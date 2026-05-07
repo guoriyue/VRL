@@ -200,6 +200,7 @@ def test_sd3_ocr_matches_flow_grpo_1gpu_training_cadence() -> None:
     assert cfg.eval.freq == 60
     assert cfg.eval.num_steps == 40
     assert cfg.eval.noise_level == 0.0
+    assert cfg.eval.seed == 20260504
     assert cfg.eval.use_ema is True
     assert built["trainer"].gradient_accumulation_steps == 4
     assert built["trainer"].optim.lr == 3.0e-4

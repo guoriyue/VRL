@@ -52,6 +52,7 @@ eval:
   num_steps: 40
   sample_batch_size: 8
   noise_level: 0.0
+  seed: 20260504
   use_ema: true
 
 trainer:

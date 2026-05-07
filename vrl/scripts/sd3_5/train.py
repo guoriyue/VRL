@@ -69,6 +69,9 @@ async def train_sd3_5_grpo(cfg: DictConfig) -> None:
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     weight_dtype = torch.bfloat16 if trainer_config.bf16 else torch.float16
+    torch.manual_seed(int(trainer_config.seed))
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(int(trainer_config.seed))
 
     # 1. Build policy bundle (backend construction lives in family builder)
     from vrl.models.families.sd3_5.builder import build_sd3_5_runtime_bundle_from_cfg
@@ -373,8 +376,17 @@ async def _run_fixed_eval(
 ) -> dict[str, float]:
     """Run Flow-GRPO-style fixed SD3 eval with EMA weights when configured."""
 
+    from omegaconf import OmegaConf
+
     from vrl.config.loader import require
 
+    eval_seed = int(
+        OmegaConf.select(
+            cfg,
+            "eval.seed",
+            default=OmegaConf.select(cfg, "trainer.seed", default=0),
+        ),
+    )
     trainable = [p for p in trainer.model.parameters() if p.requires_grad]
     ema = trainer._ensure_ema() if bool(require(cfg, "eval.use_ema")) else None
     if ema is not None:
@@ -402,6 +414,7 @@ async def _run_fixed_eval(
                     "num_steps": int(require(cfg, "eval.num_steps")),
                     "sample_batch_size": int(require(cfg, "eval.sample_batch_size")),
                     "noise_level": float(require(cfg, "eval.noise_level")),
+                    "seed": eval_seed + idx,
                 },
             )
             batches.append(batch)
