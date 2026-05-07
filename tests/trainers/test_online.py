@@ -505,6 +505,385 @@ class TestOnlineTrainerCeaRegressions:
         assert algorithm._last_policy_loss_tensor is None
         assert algorithm._last_kl_term_tensor is None
 
+    def test_gradient_accumulation_steps_control_optimizer_updates(self) -> None:
+        """Positive gradient_accumulation_steps splits one rollout step into multiple updates."""
+        import asyncio
+
+        import torch
+        import torch.nn as nn
+
+        from vrl.algorithms.types import TrainStepMetrics
+        from vrl.rollouts.batch import RolloutBatch
+        from vrl.rollouts.evaluators.types import SignalBatch
+        from vrl.trainers.online import OnlineTrainer
+        from vrl.trainers.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
+
+        class _Algorithm:
+            class _Config:
+                global_std = False
+                eps = 1e-8
+                adv_clip_max = 5.0
+                init_kl_coef = 0.0
+
+            config = _Config()
+
+            def compute_advantages_from_tensors(self, rewards, group_ids):
+                del group_ids
+                return rewards - rewards.mean()
+
+            def compute_signal_loss(self, signals, advantages, old_log_probs):
+                del advantages, old_log_probs
+                loss = signals.log_prob.mean()
+                return loss, TrainStepMetrics(loss=loss.item(), policy_loss=loss.item())
+
+        class _Collector(Collector):
+            async def collect(self, prompts, **kwargs):
+                prompts = list(prompts)
+                group_size = int(kwargs.get("group_size", 1))
+                batch_size = len(prompts) * group_size
+                group_ids = torch.tensor(
+                    [prompt_idx for prompt_idx in range(len(prompts)) for _ in range(group_size)],
+                    dtype=torch.long,
+                )
+                return RolloutBatch(
+                    observations=torch.zeros(batch_size, 1, 1),
+                    actions=torch.zeros(batch_size, 1, 1),
+                    rewards=torch.tensor(
+                        [float(i % group_size) for i in range(batch_size)],
+                        dtype=torch.float32,
+                    ),
+                    dones=torch.ones(batch_size, dtype=torch.bool),
+                    group_ids=group_ids,
+                    extras={"log_probs": torch.zeros(batch_size, 1)},
+                    prompts=[p for p in prompts for _ in range(group_size)],
+                )
+
+        class _Evaluator(Evaluator):
+            def evaluate(self, model, batch, timestep_idx, **kw):
+                del timestep_idx, kw
+                return SignalBatch(log_prob=model.weight.view(1).expand(batch.rewards.shape[0]))
+
+        model = nn.Linear(1, 1, bias=False)
+        with torch.no_grad():
+            model.weight.fill_(1.0)
+
+        trainer = OnlineTrainer(
+            algorithm=_Algorithm(),
+            collector=_Collector(),
+            evaluator=_Evaluator(),
+            model=model,
+            config=TrainerConfig(
+                optim=OptimConfig(lr=0.01),
+                ema=EMAConfig(),
+                debug=DebugConfig(),
+                n=2,
+                bf16=False,
+                gradient_accumulation_steps=2,
+            ),
+            device="cpu",
+        )
+
+        asyncio.run(trainer.step(["prompt-a", "prompt-b", "prompt-c", "prompt-d"]))
+
+        assert trainer.state.step == 1
+        assert trainer.state.global_step == 2
+
+    def test_flow_grpo_loss_scaling_includes_timesteps(self) -> None:
+        """Flow-GRPO accumulation scales loss by microbatches * train timesteps."""
+        import asyncio
+
+        import pytest
+        import torch
+        import torch.nn as nn
+
+        from vrl.algorithms.types import TrainStepMetrics
+        from vrl.rollouts.batch import RolloutBatch
+        from vrl.rollouts.evaluators.types import SignalBatch
+        from vrl.trainers.online import OnlineTrainer
+        from vrl.trainers.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
+
+        recorded_grads: list[float] = []
+
+        class _Algorithm:
+            class _Config:
+                global_std = False
+                eps = 1e-8
+                adv_clip_max = 5.0
+                init_kl_coef = 0.0
+
+            config = _Config()
+
+            def compute_advantages_from_tensors(self, rewards, group_ids):
+                del group_ids
+                return rewards - rewards.mean()
+
+            def compute_signal_loss(self, signals, advantages, old_log_probs):
+                del advantages, old_log_probs
+                loss = signals.log_prob.mean()
+                return loss, TrainStepMetrics(loss=loss.item(), policy_loss=loss.item())
+
+        class _Collector(Collector):
+            async def collect(self, prompts, **kwargs):
+                prompts = list(prompts)
+                group_size = int(kwargs.get("group_size", 1))
+                batch_size = len(prompts) * group_size
+                group_ids = torch.tensor(
+                    [prompt_idx for prompt_idx in range(len(prompts)) for _ in range(group_size)],
+                    dtype=torch.long,
+                )
+                return RolloutBatch(
+                    observations=torch.zeros(batch_size, 3, 1),
+                    actions=torch.zeros(batch_size, 3, 1),
+                    rewards=torch.tensor(
+                        [float(i % group_size) for i in range(batch_size)],
+                        dtype=torch.float32,
+                    ),
+                    dones=torch.ones(batch_size, dtype=torch.bool),
+                    group_ids=group_ids,
+                    extras={"log_probs": torch.zeros(batch_size, 3)},
+                    prompts=[p for p in prompts for _ in range(group_size)],
+                )
+
+        class _Evaluator(Evaluator):
+            def evaluate(self, model, batch, timestep_idx, **kw):
+                del timestep_idx, kw
+                return SignalBatch(log_prob=model.weight.view(1).expand(batch.rewards.shape[0]))
+
+        model = nn.Linear(1, 1, bias=False)
+        with torch.no_grad():
+            model.weight.fill_(1.0)
+
+        trainer = OnlineTrainer(
+            algorithm=_Algorithm(),
+            collector=_Collector(),
+            evaluator=_Evaluator(),
+            model=model,
+            config=TrainerConfig(
+                optim=OptimConfig(lr=0.1, weight_decay=0.0),
+                ema=EMAConfig(),
+                debug=DebugConfig(),
+                n=2,
+                bf16=False,
+                gradient_accumulation_steps=2,
+            ),
+            device="cpu",
+        )
+
+        original_step = trainer._clip_and_step
+
+        def _recording_step(optimizer):
+            assert model.weight.grad is not None
+            recorded_grads.append(float(model.weight.grad.detach().item()))
+            return original_step(optimizer)
+
+        trainer._clip_and_step = _recording_step  # type: ignore[method-assign]
+
+        asyncio.run(trainer.step(["prompt-a", "prompt-b", "prompt-c", "prompt-d"]))
+
+        # Each update accumulates 2 rollout microbatches * 3 timesteps.
+        # Without timestep-aware scaling these gradients would be 3.0.
+        assert recorded_grads == pytest.approx([1.0, 1.0])
+        assert trainer.state.global_step == 2
+
+    def test_flow_grpo_zero_advantage_padding_rebatches_evenly(self) -> None:
+        """Flow-style stat-tracker filtering pads zero-adv rows before rebatching."""
+        import asyncio
+
+        import numpy as np
+        import torch
+        import torch.nn as nn
+
+        from vrl.algorithms.types import TrainStepMetrics
+        from vrl.rollouts.batch import RolloutBatch
+        from vrl.rollouts.evaluators.types import SignalBatch
+        from vrl.trainers.online import OnlineTrainer
+        from vrl.trainers.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
+
+        seen_batch_sizes: list[int] = []
+
+        class _Algorithm:
+            class _Config:
+                global_std = True
+                eps = 1e-8
+                adv_clip_max = 5.0
+                init_kl_coef = 0.0
+
+            config = _Config()
+
+            def __init__(self) -> None:
+                self.advantages_seen: list[float] = []
+
+            def compute_advantages_from_tensors(self, rewards, group_ids):
+                del rewards, group_ids
+                raise AssertionError("stat_tracker should own advantages")
+
+            def compute_signal_loss(self, signals, advantages, old_log_probs):
+                del old_log_probs
+                self.advantages_seen.extend(
+                    float(x) for x in advantages.detach().cpu().reshape(-1).tolist()
+                )
+                loss = signals.log_prob.mean() + advantages.mean() * 0.0
+                return loss, TrainStepMetrics(loss=loss.item(), policy_loss=loss.item())
+
+        class _SparseTracker:
+            def update(self, prompts, rewards):
+                del prompts
+                out = np.zeros_like(rewards.detach().cpu().numpy())
+                out[0] = 1.0
+                return out
+
+            def get_stats(self):
+                return 2.0, 3
+
+            def clear(self):
+                pass
+
+        class _Collector(Collector):
+            async def collect(self, prompts, **kwargs):
+                prompts = list(prompts)
+                group_size = int(kwargs.get("group_size", 1))
+                batch_size = len(prompts) * group_size
+                group_ids = torch.tensor(
+                    [i for i in range(len(prompts)) for _ in range(group_size)],
+                    dtype=torch.long,
+                )
+                return RolloutBatch(
+                    observations=torch.zeros(batch_size, 1, 1),
+                    actions=torch.zeros(batch_size, 1, 1),
+                    rewards=torch.arange(batch_size, dtype=torch.float32),
+                    dones=torch.ones(batch_size, dtype=torch.bool),
+                    group_ids=group_ids,
+                    extras={"log_probs": torch.zeros(batch_size, 1)},
+                    prompts=[p for p in prompts for _ in range(group_size)],
+                )
+
+        class _Evaluator(Evaluator):
+            def evaluate(self, model, batch, timestep_idx, **kw):
+                del timestep_idx, kw
+                seen_batch_sizes.append(int(batch.rewards.shape[0]))
+                return SignalBatch(log_prob=model.weight.view(1).expand(batch.rewards.shape[0]))
+
+        algorithm = _Algorithm()
+        model = nn.Linear(1, 1, bias=False)
+        with torch.no_grad():
+            model.weight.fill_(1.0)
+
+        trainer = OnlineTrainer(
+            algorithm=algorithm,
+            collector=_Collector(),
+            evaluator=_Evaluator(),
+            model=model,
+            config=TrainerConfig(
+                optim=OptimConfig(lr=0.01),
+                ema=EMAConfig(),
+                debug=DebugConfig(),
+                n=2,
+                bf16=False,
+                gradient_accumulation_steps=2,
+            ),
+            device="cpu",
+            stat_tracker=_SparseTracker(),
+        )
+
+        asyncio.run(trainer.step(["prompt-a", "prompt-b", "prompt-c"]))
+
+        assert seen_batch_sizes == [1, 1, 1]
+        assert len(algorithm.advantages_seen) == 3
+        assert algorithm.advantages_seen.count(1.0) == 1
+        assert algorithm.advantages_seen.count(0.0) == 2
+        assert trainer.state.global_step == 2
+
+    def test_zero_advantage_stat_tracker_samples_do_not_get_epsilon_gradient(self) -> None:
+        """All-zero stat-tracker advantages should skip backward instead of inventing gradients."""
+        import asyncio
+
+        import numpy as np
+        import torch
+        import torch.nn as nn
+
+        from vrl.algorithms.types import TrainStepMetrics
+        from vrl.rollouts.batch import RolloutBatch
+        from vrl.rollouts.evaluators.types import SignalBatch
+        from vrl.trainers.online import OnlineTrainer
+        from vrl.trainers.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
+
+        class _Algorithm:
+            class _Config:
+                global_std = True
+                eps = 1e-8
+                adv_clip_max = 5.0
+                init_kl_coef = 0.0
+
+            config = _Config()
+
+            def __init__(self) -> None:
+                self.loss_calls = 0
+
+            def compute_advantages_from_tensors(self, rewards, group_ids):
+                del rewards, group_ids
+                raise AssertionError("stat_tracker should own advantages")
+
+            def compute_signal_loss(self, signals, advantages, old_log_probs):
+                del signals, advantages, old_log_probs
+                self.loss_calls += 1
+                return torch.tensor(0.0, requires_grad=True), TrainStepMetrics()
+
+        class _ZeroTracker:
+            def update(self, prompts, rewards):
+                del prompts
+                return np.zeros_like(rewards.detach().cpu().numpy())
+
+            def get_stats(self):
+                return 2.0, 1
+
+            def clear(self):
+                pass
+
+        class _Collector(Collector):
+            async def collect(self, prompts, **kwargs):
+                group_size = int(kwargs.get("group_size", 1))
+                return RolloutBatch(
+                    observations=torch.zeros(group_size, 1, 1),
+                    actions=torch.zeros(group_size, 1, 1),
+                    rewards=torch.ones(group_size, dtype=torch.float32),
+                    dones=torch.ones(group_size, dtype=torch.bool),
+                    group_ids=torch.zeros(group_size, dtype=torch.long),
+                    extras={"log_probs": torch.zeros(group_size, 1)},
+                    prompts=list(prompts) * group_size,
+                )
+
+        class _Evaluator(Evaluator):
+            def evaluate(self, model, batch, timestep_idx, **kw):
+                del model, batch, timestep_idx, kw
+                return SignalBatch(log_prob=torch.zeros(1))
+
+        algorithm = _Algorithm()
+        model = nn.Linear(1, 1, bias=False)
+        trainer = OnlineTrainer(
+            algorithm=algorithm,
+            collector=_Collector(),
+            evaluator=_Evaluator(),
+            model=model,
+            config=TrainerConfig(
+                optim=OptimConfig(lr=0.01),
+                ema=EMAConfig(),
+                debug=DebugConfig(),
+                n=2,
+                bf16=False,
+            ),
+            device="cpu",
+            stat_tracker=_ZeroTracker(),
+        )
+
+        metrics = asyncio.run(trainer.step(["prompt-a"]))
+
+        assert algorithm.loss_calls == 0
+        assert trainer.state.step == 1
+        assert trainer.state.global_step == 0
+        assert metrics.grad_norm == 0.0
+        assert metrics.group_size == 2.0
+        assert metrics.trained_prompt_num == 1
+
 
 class TestOnlineTrainerResumeState:
     def test_load_state_dict_initializes_and_restores_optimizer_state(self) -> None:

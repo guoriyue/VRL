@@ -274,6 +274,7 @@ async def train_wan_2_1_grpo(cfg: DictConfig) -> None:
                 export_modules={LORA_WEIGHTS_NAME: transformer}
                 if bool(cfg.model.use_lora) and hasattr(transformer, "save_pretrained")
                 else None,
+                export_ema=trainer._ema,
             )
             logger.info("Saved checkpoint to %s", ckpt_path)
 
@@ -292,5 +293,6 @@ async def train_wan_2_1_grpo(cfg: DictConfig) -> None:
         export_modules={LORA_WEIGHTS_NAME: transformer}
         if bool(cfg.model.use_lora) and hasattr(transformer, "save_pretrained")
         else None,
+        export_ema=trainer._ema,
     )
     logger.info("Training complete. Final checkpoint: %s", final_path)

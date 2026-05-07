@@ -51,8 +51,15 @@ class TrainerConfig:
 
     # --- PPO/GRPO loop ---
     ppo_epochs: int = 1
+    # 0 preserves the legacy behavior: accumulate every collected rollout
+    # batch in one optimizer update. Positive values match Flow-GRPO's
+    # microbatch accumulation cadence.
+    gradient_accumulation_steps: int = 0
 
     # --- precision ---
+    # Empty means "derive from bf16" for direct test construction/backward
+    # compatibility. YAML configs should set this explicitly.
+    mixed_precision: str = ""
     bf16: bool = True
     gradient_checkpointing: bool = True
 

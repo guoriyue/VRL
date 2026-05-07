@@ -180,6 +180,35 @@ def test_sd3_ocr_matches_flow_grpo_prompt_length() -> None:
     assert cfg.sampling.max_sequence_length == 128
 
 
+def test_sd3_ocr_matches_flow_grpo_1gpu_training_cadence() -> None:
+    cfg = load_config("experiment/sd3_5_ocr_grpo")
+    built = build_configs(cfg)
+
+    assert cfg.rollout.n == 8
+    assert cfg.rollout.rollout_batch_size == 8
+    assert cfg.rollout.sample_batch_size == 8
+    assert cfg.actor.optim.lr == 3.0e-4
+    assert cfg.actor.mixed_precision == "fp16"
+    assert cfg.actor.bf16 is False
+    assert cfg.actor.gradient_accumulation_steps == 4
+    assert cfg.model.torch_compile.enable is False
+    assert cfg.algorithm.init_kl_coef == 0.04
+    assert cfg.algorithm.global_std is True
+    assert cfg.actor.ema.enable is True
+    assert cfg.trainer.save_freq == 60
+    assert cfg.eval.enable is True
+    assert cfg.eval.freq == 60
+    assert cfg.eval.num_steps == 40
+    assert cfg.eval.noise_level == 0.0
+    assert cfg.eval.use_ema is True
+    assert built["trainer"].gradient_accumulation_steps == 4
+    assert built["trainer"].optim.lr == 3.0e-4
+    assert built["trainer"].mixed_precision == "fp16"
+    assert built["trainer"].bf16 is False
+    assert built["algorithm"].init_kl_coef == 0.04
+    assert built["algorithm"].global_std is True
+
+
 def test_adv_estimator_only_fails_fast() -> None:
     cfg = OmegaConf.create({"algorithm": {"adv_estimator": "token_grpo"}})
     with pytest.raises(ValueError, match="adv_estimator"):

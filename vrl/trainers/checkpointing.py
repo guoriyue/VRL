@@ -90,11 +90,15 @@ def save_training_checkpoint(
     progress: dict[str, Any],
     rng_state: dict[str, Any] | None = None,
     export_modules: dict[str, Any] | None = None,
+    export_ema: Any | None = None,
 ) -> dict[str, Any]:
     """Save a generic Torch training checkpoint.
 
     Every model family participates through ``RuntimeBundle.trainable_modules``.
-    No family-specific serialization code is needed for resume.
+    No family-specific serialization code is needed for resume. ``checkpoint.pt``
+    always stores the current/raw training state. When ``export_ema`` is passed,
+    optional ``save_pretrained`` artifacts are written from EMA weights and then
+    the raw training weights are restored.
     """
 
     path = Path(checkpoint_dir)
@@ -112,11 +116,26 @@ def save_training_checkpoint(
     }
     torch.save(payload, path / TRAINING_CHECKPOINT_NAME)
 
-    for name, module in (export_modules or {}).items():
-        save_pretrained = getattr(module, "save_pretrained", None)
-        if not callable(save_pretrained):
-            raise TypeError(f"export module {name!r} does not expose save_pretrained()")
-        save_pretrained(path / name)
+    export_modules = export_modules or {}
+    trainable_parameters: list[Any] = []
+    if export_ema is not None and export_modules:
+        for module in bundle.trainable_modules.values():
+            parameters = getattr(module, "parameters", None)
+            if callable(parameters):
+                trainable_parameters.extend(p for p in parameters() if p.requires_grad)
+        if not trainable_parameters:
+            raise ValueError("export_ema was provided but bundle has no trainable parameters")
+        export_ema.copy_ema_to(trainable_parameters, store_temp=True)
+
+    try:
+        for name, module in export_modules.items():
+            save_pretrained = getattr(module, "save_pretrained", None)
+            if not callable(save_pretrained):
+                raise TypeError(f"export module {name!r} does not expose save_pretrained()")
+            save_pretrained(path / name)
+    finally:
+        if export_ema is not None and export_modules:
+            export_ema.copy_temp_to(trainable_parameters)
 
     meta = write_checkpoint_meta(
         path,
@@ -124,7 +143,7 @@ def save_training_checkpoint(
         trainer_state=trainer_state,
         completed_epoch=int(progress.get("completed_epoch", progress.get("next_epoch", 0))),
         next_epoch=int(progress.get("next_epoch", progress.get("next_step", 0))),
-        uses_lora=bool((export_modules or {}).get(LORA_WEIGHTS_NAME)),
+        uses_lora=bool(export_modules.get(LORA_WEIGHTS_NAME)),
     )
     meta["checkpoint_file"] = TRAINING_CHECKPOINT_NAME
     (path / CHECKPOINT_META_NAME).write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n")

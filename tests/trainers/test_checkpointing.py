@@ -70,6 +70,57 @@ def test_training_checkpoint_writes_optional_lora_export(tmp_path) -> None:
     assert (tmp_path / "checkpoint-1" / CHECKPOINT_META_NAME).exists()
 
 
+def test_training_checkpoint_exports_lora_with_ema_without_mutating_resume_state(
+    tmp_path,
+) -> None:
+    class _ExportModule:
+        def __init__(self, module) -> None:
+            self.module = module
+            self.saved_weight = None
+
+        def save_pretrained(self, path):
+            path.mkdir(parents=True)
+            self.saved_weight = float(self.module.weight.item())
+            (path / "adapter_model.safetensors").write_text(str(self.saved_weight))
+
+    class _EMA:
+        def copy_ema_to(self, parameters, *, store_temp=True):
+            self.parameters = list(parameters)
+            assert store_temp is True
+            self.temp = [p.detach().clone() for p in self.parameters]
+            with torch.no_grad():
+                for p in self.parameters:
+                    p.fill_(7.0)
+
+        def copy_temp_to(self, parameters):
+            with torch.no_grad():
+                for p, temp in zip(parameters, self.temp, strict=True):
+                    p.copy_(temp)
+
+    bundle = _Bundle()
+    with torch.no_grad():
+        bundle.module.weight.fill_(3.0)
+    export_module = _ExportModule(bundle.module)
+
+    save_training_checkpoint(
+        tmp_path / "checkpoint-ema",
+        trainer=_Trainer(),
+        bundle=bundle,
+        family="unit",
+        progress={"next_epoch": 1},
+        rng_state={},
+        export_modules={LORA_WEIGHTS_NAME: export_module},
+        export_ema=_EMA(),
+    )
+
+    checkpoint = load_training_checkpoint(tmp_path / "checkpoint-ema")
+    saved_trainable = checkpoint.trainable_state["module"]["weight"].item()
+
+    assert saved_trainable == pytest.approx(3.0)
+    assert export_module.saved_weight == pytest.approx(7.0)
+    assert bundle.module.weight.item() == pytest.approx(3.0)
+
+
 def test_load_training_checkpoint_requires_checkpoint_pt(tmp_path) -> None:
     ckpt = tmp_path / "checkpoint-1"
     ckpt.mkdir()

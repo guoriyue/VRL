@@ -16,7 +16,7 @@ import torch.nn as nn
 
 from vrl.algorithms.base import Algorithm
 from vrl.algorithms.types import TrainStepMetrics
-from vrl.rollouts.batch import RolloutBatch
+from vrl.rollouts.batch import RolloutBatch, stack_batches
 from vrl.trainers.base import Trainer
 from vrl.trainers.ema import EMAModuleWrapper
 from vrl.trainers.types import TrainerConfig, TrainState
@@ -100,44 +100,154 @@ class PhaseTimer:
 # ---------------------------------------------------------------------------
 
 
+def _resolve_mixed_precision(config: TrainerConfig) -> str:
+    precision = str(config.mixed_precision or "").lower().strip()
+    if not precision:
+        precision = "bf16" if config.bf16 else "no"
+    aliases = {
+        "none": "no",
+        "off": "no",
+        "fp32": "no",
+        "float32": "no",
+        "float16": "fp16",
+        "bfloat16": "bf16",
+    }
+    precision = aliases.get(precision, precision)
+    if precision not in {"no", "fp16", "bf16"}:
+        raise ValueError(
+            "actor.mixed_precision must be one of 'no', 'fp16', or 'bf16', "
+            f"got {config.mixed_precision!r}",
+        )
+    return precision
+
+
 def _get_autocast(config: TrainerConfig, device: torch.device) -> Any:
-    """Return a bf16 autocast context manager (or no-op when disabled)."""
-    if config.bf16:
+    """Return the configured autocast context manager."""
+    precision = _resolve_mixed_precision(config)
+    if precision == "bf16":
         return torch.amp.autocast(str(device), dtype=torch.bfloat16)
+    if precision == "fp16" and device.type == "cuda":
+        return torch.amp.autocast(str(device), dtype=torch.float16)
     return contextlib.nullcontext()
 
 
-def _apply_sample_mask(batch: RolloutBatch, mask: torch.Tensor) -> RolloutBatch:
-    """Filter RolloutBatch along sample dim by a boolean mask.
+def _select_batch(batch: RolloutBatch, selector: torch.Tensor) -> RolloutBatch:
+    """Select RolloutBatch rows by a boolean mask or long indices.
 
     All per-sample tensors (observations, actions, rewards, dones, group_ids,
     videos, and extras whose leading dim matches the batch) are indexed by
-    ``mask``. Non-per-sample extras and context are carried through unchanged.
+    ``selector``. Non-per-sample extras and context are carried through unchanged.
     """
+    selector = selector.detach()
     new_extras: dict[str, Any] = {}
-    batch_size = mask.shape[0]
+    batch_size = batch.rewards.shape[0]
     for k, v in batch.extras.items():
         if isinstance(v, torch.Tensor) and v.dim() > 0 and v.shape[0] == batch_size:
-            new_extras[k] = v[mask]
+            new_extras[k] = v[selector.to(v.device)]
         else:
             new_extras[k] = v
-    videos = batch.videos[mask] if batch.videos is not None else None
+    videos = (
+        batch.videos[selector.to(batch.videos.device)]
+        if batch.videos is not None
+        else None
+    )
     if batch.prompts is not None:
-        mask_list = mask.detach().cpu().tolist()
-        prompts = [p for p, m in zip(batch.prompts, mask_list, strict=True) if m]
+        selector_cpu = selector.cpu()
+        if selector_cpu.dtype == torch.bool:
+            positions = torch.where(selector_cpu)[0].tolist()
+        else:
+            positions = [int(i) for i in selector_cpu.reshape(-1).tolist()]
+        prompts = [batch.prompts[i] for i in positions]
     else:
         prompts = None
     return RolloutBatch(
-        observations=batch.observations[mask],
-        actions=batch.actions[mask],
-        rewards=batch.rewards[mask],
-        dones=batch.dones[mask],
-        group_ids=batch.group_ids[mask],
+        observations=batch.observations[selector.to(batch.observations.device)],
+        actions=batch.actions[selector.to(batch.actions.device)],
+        rewards=batch.rewards[selector.to(batch.rewards.device)],
+        dones=batch.dones[selector.to(batch.dones.device)],
+        group_ids=batch.group_ids[selector.to(batch.group_ids.device)],
         extras=new_extras,
         context=batch.context,
         videos=videos,
         prompts=prompts,
     )
+
+
+def _apply_sample_mask(batch: RolloutBatch, mask: torch.Tensor) -> RolloutBatch:
+    """Filter RolloutBatch along sample dim by a boolean mask."""
+
+    return _select_batch(batch, mask)
+
+
+def _nonzero_advantage_mask(advantages: torch.Tensor) -> torch.Tensor:
+    """Return Flow-GRPO's mask for samples with non-zero total advantage."""
+
+    adv_abs = advantages.detach().abs()
+    if adv_abs.dim() <= 1:
+        return adv_abs != 0
+    reduce_dims = tuple(range(1, adv_abs.dim()))
+    return adv_abs.sum(dim=reduce_dims) != 0
+
+
+def _pad_zero_advantage_mask(mask: torch.Tensor, num_batches: int) -> torch.Tensor:
+    """Pad zero-advantage samples back in so rebatching divides evenly.
+
+    Flow-GRPO filters all-zero-advantage samples, then randomly re-includes
+    enough zero-advantage rows to make the remaining batch count divisible by
+    ``num_batches_per_epoch``. That keeps the later reshape/rebatch step exact.
+    """
+
+    if num_batches <= 0:
+        return mask
+    padded = mask.clone()
+    true_count = int(padded.sum().item())
+    if true_count == 0 or true_count % num_batches == 0:
+        return padded
+    false_indices = torch.where(~padded)[0]
+    num_to_change = num_batches - (true_count % num_batches)
+    if false_indices.numel() >= num_to_change:
+        random_indices = torch.randperm(false_indices.numel(), device=false_indices.device)[
+            :num_to_change
+        ]
+        padded[false_indices[random_indices]] = True
+    return padded
+
+
+def _shuffle_and_rebatch_batches(
+    batches: list[RolloutBatch],
+    advantages: list[torch.Tensor],
+    *,
+    num_batches: int,
+) -> tuple[list[RolloutBatch], list[torch.Tensor]]:
+    """Shuffle across all rollout rows and split into Flow-GRPO microbatches."""
+
+    combined = stack_batches(batches)
+    adv_all = torch.cat(advantages)
+    total_batch_size = int(combined.rewards.shape[0])
+    if total_batch_size == 0:
+        return [], []
+    if num_batches <= 0 or total_batch_size % num_batches != 0:
+        raise ValueError(
+            "Flow-GRPO rebatch requires total samples divisible by rollout batches: "
+            f"total_batch_size={total_batch_size}, num_batches={num_batches}",
+        )
+
+    perm = torch.randperm(total_batch_size, device=combined.rewards.device)
+    combined = _select_batch(combined, perm)
+    adv_all = adv_all[perm.to(adv_all.device)]
+
+    microbatch_size = total_batch_size // num_batches
+    rebatches: list[RolloutBatch] = []
+    rebatch_advs: list[torch.Tensor] = []
+    for start in range(0, total_batch_size, microbatch_size):
+        idx = torch.arange(
+            start,
+            start + microbatch_size,
+            device=combined.rewards.device,
+        )
+        rebatches.append(_select_batch(combined, idx))
+        rebatch_advs.append(adv_all[idx.to(adv_all.device)])
+    return rebatches, rebatch_advs
 
 
 def _split_batch_by_group(batch: RolloutBatch) -> list[RolloutBatch]:
@@ -479,25 +589,45 @@ class OnlineTrainer(Trainer):
         split_sizes = [b.rewards.shape[0] for b in all_batches]
         adv_split = list(torch.split(advantages_all, split_sizes))
 
-        # Zero-advantage sample filter + full-dead fallback, applied *per-batch*
-        # so each filtered batch remains a standalone tensor for forward/backward.
+        # Zero-advantage sample filter. Flow-GRPO applies this globally across
+        # the outer rollout epoch, pads enough zero-advantage rows back in for
+        # exact rebatching, then shuffles/rebatches into
+        # num_batches_per_epoch training microbatches.
         filtered_batches: list[RolloutBatch] = []
         filtered_advs: list[torch.Tensor] = []
         if self.stat_tracker is not None:
-            for b, adv_b in zip(all_batches, adv_split, strict=True):
-                mask = adv_b.detach().abs() != 0
-                if not bool(mask.any()):
-                    adv_b = adv_b + 1e-6
-                    mask = adv_b.detach().abs() != 0
-                if not bool(mask.all()):
-                    b = _apply_sample_mask(b, mask)
-                    adv_b = adv_b[mask]
-                if b.rewards.shape[0] > 0:
-                    filtered_batches.append(b)
-                    filtered_advs.append(adv_b)
+            if cfg.gradient_accumulation_steps > 0:
+                combined = stack_batches(all_batches)
+                mask = _pad_zero_advantage_mask(
+                    _nonzero_advantage_mask(advantages_all),
+                    num_batches=len(all_batches),
+                )
+                if bool(mask.any()):
+                    combined = _apply_sample_mask(combined, mask)
+                    adv_all = advantages_all[mask.to(advantages_all.device)]
+                    filtered_batches, filtered_advs = _shuffle_and_rebatch_batches(
+                        [combined],
+                        [adv_all],
+                        num_batches=len(all_batches),
+                    )
+            else:
+                for b, adv_b in zip(all_batches, adv_split, strict=True):
+                    mask = _nonzero_advantage_mask(adv_b)
+                    if not bool(mask.all()):
+                        b = _apply_sample_mask(b, mask)
+                        adv_b = adv_b[mask.to(adv_b.device)]
+                    if b.rewards.shape[0] > 0:
+                        filtered_batches.append(b)
+                        filtered_advs.append(adv_b)
         else:
             filtered_batches = list(all_batches)
             filtered_advs = adv_split
+            if cfg.gradient_accumulation_steps > 0:
+                filtered_batches, filtered_advs = _shuffle_and_rebatch_batches(
+                    filtered_batches,
+                    filtered_advs,
+                    num_batches=len(all_batches),
+                )
 
         # 3. Train loop — gradient accumulation across per-prompt batches.
         self.model.train()
@@ -526,6 +656,8 @@ class OnlineTrainer(Trainer):
                 grad_norm=0.0,
                 adv_saturation=adv_saturation,
                 adv_zero_rate=adv_zero_rate,
+                group_size=tracker_group_size,
+                trained_prompt_num=tracker_trained_prompt_num,
                 phase_times=dict(timer.times),
             )
 
@@ -545,9 +677,11 @@ class OnlineTrainer(Trainer):
         else:
             train_indices = list(range(num_timesteps))
 
-        # Number of accumulation micro-batches (loss scaled by this so total
-        # gradient magnitude equals a single forward over the stacked batch).
-        num_accum = len(filtered_batches)
+        # Number of rollout micro-batches per optimizer update. ``0`` preserves
+        # legacy VRL behavior: one optimizer update after all collected batches.
+        grad_accum_batches = int(cfg.gradient_accumulation_steps)
+        if grad_accum_batches <= 0 or grad_accum_batches > len(filtered_batches):
+            grad_accum_batches = len(filtered_batches)
 
         # Debug first step: compare old vs fresh log-probs on first timestep
         # (using first filtered batch so memory footprint is bounded).
@@ -582,6 +716,7 @@ class OnlineTrainer(Trainer):
                 f"\n[GRAD-SPLIT TRACER] about to enter inner loop: "
                 f"step={self.state.step} ppo_epochs={cfg.ppo_epochs} "
                 f"num_filtered_batches={len(filtered_batches)} "
+                f"grad_accum_batches={grad_accum_batches} "
                 f"num_train_indices={len(train_indices)}\n"
             )
             print(_msg, file=sys.stderr, flush=True)
@@ -593,119 +728,142 @@ class OnlineTrainer(Trainer):
             except Exception:
                 pass
         for _inner_epoch in range(cfg.ppo_epochs):
-            # Accumulate gradients across all per-prompt batches, then step once.
-            for b, adv_b in zip(filtered_batches, filtered_advs, strict=True):
-                old_lp = b.extras["log_probs"]
-                for j in train_indices:
-                    with timer.time("evaluate"), autocast_ctx:
-                        signals = self.evaluator.evaluate(
-                            self.model,
-                            b,
-                            j,
-                            ref_model=self.ref_model,
-                            signal_request=SignalRequest(
-                                need_ref=self.algorithm.config.init_kl_coef > 0,
-                                need_kl_intermediates=self.algorithm.config.init_kl_coef > 0,
-                            ),
-                        )
-                        old_lp_j = old_lp[:, j] if old_lp.ndim > 1 else old_lp
-                        loss, metrics = self.algorithm.compute_signal_loss(
-                            signals, adv_b, old_lp_j
-                        )
-                        # Scale loss by num_accum so the accumulated
-                        # gradient matches a single pass over the full
-                        # stacked batch in magnitude.
-                        loss = loss / num_accum
+            # Accumulate a configurable number of rollout micro-batches per
+            # optimizer update. Flow-GRPO sets this to num_batches_per_epoch//2,
+            # so an epoch can intentionally contain multiple optimizer updates.
+            for batch_start in range(0, len(filtered_batches), grad_accum_batches):
+                chunk_batches = filtered_batches[batch_start:batch_start + grad_accum_batches]
+                chunk_advs = filtered_advs[batch_start:batch_start + grad_accum_batches]
+                # Flow-GRPO uses Accelerate accumulation over both rollout
+                # microbatches and denoising timesteps:
+                # gradient_accumulation_steps = microbatches * timesteps.
+                # Mirror that normalization explicitly in the native trainer.
+                loss_scale = len(chunk_batches) * len(train_indices)
 
-                    # Grad-split diagnostic: fire ONCE per process on first
-                    # backward we actually reach, to verify the KL term is
-                    # not drowning the policy gradient. Stamps a class flag
-                    # to ensure single-shot.
-                    _grad_split_fired = getattr(OnlineTrainer, "_grad_split_already_fired", False)
-                    if cfg.debug.grad_split and not _grad_split_fired:
-                        OnlineTrainer._grad_split_already_fired = True  # type: ignore[attr-defined]
-                        import sys
-
-                        _enter = f"\n[GRAD-SPLIT] entering diagnostic block (step={self.state.step}, j={j})\n"
-                        print(_enter, file=sys.stderr, flush=True)
-                        print(_enter, flush=True)
-                        logger.info(_enter.strip())
-                        try:
-                            with open("/tmp/grad_split_debug.log", "a") as _f:
-                                _f.write(_enter)
-                        except Exception:
-                            pass
-                        try:
-                            p_t = getattr(self.algorithm, "_last_policy_loss_tensor", None)
-                            k_t = getattr(self.algorithm, "_last_kl_term_tensor", None)
-                            params = [p for p in self.model.parameters() if p.requires_grad]
-                            p_norm = float("nan")
-                            k_norm = float("nan")
-                            if p_t is not None and p_t.requires_grad:
-                                p_grads = torch.autograd.grad(
-                                    p_t, params, retain_graph=True, allow_unused=True
-                                )
-                                p_norm = (
-                                    sum(
-                                        (g.detach() ** 2).sum().item()
-                                        for g in p_grads
-                                        if g is not None
-                                    )
-                                ) ** 0.5
-                            if k_t is not None and k_t.requires_grad:
-                                k_grads = torch.autograd.grad(
-                                    k_t, params, retain_graph=True, allow_unused=True
-                                )
-                                k_norm = (
-                                    sum(
-                                        (g.detach() ** 2).sum().item()
-                                        for g in k_grads
-                                        if g is not None
-                                    )
-                                ) ** 0.5
-                            ratio = p_norm / k_norm if k_norm and k_norm > 0 else float("inf")
-                            _result = (
-                                f"\n[GRAD-SPLIT RESULT] step={self.state.step} j={j} "
-                                f"||grad(policy)||={p_norm:.4e} "
-                                f"||grad(beta*kl)||={k_norm:.4e} "
-                                f"policy/kl_ratio={ratio:.3f} "
-                                f"policy_loss={p_t.item() if p_t is not None else float('nan'):.4e} "
-                                f"kl_term={k_t.item() if k_t is not None else float('nan'):.4e}\n"
+                for b, adv_b in zip(chunk_batches, chunk_advs, strict=True):
+                    old_lp = b.extras["log_probs"]
+                    for j in train_indices:
+                        with timer.time("evaluate"), autocast_ctx:
+                            signals = self.evaluator.evaluate(
+                                self.model,
+                                b,
+                                j,
+                                ref_model=self.ref_model,
+                                signal_request=SignalRequest(
+                                    need_ref=self.algorithm.config.init_kl_coef > 0,
+                                    need_kl_intermediates=self.algorithm.config.init_kl_coef > 0,
+                                ),
                             )
+                            old_lp_j = old_lp[:, j] if old_lp.ndim > 1 else old_lp
+                            loss, metrics = self.algorithm.compute_signal_loss(
+                                signals, adv_b, old_lp_j
+                            )
+                            # Average across rollout micro-batches inside this
+                            # optimizer update; timestep accumulation follows
+                            # Flow-GRPO's per-denoise-step surrogate structure.
+                            loss = loss / loss_scale
+
+                        # Grad-split diagnostic: fire ONCE per process on first
+                        # backward we actually reach, to verify the KL term is
+                        # not drowning the policy gradient. Stamps a class flag
+                        # to ensure single-shot.
+                        _grad_split_fired = getattr(
+                            OnlineTrainer,
+                            "_grad_split_already_fired",
+                            False,
+                        )
+                        if cfg.debug.grad_split and not _grad_split_fired:
+                            OnlineTrainer._grad_split_already_fired = True  # type: ignore[attr-defined]
                             import sys
 
-                            print(_result, file=sys.stderr, flush=True)
-                            print(_result, flush=True)
-                            logger.info(_result.strip())
+                            _enter = (
+                                f"\n[GRAD-SPLIT] entering diagnostic block "
+                                f"(step={self.state.step}, j={j})\n"
+                            )
+                            print(_enter, file=sys.stderr, flush=True)
+                            print(_enter, flush=True)
+                            logger.info(_enter.strip())
                             try:
                                 with open("/tmp/grad_split_debug.log", "a") as _f:
-                                    _f.write(_result)
+                                    _f.write(_enter)
                             except Exception:
                                 pass
-                        except Exception as _e:
-                            logger.warning("debug_grad_split failed: %s", _e)
+                            try:
+                                p_t = getattr(self.algorithm, "_last_policy_loss_tensor", None)
+                                k_t = getattr(self.algorithm, "_last_kl_term_tensor", None)
+                                params = [p for p in self.model.parameters() if p.requires_grad]
+                                p_norm = float("nan")
+                                k_norm = float("nan")
+                                if p_t is not None and p_t.requires_grad:
+                                    p_grads = torch.autograd.grad(
+                                        p_t,
+                                        params,
+                                        retain_graph=True,
+                                        allow_unused=True,
+                                    )
+                                    p_norm = (
+                                        sum(
+                                            (g.detach() ** 2).sum().item()
+                                            for g in p_grads
+                                            if g is not None
+                                        )
+                                    ) ** 0.5
+                                if k_t is not None and k_t.requires_grad:
+                                    k_grads = torch.autograd.grad(
+                                        k_t,
+                                        params,
+                                        retain_graph=True,
+                                        allow_unused=True,
+                                    )
+                                    k_norm = (
+                                        sum(
+                                            (g.detach() ** 2).sum().item()
+                                            for g in k_grads
+                                            if g is not None
+                                        )
+                                    ) ** 0.5
+                                ratio = p_norm / k_norm if k_norm and k_norm > 0 else float("inf")
+                                _result = (
+                                    f"\n[GRAD-SPLIT RESULT] step={self.state.step} j={j} "
+                                    f"||grad(policy)||={p_norm:.4e} "
+                                    f"||grad(beta*kl)||={k_norm:.4e} "
+                                    f"policy/kl_ratio={ratio:.3f} "
+                                    f"policy_loss={p_t.item() if p_t is not None else float('nan'):.4e} "
+                                    f"kl_term={k_t.item() if k_t is not None else float('nan'):.4e}\n"
+                                )
+                                import sys
 
-                    with timer.time("backward"):
-                        self._backward(loss)
+                                print(_result, file=sys.stderr, flush=True)
+                                print(_result, flush=True)
+                                logger.info(_result.strip())
+                                try:
+                                    with open("/tmp/grad_split_debug.log", "a") as _f:
+                                        _f.write(_result)
+                                except Exception:
+                                    pass
+                            except Exception as _e:
+                                logger.warning("debug_grad_split failed: %s", _e)
 
-                    self._clear_algorithm_diagnostics()
+                        with timer.time("backward"):
+                            self._backward(loss)
 
-                    agg_metrics["loss"].append(metrics.loss)
-                    agg_metrics["policy_loss"].append(metrics.policy_loss)
-                    agg_metrics["kl_penalty"].append(metrics.kl_penalty)
-                    agg_metrics["clip_fraction"].append(metrics.clip_fraction)
-                    agg_metrics["approx_kl"].append(metrics.approx_kl)
+                        self._clear_algorithm_diagnostics()
 
-            # One optimizer step per inner epoch after all micro-batches processed.
-            with timer.time("optim_step"):
-                _gn = self._clip_and_step(optimizer)
-                agg_metrics["grad_norm"].append(_gn)
+                        agg_metrics["loss"].append(metrics.loss)
+                        agg_metrics["policy_loss"].append(metrics.policy_loss)
+                        agg_metrics["kl_penalty"].append(metrics.kl_penalty)
+                        agg_metrics["clip_fraction"].append(metrics.clip_fraction)
+                        agg_metrics["approx_kl"].append(metrics.approx_kl)
 
-            if ema is not None:
-                trainable = [p for p in self.model.parameters() if p.requires_grad]
-                ema.step(trainable, self.state.global_step)
+                with timer.time("optim_step"):
+                    _gn = self._clip_and_step(optimizer)
+                    agg_metrics["grad_norm"].append(_gn)
 
-            self.state.global_step += 1
+                if ema is not None:
+                    trainable = [p for p in self.model.parameters() if p.requires_grad]
+                    ema.step(trainable, self.state.global_step)
+
+                self.state.global_step += 1
 
         # Aggregate metrics — each metric averages over its own count (loss/policy
         # appended per-timestep, grad_norm appended per-inner-epoch).

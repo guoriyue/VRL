@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 
 from omegaconf import DictConfig
 
@@ -179,6 +180,18 @@ async def train_sd3_5_grpo(cfg: DictConfig) -> None:
     if not manifest_path.exists():
         raise FileNotFoundError(f"Manifest not found: {manifest_path}")
     examples: list[PromptExample] = load_prompt_manifest(manifest_path)
+
+    eval_examples: list[PromptExample] = []
+    eval_enabled = bool(require(cfg, "eval.enable"))
+    if eval_enabled:
+        eval_manifest = Path(str(require(cfg, "eval.manifest")))
+        if not eval_manifest.exists():
+            raise FileNotFoundError(f"Eval manifest not found: {eval_manifest}")
+        max_eval_prompts = int(require(cfg, "eval.max_prompts"))
+        eval_examples = load_prompt_manifest(eval_manifest)[:max_eval_prompts]
+        if not eval_examples:
+            raise ValueError(f"Eval manifest contains no prompts: {eval_manifest}")
+
     logger.info(
         "Starting SD3 GRPO — %d epochs, %d examples, n=%d",
         trainer_config.total_epochs,
@@ -207,10 +220,38 @@ async def train_sd3_5_grpo(cfg: DictConfig) -> None:
     )
     prepare_metrics_csv(csv_path, metrics_header, resume=resume_checkpoint is not None)
 
+    eval_csv_path = output_dir / "eval_metrics.csv"
+    if eval_enabled:
+        prepare_metrics_csv(
+            eval_csv_path,
+            "epoch,reward_mean,reward_std," + component_cols + "\n",
+            resume=resume_checkpoint is not None,
+        )
+
     rng = torch.Generator().manual_seed(trainer_config.seed)
     if resume_checkpoint is not None:
         restore_rng_state(resume_checkpoint.rng_state, prompt_generator=rng)
     for epoch in range(start_epoch, trainer_config.total_epochs):
+        if eval_enabled and epoch % int(require(cfg, "eval.freq")) == 0:
+            eval_metrics = await _run_fixed_eval(
+                trainer=trainer,
+                collector=collector,
+                reward_fn=reward_fn,
+                examples=eval_examples,
+                cfg=cfg,
+                output_dir=output_dir,
+                epoch=epoch,
+                component_names=component_names,
+                eval_csv_path=eval_csv_path,
+                torch=torch,
+            )
+            logger.info(
+                "Eval epoch %d | reward=%.4f+/-%.4f",
+                epoch,
+                eval_metrics["reward_mean"],
+                eval_metrics["reward_std"],
+            )
+
         idx = sample_prompt_indices(
             rng,
             num_examples=len(examples),
@@ -268,6 +309,7 @@ async def train_sd3_5_grpo(cfg: DictConfig) -> None:
                 export_modules={LORA_WEIGHTS_NAME: transformer}
                 if bool(cfg.model.use_lora) and hasattr(transformer, "save_pretrained")
                 else None,
+                export_ema=trainer._ema,
             )
             logger.info("Saved checkpoint to %s", ckpt_path)
 
@@ -286,6 +328,7 @@ async def train_sd3_5_grpo(cfg: DictConfig) -> None:
         export_modules={LORA_WEIGHTS_NAME: transformer}
         if bool(cfg.model.use_lora) and hasattr(transformer, "save_pretrained")
         else None,
+        export_ema=trainer._ema,
     )
     logger.info("Training complete. Final checkpoint: %s", final_path)
 
@@ -313,3 +356,127 @@ def _offload_driver_frozen_modules(policy: object) -> None:
 
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+
+
+async def _run_fixed_eval(
+    *,
+    trainer: Any,
+    collector: Any,
+    reward_fn: Any,
+    examples: list[Any],
+    cfg: Any,
+    output_dir: Path,
+    epoch: int,
+    component_names: list[str],
+    eval_csv_path: Path,
+    torch: Any,
+) -> dict[str, float]:
+    """Run Flow-GRPO-style fixed SD3 eval with EMA weights when configured."""
+
+    from vrl.config.loader import require
+
+    trainable = [p for p in trainer.model.parameters() if p.requires_grad]
+    ema = trainer._ensure_ema() if bool(require(cfg, "eval.use_ema")) else None
+    if ema is not None:
+        ema.copy_ema_to(trainable, store_temp=True)
+        if trainer.weight_syncer is not None:
+            await trainer.weight_syncer.push(trainer.model.state_dict())
+    else:
+        await trainer._ensure_rollout_weights_initialized()
+
+    batches = []
+    reward_fn.reset_components()
+    eval_dir = output_dir / f"eval_epoch_{epoch:04d}"
+    eval_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        for idx, example in enumerate(examples):
+            batch = await collector.collect(
+                [example.prompt],
+                group_size=1,
+                target_text=example.target_text,
+                references=example.references,
+                task_type=example.task_type,
+                sample_metadata=example.metadata,
+                request_overrides={
+                    "num_steps": int(require(cfg, "eval.num_steps")),
+                    "sample_batch_size": int(require(cfg, "eval.sample_batch_size")),
+                    "noise_level": float(require(cfg, "eval.noise_level")),
+                },
+            )
+            batches.append(batch)
+            if batch.videos is not None:
+                _save_eval_image(
+                    batch.videos[0],
+                    eval_dir / f"{idx:03d}.png",
+                )
+    finally:
+        release = getattr(collector, "release_runtime_memory", None)
+        if callable(release):
+            await release()
+        if ema is not None:
+            ema.copy_temp_to(trainable)
+            if trainer.weight_syncer is not None:
+                await trainer.weight_syncer.push(trainer.model.state_dict())
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    rewards = torch.cat([batch.rewards.detach().float().cpu() for batch in batches])
+    component_means = _component_means(reward_fn, component_names)
+    with eval_csv_path.open("a", encoding="utf-8") as f:
+        vals = ",".join(f"{component_means[name]:.4f}" for name in component_names)
+        f.write(
+            f"{epoch},{rewards.mean().item():.6f},"
+            f"{rewards.std().item() if rewards.numel() > 1 else 0.0:.6f},"
+            f"{vals}\n",
+        )
+
+    _make_contact_sheet(
+        sorted(eval_dir.glob("*.png")),
+        eval_dir / "contact_sheet.png",
+    )
+
+    return {
+        "reward_mean": float(rewards.mean().item()),
+        "reward_std": float(rewards.std().item() if rewards.numel() > 1 else 0.0),
+    }
+
+
+def _component_means(reward_fn: Any, component_names: list[str]) -> dict[str, float]:
+    last = getattr(reward_fn, "last_components", {}) or {}
+    return {
+        name: (sum(last.get(name, [])) / len(last.get(name, [])))
+        if last.get(name)
+        else float("nan")
+        for name in component_names
+    }
+
+
+def _save_eval_image(tensor: Any, path: Path) -> None:
+    from PIL import Image
+
+    array = tensor.detach().float().cpu().clamp(0, 1)
+    if array.ndim == 4:
+        array = array[:, 0]
+    if array.ndim == 3 and array.shape[0] in (1, 3):
+        array = array.permute(1, 2, 0)
+    pixels = (array.numpy() * 255).astype("uint8")
+    Image.fromarray(pixels.squeeze()).save(path)
+
+
+def _make_contact_sheet(image_paths: list[Path], out_path: Path) -> None:
+    if not image_paths:
+        return
+    from PIL import Image
+
+    images = [Image.open(path).convert("RGB") for path in image_paths]
+    thumb_w, thumb_h = 256, 256
+    cols = min(4, len(images))
+    rows = (len(images) + cols - 1) // cols
+    sheet = Image.new("RGB", (cols * thumb_w, rows * thumb_h), "white")
+    for idx, image in enumerate(images):
+        image.thumbnail((thumb_w, thumb_h))
+        x = (idx % cols) * thumb_w
+        y = (idx // cols) * thumb_h
+        sheet.paste(image, (x, y))
+    sheet.save(out_path)
