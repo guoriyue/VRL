@@ -60,8 +60,8 @@ async def train_sd3_5_grpo(cfg: DictConfig) -> None:
 
     import torch
 
-    from vrl.algorithms.grpo import GRPO, GRPOConfig
-    from vrl.algorithms.grpo_token import TokenGRPOConfig
+    from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
+    from vrl.algorithms.grpo.token import TokenGRPOConfig
     from vrl.algorithms.stat_tracking import PerPromptStatTracker
     from vrl.config.loader import build_configs, require
     from vrl.rewards.multi import MultiReward

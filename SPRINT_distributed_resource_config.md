@@ -2,9 +2,11 @@
 
 ## 0. Core Decision
 
-本 sprint 只支持一套 canonical schema：显式 role allocation。
+本 sprint 只支持一套 canonical schema：role-level resource allocation。
 
 不采用 `mode + num_gpus + trainer_gpus` 作为主配置，因为它会变成第二套 shorthand，后面和 `trainer/rollout/reward/ref` 这类 role 配置冲突。`split` / `colocate` 不作为用户必须手写的 primary knob，而是从 `trainer.devices` 和 `rollout.devices` 是否重叠推导出来。
+
+主路径不要求用户手写物理 GPU 编号。用户应该表达“trainer 要几张 GPU、rollout 要几张 GPU、每个 rollout worker 几张 GPU”。物理 GPU pinning 只作为高级 override，用于单机调试、多任务混部、或明确避开某些卡。
 
 目标配置：
 
@@ -17,16 +19,16 @@ distributed:
 
     trainer:
       num_gpus: 1
-      devices: auto
 
     rollout:
       num_gpus: auto
       gpus_per_worker: 1
       num_workers: auto
-      devices: auto
 
     allow_overlap: false
 ```
+
+上面是推荐写法。`devices` 字段在内部 schema 里存在，默认值是 `auto`，但普通 recipe 不应该显式写它。
 
 高级手动 pinning：
 
@@ -58,10 +60,10 @@ distributed:
     visible_devices: auto
 
     trainer:
-      devices: [0]
+      num_gpus: 1
 
     rollout:
-      devices: [0]
+      num_gpus: 1
       gpus_per_worker: 1
       num_workers: 1
 
@@ -80,7 +82,48 @@ distributed:
 - 物理 GPU pinning 是高级 override，用于单机调试、混部、或明确避开某些卡。
 - 模型配置不包含 GPU placement。`model` 只描述 checkpoint、dtype、LoRA、backend；GPU 分配属于 `distributed.resources`。
 
-`slime` 的主语义是 `actor_num_gpus_per_node`、`rollout_num_gpus`、`rollout_num_gpus_per_engine`、`colocate`。本 repo 不直接复制它的 CLI 形状，但保留同一个资源边界：trainer 和 rollout 是两个 role，Ray placement 负责切资源。
+`slime` / `MILES` 的主语义是 `actor_num_gpus_per_node`、`rollout_num_gpus`、`rollout_num_gpus_per_engine`、`colocate`。它们不是让普通用户手写 `trainer=[0]`、`rollout=[1,2,3]`；物理卡选择通常交给 Ray placement group 或外层 `CUDA_VISIBLE_DEVICES`。本 repo 不直接复制它们的 CLI 形状，但保留同一个资源边界：trainer 和 rollout 是两个 role，Ray placement 负责切资源。
+
+`SGLang` 自身有 `base_gpu_id` / `gpu_id_step` 这类低层 serving 参数，用来在一个 serving instance 内启动 TP/PP scheduler 进程。那不是本 repo 的 RL recipe 主入口；这里最多在 rollout runtime 里把 resolved placement 转换成 SGLang 需要的低层参数。
+
+## 1.1 Boundary: Multi-Node and Multi-Card Trainer
+
+这个 sprint 不把 multi-node training、FSDP、Megatron 也一起做掉。
+
+本 sprint 覆盖的是：
+
+- single-process trainer 选择自己的 driver device。
+- Ray rollout workers 按 role-level GPU budget 启动。
+- trainer / rollout 是否 overlap 的 fail-fast 校验。
+- single-GPU colocate smoke 和 multi-GPU split rollout。
+
+本 sprint 不覆盖的是：
+
+- 一个模型跨多张 GPU 训练，例如 FSDP、Tensor Parallel、Pipeline Parallel、Megatron。
+- trainer actor group 的 rank/world-size/env 初始化。
+- multi-node trainer 的 node/rank/device mapping。
+- multi-node rollout 的 hostname/rack-aware placement、per-node GPU quota、跨节点亲和性。
+
+如果 Ray cluster 已经是 multi-node，Ray rollout placement group 可能能把 rollout workers 放到多个节点上；但本 sprint 只要求记录和校验 Ray 实际分配的 `node_ip` / `gpu_ids`，不承诺稳定的 per-node placement 语义。也就是说：multi-node rollout 可以作为 best-effort 基础路径，multi-node training 不在本 sprint 内。
+
+后续 FSDP / Megatron sprint 应该扩展 role schema，而不是把多卡训练塞进 `devices` list：
+
+```yaml
+distributed:
+  trainer:
+    strategy: fsdp        # single_process | fsdp | megatron
+    num_nodes: 1
+    gpus_per_node: 8
+
+  resources:
+    trainer:
+      num_gpus_per_node: 8
+    rollout:
+      num_gpus: auto
+      gpus_per_worker: 1
+```
+
+这个 future schema 才对应 `slime` / `MILES` 的 `actor_num_nodes`、`actor_num_gpus_per_node` 和 Megatron/FSDP world-size 语义。
 
 ## 2. Required Semantics
 
@@ -90,7 +133,7 @@ distributed:
 
 规则：
 
-- `auto`：读取当前进程 / Ray cluster 可见 CUDA devices。
+- `auto`：读取当前进程 / Ray cluster 可见 CUDA devices；如果用户想只暴露部分物理卡，推荐用外层 `CUDA_VISIBLE_DEVICES=...`。
 - `[]`：CPU-only，Ray rollout worker 必须 `gpus_per_worker=0`。
 - 显式 list：所有 role 的 `devices` 必须是它的子集。
 - 不在这里做 free-memory 预测。显存动态变化，只能做 static resource ownership 和 OOM retry。
@@ -106,6 +149,7 @@ distributed:
 - 如果 `trainer.devices` 显式设置，`trainer.num_gpus` 必须为空或等于 `len(devices)`。
 - 当前阶段只支持 single-process trainer，因此 `len(trainer.devices)` 必须是 `0` 或 `1`。
 - 后续 FSDP / RayTrainGroup 阶段再放开 `trainer.devices` 多卡。
+- 普通 recipe 应该只写 `trainer.num_gpus`，不写 `trainer.devices`。
 
 ### 2.3 `rollout`
 
@@ -119,6 +163,7 @@ distributed:
 - `rollout.num_workers: auto`：等于 `rollout.num_gpus / gpus_per_worker`，必须整除。
 - `gpus_per_worker` 支持 `0`、`1`，后续多 GPU per worker 再支持 `>1`。
 - `rollout.devices` 为空且 `gpus_per_worker > 0` 必须 fail-fast。
+- 普通 recipe 应该只写 `rollout.num_gpus`、`rollout.gpus_per_worker`、`rollout.num_workers`，不写 `rollout.devices`。
 
 ### 2.4 overlap policy
 
@@ -196,6 +241,7 @@ vrl/rollouts/runtime/config.py
 
 - `ray_rollout.yaml` 使用 `distributed.resources`，默认多 GPU split。
 - `ray_rollout_single_gpu.yaml` 使用 explicit overlap，并设置 `release_after_collect=true`。
+- 两个 preset 都不应该显式写 `devices`。多 GPU split 由 `trainer.num_gpus` / `rollout.num_gpus` 自动 resolve；单 GPU smoke 由 `allow_overlap=true` + `release_after_collect=true` 表达。
 - `RolloutBackendConfig` 继续保留 rollout execution 参数，但不再负责 trainer/rollout device allocation。
 
 `RolloutBackendConfig` 应保留：
@@ -274,6 +320,7 @@ vrl/scripts/wan_2_1/train.py
 vrl/scripts/cosmos/train.py
 vrl/scripts/janus_pro/train.py
 vrl/scripts/nextstep_1/train.py
+vrl/scripts/wan_2_1/train_dpo.py
 ```
 
 目标：
@@ -287,7 +334,7 @@ vrl/scripts/nextstep_1/train.py
 
 ```text
 Trainer device cuda:0 overlaps rollout devices [0], but resources.allow_overlap=false.
-Use resources.rollout.devices=[1,2,3] for split mode, or set allow_overlap=true with rollout.release_after_collect=true for single-GPU smoke.
+Use CUDA_VISIBLE_DEVICES=0,1,2,3 with auto split for throughput, or set allow_overlap=true with rollout.release_after_collect=true for single-GPU smoke.
 ```
 
 ### Phase 5: README and Examples
@@ -311,7 +358,15 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python -m vrl.scripts.train \
   distributed.resources.rollout.num_gpus=auto
 ```
 
-显式 pinning：
+单 GPU colocate smoke：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python -m vrl.scripts.train \
+  --config experiment/sd3_5_ocr_grpo \
+  /base/distributed=ray_rollout_single_gpu
+```
+
+显式 pinning，高级调试才用：
 
 ```bash
 python -m vrl.scripts.train \
@@ -325,8 +380,300 @@ python -m vrl.scripts.train \
 
 - 默认推荐 auto split。
 - manual pinning 是高级选项。
+- 单 GPU 推荐用 `CUDA_VISIBLE_DEVICES=...` 限制外层可见卡，而不是在 recipe 里写物理 GPU 编号。
 - 单 GPU colocate 只用于 smoke/debug。
 - throughput path 是 trainer GPU(s) 和 rollout GPU(s) 分离。
+
+## 4.1 File-by-File Implementation Map
+
+这个 sprint 的实现不要按“看见哪里有 GPU 就改哪里”的方式推进。必须先建立 resolver，然后把所有调用点改成只消费 resolver 的结果。
+
+### 4.1.1 Core Resolver
+
+新增：
+
+```text
+vrl/distributed/resources.py
+```
+
+预期内容：
+
+- 定义 `RoleResourceConfig`、`RolloutResourceConfig`、`DistributedResourceConfig`、`ResolvedDistributedResources`。
+- 实现 `resolve_distributed_resources(cfg)`。
+- 实现 trainer device helper，例如 `trainer_torch_device(resolved)`。
+- 解析 `visible_devices=auto` 时读取当前可见 CUDA devices；如果无 CUDA，则支持 CPU-only。
+- 校验 explicit devices 必须是 `visible_devices` 子集。
+- 校验当前阶段 trainer 只能是 `0` 或 `1` 张 GPU。
+- 校验 `rollout.num_workers=auto` 时由 `rollout.num_gpus / gpus_per_worker` 推导，且必须整除。
+- 校验 single-GPU no-overlap split 必须 fail-fast。
+- 记录 resolved plan 的可读字符串，供 train script / Ray launcher logging 使用。
+
+### 4.1.2 Base Configs
+
+修改：
+
+```text
+configs/base/distributed/ray_rollout.yaml
+configs/base/distributed/ray_rollout_single_gpu.yaml
+```
+
+`ray_rollout.yaml` 预期改成多 GPU split 的主路径：
+
+```yaml
+distributed:
+  resources:
+    visible_devices: auto
+    trainer:
+      num_gpus: 1
+    rollout:
+      num_gpus: auto
+      gpus_per_worker: 1
+      num_workers: auto
+    allow_overlap: false
+
+  rollout:
+    cpus_per_worker: 4.0
+    placement_strategy: SPREAD
+    max_inflight_chunks_per_worker: 1
+    sync_trainable_state: lora_only
+    release_after_collect: false
+```
+
+`ray_rollout_single_gpu.yaml` 预期改成 colocate smoke：
+
+```yaml
+distributed:
+  resources:
+    visible_devices: auto
+    trainer:
+      num_gpus: 1
+    rollout:
+      num_gpus: 1
+      gpus_per_worker: 1
+      num_workers: 1
+    allow_overlap: true
+
+  rollout:
+    cpus_per_worker: 4.0
+    placement_strategy: STRICT_PACK
+    max_inflight_chunks_per_worker: 1
+    sync_trainable_state: lora_only
+    release_after_collect: true
+```
+
+两个 base config 都不应该手写 `trainer.devices` / `rollout.devices`。manual pinning 只能作为用户 override。
+
+### 4.1.3 Rollout Backend Config
+
+修改：
+
+```text
+vrl/rollouts/runtime/config.py
+```
+
+预期改动：
+
+- `RolloutBackendConfig` 删除 resource ownership 字段：
+  - `num_workers`
+  - `gpus_per_worker`
+  - `allow_driver_gpu_overlap`
+- `RolloutBackendConfig` 只保留 rollout execution 字段：
+  - `backend`
+  - `cpus_per_worker`
+  - `placement_strategy`
+  - `max_inflight_chunks_per_worker`
+  - `sync_trainable_state`
+  - `release_after_collect`
+- `from_cfg()` 不再从 `distributed.rollout` 解析 worker/GPU 数。
+- `to_dict()` 不再输出 worker/GPU ownership 字段。
+
+### 4.1.4 Ray Placement and Launcher
+
+修改：
+
+```text
+vrl/distributed/ray/placement/group.py
+vrl/distributed/ray/rollout/launcher.py
+vrl/distributed/ray/rollout/types.py
+```
+
+`placement/group.py` 预期改动：
+
+- `create_rollout_placement_group()` 接收 `RolloutBackendConfig` 和 `ResolvedDistributedResources`。
+- placement group bundle 数来自 `resolved.rollout_num_workers`。
+- bundle GPU 数来自 `resolved.rollout_gpus_per_worker`。
+- CPU 数继续来自 `RolloutBackendConfig.cpus_per_worker`。
+
+`rollout/launcher.py` 预期改动：
+
+- `RayRolloutLauncher.launch()` 接收 `resolved_resources`，或接收完整 cfg 并内部调用 resolver。推荐显式传入 `ResolvedDistributedResources`，避免隐式重复解析。
+- Ray actor `num_gpus` 来自 `resolved.rollout_gpus_per_worker`。
+- worker 数来自 placement 的 resolved worker 数，而不是 rollout config。
+- 启动后日志必须打印：
+  - resolved trainer devices
+  - resolved rollout devices
+  - Ray 实际 worker `node_ip`
+  - Ray 实际 worker `gpu_ids`
+- 如果 Ray 返回的 GPU id 不在 `resolved.rollout_devices` 内，第一版必须 fail-fast。
+
+`rollout/types.py` 预期改动：
+
+- `RayWorkerHandle` 保留 `node_id` / `gpu_ids`。
+- 如有必要，增加 resolved/actual metadata 字段，方便诊断实际 placement。
+
+### 4.1.5 Runtime Backend Validation
+
+修改：
+
+```text
+vrl/rollouts/runtime/backend.py
+```
+
+预期改动：
+
+- backend validation 不再判断 “driver policy 是否在 CUDA” 这个粗粒度条件。
+- 改成判断 `resolved.trainer_devices ∩ resolved.rollout_devices`。
+- overlap 且 `resources.allow_overlap=false` 时 fail-fast。
+- overlap 且 `distributed.rollout.release_after_collect=false` 时 fail-fast。
+- single-GPU colocate 的错误信息必须提示：
+  - throughput path 用 auto split / 多可见 GPU。
+  - debug path 用 `allow_overlap=true` + `release_after_collect=true`。
+
+### 4.1.6 Runtime Inputs
+
+修改：
+
+```text
+vrl/rollouts/runtime/launch_inputs.py
+```
+
+预期改动：
+
+- 不再用旧 `RolloutBackendConfig.gpus_per_worker` 判断 rollout worker device。
+- 改用 `resolved.rollout_gpus_per_worker`：
+
+```python
+rollout_device = "cuda" if resolved.rollout_gpus_per_worker > 0 else "cpu"
+```
+
+- `build_rollout_runtime_inputs()` 接收 `ResolvedDistributedResources`，或在上层传入 `rollout_device`，避免自己解析资源。
+
+### 4.1.7 Training Scripts
+
+修改：
+
+```text
+vrl/scripts/sd3_5/train.py
+vrl/scripts/wan_2_1/train.py
+vrl/scripts/cosmos/train.py
+vrl/scripts/janus_pro/train.py
+vrl/scripts/nextstep_1/train.py
+vrl/scripts/wan_2_1/train_dpo.py
+```
+
+预期改动：
+
+- 删除直接猜 device 的逻辑：
+
+```python
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+```
+
+- 改成：
+
+```python
+resolved_resources = resolve_distributed_resources(cfg)
+device = trainer_torch_device(resolved_resources)
+```
+
+- GRPO train scripts 把 `resolved_resources` 传给：
+  - `build_rollout_runtime_inputs()`
+  - `build_rollout_backend_from_cfg()`
+  - Ray launcher path
+- DPO train script 虽然没有 rollout，也必须用同一个 `trainer_torch_device()` 选择 trainer device。
+- 每个 train script 启动时记录 resolved plan。
+
+### 4.1.8 Tests
+
+新增：
+
+```text
+tests/distributed/test_resources.py
+```
+
+覆盖：
+
+- 4 GPU auto split -> trainer `(0,)`, rollout `(1,2,3)`, workers `3`。
+- explicit trainer `[0]`, rollout `[1,2,3]` -> no overlap。
+- explicit overlap + `allow_overlap=false` -> fail。
+- explicit overlap + `allow_overlap=true` -> colocated true。
+- explicit devices not subset of visible -> fail。
+- `num_workers=auto` but `num_gpus / gpus_per_worker` not divisible -> fail。
+- single GPU auto split + `allow_overlap=false` -> fail。
+- overlap + `release_after_collect=false` -> backend validation fail。
+
+更新：
+
+```text
+tests/distributed/ray/test_placement_group.py
+tests/distributed/ray/test_rollout_launcher.py
+tests/distributed/ray/test_real_ray_rollout_smoke.py
+tests/rollouts/test_runtime_inputs.py
+tests/engine/generation/test_runtime_factory.py
+tests/config/test_load_all_experiments.py
+```
+
+预期改动：
+
+- 测试不再通过 `distributed.rollout.num_workers` / `distributed.rollout.gpus_per_worker` 表达资源 ownership。
+- Ray launcher 测试构造 `ResolvedDistributedResources`。
+- runtime input 测试检查 rollout device 来自 resolved resources。
+- config tests 检查 active experiment 能加载新 `distributed.resources` schema。
+
+### 4.1.9 README
+
+修改：
+
+```text
+README.md
+```
+
+预期新增：
+
+- auto split 例子：
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1,2,3 python -m vrl.scripts.train \
+  --config experiment/sd3_5_ocr_grpo \
+  distributed.resources.trainer.num_gpus=1 \
+  distributed.resources.rollout.num_gpus=auto
+```
+
+- single-GPU colocate smoke 例子：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python -m vrl.scripts.train \
+  --config experiment/sd3_5_ocr_grpo \
+  /base/distributed=ray_rollout_single_gpu
+```
+
+- 文档说明：
+  - 默认推荐 auto split。
+  - manual `devices` pinning 是高级调试选项。
+  - 单 GPU colocate 只用于 smoke/debug。
+  - throughput path 是 trainer GPU 和 rollout GPU 分离。
+
+### 4.1.10 Implementation Order
+
+推荐按这个顺序做：
+
+1. 新增 `vrl/distributed/resources.py` 和 `tests/distributed/test_resources.py`。
+2. 修改两个 distributed base config。
+3. 收窄 `RolloutBackendConfig`。
+4. 修改 Ray placement / launcher。
+5. 修改 backend validation / runtime inputs。
+6. 修改所有 train scripts 的 trainer device 选择。
+7. 更新 tests 和 README。
 
 ## 5. Non-Goals
 
@@ -393,8 +740,8 @@ resolved:
 
 ```text
 visible_devices = [0]
-trainer.devices = [0]
-rollout.devices = [0]
+trainer.num_gpus = 1
+rollout.num_gpus = 1
 allow_overlap = true
 release_after_collect = true
 

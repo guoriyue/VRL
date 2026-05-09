@@ -13,12 +13,17 @@ from vrl.rollouts.collector.requests import (
     RolloutRequestBuilder,
 )
 from vrl.rollouts.collector.rewards import RewardScorer
-from vrl.rollouts.families.specs import FAMILY_REGISTRY, get_rollout_family_entry
+from vrl.rollouts.families.specs import (
+    FAMILY_REGISTRY,
+    get_rollout_family_entry,
+    normalize_rollout_family,
+)
 from vrl.rollouts.packers.ar_continuous import ARContinuousRolloutPacker
 from vrl.rollouts.packers.ar_discrete import ARDiscreteRolloutPacker
+from vrl.rollouts.packers.ar_r1 import ARR1RolloutPacker
 from vrl.rollouts.packers.diffusion import DiffusionRolloutPacker
 
-CollectorKind = Literal["diffusion", "ar_discrete", "ar_continuous"]
+CollectorKind = Literal["diffusion", "ar_discrete", "ar_continuous", "ar_r1"]
 
 LAST_COLLECT_PHASES: dict[str, float] = {}
 
@@ -75,8 +80,8 @@ def build_rollout_collector(
 ) -> RolloutCollector:
     """Build a rollout collector from an explicit family registry key."""
 
-    family_entry = get_rollout_family_entry(family)
-    entry = _entry_for(family_entry.family)
+    registry_key = normalize_rollout_family(family)
+    entry = _entry_for(registry_key)
     collector_config = _resolve_config(entry, config)
     request_builder = _build_request_builder(entry, collector_config)
     packer = _build_packer(entry)
@@ -101,7 +106,8 @@ def build_rollout_collector(
 def collector_config_cls(family: str) -> type:
     """Return the config schema for an explicit family registry key."""
 
-    return _entry_for(get_rollout_family_entry(family).family).config_cls
+    get_rollout_family_entry(family)
+    return _entry_for(normalize_rollout_family(family)).config_cls
 
 
 def _entry_for(family: str) -> CollectorRegistryEntry:
@@ -129,7 +135,7 @@ def _build_request_builder(
     entry: CollectorRegistryEntry,
     config: Any,
 ) -> RolloutRequestBuilder:
-    if entry.kind in {"diffusion", "ar_discrete", "ar_continuous"}:
+    if entry.kind in {"diffusion", "ar_discrete", "ar_continuous", "ar_r1"}:
         if entry.request_prefix is None:
             raise ValueError(f"{entry.family} collector registry entry is incomplete")
         return RolloutEngineRequestBuilder(
@@ -154,6 +160,8 @@ def _build_packer(entry: CollectorRegistryEntry) -> Any:
         return ARDiscreteRolloutPacker()
     if entry.kind == "ar_continuous":
         return ARContinuousRolloutPacker()
+    if entry.kind == "ar_r1":
+        return ARR1RolloutPacker()
     raise AssertionError(f"unhandled collector kind: {entry.kind}")
 
 

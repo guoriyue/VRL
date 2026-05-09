@@ -13,9 +13,10 @@ The unified ``vrl.scripts.train`` entry point dispatches Janus-Pro configs here:
                                        v
                                 OnlineTrainer
 
-Two public coroutines:
+Public coroutines:
   * ``train_janus_pro_grpo``      — general-purpose mix (PickScore + Aesthetic).
   * ``train_janus_pro_ocr_grpo``  — OCR reward + ``target_text`` manifest.
+  * ``train_janus_pro_r1_ocr_grpo`` — R1-style multi-segment OCR reward path.
 
 Both share construction logic; the only differences are reward selection
 and manifest format.
@@ -62,6 +63,16 @@ async def train_janus_pro_ocr_grpo(cfg: DictConfig) -> None:
     await _train_janus_pro(
         cfg,
         ocr_mode=True,
+        r1_mode=False,
+    )
+
+
+async def train_janus_pro_r1_ocr_grpo(cfg: DictConfig) -> None:
+    """Run Janus-Pro-R1-style multi-segment OCR GRPO wiring."""
+    await _train_janus_pro(
+        cfg,
+        ocr_mode=True,
+        r1_mode=True,
     )
 
 
@@ -69,20 +80,29 @@ async def _train_janus_pro(
     cfg: DictConfig,
     *,
     ocr_mode: bool,
+    r1_mode: bool = False,
 ) -> None:
     import csv
 
     import torch
 
-    from vrl.algorithms.grpo_token import TokenGRPO, TokenGRPOConfig
+    from vrl.algorithms.grpo.multisegment import (
+        MultiSegmentTokenGRPO,
+        MultiSegmentTokenGRPOConfig,
+    )
+    from vrl.algorithms.grpo.token import TokenGRPO, TokenGRPOConfig
     from vrl.algorithms.stat_tracking import PerPromptStatTracker
     from vrl.config.loader import build_configs, require
     from vrl.models.families.janus_pro import JanusProConfig, JanusProPolicy
     from vrl.rollouts.collector import (
         JanusProCollectorConfig,
+        JanusProR1CollectorConfig,
         build_rollout_collector,
     )
-    from vrl.rollouts.evaluators.ar import TokenLogProbEvaluator
+    from vrl.rollouts.evaluators.ar import (
+        MultiSegmentTokenLogProbEvaluator,
+        TokenLogProbEvaluator,
+    )
     from vrl.rollouts.runtime.backend import build_rollout_backend_from_cfg
     from vrl.rollouts.runtime.launch_inputs import build_rollout_runtime_inputs
     from vrl.trainers.data import PromptExample, load_prompt_manifest
@@ -152,23 +172,43 @@ async def _train_janus_pro(
     logger.info("Reward mix: %s", reward_weights)
 
     # 3. Collector + evaluator + algorithm -------------------------------
-    collector = build_rollout_collector(
-        "janus_pro",
-        model=policy,
-        reward_fn=reward_fn,
-        config=JanusProCollectorConfig(
-            n_samples_per_prompt=trainer_config.n,
-            cfg_weight=float(cfg.sampling.cfg_weight),
-            temperature=float(cfg.sampling.temperature),
-            image_token_num=int(cfg.sampling.image_token_num),
-            image_size=int(cfg.sampling.image_size),
-            rescale_to_unit=bool(require(cfg, "rollout.rescale_to_unit")),
-            max_text_length=int(require(cfg, "rollout.max_text_length")),
-        ),
-    )
+    rollout_family = "janus_pro_r1" if r1_mode else "janus_pro"
+    if r1_mode:
+        collector = build_rollout_collector(
+            rollout_family,
+            model=policy,
+            reward_fn=reward_fn,
+            config=JanusProR1CollectorConfig(
+                n_samples_per_prompt=trainer_config.n,
+                cfg_weight=float(cfg.sampling.cfg_weight),
+                temperature=float(cfg.sampling.temperature),
+                image_token_num=int(cfg.sampling.image_token_num),
+                image_size=int(cfg.sampling.image_size),
+                rescale_to_unit=bool(require(cfg, "rollout.rescale_to_unit")),
+                max_text_length=int(require(cfg, "rollout.max_text_length")),
+                max_reflect_len=int(require(cfg, "rollout.max_reflect_len")),
+                final_image_policy=str(require(cfg, "rollout.final_image_policy")),
+                train_segments=dict(require(cfg, "algorithm.train_segments")),
+            ),
+        )
+    else:
+        collector = build_rollout_collector(
+            rollout_family,
+            model=policy,
+            reward_fn=reward_fn,
+            config=JanusProCollectorConfig(
+                n_samples_per_prompt=trainer_config.n,
+                cfg_weight=float(cfg.sampling.cfg_weight),
+                temperature=float(cfg.sampling.temperature),
+                image_token_num=int(cfg.sampling.image_token_num),
+                image_size=int(cfg.sampling.image_size),
+                rescale_to_unit=bool(require(cfg, "rollout.rescale_to_unit")),
+                max_text_length=int(require(cfg, "rollout.max_text_length")),
+            ),
+        )
     rollout_runtime_inputs = build_rollout_runtime_inputs(
         cfg,
-        "janus_pro",
+        rollout_family,
         weight_dtype=str(require(cfg, "model.dtype")),
     )
     collector.set_runtime(
@@ -179,14 +219,31 @@ async def _train_janus_pro(
             gatherer=rollout_runtime_inputs.gatherer,
         ),
     )
-    evaluator = TokenLogProbEvaluator()
+    if r1_mode:
+        segment_flags = dict(require(cfg, "algorithm.train_segments"))
+        enabled_segments = tuple(
+            name
+            for name, enabled in segment_flags.items()
+            if bool(enabled)
+        )
+        evaluator = MultiSegmentTokenLogProbEvaluator(enabled_segments=enabled_segments)
+    else:
+        evaluator = TokenLogProbEvaluator()
     algo_section = cfg.algorithm
     algorithm_config = built["algorithm"]
-    if not isinstance(algorithm_config, TokenGRPOConfig):
+    if r1_mode:
+        if not isinstance(algorithm_config, MultiSegmentTokenGRPOConfig):
+            raise TypeError(
+                "Janus-Pro-R1 expects algorithm.kind=token_grpo_multisegment, "
+                f"got {type(algorithm_config).__name__}",
+            )
+        algorithm = MultiSegmentTokenGRPO(algorithm_config)
+    elif not isinstance(algorithm_config, TokenGRPOConfig):
         raise TypeError(
             f"Janus expects algorithm.kind=token_grpo, got {type(algorithm_config).__name__}",
         )
-    algorithm = TokenGRPO(algorithm_config)
+    else:
+        algorithm = TokenGRPO(algorithm_config)
 
     stat_tracker = (
         PerPromptStatTracker(global_std=algorithm.config.global_std)
@@ -229,7 +286,7 @@ async def _train_janus_pro(
     examples: list[PromptExample] = load_prompt_manifest(manifest_path)
     logger.info(
         "Starting Janus-Pro GRPO (%s) — %d epochs, %d examples, n=%d",
-        "ocr" if ocr_mode else "general",
+        "r1_ocr" if r1_mode else ("ocr" if ocr_mode else "general"),
         trainer_config.total_epochs,
         len(examples),
         trainer_config.n,

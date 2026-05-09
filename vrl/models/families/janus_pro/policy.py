@@ -43,7 +43,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -54,8 +54,10 @@ import torch.nn.functional as F
 from vrl.models.ar import (
     ARStepResult,
     AutoregressivePolicy,
-    ar_concat_rows,
-    ar_split_rows,
+)
+from vrl.models.families.janus_pro.r1_types import (
+    JanusR1GenerationResult,
+    JanusR1Segment,
 )
 
 logger = logging.getLogger(__name__)
@@ -65,6 +67,13 @@ JANUS_IMAGE_TOKEN_NUM = 576           # 24 x 24 latent grid per image
 JANUS_IMAGE_VOCAB_SIZE = 16_384       # gen_vision_model codebook size
 JANUS_IMAGE_PATCH_SIZE = 16           # decoder upsample factor → 384 px
 JANUS_IMAGE_PIXEL_SIZE = 384
+JANUS_R1_SELFCHECK_PROMPT = (
+    "<end_of_image>\nLet me think Does this image match the prompt..."
+)
+JANUS_R1_REGEN_PROMPT = (
+    "<｜end▁of▁sentence｜>\nNext, I will draw a new image<begin_of_image>"  # noqa: RUF001
+)
+JANUS_R1_SEGMENTS = ("initial_image", "selfcheck_text", "final_image")
 
 
 @dataclass(slots=True)
@@ -92,6 +101,7 @@ class JanusProConfig:
     cfg_weight: float = 5.0
     temperature: float = 1.0
     image_token_num: int = JANUS_IMAGE_TOKEN_NUM
+    r1_refine_mode: str = "selfcheck"  # "selfcheck" | "always" | "never"
 
     # Misc
     trust_remote_code: bool = True
@@ -291,6 +301,38 @@ class JanusProPolicy(nn.Module, AutoregressivePolicy):
     def trainable_param_count(self) -> int:
         return sum(p.numel() for p in self.trainable_parameters())
 
+    def load_trainable_state(self, state_dict: Mapping[str, Any]) -> Any:
+        """Load only the trainable Janus parameters from a rollout sync state."""
+
+        state = dict(state_dict)
+        if not state:
+            raise ValueError("load_trainable_state received an empty state dict")
+
+        trainable_keys = {
+            name
+            for name, parameter in self.named_parameters()
+            if parameter.requires_grad
+        }
+        if not trainable_keys:
+            raise ValueError("JanusProPolicy has no trainable parameters to sync")
+
+        filtered: dict[str, Any] = {}
+        for key, value in state.items():
+            normalized_key = key.removeprefix("policy.")
+            if normalized_key in trainable_keys:
+                filtered[normalized_key] = value
+
+        missing = sorted(trainable_keys - set(filtered))
+        if missing:
+            preview = ", ".join(missing[:5])
+            suffix = " ..." if len(missing) > 5 else ""
+            raise ValueError(
+                "load_trainable_state missing trainable Janus keys: "
+                f"{preview}{suffix}",
+            )
+
+        return self.load_state_dict(filtered, strict=False)
+
     # ------------------------------------------------------------------
     # LoRA / reference-policy helpers
     # ------------------------------------------------------------------
@@ -429,6 +471,40 @@ class JanusProPolicy(nn.Module, AutoregressivePolicy):
         gen_hidden = hidden[:, L_text - 1 : L_text - 1 + L_img, :]
         return image_token_logits_from_hidden(self.mmgpt, gen_hidden)
 
+    def forward_text_logits(
+        self,
+        prompt_inputs_embeds: torch.Tensor,
+        prompt_attention_mask: torch.Tensor,
+        text_token_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        """Teacher-forced text-vocab logits for an R1 reflection segment."""
+
+        B, L_txt = text_token_ids.shape
+        text_embeds = self.language_model.get_input_embeddings()(text_token_ids)
+        inputs_embeds = torch.cat(
+            [prompt_inputs_embeds, text_embeds[:, :-1, :]],
+            dim=1,
+        )
+        attn = torch.cat(
+            [
+                prompt_attention_mask,
+                torch.ones(
+                    B,
+                    L_txt - 1,
+                    dtype=prompt_attention_mask.dtype,
+                    device=prompt_attention_mask.device,
+                ),
+            ],
+            dim=1,
+        )
+        outputs = self.language_model(
+            inputs_embeds=inputs_embeds,
+            attention_mask=attn,
+            use_cache=False,
+        )
+        L_ctx = prompt_inputs_embeds.shape[1]
+        return outputs.logits[:, L_ctx - 1 : L_ctx - 1 + L_txt, :]
+
     # ------------------------------------------------------------------
     # Replay forward — recompute logits at training time
     # ------------------------------------------------------------------
@@ -468,6 +544,26 @@ class JanusProPolicy(nn.Module, AutoregressivePolicy):
             prompt_embeds, prompt_mask, image_token_ids,
         )  # [B, L_img, V_img]
         return {"logits": logits, "image_token_ids": image_token_ids}
+
+    def replay_r1_segment(self, segment: dict[str, Any]) -> dict[str, Any]:
+        """Replay one Janus-Pro-R1 segment from packed rollout extras."""
+
+        token_ids = segment["token_ids"]
+        prompt_embeds = segment["prompt_embeds"]
+        attention_mask = segment["attention_mask"]
+        if bool(segment.get("visual", True)):
+            logits = self.forward_image_logits(
+                prompt_embeds,
+                attention_mask,
+                token_ids,
+            )
+        else:
+            logits = self.forward_text_logits(
+                prompt_embeds,
+                attention_mask,
+                token_ids,
+            )
+        return {"logits": logits, "token_ids": token_ids}
 
     # ------------------------------------------------------------------
     # Inference-time AR sampler with classifier-free guidance
@@ -523,6 +619,477 @@ class JanusProPolicy(nn.Module, AutoregressivePolicy):
         while state.position < state.image_token_num:
             self._sample_ar_step(state)
         return self.finalize_ar_state(state)
+
+    @torch.no_grad()
+    def generate_with_refine(
+        self,
+        prompt_input_ids: torch.Tensor,
+        prompt_attention_mask: torch.Tensor,
+        *,
+        cfg_weight: float,
+        temperature: float,
+        image_token_num: int,
+        max_reflect_len: int,
+        task_stages: tuple[str, ...] = JANUS_R1_SEGMENTS,
+        uncond_input_ids: torch.Tensor | None = None,
+        uncond_attention_mask: torch.Tensor | None = None,
+        image_size: int = JANUS_IMAGE_PIXEL_SIZE,
+        refine_mode: str | None = None,
+    ) -> JanusR1GenerationResult:
+        """Run Janus-Pro-R1-style first image, self-check, and regeneration.
+
+        Each returned segment includes the prefix embeddings and attention
+        mask needed to replay that segment's sampled tokens. Image sampling
+        deliberately reuses ``sample_image_tokens`` and VQ decode deliberately
+        reuses ``decode_image_tokens`` so plain Janus-Pro AR behavior remains
+        the source of truth.
+        """
+
+        stages = tuple(task_stages)
+        unknown = sorted(set(stages) - set(JANUS_R1_SEGMENTS))
+        if unknown:
+            raise ValueError(f"unknown Janus-Pro-R1 task stages: {unknown}")
+        if "initial_image" not in stages:
+            raise ValueError("generate_with_refine requires initial_image stage")
+        if max_reflect_len < 1:
+            raise ValueError("max_reflect_len must be >= 1")
+
+        mode = (refine_mode or self.config.r1_refine_mode).lower()
+        if mode not in {"selfcheck", "always", "never"}:
+            raise ValueError(
+                "refine_mode must be one of: 'selfcheck', 'always', 'never'"
+            )
+
+        prompt_input_ids = prompt_input_ids.to(self.device)
+        prompt_attention_mask = prompt_attention_mask.to(self.device)
+        if uncond_input_ids is None:
+            # Direct callers may only have the required minimal signature.
+            # The executor passes a real empty-prompt context, which is the
+            # correct CFG path. This fallback keeps the API runnable.
+            uncond_input_ids = prompt_input_ids
+        else:
+            uncond_input_ids = uncond_input_ids.to(self.device)
+        if uncond_attention_mask is None:
+            uncond_attention_mask = prompt_attention_mask
+        else:
+            uncond_attention_mask = uncond_attention_mask.to(self.device)
+
+        cond_embeds = self._embed_text_ids(prompt_input_ids)
+        uncond_embeds = self._embed_text_ids(uncond_input_ids)
+        pad_token_id = self._pad_token_id()
+        yes_token_id = self._last_token_id("Yes")
+        no_token_id = self._last_token_id("No")
+        eos_token_id = self._eos_token_id()
+
+        initial_ids, initial_logps = self.sample_image_tokens(
+            cond_embeds,
+            uncond_embeds,
+            prompt_attention_mask,
+            uncond_attention_mask,
+            cfg_weight=cfg_weight,
+            temperature=temperature,
+            image_token_num=image_token_num,
+        )
+        initial_image = self.decode_image_tokens(initial_ids, image_size=image_size)
+        image_embeds = self._image_embeds(initial_ids)
+        image_mask = torch.ones(
+            image_embeds.shape[:2],
+            dtype=prompt_attention_mask.dtype,
+            device=prompt_attention_mask.device,
+        )
+
+        selfcheck_prefix_ids = self._repeat_text_ids(
+            JANUS_R1_SELFCHECK_PROMPT,
+            batch_size=prompt_input_ids.shape[0],
+        )
+        selfcheck_prefix_embeds = self._embed_text_ids(selfcheck_prefix_ids)
+        selfcheck_prefix_mask = torch.ones(
+            selfcheck_prefix_ids.shape,
+            dtype=prompt_attention_mask.dtype,
+            device=prompt_attention_mask.device,
+        )
+        selfcheck_prompt_embeds = torch.cat(
+            [cond_embeds, image_embeds, selfcheck_prefix_embeds],
+            dim=1,
+        )
+        selfcheck_prompt_mask = torch.cat(
+            [prompt_attention_mask, image_mask, selfcheck_prefix_mask],
+            dim=1,
+        )
+
+        if "selfcheck_text" in stages:
+            text_ids, text_logps, text_mask, selfcheck = self._sample_selfcheck_text(
+                selfcheck_prompt_embeds,
+                selfcheck_prompt_mask,
+                max_new_tokens=max_reflect_len,
+                temperature=float(temperature),
+                yes_token_id=yes_token_id,
+                no_token_id=no_token_id,
+                eos_token_id=eos_token_id,
+                pad_token_id=pad_token_id,
+            )
+        else:
+            batch_size = prompt_input_ids.shape[0]
+            text_ids = torch.full(
+                (batch_size, max_reflect_len),
+                pad_token_id,
+                dtype=torch.long,
+                device=self.device,
+            )
+            text_logps = torch.zeros(
+                batch_size,
+                max_reflect_len,
+                dtype=torch.float32,
+                device=self.device,
+            )
+            text_mask = torch.zeros_like(text_logps)
+            selfcheck = torch.zeros(batch_size, dtype=torch.bool, device=self.device)
+
+        regen_prefix_ids = self._repeat_text_ids(
+            JANUS_R1_REGEN_PROMPT,
+            batch_size=prompt_input_ids.shape[0],
+        )
+        regen_prefix_embeds = self._embed_text_ids(regen_prefix_ids)
+        regen_prefix_mask = torch.ones(
+            regen_prefix_ids.shape,
+            dtype=prompt_attention_mask.dtype,
+            device=prompt_attention_mask.device,
+        )
+        text_embeds = self._embed_text_ids(text_ids)
+        text_attention_mask = text_mask.to(dtype=prompt_attention_mask.dtype)
+        final_cond_embeds = torch.cat(
+            [
+                cond_embeds,
+                image_embeds,
+                selfcheck_prefix_embeds,
+                text_embeds,
+                regen_prefix_embeds,
+            ],
+            dim=1,
+        )
+        final_cond_mask = torch.cat(
+            [
+                prompt_attention_mask,
+                image_mask,
+                selfcheck_prefix_mask,
+                text_attention_mask,
+                regen_prefix_mask,
+            ],
+            dim=1,
+        )
+        final_uncond_embeds = torch.cat(
+            [
+                uncond_embeds,
+                image_embeds,
+                selfcheck_prefix_embeds,
+                text_embeds,
+                regen_prefix_embeds,
+            ],
+            dim=1,
+        )
+        final_uncond_mask = torch.cat(
+            [
+                uncond_attention_mask,
+                image_mask,
+                selfcheck_prefix_mask,
+                text_attention_mask,
+                regen_prefix_mask,
+            ],
+            dim=1,
+        )
+
+        if "final_image" in stages and mode != "never":
+            refined_ids, refined_logps = self.sample_image_tokens(
+                final_cond_embeds,
+                final_uncond_embeds,
+                final_cond_mask,
+                final_uncond_mask,
+                cfg_weight=cfg_weight,
+                temperature=temperature,
+                image_token_num=image_token_num,
+            )
+            refined_image = self.decode_image_tokens(
+                refined_ids,
+                image_size=image_size,
+            )
+        else:
+            refined_ids = initial_ids
+            refined_logps = initial_logps
+            refined_image = initial_image
+
+        if "final_image" not in stages or mode == "never":
+            use_refined = torch.zeros_like(selfcheck, dtype=torch.bool)
+        elif mode == "always":
+            use_refined = torch.ones_like(selfcheck, dtype=torch.bool)
+        else:
+            # Reference R1 semantics: "Yes" accepts the first image;
+            # "No" asks the model to use the regenerated image.
+            use_refined = ~selfcheck
+
+        final_ids = torch.where(use_refined.unsqueeze(1), refined_ids, initial_ids)
+        final_logps = torch.where(
+            use_refined.unsqueeze(1),
+            refined_logps,
+            initial_logps,
+        )
+        final_image = torch.where(
+            use_refined.view(-1, 1, 1, 1),
+            refined_image,
+            initial_image,
+        )
+        initial_prompt_embeds_pad, initial_prompt_mask_pad = (
+            self._left_pad_replay_context(
+                cond_embeds,
+                prompt_attention_mask,
+                target_length=final_cond_embeds.shape[1],
+                pad_token_id=pad_token_id,
+            )
+        )
+        final_prompt_embeds = torch.where(
+            use_refined.view(-1, 1, 1),
+            final_cond_embeds,
+            initial_prompt_embeds_pad,
+        )
+        final_prompt_mask = torch.where(
+            use_refined.unsqueeze(1),
+            final_cond_mask,
+            initial_prompt_mask_pad,
+        )
+
+        ones_initial = torch.ones_like(initial_logps)
+        ones_final = torch.ones_like(final_logps)
+        segments = {
+            "initial_image": JanusR1Segment(
+                name="initial_image",
+                token_ids=initial_ids,
+                token_log_probs=initial_logps,
+                token_mask=ones_initial,
+                prompt_embeds=cond_embeds,
+                attention_mask=prompt_attention_mask,
+                visual=True,
+                cfg=True,
+            ),
+            "selfcheck_text": JanusR1Segment(
+                name="selfcheck_text",
+                token_ids=text_ids,
+                token_log_probs=text_logps,
+                token_mask=text_mask.to(dtype=text_logps.dtype),
+                prompt_embeds=selfcheck_prompt_embeds,
+                attention_mask=selfcheck_prompt_mask,
+                visual=False,
+                cfg=False,
+            ),
+            "final_image": JanusR1Segment(
+                name="final_image",
+                token_ids=final_ids,
+                token_log_probs=final_logps,
+                token_mask=ones_final,
+                prompt_embeds=final_prompt_embeds,
+                attention_mask=final_prompt_mask,
+                visual=True,
+                cfg=True,
+            ),
+        }
+        return JanusR1GenerationResult(
+            initial_image=initial_image,
+            final_image=final_image,
+            selfcheck=selfcheck,
+            segments=segments,
+            context={
+                "cfg_weight": float(cfg_weight),
+                "temperature": float(temperature),
+                "image_token_num": int(image_token_num),
+                "image_size": int(image_size),
+                "max_reflect_len": int(max_reflect_len),
+                "refine_mode": mode,
+                "task_stages": stages,
+                "selfcheck_prompt": JANUS_R1_SELFCHECK_PROMPT,
+                "regeneration_prompt": JANUS_R1_REGEN_PROMPT,
+                "yes_token_id": int(yes_token_id),
+                "no_token_id": int(no_token_id),
+                "eos_token_id": int(eos_token_id),
+                "pad_token_id": int(pad_token_id),
+                "refine_mask": use_refined,
+                "prompt_input_ids": prompt_input_ids,
+                "prompt_attention_mask": prompt_attention_mask,
+                "uncond_input_ids": uncond_input_ids,
+                "uncond_attention_mask": uncond_attention_mask,
+                "model_family": getattr(self, "model_family", "janus_pro"),
+            },
+        )
+
+    def _image_embeds(self, image_token_ids: torch.Tensor) -> torch.Tensor:
+        return self._base().prepare_gen_img_embeds(image_token_ids)
+
+    def _pad_token_id(self) -> int:
+        tokenizer = self.processor.tokenizer
+        for attr in ("pad_id", "pad_token_id"):
+            value = getattr(self.processor, attr, None)
+            if value is not None:
+                return int(value)
+            value = getattr(tokenizer, attr, None)
+            if value is not None:
+                return int(value)
+        return 0
+
+    def _eos_token_id(self) -> int:
+        tokenizer = self.processor.tokenizer
+        eos = getattr(tokenizer, "eos_token_id", None)
+        if eos is not None:
+            return int(eos)
+        return self._last_token_id("<｜end▁of▁sentence｜>")  # noqa: RUF001
+
+    def _last_token_id(self, text: str) -> int:
+        ids = self._encode_text_ids(text)
+        if not ids:
+            raise RuntimeError(f"tokenizer produced no ids for {text!r}")
+        return int(ids[-1])
+
+    def _embed_text_ids(self, token_ids: torch.Tensor) -> torch.Tensor:
+        return self.language_model.get_input_embeddings()(token_ids)
+
+    def _repeat_text_ids(
+        self,
+        text: str,
+        *,
+        batch_size: int,
+    ) -> torch.Tensor:
+        ids = self._encode_text_ids(text)
+        if not ids:
+            ids = [self._pad_token_id()]
+        tensor = torch.tensor(ids, dtype=torch.long, device=self.device)
+        return tensor.unsqueeze(0).expand(batch_size, -1).contiguous()
+
+    def _encode_text_ids(self, text: str) -> list[int]:
+        tokenizer = self.processor.tokenizer
+        encode = getattr(tokenizer, "encode", None)
+        if callable(encode):
+            ids = encode(text)
+            if isinstance(ids, torch.Tensor):
+                ids = ids.detach().cpu().reshape(-1).tolist()
+            if ids and self._looks_like_bos(ids[0]):
+                ids = ids[1:]
+            return [int(x) for x in ids]
+        vocab_size = getattr(tokenizer, "vocab_size", 256)
+        return [ord(ch) % int(vocab_size) for ch in text]
+
+    def _looks_like_bos(self, token_id: int) -> bool:
+        tokenizer = self.processor.tokenizer
+        bos = getattr(tokenizer, "bos_token_id", None)
+        if bos is not None:
+            return int(token_id) == int(bos)
+        return int(token_id) == 1
+
+    def _left_pad_replay_context(
+        self,
+        prompt_embeds: torch.Tensor,
+        attention_mask: torch.Tensor,
+        *,
+        target_length: int,
+        pad_token_id: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        pad_len = int(target_length) - int(prompt_embeds.shape[1])
+        if pad_len < 0:
+            raise ValueError("target_length must be >= prompt context length")
+        if pad_len == 0:
+            return prompt_embeds, attention_mask
+        pad_ids = torch.full(
+            (prompt_embeds.shape[0], pad_len),
+            int(pad_token_id),
+            dtype=torch.long,
+            device=prompt_embeds.device,
+        )
+        pad_embeds = self._embed_text_ids(pad_ids)
+        pad_mask = torch.zeros(
+            prompt_embeds.shape[0],
+            pad_len,
+            dtype=attention_mask.dtype,
+            device=attention_mask.device,
+        )
+        return (
+            torch.cat([pad_embeds, prompt_embeds], dim=1),
+            torch.cat([pad_mask, attention_mask], dim=1),
+        )
+
+    @torch.no_grad()
+    def _sample_selfcheck_text(
+        self,
+        prompt_embeds: torch.Tensor,
+        prompt_attention_mask: torch.Tensor,
+        *,
+        max_new_tokens: int,
+        temperature: float,
+        yes_token_id: int,
+        no_token_id: int,
+        eos_token_id: int,
+        pad_token_id: int,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        batch_size = prompt_embeds.shape[0]
+        device = prompt_embeds.device
+        temp = max(float(temperature), 1e-6)
+
+        token_ids = torch.full(
+            (batch_size, max_new_tokens),
+            int(pad_token_id),
+            dtype=torch.long,
+            device=device,
+        )
+        log_probs = torch.zeros(batch_size, max_new_tokens, dtype=torch.float32, device=device)
+        mask = torch.zeros(batch_size, max_new_tokens, dtype=torch.float32, device=device)
+        context_embeds = prompt_embeds
+        context_mask = prompt_attention_mask
+        finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
+        embed = self.language_model.get_input_embeddings()
+
+        for pos in range(max_new_tokens):
+            outputs = self.language_model(
+                inputs_embeds=context_embeds,
+                attention_mask=context_mask,
+                use_cache=False,
+            )
+            logits = outputs.logits[:, -1, :].float()
+            if pos == 0:
+                allowed = torch.tensor(
+                    [yes_token_id, no_token_id],
+                    dtype=torch.long,
+                    device=device,
+                )
+                restricted = torch.full_like(logits, float("-inf"))
+                restricted[:, allowed] = logits[:, allowed]
+                logits = restricted
+            log_probs_all = F.log_softmax(logits / temp, dim=-1)
+            probs = torch.exp(log_probs_all)
+            next_token = torch.multinomial(probs, num_samples=1).squeeze(-1)
+            next_token = torch.where(
+                finished,
+                torch.full_like(next_token, int(pad_token_id)),
+                next_token,
+            )
+            log_probs[:, pos] = log_probs_all.gather(
+                -1,
+                next_token.unsqueeze(-1),
+            ).squeeze(-1)
+            token_ids[:, pos] = next_token
+            active = ~finished
+            is_eos = next_token == int(eos_token_id)
+            is_pad = next_token == int(pad_token_id)
+            keep = active & ~is_eos & ~is_pad
+            mask[:, pos] = keep.to(dtype=mask.dtype)
+            finished = finished | is_eos | is_pad
+            next_embeds = embed(next_token).unsqueeze(1)
+            context_embeds = torch.cat([context_embeds, next_embeds], dim=1)
+            context_mask = torch.cat(
+                [
+                    context_mask,
+                    keep.to(dtype=context_mask.dtype).unsqueeze(1),
+                ],
+                dim=1,
+            )
+            if bool(finished.all()):
+                break
+
+        selfcheck = token_ids[:, 0] == int(yes_token_id)
+        return token_ids, log_probs, mask, selfcheck
 
     @torch.no_grad()
     def init_ar_state(
@@ -661,29 +1228,17 @@ class JanusProPolicy(nn.Module, AutoregressivePolicy):
             [state.uncond_attn_rows[row] for row in row_indices], dim=0
         )
 
-        cond_past = [state.cond_past_rows[row] for row in row_indices]
-        uncond_past = [state.uncond_past_rows[row] for row in row_indices]
-        past_kv = None
-        all_past = [*cond_past, *uncond_past]
-        if any(past is not None for past in all_past):
-            if any(past is None for past in all_past):
-                raise ValueError("Janus AR cache rows are partially initialized")
-            past_kv = ar_concat_rows(all_past)
-
         outputs = self._lm_trunk()(
             inputs_embeds=torch.cat([cond_embeds, uncond_embeds], dim=0),
             attention_mask=torch.cat([cond_attn, uncond_attn], dim=0),
-            use_cache=True,
-            past_key_values=past_kv,
+            use_cache=False,
         )
-        past_rows = ar_split_rows(outputs.past_key_values, batch_size * 2)
-        for offset, row in enumerate(row_indices):
-            state.cond_past_rows[row] = past_rows[offset]
-            state.uncond_past_rows[row] = past_rows[batch_size + offset]
 
         hidden = outputs.last_hidden_state[:, -1:, :]
         logits = image_token_logits_from_hidden(self.mmgpt, hidden).squeeze(1)
         cond_logits, uncond_logits = logits.chunk(2, dim=0)
+        cond_logits = cond_logits.float()
+        uncond_logits = uncond_logits.float()
         guided = uncond_logits + state.cfg_weight * (cond_logits - uncond_logits)
 
         probs = F.softmax(guided / state.temperature, dim=-1)
@@ -721,8 +1276,20 @@ class JanusProPolicy(nn.Module, AutoregressivePolicy):
             dim=1,
         )
         for offset, row in enumerate(row_indices):
-            state.cond_cur_embeds_rows[row] = cond_next_embed[offset : offset + 1]
-            state.uncond_cur_embeds_rows[row] = uncond_next_embed[offset : offset + 1]
+            state.cond_cur_embeds_rows[row] = torch.cat(
+                [
+                    cond_embeds[offset : offset + 1],
+                    cond_next_embed[offset : offset + 1],
+                ],
+                dim=1,
+            )
+            state.uncond_cur_embeds_rows[row] = torch.cat(
+                [
+                    uncond_embeds[offset : offset + 1],
+                    uncond_next_embed[offset : offset + 1],
+                ],
+                dim=1,
+            )
             state.cond_attn_rows[row] = cond_next_attn[offset : offset + 1]
             state.uncond_attn_rows[row] = uncond_next_attn[offset : offset + 1]
 

@@ -54,15 +54,12 @@ def stack_batches(batches: list[RolloutBatch]) -> RolloutBatch:
         if b.prompts is not None:
             prompts.extend(b.prompts)
 
-    # Extras: cat tensor values from all batches, keep non-tensor from first
+    # Extras: cat tensor leaves from all batches, including nested segment
+    # dicts such as Janus-Pro-R1's per-stage replay payload.
     extras: dict[str, Any] = {}
     first = batches[0].extras
     for key in first:
-        val = first[key]
-        if isinstance(val, torch.Tensor):
-            extras[key] = torch.cat([b.extras[key] for b in batches], dim=0)
-        else:
-            extras[key] = val  # non-tensor: keep from first batch
+        extras[key] = _stack_extra_values([b.extras[key] for b in batches])
 
     # Context: shared metadata — take from first batch (not stacked)
     context: dict[str, Any] = dict(batches[0].context)
@@ -78,3 +75,31 @@ def stack_batches(batches: list[RolloutBatch]) -> RolloutBatch:
         videos=videos,
         prompts=prompts or None,
     )
+
+
+def _stack_extra_values(values: list[Any]) -> Any:
+    """Stack nested rollout extras along the sample dimension."""
+    import torch
+
+    if not values:
+        raise ValueError("values must be non-empty")
+    first = values[0]
+    if isinstance(first, torch.Tensor):
+        return torch.cat(values, dim=0)
+    if isinstance(first, dict):
+        keys = set(first)
+        for value in values[1:]:
+            if not isinstance(value, dict) or set(value) != keys:
+                raise ValueError("nested rollout extras must have matching dict keys")
+        return {
+            key: _stack_extra_values([value[key] for value in values])
+            for key in first
+        }
+    if isinstance(first, list) and all(isinstance(value, list) for value in values):
+        out: list[Any] = []
+        for value in values:
+            out.extend(value)
+        return out
+    if isinstance(first, tuple) and all(value == first for value in values):
+        return first
+    return first

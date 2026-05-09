@@ -1,0 +1,12 @@
+# Janus-Pro-R1-style AR rollout.
+# The R1 executor owns three-stage generation; the collector/packer keeps the
+# multi-segment replay tensors separate for train-time evaluation.
+rollout:
+  n_samples_per_prompt: 2
+  rollout_batch_size: 1
+  temperature: 0.9
+  rescale_to_unit: true
+  max_text_length: 256
+  max_reflect_len: 80
+  final_image_policy: always_generate  # always_generate | use_selfcheck
+  max_batch_requests: 1

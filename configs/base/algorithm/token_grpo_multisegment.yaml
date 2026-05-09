@@ -1,0 +1,16 @@
+# Multi-segment Token-GRPO for Janus-Pro-R1-style AR image RL.
+# Each named segment keeps its own token ids/log-probs/mask; the algorithm
+# applies token GRPO per segment and combines segment losses by weight.
+defaults:
+  - /base/algorithm/token_grpo
+
+algorithm:
+  kind: token_grpo_multisegment
+  segment_weights:
+    initial_image: 1.0
+    selfcheck_text: 0.0
+    final_image: 1.0
+  train_segments:
+    initial_image: true
+    selfcheck_text: false
+    final_image: true

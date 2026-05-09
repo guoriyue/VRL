@@ -6,7 +6,12 @@ from vrl.algorithms.flow_matching import (
     compute_kl_divergence,
     sde_step_with_logprob,
 )
-from vrl.algorithms.grpo import GRPO, GRPOConfig
+from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
+from vrl.algorithms.grpo.multisegment import (
+    MultiSegmentTokenGRPO,
+    MultiSegmentTokenGRPOConfig,
+)
+from vrl.algorithms.grpo.token import TokenGRPO, TokenGRPOConfig
 from vrl.algorithms.types import (
     Rollout,
     TrainStepMetrics,
@@ -18,8 +23,12 @@ __all__ = [
     "GRPO",
     "Algorithm",
     "GRPOConfig",
+    "MultiSegmentTokenGRPO",
+    "MultiSegmentTokenGRPOConfig",
     "Rollout",
     "SDEStepResult",
+    "TokenGRPO",
+    "TokenGRPOConfig",
     "TrainStepMetrics",
     "Trajectory",
     "TrajectoryStep",

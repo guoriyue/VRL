@@ -1,11 +1,11 @@
-"""Tests for vrl.algorithms.grpo (GRPO advantages + loss, CEA tensor path)."""
+"""Tests for continuous GRPO advantages + loss."""
 
 from __future__ import annotations
 
 import pytest
 
 from vrl.algorithms import GRPO
-from vrl.algorithms.grpo import GRPOConfig
+from vrl.algorithms.grpo.continuous import GRPOConfig
 from vrl.rollouts.evaluators.types import SignalBatch
 
 # ---------------------------------------------------------------------------

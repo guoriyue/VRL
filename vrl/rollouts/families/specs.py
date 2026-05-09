@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-CollectorKind = Literal["diffusion", "ar_discrete", "ar_continuous"]
+CollectorKind = Literal["diffusion", "ar_discrete", "ar_continuous", "ar_r1"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,6 +194,43 @@ FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {
         ),
         gatherer=GathererMetadata(
             import_path="vrl.models.families.janus_pro.executor:JanusProChunkGatherer",
+        ),
+    ),
+    "janus_pro_r1": RolloutFamilyEntry(
+        family="janus_pro_r1",
+        task="ar_t2i_r1",
+        aliases=("janus_r1", "janus_pro_1b_r1"),
+        collector=CollectorMetadata(
+            kind="ar_r1",
+            config_cls="vrl.rollouts.collector.configs:JanusProR1CollectorConfig",
+            request_prefix="janus_pro_r1",
+            sampling_fields=(
+                "cfg_weight",
+                "temperature",
+                "image_token_num",
+                "image_size",
+                "max_text_length",
+                "max_reflect_len",
+                "final_image_policy",
+                "train_segments",
+            ),
+            return_artifacts=(
+                "output",
+                "r1_segments",
+                "initial_image",
+                "final_image",
+                "selfcheck_text",
+            ),
+        ),
+        executor_cls=(
+            "vrl.models.families.janus_pro.r1_executor:JanusProR1PipelineExecutor"
+        ),
+        runtime_builder=("vrl.models.families.janus_pro.builder:build_janus_pro_runtime_bundle"),
+        runtime_spec_extractor=(
+            "vrl.models.families.janus_pro.builder:extract_janus_pro_runtime_spec"
+        ),
+        gatherer=GathererMetadata(
+            import_path="vrl.models.families.janus_pro.r1_executor:JanusProR1ChunkGatherer",
         ),
     ),
     "nextstep_1": RolloutFamilyEntry(

@@ -1,0 +1,282 @@
+"""Multi-segment token log-probability evaluator for Janus-Pro-R1 rollouts."""
+
+from __future__ import annotations
+
+from collections.abc import Iterable, Mapping
+from typing import Any
+
+import torch
+import torch.nn.functional as F
+
+from vrl.rollouts.batch import RolloutBatch
+from vrl.rollouts.evaluators.base import Evaluator
+from vrl.rollouts.evaluators.types import SignalBatch, SignalRequest
+
+R1_SEGMENTS_KEY = "r1_segments"
+
+
+def _has_active_adapter(model: Any) -> bool:
+    sub = getattr(model, "language_model", None) or model
+    return hasattr(sub, "disable_adapter") and callable(sub.disable_adapter)
+
+
+class MultiSegmentTokenLogProbEvaluator(Evaluator):
+    """Replay each enabled R1 segment without concatenating image/text tokens."""
+
+    def __init__(
+        self,
+        *,
+        enabled_segments: Iterable[str] | Mapping[str, bool] | None = None,
+        mask_key: str = "token_mask",
+    ) -> None:
+        self.enabled_segments = enabled_segments
+        self.mask_key = mask_key
+
+    def evaluate(
+        self,
+        model: Any,
+        batch: RolloutBatch,
+        timestep_idx: int = 0,
+        ref_model: Any | None = None,
+        signal_request: SignalRequest | None = None,
+    ) -> SignalBatch:
+        del timestep_idx
+        request = signal_request or SignalRequest()
+        segments = batch.extras.get(R1_SEGMENTS_KEY)
+        if not isinstance(segments, dict):
+            raise RuntimeError(
+                f"MultiSegmentTokenLogProbEvaluator requires batch.extras[{R1_SEGMENTS_KEY!r}]",
+            )
+
+        enabled_names = self._enabled_segment_names(segments)
+        if not enabled_names:
+            raise RuntimeError("no enabled R1 segments to evaluate")
+
+        segment_signals: dict[str, SignalBatch] = {}
+        old_log_probs: dict[str, torch.Tensor] = {}
+
+        for name in enabled_names:
+            segment = segments[name]
+            new_lp = self._compute_segment_logprobs(model, batch, name, segment)
+            ref_lp = None
+            if request.need_ref:
+                if ref_model is not None:
+                    ref_lp = self._compute_segment_logprobs(ref_model, batch, name, segment)
+                else:
+                    if not _has_active_adapter(model):
+                        raise RuntimeError(
+                            "MultiSegmentTokenLogProbEvaluator: need_ref=True but no "
+                            "ref_model was provided and the model has no PEFT adapter "
+                            "to disable.",
+                        )
+                    with torch.no_grad(), model.disable_adapter():
+                        ref_lp = self._compute_segment_logprobs(model, batch, name, segment)
+
+            mask = _segment_tensor(segment, self.mask_key, required=False)
+            if mask is None:
+                mask = torch.ones_like(new_lp)
+            old_lp = _segment_tensor(segment, "token_log_probs")
+
+            segment_signals[name] = SignalBatch(
+                log_prob=new_lp,
+                ref_log_prob=ref_lp,
+                entropy=None,
+                dist_family="categorical",
+                aux={
+                    self.mask_key: mask.to(dtype=new_lp.dtype, device=new_lp.device),
+                    "segment_name": name,
+                    "segment_modality": _segment_modality(name, segment),
+                },
+            )
+            old_log_probs[name] = old_lp.detach()
+
+        primary_name = _primary_segment_name(batch, enabled_names)
+        primary = segment_signals[primary_name]
+        aux: dict[str, Any] = {
+            "segments": segment_signals,
+            "old_log_probs": old_log_probs,
+            "segment_order": tuple(enabled_names),
+            "primary_segment": primary_name,
+        }
+        if self.mask_key in primary.aux:
+            aux[self.mask_key] = primary.aux[self.mask_key]
+
+        return SignalBatch(
+            log_prob=primary.log_prob,
+            ref_log_prob=primary.ref_log_prob,
+            entropy=None,
+            dist_family="multisegment_categorical",
+            aux=aux,
+        )
+
+    def _enabled_segment_names(self, segments: dict[str, Any]) -> list[str]:
+        if self.enabled_segments is None:
+            return [
+                name
+                for name, segment in segments.items()
+                if _segment_enabled(segment)
+            ]
+        if isinstance(self.enabled_segments, Mapping):
+            return [
+                name
+                for name, enabled in self.enabled_segments.items()
+                if enabled and name in segments and _segment_enabled(segments[name])
+            ]
+        return [
+            name
+            for name in self.enabled_segments
+            if name in segments and _segment_enabled(segments[name])
+        ]
+
+    def _compute_segment_logprobs(
+        self,
+        model: Any,
+        batch: RolloutBatch,
+        name: str,
+        segment: dict[str, Any],
+    ) -> torch.Tensor:
+        if hasattr(model, "replay_r1_segment"):
+            out = _call_replay_r1_segment(model, batch, name, segment)
+            return _extract_logprobs(out, segment)
+
+        modality = _segment_modality(name, segment)
+        if modality == "text":
+            if not hasattr(model, "replay_text_forward"):
+                raise RuntimeError(
+                    f"R1 segment {name!r} is text, but model does not expose "
+                    "replay_r1_segment() or replay_text_forward(). Refusing to "
+                    "score text tokens with the image replay path.",
+                )
+            out = model.replay_text_forward(
+                batch=batch,
+                segment_name=name,
+                segment=segment,
+            )
+            return _extract_logprobs(out, segment)
+
+        segment_batch = _build_image_segment_batch(batch, name, segment)
+        out = model.replay_forward(segment_batch, timestep_idx=0)
+        return _extract_logprobs(out, segment)
+
+
+def _call_replay_r1_segment(
+    model: Any,
+    batch: RolloutBatch,
+    name: str,
+    segment: dict[str, Any],
+) -> Any:
+    method = model.replay_r1_segment
+    try:
+        return method(batch=batch, segment_name=name, segment=segment)
+    except TypeError:
+        return method(segment)
+
+
+def _build_image_segment_batch(
+    batch: RolloutBatch,
+    name: str,
+    segment: dict[str, Any],
+) -> RolloutBatch:
+    prompt_ids = _segment_tensor(segment, "prompt_input_ids")
+    prompt_mask = _segment_tensor(segment, "prompt_attention_mask")
+    token_ids = _segment_tensor(segment, "token_ids")
+    token_log_probs = _segment_tensor(segment, "token_log_probs")
+    token_mask = _segment_tensor(segment, "token_mask", required=False)
+    if token_mask is None:
+        token_mask = torch.ones_like(token_log_probs)
+
+    extras: dict[str, Any] = {
+        "prompt_attention_mask": prompt_mask,
+        "log_probs": token_log_probs.detach().unsqueeze(1),
+        "token_mask": token_mask,
+        "segment_name": name,
+        "segment": segment,
+    }
+    for key in ("uncond_input_ids", "uncond_attention_mask"):
+        if key in segment:
+            extras[key] = segment[key]
+        elif key in batch.extras:
+            extras[key] = batch.extras[key]
+
+    return RolloutBatch(
+        observations=prompt_ids.unsqueeze(1),
+        actions=token_ids,
+        rewards=batch.rewards,
+        dones=batch.dones,
+        group_ids=batch.group_ids,
+        extras=extras,
+        context=batch.context,
+        videos=batch.videos,
+        prompts=batch.prompts,
+    )
+
+
+def _extract_logprobs(out: Any, segment: dict[str, Any]) -> torch.Tensor:
+    if isinstance(out, torch.Tensor):
+        return out.float()
+    if not isinstance(out, dict):
+        raise TypeError("segment replay must return a Tensor or dict")
+    if "log_probs" in out:
+        return out["log_probs"].float()
+
+    logits = out.get("logits")
+    if logits is None:
+        logits = out.get("image_logits")
+    if logits is None:
+        logits = out.get("text_logits")
+    if logits is None:
+        raise RuntimeError("segment replay output must include log_probs or logits")
+
+    token_ids = out.get("token_ids")
+    if token_ids is None:
+        token_ids = _segment_tensor(segment, "token_ids")
+    log_probs = F.log_softmax(logits.float(), dim=-1)
+    return log_probs.gather(-1, token_ids.unsqueeze(-1)).squeeze(-1)
+
+
+def _segment_tensor(
+    segment: dict[str, Any],
+    key: str,
+    *,
+    required: bool = True,
+) -> torch.Tensor | None:
+    value = segment.get(key)
+    if value is None:
+        replay = segment.get("replay")
+        if isinstance(replay, dict):
+            value = replay.get(key)
+    if value is None:
+        if required:
+            name = segment.get("name", "<unknown>")
+            raise RuntimeError(f"R1 segment {name!r} is missing tensor field {key!r}")
+        return None
+    if not isinstance(value, torch.Tensor):
+        name = segment.get("name", "<unknown>")
+        raise RuntimeError(f"R1 segment {name!r} field {key!r} must be a tensor")
+    return value
+
+
+def _segment_modality(name: str, segment: dict[str, Any]) -> str:
+    modality = segment.get("modality")
+    if modality is not None:
+        return str(modality)
+    visual = segment.get("visual")
+    if visual is not None:
+        return "image" if bool(visual) else "text"
+    if name.endswith("_text"):
+        return "text"
+    return "image"
+
+
+def _segment_enabled(segment: dict[str, Any]) -> bool:
+    return bool(segment.get("enabled", segment.get("train", True)))
+
+
+def _primary_segment_name(batch: RolloutBatch, enabled_names: list[str]) -> str:
+    primary = batch.extras.get("primary_segment")
+    if isinstance(primary, str) and primary in enabled_names:
+        return primary
+    return enabled_names[0]
+
+
+__all__ = ["R1_SEGMENTS_KEY", "MultiSegmentTokenLogProbEvaluator"]

@@ -107,6 +107,33 @@ class TestSurface:
         with pytest.raises(RuntimeError, match="Janus"):
             JanusProPolicy(JanusProConfig(use_lora=False), mmgpt=broken, processor=object())
 
+    def test_load_trainable_state_loads_only_trainable_keys(self, stub_model: JanusProPolicy) -> None:
+        stub_model.mmgpt.gen_head.weight.requires_grad_(True)
+        replacement = torch.full_like(stub_model.mmgpt.gen_head.weight, 0.25)
+        full_state = stub_model.state_dict()
+        full_state["mmgpt.gen_head.weight"] = replacement
+        full_state["mmgpt.gen_embed.weight"] = torch.full_like(
+            stub_model.mmgpt.gen_embed.weight,
+            0.75,
+        )
+
+        stub_model.load_trainable_state(full_state)
+
+        assert torch.equal(stub_model.mmgpt.gen_head.weight, replacement)
+        assert not torch.equal(
+            stub_model.mmgpt.gen_embed.weight,
+            full_state["mmgpt.gen_embed.weight"],
+        )
+
+    def test_load_trainable_state_rejects_missing_trainable_key(
+        self,
+        stub_model: JanusProPolicy,
+    ) -> None:
+        stub_model.mmgpt.gen_head.weight.requires_grad_(True)
+
+        with pytest.raises(ValueError, match="missing trainable Janus keys"):
+            stub_model.load_trainable_state({"unknown": torch.ones(1)})
+
 
 # ---------------------------------------------------------------------------
 # Train-time forward
@@ -163,6 +190,25 @@ class TestSampleImageTokens:
             cond, uncond, mask, mask, image_token_num=4,
         )
         assert (lps <= 0.0).all()
+
+    def test_bfloat16_sampling_keeps_logprobs_float32(
+        self,
+        stub_model: JanusProPolicy,
+    ) -> None:
+        stub_model.mmgpt.to(dtype=torch.bfloat16)
+        cond = torch.randn(1, 2, HIDDEN, dtype=torch.bfloat16)
+        uncond = torch.randn(1, 2, HIDDEN, dtype=torch.bfloat16)
+        mask = torch.ones(1, 2)
+
+        _, lps = stub_model.sample_image_tokens(
+            cond,
+            uncond,
+            mask,
+            mask,
+            image_token_num=2,
+        )
+
+        assert lps.dtype == torch.float32
 
     def test_token_ids_in_range(self, stub_model: JanusProPolicy) -> None:
         B = 2

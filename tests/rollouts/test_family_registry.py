@@ -7,6 +7,7 @@ import pytest
 from vrl.rollouts.collector.configs import (
     CosmosPredict2CollectorConfig,
     JanusProCollectorConfig,
+    JanusProR1CollectorConfig,
     NextStep1CollectorConfig,
     SD3_5CollectorConfig,
     Wan_2_1CollectorConfig,
@@ -29,6 +30,7 @@ def test_family_registry_covers_current_rollout_families() -> None:
         "wan_2_1",
         "cosmos",
         "janus_pro",
+        "janus_pro_r1",
         "nextstep_1",
     )
 
@@ -37,6 +39,7 @@ def test_family_registry_covers_current_rollout_families() -> None:
         "wan_2_1": "vrl.rollouts.collector.configs:Wan_2_1CollectorConfig",
         "cosmos": "vrl.rollouts.collector.configs:CosmosPredict2CollectorConfig",
         "janus_pro": "vrl.rollouts.collector.configs:JanusProCollectorConfig",
+        "janus_pro_r1": "vrl.rollouts.collector.configs:JanusProR1CollectorConfig",
         "nextstep_1": "vrl.rollouts.collector.configs:NextStep1CollectorConfig",
     }
     for family, config_cls_path in expected_config_cls_path.items():
@@ -56,6 +59,7 @@ def test_family_registry_covers_current_rollout_families() -> None:
         ("wan", "wan_2_1"),
         ("cosmos_predict2", "cosmos"),
         ("janus", "janus_pro"),
+        ("janus_r1", "janus_pro_r1"),
         ("nextstep", "nextstep_1"),
     ],
 )
@@ -70,6 +74,7 @@ def test_collector_registry_reuses_family_registry_metadata() -> None:
         "wan_2_1": Wan_2_1CollectorConfig,
         "cosmos": CosmosPredict2CollectorConfig,
         "janus_pro": JanusProCollectorConfig,
+        "janus_pro_r1": JanusProR1CollectorConfig,
         "nextstep_1": NextStep1CollectorConfig,
     }
     assert set(COLLECTOR_REGISTRY) == set(FAMILY_REGISTRY)

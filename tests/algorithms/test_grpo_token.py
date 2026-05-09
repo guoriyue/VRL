@@ -1,4 +1,4 @@
-"""Tests for vrl.algorithms.grpo_token.TokenGRPO.
+"""Tests for vrl.algorithms.grpo.token.TokenGRPO.
 
 Validates:
   * Inherits group-relative advantage from GRPO unchanged.
@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from vrl.algorithms.grpo_token import TokenGRPO, TokenGRPOConfig
+from vrl.algorithms.grpo.token import TokenGRPO, TokenGRPOConfig
 from vrl.rollouts.evaluators.types import SignalBatch
 
 # ---------------------------------------------------------------------------
@@ -23,7 +23,7 @@ from vrl.rollouts.evaluators.types import SignalBatch
 
 class TestAdvantageInheritance:
     def test_matches_diffusion_grpo(self) -> None:
-        from vrl.algorithms.grpo import GRPO, GRPOConfig
+        from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
 
         torch.manual_seed(0)
         rewards = torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])

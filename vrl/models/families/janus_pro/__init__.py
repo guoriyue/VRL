@@ -15,9 +15,17 @@ from vrl.models.families.janus_pro.policy import (
     JanusProPolicy,
     image_token_logits_from_hidden,
 )
+from vrl.models.families.janus_pro.r1_executor import JanusProR1PipelineExecutor
+from vrl.models.families.janus_pro.r1_types import (
+    JanusR1GenerationResult,
+    JanusR1Segment,
+)
 
 __all__ = [
     "JanusProConfig",
     "JanusProPolicy",
+    "JanusProR1PipelineExecutor",
+    "JanusR1GenerationResult",
+    "JanusR1Segment",
     "image_token_logits_from_hidden",
 ]

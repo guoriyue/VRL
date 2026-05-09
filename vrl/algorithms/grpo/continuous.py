@@ -1,4 +1,4 @@
-"""GRPO — Group Relative Policy Optimization."""
+"""Continuous-action GRPO for diffusion / flow-matching policies."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from vrl.rollouts.evaluators.types import SignalBatch
 
 @dataclass(slots=True)
 class GRPOConfig:
-    """Hyper-parameters for GRPO."""
+    """Hyper-parameters for continuous GRPO."""
 
     eps_clip: float = 0.2
     init_kl_coef: float = 0.0
@@ -23,7 +23,7 @@ class GRPOConfig:
 
 
 class GRPO(Algorithm):
-    """Group Relative Policy Optimization.
+    """Group Relative Policy Optimization for continuous rollout signals.
 
     Advantages are normalised within each prompt group:
         a_i = (r_i - mean(r)) / max(std(r), eps)
@@ -40,18 +40,14 @@ class GRPO(Algorithm):
         self._last_policy_loss_tensor: Any = None
         self._last_kl_term_tensor: Any = None
 
-    # ------------------------------------------------------------------
-    # Advantages from tensors
-    # ------------------------------------------------------------------
-
     def compute_advantages_from_tensors(
         self,
-        rewards: Any,     # [B] tensor
-        group_ids: Any,   # [B] tensor
+        rewards: Any,
+        group_ids: Any,
     ) -> Any:
         """Per-group advantage normalization on tensors.
 
-        Groups are identified by ``group_ids`` — samples sharing the same
+        Groups are identified by ``group_ids``: samples sharing the same
         group_id are normalized together (GRPO per-prompt normalization).
         """
         import torch
@@ -64,7 +60,6 @@ class GRPO(Algorithm):
             mask = group_ids == gid
             group_rewards = rewards[mask]
 
-            # Single sample → advantage is 0 (no group contrast possible)
             if group_rewards.numel() <= 1:
                 advantages[mask] = 0.0
                 continue
@@ -83,19 +78,15 @@ class GRPO(Algorithm):
 
         return advantages
 
-    # ------------------------------------------------------------------
-    # Loss from SignalBatch
-    # ------------------------------------------------------------------
-
     def compute_signal_loss(
         self,
         signals: SignalBatch,
-        advantages: Any,       # [B] advantages
-        old_log_probs: Any,    # [B] old log-probs from collection
+        advantages: Any,
+        old_log_probs: Any,
     ) -> tuple[Any, TrainStepMetrics]:
         """Clipped surrogate loss from evaluator signals.
 
-        Handles both flow-matching (latent-space KL) and generic (log-prob KL).
+        Handles both flow-matching latent-space KL and generic log-prob KL.
         """
         import torch
 
@@ -109,9 +100,6 @@ class GRPO(Algorithm):
         clipped_loss = -advantages * clipped_ratio
         policy_loss = torch.mean(torch.maximum(unclipped_loss, clipped_loss))
 
-        # KL penalty. Hard-error when init_kl_coef > 0 but ref_log_prob is
-        # missing — otherwise KL silently becomes 0 and the user thinks
-        # regularization is active when it isn't.
         if cfg.init_kl_coef > 0:
             if signals.ref_log_prob is None:
                 raise RuntimeError(
@@ -125,7 +113,6 @@ class GRPO(Algorithm):
                 and signals.prev_sample_mean is not None
                 and signals.ref_prev_sample_mean is not None
             ):
-                # Latent-space KL (more principled for continuous diffusion)
                 kl = compute_kl_divergence(
                     signals.prev_sample_mean,
                     signals.ref_prev_sample_mean,
@@ -134,7 +121,6 @@ class GRPO(Algorithm):
                 )
                 kl_loss = torch.mean(kl)
             else:
-                # Log-prob KL fallback
                 kl_loss = torch.mean(signals.log_prob - signals.ref_log_prob)
             kl_term = cfg.init_kl_coef * kl_loss
             loss = policy_loss + kl_term
@@ -146,7 +132,6 @@ class GRPO(Algorithm):
 
         self._last_policy_loss_tensor = policy_loss
 
-        # Metrics
         clip_fraction = torch.mean((torch.abs(ratio - 1.0) > cfg.eps_clip).float()).item()
         approx_kl = 0.5 * torch.mean((signals.log_prob - old_log_probs) ** 2).item()
 

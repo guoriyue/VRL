@@ -11,20 +11,19 @@ of becoming new `configs/experiment/*.yaml` files.
 
 Legend:
 
-- `[x]` active: experiment YAML, training entrypoint, rollout adapter, and
-  structural tests exist.
-- `[~]` wired: code path exists, but the model binding still needs real
-  checkpoint smoke validation.
-- `[ ]` not wired.
-- `-` not a target pairing for the current model family.
+- ✅ Active: recipe, training entrypoint, runtime path, and structural tests
+  exist.
+- 🟡 Wired: code path exists, but it still needs a real-checkpoint smoke run.
+- ⬜ Not wired.
+- — Not a target pairing for this model family.
 
 | Model | Modality | GRPO | TokenGRPO | Diffusion DPO | Current progress |
 | --- | --- | --- | --- | --- | --- |
-| SD3.5 | text-to-image diffusion | `[x]` `sd3_5_ocr_grpo` | - | `[ ]` | Canonical active recipe: OCR GRPO. |
-| Wan 2.1 1.3B | text-to-video diffusion | `[x]` `wan_2_1_1_3b_ocr_grpo` | - | `[x]` `wan_2_1_1_3b_dpo` | Canonical active recipes: OCR GRPO and offline DPO. |
-| Cosmos Predict2 2B | video-to-world diffusion | `[x]` `cosmos_predict2_2b_grpo` | - | `[ ]` | Canonical Predict2 GRPO wiring. |
-| Janus-Pro 1B | autoregressive image | - | `[x]` `janus_pro_1b_ocr_grpo` | - | Canonical TokenGRPO recipe: OCR. |
-| NextStep-1 1.1 | continuous-token autoregressive image | - | `[~]` `nextstep_1_ocr_grpo` | - | Wired, but still marked pre-smoke for real checkpoint binding. |
+| SD3.5 | text-to-image diffusion | ✅ `sd3_5_ocr_grpo` | — | ⬜ | Canonical active recipe: OCR GRPO. |
+| Wan 2.1 1.3B | text-to-video diffusion | ✅ `wan_2_1_1_3b_ocr_grpo` | — | ✅ `wan_2_1_1_3b_dpo` | Canonical active recipes: OCR GRPO and offline DPO. |
+| Cosmos Predict2 2B | video-to-world diffusion | ✅ `cosmos_predict2_2b_grpo` | — | ⬜ | Canonical Predict2 GRPO wiring. |
+| Janus-Pro 1B | autoregressive image | — | ✅ `janus_pro_1b_ocr_grpo` | — | Canonical TokenGRPO recipe: OCR. |
+| NextStep-1 1.1 | continuous-token autoregressive image | — | 🟡 `nextstep_1_ocr_grpo` | — | Wired, but still marked pre-smoke for real checkpoint binding. |
 
 ## Algorithm Kinds
 

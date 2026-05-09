@@ -44,7 +44,7 @@ async def train_nextstep_1_ocr_grpo(cfg: DictConfig) -> None:
     """Run NextStep-1 OCR GRPO training driven by a merged YAML config."""
     import torch
 
-    from vrl.algorithms.grpo_token import TokenGRPO, TokenGRPOConfig
+    from vrl.algorithms.grpo.token import TokenGRPO, TokenGRPOConfig
     from vrl.config.loader import build_configs, require
     from vrl.models.families.nextstep_1 import NextStep1Config, NextStep1Policy
     from vrl.rewards.ocr import OCRReward

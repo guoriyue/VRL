@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(slots=True)
@@ -95,6 +95,38 @@ class JanusProCollectorConfig:
 
 
 @dataclass(slots=True)
+class JanusProR1CollectorConfig:
+    """Configuration for Janus-Pro-R1-style rollout collection."""
+
+    n_samples_per_prompt: int = 2
+    cfg_weight: float = 5.0
+    temperature: float = 0.9
+    image_token_num: int = 576
+    image_size: int = 384
+    rescale_to_unit: bool = True
+    max_text_length: int = 256
+    max_reflect_len: int = 80
+    final_image_policy: str = "always_generate"
+    train_segments: dict[str, bool] = field(
+        default_factory=lambda: {
+            "initial_image": True,
+            "selfcheck_text": False,
+            "final_image": True,
+        },
+    )
+    max_batch_requests: int = 1
+
+    @property
+    def refine_mode(self) -> str:
+        """Map config-facing final-image policy to Janus R1 policy wording."""
+        if self.final_image_policy == "always_generate":
+            return "always"
+        if self.final_image_policy == "use_selfcheck":
+            return "selfcheck"
+        return str(self.final_image_policy)
+
+
+@dataclass(slots=True)
 class NextStep1CollectorConfig:
     """Configuration for NextStep-1 rollout collection."""
 
@@ -112,6 +144,7 @@ class NextStep1CollectorConfig:
 __all__ = [
     "CosmosPredict2CollectorConfig",
     "JanusProCollectorConfig",
+    "JanusProR1CollectorConfig",
     "NextStep1CollectorConfig",
     "SD3_5CollectorConfig",
     "Wan_2_1CollectorConfig",

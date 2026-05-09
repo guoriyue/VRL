@@ -154,10 +154,7 @@ def _select_batch(batch: RolloutBatch, selector: torch.Tensor) -> RolloutBatch:
     new_extras: dict[str, Any] = {}
     batch_size = batch.rewards.shape[0]
     for k, v in batch.extras.items():
-        if isinstance(v, torch.Tensor) and v.dim() > 0 and v.shape[0] == batch_size:
-            new_extras[k] = v[selector.to(v.device)]
-        else:
-            new_extras[k] = v
+        new_extras[k] = _select_tensor_tree(v, selector, batch_size)
     videos = (
         batch.videos[selector.to(batch.videos.device)]
         if batch.videos is not None
@@ -183,6 +180,25 @@ def _select_batch(batch: RolloutBatch, selector: torch.Tensor) -> RolloutBatch:
         videos=videos,
         prompts=prompts,
     )
+
+
+def _select_tensor_tree(value: Any, selector: torch.Tensor, batch_size: int) -> Any:
+    """Select per-sample tensor leaves inside nested rollout metadata."""
+
+    if isinstance(value, torch.Tensor):
+        if value.dim() > 0 and value.shape[0] == batch_size:
+            return value[selector.to(value.device)]
+        return value
+    if isinstance(value, dict):
+        return {
+            key: _select_tensor_tree(inner, selector, batch_size)
+            for key, inner in value.items()
+        }
+    if isinstance(value, list):
+        return [_select_tensor_tree(inner, selector, batch_size) for inner in value]
+    if isinstance(value, tuple):
+        return tuple(_select_tensor_tree(inner, selector, batch_size) for inner in value)
+    return value
 
 
 def _apply_sample_mask(batch: RolloutBatch, mask: torch.Tensor) -> RolloutBatch:

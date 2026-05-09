@@ -4,6 +4,7 @@ from vrl.rollouts.collector.base import Collector
 from vrl.rollouts.collector.configs import (
     CosmosPredict2CollectorConfig,
     JanusProCollectorConfig,
+    JanusProR1CollectorConfig,
     NextStep1CollectorConfig,
     SD3_5CollectorConfig,
     Wan_2_1CollectorConfig,
@@ -24,6 +25,7 @@ __all__ = [
     "CollectorRegistryEntry",
     "CosmosPredict2CollectorConfig",
     "JanusProCollectorConfig",
+    "JanusProR1CollectorConfig",
     "NextStep1CollectorConfig",
     "RolloutCollector",
     "SD3_5CollectorConfig",

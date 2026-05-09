@@ -135,6 +135,11 @@ _GRPO_FIELDS = {
     "flow_kl_use_dt",
 }
 _TOKEN_GRPO_EXTRA_FIELDS = {"mask_key", "kl_estimator"}
+_TOKEN_GRPO_MULTISEGMENT_EXTRA_FIELDS = {
+    *_TOKEN_GRPO_EXTRA_FIELDS,
+    "segment_weights",
+    "train_segments",
+}
 _DPO_FIELDS = {"beta", "sft_weight"}
 
 
@@ -328,6 +333,17 @@ _TOKEN_GRPO_REQUIRED: tuple[str, ...] = (
     "rollout.max_text_length",
 )
 
+_TOKEN_GRPO_MULTISEGMENT_REQUIRED: tuple[str, ...] = (
+    *_TOKEN_GRPO_REQUIRED,
+    "rollout.max_reflect_len",
+    "rollout.final_image_policy",
+    "sampling.max_reflect_len",
+    "sampling.r1.final_image_policy",
+    "sampling.r1.train_segments",
+    "algorithm.segment_weights",
+    "algorithm.train_segments",
+)
+
 # Diffusion-DPO extra fields per the patch §"Wan-DPO" (lines 322-344).
 # `data.max_train_samples` is intentionally excluded here — DPO YAML opts in
 # to ``null``, so callers must use ``optional_none`` instead of ``require``.
@@ -385,6 +401,7 @@ def validate_training_config(cfg: DictConfig) -> None:
       3. Algorithm-specific dispatch on ``algorithm.kind``:
             - ``grpo``         -> diffusion rollout fields
             - ``token_grpo``   -> AR rollout fields (+ NextStep noise_level)
+            - ``token_grpo_multisegment`` -> Janus-Pro-R1 multi-segment AR fields
             - ``diffusion_dpo``-> DPO actor/data/trainer fields
       4. No filesystem-existence checks happen here (per patch line 390).
     """
@@ -420,6 +437,22 @@ def validate_training_config(cfg: DictConfig) -> None:
             family = cfg.model.family
         if family == "nextstep_1":
             _require_path_present(cfg, "rollout.noise_level")
+    elif kind == "token_grpo_multisegment":
+        for path in _TOKEN_GRPO_MULTISEGMENT_REQUIRED:
+            _require_path_present(cfg, path)
+        family = require(cfg, "model.family")
+        if str(family) != "janus_pro":
+            raise ValueError("token_grpo_multisegment currently requires model.family=janus_pro")
+        final_image_policy = str(require(cfg, "rollout.final_image_policy"))
+        if final_image_policy not in {"always_generate", "use_selfcheck"}:
+            raise ValueError(
+                "rollout.final_image_policy must be 'always_generate' or 'use_selfcheck'",
+            )
+        sampling_final_policy = str(require(cfg, "sampling.r1.final_image_policy"))
+        if sampling_final_policy != final_image_policy:
+            raise ValueError(
+                "sampling.r1.final_image_policy must match rollout.final_image_policy",
+            )
     elif kind == "diffusion_dpo":
         for path in _DPO_REQUIRED:
             _require_path_present(cfg, path)
@@ -438,10 +471,10 @@ def _resolve_algorithm_kind(algo: DictConfig) -> str:
     if kind is None:
         raise ValueError("algorithm.kind required")
     kind = str(kind)
-    if kind not in {"grpo", "token_grpo", "diffusion_dpo"}:
+    if kind not in {"grpo", "token_grpo", "token_grpo_multisegment", "diffusion_dpo"}:
         raise ValueError(
             f"unknown algorithm.kind={kind!r}; "
-            f"expected grpo / token_grpo / diffusion_dpo",
+            f"expected grpo / token_grpo / token_grpo_multisegment / diffusion_dpo",
         )
     return kind
 
@@ -520,15 +553,22 @@ def build_algorithm_config(cfg: DictConfig):
     raw = OmegaConf.to_container(algo, resolve=True) or {}
 
     if kind == "grpo":
-        from vrl.algorithms.grpo import GRPOConfig
+        from vrl.algorithms.grpo.continuous import GRPOConfig
 
         return GRPOConfig(**{k: v for k, v in raw.items() if k in _GRPO_FIELDS})
 
     if kind == "token_grpo":
-        from vrl.algorithms.grpo_token import TokenGRPOConfig
-
         allowed = _GRPO_FIELDS | _TOKEN_GRPO_EXTRA_FIELDS
+        from vrl.algorithms.grpo.token import TokenGRPOConfig
+
         return TokenGRPOConfig(**{k: v for k, v in raw.items() if k in allowed})
+
+    if kind == "token_grpo_multisegment":
+        allowed = _GRPO_FIELDS | _TOKEN_GRPO_MULTISEGMENT_EXTRA_FIELDS
+        filtered = {k: v for k, v in raw.items() if k in allowed}
+        from vrl.algorithms.grpo.multisegment import MultiSegmentTokenGRPOConfig
+
+        return MultiSegmentTokenGRPOConfig(**filtered)
 
     if kind == "diffusion_dpo":
         from vrl.algorithms.dpo import DiffusionDPOConfig
