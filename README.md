@@ -46,6 +46,67 @@ Example:
 python -m vrl.scripts.train --config experiment/sd3_5_ocr_grpo
 ```
 
+## SD3.5 OCR GRPO Recipe
+
+`experiment/sd3_5_ocr_grpo` is the canonical SD3.5 OCR training recipe. It is
+configured for the `stabilityai/stable-diffusion-3.5-medium` checkpoint with
+LoRA training and a Ray-backed single-GPU rollout worker.
+
+Run the recipe:
+
+```bash
+python -m vrl.scripts.train --config experiment/sd3_5_ocr_grpo
+```
+
+The recipe composes these reusable config layers:
+
+- `configs/model/sd3_5/sd3_5.yaml`: SD3.5 Medium checkpoint, LoRA target
+  modules, and compile settings.
+- `configs/sampling/image_512.yaml`: 512x512 image sampling, 10 training
+  denoise steps, CFG 4.5.
+- `configs/base/rollout/flow_matching_sde.yaml`: diffusion rollout and SDE
+  trajectory settings.
+- `configs/base/distributed/ray_rollout_single_gpu.yaml`: one Ray rollout
+  worker on one visible GPU.
+
+Important defaults in `configs/experiment/sd3_5_ocr_grpo.yaml`:
+
+- OCR-only reward: `reward.components.ocr=1.0`.
+- Flow-GRPO parity rollout shape: `rollout.n=8`,
+  `rollout.rollout_batch_size=8`, and `rollout.sample_batch_size=8`.
+- Flow-GRPO parity optimizer rhythm:
+  `actor.gradient_accumulation_steps=4`, which gives two optimizer updates per
+  outer rollout epoch with eight prompt groups.
+- Fixed evaluation is enabled every 60 epochs on `datasets/ocr/test.txt` with
+  `eval.num_steps=40`, `eval.max_prompts=16`, `eval.seed=20260504`, and
+  `eval.use_ema=true`.
+- Training outputs go to `outputs/sd3_5_ocr_grpo` by default.
+
+Training writes:
+
+- `metrics.csv`: on-policy training rollout metrics.
+- `eval_metrics.csv`: fixed OCR eval metrics.
+- `eval_epoch_*/contact_sheet.png`: fixed eval contact sheets for visual
+  inspection.
+- `checkpoint-*` and `checkpoint-final`: resumable trainer checkpoints plus
+  exported LoRA artifacts.
+
+Use a fresh output directory for a new run:
+
+```bash
+python -m vrl.scripts.train \
+  --config experiment/sd3_5_ocr_grpo \
+  trainer.output_dir=outputs/sd3_5_ocr_grpo_run_001
+```
+
+Resume from a checkpoint:
+
+```bash
+python -m vrl.scripts.train \
+  --config experiment/sd3_5_ocr_grpo \
+  trainer.resume_from=outputs/sd3_5_ocr_grpo/checkpoint-60
+```
+
 Use overrides for one-off reward/model/data changes:
 
 ```bash
