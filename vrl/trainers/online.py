@@ -18,6 +18,12 @@ from vrl.algorithms.base import Algorithm
 from vrl.algorithms.types import TrainStepMetrics
 from vrl.rollouts.batch import RolloutBatch, stack_batches
 from vrl.trainers.base import Trainer
+from vrl.trainers.diagnostics import (
+    parameter_state_summary,
+    tensor_stats,
+    trainable_state_digest,
+    write_jsonl,
+)
 from vrl.trainers.ema import EMAModuleWrapper
 from vrl.trainers.types import TrainerConfig, TrainState
 from vrl.trainers.weight_sync import WeightSyncer
@@ -121,8 +127,14 @@ def _resolve_mixed_precision(config: TrainerConfig) -> str:
     return precision
 
 
-def _get_autocast(config: TrainerConfig, device: torch.device) -> Any:
+def _get_autocast(
+    config: TrainerConfig,
+    device: torch.device,
+    model: Any | None = None,
+) -> Any:
     """Return the configured autocast context manager."""
+    if bool(getattr(model, "disable_train_autocast", False)):
+        return contextlib.nullcontext()
     precision = _resolve_mixed_precision(config)
     if precision == "bf16":
         return torch.amp.autocast(str(device), dtype=torch.bfloat16)
@@ -467,6 +479,7 @@ class OnlineTrainer(Trainer):
         ema = self._ensure_ema()
 
         timer = PhaseTimer(enabled=cfg.profile)
+        runtime_debug_collect = bool(cfg.debug.first_step and self.state.step == 0)
 
         await self._ensure_rollout_weights_initialized()
 
@@ -491,9 +504,12 @@ class OnlineTrainer(Trainer):
             async def flush_pending_prompts() -> None:
                 if not pending_prompts:
                     return
+                collect_kwargs: dict[str, Any] = {"group_size": cfg.n}
+                if runtime_debug_collect:
+                    collect_kwargs["runtime_debug"] = True
                 b = await self.collector.collect(
                     list(pending_prompts),
-                    group_size=cfg.n,
+                    **collect_kwargs,
                 )
                 _remap_group_ids_(b, pending_indices)
                 all_batches.extend(_split_batch_by_group(b))
@@ -511,6 +527,8 @@ class OnlineTrainer(Trainer):
                         "request_overrides": item.request_overrides,
                         "sample_metadata": item.metadata,
                     }
+                    if runtime_debug_collect:
+                        collect_kwargs["runtime_debug"] = True
                     # Group-batched collect: one call produces cfg.n samples.
                     b = await self.collector.collect(
                         [prompt_str],
@@ -631,7 +649,7 @@ class OnlineTrainer(Trainer):
 
         # 3. Train loop — gradient accumulation across per-prompt batches.
         self.model.train()
-        autocast_ctx = _get_autocast(cfg, self.device)
+        autocast_ctx = _get_autocast(cfg, self.device, model=self.model)
         agg_metrics: dict[str, list[float]] = defaultdict(list)
 
         # If every batch was filtered out (all dead), skip training this step.
@@ -685,6 +703,7 @@ class OnlineTrainer(Trainer):
 
         # Debug first step: compare old vs fresh log-probs on first timestep
         # (using first filtered batch so memory footprint is bounded).
+        first_step_debug_record: dict[str, Any] | None = None
         if cfg.debug.first_step and self.state.step == 0:
             _dbg_batch = filtered_batches[0]
             _dbg_old_lp = _dbg_batch.extras["log_probs"]
@@ -698,6 +717,7 @@ class OnlineTrainer(Trainer):
                 )
             _old_lp_0 = _dbg_old_lp[:, 0] if _dbg_old_lp.ndim > 1 else _dbg_old_lp
             _diff = (_dbg_signals.log_prob - _old_lp_0).abs()
+            _ratio = torch.exp(_dbg_signals.log_prob - _old_lp_0)
             _old_lp_first = _old_lp_0.reshape(-1)[0]
             _fresh_lp_first = _dbg_signals.log_prob.reshape(-1)[0]
             logger.info(
@@ -708,6 +728,21 @@ class OnlineTrainer(Trainer):
                 _old_lp_first.item(),
                 _fresh_lp_first.item(),
             )
+            first_step_debug_record = {
+                "event": "first_step_logprob_parity",
+                "trainer_step": int(self.state.step),
+                "global_step": int(self.state.global_step),
+                "device": str(self.device),
+                "mixed_precision": _resolve_mixed_precision(cfg),
+                "autocast_enabled": _resolve_mixed_precision(cfg) != "no",
+                "old_log_prob": tensor_stats(_old_lp_0),
+                "fresh_log_prob": tensor_stats(_dbg_signals.log_prob),
+                "abs_diff": tensor_stats(_diff),
+                "ratio": tensor_stats(_ratio),
+                "driver_trainable_before_step": trainable_state_digest(self.model),
+                "driver_parameter_state_before_step": parameter_state_summary(self.model),
+                "runtime_debug": _dbg_batch.context.get("runtime_debug"),
+            }
 
         if cfg.debug.grad_split:
             import sys
@@ -938,6 +973,19 @@ class OnlineTrainer(Trainer):
         if self.weight_syncer is not None:
             state_dict = self.model.state_dict()
             await self.weight_syncer.push(state_dict)
+
+        if first_step_debug_record is not None:
+            first_step_debug_record["driver_trainable_after_step"] = (
+                trainable_state_digest(self.model)
+            )
+            first_step_debug_record["driver_parameter_state_after_step"] = (
+                parameter_state_summary(self.model)
+            )
+            first_step_debug_record["post_step_global_step"] = int(self.state.global_step)
+            write_jsonl(
+                f"{cfg.output_dir}/training_debug.jsonl",
+                first_step_debug_record,
+            )
 
         return metrics
 

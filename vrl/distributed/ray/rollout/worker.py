@@ -74,19 +74,33 @@ class RayRolloutWorker:
     def current_policy_version(self) -> int | None:
         return self._policy_version
 
-    def worker_metadata(self) -> dict[str, Any]:
+    def worker_metadata(self, *, runtime_debug: bool = False) -> dict[str, Any]:
         try:
             node_ip = current_node_ip()
             gpu_ids = current_gpu_ids()
         except Exception:
             node_ip = "local"
             gpu_ids = []
-        return {
+        metadata = {
             "worker_id": self.worker_id,
             "node_ip": node_ip,
             "gpu_ids": gpu_ids,
             "policy_version": self._policy_version,
         }
+        if runtime_debug:
+            metadata["runtime_debug"] = True
+            metadata["executor_type"] = type(self.executor).__name__ if self.executor else None
+            policy = getattr(self.executor, "model", None) if self.executor is not None else None
+            if policy is not None:
+                from vrl.trainers.diagnostics import (
+                    parameter_state_summary,
+                    trainable_state_digest,
+                )
+
+                metadata["trainable_state"] = trainable_state_digest(policy)
+                metadata["parameter_state"] = parameter_state_summary(policy)
+                metadata["policy_type"] = type(policy).__name__
+        return metadata
 
     def execute_chunk(
         self,
@@ -94,6 +108,7 @@ class RayRolloutWorker:
         chunk: MicroBatchPlan,
     ) -> RayChunkResult:
         self.load_policy()
+        runtime_debug = bool(request.metadata.get("_runtime_debug"))
         expected_version = request.policy_version
         if expected_version is not None and self._policy_version != expected_version:
             return RayChunkResult(
@@ -101,7 +116,7 @@ class RayRolloutWorker:
                 worker_id=self.worker_id,
                 chunk=chunk,
                 output=None,
-                metrics=self.worker_metadata(),
+                metrics=self.worker_metadata(runtime_debug=runtime_debug),
                 policy_version=self._policy_version,
                 error=(
                     "policy_version mismatch: "
@@ -116,7 +131,7 @@ class RayRolloutWorker:
                 worker_id=self.worker_id,
                 chunk=chunk,
                 output=_to_cpu(output),
-                metrics=self.worker_metadata(),
+                metrics=self.worker_metadata(runtime_debug=runtime_debug),
                 policy_version=self._policy_version,
             )
         except Exception as exc:
@@ -125,7 +140,7 @@ class RayRolloutWorker:
                 worker_id=self.worker_id,
                 chunk=chunk,
                 output=None,
-                metrics=self.worker_metadata(),
+                metrics=self.worker_metadata(runtime_debug=runtime_debug),
                 policy_version=self._policy_version,
                 error=str(exc),
             )

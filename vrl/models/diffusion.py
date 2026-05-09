@@ -79,6 +79,9 @@ class DiffusionPolicy(nn.Module, ABC):
     """Single protocol for visual-generation diffusion families on the RL path."""
 
     family: str = "diffusion"
+    # Some upstream diffusion-RL recipes intentionally keep LoRA replay outside
+    # autocast. The trainer reads this flag when choosing the replay context.
+    disable_train_autocast: bool = False
 
     async def load(self) -> None:
         """Load heavy modules. Default no-op for adapters constructed eagerly."""

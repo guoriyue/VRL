@@ -23,9 +23,9 @@ from vrl.rollouts.runtime.launch_inputs import (
     ("experiment", "family", "expected_task", "expected_gatherer"),
     [
         ("sd3_5_ocr_grpo", "sd3_5", "t2i", DiffusionChunkGatherer),
-        ("wan_2_1_1_3b_grpo", "wan_2_1", "t2v", DiffusionChunkGatherer),
+        ("wan_2_1_1_3b_ocr_grpo", "wan_2_1", "t2v", DiffusionChunkGatherer),
         ("cosmos_predict2_2b_grpo", "cosmos", "v2w", DiffusionChunkGatherer),
-        ("janus_pro_1b_grpo", "janus_pro", "ar_t2i", JanusProChunkGatherer),
+        ("janus_pro_1b_ocr_grpo", "janus_pro", "ar_t2i", JanusProChunkGatherer),
         ("nextstep_1_ocr_grpo", "nextstep_1", "ar_t2i", NextStep1ChunkGatherer),
     ],
 )

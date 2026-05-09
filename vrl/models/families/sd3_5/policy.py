@@ -87,10 +87,17 @@ class SD3_5Policy(DiffusionPolicy):
         """Load the diffusers SD3.5 pipeline + freeze non-trainable modules."""
         from diffusers import StableDiffusion3Pipeline
 
+        model_dtype = _resolve_torch_dtype(spec.dtype)
+        load_kwargs: dict[str, Any] = {}
+        if model_dtype != torch.float32:
+            load_kwargs["torch_dtype"] = model_dtype
         pipeline = StableDiffusion3Pipeline.from_pretrained(
-            spec.model_name_or_path, torch_dtype=spec.dtype,
+            spec.model_name_or_path,
+            **load_kwargs,
         )
         pipeline.vae.requires_grad_(False)
+        extra = getattr(spec, "extra", {}) or {}
+        frozen_dtype = _resolve_torch_dtype(extra.get("frozen_dtype", model_dtype))
         for enc in (
             pipeline.text_encoder,
             pipeline.text_encoder_2,
@@ -98,7 +105,7 @@ class SD3_5Policy(DiffusionPolicy):
         ):
             if enc is not None:
                 enc.requires_grad_(False)
-                enc.to(spec.device, dtype=spec.dtype)
+                enc.to(spec.device, dtype=frozen_dtype)
         pipeline.vae.to(spec.device, dtype=torch.float32)
         return cls(pipeline=pipeline, device=spec.device)
 
@@ -107,7 +114,7 @@ class SD3_5Policy(DiffusionPolicy):
         from peft import LoraConfig, PeftModel, get_peft_model
 
         self.pipeline.transformer.requires_grad_(False)
-        self.pipeline.transformer.to(self.device)
+        self.pipeline.transformer.to(self.device, dtype=_resolve_torch_dtype(spec.dtype))
 
         if spec.lora_path:
             transformer = PeftModel.from_pretrained(
@@ -387,3 +394,23 @@ class SD3_5Policy(DiffusionPolicy):
         image = pipe.vae.decode(x, return_dict=False)[0]
         # postprocess to [0, 1] float tensor [B, C, H, W]
         return pipe.image_processor.postprocess(image, output_type="pt")
+
+
+def _resolve_torch_dtype(value: Any) -> torch.dtype:
+    if isinstance(value, torch.dtype):
+        return value
+    key = str(value).removeprefix("torch.").lower()
+    aliases = {
+        "bf16": torch.bfloat16,
+        "bfloat16": torch.bfloat16,
+        "fp16": torch.float16,
+        "float16": torch.float16,
+        "half": torch.float16,
+        "fp32": torch.float32,
+        "float32": torch.float32,
+        "float": torch.float32,
+    }
+    try:
+        return aliases[key]
+    except KeyError as exc:
+        raise ValueError(f"unsupported torch dtype: {value!r}") from exc

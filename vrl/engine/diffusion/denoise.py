@@ -104,11 +104,7 @@ def run_diffusion_denoise_chunk(
     transformer_dtype = (
         prompt_embeds.dtype if isinstance(prompt_embeds, torch.Tensor) else state.latents.dtype
     )
-    autocast_ctx = (
-        torch.amp.autocast("cuda", dtype=transformer_dtype)
-        if torch.cuda.is_available()
-        else _NullCtx()
-    )
+    autocast_ctx = _autocast_for_dtype(state.latents.device, transformer_dtype)
 
     with autocast_ctx, torch.no_grad():
         for step_idx in range(len(state.timesteps)):
@@ -255,6 +251,16 @@ def _build_generator(
     if same_latent:
         raise ValueError("same_latent=True requires an explicit sampling.seed")
     return None
+
+
+def _autocast_for_dtype(device: Any, dtype: Any) -> Any:
+    """Use autocast only for CUDA half-precision rollout forwards."""
+
+    if getattr(device, "type", None) != "cuda":
+        return _NullCtx()
+    if dtype not in (torch.float16, torch.bfloat16):
+        return _NullCtx()
+    return torch.amp.autocast("cuda", dtype=dtype)
 
 
 def _concat_training_extras(chunks: list[dict[str, Any]]) -> dict[str, Any]:

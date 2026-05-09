@@ -46,6 +46,10 @@ def extract_sd3_5_runtime_spec(cfg: Any, device: Any, weight_dtype: Any) -> Runt
         }
 
     extra: dict[str, Any] = {}
+    if _dtype_name(weight_dtype) == "float32":
+        # Match Flow-GRPO's SD3 LoRA memory contract: keep the trainable
+        # denoiser in fp32, but keep frozen text encoders in fp16.
+        extra["frozen_dtype"] = "float16"
     if cfg.model.torch_compile.enable:
         extra["torch_compile"] = {
             "enable": True,
@@ -121,3 +125,7 @@ def build_sd3_5_runtime_bundle_from_cfg(
     """Outer convenience: whole-cfg → spec → bundle."""
     spec = extract_sd3_5_runtime_spec(cfg, device, weight_dtype)
     return build_sd3_5_runtime_bundle(spec)
+
+
+def _dtype_name(value: Any) -> str:
+    return str(value).removeprefix("torch.").lower()

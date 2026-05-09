@@ -27,6 +27,33 @@ from vrl.trainers.checkpointing import (
 logger = logging.getLogger(__name__)
 
 
+def _resolve_weight_dtype(trainer_config: Any, torch: Any) -> Any:
+    """Resolve model load dtype from the trainer precision contract."""
+
+    precision = str(trainer_config.mixed_precision or "").lower().strip()
+    aliases = {
+        "none": "no",
+        "off": "no",
+        "fp32": "no",
+        "float32": "no",
+        "float16": "fp16",
+        "bfloat16": "bf16",
+    }
+    precision = aliases.get(precision, precision)
+    if not precision:
+        precision = "bf16" if trainer_config.bf16 else "no"
+    if precision == "no":
+        return torch.float32
+    if precision == "bf16":
+        return torch.bfloat16
+    if precision == "fp16":
+        return torch.float16
+    raise ValueError(
+        "actor.mixed_precision must be one of 'no', 'fp16', or 'bf16', "
+        f"got {trainer_config.mixed_precision!r}",
+    )
+
+
 async def train_sd3_5_grpo(cfg: DictConfig) -> None:
     """Run SD 3.5 GRPO training driven by a merged YAML config."""
     import os
@@ -68,7 +95,7 @@ async def train_sd3_5_grpo(cfg: DictConfig) -> None:
     )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    weight_dtype = torch.bfloat16 if trainer_config.bf16 else torch.float16
+    weight_dtype = _resolve_weight_dtype(trainer_config, torch)
     torch.manual_seed(int(trainer_config.seed))
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(int(trainer_config.seed))
@@ -379,6 +406,10 @@ async def _run_fixed_eval(
     from omegaconf import OmegaConf
 
     from vrl.config.loader import require
+    from vrl.trainers.online import (
+        _collector_runtime_requires_driver_model_offload,
+        _move_model_to_device,
+    )
 
     eval_seed = int(
         OmegaConf.select(
@@ -395,6 +426,13 @@ async def _run_fixed_eval(
             await trainer.weight_syncer.push(trainer.model.state_dict())
     else:
         await trainer._ensure_rollout_weights_initialized()
+
+    offload_driver_model_for_eval = (
+        trainer.device.type == "cuda"
+        and _collector_runtime_requires_driver_model_offload(collector)
+    )
+    if offload_driver_model_for_eval:
+        _move_model_to_device(trainer.model, "cpu")
 
     batches = []
     reward_fn.reset_components()
@@ -427,6 +465,8 @@ async def _run_fixed_eval(
         release = getattr(collector, "release_runtime_memory", None)
         if callable(release):
             await release()
+        if offload_driver_model_for_eval:
+            _move_model_to_device(trainer.model, trainer.device)
         if ema is not None:
             ema.copy_temp_to(trainable)
             if trainer.weight_syncer is not None:

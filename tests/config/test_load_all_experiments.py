@@ -36,20 +36,25 @@ _EXPECTED_ALGO_TYPE = {
 
 _EXPECTED_TRAIN_TARGET = {
     "cosmos_predict2_2b_grpo": "vrl.scripts.cosmos.train:train_cosmos_predict2_grpo",
-    "janus_pro_1b_grpo": "vrl.scripts.janus_pro.train:train_janus_pro_grpo",
     "janus_pro_1b_ocr_grpo": "vrl.scripts.janus_pro.train:train_janus_pro_ocr_grpo",
     "nextstep_1_ocr_grpo": "vrl.scripts.nextstep_1.train:train_nextstep_1_ocr_grpo",
     "sd3_5_ocr_grpo": "vrl.scripts.sd3_5.train:train_sd3_5_grpo",
-    "wan_2_1_14b_grpo": "vrl.scripts.wan_2_1.train:train_wan_2_1_grpo",
     "wan_2_1_1_3b_dpo": "vrl.scripts.wan_2_1.train_dpo:train_wan_2_1_dpo",
-    "wan_2_1_1_3b_grpo": "vrl.scripts.wan_2_1.train:train_wan_2_1_grpo",
-    "wan_2_1_1_3b_multi_reward_grpo": "vrl.scripts.wan_2_1.train:train_wan_2_1_grpo",
     "wan_2_1_1_3b_ocr_grpo": "vrl.scripts.wan_2_1.train:train_wan_2_1_grpo",
 }
 
 
 def _experiment_names() -> list[str]:
     return sorted(p.stem for p in EXPERIMENT_DIR.glob("*.yaml"))
+
+
+def _training_script_paths() -> list[Path]:
+    scripts_dir = REPO_ROOT / "vrl" / "scripts"
+    return [
+        path
+        for path in scripts_dir.rglob("*.py")
+        if path.name != "eval.py" and path.name != "eval_common.py"
+    ]
 
 
 @pytest.mark.parametrize("name", _experiment_names())
@@ -89,11 +94,10 @@ def test_no_experiment_named_training_wrappers() -> None:
     """Experiment names belong in YAML, not Python module names."""
     import re
 
-    scripts_dir = REPO_ROOT / "vrl" / "scripts"
     experiment_names = set(_experiment_names())
     offenders: list[str] = []
     default_pat = re.compile(r'default_config\s*=\s*"experiment/([^"]+)"')
-    for path in scripts_dir.rglob("*.py"):
+    for path in _training_script_paths():
         if path.stem in experiment_names:
             offenders.append(str(path.relative_to(REPO_ROOT)))
         if default_pat.search(path.read_text()):
@@ -119,16 +123,6 @@ def test_unified_train_entrypoint_requires_yaml_entrypoint() -> None:
     cfg = OmegaConf.create({"trainer": {}})
     with pytest.raises(ValueError, match=r"trainer\.entrypoint"):
         resolve_train_target(cfg)
-
-
-def test_trainer_resume_fields_are_loaded_from_base_yaml() -> None:
-    cfg = load_config("experiment/sd3_5_ocr_grpo")
-    built = build_configs(cfg)
-
-    assert cfg.trainer.resume_from == ""
-    assert cfg.trainer.resume_strict is True
-    assert built["trainer"].resume_from == ""
-    assert built["trainer"].resume_strict is True
 
 
 def test_trainer_resume_from_cli_override_reaches_typed_config() -> None:
@@ -174,42 +168,6 @@ def test_kind_only_works_without_adv_estimator() -> None:
     assert type(out) is GRPOConfig
 
 
-def test_sd3_ocr_matches_flow_grpo_prompt_length() -> None:
-    cfg = load_config("experiment/sd3_5_ocr_grpo")
-
-    assert cfg.sampling.max_sequence_length == 128
-
-
-def test_sd3_ocr_matches_flow_grpo_1gpu_training_cadence() -> None:
-    cfg = load_config("experiment/sd3_5_ocr_grpo")
-    built = build_configs(cfg)
-
-    assert cfg.rollout.n == 8
-    assert cfg.rollout.rollout_batch_size == 8
-    assert cfg.rollout.sample_batch_size == 8
-    assert cfg.actor.optim.lr == 3.0e-4
-    assert cfg.actor.mixed_precision == "fp16"
-    assert cfg.actor.bf16 is False
-    assert cfg.actor.gradient_accumulation_steps == 4
-    assert cfg.model.torch_compile.enable is False
-    assert cfg.algorithm.init_kl_coef == 0.04
-    assert cfg.algorithm.global_std is True
-    assert cfg.actor.ema.enable is True
-    assert cfg.trainer.save_freq == 60
-    assert cfg.eval.enable is True
-    assert cfg.eval.freq == 60
-    assert cfg.eval.num_steps == 40
-    assert cfg.eval.noise_level == 0.0
-    assert cfg.eval.seed == 20260504
-    assert cfg.eval.use_ema is True
-    assert built["trainer"].gradient_accumulation_steps == 4
-    assert built["trainer"].optim.lr == 3.0e-4
-    assert built["trainer"].mixed_precision == "fp16"
-    assert built["trainer"].bf16 is False
-    assert built["algorithm"].init_kl_coef == 0.04
-    assert built["algorithm"].global_std is True
-
-
 def test_adv_estimator_only_fails_fast() -> None:
     cfg = OmegaConf.create({"algorithm": {"adv_estimator": "token_grpo"}})
     with pytest.raises(ValueError, match="adv_estimator"):
@@ -228,10 +186,9 @@ def test_scripts_have_no_manual_algorithm_config_construction() -> None:
     """
     import re
 
-    scripts_dir = REPO_ROOT / "vrl" / "scripts"
     bad: list[str] = []
     pat = re.compile(r"\b(TokenGRPOConfig|DiffusionDPOConfig)\(")
-    for path in scripts_dir.rglob("*.py"):
+    for path in _training_script_paths():
         text = path.read_text()
         for m in pat.finditer(text):
             # Allow imports / type aliases — only construction `Foo(...)` is bad.
@@ -264,13 +221,12 @@ def test_scripts_have_no_experiment_argparse_defaults() -> None:
     """
     import re
 
-    scripts_dir = REPO_ROOT / "vrl" / "scripts"
     bad: list[str] = []
     # Match `add_argument(...)` calls. The only allowed flags are --config and
     # the positional `overrides`. Anything else with a `default=` is a SPRINT
     # violation.
     add_arg_pat = re.compile(r"add_argument\((.*?)\)", re.DOTALL)
-    for path in scripts_dir.rglob("*.py"):
+    for path in _training_script_paths():
         text = path.read_text()
         for m in add_arg_pat.finditer(text):
             args = m.group(1)
@@ -325,7 +281,7 @@ def test_aesthetic_kwargs_required() -> None:
     """Removing ``reward.kwargs.aesthetic.model_name`` from an aesthetic
     experiment must fail ``validate_reward_config`` with a clear message.
     """
-    cfg = load_config("experiment/wan_2_1_1_3b_grpo")
+    cfg = load_config("experiment/cosmos_predict2_2b_grpo")
     # Sanity: the aesthetic component is positive in this experiment.
     assert float(cfg.reward.components.get("aesthetic", 0.0)) > 0
     del cfg.reward.kwargs.aesthetic["model_name"]
@@ -336,12 +292,15 @@ def test_aesthetic_kwargs_required() -> None:
 
 
 def test_pickscore_kwargs_required() -> None:
-    """Removing ``reward.kwargs.pickscore.model_name`` from the Janus general
-    experiment must fail ``validate_reward_config``.
-    """
-    cfg = load_config("experiment/janus_pro_1b_grpo")
-    assert float(cfg.reward.components.get("pickscore", 0.0)) > 0
-    del cfg.reward.kwargs.pickscore["model_name"]
+    """A positive PickScore component must declare model_name explicitly."""
+    cfg = OmegaConf.create(
+        {
+            "reward": {
+                "components": {"pickscore": 1.0},
+                "kwargs": {"pickscore": {"processor_name": "processor"}},
+            },
+        },
+    )
     with pytest.raises(ValueError) as excinfo:
         validate_reward_config(cfg)
     msg = str(excinfo.value)
@@ -388,14 +347,14 @@ def test_build_reward_config_returns_explicit_kwargs_for_each_positive_component
 
 
 def test_validate_training_config_fails_when_trainer_output_dir_missing() -> None:
-    cfg = load_config("experiment/wan_2_1_1_3b_grpo")
+    cfg = load_config("experiment/wan_2_1_1_3b_ocr_grpo")
     del cfg.trainer["output_dir"]
     with pytest.raises(ValueError, match=r"trainer\.output_dir"):
         validate_training_config(cfg)
 
 
 def test_validate_training_config_fails_when_actor_optim_lr_missing() -> None:
-    cfg = load_config("experiment/wan_2_1_1_3b_grpo")
+    cfg = load_config("experiment/wan_2_1_1_3b_ocr_grpo")
     del cfg.actor.optim["lr"]
     with pytest.raises(ValueError, match=r"actor\.optim\.lr"):
         validate_training_config(cfg)

@@ -77,6 +77,8 @@ class RolloutEngineRequestBuilder:
         request_metadata = dict(metadata)
         if self.metadata_key is not None:
             request_metadata = {self.metadata_key: dict(metadata)}
+        if kwargs.get("runtime_debug"):
+            request_metadata["_runtime_debug"] = True
 
         request = GenerationRequest(
             request_id=f"{self.request_prefix}-{uuid.uuid4()}",

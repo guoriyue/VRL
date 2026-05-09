@@ -53,7 +53,10 @@ class DiffusionRolloutPacker:
         actions = env_extra["actions"]
         kl_tensor = env_extra["kl"]
         training_extras: dict[str, Any] = env_extra["training_extras"]
-        rollout_context: dict[str, Any] = env_extra["context"]
+        rollout_context: dict[str, Any] = dict(env_extra["context"])
+        runtime_debug = output.extra.get("runtime_debug")
+        if runtime_debug is not None:
+            rollout_context["runtime_debug"] = runtime_debug
         video = env_extra["videos"]
 
         if observations is None or actions is None or log_probs is None:

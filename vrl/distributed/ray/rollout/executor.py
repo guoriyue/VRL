@@ -93,12 +93,18 @@ class DistributedRolloutExecutor:
             chunk_outputs.append(result.output)
 
         sample_specs = self.id_factory.build_sample_specs(request)
-        return gather_pipeline_chunks(
+        output = gather_pipeline_chunks(
             self.gatherer,
             request,
             sample_specs,
             chunk_outputs,
         )
+        runtime_debug = [
+            result.metrics for result in results if result.metrics.get("runtime_debug")
+        ]
+        if runtime_debug:
+            output.extra["runtime_debug"] = {"ray_chunks": runtime_debug}
+        return output
 
     async def _run_remote_jobs(
         self,
