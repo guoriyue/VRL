@@ -62,7 +62,16 @@ class TokenGRPO(GRPO):
         denom = mask.sum().clamp_min(1.0)
         policy_loss = (per_token_loss * mask).sum() / denom
 
-        if cfg.init_kl_coef > 0 and signals.ref_log_prob is not None:
+        if cfg.init_kl_coef > 0:
+            if signals.ref_log_prob is None:
+                raise RuntimeError(
+                    f"TokenGRPOConfig.init_kl_coef={cfg.init_kl_coef} > 0 but "
+                    "signals.ref_log_prob is None. Check: (1) OnlineTrainer "
+                    "is passing SignalRequest(need_ref=True), (2) the AR evaluator "
+                    "implements the reference log-prob path, and (3) either a "
+                    "frozen ref_model is passed or the train model has a real "
+                    "adapter that can be disabled for the reference pass."
+                )
             ref_lp: torch.Tensor = signals.ref_log_prob
             log_ratio = new_lp - ref_lp
             if cfg.kl_estimator == "k3":

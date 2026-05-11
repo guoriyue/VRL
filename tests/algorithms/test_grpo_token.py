@@ -119,6 +119,17 @@ class TestMask:
 
 
 class TestKL:
+    def test_kl_enabled_requires_ref_logprob(self) -> None:
+        new_lp = torch.zeros(1, 2)
+        algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=1.0))
+
+        with pytest.raises(RuntimeError, match="ref_log_prob is None"):
+            algo.compute_signal_loss(
+                _signals(new_lp, ref_lp=None),
+                torch.zeros(1),
+                new_lp,
+            )
+
     def test_k1_signed(self) -> None:
         new_lp = torch.zeros(1, 4) + 0.5
         ref_lp = torch.zeros(1, 4)
