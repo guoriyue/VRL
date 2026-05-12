@@ -123,6 +123,18 @@ def test_trainer_resume_from_cli_override_reaches_typed_config() -> None:
     assert built["trainer"].resume_from == "/tmp/checkpoint-10"
 
 
+def test_load_config_supports_defaults_override_for_distributed_preset() -> None:
+    cfg = load_config(
+        "experiment/sd3_5_ocr_grpo",
+        overrides=["/base/distributed=ray_rollout"],
+    )
+
+    assert cfg.distributed.resources.allow_overlap is False
+    assert cfg.distributed.resources.rollout.num_gpus == "auto"
+    assert cfg.distributed.rollout.placement_strategy == "SPREAD"
+    assert "base/distributed" not in cfg
+
+
 def test_unified_train_entrypoint_rejects_empty_yaml_entrypoint() -> None:
     from vrl.scripts.train import resolve_train_target
 

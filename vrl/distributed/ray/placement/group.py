@@ -8,6 +8,7 @@ from typing import Any
 
 from vrl.distributed.ray.dependencies import require_ray
 from vrl.distributed.ray.placement.network import sort_node_gpu_key
+from vrl.distributed.resources import ResolvedDistributedResources
 from vrl.rollouts.runtime.config import RolloutBackendConfig
 
 logger = logging.getLogger(__name__)
@@ -19,21 +20,37 @@ class RayPlacement:
 
     placement_group: Any
     ordered_bundle_indices: list[int]
+    trainer_bundle_indices: list[int]
+    trainer_reservation_actors: list[Any]
+    trainer_gpu_ids: tuple[int, ...]
+    rollout_gpu_ids: tuple[int, ...]
+
+    @property
+    def ordered_rollout_bundle_indices(self) -> list[int]:
+        return self.ordered_bundle_indices
 
 
 class _InfoActor:
-    def get_ip_and_gpu_id(self) -> tuple[str, int]:
+    def get_ip_and_gpu_ids(self) -> tuple[str, tuple[int, ...]]:
         ray = require_ray()
-        gpu_ids = ray.get_gpu_ids()
-        gpu_id = int(gpu_ids[0]) if gpu_ids else -1
-        return str(ray.util.get_node_ip_address()), gpu_id
+        gpu_ids: list[int] = []
+        for gpu_id in ray.get_gpu_ids():
+            try:
+                gpu_ids.append(int(gpu_id))
+            except (TypeError, ValueError):
+                continue
+        return str(ray.util.get_node_ip_address()), tuple(gpu_ids)
 
 
-def _bundle(config: RolloutBackendConfig) -> dict[str, float]:
+def _rollout_bundle(config: RolloutBackendConfig) -> dict[str, float]:
     bundle = {"CPU": float(config.cpus_per_worker)}
     if config.gpus_per_worker > 0:
         bundle["GPU"] = float(config.gpus_per_worker)
     return bundle
+
+
+def _trainer_reservation_bundle() -> dict[str, float]:
+    return {"CPU": 0.001, "GPU": 1.0}
 
 
 def create_rollout_placement_group(config: RolloutBackendConfig) -> RayPlacement:
@@ -41,11 +58,87 @@ def create_rollout_placement_group(config: RolloutBackendConfig) -> RayPlacement
 
     ray = require_ray()
     from ray.util.placement_group import placement_group
-    from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
-    bundles = [_bundle(config) for _ in range(config.num_workers)]
+    resources = config.resources
+    bundles: list[dict[str, float]] = []
+    trainer_bundle_indices: list[int] = []
+    if resources is not None and resources.requires_trainer_reservation:
+        for _ in resources.trainer_devices:
+            trainer_bundle_indices.append(len(bundles))
+            bundles.append(_trainer_reservation_bundle())
+
+    rollout_bundle_indices: list[int] = []
+    for _ in range(config.num_workers):
+        rollout_bundle_indices.append(len(bundles))
+        bundles.append(_rollout_bundle(config))
+
     pg = placement_group(bundles, strategy=config.placement_strategy)
     ray.get(pg.ready())
+
+    trainer_actors, trainer_gpu_ids = _start_trainer_reservations(
+        ray,
+        pg,
+        trainer_bundle_indices,
+    )
+    ordered, rollout_gpu_ids = _probe_rollout_bundles(
+        ray,
+        pg,
+        config,
+        rollout_bundle_indices,
+    )
+
+    _log_placement(
+        ordered,
+        rollout_bundle_indices,
+        rollout_gpu_ids,
+        trainer_gpu_ids,
+        resources,
+    )
+    return RayPlacement(
+        placement_group=pg,
+        ordered_bundle_indices=ordered,
+        trainer_bundle_indices=trainer_bundle_indices,
+        trainer_reservation_actors=trainer_actors,
+        trainer_gpu_ids=trainer_gpu_ids,
+        rollout_gpu_ids=rollout_gpu_ids,
+    )
+
+
+def _start_trainer_reservations(
+    ray: Any,
+    pg: Any,
+    trainer_bundle_indices: list[int],
+) -> tuple[list[Any], tuple[int, ...]]:
+    if not trainer_bundle_indices:
+        return [], ()
+
+    from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
+
+    RemoteReservationActor = ray.remote(num_cpus=0.001, num_gpus=1.0)(_InfoActor)
+    actors = [
+        RemoteReservationActor.options(
+            scheduling_strategy=PlacementGroupSchedulingStrategy(
+                placement_group=pg,
+                placement_group_bundle_index=bundle_idx,
+                placement_group_capture_child_tasks=True,
+            ),
+        ).remote()
+        for bundle_idx in trainer_bundle_indices
+    ]
+    placement = ray.get([actor.get_ip_and_gpu_ids.remote() for actor in actors])
+    gpu_ids: list[int] = []
+    for _, ids in placement:
+        gpu_ids.extend(ids)
+    return actors, tuple(gpu_ids)
+
+
+def _probe_rollout_bundles(
+    ray: Any,
+    pg: Any,
+    config: RolloutBackendConfig,
+    rollout_bundle_indices: list[int],
+) -> tuple[list[int], tuple[int, ...]]:
+    from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
     RemoteInfoActor = ray.remote(
         num_cpus=config.cpus_per_worker,
@@ -56,29 +149,57 @@ def create_rollout_placement_group(config: RolloutBackendConfig) -> RayPlacement
         RemoteInfoActor.options(
             scheduling_strategy=PlacementGroupSchedulingStrategy(
                 placement_group=pg,
-                placement_group_bundle_index=i,
+                placement_group_bundle_index=bundle_idx,
+                placement_group_capture_child_tasks=True,
             ),
         ).remote()
-        for i in range(config.num_workers)
+        for bundle_idx in rollout_bundle_indices
     ]
 
     try:
-        ip_gpu_pairs = ray.get([actor.get_ip_and_gpu_id.remote() for actor in info_actors])
+        ip_gpu_pairs = ray.get([actor.get_ip_and_gpu_ids.remote() for actor in info_actors])
     finally:
         for actor in info_actors:
             ray.kill(actor, no_restart=True)
 
-    bundle_infos = [(idx, node_ip, gpu_id) for idx, (node_ip, gpu_id) in enumerate(ip_gpu_pairs)]
-    ordered = [idx for idx, _, _ in sorted(bundle_infos, key=sort_node_gpu_key)]
+    bundle_infos = []
+    rollout_gpu_ids: list[int] = []
+    for probe_idx, (node_ip, gpu_ids) in enumerate(ip_gpu_pairs):
+        gpu_id = int(gpu_ids[0]) if gpu_ids else -1
+        bundle_idx = rollout_bundle_indices[probe_idx]
+        bundle_infos.append((bundle_idx, node_ip, gpu_id))
+        rollout_gpu_ids.extend(gpu_ids)
 
-    for logical_idx, actual_idx in enumerate(ordered):
-        node_ip, gpu_id = ip_gpu_pairs[actual_idx]
+    ordered = [idx for idx, _, _ in sorted(bundle_infos, key=sort_node_gpu_key)]
+    return ordered, tuple(rollout_gpu_ids)
+
+
+def _log_placement(
+    ordered: list[int],
+    rollout_bundle_indices: list[int],
+    rollout_gpu_ids: tuple[int, ...],
+    trainer_gpu_ids: tuple[int, ...],
+    resources: ResolvedDistributedResources | None,
+) -> None:
+    if trainer_gpu_ids:
+        logger.info("Ray trainer reservation actual GPU ids: %s", list(trainer_gpu_ids))
+
+    for logical_idx, bundle_idx in enumerate(ordered):
+        try:
+            probe_idx = rollout_bundle_indices.index(bundle_idx)
+        except ValueError:
+            probe_idx = logical_idx
+        gpu_id = rollout_gpu_ids[probe_idx] if probe_idx < len(rollout_gpu_ids) else -1
         logger.info(
-            "Ray rollout bundle %d -> actual bundle %d node=%s gpu=%s",
+            "Ray rollout bundle %d -> actual bundle %d gpu=%s",
             logical_idx,
-            actual_idx,
-            node_ip,
+            bundle_idx,
             gpu_id,
         )
-
-    return RayPlacement(placement_group=pg, ordered_bundle_indices=ordered)
+    if resources is not None:
+        logger.info(
+            "Ray resolved GPU plan trainer=%s rollout=%s actual_rollout=%s",
+            list(resources.trainer_devices),
+            list(resources.rollout_devices),
+            list(rollout_gpu_ids),
+        )

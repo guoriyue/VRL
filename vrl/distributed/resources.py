@@ -1,0 +1,480 @@
+"""Role-level resource resolution for distributed VRL runs."""
+
+from __future__ import annotations
+
+import ast
+from dataclasses import dataclass, field
+from typing import Any
+
+
+@dataclass(frozen=True, slots=True)
+class RoleResourceConfig:
+    """GPU ownership request for one execution role."""
+
+    num_gpus: int | str | None = "auto"
+    devices: list[int] | str = "auto"
+
+
+@dataclass(frozen=True, slots=True)
+class RolloutResourceConfig(RoleResourceConfig):
+    """GPU ownership request for rollout workers."""
+
+    gpus_per_worker: float = 1.0
+    num_workers: int | str = "auto"
+
+
+@dataclass(frozen=True, slots=True)
+class DistributedResourceConfig:
+    """Top-level trainer/rollout resource request."""
+
+    visible_devices: list[int] | str = "auto"
+    trainer: RoleResourceConfig = field(default_factory=RoleResourceConfig)
+    rollout: RolloutResourceConfig = field(default_factory=RolloutResourceConfig)
+    allow_overlap: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedDistributedResources:
+    """Concrete resource plan consumed by trainer and Ray rollout launchers."""
+
+    visible_devices: tuple[int, ...]
+    trainer_devices: tuple[int, ...]
+    rollout_devices: tuple[int, ...]
+    rollout_num_gpus: int
+    rollout_num_workers: int
+    rollout_gpus_per_worker: float
+    total_gpu_slots: int
+    ray_total_bundles: int
+    requires_trainer_reservation: bool
+    colocated: bool
+
+
+_MISSING = object()
+
+
+def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
+    """Resolve role-level resource config into concrete CUDA ordinals.
+
+    This is the single source of truth for trainer/rollout GPU ownership. It
+    intentionally does static ownership checks only; memory pressure is still a
+    runtime concern.
+    """
+
+    config = _distributed_resource_config_from_cfg(cfg)
+    visible_devices = _resolve_visible_devices(config.visible_devices)
+
+    trainer_devices = _resolve_role_devices(
+        role="trainer",
+        visible_devices=visible_devices,
+        role_config=config.trainer,
+        default_auto_count=1 if visible_devices else 0,
+    )
+    if len(trainer_devices) > 1:
+        raise ValueError(
+            "distributed.resources.trainer.devices currently supports only "
+            f"0 or 1 GPU for the single-process trainer, got {trainer_devices}",
+        )
+
+    rollout_gpus_per_worker = float(config.rollout.gpus_per_worker)
+    if rollout_gpus_per_worker not in {0.0, 1.0}:
+        raise ValueError(
+            "distributed.resources.rollout.gpus_per_worker currently supports "
+            f"0 or 1, got {rollout_gpus_per_worker}",
+        )
+
+    rollout_devices = _resolve_rollout_devices(
+        visible_devices=visible_devices,
+        trainer_devices=trainer_devices,
+        rollout_config=config.rollout,
+        allow_overlap=config.allow_overlap,
+    )
+    rollout_num_gpus = len(rollout_devices)
+
+    if rollout_gpus_per_worker > 0 and rollout_num_gpus == 0:
+        raise ValueError(
+            "No rollout GPUs are available after reserving trainer devices "
+            f"{list(trainer_devices)} with distributed.resources.allow_overlap=false. "
+            "Expose more GPUs or set distributed.resources.allow_overlap=true with "
+            "distributed.rollout.release_after_collect=true for single-GPU debug.",
+        )
+
+    rollout_num_workers = _resolve_rollout_num_workers(
+        rollout_config=config.rollout,
+        rollout_num_gpus=rollout_num_gpus,
+        gpus_per_worker=rollout_gpus_per_worker,
+    )
+
+    colocated = bool(set(trainer_devices) & set(rollout_devices))
+    if colocated and not config.allow_overlap:
+        raise ValueError(
+            "Trainer and rollout devices overlap but "
+            "distributed.resources.allow_overlap=false: "
+            f"trainer={list(trainer_devices)} rollout={list(rollout_devices)}",
+        )
+
+    requires_trainer_reservation = (
+        bool(trainer_devices)
+        and rollout_gpus_per_worker > 0
+        and not colocated
+        and rollout_num_workers > 0
+    )
+    total_gpu_slots = len(set(trainer_devices) | set(rollout_devices))
+    ray_total_bundles = rollout_num_workers + (
+        len(trainer_devices) if requires_trainer_reservation else 0
+    )
+
+    return ResolvedDistributedResources(
+        visible_devices=visible_devices,
+        trainer_devices=trainer_devices,
+        rollout_devices=rollout_devices,
+        rollout_num_gpus=rollout_num_gpus,
+        rollout_num_workers=rollout_num_workers,
+        rollout_gpus_per_worker=rollout_gpus_per_worker,
+        total_gpu_slots=total_gpu_slots,
+        ray_total_bundles=ray_total_bundles,
+        requires_trainer_reservation=requires_trainer_reservation,
+        colocated=colocated,
+    )
+
+
+def trainer_torch_device(
+    resolved: ResolvedDistributedResources,
+    *,
+    actual_trainer_devices: tuple[int, ...] | list[int] | None = None,
+) -> str:
+    """Return the torch device string the single-process trainer should use."""
+
+    devices = tuple(actual_trainer_devices or resolved.trainer_devices)
+    if not devices:
+        return "cpu"
+    return f"cuda:{int(devices[0])}"
+
+
+def format_distributed_resource_plan(
+    resolved: ResolvedDistributedResources,
+    *,
+    actual_placement: Any | None = None,
+) -> str:
+    """Format a compact resource plan for logs and errors."""
+
+    parts = [
+        f"visible={list(resolved.visible_devices)}",
+        f"trainer={list(resolved.trainer_devices)}",
+        f"rollout={list(resolved.rollout_devices)}",
+        f"workers={resolved.rollout_num_workers}",
+        f"gpus_per_worker={resolved.rollout_gpus_per_worker:g}",
+        f"colocated={resolved.colocated}",
+        f"trainer_reservation={resolved.requires_trainer_reservation}",
+        f"ray_bundles={resolved.ray_total_bundles}",
+    ]
+    if actual_placement is not None:
+        parts.append(f"actual={actual_placement}")
+    return "Distributed resources: " + " ".join(parts)
+
+
+def _distributed_resource_config_from_cfg(cfg: Any) -> DistributedResourceConfig:
+    distributed = _cfg_get(cfg, "distributed", {})
+    resources = _cfg_get(distributed, "resources", {})
+    trainer_node = _cfg_get(resources, "trainer", {})
+    rollout_node = _cfg_get(resources, "rollout", {})
+
+    trainer = RoleResourceConfig(
+        num_gpus=_cfg_get(trainer_node, "num_gpus", "auto"),
+        devices=_parse_devices(_cfg_get(trainer_node, "devices", "auto")),
+    )
+    rollout = RolloutResourceConfig(
+        num_gpus=_cfg_get(rollout_node, "num_gpus", "auto"),
+        devices=_parse_devices(_cfg_get(rollout_node, "devices", "auto")),
+        gpus_per_worker=float(_cfg_get(rollout_node, "gpus_per_worker", 1.0)),
+        num_workers=_cfg_get(rollout_node, "num_workers", "auto"),
+    )
+    return DistributedResourceConfig(
+        visible_devices=_parse_devices(_cfg_get(resources, "visible_devices", "auto")),
+        trainer=trainer,
+        rollout=rollout,
+        allow_overlap=bool(_cfg_get(resources, "allow_overlap", False)),
+    )
+
+
+def _resolve_visible_devices(value: list[int] | str) -> tuple[int, ...]:
+    devices = _parse_devices(value)
+    if devices == "auto":
+        return _auto_visible_cuda_devices()
+    return tuple(_dedupe_ints(devices, field_name="distributed.resources.visible_devices"))
+
+
+def _resolve_role_devices(
+    *,
+    role: str,
+    visible_devices: tuple[int, ...],
+    role_config: RoleResourceConfig,
+    default_auto_count: int,
+) -> tuple[int, ...]:
+    explicit_devices = _parse_devices(role_config.devices)
+    num_gpus = _parse_num_gpus(role_config.num_gpus, field_name=f"{role}.num_gpus")
+
+    if explicit_devices != "auto":
+        devices = tuple(_dedupe_ints(explicit_devices, field_name=f"{role}.devices"))
+        _validate_subset(devices, visible_devices, field_name=f"{role}.devices")
+        if num_gpus != "auto" and num_gpus is not None and int(num_gpus) != len(devices):
+            raise ValueError(
+                f"distributed.resources.{role}.num_gpus={num_gpus} does not match "
+                f"len(distributed.resources.{role}.devices)={len(devices)}",
+            )
+        return devices
+
+    count = default_auto_count if num_gpus == "auto" or num_gpus is None else int(num_gpus)
+    if count < 0:
+        raise ValueError(f"distributed.resources.{role}.num_gpus must be >= 0")
+    if count > len(visible_devices):
+        raise ValueError(
+            f"distributed.resources.{role}.num_gpus={count} exceeds visible devices "
+            f"{list(visible_devices)}",
+        )
+    return tuple(visible_devices[:count])
+
+
+def _resolve_rollout_devices(
+    *,
+    visible_devices: tuple[int, ...],
+    trainer_devices: tuple[int, ...],
+    rollout_config: RolloutResourceConfig,
+    allow_overlap: bool,
+) -> tuple[int, ...]:
+    explicit_devices = _parse_devices(rollout_config.devices)
+    num_gpus = _parse_num_gpus(
+        rollout_config.num_gpus,
+        field_name="rollout.num_gpus",
+    )
+
+    if explicit_devices != "auto":
+        devices = tuple(
+            _dedupe_ints(explicit_devices, field_name="distributed.resources.rollout.devices"),
+        )
+        _validate_subset(
+            devices,
+            visible_devices,
+            field_name="distributed.resources.rollout.devices",
+        )
+        if num_gpus != "auto" and num_gpus is not None and int(num_gpus) != len(devices):
+            raise ValueError(
+                "distributed.resources.rollout.num_gpus does not match "
+                f"len(distributed.resources.rollout.devices): {num_gpus} vs {len(devices)}",
+            )
+        return devices
+
+    pool = tuple(device for device in visible_devices if device not in set(trainer_devices))
+    requested = _requested_rollout_gpu_count(
+        rollout_config=rollout_config,
+        available_count=len(pool),
+    )
+    if requested == 0:
+        return ()
+    if requested <= len(pool):
+        return tuple(pool[:requested])
+    if not allow_overlap:
+        raise ValueError(
+            "Not enough non-overlapping rollout GPUs: "
+            f"requested={requested}, available={len(pool)}, "
+            f"trainer={list(trainer_devices)}, visible={list(visible_devices)}. "
+            "Expose more GPUs or set distributed.resources.allow_overlap=true with "
+            "distributed.rollout.release_after_collect=true for single-GPU debug.",
+        )
+
+    fallback = tuple(device for device in visible_devices if device in set(trainer_devices))
+    combined = pool + fallback
+    if requested > len(combined):
+        raise ValueError(
+            "Not enough visible GPUs for rollout even with overlap allowed: "
+            f"requested={requested}, visible={list(visible_devices)}",
+        )
+    return tuple(combined[:requested])
+
+
+def _requested_rollout_gpu_count(
+    *,
+    rollout_config: RolloutResourceConfig,
+    available_count: int,
+) -> int:
+    num_gpus = _parse_num_gpus(
+        rollout_config.num_gpus,
+        field_name="rollout.num_gpus",
+    )
+    if num_gpus != "auto" and num_gpus is not None:
+        count = int(num_gpus)
+        if count < 0:
+            raise ValueError("distributed.resources.rollout.num_gpus must be >= 0")
+        return count
+    if float(rollout_config.gpus_per_worker) == 0.0:
+        return 0
+
+    num_workers = _parse_num_workers(rollout_config.num_workers)
+    if num_workers != "auto" and rollout_config.gpus_per_worker > 0:
+        return int(num_workers * float(rollout_config.gpus_per_worker))
+    return int(available_count)
+
+
+def _resolve_rollout_num_workers(
+    *,
+    rollout_config: RolloutResourceConfig,
+    rollout_num_gpus: int,
+    gpus_per_worker: float,
+) -> int:
+    requested = _parse_num_workers(rollout_config.num_workers)
+    if gpus_per_worker == 0:
+        workers = 1 if requested == "auto" else int(requested)
+        if workers < 1:
+            raise ValueError("distributed.resources.rollout.num_workers must be >= 1")
+        return workers
+
+    if requested == "auto":
+        workers_float = rollout_num_gpus / gpus_per_worker
+        if int(workers_float) != workers_float:
+            raise ValueError(
+                "distributed.resources.rollout.num_gpus must be divisible by "
+                "distributed.resources.rollout.gpus_per_worker",
+            )
+        workers = int(workers_float)
+    else:
+        workers = int(requested)
+        expected_gpus = int(workers * gpus_per_worker)
+        if expected_gpus != rollout_num_gpus:
+            raise ValueError(
+                "distributed.resources.rollout.num_workers * gpus_per_worker must "
+                f"equal rollout GPU count: {workers} * {gpus_per_worker:g} "
+                f"!= {rollout_num_gpus}",
+            )
+
+    if workers < 1:
+        raise ValueError("distributed.resources.rollout.num_workers must be >= 1")
+    return workers
+
+
+def _parse_devices(value: Any) -> list[int] | str:
+    value = _to_plain(value)
+    if _is_auto(value):
+        return "auto"
+    if value is None:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        try:
+            parsed = ast.literal_eval(text)
+        except (SyntaxError, ValueError) as exc:
+            raise ValueError(f"invalid device list: {value!r}") from exc
+        return _parse_devices(parsed)
+    if isinstance(value, int):
+        return [int(value)]
+    if isinstance(value, (list, tuple)):
+        return [int(item) for item in value]
+    raise ValueError(f"invalid device list: {value!r}")
+
+
+def _parse_num_gpus(value: Any, *, field_name: str) -> int | str | None:
+    value = _to_plain(value)
+    if _is_auto(value):
+        return "auto"
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"distributed.resources.{field_name} must be int, auto, or null") from exc
+    return parsed
+
+
+def _parse_num_workers(value: Any) -> int | str:
+    value = _to_plain(value)
+    if _is_auto(value):
+        return "auto"
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("distributed.resources.rollout.num_workers must be int or auto") from exc
+    if parsed < 1:
+        raise ValueError("distributed.resources.rollout.num_workers must be >= 1")
+    return parsed
+
+
+def _dedupe_ints(values: list[int], *, field_name: str) -> list[int]:
+    out: list[int] = []
+    seen: set[int] = set()
+    for value in values:
+        item = int(value)
+        if item < 0:
+            raise ValueError(f"{field_name} cannot contain negative device ids")
+        if item in seen:
+            raise ValueError(f"{field_name} contains duplicate device id {item}")
+        seen.add(item)
+        out.append(item)
+    return out
+
+
+def _validate_subset(
+    devices: tuple[int, ...],
+    visible_devices: tuple[int, ...],
+    *,
+    field_name: str,
+) -> None:
+    missing = sorted(set(devices) - set(visible_devices))
+    if missing:
+        raise ValueError(
+            f"{field_name} contains devices outside distributed.resources.visible_devices: "
+            f"{missing} not in {list(visible_devices)}",
+        )
+
+
+def _auto_visible_cuda_devices() -> tuple[int, ...]:
+    try:
+        import torch
+    except Exception:
+        return ()
+    try:
+        if not torch.cuda.is_available():
+            return ()
+        return tuple(range(int(torch.cuda.device_count())))
+    except Exception:
+        return ()
+
+
+def _is_auto(value: Any) -> bool:
+    return isinstance(value, str) and value.strip().lower() == "auto"
+
+
+def _cfg_get(node: Any, key: str, default: Any) -> Any:
+    if node is None:
+        return default
+    getter = getattr(node, "get", None)
+    if callable(getter):
+        try:
+            return getter(key, default)
+        except TypeError:
+            pass
+    try:
+        return node[key]
+    except (KeyError, IndexError, TypeError):
+        pass
+    return getattr(node, key, default)
+
+
+def _to_plain(value: Any) -> Any:
+    try:
+        from omegaconf import DictConfig, ListConfig, OmegaConf
+    except Exception:
+        return value
+    if isinstance(value, (DictConfig, ListConfig)):
+        return OmegaConf.to_container(value, resolve=True)
+    return value
+
+
+__all__ = [
+    "DistributedResourceConfig",
+    "ResolvedDistributedResources",
+    "RoleResourceConfig",
+    "RolloutResourceConfig",
+    "format_distributed_resource_plan",
+    "resolve_distributed_resources",
+    "trainer_torch_device",
+]

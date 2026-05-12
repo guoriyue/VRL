@@ -93,6 +93,11 @@ async def _train_janus_pro(
     from vrl.algorithms.grpo.token import TokenGRPO, TokenGRPOConfig
     from vrl.algorithms.stat_tracking import PerPromptStatTracker
     from vrl.config.loader import build_configs, require
+    from vrl.distributed.resources import (
+        format_distributed_resource_plan,
+        resolve_distributed_resources,
+        trainer_torch_device,
+    )
     from vrl.models.families.janus_pro import JanusProConfig, JanusProPolicy
     from vrl.rollouts.collector import (
         JanusProCollectorConfig,
@@ -126,7 +131,9 @@ async def _train_janus_pro(
     )
 
     torch.manual_seed(trainer_config.seed)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    distributed_resources = resolve_distributed_resources(cfg)
+    logger.info(format_distributed_resource_plan(distributed_resources))
+    device = torch.device(trainer_torch_device(distributed_resources))
 
     # 1. Model -----------------------------------------------------------
     model_cfg = cfg.model

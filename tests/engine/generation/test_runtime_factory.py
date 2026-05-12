@@ -67,7 +67,13 @@ def _runtime_spec() -> GenerationRuntimeSpec:
     )
 
 
-def _cfg(*, backend: str = "ray", num_workers: int = 1, overlap: bool = False):
+def _cfg(
+    *,
+    backend: str = "ray",
+    num_workers: int = 1,
+    overlap: bool = False,
+    release_after_collect: bool = False,
+):
     return OmegaConf.create(
         {
             "distributed": {
@@ -75,6 +81,37 @@ def _cfg(*, backend: str = "ray", num_workers: int = 1, overlap: bool = False):
                 "rollout": {
                     "num_workers": num_workers,
                     "allow_driver_gpu_overlap": overlap,
+                    "release_after_collect": release_after_collect,
+                },
+            },
+        },
+    )
+
+
+def _resource_cfg(
+    *,
+    trainer_devices: list[int],
+    rollout_devices: list[int],
+    allow_overlap: bool = False,
+    release_after_collect: bool = False,
+):
+    return OmegaConf.create(
+        {
+            "distributed": {
+                "backend": "ray",
+                "resources": {
+                    "visible_devices": sorted(set(trainer_devices) | set(rollout_devices)),
+                    "trainer": {"devices": trainer_devices},
+                    "rollout": {
+                        "devices": rollout_devices,
+                        "gpus_per_worker": 1,
+                        "num_workers": len(rollout_devices),
+                    },
+                    "allow_overlap": allow_overlap,
+                },
+                "rollout": {
+                    "cpus_per_worker": 1,
+                    "release_after_collect": release_after_collect,
                 },
             },
         },
@@ -113,13 +150,13 @@ def test_ray_backend_requires_runtime_spec_and_gatherer(
 
 
 def test_ray_backend_rejects_driver_cuda_policy_without_overlap() -> None:
-    with pytest.raises(ValueError, match="Driver loaded rollout policy on CUDA"):
+    with pytest.raises(ValueError, match=r"no distributed\.resources plan"):
         validate_rollout_backend_config(
             _cfg(),
             driver_policy=_CudaPolicy(),
         )
 
-    assert "model.device=cpu" in DRIVER_CUDA_OWNERSHIP_ERROR
+    assert "overlaps rollout devices" in DRIVER_CUDA_OWNERSHIP_ERROR
 
 
 def test_ray_backend_detects_cuda_trainable_module_when_policy_has_no_device() -> None:
@@ -128,7 +165,7 @@ def test_ray_backend_detects_cuda_trainable_module_when_policy_has_no_device() -
         trainable_modules={"transformer": _FakeModule("cuda:1")},
     )
 
-    with pytest.raises(ValueError, match="Driver loaded rollout policy on CUDA"):
+    with pytest.raises(ValueError, match=r"no distributed\.resources plan"):
         validate_rollout_backend_config(
             _cfg(),
             driver_bundle=bundle,
@@ -137,9 +174,34 @@ def test_ray_backend_detects_cuda_trainable_module_when_policy_has_no_device() -
 
 def test_ray_backend_allows_driver_cuda_policy_with_explicit_overlap() -> None:
     config = validate_rollout_backend_config(
-        _cfg(overlap=True),
+        _cfg(overlap=True, release_after_collect=True),
         driver_policy=_CudaPolicy(),
     )
 
     assert config.backend == "ray"
     assert config.allow_driver_gpu_overlap is True
+
+
+def test_ray_backend_allows_split_driver_cuda_when_devices_do_not_overlap() -> None:
+    config = validate_rollout_backend_config(
+        _resource_cfg(trainer_devices=[0], rollout_devices=[1]),
+        driver_policy=_CudaPolicy(),
+    )
+
+    assert config.resources is not None
+    assert config.resources.trainer_devices == (0,)
+    assert config.resources.rollout_devices == (1,)
+    assert config.allow_driver_gpu_overlap is False
+
+
+def test_ray_backend_overlap_requires_release_after_collect() -> None:
+    with pytest.raises(ValueError, match="release_after_collect=false"):
+        validate_rollout_backend_config(
+            _resource_cfg(
+                trainer_devices=[0],
+                rollout_devices=[0],
+                allow_overlap=True,
+                release_after_collect=False,
+            ),
+            driver_policy=_CudaPolicy(),
+        )

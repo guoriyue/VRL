@@ -17,8 +17,10 @@ Examples:
     reward:
       ocr: 1.0
 
-CLI override syntax matches OmegaConf dotlist:
+CLI override syntax matches OmegaConf dotlist. Defaults entries can be replaced
+with ``/group/path=option``:
     python -m vrl.scripts.x --config experiment/wan_ocr trainer.seed=42
+    python -m vrl.scripts.x --config experiment/wan_ocr /base/distributed=ray_rollout
 """
 
 from __future__ import annotations
@@ -52,9 +54,58 @@ def _resolve_default(entry: str | dict, root: Path) -> Path:
     return root / s
 
 
-def _load_one(path: Path, root: Path, _seen: set[Path] | None = None) -> DictConfig:
+def _default_group(entry: str | dict) -> str | None:
+    if isinstance(entry, dict):
+        if len(entry) != 1:
+            raise ValueError(f"defaults dict must have exactly one key: {entry}")
+        key = str(next(iter(entry.keys()))).strip().lstrip("/")
+        return key or None
+
+    text = str(entry).strip().lstrip("/")
+    if not text or text == _SELF_:
+        return None
+    if text.endswith((".yaml", ".yml")):
+        text = text.rsplit(".", 1)[0]
+    parts = text.split("/")
+    if len(parts) < 2:
+        return None
+    return "/".join(parts[:-1])
+
+
+def _apply_default_override(entry: str | dict, default_overrides: dict[str, str]) -> str | dict:
+    group = _default_group(entry)
+    if group is None or group not in default_overrides:
+        return entry
+    option = default_overrides[group].strip().lstrip("/")
+    if not option:
+        raise ValueError(f"defaults override for {group!r} cannot be empty")
+    return f"{group}/{option}"
+
+
+def _split_defaults_overrides(overrides: list[str] | None) -> tuple[dict[str, str], list[str]]:
+    default_overrides: dict[str, str] = {}
+    value_overrides: list[str] = []
+    for override in overrides or []:
+        if isinstance(override, str) and override.startswith("/") and "=" in override:
+            key, value = override.split("=", 1)
+            group = key.strip().lstrip("/")
+            if not group:
+                raise ValueError(f"invalid defaults override: {override!r}")
+            default_overrides[group] = value
+            continue
+        value_overrides.append(override)
+    return default_overrides, value_overrides
+
+
+def _load_one(
+    path: Path,
+    root: Path,
+    _seen: set[Path] | None = None,
+    default_overrides: dict[str, str] | None = None,
+) -> DictConfig:
     """Load a single YAML and recursively merge its ``defaults:`` list."""
     path = path.resolve()
+    default_overrides = default_overrides or {}
     if _seen is None:
         _seen = set()
     if path in _seen:
@@ -78,8 +129,9 @@ def _load_one(path: Path, root: Path, _seen: set[Path] | None = None) -> DictCon
                 merged = OmegaConf.merge(merged, raw)
                 self_seen = True
                 continue
+            entry_val = _apply_default_override(entry_val, default_overrides)
             sub_path = _resolve_default(entry_val, root)
-            sub = _load_one(sub_path, root, _seen)
+            sub = _load_one(sub_path, root, _seen, default_overrides)
             merged = OmegaConf.merge(merged, sub)
         if not self_seen:
             merged = OmegaConf.merge(merged, raw)
@@ -116,10 +168,11 @@ def load_config(
             rel = f"{rel}.yaml"
         p = root / rel
 
-    cfg = _load_one(p, root)
+    default_overrides, value_overrides = _split_defaults_overrides(overrides)
+    cfg = _load_one(p, root, default_overrides=default_overrides)
 
-    if overrides:
-        cfg = OmegaConf.merge(cfg, OmegaConf.from_dotlist(list(overrides)))
+    if value_overrides:
+        cfg = OmegaConf.merge(cfg, OmegaConf.from_dotlist(value_overrides))
         assert isinstance(cfg, DictConfig)
 
     OmegaConf.resolve(cfg)

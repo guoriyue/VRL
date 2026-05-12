@@ -24,7 +24,16 @@ def test_janus_pro_r1_experiment_loads_with_multisegment_algorithm() -> None:
 
 
 def test_janus_pro_r1_runtime_inputs_select_r1_task_and_executor() -> None:
-    cfg = load_config("experiment/janus_pro_1b_r1_ocr_grpo")
+    cfg = load_config(
+        "experiment/janus_pro_1b_r1_ocr_grpo",
+        overrides=[
+            "distributed.resources.visible_devices=[]",
+            "distributed.resources.trainer.num_gpus=0",
+            "distributed.resources.rollout.num_gpus=0",
+            "distributed.resources.rollout.gpus_per_worker=0",
+            "distributed.resources.rollout.num_workers=1",
+        ],
+    )
     inputs = build_rollout_runtime_inputs(
         cfg,
         "janus_pro_r1",

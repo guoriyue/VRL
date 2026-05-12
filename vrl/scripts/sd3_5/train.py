@@ -64,6 +64,11 @@ async def train_sd3_5_grpo(cfg: DictConfig) -> None:
     from vrl.algorithms.grpo.token import TokenGRPOConfig
     from vrl.algorithms.stat_tracking import PerPromptStatTracker
     from vrl.config.loader import build_configs, require
+    from vrl.distributed.resources import (
+        format_distributed_resource_plan,
+        resolve_distributed_resources,
+        trainer_torch_device,
+    )
     from vrl.rewards.multi import MultiReward
     from vrl.rollouts.collector import (
         SD3_5CollectorConfig,
@@ -94,7 +99,9 @@ async def train_sd3_5_grpo(cfg: DictConfig) -> None:
         strict=trainer_config.resume_strict,
     )
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    distributed_resources = resolve_distributed_resources(cfg)
+    logger.info(format_distributed_resource_plan(distributed_resources))
+    device = torch.device(trainer_torch_device(distributed_resources))
     weight_dtype = _resolve_weight_dtype(trainer_config, torch)
     torch.manual_seed(int(trainer_config.seed))
     if torch.cuda.is_available():
@@ -370,7 +377,7 @@ def _offload_driver_frozen_modules(policy: object) -> None:
     rollout workers own prompt encoding and VAE decoding during generation, while
     trainer replay consumes prompt embeddings and latents already packed in the
     ``RolloutBatch``. Keeping frozen encoders/VAE on the driver GPU duplicates
-    the rollout worker footprint and makes single-GPU Ray smoke runs OOM.
+    the rollout worker footprint and makes single-GPU Ray validation runs OOM.
     """
 
     import torch

@@ -46,6 +46,11 @@ async def train_nextstep_1_ocr_grpo(cfg: DictConfig) -> None:
 
     from vrl.algorithms.grpo.token import TokenGRPO, TokenGRPOConfig
     from vrl.config.loader import build_configs, require
+    from vrl.distributed.resources import (
+        format_distributed_resource_plan,
+        resolve_distributed_resources,
+        trainer_torch_device,
+    )
     from vrl.models.families.nextstep_1 import NextStep1Config, NextStep1Policy
     from vrl.rewards.ocr import OCRReward
     from vrl.rollouts.collector import (
@@ -77,6 +82,9 @@ async def train_nextstep_1_ocr_grpo(cfg: DictConfig) -> None:
     lora_targets_tuple = tuple(require(cfg, "model.lora.target_modules"))
 
     torch.manual_seed(trainer_config.seed)
+    distributed_resources = resolve_distributed_resources(cfg)
+    logger.info(format_distributed_resource_plan(distributed_resources))
+    device = torch.device(trainer_torch_device(distributed_resources))
 
     logger.info("Loading NextStep-1 from %s ...", model_cfg.path)
     model = NextStep1Policy(
@@ -98,6 +106,7 @@ async def train_nextstep_1_ocr_grpo(cfg: DictConfig) -> None:
             freeze_vae=bool(require(cfg, "model.freeze_vae")),
             freeze_image_head=bool(require(cfg, "model.freeze_image_head")),
             gradient_checkpointing=bool(trainer_config.gradient_checkpointing),
+            device=str(device),
         )
     )
     logger.info("Trainable params: %.2f M", model.trainable_param_count() / 1e6)

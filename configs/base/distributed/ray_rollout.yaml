@@ -1,10 +1,18 @@
 distributed:
   backend: ray
+  resources:
+    visible_devices: auto
+    trainer:
+      num_gpus: 1
+    rollout:
+      num_gpus: auto
+      gpus_per_worker: 1.0
+      num_workers: auto
+    allow_overlap: false
+
   rollout:
-    num_workers: 4
-    gpus_per_worker: 1.0
     cpus_per_worker: 4.0
     placement_strategy: SPREAD
-    allow_driver_gpu_overlap: false
     max_inflight_chunks_per_worker: 1
     sync_trainable_state: lora_only
+    release_after_collect: false

@@ -38,6 +38,11 @@ async def train_wan_2_1_grpo(cfg: DictConfig) -> None:
     from vrl.algorithms.grpo.token import TokenGRPOConfig
     from vrl.algorithms.stat_tracking import PerPromptStatTracker
     from vrl.config.loader import build_configs, require
+    from vrl.distributed.resources import (
+        format_distributed_resource_plan,
+        resolve_distributed_resources,
+        trainer_torch_device,
+    )
     from vrl.rewards.multi import MultiReward
     from vrl.rollouts.collector import (
         Wan_2_1CollectorConfig,
@@ -68,7 +73,9 @@ async def train_wan_2_1_grpo(cfg: DictConfig) -> None:
         strict=trainer_config.resume_strict,
     )
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    distributed_resources = resolve_distributed_resources(cfg)
+    logger.info(format_distributed_resource_plan(distributed_resources))
+    device = torch.device(trainer_torch_device(distributed_resources))
     weight_dtype = torch.bfloat16 if trainer_config.bf16 else torch.float16
 
     # 1. Build policy bundle (backend construction lives in family builder)

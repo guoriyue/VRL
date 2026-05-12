@@ -9,10 +9,8 @@ from vrl.engine.core.runtime import RolloutBackend
 from vrl.rollouts.runtime.config import RolloutBackendConfig
 
 DRIVER_CUDA_OWNERSHIP_ERROR = (
-    "Driver loaded rollout policy on CUDA. "
-    "For Ray backend, set model.device=cpu so Ray actors load CUDA copies, "
-    "or set distributed.rollout.allow_driver_gpu_overlap=true only for explicit "
-    "colocate experiments."
+    "Driver CUDA device overlaps rollout devices without an explicit colocate "
+    "configuration."
 )
 
 _MISSING = object()
@@ -28,12 +26,12 @@ def validate_rollout_backend_config(
     """Validate rollout backend config before a collector touches the runtime."""
     config = RolloutBackendConfig.from_cfg(cfg)
 
-    if not config.allow_driver_gpu_overlap and _driver_rollout_policy_on_cuda(
+    driver_cuda_devices = _driver_cuda_devices(
         driver_bundle=driver_bundle,
         driver_policy=driver_policy,
         trainable_modules=trainable_modules,
-    ):
-        raise ValueError(DRIVER_CUDA_OWNERSHIP_ERROR)
+    )
+    _validate_driver_cuda_ownership(config, driver_cuda_devices)
 
     return config
 
@@ -74,7 +72,7 @@ def build_rollout_backend_from_cfg(
 
         if config.release_after_collect:
             return ReleasableRayRolloutBackend(config, runtime_spec, gatherer)
-        return RayRolloutLauncher().launch(config.to_dict(), runtime_spec, gatherer)
+        return RayRolloutLauncher().launch(config, runtime_spec, gatherer)
 
     raise ValueError(
         "Ray-only rollout backend requires runtime_spec plus gatherer so "
@@ -83,25 +81,78 @@ def build_rollout_backend_from_cfg(
     )
 
 
-def _driver_rollout_policy_on_cuda(
+def _validate_driver_cuda_ownership(
+    config: RolloutBackendConfig,
+    driver_cuda_devices: set[int],
+) -> None:
+    if not driver_cuda_devices:
+        return
+
+    resources = config.resources
+    if resources is None:
+        if config.allow_driver_gpu_overlap:
+            if config.release_after_collect:
+                return
+            raise ValueError(
+                "Driver CUDA placement uses legacy overlap config but "
+                "distributed.rollout.release_after_collect=false. "
+                "Set release_after_collect=true for single-GPU Ray debug.",
+            )
+        raise ValueError(
+            "Driver loaded rollout policy on CUDA, but no distributed.resources "
+            "plan is available to prove rollout devices do not overlap. "
+            "Use distributed.resources for split runs or enable overlap with "
+            "distributed.rollout.release_after_collect=true for single-GPU debug.",
+        )
+
+    overlap = driver_cuda_devices & set(resources.rollout_devices)
+    if not overlap:
+        return
+
+    overlap_list = sorted(overlap)
+    rollout_devices = list(resources.rollout_devices)
+    if not config.allow_driver_gpu_overlap:
+        raise ValueError(
+            f"Trainer device cuda:{overlap_list[0]} overlaps rollout devices "
+            f"{rollout_devices}, but resources.allow_overlap=false. "
+            "Use CUDA_VISIBLE_DEVICES=0,1,2,3 with auto split for throughput, "
+            "or set allow_overlap=true with rollout.release_after_collect=true "
+            "for single-GPU debug.",
+        )
+
+    if not config.release_after_collect:
+        raise ValueError(
+            f"Trainer device cuda:{overlap_list[0]} overlaps rollout devices "
+            f"{rollout_devices}, but distributed.rollout.release_after_collect=false. "
+            "Set release_after_collect=true for single-GPU Ray debug.",
+        )
+
+
+def _driver_cuda_devices(
     *,
     driver_bundle: Any | None,
     driver_policy: Any | None,
     trainable_modules: Mapping[str, Any] | Iterable[Any] | None,
-) -> bool:
+) -> set[int]:
     policy = driver_policy
     if policy is None and driver_bundle is not None:
         policy = getattr(driver_bundle, "policy", None)
 
     has_policy_device, device = _get_device(policy)
     if has_policy_device:
-        return _is_cuda_device(device)
+        parsed = _cuda_device_index(device)
+        return set() if parsed is None else {parsed}
 
     modules = trainable_modules
     if modules is None and driver_bundle is not None:
         modules = getattr(driver_bundle, "trainable_modules", None)
 
-    return any(_is_cuda_device(device) for device in _iter_parameter_devices(modules))
+    devices: set[int] = set()
+    for parameter_device in _iter_parameter_devices(modules):
+        parsed = _cuda_device_index(parameter_device)
+        if parsed is not None:
+            devices.add(parsed)
+    return devices
 
 
 def _get_device(obj: Any) -> tuple[bool, Any]:
@@ -149,11 +200,24 @@ def _iter_parameter_devices(obj: Any, seen: set[int] | None = None) -> Iterable[
             yield from _iter_parameter_devices(value, seen)
 
 
-def _is_cuda_device(device: Any) -> bool:
+def _cuda_device_index(device: Any) -> int | None:
     device_type = getattr(device, "type", None)
     if device_type is not None:
-        return str(device_type).lower() == "cuda"
-    return str(device).lower().startswith("cuda")
+        if str(device_type).lower() != "cuda":
+            return None
+        index = getattr(device, "index", None)
+        return 0 if index is None else int(index)
+
+    text = str(device).lower()
+    if not text.startswith("cuda"):
+        return None
+    if ":" not in text:
+        return 0
+    _, raw_index = text.split(":", 1)
+    try:
+        return int(raw_index)
+    except ValueError:
+        return 0
 
 
 class ReleasableRayRolloutBackend(RolloutBackend):
@@ -209,7 +273,7 @@ class ReleasableRayRolloutBackend(RolloutBackend):
             from vrl.distributed.ray.rollout.launcher import RayRolloutLauncher
 
             runtime = RayRolloutLauncher().launch(
-                self.config.to_dict(),
+                self.config,
                 self.runtime_spec,
                 self.gatherer,
             )

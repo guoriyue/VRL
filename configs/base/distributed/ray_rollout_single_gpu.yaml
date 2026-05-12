@@ -1,12 +1,19 @@
-# Single-GPU Ray rollout preset for local debug and smoke runs.
+# Single-GPU Ray rollout preset for local debug and validation runs.
 distributed:
   backend: ray
+  resources:
+    visible_devices: auto
+    trainer:
+      num_gpus: 1
+    rollout:
+      num_gpus: 1
+      gpus_per_worker: 1.0
+      num_workers: 1
+    allow_overlap: true
+
   rollout:
-    num_workers: 1
-    gpus_per_worker: 1.0
     cpus_per_worker: 4.0
     placement_strategy: STRICT_PACK
-    allow_driver_gpu_overlap: true
     max_inflight_chunks_per_worker: 1
     sync_trainable_state: lora_only
     release_after_collect: true

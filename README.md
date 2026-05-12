@@ -117,3 +117,30 @@ python -m vrl.scripts.train \
   data.manifest=datasets/drawbench/train_192.txt \
   trainer.output_dir=outputs/sd3_5_aesthetic_ablation
 ```
+
+Ray rollout resource presets use role-level allocation. Multi-GPU split should
+declare trainer and rollout budgets, while single-GPU local validation must use
+the colocated preset so rollout actors are released before replay/backward:
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1,2,3 python -m vrl.scripts.train \
+  --config experiment/sd3_5_ocr_grpo \
+  /base/distributed=ray_rollout \
+  distributed.resources.trainer.num_gpus=1 \
+  distributed.resources.rollout.num_gpus=auto
+
+CUDA_VISIBLE_DEVICES=0 python -m vrl.scripts.train \
+  --config experiment/sd3_5_ocr_grpo \
+  /base/distributed=ray_rollout_single_gpu
+```
+
+Manual physical device pinning is an advanced override for debugging or mixed
+jobs:
+
+```bash
+python -m vrl.scripts.train \
+  --config experiment/sd3_5_ocr_grpo \
+  distributed.resources.visible_devices='[0,1,2,3]' \
+  distributed.resources.trainer.devices='[0]' \
+  distributed.resources.rollout.devices='[1,2,3]'
+```

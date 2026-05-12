@@ -5,10 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from vrl.distributed.resources import (
+    ResolvedDistributedResources,
+    resolve_distributed_resources,
+)
+
 
 @dataclass(slots=True)
 class RolloutBackendConfig:
-    """Resource and backend selection config for rollout collection."""
+    """Ray rollout execution config plus resolved worker resource shape."""
 
     backend: str = "ray"
     num_workers: int = 1
@@ -19,6 +24,7 @@ class RolloutBackendConfig:
     max_inflight_chunks_per_worker: int = 1
     sync_trainable_state: str = "disabled"
     release_after_collect: bool = False
+    resources: ResolvedDistributedResources | None = None
 
     def __post_init__(self) -> None:
         if self.backend != "ray":
@@ -56,26 +62,49 @@ class RolloutBackendConfig:
         if backend is _MISSING:
             raise ValueError("distributed.backend or backend is required")
 
+        resources_node = _config_get(distributed, "resources", _MISSING)
+        resources = None
+        if resources_node is not _MISSING:
+            resources = resolve_distributed_resources(cfg)
+
+        legacy_num_workers = _rollout_get(distributed, rollout, "num_workers", _MISSING)
+        legacy_gpus_per_worker = _rollout_get(
+            distributed,
+            rollout,
+            "gpus_per_worker",
+            _MISSING,
+        )
+        legacy_overlap = _rollout_get(
+            distributed,
+            rollout,
+            "allow_driver_gpu_overlap",
+            _MISSING,
+        )
+
+        if resources is not None:
+            num_workers = resources.rollout_num_workers
+            gpus_per_worker = resources.rollout_gpus_per_worker
+            allow_driver_gpu_overlap = bool(resources.colocated)
+        else:
+            num_workers = int(1 if legacy_num_workers is _MISSING else legacy_num_workers)
+            gpus_per_worker = float(
+                1.0 if legacy_gpus_per_worker is _MISSING else legacy_gpus_per_worker,
+            )
+            allow_driver_gpu_overlap = bool(
+                False if legacy_overlap is _MISSING else legacy_overlap,
+            )
+
         return cls(
             backend=str(backend),
-            num_workers=int(_rollout_get(distributed, rollout, "num_workers", 1)),
-            gpus_per_worker=float(
-                _rollout_get(distributed, rollout, "gpus_per_worker", 1.0),
-            ),
+            num_workers=num_workers,
+            gpus_per_worker=gpus_per_worker,
             cpus_per_worker=float(
                 _rollout_get(distributed, rollout, "cpus_per_worker", 1.0),
             ),
             placement_strategy=str(
                 _rollout_get(distributed, rollout, "placement_strategy", "SPREAD"),
             ),
-            allow_driver_gpu_overlap=bool(
-                _rollout_get(
-                    distributed,
-                    rollout,
-                    "allow_driver_gpu_overlap",
-                    False,
-                ),
-            ),
+            allow_driver_gpu_overlap=allow_driver_gpu_overlap,
             max_inflight_chunks_per_worker=int(
                 _rollout_get(
                     distributed,
@@ -90,6 +119,7 @@ class RolloutBackendConfig:
             release_after_collect=bool(
                 _rollout_get(distributed, rollout, "release_after_collect", False),
             ),
+            resources=resources,
         )
 
     def to_dict(self) -> dict[str, Any]:

@@ -39,8 +39,11 @@ def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
         f"experiment/{experiment}",
         overrides=[
             "distributed.backend=ray",
-            "distributed.rollout.num_workers=1",
-            "distributed.rollout.gpus_per_worker=0",
+            "distributed.resources.visible_devices=[]",
+            "distributed.resources.trainer.num_gpus=0",
+            "distributed.resources.rollout.num_gpus=0",
+            "distributed.resources.rollout.gpus_per_worker=0",
+            "distributed.resources.rollout.num_workers=1",
             "distributed.rollout.cpus_per_worker=1",
         ],
     )
@@ -70,8 +73,11 @@ def test_diffusion_runtime_spec_uses_worker_primitive_device_and_dtype() -> None
         "experiment/sd3_5_ocr_grpo",
         overrides=[
             "distributed.backend=ray",
-            "distributed.rollout.num_workers=1",
-            "distributed.rollout.gpus_per_worker=1",
+            "distributed.resources.visible_devices=[0,1]",
+            "distributed.resources.trainer.num_gpus=0",
+            "distributed.resources.rollout.num_gpus=1",
+            "distributed.resources.rollout.gpus_per_worker=1",
+            "distributed.resources.rollout.num_workers=1",
         ],
     )
 
@@ -92,8 +98,11 @@ def test_cosmos_runtime_inputs_include_reference_image_from_cfg() -> None:
         "experiment/cosmos_predict2_2b_grpo",
         overrides=[
             "distributed.backend=ray",
-            "distributed.rollout.num_workers=1",
-            "distributed.rollout.gpus_per_worker=0",
+            "distributed.resources.visible_devices=[]",
+            "distributed.resources.trainer.num_gpus=0",
+            "distributed.resources.rollout.num_gpus=0",
+            "distributed.resources.rollout.gpus_per_worker=0",
+            "distributed.resources.rollout.num_workers=1",
             "model.reference_image=/tmp/reference.png",
         ],
     )
@@ -116,8 +125,11 @@ def test_explicit_executor_kwargs_override_registry_defaults() -> None:
         "experiment/sd3_5_ocr_grpo",
         overrides=[
             "distributed.backend=ray",
-            "distributed.rollout.num_workers=1",
-            "distributed.rollout.gpus_per_worker=0",
+            "distributed.resources.visible_devices=[]",
+            "distributed.resources.trainer.num_gpus=0",
+            "distributed.resources.rollout.num_gpus=0",
+            "distributed.resources.rollout.gpus_per_worker=0",
+            "distributed.resources.rollout.num_workers=1",
             "rollout.sample_batch_size=8",
         ],
     )

@@ -23,11 +23,13 @@ class RayDistributedRuntime(RolloutBackend):
         *,
         weight_sync: RolloutWeightSync | None = None,
         owned_workers: list[RayWorkerHandle] | None = None,
+        owned_actors: list[Any] | None = None,
         placement_group: Any | None = None,
     ) -> None:
         self.executor = executor
         self.weight_sync = weight_sync
         self._owned_workers = list(owned_workers or [])
+        self._owned_actors = list(owned_actors or [])
         self._placement_group = placement_group
         self.current_policy_version: int | None = None
 
@@ -43,7 +45,7 @@ class RayDistributedRuntime(RolloutBackend):
         self.current_policy_version = int(policy_version)
 
     async def shutdown(self) -> None:
-        if not self._owned_workers and self._placement_group is None:
+        if not self._owned_workers and not self._owned_actors and self._placement_group is None:
             return None
         ray = require_ray()
         release_refs: list[Any] = []
@@ -63,6 +65,10 @@ class RayDistributedRuntime(RolloutBackend):
             with contextlib.suppress(Exception):
                 ray.kill(actor, no_restart=True)
         self._owned_workers.clear()
+        for actor in self._owned_actors:
+            with contextlib.suppress(Exception):
+                ray.kill(actor, no_restart=True)
+        self._owned_actors.clear()
         if self._placement_group is not None:
             with contextlib.suppress(Exception):
                 from ray.util import remove_placement_group
