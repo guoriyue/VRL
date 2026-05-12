@@ -5,6 +5,13 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from vrl.engine.core.capabilities import FamilyCapability, generic_family_capability
+from vrl.engine.core.planner import (
+    EnginePlan,
+    attach_engine_plan,
+    build_engine_plan,
+    resolve_executor_capability,
+)
 from vrl.engine.core.registry import FamilyPipelineRegistry
 from vrl.engine.core.types import (
     GenerationMetrics,
@@ -87,15 +94,17 @@ class GenerationWorker:
 
     def _execute_one(self, request: GenerationRequest) -> OutputBatch:
         sample_specs = self.id_factory.build_sample_specs(request)
+        plan: EnginePlan | None = None
         try:
             executor = self.registry.resolve(request.family, request.task)
+            plan = self._plan_request(executor, request, sample_specs)
             output = executor.forward(request, sample_specs)
             if output.request_id != request.request_id:
                 raise ValueError(
                     f"Executor returned request_id={output.request_id!r} for "
                     f"request_id={request.request_id!r}"
                 )
-            return output
+            return attach_engine_plan(output, plan)
         except Exception as exc:
             logger.exception("Generation request %s failed", request.request_id)
             return OutputBatch(
@@ -108,7 +117,11 @@ class GenerationWorker:
                 metrics=GenerationMetrics(
                     num_prompts=len(request.prompts),
                     num_samples=len(sample_specs),
+                    trajectory_kind=None if plan is None else plan.trajectory_kind,
+                    execution_units=() if plan is None else plan.profiler_labels,
+                    engine_plan_id=None if plan is None else plan.request_id,
                 ),
+                engine_plan=plan,
                 error=str(exc),
             )
 
@@ -119,21 +132,32 @@ class GenerationWorker:
         sample_specs_by_request = {
             request.request_id: self.id_factory.build_sample_specs(request) for request in requests
         }
+        plans: dict[str, EnginePlan] = {}
         try:
             executor = self.registry.resolve(requests[0].family, requests[0].task)
+            for request in requests:
+                plans[request.request_id] = self._plan_request(
+                    executor,
+                    request,
+                    sample_specs_by_request[request.request_id],
+                )
             forward_batch = getattr(executor, "forward_batch", None)
             if forward_batch is None:
                 return {request.request_id: self._execute_one(request) for request in requests}
             outputs = forward_batch(requests, sample_specs_by_request)
-            return {
-                request.request_id: outputs.get(request.request_id)
-                or _error_output(
-                    request,
-                    sample_specs_by_request[request.request_id],
-                    "Batched executor did not return an output for this request",
-                )
-                for request in requests
-            }
+            completed: dict[str, OutputBatch] = {}
+            for request in requests:
+                output = outputs.get(request.request_id)
+                plan = plans[request.request_id]
+                if output is None:
+                    output = _error_output(
+                        request,
+                        sample_specs_by_request[request.request_id],
+                        "Batched executor did not return an output for this request",
+                        engine_plan=plan,
+                    )
+                completed[request.request_id] = attach_engine_plan(output, plan)
+            return completed
         except Exception as exc:
             logger.exception(
                 "Generation request batch failed: %s",
@@ -144,6 +168,7 @@ class GenerationWorker:
                     request,
                     sample_specs_by_request[request.request_id],
                     str(exc),
+                    engine_plan=plans.get(request.request_id),
                 )
                 for request in requests
             }
@@ -155,20 +180,49 @@ class GenerationWorker:
         groups: dict[Any, list[GenerationRequest]] = {}
         ordered_keys: list[Any] = []
         for request in requests:
-            key = _strict_batch_key(request)
+            key = _strict_batch_key(request, self._capability_for_group_key(request))
             if key not in groups:
                 groups[key] = []
                 ordered_keys.append(key)
             groups[key].append(request)
         return [groups[key] for key in ordered_keys]
 
+    def _plan_request(
+        self,
+        executor: Any,
+        request: GenerationRequest,
+        sample_specs: list[GenerationSampleSpec],
+    ) -> EnginePlan:
+        from vrl.trainers.profiling import record_function
 
-def _strict_batch_key(request: GenerationRequest) -> tuple[Any, ...]:
-    if not _safe_to_batch(request):
+        with record_function("engine.plan"):
+            plan_method = getattr(executor, "plan", None)
+            if callable(plan_method):
+                return plan_method(request, sample_specs)
+            return build_engine_plan(
+                request,
+                sample_specs,
+                capability=resolve_executor_capability(executor, request),
+            )
+
+    def _capability_for_group_key(self, request: GenerationRequest) -> FamilyCapability:
+        try:
+            executor = self.registry.resolve(request.family, request.task)
+            return resolve_executor_capability(executor, request)
+        except Exception:
+            return generic_family_capability(request.family, request.task)
+
+
+def _strict_batch_key(
+    request: GenerationRequest,
+    capability: FamilyCapability,
+) -> tuple[Any, ...]:
+    if not _safe_to_batch(request, capability):
         return (request.request_id,)
     return (
         request.family,
         request.task,
+        capability.batch_signature(),
         request.samples_per_prompt,
         request.policy_version,
         tuple(sorted(request.return_artifacts)),
@@ -176,7 +230,9 @@ def _strict_batch_key(request: GenerationRequest) -> tuple[Any, ...]:
     )
 
 
-def _safe_to_batch(request: GenerationRequest) -> bool:
+def _safe_to_batch(request: GenerationRequest, capability: FamilyCapability) -> bool:
+    if not capability.supports_batched_requests:
+        return False
     sampling = request.sampling
     if "seed" in sampling:
         return False
@@ -201,6 +257,8 @@ def _error_output(
     request: GenerationRequest,
     sample_specs: list[Any],
     error: str,
+    *,
+    engine_plan: EnginePlan | None = None,
 ) -> OutputBatch:
     return OutputBatch(
         request_id=request.request_id,
@@ -212,6 +270,10 @@ def _error_output(
         metrics=GenerationMetrics(
             num_prompts=len(request.prompts),
             num_samples=len(sample_specs),
+            trajectory_kind=None if engine_plan is None else engine_plan.trajectory_kind,
+            execution_units=() if engine_plan is None else engine_plan.profiler_labels,
+            engine_plan_id=None if engine_plan is None else engine_plan.request_id,
         ),
+        engine_plan=engine_plan,
         error=error,
     )

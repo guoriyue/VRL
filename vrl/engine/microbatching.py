@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import TypeVar
+from typing import Any, TypeVar
 
 T = TypeVar("T")
 
@@ -60,6 +60,8 @@ class ExecutionPlan:
     samples_per_prompt: int
     max_samples_per_microbatch: int
     micro_batches: tuple[MicroBatchPlan, ...]
+    trajectory_kind: str | None = None
+    batchable_axes: tuple[str, ...] = ()
 
     @property
     def total_samples(self) -> int:
@@ -78,6 +80,8 @@ def plan_prompt_group_microbatches(
     prompts: Sequence[str],
     samples_per_prompt: int,
     max_samples_per_microbatch: int,
+    *,
+    capability: Any | None = None,
 ) -> ExecutionPlan:
     """Plan prompt-major micro-batches without changing RL group semantics."""
 
@@ -87,6 +91,11 @@ def plan_prompt_group_microbatches(
         raise ValueError("samples_per_prompt must be >= 1")
     if max_samples_per_microbatch < 1:
         raise ValueError("max_samples_per_microbatch must be >= 1")
+
+    if capability is not None and not bool(
+        getattr(capability, "supports_chunked_execution", True),
+    ):
+        max_samples_per_microbatch = samples_per_prompt
 
     micro_batches: list[MicroBatchPlan] = []
     for prompt_index, prompt in enumerate(prompts):
@@ -110,6 +119,8 @@ def plan_prompt_group_microbatches(
         samples_per_prompt=samples_per_prompt,
         max_samples_per_microbatch=max_samples_per_microbatch,
         micro_batches=tuple(micro_batches),
+        trajectory_kind=getattr(capability, "trajectory_kind", None),
+        batchable_axes=tuple(getattr(capability, "batchable_axes", ())),
     )
 
 

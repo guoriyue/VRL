@@ -107,7 +107,7 @@ class RayRolloutLauncher:
         ]
 
         executor = DistributedRolloutExecutor(
-            DistributedExecutionPlanner(),
+            DistributedExecutionPlanner(spec.extra.get("family_capability")),
             workers,
             chunk_gatherer,
             max_inflight_chunks_per_worker=rollout_config.max_inflight_chunks_per_worker,

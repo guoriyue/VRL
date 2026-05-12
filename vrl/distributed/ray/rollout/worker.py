@@ -10,6 +10,11 @@ from typing import Any
 from vrl.distributed.ray.dependencies import current_gpu_ids, current_node_ip
 from vrl.distributed.ray.module_loading import import_from_path
 from vrl.distributed.ray.rollout.types import RayChunkResult
+from vrl.engine.core.capabilities import (
+    FamilyCapability,
+    family_capability_from_value,
+    generic_family_capability,
+)
 from vrl.engine.core.protocols import ChunkedFamilyPipelineExecutor
 from vrl.engine.core.runtime_spec import GenerationRuntimeSpec
 from vrl.engine.core.types import GenerationRequest
@@ -38,6 +43,7 @@ class RayRolloutWorker:
             self.runtime_spec.extra.get("profiler_output_dir", "outputs/"),
         )
         self._profiler_step = 0
+        self.capability = _capability_from_spec(self.runtime_spec)
 
     def load_policy(self) -> None:
         """Build the family executor from the serialized runtime spec."""
@@ -115,6 +121,7 @@ class RayRolloutWorker:
         self,
         request: GenerationRequest,
         chunk: MicroBatchPlan,
+        profiler_label: str | None = None,
     ) -> RayChunkResult:
         self.load_policy()
         runtime_debug = bool(request.metadata.get("_runtime_debug"))
@@ -134,13 +141,16 @@ class RayRolloutWorker:
             )
         try:
             assert self.executor is not None
-            output = self._profile_forward_chunk(request, chunk)
+            output = self._profile_forward_chunk(request, chunk, profiler_label)
             return RayChunkResult(
                 request_id=request.request_id,
                 worker_id=self.worker_id,
                 chunk=chunk,
                 output=_to_cpu(output),
-                metrics=self.worker_metadata(runtime_debug=runtime_debug),
+                metrics={
+                    **self.worker_metadata(runtime_debug=runtime_debug),
+                    "profiler_label": profiler_label,
+                },
                 policy_version=self._policy_version,
             )
         except Exception as exc:
@@ -158,8 +168,9 @@ class RayRolloutWorker:
         self,
         request: GenerationRequest,
         chunk: MicroBatchPlan,
+        profiler_label: str | None = None,
     ) -> Any:
-        from vrl.trainers.profiling import torch_profiler_step
+        from vrl.trainers.profiling import record_function, torch_profiler_step
 
         assert self.executor is not None
         step = self._profiler_step
@@ -170,7 +181,7 @@ class RayRolloutWorker:
         )
         try:
             device = _executor_device(self.executor)
-            event_name = f"rollout.forward_chunk.{self.family}.{self.runtime_spec.task}"
+            event_name = profiler_label or _default_chunk_profiler_label(self.capability)
             with torch_profiler_step(
                 self._profiler_config,
                 output_dir=self._profiler_output_dir,
@@ -178,7 +189,7 @@ class RayRolloutWorker:
                 device=device,
                 worker_name=worker_name,
                 trace_subdir=f"rollout/{self.worker_id}",
-            ), _record_function(event_name):
+            ), record_function(event_name):
                 return self.executor.forward_chunk(request, chunk)
         except Exception:
             logger.exception("Ray rollout profiler-wrapped chunk failed")
@@ -214,6 +225,8 @@ def _build_executor(runtime_spec: GenerationRuntimeSpec) -> ChunkedFamilyPipelin
         ),
     )
     built = executor_cls(bundle.policy, **dict(runtime_spec.executor_kwargs))
+    if getattr(bundle, "runtime_caps", None) is not None:
+        built.runtime_caps = dict(bundle.runtime_caps)
     return require_chunked_executor(built)
 
 
@@ -222,6 +235,21 @@ def _profiler_config_from_spec(runtime_spec: GenerationRuntimeSpec) -> TorchProf
     if isinstance(raw, Mapping):
         return TorchProfilerConfig(**dict(raw))
     return TorchProfilerConfig()
+
+
+def _capability_from_spec(runtime_spec: GenerationRuntimeSpec) -> FamilyCapability:
+    capability = family_capability_from_value(runtime_spec.extra.get("family_capability"))
+    if capability is not None:
+        return capability
+    return generic_family_capability(
+        runtime_spec.family or "unknown",
+        runtime_spec.task or "unknown",
+    )
+
+
+def _default_chunk_profiler_label(capability: FamilyCapability) -> str:
+    del capability
+    return "engine.forward_chunk"
 
 
 def _executor_device(executor: Any) -> Any:
@@ -235,17 +263,6 @@ def _executor_device(executor: Any) -> Any:
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
     except Exception:
         return "cpu"
-
-
-def _record_function(name: str) -> Any:
-    try:
-        import torch
-
-        return torch.profiler.record_function(name)
-    except Exception:
-        import contextlib
-
-        return contextlib.nullcontext()
 
 
 def _normalize_runtime_build_spec_payload(payload: dict[str, Any]) -> dict[str, Any]:

@@ -6,6 +6,8 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from vrl.engine.core.capabilities import FamilyCapability
+    from vrl.engine.core.planner import EnginePlan
     from vrl.engine.core.types import (
         GenerationRequest,
         GenerationSampleSpec,
@@ -47,6 +49,19 @@ class BatchedFamilyPipelineExecutor(FamilyPipelineExecutor, Protocol):
         requests: list[GenerationRequest],
         sample_specs_by_request: dict[str, list[GenerationSampleSpec]],
     ) -> dict[str, OutputBatch]: ...
+
+
+@runtime_checkable
+class CapabilityAwareFamilyPipelineExecutor(FamilyPipelineExecutor, Protocol):
+    """Optional extension for engines that expose typed planning capability."""
+
+    def capability(self) -> FamilyCapability: ...
+
+    def plan(
+        self,
+        request: GenerationRequest,
+        sample_specs: list[GenerationSampleSpec],
+    ) -> EnginePlan: ...
 
 
 @runtime_checkable

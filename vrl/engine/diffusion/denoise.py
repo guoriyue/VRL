@@ -85,7 +85,10 @@ def run_diffusion_denoise_chunk(
 ) -> DiffusionChunkResult:
     """Run one fused diffusion micro-batch: prepare -> denoise -> decode."""
 
-    state = policy.prepare_sampling(request, encoded, **(prepare_kwargs or {}))
+    from vrl.trainers.profiling import record_function
+
+    with record_function("engine.cache_write"):
+        state = policy.prepare_sampling(request, encoded, **(prepare_kwargs or {}))
     chunk_batch = state.latents.shape[0]
     device = state.latents.device
     generator = _build_generator(
@@ -109,27 +112,30 @@ def run_diffusion_denoise_chunk(
 
     with autocast_ctx, torch.no_grad():
         for step_idx in range(len(state.timesteps)):
-            latents_ori = state.latents.clone()
-            timestep = state.timesteps[step_idx]
-            fwd = policy.forward_step(state, step_idx)
-            noise_pred = fwd["noise_pred"]
+            with record_function("engine.denoise_step"):
+                latents_ori = state.latents.clone()
+                timestep = state.timesteps[step_idx]
+                with record_function("engine.cache_read"):
+                    fwd = policy.forward_step(state, step_idx)
+                noise_pred = fwd["noise_pred"]
 
-            in_sde_window = config.sde_window is None or (
-                config.sde_window[0] <= step_idx < config.sde_window[1]
-            )
-            sde_result = sde_step_with_logprob(
-                state.scheduler,
-                noise_pred.float(),
-                timestep.unsqueeze(0),
-                state.latents.float(),
-                generator=generator if in_sde_window else None,
-                deterministic=not in_sde_window,
-                return_dt=config.return_kl,
-                noise_level=config.noise_level,
-                sde_type=config.sde_type,
-            )
-            prev_latents = sde_result.prev_sample
-            state.latents = prev_latents
+                in_sde_window = config.sde_window is None or (
+                    config.sde_window[0] <= step_idx < config.sde_window[1]
+                )
+                sde_result = sde_step_with_logprob(
+                    state.scheduler,
+                    noise_pred.float(),
+                    timestep.unsqueeze(0),
+                    state.latents.float(),
+                    generator=generator if in_sde_window else None,
+                    deterministic=not in_sde_window,
+                    return_dt=config.return_kl,
+                    noise_level=config.noise_level,
+                    sde_type=config.sde_type,
+                )
+                prev_latents = sde_result.prev_sample
+                with record_function("engine.cache_write"):
+                    state.latents = prev_latents
 
             obs_steps.append(latents_ori.detach())
             act_steps.append(prev_latents.detach())
@@ -148,7 +154,8 @@ def run_diffusion_denoise_chunk(
         dim=1,
     )
     kl = torch.stack(kl_steps, dim=1)
-    video = policy.decode_latents(state.latents)
+    with record_function("engine.vq_decode"):
+        video = policy.decode_latents(state.latents)
 
     return DiffusionChunkResult(
         observations=observations,

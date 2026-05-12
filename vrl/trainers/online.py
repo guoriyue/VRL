@@ -508,6 +508,7 @@ class OnlineTrainer(Trainer):
         """Run one full training step without profiler wrapping."""
         from vrl.rollouts.evaluators.types import SignalRequest
         from vrl.trainers.data import PromptExample
+        from vrl.trainers.profiling import record_function
 
         if prompts is not None:
             self.prompts = prompts
@@ -760,7 +761,7 @@ class OnlineTrainer(Trainer):
         if cfg.debug.first_step and self.state.step == 0 and uses_evaluator:
             _dbg_batch = filtered_batches[0]
             _dbg_old_lp = _dbg_batch.extras["log_probs"]
-            with autocast_ctx:
+            with autocast_ctx, record_function("trainer.replay"):
                 _dbg_signals = self.evaluator.evaluate(
                     self.model,
                     _dbg_batch,
@@ -833,12 +834,13 @@ class OnlineTrainer(Trainer):
                     for j in train_indices:
                         with timer.time("evaluate"), autocast_ctx:
                             if callable(compute_batch_timestep_loss):
-                                loss, metrics = compute_batch_timestep_loss(
-                                    self.model,
-                                    b,
-                                    j,
-                                    adv_b,
-                                )
+                                with record_function("trainer.loss"):
+                                    loss, metrics = compute_batch_timestep_loss(
+                                        self.model,
+                                        b,
+                                        j,
+                                        adv_b,
+                                    )
                             else:
                                 if self.evaluator is None:
                                     raise RuntimeError(
@@ -852,20 +854,22 @@ class OnlineTrainer(Trainer):
                                 init_kl_coef = float(
                                     getattr(self.algorithm.config, "init_kl_coef", 0.0),
                                 )
-                                signals = self.evaluator.evaluate(
-                                    self.model,
-                                    b,
-                                    j,
-                                    ref_model=self.ref_model,
-                                    signal_request=SignalRequest(
-                                        need_ref=init_kl_coef > 0,
-                                        need_kl_intermediates=init_kl_coef > 0,
-                                    ),
-                                )
+                                with record_function("trainer.replay"):
+                                    signals = self.evaluator.evaluate(
+                                        self.model,
+                                        b,
+                                        j,
+                                        ref_model=self.ref_model,
+                                        signal_request=SignalRequest(
+                                            need_ref=init_kl_coef > 0,
+                                            need_kl_intermediates=init_kl_coef > 0,
+                                        ),
+                                    )
                                 old_lp_j = old_lp[:, j] if old_lp.ndim > 1 else old_lp
-                                loss, metrics = self.algorithm.compute_signal_loss(
-                                    signals, adv_b, old_lp_j
-                                )
+                                with record_function("trainer.loss"):
+                                    loss, metrics = self.algorithm.compute_signal_loss(
+                                        signals, adv_b, old_lp_j
+                                    )
                             # Average across rollout micro-batches inside this
                             # optimizer update; timestep accumulation follows
                             # Flow-GRPO's per-denoise-step surrogate structure.

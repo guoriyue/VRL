@@ -11,9 +11,19 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from vrl.engine.core.capabilities import diffusion_family_capability
+from vrl.engine.core.types import GenerationRequest
+from vrl.engine.diffusion import (
+    DiffusionGenerationSpec,
+    DiffusionPipelineExecutorBase,
+    repeat_tensor_batch,
+)
+from vrl.engine.microbatching import MicroBatchPlan
+from vrl.models.diffusion import VideoGenerationRequest
 from vrl.models.runtime import RuntimeBuildSpec, RuntimeBundle
 
 logger = logging.getLogger(__name__)
+SD3_5_FAMILY_CAPABILITY = diffusion_family_capability("sd3_5", "t2i")
 
 _ADAPTER_BY_BACKEND: dict[str, str] = {
     "diffusers": "vrl.models.families.sd3_5.policy:SD3_5Policy",
@@ -105,6 +115,7 @@ def build_sd3_5_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         backend_kind=backend,
         backend_handle=adapter.backend_handle,
         runtime_caps={
+            "family_capability": SD3_5_FAMILY_CAPABILITY.to_dict(),
             "supports_stepwise": True,
             "supports_cfg": True,
             "supports_batched_decode": True,
@@ -130,26 +141,12 @@ def build_sd3_5_runtime_bundle_from_cfg(
 def _dtype_name(value: Any) -> str:
     return str(value).removeprefix("torch.").lower()
 
-"""SD3.5-Medium diffusion pipeline executor."""
-
-
-from typing import Any
-
-from vrl.engine.core.types import GenerationRequest
-from vrl.engine.diffusion import (
-    DiffusionGenerationSpec,
-    DiffusionPipelineExecutorBase,
-    repeat_tensor_batch,
-)
-from vrl.engine.microbatching import MicroBatchPlan
-from vrl.models.diffusion import VideoGenerationRequest
-
-
 class SD3_5PipelineExecutor(DiffusionPipelineExecutorBase):
     """Diffusion executor for SD3.5-M text-to-image rollouts."""
 
     family: str = "sd3_5"
     task: str = "t2i"
+    family_capability = SD3_5_FAMILY_CAPABILITY
     default_num_frames: int = 1
     default_max_sequence_length: int = 128
 

@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from vrl.engine.core.capabilities import FamilyCapability
+    from vrl.engine.core.planner import EnginePlan
     from vrl.engine.trajectory import TrajectoryBatch
 
 
@@ -24,6 +26,9 @@ class GenerationMetrics:
     num_samples: int = 0
     num_steps: int | None = None
     micro_batches: int = 0
+    trajectory_kind: str | None = None
+    execution_units: tuple[str, ...] = ()
+    engine_plan_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -83,6 +88,9 @@ class WorkloadSignature:
     num_steps: int | None
     artifact_mode: tuple[str, ...]
     max_new_tokens: int | None = None
+    trajectory_kind: str | None = None
+    axis_kinds: tuple[tuple[str, str], ...] = ()
+    capability_key: tuple[Any, ...] = ()
 
     @classmethod
     def from_request(cls, request: GenerationRequest) -> WorkloadSignature:
@@ -100,6 +108,27 @@ class WorkloadSignature:
             max_new_tokens=_optional_int(
                 sampling.get("max_new_tokens", sampling.get("max_new_image_tokens"))
             ),
+        )
+
+    @classmethod
+    def from_request_and_capability(
+        cls,
+        request: GenerationRequest,
+        capability: FamilyCapability,
+    ) -> WorkloadSignature:
+        signature = cls.from_request(request)
+        return cls(
+            family=signature.family,
+            task=signature.task,
+            height=signature.height,
+            width=signature.width,
+            num_frames=signature.num_frames,
+            num_steps=signature.num_steps,
+            artifact_mode=signature.artifact_mode,
+            max_new_tokens=signature.max_new_tokens,
+            trajectory_kind=capability.trajectory_kind,
+            axis_kinds=tuple((axis.name, axis.kind) for axis in capability.expected_axes),
+            capability_key=capability.batch_signature(),
         )
 
 
@@ -161,6 +190,7 @@ class OutputBatch:
     rollout_trajectory_data: RolloutTrajectoryData | None = None
     trajectory_decoded: list[Any] | None = None
     trajectory: TrajectoryBatch | None = None
+    engine_plan: EnginePlan | None = None
     extra: dict[str, Any] = field(default_factory=dict)
     metrics: GenerationMetrics | None = None
     peak_memory_mb: float = 0.0

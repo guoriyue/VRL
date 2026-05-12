@@ -11,6 +11,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
+from vrl.engine.core.capabilities import (
+    FamilyCapability,
+    ar_continuous_family_capability,
+    ar_discrete_family_capability,
+    diffusion_family_capability,
+)
+
 CollectorKind = Literal["diffusion", "ar_discrete", "ar_continuous", "ar_r1"]
 
 
@@ -55,6 +62,7 @@ class RolloutFamilyEntry:
     runtime_builder: str
     runtime_spec_extractor: str
     gatherer: GathererMetadata
+    capability: FamilyCapability
     executor_kwargs: ExecutorKwargsMetadata = field(
         default_factory=ExecutorKwargsMetadata,
     )
@@ -112,6 +120,7 @@ FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {
             import_path="vrl.engine.gather:DiffusionChunkGatherer",
             kwargs={"model_family": "sd3_5"},
         ),
+        capability=diffusion_family_capability("sd3_5", "t2i"),
         executor_kwargs=ExecutorKwargsMetadata(include_sample_batch_size=True),
     ),
     "wan_2_1": RolloutFamilyEntry(
@@ -136,6 +145,7 @@ FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {
             import_path="vrl.engine.gather:DiffusionChunkGatherer",
             kwargs={"model_family": "wan_2_1"},
         ),
+        capability=diffusion_family_capability("wan_2_1", "t2v"),
         executor_kwargs=ExecutorKwargsMetadata(include_sample_batch_size=True),
     ),
     "cosmos-predict2": RolloutFamilyEntry(
@@ -166,6 +176,11 @@ FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {
         gatherer=GathererMetadata(
             import_path="vrl.engine.gather:DiffusionChunkGatherer",
             kwargs={"model_family": "cosmos-predict2", "respect_cfg_flag": False},
+        ),
+        capability=diffusion_family_capability(
+            "cosmos-predict2",
+            "v2w",
+            supports_reference_conditioning=True,
         ),
         executor_kwargs=ExecutorKwargsMetadata(
             include_sample_batch_size=True,
@@ -204,6 +219,7 @@ FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {
             import_path="vrl.engine.gather:DiffusionChunkGatherer",
             kwargs={"model_family": "cosmos-predict2.5"},
         ),
+        capability=diffusion_family_capability("cosmos-predict2.5", "t2w"),
         executor_kwargs=ExecutorKwargsMetadata(include_sample_batch_size=True),
     ),
     "janus_pro": RolloutFamilyEntry(
@@ -231,6 +247,7 @@ FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {
         gatherer=GathererMetadata(
             import_path="vrl.models.families.janus_pro.runtime:JanusProChunkGatherer",
         ),
+        capability=ar_discrete_family_capability("janus_pro", "ar_t2i"),
     ),
     "janus_pro_r1": RolloutFamilyEntry(
         family="janus_pro_r1",
@@ -268,6 +285,11 @@ FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {
         gatherer=GathererMetadata(
             import_path="vrl.models.families.janus_pro.runtime:JanusProR1ChunkGatherer",
         ),
+        capability=ar_discrete_family_capability(
+            "janus_pro_r1",
+            "ar_t2i_r1",
+            multisegment=True,
+        ),
     ),
     "nextstep_1": RolloutFamilyEntry(
         family="nextstep_1",
@@ -297,6 +319,7 @@ FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {
         gatherer=GathererMetadata(
             import_path="vrl.models.families.nextstep_1.runtime:NextStep1ChunkGatherer",
         ),
+        capability=ar_continuous_family_capability("nextstep_1", "ar_t2i"),
     ),
 }
 
@@ -340,6 +363,7 @@ __all__ = [
     "CollectorKind",
     "CollectorMetadata",
     "ExecutorKwargsMetadata",
+    "FamilyCapability",
     "GathererMetadata",
     "RolloutFamilyEntry",
     "get_rollout_family_entry",

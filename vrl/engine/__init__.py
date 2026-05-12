@@ -1,8 +1,28 @@
 """Visual generation engine primitives."""
 
 from vrl.engine.batching import forward_batch_by_merging_prompts
+from vrl.engine.core.capabilities import (
+    AxisCapability,
+    ExecutionUnitCapability,
+    FamilyCapability,
+    ar_continuous_family_capability,
+    ar_discrete_family_capability,
+    diffusion_family_capability,
+    family_capability_from_value,
+    generic_family_capability,
+)
+from vrl.engine.core.planner import (
+    AxisPlan,
+    EnginePlan,
+    ExecutionUnit,
+    attach_engine_plan,
+    build_engine_plan,
+    profiler_label_for_unit,
+    resolve_executor_capability,
+)
 from vrl.engine.core.protocols import (
     BatchedFamilyPipelineExecutor,
+    CapabilityAwareFamilyPipelineExecutor,
     ChunkedFamilyPipelineExecutor,
     FamilyPipelineExecutor,
     PipelineChunkResult,
@@ -31,10 +51,17 @@ from vrl.engine.gather import (
 )
 
 __all__ = [
+    "AxisCapability",
+    "AxisPlan",
     "BatchedFamilyPipelineExecutor",
+    "CapabilityAwareFamilyPipelineExecutor",
     "ChunkedFamilyPipelineExecutor",
+    "EnginePlan",
     "ExecutorKey",
+    "ExecutionUnit",
+    "ExecutionUnitCapability",
     "FamilyPipelineExecutor",
+    "FamilyCapability",
     "FamilyPipelineRegistry",
     "GenerationIdFactory",
     "GenerationMetrics",
@@ -51,7 +78,16 @@ __all__ = [
     "RolloutDitTrajectory",
     "RolloutTrajectoryData",
     "WorkloadSignature",
+    "ar_continuous_family_capability",
+    "ar_discrete_family_capability",
+    "attach_engine_plan",
+    "build_engine_plan",
+    "diffusion_family_capability",
+    "family_capability_from_value",
     "forward_batch_by_merging_prompts",
     "gather_pipeline_chunks",
+    "generic_family_capability",
+    "profiler_label_for_unit",
     "require_chunked_executor",
+    "resolve_executor_capability",
 ]

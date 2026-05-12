@@ -129,12 +129,15 @@ class RolloutCollector:
         )
         reward_outputs = self.packer.reward_outputs(output, context)
         reward_prompts = self.packer.reward_prompts(output, context)
-        rewards = await self.reward_scorer.score(
-            reward_outputs,
-            reward_prompts,
-            request_plan.reward_metadata,
-            _infer_device(reward_outputs, context.device),
-        )
+        from vrl.trainers.profiling import record_function
+
+        with record_function("collector.reward_score"):
+            rewards = await self.reward_scorer.score(
+                reward_outputs,
+                reward_prompts,
+                request_plan.reward_metadata,
+                _infer_device(reward_outputs, context.device),
+            )
 
         if phases is not None and phase_t is not None:
             phases["collect.reward_score"] = _sync_time() - phase_t

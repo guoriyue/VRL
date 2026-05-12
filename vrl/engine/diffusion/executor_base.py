@@ -10,6 +10,8 @@ from vrl.engine.core.protocols import (
     BatchedFamilyPipelineExecutor,
     ChunkedFamilyPipelineExecutor,
 )
+from vrl.engine.core.capabilities import FamilyCapability, diffusion_family_capability
+from vrl.engine.core.planner import attach_engine_plan, build_engine_plan
 from vrl.engine.core.types import (
     GenerationRequest,
     GenerationSampleSpec,
@@ -31,7 +33,6 @@ from vrl.engine.diffusion.spec import (
 from vrl.engine.gather import gather_diffusion_chunks
 from vrl.engine.microbatching import (
     MicroBatchPlan,
-    plan_prompt_group_microbatches,
     run_microbatches_with_oom_retry,
 )
 from vrl.models.diffusion import VideoGenerationRequest
@@ -53,11 +54,28 @@ class DiffusionPipelineExecutorBase(
     respect_cfg_flag: bool = True
     sde_type: str = "sde"
     include_max_sequence_length_extra: bool = True
+    family_capability: FamilyCapability | None = None
 
     # -- protocol ------------------------------------------------------
 
     def workload_signature(self, request: GenerationRequest) -> WorkloadSignature:
-        return WorkloadSignature.from_request(request)
+        return WorkloadSignature.from_request_and_capability(request, self.capability())
+
+    def capability(self) -> FamilyCapability:
+        return self.family_capability or diffusion_family_capability(self.family, self.task)
+
+    def plan(
+        self,
+        request: GenerationRequest,
+        sample_specs: list[GenerationSampleSpec],
+    ) -> Any:
+        spec = self.parse_spec(request)
+        return build_engine_plan(
+            request,
+            sample_specs,
+            capability=self.capability(),
+            max_samples_per_microbatch=spec.base.sample_batch_size,
+        )
 
     def parse_spec(self, request: GenerationRequest) -> DiffusionGenerationSpec:
         """Parse shared diffusion sampling fields from GenerationRequest."""
@@ -176,31 +194,29 @@ class DiffusionPipelineExecutorBase(
         request: GenerationRequest,
         sample_specs: list[GenerationSampleSpec],
     ) -> OutputBatch:
-        spec = self.parse_spec(request)
-        plan = plan_prompt_group_microbatches(
-            list(request.prompts),
-            samples_per_prompt=int(request.samples_per_prompt),
-            max_samples_per_microbatch=spec.base.sample_batch_size,
-        )
+        plan = self.plan(request, sample_specs)
         chunks = run_microbatches_with_oom_retry(
             plan.micro_batches,
             lambda micro_batch: self.forward_chunk(request, micro_batch),
         )
-        return self.gather_chunks(request, sample_specs, chunks)
+        return attach_engine_plan(self.gather_chunks(request, sample_specs, chunks), plan)
 
     def forward_chunk(
         self,
         request: GenerationRequest,
         chunk: MicroBatchPlan,
     ) -> DiffusionChunkResult:
+        from vrl.trainers.profiling import record_function
+
         spec = self.parse_spec(request)
         video_request = self.build_video_request(chunk.prompt, spec)
-        encoded = self.encode_prompt_for_chunk(
-            generation_request=request,
-            video_request=video_request,
-            spec=spec,
-            chunk=chunk,
-        )
+        with record_function("engine.prefill"):
+            encoded = self.encode_prompt_for_chunk(
+                generation_request=request,
+                video_request=video_request,
+                spec=spec,
+                chunk=chunk,
+            )
         chunk_encoded = self.build_chunk_encoded(
             encoded=encoded,
             generation_request=request,

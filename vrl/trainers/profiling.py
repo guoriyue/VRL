@@ -15,6 +15,20 @@ logger = logging.getLogger(__name__)
 
 
 @contextlib.contextmanager
+def record_function(name: str) -> Iterator[None]:
+    """Record a profiler range when torch profiler is available."""
+
+    try:
+        import torch
+
+        ctx = torch.profiler.record_function(name)
+    except Exception:
+        ctx = contextlib.nullcontext()
+    with ctx:
+        yield
+
+
+@contextlib.contextmanager
 def torch_profiler_step(
     config: TorchProfilerConfig,
     *,
@@ -143,5 +157,6 @@ def _table(prof: Any, *, sort_by: str) -> str:
 
 
 __all__ = [
+    "record_function",
     "torch_profiler_step",
 ]

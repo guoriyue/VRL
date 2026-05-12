@@ -1,0 +1,498 @@
+"""Typed capability view for engine planning.
+
+Family routing still lives in the rollout family registry and backend-specific
+flags still live in ``RuntimeBundle.runtime_caps``. This module only provides
+the normalized view that the engine planner can consume.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
+from typing import Any, Literal
+
+TrajectoryKind = Literal[
+    "diffusion",
+    "ar_discrete",
+    "ar_continuous",
+    "multisegment",
+    "unknown",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class AxisCapability:
+    """One logical trajectory axis visible to the engine planner."""
+
+    name: str
+    kind: str
+    batchable: bool = False
+    chunkable: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("AxisCapability.name must be non-empty")
+        if not self.kind:
+            raise ValueError("AxisCapability.kind must be non-empty")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "kind": self.kind,
+            "batchable": self.batchable,
+            "chunkable": self.chunkable,
+        }
+
+    @classmethod
+    def from_value(cls, value: AxisCapability | Mapping[str, Any]) -> AxisCapability:
+        if isinstance(value, cls):
+            return value
+        return cls(
+            name=str(value["name"]),
+            kind=str(value["kind"]),
+            batchable=bool(value.get("batchable", False)),
+            chunkable=bool(value.get("chunkable", False)),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionUnitCapability:
+    """A stable execution unit kind a family can expose to the planner."""
+
+    name: str
+    segment: str | None = None
+    axis: str | None = None
+    cache_read: bool = False
+    cache_write: bool = False
+    profiler_name: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("ExecutionUnitCapability.name must be non-empty")
+        if self.profiler_name is not None and not self.profiler_name:
+            raise ValueError(
+                "ExecutionUnitCapability.profiler_name must be non-empty when set"
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "segment": self.segment,
+            "axis": self.axis,
+            "cache_read": self.cache_read,
+            "cache_write": self.cache_write,
+            "profiler_name": self.profiler_label,
+            "metadata": dict(self.metadata),
+        }
+
+    @property
+    def profiler_label(self) -> str:
+        return self.profiler_name or f"engine.{self.name}"
+
+    @classmethod
+    def from_value(
+        cls,
+        value: ExecutionUnitCapability | Mapping[str, Any],
+    ) -> ExecutionUnitCapability:
+        if isinstance(value, cls):
+            return value
+        return cls(
+            name=str(value["name"]),
+            segment=_optional_str(value.get("segment")),
+            axis=_optional_str(value.get("axis")),
+            cache_read=bool(value.get("cache_read", False)),
+            cache_write=bool(value.get("cache_write", False)),
+            profiler_name=_optional_str(value.get("profiler_name")),
+            metadata=dict(value.get("metadata") or {}),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class FamilyCapability:
+    """Planner-facing capability snapshot for one family/task pair."""
+
+    family: str
+    task: str
+    trajectory_kind: TrajectoryKind
+    expected_axes: tuple[AxisCapability, ...]
+    execution_units: tuple[ExecutionUnitCapability, ...]
+    trainable_segments: tuple[str, ...] = ()
+    reward_views: tuple[str, ...] = ()
+    supports_batched_requests: bool = True
+    supports_chunked_execution: bool = True
+    supports_batched_forward: bool = True
+    supports_stepwise: bool = False
+    supports_cfg: bool = False
+    supports_batched_decode: bool = False
+    supports_reference_conditioning: bool = False
+    supports_token_logprobs: bool = False
+    supports_kv_decode: bool = False
+    supports_prefill_decode_split: bool = False
+    supports_resident_rollout_state: bool = False
+    supports_torch_compile: bool = False
+    supports_cuda_graph: bool = False
+    cache_kinds: tuple[str, ...] = ()
+    default_max_samples_per_microbatch: int | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.family:
+            raise ValueError("FamilyCapability.family must be non-empty")
+        if not self.task:
+            raise ValueError("FamilyCapability.task must be non-empty")
+        if not self.expected_axes:
+            raise ValueError("FamilyCapability.expected_axes must be non-empty")
+        if not self.execution_units:
+            raise ValueError("FamilyCapability.execution_units must be non-empty")
+        _require_string_tuple("FamilyCapability.trainable_segments", self.trainable_segments)
+        _require_string_tuple("FamilyCapability.reward_views", self.reward_views)
+        _require_string_tuple("FamilyCapability.cache_kinds", self.cache_kinds)
+        if (
+            self.default_max_samples_per_microbatch is not None
+            and self.default_max_samples_per_microbatch < 1
+        ):
+            raise ValueError(
+                "FamilyCapability.default_max_samples_per_microbatch must be >= 1"
+            )
+
+    @property
+    def axis_names(self) -> tuple[str, ...]:
+        return tuple(axis.name for axis in self.expected_axes)
+
+    @property
+    def batchable_axes(self) -> tuple[str, ...]:
+        return tuple(axis.name for axis in self.expected_axes if axis.batchable)
+
+    @property
+    def chunkable_axes(self) -> tuple[str, ...]:
+        return tuple(axis.name for axis in self.expected_axes if axis.chunkable)
+
+    @property
+    def profiler_labels(self) -> tuple[str, ...]:
+        return tuple(unit.profiler_label for unit in self.execution_units)
+
+    def batch_signature(self) -> tuple[Any, ...]:
+        """Return the capability portion of a request batching key."""
+
+        return (
+            self.trajectory_kind,
+            self.axis_names,
+            self.batchable_axes,
+            self.supports_batched_requests,
+            self.supports_batched_forward,
+        )
+
+    def with_runtime_caps(self, runtime_caps: Mapping[str, Any] | None) -> FamilyCapability:
+        """Merge backend-loaded flags without changing static trajectory facts."""
+
+        if not runtime_caps:
+            return self
+        updates: dict[str, Any] = {}
+        bool_fields = (
+            "supports_batched_requests",
+            "supports_chunked_execution",
+            "supports_batched_forward",
+            "supports_stepwise",
+            "supports_cfg",
+            "supports_batched_decode",
+            "supports_reference_conditioning",
+            "supports_token_logprobs",
+            "supports_kv_decode",
+            "supports_prefill_decode_split",
+            "supports_resident_rollout_state",
+            "supports_torch_compile",
+            "supports_cuda_graph",
+        )
+        for field_name in bool_fields:
+            if field_name in runtime_caps:
+                updates[field_name] = bool(runtime_caps[field_name])
+        if "cache_kinds" in runtime_caps:
+            updates["cache_kinds"] = tuple(str(item) for item in runtime_caps["cache_kinds"])
+        if "default_max_samples_per_microbatch" in runtime_caps:
+            value = runtime_caps["default_max_samples_per_microbatch"]
+            updates["default_max_samples_per_microbatch"] = (
+                None if value is None else int(value)
+            )
+        if "family_capability" in runtime_caps:
+            dynamic = family_capability_from_value(runtime_caps["family_capability"])
+            if dynamic is not None:
+                updates.update(
+                    {
+                        "trajectory_kind": dynamic.trajectory_kind,
+                        "expected_axes": dynamic.expected_axes,
+                        "execution_units": dynamic.execution_units,
+                        "trainable_segments": dynamic.trainable_segments,
+                        "reward_views": dynamic.reward_views,
+                    }
+                )
+        if not updates:
+            return self
+        return replace(self, **updates)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "family": self.family,
+            "task": self.task,
+            "trajectory_kind": self.trajectory_kind,
+            "expected_axes": [axis.to_dict() for axis in self.expected_axes],
+            "execution_units": [unit.to_dict() for unit in self.execution_units],
+            "trainable_segments": list(self.trainable_segments),
+            "reward_views": list(self.reward_views),
+            "supports_batched_requests": self.supports_batched_requests,
+            "supports_chunked_execution": self.supports_chunked_execution,
+            "supports_batched_forward": self.supports_batched_forward,
+            "supports_stepwise": self.supports_stepwise,
+            "supports_cfg": self.supports_cfg,
+            "supports_batched_decode": self.supports_batched_decode,
+            "supports_reference_conditioning": self.supports_reference_conditioning,
+            "supports_token_logprobs": self.supports_token_logprobs,
+            "supports_kv_decode": self.supports_kv_decode,
+            "supports_prefill_decode_split": self.supports_prefill_decode_split,
+            "supports_resident_rollout_state": self.supports_resident_rollout_state,
+            "supports_torch_compile": self.supports_torch_compile,
+            "supports_cuda_graph": self.supports_cuda_graph,
+            "cache_kinds": list(self.cache_kinds),
+            "default_max_samples_per_microbatch": self.default_max_samples_per_microbatch,
+            "metadata": dict(self.metadata),
+        }
+
+    @classmethod
+    def from_value(
+        cls,
+        value: FamilyCapability | Mapping[str, Any],
+    ) -> FamilyCapability:
+        if isinstance(value, cls):
+            return value
+        return cls(
+            family=str(value["family"]),
+            task=str(value["task"]),
+            trajectory_kind=_trajectory_kind(value.get("trajectory_kind", "unknown")),
+            expected_axes=tuple(
+                AxisCapability.from_value(axis)
+                for axis in value.get("expected_axes", ())
+            ),
+            execution_units=tuple(
+                ExecutionUnitCapability.from_value(unit)
+                for unit in value.get("execution_units", ())
+            ),
+            trainable_segments=tuple(str(item) for item in value.get("trainable_segments", ())),
+            reward_views=tuple(str(item) for item in value.get("reward_views", ())),
+            supports_batched_requests=bool(value.get("supports_batched_requests", True)),
+            supports_chunked_execution=bool(value.get("supports_chunked_execution", True)),
+            supports_batched_forward=bool(value.get("supports_batched_forward", True)),
+            supports_stepwise=bool(value.get("supports_stepwise", False)),
+            supports_cfg=bool(value.get("supports_cfg", False)),
+            supports_batched_decode=bool(value.get("supports_batched_decode", False)),
+            supports_reference_conditioning=bool(
+                value.get("supports_reference_conditioning", False)
+            ),
+            supports_token_logprobs=bool(value.get("supports_token_logprobs", False)),
+            supports_kv_decode=bool(value.get("supports_kv_decode", False)),
+            supports_prefill_decode_split=bool(
+                value.get("supports_prefill_decode_split", False)
+            ),
+            supports_resident_rollout_state=bool(
+                value.get("supports_resident_rollout_state", False)
+            ),
+            supports_torch_compile=bool(value.get("supports_torch_compile", False)),
+            supports_cuda_graph=bool(value.get("supports_cuda_graph", False)),
+            cache_kinds=tuple(str(item) for item in value.get("cache_kinds", ())),
+            default_max_samples_per_microbatch=_optional_int(
+                value.get("default_max_samples_per_microbatch")
+            ),
+            metadata=dict(value.get("metadata") or {}),
+        )
+
+
+def family_capability_from_value(value: Any) -> FamilyCapability | None:
+    """Normalize a serialized or typed capability value."""
+
+    if value is None:
+        return None
+    if isinstance(value, FamilyCapability):
+        return value
+    if isinstance(value, Mapping):
+        return FamilyCapability.from_value(value)
+    raise TypeError(
+        "family capability must be a FamilyCapability, mapping, or None; "
+        f"got {type(value).__name__}"
+    )
+
+
+def generic_family_capability(family: str, task: str) -> FamilyCapability:
+    """Fallback capability for legacy tests and un-migrated executors."""
+
+    return FamilyCapability(
+        family=family,
+        task=task,
+        trajectory_kind="unknown",
+        expected_axes=(
+            AxisCapability("sample", "sample", batchable=True, chunkable=True),
+        ),
+        execution_units=(
+            ExecutionUnitCapability("forward", profiler_name="engine.forward"),
+        ),
+        supports_batched_requests=True,
+        supports_chunked_execution=True,
+        supports_batched_forward=True,
+    )
+
+
+def diffusion_family_capability(
+    family: str,
+    task: str,
+    *,
+    supports_reference_conditioning: bool = False,
+) -> FamilyCapability:
+    """Capability template for diffusion timestep rollouts."""
+
+    return FamilyCapability(
+        family=family,
+        task=task,
+        trajectory_kind="diffusion",
+        expected_axes=(
+            AxisCapability("sample", "sample", batchable=True, chunkable=True),
+            AxisCapability("timestep", "denoise_step", batchable=True, chunkable=False),
+        ),
+        execution_units=(
+            ExecutionUnitCapability(
+                "denoise_step",
+                segment="denoise",
+                axis="timestep",
+                cache_read=True,
+                cache_write=True,
+            ),
+            ExecutionUnitCapability("vq_decode", segment="denoise"),
+            ExecutionUnitCapability("reward_artifact", profiler_name="collector.reward_score"),
+        ),
+        trainable_segments=("denoise",),
+        reward_views=("image",),
+        supports_stepwise=True,
+        supports_cfg=True,
+        supports_batched_decode=True,
+        supports_reference_conditioning=supports_reference_conditioning,
+        supports_resident_rollout_state=True,
+        cache_kinds=("prompt_embed_cache", "latent_cache"),
+    )
+
+
+def ar_discrete_family_capability(
+    family: str,
+    task: str,
+    *,
+    multisegment: bool = False,
+) -> FamilyCapability:
+    """Capability template for discrete-token AR image generation."""
+
+    trajectory_kind: TrajectoryKind = "multisegment" if multisegment else "ar_discrete"
+    trainable_segments = (
+        ("initial_image", "selfcheck_text", "final_image")
+        if multisegment
+        else ("image_tokens",)
+    )
+    return FamilyCapability(
+        family=family,
+        task=task,
+        trajectory_kind=trajectory_kind,
+        expected_axes=(
+            AxisCapability("sample", "sample", batchable=True, chunkable=True),
+            AxisCapability("token", "discrete_token", batchable=True, chunkable=False),
+        ),
+        execution_units=(
+            ExecutionUnitCapability(
+                "prefill",
+                segment=trainable_segments[0],
+                cache_write=True,
+            ),
+            ExecutionUnitCapability(
+                "decode_step",
+                segment=trainable_segments[0],
+                axis="token",
+                cache_read=True,
+                cache_write=True,
+            ),
+            ExecutionUnitCapability("vq_decode", segment=trainable_segments[-1]),
+            ExecutionUnitCapability("reward_artifact", profiler_name="collector.reward_score"),
+        ),
+        trainable_segments=trainable_segments,
+        reward_views=("image",),
+        supports_stepwise=True,
+        supports_cfg=True,
+        supports_batched_decode=True,
+        supports_token_logprobs=True,
+        supports_resident_rollout_state=True,
+        cache_kinds=("kv_cache", "prompt_embed_cache", "token_buffer"),
+    )
+
+
+def ar_continuous_family_capability(family: str, task: str) -> FamilyCapability:
+    """Capability template for continuous-token AR image generation."""
+
+    return FamilyCapability(
+        family=family,
+        task=task,
+        trajectory_kind="ar_continuous",
+        expected_axes=(
+            AxisCapability("sample", "sample", batchable=True, chunkable=True),
+            AxisCapability("token", "continuous_token", batchable=True, chunkable=False),
+        ),
+        execution_units=(
+            ExecutionUnitCapability("prefill", segment="image_tokens", cache_write=True),
+            ExecutionUnitCapability(
+                "decode_step",
+                segment="image_tokens",
+                axis="token",
+                cache_read=True,
+                cache_write=True,
+            ),
+            ExecutionUnitCapability("vq_decode", segment="image_tokens"),
+            ExecutionUnitCapability("reward_artifact", profiler_name="collector.reward_score"),
+        ),
+        trainable_segments=("image_tokens",),
+        reward_views=("image",),
+        supports_stepwise=True,
+        supports_cfg=True,
+        supports_batched_decode=True,
+        supports_token_logprobs=True,
+        supports_resident_rollout_state=True,
+        cache_kinds=("prompt_embed_cache", "token_buffer"),
+    )
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    return int(value)
+
+
+def _optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    return str(value)
+
+
+def _require_string_tuple(name: str, values: tuple[str, ...]) -> None:
+    for value in values:
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"{name} must contain non-empty strings")
+
+
+def _trajectory_kind(value: Any) -> TrajectoryKind:
+    text = str(value)
+    if text in {"diffusion", "ar_discrete", "ar_continuous", "multisegment", "unknown"}:
+        return text  # type: ignore[return-value]
+    raise ValueError(f"unsupported trajectory_kind: {value!r}")
+
+
+__all__ = [
+    "AxisCapability",
+    "ExecutionUnitCapability",
+    "FamilyCapability",
+    "TrajectoryKind",
+    "ar_continuous_family_capability",
+    "ar_discrete_family_capability",
+    "diffusion_family_capability",
+    "family_capability_from_value",
+    "generic_family_capability",
+]

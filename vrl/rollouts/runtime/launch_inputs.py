@@ -48,6 +48,8 @@ def build_rollout_runtime_inputs(
     )
     resolved_executor_kwargs = _build_executor_kwargs(entry, cfg)
     resolved_executor_kwargs.update(dict(executor_kwargs or {}))
+    runtime_extra = _runtime_extra(cfg)
+    runtime_extra["family_capability"] = entry.capability.to_dict()
 
     return RolloutRuntimeInputs(
         runtime_spec=GenerationRuntimeSpec(
@@ -58,7 +60,7 @@ def build_rollout_runtime_inputs(
             policy_version=policy_version,
             runtime_builder=entry.runtime_builder,
             executor_cls=entry.executor_cls,
-            extra=_runtime_extra(cfg),
+            extra=runtime_extra,
         ),
         gatherer=_build_gatherer(entry),
     )
