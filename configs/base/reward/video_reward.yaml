@@ -1,0 +1,19 @@
+# Video-level reward for world-model RL. Stub is explicit and only validates
+# the training chain; use backend=remote for cosmos-rl reward service parity.
+reward:
+  components:
+    video_reward: 1.0
+  kwargs:
+    video_reward:
+      backend: stub
+      reward_name: dance_grpo
+      score_key: overall_reward
+      media_type: video
+      enqueue_url: ${oc.env:REMOTE_REWARD_ENQUEUE_URL,""}
+      fetch_url: ${oc.env:REMOTE_REWARD_FETCH_URL,""}
+      token: ${oc.env:REMOTE_REWARD_TOKEN,""}
+      timeout_s: 60.0
+      poll_interval_s: 1.0
+      max_wait_s: 600.0
+      debug_dir: ""
+      stub_scale: 0.01

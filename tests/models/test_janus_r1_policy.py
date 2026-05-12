@@ -12,7 +12,7 @@ from vrl.models.families.janus_pro.policy import (
     JanusProConfig,
     JanusProPolicy,
 )
-from vrl.models.families.janus_pro.r1_executor import JanusProR1PipelineExecutor
+from vrl.models.families.janus_pro.runtime import JanusProR1PipelineExecutor
 from vrl.models.families.janus_pro.r1_types import (
     JanusR1GenerationResult,
     JanusR1Segment,

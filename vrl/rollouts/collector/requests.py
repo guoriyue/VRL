@@ -74,6 +74,8 @@ class RolloutEngineRequestBuilder:
             kwargs,
             default_task_type=self.default_task_type,
         )
+        if "fps" in sampling:
+            metadata.setdefault("video_fps", sampling["fps"])
         request_metadata = dict(metadata)
         if self.metadata_key is not None:
             request_metadata = {self.metadata_key: dict(metadata)}
@@ -118,6 +120,9 @@ def _rollout_metadata(
         reference_image = kwargs.get("reference_image")
         if reference_image is not None:
             metadata["reference_image"] = reference_image
+        reference_video = kwargs.get("reference_video")
+        if reference_video is not None:
+            metadata["reference_video"] = reference_video
     return metadata
 
 

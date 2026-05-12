@@ -59,8 +59,8 @@ class CosmosPredict2SamplingState:
 class CosmosPredict2Policy(DiffusionPolicy):
     """Diffusers-backed Cosmos Predict2 Video2World adapter (RL path).
 
-    The pipeline is constructed by the family builder
-    (:func:`vrl.models.families.cosmos.builder.build_cosmos_predict2_runtime_bundle`)
+    The pipeline is constructed by the family runtime
+    (:func:`vrl.models.families.cosmos.predict2.runtime.build_cosmos_predict2_runtime_bundle`)
     and passed in. Scripts must NOT instantiate the diffusers pipeline
     directly.
     """
@@ -81,7 +81,7 @@ class CosmosPredict2Policy(DiffusionPolicy):
         self.transformer = transformer
         self.pipeline.transformer = transformer
 
-    # -- backend ownership (called by builder, not by collectors) -------
+    # -- backend ownership (called by runtime, not by collectors) -------
 
     @classmethod
     def from_spec(cls, spec: Any) -> CosmosPredict2Policy:

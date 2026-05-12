@@ -28,7 +28,8 @@ def test_family_registry_covers_current_rollout_families() -> None:
     assert registered_rollout_families() == (
         "sd3_5",
         "wan_2_1",
-        "cosmos",
+        "cosmos-predict2",
+        "cosmos-predict2.5",
         "janus_pro",
         "janus_pro_r1",
         "nextstep_1",
@@ -37,7 +38,8 @@ def test_family_registry_covers_current_rollout_families() -> None:
     expected_config_cls_path = {
         "sd3_5": "vrl.rollouts.collector.configs:SD3_5CollectorConfig",
         "wan_2_1": "vrl.rollouts.collector.configs:Wan_2_1CollectorConfig",
-        "cosmos": "vrl.rollouts.collector.configs:CosmosPredict2CollectorConfig",
+        "cosmos-predict2": "vrl.rollouts.collector.configs:CosmosPredict2CollectorConfig",
+        "cosmos-predict2.5": "vrl.rollouts.collector.configs:CosmosPredict2CollectorConfig",
         "janus_pro": "vrl.rollouts.collector.configs:JanusProCollectorConfig",
         "janus_pro_r1": "vrl.rollouts.collector.configs:JanusProR1CollectorConfig",
         "nextstep_1": "vrl.rollouts.collector.configs:NextStep1CollectorConfig",
@@ -57,7 +59,9 @@ def test_family_registry_covers_current_rollout_families() -> None:
     ("alias", "expected"),
     [
         ("wan", "wan_2_1"),
-        ("cosmos_predict2", "cosmos"),
+        ("cosmos", "cosmos-predict2"),
+        ("cosmos_predict2", "cosmos-predict2"),
+        ("cosmos_predict2_5", "cosmos-predict2.5"),
         ("janus", "janus_pro"),
         ("janus_r1", "janus_pro_r1"),
         ("nextstep", "nextstep_1"),
@@ -72,7 +76,8 @@ def test_collector_registry_reuses_family_registry_metadata() -> None:
     expected_config_cls = {
         "sd3_5": SD3_5CollectorConfig,
         "wan_2_1": Wan_2_1CollectorConfig,
-        "cosmos": CosmosPredict2CollectorConfig,
+        "cosmos-predict2": CosmosPredict2CollectorConfig,
+        "cosmos-predict2.5": CosmosPredict2CollectorConfig,
         "janus_pro": JanusProCollectorConfig,
         "janus_pro_r1": JanusProR1CollectorConfig,
         "nextstep_1": NextStep1CollectorConfig,
@@ -92,11 +97,15 @@ def test_diffusion_request_shape_is_registry_declared() -> None:
     assert FAMILY_REGISTRY["wan_2_1"].collector.sampling_fields == (
         DIFFUSION_VIDEO_SAMPLING_FIELDS
     )
-    assert FAMILY_REGISTRY["cosmos"].collector.sampling_fields == (
+    assert FAMILY_REGISTRY["cosmos-predict2"].collector.sampling_fields == (
         *DIFFUSION_VIDEO_SAMPLING_FIELDS,
         "fps",
     )
-    for family in ("sd3_5", "wan_2_1", "cosmos"):
+    assert FAMILY_REGISTRY["cosmos-predict2.5"].collector.sampling_fields == (
+        *DIFFUSION_VIDEO_SAMPLING_FIELDS,
+        "fps",
+    )
+    for family in ("sd3_5", "wan_2_1", "cosmos-predict2", "cosmos-predict2.5"):
         collector = FAMILY_REGISTRY[family].collector
         assert "noise_level" in collector.sampling_fields
         assert "sde_type" in collector.sampling_fields

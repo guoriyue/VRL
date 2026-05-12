@@ -10,8 +10,8 @@ import torch
 from vrl.config.loader import load_config
 from vrl.engine import ChunkedFamilyPipelineExecutor
 from vrl.engine.gather import DiffusionChunkGatherer
-from vrl.models.families.janus_pro.executor import JanusProChunkGatherer
-from vrl.models.families.nextstep_1.executor import NextStep1ChunkGatherer
+from vrl.models.families.janus_pro.runtime import JanusProChunkGatherer
+from vrl.models.families.nextstep_1.runtime import NextStep1ChunkGatherer
 from vrl.rollouts.families.specs import get_rollout_family_entry
 from vrl.rollouts.runtime.launch_inputs import (
     RolloutRuntimeInputs,
@@ -24,7 +24,7 @@ from vrl.rollouts.runtime.launch_inputs import (
     [
         ("sd3_5_ocr_grpo", "sd3_5", "t2i", DiffusionChunkGatherer),
         ("wan_2_1_1_3b_ocr_grpo", "wan_2_1", "t2v", DiffusionChunkGatherer),
-        ("cosmos_predict2_2b_grpo", "cosmos", "v2w", DiffusionChunkGatherer),
+        ("cosmos_predict2_2b_grpo", "cosmos-predict2", "v2w", DiffusionChunkGatherer),
         ("janus_pro_1b_ocr_grpo", "janus_pro", "ar_t2i", JanusProChunkGatherer),
         ("nextstep_1_ocr_grpo", "nextstep_1", "ar_t2i", NextStep1ChunkGatherer),
     ],
@@ -109,12 +109,12 @@ def test_cosmos_runtime_inputs_include_reference_image_from_cfg() -> None:
 
     inputs = build_rollout_runtime_inputs(
         cfg,
-        "cosmos_predict2",
+        "cosmos-predict2",
         weight_dtype=torch.bfloat16,
     )
 
     assert isinstance(inputs, RolloutRuntimeInputs)
-    assert inputs.runtime_spec.family == "cosmos"
+    assert inputs.runtime_spec.family == "cosmos-predict2"
     assert inputs.runtime_spec.executor_kwargs["reference_image"] == "/tmp/reference.png"
     assert inputs.runtime_spec.build_spec is not None
     assert inputs.runtime_spec.build_spec["extra"]["reference_image"] == "/tmp/reference.png"

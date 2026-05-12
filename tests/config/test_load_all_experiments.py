@@ -12,6 +12,7 @@ import pytest
 from omegaconf import OmegaConf
 
 from vrl.algorithms.dpo import DiffusionDPOConfig
+from vrl.algorithms.diffusion_nft import DiffusionNFTConfig
 from vrl.algorithms.grpo.continuous import GRPOConfig
 from vrl.algorithms.grpo.multisegment import MultiSegmentTokenGRPOConfig
 from vrl.algorithms.grpo.token import TokenGRPOConfig
@@ -34,10 +35,14 @@ _EXPECTED_ALGO_TYPE = {
     "token_grpo": TokenGRPOConfig,
     "token_grpo_multisegment": MultiSegmentTokenGRPOConfig,
     "diffusion_dpo": DiffusionDPOConfig,
+    "diffusion_nft": DiffusionNFTConfig,
 }
 
 _EXPECTED_TRAIN_TARGET = {
     "cosmos_predict2_2b_grpo": "vrl.scripts.cosmos.train:train_cosmos_predict2_grpo",
+    "cosmos_predict2_5_2b_diffusionnft": (
+        "vrl.scripts.cosmos.train:train_cosmos_predict25_diffusion_nft"
+    ),
     "janus_pro_1b_ocr_grpo": "vrl.scripts.janus_pro.train:train_janus_pro_ocr_grpo",
     "janus_pro_1b_r1_ocr_grpo": (
         "vrl.scripts.janus_pro.train:train_janus_pro_r1_ocr_grpo"

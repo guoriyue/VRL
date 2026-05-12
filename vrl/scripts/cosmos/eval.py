@@ -5,7 +5,7 @@ from __future__ import annotations
 from vrl.scripts.eval_common import FamilyEvalDefinition, main_sync
 
 DEFINITION = FamilyEvalDefinition(
-    family="cosmos",
+    family="cosmos-predict2",
     default_config="experiment/cosmos_predict2_2b_grpo",
     default_run_dir="outputs/cosmos_pred2_2b_grpo",
     default_splits=("eval",),

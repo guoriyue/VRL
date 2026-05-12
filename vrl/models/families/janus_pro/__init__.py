@@ -15,7 +15,14 @@ from vrl.models.families.janus_pro.policy import (
     JanusProPolicy,
     image_token_logits_from_hidden,
 )
-from vrl.models.families.janus_pro.r1_executor import JanusProR1PipelineExecutor
+from vrl.models.families.janus_pro.runtime import (
+    JanusProChunkGatherer,
+    JanusProPipelineExecutor,
+    JanusProR1ChunkGatherer,
+    JanusProR1PipelineExecutor,
+    build_janus_pro_runtime_bundle,
+    extract_janus_pro_runtime_spec,
+)
 from vrl.models.families.janus_pro.r1_types import (
     JanusR1GenerationResult,
     JanusR1Segment,
@@ -23,9 +30,14 @@ from vrl.models.families.janus_pro.r1_types import (
 
 __all__ = [
     "JanusProConfig",
+    "JanusProChunkGatherer",
+    "JanusProPipelineExecutor",
     "JanusProPolicy",
+    "JanusProR1ChunkGatherer",
     "JanusProR1PipelineExecutor",
     "JanusR1GenerationResult",
     "JanusR1Segment",
+    "build_janus_pro_runtime_bundle",
+    "extract_janus_pro_runtime_spec",
     "image_token_logits_from_hidden",
 ]

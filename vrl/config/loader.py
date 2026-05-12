@@ -194,6 +194,19 @@ _TOKEN_GRPO_MULTISEGMENT_EXTRA_FIELDS = {
     "train_segments",
 }
 _DPO_FIELDS = {"beta", "sft_weight"}
+_DIFFUSION_NFT_FIELDS = {
+    "eps",
+    "adv_clip_max",
+    "global_std",
+    "per_prompt_stat_tracking",
+    "nft_beta",
+    "kl_beta",
+    "advantage_high",
+    "advantage_low",
+    "mini_batch",
+    "uncentralized_training",
+    "weight_copy_decay",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -264,6 +277,7 @@ _REWARD_REQUIRED_KWARGS: dict[str, tuple[str, ...]] = {
     # OCR's `debug_dir` is allowed to be the empty string but the key must be
     # explicitly present in YAML — we validate presence, not non-emptiness.
     "ocr": ("debug_dir",),
+    "video_reward": ("backend", "reward_name", "score_key"),
 }
 
 
@@ -387,6 +401,16 @@ _GRPO_DIFFUSION_REQUIRED: tuple[str, ...] = (
     "rollout.sde.window_size",
     "rollout.sde.window_range",
     "rollout.same_latent",
+)
+
+_DIFFUSION_NFT_REQUIRED: tuple[str, ...] = (
+    *_GRPO_DIFFUSION_REQUIRED,
+    "algorithm.nft_beta",
+    "algorithm.kl_beta",
+    "algorithm.advantage_high",
+    "algorithm.advantage_low",
+    "algorithm.mini_batch",
+    "algorithm.uncentralized_training",
 )
 
 # Token-GRPO (autoregressive) extra rollout fields (Phase 4 lines 244-251).
@@ -517,6 +541,12 @@ def validate_training_config(cfg: DictConfig) -> None:
             raise ValueError(
                 "sampling.r1.final_image_policy must match rollout.final_image_policy",
             )
+    elif kind == "diffusion_nft":
+        for path in _DIFFUSION_NFT_REQUIRED:
+            _require_path_present(cfg, path)
+        sde_type = require(cfg, "rollout.sde.type")
+        if str(sde_type) not in {"sde", "cps"}:
+            raise ValueError("rollout.sde.type must be 'sde' or 'cps'")
     elif kind == "diffusion_dpo":
         for path in _DPO_REQUIRED:
             _require_path_present(cfg, path)
@@ -535,10 +565,17 @@ def _resolve_algorithm_kind(algo: DictConfig) -> str:
     if kind is None:
         raise ValueError("algorithm.kind required")
     kind = str(kind)
-    if kind not in {"grpo", "token_grpo", "token_grpo_multisegment", "diffusion_dpo"}:
+    if kind not in {
+        "grpo",
+        "token_grpo",
+        "token_grpo_multisegment",
+        "diffusion_dpo",
+        "diffusion_nft",
+    }:
         raise ValueError(
             f"unknown algorithm.kind={kind!r}; "
-            f"expected grpo / token_grpo / token_grpo_multisegment / diffusion_dpo",
+            "expected grpo / token_grpo / token_grpo_multisegment / "
+            "diffusion_dpo / diffusion_nft",
         )
     return kind
 
@@ -641,6 +678,13 @@ def build_algorithm_config(cfg: DictConfig):
         from vrl.algorithms.dpo import DiffusionDPOConfig
 
         return DiffusionDPOConfig(**{k: v for k, v in raw.items() if k in _DPO_FIELDS})
+
+    if kind == "diffusion_nft":
+        from vrl.algorithms.diffusion_nft import DiffusionNFTConfig
+
+        return DiffusionNFTConfig(
+            **{k: v for k, v in raw.items() if k in _DIFFUSION_NFT_FIELDS},
+        )
 
     raise AssertionError(f"unreachable: kind={kind}")  # pragma: no cover
 

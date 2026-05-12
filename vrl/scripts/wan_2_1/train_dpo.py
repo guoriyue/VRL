@@ -89,7 +89,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         require,
         validate_training_config,
     )
-    from vrl.models.families.wan_2_1.builder import (
+    from vrl.models.families.wan_2_1.runtime import (
         build_wan_2_1_runtime_bundle_from_cfg,
     )
     from vrl.trainers.offline_dpo import (
@@ -126,7 +126,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     weight_dtype = torch.bfloat16 if mixed_precision == "bf16" else torch.float16
 
-    # 1. Runtime via family builder (no diffusers import here)
+    # 1. Runtime via family runtime (no diffusers import here)
     bundle = build_wan_2_1_runtime_bundle_from_cfg(cfg, device, weight_dtype)
     wan_model = bundle.policy
     pipeline = bundle.backend_handle

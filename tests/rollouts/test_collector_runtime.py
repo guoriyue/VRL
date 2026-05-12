@@ -173,3 +173,30 @@ def test_collector_routes_request_through_runtime_reward_and_packer() -> None:
     assert packer.pack_contexts[0].metadata == {"pack": "metadata"}
     assert batch.rewards.tolist() == [0.0, 1.0, 2.0, 3.0]
     assert batch.context == {"pack": "metadata"}
+
+
+def test_collector_forwards_reference_metadata_to_request() -> None:
+    from vrl.rollouts.collector.requests import RolloutEngineRequestBuilder
+
+    class _Config:
+        num_steps = 1
+
+    builder = RolloutEngineRequestBuilder(
+        family="cosmos",
+        task="v2w",
+        request_prefix="cosmos",
+        config=_Config(),
+        sampling_fields=("num_steps",),
+        return_artifacts=("trajectory",),
+        default_task_type="video2world",
+    )
+
+    plan = builder.build(
+        ["prompt"],
+        1,
+        {"reference_image": "/tmp/reference.png"},
+    )
+
+    assert plan.request.metadata["reference_image"] == "/tmp/reference.png"
+    assert plan.reward_metadata["reference_image"] == "/tmp/reference.png"
+    assert plan.pack_metadata["reference_image"] == "/tmp/reference.png"

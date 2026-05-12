@@ -1,0 +1,49 @@
+# Cosmos Predict2.5 2B + DiffusionNFT + video reward.
+# Keep this out of README as a recommended recipe until real training proves
+# non-flat reward, global_step > 0, generated artifacts, and changed LoRA weights.
+defaults:
+  - /base/algorithm/diffusion_nft
+  - /base/actor
+  - /base/rollout/diffusion
+  - /base/distributed/ray_rollout_single_gpu
+  - /base/trainer
+  - /base/reward/video_reward
+  - /model/cosmos/predict2_5_2b
+  - /sampling/cosmos_predict2_5_512p_93f
+
+actor:
+  optim:
+    lr: 3.0e-4
+  ppo_epochs: 1
+  gradient_accumulation_steps: 1
+  timestep_fraction: 0.99
+  ema:
+    enable: true
+    decay: 0.9
+    update_interval: 1
+
+rollout:
+  n: 2
+  rollout_batch_size: 1
+  sample_batch_size: 1
+  noise_level: 0.7
+  same_latent: false
+
+reward:
+  kwargs:
+    video_reward:
+      backend: remote
+      debug_dir: outputs/cosmos_predict2_5_2b_diffusionnft/reward_debug
+
+data:
+  manifest: datasets/drawbench/train_192.txt
+
+trainer:
+  entrypoint: vrl.scripts.cosmos.train:train_cosmos_predict25_diffusion_nft
+  output_dir: outputs/cosmos_predict2_5_2b_diffusionnft
+  save_freq: 20
+  log_freq: 1
+
+eval:
+  prompts_file: datasets/drawbench/eval_64.txt
+  seeds: 1

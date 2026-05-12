@@ -105,9 +105,9 @@ FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {
             sampling_fields=DIFFUSION_COMMON_SAMPLING_FIELDS,
             return_artifacts=DIFFUSION_RETURN_ARTIFACTS,
         ),
-        executor_cls="vrl.models.families.sd3_5.executor:SD3_5PipelineExecutor",
-        runtime_builder="vrl.models.families.sd3_5.builder:build_sd3_5_runtime_bundle",
-        runtime_spec_extractor=("vrl.models.families.sd3_5.builder:extract_sd3_5_runtime_spec"),
+        executor_cls="vrl.models.families.sd3_5.runtime:SD3_5PipelineExecutor",
+        runtime_builder="vrl.models.families.sd3_5.runtime:build_sd3_5_runtime_bundle",
+        runtime_spec_extractor=("vrl.models.families.sd3_5.runtime:extract_sd3_5_runtime_spec"),
         gatherer=GathererMetadata(
             import_path="vrl.engine.gather:DiffusionChunkGatherer",
             kwargs={"model_family": "sd3_5"},
@@ -127,10 +127,10 @@ FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {
             sampling_fields=DIFFUSION_VIDEO_SAMPLING_FIELDS,
             return_artifacts=DIFFUSION_RETURN_ARTIFACTS,
         ),
-        executor_cls="vrl.models.families.wan_2_1.executor:Wan_2_1PipelineExecutor",
-        runtime_builder="vrl.models.families.wan_2_1.builder:build_wan_2_1_runtime_bundle",
+        executor_cls="vrl.models.families.wan_2_1.runtime:Wan_2_1PipelineExecutor",
+        runtime_builder="vrl.models.families.wan_2_1.runtime:build_wan_2_1_runtime_bundle",
         runtime_spec_extractor=(
-            "vrl.models.families.wan_2_1.builder:extract_wan_2_1_runtime_spec"
+            "vrl.models.families.wan_2_1.runtime:extract_wan_2_1_runtime_spec"
         ),
         gatherer=GathererMetadata(
             import_path="vrl.engine.gather:DiffusionChunkGatherer",
@@ -138,14 +138,14 @@ FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {
         ),
         executor_kwargs=ExecutorKwargsMetadata(include_sample_batch_size=True),
     ),
-    "cosmos": RolloutFamilyEntry(
-        family="cosmos",
+    "cosmos-predict2": RolloutFamilyEntry(
+        family="cosmos-predict2",
         task="v2w",
-        aliases=("cosmos_predict2", "cosmos_predict2_2b"),
+        aliases=("cosmos", "cosmos_predict2", "cosmos_predict2_2b"),
         collector=CollectorMetadata(
             kind="diffusion",
             config_cls="vrl.rollouts.collector.configs:CosmosPredict2CollectorConfig",
-            request_prefix="cosmos",
+            request_prefix="cosmos-predict2",
             default_task_type="video2world",
             error_prefix="Cosmos",
             sampling_fields=(
@@ -154,21 +154,57 @@ FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {
             ),
             return_artifacts=DIFFUSION_RETURN_ARTIFACTS,
         ),
-        executor_cls="vrl.models.families.cosmos.executor:CosmosPipelineExecutor",
+        executor_cls="vrl.models.families.cosmos.predict2.runtime:CosmosPipelineExecutor",
         runtime_builder=(
-            "vrl.models.families.cosmos.builder:build_cosmos_predict2_runtime_bundle"
+            "vrl.models.families.cosmos.predict2.runtime:"
+            "build_cosmos_predict2_runtime_bundle"
         ),
         runtime_spec_extractor=(
-            "vrl.models.families.cosmos.builder:extract_cosmos_predict2_runtime_spec"
+            "vrl.models.families.cosmos.predict2.runtime:"
+            "extract_cosmos_predict2_runtime_spec"
         ),
         gatherer=GathererMetadata(
             import_path="vrl.engine.gather:DiffusionChunkGatherer",
-            kwargs={"model_family": "cosmos", "respect_cfg_flag": False},
+            kwargs={"model_family": "cosmos-predict2", "respect_cfg_flag": False},
         ),
         executor_kwargs=ExecutorKwargsMetadata(
             include_sample_batch_size=True,
             include_reference_image=True,
         ),
+    ),
+    "cosmos-predict2.5": RolloutFamilyEntry(
+        family="cosmos-predict2.5",
+        task="t2w",
+        aliases=("cosmos_predict25", "cosmos_predict2_5", "cosmos_predict2_5_2b"),
+        collector=CollectorMetadata(
+            kind="diffusion",
+            config_cls="vrl.rollouts.collector.configs:CosmosPredict2CollectorConfig",
+            request_prefix="cosmos-predict2.5",
+            default_task_type="text_to_video",
+            error_prefix="Cosmos Predict2.5",
+            sampling_fields=(
+                *DIFFUSION_VIDEO_SAMPLING_FIELDS,
+                "fps",
+            ),
+            return_artifacts=DIFFUSION_RETURN_ARTIFACTS,
+        ),
+        executor_cls=(
+            "vrl.models.families.cosmos.predict2_5.runtime:"
+            "CosmosPredict25PipelineExecutor"
+        ),
+        runtime_builder=(
+            "vrl.models.families.cosmos.predict2_5.runtime:"
+            "build_cosmos_predict25_runtime_bundle"
+        ),
+        runtime_spec_extractor=(
+            "vrl.models.families.cosmos.predict2_5.runtime:"
+            "extract_cosmos_predict25_runtime_spec"
+        ),
+        gatherer=GathererMetadata(
+            import_path="vrl.engine.gather:DiffusionChunkGatherer",
+            kwargs={"model_family": "cosmos-predict2.5"},
+        ),
+        executor_kwargs=ExecutorKwargsMetadata(include_sample_batch_size=True),
     ),
     "janus_pro": RolloutFamilyEntry(
         family="janus_pro",
@@ -187,13 +223,13 @@ FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {
             ),
             return_artifacts=("output", "token_ids", "token_log_probs"),
         ),
-        executor_cls="vrl.models.families.janus_pro.executor:JanusProPipelineExecutor",
-        runtime_builder=("vrl.models.families.janus_pro.builder:build_janus_pro_runtime_bundle"),
+        executor_cls="vrl.models.families.janus_pro.runtime:JanusProPipelineExecutor",
+        runtime_builder=("vrl.models.families.janus_pro.runtime:build_janus_pro_runtime_bundle"),
         runtime_spec_extractor=(
-            "vrl.models.families.janus_pro.builder:extract_janus_pro_runtime_spec"
+            "vrl.models.families.janus_pro.runtime:extract_janus_pro_runtime_spec"
         ),
         gatherer=GathererMetadata(
-            import_path="vrl.models.families.janus_pro.executor:JanusProChunkGatherer",
+            import_path="vrl.models.families.janus_pro.runtime:JanusProChunkGatherer",
         ),
     ),
     "janus_pro_r1": RolloutFamilyEntry(
@@ -223,14 +259,14 @@ FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {
             ),
         ),
         executor_cls=(
-            "vrl.models.families.janus_pro.r1_executor:JanusProR1PipelineExecutor"
+            "vrl.models.families.janus_pro.runtime:JanusProR1PipelineExecutor"
         ),
-        runtime_builder=("vrl.models.families.janus_pro.builder:build_janus_pro_runtime_bundle"),
+        runtime_builder=("vrl.models.families.janus_pro.runtime:build_janus_pro_runtime_bundle"),
         runtime_spec_extractor=(
-            "vrl.models.families.janus_pro.builder:extract_janus_pro_runtime_spec"
+            "vrl.models.families.janus_pro.runtime:extract_janus_pro_runtime_spec"
         ),
         gatherer=GathererMetadata(
-            import_path="vrl.models.families.janus_pro.r1_executor:JanusProR1ChunkGatherer",
+            import_path="vrl.models.families.janus_pro.runtime:JanusProR1ChunkGatherer",
         ),
     ),
     "nextstep_1": RolloutFamilyEntry(
@@ -253,13 +289,13 @@ FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {
             return_artifacts=("output", "rollout_trajectory_data"),
             metadata_key="rollout_metadata",
         ),
-        executor_cls="vrl.models.families.nextstep_1.executor:NextStep1PipelineExecutor",
-        runtime_builder=("vrl.models.families.nextstep_1.builder:build_nextstep_1_runtime_bundle"),
+        executor_cls="vrl.models.families.nextstep_1.runtime:NextStep1PipelineExecutor",
+        runtime_builder=("vrl.models.families.nextstep_1.runtime:build_nextstep_1_runtime_bundle"),
         runtime_spec_extractor=(
-            "vrl.models.families.nextstep_1.builder:extract_nextstep_1_runtime_spec"
+            "vrl.models.families.nextstep_1.runtime:extract_nextstep_1_runtime_spec"
         ),
         gatherer=GathererMetadata(
-            import_path="vrl.models.families.nextstep_1.executor:NextStep1ChunkGatherer",
+            import_path="vrl.models.families.nextstep_1.runtime:NextStep1ChunkGatherer",
         ),
     ),
 }

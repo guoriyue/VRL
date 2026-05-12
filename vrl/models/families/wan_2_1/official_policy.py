@@ -97,7 +97,7 @@ class WanT2VOfficialPolicy(DiffusionPolicy):
     async def load(self) -> None:
         self._load_modules()
 
-    # -- backend ownership (called by builder, not by collectors) -------
+    # -- backend ownership (called by runtime, not by collectors) -------
 
     @classmethod
     def from_spec(cls, spec: Any) -> WanT2VOfficialPolicy:
@@ -552,7 +552,7 @@ class WanT2VOfficialPolicy(DiffusionPolicy):
     def export_batch_context(self, state: WanT2VOfficialSamplingState) -> dict[str, Any]:
         """Project SamplingState -> RolloutBatch.context (shared metadata).
 
-        Note: official adapter is not yet wired into the RL builder; this
+        Note: official adapter is not yet wired into the RL runtime; this
         keeps the contract uniform without committing to behavior the path
         does not exercise yet.
         """

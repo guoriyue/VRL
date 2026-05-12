@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 
 from vrl.models.diffusion import DiffusionPolicy, VideoGenerationRequest
-from vrl.models.families.cosmos.policy import CosmosPredict2Policy
+from vrl.models.families.cosmos.predict2.policy import CosmosPredict2Policy
 from vrl.models.families.sd3_5.policy import SD3_5Policy
 from vrl.models.families.wan_2_1.diffusers_policy import WanT2VDiffusersPolicy
 

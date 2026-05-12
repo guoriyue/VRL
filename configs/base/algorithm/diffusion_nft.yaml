@@ -1,0 +1,20 @@
+# DiffusionNFT-style RL objective for diffusion world models.
+algorithm:
+  kind: diffusion_nft
+  eps: 1.0e-8
+  adv_clip_max: 5.0
+  global_std: false
+  per_prompt_stat_tracking: true
+
+  # Cosmos-RL DiffusionNFT parity knobs.
+  nft_beta: 1.0
+  kl_beta: 1.0
+  mini_batch: 1
+  uncentralized_training: true
+  advantage_high: 5.0
+  advantage_low: -5.0
+  weight_copy_decay: 0.0
+
+  # Kept for collector reward-shaping compatibility; DiffusionNFT loss-side KL
+  # is controlled by kl_beta above.
+  kl_reward: 0.0

@@ -78,8 +78,8 @@ async def train_wan_2_1_grpo(cfg: DictConfig) -> None:
     device = torch.device(trainer_torch_device(distributed_resources))
     weight_dtype = torch.bfloat16 if trainer_config.bf16 else torch.float16
 
-    # 1. Build policy bundle (backend construction lives in family builder)
-    from vrl.models.families.wan_2_1.builder import build_wan_2_1_runtime_bundle_from_cfg
+    # 1. Build policy bundle (backend construction lives in family runtime)
+    from vrl.models.families.wan_2_1.runtime import build_wan_2_1_runtime_bundle_from_cfg
 
     bundle = build_wan_2_1_runtime_bundle_from_cfg(cfg, device, weight_dtype)
     wan_model = bundle.policy

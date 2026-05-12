@@ -80,7 +80,7 @@ class SD3_5Policy(DiffusionPolicy):
     def describe(self) -> dict[str, Any]:
         return {"family": self.family, "device": str(self.device)}
 
-    # -- backend ownership (called by builder, not by collectors) -------
+    # -- backend ownership (called by runtime, not by collectors) -------
 
     @classmethod
     def from_spec(cls, spec: Any) -> SD3_5Policy:

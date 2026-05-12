@@ -556,6 +556,10 @@ class OnlineTrainer(Trainer):
                         "request_overrides": item.request_overrides,
                         "sample_metadata": item.metadata,
                     }
+                    if item.reference_image:
+                        collect_kwargs["reference_image"] = item.reference_image
+                    if item.reference_video:
+                        collect_kwargs["reference_video"] = item.reference_video
                     if runtime_debug_collect:
                         collect_kwargs["runtime_debug"] = True
                     # Group-batched collect: one call produces cfg.n samples.
@@ -680,6 +684,17 @@ class OnlineTrainer(Trainer):
         self.model.train()
         autocast_ctx = _get_autocast(cfg, self.device, model=self.model)
         agg_metrics: dict[str, list[float]] = defaultdict(list)
+        compute_batch_timestep_loss = getattr(
+            self.algorithm,
+            "compute_batch_timestep_loss",
+            None,
+        )
+        uses_evaluator = bool(getattr(self.algorithm, "uses_evaluator", True))
+        if not uses_evaluator and not callable(compute_batch_timestep_loss):
+            raise RuntimeError(
+                f"{type(self.algorithm).__name__} disabled evaluator use but does "
+                "not expose compute_batch_timestep_loss(...)",
+            )
 
         # If every batch was filtered out (all dead), skip training this step.
         if not filtered_batches:
@@ -733,7 +748,7 @@ class OnlineTrainer(Trainer):
         # Debug first step: compare old vs fresh log-probs on first timestep
         # (using first filtered batch so memory footprint is bounded).
         first_step_debug_record: dict[str, Any] | None = None
-        if cfg.debug.first_step and self.state.step == 0:
+        if cfg.debug.first_step and self.state.step == 0 and uses_evaluator:
             _dbg_batch = filtered_batches[0]
             _dbg_old_lp = _dbg_batch.extras["log_probs"]
             with autocast_ctx:
@@ -805,23 +820,43 @@ class OnlineTrainer(Trainer):
                 loss_scale = len(chunk_batches) * len(train_indices)
 
                 for b, adv_b in zip(chunk_batches, chunk_advs, strict=True):
-                    old_lp = b.extras["log_probs"]
+                    old_lp = b.extras.get("log_probs")
                     for j in train_indices:
                         with timer.time("evaluate"), autocast_ctx:
-                            signals = self.evaluator.evaluate(
-                                self.model,
-                                b,
-                                j,
-                                ref_model=self.ref_model,
-                                signal_request=SignalRequest(
-                                    need_ref=self.algorithm.config.init_kl_coef > 0,
-                                    need_kl_intermediates=self.algorithm.config.init_kl_coef > 0,
-                                ),
-                            )
-                            old_lp_j = old_lp[:, j] if old_lp.ndim > 1 else old_lp
-                            loss, metrics = self.algorithm.compute_signal_loss(
-                                signals, adv_b, old_lp_j
-                            )
+                            if callable(compute_batch_timestep_loss):
+                                loss, metrics = compute_batch_timestep_loss(
+                                    self.model,
+                                    b,
+                                    j,
+                                    adv_b,
+                                )
+                            else:
+                                if self.evaluator is None:
+                                    raise RuntimeError(
+                                        f"{type(self.algorithm).__name__} requires an evaluator",
+                                    )
+                                if old_lp is None:
+                                    raise RuntimeError(
+                                        "RolloutBatch.extras['log_probs'] is required "
+                                        f"for {type(self.algorithm).__name__}",
+                                    )
+                                init_kl_coef = float(
+                                    getattr(self.algorithm.config, "init_kl_coef", 0.0),
+                                )
+                                signals = self.evaluator.evaluate(
+                                    self.model,
+                                    b,
+                                    j,
+                                    ref_model=self.ref_model,
+                                    signal_request=SignalRequest(
+                                        need_ref=init_kl_coef > 0,
+                                        need_kl_intermediates=init_kl_coef > 0,
+                                    ),
+                                )
+                                old_lp_j = old_lp[:, j] if old_lp.ndim > 1 else old_lp
+                                loss, metrics = self.algorithm.compute_signal_loss(
+                                    signals, adv_b, old_lp_j
+                                )
                             # Average across rollout micro-batches inside this
                             # optimizer update; timestep accumulation follows
                             # Flow-GRPO's per-denoise-step surrogate structure.
@@ -922,6 +957,10 @@ class OnlineTrainer(Trainer):
                 with timer.time("optim_step"):
                     _gn = self._clip_and_step(optimizer)
                     agg_metrics["grad_norm"].append(_gn)
+
+                after_optimizer_step = getattr(self.algorithm, "after_optimizer_step", None)
+                if callable(after_optimizer_step):
+                    after_optimizer_step(self.model, self.state.global_step)
 
                 if ema is not None:
                     trainable = [p for p in self.model.parameters() if p.requires_grad]

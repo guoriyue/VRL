@@ -22,6 +22,8 @@ class PromptExample:
 
     prompt: str
     target_text: str = ""
+    reference_image: str = ""
+    reference_video: str = ""
     references: list[str] = field(default_factory=list)
     task_type: str = "text_to_video"
     request_overrides: dict[str, Any] = field(default_factory=dict)
@@ -70,7 +72,19 @@ class JsonlPromptDataset(Dataset):
                 if not line:
                     continue
                 obj = json.loads(line)
-                self.examples.append(PromptExample(**obj))
+                if not isinstance(obj, dict):
+                    raise ValueError(f"{path}: JSONL rows must be objects")
+                known_fields = set(PromptExample.__dataclass_fields__)
+                extra_metadata = {
+                    key: value for key, value in obj.items() if key not in known_fields
+                }
+                prompt_fields = {
+                    key: value for key, value in obj.items() if key in known_fields
+                }
+                metadata = dict(prompt_fields.get("metadata") or {})
+                metadata.update(extra_metadata)
+                prompt_fields["metadata"] = metadata
+                self.examples.append(PromptExample(**prompt_fields))
 
     def __len__(self) -> int:
         return len(self.examples)

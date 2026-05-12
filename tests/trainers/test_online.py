@@ -219,6 +219,7 @@ class TestOnlineTrainerCeaRegressions:
         example = PromptExample(
             prompt="sign says HELLO",
             target_text="HELLO",
+            reference_image="/tmp/reference.png",
             task_type="text_to_video",
             metadata={"difficulty": "easy"},
         )
@@ -229,6 +230,7 @@ class TestOnlineTrainerCeaRegressions:
         kw = captured_kwargs[0]
         assert kw["group_size"] == 2
         assert kw["target_text"] == "HELLO"
+        assert kw["reference_image"] == "/tmp/reference.png"
         assert kw["task_type"] == "text_to_video"
         assert kw["sample_metadata"]["difficulty"] == "easy"
 

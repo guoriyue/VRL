@@ -1,4 +1,8 @@
-# Cosmos Predict2 2B Video2World + GRPO (single-GPU Ray rollout backend)
+# Cosmos Predict2 2B Video2World + GRPO (single-GPU Ray rollout backend).
+# This recipe requires real Video2World conditioning. Use either:
+#   1. global mode: override model.reference_image=/path/to/reference.png
+#   2. per-sample mode: set cosmos.reference_mode=per_sample and use JSONL rows:
+#      {"prompt": "...", "reference_image": "path/to/frame.png"}
 defaults:
   - /base/algorithm/grpo
   - /base/actor
@@ -33,6 +37,9 @@ reward:
 
 data:
   manifest: datasets/drawbench/train_192.txt
+
+cosmos:
+  reference_mode: global   # global | per_sample
 
 trainer:
   entrypoint: vrl.scripts.cosmos.train:train_cosmos_predict2_grpo

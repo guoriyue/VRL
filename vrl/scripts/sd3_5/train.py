@@ -107,8 +107,8 @@ async def train_sd3_5_grpo(cfg: DictConfig) -> None:
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(int(trainer_config.seed))
 
-    # 1. Build policy bundle (backend construction lives in family builder)
-    from vrl.models.families.sd3_5.builder import build_sd3_5_runtime_bundle_from_cfg
+    # 1. Build policy bundle (backend construction lives in family runtime)
+    from vrl.models.families.sd3_5.runtime import build_sd3_5_runtime_bundle_from_cfg
 
     bundle = build_sd3_5_runtime_bundle_from_cfg(cfg, device, weight_dtype)
     sd3_5_model = bundle.policy

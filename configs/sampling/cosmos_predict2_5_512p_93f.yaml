@@ -1,0 +1,9 @@
+# Cosmos Predict2.5 lightweight validation sampling preset.
+sampling:
+  width: 512
+  height: 512
+  num_frames: 93
+  fps: 16
+  num_steps: 10
+  guidance_scale: 1.0
+  cfg: false

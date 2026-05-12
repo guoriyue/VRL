@@ -34,6 +34,7 @@ def _register_builtins() -> None:
     from vrl.rewards.codex_image_qa import CodexImageQAReward
     from vrl.rewards.ocr import OCRReward
     from vrl.rewards.pickscore import PickScoreReward
+    from vrl.rewards.video_reward import VideoReward
 
     register_reward("aesthetic", AestheticReward)
     register_reward("clipscore", CLIPScoreReward)
@@ -41,6 +42,7 @@ def _register_builtins() -> None:
     register_reward("image_qa_cli", CodexImageQAReward)
     register_reward("ocr", OCRReward)
     register_reward("pickscore", PickScoreReward)
+    register_reward("video_reward", VideoReward)
 
 
 class MultiReward(RewardFunction):

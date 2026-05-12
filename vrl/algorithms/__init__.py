@@ -1,6 +1,7 @@
 """RL algorithms: advantage estimation and policy gradient losses."""
 
 from vrl.algorithms.base import Algorithm
+from vrl.algorithms.diffusion_nft import DiffusionNFT, DiffusionNFTConfig
 from vrl.algorithms.flow_matching import (
     SDEStepResult,
     compute_kl_divergence,
@@ -22,6 +23,8 @@ from vrl.algorithms.types import (
 __all__ = [
     "GRPO",
     "Algorithm",
+    "DiffusionNFT",
+    "DiffusionNFTConfig",
     "GRPOConfig",
     "MultiSegmentTokenGRPO",
     "MultiSegmentTokenGRPOConfig",

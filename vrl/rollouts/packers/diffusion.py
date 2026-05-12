@@ -54,6 +54,8 @@ class DiffusionRolloutPacker:
         kl_tensor = env_extra["kl"]
         training_extras: dict[str, Any] = env_extra["training_extras"]
         rollout_context: dict[str, Any] = dict(env_extra["context"])
+        if context.metadata:
+            rollout_context["reward_metadata"] = dict(context.metadata)
         runtime_debug = output.extra.get("runtime_debug")
         if runtime_debug is not None:
             rollout_context["runtime_debug"] = runtime_debug

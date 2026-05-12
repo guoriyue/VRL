@@ -8,11 +8,9 @@ Mirrors the Janus-Pro pattern (TokenGRPO + AR) — only the model wrapper,
 collector, and evaluator differ from ``vrl.scripts.janus_pro``. The
 ``OnlineTrainer`` machinery is identical.
 
-Note: NextStep-1 still needs real checkpoint validation — see ``# TODO(nextstep-binding)``
-markers in ``vrl/models/families/nextstep_1/policy.py``,
-``vrl/models/families/nextstep_1/flow_step.py``, and the shared rollout
-collector factory. The driver here is YAML-driven
-scaffolding; binding work is tracked separately.
+Status: one-step real-checkpoint sanity output exists, but the full OCR
+training recipe still needs validation with generated image artifacts and
+non-degenerate metrics. Treat this driver as wired, not active.
 """
 
 from __future__ import annotations
