@@ -240,11 +240,17 @@ def test_views_store_refs_not_tensor_payloads() -> None:
         validate_training_view(
             batch,
             TrainingView(
-                loss_units=(),
+                loss_units=(_denoise_loss_unit(),),
                 metadata={"payload": torch.ones(1)},
             ),
         )
 
+    batch = _diffusion_batch()
+    batch.context["opaque"] = object()
+    with pytest.raises(TrajectoryValidationError, match="runtime-only state"):
+        validate_trajectory_batch(batch)
+
+    batch = _diffusion_batch()
     batch.reward_views["image"] = RewardView(
         name="image",
         modality="mixed",
@@ -259,6 +265,11 @@ def test_reward_views_group_ids_and_metrics_are_not_loose_fact_sources() -> None
     batch = _diffusion_batch()
     batch.reward_views["bad"] = "not-a-view"  # type: ignore[assignment]
     with pytest.raises(TrajectoryValidationError, match="must be a RewardView"):
+        validate_trajectory_batch(batch)
+
+    batch = _diffusion_batch()
+    batch.segments["denoise"].reward_view = "missing"
+    with pytest.raises(TrajectoryValidationError, match="unknown reward_view"):
         validate_trajectory_batch(batch)
 
     batch = _diffusion_batch()
@@ -306,6 +317,39 @@ def test_loss_units_require_role_correct_refs_and_unique_core_roles() -> None:
         primary_segment="denoise",
     )
     with pytest.raises(TrajectoryValidationError, match="must reference role 'action'"):
+        validate_training_view(batch, view)
+
+    batch = _diffusion_batch()
+    batch.segments["other"] = _token_segment("other", "timestep", 2, 3)
+    view = TrainingView(
+        loss_units=(
+            LossUnit(
+                segment="denoise",
+                axis="timestep",
+                axis_index=None,
+                action_ref=tensor_ref("other", "token_ids"),
+                old_log_prob_ref=tensor_ref("denoise", "old_log_prob"),
+                mask_ref=tensor_ref("denoise", "mask"),
+            ),
+        ),
+        primary_segment="denoise",
+    )
+    with pytest.raises(TrajectoryValidationError, match="must reference segment 'denoise'"):
+        validate_training_view(batch, view)
+
+    batch = _diffusion_batch()
+    batch.segments["denoise"].tensors["actions"] = TrajectoryTensor(
+        "actions",
+        torch.ones(2),
+        ("sample",),
+        "action",
+    )
+    with pytest.raises(TrajectoryValidationError, match="action axes"):
+        validate_trajectory_batch(batch)
+
+    batch = _diffusion_batch()
+    view = TrainingView(loss_units=(), primary_segment="denoise")
+    with pytest.raises(TrajectoryValidationError, match="loss_units"):
         validate_training_view(batch, view)
 
 
@@ -410,6 +454,18 @@ def _diffusion_batch(request_id: str = "req") -> TrajectoryBatch:
                 tensor_refs=(tensor_ref("denoise", "actions"),),
             )
         },
+    )
+
+
+def _denoise_loss_unit() -> LossUnit:
+    return LossUnit(
+        segment="denoise",
+        axis="timestep",
+        axis_index=None,
+        action_ref=tensor_ref("denoise", "actions"),
+        old_log_prob_ref=tensor_ref("denoise", "old_log_prob"),
+        mask_ref=tensor_ref("denoise", "mask"),
+        replay_input_refs=(replay_input_ref("denoise", "logprob"),),
     )
 
 

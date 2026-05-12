@@ -120,6 +120,8 @@ def validate_training_view(batch: TrajectoryBatch, view: TrainingView) -> Traini
     """Validate that a training view references existing loss tensors."""
 
     refs = _collect_tensor_refs(batch)
+    if not view.loss_units:
+        _fail("TrainingView.loss_units must be non-empty")
     if view.primary_segment is not None and view.primary_segment not in batch.segments:
         _fail(f"TrainingView.primary_segment={view.primary_segment!r} is unknown")
 
@@ -156,6 +158,17 @@ def validate_loss_unit(
     ):
         if ref not in refs:
             _fail(f"LossUnit.{field_name} references unknown tensor {ref!r}")
+        ref_segment = ref.split(".", 1)[0]
+        if ref_segment != unit.segment:
+            _fail(
+                f"LossUnit.{field_name} must reference segment {unit.segment!r}, "
+                f"got {ref_segment!r}",
+            )
+        if unit.axis not in refs[ref].axes:
+            _fail(
+                f"LossUnit.{field_name} must reference tensor with axis "
+                f"{unit.axis!r}",
+            )
     _require_ref_role(refs, unit.action_ref, "action", "LossUnit.action_ref")
     _require_ref_role(
         refs,
@@ -201,6 +214,11 @@ def _validate_segment(
             f"Segment key {segment_key!r} does not match "
             f"TrajectorySegment.name={segment.name!r}",
         )
+    if segment.reward_view is not None and segment.reward_view not in batch.reward_views:
+        _fail(
+            f"TrajectorySegment {segment.name!r} references unknown reward_view "
+            f"{segment.reward_view!r}",
+        )
     if not segment.tensors:
         _fail(f"TrajectorySegment {segment.name!r} must contain tensors")
 
@@ -236,6 +254,12 @@ def _validate_segment(
             _fail(
                 f"trainable segment {segment.name!r} old_log_prob axes "
                 f"{old_log_prob.axes!r} must match mask axes {mask.axes!r}",
+            )
+        action = roles["action"]
+        if action.axes != old_log_prob.axes:
+            _fail(
+                f"trainable segment {segment.name!r} action axes "
+                f"{action.axes!r} must match old_log_prob axes {old_log_prob.axes!r}",
             )
 
     for replay_key, replay in segment.replay_inputs.items():
@@ -344,8 +368,8 @@ def _looks_runtime_only(value: Any, *, allow_tensor_like: bool = False) -> bool:
         return False
     if isinstance(value, (dict, list, tuple)):
         return False
-    if getattr(value, "shape", None) is not None and not allow_tensor_like:
-        return True
+    if getattr(value, "shape", None) is not None:
+        return not allow_tensor_like
     if isinstance(value, (types.ModuleType, io.IOBase)):
         return True
     if callable(value):
@@ -357,7 +381,9 @@ def _looks_runtime_only(value: Any, *, allow_tensor_like: bool = False) -> bool:
         return True
     type_module = type(value).__module__
     type_name = type(value).__name__.lower()
-    return type_module.startswith("ray.") or "actor" in type_name
+    if type_module.startswith("ray.") or "actor" in type_name:
+        return True
+    return True
 
 
 def _fail(message: str) -> None:
