@@ -258,6 +258,8 @@ def optional_none(cfg: DictConfig, path: str) -> Any | None:
 _REWARD_REQUIRED_KWARGS: dict[str, tuple[str, ...]] = {
     "aesthetic": ("model_name",),
     "clipscore": ("model_name",),
+    "codex_image_qa": ("command",),
+    "image_qa_cli": ("command",),
     "pickscore": ("processor_name", "model_name"),
     # OCR's `debug_dir` is allowed to be the empty string but the key must be
     # explicitly present in YAML — we validate presence, not non-emptiness.
@@ -360,6 +362,15 @@ _COMMON_REQUIRED_FIELDS: tuple[str, ...] = (
     "trainer.output_dir",
     "trainer.seed",
     "trainer.profile",
+    "trainer.torch_profiler.enabled",
+    "trainer.torch_profiler.output_dir",
+    "trainer.torch_profiler.activities",
+    "trainer.torch_profiler.record_shapes",
+    "trainer.torch_profiler.profile_memory",
+    "trainer.torch_profiler.with_stack",
+    "trainer.torch_profiler.with_flops",
+    "trainer.torch_profiler.skip_first",
+    "trainer.torch_profiler.max_steps",
     "trainer.resume_from",
     "trainer.resume_strict",
     "trainer.debug.first_step",
@@ -544,6 +555,7 @@ def build_trainer_config(cfg: DictConfig):
         DebugConfig,
         EMAConfig,
         OptimConfig,
+        TorchProfilerConfig,
         TrainerConfig,
     )
 
@@ -553,6 +565,7 @@ def build_trainer_config(cfg: DictConfig):
     optim_dict = require(cfg, "actor.optim")
     ema_dict = require(cfg, "actor.ema")
     debug_dict = require(cfg, "trainer.debug")
+    torch_profiler_dict = require(cfg, "trainer.torch_profiler")
 
     # Rollout n / batch. AR uses `n_samples_per_prompt`, diffusion uses `n`.
     # Offline trainers still declare explicit values so config slicing stays
@@ -573,6 +586,7 @@ def build_trainer_config(cfg: DictConfig):
         optim=OptimConfig(**optim_dict),
         ema=EMAConfig(**ema_dict),
         debug=DebugConfig(**debug_dict),
+        torch_profiler=TorchProfilerConfig(**torch_profiler_dict),
         max_norm=require(cfg, "actor.max_norm"),
         ppo_epochs=require(cfg, "actor.ppo_epochs"),
         gradient_accumulation_steps=require(cfg, "actor.gradient_accumulation_steps"),

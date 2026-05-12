@@ -1,0 +1,9 @@
+# One-epoch Janus-Pro-R1 Codex-QA profiling wrapper.
+defaults:
+  - /experiment/janus_pro_1b_r1_codex_qa_grpo
+  - /profiling/torch_profiler
+
+trainer:
+  total_epochs: 1
+  save_freq: 1
+  output_dir: outputs/profile_janus_r1_codex_qa_1epoch

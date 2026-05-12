@@ -78,6 +78,12 @@ async def train_cosmos_predict2_grpo(cfg: DictConfig) -> None:
     device = torch.device(trainer_torch_device(distributed_resources))
     weight_dtype = torch.bfloat16 if trainer_config.bf16 else torch.float16
 
+    # Video2World conditioning is required for meaningful Cosmos training.
+    reference_image = _load_required_reference_image(
+        str(require(cfg, "model.reference_image") or ""),
+    )
+    logger.info("Loaded reference image from %s", cfg.model.reference_image)
+
     # 1. Build policy bundle (backend construction lives in family builder)
     from vrl.models.families.cosmos.builder import (
         build_cosmos_predict2_runtime_bundle_from_cfg,
@@ -105,22 +111,7 @@ async def train_cosmos_predict2_grpo(cfg: DictConfig) -> None:
     )
     logger.info("Reward mix: %s", reward_weights)
 
-    # 3. Reference image (for Video2World conditioning)
-    reference_image = None
-    ref_image_path = str(require(cfg, "model.reference_image") or "")
-    if ref_image_path:
-        from PIL import Image
-
-        reference_image = Image.open(ref_image_path).convert("RGB")
-        logger.info("Loaded reference image from %s", ref_image_path)
-    else:
-        logger.warning(
-            "No model.reference_image provided. Video2World will use zero "
-            "conditioning. This is degenerate — provide a real image for "
-            "valid training."
-        )
-
-    # 4. Collector + evaluator + algorithm
+    # 3. Collector + evaluator + algorithm
     noise_level = float(require(cfg, "rollout.noise_level"))
     collector_config = CosmosPredict2CollectorConfig(
         num_steps=cfg.sampling.num_steps,
@@ -204,7 +195,7 @@ async def train_cosmos_predict2_grpo(cfg: DictConfig) -> None:
             resume_checkpoint.next_epoch,
         )
 
-    # 5. Prompts (manifest = one prompt per line)
+    # 4. Prompts (manifest = one prompt per line)
     manifest_path = Path(cfg.data.manifest)
     if not manifest_path.exists():
         raise FileNotFoundError(f"Manifest not found: {manifest_path}")
@@ -564,3 +555,24 @@ async def _run_eval_only(
         delta,
         csv_path,
     )
+
+
+def _load_required_reference_image(reference_image_path: str) -> Any:
+    """Load the Video2World conditioning image and reject degenerate training."""
+
+    path_text = str(reference_image_path or "").strip()
+    if not path_text:
+        raise ValueError(
+            "Cosmos Predict2 Video2World GRPO requires model.reference_image. "
+            "The empty-string default would use zero conditioning, which is only "
+            "valid for smoke/debug runs and is not a meaningful Video2World "
+            "training objective.",
+        )
+
+    path = Path(path_text).expanduser()
+    if not path.exists():
+        raise FileNotFoundError(f"model.reference_image does not exist: {path}")
+
+    from PIL import Image
+
+    return Image.open(path).convert("RGB")

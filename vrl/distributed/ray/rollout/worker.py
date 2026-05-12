@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
 from collections.abc import Mapping
 from typing import Any
 
@@ -14,6 +15,9 @@ from vrl.engine.core.runtime_spec import GenerationRuntimeSpec
 from vrl.engine.core.types import GenerationRequest
 from vrl.engine.gather import require_chunked_executor
 from vrl.engine.microbatching import MicroBatchPlan
+from vrl.trainers.types import TorchProfilerConfig
+
+logger = logging.getLogger(__name__)
 
 
 class RayRolloutWorker:
@@ -29,6 +33,11 @@ class RayRolloutWorker:
         self.family = self.runtime_spec.family
         self.executor: ChunkedFamilyPipelineExecutor | None = None
         self._policy_version: int | None = self.runtime_spec.policy_version
+        self._profiler_config = _profiler_config_from_spec(self.runtime_spec)
+        self._profiler_output_dir = str(
+            self.runtime_spec.extra.get("profiler_output_dir", "outputs/"),
+        )
+        self._profiler_step = 0
 
     def load_policy(self) -> None:
         """Build the family executor from the serialized runtime spec."""
@@ -125,7 +134,7 @@ class RayRolloutWorker:
             )
         try:
             assert self.executor is not None
-            output = self.executor.forward_chunk(request, chunk)
+            output = self._profile_forward_chunk(request, chunk)
             return RayChunkResult(
                 request_id=request.request_id,
                 worker_id=self.worker_id,
@@ -144,6 +153,36 @@ class RayRolloutWorker:
                 policy_version=self._policy_version,
                 error=str(exc),
             )
+
+    def _profile_forward_chunk(
+        self,
+        request: GenerationRequest,
+        chunk: MicroBatchPlan,
+    ) -> Any:
+        from vrl.trainers.profiling import torch_profiler_step
+
+        assert self.executor is not None
+        step = self._profiler_step
+        self._profiler_step += 1
+        worker_name = (
+            f"{self.worker_id}_{self.family}_{self.runtime_spec.task}_"
+            f"policy{self._policy_version}_chunk{chunk.prompt_index}_{chunk.sample_start}"
+        )
+        try:
+            device = _executor_device(self.executor)
+            event_name = f"rollout.forward_chunk.{self.family}.{self.runtime_spec.task}"
+            with torch_profiler_step(
+                self._profiler_config,
+                output_dir=self._profiler_output_dir,
+                step=step,
+                device=device,
+                worker_name=worker_name,
+                trace_subdir=f"rollout/{self.worker_id}",
+            ), _record_function(event_name):
+                return self.executor.forward_chunk(request, chunk)
+        except Exception:
+            logger.exception("Ray rollout profiler-wrapped chunk failed")
+            raise
 
 
 def _normalize_runtime_spec(
@@ -176,6 +215,37 @@ def _build_executor(runtime_spec: GenerationRuntimeSpec) -> ChunkedFamilyPipelin
     )
     built = executor_cls(bundle.policy, **dict(runtime_spec.executor_kwargs))
     return require_chunked_executor(built)
+
+
+def _profiler_config_from_spec(runtime_spec: GenerationRuntimeSpec) -> TorchProfilerConfig:
+    raw = runtime_spec.extra.get("torch_profiler", {})
+    if isinstance(raw, Mapping):
+        return TorchProfilerConfig(**dict(raw))
+    return TorchProfilerConfig()
+
+
+def _executor_device(executor: Any) -> Any:
+    policy = getattr(executor, "model", None)
+    device = getattr(policy, "device", None)
+    if device is not None:
+        return device
+    try:
+        import torch
+
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    except Exception:
+        return "cpu"
+
+
+def _record_function(name: str) -> Any:
+    try:
+        import torch
+
+        return torch.profiler.record_function(name)
+    except Exception:
+        import contextlib
+
+        return contextlib.nullcontext()
 
 
 def _normalize_runtime_build_spec_payload(payload: dict[str, Any]) -> dict[str, Any]:

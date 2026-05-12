@@ -8,7 +8,7 @@ Mirrors the Janus-Pro pattern (TokenGRPO + AR) — only the model wrapper,
 collector, and evaluator differ from ``vrl.scripts.janus_pro``. The
 ``OnlineTrainer`` machinery is identical.
 
-Note: NextStep-1 is pre-smoke-test — see ``# TODO(nextstep-binding)``
+Note: NextStep-1 still needs real checkpoint validation — see ``# TODO(nextstep-binding)``
 markers in ``vrl/models/families/nextstep_1/policy.py``,
 ``vrl/models/families/nextstep_1/flow_step.py``, and the shared rollout
 collector factory. The driver here is YAML-driven
@@ -42,6 +42,8 @@ logger = logging.getLogger(__name__)
 
 async def train_nextstep_1_ocr_grpo(cfg: DictConfig) -> None:
     """Run NextStep-1 OCR GRPO training driven by a merged YAML config."""
+    import os
+
     import torch
 
     from vrl.algorithms.grpo.token import TokenGRPO, TokenGRPOConfig
@@ -66,6 +68,9 @@ async def train_nextstep_1_ocr_grpo(cfg: DictConfig) -> None:
 
     built = build_configs(cfg)
     trainer_config = built["trainer"]
+    if trainer_config.profile:
+        os.environ["VRL_PROFILE_COLLECT"] = "1"
+
     resume_checkpoint = load_training_checkpoint_from_config(cfg)
     prepare_model_config_for_training_resume(
         cfg,

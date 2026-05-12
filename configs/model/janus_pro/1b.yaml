@@ -3,7 +3,7 @@
 # live in configs/sampling/janus_*.yaml.
 model:
   family: janus_pro
-  path: deepseek-community/Janus-Pro-1B
+  path: deepseek-ai/Janus-Pro-1B
   dtype: bfloat16
 
   use_lora: true

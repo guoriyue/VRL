@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from vrl.engine import GenerationSampleSpec, OutputBatch
-from vrl.rollouts.packers.ar_r1 import ARR1RolloutPacker
+from vrl.rollouts.packers.ar.r1 import ARR1RolloutPacker
 from vrl.rollouts.packers.base import RolloutPackContext
 
 

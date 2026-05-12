@@ -13,7 +13,7 @@ Legend:
 
 - ✅ Active: recipe, training entrypoint, runtime path, and structural tests
   exist.
-- 🟡 Wired: code path exists, but it still needs a real-checkpoint smoke run.
+- 🟡 Wired: code path exists, but it still needs a real-checkpoint validation run.
 - ⬜ Not wired.
 - — Not a target pairing for this model family.
 
@@ -22,8 +22,8 @@ Legend:
 | SD3.5 | text-to-image diffusion | ✅ `sd3_5_ocr_grpo` | — | ⬜ | Canonical active recipe: OCR GRPO. |
 | Wan 2.1 1.3B | text-to-video diffusion | ✅ `wan_2_1_1_3b_ocr_grpo` | — | ✅ `wan_2_1_1_3b_dpo` | Canonical active recipes: OCR GRPO and offline DPO. |
 | Cosmos Predict2 2B | video-to-world diffusion | ✅ `cosmos_predict2_2b_grpo` | — | ⬜ | Canonical Predict2 GRPO wiring. |
-| Janus-Pro 1B | autoregressive image | — | ✅ `janus_pro_1b_ocr_grpo` | — | Canonical TokenGRPO recipe: OCR. |
-| NextStep-1 1.1 | continuous-token autoregressive image | — | 🟡 `nextstep_1_ocr_grpo` | — | Wired, but still marked pre-smoke for real checkpoint binding. |
+| Janus-Pro 1B | autoregressive image | — | ✅ `janus_pro_1b_ocr_grpo`, ✅ `janus_pro_1b_r1_codex_qa_grpo` | — | Canonical TokenGRPO recipes: OCR and R1-style Codex image-QA alignment baseline. |
+| NextStep-1 1.1 | continuous-token autoregressive image | — | 🟡 `nextstep_1_ocr_grpo` | — | Wired, but real checkpoint binding still needs validation. |
 
 ## Algorithm Kinds
 
@@ -144,3 +144,64 @@ python -m vrl.scripts.train \
   distributed.resources.trainer.devices='[0]' \
   distributed.resources.rollout.devices='[1,2,3]'
 ```
+
+## Janus-Pro R1 Codex Image-QA Baseline
+
+`experiment/janus_pro_1b_r1_codex_qa_grpo` keeps the existing multi-segment
+Token-GRPO baseline and swaps OCR scoring for a command-line dense image-text
+judge on the final image. The default judge command is `codex exec --image ...`. It
+intentionally reuses one scalar advantage across enabled segments; it is not the
+Janus-Pro-R1 paper's per-segment reward decomposition. The reward component name
+is `codex_image_qa`.
+
+Run the recipe:
+
+```bash
+python -m vrl.scripts.train --config experiment/janus_pro_1b_r1_codex_qa_grpo
+```
+
+Run a short profiled pass before scaling hardware:
+
+```bash
+python -m vrl.scripts.train --config profile/janus_pro_r1_codex_qa_1epoch
+```
+
+The wrapper composes `configs/profiling/torch_profiler.yaml`, so it writes
+TensorBoard traces for the trainer and Ray rollout worker under
+`outputs/profile_janus_r1_codex_qa_1epoch/torch_profiler`. It also enables the
+lightweight phase log with timings such as `collect.engine_generate` and
+`collect.reward_score`. Each profiled step also writes a small `*.summary.txt`
+next to the trace with top CPU and CUDA ops, which is useful before opening a
+multi-GB rollout trace in TensorBoard.
+
+Open the trace UI with:
+
+```bash
+tensorboard --logdir outputs/profile_janus_r1_codex_qa_1epoch/torch_profiler
+```
+
+The configured command receives the generated image through `{image_path}` and
+the judging prompt through stdin. The default command is:
+
+```bash
+codex exec --sandbox read-only --skip-git-repo-check \
+  --image "{image_path}" \
+  --output-last-message "{output_path}" \
+  -
+```
+
+The command output must include a dense score in `[0, 1]`, preferably as JSON:
+
+```json
+{"score": 0.75, "answer": "yes"}
+```
+
+Plain `yes`, `no`, or `score: 0.75` are also accepted.
+
+## Training Examples
+
+Specific run notes and curated qualitative results live under
+`docs/training_examples/`. Use these for concrete examples with visible output;
+keep raw checkpoints and full generated artifacts under `outputs/`.
+
+- `docs/training_examples/sd3_5_ocr_grpo/`: SD3.5 OCR GRPO qualitative result.

@@ -246,7 +246,7 @@ class CosmosPredict2Policy(DiffusionPolicy):
 
         # Reference image preprocessing for Video2World; fall back to zero
         # video conditioning when no reference is provided (degenerate but
-        # allows smoke-test paths to run).
+        # enough for minimal validation paths).
         if reference_image is not None:
             video_input = pipe.video_processor.preprocess_video(
                 reference_image,

@@ -38,6 +38,32 @@ class DebugConfig:
 
 
 @dataclass(slots=True)
+class TorchProfilerConfig:
+    """PyTorch profiler settings for visual TensorBoard traces."""
+
+    enabled: bool = False
+    output_dir: str = ""
+    activities: tuple[str, ...] = ("cpu", "cuda")
+    record_shapes: bool = True
+    profile_memory: bool = True
+    with_stack: bool = False
+    with_flops: bool = False
+    skip_first: int = 0
+    max_steps: int = 1
+
+    def __post_init__(self) -> None:
+        self.enabled = bool(self.enabled)
+        self.output_dir = str(self.output_dir or "")
+        self.activities = tuple(str(activity).lower() for activity in self.activities)
+        self.record_shapes = bool(self.record_shapes)
+        self.profile_memory = bool(self.profile_memory)
+        self.with_stack = bool(self.with_stack)
+        self.with_flops = bool(self.with_flops)
+        self.skip_first = max(0, int(self.skip_first))
+        self.max_steps = int(self.max_steps)
+
+
+@dataclass(slots=True)
 class TrainerConfig:
     """Configuration for the online RL training loop."""
 
@@ -45,6 +71,7 @@ class TrainerConfig:
     optim: OptimConfig = field(default_factory=OptimConfig)
     ema: EMAConfig = field(default_factory=EMAConfig)
     debug: DebugConfig = field(default_factory=DebugConfig)
+    torch_profiler: TorchProfilerConfig = field(default_factory=TorchProfilerConfig)
 
     # --- gradient ---
     max_norm: float = 1.0

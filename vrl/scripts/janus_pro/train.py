@@ -17,6 +17,7 @@ Public coroutines:
   * ``train_janus_pro_grpo``      — general-purpose mix (PickScore + Aesthetic).
   * ``train_janus_pro_ocr_grpo``  — OCR reward + ``target_text`` manifest.
   * ``train_janus_pro_r1_ocr_grpo`` — R1-style multi-segment OCR reward path.
+  * ``train_janus_pro_r1_codex_qa_grpo`` — R1-style Codex image-QA baseline.
 
 Both share construction logic; the only differences are reward selection
 and manifest format.
@@ -73,6 +74,17 @@ async def train_janus_pro_r1_ocr_grpo(cfg: DictConfig) -> None:
         cfg,
         ocr_mode=True,
         r1_mode=True,
+        run_label="r1_ocr",
+    )
+
+
+async def train_janus_pro_r1_codex_qa_grpo(cfg: DictConfig) -> None:
+    """Run Janus-Pro-R1-style multi-segment Codex image-QA GRPO wiring."""
+    await _train_janus_pro(
+        cfg,
+        ocr_mode=False,
+        r1_mode=True,
+        run_label="r1_codex_qa",
     )
 
 
@@ -81,8 +93,10 @@ async def _train_janus_pro(
     *,
     ocr_mode: bool,
     r1_mode: bool = False,
+    run_label: str | None = None,
 ) -> None:
     import csv
+    import os
 
     import torch
 
@@ -122,6 +136,8 @@ async def _train_janus_pro(
     # prompt count below.
     trainer_config.n = int(cfg.rollout.n_samples_per_prompt)
     trainer_config.rollout_batch_size = int(cfg.rollout.rollout_batch_size)
+    if trainer_config.profile:
+        os.environ["VRL_PROFILE_COLLECT"] = "1"
 
     resume_checkpoint = load_training_checkpoint_from_config(cfg)
     prepare_model_config_for_training_resume(
@@ -293,7 +309,7 @@ async def _train_janus_pro(
     examples: list[PromptExample] = load_prompt_manifest(manifest_path)
     logger.info(
         "Starting Janus-Pro GRPO (%s) — %d epochs, %d examples, n=%d",
-        "r1_ocr" if r1_mode else ("ocr" if ocr_mode else "general"),
+        run_label or ("r1" if r1_mode else ("ocr" if ocr_mode else "general")),
         trainer_config.total_epochs,
         len(examples),
         trainer_config.n,

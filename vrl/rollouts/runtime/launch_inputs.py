@@ -7,6 +7,8 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from omegaconf import DictConfig, ListConfig, OmegaConf
+
 from vrl.engine.core.runtime_spec import GenerationRuntimeSpec
 from vrl.engine.gather import ChunkGatherer
 from vrl.rollouts.families.specs import (
@@ -56,6 +58,7 @@ def build_rollout_runtime_inputs(
             policy_version=policy_version,
             runtime_builder=entry.runtime_builder,
             executor_cls=entry.executor_cls,
+            extra=_runtime_extra(cfg),
         ),
         gatherer=_build_gatherer(entry),
     )
@@ -97,6 +100,19 @@ def _runtime_build_spec_payload(spec: Any) -> dict[str, Any]:
     return payload
 
 
+def _runtime_extra(cfg: Any) -> dict[str, Any]:
+    profiler_cfg = _cfg_path(cfg, "rollout.torch_profiler", None)
+    if profiler_cfg is None:
+        return {}
+    profiler = _to_builtin(profiler_cfg)
+    if not isinstance(profiler, dict):
+        return {}
+    return {
+        "torch_profiler": profiler,
+        "profiler_output_dir": str(_cfg_path(cfg, "trainer.output_dir", "outputs/")),
+    }
+
+
 def _import_from_path(path: str) -> Any:
     module_path, attr = path.split(":", 1)
     module = importlib.import_module(module_path)
@@ -110,6 +126,16 @@ def _device_to_string(value: Any) -> str:
 def _dtype_to_string(value: Any) -> str:
     text = str(value)
     return text.removeprefix("torch.")
+
+
+def _to_builtin(value: Any) -> Any:
+    if isinstance(value, (DictConfig, ListConfig)):
+        return OmegaConf.to_container(value, resolve=True)
+    if isinstance(value, Mapping):
+        return {str(key): _to_builtin(inner) for key, inner in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_builtin(inner) for inner in value]
+    return value
 
 
 _MISSING = object()

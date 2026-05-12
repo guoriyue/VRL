@@ -1,0 +1,80 @@
+# Janus-Pro-1B + Janus-Pro-R1-style Codex image-QA alignment GRPO baseline.
+defaults:
+  - /base/algorithm/token_grpo_multisegment
+  - /base/actor
+  - /base/rollout/ar_r1
+  - /base/distributed/ray_rollout_single_gpu
+  - /base/trainer
+  - /model/janus_pro/1b
+  - /sampling/janus_r1_384_576tok
+
+reward:
+  components:
+    codex_image_qa: 1.0
+  kwargs:
+    codex_image_qa:
+      command:
+        - codex
+        - exec
+        - --sandbox
+        - read-only
+        - --skip-git-repo-check
+        - --image
+        - "{image_path}"
+        - --output-last-message
+        - "{output_path}"
+        - "-"
+      timeout_s: 300.0
+      pass_prompt_stdin: true
+      max_concurrency: 1
+      prompt_template: |-
+        You are a strict image-text alignment judge.
+        Evaluate whether the attached image matches the text prompt.
+        Return exactly one JSON object and no extra text:
+        {"score": 0.37}
+
+        Use a dense continuous score in [0, 1]. Do not collapse most samples to 0.
+        Reserve 0.0 only for blank, broken, or completely unrelated images.
+        Assign fine-grained decimals based on visible evidence; avoid repeated generic
+        scores such as 0.10, 0.12, or 0.50 when images differ.
+
+        Scoring rubric:
+        - 0.85-1.00: the image clearly matches the prompt.
+        - 0.60-0.84: the image mostly matches with minor missing details.
+        - 0.35-0.59: the image partially matches but misses important details.
+        - 0.10-0.34: the image is coherent but weakly related to the prompt.
+        - 0.00-0.09: the image is blank, broken, or completely unrelated.
+
+        Text prompt: {prompt}
+
+data:
+  manifest: datasets/drawbench/train_192.txt
+
+trainer:
+  entrypoint: vrl.scripts.janus_pro.train:train_janus_pro_r1_codex_qa_grpo
+  output_dir: outputs/janus_pro_1b_r1_codex_qa_grpo
+  total_epochs: 80
+  save_freq: 10
+  debug:
+    # Multi-segment old log-probs are kept per segment; the legacy first-step
+    # scalar parity check is for single-trajectory token GRPO only.
+    first_step: false
+
+rollout:
+  n_samples_per_prompt: 4
+  rollout_batch_size: 1
+
+eval:
+  fixed:
+    enabled: true
+    interval_epochs: 40
+    output_dir: ${trainer.output_dir}/fixed_eval
+    prompts:
+      - An elephant under the sea.
+      - A storefront with "Google Brain Toronto" written on it.
+      - A pyramid made of falafel with a partial solar eclipse in the background.
+      - A maglev train going vertically downward in high speed, New York Times photojournalism.
+      - A photo of a red cube on top of a blue sphere.
+      - A watercolor painting of a robot playing chess in a library.
+      - A close-up photo of a glass teapot filled with glowing green tea.
+      - A cinematic still of a small wooden boat floating through a neon city canal.

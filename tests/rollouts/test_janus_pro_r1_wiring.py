@@ -7,7 +7,7 @@ import torch
 from vrl.engine import GenerationSampleSpec, OutputBatch
 from vrl.rollouts.collector.configs import JanusProR1CollectorConfig
 from vrl.rollouts.collector.factory import build_rollout_collector
-from vrl.rollouts.packers.ar_r1 import ARR1RolloutPacker
+from vrl.rollouts.packers.ar.r1 import ARR1RolloutPacker
 from vrl.rollouts.packers.base import RolloutPackContext
 
 

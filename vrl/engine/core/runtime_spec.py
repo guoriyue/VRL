@@ -28,6 +28,7 @@ class GenerationRuntimeSpec:
     runtime_builder: str | None = None
     executor_cls: str | None = None
     build_spec: dict[str, Any] | None = None
+    extra: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -46,6 +47,11 @@ class GenerationRuntimeSpec:
                 "build_spec",
                 _normalize_config_mapping(self.build_spec, "build_spec"),
             )
+        object.__setattr__(
+            self,
+            "extra",
+            _normalize_config_mapping(self.extra, "extra"),
+        )
         if self.policy_version is not None:
             object.__setattr__(self, "policy_version", int(self.policy_version))
 
@@ -103,6 +109,7 @@ class GenerationRuntimeSpec:
             "runtime_builder": self.runtime_builder,
             "executor_cls": self.executor_cls,
             "build_spec": None if self.build_spec is None else dict(self.build_spec),
+            "extra": dict(self.extra),
         }
 
     def build_spec_payload(self) -> dict[str, Any]:

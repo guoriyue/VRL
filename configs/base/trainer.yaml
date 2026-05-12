@@ -6,6 +6,18 @@ trainer:
   output_dir: outputs/
   seed: 0
   profile: false
+  torch_profiler:
+    enabled: false
+    output_dir: ""
+    activities:
+      - cpu
+      - cuda
+    record_shapes: true
+    profile_memory: true
+    with_stack: false
+    with_flops: false
+    skip_first: 0
+    max_steps: 1
   resume_from: ""
   resume_strict: true
 

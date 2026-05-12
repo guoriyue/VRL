@@ -18,9 +18,11 @@ from vrl.rollouts.families.specs import (
     get_rollout_family_entry,
     normalize_rollout_family,
 )
-from vrl.rollouts.packers.ar_continuous import ARContinuousRolloutPacker
-from vrl.rollouts.packers.ar_discrete import ARDiscreteRolloutPacker
-from vrl.rollouts.packers.ar_r1 import ARR1RolloutPacker
+from vrl.rollouts.packers.ar import (
+    ARContinuousRolloutPacker,
+    ARDiscreteRolloutPacker,
+    ARR1RolloutPacker,
+)
 from vrl.rollouts.packers.diffusion import DiffusionRolloutPacker
 
 CollectorKind = Literal["diffusion", "ar_discrete", "ar_continuous", "ar_r1"]

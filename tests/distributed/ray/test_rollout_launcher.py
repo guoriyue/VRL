@@ -160,6 +160,37 @@ def _runtime_spec(*, policy_version: int | None = 3) -> GenerationRuntimeSpec:
     )
 
 
+def _runtime_spec_with_profiler(tmp_path, *, policy_version: int | None = 3) -> GenerationRuntimeSpec:
+    return GenerationRuntimeSpec(
+        family="fake",
+        task="t2i",
+        build_spec={
+            "model_name_or_path": "fake-model",
+            "device": "cpu",
+            "dtype": "float32",
+        },
+        executor_kwargs={"sample_batch_size": 1},
+        policy_version=policy_version,
+        runtime_builder=(
+            "tests.distributed.ray.test_rollout_launcher:make_launcher_runtime_bundle"
+        ),
+        executor_cls=("tests.distributed.ray.test_rollout_launcher:_LauncherFakeExecutor"),
+        extra={
+            "profiler_output_dir": str(tmp_path),
+            "torch_profiler": {
+                "enabled": True,
+                "activities": ["cpu"],
+                "record_shapes": True,
+                "profile_memory": True,
+                "with_stack": False,
+                "with_flops": False,
+                "skip_first": 0,
+                "max_steps": 1,
+            },
+        },
+    )
+
+
 def _request(*, policy_version: int | None = 3) -> GenerationRequest:
     return GenerationRequest(
         request_id="req",
@@ -172,6 +203,21 @@ def _request(*, policy_version: int | None = 3) -> GenerationRequest:
     )
 
 
+def test_ray_rollout_worker_writes_forward_chunk_profiler_trace(tmp_path) -> None:
+    worker = RayRolloutWorker("rollout-0", _runtime_spec_with_profiler(tmp_path))
+
+    result = worker.execute_chunk(
+        _request(),
+        MicroBatchPlan(prompt_index=0, prompt="p0", sample_start=0, sample_count=1),
+    )
+
+    assert result.error is None
+    trace_dir = tmp_path / "torch_profiler" / "rollout" / "rollout-0"
+    assert trace_dir.exists()
+    assert any(path.name.endswith(".pt.trace.json") for path in trace_dir.rglob("*"))
+    assert any(path.name.endswith(".summary.txt") for path in trace_dir.rglob("*"))
+
+
 def _config(*, num_workers: int = 2) -> RolloutBackendConfig:
     return RolloutBackendConfig(
         backend="ray",
@@ -182,7 +228,7 @@ def _config(*, num_workers: int = 2) -> RolloutBackendConfig:
     )
 
 
-def test_ray_rollout_launcher_single_worker_smoke(ray_local) -> None:
+def test_ray_rollout_launcher_single_worker_validation(ray_local) -> None:
     launcher = RayRolloutLauncher(init_ray=False)
     runtime = launcher.launch(_config(num_workers=1), _runtime_spec(), _LauncherGatherer())
     try:

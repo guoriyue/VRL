@@ -42,6 +42,9 @@ _EXPECTED_TRAIN_TARGET = {
     "janus_pro_1b_r1_ocr_grpo": (
         "vrl.scripts.janus_pro.train:train_janus_pro_r1_ocr_grpo"
     ),
+    "janus_pro_1b_r1_codex_qa_grpo": (
+        "vrl.scripts.janus_pro.train:train_janus_pro_r1_codex_qa_grpo"
+    ),
     "nextstep_1_ocr_grpo": "vrl.scripts.nextstep_1.train:train_nextstep_1_ocr_grpo",
     "sd3_5_ocr_grpo": "vrl.scripts.sd3_5.train:train_sd3_5_grpo",
     "wan_2_1_1_3b_dpo": "vrl.scripts.wan_2_1.train_dpo:train_wan_2_1_dpo",
@@ -121,6 +124,27 @@ def test_trainer_resume_from_cli_override_reaches_typed_config() -> None:
     built = build_configs(cfg)
 
     assert built["trainer"].resume_from == "/tmp/checkpoint-10"
+
+
+def test_torch_profiler_cli_overrides_reach_typed_config() -> None:
+    cfg = load_config(
+        "experiment/sd3_5_ocr_grpo",
+        overrides=[
+            "trainer.torch_profiler.enabled=true",
+            "trainer.torch_profiler.output_dir=/tmp/vrl-profiler",
+            "trainer.torch_profiler.activities=[cpu]",
+            "trainer.torch_profiler.skip_first=2",
+            "trainer.torch_profiler.max_steps=3",
+        ],
+    )
+    built = build_configs(cfg)
+
+    profiler = built["trainer"].torch_profiler
+    assert profiler.enabled is True
+    assert profiler.output_dir == "/tmp/vrl-profiler"
+    assert profiler.activities == ("cpu",)
+    assert profiler.skip_first == 2
+    assert profiler.max_steps == 3
 
 
 def test_load_config_supports_defaults_override_for_distributed_preset() -> None:
@@ -214,6 +238,22 @@ def test_pickscore_kwargs_required() -> None:
         validate_reward_config(cfg)
     msg = str(excinfo.value)
     assert "pickscore" in msg and "model_name" in msg, msg
+
+
+def test_codex_image_qa_kwargs_required() -> None:
+    """A positive Codex image-QA component must declare its command explicitly."""
+    cfg = OmegaConf.create(
+        {
+            "reward": {
+                "components": {"codex_image_qa": 1.0},
+                "kwargs": {"codex_image_qa": {"timeout_s": 30.0}},
+            },
+        },
+    )
+    with pytest.raises(ValueError) as excinfo:
+        validate_reward_config(cfg)
+    msg = str(excinfo.value)
+    assert "codex_image_qa" in msg and "command" in msg, msg
 
 
 @pytest.mark.parametrize("name", _experiment_names())
