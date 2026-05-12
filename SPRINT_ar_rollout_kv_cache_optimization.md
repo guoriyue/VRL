@@ -186,14 +186,14 @@ vrl/models/families/janus_pro/policy.py
 - `sample_image_tokens()` 默认走 KV decode；必要时测试可指定 legacy path。
 - R1 `generate_with_refine()` 复用同一个 KV decode path 生成 initial/final image。
 
-### 5.3 Janus executors
+### 5.3 Janus runtime
 
 编辑：
 
 ```text
-vrl/models/families/janus_pro/executor.py
-vrl/models/families/janus_pro/r1_executor.py
-vrl/models/families/janus_pro/builder.py
+vrl/models/families/janus_pro/runtime.py
+vrl/models/families/janus_pro/policy.py
+vrl/models/families/janus_pro/r1_types.py
 configs/model/janus_pro/1b.yaml
 configs/sampling/janus_384_576tok.yaml
 configs/sampling/janus_r1_384_576tok.yaml
@@ -210,7 +210,7 @@ sampling:
   ar_scheduler_batch_size: auto
 ```
 
-- builder 暴露 `supports_kv_decode` / `supports_token_scheduler` debug metadata。
+- runtime capability/debug metadata 暴露 `supports_kv_decode` / `supports_token_scheduler`。
 
 ### 5.4 NextStep 对齐
 
@@ -218,8 +218,7 @@ sampling:
 
 ```text
 vrl/models/families/nextstep_1/policy.py
-vrl/models/families/nextstep_1/executor.py
-vrl/models/families/nextstep_1/builder.py
+vrl/models/families/nextstep_1/runtime.py
 configs/sampling/*
 ```
 
@@ -246,7 +245,7 @@ vrl/engine/core/worker.py
 
 - 确认 rollout actor 常驻 policy，不在 request 之间释放模型。
 - 给 generation metrics 增加 AR decode counters。
-- 如果后续加 request-level batching，先在 `GenerationWorker._execute_group()` 里走 family executor 的 `forward_batch()`，不要绕过现有 registry。
+- 如果后续加 request-level batching，先在 `GenerationWorker._execute_group()` 里走 family runtime 的 batch-forward path，不要绕过现有 registry。
 - `release_after_collect` 保留给单卡 debug，多卡 profiling wrapper 默认关闭。
 
 ### 5.6 Tests
@@ -258,16 +257,16 @@ tests/engine/generation/test_ar_token_scheduler.py
 tests/models/test_ar_cache.py
 tests/models/test_janus_wrapper.py
 tests/models/test_janus_r1_policy.py
-tests/models/test_nextstep_1_policy.py
-tests/models/test_nextstep_1_executor.py
-tests/distributed/ray/test_rollout_worker.py
+tests/distributed/ray/test_rollout_launcher.py
 ```
 
 新增：
 
 ```text
 tests/models/test_janus_kv_decode.py
-tests/models/test_janus_executor_kv_decode.py
+tests/models/test_janus_runtime_kv_decode.py
+tests/models/test_nextstep_1_kv_decode.py
+tests/distributed/ray/test_ray_resident_session.py
 ```
 
 测试重点：
@@ -359,9 +358,10 @@ pytest tests/engine/generation/test_ar_token_scheduler.py \
   tests/models/test_ar_cache.py \
   tests/models/test_janus_wrapper.py \
   tests/models/test_janus_kv_decode.py \
+  tests/models/test_janus_runtime_kv_decode.py \
   tests/models/test_janus_r1_policy.py \
-  tests/models/test_nextstep_1_policy.py \
-  tests/models/test_nextstep_1_executor.py
+  tests/models/test_nextstep_1_kv_decode.py \
+  tests/distributed/ray/test_rollout_launcher.py
 ```
 
 Janus profile baseline：
