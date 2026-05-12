@@ -23,6 +23,8 @@ class RolloutBatch:
     context: dict[str, Any] = field(default_factory=dict)  # shared metadata (not stacked)
     videos: Any | None = None      # [B, C, T, H, W] decoded frames (for reward scoring)
     prompts: list[str] | None = None
+    trajectory: Any | None = None
+    training_view: Any | None = None
 
 
 def stack_batches(batches: list[RolloutBatch]) -> RolloutBatch:
@@ -61,8 +63,12 @@ def stack_batches(batches: list[RolloutBatch]) -> RolloutBatch:
     for key in first:
         extras[key] = _stack_extra_values([b.extras[key] for b in batches])
 
+    from vrl.engine.trajectory.ops import stack_trajectory_batches
+
     # Context: shared metadata — take from first batch (not stacked)
     context: dict[str, Any] = dict(batches[0].context)
+    trajectory = stack_trajectory_batches([b.trajectory for b in batches])
+    training_view = _stack_training_views([b.training_view for b in batches])
 
     return RolloutBatch(
         observations=observations,
@@ -74,6 +80,8 @@ def stack_batches(batches: list[RolloutBatch]) -> RolloutBatch:
         context=context,
         videos=videos,
         prompts=prompts or None,
+        trajectory=trajectory,
+        training_view=training_view,
     )
 
 
@@ -103,3 +111,14 @@ def _stack_extra_values(values: list[Any]) -> Any:
     if isinstance(first, tuple) and all(value == first for value in values):
         return first
     return first
+
+
+def _stack_training_views(values: list[Any]) -> Any:
+    if all(value is None for value in values):
+        return None
+    if any(value is None for value in values):
+        raise ValueError("cannot stack mixed training_view and non-training_view batches")
+    first = values[0]
+    if all(value == first for value in values):
+        return first
+    raise ValueError("training_view must match across stacked batches")

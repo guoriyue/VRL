@@ -11,6 +11,7 @@ from vrl.engine.trajectory import (
     TrajectoryBatch,
     TrajectorySegment,
     TrajectoryTensor,
+    build_training_view,
     require_output_trajectory,
 )
 from vrl.rollouts.batch import RolloutBatch
@@ -106,6 +107,8 @@ def _pack_diffusion(
         context=rollout_context,
         videos=output.output,
         prompts=[spec.prompt for spec in output.sample_specs],
+        trajectory=trajectory,
+        training_view=build_training_view(trajectory, primary_segment=segment.name),
     )
 
 
@@ -142,6 +145,8 @@ def _pack_ar_discrete(
         context=dict(trajectory.context),
         videos=images.unsqueeze(2),
         prompts=[spec.prompt for spec in output.sample_specs],
+        trajectory=trajectory,
+        training_view=build_training_view(trajectory, primary_segment=segment.name),
     )
 
 

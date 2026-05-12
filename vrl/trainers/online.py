@@ -16,6 +16,7 @@ import torch.nn as nn
 
 from vrl.algorithms.base import Algorithm
 from vrl.algorithms.types import TrainStepMetrics
+from vrl.engine.trajectory.ops import move_trajectory_batch, select_trajectory_batch
 from vrl.rollouts.batch import RolloutBatch, stack_batches
 from vrl.trainers.base import Trainer
 from vrl.trainers.diagnostics import (
@@ -179,6 +180,8 @@ def _select_batch(batch: RolloutBatch, selector: torch.Tensor) -> RolloutBatch:
         context=batch.context,
         videos=videos,
         prompts=prompts,
+        trajectory=select_trajectory_batch(batch.trajectory, selector),
+        training_view=batch.training_view,
     )
 
 
@@ -303,6 +306,10 @@ def _remap_group_ids_(batch: RolloutBatch, global_prompt_indices: list[int]) -> 
     for local_idx, global_idx in enumerate(global_prompt_indices):
         remapped[batch.group_ids == local_idx] = global_idx
     batch.group_ids = remapped
+    if batch.trajectory is not None:
+        trajectory_group_ids = batch.trajectory.group_ids
+        device = getattr(trajectory_group_ids, "device", remapped.device)
+        batch.trajectory.group_ids = remapped.to(device)
 
 
 def _move_tensor_tree(value: Any, device: torch.device) -> Any:
@@ -338,6 +345,8 @@ def _move_training_batch_to_device(batch: RolloutBatch, device: torch.device) ->
         context=_move_tensor_tree(batch.context, device),
         videos=batch.videos,
         prompts=batch.prompts,
+        trajectory=move_trajectory_batch(batch.trajectory, device),
+        training_view=batch.training_view,
     )
 
 

@@ -161,3 +161,81 @@ class TestStackBatches:
         assert combined.extras["label"] == "first"
         # Context preserved
         assert combined.context["cfg"] is True
+
+    def test_stack_preserves_trajectory_and_training_view(self) -> None:
+        """Trajectory-backed batches keep first-class trajectory metadata when stacked."""
+        import torch
+
+        from vrl.engine.trajectory import build_training_view
+        from vrl.rollouts.batch import RolloutBatch, stack_batches
+
+        t1 = _trajectory("req-a", torch.tensor([[1, 2]]))
+        t2 = _trajectory("req-b", torch.tensor([[3, 4]]))
+        view = build_training_view(t1)
+        b1 = RolloutBatch(
+            observations=torch.ones(1, 1, 2, dtype=torch.long),
+            actions=torch.tensor([[1, 2]]),
+            rewards=torch.tensor([1.0]),
+            dones=torch.tensor([True]),
+            group_ids=torch.tensor([0]),
+            trajectory=t1,
+            training_view=view,
+        )
+        b2 = RolloutBatch(
+            observations=torch.ones(1, 1, 2, dtype=torch.long),
+            actions=torch.tensor([[3, 4]]),
+            rewards=torch.tensor([2.0]),
+            dones=torch.tensor([True]),
+            group_ids=torch.tensor([0]),
+            trajectory=t2,
+            training_view=build_training_view(t2),
+        )
+
+        combined = stack_batches([b1, b2])
+
+        assert combined.trajectory is not None
+        assert combined.training_view == view
+        assert combined.trajectory.axes["sample"].length == 2
+        assert torch.equal(
+            combined.trajectory.segments["image_tokens"].tensors["token_ids"].value,
+            torch.tensor([[1, 2], [3, 4]]),
+        )
+
+
+def _trajectory(request_id: str, token_ids):
+    import torch
+
+    from vrl.engine import GenerationRequest, GenerationSampleSpec
+    from vrl.engine.trajectory import build_ar_discrete_trajectory
+
+    request = GenerationRequest(
+        request_id=request_id,
+        family="janus_pro",
+        task="ar_t2i",
+        prompts=["p"],
+        samples_per_prompt=1,
+    )
+    sample_specs = [
+        GenerationSampleSpec(
+            prompt_index=0,
+            sample_index=0,
+            prompt="p",
+            prompt_id=f"{request_id}:prompt",
+            group_id=f"{request_id}:group",
+            sample_id=f"{request_id}:sample",
+            trajectory_id=f"{request_id}:trajectory",
+            seed=None,
+        )
+    ]
+    return build_ar_discrete_trajectory(
+        request=request,
+        sample_specs=sample_specs,
+        token_ids=token_ids,
+        token_log_probs=torch.zeros_like(token_ids, dtype=torch.float32),
+        token_mask=torch.ones_like(token_ids, dtype=torch.float32),
+        prompt_input_ids=torch.ones(1, 3, dtype=torch.long),
+        prompt_attention_mask=torch.ones(1, 3, dtype=torch.long),
+        uncond_input_ids=torch.zeros(1, 3, dtype=torch.long),
+        uncond_attention_mask=torch.ones(1, 3, dtype=torch.long),
+        context={"model_family": "janus_pro"},
+    )

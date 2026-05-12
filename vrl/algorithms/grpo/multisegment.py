@@ -73,9 +73,10 @@ class MultiSegmentTokenGRPO(TokenGRPO):
             segment_old = old_by_segment.get(name)
             if segment_signal is None or segment_old is None:
                 raise RuntimeError(f"missing multi-segment GRPO segment: {name}")
+            segment_advantages = _segment_advantages(advantages, name)
             loss, metrics = super().compute_signal_loss(
                 segment_signal,
-                advantages,
+                segment_advantages,
                 segment_old,
             )
             self.last_segment_metrics[name] = metrics
@@ -119,3 +120,13 @@ class MultiSegmentTokenGRPO(TokenGRPO):
         if isinstance(old_log_probs, dict):
             return old_log_probs
         return {}
+
+
+def _segment_advantages(advantages: Any, name: str) -> Any:
+    if isinstance(advantages, dict):
+        if name in advantages:
+            return advantages[name]
+        if "__default__" in advantages:
+            return advantages["__default__"]
+        raise RuntimeError(f"missing multi-segment advantages for segment: {name}")
+    return advantages

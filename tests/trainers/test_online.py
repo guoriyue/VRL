@@ -1173,3 +1173,80 @@ def _adam_exp_avg_values(optimizer) -> list[float]:
         if exp_avg is not None:
             values.extend(float(v) for v in exp_avg.reshape(-1).detach().cpu().tolist())
     return values
+
+
+def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:
+    import torch
+
+    from vrl.engine import GenerationRequest, GenerationSampleSpec
+    from vrl.engine.trajectory import build_ar_discrete_trajectory, build_training_view
+    from vrl.rollouts.batch import RolloutBatch
+    from vrl.trainers.online import (
+        _move_training_batch_to_device,
+        _remap_group_ids_,
+        _select_batch,
+    )
+
+    request = GenerationRequest(
+        request_id="req",
+        family="janus_pro",
+        task="ar_t2i",
+        prompts=["a", "b"],
+        samples_per_prompt=2,
+    )
+    sample_specs = [
+        GenerationSampleSpec(
+            prompt_index=index // 2,
+            sample_index=index % 2,
+            prompt=request.prompts[index // 2],
+            prompt_id=f"p{index // 2}",
+            group_id=f"g{index // 2}",
+            sample_id=f"s{index}",
+            trajectory_id=f"t{index}",
+            seed=None,
+        )
+        for index in range(4)
+    ]
+    token_ids = torch.arange(8).view(4, 2)
+    trajectory = build_ar_discrete_trajectory(
+        request=request,
+        sample_specs=sample_specs,
+        token_ids=token_ids,
+        token_log_probs=torch.zeros(4, 2),
+        token_mask=torch.ones(4, 2),
+        prompt_input_ids=torch.ones(4, 3, dtype=torch.long),
+        prompt_attention_mask=torch.ones(4, 3, dtype=torch.long),
+        uncond_input_ids=torch.zeros(4, 3, dtype=torch.long),
+        uncond_attention_mask=torch.ones(4, 3, dtype=torch.long),
+        context={"model_family": "janus_pro"},
+    )
+    batch = RolloutBatch(
+        observations=torch.ones(4, 1, 3, dtype=torch.long),
+        actions=token_ids,
+        rewards=torch.arange(4, dtype=torch.float32),
+        dones=torch.ones(4, dtype=torch.bool),
+        group_ids=torch.tensor([0, 0, 1, 1]),
+        extras={"log_probs": torch.zeros(4, 2)},
+        trajectory=trajectory,
+        training_view=build_training_view(trajectory),
+    )
+
+    selected = _select_batch(batch, torch.tensor([True, False, True, False]))
+
+    assert selected.trajectory is not None
+    assert selected.training_view == batch.training_view
+    assert selected.trajectory.axes["sample"].length == 2
+    assert torch.equal(selected.trajectory.group_ids, torch.tensor([0, 1]))
+    assert torch.equal(
+        selected.trajectory.segments["image_tokens"].tensors["token_ids"].value,
+        torch.tensor([[0, 1], [4, 5]]),
+    )
+
+    moved = _move_training_batch_to_device(selected, torch.device("cpu"))
+    assert moved.trajectory is not None
+    assert moved.trajectory.group_ids.device.type == "cpu"
+
+    _remap_group_ids_(moved, [10, 11])
+    assert torch.equal(moved.group_ids, torch.tensor([10, 11]))
+    assert moved.trajectory is not None
+    assert torch.equal(moved.trajectory.group_ids, torch.tensor([10, 11]))

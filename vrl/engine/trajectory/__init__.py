@@ -31,6 +31,7 @@ from vrl.engine.trajectory.validation import (
     validate_training_view,
     validate_trajectory_batch,
 )
+from vrl.engine.trajectory.view_builders import build_training_view
 from vrl.engine.trajectory.views import (
     AlgorithmFamily,
     LossUnit,
@@ -61,6 +62,7 @@ __all__ = [
     "TrajectoryValidationError",
     "build_ar_discrete_trajectory",
     "build_diffusion_trajectory",
+    "build_training_view",
     "get_output_trajectory",
     "replay_input_ref",
     "require_output_trajectory",

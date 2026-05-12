@@ -1569,6 +1569,8 @@ vrl/models/families/cosmos/predict2_5/runtime.py
 新增：
 
 ```text
+vrl/engine/trajectory/ops.py
+vrl/engine/trajectory/view_builders.py
 vrl/rollouts/evaluators/trajectory.py
 vrl/algorithms/trajectory.py
 tests/rollouts/evaluators/test_trajectory_signals.py
@@ -1578,17 +1580,25 @@ tests/algorithms/test_algorithm_input_views.py
 编辑：
 
 ```text
+vrl/engine/batching.py
+vrl/engine/trajectory/__init__.py
+vrl/rollouts/batch.py
 vrl/rollouts/evaluators/types.py
-vrl/rollouts/evaluators/ar/token_logprob.py
-vrl/rollouts/evaluators/ar/continuous_token_logprob.py
-vrl/rollouts/evaluators/ar/multi_segment_token_logprob.py
-vrl/rollouts/evaluators/diffusion/flow_matching.py
-vrl/algorithms/base.py
-vrl/algorithms/grpo/continuous.py
-vrl/algorithms/grpo/token.py
+vrl/rollouts/evaluators/__init__.py
+vrl/rollouts/packers/trajectory.py
+vrl/algorithms/__init__.py
 vrl/algorithms/grpo/multisegment.py
-vrl/algorithms/diffusion_nft.py
+vrl/trainers/online.py
+tests/rollouts/test_batch.py
+tests/trainers/test_online.py
 ```
+
+说明：
+
+- Sprint C 先做 adapter 闭环，不把 `OnlineTrainer` 主循环切到 strict trajectory。
+- 旧 evaluator 仍可返回 `SignalBatch`；`vrl/rollouts/evaluators/trajectory.py` 负责把它提升成 `TrajectorySignalBatch`。
+- `RolloutBatch.trajectory` / `RolloutBatch.training_view` 只是兼容期携带字段；stack/select/move/remap 必须传播，避免 trajectory 和 legacy batch 顺序分叉。
+- `DiffusionRolloutPacker`、`ARDiscreteRolloutPacker`、现有 evaluator 数值路径保持不变。
 
 必须满足：
 

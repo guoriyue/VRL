@@ -13,6 +13,7 @@ from vrl.algorithms.grpo.multisegment import (
     MultiSegmentTokenGRPOConfig,
 )
 from vrl.algorithms.grpo.token import TokenGRPO, TokenGRPOConfig
+from vrl.algorithms.trajectory import AlgorithmAdapter, AlgorithmInput
 from vrl.algorithms.types import (
     Rollout,
     TrainStepMetrics,
@@ -23,6 +24,8 @@ from vrl.algorithms.types import (
 __all__ = [
     "GRPO",
     "Algorithm",
+    "AlgorithmAdapter",
+    "AlgorithmInput",
     "DiffusionNFT",
     "DiffusionNFTConfig",
     "GRPOConfig",
