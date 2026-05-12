@@ -224,7 +224,7 @@ family packers
 
 ```text
 request identity / decoded artifact / error / metrics -> OutputBatch
-action / old_logprob / mask / replay input -> TrajectoryBatch
+action / old_log_prob / mask / replay input -> TrajectoryBatch
 trainer legacy tensors -> RolloutBatch compatibility fields
 live runtime state -> RuntimeSession / Ray worker
 static family routing -> RolloutFamilyEntry
@@ -283,7 +283,7 @@ TrajectoryTensor(
     name=str,
     value=Any,
     axes=tuple[str, ...],
-    role="observation" | "action" | "old_logprob" | "mask" | "replay_input" | "media",
+    role="observation" | "action" | "old_log_prob" | "mask" | "replay_input",
 )
 
 TrajectorySegment(
@@ -304,7 +304,7 @@ TrajectoryBatch(
     group_ids=Any,
     axes=dict[str, AxisSpec],
     segments=dict[str, TrajectorySegment],
-    reward_views=dict[str, Any],
+    reward_views=dict[str, RewardView],
     metrics=TrajectoryMetrics,
     context=dict[str, Any],
 )
@@ -315,7 +315,7 @@ TrajectoryBatch(
 - `sample_specs`：prompt/sample 顺序。
 - `group_ids`：group-relative normalization / preference grouping / per-prompt statistics 需要。
 - `segments`：R1、diffusion、AR 都可以表达。
-- `old_logprob`：采样时的 old policy logprob。
+- `old_log_prob`：采样时的 old policy logprob。
 - `mask`：训练有效位置。
 - `replay_input`：evaluator 重新计算 current logprob 所需的可序列化输入。
 - `reward_views`：reward 看到的是 image/video/text，不一定等于训练 action。
@@ -371,7 +371,7 @@ TrainingView(
     loss_units=tuple[LossUnit, ...],
     primary_segment=str | None,
     algorithm_family="policy_gradient" | "supervised" | "preference" | "custom",
-    legacy_fields=dict[str, Any],
+    metadata=dict[str, Any],
 )
 
 LossUnit(
@@ -379,7 +379,7 @@ LossUnit(
     axis=str,
     axis_index=int | None,
     action_ref=str,
-    old_logprob_ref=str,
+    old_log_prob_ref=str,
     mask_ref=str,
     advantage_scope="sample" | "segment" | "axis",
     signal_requirements=tuple[str, ...],
@@ -392,9 +392,10 @@ LossUnit(
 - `TrajectoryBatch` 持有事实。
 - `RewardView` 只声明 reward function 应该读取哪些事实，不复制图像/视频/text tensor。
 - `TrainingView` 只声明 trainer/algorithm 应该按什么 loss unit 迭代，不绑定具体算法类。
+- `TrainingView` 不能带 `legacy_fields` 或第二套 `RolloutBatch.extras`。
 - `RolloutBatch` 只是迁移期 trainer 容器，不再定义语义。
 
-`AlgorithmInput` 是算法统一入口，但不是新算法：
+`AlgorithmInput` 是 Sprint C 的算法统一入口，不属于 Sprint A 的实现范围，也不是新算法：
 
 ```python
 AlgorithmInput(
@@ -876,7 +877,7 @@ vrl/rollouts/evaluators/diffusion/
 收益：
 
 - SD3.5、Wan、Cosmos 共享 timestep selection、SDE logprob、KL replay metadata。
-- `TrajectoryTensor(role="old_logprob", axes=("sample", "timestep"))` 能被统一 algorithm 消费。
+- `TrajectoryTensor(role="old_log_prob", axes=("sample", "timestep"))` 能被统一 algorithm 消费。
 
 ### 10.5 Profiling
 
@@ -1081,7 +1082,7 @@ TrajectoryBatch
   segment=image_generation
   axis=token
   action=token_ids
-  old_logprob=token_log_probs
+  old_log_prob=token_log_probs
   mask=token_mask
   prompt_context=prompt_ids/prompt_mask/uncond_ids/uncond_mask
   replay_inputs=prompt ids/masks + token_ids
@@ -1159,7 +1160,7 @@ TrajectoryBatch
   axis=timestep
   observation=latents
   action=next_latents / prev_sample
-  old_logprob=rollout_log_probs
+  old_log_prob=rollout_log_probs
   mask=step_mask
   replay_inputs=latents/timesteps/conditioning refs
 ```
@@ -1263,7 +1264,7 @@ TrajectorySignalBatch.segment_signals[name]
 - `segment`
 - `distribution`
 - `new_logprob`
-- `old_logprob`
+- `old_log_prob`
 - `ref_logprob`
 - `mask`
 - `replay_metrics`
@@ -1485,7 +1486,7 @@ tests/engine/trajectory/test_trajectory_types.py
 
 - 定义 `TrajectoryBatch` / `TrajectorySegment` / `TrajectoryTensor`。
 - 定义最小版 `RewardView` / `TrainingView` / `LossUnit`。
-- 定义 `AlgorithmInput` 需要引用的 view-facing fields，但不实现 algorithm adapter。
+- 不定义 `AlgorithmInput` / `AlgorithmAdapter`；Sprint A 只保证 `TrainingView` 能被后续 Sprint C 引用。
 - 支持 diffusion、AR discrete、AR continuous、R1 的最小 schema。
 - validator 能检查 batch dim、axis 名称、mask/logprob shape。
 - `TrajectoryBatch` 不包含 KV cache handle、CUDA graph handle、Ray actor/session、scheduler object、model module、HTTP client。
