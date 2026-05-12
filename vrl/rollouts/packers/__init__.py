@@ -7,6 +7,7 @@ from vrl.rollouts.packers.ar import (
 )
 from vrl.rollouts.packers.base import RolloutPackContext, RolloutPacker
 from vrl.rollouts.packers.diffusion import DiffusionRolloutPacker
+from vrl.rollouts.packers.trajectory import TrajectoryRolloutPacker
 
 __all__ = [
     "ARContinuousRolloutPacker",
@@ -15,4 +16,5 @@ __all__ = [
     "DiffusionRolloutPacker",
     "RolloutPackContext",
     "RolloutPacker",
+    "TrajectoryRolloutPacker",
 ]

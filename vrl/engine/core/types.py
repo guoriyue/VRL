@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from vrl.engine.trajectory import TrajectoryBatch
 
 
 @dataclass(slots=True)
@@ -157,6 +160,7 @@ class OutputBatch:
     trajectory_latents: Any | None = None
     rollout_trajectory_data: RolloutTrajectoryData | None = None
     trajectory_decoded: list[Any] | None = None
+    trajectory: TrajectoryBatch | None = None
     extra: dict[str, Any] = field(default_factory=dict)
     metrics: GenerationMetrics | None = None
     peak_memory_mb: float = 0.0

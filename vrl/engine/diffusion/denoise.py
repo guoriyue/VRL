@@ -19,6 +19,7 @@ from vrl.engine.core.types import (
     RolloutDitTrajectory,
     RolloutTrajectoryData,
 )
+from vrl.engine.trajectory import build_diffusion_trajectory
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,6 +212,17 @@ def build_diffusion_output_batch(
         micro_batches=len(chunks),
         peak_memory_mb=peak_mem_mb,
     )
+    trajectory = build_diffusion_trajectory(
+        request=request,
+        sample_specs=sample_specs,
+        observations=observations,
+        actions=actions,
+        old_log_prob=log_probs,
+        timesteps=timesteps_tensor,
+        kl=kl_tensor,
+        training_extras=training_extras,
+        context=rollout_context,
+    )
 
     return OutputBatch(
         request_id=request.request_id,
@@ -220,6 +232,8 @@ def build_diffusion_output_batch(
         sample_specs=sample_specs,
         output=video,
         rollout_trajectory_data=rollout_trajectory_data,
+        trajectory=trajectory,
+        extra={"trajectory": trajectory},
         metrics=metrics,
         peak_memory_mb=peak_mem_mb or 0.0,
     )

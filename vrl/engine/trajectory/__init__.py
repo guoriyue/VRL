@@ -1,6 +1,10 @@
 """Trajectory contract types for generation RL."""
 
 from vrl.engine.trajectory.axes import AxisKind, AxisSpec
+from vrl.engine.trajectory.builders import (
+    build_ar_discrete_trajectory,
+    build_diffusion_trajectory,
+)
 from vrl.engine.trajectory.compat import (
     TRAJECTORY_EXTRA_KEY,
     get_output_trajectory,
@@ -55,6 +59,8 @@ __all__ = [
     "TrajectorySegment",
     "TrajectoryTensor",
     "TrajectoryValidationError",
+    "build_ar_discrete_trajectory",
+    "build_diffusion_trajectory",
     "get_output_trajectory",
     "replay_input_ref",
     "require_output_trajectory",

@@ -117,6 +117,17 @@ def _slice_output_batch(
     count: int,
     total: int,
 ) -> OutputBatch:
+    trajectory = _slice_trajectory(
+        output.trajectory,
+        request=request,
+        sample_specs=sample_specs,
+        offset=offset,
+        count=count,
+        total=total,
+    )
+    extra = _slice_value(output.extra, offset, count, total)
+    if trajectory is not None and isinstance(extra, dict) and "trajectory" in extra:
+        extra["trajectory"] = trajectory
     return OutputBatch(
         request_id=request.request_id,
         family=request.family,
@@ -148,7 +159,8 @@ def _slice_output_batch(
             count,
             total,
         ),
-        extra=_slice_value(output.extra, offset, count, total),
+        trajectory=trajectory,
+        extra=extra,
         metrics=replace(output.metrics, num_prompts=len(request.prompts), num_samples=count)
         if output.metrics is not None
         else None,
@@ -190,6 +202,80 @@ def _slice_rollout_trajectory(
             count,
             total,
         ),
+    )
+
+
+def _slice_trajectory(
+    data: Any,
+    *,
+    request: GenerationRequest,
+    sample_specs: list[GenerationSampleSpec],
+    offset: int,
+    count: int,
+    total: int,
+) -> Any:
+    if data is None:
+        return None
+
+    from vrl.engine.trajectory import (
+        AxisSpec,
+        TrajectoryBatch,
+        TrajectoryMetrics,
+        TrajectorySegment,
+        TrajectoryTensor,
+    )
+
+    if not isinstance(data, TrajectoryBatch):
+        return data
+
+    axes: dict[str, AxisSpec] = {}
+    for name, axis in data.axes.items():
+        axes[name] = replace(axis, length=count) if name == "sample" else axis
+
+    segments: dict[str, TrajectorySegment] = {}
+    for name, segment in data.segments.items():
+        tensors = {
+            tensor_name: TrajectoryTensor(
+                name=tensor.name,
+                value=_slice_value(tensor.value, offset, count, total),
+                axes=tensor.axes,
+                role=tensor.role,
+                metadata=dict(tensor.metadata),
+            )
+            for tensor_name, tensor in segment.tensors.items()
+        }
+        segments[name] = TrajectorySegment(
+            name=segment.name,
+            modality=segment.modality,
+            trainable=segment.trainable,
+            distribution=segment.distribution,
+            tensors=tensors,
+            reward_view=segment.reward_view,
+            advantage_scope=segment.advantage_scope,
+            replay_inputs=dict(segment.replay_inputs),
+            metadata=dict(segment.metadata),
+        )
+
+    axis_lengths = dict(data.metrics.axis_lengths)
+    if "sample" in axis_lengths:
+        axis_lengths["sample"] = count
+    metrics = TrajectoryMetrics(
+        num_samples=count if data.metrics.num_samples is not None else None,
+        axis_lengths=axis_lengths,
+        values=_slice_value(data.metrics.values, offset, count, total),
+    )
+
+    return TrajectoryBatch(
+        request_id=request.request_id,
+        family=request.family,
+        task=request.task,
+        sample_specs=list(sample_specs),
+        group_ids=_slice_value(data.group_ids, offset, count, total),
+        axes=axes,
+        segments=segments,
+        reward_views=dict(data.reward_views),
+        metrics=metrics,
+        context=_slice_value(data.context, offset, count, total),
     )
 
 

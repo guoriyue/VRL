@@ -214,6 +214,7 @@ from vrl.engine.core.types import (
     WorkloadSignature,
 )
 from vrl.engine.microbatching import MicroBatchPlan
+from vrl.engine.trajectory import build_ar_discrete_trajectory
 
 logger = logging.getLogger(__name__)
 
@@ -394,6 +395,19 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
                 "model_family": getattr(self.model, "model_family", "janus_pro"),
             },
         }
+        trajectory = build_ar_discrete_trajectory(
+            request=request,
+            sample_specs=sample_specs,
+            token_ids=token_ids,
+            token_log_probs=token_log_probs,
+            token_mask=token_mask,
+            prompt_input_ids=prompt_ids,
+            prompt_attention_mask=prompt_mask,
+            uncond_input_ids=uncond_ids,
+            uncond_attention_mask=uncond_mask,
+            context=extra["context"],
+        )
+        extra["trajectory"] = trajectory
 
         return OutputBatch(
             request_id=request.request_id,
@@ -403,6 +417,7 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
             sample_specs=sample_specs,
             output=images,
             rollout_trajectory_data=None,  # AR has no DiT trajectory
+            trajectory=trajectory,
             extra=extra,
             metrics=metrics,
             peak_memory_mb=peak_mem_mb or 0.0,
@@ -702,6 +717,19 @@ class JanusProChunkGatherer:
             ),
             "context": dict(ordered_ar_chunks[0].context),
         }
+        trajectory = build_ar_discrete_trajectory(
+            request=request,
+            sample_specs=list(sample_specs),
+            token_ids=token_ids,
+            token_log_probs=token_log_probs,
+            token_mask=extra["token_mask"],
+            prompt_input_ids=extra["prompt_input_ids"],
+            prompt_attention_mask=extra["prompt_attention_mask"],
+            uncond_input_ids=extra["uncond_input_ids"],
+            uncond_attention_mask=extra["uncond_attention_mask"],
+            context=extra["context"],
+        )
+        extra["trajectory"] = trajectory
 
         return OutputBatch(
             request_id=request.request_id,
@@ -711,6 +739,7 @@ class JanusProChunkGatherer:
             sample_specs=list(sample_specs),
             output=output,
             rollout_trajectory_data=None,
+            trajectory=trajectory,
             extra=extra,
             metrics=metrics,
             peak_memory_mb=peak_mem_mb or 0.0,

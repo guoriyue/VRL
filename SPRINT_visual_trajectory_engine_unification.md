@@ -1505,6 +1505,7 @@ tests/engine/trajectory/test_trajectory_types.py
 新增：
 
 ```text
+vrl/engine/trajectory/builders.py
 vrl/rollouts/packers/trajectory.py
 tests/rollouts/test_sd3_5_ocr_trajectory_parity.py
 tests/rollouts/test_trajectory_packer.py
@@ -1513,14 +1514,20 @@ tests/rollouts/test_trajectory_packer.py
 编辑：
 
 ```text
+vrl/engine/batching.py
 vrl/engine/core/types.py
-vrl/rollouts/batch.py
-vrl/rollouts/packers/base.py
-vrl/rollouts/packers/diffusion.py
-vrl/rollouts/packers/ar/discrete.py
+vrl/engine/diffusion/denoise.py
+vrl/engine/trajectory/__init__.py
 vrl/models/families/janus_pro/runtime.py
-vrl/models/families/sd3_5/runtime.py
+vrl/rollouts/packers/__init__.py
+tests/engine/generation/test_chunk_gatherer.py
 ```
+
+说明：
+
+- SD3.5 的实际 emission 落在 shared diffusion gather/build path：`vrl/engine/diffusion/denoise.py`，不是 family runtime glue。
+- `DiffusionRolloutPacker` 和 `ARDiscreteRolloutPacker` 保持不变；Sprint B 用 `TrajectoryRolloutPacker` 做 parity，不把旧 packer 切到 strict。
+- `RolloutBatch` 这轮不新增 trajectory 字段，避免把 trainer 主路径迁移提前塞进 Sprint B。
 
 必须满足：
 
