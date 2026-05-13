@@ -295,11 +295,24 @@ def test_r1_executor_forward_emits_canonical_family_and_segment_schema() -> None
     )
     specs = GenerationIdFactory().build_sample_specs(request)
 
-    out = executor.forward(request, specs)
+    out = executor.forward_plan(request, specs, executor.plan(request, specs))
 
     assert out.family == "janus_pro_r1"
     assert out.task == "ar_t2i_r1"
     assert out.output.shape == (2, 3, 2, 2)
-    assert set(out.extra["segments"]) == {"initial_image", "selfcheck_text", "final_image"}
-    assert out.extra["segments"]["final_image"]["token_ids"].shape == (2, 4)
-    assert out.extra["selfcheck_text"].shape == (2, 4)
+    assert "segments" not in out.extra
+    assert "selfcheck_text" not in out.extra
+    assert out.trajectory is not None
+    assert set(out.trajectory.segments) >= {
+        "initial_image",
+        "selfcheck_text",
+        "final_image",
+    }
+    assert (
+        out.trajectory.segments["final_image"].tensors["token_ids"].value.shape
+        == (2, 4)
+    )
+    assert (
+        out.trajectory.segments["selfcheck_text"].tensors["token_ids"].value.shape
+        == (2, 4)
+    )

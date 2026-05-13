@@ -9,29 +9,29 @@ from vrl.engine.core.types import (
     GenerationRequest,
     GenerationSampleSpec,
     OutputBatch,
-    RolloutDebugTensors,
-    RolloutDenoisingEnv,
-    RolloutDitTrajectory,
-    RolloutTrajectoryData,
 )
 from vrl.engine.trajectory.ops import slice_trajectory_batch
 
 
-class _SingleRequestExecutor(Protocol):
+class _PlanAwareRequestExecutor(Protocol):
     family: str
     task: str
 
-    def forward(
+    def forward_plan(
         self,
         request: GenerationRequest,
         sample_specs: list[GenerationSampleSpec],
+        plan: Any,
     ) -> OutputBatch: ...
 
 
 def forward_batch_by_merging_prompts(
-    executor: _SingleRequestExecutor,
+    executor: _PlanAwareRequestExecutor,
     requests: list[GenerationRequest],
     sample_specs_by_request: dict[str, list[GenerationSampleSpec]],
+    *,
+    engine_plans_by_request: dict[str, Any],
+    merged_plan: Any | None = None,
 ) -> dict[str, OutputBatch]:
     """Run same-config requests as one prompt-major executor call.
 
@@ -45,11 +45,16 @@ def forward_batch_by_merging_prompts(
         return {}
     if len(requests) == 1:
         request = requests[0]
+        plan = engine_plans_by_request[request.request_id]
+        output = _forward_request(
+            executor,
+            request,
+            sample_specs_by_request[request.request_id],
+            plan=plan,
+        )
+        output = _attach_plan(output, plan)
         return {
-            request.request_id: executor.forward(
-                request,
-                sample_specs_by_request[request.request_id],
-            )
+            request.request_id: output
         }
 
     first = requests[0]
@@ -76,13 +81,20 @@ def forward_batch_by_merging_prompts(
         priority=min(r.priority for r in requests),
         policy_version=first.policy_version,
     )
-    merged_output = executor.forward(merged_request, merged_specs)
+    if merged_plan is None:
+        merged_plan = _build_plan(executor, merged_request, merged_specs)
+    merged_output = _forward_request(
+        executor,
+        merged_request,
+        merged_specs,
+        plan=merged_plan,
+    )
 
     outputs: dict[str, OutputBatch] = {}
     offset = 0
     for request in requests:
         count = request_sample_counts[request.request_id]
-        outputs[request.request_id] = _slice_output_batch(
+        output = _slice_output_batch(
             merged_output,
             request=request,
             sample_specs=sample_specs_by_request[request.request_id],
@@ -90,8 +102,54 @@ def forward_batch_by_merging_prompts(
             count=count,
             total=len(merged_specs),
         )
+        output = _attach_plan(output, engine_plans_by_request[request.request_id])
+        outputs[request.request_id] = output
         offset += count
     return outputs
+
+
+def _forward_request(
+    executor: _PlanAwareRequestExecutor,
+    request: GenerationRequest,
+    sample_specs: list[GenerationSampleSpec],
+    *,
+    plan: Any,
+) -> OutputBatch:
+    forward_plan = getattr(executor, "forward_plan", None)
+    if not callable(forward_plan):
+        raise TypeError(
+            f"{type(executor).__name__} must implement forward_plan(...) "
+            "for plan-aware local batching",
+        )
+    output = forward_plan(request, sample_specs, plan)
+    execution_extra = output.extra.setdefault("engine_execution", {})
+    if isinstance(execution_extra, dict):
+        execution_extra["plan_aware_forward"] = True
+        execution_extra["forward_plan_id"] = plan.request_id
+    return output
+
+
+def _build_plan(
+    executor: _PlanAwareRequestExecutor,
+    request: GenerationRequest,
+    sample_specs: list[GenerationSampleSpec],
+) -> Any:
+    plan_method = getattr(executor, "plan", None)
+    if callable(plan_method):
+        return plan_method(request, sample_specs)
+    from vrl.engine.execution.planner import build_engine_plan, resolve_executor_capability
+
+    return build_engine_plan(
+        request,
+        sample_specs,
+        capability=resolve_executor_capability(executor, request),
+    )
+
+
+def _attach_plan(output: OutputBatch, plan: Any) -> OutputBatch:
+    from vrl.engine.execution.planner import attach_engine_plan
+
+    return attach_engine_plan(output, plan)
 
 
 def _validate_mergeable(requests: list[GenerationRequest]) -> None:
@@ -134,30 +192,6 @@ def _slice_output_batch(
         prompts=list(request.prompts),
         sample_specs=sample_specs,
         output=_slice_value(output.output, offset, count, total),
-        trajectory_timesteps=_slice_value(
-            output.trajectory_timesteps,
-            offset,
-            count,
-            total,
-        ),
-        trajectory_latents=_slice_value(
-            output.trajectory_latents,
-            offset,
-            count,
-            total,
-        ),
-        rollout_trajectory_data=_slice_rollout_trajectory(
-            output.rollout_trajectory_data,
-            offset,
-            count,
-            total,
-        ),
-        trajectory_decoded=_slice_value(
-            output.trajectory_decoded,
-            offset,
-            count,
-            total,
-        ),
         trajectory=trajectory,
         extra=extra,
         metrics=replace(output.metrics, num_prompts=len(request.prompts), num_samples=count)
@@ -165,42 +199,6 @@ def _slice_output_batch(
         else None,
         peak_memory_mb=output.peak_memory_mb,
         error=output.error,
-    )
-
-
-def _slice_rollout_trajectory(
-    data: RolloutTrajectoryData | None,
-    offset: int,
-    count: int,
-    total: int,
-) -> RolloutTrajectoryData | None:
-    if data is None:
-        return None
-    return RolloutTrajectoryData(
-        rollout_log_probs=_slice_value(
-            data.rollout_log_probs,
-            offset,
-            count,
-            total,
-        ),
-        rollout_debug_tensors=_slice_debug_tensors(
-            data.rollout_debug_tensors,
-            offset,
-            count,
-            total,
-        ),
-        denoising_env=_slice_denoising_env(
-            data.denoising_env,
-            offset,
-            count,
-            total,
-        ),
-        dit_trajectory=_slice_dit_trajectory(
-            data.dit_trajectory,
-            offset,
-            count,
-            total,
-        ),
     )
 
 
@@ -220,73 +218,6 @@ def _slice_trajectory(
         offset=offset,
         count=count,
         total=total,
-    )
-
-
-def _slice_debug_tensors(
-    data: RolloutDebugTensors | None,
-    offset: int,
-    count: int,
-    total: int,
-) -> RolloutDebugTensors | None:
-    if data is None:
-        return None
-    return RolloutDebugTensors(
-        rollout_variance_noises=_slice_value(
-            data.rollout_variance_noises,
-            offset,
-            count,
-            total,
-        ),
-        rollout_prev_sample_means=_slice_value(
-            data.rollout_prev_sample_means,
-            offset,
-            count,
-            total,
-        ),
-        rollout_noise_std_devs=_slice_value(
-            data.rollout_noise_std_devs,
-            offset,
-            count,
-            total,
-        ),
-        rollout_model_outputs=_slice_value(
-            data.rollout_model_outputs,
-            offset,
-            count,
-            total,
-        ),
-    )
-
-
-def _slice_denoising_env(
-    data: RolloutDenoisingEnv | None,
-    offset: int,
-    count: int,
-    total: int,
-) -> RolloutDenoisingEnv | None:
-    if data is None:
-        return None
-    return RolloutDenoisingEnv(
-        image_kwargs=_slice_value(data.image_kwargs, offset, count, total),
-        pos_cond_kwargs=_slice_value(data.pos_cond_kwargs, offset, count, total),
-        neg_cond_kwargs=_slice_value(data.neg_cond_kwargs, offset, count, total),
-        guidance=_slice_value(data.guidance, offset, count, total),
-        extra=_slice_value(data.extra, offset, count, total),
-    )
-
-
-def _slice_dit_trajectory(
-    data: RolloutDitTrajectory | None,
-    offset: int,
-    count: int,
-    total: int,
-) -> RolloutDitTrajectory | None:
-    if data is None:
-        return None
-    return RolloutDitTrajectory(
-        latents=_slice_value(data.latents, offset, count, total),
-        timesteps=_slice_value(data.timesteps, offset, count, total),
     )
 
 

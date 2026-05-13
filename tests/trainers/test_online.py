@@ -8,6 +8,39 @@ from vrl.rollouts.collector.base import Collector
 from vrl.rollouts.evaluators.base import Evaluator
 
 
+def _algorithm_inputs(inputs):
+    if inputs.signals is None:
+        raise AssertionError("test algorithm requires trajectory signals")
+    signals = inputs.signals.primary
+    return signals, inputs.advantages, signals.old_log_prob
+
+
+def _trajectory_signals(batch, log_prob, timestep_idx: int = 0):
+    import torch
+
+    from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
+
+    old_log_prob = torch.full_like(log_prob, float(timestep_idx))
+    mask = torch.ones_like(log_prob)
+    axes = ("sample",) if int(getattr(log_prob, "ndim", 1)) <= 1 else ("sample", "timestep")
+    return TrajectorySignalBatch(
+        segments={
+            "default": SegmentSignal(
+                name="default",
+                segment="default",
+                axis="timestep",
+                axes=axes,
+                distribution="flow_matching",
+                log_prob=log_prob,
+                old_log_prob=old_log_prob,
+                mask=mask,
+            ),
+        },
+        group_ids=batch.group_ids,
+        primary_segment="default",
+    )
+
+
 class TestOnlineTrainerCeaRegressions:
     def _make_cea_trainer(self, rewards: list[float]):
         import torch
@@ -15,7 +48,6 @@ class TestOnlineTrainerCeaRegressions:
 
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.rollouts.batch import RolloutBatch
-        from vrl.rollouts.evaluators.types import SignalBatch
         from vrl.trainers.online import OnlineTrainer
         from vrl.trainers.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
 
@@ -40,7 +72,8 @@ class TestOnlineTrainerCeaRegressions:
                     advantages[mask] = (gr - mean) / std
                 return advantages
 
-            def compute_signal_loss(self, signals, advantages, old_log_probs):
+            def compute_loss(self, inputs):
+                signals, _advantages, old_log_probs = _algorithm_inputs(inputs)
                 loss = signals.log_prob.mean()
                 metrics = TrainStepMetrics(
                     loss=loss.item(),
@@ -66,12 +99,6 @@ class TestOnlineTrainerCeaRegressions:
                     rewards=torch.tensor(rewards, dtype=torch.float32),
                     dones=torch.ones(group_size, dtype=torch.bool),
                     group_ids=torch.zeros(group_size, dtype=torch.long),
-                    extras={
-                        "log_probs": torch.tensor(
-                            [[0.0, 1.0]] * group_size,
-                            dtype=torch.float32,
-                        ),
-                    },
                     prompts=list(prompts) * group_size,
                 )
 
@@ -86,7 +113,7 @@ class TestOnlineTrainerCeaRegressions:
             ):
                 batch_size = batch.rewards.shape[0]
                 log_prob = model.weight.view(1).expand(batch_size)
-                return SignalBatch(log_prob=log_prob)
+                return _trajectory_signals(batch, log_prob, timestep_idx)
 
         model = nn.Linear(1, 1, bias=False)
         with torch.no_grad():
@@ -138,7 +165,6 @@ class TestOnlineTrainerCeaRegressions:
 
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.rollouts.batch import RolloutBatch
-        from vrl.rollouts.evaluators.types import SignalBatch
         from vrl.trainers.data import PromptExample
         from vrl.trainers.online import OnlineTrainer
         from vrl.trainers.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
@@ -166,7 +192,8 @@ class TestOnlineTrainerCeaRegressions:
                     advantages[mask] = (gr - mean) / std
                 return advantages
 
-            def compute_signal_loss(self, signals, advantages, old_log_probs):
+            def compute_loss(self, inputs):
+                signals, _advantages, _old_log_probs = _algorithm_inputs(inputs)
                 loss = signals.log_prob.mean()
                 return loss, TrainStepMetrics(
                     loss=loss.item(),
@@ -184,16 +211,13 @@ class TestOnlineTrainerCeaRegressions:
                     rewards=torch.ones(group_size, dtype=torch.float32),
                     dones=torch.ones(group_size, dtype=torch.bool),
                     group_ids=torch.zeros(group_size, dtype=torch.long),
-                    extras={
-                        "log_probs": torch.zeros(group_size, 2, dtype=torch.float32),
-                    },
                     prompts=list(prompts) * group_size,
                 )
 
         class _Evaluator(Evaluator):
             def evaluate(self, model, batch, timestep_idx, **kw):
                 batch_size = batch.rewards.shape[0]
-                return SignalBatch(log_prob=model.weight.view(1).expand(batch_size))
+                return _trajectory_signals(batch, model.weight.view(1).expand(batch_size), timestep_idx)
 
         import torch.nn as nn
 
@@ -243,7 +267,6 @@ class TestOnlineTrainerCeaRegressions:
 
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.rollouts.batch import RolloutBatch
-        from vrl.rollouts.evaluators.types import SignalBatch
         from vrl.trainers.online import OnlineTrainer
         from vrl.trainers.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
 
@@ -268,7 +291,8 @@ class TestOnlineTrainerCeaRegressions:
                     advantages[mask] = gr - gr.mean()
                 return advantages
 
-            def compute_signal_loss(self, signals, advantages, old_log_probs):
+            def compute_loss(self, inputs):
+                signals, advantages, old_log_probs = _algorithm_inputs(inputs)
                 loss = signals.log_prob.mean() + advantages.mean() * 0.0
                 return loss, TrainStepMetrics(
                     loss=loss.item(),
@@ -296,18 +320,17 @@ class TestOnlineTrainerCeaRegressions:
                     rewards=rewards,
                     dones=torch.ones(batch_size, dtype=torch.bool),
                     group_ids=group_ids,
-                    extras={"log_probs": torch.zeros(batch_size, 2)},
                     prompts=[p for p in prompts for _ in range(group_size)],
                 )
 
         class _Evaluator(Evaluator):
             def evaluate(self, model, batch, timestep_idx, **kw):
-                del timestep_idx, kw
+                del kw
                 evaluate_batch_sizes.append(int(batch.rewards.shape[0]))
                 evaluate_group_ids.append(
                     [int(x) for x in batch.group_ids.detach().cpu().tolist()]
                 )
-                return SignalBatch(log_prob=model.weight.view(1).expand(batch.rewards.shape[0]))
+                return _trajectory_signals(batch, model.weight.view(1).expand(batch.rewards.shape[0]), timestep_idx)
 
         model = nn.Linear(1, 1, bias=False)
         with torch.no_grad():
@@ -342,7 +365,6 @@ class TestOnlineTrainerCeaRegressions:
 
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.rollouts.batch import RolloutBatch
-        from vrl.rollouts.evaluators.types import SignalBatch
         from vrl.trainers.online import OnlineTrainer
         from vrl.trainers.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
 
@@ -361,7 +383,8 @@ class TestOnlineTrainerCeaRegressions:
                 del group_ids
                 return rewards - rewards.mean()
 
-            def compute_signal_loss(self, signals, advantages, old_log_probs):
+            def compute_loss(self, inputs):
+                signals, advantages, old_log_probs = _algorithm_inputs(inputs)
                 loss = signals.log_prob.mean() + advantages.mean() * 0.0
                 return loss, TrainStepMetrics(
                     loss=loss.item(),
@@ -391,14 +414,13 @@ class TestOnlineTrainerCeaRegressions:
                     rewards=torch.arange(group_size, dtype=torch.float32),
                     dones=torch.ones(group_size, dtype=torch.bool),
                     group_ids=torch.zeros(group_size, dtype=torch.long),
-                    extras={"log_probs": torch.zeros(group_size, 2)},
                     prompts=list(prompts) * group_size,
                 )
 
         class _Evaluator(Evaluator):
             def evaluate(self, model, batch, timestep_idx, **kw):
-                del timestep_idx, kw
-                return SignalBatch(log_prob=model.weight.view(1).expand(batch.rewards.shape[0]))
+                del kw
+                return _trajectory_signals(batch, model.weight.view(1).expand(batch.rewards.shape[0]), timestep_idx)
 
         model = nn.Linear(1, 1, bias=False)
         with torch.no_grad():
@@ -435,7 +457,6 @@ class TestOnlineTrainerCeaRegressions:
 
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.rollouts.batch import RolloutBatch
-        from vrl.rollouts.evaluators.types import SignalBatch
         from vrl.trainers.online import OnlineTrainer
         from vrl.trainers.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
 
@@ -452,7 +473,8 @@ class TestOnlineTrainerCeaRegressions:
                 del group_ids
                 return rewards - rewards.mean()
 
-            def compute_signal_loss(self, signals, advantages, old_log_probs):
+            def compute_loss(self, inputs):
+                signals, advantages, old_log_probs = _algorithm_inputs(inputs)
                 del advantages, old_log_probs
                 loss = signals.log_prob.mean()
                 return loss, TrainStepMetrics(
@@ -470,7 +492,6 @@ class TestOnlineTrainerCeaRegressions:
                     rewards=torch.arange(group_size, dtype=torch.float32),
                     dones=torch.ones(group_size, dtype=torch.bool),
                     group_ids=torch.zeros(group_size, dtype=torch.long),
-                    extras={"log_probs": torch.zeros(group_size, 2)},
                     context={
                         "runtime_debug": {
                             "ray_chunks": [
@@ -486,8 +507,8 @@ class TestOnlineTrainerCeaRegressions:
 
         class _Evaluator(Evaluator):
             def evaluate(self, model, batch, timestep_idx, **kw):
-                del timestep_idx, kw
-                return SignalBatch(log_prob=model.weight.view(1).expand(batch.rewards.shape[0]))
+                del kw
+                return _trajectory_signals(batch, model.weight.view(1).expand(batch.rewards.shape[0]), timestep_idx)
 
         model = nn.Linear(1, 1, bias=False)
         with torch.no_grad():
@@ -532,7 +553,6 @@ class TestOnlineTrainerCeaRegressions:
 
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.rollouts.batch import RolloutBatch
-        from vrl.rollouts.evaluators.types import SignalBatch
         from vrl.trainers.online import OnlineTrainer
         from vrl.trainers.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
 
@@ -553,7 +573,8 @@ class TestOnlineTrainerCeaRegressions:
                 del group_ids
                 return rewards - rewards.mean()
 
-            def compute_signal_loss(self, signals, advantages, old_log_probs):
+            def compute_loss(self, inputs):
+                signals, advantages, old_log_probs = _algorithm_inputs(inputs)
                 del old_log_probs
                 policy_loss = signals.log_prob.mean() + advantages.mean() * 0.0
                 self._last_policy_loss_tensor = policy_loss
@@ -572,14 +593,13 @@ class TestOnlineTrainerCeaRegressions:
                     rewards=torch.arange(group_size, dtype=torch.float32),
                     dones=torch.ones(group_size, dtype=torch.bool),
                     group_ids=torch.zeros(group_size, dtype=torch.long),
-                    extras={"log_probs": torch.zeros(group_size, 2)},
                     prompts=list(prompts) * group_size,
                 )
 
         class _Evaluator(Evaluator):
             def evaluate(self, model, batch, timestep_idx, **kw):
-                del timestep_idx, kw
-                return SignalBatch(log_prob=model.weight.view(1).expand(batch.rewards.shape[0]))
+                del kw
+                return _trajectory_signals(batch, model.weight.view(1).expand(batch.rewards.shape[0]), timestep_idx)
 
         algorithm = _Algorithm()
         model = nn.Linear(1, 1, bias=False)
@@ -615,7 +635,6 @@ class TestOnlineTrainerCeaRegressions:
 
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.rollouts.batch import RolloutBatch
-        from vrl.rollouts.evaluators.types import SignalBatch
         from vrl.trainers.online import OnlineTrainer
         from vrl.trainers.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
 
@@ -632,7 +651,8 @@ class TestOnlineTrainerCeaRegressions:
                 del group_ids
                 return rewards - rewards.mean()
 
-            def compute_signal_loss(self, signals, advantages, old_log_probs):
+            def compute_loss(self, inputs):
+                signals, advantages, old_log_probs = _algorithm_inputs(inputs)
                 del advantages, old_log_probs
                 loss = signals.log_prob.mean()
                 return loss, TrainStepMetrics(loss=loss.item(), policy_loss=loss.item())
@@ -655,14 +675,13 @@ class TestOnlineTrainerCeaRegressions:
                     ),
                     dones=torch.ones(batch_size, dtype=torch.bool),
                     group_ids=group_ids,
-                    extras={"log_probs": torch.zeros(batch_size, 1)},
                     prompts=[p for p in prompts for _ in range(group_size)],
                 )
 
         class _Evaluator(Evaluator):
             def evaluate(self, model, batch, timestep_idx, **kw):
-                del timestep_idx, kw
-                return SignalBatch(log_prob=model.weight.view(1).expand(batch.rewards.shape[0]))
+                del kw
+                return _trajectory_signals(batch, model.weight.view(1).expand(batch.rewards.shape[0]), timestep_idx)
 
         model = nn.Linear(1, 1, bias=False)
         with torch.no_grad():
@@ -699,7 +718,6 @@ class TestOnlineTrainerCeaRegressions:
 
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.rollouts.batch import RolloutBatch
-        from vrl.rollouts.evaluators.types import SignalBatch
         from vrl.trainers.online import OnlineTrainer
         from vrl.trainers.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
 
@@ -718,7 +736,8 @@ class TestOnlineTrainerCeaRegressions:
                 del group_ids
                 return rewards - rewards.mean()
 
-            def compute_signal_loss(self, signals, advantages, old_log_probs):
+            def compute_loss(self, inputs):
+                signals, advantages, old_log_probs = _algorithm_inputs(inputs)
                 del advantages, old_log_probs
                 loss = signals.log_prob.mean()
                 return loss, TrainStepMetrics(loss=loss.item(), policy_loss=loss.item())
@@ -741,14 +760,13 @@ class TestOnlineTrainerCeaRegressions:
                     ),
                     dones=torch.ones(batch_size, dtype=torch.bool),
                     group_ids=group_ids,
-                    extras={"log_probs": torch.zeros(batch_size, 3)},
                     prompts=[p for p in prompts for _ in range(group_size)],
                 )
 
         class _Evaluator(Evaluator):
             def evaluate(self, model, batch, timestep_idx, **kw):
-                del timestep_idx, kw
-                return SignalBatch(log_prob=model.weight.view(1).expand(batch.rewards.shape[0]))
+                del kw
+                return _trajectory_signals(batch, model.weight.view(1).expand(batch.rewards.shape[0]), timestep_idx)
 
         model = nn.Linear(1, 1, bias=False)
         with torch.no_grad():
@@ -796,7 +814,6 @@ class TestOnlineTrainerCeaRegressions:
 
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.rollouts.batch import RolloutBatch
-        from vrl.rollouts.evaluators.types import SignalBatch
         from vrl.trainers.online import OnlineTrainer
         from vrl.trainers.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
 
@@ -818,7 +835,8 @@ class TestOnlineTrainerCeaRegressions:
                 del rewards, group_ids
                 raise AssertionError("stat_tracker should own advantages")
 
-            def compute_signal_loss(self, signals, advantages, old_log_probs):
+            def compute_loss(self, inputs):
+                signals, advantages, old_log_probs = _algorithm_inputs(inputs)
                 del old_log_probs
                 self.advantages_seen.extend(
                     float(x) for x in advantages.detach().cpu().reshape(-1).tolist()
@@ -854,15 +872,14 @@ class TestOnlineTrainerCeaRegressions:
                     rewards=torch.arange(batch_size, dtype=torch.float32),
                     dones=torch.ones(batch_size, dtype=torch.bool),
                     group_ids=group_ids,
-                    extras={"log_probs": torch.zeros(batch_size, 1)},
                     prompts=[p for p in prompts for _ in range(group_size)],
                 )
 
         class _Evaluator(Evaluator):
             def evaluate(self, model, batch, timestep_idx, **kw):
-                del timestep_idx, kw
+                del kw
                 seen_batch_sizes.append(int(batch.rewards.shape[0]))
-                return SignalBatch(log_prob=model.weight.view(1).expand(batch.rewards.shape[0]))
+                return _trajectory_signals(batch, model.weight.view(1).expand(batch.rewards.shape[0]), timestep_idx)
 
         algorithm = _Algorithm()
         model = nn.Linear(1, 1, bias=False)
@@ -904,7 +921,6 @@ class TestOnlineTrainerCeaRegressions:
 
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.rollouts.batch import RolloutBatch
-        from vrl.rollouts.evaluators.types import SignalBatch
         from vrl.trainers.online import OnlineTrainer
         from vrl.trainers.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
 
@@ -924,7 +940,8 @@ class TestOnlineTrainerCeaRegressions:
                 del rewards, group_ids
                 raise AssertionError("stat_tracker should own advantages")
 
-            def compute_signal_loss(self, signals, advantages, old_log_probs):
+            def compute_loss(self, inputs):
+                signals, advantages, old_log_probs = _algorithm_inputs(inputs)
                 del signals, advantages, old_log_probs
                 self.loss_calls += 1
                 return torch.tensor(0.0, requires_grad=True), TrainStepMetrics()
@@ -949,14 +966,13 @@ class TestOnlineTrainerCeaRegressions:
                     rewards=torch.ones(group_size, dtype=torch.float32),
                     dones=torch.ones(group_size, dtype=torch.bool),
                     group_ids=torch.zeros(group_size, dtype=torch.long),
-                    extras={"log_probs": torch.zeros(group_size, 1)},
                     prompts=list(prompts) * group_size,
                 )
 
         class _Evaluator(Evaluator):
             def evaluate(self, model, batch, timestep_idx, **kw):
-                del model, batch, timestep_idx, kw
-                return SignalBatch(log_prob=torch.zeros(1))
+                del model, kw
+                return _trajectory_signals(batch, torch.zeros(1), timestep_idx)
 
         algorithm = _Algorithm()
         model = nn.Linear(1, 1, bias=False)
@@ -1075,7 +1091,8 @@ class _ResumeAlgorithm:
         del group_ids
         return rewards - rewards.mean()
 
-    def compute_signal_loss(self, signals, advantages, old_log_probs):
+    def compute_loss(self, inputs):
+        signals, advantages, old_log_probs = _algorithm_inputs(inputs)
         from vrl.algorithms.types import TrainStepMetrics
 
         loss = signals.log_prob.mean() + advantages.mean() * 0.0
@@ -1099,7 +1116,6 @@ class _ResumeCollector:
             rewards=torch.arange(group_size, dtype=torch.float32),
             dones=torch.ones(group_size, dtype=torch.bool),
             group_ids=torch.zeros(group_size, dtype=torch.long),
-            extras={"log_probs": torch.zeros(group_size, 2)},
             prompts=list(prompts) * group_size,
         )
 
@@ -1116,11 +1132,9 @@ class _SyncCountingCollector(_ResumeCollector):
 
 class _ResumeEvaluator:
     def evaluate(self, model, batch, timestep_idx, **kw):
-        del timestep_idx, kw
+        del kw
 
-        from vrl.rollouts.evaluators.types import SignalBatch
-
-        return SignalBatch(log_prob=model.weight.view(1).expand(batch.rewards.shape[0]))
+        return _trajectory_signals(batch, model.weight.view(1).expand(batch.rewards.shape[0]), timestep_idx)
 
 
 class _Syncer:
@@ -1226,7 +1240,6 @@ def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:
         rewards=torch.arange(4, dtype=torch.float32),
         dones=torch.ones(4, dtype=torch.bool),
         group_ids=torch.tensor([0, 0, 1, 1]),
-        extras={"log_probs": torch.zeros(4, 2)},
         trajectory=trajectory,
         training_view=build_training_view(trajectory),
     )

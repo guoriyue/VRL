@@ -13,22 +13,34 @@ TrajectoryBatch contract
 + TrajectoryRolloutPacker strict path
 + old family-specific packer deletion
 + flattened rollout family registry
++ strict TrajectorySignalBatch evaluator output
++ AlgorithmInput-native objective path
++ plan-aware local / batched / Ray execution envelope
++ trajectory-native model replay inputs
++ common online recipe wrappers for active family train scripts
 + SD3.5 OCR baseline 不破坏
 ```
 
-当前 `OnlineTrainer` 主循环已经通过 `evaluator_output_to_trajectory_signals(...)` 显式进入 `TrajectorySignalBatch` / `AlgorithmInput` path。这个入口可以接受原生 `TrajectorySignalBatch`，也可以把 legacy `SignalBatch` 提升到 strict signal schema。所有 family 的默认 packer 已经固定为 `TrajectoryRolloutPacker`；evaluator 原生返回 strict signal、algorithm 完全移除 legacy `SignalBatch` 兼容、old packer 文件删除，仍然放在后续 gate。
+当前 `OnlineTrainer` 主循环已经进入 strict `TrajectorySignalBatch` / `AlgorithmInput` path。concrete evaluator 原生返回 `TrajectorySignalBatch`，trainer 只接受 strict signal；algorithm 原生消费 `AlgorithmInput`，不再把 signal 反向压回 legacy `SignalBatch`。`SignalBatch` 类型和 compatibility bridge 已删除。所有 family 的默认 packer 已经固定为 `TrajectoryRolloutPacker`，old packer 文件已经删除。
 
 已合并并删除的 sprint 文档：
 
 - `SPRINT_strict_trajectory_all_families.md`
 - `SPRINT_remove_legacy_paths.md`
+- `SPRINT_fix_evaluator_strict_signals.md`
 
-这两份文档的剩余内容已经收敛到本文的 unified gate / remaining work。当前仍单独保留的 sprint：
+这些文档的剩余内容已经收敛到本文的 unified gate / remaining work。当前仍单独保留的 sprint：
 
+- `SPRINT_fix_rollout_extras_thinning.md`：已完成主路径收口；trainer/evaluator/algorithm/model replay 不再把 `log_probs` / `token_mask` / `r1_segments` / model replay payload 当 `RolloutBatch.extras` 事实源。
+- `SPRINT_fix_algorithm_strict_input.md`：已完成；algorithm 原生消费 `AlgorithmInput` / `TrajectorySignalBatch`，不再降回 `SignalBatch`。
+- `SPRINT_fix_engine_plan_execution.md`：已完成主路径收口；`EnginePlan` / `FamilyCapability` 已覆盖 single-request local、local batched 和 Ray execution envelope，Ray chunk 不再有 `forward_chunk(...)` fallback。
 - `SPRINT_ar_rollout_kv_cache_optimization.md`：AR KV decode / scheduler / resident session 性能 sprint。
-- `SPRINT_cosmos_rl_diffusionnft_predict25.md`：Cosmos-Predict2.5 真实 video reward 验收。
+- `SPRINT_fix_common_online_recipe.md`：已完成 active family train script 入口迁移；SD3.5、Janus-Pro、NextStep、Wan、Cosmos 入口都走 `run_online_recipe(...)`。
+- `SPRINT_reward_model_video_inference.md`：future reward-model image/video inference infrastructure；Cosmos-Predict2.5 + DiffusionNFT 只是第一条验收 consumer。
 - `SPRINT_distributed_resource_config.md`：Ray rollout 资源分配。
 - `SPRINT_multi_gpu_training.md`：训练侧 DDP/FSDP。
+
+已完成的 strict cleanup 不继续塞在本文里实现细节。本文只保留统一架构目标和总 gate；剩余性能工作由 `SPRINT_ar_rollout_kv_cache_optimization.md` 覆盖。
 
 ## 1. 现状判断
 
@@ -57,9 +69,8 @@ unified online RL framework
 还没有真正统一的地方：
 
 - family train script 仍然分散：Janus、NextStep、SD3.5、Wan、Cosmos 各有自己的 glue code。
-- evaluator 原生 signal 还没有全部切到 `TrajectorySignalBatch`，部分仍通过显式 adapter 提升。
 - metrics 没有统一 schema：不同 family 的 `num_steps`、reward、old logprob 含义不可直接比较。
-- algorithm 不是 family-agnostic，而是靠多个 algorithm class 分别处理。
+- algorithm class 仍按 objective/family 分开，但入口已经统一为 `AlgorithmInput`；还没有统一到完全 family-agnostic 的 metrics/loss schema。
 
 ## 2. 核心 proposal
 
@@ -213,7 +224,7 @@ SD3.5 OCR 的迁移策略：
 ```text
 GenerationRequest / OutputBatch
 RolloutBatch
-SignalBatch
+SignalBatch（historical，已删除）
 RuntimeBundle.runtime_caps
 FAMILY_REGISTRY / RolloutFamilyEntry
 FamilyPipelineRegistry
@@ -228,7 +239,7 @@ family packers
 | `TrajectoryBatch` | 允许 | `OutputBatch` / `RolloutBatch` | 只做可序列化训练轨迹记录；`OutputBatch` 仍是 engine envelope，`RolloutBatch` 只是 trainer 兼容容器。 |
 | `RewardView` | 允许 | `RolloutPacker.reward_outputs()` | 只声明 reward 读哪些 artifact/tensor；不复制 image/video/text，不再次打包 reward payload。 |
 | `TrainingView` | 允许 | `RolloutBatch.extras` | 只声明 loss unit 和 tensor refs；不复制 action/logprob/mask。 |
-| `TrajectorySignalBatch` | 允许 | `SignalBatch` | 作为长期 signal schema；`SignalBatch` 只能作为 legacy adapter 输入/输出，不能长期双主路径。 |
+| `TrajectorySignalBatch` | 允许 | historical `SignalBatch` | 作为长期 signal schema；`SignalBatch` 类型和 legacy adapter 已删除。 |
 | `AlgorithmInput` | 允许 | algorithm class / objective | 只是 adapter 输入；不新增新的 GRPO objective，不把现有 algorithm 合成一个大类。 |
 | `EnginePlan` | 有条件允许 | `ExecutionPlan` / `MicroBatchPlan` / `DistributedExecutionPlanner` | 必须复用或替代现有 planning 类型，不能并行维护两套 chunk 语义。 |
 | `FamilyCapability` | 有条件允许 | `RuntimeBundle.runtime_caps` / `RolloutFamilyEntry` | 不能做第三个 registry；静态路由来自 family registry，动态能力来自 runtime bundle，resolver 合并成一个 view。 |
@@ -478,14 +489,14 @@ OutputBatch(
 新增 engine planning 层：
 
 ```text
-vrl/engine/core/planner.py
+vrl/engine/execution/planner.py
 ```
 
 这不是第二套 `ExecutionPlan`。当前已有：
 
 ```text
-vrl/engine/microbatching.py::ExecutionPlan
-vrl/engine/microbatching.py::MicroBatchPlan
+vrl/engine/execution/microbatching.py::ExecutionPlan
+vrl/engine/execution/microbatching.py::MicroBatchPlan
 vrl/distributed/ray/rollout/planner.py::DistributedExecutionPlanner
 ```
 
@@ -548,7 +559,7 @@ vrl/engine/core/capabilities.py
 
 ```text
 vrl/rollouts/family_registry.py::FAMILY_REGISTRY
-vrl/models/runtime.py::RuntimeBundle.runtime_caps
+vrl/models/interfaces/runtime.py::RuntimeBundle.runtime_caps
 ```
 
 规则：
@@ -614,7 +625,7 @@ TrajectoryBatch + decoded output
 迁移后的 strict 路径：
 
 ```text
-pipeline_executor.forward(...) -> OutputBatch
+pipeline_executor.forward_plan(...) -> OutputBatch
 OutputBatch.trajectory = TrajectoryBatch
 ```
 
@@ -658,7 +669,7 @@ family OutputBatch -> TrajectoryBatch -> TrajectoryRolloutPacker -> RolloutBatch
 
 ## 7. Evaluator v2
 
-当前 evaluator 输出：
+历史 evaluator 输出：
 
 ```python
 SignalBatch(log_prob, ref_log_prob, aux=...)
@@ -699,13 +710,13 @@ Evaluator v2 contract：
 evaluate(model, TrajectoryBatch, SignalRequest) -> TrajectorySignalBatch
 ```
 
-兼容期：
+当前状态：
 
-- diffusion evaluator 继续返回 `SignalBatch`。
-- AR evaluator 继续返回 `SignalBatch`。
-- 新 adapter 把旧 `SignalBatch` 包成 `TrajectorySignalBatch`。
+- diffusion evaluator 原生返回 `TrajectorySignalBatch`。
+- AR evaluator 原生返回 `TrajectorySignalBatch`。
+- `SignalBatch` 类型和旧 adapter 已删除。
 
-长期只能有一个主 signal schema。`SignalBatch` 不能继续通过 `aux` 承载 segment schema；strict path 通过后，R1/multisegment 的主路径必须读 `TrajectorySignalBatch.segments[name]`。
+长期只能有一个主 signal schema。R1/multisegment 的主路径读 `TrajectorySignalBatch.segments[name]`。
 
 ## 8. Algorithm input v2
 
@@ -819,8 +830,8 @@ async def train_janus_pro_r1_codex_qa_grpo(cfg):
 位置：
 
 ```text
-vrl/engine/core/worker.py
-vrl/engine/core/planner.py
+vrl/engine/execution/worker.py
+vrl/engine/execution/planner.py
 ```
 
 收益：
@@ -839,7 +850,7 @@ vrl/engine/core/planner.py
 位置：
 
 ```text
-vrl/engine/microbatching.py
+vrl/engine/execution/microbatching.py
 vrl/distributed/ray/rollout/planner.py
 ```
 
@@ -884,7 +895,7 @@ vrl/rollouts/evaluators/diffusion/
 ```text
 vrl/trainers/profiling.py
 vrl/distributed/ray/rollout/worker.py
-vrl/engine/core/planner.py
+vrl/engine/execution/planner.py
 ```
 
 收益：
@@ -898,7 +909,7 @@ vrl/engine/core/planner.py
 
 ```text
 vrl/engine/core/capabilities.py
-vrl/engine/core/planner.py
+vrl/engine/execution/planner.py
 vrl/models/families/*/runtime.py
 vrl/models/families/*/policy.py
 ```
@@ -986,7 +997,7 @@ strict 路径规则：
 vrl/engine/core/protocols.py
 ```
 
-当前 protocol 只有：
+historical protocol 最早只有：
 
 ```python
 def forward(...)
@@ -994,11 +1005,13 @@ def forward_chunk(...)
 def gather_chunks(...)
 ```
 
-需要新增：
+当前 strict local executor path 需要：
 
 ```python
 def capability(self) -> FamilyCapability: ...
 def plan(self, request: GenerationRequest, sample_specs: list[GenerationSampleSpec]) -> EnginePlan: ...
+def forward_plan(self, request: GenerationRequest, sample_specs: list[GenerationSampleSpec], plan: EnginePlan) -> OutputBatch: ...
+def forward_batch_plan(..., engine_plans_by_request: dict[str, EnginePlan]) -> dict[str, OutputBatch]: ...
 ```
 
 或者由 registry 提供 capability，worker 统一调用 planner：
@@ -1022,7 +1035,7 @@ GenerationRequest + FamilyCapability -> EnginePlan
 当前文件：
 
 ```text
-vrl/engine/core/worker.py
+vrl/engine/execution/worker.py
 ```
 
 当前 batching key：
@@ -1136,10 +1149,10 @@ TrajectoryBatch.segments:
 
 ```text
 vrl/engine/diffusion/executor_base.py
-vrl/engine/gather.py
+vrl/engine/execution/gather.py
 ```
 
-当前 diffusion 通过：
+历史 diffusion path 曾经通过：
 
 ```text
 rollout_trajectory_data
@@ -1434,6 +1447,8 @@ vrl/training/loop.py
 
 这份计划拆成 A-F，不再把 contract、packer、algorithm、engine、KV cache、recipe 收敛混成一个巨大完成标准。
 
+说明：A/B 和 legacy packer 删除已经完成。下面 A-F 是原始粗粒度拆分，用来保留架构上下文；当前剩余问题的权威执行边界以 `SPRINT_fix_*.md` 文件为准。尤其是旧 Sprint C/D/F 只描述历史阶段，不再作为 strict cleanup 的完成标准。
+
 依赖关系：
 
 ```text
@@ -1511,7 +1526,7 @@ tests/rollouts/test_trajectory_packer.py
 编辑：
 
 ```text
-vrl/engine/batching.py
+vrl/engine/execution/batching.py
 vrl/engine/core/types.py
 vrl/engine/diffusion/denoise.py
 vrl/engine/trajectory/__init__.py
@@ -1557,7 +1572,9 @@ vrl/models/families/cosmos/predict2_5/runtime.py
 
 这些 family 现在也通过 `OutputBatch.trajectory` 暴露默认轨迹，并通过 registry 默认走 `TrajectoryRolloutPacker`。
 
-### 13.4 Sprint C：TrajectorySignalBatch + AlgorithmInput adapters
+### 13.4 Historical Sprint C：TrajectorySignalBatch + AlgorithmInput adapters
+
+状态：historical。compatibility adapter 闭环已经被后续 strict cleanup 取代：evaluator 现在原生返回 `TrajectorySignalBatch`，algorithm 现在原生消费 `AlgorithmInput`。下面内容只记录当时的 adapter 目标，不再表示当前实现或最终统一标准。
 
 目标：统一 algorithm 输入，不强行合并现有 algorithm。
 
@@ -1575,7 +1592,7 @@ tests/algorithms/test_algorithm_input_views.py
 编辑：
 
 ```text
-vrl/engine/batching.py
+vrl/engine/execution/batching.py
 vrl/engine/trajectory/__init__.py
 vrl/rollouts/batch.py
 vrl/rollouts/evaluators/types.py
@@ -1590,8 +1607,8 @@ tests/trainers/test_online.py
 
 说明：
 
-- `OnlineTrainer` 主循环通过 `evaluator_output_to_trajectory_signals(...)` 显式进入 `TrajectorySignalBatch` / `AlgorithmInput` path；这个入口允许 evaluator 逐步从 legacy `SignalBatch` 切到原生 `TrajectorySignalBatch`，后续 gate 继续把 evaluator 原生返回值和 algorithm 兼容层收敛到 strict schema。
-- 旧 evaluator 仍可返回 `SignalBatch`；`vrl/rollouts/evaluators/trajectory.py` 负责把它提升成 `TrajectorySignalBatch`。
+- historical adapter 阶段曾允许旧 evaluator 返回 `SignalBatch`，并由 `vrl/rollouts/evaluators/trajectory.py` 提升成 `TrajectorySignalBatch`。
+- 当前主路径已经不再这样工作：`OnlineTrainer` 只接受 strict `TrajectorySignalBatch`，algorithm 不再通过 legacy signal bridge 计算 loss。
 - `RolloutBatch.trajectory` / `RolloutBatch.training_view` 只是兼容期携带字段；stack/select/move/remap 必须传播，避免 trajectory 和 legacy batch 顺序分叉。
 - `TrajectoryRolloutPacker`、现有 evaluator 数值路径保持不变。
 
@@ -1609,17 +1626,19 @@ tests/trainers/test_online.py
 不能算完成：
 
 - 把所有 objective 强行合并成一个新的 GRPO 类。
-- `SignalBatch.aux["segments"]` 继续作为 R1 segment signal 主路径。
+- `SignalBatch.aux["segments"]` 继续作为 R1 segment signal 主路径；当前实现已经修复，保留这条作为历史防回归标准。
 - algorithm adapter 继续猜 family-specific loose extras。
 
-### 13.5 Sprint D：EnginePlan / FamilyCapability / profiler labels
+### 13.5 Historical Sprint D：EnginePlan / FamilyCapability / profiler labels
+
+状态：single-request local、local batched 和 Ray chunk 已经接入 execution envelope；family runtime 内部 profiler label / capability 闭环仍以后续 `SPRINT_fix_engine_plan_execution.md` 阶段为准。
 
 目标：把优化入口放到 engine contract，而不是 family script 或私有 runtime 分支。
 
 新增：
 
 ```text
-vrl/engine/core/planner.py
+vrl/engine/execution/planner.py
 vrl/engine/core/capabilities.py
 tests/engine/test_engine_planner.py
 ```
@@ -1628,9 +1647,9 @@ tests/engine/test_engine_planner.py
 
 ```text
 vrl/engine/core/protocols.py
-vrl/engine/core/worker.py
-vrl/engine/core/runtime.py
-vrl/engine/microbatching.py
+vrl/engine/execution/worker.py
+vrl/engine/execution/runtime.py
+vrl/engine/execution/microbatching.py
 vrl/distributed/ray/rollout/planner.py
 vrl/distributed/ray/rollout/executor.py
 vrl/distributed/ray/rollout/worker.py
@@ -1703,7 +1722,9 @@ tests/distributed/ray/test_ray_resident_session.py
 - Ray worker 每个 rollout step 仍然重新构造/释放所有 sampling state。
 - optimization 没有挂到 `FamilyCapability` / `EnginePlan`。
 
-### 13.7 Sprint F：Common recipe / train script 收敛
+### 13.7 Historical Sprint F：Common recipe / train script 收敛
+
+状态：目标仍然成立，但具体 common online recipe 设计已经拆到 `SPRINT_fix_common_online_recipe.md`。下面内容只保留原始方向。
 
 目标：最后再抽 train script glue，避免先抽象出一层还没吃到 trajectory/engine contract 的 legacy。
 
@@ -1759,35 +1780,32 @@ baseline gate + all-family strict trajectory + legacy packer deletion 已完成�
 10. old family-specific packer 文件已删除。
 11. rollout family registry 已 flatten 到 `vrl/rollouts/family_registry.py`，不再携带 packer routing 字段。
 12. SD3.5 OCR strict trajectory gate 通过。
+13. evaluator / algorithm 已删除 `SignalBatch` 兼容桥。
+14. Ray chunk 只接受 `forward_chunk_plan(...)` execution envelope，不再回退 `forward_chunk(...)`。
+15. model replay tensors 已从 `TrajectoryBatch` replay refs 解析，不再读 `RolloutBatch.extras`。
+16. active family train scripts 已收敛到 common online recipe wrapper。
 
-当前剩余 legacy 面：
+当前剩余非统一面：
 
-1. 部分 evaluator 仍返回 legacy `SignalBatch`，trainer 通过 `evaluator_output_to_trajectory_signals(...)` 提升到 `TrajectorySignalBatch`。
-2. 部分 algorithm 内部仍通过 `trajectory_signals_to_signal_batch(...)` 适配旧 objective API。
-3. `RolloutBatch.extras` 仍作为 trainer compatibility payload 存在。
-4. `RolloutTrajectoryData` / `denoising_env` 这类 debug artifact type 仍存在，但不再是 migrated default path 的要求。
+1. Janus / NextStep 这类 AR rollout 仍没有完成真实 `prefill once + decode step` 和 resident state 优化。修复见 `SPRINT_ar_rollout_kv_cache_optimization.md`。
+2. metrics schema 仍未完全统一：不同 family 的 `num_steps`、reward、old logprob 含义还不能直接比较。
+3. 新增 family 仍需要 objective-specific algorithm class；入口已经统一为 `AlgorithmInput`，但 metrics/loss schema 还没有完全 family-agnostic。
 
 ### 14.2 Fully unified gate
 
 这些必须在 README / paper intro claim unified 之前完成：
 
-1. evaluator 原生返回 `TrajectorySignalBatch`，trainer 主路径不再调用 legacy signal conversion。
-2. algorithm 原生消费 `AlgorithmInput` / `TrajectorySignalBatch`，不再把 signals 降回 `SignalBatch`。
-3. `SignalBatch.aux["segments"]` 不再是 R1 segment signal 主路径。
-4. `RolloutBatch.extras` 只剩 compatibility payload，不承载 action/logprob/mask 的主语义。
-5. `EnginePlan` / `FamilyCapability` 能为 Janus 生成 prefill/decode plan。
-6. Janus AR rollout 至少有一版真实 `prefill once + decode step` 优化通过 shared engine path 接入。
-7. Ray rollout worker 能在 plan/session 级别保留至少一种 resident state。
-8. profiler 能看到 prefill/decode/cache/timestep/segment，不只看到 `forward_chunk`。
-9. train script glue 收敛到 common recipe wrapper。
-10. 新增 family 时，只需要补 capability + trajectory emission + reward/training view，不需要新增 trainer 主循环或 algorithm class。
+1. `SPRINT_ar_rollout_kv_cache_optimization.md` 完成：Janus AR rollout 至少有一版真实 `prefill once + decode step` 优化通过 shared engine path 接入。
+2. Ray rollout worker 能在 plan/session 级别保留至少一种 resident state。
+3. profiler 能看到 prefill/decode/cache/timestep/segment，不只看到 request/chunk 级 envelope。
+4. metrics schema 收敛：不同 family 的 `num_steps`、reward、old logprob、KL、mask 语义能在同一 schema 下解释。
+5. 新增 family 时，只需要补 capability + trajectory emission + reward/training view，不需要新增 trainer 主循环。
 
 不能算完成的情况：
 
 - 继续在 `OutputBatch.extra["trajectory"]` 放对象，或让 packer/trainer/evaluator 把它当事实源。
 - 把 cache handle、scheduler object、Ray actor/session state 放进 `TrajectoryBatch`。
 - Janus KV cache 写成 Janus runtime 私有优化，`EnginePlan` 和 `FamilyCapability` 看不到。
-- R1 segment 仍然通过 `SignalBatch.aux["segments"]` 传递，algorithm 仍然复用同一份 advantage。
 - profiler 只能看到 `forward_chunk`，看不到 prefill/decode/cache/timestep/segment。
 - train script 仍然写 family-specific rollout/evaluator/algorithm glue。
 - 为了让新 trajectory 路径通过而删掉 SD3.5 OCR 的 config/runtime/packer/evaluator 回归测试。
@@ -1847,6 +1865,42 @@ Sprint F：
 pytest tests/training/test_online_rl_recipe_factory.py
 ```
 
+Fix sprint gates：
+
+```bash
+pytest tests/trainers/test_online.py \
+  tests/rollouts/evaluators/test_trajectory_signals.py \
+  tests/rollouts/test_multisegment_token_logprob.py \
+  tests/rollouts/test_trajectory_packer.py \
+  tests/models/test_janus_replay.py \
+  tests/models/test_diffusion_policy_module.py \
+  tests/algorithms/test_diffusion_nft.py \
+  tests/rollouts/test_batch.py
+
+pytest tests/rollouts/test_evaluators.py \
+  tests/rollouts/test_multisegment_token_logprob.py \
+  tests/rollouts/evaluators/test_trajectory_signals.py \
+  tests/models/test_janus_replay.py \
+  tests/trainers/test_online.py
+
+pytest tests/algorithms \
+  tests/rollouts/evaluators/test_trajectory_signals.py \
+  tests/trainers/test_online.py
+
+pytest tests/engine/test_engine_planner.py \
+  tests/engine/generation/test_microbatching.py \
+  tests/distributed/ray/test_large_rollout_execution.py \
+  tests/distributed/ray/test_rollout_launcher.py \
+  tests/models/test_nextstep_1_policy.py
+
+pytest tests/config/test_load_all_experiments.py \
+  tests/rollouts/test_family_registry.py \
+  tests/rollouts/test_runtime_inputs.py \
+  tests/trainers/test_online.py \
+  tests/scripts/recipes/test_online_recipe_factory.py \
+  tests/scripts/recipes/test_online_recipe_runner.py
+```
+
 现有 family 回归：
 
 ```bash
@@ -1879,9 +1933,9 @@ python -m vrl.scripts.train --config profile/janus_pro_r1_codex_qa_1epoch
 在此之前，更诚实的描述是：
 
 ```text
-This repo is moving toward a unified online RL stack for generation.
-The current gap is strict trajectory-native evaluator/algorithm integration
-and engine-plan-backed rollout optimization.
+This repo has a shared trajectory-native evaluator/algorithm path for online visual RL.
+The remaining gaps are replay-extras thinning, engine-plan-backed rollout optimization,
+AR KV decode performance, and common online recipe migration.
 ```
 
 ## 17. 和 AR KV sprint 的关系
@@ -1890,10 +1944,12 @@ and engine-plan-backed rollout optimization.
 
 本 sprint 是架构 sprint，解决为什么性能优化不能自然惠及所有 family。
 
-推荐执行顺序：
+当前执行状态：
 
-1. 先完成 evaluator strict cleanup：evaluator 原生返回 `TrajectorySignalBatch`。
-2. 再完成 algorithm strict cleanup：objective 原生消费 `AlgorithmInput`，不再降回 `SignalBatch`。
-3. 并行推进 `SPRINT_ar_rollout_kv_cache_optimization.md`，但不要把 KV cache handle 塞进 `TrajectoryBatch`。
-4. 当 AR KV decode 完成后，把 `prefill_steps` / `decode_steps` / `cache_hit` 写入 `OutputBatch.metrics` 或 engine metrics；`TrajectoryBatch.metrics` 只记录和轨迹本身相关的可序列化统计。
-5. 再完成 Sprint D，把 AR 和 diffusion 的 batching/profiling 统一到 `EnginePlan` / `FamilyCapability`。
+1. `SPRINT_fix_rollout_extras_thinning.md` 主路径已完成：resolver / views / validation 已存在，model replay payload 从 trajectory replay refs 解析。
+2. Evaluator strict cleanup 已完成：evaluator 原生返回 `TrajectorySignalBatch`，`SignalBatch` 类型和兼容 bridge 已删除。
+3. `SPRINT_fix_algorithm_strict_input.md` 已完成：objective 原生消费 `AlgorithmInput`，trainer/algorithm 主路径没有 `trajectory_signals_to_signal_batch(...)` 反向桥。
+4. `SPRINT_fix_engine_plan_execution.md` 主路径已完成：现有 `EnginePlan` 已成为 single-request local、local batched 和 Ray execution envelope；Ray chunk 不再支持 legacy `forward_chunk(...)` fallback。
+5. `SPRINT_fix_common_online_recipe.md` 已完成 active script 迁移：SD3.5、Janus-Pro、NextStep、Wan、Cosmos 入口都走 common factory/runner。
+6. 后续推进 `SPRINT_ar_rollout_kv_cache_optimization.md`，但不要把 KV cache handle 塞进 `TrajectoryBatch`。
+7. 当 AR KV decode 完成后，把 `prefill_steps` / `decode_steps` / `cache_hit` 写入 `OutputBatch.metrics` 或 engine metrics；`TrajectoryBatch.metrics` 只记录和轨迹本身相关的可序列化统计。

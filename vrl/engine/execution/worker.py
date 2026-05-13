@@ -5,19 +5,19 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from vrl.engine.core.capabilities import FamilyCapability, generic_family_capability
-from vrl.engine.core.planner import (
-    EnginePlan,
-    attach_engine_plan,
-    build_engine_plan,
-    resolve_executor_capability,
-)
+from vrl.engine.core.capabilities import FamilyCapability
 from vrl.engine.core.registry import FamilyPipelineRegistry
 from vrl.engine.core.types import (
     GenerationMetrics,
     GenerationRequest,
     GenerationSampleSpec,
     OutputBatch,
+)
+from vrl.engine.execution.planner import (
+    EnginePlan,
+    attach_engine_plan,
+    build_engine_plan,
+    resolve_executor_capability,
 )
 
 logger = logging.getLogger(__name__)
@@ -98,7 +98,7 @@ class GenerationWorker:
         try:
             executor = self.registry.resolve(request.family, request.task)
             plan = self._plan_request(executor, request, sample_specs)
-            output = executor.forward(request, sample_specs)
+            output = _forward_with_plan(executor, request, sample_specs, plan)
             if output.request_id != request.request_id:
                 raise ValueError(
                     f"Executor returned request_id={output.request_id!r} for "
@@ -141,10 +141,14 @@ class GenerationWorker:
                     request,
                     sample_specs_by_request[request.request_id],
                 )
-            forward_batch = getattr(executor, "forward_batch", None)
-            if forward_batch is None:
+            if not _has_batched_forward(executor):
                 return {request.request_id: self._execute_one(request) for request in requests}
-            outputs = forward_batch(requests, sample_specs_by_request)
+            outputs = _forward_batch_with_plan(
+                executor,
+                requests,
+                sample_specs_by_request,
+                plans,
+            )
             completed: dict[str, OutputBatch] = {}
             for request in requests:
                 output = outputs.get(request.request_id)
@@ -206,11 +210,8 @@ class GenerationWorker:
             )
 
     def _capability_for_group_key(self, request: GenerationRequest) -> FamilyCapability:
-        try:
-            executor = self.registry.resolve(request.family, request.task)
-            return resolve_executor_capability(executor, request)
-        except Exception:
-            return generic_family_capability(request.family, request.task)
+        executor = self.registry.resolve(request.family, request.task)
+        return resolve_executor_capability(executor, request)
 
 
 def _strict_batch_key(
@@ -276,4 +277,46 @@ def _error_output(
         ),
         engine_plan=engine_plan,
         error=error,
+    )
+
+
+def _forward_with_plan(
+    executor: Any,
+    request: GenerationRequest,
+    sample_specs: list[GenerationSampleSpec],
+    plan: EnginePlan,
+) -> OutputBatch:
+    forward_plan = getattr(executor, "forward_plan", None)
+    if not callable(forward_plan):
+        raise TypeError(
+            f"{type(executor).__name__} must implement forward_plan(...) "
+            "for GenerationWorker execution",
+        )
+    output = forward_plan(request, sample_specs, plan)
+    execution_extra = output.extra.setdefault("engine_execution", {})
+    if isinstance(execution_extra, dict):
+        execution_extra["plan_aware_forward"] = True
+    return output
+
+
+def _has_batched_forward(executor: Any) -> bool:
+    return callable(getattr(executor, "forward_batch_plan", None))
+
+
+def _forward_batch_with_plan(
+    executor: Any,
+    requests: list[GenerationRequest],
+    sample_specs_by_request: dict[str, list[GenerationSampleSpec]],
+    plans: dict[str, EnginePlan],
+) -> dict[str, OutputBatch]:
+    forward_batch_plan = getattr(executor, "forward_batch_plan", None)
+    if callable(forward_batch_plan):
+        return forward_batch_plan(
+            requests,
+            sample_specs_by_request,
+            plans,
+        )
+    raise TypeError(
+        f"{type(executor).__name__} must implement forward_batch_plan(...) "
+        "for local batched execution",
     )

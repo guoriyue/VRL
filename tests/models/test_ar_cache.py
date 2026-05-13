@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from vrl.models.ar import ar_concat_rows, ar_split_rows
+from vrl.models.interfaces.ar_policy import ar_concat_rows, ar_split_rows
 
 
 def test_ar_split_and_concat_rows_preserve_nested_kv_order() -> None:

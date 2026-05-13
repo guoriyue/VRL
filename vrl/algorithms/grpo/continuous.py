@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from vrl.algorithms.base import Algorithm
+from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.types import TrainStepMetrics
-from vrl.rollouts.evaluators.types import SignalBatch
 
 
 @dataclass(slots=True)
@@ -78,13 +78,11 @@ class GRPO(Algorithm):
 
         return advantages
 
-    def compute_signal_loss(
+    def compute_loss(
         self,
-        signals: SignalBatch,
-        advantages: Any,
-        old_log_probs: Any,
+        inputs: AlgorithmInput,
     ) -> tuple[Any, TrainStepMetrics]:
-        """Clipped surrogate loss from evaluator signals.
+        """Clipped surrogate loss from trajectory-native evaluator signals.
 
         Handles both flow-matching latent-space KL and generic log-prob KL.
         """
@@ -93,6 +91,9 @@ class GRPO(Algorithm):
         from vrl.algorithms.flow_matching import compute_kl_divergence
 
         cfg = self.config
+        signals = _primary_signal(inputs)
+        advantages = _required_advantages(inputs)
+        old_log_probs = signals.old_log_prob
 
         ratio = torch.exp(signals.log_prob - old_log_probs)
         clipped_ratio = torch.clamp(ratio, 1.0 - cfg.eps_clip, 1.0 + cfg.eps_clip)
@@ -109,7 +110,7 @@ class GRPO(Algorithm):
                     "in the evaluator call."
                 )
             if (
-                signals.dist_family == "flow_matching"
+                signals.distribution == "flow_matching"
                 and signals.prev_sample_mean is not None
                 and signals.ref_prev_sample_mean is not None
             ):
@@ -144,3 +145,15 @@ class GRPO(Algorithm):
         )
 
         return loss, metrics
+
+
+def _primary_signal(inputs: AlgorithmInput) -> Any:
+    if inputs.signals is None:
+        raise RuntimeError("AlgorithmInput.signals is required for GRPO")
+    return inputs.signals.primary
+
+
+def _required_advantages(inputs: AlgorithmInput) -> Any:
+    if inputs.advantages is None:
+        raise RuntimeError("AlgorithmInput.advantages is required for GRPO")
+    return inputs.advantages

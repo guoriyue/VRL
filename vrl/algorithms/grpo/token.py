@@ -8,8 +8,8 @@ from typing import Any
 import torch
 
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
+from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.types import TrainStepMetrics
-from vrl.rollouts.evaluators.types import SignalBatch
 
 
 @dataclass(slots=True)
@@ -28,25 +28,22 @@ class TokenGRPO(GRPO):
         super().__init__(cfg)
         self.config: TokenGRPOConfig = cfg
 
-    def compute_signal_loss(
+    def compute_loss(
         self,
-        signals: SignalBatch,
-        advantages: Any,
-        old_log_probs: Any,
+        inputs: AlgorithmInput,
     ) -> tuple[Any, TrainStepMetrics]:
         cfg = self.config
 
+        signals = _primary_signal(inputs)
         new_lp: torch.Tensor = signals.log_prob
-        old_lp: torch.Tensor = old_log_probs
+        old_lp: torch.Tensor = signals.old_log_prob
+        advantages = _required_advantages(inputs)
         if new_lp.shape != old_lp.shape:
             raise ValueError(
                 f"log_prob shape mismatch: new={tuple(new_lp.shape)} old={tuple(old_lp.shape)}"
             )
 
-        mask = signals.aux.get(cfg.mask_key) if signals.aux else None
-        if mask is None:
-            mask = torch.ones_like(new_lp)
-        mask = mask.to(dtype=new_lp.dtype, device=new_lp.device)
+        mask = signals.mask.to(dtype=new_lp.dtype, device=new_lp.device)
 
         if advantages.dim() == 1:
             adv_bL = advantages.unsqueeze(-1).expand_as(new_lp)
@@ -104,3 +101,15 @@ class TokenGRPO(GRPO):
             approx_kl=approx_kl,
         )
         return loss, metrics
+
+
+def _primary_signal(inputs: AlgorithmInput) -> Any:
+    if inputs.signals is None:
+        raise RuntimeError("AlgorithmInput.signals is required for TokenGRPO")
+    return inputs.signals.primary
+
+
+def _required_advantages(inputs: AlgorithmInput) -> Any:
+    if inputs.advantages is None:
+        raise RuntimeError("AlgorithmInput.advantages is required for TokenGRPO")
+    return inputs.advantages

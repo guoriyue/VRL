@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,7 +19,6 @@ from vrl.engine.ar import (
     ordered_chunks,
 )
 from vrl.engine.core.capabilities import FamilyCapability, ar_discrete_family_capability
-from vrl.engine.core.planner import attach_engine_plan, build_engine_plan
 from vrl.engine.core.protocols import PipelineChunkResult
 from vrl.engine.core.types import (
     GenerationMetrics,
@@ -28,11 +27,12 @@ from vrl.engine.core.types import (
     OutputBatch,
     WorkloadSignature,
 )
-from vrl.engine.microbatching import MicroBatchPlan
+from vrl.engine.execution.microbatching import MicroBatchPlan
+from vrl.engine.execution.planner import attach_engine_plan, build_engine_plan
 from vrl.engine.trajectory import build_ar_discrete_trajectory, build_ar_multisegment_trajectory
 from vrl.models.families.janus_pro.policy import JanusProConfig, JanusProPolicy
 from vrl.models.families.janus_pro.r1_types import JanusR1Segment
-from vrl.models.runtime import RuntimeBuildSpec, RuntimeBundle
+from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 
 logger = logging.getLogger(__name__)
 
@@ -311,14 +311,14 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
             capability=self.capability(),
         )
 
-    def forward(
+    def forward_plan(
         self,
         request: GenerationRequest,
         sample_specs: list[GenerationSampleSpec],
+        engine_plan: Any,
     ) -> OutputBatch:
         from vrl.trainers.profiling import record_function
 
-        engine_plan = self.plan(request, sample_specs)
         sampling = request.sampling
         spec: ARGenerationSpec = self.parse_spec(request)
         prompts = list(request.prompts)
@@ -413,19 +413,10 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
             peak_memory_mb=peak_mem_mb,
         )
 
-        extra: dict[str, Any] = {
-            "token_ids": token_ids,
-            "token_log_probs": token_log_probs,
-            "token_mask": token_mask,
-            "prompt_input_ids": prompt_ids,
-            "prompt_attention_mask": prompt_mask,
-            "uncond_input_ids": uncond_ids,
-            "uncond_attention_mask": uncond_mask,
-            "context": {
-                "cfg_weight": cfg_weight,
-                "image_token_num": spec.image_token_num,
-                "model_family": getattr(self.model, "model_family", "janus_pro"),
-            },
+        trajectory_context: dict[str, Any] = {
+            "cfg_weight": cfg_weight,
+            "image_token_num": spec.image_token_num,
+            "model_family": getattr(self.model, "model_family", "janus_pro"),
         }
         trajectory = build_ar_discrete_trajectory(
             request=request,
@@ -437,7 +428,7 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
             prompt_attention_mask=prompt_mask,
             uncond_input_ids=uncond_ids,
             uncond_attention_mask=uncond_mask,
-            context=extra["context"],
+            context=trajectory_context,
         )
 
         return attach_engine_plan(OutputBatch(
@@ -447,22 +438,24 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
             prompts=prompts,
             sample_specs=sample_specs,
             output=images,
-            rollout_trajectory_data=None,  # AR has no DiT trajectory
             trajectory=trajectory,
-            extra=extra,
+            extra={},
             metrics=metrics,
             peak_memory_mb=peak_mem_mb or 0.0,
         ), engine_plan)
 
-    def forward_chunk(
+    def forward_chunk_plan(
         self,
         request: GenerationRequest,
         chunk: MicroBatchPlan,
+        execution_unit: Any,
+        plan_summary: Mapping[str, object],
     ) -> JanusProARChunkResult:
         """Run one prompt-major AR chunk through the black-box sampling path."""
 
         from vrl.trainers.profiling import record_function
 
+        del execution_unit, plan_summary
         self.validate_chunk(request, chunk)
         sampling = request.sampling
         spec: ARGenerationSpec = self.parse_spec(request)
@@ -733,42 +726,35 @@ class JanusProChunkGatherer:
             micro_batches=len(ordered_ar_chunks),
             peak_memory_mb=peak_mem_mb,
         )
-        extra: dict[str, Any] = {
-            "token_ids": token_ids,
-            "token_log_probs": token_log_probs,
-            "token_mask": torch.cat(
-                [chunk.token_mask for chunk in ordered_ar_chunks],
-                dim=0,
-            ),
-            "prompt_input_ids": torch.cat(
-                [chunk.prompt_input_ids for chunk in ordered_ar_chunks],
-                dim=0,
-            ),
-            "prompt_attention_mask": torch.cat(
-                [chunk.prompt_attention_mask for chunk in ordered_ar_chunks],
-                dim=0,
-            ),
-            "uncond_input_ids": torch.cat(
-                [chunk.uncond_input_ids for chunk in ordered_ar_chunks],
-                dim=0,
-            ),
-            "uncond_attention_mask": torch.cat(
-                [chunk.uncond_attention_mask for chunk in ordered_ar_chunks],
-                dim=0,
-            ),
-            "context": dict(ordered_ar_chunks[0].context),
-        }
+        token_mask = torch.cat([chunk.token_mask for chunk in ordered_ar_chunks], dim=0)
+        prompt_input_ids = torch.cat(
+            [chunk.prompt_input_ids for chunk in ordered_ar_chunks],
+            dim=0,
+        )
+        prompt_attention_mask = torch.cat(
+            [chunk.prompt_attention_mask for chunk in ordered_ar_chunks],
+            dim=0,
+        )
+        uncond_input_ids = torch.cat(
+            [chunk.uncond_input_ids for chunk in ordered_ar_chunks],
+            dim=0,
+        )
+        uncond_attention_mask = torch.cat(
+            [chunk.uncond_attention_mask for chunk in ordered_ar_chunks],
+            dim=0,
+        )
+        trajectory_context = dict(ordered_ar_chunks[0].context)
         trajectory = build_ar_discrete_trajectory(
             request=request,
             sample_specs=list(sample_specs),
             token_ids=token_ids,
             token_log_probs=token_log_probs,
-            token_mask=extra["token_mask"],
-            prompt_input_ids=extra["prompt_input_ids"],
-            prompt_attention_mask=extra["prompt_attention_mask"],
-            uncond_input_ids=extra["uncond_input_ids"],
-            uncond_attention_mask=extra["uncond_attention_mask"],
-            context=extra["context"],
+            token_mask=token_mask,
+            prompt_input_ids=prompt_input_ids,
+            prompt_attention_mask=prompt_attention_mask,
+            uncond_input_ids=uncond_input_ids,
+            uncond_attention_mask=uncond_attention_mask,
+            context=trajectory_context,
         )
 
         return OutputBatch(
@@ -778,9 +764,8 @@ class JanusProChunkGatherer:
             prompts=list(request.prompts),
             sample_specs=list(sample_specs),
             output=output,
-            rollout_trajectory_data=None,
             trajectory=trajectory,
-            extra=extra,
+            extra={},
             metrics=metrics,
             peak_memory_mb=peak_mem_mb or 0.0,
         )
@@ -824,14 +809,14 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
     task: str = "ar_t2i_r1"
     family_capability: FamilyCapability = JANUS_PRO_R1_FAMILY_CAPABILITY
 
-    def forward(
+    def forward_plan(
         self,
         request: GenerationRequest,
         sample_specs: list[GenerationSampleSpec],
+        engine_plan: Any,
     ) -> OutputBatch:
         from vrl.trainers.profiling import record_function
 
-        engine_plan = self.plan(request, sample_specs)
         sampling = request.sampling
         spec: ARGenerationSpec = self.parse_spec(request)
         prompts = list(request.prompts)
@@ -894,27 +879,22 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
             prompts=prompts,
             sample_specs=sample_specs,
             output=result.final_image,
-            rollout_trajectory_data=None,
             trajectory=trajectory,
-            extra={
-                "initial_image": result.initial_image,
-                "final_image": result.final_image,
-                "selfcheck": result.selfcheck,
-                "selfcheck_text": segment_extra["selfcheck_text"]["token_ids"],
-                "segments": segment_extra,
-                "context": result.context,
-            },
+            extra={},
             metrics=metrics,
             peak_memory_mb=peak_mem_mb or 0.0,
         ), engine_plan)
 
-    def forward_chunk(
+    def forward_chunk_plan(
         self,
         request: GenerationRequest,
         chunk: MicroBatchPlan,
+        execution_unit: Any,
+        plan_summary: Mapping[str, object],
     ) -> JanusProR1ChunkResult:
         from vrl.trainers.profiling import record_function
 
+        del execution_unit, plan_summary
         self.validate_chunk(request, chunk)
         sampling = request.sampling
         spec: ARGenerationSpec = self.parse_spec(request)
@@ -1047,16 +1027,8 @@ class JanusProR1ChunkGatherer:
             prompts=list(request.prompts),
             sample_specs=list(sample_specs),
             output=output,
-            rollout_trajectory_data=None,
             trajectory=trajectory,
-            extra={
-                "initial_image": initial_image,
-                "final_image": final_image,
-                "selfcheck": selfcheck,
-                "selfcheck_text": segment_extra["selfcheck_text"]["token_ids"],
-                "segments": segment_extra,
-                "context": dict(ordered[0].context),
-            },
+            extra={},
             metrics=metrics,
             peak_memory_mb=peak_mem_mb or 0.0,
         )

@@ -1,9 +1,8 @@
 """Runtime build spec and runtime bundle (CONTRACT.md, SPRINT_model_refactor.md §5.1, §5.3.E).
 
 These two dataclasses are the only sanctioned interface between training scripts
-and family-adjacent builders. Scripts must not import diffusers / native /
-official backend classes directly; builders consume a ``RuntimeBuildSpec`` and
-return a ``RuntimeBundle``.
+and family-adjacent builders. Scripts must not import backend classes directly;
+builders consume a ``RuntimeBuildSpec`` and return a ``RuntimeBundle``.
 """
 
 from __future__ import annotations

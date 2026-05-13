@@ -1,100 +1,116 @@
-"""Tests for the Ray rollout launcher."""
+"""Small Ray rollout launcher tests that avoid starting a real Ray cluster."""
 
 from __future__ import annotations
 
-import asyncio
-import uuid
+import sys
 from collections.abc import Sequence
-from dataclasses import dataclass
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
-import pytest
-import torch
-
-from vrl.distributed.ray import (
-    RayRolloutLauncher,
-    RayRolloutWorker,
-)
-from vrl.engine import (
-    ChunkedFamilyPipelineExecutor,
-    GenerationRequest,
-    OutputBatch,
-    PipelineChunkResult,
-    WorkloadSignature,
-)
+from vrl.distributed.ray.rollout.runtime import RayDistributedRuntime
+from vrl.engine.core.protocols import PipelineChunkResult
 from vrl.engine.core.runtime_spec import GenerationRuntimeSpec
-from vrl.engine.microbatching import MicroBatchPlan
+from vrl.engine.core.types import GenerationRequest, GenerationSampleSpec, OutputBatch
 from vrl.rollouts.runtime.config import RolloutBackendConfig
 
 
-@dataclass(slots=True)
-class _LaunchChunk(PipelineChunkResult):
-    executor_instance_id: str
-    prompt_index: int
-    sample_start: int
-    sample_count: int
-
-
-class _LauncherFakeExecutor(ChunkedFamilyPipelineExecutor):
-    family = "fake"
-    task = "t2i"
-
-    def __init__(self, policy: Any | None = None, **kwargs: Any) -> None:
-        self.executor_instance_id = uuid.uuid4().hex
-        self.policy = policy
-        self.kwargs = dict(kwargs)
-
-    def workload_signature(self, request: GenerationRequest) -> WorkloadSignature:
-        return WorkloadSignature.from_request(request)
-
-    def forward(
+class _PlacementGroupSchedulingStrategy:
+    def __init__(
         self,
-        request: GenerationRequest,
-        sample_specs: list[Any],
-    ) -> OutputBatch:
-        chunks = [
-            self.forward_chunk(
-                request,
-                MicroBatchPlan(
-                    prompt_index=spec.prompt_index,
-                    prompt=spec.prompt,
-                    sample_start=spec.sample_index,
-                    sample_count=1,
-                ),
-            )
-            for spec in sample_specs
-        ]
-        return self.gather_chunks(request, sample_specs, chunks)
+        *,
+        placement_group: Any,
+        placement_group_capture_child_tasks: bool,
+        placement_group_bundle_index: int,
+    ) -> None:
+        self.placement_group = placement_group
+        self.placement_group_capture_child_tasks = placement_group_capture_child_tasks
+        self.placement_group_bundle_index = placement_group_bundle_index
 
-    def forward_chunk(
+
+class _FakeRemoteMethod:
+    def __init__(self, fn: Any) -> None:
+        self._fn = fn
+        self.calls = 0
+
+    def remote(self, *args: Any, **kwargs: Any) -> Any:
+        self.calls += 1
+        return self._fn(*args, **kwargs)
+
+
+class _FakeActorHandle:
+    def __init__(
         self,
-        request: GenerationRequest,
-        chunk: MicroBatchPlan,
-    ) -> _LaunchChunk:
-        del request
-        return _LaunchChunk(
-            executor_instance_id=self.executor_instance_id,
-            prompt_index=chunk.prompt_index,
-            sample_start=chunk.sample_start,
-            sample_count=chunk.sample_count,
-        )
+        worker_id: str,
+        spec: GenerationRuntimeSpec,
+        strategy: _PlacementGroupSchedulingStrategy,
+    ) -> None:
+        self.worker_id = worker_id
+        self.spec = spec
+        self.strategy = strategy
+        self.load_policy = _FakeRemoteMethod(lambda: None)
+        self.worker_metadata = _FakeRemoteMethod(self._metadata)
 
+    def _metadata(self) -> dict[str, Any]:
+        return {
+            "worker_id": self.worker_id,
+            "node_ip": f"node-for-{self.worker_id}",
+            "gpu_ids": (),
+        }
+
+
+class _FakeRemoteClass:
+    def __init__(self, ray: _FakeRay, resource_options: dict[str, Any]) -> None:
+        self._ray = ray
+        self._resource_options = resource_options
+        self._strategy: _PlacementGroupSchedulingStrategy | None = None
+
+    def options(self, *, scheduling_strategy: _PlacementGroupSchedulingStrategy) -> _FakeRemoteClass:
+        child = _FakeRemoteClass(self._ray, self._resource_options)
+        child._strategy = scheduling_strategy
+        return child
+
+    def remote(self, worker_id: str, spec: GenerationRuntimeSpec) -> _FakeActorHandle:
+        if self._strategy is None:
+            raise AssertionError("launcher must set a scheduling strategy for rollout actors")
+        actor = _FakeActorHandle(worker_id, spec, self._strategy)
+        self._ray.actors.append(actor)
+        return actor
+
+
+class _FakeRay:
+    def __init__(self) -> None:
+        self.initialized = False
+        self.init_kwargs: dict[str, Any] | None = None
+        self.remote_options: list[dict[str, Any]] = []
+        self.actors: list[_FakeActorHandle] = []
+
+    def is_initialized(self) -> bool:
+        return self.initialized
+
+    def init(self, **kwargs: Any) -> None:
+        self.initialized = True
+        self.init_kwargs = dict(kwargs)
+
+    def remote(self, **resource_options: Any) -> Any:
+        self.remote_options.append(dict(resource_options))
+
+        def _wrap(_actor_cls: type[Any]) -> _FakeRemoteClass:
+            return _FakeRemoteClass(self, resource_options)
+
+        return _wrap
+
+    def get(self, value: Any) -> Any:
+        if isinstance(value, list):
+            return [self.get(item) for item in value]
+        return value
+
+
+class _Gatherer:
     def gather_chunks(
         self,
         request: GenerationRequest,
-        sample_specs: Sequence[Any],
-        chunks: Sequence[_LaunchChunk],
-    ) -> OutputBatch:
-        return _LauncherGatherer().gather_chunks(request, sample_specs, chunks)
-
-
-class _LauncherGatherer:
-    def gather_chunks(
-        self,
-        request: GenerationRequest,
-        sample_specs: Sequence[Any],
-        chunks: Sequence[_LaunchChunk],
+        sample_specs: Sequence[GenerationSampleSpec],
+        chunks: Sequence[PipelineChunkResult],
     ) -> OutputBatch:
         return OutputBatch(
             request_id=request.request_id,
@@ -102,224 +118,83 @@ class _LauncherGatherer:
             task=request.task,
             prompts=list(request.prompts),
             sample_specs=list(sample_specs),
-            output=[
-                {
-                    "executor_instance_id": chunk.executor_instance_id,
-                    "prompt_index": chunk.prompt_index,
-                    "sample_start": chunk.sample_start,
-                    "sample_count": chunk.sample_count,
-                }
-                for chunk in chunks
-            ],
+            output=list(chunks),
         )
 
 
-def make_launcher_runtime_bundle(build_spec: Any) -> Any:
-    assert build_spec.model_name_or_path == "fake-model"
-    return SimpleNamespace(policy={"device": build_spec.device, "dtype": build_spec.dtype})
+def _install_fake_ray_modules(monkeypatch: Any) -> None:
+    ray_module = ModuleType("ray")
+    ray_util_module = ModuleType("ray.util")
+    scheduling_module = ModuleType("ray.util.scheduling_strategies")
+    scheduling_module.PlacementGroupSchedulingStrategy = _PlacementGroupSchedulingStrategy
+    ray_module.util = ray_util_module
+    ray_util_module.scheduling_strategies = scheduling_module
+    monkeypatch.setitem(sys.modules, "ray", ray_module)
+    monkeypatch.setitem(sys.modules, "ray.util", ray_util_module)
+    monkeypatch.setitem(sys.modules, "ray.util.scheduling_strategies", scheduling_module)
 
 
-class LauncherExecutorFromPolicy(_LauncherFakeExecutor):
-    def __init__(self, policy: Any, **kwargs: Any) -> None:
-        super().__init__()
-        self.policy = policy
-        self.kwargs = kwargs
-
-
-@pytest.fixture()
-def ray_local():
-    ray = pytest.importorskip("ray")
-    ray.init(
-        local_mode=True,
-        num_cpus=4,
-        include_dashboard=False,
-        ignore_reinit_error=True,
-        log_to_driver=False,
-    )
-    try:
-        yield ray
-    finally:
-        ray.shutdown()
-
-
-def _runtime_spec(*, policy_version: int | None = 3) -> GenerationRuntimeSpec:
+def _runtime_spec() -> GenerationRuntimeSpec:
     return GenerationRuntimeSpec(
         family="fake",
         task="t2i",
-        build_spec={
-            "model_name_or_path": "fake-model",
-            "device": "cpu",
-            "dtype": "float32",
-        },
-        executor_kwargs={"sample_batch_size": 2},
-        policy_version=policy_version,
-        runtime_builder=(
-            "tests.distributed.ray.test_rollout_launcher:make_launcher_runtime_bundle"
-        ),
-        executor_cls=("tests.distributed.ray.test_rollout_launcher:_LauncherFakeExecutor"),
+        policy_version=7,
+        runtime_builder="tests.distributed.ray.test_rollout_launcher:_unused_builder",
+        executor_cls="tests.distributed.ray.test_rollout_launcher:_UnusedExecutor",
     )
 
 
-def _runtime_spec_with_profiler(tmp_path, *, policy_version: int | None = 3) -> GenerationRuntimeSpec:
-    return GenerationRuntimeSpec(
-        family="fake",
-        task="t2i",
-        build_spec={
-            "model_name_or_path": "fake-model",
-            "device": "cpu",
-            "dtype": "float32",
-        },
-        executor_kwargs={"sample_batch_size": 1},
-        policy_version=policy_version,
-        runtime_builder=(
-            "tests.distributed.ray.test_rollout_launcher:make_launcher_runtime_bundle"
-        ),
-        executor_cls=("tests.distributed.ray.test_rollout_launcher:_LauncherFakeExecutor"),
-        extra={
-            "profiler_output_dir": str(tmp_path),
-            "torch_profiler": {
-                "enabled": True,
-                "activities": ["cpu"],
-                "record_shapes": True,
-                "profile_memory": True,
-                "with_stack": False,
-                "with_flops": False,
-                "skip_first": 0,
-                "max_steps": 1,
-            },
-        },
-    )
-
-
-def _request(*, policy_version: int | None = 3) -> GenerationRequest:
-    return GenerationRequest(
-        request_id="req",
-        family="fake",
-        task="t2i",
-        prompts=["p0", "p1"],
-        samples_per_prompt=4,
-        sampling={"sample_batch_size": 2},
-        policy_version=policy_version,
-    )
-
-
-def test_ray_rollout_worker_writes_forward_chunk_profiler_trace(tmp_path) -> None:
-    worker = RayRolloutWorker("rollout-0", _runtime_spec_with_profiler(tmp_path))
-
-    result = worker.execute_chunk(
-        _request(),
-        MicroBatchPlan(prompt_index=0, prompt="p0", sample_start=0, sample_count=1),
-    )
-
-    assert result.error is None
-    trace_dir = tmp_path / "torch_profiler" / "rollout" / "rollout-0"
-    assert trace_dir.exists()
-    assert any(path.name.endswith(".pt.trace.json") for path in trace_dir.rglob("*"))
-    assert any(path.name.endswith(".summary.txt") for path in trace_dir.rglob("*"))
-
-
-def _config(*, num_workers: int = 2) -> RolloutBackendConfig:
-    return RolloutBackendConfig(
-        backend="ray",
-        num_workers=num_workers,
-        gpus_per_worker=0.0,
-        cpus_per_worker=1.0,
-        max_inflight_chunks_per_worker=1,
-    )
-
-
-def test_ray_rollout_launcher_single_worker_validation(ray_local) -> None:
-    launcher = RayRolloutLauncher(init_ray=False)
-    runtime = launcher.launch(_config(num_workers=1), _runtime_spec(), _LauncherGatherer())
-    try:
-        output = asyncio.run(runtime.generate(_request()))
-    finally:
-        asyncio.run(runtime.shutdown())
-
-    assert [
-        (row["prompt_index"], row["sample_start"], row["sample_count"]) for row in output.output
-    ] == [(0, 0, 2), (0, 2, 2), (1, 0, 2), (1, 2, 2)]
-    assert len({row["executor_instance_id"] for row in output.output}) == 1
-
-
-def test_ray_rollout_launcher_multi_worker_assigns_chunks_to_distinct_replicas(
-    ray_local,
-) -> None:
-    runtime = RayRolloutLauncher(init_ray=False).launch(
-        _config(num_workers=2),
-        _runtime_spec(policy_version=5),
-        _LauncherGatherer(),
-    )
-    try:
-        workers = runtime.executor.workers
-        assert [worker.worker_id for worker in workers] == ["rollout-0", "rollout-1"]
-        assert all(worker.actor is not None for worker in workers)
-        assert all(worker.node_id for worker in workers)
-        assert all(isinstance(worker.gpu_ids, tuple) for worker in workers)
-
-        assignments = runtime.executor.planner.plan(_request(policy_version=5), workers)
-        assert [assignment.worker_id for assignment in assignments] == [
-            "rollout-0",
-            "rollout-1",
-            "rollout-0",
-            "rollout-1",
-        ]
-
-        output = asyncio.run(runtime.generate(_request(policy_version=5)))
-    finally:
-        asyncio.run(runtime.shutdown())
-
-    assert output.error is None
-    by_executor: dict[str, list[tuple[int, int]]] = {}
-    for row in output.output:
-        by_executor.setdefault(row["executor_instance_id"], []).append(
-            (row["prompt_index"], row["sample_start"]),
-        )
-    assert len(by_executor) == 2
-    assert {tuple(chunks) for chunks in by_executor.values()} == {
-        ((0, 0), (1, 0)),
-        ((0, 2), (1, 2)),
-    }
-
-
-def test_ray_rollout_worker_runtime_builder_normalizes_device_and_dtype() -> None:
-    worker = RayRolloutWorker(
-        worker_id="w0",
-        runtime_spec=GenerationRuntimeSpec(
-            family="fake",
-            task="t2i",
-            build_spec={
-                "model_name_or_path": "fake-model",
-                "device": "cuda",
-                "dtype": "bfloat16",
-            },
-            runtime_builder=(
-                "tests.distributed.ray.test_rollout_launcher:make_launcher_runtime_bundle"
-            ),
-            executor_cls=(
-                "tests.distributed.ray.test_rollout_launcher:LauncherExecutorFromPolicy"
-            ),
-        ),
-    )
-
-    worker.load_policy()
-
-    assert isinstance(worker.executor, LauncherExecutorFromPolicy)
-    assert str(worker.executor.policy["device"]) == "cuda"
-    assert worker.executor.policy["dtype"] is torch.bfloat16
-
-
-def test_ray_rollout_launcher_requires_ray(monkeypatch) -> None:
+def test_ray_rollout_launcher_builds_worker_runtime_without_real_ray(monkeypatch) -> None:
     import vrl.distributed.ray.rollout.launcher as launcher_mod
 
-    def _missing_ray() -> Any:
-        raise ImportError("Ray distributed rollout support requires `ray`.")
+    _install_fake_ray_modules(monkeypatch)
+    fake_ray = _FakeRay()
+    placement_group = object()
+    placement = SimpleNamespace(
+        placement_group=placement_group,
+        ordered_bundle_indices=[3, 1],
+        trainer_reservation_actors=["trainer-reservation"],
+        trainer_gpu_ids=(),
+        rollout_gpu_ids=(),
+    )
+    monkeypatch.setattr(launcher_mod, "require_ray", lambda: fake_ray)
+    monkeypatch.setattr(launcher_mod, "create_rollout_placement_group", lambda config: placement)
 
-    monkeypatch.setattr(launcher_mod, "require_ray", _missing_ray)
+    runtime = launcher_mod.RayRolloutLauncher(
+        init_ray=True,
+        ray_init_kwargs={"ignore_reinit_error": True},
+    ).launch(
+        RolloutBackendConfig(
+            backend="ray",
+            num_workers=2,
+            gpus_per_worker=0.0,
+            cpus_per_worker=2.0,
+            sync_trainable_state="disabled",
+        ),
+        _runtime_spec(),
+        _Gatherer(),
+    )
 
-    with pytest.raises(ImportError, match="Ray distributed rollout support"):
-        RayRolloutLauncher().launch(
-            _config(num_workers=1),
-            _runtime_spec(),
-            _LauncherGatherer(),
-        )
+    assert isinstance(runtime, RayDistributedRuntime)
+    assert fake_ray.init_kwargs == {"ignore_reinit_error": True}
+    assert fake_ray.remote_options == [{"num_cpus": 2.0, "num_gpus": 0.0}]
+    assert runtime.current_policy_version == 7
+    assert runtime.weight_sync is None
+    assert runtime._owned_actors == ["trainer-reservation"]
+    assert runtime._placement_group is placement_group
+
+    workers = runtime.executor.workers
+    assert [worker.worker_id for worker in workers] == ["rollout-0", "rollout-1"]
+    assert [worker.node_id for worker in workers] == [
+        "node-for-rollout-0",
+        "node-for-rollout-1",
+    ]
+    assert [actor.spec for actor in fake_ray.actors] == [_runtime_spec(), _runtime_spec()]
+    assert [actor.load_policy.calls for actor in fake_ray.actors] == [1, 1]
+    assert [actor.worker_metadata.calls for actor in fake_ray.actors] == [1, 1]
+    assert [actor.strategy.placement_group for actor in fake_ray.actors] == [
+        placement_group,
+        placement_group,
+    ]
+    assert [actor.strategy.placement_group_bundle_index for actor in fake_ray.actors] == [3, 1]
+    assert all(actor.strategy.placement_group_capture_child_tasks for actor in fake_ray.actors)

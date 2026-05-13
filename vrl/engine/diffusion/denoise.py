@@ -15,9 +15,6 @@ from vrl.engine.core.types import (
     GenerationRequest,
     GenerationSampleSpec,
     OutputBatch,
-    RolloutDenoisingEnv,
-    RolloutDitTrajectory,
-    RolloutTrajectoryData,
 )
 from vrl.engine.trajectory import build_diffusion_trajectory
 
@@ -45,7 +42,7 @@ class DiffusionChunkResult(PipelineChunkResult):
     timesteps: Any
     kl: Any
     video: Any
-    training_extras: dict[str, Any]
+    replay_tensors: dict[str, Any]
     context: dict[str, Any]
 
 
@@ -164,7 +161,7 @@ def run_diffusion_denoise_chunk(
         timesteps=timesteps,
         kl=kl,
         video=video,
-        training_extras=policy.export_training_extras(state),
+        replay_tensors=policy.export_replay_tensors(state),
         context=policy.export_batch_context(state),
     )
 
@@ -188,22 +185,11 @@ def build_diffusion_output_batch(
     timesteps_tensor = torch.cat([chunk.timesteps for chunk in chunks], dim=0)
     kl_tensor = torch.cat([chunk.kl for chunk in chunks], dim=0)
     video = torch.cat([chunk.video for chunk in chunks], dim=0)
-    training_extras = _concat_training_extras([chunk.training_extras for chunk in chunks])
+    replay_tensors = _concat_replay_tensors([chunk.replay_tensors for chunk in chunks])
     rollout_context = chunks[0].context
     if not rollout_context:
         raise ValueError("DiffusionChunkResult.context must be non-empty")
 
-    rollout_trajectory_data = _build_legacy_rollout_trajectory_data(
-        request=request,
-        observations=observations,
-        actions=actions,
-        log_probs=log_probs,
-        timesteps_tensor=timesteps_tensor,
-        kl_tensor=kl_tensor,
-        training_extras=training_extras,
-        rollout_context=rollout_context,
-        video=video,
-    )
     peak_mem_mb = peak_memory_mb()
     metrics = GenerationMetrics(
         num_prompts=len(prompts),
@@ -220,7 +206,7 @@ def build_diffusion_output_batch(
         old_log_prob=log_probs,
         timesteps=timesteps_tensor,
         kl=kl_tensor,
-        training_extras=training_extras,
+        replay_tensors=replay_tensors,
         context=rollout_context,
     )
 
@@ -231,47 +217,10 @@ def build_diffusion_output_batch(
         prompts=prompts,
         sample_specs=sample_specs,
         output=video,
-        rollout_trajectory_data=rollout_trajectory_data,
         trajectory=trajectory,
         extra={},
         metrics=metrics,
         peak_memory_mb=peak_mem_mb or 0.0,
-    )
-
-
-def _build_legacy_rollout_trajectory_data(
-    *,
-    request: GenerationRequest,
-    observations: Any,
-    actions: Any,
-    log_probs: Any,
-    timesteps_tensor: Any,
-    kl_tensor: Any,
-    training_extras: dict[str, Any],
-    rollout_context: dict[str, Any],
-    video: Any,
-) -> RolloutTrajectoryData | None:
-    """Build legacy diffusion replay payload only when explicitly requested."""
-
-    if "rollout_trajectory_data" not in request.return_artifacts:
-        return None
-    denoising_env = RolloutDenoisingEnv(
-        extra={
-            "actions": actions,
-            "kl": kl_tensor,
-            "training_extras": training_extras,
-            "context": rollout_context,
-            "videos": video,
-        },
-    )
-    dit_trajectory = RolloutDitTrajectory(
-        latents=observations,
-        timesteps=timesteps_tensor,
-    )
-    return RolloutTrajectoryData(
-        rollout_log_probs=log_probs,
-        denoising_env=denoising_env,
-        dit_trajectory=dit_trajectory,
     )
 
 
@@ -313,19 +262,19 @@ def _autocast_for_dtype(device: Any, dtype: Any) -> Any:
     return torch.amp.autocast("cuda", dtype=dtype)
 
 
-def _concat_training_extras(chunks: list[dict[str, Any]]) -> dict[str, Any]:
-    training_extras: dict[str, Any] = {}
+def _concat_replay_tensors(chunks: list[dict[str, Any]]) -> dict[str, Any]:
+    replay_tensors: dict[str, Any] = {}
     if not chunks:
-        return training_extras
+        return replay_tensors
     for key in chunks[0]:
         vals = [chunk[key] for chunk in chunks]
         if any(value is None for value in vals):
-            training_extras[key] = None
+            replay_tensors[key] = None
         elif all(isinstance(value, torch.Tensor) for value in vals):
-            training_extras[key] = torch.cat(vals, dim=0)
+            replay_tensors[key] = torch.cat(vals, dim=0)
         else:
-            training_extras[key] = vals[0]
-    return training_extras
+            replay_tensors[key] = vals[0]
+    return replay_tensors
 
 
 class _NullCtx:

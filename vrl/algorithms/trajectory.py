@@ -7,10 +7,6 @@ from typing import Any
 
 from vrl.algorithms.types import TrainStepMetrics
 from vrl.engine.trajectory import TrainingView, TrajectoryBatch
-from vrl.rollouts.evaluators.trajectory import (
-    old_log_probs_from_trajectory_signals,
-    trajectory_signals_to_signal_batch,
-)
 from vrl.rollouts.evaluators.types import TrajectorySignalBatch
 
 
@@ -30,13 +26,12 @@ class AlgorithmInput:
     def __post_init__(self) -> None:
         if self.signals is not None and not isinstance(self.signals, TrajectorySignalBatch):
             raise TypeError(
-                "AlgorithmInput.signals must be a TrajectorySignalBatch; convert legacy "
-                "SignalBatch with legacy_signal_batch_to_trajectory_signals first",
+                "AlgorithmInput.signals must be a TrajectorySignalBatch",
             )
 
 
 class AlgorithmAdapter:
-    """Project AlgorithmInput into existing objective-specific APIs."""
+    """Dispatch strict AlgorithmInput to objective-specific native APIs."""
 
     def compute_advantages(self, algorithm: Any, inputs: AlgorithmInput) -> Any:
         if inputs.advantages is not None:
@@ -62,23 +57,13 @@ class AlgorithmAdapter:
         if dpo_loss is not None:
             return dpo_loss
 
-        compute_batch_timestep_loss = getattr(algorithm, "compute_batch_timestep_loss", None)
-        uses_evaluator = bool(getattr(algorithm, "uses_evaluator", True))
-        if not uses_evaluator and callable(compute_batch_timestep_loss):
-            return _compute_diffusion_nft_loss(
-                algorithm,
-                inputs,
-                advantages=self.compute_advantages(algorithm, inputs),
+        compute_loss = getattr(algorithm, "compute_loss", None)
+        if not callable(compute_loss):
+            raise TypeError(
+                f"{type(algorithm).__name__} must expose compute_loss(AlgorithmInput)",
             )
 
-        signals = _ensure_trajectory_signals(inputs)
-        legacy_signals = trajectory_signals_to_signal_batch(
-            signals,
-            mask_key=_mask_key(algorithm),
-        )
-        old_log_probs = old_log_probs_from_trajectory_signals(signals)
-        advantages = self.compute_advantages(algorithm, inputs)
-        return algorithm.compute_signal_loss(legacy_signals, advantages, old_log_probs)
+        return compute_loss(_with_advantages(algorithm, inputs, self))
 
 
 def _ensure_trajectory_signals(inputs: AlgorithmInput) -> TrajectorySignalBatch:
@@ -87,25 +72,23 @@ def _ensure_trajectory_signals(inputs: AlgorithmInput) -> TrajectorySignalBatch:
     return inputs.signals
 
 
-def _mask_key(algorithm: Any) -> str:
-    config = getattr(algorithm, "config", None)
-    return str(getattr(config, "mask_key", "token_mask"))
-
-
-def _compute_diffusion_nft_loss(
+def _with_advantages(
     algorithm: Any,
     inputs: AlgorithmInput,
-    *,
-    advantages: Any,
-) -> tuple[Any, TrainStepMetrics]:
-    model = inputs.metadata.get("model")
-    batch = inputs.metadata.get("rollout_batch")
-    timestep_index = int(inputs.metadata.get("timestep_index", 0))
-    if model is None:
-        raise RuntimeError("DiffusionNFT AlgorithmInput.metadata['model'] is required")
-    if batch is None:
-        raise RuntimeError("DiffusionNFT AlgorithmInput.metadata['rollout_batch'] is required")
-    return algorithm.compute_batch_timestep_loss(model, batch, timestep_index, advantages)
+    adapter: AlgorithmAdapter,
+) -> AlgorithmInput:
+    if inputs.advantages is not None:
+        return inputs
+    return AlgorithmInput(
+        trajectory=inputs.trajectory,
+        training_view=inputs.training_view,
+        signals=inputs.signals,
+        rewards=inputs.rewards,
+        group_ids=inputs.group_ids,
+        advantages=adapter.compute_advantages(algorithm, inputs),
+        old_log_probs=inputs.old_log_probs,
+        metadata=inputs.metadata,
+    )
 
 
 def _try_compute_dpo_loss(

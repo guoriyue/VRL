@@ -1,4 +1,4 @@
-"""Adapters and normalizers for trajectory-native evaluator signals."""
+"""Helpers for trajectory-native evaluator signals."""
 
 from __future__ import annotations
 
@@ -8,237 +8,144 @@ import torch
 
 from vrl.engine.trajectory import TrainingView, TrajectoryBatch
 from vrl.engine.trajectory.views import LossUnit
-from vrl.rollouts.evaluators.types import (
-    SegmentSignal,
-    SignalBatch,
-    TrajectorySignalBatch,
-)
-
-
-def evaluator_output_to_trajectory_signals(
-    signals: SignalBatch | TrajectorySignalBatch,
-    **kwargs: Any,
-) -> TrajectorySignalBatch:
-    """Normalize evaluator output into the trajectory-native signal schema."""
-
-    if isinstance(signals, TrajectorySignalBatch):
-        return to_trajectory_signals(signals)
-    if isinstance(signals, SignalBatch):
-        return legacy_signal_batch_to_trajectory_signals(signals, **kwargs)
-    raise TypeError(
-        "evaluator output must be a SignalBatch or TrajectorySignalBatch; "
-        f"got {type(signals).__name__}",
-    )
+from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
 
 
 def to_trajectory_signals(
     signals: TrajectorySignalBatch,
     **_: Any,
 ) -> TrajectorySignalBatch:
-    """Return trajectory-native signals without accepting legacy payloads."""
+    """Return trajectory-native signals and reject any older signal schema."""
 
     if not isinstance(signals, TrajectorySignalBatch):
         raise TypeError(
-            "to_trajectory_signals requires TrajectorySignalBatch; use "
-            "legacy_signal_batch_to_trajectory_signals for legacy SignalBatch",
+            "evaluator output must be TrajectorySignalBatch; "
+            f"got {type(signals).__name__}",
         )
     return signals
 
 
-def legacy_signal_batch_to_trajectory_signals(
-    signals: SignalBatch,
+def segment_signal_from_batch(
+    batch: Any,
     *,
-    trajectory: TrajectoryBatch | None = None,
-    training_view: TrainingView | None = None,
-    old_log_probs: Any | None = None,
-    group_ids: Any | None = None,
-    context: dict[str, Any] | None = None,
-    primary_segment: str | None = None,
+    segment_name: str | None,
+    log_prob: Any,
+    distribution: str,
+    timestep_idx: int | None = None,
+    old_log_prob: Any | None = None,
+    mask: Any | None = None,
+    ref_log_prob: Any | None = None,
+    entropy: Any | None = None,
+    prev_sample_mean: Any | None = None,
+    ref_prev_sample_mean: Any | None = None,
+    std_dev_t: Any | None = None,
+    dt: Any | None = None,
+    axis: str | None = None,
+    aux: dict[str, Any] | None = None,
     mask_key: str = "token_mask",
-) -> TrajectorySignalBatch:
-    """Project legacy evaluator signals into the trajectory signal schema."""
+) -> SegmentSignal:
+    """Build one signal segment from first-class trajectory facts."""
 
-    if not isinstance(signals, SignalBatch):
-        raise TypeError("signals must be a SignalBatch")
+    trajectory = getattr(batch, "trajectory", None)
+    training_view = getattr(batch, "training_view", None)
+    name = _primary_segment_name(
+        trajectory=trajectory,
+        training_view=training_view,
+        fallback=segment_name,
+    )
+    segment = trajectory.segments.get(name) if trajectory is not None else None
+    unit = _loss_unit(training_view, name)
 
-    if isinstance((signals.aux or {}).get("segments"), dict):
-        return _multi_segment_to_trajectory(
-            signals,
-            trajectory=trajectory,
-            training_view=training_view,
-            group_ids=group_ids,
-            context=context,
-            primary_segment=primary_segment,
+    resolved_old = old_log_prob
+    if resolved_old is None:
+        resolved_old = _old_log_prob_from_trajectory(
+            segment,
+            log_prob=log_prob,
+            timestep_idx=timestep_idx,
+        )
+    resolved_mask = mask
+    if resolved_mask is None:
+        resolved_mask = _mask_from_trajectory(
+            segment,
+            log_prob=log_prob,
+            timestep_idx=timestep_idx,
             mask_key=mask_key,
         )
 
-    segment_name = _primary_segment_name(
-        trajectory=trajectory,
-        training_view=training_view,
-        fallback=primary_segment,
-    )
-    segment = trajectory.segments.get(segment_name) if trajectory is not None else None
-    unit = _loss_unit(training_view, segment_name)
-    old_log_prob = old_log_probs
-    if old_log_prob is None and segment is not None:
-        old_log_prob = _role_value(segment, "old_log_prob")
-    if old_log_prob is None:
-        raise RuntimeError("old_log_probs is required for legacy SignalBatch conversion")
-    mask = _mask_from_signal_or_trajectory(signals, segment, mask_key=mask_key)
     _validate_signal_shapes(
-        log_prob=signals.log_prob,
+        log_prob=log_prob,
+        old_log_prob=resolved_old,
+        mask=resolved_mask,
+        segment=name,
+    )
+    resolved_axis = axis or (unit.axis if unit is not None else None)
+    if resolved_axis is None:
+        resolved_axis = _axis_from_segment_or_signal(segment, resolved_old)
+
+    return SegmentSignal(
+        name=name,
+        segment=name,
+        axis=resolved_axis,
+        axes=_axes_from_value(resolved_old, axis=resolved_axis),
+        distribution=segment.distribution if segment is not None else distribution,
+        log_prob=log_prob,
+        old_log_prob=resolved_old,
+        mask=resolved_mask,
+        ref_log_prob=ref_log_prob,
+        entropy=entropy,
+        prev_sample_mean=prev_sample_mean,
+        ref_prev_sample_mean=ref_prev_sample_mean,
+        std_dev_t=std_dev_t,
+        dt=dt,
+        aux=dict(aux or {}),
+    )
+
+
+def single_segment_trajectory_signals(
+    batch: Any,
+    *,
+    segment_name: str | None,
+    log_prob: Any,
+    distribution: str,
+    timestep_idx: int | None = None,
+    old_log_prob: Any | None = None,
+    mask: Any | None = None,
+    ref_log_prob: Any | None = None,
+    entropy: Any | None = None,
+    prev_sample_mean: Any | None = None,
+    ref_prev_sample_mean: Any | None = None,
+    std_dev_t: Any | None = None,
+    dt: Any | None = None,
+    axis: str | None = None,
+    aux: dict[str, Any] | None = None,
+    mask_key: str = "token_mask",
+) -> TrajectorySignalBatch:
+    """Build a one-segment ``TrajectorySignalBatch`` for concrete evaluators."""
+
+    segment = segment_signal_from_batch(
+        batch,
+        segment_name=segment_name,
+        log_prob=log_prob,
+        distribution=distribution,
+        timestep_idx=timestep_idx,
         old_log_prob=old_log_prob,
         mask=mask,
-        segment=segment_name,
-    )
-    axis = unit.axis if unit is not None else _axis_from_segment_or_signal(segment, old_log_prob)
-    axes = _axes_from_value(old_log_prob, axis=axis)
-
-    return TrajectorySignalBatch(
-        segments={
-            segment_name: SegmentSignal(
-                name=segment_name,
-                segment=segment_name,
-                axis=axis,
-                axes=axes,
-                distribution=segment.distribution if segment is not None else signals.dist_family,
-                log_prob=signals.log_prob,
-                old_log_prob=old_log_prob,
-                mask=mask,
-                ref_log_prob=signals.ref_log_prob,
-                entropy=signals.entropy,
-                prev_sample_mean=signals.prev_sample_mean,
-                ref_prev_sample_mean=signals.ref_prev_sample_mean,
-                std_dev_t=signals.std_dev_t,
-                dt=signals.dt,
-                aux=dict(signals.aux),
-            )
-        },
-        group_ids=group_ids if group_ids is not None else _group_ids_from_trajectory(trajectory),
-        context=context if context is not None else _context_from_trajectory(trajectory),
-        primary_segment=segment_name,
-    )
-
-
-def trajectory_signals_to_signal_batch(
-    signals: TrajectorySignalBatch,
-    *,
-    mask_key: str = "token_mask",
-) -> SignalBatch:
-    """Project trajectory-native signals back to the legacy algorithm API."""
-
-    if len(signals.segments) > 1:
-        segment_signals: dict[str, SignalBatch] = {}
-        old_by_segment: dict[str, Any] = {}
-        for name, segment in signals.segments.items():
-            segment_signals[name] = _segment_to_signal_batch(segment, mask_key=mask_key)
-            old_by_segment[name] = segment.old_log_prob
-        primary = signals.primary
-        aux: dict[str, Any] = {
-            "segments": segment_signals,
-            "old_log_probs": old_by_segment,
-            "segment_order": tuple(signals.segments),
-            "primary_segment": primary.name,
-        }
-        aux.update(primary.aux)
-        if primary.mask is not None:
-            aux[mask_key] = primary.mask
-        return SignalBatch(
-            log_prob=primary.log_prob,
-            ref_log_prob=primary.ref_log_prob,
-            entropy=primary.entropy,
-            dist_family=f"multisegment_{primary.distribution}",
-            aux=aux,
-        )
-    return _segment_to_signal_batch(signals.primary, mask_key=mask_key)
-
-
-def old_log_probs_from_trajectory_signals(signals: TrajectorySignalBatch) -> Any:
-    """Return the legacy old_log_probs argument for an algorithm call."""
-
-    if len(signals.segments) == 1:
-        return signals.primary.old_log_prob
-    return {name: segment.old_log_prob for name, segment in signals.segments.items()}
-
-
-def _multi_segment_to_trajectory(
-    signals: SignalBatch,
-    *,
-    trajectory: TrajectoryBatch | None,
-    training_view: TrainingView | None,
-    group_ids: Any | None,
-    context: dict[str, Any] | None,
-    primary_segment: str | None,
-    mask_key: str,
-) -> TrajectorySignalBatch:
-    raw_segments = (signals.aux or {})["segments"]
-    raw_old = (signals.aux or {}).get("old_log_probs") or {}
-    out: dict[str, SegmentSignal] = {}
-
-    for name, segment_signal in raw_segments.items():
-        if not isinstance(segment_signal, SignalBatch):
-            raise TypeError(f"segment signal {name!r} must be a SignalBatch")
-        segment = trajectory.segments.get(name) if trajectory is not None else None
-        unit = _loss_unit(training_view, name)
-        old_log_prob = raw_old.get(name)
-        if old_log_prob is None and segment is not None:
-            old_log_prob = _role_value(segment, "old_log_prob")
-        if old_log_prob is None:
-            raise RuntimeError(f"old log-prob is required for segment {name!r}")
-        mask = _mask_from_signal_or_trajectory(segment_signal, segment, mask_key=mask_key)
-        _validate_signal_shapes(
-            log_prob=segment_signal.log_prob,
-            old_log_prob=old_log_prob,
-            mask=mask,
-            segment=name,
-        )
-        axis = unit.axis if unit is not None else _axis_from_segment_or_signal(segment, old_log_prob)
-        out[name] = SegmentSignal(
-            name=name,
-            segment=name,
-            axis=axis,
-            axes=_axes_from_value(old_log_prob, axis=axis),
-            distribution=segment.distribution if segment is not None else segment_signal.dist_family,
-            log_prob=segment_signal.log_prob,
-            old_log_prob=old_log_prob,
-            mask=mask,
-            ref_log_prob=segment_signal.ref_log_prob,
-            entropy=segment_signal.entropy,
-            prev_sample_mean=segment_signal.prev_sample_mean,
-            ref_prev_sample_mean=segment_signal.ref_prev_sample_mean,
-            std_dev_t=segment_signal.std_dev_t,
-            dt=segment_signal.dt,
-            aux=dict(segment_signal.aux),
-        )
-
-    primary = (
-        primary_segment
-        or (signals.aux or {}).get("primary_segment")
-        or (training_view.primary_segment if training_view is not None else None)
-        or next(iter(out))
-    )
-    return TrajectorySignalBatch(
-        segments=out,
-        group_ids=group_ids if group_ids is not None else _group_ids_from_trajectory(trajectory),
-        context=context if context is not None else _context_from_trajectory(trajectory),
-        primary_segment=primary,
-    )
-
-
-def _segment_to_signal_batch(segment: SegmentSignal, *, mask_key: str) -> SignalBatch:
-    aux = dict(segment.aux)
-    if segment.mask is not None:
-        aux.setdefault(mask_key, segment.mask)
-    return SignalBatch(
-        log_prob=segment.log_prob,
-        ref_log_prob=segment.ref_log_prob,
-        entropy=segment.entropy,
-        prev_sample_mean=segment.prev_sample_mean,
-        ref_prev_sample_mean=segment.ref_prev_sample_mean,
-        std_dev_t=segment.std_dev_t,
-        dt=segment.dt,
-        dist_family=segment.distribution,
+        ref_log_prob=ref_log_prob,
+        entropy=entropy,
+        prev_sample_mean=prev_sample_mean,
+        ref_prev_sample_mean=ref_prev_sample_mean,
+        std_dev_t=std_dev_t,
+        dt=dt,
+        axis=axis,
         aux=aux,
+        mask_key=mask_key,
+    )
+    trajectory = getattr(batch, "trajectory", None)
+    return TrajectorySignalBatch(
+        segments={segment.name: segment},
+        group_ids=_group_ids_from_batch(batch, trajectory),
+        context=_context_from_batch(batch, trajectory),
+        primary_segment=segment.name,
     )
 
 
@@ -278,22 +185,61 @@ def _role_value(segment: Any, role: str) -> Any:
     return matches[0].value
 
 
-def _mask_from_signal_or_trajectory(
-    signals: SignalBatch,
+def _old_log_prob_from_trajectory(
     segment: Any | None,
     *,
+    log_prob: Any,
+    timestep_idx: int | None,
+) -> Any:
+    if segment is None:
+        raise RuntimeError(
+            "trajectory-native evaluator signals require batch.trajectory with "
+            "an old_log_prob tensor",
+        )
+    value = _role_value(segment, "old_log_prob")
+    return _select_loss_value_if_needed(value, log_prob, timestep_idx=timestep_idx)
+
+
+def _mask_from_trajectory(
+    segment: Any | None,
+    *,
+    log_prob: Any,
+    timestep_idx: int | None,
     mask_key: str,
 ) -> Any:
-    if signals.aux:
-        if mask_key in signals.aux:
-            return signals.aux[mask_key]
-        if "mask" in signals.aux:
-            return signals.aux["mask"]
-    if segment is not None:
-        mask = _role_value(segment, "mask")
-        if _same_shape(mask, signals.log_prob):
-            return mask
-    return torch.ones_like(signals.log_prob)
+    if segment is None:
+        return torch.ones_like(log_prob)
+    tensor = segment.tensors.get(mask_key)
+    value = tensor.value if tensor is not None and tensor.role == "mask" else _role_value(segment, "mask")
+    value = _select_loss_value_if_needed(value, log_prob, timestep_idx=timestep_idx)
+    if _same_shape(value, log_prob):
+        return value
+    return torch.ones_like(log_prob)
+
+
+def _select_loss_value_if_needed(
+    value: Any,
+    log_prob: Any,
+    *,
+    timestep_idx: int | None,
+) -> Any:
+    if _same_shape(value, log_prob):
+        return value
+    if timestep_idx is None:
+        return value
+    value_shape = getattr(value, "shape", None)
+    log_prob_shape = getattr(log_prob, "shape", None)
+    if value_shape is None or log_prob_shape is None:
+        return value
+    if len(value_shape) == len(log_prob_shape) + 1 and int(value_shape[0]) == int(log_prob_shape[0]):
+        selected = value[:, timestep_idx]
+        if _same_shape(selected, log_prob):
+            return selected
+    if len(value_shape) == 2 and len(log_prob_shape) == 1 and int(value_shape[0]) == int(log_prob_shape[0]):
+        selected = value[:, timestep_idx]
+        if _same_shape(selected, log_prob):
+            return selected
+    return value
 
 
 def _validate_signal_shapes(
@@ -307,8 +253,8 @@ def _validate_signal_shapes(
         raise RuntimeError(
             "trajectory signal shape mismatch for segment "
             f"{segment!r}: log_prob shape={_shape(log_prob)}, "
-            f"old_log_prob shape={_shape(old_log_prob)}. Pass step-level "
-            "old_log_probs when adapting per-step legacy evaluator signals.",
+            f"old_log_prob shape={_shape(old_log_prob)}. Evaluators must pass "
+            "step-level old_log_prob for per-step signals.",
         )
     if mask is not None and not _same_shape(log_prob, mask):
         raise RuntimeError(
@@ -361,10 +307,23 @@ def _context_from_trajectory(trajectory: TrajectoryBatch | None) -> dict[str, An
     return dict(trajectory.context)
 
 
+def _group_ids_from_batch(batch: Any, trajectory: TrajectoryBatch | None) -> Any:
+    group_ids = _group_ids_from_trajectory(trajectory)
+    if group_ids is not None:
+        return group_ids
+    return getattr(batch, "group_ids", None)
+
+
+def _context_from_batch(batch: Any, trajectory: TrajectoryBatch | None) -> dict[str, Any]:
+    context = _context_from_trajectory(trajectory)
+    if context:
+        return context
+    batch_context = getattr(batch, "context", None)
+    return dict(batch_context) if isinstance(batch_context, dict) else {}
+
+
 __all__ = [
-    "evaluator_output_to_trajectory_signals",
-    "legacy_signal_batch_to_trajectory_signals",
-    "old_log_probs_from_trajectory_signals",
+    "segment_signal_from_batch",
+    "single_segment_trajectory_signals",
     "to_trajectory_signals",
-    "trajectory_signals_to_signal_batch",
 ]

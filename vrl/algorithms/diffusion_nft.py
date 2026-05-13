@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from vrl.algorithms.base import Algorithm
+from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.types import TrainStepMetrics
-from vrl.rollouts.evaluators.types import SignalBatch
 
 
 @dataclass(slots=True)
@@ -32,8 +32,9 @@ class DiffusionNFT(Algorithm):
 
     This objective does not consume evaluator log-prob signals. It trains from
     generated clean latents, prompt embeddings, sampled diffusion timesteps, and
-    video-level rewards. Calling ``compute_signal_loss`` is therefore treated as
-    a wiring error instead of silently falling back to continuous GRPO.
+    video-level rewards. The strict algorithm entrypoint is
+    ``compute_loss(AlgorithmInput)``; replay tensors are resolved from the
+    trajectory contract, not from ``RolloutBatch.extras``.
     """
 
     uses_evaluator = False
@@ -69,17 +70,24 @@ class DiffusionNFT(Algorithm):
             )
         return advantages
 
-    def compute_signal_loss(
+    def compute_loss(
         self,
-        signals: SignalBatch,
-        advantages: Any,
-        old_log_probs: Any,
+        inputs: AlgorithmInput,
     ) -> tuple[Any, TrainStepMetrics]:
-        del signals, advantages, old_log_probs
-        raise RuntimeError(
-            "DiffusionNFT does not consume evaluator log-prob signals. "
-            "Use OnlineTrainer's DiffusionNFT batch/timestep loss path with "
-            "latents_clean, prompt embeddings, timesteps, and video rewards.",
+        model = inputs.metadata.get("model")
+        batch = inputs.metadata.get("rollout_batch")
+        timestep_index = int(inputs.metadata.get("timestep_index", 0))
+        if model is None:
+            raise RuntimeError("DiffusionNFT AlgorithmInput.metadata['model'] is required")
+        if batch is None:
+            raise RuntimeError("DiffusionNFT AlgorithmInput.metadata['rollout_batch'] is required")
+        if inputs.advantages is None:
+            raise RuntimeError("AlgorithmInput.advantages is required for DiffusionNFT")
+        return self.compute_batch_timestep_loss(
+            model,
+            batch,
+            timestep_index,
+            inputs.advantages,
         )
 
     def compute_batch_timestep_loss(
@@ -93,11 +101,13 @@ class DiffusionNFT(Algorithm):
 
         import torch
 
+        from vrl.engine.trajectory import trajectory_replay_tensor_dict
+
         cfg = self.config
-        extras = batch.extras
-        x0 = _required_tensor(extras, "latents_clean")
-        prompt_embeds = _required_tensor(extras, "prompt_embeds")
-        timesteps = _required_tensor(extras, "timesteps")
+        replay_tensors = trajectory_replay_tensor_dict(batch, "denoise")
+        x0 = _required_replay_tensor(replay_tensors, "latents_clean")
+        prompt_embeds = _required_replay_tensor(replay_tensors, "prompt_embeds")
+        timesteps = _required_replay_tensor(replay_tensors, "timesteps")
         if timesteps.ndim == 1:
             t_raw = timesteps
         else:
@@ -134,7 +144,7 @@ class DiffusionNFT(Algorithm):
 
         t = _normalize_timesteps(t_raw, device=x0.device, dtype=x0.dtype)
         t_expanded = t.view(-1, *([1] * (x0.ndim - 1)))
-        noise = extras.get("diffusion_nft_noise")
+        noise = replay_tensors.get("diffusion_nft_noise")
         if noise is None:
             noise = torch.randn_like(x0.float())
         else:
@@ -144,8 +154,8 @@ class DiffusionNFT(Algorithm):
         transformer_inputs = prepare(
             latents=xt.to(x0.dtype),
             prompt_embeds=prompt_embeds,
-            prompt_attention_mask=extras.get("prompt_attention_mask"),
-            pooled_prompt_embeds=extras.get("pooled_prompt_embeds"),
+            prompt_attention_mask=replay_tensors.get("prompt_attention_mask"),
+            pooled_prompt_embeds=replay_tensors.get("pooled_prompt_embeds"),
             timestep=t_raw,
             num_frames=int(batch.context.get("num_frames", _infer_num_frames(x0))),
             height=int(batch.context.get("height", 0)),
@@ -229,13 +239,13 @@ class DiffusionNFT(Algorithm):
         sync(decay=float(self.config.weight_copy_decay))
 
 
-def _required_tensor(extras: dict[str, Any], key: str) -> Any:
+def _required_replay_tensor(replay_tensors: dict[str, Any], key: str) -> Any:
     import torch
 
-    value = extras.get(key)
+    value = replay_tensors.get(key)
     if not isinstance(value, torch.Tensor):
         raise RuntimeError(
-            f"DiffusionNFT requires batch.extras[{key!r}] to be a tensor; "
+            f"DiffusionNFT requires trajectory replay tensor {key!r}; "
             f"got {type(value).__name__}",
         )
     return value

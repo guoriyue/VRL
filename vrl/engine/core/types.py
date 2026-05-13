@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from vrl.engine.core.capabilities import FamilyCapability
-    from vrl.engine.core.planner import EnginePlan
+    from vrl.engine.execution.planner import EnginePlan
     from vrl.engine.trajectory import TrajectoryBatch
 
 
@@ -131,46 +131,6 @@ class WorkloadSignature:
             capability_key=capability.batch_signature(),
         )
 
-
-@dataclass(slots=True)
-class RolloutDebugTensors:
-    """Optional debug tensors collected during rollout generation."""
-
-    rollout_variance_noises: Any | None = None
-    rollout_prev_sample_means: Any | None = None
-    rollout_noise_std_devs: Any | None = None
-    rollout_model_outputs: Any | None = None
-
-
-@dataclass(slots=True)
-class RolloutDenoisingEnv:
-    """Replay context needed to re-evaluate diffusion rollout logprobs."""
-
-    image_kwargs: dict[str, Any] | None = None
-    pos_cond_kwargs: dict[str, Any] | None = None
-    neg_cond_kwargs: dict[str, Any] | None = None
-    guidance: Any | None = None
-    extra: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(slots=True)
-class RolloutDitTrajectory:
-    """Diffusion trajectory data produced by a DiT rollout."""
-
-    latents: Any | None = None
-    timesteps: Any | None = None
-
-
-@dataclass(slots=True)
-class RolloutTrajectoryData:
-    """SGLang-style post-training rollout trajectory payload."""
-
-    rollout_log_probs: Any | None = None
-    rollout_debug_tensors: RolloutDebugTensors | None = None
-    denoising_env: RolloutDenoisingEnv | None = None
-    dit_trajectory: RolloutDitTrajectory | None = None
-
-
 @dataclass(slots=True)
 class OutputBatch:
     """Engine runtime output batch.
@@ -185,10 +145,6 @@ class OutputBatch:
     prompts: list[str]
     sample_specs: list[GenerationSampleSpec]
     output: Any
-    trajectory_timesteps: Any | None = None
-    trajectory_latents: Any | None = None
-    rollout_trajectory_data: RolloutTrajectoryData | None = None
-    trajectory_decoded: list[Any] | None = None
     trajectory: TrajectoryBatch | None = None
     engine_plan: EnginePlan | None = None
     extra: dict[str, Any] = field(default_factory=dict)

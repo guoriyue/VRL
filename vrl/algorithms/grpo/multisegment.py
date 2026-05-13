@@ -8,8 +8,9 @@ from typing import Any
 import torch
 
 from vrl.algorithms.grpo.token import TokenGRPO, TokenGRPOConfig
+from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.types import TrainStepMetrics
-from vrl.rollouts.evaluators.types import SignalBatch
+from vrl.rollouts.evaluators.types import TrajectorySignalBatch
 
 
 @dataclass(slots=True)
@@ -41,16 +42,13 @@ class MultiSegmentTokenGRPO(TokenGRPO):
         self.config: MultiSegmentTokenGRPOConfig = cfg
         self.last_segment_metrics: dict[str, TrainStepMetrics] = {}
 
-    def compute_signal_loss(
+    def compute_loss(
         self,
-        signals: SignalBatch,
-        advantages: Any,
-        old_log_probs: Any,
+        inputs: AlgorithmInput,
     ) -> tuple[Any, TrainStepMetrics]:
-        segments = (signals.aux or {}).get("segments")
-        if not isinstance(segments, dict):
-            return super().compute_signal_loss(signals, advantages, old_log_probs)
-        old_by_segment = self._old_log_probs_by_segment(signals, old_log_probs)
+        if inputs.signals is None:
+            raise RuntimeError("AlgorithmInput.signals is required for MultiSegmentTokenGRPO")
+        signals = inputs.signals
 
         total_loss: torch.Tensor | None = None
         metric_values: dict[str, list[float]] = {
@@ -63,21 +61,33 @@ class MultiSegmentTokenGRPO(TokenGRPO):
         total_weight = 0.0
         self.last_segment_metrics = {}
         train_segments = dict(self.config.train_segments or {})
-        for name, weight_raw in self.config.segment_weights.items():
+        weights = dict(self.config.segment_weights or {})
+        for name in _ordered_segment_names(inputs, weights):
             if not bool(train_segments.get(name, True)):
                 continue
-            weight = float(weight_raw)
+            weight = float(weights.get(name, 1.0))
             if weight <= 0:
                 continue
-            segment_signal = segments.get(name)
-            segment_old = old_by_segment.get(name)
-            if segment_signal is None or segment_old is None:
+            segment_signal = signals.segments.get(name)
+            if segment_signal is None:
                 raise RuntimeError(f"missing multi-segment GRPO segment: {name}")
-            segment_advantages = _segment_advantages(advantages, name)
-            loss, metrics = super().compute_signal_loss(
-                segment_signal,
-                segment_advantages,
-                segment_old,
+            segment_advantages = _segment_advantages(inputs.advantages, name)
+            loss, metrics = super().compute_loss(
+                AlgorithmInput(
+                    trajectory=inputs.trajectory,
+                    training_view=inputs.training_view,
+                    signals=TrajectorySignalBatch(
+                        segments={name: segment_signal},
+                        group_ids=signals.group_ids,
+                        context=signals.context,
+                        primary_segment=name,
+                    ),
+                    rewards=inputs.rewards,
+                    group_ids=inputs.group_ids,
+                    advantages=segment_advantages,
+                    old_log_probs=inputs.old_log_probs,
+                    metadata=inputs.metadata,
+                ),
             )
             self.last_segment_metrics[name] = metrics
             weighted = loss * weight
@@ -90,7 +100,7 @@ class MultiSegmentTokenGRPO(TokenGRPO):
             metric_values["approx_kl"].append(metrics.approx_kl * weight)
 
         if total_loss is None or total_weight <= 0:
-            zero = signals.log_prob.sum() * 0.0
+            zero = signals.primary.log_prob.sum() * 0.0
             return zero, TrainStepMetrics()
 
         total_loss = total_loss / total_weight
@@ -109,17 +119,22 @@ class MultiSegmentTokenGRPO(TokenGRPO):
             approx_kl=_weighted_avg("approx_kl"),
         )
 
-    @staticmethod
-    def _old_log_probs_by_segment(
-        signals: SignalBatch,
-        old_log_probs: Any,
-    ) -> dict[str, torch.Tensor]:
-        aux_old = (signals.aux or {}).get("old_log_probs")
-        if isinstance(aux_old, dict):
-            return aux_old
-        if isinstance(old_log_probs, dict):
-            return old_log_probs
-        return {}
+
+def _ordered_segment_names(inputs: AlgorithmInput, weights: dict[str, float]) -> list[str]:
+    if inputs.training_view is not None and inputs.training_view.loss_units:
+        out: list[str] = []
+        seen: set[str] = set()
+        for unit in inputs.training_view.loss_units:
+            if unit.segment not in seen:
+                out.append(unit.segment)
+                seen.add(unit.segment)
+        return out
+
+    if weights:
+        return list(weights)
+    if inputs.signals is None:
+        return []
+    return list(inputs.signals.segments)
 
 
 def _segment_advantages(advantages: Any, name: str) -> Any:

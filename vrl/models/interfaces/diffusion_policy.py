@@ -14,11 +14,11 @@ Inference primitives:
     forward_step(state, step_idx) -> dict[str, Tensor] (one fwd + CFG; no scheduler step)
     decode_latents(latents)                  -> Tensor
 
-Boundary helpers — make ``SamplingState`` opaque to the collector:
+Boundary helpers — make ``SamplingState`` opaque to the engine:
 
-    export_batch_context(state)            -> dict   (scalar/shared metadata for RolloutBatch.context)
-    export_training_extras(state)            -> dict   (per-sample tensors for RolloutBatch.extras)
-    restore_eval_state(extras, context, latents, step_idx) -> SamplingState  (rebuild for the eval forward path)
+    export_batch_context(state)            -> dict   (scalar/shared metadata for TrajectoryBatch.context)
+    export_replay_tensors(state)           -> dict   (per-sample tensors for TrajectorySegment replay_inputs)
+    restore_eval_state(replay_tensors, context, latents, step_idx) -> SamplingState  (rebuild eval path)
 
 Backend ownership (called by the family builder, not the collector):
 
@@ -150,7 +150,7 @@ class DiffusionPolicy(nn.Module, ABC):
 
     def export_batch_context(self, state: Any) -> dict[str, Any]:
         """Project SamplingState into the read-only dict packed into
-        ``RolloutBatch.context``.
+        ``TrajectoryBatch.context``.
 
         Implementations return scalar / shared metadata — guidance_scale,
         do_cfg flag, model_family, plus family-specific shared tensors
@@ -158,20 +158,18 @@ class DiffusionPolicy(nn.Module, ABC):
         """
         raise NotImplementedError
 
-    def export_training_extras(self, state: Any) -> dict[str, Any]:
-        """Project SamplingState into the per-sample tensor dict packed
-        into ``RolloutBatch.extras``.
+    def export_replay_tensors(self, state: Any) -> dict[str, Any]:
+        """Project SamplingState into per-sample trajectory replay tensors.
 
         Implementations return prompt embeds and any family-specific
         per-sample tensors (e.g. cosmos init_latents). The collector
-        merges this dict with its own per-step tensors (log_probs,
-        timesteps, kl) when assembling the batch.
+        records these values under ``TrajectorySegment.replay_inputs``.
         """
         raise NotImplementedError
 
     def restore_eval_state(
         self,
-        batch_extras: dict[str, Any],
+        replay_tensors: dict[str, Any],
         batch_context: dict[str, Any],
         latents: Any,
         step_idx: int,
@@ -202,8 +200,10 @@ class DiffusionPolicy(nn.Module, ABC):
 
         Wan official has no eval path today (``restore_eval_state`` raises).
         """
+        from vrl.engine.trajectory import trajectory_replay_tensor_dict
+
         state = self.restore_eval_state(
-            batch.extras,
+            trajectory_replay_tensor_dict(batch, "denoise"),
             batch.context,
             batch.observations[:, timestep_idx],
             timestep_idx,

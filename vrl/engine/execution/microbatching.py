@@ -30,6 +30,12 @@ class MicroBatchPlan:
     def sample_end(self) -> int:
         return self.sample_start + self.sample_count
 
+    @property
+    def chunk_key(self) -> str:
+        """Stable key used to join chunk assignments with engine plan units."""
+
+        return f"prompt:{self.prompt_index}:samples:{self.sample_start}:{self.sample_end}"
+
     def split(self) -> tuple[MicroBatchPlan, MicroBatchPlan]:
         """Split this micro-batch into two ordered smaller chunks."""
 

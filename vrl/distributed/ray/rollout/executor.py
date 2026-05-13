@@ -8,12 +8,16 @@ from typing import Any
 
 from vrl.distributed.ray.dependencies import require_ray
 from vrl.distributed.ray.rollout.planner import DistributedExecutionPlanner
-from vrl.distributed.ray.rollout.types import RayChunkResult, RayWorkerHandle
-from vrl.engine.core.planner import attach_engine_plan
+from vrl.distributed.ray.rollout.types import (
+    RayChunkExecutionEnvelope,
+    RayChunkResult,
+    RayWorkerHandle,
+)
 from vrl.engine.core.protocols import PipelineChunkResult
 from vrl.engine.core.types import GenerationRequest, OutputBatch
-from vrl.engine.core.worker import GenerationIdFactory
-from vrl.engine.gather import ChunkGatherer, gather_pipeline_chunks
+from vrl.engine.execution.gather import ChunkGatherer, gather_pipeline_chunks
+from vrl.engine.execution.planner import attach_engine_plan
+from vrl.engine.execution.worker import GenerationIdFactory
 
 
 class DistributedRolloutExecutor:
@@ -51,7 +55,7 @@ class DistributedRolloutExecutor:
         assignments = list(rollout_plan.assignments)
         engine_plan = rollout_plan.engine_plan
         worker_by_id = {worker.worker_id: worker for worker in self.workers}
-        remote_jobs: list[tuple[int, Any, RayWorkerHandle, Any, str | None]] = []
+        remote_jobs: list[tuple[int, Any, RayWorkerHandle, RayChunkExecutionEnvelope]] = []
         result_pairs: list[tuple[int, RayChunkResult]] = []
 
         for job_index, assignment in enumerate(assignments):
@@ -59,22 +63,19 @@ class DistributedRolloutExecutor:
             actor = worker.actor
             if actor is None:
                 raise RuntimeError(f"worker {worker.worker_id!r} has no actor")
+            if assignment.envelope is None:
+                raise RuntimeError("distributed rollout assignment is missing execution envelope")
             execute_chunk = actor.execute_chunk
             remote = getattr(execute_chunk, "remote", None)
-            profiler_label = (
-                None
-                if assignment.execution_unit is None
-                else assignment.execution_unit.profiler_name
-            )
             if callable(remote):
-                remote_jobs.append((job_index, remote, worker, assignment.chunk, profiler_label))
+                remote_jobs.append((job_index, remote, worker, assignment.envelope))
             else:
                 result_pairs.append(
-                    (job_index, execute_chunk(request, assignment.chunk, profiler_label))
+                    (job_index, execute_chunk(assignment.envelope))
                 )
 
         if remote_jobs:
-            result_pairs.extend(await self._run_remote_jobs(request, remote_jobs))
+            result_pairs.extend(await self._run_remote_jobs(remote_jobs))
 
         results = [result for _, result in sorted(result_pairs, key=lambda pair: pair[0])]
 
@@ -117,6 +118,7 @@ class DistributedRolloutExecutor:
             chunk_outputs,
         )
         attach_engine_plan(output, engine_plan)
+        output.extra["ray_chunk_metrics"] = [dict(result.metrics) for result in results]
         runtime_debug = [
             result.metrics for result in results if result.metrics.get("runtime_debug")
         ]
@@ -126,12 +128,11 @@ class DistributedRolloutExecutor:
 
     async def _run_remote_jobs(
         self,
-        request: GenerationRequest,
-        jobs: list[tuple[int, Any, RayWorkerHandle, Any, str | None]],
+        jobs: list[tuple[int, Any, RayWorkerHandle, RayChunkExecutionEnvelope]],
     ) -> list[tuple[int, RayChunkResult]]:
         ray = require_ray()
         pending = deque(jobs)
-        inflight_by_worker = {worker.worker_id: 0 for _, _, worker, _, _ in jobs}
+        inflight_by_worker = {worker.worker_id: 0 for _, _, worker, _ in jobs}
         ref_to_job: dict[Any, tuple[int, str]] = {}
         result_pairs: list[tuple[int, RayChunkResult]] = []
 
@@ -140,11 +141,11 @@ class DistributedRolloutExecutor:
             while pending and made_progress:
                 made_progress = False
                 for _ in range(len(pending)):
-                    job_index, remote, worker, chunk, profiler_label = pending.popleft()
+                    job_index, remote, worker, envelope = pending.popleft()
                     if inflight_by_worker[worker.worker_id] >= self.max_inflight_chunks_per_worker:
-                        pending.append((job_index, remote, worker, chunk, profiler_label))
+                        pending.append((job_index, remote, worker, envelope))
                         continue
-                    ref = remote(request, chunk, profiler_label)
+                    ref = remote(envelope)
                     ref_to_job[ref] = (job_index, worker.worker_id)
                     inflight_by_worker[worker.worker_id] += 1
                     made_progress = True

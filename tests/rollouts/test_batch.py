@@ -48,7 +48,7 @@ class TestStackBatches:
             dones=torch.tensor([True]),
             group_ids=torch.tensor([0]),
             extras={
-                "log_probs": torch.tensor([[0.1, 0.2]]),
+                "debug_tensor": torch.tensor([[0.1, 0.2]]),
                 "scheduler": "shared_object",
             },
         )
@@ -59,12 +59,12 @@ class TestStackBatches:
             dones=torch.tensor([True]),
             group_ids=torch.tensor([0]),
             extras={
-                "log_probs": torch.tensor([[0.3, 0.4]]),
+                "debug_tensor": torch.tensor([[0.3, 0.4]]),
                 "scheduler": "shared_object",
             },
         )
         combined = stack_batches([b1, b2])
-        assert combined.extras["log_probs"].shape == (2, 2)
+        assert combined.extras["debug_tensor"].shape == (2, 2)
         assert combined.extras["scheduler"] == "shared_object"
 
     def test_single_batch_passthrough(self) -> None:
@@ -137,7 +137,7 @@ class TestStackBatches:
             dones=torch.tensor([True]),
             group_ids=torch.tensor([0]),
             extras={
-                "log_probs": torch.tensor([[0.1, 0.2]]),
+                "debug_tensor": torch.tensor([[0.1, 0.2]]),
                 "label": "first",
             },
             context={"cfg": True},
@@ -149,14 +149,14 @@ class TestStackBatches:
             dones=torch.tensor([True]),
             group_ids=torch.tensor([1]),
             extras={
-                "log_probs": torch.tensor([[0.3, 0.4]]),
+                "debug_tensor": torch.tensor([[0.3, 0.4]]),
                 "label": "second",
             },
             context={"cfg": True},
         )
         combined = stack_batches([b1, b2])
         # Tensor extras stacked
-        assert combined.extras["log_probs"].shape == (2, 2)
+        assert combined.extras["debug_tensor"].shape == (2, 2)
         # Non-tensor extras kept from first
         assert combined.extras["label"] == "first"
         # Context preserved

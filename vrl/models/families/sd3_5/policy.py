@@ -35,7 +35,7 @@ from typing import Any
 
 import torch
 
-from vrl.models.diffusion import DiffusionPolicy, VideoGenerationRequest
+from vrl.models.interfaces.diffusion_policy import DiffusionPolicy, VideoGenerationRequest
 
 
 @dataclass
@@ -335,15 +335,15 @@ class SD3_5Policy(DiffusionPolicy):
     # -- collector boundary --------------------------------------------
 
     def export_batch_context(self, state: SD3SamplingState) -> dict[str, Any]:
-        """Project SD3 sampling state into RolloutBatch.context."""
+        """Project SD3 sampling state into trajectory context."""
         return {
             "guidance_scale": state.guidance_scale,
             "cfg": state.do_cfg,
             "model_family": self.family,
         }
 
-    def export_training_extras(self, state: SD3SamplingState) -> dict[str, Any]:
-        """Project SD3 sampling state into RolloutBatch.extras."""
+    def export_replay_tensors(self, state: SD3SamplingState) -> dict[str, Any]:
+        """Project SD3 sampling state into trajectory replay tensors."""
         return {
             "prompt_embeds": state.prompt_embeds,
             "pooled_prompt_embeds": state.pooled_prompt_embeds,
@@ -353,7 +353,7 @@ class SD3_5Policy(DiffusionPolicy):
 
     def restore_eval_state(
         self,
-        batch_extras: dict[str, Any],
+        replay_tensors: dict[str, Any],
         batch_context: dict[str, Any],
         latents: Any,
         step_idx: int,
@@ -363,17 +363,17 @@ class SD3_5Policy(DiffusionPolicy):
         Packs timesteps as ``[1, B]`` so ``state.timesteps[0]`` is ``[B]`` —
         matches the eval-path convention documented in the class docstring.
         """
-        ts = batch_extras["timesteps"]
+        ts = replay_tensors["timesteps"]
         t = ts[:, step_idx] if ts.ndim > 1 else ts  # [B]
         timesteps = t.unsqueeze(0) if t.ndim == 1 else t  # pack as [1, B]
         return SD3SamplingState(
             latents=latents,
             timesteps=timesteps,
             scheduler=None,  # not needed for forward_step (no scheduler.step here)
-            prompt_embeds=batch_extras["prompt_embeds"],
-            pooled_prompt_embeds=batch_extras["pooled_prompt_embeds"],
-            negative_prompt_embeds=batch_extras.get("negative_prompt_embeds"),
-            negative_pooled_prompt_embeds=batch_extras.get(
+            prompt_embeds=replay_tensors["prompt_embeds"],
+            pooled_prompt_embeds=replay_tensors["pooled_prompt_embeds"],
+            negative_prompt_embeds=replay_tensors.get("negative_prompt_embeds"),
+            negative_pooled_prompt_embeds=replay_tensors.get(
                 "negative_pooled_prompt_embeds",
             ),
             guidance_scale=batch_context["guidance_scale"],

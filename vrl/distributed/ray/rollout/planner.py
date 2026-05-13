@@ -5,13 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from vrl.distributed.ray.rollout.types import RayWorkerHandle
-from vrl.engine.core.capabilities import family_capability_from_value, generic_family_capability
-from vrl.engine.core.planner import EnginePlan, ExecutionUnit, build_engine_plan
+from vrl.distributed.ray.rollout.types import RayChunkExecutionEnvelope, RayWorkerHandle
+from vrl.engine.core.capabilities import family_capability_from_value
 from vrl.engine.core.types import GenerationRequest, GenerationSampleSpec
-from vrl.engine.microbatching import (
+from vrl.engine.execution.microbatching import (
     MicroBatchPlan,
 )
+from vrl.engine.execution.planner import EnginePlan, ExecutionUnit, build_engine_plan
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +23,7 @@ class DeviceAssignment:
     gpu_ids: tuple[int, ...]
     chunk: MicroBatchPlan
     execution_unit: ExecutionUnit | None = None
+    envelope: RayChunkExecutionEnvelope | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,10 +66,21 @@ class DistributedExecutionPlanner:
             capability=capability,
             max_samples_per_microbatch=max(1, max_samples),
         )
-        chunk_unit = engine_plan.primary_chunk_unit
+        plan_summary = engine_plan.summary()
+        capability_summary = engine_plan.capability.to_dict()
         assignments: list[DeviceAssignment] = []
         for idx, chunk in enumerate(engine_plan.micro_batches):
             worker = workers[idx % len(workers)]
+            chunk_unit = engine_plan.chunk_unit_for(chunk)
+            envelope = RayChunkExecutionEnvelope(
+                request=request,
+                chunk=chunk,
+                plan_id=engine_plan.request_id,
+                execution_unit=chunk_unit,
+                profiler_label=chunk_unit.profiler_name,
+                capability_summary=capability_summary,
+                plan_summary=plan_summary,
+            )
             assignments.append(
                 DeviceAssignment(
                     worker_id=worker.worker_id,
@@ -76,6 +88,7 @@ class DistributedExecutionPlanner:
                     gpu_ids=worker.gpu_ids,
                     chunk=chunk,
                     execution_unit=chunk_unit,
+                    envelope=envelope,
                 )
             )
         return DistributedRolloutPlan(
@@ -89,7 +102,10 @@ def _capability_from_request(request: GenerationRequest) -> object:
     capability = family_capability_from_value(raw)
     if capability is not None:
         return capability
-    return generic_family_capability(request.family, request.task)
+    raise ValueError(
+        "GenerationRequest.metadata['family_capability'] is required for "
+        "distributed rollout planning",
+    )
 
 
 __all__ = [

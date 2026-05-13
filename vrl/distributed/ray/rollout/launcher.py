@@ -18,7 +18,7 @@ from vrl.distributed.ray.rollout.weight_sync import RayRolloutWeightSync
 from vrl.distributed.ray.rollout.worker import RayRolloutWorker
 from vrl.distributed.resources import format_distributed_resource_plan
 from vrl.engine.core.runtime_spec import GenerationRuntimeSpec
-from vrl.engine.gather import ChunkGatherer, require_chunk_gatherer
+from vrl.engine.execution.gather import ChunkGatherer, require_chunk_gatherer
 from vrl.rollouts.runtime.config import RolloutBackendConfig
 
 logger = logging.getLogger(__name__)

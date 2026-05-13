@@ -17,7 +17,11 @@ from vrl.distributed.ray.rollout.planner import (
     DistributedRolloutPlan,
 )
 from vrl.distributed.ray.rollout.runtime import RayDistributedRuntime
-from vrl.distributed.ray.rollout.types import RayChunkResult, RayWorkerHandle
+from vrl.distributed.ray.rollout.types import (
+    RayChunkExecutionEnvelope,
+    RayChunkResult,
+    RayWorkerHandle,
+)
 from vrl.distributed.ray.rollout.weight_sync import RayRolloutWeightSync, RolloutWeightSync
 from vrl.distributed.ray.rollout.worker import RayRolloutWorker
 from vrl.distributed.ray.train.actor import RayTrainActor
@@ -28,6 +32,7 @@ __all__ = [
     "DistributedExecutionPlanner",
     "DistributedRolloutExecutor",
     "DistributedRolloutPlan",
+    "RayChunkExecutionEnvelope",
     "RayChunkResult",
     "RayDistributedRuntime",
     "RayPlacement",

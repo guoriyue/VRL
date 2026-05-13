@@ -475,8 +475,8 @@ python -m pytest -q tests/config/test_load_all_experiments.py
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/trainers/weight_sync.py`
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/trainers/fsdp.py`
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/trainers/data.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/models/runtime.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/models/diffusion.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/models/interfaces/runtime.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/models/interfaces/diffusion_policy.py`
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/models/families/sd3_5/policy.py`
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/models/families/wan_2_1/diffusers_policy.py`
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/models/families/cosmos/policy.py`

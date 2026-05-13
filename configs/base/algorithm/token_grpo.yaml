@@ -5,5 +5,5 @@ defaults:
 
 algorithm:
   kind: token_grpo
-  mask_key: token_mask          # SignalBatch.aux key for [B, L] float mask
+  mask_key: token_mask          # Trajectory segment mask tensor for [B, L] token scoring
   kl_estimator: k3              # k1 = logp-logp_ref signed; k3 = Schulman 2020 unbiased

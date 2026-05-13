@@ -45,15 +45,15 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from vrl.models.ar import (
+from vrl.models.families.nextstep_1.flow_step import (
+    flow_logprob_at,
+    flow_sample_with_logprob,
+)
+from vrl.models.interfaces.ar_policy import (
     ARStepResult,
     AutoregressivePolicy,
     ar_concat_rows,
     ar_split_rows,
-)
-from vrl.models.families.nextstep_1.flow_step import (
-    flow_logprob_at,
-    flow_sample_with_logprob,
 )
 
 logger = logging.getLogger(__name__)
@@ -575,11 +575,9 @@ class NextStep1Policy(nn.Module, AutoregressivePolicy):
     ) -> dict[str, Any]:
         """Re-run the AR loop and return per-token log-probs.
 
-        Train-time replay for ``ContinuousTokenLogProbEvaluator``: reads
-        ``observations`` (text prompt ids), ``extras["prompt_attention_mask"]``,
-        the optional ``extras["uncond_input_ids"]``/``extras["uncond_attention_mask"]``,
-        ``actions`` (sampled continuous tokens), and ``extras["saved_noise"]``;
-        returns log-probs of the sampled tokens under the current policy.
+        Train-time replay for ``ContinuousTokenLogProbEvaluator``: reads prompt
+        ids, CFG inputs, sampled continuous tokens, and saved noise from
+        ``batch.trajectory``; returns log-probs under the current policy.
 
         Differs from Janus's ``replay_forward`` (which returns logits) — for
         continuous tokens we go straight to log-probs since there is no
@@ -591,13 +589,15 @@ class NextStep1Policy(nn.Module, AutoregressivePolicy):
           ``{"log_probs": Tensor[B, L_img], "tokens": Tensor[B, L_img, D_token]}``.
         """
         del timestep_idx
-        obs = batch.observations
-        prompt_ids = obs.squeeze(1) if obs.dim() == 3 else obs
-        prompt_mask = batch.extras["prompt_attention_mask"]
-        uncond_ids = batch.extras.get("uncond_input_ids")
-        uncond_mask = batch.extras.get("uncond_attention_mask")
-        tokens = batch.actions
-        saved_noise = batch.extras["saved_noise"]
+        from vrl.engine.trajectory import trajectory_replay_tensor_dict, trajectory_role_value
+
+        replay = trajectory_replay_tensor_dict(batch, "image_tokens")
+        prompt_ids = replay["prompt_input_ids"]
+        prompt_mask = replay["prompt_attention_mask"]
+        uncond_ids = replay.get("uncond_input_ids")
+        uncond_mask = replay.get("uncond_attention_mask")
+        tokens = trajectory_role_value(batch, "image_tokens", "action")
+        saved_noise = replay["saved_noise"]
 
         embed = self.language_model.get_input_embeddings()
         prompt_embeds = embed(prompt_ids)

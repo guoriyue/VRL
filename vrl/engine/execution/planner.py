@@ -10,7 +10,6 @@ from vrl.engine.core.capabilities import (
     AxisCapability,
     FamilyCapability,
     family_capability_from_value,
-    generic_family_capability,
 )
 from vrl.engine.core.types import (
     GenerationMetrics,
@@ -19,7 +18,7 @@ from vrl.engine.core.types import (
     OutputBatch,
     WorkloadSignature,
 )
-from vrl.engine.microbatching import (
+from vrl.engine.execution.microbatching import (
     MicroBatchPlan,
     plan_prompt_group_microbatches,
 )
@@ -56,9 +55,13 @@ class ExecutionUnit:
     """One logical engine execution region and profiler label."""
 
     name: str
+    unit_id: str = ""
     segment: str | None = None
     axis: str | None = None
     axis_index: int | None = None
+    prompt_index: int | None = None
+    sample_start: int | None = None
+    sample_count: int | None = None
     batch_group_key: tuple[Any, ...] = ()
     cache_read: bool = False
     cache_write: bool = False
@@ -68,10 +71,29 @@ class ExecutionUnit:
     def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("ExecutionUnit.name must be non-empty")
+        if not self.unit_id:
+            object.__setattr__(self, "unit_id", self.name)
         if not self.profiler_name:
             object.__setattr__(self, "profiler_name", f"engine.{self.name}")
         if self.axis_index is not None and self.axis_index < 0:
             raise ValueError("ExecutionUnit.axis_index must be >= 0 when set")
+        if self.prompt_index is not None and self.prompt_index < 0:
+            raise ValueError("ExecutionUnit.prompt_index must be >= 0 when set")
+        if self.sample_start is not None and self.sample_start < 0:
+            raise ValueError("ExecutionUnit.sample_start must be >= 0 when set")
+        if self.sample_count is not None and self.sample_count < 1:
+            raise ValueError("ExecutionUnit.sample_count must be >= 1 when set")
+
+    @property
+    def chunk_key(self) -> str | None:
+        if (
+            self.prompt_index is None
+            or self.sample_start is None
+            or self.sample_count is None
+        ):
+            return None
+        sample_end = self.sample_start + self.sample_count
+        return f"prompt:{self.prompt_index}:samples:{self.sample_start}:{sample_end}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,7 +114,7 @@ class EnginePlan:
 
     @property
     def profiler_labels(self) -> tuple[str, ...]:
-        return tuple(unit.profiler_name for unit in self.execution_units)
+        return tuple(dict.fromkeys(unit.profiler_name for unit in self.execution_units))
 
     @property
     def primary_chunk_unit(self) -> ExecutionUnit:
@@ -102,6 +124,21 @@ class EnginePlan:
                     return unit
         return self.execution_units[0]
 
+    @property
+    def chunk_execution_units(self) -> tuple[ExecutionUnit, ...]:
+        return tuple(unit for unit in self.execution_units if unit.name == "forward_chunk")
+
+    def chunk_unit_for(self, chunk: MicroBatchPlan) -> ExecutionUnit:
+        """Return the materialized execution unit for one micro-batch."""
+
+        for unit in self.chunk_execution_units:
+            if unit.chunk_key == chunk.chunk_key:
+                return unit
+        raise KeyError(f"no execution unit found for chunk {chunk.chunk_key!r}")
+
+    def profiler_label(self, unit_name: str) -> str:
+        return profiler_label_for_unit(self, unit_name)
+
     def summary(self) -> dict[str, Any]:
         """Return a lightweight, serializable plan summary for logs/metrics."""
 
@@ -110,6 +147,8 @@ class EnginePlan:
             "family": self.family,
             "task": self.task,
             "trajectory_kind": self.trajectory_kind,
+            "profiler_labels": list(self.profiler_labels),
+            "capability": self.capability.to_dict(),
             "axes": {
                 name: {
                     "kind": axis.kind,
@@ -122,6 +161,7 @@ class EnginePlan:
             "micro_batches": [
                 {
                     "prompt_index": chunk.prompt_index,
+                    "chunk_key": chunk.chunk_key,
                     "sample_start": chunk.sample_start,
                     "sample_count": chunk.sample_count,
                 }
@@ -129,13 +169,19 @@ class EnginePlan:
             ],
             "execution_units": [
                 {
+                    "unit_id": unit.unit_id,
                     "name": unit.name,
                     "segment": unit.segment,
                     "axis": unit.axis,
                     "axis_index": unit.axis_index,
+                    "prompt_index": unit.prompt_index,
+                    "sample_start": unit.sample_start,
+                    "sample_count": unit.sample_count,
+                    "chunk_key": unit.chunk_key,
                     "profiler_name": unit.profiler_name,
                     "cache_read": unit.cache_read,
                     "cache_write": unit.cache_write,
+                    "metadata": dict(unit.metadata),
                 }
                 for unit in self.execution_units
             ],
@@ -154,10 +200,12 @@ def build_engine_plan(
     from vrl.trainers.profiling import record_function
 
     with record_function("engine.plan"):
-        resolved_capability = family_capability_from_value(capability) or generic_family_capability(
-            request.family,
-            request.task,
-        )
+        resolved_capability = family_capability_from_value(capability)
+        if resolved_capability is None:
+            raise ValueError(
+                "build_engine_plan requires an explicit FamilyCapability; "
+                f"got None for {request.family}/{request.task}",
+            )
         sample_specs_tuple = tuple(sample_specs or ())
         chunk_size = _resolve_microbatch_size(
             request,
@@ -177,7 +225,12 @@ def build_engine_plan(
             )
             for axis in resolved_capability.expected_axes
         }
-        execution_units = _build_execution_units(resolved_capability, request, axis_plans)
+        execution_units = _build_execution_units(
+            resolved_capability,
+            request,
+            axis_plans,
+            execution_plan.micro_batches,
+        )
         return EnginePlan(
             request_id=request.request_id,
             family=request.family,
@@ -203,7 +256,7 @@ def resolve_executor_capability(
     executor: Any,
     request: GenerationRequest,
 ) -> FamilyCapability:
-    """Resolve capability from an executor with a safe legacy fallback."""
+    """Resolve the explicit planning capability declared by an executor."""
 
     method = getattr(executor, "capability", None)
     if callable(method):
@@ -212,7 +265,10 @@ def resolve_executor_capability(
         value = getattr(executor, attr_name, None)
         if value is not None:
             return _merge_runtime_caps(value, executor, request)
-    return generic_family_capability(request.family, request.task)
+    raise ValueError(
+        f"{type(executor).__name__} must declare FamilyCapability for "
+        f"{request.family}/{request.task}",
+    )
 
 
 def attach_engine_plan(output: OutputBatch, plan: EnginePlan) -> OutputBatch:
@@ -248,7 +304,10 @@ def _merge_runtime_caps(
 ) -> FamilyCapability:
     capability = family_capability_from_value(value)
     if capability is None:
-        capability = generic_family_capability(request.family, request.task)
+        raise ValueError(
+            f"{type(executor).__name__} declared an empty FamilyCapability for "
+            f"{request.family}/{request.task}",
+        )
     runtime_caps = getattr(executor, "runtime_caps", None)
     if isinstance(runtime_caps, Mapping):
         return capability.with_runtime_caps(runtime_caps)
@@ -294,24 +353,23 @@ def _build_execution_units(
     capability: FamilyCapability,
     request: GenerationRequest,
     axis_plans: dict[str, AxisPlan],
+    micro_batches: tuple[MicroBatchPlan, ...],
 ) -> tuple[ExecutionUnit, ...]:
     units = [
         ExecutionUnit(
             name="plan",
+            unit_id=f"{request.request_id}:plan",
             profiler_name="engine.plan",
             batch_group_key=(request.family, request.task, capability.trajectory_kind),
         ),
-        ExecutionUnit(
-            name="forward_chunk",
-            profiler_name="engine.forward_chunk",
-            batch_group_key=(request.family, request.task, capability.trajectory_kind),
-        ),
     ]
+    units.extend(_build_chunk_units(capability, request, micro_batches))
     for unit in capability.execution_units:
         axis_plan = axis_plans.get(unit.axis or "")
         units.append(
             ExecutionUnit(
                 name=unit.name,
+                unit_id=f"{request.request_id}:unit:{unit.name}",
                 segment=unit.segment,
                 axis=unit.axis,
                 axis_index=None,
@@ -326,6 +384,7 @@ def _build_execution_units(
             units.append(
                 ExecutionUnit(
                     name="cache_read",
+                    unit_id=f"{request.request_id}:unit:{unit.name}:cache_read",
                     segment=unit.segment,
                     axis=unit.axis,
                     profiler_name="engine.cache_read",
@@ -335,12 +394,44 @@ def _build_execution_units(
             units.append(
                 ExecutionUnit(
                     name="cache_write",
+                    unit_id=f"{request.request_id}:unit:{unit.name}:cache_write",
                     segment=unit.segment,
                     axis=unit.axis,
                     profiler_name="engine.cache_write",
                 )
             )
     return tuple(units)
+
+
+def _build_chunk_units(
+    capability: FamilyCapability,
+    request: GenerationRequest,
+    micro_batches: tuple[MicroBatchPlan, ...],
+) -> list[ExecutionUnit]:
+    units: list[ExecutionUnit] = []
+    for index, chunk in enumerate(micro_batches):
+        units.append(
+            ExecutionUnit(
+                name="forward_chunk",
+                unit_id=(
+                    f"{request.request_id}:chunk:"
+                    f"p{chunk.prompt_index}:s{chunk.sample_start}:n{chunk.sample_count}"
+                ),
+                axis="sample",
+                axis_index=chunk.sample_start,
+                prompt_index=chunk.prompt_index,
+                sample_start=chunk.sample_start,
+                sample_count=chunk.sample_count,
+                batch_group_key=(request.family, request.task, capability.trajectory_kind),
+                profiler_name="engine.forward_chunk",
+                metadata={
+                    "unit_kind": "chunk",
+                    "chunk_index": index,
+                    "chunk_key": chunk.chunk_key,
+                },
+            )
+        )
+    return units
 
 
 def _batch_group_key(

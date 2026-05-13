@@ -8,9 +8,7 @@ from typing import Any, Protocol, TypeVar
 import torch
 
 from vrl.engine.ar.spec import ARGenerationSpec
-from vrl.engine.batching import forward_batch_by_merging_prompts
 from vrl.engine.core.protocols import (
-    BatchedFamilyPipelineExecutor,
     ChunkedFamilyPipelineExecutor,
     PipelineChunkResult,
 )
@@ -19,7 +17,8 @@ from vrl.engine.core.types import (
     GenerationSampleSpec,
     OutputBatch,
 )
-from vrl.engine.microbatching import MicroBatchPlan
+from vrl.engine.execution.batching import forward_batch_by_merging_prompts
+from vrl.engine.execution.microbatching import MicroBatchPlan
 
 
 class ARChunkResult(PipelineChunkResult, Protocol):
@@ -210,7 +209,6 @@ def peak_memory_mb() -> float | None:
 
 class ARPipelineExecutorBase(
     ChunkedFamilyPipelineExecutor,
-    BatchedFamilyPipelineExecutor,
 ):
     """Base helpers for AR family executors.
 
@@ -235,15 +233,17 @@ class ARPipelineExecutorBase(
     def expand_prompts(self, request: GenerationRequest) -> list[str]:
         return expand_prompt_major_prompts(request)
 
-    def forward_batch(
+    def forward_batch_plan(
         self,
         requests: list[GenerationRequest],
         sample_specs_by_request: dict[str, list[GenerationSampleSpec]],
+        engine_plans_by_request: dict[str, Any],
     ) -> dict[str, OutputBatch]:
         return forward_batch_by_merging_prompts(
             self,
             requests,
             sample_specs_by_request,
+            engine_plans_by_request=engine_plans_by_request,
         )
 
     def validate_chunk(self, request: GenerationRequest, chunk: MicroBatchPlan) -> None:

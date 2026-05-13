@@ -320,25 +320,6 @@ def family_capability_from_value(value: Any) -> FamilyCapability | None:
     )
 
 
-def generic_family_capability(family: str, task: str) -> FamilyCapability:
-    """Fallback capability for legacy tests and un-migrated executors."""
-
-    return FamilyCapability(
-        family=family,
-        task=task,
-        trajectory_kind="unknown",
-        expected_axes=(
-            AxisCapability("sample", "sample", batchable=True, chunkable=True),
-        ),
-        execution_units=(
-            ExecutionUnitCapability("forward", profiler_name="engine.forward"),
-        ),
-        supports_batched_requests=True,
-        supports_chunked_execution=True,
-        supports_batched_forward=True,
-    )
-
-
 def diffusion_family_capability(
     family: str,
     task: str,
@@ -494,5 +475,4 @@ __all__ = [
     "ar_discrete_family_capability",
     "diffusion_family_capability",
     "family_capability_from_value",
-    "generic_family_capability",
 ]

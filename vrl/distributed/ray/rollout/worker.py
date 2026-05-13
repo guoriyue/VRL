@@ -9,17 +9,16 @@ from typing import Any
 
 from vrl.distributed.ray.dependencies import current_gpu_ids, current_node_ip
 from vrl.distributed.ray.module_loading import import_from_path
-from vrl.distributed.ray.rollout.types import RayChunkResult
+from vrl.distributed.ray.rollout.types import RayChunkExecutionEnvelope, RayChunkResult
 from vrl.engine.core.capabilities import (
     FamilyCapability,
     family_capability_from_value,
-    generic_family_capability,
 )
 from vrl.engine.core.protocols import ChunkedFamilyPipelineExecutor
 from vrl.engine.core.runtime_spec import GenerationRuntimeSpec
 from vrl.engine.core.types import GenerationRequest
-from vrl.engine.gather import require_chunked_executor
-from vrl.engine.microbatching import MicroBatchPlan
+from vrl.engine.execution.gather import require_chunked_executor
+from vrl.engine.execution.microbatching import MicroBatchPlan
 from vrl.trainers.types import TorchProfilerConfig
 
 logger = logging.getLogger(__name__)
@@ -51,6 +50,7 @@ class RayRolloutWorker:
         if self.executor is not None:
             return
         self.executor = _build_executor(self.runtime_spec)
+        self.capability = _merge_loaded_capability(self.capability, self.executor)
 
     def release_policy(self) -> None:
         """Drop loaded model state so the actor releases CUDA memory before exit."""
@@ -119,11 +119,19 @@ class RayRolloutWorker:
 
     def execute_chunk(
         self,
-        request: GenerationRequest,
-        chunk: MicroBatchPlan,
+        request_or_envelope: GenerationRequest | RayChunkExecutionEnvelope,
+        chunk: MicroBatchPlan | None = None,
         profiler_label: str | None = None,
     ) -> RayChunkResult:
         self.load_policy()
+        envelope = _normalize_execution_envelope(
+            request_or_envelope,
+            chunk,
+            profiler_label,
+            self.capability,
+        )
+        request = envelope.request
+        chunk = envelope.chunk
         runtime_debug = bool(request.metadata.get("_runtime_debug"))
         expected_version = request.policy_version
         if expected_version is not None and self._policy_version != expected_version:
@@ -132,7 +140,12 @@ class RayRolloutWorker:
                 worker_id=self.worker_id,
                 chunk=chunk,
                 output=None,
-                metrics=self.worker_metadata(runtime_debug=runtime_debug),
+                metrics=self._chunk_metrics(envelope, runtime_debug=runtime_debug),
+                plan_id=envelope.plan_id,
+                unit_id=envelope.unit_id,
+                unit_name=envelope.unit_name,
+                profiler_label=envelope.profiler_label,
+                chunk_key=envelope.chunk_key,
                 policy_version=self._policy_version,
                 error=(
                     "policy_version mismatch: "
@@ -141,16 +154,22 @@ class RayRolloutWorker:
             )
         try:
             assert self.executor is not None
-            output = self._profile_forward_chunk(request, chunk, profiler_label)
+            output = self._profile_forward_chunk(envelope)
             return RayChunkResult(
                 request_id=request.request_id,
                 worker_id=self.worker_id,
                 chunk=chunk,
                 output=_to_cpu(output),
-                metrics={
-                    **self.worker_metadata(runtime_debug=runtime_debug),
-                    "profiler_label": profiler_label,
-                },
+                metrics=self._chunk_metrics(
+                    envelope,
+                    runtime_debug=runtime_debug,
+                    plan_aware_chunk=True,
+                ),
+                plan_id=envelope.plan_id,
+                unit_id=envelope.unit_id,
+                unit_name=envelope.unit_name,
+                profiler_label=envelope.profiler_label,
+                chunk_key=envelope.chunk_key,
                 policy_version=self._policy_version,
             )
         except Exception as exc:
@@ -159,20 +178,25 @@ class RayRolloutWorker:
                 worker_id=self.worker_id,
                 chunk=chunk,
                 output=None,
-                metrics=self.worker_metadata(runtime_debug=runtime_debug),
+                metrics=self._chunk_metrics(envelope, runtime_debug=runtime_debug),
+                plan_id=envelope.plan_id,
+                unit_id=envelope.unit_id,
+                unit_name=envelope.unit_name,
+                profiler_label=envelope.profiler_label,
+                chunk_key=envelope.chunk_key,
                 policy_version=self._policy_version,
                 error=str(exc),
             )
 
     def _profile_forward_chunk(
         self,
-        request: GenerationRequest,
-        chunk: MicroBatchPlan,
-        profiler_label: str | None = None,
+        envelope: RayChunkExecutionEnvelope,
     ) -> Any:
         from vrl.trainers.profiling import record_function, torch_profiler_step
 
         assert self.executor is not None
+        request = envelope.request
+        chunk = envelope.chunk
         step = self._profiler_step
         self._profiler_step += 1
         worker_name = (
@@ -181,7 +205,17 @@ class RayRolloutWorker:
         )
         try:
             device = _executor_device(self.executor)
-            event_name = profiler_label or _default_chunk_profiler_label(self.capability)
+            event_name = envelope.profiler_label or _default_chunk_profiler_label(
+                self.capability,
+            )
+            forward_chunk_plan = getattr(self.executor, "forward_chunk_plan", None)
+            if not callable(forward_chunk_plan):
+                raise TypeError(
+                    f"{type(self.executor).__name__} must implement "
+                    "forward_chunk_plan(...) for Ray chunk execution",
+                )
+            if envelope.execution_unit is None:
+                raise RuntimeError("Ray chunk execution requires an EnginePlan execution unit")
             with torch_profiler_step(
                 self._profiler_config,
                 output_dir=self._profiler_output_dir,
@@ -190,10 +224,38 @@ class RayRolloutWorker:
                 worker_name=worker_name,
                 trace_subdir=f"rollout/{self.worker_id}",
             ), record_function(event_name):
-                return self.executor.forward_chunk(request, chunk)
+                return forward_chunk_plan(
+                    request,
+                    chunk,
+                    envelope.execution_unit,
+                    envelope.plan_summary,
+                )
         except Exception:
             logger.exception("Ray rollout profiler-wrapped chunk failed")
             raise
+
+    def _chunk_metrics(
+        self,
+        envelope: RayChunkExecutionEnvelope,
+        *,
+        runtime_debug: bool,
+        plan_aware_chunk: bool | None = None,
+    ) -> dict[str, Any]:
+        metrics = self.worker_metadata(runtime_debug=runtime_debug)
+        metrics.update(
+            {
+                "plan_id": envelope.plan_id,
+                "engine_plan_id": envelope.plan_id,
+                "unit_id": envelope.unit_id,
+                "unit_name": envelope.unit_name,
+                "profiler_label": envelope.profiler_label,
+                "chunk_key": envelope.chunk_key,
+                "capability": dict(envelope.capability_summary),
+            }
+        )
+        if plan_aware_chunk is not None:
+            metrics["plan_aware_chunk"] = plan_aware_chunk
+        return metrics
 
 
 def _normalize_runtime_spec(
@@ -213,7 +275,7 @@ def _build_executor(runtime_spec: GenerationRuntimeSpec) -> ChunkedFamilyPipelin
             "GenerationRuntimeSpec requires runtime_builder and executor_cls import paths",
         )
 
-    from vrl.models.runtime import RuntimeBuildSpec
+    from vrl.models.interfaces.runtime import RuntimeBuildSpec
 
     build_runtime_bundle = import_from_path(str(builder_path))
     executor_cls = import_from_path(str(executor_path))
@@ -241,10 +303,59 @@ def _capability_from_spec(runtime_spec: GenerationRuntimeSpec) -> FamilyCapabili
     capability = family_capability_from_value(runtime_spec.extra.get("family_capability"))
     if capability is not None:
         return capability
-    return generic_family_capability(
-        runtime_spec.family or "unknown",
-        runtime_spec.task or "unknown",
+    raise ValueError(
+        "GenerationRuntimeSpec.extra['family_capability'] is required for Ray rollout",
     )
+
+
+def _normalize_execution_envelope(
+    request_or_envelope: GenerationRequest | RayChunkExecutionEnvelope,
+    chunk: MicroBatchPlan | None,
+    profiler_label: str | None,
+    capability: FamilyCapability,
+) -> RayChunkExecutionEnvelope:
+    if isinstance(request_or_envelope, RayChunkExecutionEnvelope):
+        return request_or_envelope
+    del chunk, profiler_label, capability
+    raise TypeError(
+        "RayRolloutWorker.execute_chunk requires RayChunkExecutionEnvelope; "
+        "request+chunk execution is no longer supported",
+    )
+
+
+def _merge_loaded_capability(
+    capability: FamilyCapability,
+    executor: ChunkedFamilyPipelineExecutor,
+) -> FamilyCapability:
+    runtime_caps = getattr(executor, "runtime_caps", None)
+    merged = capability.with_runtime_caps(runtime_caps if isinstance(runtime_caps, Mapping) else None)
+    declared = _declared_executor_capability(executor)
+    if declared is None:
+        return merged
+    if declared.family != merged.family or declared.task != merged.task:
+        raise ValueError(
+            "executor capability does not match runtime spec: "
+            f"{declared.family}/{declared.task} != {merged.family}/{merged.task}",
+        )
+    if declared.trajectory_kind != merged.trajectory_kind:
+        raise ValueError(
+            "executor trajectory capability does not match runtime spec: "
+            f"{declared.trajectory_kind} != {merged.trajectory_kind}",
+        )
+    return declared.with_runtime_caps(runtime_caps if isinstance(runtime_caps, Mapping) else None)
+
+
+def _declared_executor_capability(
+    executor: ChunkedFamilyPipelineExecutor,
+) -> FamilyCapability | None:
+    method = getattr(executor, "capability", None)
+    if callable(method):
+        return family_capability_from_value(method())
+    for attr_name in ("family_capability", "capability_metadata"):
+        value = getattr(executor, attr_name, None)
+        if value is not None:
+            return family_capability_from_value(value)
+    return None
 
 
 def _default_chunk_profiler_label(capability: FamilyCapability) -> str:

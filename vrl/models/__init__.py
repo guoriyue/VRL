@@ -1,12 +1,23 @@
-"""Model definitions and registry."""
+"""Model interfaces and family implementations."""
 
-from vrl.models.diffusion import DiffusionPolicy, VideoGenerationRequest
-from vrl.models.registry import list_models, register_model, resolve_model
+from vrl.models.interfaces import (
+    ARStepResult,
+    AutoregressivePolicy,
+    DiffusionPolicy,
+    RuntimeBuildSpec,
+    RuntimeBundle,
+    VideoGenerationRequest,
+    ar_concat_rows,
+    ar_split_rows,
+)
 
 __all__ = [
+    "ARStepResult",
+    "AutoregressivePolicy",
     "DiffusionPolicy",
+    "RuntimeBuildSpec",
+    "RuntimeBundle",
     "VideoGenerationRequest",
-    "list_models",
-    "register_model",
-    "resolve_model",
+    "ar_concat_rows",
+    "ar_split_rows",
 ]

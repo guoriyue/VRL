@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
-from vrl.engine.batching import forward_batch_by_merging_prompts
 from vrl.engine.core.capabilities import FamilyCapability, diffusion_family_capability
-from vrl.engine.core.planner import attach_engine_plan, build_engine_plan
 from vrl.engine.core.protocols import (
-    BatchedFamilyPipelineExecutor,
     ChunkedFamilyPipelineExecutor,
 )
 from vrl.engine.core.types import (
@@ -30,17 +27,18 @@ from vrl.engine.diffusion.spec import (
     DiffusionGenerationSpec,
     SDEDiffusionSpec,
 )
-from vrl.engine.gather import gather_diffusion_chunks
-from vrl.engine.microbatching import (
+from vrl.engine.execution.batching import forward_batch_by_merging_prompts
+from vrl.engine.execution.gather import gather_diffusion_chunks
+from vrl.engine.execution.microbatching import (
     MicroBatchPlan,
     run_microbatches_with_oom_retry,
 )
-from vrl.models.diffusion import VideoGenerationRequest
+from vrl.engine.execution.planner import attach_engine_plan, build_engine_plan
+from vrl.models.interfaces.diffusion_policy import VideoGenerationRequest
 
 
 class DiffusionPipelineExecutorBase(
     ChunkedFamilyPipelineExecutor,
-    BatchedFamilyPipelineExecutor,
 ):
     """Common GenerationRequest -> diffusion OutputBatch execution path."""
 
@@ -189,25 +187,33 @@ class DiffusionPipelineExecutorBase(
             sde_type=spec.sde.sde_type,
         )
 
-    def forward(
+    def forward_plan(
         self,
         request: GenerationRequest,
         sample_specs: list[GenerationSampleSpec],
+        plan: Any,
     ) -> OutputBatch:
-        plan = self.plan(request, sample_specs)
         chunks = run_microbatches_with_oom_retry(
             plan.micro_batches,
-            lambda micro_batch: self.forward_chunk(request, micro_batch),
+            lambda micro_batch: self.forward_chunk_plan(
+                request,
+                micro_batch,
+                plan.chunk_unit_for(micro_batch),
+                plan.summary(),
+            ),
         )
         return attach_engine_plan(self.gather_chunks(request, sample_specs, chunks), plan)
 
-    def forward_chunk(
+    def forward_chunk_plan(
         self,
         request: GenerationRequest,
         chunk: MicroBatchPlan,
+        execution_unit: Any,
+        plan_summary: Mapping[str, object],
     ) -> DiffusionChunkResult:
         from vrl.trainers.profiling import record_function
 
+        del execution_unit, plan_summary
         spec = self.parse_spec(request)
         video_request = self.build_video_request(chunk.prompt, spec)
         with record_function("engine.prefill"):
@@ -252,15 +258,17 @@ class DiffusionPipelineExecutorBase(
             respect_cfg_flag=self.respect_cfg_flag,
         )
 
-    def forward_batch(
+    def forward_batch_plan(
         self,
         requests: list[GenerationRequest],
         sample_specs_by_request: dict[str, list[GenerationSampleSpec]],
+        engine_plans_by_request: dict[str, Any],
     ) -> dict[str, OutputBatch]:
         return forward_batch_by_merging_prompts(
             self,
             requests,
             sample_specs_by_request,
+            engine_plans_by_request=engine_plans_by_request,
         )
 
     # -- family hooks --------------------------------------------------

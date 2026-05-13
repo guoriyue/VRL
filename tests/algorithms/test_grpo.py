@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import pytest
+import torch
 
 from vrl.algorithms import GRPO
 from vrl.algorithms.grpo.continuous import GRPOConfig
-from vrl.rollouts.evaluators.types import SignalBatch
+from vrl.algorithms.trajectory import AlgorithmInput
+from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
 
 # ---------------------------------------------------------------------------
 # Regression: single-sample GRPO advantage must NOT be NaN
@@ -52,47 +54,78 @@ class TestGRPOSingleSampleNaN:
 
 class TestGRPOFlowMatchingKL:
     def test_flow_kl_ignores_dt_by_default_to_match_flow_grpo(self) -> None:
-        import torch
-
         grpo = GRPO(GRPOConfig(init_kl_coef=1.0))
-        signals = SignalBatch(
+        signals = _flow_signals(
             log_prob=torch.zeros(2),
+            old_log_prob=torch.zeros(2),
             ref_log_prob=torch.zeros(2),
             prev_sample_mean=torch.zeros(2, 1, 1, 1),
             ref_prev_sample_mean=torch.ones(2, 1, 1, 1),
             std_dev_t=torch.ones(2, 1, 1, 1),
             dt=torch.full((2, 1, 1, 1), 0.1),
-            dist_family="flow_matching",
         )
 
-        loss, metrics = grpo.compute_signal_loss(
-            signals,
-            advantages=torch.zeros(2),
-            old_log_probs=torch.zeros(2),
+        loss, metrics = grpo.compute_loss(
+            AlgorithmInput(
+                signals=signals,
+                advantages=torch.zeros(2),
+            ),
         )
 
         assert loss.item() == pytest.approx(0.5)
         assert metrics.kl_penalty == pytest.approx(0.5)
 
     def test_flow_kl_can_use_dt_when_explicitly_configured(self) -> None:
-        import torch
-
         grpo = GRPO(GRPOConfig(init_kl_coef=1.0, flow_kl_use_dt=True))
-        signals = SignalBatch(
+        signals = _flow_signals(
             log_prob=torch.zeros(2),
+            old_log_prob=torch.zeros(2),
             ref_log_prob=torch.zeros(2),
             prev_sample_mean=torch.zeros(2, 1, 1, 1),
             ref_prev_sample_mean=torch.ones(2, 1, 1, 1),
             std_dev_t=torch.ones(2, 1, 1, 1),
             dt=torch.full((2, 1, 1, 1), 0.1),
-            dist_family="flow_matching",
         )
 
-        loss, metrics = grpo.compute_signal_loss(
-            signals,
-            advantages=torch.zeros(2),
-            old_log_probs=torch.zeros(2),
+        loss, metrics = grpo.compute_loss(
+            AlgorithmInput(
+                signals=signals,
+                advantages=torch.zeros(2),
+            ),
         )
 
         assert loss.item() == pytest.approx(50.0)
         assert metrics.kl_penalty == pytest.approx(50.0)
+
+
+def _flow_signals(
+    *,
+    log_prob: torch.Tensor,
+    old_log_prob: torch.Tensor,
+    ref_log_prob: torch.Tensor | None = None,
+    prev_sample_mean: torch.Tensor | None = None,
+    ref_prev_sample_mean: torch.Tensor | None = None,
+    std_dev_t: torch.Tensor | None = None,
+    dt: torch.Tensor | None = None,
+) -> TrajectorySignalBatch:
+    return TrajectorySignalBatch(
+        segments={
+            "denoise": SegmentSignal(
+                name="denoise",
+                segment="denoise",
+                axis="timestep",
+                axes=("sample",),
+                distribution="flow_matching",
+                log_prob=log_prob,
+                old_log_prob=old_log_prob,
+                mask=torch.ones_like(log_prob),
+                ref_log_prob=ref_log_prob,
+                prev_sample_mean=prev_sample_mean,
+                ref_prev_sample_mean=ref_prev_sample_mean,
+                std_dev_t=std_dev_t,
+                dt=dt,
+            ),
+        },
+        group_ids=torch.arange(log_prob.shape[0], device=log_prob.device),
+        primary_segment="denoise",
+    )

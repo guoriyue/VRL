@@ -122,10 +122,11 @@ def test_r1_packer_keeps_segments_separate() -> None:
         ),
     )
 
-    segments = packed.extras["r1_segments"]
-    assert segments["initial_image"]["token_ids"].shape == (batch_size, 3)
-    assert segments["selfcheck_text"]["token_ids"].shape == (batch_size, 2)
-    assert segments["final_image"]["token_ids"].shape == (batch_size, 5)
-    assert packed.extras["log_probs"].shape == (batch_size, 1, 5)
+    assert "r1_segments" not in packed.extras
+    assert packed.trajectory is trajectory
+    assert trajectory.segments["initial_image"].tensors["token_ids"].value.shape == (batch_size, 3)
+    assert trajectory.segments["selfcheck_text"].tensors["token_ids"].value.shape == (batch_size, 2)
+    assert trajectory.segments["final_image"].tensors["token_ids"].value.shape == (batch_size, 5)
+    assert "log_probs" not in packed.extras
     assert packed.actions.shape == (batch_size, 5)
     assert packed.context["mode"] == "r1"

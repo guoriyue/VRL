@@ -9,7 +9,7 @@ from typing import Any
 
 import torch
 
-from vrl.models.diffusion import DiffusionPolicy, VideoGenerationRequest
+from vrl.models.interfaces.diffusion_policy import DiffusionPolicy, VideoGenerationRequest
 
 
 class _NoOpCosmosSafetyChecker:
@@ -402,7 +402,7 @@ class CosmosPredict25Policy(DiffusionPolicy):
             "conditional_frame_timestep": state.conditional_frame_timestep,
         }
 
-    def export_training_extras(self, state: CosmosPredict25SamplingState) -> dict[str, Any]:
+    def export_replay_tensors(self, state: CosmosPredict25SamplingState) -> dict[str, Any]:
         return {
             "prompt_embeds": state.prompt_embeds,
             "negative_prompt_embeds": state.negative_prompt_embeds,
@@ -413,7 +413,7 @@ class CosmosPredict25Policy(DiffusionPolicy):
 
     def restore_eval_state(
         self,
-        batch_extras: dict[str, Any],
+        replay_tensors: dict[str, Any],
         batch_context: dict[str, Any],
         latents: Any,
         step_idx: int,
@@ -424,8 +424,8 @@ class CosmosPredict25Policy(DiffusionPolicy):
             latents=latents,
             timesteps=self.pipeline.scheduler.timesteps,
             scheduler=self.pipeline.scheduler,
-            prompt_embeds=batch_extras["prompt_embeds"],
-            negative_prompt_embeds=batch_extras.get("negative_prompt_embeds"),
+            prompt_embeds=replay_tensors["prompt_embeds"],
+            negative_prompt_embeds=replay_tensors.get("negative_prompt_embeds"),
             guidance_scale=batch_context["guidance_scale"],
             do_cfg=batch_context["cfg"] and batch_context["guidance_scale"] > 1.0,
             cond_latent=cond_latent,
@@ -441,8 +441,10 @@ class CosmosPredict25Policy(DiffusionPolicy):
         )
 
     def replay_forward(self, batch: Any, timestep_idx: int) -> dict[str, Any]:
+        from vrl.engine.trajectory import trajectory_replay_tensor_dict
+
         state = self.restore_eval_state(
-            batch.extras,
+            trajectory_replay_tensor_dict(batch, "denoise"),
             batch.context,
             batch.observations[:, timestep_idx],
             timestep_idx,

@@ -6,7 +6,7 @@ import asyncio
 from typing import Protocol
 
 from vrl.engine.core.types import GenerationRequest, OutputBatch
-from vrl.engine.core.worker import GenerationWorker
+from vrl.engine.execution.worker import GenerationWorker
 
 
 class RolloutBackend(Protocol):

@@ -8,14 +8,14 @@ from typing import Any
 import torch
 
 from vrl.engine.core.types import GenerationRequest, OutputBatch
-from vrl.engine.core.worker import GenerationIdFactory
 from vrl.engine.diffusion import DiffusionChunkResult
-from vrl.engine.gather import (
+from vrl.engine.execution.gather import (
     ChunkGatherer,
     DiffusionChunkGatherer,
     gather_pipeline_chunks,
     require_chunk_gatherer,
 )
+from vrl.engine.execution.worker import GenerationIdFactory
 
 
 class _PureGatherer:
@@ -35,13 +35,13 @@ class _PureGatherer:
         )
 
 
-def test_chunk_gatherer_accepts_pure_object_without_forward_chunk() -> None:
+def test_chunk_gatherer_accepts_pure_object_without_forward_chunk_plan() -> None:
     request = _request()
     sample_specs = GenerationIdFactory().build_sample_specs(request)
     gatherer = _PureGatherer()
 
     assert isinstance(gatherer, ChunkGatherer)
-    assert not hasattr(gatherer, "forward_chunk")
+    assert not hasattr(gatherer, "forward_chunk_plan")
     assert require_chunk_gatherer(gatherer) is gatherer
 
     output = gather_pipeline_chunks(gatherer, request, sample_specs, ["chunk"])
@@ -65,7 +65,6 @@ def test_diffusion_chunk_gatherer_gathers_without_model_object() -> None:
     assert output.metrics is not None
     assert output.metrics.num_steps == 2
     assert output.metrics.micro_batches == 2
-    assert output.rollout_trajectory_data is None
     assert output.trajectory is not None
     assert "trajectory" not in output.extra
     assert output.trajectory.segments["denoise"].distribution == "flow_matching"
@@ -88,7 +87,6 @@ def test_diffusion_chunk_gatherer_can_ignore_cfg_sampling_flag() -> None:
 
     output = gatherer.gather_chunks(request, sample_specs, _diffusion_chunks(context))
 
-    assert output.rollout_trajectory_data is None
     assert output.trajectory is not None
     assert output.trajectory.context == context
     assert output.trajectory.segments["denoise"].reward_view == "video"
@@ -127,6 +125,6 @@ def _diffusion_chunk(value: float, context: dict[str, Any]) -> DiffusionChunkRes
         timesteps=torch.arange(2).view(1, 2),
         kl=torch.full((1, 2), value + 3),
         video=torch.full((1, 3, 4, 4), value),
-        training_extras={},
+        replay_tensors={},
         context=context,
     )

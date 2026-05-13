@@ -1,6 +1,5 @@
 """Visual generation engine primitives."""
 
-from vrl.engine.batching import forward_batch_by_merging_prompts
 from vrl.engine.core.capabilities import (
     AxisCapability,
     ExecutionUnitCapability,
@@ -9,9 +8,30 @@ from vrl.engine.core.capabilities import (
     ar_discrete_family_capability,
     diffusion_family_capability,
     family_capability_from_value,
-    generic_family_capability,
 )
-from vrl.engine.core.planner import (
+from vrl.engine.core.protocols import (
+    CapabilityAwareFamilyPipelineExecutor,
+    ChunkedFamilyPipelineExecutor,
+    FamilyPipelineExecutor,
+    PipelineChunkResult,
+    PlanAwareBatchedFamilyPipelineExecutor,
+    PlanAwareFamilyPipelineExecutor,
+)
+from vrl.engine.core.registry import ExecutorKey, FamilyPipelineRegistry
+from vrl.engine.core.runtime_spec import GenerationRuntimeSpec
+from vrl.engine.core.types import (
+    GenerationMetrics,
+    GenerationRequest,
+    GenerationSampleSpec,
+    OutputBatch,
+    WorkloadSignature,
+)
+from vrl.engine.execution.batching import forward_batch_by_merging_prompts
+from vrl.engine.execution.gather import (
+    gather_pipeline_chunks,
+    require_chunked_executor,
+)
+from vrl.engine.execution.planner import (
     AxisPlan,
     EnginePlan,
     ExecutionUnit,
@@ -20,40 +40,15 @@ from vrl.engine.core.planner import (
     profiler_label_for_unit,
     resolve_executor_capability,
 )
-from vrl.engine.core.protocols import (
-    BatchedFamilyPipelineExecutor,
-    CapabilityAwareFamilyPipelineExecutor,
-    ChunkedFamilyPipelineExecutor,
-    FamilyPipelineExecutor,
-    PipelineChunkResult,
-)
-from vrl.engine.core.registry import ExecutorKey, FamilyPipelineRegistry
-from vrl.engine.core.runtime import (
+from vrl.engine.execution.runtime import (
     GenerationRuntime,
     RolloutBackend,
 )
-from vrl.engine.core.runtime_spec import GenerationRuntimeSpec
-from vrl.engine.core.types import (
-    GenerationMetrics,
-    GenerationRequest,
-    GenerationSampleSpec,
-    OutputBatch,
-    RolloutDebugTensors,
-    RolloutDenoisingEnv,
-    RolloutDitTrajectory,
-    RolloutTrajectoryData,
-    WorkloadSignature,
-)
-from vrl.engine.core.worker import GenerationIdFactory, GenerationWorker
-from vrl.engine.gather import (
-    gather_pipeline_chunks,
-    require_chunked_executor,
-)
+from vrl.engine.execution.worker import GenerationIdFactory, GenerationWorker
 
 __all__ = [
     "AxisCapability",
     "AxisPlan",
-    "BatchedFamilyPipelineExecutor",
     "CapabilityAwareFamilyPipelineExecutor",
     "ChunkedFamilyPipelineExecutor",
     "EnginePlan",
@@ -72,11 +67,9 @@ __all__ = [
     "GenerationWorker",
     "OutputBatch",
     "PipelineChunkResult",
+    "PlanAwareBatchedFamilyPipelineExecutor",
+    "PlanAwareFamilyPipelineExecutor",
     "RolloutBackend",
-    "RolloutDebugTensors",
-    "RolloutDenoisingEnv",
-    "RolloutDitTrajectory",
-    "RolloutTrajectoryData",
     "WorkloadSignature",
     "ar_continuous_family_capability",
     "ar_discrete_family_capability",
@@ -86,7 +79,6 @@ __all__ = [
     "family_capability_from_value",
     "forward_batch_by_merging_prompts",
     "gather_pipeline_chunks",
-    "generic_family_capability",
     "profiler_label_for_unit",
     "require_chunked_executor",
     "resolve_executor_capability",

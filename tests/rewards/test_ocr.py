@@ -4,45 +4,31 @@ from __future__ import annotations
 
 import pytest
 
-from vrl.rewards.ocr import OCRReward, _normalize_text, _normalized_edit_distance
-
-# ---------------------------------------------------------------------------
-# Unit tests for text helpers
-# ---------------------------------------------------------------------------
-
-class TestNormalizeText:
-    def test_basic(self) -> None:
-        assert _normalize_text("  Hello, World!  ") == "hello world"
-
-    def test_collapses_whitespace(self) -> None:
-        assert _normalize_text("a   b\tc") == "a b c"
-
-    def test_strips_punctuation(self) -> None:
-        assert _normalize_text("EXIT-42.") == "exit42"
-
-    def test_empty(self) -> None:
-        assert _normalize_text("") == ""
+from vrl.rewards.ocr import (
+    OCRReward,
+    _normalize_text,
+    _normalized_edit_distance,
+)
 
 
-class TestNormalizedEditDistance:
-    def test_identical(self) -> None:
-        assert _normalized_edit_distance("hello", "hello") == pytest.approx(0.0)
+def test_text_normalization_core_cases() -> None:
+    assert _normalize_text("  Hello, World!  ") == "hello world"
+    assert _normalize_text("a   b\tc") == "a b c"
+    assert _normalize_text("EXIT-42.") == "exit42"
+    assert _normalize_text("") == ""
 
-    def test_completely_different(self) -> None:
-        dist = _normalized_edit_distance("abc", "xyz")
-        assert dist > 0.5
 
-    def test_empty_both(self) -> None:
-        assert _normalized_edit_distance("", "") == pytest.approx(0.0)
+def test_normalized_edit_distance_core_cases() -> None:
+    assert _normalized_edit_distance("hello", "hello") == pytest.approx(0.0)
+    assert _normalized_edit_distance("", "") == pytest.approx(0.0)
+    assert _normalized_edit_distance("abc", "xyz") > 0.5
 
-    def test_partial_match(self) -> None:
-        dist = _normalized_edit_distance("hello", "helo")
-        assert 0.0 < dist < 1.0
+    partial = _normalized_edit_distance("hello", "helo")
+    assert 0.0 < partial < 1.0
 
-    def test_symmetry(self) -> None:
-        d1 = _normalized_edit_distance("abc", "abcd")
-        d2 = _normalized_edit_distance("abcd", "abc")
-        assert d1 == pytest.approx(d2, abs=0.01)
+    d1 = _normalized_edit_distance("abc", "abcd")
+    d2 = _normalized_edit_distance("abcd", "abc")
+    assert d1 == pytest.approx(d2, abs=0.01)
 
 
 class _FakePaddleOCR:
@@ -54,10 +40,6 @@ class _FakePaddleOCR:
         text = self.texts.pop(0)
         return [[(None, (text, 1.0))]]
 
-
-# ---------------------------------------------------------------------------
-# OCRReward scoring tests (require rapidocr_onnxruntime)
-# ---------------------------------------------------------------------------
 
 def _has_rapidocr() -> bool:
     try:
@@ -88,25 +70,14 @@ def _make_ocr_rollout(target_text: str, video_tensor=None):
 
 @_skip_no_rapidocr
 @pytest.mark.asyncio
-class TestOCRRewardScoring:
-    async def test_no_target_text_returns_zero(self) -> None:
-        reward = OCRReward(device="cpu")
-        rollout = _make_ocr_rollout("")
-        score = await reward.score(rollout)
-        assert score == pytest.approx(0.0)
+async def test_ocr_reward_rapidocr_core_scoring_behaviors() -> None:
+    reward = OCRReward(device="cpu")
 
-    async def test_black_frames_low_score(self) -> None:
-        """Black frames should have no readable text → low score."""
-        reward = OCRReward(device="cpu")
-        rollout = _make_ocr_rollout("HELLO")
-        score = await reward.score(rollout)
-        assert score <= 0.5
+    assert await reward.score(_make_ocr_rollout("")) == pytest.approx(0.0)
+    assert await reward.score(_make_ocr_rollout("HELLO")) <= 0.5
 
-    async def test_score_batch_length(self) -> None:
-        reward = OCRReward(device="cpu")
-        rollouts = [_make_ocr_rollout("A"), _make_ocr_rollout("B")]
-        scores = await reward.score_batch(rollouts)
-        assert len(scores) == 2
+    scores = await reward.score_batch([_make_ocr_rollout("A"), _make_ocr_rollout("B")])
+    assert len(scores) == 2
 
 
 @pytest.mark.asyncio

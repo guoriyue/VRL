@@ -131,7 +131,7 @@ FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {
         runtime_builder="vrl.models.families.sd3_5.runtime:build_sd3_5_runtime_bundle",
         runtime_spec_extractor=("vrl.models.families.sd3_5.runtime:extract_sd3_5_runtime_spec"),
         gatherer=GathererMetadata(
-            import_path="vrl.engine.gather:DiffusionChunkGatherer",
+            import_path="vrl.engine.execution.gather:DiffusionChunkGatherer",
             kwargs={"model_family": "sd3_5"},
         ),
         capability=diffusion_family_capability("sd3_5", "t2i"),
@@ -156,7 +156,7 @@ FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {
             "vrl.models.families.wan_2_1.runtime:extract_wan_2_1_runtime_spec"
         ),
         gatherer=GathererMetadata(
-            import_path="vrl.engine.gather:DiffusionChunkGatherer",
+            import_path="vrl.engine.execution.gather:DiffusionChunkGatherer",
             kwargs={"model_family": "wan_2_1"},
         ),
         capability=diffusion_family_capability("wan_2_1", "t2v"),
@@ -188,7 +188,7 @@ FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {
             "extract_cosmos_predict2_runtime_spec"
         ),
         gatherer=GathererMetadata(
-            import_path="vrl.engine.gather:DiffusionChunkGatherer",
+            import_path="vrl.engine.execution.gather:DiffusionChunkGatherer",
             kwargs={"model_family": "cosmos-predict2", "respect_cfg_flag": False},
         ),
         capability=diffusion_family_capability(
@@ -230,7 +230,7 @@ FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {
             "extract_cosmos_predict25_runtime_spec"
         ),
         gatherer=GathererMetadata(
-            import_path="vrl.engine.gather:DiffusionChunkGatherer",
+            import_path="vrl.engine.execution.gather:DiffusionChunkGatherer",
             kwargs={"model_family": "cosmos-predict2.5"},
         ),
         capability=diffusion_family_capability("cosmos-predict2.5", "t2w"),

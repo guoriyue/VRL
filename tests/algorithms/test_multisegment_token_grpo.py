@@ -10,32 +10,42 @@ from vrl.algorithms.grpo.multisegment import (
     MultiSegmentTokenGRPOConfig,
 )
 from vrl.algorithms.grpo.token import TokenGRPO, TokenGRPOConfig
-from vrl.rollouts.evaluators.types import SignalBatch
+from vrl.algorithms.trajectory import AlgorithmInput
+from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
 
 
-def _segment_signal(new_lp: torch.Tensor, mask: torch.Tensor | None = None) -> SignalBatch:
-    aux = {}
-    if mask is not None:
-        aux["token_mask"] = mask
-    return SignalBatch(
+def _segment_signal(
+    name: str,
+    new_lp: torch.Tensor,
+    old_lp: torch.Tensor,
+    mask: torch.Tensor | None = None,
+) -> SegmentSignal:
+    if mask is None:
+        mask = torch.ones_like(new_lp)
+    return SegmentSignal(
+        name=name,
+        segment=name,
+        axis="token",
+        axes=("sample", "token"),
+        distribution="categorical",
         log_prob=new_lp,
-        dist_family="categorical",
-        aux=aux,
+        old_log_prob=old_lp,
+        mask=mask,
     )
 
 
-def _multi_signal(
-    segments: dict[str, SignalBatch],
-    old_log_probs: dict[str, torch.Tensor],
-) -> SignalBatch:
+def _inputs(
+    segments: dict[str, SegmentSignal],
+    advantages: torch.Tensor | dict[str, torch.Tensor],
+) -> AlgorithmInput:
     first = next(iter(segments.values()))
-    return SignalBatch(
-        log_prob=first.log_prob,
-        dist_family="multisegment_categorical",
-        aux={
-            "segments": segments,
-            "old_log_probs": old_log_probs,
-        },
+    return AlgorithmInput(
+        signals=TrajectorySignalBatch(
+            segments=segments,
+            group_ids=torch.arange(first.log_prob.shape[0], device=first.log_prob.device),
+            primary_segment=next(iter(segments)),
+        ),
+        advantages=advantages,
     )
 
 
@@ -43,12 +53,9 @@ def test_weighted_mean_matches_token_grpo_per_segment() -> None:
     adv = torch.ones(2)
     old_initial = torch.zeros(2, 2)
     old_final = torch.zeros(2, 3)
-    initial = _segment_signal(torch.full((2, 2), 0.1))
-    final = _segment_signal(torch.full((2, 3), 0.3))
-    signals = _multi_signal(
-        {"initial_image": initial, "final_image": final},
-        {"initial_image": old_initial, "final_image": old_final},
-    )
+    initial = _segment_signal("initial_image", torch.full((2, 2), 0.1), old_initial)
+    final = _segment_signal("final_image", torch.full((2, 3), 0.3), old_final)
+    inputs = _inputs({"initial_image": initial, "final_image": final}, adv)
 
     cfg = MultiSegmentTokenGRPOConfig(
         init_kl_coef=0.0,
@@ -60,11 +67,15 @@ def test_weighted_mean_matches_token_grpo_per_segment() -> None:
         },
     )
     algo = MultiSegmentTokenGRPO(cfg)
-    loss, metrics = algo.compute_signal_loss(signals, adv, old_log_probs=torch.zeros(2, 1))
+    loss, metrics = algo.compute_loss(inputs)
 
     base = TokenGRPO(TokenGRPOConfig(init_kl_coef=0.0, eps_clip=10.0))
-    initial_loss, initial_metrics = base.compute_signal_loss(initial, adv, old_initial)
-    final_loss, final_metrics = base.compute_signal_loss(final, adv, old_final)
+    initial_loss, initial_metrics = base.compute_loss(
+        _inputs({"initial_image": initial}, adv),
+    )
+    final_loss, final_metrics = base.compute_loss(
+        _inputs({"final_image": final}, adv),
+    )
     expected = (initial_loss + 3.0 * final_loss) / 4.0
 
     assert torch.allclose(loss, expected)
@@ -75,32 +86,40 @@ def test_weighted_mean_matches_token_grpo_per_segment() -> None:
 
 def test_default_selfcheck_weight_zero_does_not_affect_loss() -> None:
     adv = torch.ones(1)
-    image_signal = _segment_signal(torch.zeros(1, 2))
-    noisy_selfcheck = _segment_signal(torch.full((1, 2), 100.0))
-    signals = _multi_signal(
+    image_old = torch.zeros(1, 2)
+    image_signal = _segment_signal("initial_image", torch.zeros(1, 2), image_old)
+    noisy_selfcheck = _segment_signal(
+        "selfcheck_text",
+        torch.full((1, 2), 100.0),
+        torch.full((1, 2), -100.0),
+    )
+    final_signal = _segment_signal("final_image", torch.zeros(1, 2), image_old)
+    inputs = _inputs(
         {
             "initial_image": image_signal,
             "selfcheck_text": noisy_selfcheck,
-            "final_image": image_signal,
+            "final_image": final_signal,
         },
-        {
-            "initial_image": torch.zeros(1, 2),
-            "selfcheck_text": torch.full((1, 2), -100.0),
-            "final_image": torch.zeros(1, 2),
-        },
+        adv,
     )
 
     algo = MultiSegmentTokenGRPO(MultiSegmentTokenGRPOConfig(init_kl_coef=0.0))
-    loss, _ = algo.compute_signal_loss(signals, adv, old_log_probs=torch.zeros(1, 1))
+    loss, _ = algo.compute_loss(inputs)
 
     assert loss.item() == pytest.approx(-1.0)
     assert "selfcheck_text" not in algo.last_segment_metrics
 
 
 def test_nonzero_missing_segment_raises() -> None:
-    signals = _multi_signal(
-        {"initial_image": _segment_signal(torch.zeros(1, 2))},
-        {"initial_image": torch.zeros(1, 2)},
+    inputs = _inputs(
+        {
+            "initial_image": _segment_signal(
+                "initial_image",
+                torch.zeros(1, 2),
+                torch.zeros(1, 2),
+            ),
+        },
+        torch.zeros(1),
     )
     algo = MultiSegmentTokenGRPO(
         MultiSegmentTokenGRPOConfig(
@@ -109,4 +128,4 @@ def test_nonzero_missing_segment_raises() -> None:
     )
 
     with pytest.raises(RuntimeError, match="final_image"):
-        algo.compute_signal_loss(signals, torch.zeros(1), old_log_probs=torch.zeros(1, 1))
+        algo.compute_loss(inputs)

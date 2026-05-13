@@ -24,7 +24,7 @@ from typing import Any
 
 import torch
 
-from vrl.models.diffusion import DiffusionPolicy, VideoGenerationRequest
+from vrl.models.interfaces.diffusion_policy import DiffusionPolicy, VideoGenerationRequest
 
 
 @dataclass
@@ -465,11 +465,11 @@ class CosmosPredict2Policy(DiffusionPolicy):
             "sigma_conditioning": state.sigma_conditioning,
         }
 
-    def export_training_extras(
+    def export_replay_tensors(
         self,
         state: CosmosPredict2SamplingState,
     ) -> dict[str, Any]:
-        """Project SamplingState -> RolloutBatch.extras (per-sample tensors).
+        """Project SamplingState into trajectory replay tensors.
 
         ``init_latents`` is per-sample because Video2World conditioning
         depends on the reference image.
@@ -482,7 +482,7 @@ class CosmosPredict2Policy(DiffusionPolicy):
 
     def restore_eval_state(
         self,
-        batch_extras: dict[str, Any],
+        replay_tensors: dict[str, Any],
         batch_context: dict[str, Any],
         latents: Any,
         step_idx: int,
@@ -504,11 +504,11 @@ class CosmosPredict2Policy(DiffusionPolicy):
             latents=latents,
             timesteps=self.pipeline.scheduler.timesteps,
             scheduler=self.pipeline.scheduler,
-            prompt_embeds=batch_extras["prompt_embeds"],
-            negative_prompt_embeds=batch_extras.get("negative_prompt_embeds"),
+            prompt_embeds=replay_tensors["prompt_embeds"],
+            negative_prompt_embeds=replay_tensors.get("negative_prompt_embeds"),
             guidance_scale=batch_context["guidance_scale"],
             do_cfg=batch_context["cfg"] and batch_context["guidance_scale"] > 1.0,
-            init_latents=batch_extras["init_latents"],
+            init_latents=replay_tensors["init_latents"],
             cond_mask=batch_context["cond_mask"],
             uncond_mask=batch_context["uncond_mask"],
             padding_mask=batch_context["padding_mask"],
@@ -532,8 +532,10 @@ class CosmosPredict2Policy(DiffusionPolicy):
         through the actual ``timestep_idx`` to keep sigma scaling consistent
         with the rollout-time scheduler state.
         """
+        from vrl.engine.trajectory import trajectory_replay_tensor_dict
+
         state = self.restore_eval_state(
-            batch.extras,
+            trajectory_replay_tensor_dict(batch, "denoise"),
             batch.context,
             batch.observations[:, timestep_idx],
             timestep_idx,

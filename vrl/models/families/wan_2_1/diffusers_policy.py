@@ -30,7 +30,7 @@ from typing import Any
 
 import torch
 
-from vrl.models.diffusion import DiffusionPolicy, VideoGenerationRequest
+from vrl.models.interfaces.diffusion_policy import DiffusionPolicy, VideoGenerationRequest
 
 
 @dataclass
@@ -300,8 +300,8 @@ class WanT2VDiffusersPolicy(DiffusionPolicy):
             "model_family": self.family,
         }
 
-    def export_training_extras(self, state: WanT2VSamplingState) -> dict[str, Any]:
-        """Project SamplingState -> RolloutBatch.extras (per-sample tensors)."""
+    def export_replay_tensors(self, state: WanT2VSamplingState) -> dict[str, Any]:
+        """Project SamplingState into trajectory replay tensors."""
         return {
             "prompt_embeds": state.prompt_embeds,
             "negative_prompt_embeds": state.negative_prompt_embeds,
@@ -309,13 +309,13 @@ class WanT2VDiffusersPolicy(DiffusionPolicy):
 
     def restore_eval_state(
         self,
-        batch_extras: dict[str, Any],
+        replay_tensors: dict[str, Any],
         batch_context: dict[str, Any],
         latents: Any,
         step_idx: int,
     ) -> WanT2VSamplingState:
         """Rebuild SamplingState for the eval forward path from a batch slice."""
-        ts = batch_extras["timesteps"]
+        ts = replay_tensors["timesteps"]
         t = ts[:, step_idx] if ts.ndim > 1 else ts
         # Pack as [1, B] so forward_step's state.timesteps[0] returns [B]
         # (matches the rollout convention where timesteps is 1-D and indexed
@@ -325,8 +325,8 @@ class WanT2VDiffusersPolicy(DiffusionPolicy):
             latents=latents,
             timesteps=timesteps,
             scheduler=None,
-            prompt_embeds=batch_extras["prompt_embeds"],
-            negative_prompt_embeds=batch_extras.get("negative_prompt_embeds"),
+            prompt_embeds=replay_tensors["prompt_embeds"],
+            negative_prompt_embeds=replay_tensors.get("negative_prompt_embeds"),
             guidance_scale=batch_context["guidance_scale"],
             do_cfg=batch_context["cfg"] and batch_context["guidance_scale"] > 1.0,
             seed=0,

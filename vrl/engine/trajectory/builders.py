@@ -31,7 +31,7 @@ def build_diffusion_trajectory(
     old_log_prob: Any,
     timesteps: Any,
     kl: Any,
-    training_extras: dict[str, Any],
+    replay_tensors: dict[str, Any],
     context: dict[str, Any],
 ) -> TrajectoryBatch:
     """Build a denoise-step trajectory from shared diffusion rollout tensors."""
@@ -77,12 +77,20 @@ def build_diffusion_trajectory(
             "replay_input",
         ),
     }
-    for name, value in training_extras.items():
+    replay_tensor_names: list[str] = []
+    for name, value in replay_tensors.items():
         if name in tensors:
             continue
         if not _sample_aligned_or_scalar(value, batch_size):
             continue
         tensors[name] = TrajectoryTensor(name, value, ("sample",), "replay_input")
+        replay_tensor_names.append(name)
+    replay_tensor_refs = (
+        tensor_ref("denoise", "observations"),
+        tensor_ref("denoise", "actions"),
+        tensor_ref("denoise", "timesteps"),
+        *(tensor_ref("denoise", name) for name in replay_tensor_names),
+    )
 
     reward_modality = _reward_modality_for_task(request.task)
     trajectory = TrajectoryBatch(
@@ -106,11 +114,7 @@ def build_diffusion_trajectory(
                 replay_inputs={
                     "logprob": ReplayInput(
                         name="logprob",
-                        tensor_refs=(
-                            tensor_ref("denoise", "observations"),
-                            tensor_ref("denoise", "actions"),
-                            tensor_ref("denoise", "timesteps"),
-                        ),
+                        tensor_refs=replay_tensor_refs,
                     ),
                 },
             )

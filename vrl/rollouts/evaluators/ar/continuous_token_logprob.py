@@ -18,7 +18,8 @@ import torch
 
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
-from vrl.rollouts.evaluators.types import SignalBatch, SignalRequest
+from vrl.rollouts.evaluators.trajectory import single_segment_trajectory_signals
+from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
 
 
 def _has_active_adapter(model: Any) -> bool:
@@ -44,7 +45,7 @@ class ContinuousTokenLogProbEvaluator(Evaluator):
         timestep_idx: int = 0,
         ref_model: Any | None = None,
         signal_request: SignalRequest | None = None,
-    ) -> SignalBatch:
+    ) -> TrajectorySignalBatch:
         request = signal_request or SignalRequest()
 
         new_lp = self._compute_logprobs(model, batch)
@@ -65,16 +66,15 @@ class ContinuousTokenLogProbEvaluator(Evaluator):
                 with torch.no_grad(), model.disable_adapter():
                     ref_lp = self._compute_logprobs(model, batch)
 
-        aux: dict[str, Any] = {}
-        if self.mask_key in batch.extras:
-            aux[self.mask_key] = batch.extras[self.mask_key]
-
-        return SignalBatch(
+        return single_segment_trajectory_signals(
+            batch,
+            segment_name="image_tokens",
             log_prob=new_lp,
             ref_log_prob=ref_lp,
             entropy=None,
-            dist_family="gaussian",
-            aux=aux,
+            distribution="gaussian",
+            timestep_idx=timestep_idx,
+            mask_key=self.mask_key,
         )
 
     @staticmethod

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from vrl.algorithms.types import TrainStepMetrics
-from vrl.rollouts.evaluators.types import SignalBatch
+
+if TYPE_CHECKING:
+    from vrl.algorithms.trajectory import AlgorithmInput
 
 
 class Algorithm(ABC):
@@ -14,7 +16,7 @@ class Algorithm(ABC):
 
     CEA pipeline interface:
     - compute_advantages_from_tensors(rewards, group_ids)
-    - compute_signal_loss(signals, advantages, old_log_probs)
+    - compute_loss(inputs)
     """
 
     @abstractmethod
@@ -26,10 +28,8 @@ class Algorithm(ABC):
         """Compute per-sample advantages from reward tensors."""
 
     @abstractmethod
-    def compute_signal_loss(
+    def compute_loss(
         self,
-        signals: SignalBatch,
-        advantages: Any,          # [B] or [B, T] advantages
-        old_log_probs: Any,       # [B] old log-probs from collection
+        inputs: AlgorithmInput,
     ) -> tuple[Any, TrainStepMetrics]:
-        """Compute loss from evaluator signals. Returns (loss, metrics)."""
+        """Compute loss from strict trajectory-native algorithm inputs."""

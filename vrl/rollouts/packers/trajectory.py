@@ -80,8 +80,6 @@ def _pack_diffusion(
 ) -> RolloutBatch:
     observations = _role_tensor(segment, "observation").value
     actions = _role_tensor(segment, "action").value
-    log_probs = _role_tensor(segment, "old_log_prob").value
-    timesteps = _named_tensor(segment, "timesteps").value
     kl_tensor = _named_tensor(segment, "kl").value
     device = observations.device
 
@@ -89,17 +87,6 @@ def _pack_diffusion(
         rewards_adjusted = rewards_raw.to(device) - context.kl_reward * kl_tensor.sum(dim=1)
     else:
         rewards_adjusted = rewards_raw.to(device)
-
-    extras: dict[str, Any] = {
-        "log_probs": log_probs,
-        "timesteps": timesteps,
-        "kl": kl_tensor,
-        "reward_before_kl": rewards_raw.to(device),
-    }
-    for name, tensor in segment.tensors.items():
-        if tensor.role != "replay_input" or name in {"timesteps", "kl"}:
-            continue
-        extras[name] = tensor.value
 
     rollout_context = dict(trajectory.context)
     if context.metadata:
@@ -114,7 +101,7 @@ def _pack_diffusion(
         rewards=rewards_adjusted,
         dones=torch.ones(observations.shape[0], dtype=torch.bool, device=device),
         group_ids=_group_ids_from_trajectory(trajectory, device=device),
-        extras=extras,
+        extras={},
         context=rollout_context,
         videos=output.output,
         prompts=[spec.prompt for spec in output.sample_specs],
@@ -131,12 +118,7 @@ def _pack_ar_discrete(
     context: RolloutPackContext,
 ) -> RolloutBatch:
     token_ids = _role_tensor(segment, "action").value
-    token_log_probs = _role_tensor(segment, "old_log_prob").value
-    token_mask = _role_tensor(segment, "mask").value
     prompt_ids = _named_tensor(segment, "prompt_input_ids").value
-    prompt_mask = _named_tensor(segment, "prompt_attention_mask").value
-    uncond_ids = _named_tensor(segment, "uncond_input_ids").value
-    uncond_mask = _named_tensor(segment, "uncond_attention_mask").value
     device = context.device or prompt_ids.device
     images = output.output
 
@@ -146,13 +128,7 @@ def _pack_ar_discrete(
         rewards=rewards_raw.to(device),
         dones=torch.ones(len(output.sample_specs), dtype=torch.bool, device=device),
         group_ids=_group_ids_from_trajectory(trajectory, device=device),
-        extras={
-            "log_probs": token_log_probs.detach().unsqueeze(1),
-            "prompt_attention_mask": prompt_mask,
-            "uncond_input_ids": uncond_ids,
-            "uncond_attention_mask": uncond_mask,
-            "token_mask": token_mask,
-        },
+        extras={},
         context=dict(trajectory.context),
         videos=images.unsqueeze(2),
         prompts=[spec.prompt for spec in output.sample_specs],
@@ -169,13 +145,7 @@ def _pack_ar_continuous(
     context: RolloutPackContext,
 ) -> RolloutBatch:
     tokens = _role_tensor(segment, "action").value
-    token_log_probs = _role_tensor(segment, "old_log_prob").value
-    token_mask = _role_tensor(segment, "mask").value
-    saved_noise = _named_tensor(segment, "saved_noise").value
     prompt_ids = _named_tensor(segment, "prompt_input_ids").value
-    prompt_mask = _named_tensor(segment, "prompt_attention_mask").value
-    uncond_ids = _named_tensor(segment, "uncond_input_ids").value
-    uncond_mask = _named_tensor(segment, "uncond_attention_mask").value
     device = context.device or prompt_ids.device
     images = output.output
 
@@ -185,14 +155,7 @@ def _pack_ar_continuous(
         rewards=rewards_raw.to(device),
         dones=torch.ones(len(output.sample_specs), dtype=torch.bool, device=device),
         group_ids=_group_ids_from_trajectory(trajectory, device=device),
-        extras={
-            "log_probs": token_log_probs.detach().unsqueeze(1),
-            "prompt_attention_mask": prompt_mask,
-            "uncond_input_ids": uncond_ids,
-            "uncond_attention_mask": uncond_mask,
-            "token_mask": token_mask,
-            "saved_noise": saved_noise,
-        },
+        extras={},
         context=dict(trajectory.context),
         videos=images.unsqueeze(2),
         prompts=[spec.prompt for spec in output.sample_specs],
@@ -215,8 +178,6 @@ def _pack_ar_multisegment(
         primary_name = primary.name
 
     token_ids = _role_tensor(primary, "action").value
-    token_log_probs = _role_tensor(primary, "old_log_prob").value
-    token_mask = _role_tensor(primary, "mask").value
     prompt_ids = _optional_named_tensor(primary, "prompt_input_ids")
     if prompt_ids is None:
         prompt_ids = torch.zeros(
@@ -225,34 +186,11 @@ def _pack_ar_multisegment(
             dtype=torch.long,
             device=token_ids.device,
         )
-    prompt_mask = _optional_named_tensor(primary, "prompt_attention_mask")
-    if prompt_mask is None:
-        prompt_mask = _optional_named_tensor(primary, "attention_mask")
-    if prompt_mask is None:
-        prompt_mask = torch.ones_like(prompt_ids)
-
     device = context.device or prompt_ids.device
     final_image = _decoded_tensor(trajectory, "final_image")
     if final_image is None:
         final_image = output.output
-    segments = {
-        name: _segment_payload_from_trajectory(segment)
-        for name, segment in trajectory.segments.items()
-        if segment.distribution == "categorical"
-    }
-    decoded_initial = _decoded_tensor(trajectory, "initial_image")
-    decoded_selfcheck = _decoded_tensor(trajectory, "selfcheck")
 
-    extras: dict[str, Any] = {
-        "log_probs": token_log_probs.detach().unsqueeze(1),
-        "prompt_attention_mask": prompt_mask,
-        "token_mask": token_mask,
-        "r1_segments": segments,
-        "primary_segment": primary_name,
-        "initial_image": decoded_initial,
-        "final_image": final_image,
-        "selfcheck": decoded_selfcheck,
-    }
     rollout_context = dict(trajectory.context)
     rollout_context.pop("primary_segment", None)
     rollout_context.pop("segment_names", None)
@@ -262,8 +200,12 @@ def _pack_ar_multisegment(
         rewards=rewards_raw.to(device),
         dones=torch.ones(len(output.sample_specs), dtype=torch.bool, device=device),
         group_ids=_group_ids_from_trajectory(trajectory, device=device),
-        extras=extras,
-        context={**rollout_context, "r1_segment_names": tuple(segments)},
+        extras={},
+        context={**rollout_context, "r1_segment_names": tuple(
+            name
+            for name, segment in trajectory.segments.items()
+            if segment.distribution == "categorical"
+        )},
         videos=final_image.unsqueeze(2),
         prompts=[spec.prompt for spec in output.sample_specs],
         trajectory=trajectory,

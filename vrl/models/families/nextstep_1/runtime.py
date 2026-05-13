@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,21 +17,23 @@ from vrl.engine.ar import (
     max_peak_memory_mb,
     ordered_chunks,
 )
+from vrl.engine.core.capabilities import FamilyCapability, ar_continuous_family_capability
 from vrl.engine.core.protocols import PipelineChunkResult
 from vrl.engine.core.types import (
     GenerationMetrics,
     GenerationRequest,
     GenerationSampleSpec,
     OutputBatch,
-    RolloutTrajectoryData,
     WorkloadSignature,
 )
-from vrl.engine.microbatching import MicroBatchPlan
+from vrl.engine.execution.microbatching import MicroBatchPlan
 from vrl.engine.trajectory import build_ar_continuous_trajectory
 from vrl.models.families.nextstep_1.policy import NextStep1Config, NextStep1Policy
-from vrl.models.runtime import RuntimeBuildSpec, RuntimeBundle
+from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 
 logger = logging.getLogger(__name__)
+
+NEXTSTEP_1_FAMILY_CAPABILITY = ar_continuous_family_capability("nextstep_1", "ar_t2i")
 
 
 def build_nextstep_1_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
@@ -46,6 +48,7 @@ def build_nextstep_1_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         backend_kind="nextstep_1",
         backend_handle=policy,
         runtime_caps={
+            "family_capability": NEXTSTEP_1_FAMILY_CAPABILITY.to_dict(),
             "supports_chunked_execution": True,
             "supports_token_logprobs": True,
             "supports_cfg": True,
@@ -266,16 +269,14 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
     And whose ``metadata`` may carry ``rollout_metadata`` (target_text,
     references, etc.) for the collector's reward layer.
 
-    The executor returns an ``OutputBatch`` whose ``extra`` carries the
-    three NextStep-1-specific artifacts ``tokens``/``saved_noise``/
-    ``log_probs`` plus the prompt-side replay context
-    (``prompt_input_ids``, ``prompt_attention_mask``, ``uncond_*``).
-    There is no DiT trajectory: ``rollout_trajectory_data.dit_trajectory``
-    is ``None`` and ``denoising_env`` is ``None``.
+    The executor returns an ``OutputBatch`` whose first-class trajectory carries
+    tokens, saved noise, log-probs, decoded reward images, and prompt-side replay
+    context.
     """
 
     family: str = "nextstep_1"
     task: str = "ar_t2i"
+    family_capability: FamilyCapability = NEXTSTEP_1_FAMILY_CAPABILITY
     default_image_token_num: int | None = None
     default_image_size: int | None = None
 
@@ -288,13 +289,18 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
     # -- protocol ------------------------------------------------------
 
     def workload_signature(self, request: GenerationRequest) -> WorkloadSignature:
-        return WorkloadSignature.from_request(request)
+        return WorkloadSignature.from_request_and_capability(request, self.family_capability)
 
-    def forward(
+    def capability(self) -> FamilyCapability:
+        return self.family_capability
+
+    def forward_plan(
         self,
         request: GenerationRequest,
         sample_specs: list[GenerationSampleSpec],
+        engine_plan: Any,
     ) -> OutputBatch:
+        del engine_plan
         sampling = request.sampling
         spec: ARGenerationSpec = self.parse_spec(request)
         prompts = list(request.prompts)
@@ -385,35 +391,13 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
             peak_memory_mb=peak_mem_mb,
         )
 
-        rollout_trajectory_data = (
-            RolloutTrajectoryData(
-                rollout_log_probs=old_logprobs,
-                denoising_env=None,
-                dit_trajectory=None,
-            )
-            if "rollout_trajectory_data" in request.return_artifacts
-            else None
-        )
-
-        # ``extra`` is the contract surface for the collector. Everything
-        # the OutputBatch → RolloutBatch translation needs lives here.
-        extra: dict[str, Any] = {
-            "tokens": tokens,
-            "saved_noise": saved_noise,
-            "log_probs": old_logprobs,
-            "images_for_reward": images_for_reward,
-            "prompt_input_ids": prompt_ids,
-            "prompt_attention_mask": prompt_mask,
-            "uncond_input_ids": uncond_ids,
-            "uncond_attention_mask": uncond_mask,
-            "context": {
-                "cfg_scale": cfg_scale,
-                "num_flow_steps": num_flow_steps,
-                "noise_level": noise_level,
-                "image_token_num": spec.image_token_num,
-                "image_size": spec.image_size,
-                "rescale_to_unit": rescale_to_unit,
-            },
+        trajectory_context: dict[str, Any] = {
+            "cfg_scale": cfg_scale,
+            "num_flow_steps": num_flow_steps,
+            "noise_level": noise_level,
+            "image_token_num": spec.image_token_num,
+            "image_size": spec.image_size,
+            "rescale_to_unit": rescale_to_unit,
         }
         trajectory = build_ar_continuous_trajectory(
             request=request,
@@ -427,7 +411,7 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
             uncond_input_ids=uncond_ids,
             uncond_attention_mask=uncond_mask,
             images_for_reward=images_for_reward,
-            context=extra["context"],
+            context=trajectory_context,
         )
 
         return OutputBatch(
@@ -437,20 +421,22 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
             prompts=prompts,
             sample_specs=sample_specs,
             output=images,
-            rollout_trajectory_data=rollout_trajectory_data,
             trajectory=trajectory,
-            extra=extra,
+            extra={},
             metrics=metrics,
             peak_memory_mb=peak_mem_mb or 0.0,
         )
 
-    def forward_chunk(
+    def forward_chunk_plan(
         self,
         request: GenerationRequest,
         chunk: MicroBatchPlan,
+        execution_unit: Any,
+        plan_summary: Mapping[str, object],
     ) -> NextStep1ARChunkResult:
         """Run one prompt-major AR chunk through the black-box sampling path."""
 
+        del execution_unit, plan_summary
         self.validate_chunk(request, chunk)
         sampling = request.sampling
         spec: ARGenerationSpec = self.parse_spec(request)
@@ -700,15 +686,6 @@ class NextStep1ChunkGatherer:
         log_probs = torch.cat([chunk.log_probs for chunk in ordered_ar_chunks], dim=0)
         output = torch.cat([chunk.output for chunk in ordered_ar_chunks], dim=0)
         peak_mem_mb = max_peak_memory_mb(ordered_ar_chunks)
-        rollout_trajectory_data = (
-            RolloutTrajectoryData(
-                rollout_log_probs=log_probs,
-                denoising_env=None,
-                dit_trajectory=None,
-            )
-            if "rollout_trajectory_data" in request.return_artifacts
-            else None
-        )
         metrics = GenerationMetrics(
             num_prompts=len(request.prompts),
             num_samples=len(sample_specs),
@@ -716,32 +693,27 @@ class NextStep1ChunkGatherer:
             micro_batches=len(ordered_ar_chunks),
             peak_memory_mb=peak_mem_mb,
         )
-        extra: dict[str, Any] = {
-            "tokens": tokens,
-            "saved_noise": saved_noise,
-            "log_probs": log_probs,
-            "images_for_reward": torch.cat(
-                [chunk.images_for_reward for chunk in ordered_ar_chunks],
-                dim=0,
-            ),
-            "prompt_input_ids": torch.cat(
-                [chunk.prompt_input_ids for chunk in ordered_ar_chunks],
-                dim=0,
-            ),
-            "prompt_attention_mask": torch.cat(
-                [chunk.prompt_attention_mask for chunk in ordered_ar_chunks],
-                dim=0,
-            ),
-            "uncond_input_ids": torch.cat(
-                [chunk.uncond_input_ids for chunk in ordered_ar_chunks],
-                dim=0,
-            ),
-            "uncond_attention_mask": torch.cat(
-                [chunk.uncond_attention_mask for chunk in ordered_ar_chunks],
-                dim=0,
-            ),
-            "context": dict(ordered_ar_chunks[0].context),
-        }
+        images_for_reward = torch.cat(
+            [chunk.images_for_reward for chunk in ordered_ar_chunks],
+            dim=0,
+        )
+        prompt_input_ids = torch.cat(
+            [chunk.prompt_input_ids for chunk in ordered_ar_chunks],
+            dim=0,
+        )
+        prompt_attention_mask = torch.cat(
+            [chunk.prompt_attention_mask for chunk in ordered_ar_chunks],
+            dim=0,
+        )
+        uncond_input_ids = torch.cat(
+            [chunk.uncond_input_ids for chunk in ordered_ar_chunks],
+            dim=0,
+        )
+        uncond_attention_mask = torch.cat(
+            [chunk.uncond_attention_mask for chunk in ordered_ar_chunks],
+            dim=0,
+        )
+        trajectory_context = dict(ordered_ar_chunks[0].context)
         trajectory = build_ar_continuous_trajectory(
             request=request,
             sample_specs=list(sample_specs),
@@ -749,12 +721,12 @@ class NextStep1ChunkGatherer:
             saved_noise=saved_noise,
             token_log_probs=log_probs,
             token_mask=torch.ones_like(log_probs),
-            prompt_input_ids=extra["prompt_input_ids"],
-            prompt_attention_mask=extra["prompt_attention_mask"],
-            uncond_input_ids=extra["uncond_input_ids"],
-            uncond_attention_mask=extra["uncond_attention_mask"],
-            images_for_reward=extra["images_for_reward"],
-            context=extra["context"],
+            prompt_input_ids=prompt_input_ids,
+            prompt_attention_mask=prompt_attention_mask,
+            uncond_input_ids=uncond_input_ids,
+            uncond_attention_mask=uncond_attention_mask,
+            images_for_reward=images_for_reward,
+            context=trajectory_context,
         )
 
         return OutputBatch(
@@ -764,9 +736,8 @@ class NextStep1ChunkGatherer:
             prompts=list(request.prompts),
             sample_specs=list(sample_specs),
             output=output,
-            rollout_trajectory_data=rollout_trajectory_data,
             trajectory=trajectory,
-            extra=extra,
+            extra={},
             metrics=metrics,
             peak_memory_mb=peak_mem_mb or 0.0,
         )

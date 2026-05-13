@@ -75,7 +75,7 @@ outputs = self._lm_trunk()(
 
 ### 4.1 统一 AR decode contract
 
-目标是在 `vrl/engine/ar` 和 `vrl/models/ar.py` 层表达一个通用能力：
+目标是在 `vrl/engine/ar` 和 `vrl/models/interfaces/ar_policy.py` 层表达一个通用能力：
 
 ```text
 init_ar_state(...) -> family-specific state
@@ -149,7 +149,7 @@ Ray actor 现在已经有 `load_policy()` / `release_policy()`，但 sprint 需�
 编辑：
 
 ```text
-vrl/models/ar.py
+vrl/models/interfaces/ar_policy.py
 vrl/engine/ar/sequence.py
 vrl/engine/ar/token_scheduler.py
 vrl/engine/ar/spec.py
@@ -238,7 +238,7 @@ vrl/distributed/ray/rollout/executor.py
 vrl/distributed/ray/rollout/runtime.py
 vrl/rollouts/runtime/config.py
 vrl/rollouts/runtime/backend.py
-vrl/engine/core/worker.py
+vrl/engine/execution/worker.py
 ```
 
 主要改动：

@@ -11,9 +11,9 @@ from vrl.engine.diffusion import (
     DiffusionPipelineExecutorBase,
     repeat_tensor_batch,
 )
-from vrl.engine.microbatching import MicroBatchPlan
-from vrl.models.diffusion import VideoGenerationRequest
-from vrl.models.runtime import RuntimeBuildSpec, RuntimeBundle
+from vrl.engine.execution.microbatching import MicroBatchPlan
+from vrl.models.interfaces.diffusion_policy import VideoGenerationRequest
+from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 
 logger = logging.getLogger(__name__)
 

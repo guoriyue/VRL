@@ -4,7 +4,8 @@ Wraps ``model.replay_forward`` (which returns full logits) and gathers the
 log-probabilities of the *sampled* tokens — both under the current policy
 and, when needed, under the LoRA-off reference policy.
 
-The returned ``SignalBatch`` is fed to ``TokenGRPO.compute_signal_loss``.
+The returned ``TrajectorySignalBatch`` is consumed by the trainer/algorithm
+adapter.
 
 Distribution family is ``"categorical"`` — flow-matching latent-space KL
 intermediates are unused and stay ``None``.
@@ -19,7 +20,8 @@ import torch.nn.functional as F
 
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
-from vrl.rollouts.evaluators.types import SignalBatch, SignalRequest
+from vrl.rollouts.evaluators.trajectory import single_segment_trajectory_signals
+from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
 
 
 def _has_active_adapter(model: Any) -> bool:
@@ -62,7 +64,7 @@ class TokenLogProbEvaluator(Evaluator):
         timestep_idx: int = 0,
         ref_model: Any | None = None,
         signal_request: SignalRequest | None = None,
-    ) -> SignalBatch:
+    ) -> TrajectorySignalBatch:
         request = signal_request or SignalRequest()
         action_ids: torch.Tensor = batch.actions  # [B, L_img]
 
@@ -92,16 +94,16 @@ class TokenLogProbEvaluator(Evaluator):
                         model, batch, action_ids,
                     )
 
-        aux: dict[str, Any] = {}
-        if self.mask_key in batch.extras:
-            aux[self.mask_key] = batch.extras[self.mask_key]
-
-        return SignalBatch(
+        return single_segment_trajectory_signals(
+            batch,
+            segment_name="image_tokens",
             log_prob=new_lp,
+            old_log_prob=None,
             ref_log_prob=ref_lp,
             entropy=None,
-            dist_family="categorical",
-            aux=aux,
+            distribution="categorical",
+            timestep_idx=timestep_idx,
+            mask_key=self.mask_key,
         )
 
     # ------------------------------------------------------------------

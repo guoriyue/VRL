@@ -513,7 +513,7 @@ class OnlineTrainer(Trainer):
         """Run one full training step without profiler wrapping."""
         from vrl.algorithms.trajectory import AlgorithmAdapter, AlgorithmInput
         from vrl.rollouts.evaluators.trajectory import (
-            evaluator_output_to_trajectory_signals,
+            to_trajectory_signals,
         )
         from vrl.rollouts.evaluators.types import SignalRequest
         from vrl.trainers.data import PromptExample
@@ -703,17 +703,12 @@ class OnlineTrainer(Trainer):
         self.model.train()
         autocast_ctx = _get_autocast(cfg, self.device, model=self.model)
         agg_metrics: dict[str, list[float]] = defaultdict(list)
-        compute_batch_timestep_loss = getattr(
-            self.algorithm,
-            "compute_batch_timestep_loss",
-            None,
-        )
         uses_evaluator = bool(getattr(self.algorithm, "uses_evaluator", True))
         algorithm_adapter = AlgorithmAdapter()
-        if not uses_evaluator and not callable(compute_batch_timestep_loss):
+        if not uses_evaluator and not callable(getattr(self.algorithm, "compute_loss", None)):
             raise RuntimeError(
                 f"{type(self.algorithm).__name__} disabled evaluator use but does "
-                "not expose compute_batch_timestep_loss(...)",
+                "not expose compute_loss(AlgorithmInput)",
             )
 
         # If every batch was filtered out (all dead), skip training this step.
@@ -770,7 +765,6 @@ class OnlineTrainer(Trainer):
         first_step_debug_record: dict[str, Any] | None = None
         if cfg.debug.first_step and self.state.step == 0 and uses_evaluator:
             _dbg_batch = filtered_batches[0]
-            _dbg_old_lp = _dbg_batch.extras["log_probs"]
             with autocast_ctx, record_function("trainer.replay"):
                 _dbg_signals = self.evaluator.evaluate(
                     self.model,
@@ -779,18 +773,9 @@ class OnlineTrainer(Trainer):
                     ref_model=self.ref_model,
                     signal_request=SignalRequest(need_ref=False, need_kl_intermediates=False),
                 )
-            _old_lp_0 = _dbg_old_lp[:, 0] if _dbg_old_lp.ndim > 1 else _dbg_old_lp
-            _dbg_mask_key = _algorithm_mask_key(self.algorithm)
-            _dbg_trajectory_signals = evaluator_output_to_trajectory_signals(
-                _dbg_signals,
-                trajectory=_dbg_batch.trajectory,
-                training_view=_dbg_batch.training_view,
-                old_log_probs=_old_lp_0,
-                group_ids=_dbg_batch.group_ids,
-                context=_dbg_batch.context,
-                mask_key=_dbg_mask_key,
-            )
+            _dbg_trajectory_signals = to_trajectory_signals(_dbg_signals)
             _dbg_log_prob = _dbg_trajectory_signals.primary.log_prob
+            _old_lp_0 = _dbg_trajectory_signals.primary.old_log_prob
             _diff = (_dbg_log_prob - _old_lp_0).abs()
             _ratio = torch.exp(_dbg_log_prob - _old_lp_0)
             _old_lp_first = _old_lp_0.reshape(-1)[0]
@@ -851,26 +836,30 @@ class OnlineTrainer(Trainer):
                 loss_scale = len(chunk_batches) * len(train_indices)
 
                 for b, adv_b in zip(chunk_batches, chunk_advs, strict=True):
-                    old_lp = b.extras.get("log_probs")
                     for j in train_indices:
                         with timer.time("evaluate"), autocast_ctx:
-                            if callable(compute_batch_timestep_loss):
+                            if not uses_evaluator:
                                 with record_function("trainer.loss"):
-                                    loss, metrics = compute_batch_timestep_loss(
-                                        self.model,
-                                        b,
-                                        j,
-                                        adv_b,
+                                    loss, metrics = algorithm_adapter.compute_loss(
+                                        self.algorithm,
+                                        AlgorithmInput(
+                                            trajectory=b.trajectory,
+                                            training_view=b.training_view,
+                                            rewards=b.rewards,
+                                            group_ids=b.group_ids,
+                                            advantages=adv_b,
+                                            metadata={
+                                                "model": self.model,
+                                                "rollout_batch": b,
+                                                "timestep_index": j,
+                                                "signal_context": b.context,
+                                            },
+                                        ),
                                     )
                             else:
                                 if self.evaluator is None:
                                     raise RuntimeError(
                                         f"{type(self.algorithm).__name__} requires an evaluator",
-                                    )
-                                if old_lp is None:
-                                    raise RuntimeError(
-                                        "RolloutBatch.extras['log_probs'] is required "
-                                        f"for {type(self.algorithm).__name__}",
                                     )
                                 init_kl_coef = float(
                                     getattr(self.algorithm.config, "init_kl_coef", 0.0),
@@ -886,20 +875,9 @@ class OnlineTrainer(Trainer):
                                             need_kl_intermediates=init_kl_coef > 0,
                                         ),
                                     )
-                                old_lp_j = old_lp[:, j] if old_lp.ndim > 1 else old_lp
                                 with record_function("trainer.loss"):
                                     mask_key = _algorithm_mask_key(self.algorithm)
-                                    trajectory_signals = (
-                                        evaluator_output_to_trajectory_signals(
-                                            signals,
-                                            trajectory=b.trajectory,
-                                            training_view=b.training_view,
-                                            old_log_probs=old_lp_j,
-                                            group_ids=b.group_ids,
-                                            context=b.context,
-                                            mask_key=mask_key,
-                                        )
-                                    )
+                                    trajectory_signals = to_trajectory_signals(signals)
                                     loss, metrics = algorithm_adapter.compute_loss(
                                         self.algorithm,
                                         AlgorithmInput(
@@ -907,7 +885,7 @@ class OnlineTrainer(Trainer):
                                             training_view=b.training_view,
                                             signals=trajectory_signals,
                                             advantages=adv_b,
-                                            old_log_probs=old_lp_j,
+                                            old_log_probs=trajectory_signals.primary.old_log_prob,
                                             group_ids=b.group_ids,
                                             metadata={
                                                 "signal_context": b.context,

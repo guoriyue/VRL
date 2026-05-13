@@ -1,442 +1,77 @@
-"""Janus-Pro GRPO training recipe.
-
-The unified ``vrl.scripts.train`` entry point dispatches Janus-Pro configs here:
-
-    JanusProPolicy  --(rollout)-->  JanusProCollector
-                                       |
-                                       v
-                          TokenLogProbEvaluator
-                                       |
-                                       v
-                                  TokenGRPO
-                                       |
-                                       v
-                                OnlineTrainer
-
-Public coroutines:
-  * ``train_janus_pro_grpo``      — general-purpose mix (PickScore + Aesthetic).
-  * ``train_janus_pro_ocr_grpo``  — OCR reward + ``target_text`` manifest.
-  * ``train_janus_pro_r1_ocr_grpo`` — R1-style multi-segment OCR reward path.
-  * ``train_janus_pro_r1_codex_qa_grpo`` — R1-style Codex image-QA baseline.
-
-Both share construction logic; the only differences are reward selection
-and manifest format.
-"""
+"""Janus-Pro online GRPO training recipes."""
 
 from __future__ import annotations
 
-import logging
-from pathlib import Path
+from typing import Any
 
 from omegaconf import DictConfig
 
-from vrl.models.runtime import RuntimeBundle
-from vrl.trainers.checkpointing import (
-    LORA_WEIGHTS_NAME,
-    capture_rng_state,
-    load_training_checkpoint_from_config,
-    prepare_metrics_csv,
-    prepare_model_config_for_training_resume,
-    restore_rng_state,
-    restore_training_checkpoint,
-    sample_prompt_indices,
-    save_resolved_config,
-    save_training_checkpoint,
-)
-
-logger = logging.getLogger(__name__)
+from vrl.scripts.recipes.online import run_online_recipe
+from vrl.scripts.recipes.types import OnlineRecipeDefinition
+from vrl.trainers.checkpointing import LORA_WEIGHTS_NAME
 
 
 async def train_janus_pro_grpo(cfg: DictConfig) -> None:
-    """Run Janus-Pro GRPO with a multi-component image-quality reward."""
-    await _train_janus_pro(
-        cfg,
-        ocr_mode=False,
-    )
+    """Run Janus-Pro token GRPO."""
+
+    await _run_janus_recipe(cfg, family="janus_pro")
 
 
 async def train_janus_pro_ocr_grpo(cfg: DictConfig) -> None:
-    """Run Janus-Pro GRPO with the OCR edit-distance reward.
+    """Run Janus-Pro OCR token GRPO."""
 
-    Manifest entries must carry ``target_text`` so ``OCRReward`` knows what
-    string to look for in each rendered image.
-    """
-    await _train_janus_pro(
-        cfg,
-        ocr_mode=True,
-        r1_mode=False,
-    )
+    await _run_janus_recipe(cfg, family="janus_pro")
 
 
 async def train_janus_pro_r1_ocr_grpo(cfg: DictConfig) -> None:
-    """Run Janus-Pro-R1-style multi-segment OCR GRPO wiring."""
-    await _train_janus_pro(
-        cfg,
-        ocr_mode=True,
-        r1_mode=True,
-        run_label="r1_ocr",
-    )
+    """Run Janus-Pro-R1 multi-segment OCR GRPO."""
+
+    await _run_janus_recipe(cfg, family="janus_pro_r1")
 
 
 async def train_janus_pro_r1_codex_qa_grpo(cfg: DictConfig) -> None:
-    """Run Janus-Pro-R1-style multi-segment Codex image-QA GRPO wiring."""
-    await _train_janus_pro(
+    """Run Janus-Pro-R1 multi-segment Codex-QA GRPO."""
+
+    await _run_janus_recipe(cfg, family="janus_pro_r1")
+
+
+async def _run_janus_recipe(cfg: DictConfig, *, family: str) -> None:
+    await run_online_recipe(
         cfg,
-        ocr_mode=False,
-        r1_mode=True,
-        run_label="r1_codex_qa",
+        OnlineRecipeDefinition(
+            family=family,
+            build_bundle=_build_bundle,
+            configure_trainer=_configure_trainer,
+            export_modules_getter=_export_modules,
+        ),
     )
 
 
-async def _train_janus_pro(
-    cfg: DictConfig,
-    *,
-    ocr_mode: bool,
-    r1_mode: bool = False,
-    run_label: str | None = None,
-) -> None:
-    import csv
-    import os
+def _build_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
+    from vrl.models.families.janus_pro.runtime import (
+        build_janus_pro_runtime_bundle,
+        extract_janus_pro_runtime_spec,
+    )
 
-    import torch
+    return build_janus_pro_runtime_bundle(
+        extract_janus_pro_runtime_spec(cfg, device, weight_dtype),
+    )
 
-    from vrl.algorithms.grpo.multisegment import (
-        MultiSegmentTokenGRPO,
-        MultiSegmentTokenGRPOConfig,
-    )
-    from vrl.algorithms.grpo.token import TokenGRPO, TokenGRPOConfig
-    from vrl.algorithms.stat_tracking import PerPromptStatTracker
-    from vrl.config.loader import build_configs, require
-    from vrl.distributed.resources import (
-        format_distributed_resource_plan,
-        resolve_distributed_resources,
-        trainer_torch_device,
-    )
-    from vrl.models.families.janus_pro import JanusProConfig, JanusProPolicy
-    from vrl.rollouts.collector import (
-        JanusProCollectorConfig,
-        JanusProR1CollectorConfig,
-        build_rollout_collector,
-    )
-    from vrl.rollouts.evaluators.ar import (
-        MultiSegmentTokenLogProbEvaluator,
-        TokenLogProbEvaluator,
-    )
-    from vrl.rollouts.runtime.backend import build_rollout_backend_from_cfg
-    from vrl.rollouts.runtime.launch_inputs import build_rollout_runtime_inputs
-    from vrl.trainers.data import PromptExample, load_prompt_manifest
-    from vrl.trainers.online import OnlineTrainer
-    from vrl.trainers.weight_sync import build_runtime_weight_syncer
 
-    built = build_configs(cfg)
-    trainer_config = built["trainer"]
-    # AR rollout uses ``n_samples_per_prompt``; mirror it onto the runtime
-    # ``TrainerConfig.n`` (which the OnlineTrainer hands as ``group_size`` to
-    # the collector). ``rollout_batch_size`` similarly drives the per-step
-    # prompt count below.
+def _configure_trainer(cfg: DictConfig, trainer_config: Any) -> None:
     trainer_config.n = int(cfg.rollout.n_samples_per_prompt)
     trainer_config.rollout_batch_size = int(cfg.rollout.rollout_batch_size)
-    if trainer_config.profile:
-        os.environ["VRL_PROFILE_COLLECT"] = "1"
 
-    resume_checkpoint = load_training_checkpoint_from_config(cfg)
-    prepare_model_config_for_training_resume(
-        cfg,
-        resume_checkpoint,
-        strict=trainer_config.resume_strict,
-    )
 
-    torch.manual_seed(trainer_config.seed)
-    distributed_resources = resolve_distributed_resources(cfg)
-    logger.info(format_distributed_resource_plan(distributed_resources))
-    device = torch.device(trainer_torch_device(distributed_resources))
+def _export_modules(bundle: Any, cfg: DictConfig) -> dict[str, Any] | None:
+    if bool(cfg.model.use_lora):
+        return {LORA_WEIGHTS_NAME: bundle.policy.language_model}
+    return None
 
-    # 1. Model -----------------------------------------------------------
-    model_cfg = cfg.model
-    use_lora = bool(require(cfg, "model.use_lora"))
-    logger.info("Loading Janus-Pro from %s ...", model_cfg.path)
-    policy = JanusProPolicy(
-        JanusProConfig(
-            model_path=str(model_cfg.path),
-            dtype=str(require(cfg, "model.dtype")),
-            use_lora=use_lora,
-            lora_rank=int(require(cfg, "model.lora.rank")),
-            lora_alpha=int(require(cfg, "model.lora.alpha")),
-            lora_dropout=float(require(cfg, "model.lora.dropout")),
-            lora_target_modules=tuple(require(cfg, "model.lora.target_modules")),
-            lora_init=str(require(cfg, "model.lora.init")),
-            cfg_weight=float(cfg.sampling.cfg_weight),
-            temperature=float(cfg.sampling.temperature),
-            image_token_num=int(cfg.sampling.image_token_num),
-            device=str(device),
-        )
-    )
-    logger.info("Trainable params: %.2f M", policy.trainable_param_count() / 1e6)
-    bundle = RuntimeBundle(
-        policy=policy,
-        trainable_modules={"policy": policy},
-        scheduler=None,
-        backend_kind="janus_pro",
-        backend_handle=policy,
-        metadata={"family": "janus_pro"},
-    )
 
-    # 2. Reward ----------------------------------------------------------
-    reward_weights, reward_kwargs = built["reward"]
-    if not reward_weights:
-        raise ValueError("At least one reward component must have weight > 0.")
-    from vrl.rewards.multi import MultiReward
-
-    reward_fn = MultiReward.from_dict(
-        reward_weights,
-        device=str(device),
-        reward_kwargs=reward_kwargs,
-    )
-    logger.info("Reward mix: %s", reward_weights)
-
-    # 3. Collector + evaluator + algorithm -------------------------------
-    rollout_family = "janus_pro_r1" if r1_mode else "janus_pro"
-    if r1_mode:
-        collector = build_rollout_collector(
-            rollout_family,
-            model=policy,
-            reward_fn=reward_fn,
-            config=JanusProR1CollectorConfig(
-                n_samples_per_prompt=trainer_config.n,
-                cfg_weight=float(cfg.sampling.cfg_weight),
-                temperature=float(cfg.sampling.temperature),
-                image_token_num=int(cfg.sampling.image_token_num),
-                image_size=int(cfg.sampling.image_size),
-                rescale_to_unit=bool(require(cfg, "rollout.rescale_to_unit")),
-                max_text_length=int(require(cfg, "rollout.max_text_length")),
-                max_reflect_len=int(require(cfg, "rollout.max_reflect_len")),
-                final_image_policy=str(require(cfg, "rollout.final_image_policy")),
-                train_segments=dict(require(cfg, "algorithm.train_segments")),
-            ),
-        )
-    else:
-        collector = build_rollout_collector(
-            rollout_family,
-            model=policy,
-            reward_fn=reward_fn,
-            config=JanusProCollectorConfig(
-                n_samples_per_prompt=trainer_config.n,
-                cfg_weight=float(cfg.sampling.cfg_weight),
-                temperature=float(cfg.sampling.temperature),
-                image_token_num=int(cfg.sampling.image_token_num),
-                image_size=int(cfg.sampling.image_size),
-                rescale_to_unit=bool(require(cfg, "rollout.rescale_to_unit")),
-                max_text_length=int(require(cfg, "rollout.max_text_length")),
-            ),
-        )
-    rollout_runtime_inputs = build_rollout_runtime_inputs(
-        cfg,
-        rollout_family,
-        weight_dtype=str(require(cfg, "model.dtype")),
-    )
-    collector.set_runtime(
-        build_rollout_backend_from_cfg(
-            cfg,
-            driver_policy=policy,
-            runtime_spec=rollout_runtime_inputs.runtime_spec,
-            gatherer=rollout_runtime_inputs.gatherer,
-        ),
-    )
-    if r1_mode:
-        segment_flags = dict(require(cfg, "algorithm.train_segments"))
-        enabled_segments = tuple(
-            name
-            for name, enabled in segment_flags.items()
-            if bool(enabled)
-        )
-        evaluator = MultiSegmentTokenLogProbEvaluator(enabled_segments=enabled_segments)
-    else:
-        evaluator = TokenLogProbEvaluator()
-    algo_section = cfg.algorithm
-    algorithm_config = built["algorithm"]
-    if r1_mode:
-        if not isinstance(algorithm_config, MultiSegmentTokenGRPOConfig):
-            raise TypeError(
-                "Janus-Pro-R1 expects algorithm.kind=token_grpo_multisegment, "
-                f"got {type(algorithm_config).__name__}",
-            )
-        algorithm = MultiSegmentTokenGRPO(algorithm_config)
-    elif not isinstance(algorithm_config, TokenGRPOConfig):
-        raise TypeError(
-            f"Janus expects algorithm.kind=token_grpo, got {type(algorithm_config).__name__}",
-        )
-    else:
-        algorithm = TokenGRPO(algorithm_config)
-
-    stat_tracker = (
-        PerPromptStatTracker(global_std=algorithm.config.global_std)
-        if algo_section.get("per_prompt_stat_tracking", True)
-        else None
-    )
-
-    trainer = OnlineTrainer(
-        algorithm=algorithm,
-        collector=collector,
-        evaluator=evaluator,
-        model=policy,
-        weight_syncer=build_runtime_weight_syncer(
-            collector.runtime,
-            initial_policy_version=resume_checkpoint.next_step
-            if resume_checkpoint is not None
-            else None,
-        ),
-        config=trainer_config,
-        device=policy.device,
-        stat_tracker=stat_tracker,
-    )
-    if resume_checkpoint is not None:
-        restore_training_checkpoint(
-            resume_checkpoint,
-            trainer=trainer,
-            bundle=bundle,
-            strict=trainer_config.resume_strict,
-        )
-        logger.info(
-            "Resuming from %s, start_epoch=%d",
-            resume_checkpoint.checkpoint_dir,
-            resume_checkpoint.next_epoch,
-        )
-
-    # 4. Prompts ---------------------------------------------------------
-    manifest_path = Path(cfg.data.manifest)
-    if not manifest_path.exists():
-        raise FileNotFoundError(f"Manifest not found: {manifest_path}")
-    examples: list[PromptExample] = load_prompt_manifest(manifest_path)
-    logger.info(
-        "Starting Janus-Pro GRPO (%s) — %d epochs, %d examples, n=%d",
-        run_label or ("r1" if r1_mode else ("ocr" if ocr_mode else "general")),
-        trainer_config.total_epochs,
-        len(examples),
-        trainer_config.n,
-    )
-
-    output_dir = Path(trainer_config.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    save_resolved_config(cfg, output_dir, resumed=resume_checkpoint is not None)
-
-    csv_path = output_dir / "metrics.csv"
-    component_names = list(reward_weights.keys())
-    header = ",".join(
-        [
-            "epoch",
-            "loss",
-            "policy_loss",
-            "kl_penalty",
-            "reward_mean",
-            "reward_std",
-            "approx_kl",
-            "clip_fraction",
-            "advantage_mean",
-            "grad_norm",
-            "adv_saturation",
-            "adv_zero_rate",
-            "group_size",
-            "trained_prompt_num",
-            *(f"r_{n}" for n in component_names),
-        ],
-    )
-    prepare_metrics_csv(csv_path, header + "\n", resume=resume_checkpoint is not None)
-
-    rng = torch.Generator().manual_seed(trainer_config.seed)
-    start_epoch = resume_checkpoint.next_epoch if resume_checkpoint is not None else 0
-    if start_epoch > trainer_config.total_epochs:
-        raise ValueError(
-            "resume checkpoint starts after configured total_epochs: "
-            f"start_epoch={start_epoch}, total_epochs={trainer_config.total_epochs}",
-        )
-    if resume_checkpoint is not None:
-        restore_rng_state(resume_checkpoint.rng_state, prompt_generator=rng)
-
-    with csv_path.open("a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        for epoch in range(start_epoch, trainer_config.total_epochs):
-            idx = sample_prompt_indices(
-                rng,
-                num_examples=len(examples),
-                rollout_batch_size=trainer_config.rollout_batch_size,
-            )
-            example_batch = [examples[i] for i in idx]
-            reward_fn.reset_components()
-            metrics = await trainer.step(example_batch)
-
-            if epoch % trainer_config.log_freq == 0:
-                last = getattr(reward_fn, "last_components", {}) or {}
-                component_means = {
-                    n: (sum(last.get(n, [])) / len(last.get(n, [])))
-                    if last.get(n)
-                    else float("nan")
-                    for n in component_names
-                }
-                component_str = " ".join(f"{n}={component_means[n]:.3f}" for n in component_names)
-                logger.info(
-                    "Epoch %d | loss=%.4f kl=%.4f reward=%.4f+/-%.4f "
-                    "clip_frac=%.3f approx_kl=%.4f | %s",
-                    epoch,
-                    metrics.loss,
-                    metrics.kl_penalty,
-                    metrics.reward_mean,
-                    metrics.reward_std,
-                    metrics.clip_fraction,
-                    metrics.approx_kl,
-                    component_str,
-                )
-                writer.writerow(
-                    [
-                        epoch,
-                        metrics.loss,
-                        metrics.policy_loss,
-                        metrics.kl_penalty,
-                        metrics.reward_mean,
-                        metrics.reward_std,
-                        metrics.approx_kl,
-                        metrics.clip_fraction,
-                        metrics.advantage_mean,
-                        metrics.grad_norm,
-                        metrics.adv_saturation,
-                        metrics.adv_zero_rate,
-                        metrics.group_size,
-                        metrics.trained_prompt_num,
-                        *(component_means[n] for n in component_names),
-                    ]
-                )
-                f.flush()
-
-            if trainer_config.save_freq > 0 and (epoch + 1) % trainer_config.save_freq == 0:
-                ckpt_path = output_dir / f"checkpoint-{epoch + 1}"
-                save_training_checkpoint(
-                    ckpt_path,
-                    trainer=trainer,
-                    bundle=bundle,
-                    family="janus_pro",
-                    progress={
-                        "completed_epoch": epoch + 1,
-                        "next_epoch": epoch + 1,
-                        "global_step": trainer.state.global_step,
-                    },
-                    rng_state=capture_rng_state(prompt_generator=rng),
-                    export_modules={LORA_WEIGHTS_NAME: policy.language_model}
-                    if use_lora
-                    else None,
-                )
-                logger.info("Saved checkpoint to %s", ckpt_path)
-
-    final_path = output_dir / "checkpoint-final"
-    save_training_checkpoint(
-        final_path,
-        trainer=trainer,
-        bundle=bundle,
-        family="janus_pro",
-        progress={
-            "completed_epoch": trainer_config.total_epochs,
-            "next_epoch": trainer_config.total_epochs,
-            "global_step": trainer.state.global_step,
-        },
-        rng_state=capture_rng_state(prompt_generator=rng),
-        export_modules={LORA_WEIGHTS_NAME: policy.language_model} if use_lora else None,
-    )
-    logger.info("Training complete. Final checkpoint: %s", final_path)
+__all__ = [
+    "train_janus_pro_grpo",
+    "train_janus_pro_ocr_grpo",
+    "train_janus_pro_r1_codex_qa_grpo",
+    "train_janus_pro_r1_ocr_grpo",
+]

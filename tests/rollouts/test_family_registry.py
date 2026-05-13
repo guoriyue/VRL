@@ -64,21 +64,19 @@ def test_family_registry_covers_current_rollout_families() -> None:
         assert ":" in entry.gatherer.import_path
 
 
-@pytest.mark.parametrize(
-    ("alias", "expected"),
-    [
-        ("wan", "wan_2_1"),
-        ("cosmos", "cosmos-predict2"),
-        ("cosmos_predict2", "cosmos-predict2"),
-        ("cosmos_predict2_5", "cosmos-predict2.5"),
-        ("janus", "janus_pro"),
-        ("janus_r1", "janus_pro_r1"),
-        ("nextstep", "nextstep_1"),
-    ],
-)
-def test_family_aliases_resolve_to_canonical_entries(alias: str, expected: str) -> None:
-    assert normalize_rollout_family(alias) == expected
-    assert get_rollout_family_entry(alias) is FAMILY_REGISTRY[expected]
+def test_family_aliases_resolve_to_canonical_entries() -> None:
+    expected_aliases = {
+        "wan": "wan_2_1",
+        "cosmos": "cosmos-predict2",
+        "cosmos_predict2": "cosmos-predict2",
+        "cosmos_predict2_5": "cosmos-predict2.5",
+        "janus": "janus_pro",
+        "janus_r1": "janus_pro_r1",
+        "nextstep": "nextstep_1",
+    }
+    for alias, expected in expected_aliases.items():
+        assert normalize_rollout_family(alias) == expected
+        assert get_rollout_family_entry(alias) is FAMILY_REGISTRY[expected]
 
 
 def test_collector_registry_reuses_family_registry_metadata() -> None:

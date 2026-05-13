@@ -10,10 +10,10 @@ import pytest
 import torch
 import torch.nn as nn
 
-from vrl.models.diffusion import DiffusionPolicy, VideoGenerationRequest
 from vrl.models.families.cosmos.predict2.policy import CosmosPredict2Policy
 from vrl.models.families.sd3_5.policy import SD3_5Policy
 from vrl.models.families.wan_2_1.diffusers_policy import WanT2VDiffusersPolicy
+from vrl.models.interfaces.diffusion_policy import DiffusionPolicy, VideoGenerationRequest
 
 
 class _AdapterTransformer(nn.Linear):
@@ -80,12 +80,12 @@ class _PolicyStub(DiffusionPolicy):
 
     def restore_eval_state(
         self,
-        batch_extras: dict[str, Any],
+        replay_tensors: dict[str, Any],
         batch_context: dict[str, Any],
         latents: Any,
         step_idx: int,
     ) -> Any:
-        del batch_extras, batch_context, latents, step_idx
+        del replay_tensors, batch_context, latents, step_idx
         return object()
 
     @property
@@ -161,19 +161,6 @@ def test_forward_resolves_policy_self_to_registered_transformer() -> None:
     policy = _PolicyStub()
 
     policy.forward(object(), 0)
-
-    assert policy.forward_models == [policy.transformer]
-
-
-def test_replay_forward_uses_registered_transformer_for_policy_model() -> None:
-    policy = _PolicyStub()
-    batch = SimpleNamespace(
-        observations=torch.zeros(1, 1, 2),
-        extras={},
-        context={},
-    )
-
-    policy.replay_forward(batch, 0)
 
     assert policy.forward_models == [policy.transformer]
 

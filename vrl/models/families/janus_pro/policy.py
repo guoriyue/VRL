@@ -51,13 +51,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from vrl.models.ar import (
-    ARStepResult,
-    AutoregressivePolicy,
-)
 from vrl.models.families.janus_pro.r1_types import (
     JanusR1GenerationResult,
     JanusR1Segment,
+)
+from vrl.models.interfaces.ar_policy import (
+    ARStepResult,
+    AutoregressivePolicy,
 )
 
 logger = logging.getLogger(__name__)
@@ -516,27 +516,25 @@ class JanusProPolicy(nn.Module, AutoregressivePolicy):
     ) -> dict[str, Any]:
         """Single forward producing per-token logits over the image vocab.
 
-        Train-time replay: given a ``RolloutBatch`` that recorded
-        ``observations`` (text prompt ids), ``extras["prompt_attention_mask"]``,
-        and ``actions`` (sampled image tokens), recompute the conditional
-        logits over the image vocab so the evaluator can gather log-probs
-        of the sampled tokens under the *current* policy.
+        Train-time replay: read prompt ids, prompt masks, and sampled image
+        tokens from ``batch.trajectory`` and recompute logits under the current
+        policy.
 
         AR has no notion of "denoising step", so ``timestep_idx`` is ignored.
 
-        See ``vrl/models/ar.py::AutoregressivePolicy`` for the shared AR
+        See ``vrl/models/interfaces/ar_policy.py::AutoregressivePolicy`` for the shared AR
         replay protocol; see ``SPRINT_ar_support.md`` §5 for why Janus and
         NextStep do not share a return-dict schema.
 
         Returns:
           ``{"logits": Tensor[B, L_img, V_img], "image_token_ids": Tensor[B, L_img]}``.
         """
-        # observations may be [B, L_text] (direct-use) or [B, 1, L_text]
-        # (OnlineTrainer path). Squeeze the T=1 axis if present.
-        obs = batch.observations
-        prompt_ids = obs.squeeze(1) if obs.dim() == 3 else obs
-        prompt_mask = batch.extras["prompt_attention_mask"]
-        image_token_ids = batch.actions
+        from vrl.engine.trajectory import trajectory_replay_tensor_dict, trajectory_role_value
+
+        replay = trajectory_replay_tensor_dict(batch, "image_tokens")
+        prompt_ids = replay["prompt_input_ids"]
+        prompt_mask = replay["prompt_attention_mask"]
+        image_token_ids = trajectory_role_value(batch, "image_tokens", "action")
 
         embed = self.language_model.get_input_embeddings()
         prompt_embeds = embed(prompt_ids)

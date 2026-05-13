@@ -32,12 +32,12 @@ class ChunkGatherer(Protocol):
 def require_chunked_executor(executor: Any) -> ChunkedFamilyPipelineExecutor:
     """Return executor if it exposes the distributed chunk contract."""
 
-    forward_chunk = getattr(executor, "forward_chunk", None)
+    forward_chunk_plan = getattr(executor, "forward_chunk_plan", None)
     gather_chunks = getattr(executor, "gather_chunks", None)
-    if not callable(forward_chunk) or not callable(gather_chunks):
+    if not callable(forward_chunk_plan) or not callable(gather_chunks):
         raise TypeError(
             f"{type(executor).__name__} does not implement "
-            "forward_chunk(...) and gather_chunks(...)",
+            "forward_chunk_plan(...) and gather_chunks(...)",
         )
     return executor
 

@@ -16,7 +16,7 @@ from vrl.engine.ar.executor_base import (
 from vrl.engine.ar.sequence import ActiveSequence, ARSequenceKey
 from vrl.engine.ar.spec import ARGenerationSpec
 from vrl.engine.ar.token_scheduler import ARTokenBatch, ARTokenScheduler
-from vrl.models.ar import ARStepResult
+from vrl.models.interfaces.ar_policy import ARStepResult
 
 __all__ = [
     "ARChunkResult",

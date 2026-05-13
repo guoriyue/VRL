@@ -8,7 +8,8 @@ from typing import Any
 import vrl.algorithms.flow_matching as flow_matching_math
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
-from vrl.rollouts.evaluators.types import SignalBatch, SignalRequest
+from vrl.rollouts.evaluators.trajectory import single_segment_trajectory_signals
+from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
 
 # ------------------------------------------------------------------
 # FlowMatchingEvaluator
@@ -38,8 +39,8 @@ class FlowMatchingEvaluator(Evaluator):
         timestep_idx: int,
         ref_model: Any | None = None,
         signal_request: SignalRequest | None = None,
-    ) -> SignalBatch:
-        """Replay one diffusion step -> sde_step_with_logprob -> SignalBatch.
+    ) -> TrajectorySignalBatch:
+        """Replay one diffusion step into trajectory-native signals.
 
         Replay forward ownership lives on the family policy adapter. ``model``
         must be that policy and must expose ``replay_forward``.
@@ -53,7 +54,9 @@ class FlowMatchingEvaluator(Evaluator):
         if signal_request is None:
             signal_request = SignalRequest()
 
-        timesteps = batch.extras["timesteps"]
+        from vrl.engine.trajectory import trajectory_tensor_value
+
+        timesteps = trajectory_tensor_value(batch, "denoise", "timesteps")
         t = timesteps[:, timestep_idx] if timesteps.ndim > 1 else timesteps
 
         observations = batch.observations[:, timestep_idx]  # x_t
@@ -108,12 +111,16 @@ class FlowMatchingEvaluator(Evaluator):
                     ref_prev_sample_mean = ref_result.prev_sample_mean
                     ref_dt = ref_result.dt
 
-        return SignalBatch(
+        return single_segment_trajectory_signals(
+            batch,
+            segment_name="denoise",
             log_prob=result.log_prob,
             ref_log_prob=ref_log_prob,
             prev_sample_mean=result.prev_sample_mean,
             ref_prev_sample_mean=ref_prev_sample_mean,
             std_dev_t=result.std_dev_t,
             dt=result.dt if result.dt is not None else ref_dt,
-            dist_family="flow_matching",
+            distribution="flow_matching",
+            timestep_idx=timestep_idx,
+            mask_key="mask",
         )

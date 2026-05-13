@@ -32,7 +32,7 @@ def _request(
         prompts=["a test prompt"],
         samples_per_prompt=2,
         sampling=sampling,
-        return_artifacts={"output", "rollout_trajectory_data"},
+        return_artifacts={"output", "trajectory"},
         metadata={"dataset": "unit"},
     )
 
