@@ -5,7 +5,7 @@ continuous (NextStep-1 family). The LLM produces hidden states; the
 flow-matching head turns those into per-token Gaussian log-probabilities
 of the *previously sampled* continuous tokens.
 
-Distribution family is ``"continuous_flow"`` — algorithms see the same
+Distribution family is ``"gaussian"`` — algorithms see the same
 ``[B, L]`` log-prob tensor as the categorical path, so ``TokenGRPO``
 needs no change.
 """
@@ -73,7 +73,7 @@ class ContinuousTokenLogProbEvaluator(Evaluator):
             log_prob=new_lp,
             ref_log_prob=ref_lp,
             entropy=None,
-            dist_family="continuous_flow",
+            dist_family="gaussian",
             aux=aux,
         )
 

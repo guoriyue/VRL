@@ -372,6 +372,11 @@ def _move_model_to_device(model: nn.Module, device: torch.device | str) -> None:
         torch.cuda.empty_cache()
 
 
+def _algorithm_mask_key(algorithm: Any) -> str:
+    config = getattr(algorithm, "config", None)
+    return str(getattr(config, "mask_key", "token_mask"))
+
+
 # ---------------------------------------------------------------------------
 # OnlineTrainer
 # ---------------------------------------------------------------------------
@@ -506,6 +511,10 @@ class OnlineTrainer(Trainer):
 
     async def _step_impl(self, prompts: list[str] | None = None) -> TrainStepMetrics:
         """Run one full training step without profiler wrapping."""
+        from vrl.algorithms.trajectory import AlgorithmAdapter, AlgorithmInput
+        from vrl.rollouts.evaluators.trajectory import (
+            evaluator_output_to_trajectory_signals,
+        )
         from vrl.rollouts.evaluators.types import SignalRequest
         from vrl.trainers.data import PromptExample
         from vrl.trainers.profiling import record_function
@@ -700,6 +709,7 @@ class OnlineTrainer(Trainer):
             None,
         )
         uses_evaluator = bool(getattr(self.algorithm, "uses_evaluator", True))
+        algorithm_adapter = AlgorithmAdapter()
         if not uses_evaluator and not callable(compute_batch_timestep_loss):
             raise RuntimeError(
                 f"{type(self.algorithm).__name__} disabled evaluator use but does "
@@ -770,10 +780,21 @@ class OnlineTrainer(Trainer):
                     signal_request=SignalRequest(need_ref=False, need_kl_intermediates=False),
                 )
             _old_lp_0 = _dbg_old_lp[:, 0] if _dbg_old_lp.ndim > 1 else _dbg_old_lp
-            _diff = (_dbg_signals.log_prob - _old_lp_0).abs()
-            _ratio = torch.exp(_dbg_signals.log_prob - _old_lp_0)
+            _dbg_mask_key = _algorithm_mask_key(self.algorithm)
+            _dbg_trajectory_signals = evaluator_output_to_trajectory_signals(
+                _dbg_signals,
+                trajectory=_dbg_batch.trajectory,
+                training_view=_dbg_batch.training_view,
+                old_log_probs=_old_lp_0,
+                group_ids=_dbg_batch.group_ids,
+                context=_dbg_batch.context,
+                mask_key=_dbg_mask_key,
+            )
+            _dbg_log_prob = _dbg_trajectory_signals.primary.log_prob
+            _diff = (_dbg_log_prob - _old_lp_0).abs()
+            _ratio = torch.exp(_dbg_log_prob - _old_lp_0)
             _old_lp_first = _old_lp_0.reshape(-1)[0]
-            _fresh_lp_first = _dbg_signals.log_prob.reshape(-1)[0]
+            _fresh_lp_first = _dbg_log_prob.reshape(-1)[0]
             logger.info(
                 "DEBUG first-step log-prob diff: mean=%.6f max=%.6f | "
                 "old_lp[0]=%.6f fresh_lp[0]=%.6f",
@@ -790,7 +811,7 @@ class OnlineTrainer(Trainer):
                 "mixed_precision": _resolve_mixed_precision(cfg),
                 "autocast_enabled": _resolve_mixed_precision(cfg) != "no",
                 "old_log_prob": tensor_stats(_old_lp_0),
-                "fresh_log_prob": tensor_stats(_dbg_signals.log_prob),
+                "fresh_log_prob": tensor_stats(_dbg_log_prob),
                 "abs_diff": tensor_stats(_diff),
                 "ratio": tensor_stats(_ratio),
                 "driver_trainable_before_step": trainable_state_digest(self.model),
@@ -867,8 +888,32 @@ class OnlineTrainer(Trainer):
                                     )
                                 old_lp_j = old_lp[:, j] if old_lp.ndim > 1 else old_lp
                                 with record_function("trainer.loss"):
-                                    loss, metrics = self.algorithm.compute_signal_loss(
-                                        signals, adv_b, old_lp_j
+                                    mask_key = _algorithm_mask_key(self.algorithm)
+                                    trajectory_signals = (
+                                        evaluator_output_to_trajectory_signals(
+                                            signals,
+                                            trajectory=b.trajectory,
+                                            training_view=b.training_view,
+                                            old_log_probs=old_lp_j,
+                                            group_ids=b.group_ids,
+                                            context=b.context,
+                                            mask_key=mask_key,
+                                        )
+                                    )
+                                    loss, metrics = algorithm_adapter.compute_loss(
+                                        self.algorithm,
+                                        AlgorithmInput(
+                                            trajectory=b.trajectory,
+                                            training_view=b.training_view,
+                                            signals=trajectory_signals,
+                                            advantages=adv_b,
+                                            old_log_probs=old_lp_j,
+                                            group_ids=b.group_ids,
+                                            metadata={
+                                                "signal_context": b.context,
+                                                "mask_key": mask_key,
+                                            },
+                                        ),
                                     )
                             # Average across rollout micro-batches inside this
                             # optimizer update; timestep accumulation follows

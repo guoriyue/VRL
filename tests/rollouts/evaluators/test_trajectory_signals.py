@@ -12,10 +12,12 @@ from vrl.engine.trajectory import (
     build_training_view,
 )
 from vrl.rollouts.evaluators.trajectory import (
+    evaluator_output_to_trajectory_signals,
+    legacy_signal_batch_to_trajectory_signals,
     to_trajectory_signals,
     trajectory_signals_to_signal_batch,
 )
-from vrl.rollouts.evaluators.types import SignalBatch
+from vrl.rollouts.evaluators.types import SegmentSignal, SignalBatch, TrajectorySignalBatch
 
 
 def test_flow_signal_adapter_preserves_kl_fields_and_axis() -> None:
@@ -39,7 +41,7 @@ def test_flow_signal_adapter_preserves_kl_fields_and_axis() -> None:
         dist_family="flow_matching",
     )
 
-    signals = to_trajectory_signals(
+    signals = legacy_signal_batch_to_trajectory_signals(
         legacy,
         trajectory=trajectory,
         training_view=training_view,
@@ -74,13 +76,13 @@ def test_step_signal_adapter_requires_step_old_log_probs_when_trajectory_is_full
     )
 
     with pytest.raises(RuntimeError, match="step-level old_log_probs"):
-        to_trajectory_signals(
+        legacy_signal_batch_to_trajectory_signals(
             legacy,
             trajectory=trajectory,
             training_view=training_view,
         )
 
-    signals = to_trajectory_signals(
+    signals = legacy_signal_batch_to_trajectory_signals(
         legacy,
         trajectory=trajectory,
         training_view=training_view,
@@ -109,7 +111,7 @@ def test_token_signal_adapter_preserves_mask_and_roundtrips() -> None:
         aux={"token_mask": mask},
     )
 
-    signals = to_trajectory_signals(
+    signals = legacy_signal_batch_to_trajectory_signals(
         legacy,
         trajectory=trajectory,
         training_view=training_view,
@@ -151,7 +153,10 @@ def test_multisegment_signal_adapter_lifts_legacy_aux_segments() -> None:
         },
     )
 
-    signals = to_trajectory_signals(legacy, group_ids=torch.tensor([0, 0]))
+    signals = legacy_signal_batch_to_trajectory_signals(
+        legacy,
+        group_ids=torch.tensor([0, 0]),
+    )
 
     assert set(signals.segments) == {"initial_image", "final_image"}
     assert signals.primary_segment == "final_image"
@@ -162,6 +167,87 @@ def test_multisegment_signal_adapter_lifts_legacy_aux_segments() -> None:
     assert roundtrip.dist_family == "multisegment_categorical"
     assert set(roundtrip.aux["segments"]) == {"initial_image", "final_image"}
     assert torch.equal(roundtrip.aux["old_log_probs"]["final_image"], old_final)
+
+
+def test_to_trajectory_signals_rejects_legacy_signal_batch() -> None:
+    with pytest.raises(TypeError, match="legacy_signal_batch_to_trajectory_signals"):
+        to_trajectory_signals(SignalBatch(log_prob=torch.zeros(2)))
+
+
+def test_evaluator_output_normalizer_accepts_native_trajectory_signals() -> None:
+    native = TrajectorySignalBatch(
+        segments={
+            "image_tokens": SegmentSignal(
+                name="image_tokens",
+                segment="image_tokens",
+                axis="token",
+                axes=("sample", "token"),
+                distribution="categorical",
+                log_prob=torch.zeros(2, 3),
+                old_log_prob=torch.zeros(2, 3),
+                mask=torch.ones(2, 3),
+            )
+        },
+        group_ids=torch.tensor([0, 0]),
+        primary_segment="image_tokens",
+    )
+
+    assert evaluator_output_to_trajectory_signals(native) is native
+
+
+def test_evaluator_output_normalizer_converts_legacy_signal_batch() -> None:
+    trajectory = _janus_trajectory()
+    training_view = build_training_view(trajectory)
+    legacy = SignalBatch(
+        log_prob=torch.full((2, 4), -0.25),
+        dist_family="categorical",
+        aux={"token_mask": torch.ones(2, 4)},
+    )
+
+    signals = evaluator_output_to_trajectory_signals(
+        legacy,
+        trajectory=trajectory,
+        training_view=training_view,
+    )
+
+    assert signals.primary is signals.segments["image_tokens"]
+    assert signals.primary.distribution == "categorical"
+
+
+def test_trajectory_signal_batch_validates_shapes() -> None:
+    with pytest.raises(ValueError, match="log_prob/old_log_prob"):
+        TrajectorySignalBatch(
+            segments={
+                "denoise": SegmentSignal(
+                    name="denoise",
+                    segment="denoise",
+                    axis="timestep",
+                    axes=("sample", "timestep"),
+                    distribution="flow_matching",
+                    log_prob=torch.zeros(2, 3),
+                    old_log_prob=torch.zeros(2),
+                    mask=torch.ones(2, 3),
+                )
+            },
+            group_ids=torch.tensor([0, 0]),
+        )
+
+    with pytest.raises(ValueError, match="log_prob/mask"):
+        TrajectorySignalBatch(
+            segments={
+                "denoise": SegmentSignal(
+                    name="denoise",
+                    segment="denoise",
+                    axis="timestep",
+                    axes=("sample", "timestep"),
+                    distribution="flow_matching",
+                    log_prob=torch.zeros(2, 3),
+                    old_log_prob=torch.zeros(2, 3),
+                    mask=torch.ones(2),
+                )
+            },
+            group_ids=torch.tensor([0, 0]),
+        )
 
 
 def _diffusion_trajectory():

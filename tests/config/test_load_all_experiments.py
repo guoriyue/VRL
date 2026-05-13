@@ -11,8 +11,8 @@ from pathlib import Path
 import pytest
 from omegaconf import OmegaConf
 
-from vrl.algorithms.dpo import DiffusionDPOConfig
 from vrl.algorithms.diffusion_nft import DiffusionNFTConfig
+from vrl.algorithms.dpo import DiffusionDPOConfig
 from vrl.algorithms.grpo.continuous import GRPOConfig
 from vrl.algorithms.grpo.multisegment import MultiSegmentTokenGRPOConfig
 from vrl.algorithms.grpo.token import TokenGRPOConfig

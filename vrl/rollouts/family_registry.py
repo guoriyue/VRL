@@ -69,12 +69,26 @@ class RolloutFamilyEntry:
     aliases: tuple[str, ...] = ()
 
 
-DIFFUSION_RETURN_ARTIFACTS = (
+DIFFUSION_MIGRATED_RETURN_ARTIFACTS = (
     "output",
-    "rollout_trajectory_data",
-    "trajectory_timesteps",
-    "trajectory_latents",
-    "denoising_env",
+    "trajectory",
+)
+
+SD3_MIGRATED_RETURN_ARTIFACTS = DIFFUSION_MIGRATED_RETURN_ARTIFACTS
+
+JANUS_PRO_MIGRATED_RETURN_ARTIFACTS = (
+    "output",
+    "trajectory",
+)
+
+NEXTSTEP_MIGRATED_RETURN_ARTIFACTS = (
+    "output",
+    "trajectory",
+)
+
+JANUS_PRO_R1_MIGRATED_RETURN_ARTIFACTS = (
+    "output",
+    "trajectory",
 )
 
 DIFFUSION_COMMON_SAMPLING_FIELDS = (
@@ -111,7 +125,7 @@ FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {
             default_task_type="text_to_image",
             error_prefix="SD3.5",
             sampling_fields=DIFFUSION_COMMON_SAMPLING_FIELDS,
-            return_artifacts=DIFFUSION_RETURN_ARTIFACTS,
+            return_artifacts=SD3_MIGRATED_RETURN_ARTIFACTS,
         ),
         executor_cls="vrl.models.families.sd3_5.runtime:SD3_5PipelineExecutor",
         runtime_builder="vrl.models.families.sd3_5.runtime:build_sd3_5_runtime_bundle",
@@ -134,7 +148,7 @@ FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {
             default_task_type="text_to_video",
             error_prefix="Wan 2.1",
             sampling_fields=DIFFUSION_VIDEO_SAMPLING_FIELDS,
-            return_artifacts=DIFFUSION_RETURN_ARTIFACTS,
+            return_artifacts=DIFFUSION_MIGRATED_RETURN_ARTIFACTS,
         ),
         executor_cls="vrl.models.families.wan_2_1.runtime:Wan_2_1PipelineExecutor",
         runtime_builder="vrl.models.families.wan_2_1.runtime:build_wan_2_1_runtime_bundle",
@@ -162,7 +176,7 @@ FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {
                 *DIFFUSION_VIDEO_SAMPLING_FIELDS,
                 "fps",
             ),
-            return_artifacts=DIFFUSION_RETURN_ARTIFACTS,
+            return_artifacts=DIFFUSION_MIGRATED_RETURN_ARTIFACTS,
         ),
         executor_cls="vrl.models.families.cosmos.predict2.runtime:CosmosPipelineExecutor",
         runtime_builder=(
@@ -201,7 +215,7 @@ FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {
                 *DIFFUSION_VIDEO_SAMPLING_FIELDS,
                 "fps",
             ),
-            return_artifacts=DIFFUSION_RETURN_ARTIFACTS,
+            return_artifacts=DIFFUSION_MIGRATED_RETURN_ARTIFACTS,
         ),
         executor_cls=(
             "vrl.models.families.cosmos.predict2_5.runtime:"
@@ -237,7 +251,7 @@ FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {
                 "image_size",
                 "max_text_length",
             ),
-            return_artifacts=("output", "token_ids", "token_log_probs"),
+            return_artifacts=JANUS_PRO_MIGRATED_RETURN_ARTIFACTS,
         ),
         executor_cls="vrl.models.families.janus_pro.runtime:JanusProPipelineExecutor",
         runtime_builder=("vrl.models.families.janus_pro.runtime:build_janus_pro_runtime_bundle"),
@@ -267,13 +281,7 @@ FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {
                 "final_image_policy",
                 "train_segments",
             ),
-            return_artifacts=(
-                "output",
-                "r1_segments",
-                "initial_image",
-                "final_image",
-                "selfcheck_text",
-            ),
+            return_artifacts=JANUS_PRO_R1_MIGRATED_RETURN_ARTIFACTS,
         ),
         executor_cls=(
             "vrl.models.families.janus_pro.runtime:JanusProR1PipelineExecutor"
@@ -308,7 +316,7 @@ FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {
                 "max_text_length",
                 "rescale_to_unit",
             ),
-            return_artifacts=("output", "rollout_trajectory_data"),
+            return_artifacts=NEXTSTEP_MIGRATED_RETURN_ARTIFACTS,
             metadata_key="rollout_metadata",
         ),
         executor_cls="vrl.models.families.nextstep_1.runtime:NextStep1PipelineExecutor",
@@ -357,9 +365,13 @@ def registered_rollout_families() -> tuple[str, ...]:
 
 __all__ = [
     "DIFFUSION_COMMON_SAMPLING_FIELDS",
-    "DIFFUSION_RETURN_ARTIFACTS",
+    "DIFFUSION_MIGRATED_RETURN_ARTIFACTS",
     "DIFFUSION_VIDEO_SAMPLING_FIELDS",
     "FAMILY_REGISTRY",
+    "JANUS_PRO_MIGRATED_RETURN_ARTIFACTS",
+    "JANUS_PRO_R1_MIGRATED_RETURN_ARTIFACTS",
+    "NEXTSTEP_MIGRATED_RETURN_ARTIFACTS",
+    "SD3_MIGRATED_RETURN_ARTIFACTS",
     "CollectorKind",
     "CollectorMetadata",
     "ExecutorKwargsMetadata",

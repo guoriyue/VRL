@@ -42,10 +42,11 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
     ) -> SignalBatch:
         del timestep_idx
         request = signal_request or SignalRequest()
-        segments = batch.extras.get(R1_SEGMENTS_KEY)
+        segments = _segments_from_batch(batch)
         if not isinstance(segments, dict):
             raise RuntimeError(
-                f"MultiSegmentTokenLogProbEvaluator requires batch.extras[{R1_SEGMENTS_KEY!r}]",
+                "MultiSegmentTokenLogProbEvaluator requires trajectory segments "
+                f"or batch.extras[{R1_SEGMENTS_KEY!r}]",
             )
 
         enabled_names = self._enabled_segment_names(segments)
@@ -172,6 +173,47 @@ def _call_replay_r1_segment(
         return method(segment)
 
 
+def _segments_from_batch(batch: RolloutBatch) -> dict[str, Any] | None:
+    trajectory = getattr(batch, "trajectory", None)
+    if trajectory is not None:
+        segments: dict[str, Any] = {}
+        for name, segment in trajectory.segments.items():
+            if segment.distribution != "categorical":
+                continue
+            segments[name] = _trajectory_segment_payload(segment)
+        if segments:
+            return segments
+    value = batch.extras.get(R1_SEGMENTS_KEY)
+    return value if isinstance(value, dict) else None
+
+
+def _trajectory_segment_payload(segment: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "name": segment.name,
+        "token_ids": _trajectory_role_value(segment, "action"),
+        "token_log_probs": _trajectory_role_value(segment, "old_log_prob"),
+        "token_mask": _trajectory_role_value(segment, "mask"),
+        "visual": bool(segment.metadata.get("visual", segment.modality == "image")),
+        "cfg": bool(segment.metadata.get("cfg", False)),
+        "train": bool(segment.metadata.get("train", segment.trainable)),
+        "modality": segment.modality,
+    }
+    for key in ("prompt_embeds", "attention_mask", "prompt_attention_mask", "prompt_input_ids"):
+        tensor = segment.tensors.get(key)
+        if tensor is not None:
+            payload[key] = tensor.value
+    return payload
+
+
+def _trajectory_role_value(segment: Any, role: str) -> Any:
+    matches = [tensor.value for tensor in segment.tensors.values() if tensor.role == role]
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"trajectory segment {segment.name!r} requires exactly one {role!r} tensor",
+        )
+    return matches[0]
+
+
 def _build_image_segment_batch(
     batch: RolloutBatch,
     name: str,
@@ -273,6 +315,15 @@ def _segment_enabled(segment: dict[str, Any]) -> bool:
 
 
 def _primary_segment_name(batch: RolloutBatch, enabled_names: list[str]) -> str:
+    training_view = getattr(batch, "training_view", None)
+    primary = getattr(training_view, "primary_segment", None)
+    if isinstance(primary, str) and primary in enabled_names:
+        return primary
+    trajectory = getattr(batch, "trajectory", None)
+    if trajectory is not None:
+        primary = trajectory.context.get("primary_segment")
+        if isinstance(primary, str) and primary in enabled_names:
+            return primary
     primary = batch.extras.get("primary_segment")
     if isinstance(primary, str) and primary in enabled_names:
         return primary

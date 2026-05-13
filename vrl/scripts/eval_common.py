@@ -19,7 +19,7 @@ from vrl.config.loader import build_configs, load_config, require
 from vrl.engine import FamilyPipelineRegistry, GenerationRuntime, GenerationWorker
 from vrl.rewards.multi import MultiReward
 from vrl.rollouts.collector import build_rollout_collector, collector_config_cls
-from vrl.rollouts.families.specs import get_rollout_family_entry
+from vrl.rollouts.family_registry import get_rollout_family_entry
 from vrl.trainers.checkpointing import (
     TRAINING_CHECKPOINT_NAME,
     TrainingCheckpoint,

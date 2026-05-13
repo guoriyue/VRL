@@ -379,15 +379,16 @@ def test_runtime_state_is_rejected_from_trajectory_context_and_tensor_value() ->
         validate_trajectory_batch(batch)
 
 
-def test_compat_prefers_first_class_trajectory_over_extra_bridge() -> None:
+def test_compat_reads_only_first_class_trajectory() -> None:
     primary = _diffusion_batch(request_id="primary")
     bridge = _diffusion_batch(request_id="bridge")
+    legacy_key = "trajectory"
 
-    output = SimpleNamespace(trajectory=primary, extra={"trajectory": bridge})
+    output = SimpleNamespace(trajectory=primary, extra={legacy_key: bridge})
     assert get_output_trajectory(output) is primary
 
-    bridged_output = SimpleNamespace(extra={"trajectory": bridge})
-    assert get_output_trajectory(bridged_output) is bridge
+    bridged_output = SimpleNamespace(extra={legacy_key: bridge})
+    assert get_output_trajectory(bridged_output) is None
 
 
 def _diffusion_batch(request_id: str = "req") -> TrajectoryBatch:

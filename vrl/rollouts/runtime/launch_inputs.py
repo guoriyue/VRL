@@ -11,7 +11,7 @@ from omegaconf import DictConfig, ListConfig, OmegaConf
 
 from vrl.engine.core.runtime_spec import GenerationRuntimeSpec
 from vrl.engine.gather import ChunkGatherer
-from vrl.rollouts.families.specs import (
+from vrl.rollouts.family_registry import (
     RolloutFamilyEntry,
     get_rollout_family_entry,
 )

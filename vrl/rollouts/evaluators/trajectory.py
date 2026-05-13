@@ -1,4 +1,4 @@
-"""Adapters between legacy SignalBatch and trajectory-native signals."""
+"""Adapters and normalizers for trajectory-native evaluator signals."""
 
 from __future__ import annotations
 
@@ -15,8 +15,38 @@ from vrl.rollouts.evaluators.types import (
 )
 
 
-def to_trajectory_signals(
+def evaluator_output_to_trajectory_signals(
     signals: SignalBatch | TrajectorySignalBatch,
+    **kwargs: Any,
+) -> TrajectorySignalBatch:
+    """Normalize evaluator output into the trajectory-native signal schema."""
+
+    if isinstance(signals, TrajectorySignalBatch):
+        return to_trajectory_signals(signals)
+    if isinstance(signals, SignalBatch):
+        return legacy_signal_batch_to_trajectory_signals(signals, **kwargs)
+    raise TypeError(
+        "evaluator output must be a SignalBatch or TrajectorySignalBatch; "
+        f"got {type(signals).__name__}",
+    )
+
+
+def to_trajectory_signals(
+    signals: TrajectorySignalBatch,
+    **_: Any,
+) -> TrajectorySignalBatch:
+    """Return trajectory-native signals without accepting legacy payloads."""
+
+    if not isinstance(signals, TrajectorySignalBatch):
+        raise TypeError(
+            "to_trajectory_signals requires TrajectorySignalBatch; use "
+            "legacy_signal_batch_to_trajectory_signals for legacy SignalBatch",
+        )
+    return signals
+
+
+def legacy_signal_batch_to_trajectory_signals(
+    signals: SignalBatch,
     *,
     trajectory: TrajectoryBatch | None = None,
     training_view: TrainingView | None = None,
@@ -28,8 +58,8 @@ def to_trajectory_signals(
 ) -> TrajectorySignalBatch:
     """Project legacy evaluator signals into the trajectory signal schema."""
 
-    if isinstance(signals, TrajectorySignalBatch):
-        return signals
+    if not isinstance(signals, SignalBatch):
+        raise TypeError("signals must be a SignalBatch")
 
     if isinstance((signals.aux or {}).get("segments"), dict):
         return _multi_segment_to_trajectory(
@@ -332,6 +362,8 @@ def _context_from_trajectory(trajectory: TrajectoryBatch | None) -> dict[str, An
 
 
 __all__ = [
+    "evaluator_output_to_trajectory_signals",
+    "legacy_signal_batch_to_trajectory_signals",
     "old_log_probs_from_trajectory_signals",
     "to_trajectory_signals",
     "trajectory_signals_to_signal_batch",

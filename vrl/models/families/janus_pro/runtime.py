@@ -29,7 +29,7 @@ from vrl.engine.core.types import (
     WorkloadSignature,
 )
 from vrl.engine.microbatching import MicroBatchPlan
-from vrl.engine.trajectory import build_ar_discrete_trajectory
+from vrl.engine.trajectory import build_ar_discrete_trajectory, build_ar_multisegment_trajectory
 from vrl.models.families.janus_pro.policy import JanusProConfig, JanusProPolicy
 from vrl.models.families.janus_pro.r1_types import JanusR1Segment
 from vrl.models.runtime import RuntimeBuildSpec, RuntimeBundle
@@ -439,7 +439,6 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
             uncond_attention_mask=uncond_mask,
             context=extra["context"],
         )
-        extra["trajectory"] = trajectory
 
         return attach_engine_plan(OutputBatch(
             request_id=request.request_id,
@@ -771,7 +770,6 @@ class JanusProChunkGatherer:
             uncond_attention_mask=extra["uncond_attention_mask"],
             context=extra["context"],
         )
-        extra["trajectory"] = trajectory
 
         return OutputBatch(
             request_id=request.request_id,
@@ -869,6 +867,18 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
 
         peak_mem_mb = self.peak_memory_mb()
         segment_extra = _segments_to_extra(result.segments)
+        trajectory = build_ar_multisegment_trajectory(
+            request=request,
+            sample_specs=sample_specs,
+            segments=segment_extra,
+            decoded_outputs={
+                "initial_image": result.initial_image,
+                "final_image": result.final_image,
+                "selfcheck": result.selfcheck,
+            },
+            primary_segment="final_image",
+            context=result.context,
+        )
         metrics = GenerationMetrics(
             num_prompts=len(prompts),
             num_samples=len(sample_specs),
@@ -885,6 +895,7 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
             sample_specs=sample_specs,
             output=result.final_image,
             rollout_trajectory_data=None,
+            trajectory=trajectory,
             extra={
                 "initial_image": result.initial_image,
                 "final_image": result.final_image,
@@ -1008,6 +1019,18 @@ class JanusProR1ChunkGatherer:
         final_image = torch.cat([chunk.final_image for chunk in ordered], dim=0)
         selfcheck = torch.cat([chunk.selfcheck for chunk in ordered], dim=0)
         segment_extra = _cat_segment_extra(ordered)
+        trajectory = build_ar_multisegment_trajectory(
+            request=request,
+            sample_specs=list(sample_specs),
+            segments=segment_extra,
+            decoded_outputs={
+                "initial_image": initial_image,
+                "final_image": final_image,
+                "selfcheck": selfcheck,
+            },
+            primary_segment="final_image",
+            context=dict(ordered[0].context),
+        )
         peak_mem_mb = self._max_peak_memory_mb(ordered)
         metrics = GenerationMetrics(
             num_prompts=len(request.prompts),
@@ -1025,6 +1048,7 @@ class JanusProR1ChunkGatherer:
             sample_specs=list(sample_specs),
             output=output,
             rollout_trajectory_data=None,
+            trajectory=trajectory,
             extra={
                 "initial_image": initial_image,
                 "final_image": final_image,

@@ -2,24 +2,40 @@
 
 这份 sprint 的目标不是继续把更多 family 写进同一个 repo，而是把现在“写在一起”的 diffusion / AR / video / R1 pipeline 收敛成一个可迁移的 engine + trajectory contract。只有 trajectory 记录、engine plan、view builder 的边界清楚，后续 KV cache、batching、profile、compile、Ray rollout、reward 并发这些优化才有机会一次改动、多 family 受益。
 
-当前第一组可执行 sprint 不是全 repo 主路径迁移。baseline gate + Sprint A + Sprint B 的完成范围是：
+当前 trajectory sprint 已经从 baseline gate 推进到 all-family default trajectory，并完成 legacy packer 删除。已完成范围是：
 
 ```text
 TrajectoryBatch contract
-+ SD3.5 diffusion trajectory emission
-+ one AR family trajectory emission
-+ generic TrajectoryRolloutPacker parity
++ SD3.5 / Wan / Cosmos diffusion trajectory emission
++ Janus-Pro discrete AR trajectory emission
++ NextStep continuous AR trajectory emission
++ Janus-Pro-R1 multi-segment trajectory emission
++ TrajectoryRolloutPacker strict path
++ old family-specific packer deletion
++ flattened rollout family registry
 + SD3.5 OCR baseline 不破坏
 ```
 
-`OnlineTrainer`、evaluator、algorithm 的 strict 主路径迁移放到 Sprint C/F 之后的 gate。现在如果直接要求所有 trainer/evaluator/algorithm 主路径切换，会把风险集中到 SD3.5 OCR 这种已经工作的 recipe 上。
+当前 `OnlineTrainer` 主循环已经通过 `evaluator_output_to_trajectory_signals(...)` 显式进入 `TrajectorySignalBatch` / `AlgorithmInput` path。这个入口可以接受原生 `TrajectorySignalBatch`，也可以把 legacy `SignalBatch` 提升到 strict signal schema。所有 family 的默认 packer 已经固定为 `TrajectoryRolloutPacker`；evaluator 原生返回 strict signal、algorithm 完全移除 legacy `SignalBatch` 兼容、old packer 文件删除，仍然放在后续 gate。
+
+已合并并删除的 sprint 文档：
+
+- `SPRINT_strict_trajectory_all_families.md`
+- `SPRINT_remove_legacy_paths.md`
+
+这两份文档的剩余内容已经收敛到本文的 unified gate / remaining work。当前仍单独保留的 sprint：
+
+- `SPRINT_ar_rollout_kv_cache_optimization.md`：AR KV decode / scheduler / resident session 性能 sprint。
+- `SPRINT_cosmos_rl_diffusionnft_predict25.md`：Cosmos-Predict2.5 真实 video reward 验收。
+- `SPRINT_distributed_resource_config.md`：Ray rollout 资源分配。
+- `SPRINT_multi_gpu_training.md`：训练侧 DDP/FSDP。
 
 ## 1. 现状判断
 
-当前 repo 更准确的定位是：
+当前 repo 更准确的定位已经从“只是写在一起”推进到：
 
 ```text
-multi-family visual RL codebase with early shared trainer/runtime pieces
+multi-family visual RL codebase with a shared trajectory record and early shared trainer/runtime pieces
 ```
 
 还不能 claim：
@@ -34,15 +50,14 @@ unified online RL framework
 - reward interface。
 - `GenerationRequest -> OutputBatch` engine 边界。
 - Ray rollout worker / runtime。
-- family packer 把 `OutputBatch` 转成 `RolloutBatch`。
+- `OutputBatch.trajectory` 作为 family 默认轨迹输出。
+- `TrajectoryRolloutPacker` 覆盖 diffusion、discrete AR、continuous AR、multi-segment AR。
 - GRPO / TokenGRPO / MultiSegmentTokenGRPO / DiffusionNFT 等算法模块。
 
 还没有真正统一的地方：
 
 - family train script 仍然分散：Janus、NextStep、SD3.5、Wan、Cosmos 各有自己的 glue code。
-- trajectory 表达没有统一：diffusion 是 denoising timestep，Janus 是 discrete image token，NextStep 是 continuous image token，R1 是 multi-segment text/image 混合。
-- advantage / logprob / mask 的 axis 语义不统一：有的是 `[B, T]`，有的是 `[B, steps]`，有的是 segment dict。
-- packer 现在像 adapter collection，不是统一的 trajectory contract。
+- evaluator 原生 signal 还没有全部切到 `TrajectorySignalBatch`，部分仍通过显式 adapter 提升。
 - metrics 没有统一 schema：不同 family 的 `num_steps`、reward、old logprob 含义不可直接比较。
 - algorithm 不是 family-agnostic，而是靠多个 algorithm class 分别处理。
 
@@ -155,7 +170,7 @@ request envelope + output envelope + trajectory record + compatibility adapter
 
 - 兼容代码只能集中在 `vrl/engine/trajectory/compat.py`、`vrl/rollouts/packers/trajectory.py` 和少量 family packer adapter 中。
 - `OnlineTrainer`、algorithm、evaluator 主路径不能新增 family-specific `if family == ...` 分支。
-- `OutputBatch.extra["trajectory"]` 只能作为短期 bridge；新增代码必须优先读 `OutputBatch.trajectory`。
+- `OutputBatch.extra["trajectory"]` 已经是被移除的 legacy bridge；新增和迁移后的生产路径只能读 `OutputBatch.trajectory`。
 - 不新增新的 loose key 作为训练主语义，例如新的 `extra["new_log_probs"]`、`extra["segment_masks_v2"]`。
 - 每个 legacy bridge 必须有对应 strict-mode 测试，证明 `extra` 缺失时新路径仍能跑。
 - 不删除正在保护真实 recipe 的旧测试。只有当旧测试断言的是被明确移除的 legacy key，并且已有等价 trajectory 测试覆盖时，才能删。
@@ -180,17 +195,16 @@ configs/experiment/sd3_5_ocr_grpo.yaml
 vrl/scripts/sd3_5/train.py
 vrl/models/families/sd3_5/runtime.py
 vrl/models/families/sd3_5/policy.py
-vrl/rollouts/packers/diffusion.py
+vrl/rollouts/packers/trajectory.py
 vrl/rollouts/evaluators/diffusion/flow_matching.py
 ```
 
 SD3.5 OCR 的迁移策略：
 
 - baseline gate 先锁当前行为。
-- Sprint A/B 只增加 `TrajectoryBatch` emission，不改变 `DiffusionRolloutPacker` 的旧输出。
-- Sprint B 做 old packer 和 trajectory packer parity，确认 `observations/actions/log_probs/timesteps/kl/reward_before_kl/videos/prompts` 一致。
+- Sprint A/B 增加 `TrajectoryBatch` emission，并用 strict trajectory packer 锁住 `observations/actions/log_probs/timesteps/kl/reward_before_kl/videos/prompts` 行为。
 - Sprint C 迁移 evaluator/algorithm input 时，SD3.5 OCR 必须同时跑旧 GRPO path 和新 `AlgorithmInput` adapter parity 测试。
-- 在 SD3.5 OCR strict path 通过前，不删除旧 diffusion packer/evaluator 的行为。
+- SD3.5 OCR strict path 通过后，旧 diffusion packer 已删除；后续只保留 strict trajectory gate。
 
 ### 2.5 重复设计审计结论
 
@@ -426,11 +440,13 @@ OutputBatch.trajectory: TrajectoryBatch | None
 OutputBatch.engine_plan: EnginePlan | None
 ```
 
-如果暂时不想改 `OutputBatch` 字段，可以先放在：
+早期方案允许临时放在：
 
 ```text
 OutputBatch.extra["trajectory"]
 ```
+
+这条 bridge 已在 legacy-removal sprint 中删除，不能再作为生产路径或新测试 fixture 的事实源。
 
 最终目标不是新增 `EngineResult`，而是让 `OutputBatch` 成为唯一 engine envelope：
 
@@ -531,7 +547,7 @@ vrl/engine/core/capabilities.py
 这不是新的 registry。当前已有两个相关事实源：
 
 ```text
-vrl/rollouts/families/specs.py::FAMILY_REGISTRY
+vrl/rollouts/family_registry.py::FAMILY_REGISTRY
 vrl/models/runtime.py::RuntimeBundle.runtime_caps
 ```
 
@@ -595,28 +611,19 @@ FamilyCapability(
 TrajectoryBatch + decoded output
 ```
 
-兼容期：
+迁移后的 strict 路径：
 
 ```text
 pipeline_executor.forward(...) -> OutputBatch
-OutputBatch.extra["trajectory"] = TrajectoryBatch
+OutputBatch.trajectory = TrajectoryBatch
 ```
 
 ## 6. Packer 迁移方案
 
-当前 packer：
+当前唯一默认 packer 是：
 
 ```text
-DiffusionRolloutPacker
-ARDiscreteRolloutPacker
-ARContinuousRolloutPacker
-ARR1RolloutPacker
-```
-
-短期不删。先新增：
-
-```text
-vrl/rollouts/packers/trajectory.py
+vrl/rollouts/packers/trajectory.py::TrajectoryRolloutPacker
 ```
 
 新增：
@@ -641,22 +648,13 @@ RolloutBatch.videos
 RolloutBatch.prompts
 ```
 
-family packer 逐步变薄：
+旧 family packer 文件已经删除。当前 packer path 是：
 
 ```text
 family OutputBatch -> TrajectoryBatch -> TrajectoryRolloutPacker -> RolloutBatch
 ```
 
-完成后，packers 不再是主要 contract，只是 legacy adapter。
-
-进入 strict path 后，同一个 family 不能同时长期维护：
-
-```text
-family packer reads OutputBatch.extra
-TrajectoryRolloutPacker reads TrajectoryBatch
-```
-
-只能保留前者作为 parity test fixture 或短期 bridge。
+`TrajectoryRolloutPacker` 仍然生成 `RolloutBatch`，这是 trainer compatibility layer；事实源已经是 `TrajectoryBatch`，不是 family-specific `OutputBatch.extra`。
 
 ## 7. Evaluator v2
 
@@ -690,7 +688,7 @@ SegmentSignal(
     ref_log_prob=Any | None,
     mask=Any,
     axes=tuple[str, ...],
-    dist_family=str,
+    distribution=str,
     aux=dict[str, Any],
 )
 ```
@@ -707,7 +705,7 @@ evaluate(model, TrajectoryBatch, SignalRequest) -> TrajectorySignalBatch
 - AR evaluator 继续返回 `SignalBatch`。
 - 新 adapter 把旧 `SignalBatch` 包成 `TrajectorySignalBatch`。
 
-长期只能有一个主 signal schema。`SignalBatch` 不能继续通过 `aux` 承载 segment schema；strict path 通过后，R1/multisegment 的主路径必须读 `TrajectorySignalBatch.segment_signals`。
+长期只能有一个主 signal schema。`SignalBatch` 不能继续通过 `aux` 承载 segment schema；strict path 通过后，R1/multisegment 的主路径必须读 `TrajectorySignalBatch.segments[name]`。
 
 ## 8. Algorithm input v2
 
@@ -974,10 +972,10 @@ OutputBatch.trajectory: TrajectoryBatch | None
 OutputBatch.engine_plan: EnginePlan | None
 ```
 
-兼容期规则：
+strict 路径规则：
 
 - `OutputBatch.trajectory` 是主路径。
-- `OutputBatch.extra["trajectory"]` 只作为老代码读取的 bridge。
+- `OutputBatch.extra["trajectory"]` 不是事实源，生产路径不再写入或读取它。
 - `extra` 不能再成为 action/logprob/mask/replay 的主来源。
 
 ### 12.2 Executor protocol：需要 capability 和 plan-aware forward
@@ -1169,16 +1167,15 @@ TrajectoryBatch
 
 ### 12.7 Packer：从 adapter collection 改成 view builder
 
-当前文件：
+旧 family-specific packer 文件已经删除。
+
+当前唯一 packer 文件：
 
 ```text
-vrl/rollouts/packers/diffusion.py
-vrl/rollouts/packers/ar/discrete.py
-vrl/rollouts/packers/ar/continuous.py
-vrl/rollouts/packers/ar/r1.py
+vrl/rollouts/packers/trajectory.py
 ```
 
-当前 AR packer 直接读：
+旧 AR packer 曾经直接读：
 
 ```python
 token_ids = output.extra["token_ids"]
@@ -1255,7 +1252,7 @@ SignalBatch(aux={"segments": segment_signals})
 需要改成：
 
 ```text
-TrajectorySignalBatch.segment_signals[name]
+TrajectorySignalBatch.segments[name]
 ```
 
 每个 signal 必须显式携带：
@@ -1370,7 +1367,7 @@ Sprint D/E 不必把所有 family 都改成 unit-level remote call，但 Janus K
 当前文件：
 
 ```text
-vrl/rollouts/families/specs.py
+vrl/rollouts/family_registry.py
 ```
 
 当前 registry 有：
@@ -1526,18 +1523,17 @@ tests/engine/generation/test_chunk_gatherer.py
 说明：
 
 - SD3.5 的实际 emission 落在 shared diffusion gather/build path：`vrl/engine/diffusion/denoise.py`，不是 family runtime glue。
-- `DiffusionRolloutPacker` 和 `ARDiscreteRolloutPacker` 保持不变；Sprint B 用 `TrajectoryRolloutPacker` 做 parity，不把旧 packer 切到 strict。
-- `RolloutBatch` 这轮不新增 trajectory 字段，避免把 trainer 主路径迁移提前塞进 Sprint B。
+- legacy family packer 文件已删除；registry 默认只走 `TrajectoryRolloutPacker`。
+- `RolloutBatch` 已有 `trajectory` / `training_view` 字段，作为 trainer compatibility layer 携带 strict trajectory view。
 
 必须满足：
 
 - `OutputBatch.trajectory` 字段存在。
-- `OutputBatch.extra["trajectory"]` 只作为 bridge，新增主路径优先读 `OutputBatch.trajectory`。
+- migrated path 不再写 `OutputBatch.extra["trajectory"]`。
 - SD3.5 runtime 写入 diffusion timestep `TrajectoryBatch`。
 - Janus-Pro discrete image-token path 写入 AR token `TrajectoryBatch`。
-- 现有 SD3.5 OCR packer 输出完全不变。
 - `TrajectoryRolloutPacker` 可以从 SD3.5 和 Janus-Pro 的 `TrajectoryBatch` 生成旧 `RolloutBatch`。
-- SD3.5 diffusion old packer 和 `TrajectoryRolloutPacker` 对同一个 `OutputBatch` 产生 parity：
+- SD3.5 strict trajectory tests 锁住：
   - `observations`
   - `actions`
   - `rewards`
@@ -1548,10 +1544,9 @@ tests/engine/generation/test_chunk_gatherer.py
   - `extras["reward_before_kl"]`
   - `videos`
   - `prompts`
-- Janus-Pro old AR packer 和 `TrajectoryRolloutPacker` 对 token ids、old logprobs、mask、prompt replay inputs 做 parity。
-- parity 通过前，`DiffusionRolloutPacker` 和 `ARDiscreteRolloutPacker` 不切到 strict。
+- Janus-Pro strict trajectory tests 锁住 token ids、old logprobs、mask、prompt replay inputs。
 
-本 sprint 不强制迁移：
+第一轮不强制迁移的 family 已经在 all-family strict trajectory sprint 中接入：
 
 ```text
 vrl/models/families/nextstep_1/runtime.py
@@ -1560,7 +1555,7 @@ vrl/models/families/cosmos/predict2/runtime.py
 vrl/models/families/cosmos/predict2_5/runtime.py
 ```
 
-这些 family 后续按同一 contract 接，不在第一组实现里一起碰。
+这些 family 现在也通过 `OutputBatch.trajectory` 暴露默认轨迹，并通过 registry 默认走 `TrajectoryRolloutPacker`。
 
 ### 13.4 Sprint C：TrajectorySignalBatch + AlgorithmInput adapters
 
@@ -1595,10 +1590,10 @@ tests/trainers/test_online.py
 
 说明：
 
-- Sprint C 先做 adapter 闭环，不把 `OnlineTrainer` 主循环切到 strict trajectory。
+- `OnlineTrainer` 主循环通过 `evaluator_output_to_trajectory_signals(...)` 显式进入 `TrajectorySignalBatch` / `AlgorithmInput` path；这个入口允许 evaluator 逐步从 legacy `SignalBatch` 切到原生 `TrajectorySignalBatch`，后续 gate 继续把 evaluator 原生返回值和 algorithm 兼容层收敛到 strict schema。
 - 旧 evaluator 仍可返回 `SignalBatch`；`vrl/rollouts/evaluators/trajectory.py` 负责把它提升成 `TrajectorySignalBatch`。
 - `RolloutBatch.trajectory` / `RolloutBatch.training_view` 只是兼容期携带字段；stack/select/move/remap 必须传播，避免 trajectory 和 legacy batch 顺序分叉。
-- `DiffusionRolloutPacker`、`ARDiscreteRolloutPacker`、现有 evaluator 数值路径保持不变。
+- `TrajectoryRolloutPacker`、现有 evaluator 数值路径保持不变。
 
 必须满足：
 
@@ -1639,7 +1634,7 @@ vrl/engine/microbatching.py
 vrl/distributed/ray/rollout/planner.py
 vrl/distributed/ray/rollout/executor.py
 vrl/distributed/ray/rollout/worker.py
-vrl/rollouts/families/specs.py
+vrl/rollouts/family_registry.py
 vrl/trainers/profiling.py
 vrl/models/families/janus_pro/runtime.py
 vrl/models/families/sd3_5/runtime.py
@@ -1748,39 +1743,48 @@ vrl/scripts/cosmos/train.py
 
 ### 14.1 当前可执行完成标准
 
-先完成 baseline gate + Sprint A + Sprint B。达到这里后，repo 还不能 claim fully unified，但已经有了可落地的 trajectory contract 和 generic packer。
+baseline gate + all-family strict trajectory + legacy packer deletion 已完成。达到这里后，repo 还不能 claim fully unified，但已经有了可落地的 trajectory contract、generic packer 和 family routing registry。
 
-必须满足：
+当前已满足：
 
 1. SD3.5 OCR baseline gate 通过。
 2. `TrajectoryBatch` 是可序列化的训练/奖励轨迹记录，不包含 runtime state。
 3. `RewardView` / `TrainingView` 有具体类型定义，且只做 view，不复制 tensor。
-4. `OutputBatch.trajectory` 字段存在；`OutputBatch.extra["trajectory"]` 只是 bridge。
-5. SD3.5 原生 emit `TrajectoryBatch`，且旧 packer 输出完全不变。
-6. Janus-Pro discrete image-token path 原生 emit `TrajectoryBatch`。
-7. `TrajectoryRolloutPacker` 可以从 SD3.5 和 Janus-Pro 的 `TrajectoryBatch` 生成旧 `RolloutBatch`。
-8. SD3.5 diffusion old packer 和 `TrajectoryRolloutPacker` parity 通过。
-9. Janus-Pro old packer 和 `TrajectoryRolloutPacker` parity 通过。
-10. 所有新增 legacy bridge 都有删除门槛和 strict-mode 测试。
+4. `OutputBatch.trajectory` 字段存在；migrated path 不写 `OutputBatch.extra["trajectory"]`。
+5. SD3.5 / Wan / Cosmos 原生 emit diffusion `TrajectoryBatch`。
+6. Janus-Pro 原生 emit discrete AR `TrajectoryBatch`。
+7. NextStep 原生 emit continuous AR `TrajectoryBatch`。
+8. Janus-Pro-R1 原生 emit multi-segment `TrajectoryBatch`。
+9. `TrajectoryRolloutPacker` 覆盖 diffusion、discrete AR、continuous AR、multi-segment AR。
+10. old family-specific packer 文件已删除。
+11. rollout family registry 已 flatten 到 `vrl/rollouts/family_registry.py`，不再携带 packer routing 字段。
+12. SD3.5 OCR strict trajectory gate 通过。
+
+当前剩余 legacy 面：
+
+1. 部分 evaluator 仍返回 legacy `SignalBatch`，trainer 通过 `evaluator_output_to_trajectory_signals(...)` 提升到 `TrajectorySignalBatch`。
+2. 部分 algorithm 内部仍通过 `trajectory_signals_to_signal_batch(...)` 适配旧 objective API。
+3. `RolloutBatch.extras` 仍作为 trainer compatibility payload 存在。
+4. `RolloutTrajectoryData` / `denoising_env` 这类 debug artifact type 仍存在，但不再是 migrated default path 的要求。
 
 ### 14.2 Fully unified gate
 
 这些必须在 README / paper intro claim unified 之前完成：
 
-1. 每个 family runtime 都原生 emit `TrajectoryBatch`。
-2. `OutputBatch.extra` 不再是 action/logprob/mask/replay 的主来源。
-3. `TrainingView` 覆盖 diffusion timestep、discrete token、continuous token、multi-segment loss units。
-4. `TrajectorySignalBatch` 取代 `SignalBatch.aux["segments"]` 作为 segment signal 主路径。
-5. 所有 algorithm 都能通过 `AlgorithmInput` adapter 接入，不再直接依赖 family-specific loose extras。
-6. `EnginePlan` / `FamilyCapability` 能为 Janus 生成 prefill/decode plan。
-7. Janus AR rollout 至少有一版真实 `prefill once + decode step` 优化通过 shared engine path 接入。
-8. Ray rollout worker 能在 plan/session 级别保留至少一种 resident state。
-9. 新增 family 时，只需要补 capability + trajectory emission + reward/training view，不需要新增 trainer 主循环或 algorithm class。
-10. `dual_path` 只能用于 parity，不允许成为长期默认路径。
+1. evaluator 原生返回 `TrajectorySignalBatch`，trainer 主路径不再调用 legacy signal conversion。
+2. algorithm 原生消费 `AlgorithmInput` / `TrajectorySignalBatch`，不再把 signals 降回 `SignalBatch`。
+3. `SignalBatch.aux["segments"]` 不再是 R1 segment signal 主路径。
+4. `RolloutBatch.extras` 只剩 compatibility payload，不承载 action/logprob/mask 的主语义。
+5. `EnginePlan` / `FamilyCapability` 能为 Janus 生成 prefill/decode plan。
+6. Janus AR rollout 至少有一版真实 `prefill once + decode step` 优化通过 shared engine path 接入。
+7. Ray rollout worker 能在 plan/session 级别保留至少一种 resident state。
+8. profiler 能看到 prefill/decode/cache/timestep/segment，不只看到 `forward_chunk`。
+9. train script glue 收敛到 common recipe wrapper。
+10. 新增 family 时，只需要补 capability + trajectory emission + reward/training view，不需要新增 trainer 主循环或 algorithm class。
 
 不能算完成的情况：
 
-- 只在 `OutputBatch.extra["trajectory"]` 放一个对象，但 packer/trainer/evaluator 仍然读旧 extras。
+- 继续在 `OutputBatch.extra["trajectory"]` 放对象，或让 packer/trainer/evaluator 把它当事实源。
 - 把 cache handle、scheduler object、Ray actor/session state 放进 `TrajectoryBatch`。
 - Janus KV cache 写成 Janus runtime 私有优化，`EnginePlan` 和 `FamilyCapability` 看不到。
 - R1 segment 仍然通过 `SignalBatch.aux["segments"]` 传递，algorithm 仍然复用同一份 advantage。
@@ -1864,19 +1868,20 @@ python -m vrl.scripts.train --config profile/janus_pro_r1_codex_qa_1epoch
 
 只有同时满足这些条件，README / paper intro 才能说 unified：
 
-- 每个 family runtime 都产出 `TrajectoryBatch`。
-- trainer 不再需要通过 family-specific shape 猜 logprob/mask 语义。
-- 至少一个 generic trajectory packer 被 diffusion 和 AR 同时使用。
-- 至少一个 generic `AlgorithmInput` adapter 同时覆盖 diffusion-style axis 和 AR-style axis。
+- evaluator / algorithm 不再依赖 legacy `SignalBatch` bridge。
+- trainer 不再需要通过 family-specific shape 或 `RolloutBatch.extras` 猜 logprob/mask 语义。
 - engine planner 能基于 capability 做 batching/chunk/profile，而不是 hardcode family。
+- Janus/NextStep AR decode 优化走 shared `engine/ar` contract，而不是 family runtime 私有 path。
+- Ray rollout worker 能持有 plan/session 级 resident state。
+- common train recipe wrapper 能覆盖现有 family train scripts。
 - 新增一个优化时，不需要同时改 Janus、NextStep、SD3.5、Wan、Cosmos 五套 glue code。
 
 在此之前，更诚实的描述是：
 
 ```text
 This repo is moving toward a unified online RL stack for generation.
-The current gap is trajectory unification across denoising steps, image tokens,
-continuous tokens, and multi-segment regeneration.
+The current gap is strict trajectory-native evaluator/algorithm integration
+and engine-plan-backed rollout optimization.
 ```
 
 ## 17. 和 AR KV sprint 的关系
@@ -1887,7 +1892,8 @@ continuous tokens, and multi-segment regeneration.
 
 推荐执行顺序：
 
-1. 先完成 baseline gate + Sprint A + Sprint B：trajectory contract、SD3.5 / Janus-Pro trajectory emission、generic packer parity。
-2. 并行推进 Sprint E 的 Janus KV decode，但不要把 KV cache handle 塞进 `TrajectoryBatch`。
-3. 当 AR KV decode 完成后，把 `prefill_steps` / `decode_steps` / `cache_hit` 写入 `OutputBatch.metrics` 或 engine metrics；`TrajectoryBatch.metrics` 只记录和轨迹本身相关的可序列化统计。
-4. 再完成 Sprint D，把 AR 和 diffusion 的 batching/profiling 统一到 `EnginePlan` / `FamilyCapability`。
+1. 先完成 evaluator strict cleanup：evaluator 原生返回 `TrajectorySignalBatch`。
+2. 再完成 algorithm strict cleanup：objective 原生消费 `AlgorithmInput`，不再降回 `SignalBatch`。
+3. 并行推进 `SPRINT_ar_rollout_kv_cache_optimization.md`，但不要把 KV cache handle 塞进 `TrajectoryBatch`。
+4. 当 AR KV decode 完成后，把 `prefill_steps` / `decode_steps` / `cache_hit` 写入 `OutputBatch.metrics` 或 engine metrics；`TrajectoryBatch.metrics` 只记录和轨迹本身相关的可序列化统计。
+5. 再完成 Sprint D，把 AR 和 diffusion 的 batching/profiling 统一到 `EnginePlan` / `FamilyCapability`。

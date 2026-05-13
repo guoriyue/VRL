@@ -12,7 +12,7 @@ from vrl.engine import ChunkedFamilyPipelineExecutor
 from vrl.engine.gather import DiffusionChunkGatherer
 from vrl.models.families.janus_pro.runtime import JanusProChunkGatherer
 from vrl.models.families.nextstep_1.runtime import NextStep1ChunkGatherer
-from vrl.rollouts.families.specs import get_rollout_family_entry
+from vrl.rollouts.family_registry import get_rollout_family_entry
 from vrl.rollouts.runtime.launch_inputs import (
     RolloutRuntimeInputs,
     build_rollout_runtime_inputs,

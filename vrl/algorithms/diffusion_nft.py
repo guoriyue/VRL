@@ -296,9 +296,8 @@ def _forward_reference(transformer: Any, inputs: dict[str, Any]) -> Any:
 
     disable_adapter = getattr(transformer, "disable_adapter", None)
     if callable(disable_adapter):
-        with disable_adapter():
-            with torch.no_grad():
-                return transformer(**inputs)[0].detach()
+        with disable_adapter(), torch.no_grad():
+            return transformer(**inputs)[0].detach()
 
     raise RuntimeError(
         "DiffusionNFT requires a reference branch via transformer.disable_adapters() "

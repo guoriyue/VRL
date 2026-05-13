@@ -12,16 +12,25 @@ from vrl.rollouts.collector.configs import (
     SD3_5CollectorConfig,
     Wan_2_1CollectorConfig,
 )
-from vrl.rollouts.collector.factory import COLLECTOR_REGISTRY, collector_config_cls
-from vrl.rollouts.families.specs import (
+from vrl.rollouts.collector.factory import (
+    COLLECTOR_REGISTRY,
+    build_rollout_collector,
+    collector_config_cls,
+)
+from vrl.rollouts.family_registry import (
     DIFFUSION_COMMON_SAMPLING_FIELDS,
-    DIFFUSION_RETURN_ARTIFACTS,
+    DIFFUSION_MIGRATED_RETURN_ARTIFACTS,
     DIFFUSION_VIDEO_SAMPLING_FIELDS,
     FAMILY_REGISTRY,
+    JANUS_PRO_MIGRATED_RETURN_ARTIFACTS,
+    JANUS_PRO_R1_MIGRATED_RETURN_ARTIFACTS,
+    NEXTSTEP_MIGRATED_RETURN_ARTIFACTS,
+    SD3_MIGRATED_RETURN_ARTIFACTS,
     get_rollout_family_entry,
     normalize_rollout_family,
     registered_rollout_families,
 )
+from vrl.rollouts.packers.trajectory import TrajectoryRolloutPacker
 
 
 def test_family_registry_covers_current_rollout_families() -> None:
@@ -110,7 +119,26 @@ def test_diffusion_request_shape_is_registry_declared() -> None:
         assert "noise_level" in collector.sampling_fields
         assert "sde_type" in collector.sampling_fields
         assert "return_kl" in collector.sampling_fields
-        assert collector.return_artifacts == DIFFUSION_RETURN_ARTIFACTS
+    assert FAMILY_REGISTRY["sd3_5"].collector.return_artifacts == SD3_MIGRATED_RETURN_ARTIFACTS
+    for family in ("wan_2_1", "cosmos-predict2", "cosmos-predict2.5"):
+        assert FAMILY_REGISTRY[family].collector.return_artifacts == (
+            DIFFUSION_MIGRATED_RETURN_ARTIFACTS
+        )
+    assert FAMILY_REGISTRY["janus_pro"].collector.return_artifacts == (
+        JANUS_PRO_MIGRATED_RETURN_ARTIFACTS
+    )
+    assert FAMILY_REGISTRY["janus_pro_r1"].collector.return_artifacts == (
+        JANUS_PRO_R1_MIGRATED_RETURN_ARTIFACTS
+    )
+    assert FAMILY_REGISTRY["nextstep_1"].collector.return_artifacts == (
+        NEXTSTEP_MIGRATED_RETURN_ARTIFACTS
+    )
+
+
+def test_migrated_collectors_use_trajectory_packer_by_default() -> None:
+    for family in FAMILY_REGISTRY:
+        collector = build_rollout_collector(family, model=None, reward_fn=None)
+        assert isinstance(collector.packer, TrajectoryRolloutPacker)
 
 
 def test_unknown_family_raises_clear_error() -> None:

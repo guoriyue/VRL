@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 import torch
 
 from vrl.algorithms.diffusion_nft import DiffusionNFT, DiffusionNFTConfig
@@ -15,6 +16,11 @@ from vrl.algorithms.grpo.token import TokenGRPO, TokenGRPOConfig
 from vrl.algorithms.trajectory import AlgorithmAdapter, AlgorithmInput
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.types import SegmentSignal, SignalBatch, TrajectorySignalBatch
+
+
+def test_algorithm_input_rejects_legacy_signal_batch() -> None:
+    with pytest.raises(TypeError, match="TrajectorySignalBatch"):
+        AlgorithmInput(signals=SignalBatch(log_prob=torch.zeros(2)))
 
 
 def test_algorithm_adapter_matches_continuous_grpo_signal_loss() -> None:

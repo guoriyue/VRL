@@ -13,17 +13,12 @@ from vrl.rollouts.collector.requests import (
     RolloutRequestBuilder,
 )
 from vrl.rollouts.collector.rewards import RewardScorer
-from vrl.rollouts.families.specs import (
+from vrl.rollouts.family_registry import (
     FAMILY_REGISTRY,
     get_rollout_family_entry,
     normalize_rollout_family,
 )
-from vrl.rollouts.packers.ar import (
-    ARContinuousRolloutPacker,
-    ARDiscreteRolloutPacker,
-    ARR1RolloutPacker,
-)
-from vrl.rollouts.packers.diffusion import DiffusionRolloutPacker
+from vrl.rollouts.packers.trajectory import TrajectoryRolloutPacker
 
 CollectorKind = Literal["diffusion", "ar_discrete", "ar_continuous", "ar_r1"]
 
@@ -86,7 +81,6 @@ def build_rollout_collector(
     entry = _entry_for(registry_key)
     collector_config = _resolve_config(entry, config)
     request_builder = _build_request_builder(entry, collector_config)
-    packer = _build_packer(entry)
     executor_kwargs = _build_executor_kwargs(entry, collector_config, reference_image)
 
     return RolloutCollector(
@@ -96,7 +90,7 @@ def build_rollout_collector(
         task=entry.task,
         executor_cls=entry.executor_cls,
         request_builder=request_builder,
-        packer=packer,
+        packer=TrajectoryRolloutPacker(),
         reward_scorer=RewardScorer(reward_fn),
         default_group_size=_default_group_size(entry, collector_config),
         runtime=runtime,
@@ -150,20 +144,6 @@ def _build_request_builder(
             default_task_type=entry.default_task_type,
             metadata_key=entry.metadata_key,
         )
-    raise AssertionError(f"unhandled collector kind: {entry.kind}")
-
-
-def _build_packer(entry: CollectorRegistryEntry) -> Any:
-    if entry.kind == "diffusion":
-        if entry.error_prefix is None:
-            raise ValueError(f"{entry.family} diffusion registry entry is incomplete")
-        return DiffusionRolloutPacker(error_prefix=entry.error_prefix)
-    if entry.kind == "ar_discrete":
-        return ARDiscreteRolloutPacker()
-    if entry.kind == "ar_continuous":
-        return ARContinuousRolloutPacker()
-    if entry.kind == "ar_r1":
-        return ARR1RolloutPacker()
     raise AssertionError(f"unhandled collector kind: {entry.kind}")
 
 

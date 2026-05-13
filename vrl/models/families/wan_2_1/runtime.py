@@ -11,6 +11,14 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from vrl.engine.core.types import GenerationRequest
+from vrl.engine.diffusion import (
+    DiffusionGenerationSpec,
+    DiffusionPipelineExecutorBase,
+    repeat_tensor_batch,
+)
+from vrl.engine.microbatching import MicroBatchPlan
+from vrl.models.diffusion import VideoGenerationRequest
 from vrl.models.runtime import RuntimeBuildSpec, RuntimeBundle
 
 logger = logging.getLogger(__name__)
@@ -124,18 +132,6 @@ def build_wan_2_1_runtime_bundle_from_cfg(
     return build_wan_2_1_runtime_bundle(spec)
 
 """Wan 2.1 diffusion pipeline executor."""
-
-
-from typing import Any
-
-from vrl.engine.core.types import GenerationRequest
-from vrl.engine.diffusion import (
-    DiffusionGenerationSpec,
-    DiffusionPipelineExecutorBase,
-    repeat_tensor_batch,
-)
-from vrl.engine.microbatching import MicroBatchPlan
-from vrl.models.diffusion import VideoGenerationRequest
 
 
 class Wan_2_1PipelineExecutor(DiffusionPipelineExecutorBase):

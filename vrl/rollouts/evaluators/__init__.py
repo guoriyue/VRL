@@ -2,6 +2,8 @@
 
 from vrl.rollouts.evaluators.base import Evaluator
 from vrl.rollouts.evaluators.trajectory import (
+    evaluator_output_to_trajectory_signals,
+    legacy_signal_batch_to_trajectory_signals,
     old_log_probs_from_trajectory_signals,
     to_trajectory_signals,
     trajectory_signals_to_signal_batch,
@@ -19,6 +21,8 @@ __all__ = [
     "SignalBatch",
     "SignalRequest",
     "TrajectorySignalBatch",
+    "evaluator_output_to_trajectory_signals",
+    "legacy_signal_batch_to_trajectory_signals",
     "old_log_probs_from_trajectory_signals",
     "to_trajectory_signals",
     "trajectory_signals_to_signal_batch",

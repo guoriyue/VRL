@@ -127,8 +127,6 @@ def _slice_output_batch(
         total=total,
     )
     extra = _slice_value(output.extra, offset, count, total)
-    if trajectory is not None and isinstance(extra, dict) and "trajectory" in extra:
-        extra["trajectory"] = trajectory
     return OutputBatch(
         request_id=request.request_id,
         family=request.family,

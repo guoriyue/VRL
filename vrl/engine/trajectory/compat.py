@@ -1,4 +1,4 @@
-"""Compatibility helpers for the migration period."""
+"""Trajectory access helpers for engine outputs."""
 
 from __future__ import annotations
 
@@ -10,16 +10,11 @@ TRAJECTORY_EXTRA_KEY = "trajectory"
 
 
 def get_output_trajectory(output: Any) -> TrajectoryBatch | None:
-    """Return a trajectory from ``OutputBatch`` or its short-term bridge."""
+    """Return the first-class trajectory from ``OutputBatch``."""
 
     trajectory = getattr(output, "trajectory", None)
     if trajectory is not None:
         return trajectory
-    extra = getattr(output, "extra", None)
-    if isinstance(extra, dict):
-        bridge = extra.get(TRAJECTORY_EXTRA_KEY)
-        if isinstance(bridge, TrajectoryBatch):
-            return bridge
     return None
 
 

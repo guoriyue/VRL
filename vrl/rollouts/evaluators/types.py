@@ -70,6 +70,33 @@ class TrajectorySignalBatch:
                 f"TrajectorySignalBatch.primary_segment={self.primary_segment!r} "
                 "is not present in segments",
             )
+        for name, segment in self.segments.items():
+            if not isinstance(segment, SegmentSignal):
+                raise TypeError(f"trajectory signal {name!r} must be a SegmentSignal")
+            if not segment.name:
+                raise ValueError(f"trajectory signal {name!r} must have a non-empty name")
+            if segment.segment != name:
+                raise ValueError(
+                    f"trajectory signal key {name!r} must match segment={segment.segment!r}",
+                )
+            if not segment.axis:
+                raise ValueError(f"trajectory signal {name!r} must have a non-empty axis")
+            if not segment.distribution:
+                raise ValueError(
+                    f"trajectory signal {name!r} must have a non-empty distribution",
+                )
+            _require_same_shape(
+                segment.log_prob,
+                segment.old_log_prob,
+                label=f"trajectory signal {name!r} log_prob/old_log_prob",
+            )
+            if segment.mask is None:
+                raise ValueError(f"trajectory signal {name!r} must have a mask")
+            _require_same_shape(
+                segment.log_prob,
+                segment.mask,
+                label=f"trajectory signal {name!r} log_prob/mask",
+            )
 
     @property
     def primary(self) -> SegmentSignal:
@@ -87,3 +114,14 @@ class SignalRequest:
     need_ref: bool = False
     need_entropy: bool = False
     need_kl_intermediates: bool = False  # for latent-space KL
+
+
+def _require_same_shape(left: Any, right: Any, *, label: str) -> None:
+    left_shape = getattr(left, "shape", None)
+    right_shape = getattr(right, "shape", None)
+    if left_shape is None or right_shape is None:
+        return
+    if tuple(left_shape) != tuple(right_shape):
+        raise ValueError(
+            f"{label} shape mismatch: left={tuple(left_shape)} right={tuple(right_shape)}",
+        )

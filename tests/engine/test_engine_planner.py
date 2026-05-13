@@ -18,7 +18,7 @@ from vrl.engine import (
     diffusion_family_capability,
     forward_batch_by_merging_prompts,
 )
-from vrl.rollouts.families.specs import get_rollout_family_entry
+from vrl.rollouts.family_registry import get_rollout_family_entry
 
 
 def test_diffusion_engine_plan_exposes_axes_chunks_and_profiler_labels() -> None:

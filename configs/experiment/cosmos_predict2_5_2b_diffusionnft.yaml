@@ -7,7 +7,6 @@ defaults:
   - /base/rollout/diffusion
   - /base/distributed/ray_rollout_single_gpu
   - /base/trainer
-  - /base/reward/video_reward
   - /model/cosmos/predict2_5_2b
   - /sampling/cosmos_predict2_5_512p_93f
 
@@ -30,13 +29,14 @@ rollout:
   same_latent: false
 
 reward:
+  components:
+    ocr: 1.0
   kwargs:
-    video_reward:
-      backend: remote
+    ocr:
       debug_dir: outputs/cosmos_predict2_5_2b_diffusionnft/reward_debug
 
 data:
-  manifest: datasets/drawbench/train_192.txt
+  manifest: datasets/ocr/train.txt
 
 trainer:
   entrypoint: vrl.scripts.cosmos.train:train_cosmos_predict25_diffusion_nft

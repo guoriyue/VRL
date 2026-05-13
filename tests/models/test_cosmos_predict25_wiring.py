@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from vrl.models.registry import resolve_model
-from vrl.rollouts.families.specs import get_rollout_family_entry
+from vrl.rollouts.family_registry import get_rollout_family_entry
 
 
 def test_cosmos_predict25_model_registry_resolves_without_loading_weights() -> None:

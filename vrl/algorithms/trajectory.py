@@ -9,10 +9,9 @@ from vrl.algorithms.types import TrainStepMetrics
 from vrl.engine.trajectory import TrainingView, TrajectoryBatch
 from vrl.rollouts.evaluators.trajectory import (
     old_log_probs_from_trajectory_signals,
-    to_trajectory_signals,
     trajectory_signals_to_signal_batch,
 )
-from vrl.rollouts.evaluators.types import SignalBatch, TrajectorySignalBatch
+from vrl.rollouts.evaluators.types import TrajectorySignalBatch
 
 
 @dataclass(slots=True)
@@ -21,12 +20,19 @@ class AlgorithmInput:
 
     trajectory: TrajectoryBatch | None = None
     training_view: TrainingView | None = None
-    signals: TrajectorySignalBatch | SignalBatch | None = None
+    signals: TrajectorySignalBatch | None = None
     rewards: Any | None = None
     group_ids: Any | None = None
     advantages: Any | None = None
     old_log_probs: Any | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.signals is not None and not isinstance(self.signals, TrajectorySignalBatch):
+            raise TypeError(
+                "AlgorithmInput.signals must be a TrajectorySignalBatch; convert legacy "
+                "SignalBatch with legacy_signal_batch_to_trajectory_signals first",
+            )
 
 
 class AlgorithmAdapter:
@@ -78,15 +84,7 @@ class AlgorithmAdapter:
 def _ensure_trajectory_signals(inputs: AlgorithmInput) -> TrajectorySignalBatch:
     if inputs.signals is None:
         raise RuntimeError("AlgorithmInput.signals is required for signal-based algorithms")
-    return to_trajectory_signals(
-        inputs.signals,
-        trajectory=inputs.trajectory,
-        training_view=inputs.training_view,
-        old_log_probs=inputs.old_log_probs,
-        group_ids=inputs.group_ids,
-        context=inputs.metadata.get("signal_context"),
-        mask_key=inputs.metadata.get("mask_key", "token_mask"),
-    )
+    return inputs.signals
 
 
 def _mask_key(algorithm: Any) -> str:

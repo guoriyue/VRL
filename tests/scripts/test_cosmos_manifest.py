@@ -84,7 +84,7 @@ def test_per_sample_cosmos_manifest_rejects_multi_prompt_batches(tmp_path: Path)
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="rollout.rollout_batch_size=1"):
+    with pytest.raises(ValueError, match=r"rollout\.rollout_batch_size=1"):
         _load_cosmos_prompt_examples(
             manifest,
             reference_mode="per_sample",

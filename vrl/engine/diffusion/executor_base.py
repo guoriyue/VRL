@@ -6,12 +6,12 @@ from collections.abc import Sequence
 from typing import Any
 
 from vrl.engine.batching import forward_batch_by_merging_prompts
+from vrl.engine.core.capabilities import FamilyCapability, diffusion_family_capability
+from vrl.engine.core.planner import attach_engine_plan, build_engine_plan
 from vrl.engine.core.protocols import (
     BatchedFamilyPipelineExecutor,
     ChunkedFamilyPipelineExecutor,
 )
-from vrl.engine.core.capabilities import FamilyCapability, diffusion_family_capability
-from vrl.engine.core.planner import attach_engine_plan, build_engine_plan
 from vrl.engine.core.types import (
     GenerationRequest,
     GenerationSampleSpec,

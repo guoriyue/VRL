@@ -65,15 +65,12 @@ def test_diffusion_chunk_gatherer_gathers_without_model_object() -> None:
     assert output.metrics is not None
     assert output.metrics.num_steps == 2
     assert output.metrics.micro_batches == 2
-    assert output.rollout_trajectory_data is not None
+    assert output.rollout_trajectory_data is None
     assert output.trajectory is not None
-    assert output.extra["trajectory"] is output.trajectory
+    assert "trajectory" not in output.extra
     assert output.trajectory.segments["denoise"].distribution == "flow_matching"
     assert output.trajectory.axes["sample"].length == 2
     assert output.trajectory.axes["timestep"].length == 2
-    denoising_env = output.rollout_trajectory_data.denoising_env
-    assert denoising_env is not None
-    assert denoising_env.extra["context"] == context
 
 
 def test_diffusion_chunk_gatherer_can_ignore_cfg_sampling_flag() -> None:
@@ -91,10 +88,10 @@ def test_diffusion_chunk_gatherer_can_ignore_cfg_sampling_flag() -> None:
 
     output = gatherer.gather_chunks(request, sample_specs, _diffusion_chunks(context))
 
-    assert output.rollout_trajectory_data is not None
-    denoising_env = output.rollout_trajectory_data.denoising_env
-    assert denoising_env is not None
-    assert denoising_env.extra["context"] == context
+    assert output.rollout_trajectory_data is None
+    assert output.trajectory is not None
+    assert output.trajectory.context == context
+    assert output.trajectory.segments["denoise"].reward_view == "video"
 
 
 def _request(

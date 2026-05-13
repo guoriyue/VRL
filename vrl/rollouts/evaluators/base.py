@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Protocol, runtime_checkable
 
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.evaluators.types import SignalBatch, SignalRequest
+from vrl.rollouts.evaluators.types import SignalBatch, SignalRequest, TrajectorySignalBatch
 
 
 @runtime_checkable
@@ -26,6 +26,6 @@ class Evaluator(Protocol):
         timestep_idx: int,
         ref_model: Any | None = None,
         signal_request: SignalRequest | None = None,
-    ) -> SignalBatch:
+    ) -> SignalBatch | TrajectorySignalBatch:
         """Run model.replay_forward() -> extract log_prob, KL, etc."""
         ...

@@ -15,7 +15,7 @@ from vrl.models.diffusion import DiffusionPolicy, VideoGenerationRequest
 class _NoOpCosmosSafetyChecker:
     """Avoid loading guardrail weights in internal optimization diagnostics."""
 
-    def to(self, *_args: Any, **_kwargs: Any) -> "_NoOpCosmosSafetyChecker":
+    def to(self, *_args: Any, **_kwargs: Any) -> _NoOpCosmosSafetyChecker:
         return self
 
     def check_text_safety(self, _prompt: str) -> bool:

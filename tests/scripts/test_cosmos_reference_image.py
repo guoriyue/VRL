@@ -9,12 +9,12 @@ from vrl.scripts.cosmos.train import _load_required_reference_image
 
 
 def test_cosmos_reference_image_is_required() -> None:
-    with pytest.raises(ValueError, match="model.reference_image"):
+    with pytest.raises(ValueError, match=r"model\.reference_image"):
         _load_required_reference_image("")
 
 
 def test_cosmos_reference_image_path_must_exist() -> None:
-    with pytest.raises(FileNotFoundError, match="model.reference_image"):
+    with pytest.raises(FileNotFoundError, match=r"model\.reference_image"):
         _load_required_reference_image("/tmp/does-not-exist-cosmos-reference.png")
 
 

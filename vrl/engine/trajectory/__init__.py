@@ -2,7 +2,9 @@
 
 from vrl.engine.trajectory.axes import AxisKind, AxisSpec
 from vrl.engine.trajectory.builders import (
+    build_ar_continuous_trajectory,
     build_ar_discrete_trajectory,
+    build_ar_multisegment_trajectory,
     build_diffusion_trajectory,
 )
 from vrl.engine.trajectory.compat import (
@@ -60,7 +62,9 @@ __all__ = [
     "TrajectorySegment",
     "TrajectoryTensor",
     "TrajectoryValidationError",
+    "build_ar_continuous_trajectory",
     "build_ar_discrete_trajectory",
+    "build_ar_multisegment_trajectory",
     "build_diffusion_trajectory",
     "build_training_view",
     "get_output_trajectory",

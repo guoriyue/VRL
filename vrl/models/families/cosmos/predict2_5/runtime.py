@@ -5,6 +5,14 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from vrl.engine.core.types import GenerationRequest
+from vrl.engine.diffusion import (
+    DiffusionGenerationSpec,
+    DiffusionPipelineExecutorBase,
+    repeat_tensor_batch,
+)
+from vrl.engine.microbatching import MicroBatchPlan
+from vrl.models.diffusion import VideoGenerationRequest
 from vrl.models.runtime import RuntimeBuildSpec, RuntimeBundle
 
 logger = logging.getLogger(__name__)
@@ -105,18 +113,6 @@ def build_cosmos_predict25_runtime_bundle_from_cfg(
 
 
 """Cosmos Predict2.5 diffusion executor."""
-
-
-from typing import Any
-
-from vrl.engine.core.types import GenerationRequest
-from vrl.engine.diffusion import (
-    DiffusionGenerationSpec,
-    DiffusionPipelineExecutorBase,
-    repeat_tensor_batch,
-)
-from vrl.engine.microbatching import MicroBatchPlan
-from vrl.models.diffusion import VideoGenerationRequest
 
 
 class CosmosPredict25PipelineExecutor(DiffusionPipelineExecutorBase):

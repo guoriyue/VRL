@@ -193,23 +193,16 @@ def build_diffusion_output_batch(
     if not rollout_context:
         raise ValueError("DiffusionChunkResult.context must be non-empty")
 
-    denoising_env = RolloutDenoisingEnv(
-        extra={
-            "actions": actions,
-            "kl": kl_tensor,
-            "training_extras": training_extras,
-            "context": rollout_context,
-            "videos": video,
-        },
-    )
-    dit_trajectory = RolloutDitTrajectory(
-        latents=observations,
-        timesteps=timesteps_tensor,
-    )
-    rollout_trajectory_data = RolloutTrajectoryData(
-        rollout_log_probs=log_probs,
-        denoising_env=denoising_env,
-        dit_trajectory=dit_trajectory,
+    rollout_trajectory_data = _build_legacy_rollout_trajectory_data(
+        request=request,
+        observations=observations,
+        actions=actions,
+        log_probs=log_probs,
+        timesteps_tensor=timesteps_tensor,
+        kl_tensor=kl_tensor,
+        training_extras=training_extras,
+        rollout_context=rollout_context,
+        video=video,
     )
     peak_mem_mb = peak_memory_mb()
     metrics = GenerationMetrics(
@@ -240,9 +233,45 @@ def build_diffusion_output_batch(
         output=video,
         rollout_trajectory_data=rollout_trajectory_data,
         trajectory=trajectory,
-        extra={"trajectory": trajectory},
+        extra={},
         metrics=metrics,
         peak_memory_mb=peak_mem_mb or 0.0,
+    )
+
+
+def _build_legacy_rollout_trajectory_data(
+    *,
+    request: GenerationRequest,
+    observations: Any,
+    actions: Any,
+    log_probs: Any,
+    timesteps_tensor: Any,
+    kl_tensor: Any,
+    training_extras: dict[str, Any],
+    rollout_context: dict[str, Any],
+    video: Any,
+) -> RolloutTrajectoryData | None:
+    """Build legacy diffusion replay payload only when explicitly requested."""
+
+    if "rollout_trajectory_data" not in request.return_artifacts:
+        return None
+    denoising_env = RolloutDenoisingEnv(
+        extra={
+            "actions": actions,
+            "kl": kl_tensor,
+            "training_extras": training_extras,
+            "context": rollout_context,
+            "videos": video,
+        },
+    )
+    dit_trajectory = RolloutDitTrajectory(
+        latents=observations,
+        timesteps=timesteps_tensor,
+    )
+    return RolloutTrajectoryData(
+        rollout_log_probs=log_probs,
+        denoising_env=denoising_env,
+        dit_trajectory=dit_trajectory,
     )
 
 
