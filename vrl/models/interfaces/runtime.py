@@ -49,6 +49,17 @@ class RuntimeBundle:
     ``load_state_dict`` methods. Generic trainer checkpointing saves and
     restores only these modules, so family builders must include every
     trainable adapter/backbone needed for exact resume.
+
+    ``metadata`` may include generic replay/runtime flags used by shared
+    trainer infrastructure:
+
+    - ``runtime_role``: e.g. ``"full_generation_policy"`` or
+      ``"minimal_replay_policy"``.
+    - ``loads_full_generation_modules``: true when the trainer bundle owns
+      generation-only modules such as prompt encoders, VAE/VQ decoders, or a
+      full pipeline object.
+    - ``requires_minimal_replay_loader``: true when colocated Ray training is
+      known to benefit from a family-specific replay-only loader.
     """
 
     policy: Any

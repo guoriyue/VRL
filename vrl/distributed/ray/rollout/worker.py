@@ -49,8 +49,12 @@ class RayRolloutWorker:
 
         if self.executor is not None:
             return
+        from vrl.trainers.memory import log_host_memory
+
+        log_host_memory(f"ray_worker:{self.worker_id}:before_load_policy", log=logger)
         self.executor = _build_executor(self.runtime_spec)
         self.capability = _merge_loaded_capability(self.capability, self.executor)
+        log_host_memory(f"ray_worker:{self.worker_id}:after_load_policy", log=logger)
 
     def release_policy(self) -> None:
         """Drop loaded model state so the actor releases CUDA memory before exit."""

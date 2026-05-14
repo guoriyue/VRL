@@ -253,7 +253,26 @@ class DiffusionPolicy(nn.Module, ABC):
         }
         if not state:
             raise ValueError("load_trainable_state requires transformer.* keys")
-        return transformer.load_state_dict(state, strict=True)
+        named_parameters = getattr(transformer, "named_parameters", None)
+        if not callable(named_parameters):
+            raise TypeError(
+                f"{type(transformer).__name__} must expose named_parameters()",
+            )
+        trainable_keys = {
+            name
+            for name, parameter in named_parameters()
+            if bool(getattr(parameter, "requires_grad", False))
+        }
+        if not trainable_keys:
+            raise ValueError(f"{type(transformer).__name__} has no trainable parameters")
+        extra = sorted(set(state) - trainable_keys)
+        missing = sorted(trainable_keys - set(state))
+        if extra or missing:
+            raise ValueError(
+                "load_trainable_state must receive exactly trainable "
+                f"transformer keys; missing={missing[:5]}, extra={extra[:5]}",
+            )
+        return transformer.load_state_dict(state, strict=False)
 
     # -- backend ownership (called by builder, NOT by collectors) ----------
 

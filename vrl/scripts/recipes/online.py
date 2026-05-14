@@ -40,7 +40,11 @@ from vrl.trainers.checkpointing import (
 )
 from vrl.trainers.data import load_prompt_manifest
 from vrl.trainers.online import OnlineTrainer
-from vrl.trainers.weight_sync import build_runtime_weight_syncer
+from vrl.trainers.memory import log_host_memory
+from vrl.trainers.weight_sync import (
+    build_runtime_weight_syncer,
+    build_trainable_state_sync_getter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +84,9 @@ async def run_online_recipe(
     )
     examples = load_prompt_manifest(Path(str(cfg.data.manifest)))
 
+    log_host_memory("before_bundle_build", log=logger)
     bundle = definition.build_bundle(cfg, context.device, context.weight_dtype)
+    log_host_memory("after_bundle_build", log=logger)
     if definition.after_bundle_built is not None:
         definition.after_bundle_built(bundle, cfg)
     policy = definition.policy_getter(bundle)
@@ -111,6 +117,7 @@ async def run_online_recipe(
         weight_dtype=weight_dtype,
         executor_kwargs=dict(getattr(collector, "executor_kwargs", {}) or {}),
     )
+    log_host_memory("before_rollout_backend_build", log=logger)
     collector.set_runtime(
         build_rollout_backend_from_cfg(
             cfg,
@@ -119,6 +126,7 @@ async def run_online_recipe(
             gatherer=runtime_inputs.gatherer,
         ),
     )
+    log_host_memory("after_rollout_backend_build", log=logger)
 
     ref_model = (
         definition.reference_model_getter(bundle, cfg)
@@ -137,6 +145,7 @@ async def run_online_recipe(
             if resume_checkpoint is not None
             else None,
         ),
+        sync_state_getter=build_trainable_state_sync_getter(bundle),
         config=trainer_config,
         device=device,
         stat_tracker=_build_stat_tracker(cfg, components.algorithm),

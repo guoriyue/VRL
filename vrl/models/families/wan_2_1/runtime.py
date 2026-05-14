@@ -119,6 +119,9 @@ def build_wan_2_1_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
             "task_variant": spec.task_variant,
             "dtype": str(spec.dtype),
             "use_lora": spec.use_lora,
+            "runtime_role": "full_generation_policy",
+            "loads_full_generation_modules": True,
+            "requires_minimal_replay_loader": True,
         },
     )
 

@@ -10,6 +10,8 @@ from vrl.trainers.weight_sync import (
     RayRuntimeWeightSyncer,
     WeightSyncer,
     build_runtime_weight_syncer,
+    build_trainable_state_sync_getter,
+    flatten_trainable_module_state,
 )
 
 __all__ = [
@@ -24,4 +26,6 @@ __all__ = [
     "TrainerConfig",
     "WeightSyncer",
     "build_runtime_weight_syncer",
+    "build_trainable_state_sync_getter",
+    "flatten_trainable_module_state",
 ]

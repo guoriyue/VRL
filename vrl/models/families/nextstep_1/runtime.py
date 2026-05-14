@@ -58,6 +58,9 @@ def build_nextstep_1_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
             "model_path": spec.model_name_or_path,
             "task_variant": spec.task_variant,
             "use_lora": spec.use_lora,
+            "runtime_role": "full_generation_policy",
+            "loads_full_generation_modules": True,
+            "requires_minimal_replay_loader": True,
         },
     )
 

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import torch
+
+TrainableStateGetter = Callable[[], dict[str, Any]]
 
 
 class WeightSyncer(ABC):
@@ -80,6 +83,55 @@ def build_runtime_weight_syncer(
     )
 
 
+def build_trainable_state_sync_getter(bundle: Any) -> TrainableStateGetter:
+    """Build the flattened trainable-state getter used by rollout sync.
+
+    Checkpoints store trainable modules as a nested mapping keyed by module
+    name. Rollout policies consume a flat policy-state payload so a worker can
+    call ``policy.load_trainable_state(payload)`` without knowing bundle shape.
+    """
+
+    modules = _require_trainable_modules(bundle)
+
+    def _getter() -> dict[str, Any]:
+        return flatten_trainable_module_state(modules)
+
+    return _getter
+
+
+def flatten_trainable_module_state(modules: Mapping[str, Any]) -> dict[str, Any]:
+    """Return trainable ``module_name.parameter_name`` keys for rollout sync."""
+
+    if not isinstance(modules, Mapping) or not modules:
+        raise ValueError("trainable modules must be a non-empty mapping")
+    state: dict[str, Any] = {}
+    for module_name, module in modules.items():
+        name = str(module_name)
+        if not name:
+            raise ValueError("trainable module names must be non-empty")
+        state_dict = getattr(module, "state_dict", None)
+        if not callable(state_dict):
+            raise TypeError(f"trainable module {name!r} does not expose state_dict()")
+        module_state = state_dict()
+        if not isinstance(module_state, Mapping):
+            raise TypeError(f"trainable module {name!r} state_dict() must return a mapping")
+        trainable_names = _trainable_parameter_names(module, name)
+        missing = sorted(trainable_names - set(module_state))
+        if missing:
+            preview = ", ".join(missing[:5])
+            suffix = " ..." if len(missing) > 5 else ""
+            raise ValueError(
+                f"trainable module {name!r} state_dict() is missing trainable "
+                f"parameters: {preview}{suffix}",
+            )
+        for key, value in module_state.items():
+            if str(key) in trainable_names:
+                state[f"{name}.{key}"] = value
+    if not state:
+        raise ValueError("trainable module state is empty")
+    return state
+
+
 def _resolve_next_policy_version(
     runtime: Any,
     initial_policy_version: int | None,
@@ -90,6 +142,30 @@ def _resolve_next_policy_version(
     if current is None:
         return 1
     return int(current) + 1
+
+
+def _require_trainable_modules(bundle: Any) -> Mapping[str, Any]:
+    modules = getattr(bundle, "trainable_modules", None)
+    if not isinstance(modules, Mapping) or not modules:
+        raise ValueError("RuntimeBundle.trainable_modules must be a non-empty mapping")
+    return modules
+
+
+def _trainable_parameter_names(module: Any, module_name: str) -> set[str]:
+    named_parameters = getattr(module, "named_parameters", None)
+    if not callable(named_parameters):
+        raise TypeError(
+            f"trainable module {module_name!r} must expose named_parameters() "
+            "for trainable-only rollout sync",
+        )
+    names = {
+        str(name)
+        for name, parameter in named_parameters()
+        if bool(getattr(parameter, "requires_grad", False))
+    }
+    if not names:
+        raise ValueError(f"trainable module {module_name!r} has no trainable parameters")
+    return names
 
 
 def _cpu_state_dict(state_dict: dict[str, Any]) -> dict[str, Any]:

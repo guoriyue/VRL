@@ -27,7 +27,7 @@ from vrl.trainers.diagnostics import (
 )
 from vrl.trainers.ema import EMAModuleWrapper
 from vrl.trainers.types import TrainerConfig, TrainState
-from vrl.trainers.weight_sync import WeightSyncer
+from vrl.trainers.weight_sync import TrainableStateGetter, WeightSyncer
 
 logger = logging.getLogger(__name__)
 
@@ -396,6 +396,7 @@ class OnlineTrainer(Trainer):
         model: nn.Module,
         ref_model: nn.Module | None = None,
         weight_syncer: WeightSyncer | None = None,
+        sync_state_getter: TrainableStateGetter | None = None,
         config: TrainerConfig | None = None,
         prompts: list[str] | None = None,
         device: torch.device | str = "cuda",
@@ -408,6 +409,12 @@ class OnlineTrainer(Trainer):
         self.model = model
         self.ref_model = ref_model
         self.weight_syncer = weight_syncer
+        if weight_syncer is not None and sync_state_getter is None:
+            raise ValueError(
+                "OnlineTrainer weight sync requires an explicit trainable-state "
+                "getter; syncing model.state_dict() would send frozen modules.",
+            )
+        self.sync_state_getter = sync_state_getter
         self.config = config or TrainerConfig()
         self.prompts = prompts or []
         self.device = torch.device(device) if isinstance(device, str) else device
@@ -458,7 +465,8 @@ class OnlineTrainer(Trainer):
 
         if self._rollout_weights_initialized or self.weight_syncer is None:
             return
-        await self.weight_syncer.push(self.model.state_dict())
+        assert self.sync_state_getter is not None
+        await self.weight_syncer.push(self.sync_state_getter())
         self._rollout_weights_initialized = True
 
     # ------------------------------------------------------------------
@@ -1075,8 +1083,8 @@ class OnlineTrainer(Trainer):
 
         # Sync weights
         if self.weight_syncer is not None:
-            state_dict = self.model.state_dict()
-            await self.weight_syncer.push(state_dict)
+            assert self.sync_state_getter is not None
+            await self.weight_syncer.push(self.sync_state_getter())
 
         if first_step_debug_record is not None:
             first_step_debug_record["driver_trainable_after_step"] = (

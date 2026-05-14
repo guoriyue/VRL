@@ -432,6 +432,7 @@ class TestOnlineTrainerCeaRegressions:
             evaluator=_Evaluator(),
             model=model,
             weight_syncer=syncer,
+            sync_state_getter=lambda: {"linear.weight": model.weight.detach().clone()},
             config=TrainerConfig(
                 optim=OptimConfig(lr=0.01),
                 ema=EMAConfig(),
@@ -446,6 +447,54 @@ class TestOnlineTrainerCeaRegressions:
 
         assert collect_seen_sync_counts == [1]
         assert len(syncer.calls) == 2
+
+    def test_weight_sync_requires_explicit_trainable_state_getter(self) -> None:
+        import pytest
+        import torch.nn as nn
+
+        from vrl.trainers.online import OnlineTrainer
+        from vrl.trainers.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
+
+        class _Algorithm:
+            class _Config:
+                global_std = False
+                eps = 1e-8
+                adv_clip_max = 5.0
+                init_kl_coef = 0.0
+
+            config = _Config()
+
+        class _Collector(Collector):
+            async def collect(self, prompts, **kwargs):
+                del prompts, kwargs
+                raise AssertionError("constructor guard should run before collect")
+
+        class _Evaluator(Evaluator):
+            pass
+
+        class _Syncer:
+            async def push(self, state_dict):
+                del state_dict
+
+            async def pull(self):
+                return {}
+
+        with pytest.raises(ValueError, match="trainable-state getter"):
+            OnlineTrainer(
+                algorithm=_Algorithm(),
+                collector=_Collector(),
+                evaluator=_Evaluator(),
+                model=nn.Linear(1, 1),
+                weight_syncer=_Syncer(),
+                config=TrainerConfig(
+                    optim=OptimConfig(lr=0.01),
+                    ema=EMAConfig(),
+                    debug=DebugConfig(),
+                    n=2,
+                    bf16=False,
+                ),
+                device="cpu",
+            )
 
     def test_first_step_debug_writes_training_debug_jsonl(self, tmp_path) -> None:
         import asyncio
@@ -1169,6 +1218,11 @@ def _make_resume_trainer(
         evaluator=_ResumeEvaluator(),
         model=model,
         weight_syncer=weight_syncer,
+        sync_state_getter=(
+            lambda: {"linear.weight": model.weight.detach().clone()}
+            if weight_syncer is not None
+            else None
+        ),
         config=TrainerConfig(
             optim=OptimConfig(lr=0.01),
             ema=EMAConfig(enable=ema),
