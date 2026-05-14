@@ -177,16 +177,13 @@ def test_collector_routes_request_through_runtime_reward_and_packer() -> None:
 
 def test_collector_forwards_reference_metadata_to_request() -> None:
     from vrl.rollouts.collector.requests import RolloutEngineRequestBuilder
-
-    class _Config:
-        num_steps = 1
+    from vrl.rollouts.settings import RolloutSettings
 
     builder = RolloutEngineRequestBuilder(
         family="cosmos",
         task="v2w",
         request_prefix="cosmos",
-        config=_Config(),
-        sampling_fields=("num_steps",),
+        config=RolloutSettings(family="cosmos", values={"num_steps": 1}),
         return_artifacts=("trajectory",),
         default_task_type="video2world",
     )

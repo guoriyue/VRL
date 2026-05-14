@@ -21,7 +21,6 @@ from vrl.engine.diffusion import (
 from vrl.engine.execution.microbatching import MicroBatchPlan
 from vrl.models.interfaces.diffusion_policy import VideoGenerationRequest
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
-from vrl.models.registry import register_diffusion_model
 
 logger = logging.getLogger(__name__)
 SD3_5_FAMILY_CAPABILITY = diffusion_family_capability("sd3_5", "t2i")
@@ -201,23 +200,7 @@ class SD3_5PipelineExecutor(DiffusionPipelineExecutorBase):
         return chunk_encoded
 
 
-SD3_5_MODEL = register_diffusion_model(
-    "sd3_5",
-    task="t2i",
-    aliases=("sd3.5", "sd35"),
-    executor_cls=SD3_5PipelineExecutor,
-    runtime_builder=build_sd3_5_runtime_bundle,
-    runtime_spec_extractor=extract_sd3_5_runtime_spec,
-    collector_config_cls="vrl.rollouts.collector.configs:SD3_5CollectorConfig",
-    request_prefix="sd3_5",
-    default_task_type="text_to_image",
-    error_prefix="SD3.5",
-    gatherer_kwargs={"model_family": "sd3_5"},
-)
-
-
 __all__ = [
-    "SD3_5_MODEL",
     "SD3_5PipelineExecutor",
     "build_sd3_5_runtime_bundle",
     "build_sd3_5_runtime_bundle_from_cfg",

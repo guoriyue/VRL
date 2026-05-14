@@ -13,10 +13,8 @@ from vrl.models.families.janus_pro.policy import (
     JanusProPolicy,
 )
 from vrl.models.interfaces.ar_policy import AutoregressivePolicy
-from vrl.rollouts.collector import (
-    JanusProCollectorConfig,
-    build_rollout_collector,
-)
+from vrl.rollouts.collector import build_rollout_collector
+from vrl.rollouts.settings import RolloutSettings
 
 HIDDEN = 32
 TEXT_VOCAB = 64
@@ -94,7 +92,18 @@ def test_janus_collector_has_no_forward_step() -> None:
         "janus_pro",
         model=_build_stub_model(),
         reward_fn=None,
-        config=JanusProCollectorConfig(image_token_num=4, image_size=64),
+        config=RolloutSettings(
+            family="janus_pro",
+            values={
+                "n_samples_per_prompt": 1,
+                "cfg_weight": 5.0,
+                "temperature": 1.0,
+                "image_token_num": 4,
+                "image_size": 64,
+                "rescale_to_unit": True,
+                "max_text_length": 256,
+            },
+        ),
     )
     assert not hasattr(collector, "forward_step")
 

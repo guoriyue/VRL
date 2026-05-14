@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from typing import Any
 
 from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.loader import build_configs
-from vrl.rollouts.collector import build_rollout_collector, collector_config_cls
+from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.family_registry import (
     RolloutFamilyEntry,
     get_rollout_family_entry,
     normalize_rollout_family,
+)
+from vrl.rollouts.settings import (
+    build_rollout_settings_from_cfg as _build_rollout_settings_from_cfg,
 )
 
 
@@ -55,20 +58,26 @@ def resolve_online_family(cfg: DictConfig) -> str:
     return family
 
 
+def build_rollout_settings_from_cfg(
+    cfg: DictConfig,
+    family: str | RolloutFamilyEntry | None = None,
+) -> Any:
+    """Build resolved rollout settings from YAML."""
+
+    entry = _entry_from_family(cfg, family)
+    return _build_rollout_settings_from_cfg(
+        cfg,
+        family=entry.family,
+    )
+
+
 def build_collector_config_from_cfg(
     cfg: DictConfig,
     family: str | RolloutFamilyEntry | None = None,
 ) -> Any:
-    """Build a collector config by projecting YAML fields through registry metadata."""
+    """Compatibility wrapper for the old collector config factory name."""
 
-    entry = _entry_from_family(cfg, family)
-    cls = collector_config_cls(entry.family)
-    values: dict[str, Any] = {}
-    for field in fields(cls):
-        found, value = _select_cfg_value(cfg, field.name)
-        if found:
-            values[field.name] = value
-    return cls(**values)
+    return build_rollout_settings_from_cfg(cfg, family)
 
 
 def build_reward_from_cfg(
@@ -268,37 +277,6 @@ def _entry_from_family(
     return get_rollout_family_entry(family or resolve_online_family(cfg))
 
 
-def _select_cfg_value(cfg: DictConfig, name: str) -> tuple[bool, Any]:
-    aliases = {
-        "kl_reward": ("algorithm.kl_reward",),
-        "sde_type": ("rollout.sde.type",),
-        "sde_window_size": ("rollout.sde.window_size",),
-        "sde_window_range": ("rollout.sde.window_range",),
-        "train_segments": ("rollout.train_segments", "algorithm.train_segments"),
-        "final_image_policy": ("rollout.final_image_policy", "sampling.r1.final_image_policy"),
-    }
-    paths = (
-        *aliases.get(name, ()),
-        f"sampling.{name}",
-        f"rollout.{name}",
-        f"algorithm.{name}",
-        f"trainer.{name}",
-    )
-    for path in paths:
-        value = _cfg_select(cfg, path, None)
-        if value is not None:
-            return True, _normalize_config_value(name, value)
-    return False, None
-
-
-def _normalize_config_value(name: str, value: Any) -> Any:
-    if name == "sde_window_range":
-        return tuple(value)
-    if isinstance(value, dict):
-        return dict(value)
-    return value
-
-
 def _cfg_select(cfg: DictConfig, path: str, default: Any) -> Any:
     value = OmegaConf.select(cfg, path, default=default)
     if isinstance(value, (dict, list, tuple)):
@@ -320,5 +298,6 @@ __all__ = [
     "build_collector_from_cfg",
     "build_online_recipe_components",
     "build_reward_from_cfg",
+    "build_rollout_settings_from_cfg",
     "resolve_online_family",
 ]

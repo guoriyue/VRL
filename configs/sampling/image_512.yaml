@@ -5,4 +5,5 @@ sampling:
   height: 512
   num_steps: 10
   guidance_scale: 4.5
+  max_sequence_length: 128
   cfg: true

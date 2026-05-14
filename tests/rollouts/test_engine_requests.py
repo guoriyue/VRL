@@ -2,20 +2,23 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
-import pytest
-
 from vrl.rollouts.collector.requests import RolloutEngineRequestBuilder
+from vrl.rollouts.settings import RolloutSettings
 
 
-def test_engine_request_builder_reads_declared_sampling_fields() -> None:
+def test_engine_request_builder_reads_resolved_request_sampling() -> None:
     builder = RolloutEngineRequestBuilder(
         family="fake",
         task="t2i",
         request_prefix="fake",
-        config=SimpleNamespace(alpha=1, window=(0, 2)),
-        sampling_fields=("alpha", "window"),
+        config=RolloutSettings(
+            family="fake",
+            values={
+                "alpha": 1,
+                "window": (0, 2),
+                "n_samples_per_prompt": 3,
+            },
+        ),
         return_artifacts=("output",),
         default_task_type="text_to_image",
     )
@@ -46,15 +49,19 @@ def test_engine_request_builder_reads_declared_sampling_fields() -> None:
     assert plan.pack_metadata == plan.request.metadata
 
 
-def test_engine_request_builder_fails_when_registry_field_is_missing() -> None:
+def test_engine_request_builder_applies_request_overrides_last() -> None:
     builder = RolloutEngineRequestBuilder(
         family="fake",
         task="t2i",
         request_prefix="fake",
-        config=SimpleNamespace(alpha=1),
-        sampling_fields=("alpha", "missing"),
+        config=RolloutSettings(family="fake", values={"alpha": 1}),
         return_artifacts=("output",),
     )
 
-    with pytest.raises(ValueError, match="missing sampling field 'missing'"):
-        builder.build(["prompt"], 1, {})
+    plan = builder.build(
+        ["prompt"],
+        1,
+        {"request_overrides": {"alpha": 2, "beta": 3}},
+    )
+
+    assert plan.request.sampling == {"alpha": 2, "beta": 3}

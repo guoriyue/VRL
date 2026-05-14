@@ -6,10 +6,10 @@ import torch
 
 from vrl.engine import GenerationRequest, GenerationSampleSpec, OutputBatch
 from vrl.engine.trajectory import build_ar_multisegment_trajectory
-from vrl.rollouts.collector.configs import JanusProR1CollectorConfig
 from vrl.rollouts.collector.factory import build_rollout_collector
 from vrl.rollouts.packers.base import RolloutPackContext
 from vrl.rollouts.packers.trajectory import TrajectoryRolloutPacker
+from vrl.rollouts.settings import RolloutSettings
 
 
 def _sample_specs() -> list[GenerationSampleSpec]:
@@ -54,12 +54,30 @@ def _segment(batch: int, length: int, *, visual: bool) -> dict[str, torch.Tensor
 
 
 def test_r1_collector_uses_r1_task_request_and_packer() -> None:
-    config = JanusProR1CollectorConfig(max_reflect_len=32)
+    settings = RolloutSettings(
+        family="janus_pro_r1",
+        values={
+            "n_samples_per_prompt": 2,
+            "cfg_weight": 5.0,
+            "temperature": 0.9,
+            "image_token_num": 576,
+            "image_size": 384,
+            "rescale_to_unit": True,
+            "max_text_length": 256,
+            "max_reflect_len": 32,
+            "final_image_policy": "always_generate",
+            "train_segments": {
+                "initial_image": True,
+                "selfcheck_text": False,
+                "final_image": True,
+            },
+        },
+    )
     collector = build_rollout_collector(
         "janus_pro_r1",
         model=None,
         reward_fn=None,
-        config=config,
+        config=settings,
     )
     plan = collector.request_builder.build(["draw text"], 2, {})
 

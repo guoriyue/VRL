@@ -6,4 +6,5 @@ sampling:
   num_frames: 33
   num_steps: 50
   guidance_scale: 5.0
+  max_sequence_length: 512
   cfg: true

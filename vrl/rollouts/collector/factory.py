@@ -15,7 +15,6 @@ from vrl.rollouts.collector.requests import (
 from vrl.rollouts.collector.rewards import RewardScorer
 from vrl.rollouts.family_registry import (
     FAMILY_REGISTRY,
-    get_rollout_family_entry,
     normalize_rollout_family,
 )
 from vrl.rollouts.packers.trajectory import TrajectoryRolloutPacker
@@ -32,12 +31,9 @@ class CollectorRegistryEntry:
     family: str
     task: str
     kind: CollectorKind
-    config_cls: type
     executor_cls: type
     request_prefix: str | None = None
     default_task_type: str | None = None
-    error_prefix: str | None = None
-    sampling_fields: tuple[str, ...] = ()
     return_artifacts: tuple[str, ...] = ()
     metadata_key: str | None = None
 
@@ -53,12 +49,9 @@ COLLECTOR_REGISTRY: dict[str, CollectorRegistryEntry] = {
         family=entry.family,
         task=entry.task,
         kind=entry.collector.kind,
-        config_cls=_import_from_path(entry.collector.config_cls),
         executor_cls=_import_from_path(entry.executor_cls),
         request_prefix=entry.collector.request_prefix,
         default_task_type=entry.collector.default_task_type,
-        error_prefix=entry.collector.error_prefix,
-        sampling_fields=entry.collector.sampling_fields,
         return_artifacts=entry.collector.return_artifacts,
         metadata_key=entry.collector.metadata_key,
     )
@@ -79,31 +72,24 @@ def build_rollout_collector(
 
     registry_key = normalize_rollout_family(family)
     entry = _entry_for(registry_key)
-    collector_config = _resolve_config(entry, config)
-    request_builder = _build_request_builder(entry, collector_config)
-    executor_kwargs = _build_executor_kwargs(entry, collector_config, reference_image)
+    settings = _resolve_settings(entry, config)
+    request_builder = _build_request_builder(entry, settings)
+    executor_kwargs = _build_executor_kwargs(entry, settings, reference_image)
 
     return RolloutCollector(
         model=model,
-        config=collector_config,
+        config=settings,
         family=entry.family,
         task=entry.task,
         executor_cls=entry.executor_cls,
         request_builder=request_builder,
         packer=TrajectoryRolloutPacker(),
         reward_scorer=RewardScorer(reward_fn),
-        default_group_size=_default_group_size(entry, collector_config),
+        default_group_size=_default_group_size(entry, settings),
         runtime=runtime,
         executor_kwargs=executor_kwargs,
         phase_sink=LAST_COLLECT_PHASES,
     )
-
-
-def collector_config_cls(family: str) -> type:
-    """Return the config schema for an explicit family registry key."""
-
-    get_rollout_family_entry(family)
-    return _entry_for(normalize_rollout_family(family)).config_cls
 
 
 def _entry_for(family: str) -> CollectorRegistryEntry:
@@ -116,13 +102,11 @@ def _entry_for(family: str) -> CollectorRegistryEntry:
         ) from exc
 
 
-def _resolve_config(entry: CollectorRegistryEntry, config: Any | None) -> Any:
+def _resolve_settings(entry: CollectorRegistryEntry, config: Any | None) -> Any:
     if config is None:
-        return entry.config_cls()
-    if not isinstance(config, entry.config_cls):
-        raise TypeError(
-            f"{entry.family} collector requires {entry.config_cls.__name__}, "
-            f"got {type(config).__name__}",
+        raise ValueError(
+            f"{entry.family} collector requires resolved rollout settings; "
+            "build them from YAML before constructing the collector",
         )
     return config
 
@@ -139,7 +123,6 @@ def _build_request_builder(
             task=entry.task,
             request_prefix=entry.request_prefix,
             config=config,
-            sampling_fields=entry.sampling_fields,
             return_artifacts=entry.return_artifacts,
             default_task_type=entry.default_task_type,
             metadata_key=entry.metadata_key,
@@ -154,7 +137,9 @@ def _build_executor_kwargs(
 ) -> dict[str, Any]:
     if entry.kind != "diffusion":
         return {}
-    kwargs: dict[str, Any] = {"sample_batch_size": config.sample_batch_size}
+    kwargs: dict[str, Any] = {
+        "sample_batch_size": _require_config_value(entry, config, "sample_batch_size"),
+    }
     if reference_image is not None:
         kwargs["reference_image"] = reference_image
     return kwargs
@@ -163,7 +148,23 @@ def _build_executor_kwargs(
 def _default_group_size(entry: CollectorRegistryEntry, config: Any) -> int:
     if entry.kind == "diffusion":
         return 1
-    return int(config.n_samples_per_prompt)
+    return int(_require_config_value(entry, config, "n_samples_per_prompt"))
+
+
+def _require_config_value(
+    entry: CollectorRegistryEntry,
+    config: Any,
+    name: str,
+) -> Any:
+    require = getattr(config, "require", None)
+    if callable(require):
+        return require(name)
+    try:
+        return getattr(config, name)
+    except AttributeError as exc:
+        raise ValueError(
+            f"{entry.family} collector config missing required field {name!r}",
+        ) from exc
 
 
 __all__ = [
@@ -171,5 +172,4 @@ __all__ = [
     "LAST_COLLECT_PHASES",
     "CollectorRegistryEntry",
     "build_rollout_collector",
-    "collector_config_cls",
 ]

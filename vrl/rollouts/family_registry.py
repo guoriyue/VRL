@@ -1,31 +1,29 @@
-"""Canonical rollout family registry derived from model registrations.
+"""Canonical rollout family registry.
 
-Model runtime modules own the one-line registration of supported rollout modes.
-This module explicitly imports those built-in runtimes, then adapts their
-model-level declarations into the rollout-facing metadata consumed by
-collectors, runtime launchers, and distributed backends.
+YAML owns experiment values and defaults. This registry owns rollout wiring:
+runtime construction, gatherer construction, collector kind, and capability
+metadata.
 """
 
 from __future__ import annotations
 
-import importlib
 from dataclasses import dataclass, field
 from typing import Literal
 
-from vrl.engine.core.capabilities import FamilyCapability
-from vrl.models.registry import (
-    DIFFUSION_COMMON_SAMPLING_FIELDS,
-    DIFFUSION_MIGRATED_RETURN_ARTIFACTS,
-    DIFFUSION_VIDEO_SAMPLING_FIELDS,
-    JANUS_PRO_MIGRATED_RETURN_ARTIFACTS,
-    JANUS_PRO_R1_MIGRATED_RETURN_ARTIFACTS,
-    NEXTSTEP_MIGRATED_RETURN_ARTIFACTS,
-    SD3_MIGRATED_RETURN_ARTIFACTS,
-    RolloutRegistration,
-    registered_models,
+from vrl.engine.core.capabilities import (
+    FamilyCapability,
+    ar_continuous_family_capability,
+    ar_discrete_family_capability,
+    diffusion_family_capability,
 )
 
 CollectorKind = Literal["diffusion", "ar_discrete", "ar_continuous", "ar_r1"]
+
+
+_default_return_artifacts = (
+    "output",
+    "trajectory",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,11 +31,8 @@ class CollectorMetadata:
     """Collector-facing family metadata shared by collector builders."""
 
     kind: CollectorKind
-    config_cls: str
     request_prefix: str | None = None
     default_task_type: str | None = None
-    error_prefix: str | None = None
-    sampling_fields: tuple[str, ...] = ()
     return_artifacts: tuple[str, ...] = ()
     metadata_key: str | None = None
 
@@ -76,68 +71,202 @@ class RolloutFamilyEntry:
     aliases: tuple[str, ...] = ()
 
 
-_BUILTIN_MODEL_RUNTIME_MODULES = (
-    "vrl.models.families.sd3_5.runtime",
-    "vrl.models.families.wan_2_1.runtime",
-    "vrl.models.families.cosmos.predict2.runtime",
-    "vrl.models.families.cosmos.predict2_5.runtime",
-    "vrl.models.families.janus_pro.runtime",
-    "vrl.models.families.nextstep_1.runtime",
-)
+FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {}
 
 
-def _load_builtin_model_registrations() -> None:
-    for module_name in _BUILTIN_MODEL_RUNTIME_MODULES:
-        importlib.import_module(module_name)
+def register_rollout_family(entry: RolloutFamilyEntry) -> RolloutFamilyEntry:
+    """Register one canonical rollout family."""
+
+    if entry.family in FAMILY_REGISTRY:
+        raise ValueError(f"duplicate rollout family registration: {entry.family!r}")
+    FAMILY_REGISTRY[entry.family] = entry
+    return entry
 
 
-def _rollout_entry_from_model_registration(
-    registration: RolloutRegistration,
+def _diffusion_entry(
+    *,
+    family: str,
+    task: str,
+    aliases: tuple[str, ...],
+    executor_cls: str,
+    runtime_builder: str,
+    runtime_spec_extractor: str,
+    request_prefix: str,
+    default_task_type: str,
+    gatherer_kwargs: dict[str, object] | None = None,
+    supports_reference_conditioning: bool = False,
 ) -> RolloutFamilyEntry:
     return RolloutFamilyEntry(
-        family=registration.family,
-        task=registration.task,
-        aliases=registration.aliases,
+        family=family,
+        task=task,
+        aliases=aliases,
         collector=CollectorMetadata(
-            kind=registration.collector_kind,
-            config_cls=registration.collector_config_cls,
-            request_prefix=registration.request_prefix,
-            default_task_type=registration.default_task_type,
-            error_prefix=registration.error_prefix,
-            sampling_fields=registration.sampling_fields,
-            return_artifacts=registration.return_artifacts,
-            metadata_key=registration.metadata_key,
+            kind="diffusion",
+            request_prefix=request_prefix,
+            default_task_type=default_task_type,
+            return_artifacts=_default_return_artifacts,
         ),
-        executor_cls=registration.executor_cls,
-        runtime_builder=registration.runtime_builder,
-        runtime_spec_extractor=registration.runtime_spec_extractor,
+        executor_cls=executor_cls,
+        runtime_builder=runtime_builder,
+        runtime_spec_extractor=runtime_spec_extractor,
         gatherer=GathererMetadata(
-            import_path=registration.gatherer.import_path,
-            kwargs=dict(registration.gatherer.kwargs),
+            import_path="vrl.engine.execution.gather:DiffusionChunkGatherer",
+            kwargs=dict(gatherer_kwargs or {"model_family": family}),
         ),
-        capability=registration.capability,
+        capability=diffusion_family_capability(
+            family,
+            task,
+            supports_reference_conditioning=supports_reference_conditioning,
+        ),
         executor_kwargs=ExecutorKwargsMetadata(
-            include_sample_batch_size=(
-                registration.executor_kwargs.include_sample_batch_size
-            ),
-            include_reference_image=registration.executor_kwargs.include_reference_image,
+            include_sample_batch_size=True,
+            include_reference_image=supports_reference_conditioning,
         ),
     )
 
 
-def _build_family_registry() -> dict[str, RolloutFamilyEntry]:
-    _load_builtin_model_registrations()
-    entries: dict[str, RolloutFamilyEntry] = {}
-    for model_registration in registered_models():
-        for rollout_registration in model_registration.rollouts:
-            entry = _rollout_entry_from_model_registration(rollout_registration)
-            if entry.family in entries:
-                raise ValueError(f"duplicate rollout family registration: {entry.family!r}")
-            entries[entry.family] = entry
-    return entries
+register_rollout_family(
+    _diffusion_entry(
+        family="sd3_5",
+        task="t2i",
+        aliases=("sd3.5", "sd35"),
+        executor_cls="vrl.models.families.sd3_5.runtime:SD3_5PipelineExecutor",
+        runtime_builder="vrl.models.families.sd3_5.runtime:build_sd3_5_runtime_bundle",
+        runtime_spec_extractor="vrl.models.families.sd3_5.runtime:extract_sd3_5_runtime_spec",
+        request_prefix="sd3_5",
+        default_task_type="text_to_image",
+        gatherer_kwargs={"model_family": "sd3_5"},
+    ),
+)
 
+register_rollout_family(
+    _diffusion_entry(
+        family="wan_2_1",
+        task="t2v",
+        aliases=("wan", "wan_2_1_1_3b", "wan_2_1_14b"),
+        executor_cls="vrl.models.families.wan_2_1.runtime:Wan_2_1PipelineExecutor",
+        runtime_builder="vrl.models.families.wan_2_1.runtime:build_wan_2_1_runtime_bundle",
+        runtime_spec_extractor="vrl.models.families.wan_2_1.runtime:extract_wan_2_1_runtime_spec",
+        request_prefix="wan_2_1",
+        default_task_type="text_to_video",
+        gatherer_kwargs={"model_family": "wan_2_1"},
+    ),
+)
 
-FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = _build_family_registry()
+register_rollout_family(
+    _diffusion_entry(
+        family="cosmos-predict2",
+        task="v2w",
+        aliases=("cosmos", "cosmos_predict2", "cosmos_predict2_2b"),
+        executor_cls="vrl.models.families.cosmos.predict2.runtime:CosmosPipelineExecutor",
+        runtime_builder=(
+            "vrl.models.families.cosmos.predict2.runtime:"
+            "build_cosmos_predict2_runtime_bundle"
+        ),
+        runtime_spec_extractor=(
+            "vrl.models.families.cosmos.predict2.runtime:"
+            "extract_cosmos_predict2_runtime_spec"
+        ),
+        request_prefix="cosmos-predict2",
+        default_task_type="video2world",
+        gatherer_kwargs={"model_family": "cosmos-predict2", "respect_cfg_flag": False},
+        supports_reference_conditioning=True,
+    ),
+)
+
+register_rollout_family(
+    _diffusion_entry(
+        family="cosmos-predict2.5",
+        task="t2w",
+        aliases=("cosmos_predict25", "cosmos_predict2_5", "cosmos_predict2_5_2b"),
+        executor_cls=(
+            "vrl.models.families.cosmos.predict2_5.runtime:"
+            "CosmosPredict25PipelineExecutor"
+        ),
+        runtime_builder=(
+            "vrl.models.families.cosmos.predict2_5.runtime:"
+            "build_cosmos_predict25_runtime_bundle"
+        ),
+        runtime_spec_extractor=(
+            "vrl.models.families.cosmos.predict2_5.runtime:"
+            "extract_cosmos_predict25_runtime_spec"
+        ),
+        request_prefix="cosmos-predict2.5",
+        default_task_type="text_to_video",
+        gatherer_kwargs={"model_family": "cosmos-predict2.5"},
+    ),
+)
+
+register_rollout_family(
+    RolloutFamilyEntry(
+        family="janus_pro",
+        task="ar_t2i",
+        aliases=("janus", "janus_pro_1b"),
+        collector=CollectorMetadata(
+            kind="ar_discrete",
+            request_prefix="janus_pro",
+            return_artifacts=_default_return_artifacts,
+        ),
+        executor_cls="vrl.models.families.janus_pro.runtime:JanusProPipelineExecutor",
+        runtime_builder="vrl.models.families.janus_pro.runtime:build_janus_pro_runtime_bundle",
+        runtime_spec_extractor=(
+            "vrl.models.families.janus_pro.runtime:extract_janus_pro_runtime_spec"
+        ),
+        gatherer=GathererMetadata(
+            import_path="vrl.models.families.janus_pro.runtime:JanusProChunkGatherer",
+        ),
+        capability=ar_discrete_family_capability("janus_pro", "ar_t2i"),
+    ),
+)
+
+register_rollout_family(
+    RolloutFamilyEntry(
+        family="janus_pro_r1",
+        task="ar_t2i_r1",
+        aliases=("janus_r1", "janus_pro_1b_r1"),
+        collector=CollectorMetadata(
+            kind="ar_r1",
+            request_prefix="janus_pro_r1",
+            return_artifacts=_default_return_artifacts,
+        ),
+        executor_cls="vrl.models.families.janus_pro.runtime:JanusProR1PipelineExecutor",
+        runtime_builder="vrl.models.families.janus_pro.runtime:build_janus_pro_runtime_bundle",
+        runtime_spec_extractor=(
+            "vrl.models.families.janus_pro.runtime:extract_janus_pro_runtime_spec"
+        ),
+        gatherer=GathererMetadata(
+            import_path="vrl.models.families.janus_pro.runtime:JanusProR1ChunkGatherer",
+        ),
+        capability=ar_discrete_family_capability(
+            "janus_pro_r1",
+            "ar_t2i_r1",
+            multisegment=True,
+        ),
+    ),
+)
+
+register_rollout_family(
+    RolloutFamilyEntry(
+        family="nextstep_1",
+        task="ar_t2i",
+        aliases=("nextstep", "nextstep_1_1"),
+        collector=CollectorMetadata(
+            kind="ar_continuous",
+            request_prefix="nextstep_1",
+            return_artifacts=_default_return_artifacts,
+            metadata_key="rollout_metadata",
+        ),
+        executor_cls="vrl.models.families.nextstep_1.runtime:NextStep1PipelineExecutor",
+        runtime_builder="vrl.models.families.nextstep_1.runtime:build_nextstep_1_runtime_bundle",
+        runtime_spec_extractor=(
+            "vrl.models.families.nextstep_1.runtime:extract_nextstep_1_runtime_spec"
+        ),
+        gatherer=GathererMetadata(
+            import_path="vrl.models.families.nextstep_1.runtime:NextStep1ChunkGatherer",
+        ),
+        capability=ar_continuous_family_capability("nextstep_1", "ar_t2i"),
+    ),
+)
 
 _FAMILY_ALIASES: dict[str, str] = {
     alias: family
@@ -172,14 +301,7 @@ def registered_rollout_families() -> tuple[str, ...]:
 
 
 __all__ = [
-    "DIFFUSION_COMMON_SAMPLING_FIELDS",
-    "DIFFUSION_MIGRATED_RETURN_ARTIFACTS",
-    "DIFFUSION_VIDEO_SAMPLING_FIELDS",
     "FAMILY_REGISTRY",
-    "JANUS_PRO_MIGRATED_RETURN_ARTIFACTS",
-    "JANUS_PRO_R1_MIGRATED_RETURN_ARTIFACTS",
-    "NEXTSTEP_MIGRATED_RETURN_ARTIFACTS",
-    "SD3_MIGRATED_RETURN_ARTIFACTS",
     "CollectorKind",
     "CollectorMetadata",
     "ExecutorKwargsMetadata",
@@ -188,5 +310,6 @@ __all__ = [
     "RolloutFamilyEntry",
     "get_rollout_family_entry",
     "normalize_rollout_family",
+    "register_rollout_family",
     "registered_rollout_families",
 ]

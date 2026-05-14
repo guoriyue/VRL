@@ -7,5 +7,6 @@ sampling:
   num_frames: 93
   num_steps: 35
   guidance_scale: 7.0
+  max_sequence_length: 512
   fps: 16
   cfg: true

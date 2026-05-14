@@ -8,6 +8,7 @@ from vrl.scripts.common.factory import (
     build_collector_from_cfg,
     build_online_recipe_components,
     build_reward_from_cfg,
+    build_rollout_settings_from_cfg,
     resolve_online_family,
 )
 from vrl.scripts.common.online import run_online_recipe
@@ -28,6 +29,7 @@ __all__ = [
     "build_collector_from_cfg",
     "build_online_recipe_components",
     "build_reward_from_cfg",
+    "build_rollout_settings_from_cfg",
     "resolve_online_family",
     "run_online_recipe",
 ]

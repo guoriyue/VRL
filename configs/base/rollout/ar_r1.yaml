@@ -9,4 +9,3 @@ rollout:
   max_text_length: 256
   max_reflect_len: 80
   final_image_policy: always_generate  # always_generate | use_selfcheck
-  max_batch_requests: 1

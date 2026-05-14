@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -30,7 +31,7 @@ class RolloutRequestBuilder(Protocol):
 
 
 class RolloutEngineRequestBuilder:
-    """Build ``GenerationRequest`` payloads from registry-declared fields."""
+    """Build ``GenerationRequest`` payloads from resolved rollout settings."""
 
     def __init__(
         self,
@@ -39,20 +40,16 @@ class RolloutEngineRequestBuilder:
         task: str,
         request_prefix: str,
         config: Any,
-        sampling_fields: tuple[str, ...],
         return_artifacts: tuple[str, ...],
         default_task_type: str | None = None,
         metadata_key: str | None = None,
     ) -> None:
-        if not sampling_fields:
-            raise ValueError(f"{family} request builder requires sampling_fields")
         if not return_artifacts:
             raise ValueError(f"{family} request builder requires return_artifacts")
         self.family = family
         self.task = task
         self.request_prefix = request_prefix
         self.config = config
-        self.sampling_fields = sampling_fields
         self.return_artifacts = return_artifacts
         self.default_task_type = default_task_type
         self.metadata_key = metadata_key
@@ -65,7 +62,7 @@ class RolloutEngineRequestBuilder:
     ) -> RolloutRequestPlan:
         seed = kwargs.get("seed")
         policy_version = kwargs.get("policy_version")
-        sampling = _sampling_from_config(self.config, self.sampling_fields)
+        sampling = _sampling_from_settings(self.config)
         if seed is not None:
             sampling["seed"] = seed
         sampling.update(dict(kwargs.get("request_overrides", {})))
@@ -126,15 +123,20 @@ def _rollout_metadata(
     return metadata
 
 
-def _sampling_from_config(config: Any, field_names: tuple[str, ...]) -> dict[str, Any]:
-    sampling: dict[str, Any] = {}
-    for field_name in field_names:
-        if not hasattr(config, field_name):
-            raise ValueError(
-                f"{type(config).__name__} is missing sampling field {field_name!r}",
-            )
-        sampling[field_name] = _sampling_value(getattr(config, field_name))
-    return sampling
+def _sampling_from_settings(settings: Any) -> dict[str, Any]:
+    request_sampling = getattr(settings, "request_sampling", None)
+    if callable(request_sampling):
+        raw_sampling = request_sampling()
+    else:
+        raw_sampling = getattr(settings, "values", None)
+    if not isinstance(raw_sampling, Mapping):
+        raise TypeError(
+            f"{type(settings).__name__} must expose request_sampling() or values",
+        )
+    return {
+        str(field_name): _sampling_value(value)
+        for field_name, value in raw_sampling.items()
+    }
 
 
 def _sampling_value(value: Any) -> Any:
