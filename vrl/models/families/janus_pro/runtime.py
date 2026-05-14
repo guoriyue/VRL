@@ -33,6 +33,7 @@ from vrl.engine.trajectory import build_ar_discrete_trajectory, build_ar_multise
 from vrl.models.families.janus_pro.policy import JanusProConfig, JanusProPolicy
 from vrl.models.families.janus_pro.r1_types import JanusR1Segment
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
+from vrl.models.registry import GathererRegistration, RolloutRegistration, register_model
 
 logger = logging.getLogger(__name__)
 
@@ -1135,7 +1136,68 @@ def _segment_token_steps(segments: dict[str, dict[str, Any]]) -> int:
     return sum(int(segment["token_ids"].shape[1]) for segment in segments.values())
 
 
+JANUS_PRO_MODEL = register_model(
+    "janus_pro",
+    rollouts=(
+        RolloutRegistration(
+            family="janus_pro",
+            task="ar_t2i",
+            aliases=("janus", "janus_pro_1b"),
+            collector_kind="ar_discrete",
+            collector_config_cls="vrl.rollouts.collector.configs:JanusProCollectorConfig",
+            request_prefix="janus_pro",
+            sampling_fields=(
+                "cfg_weight",
+                "temperature",
+                "image_token_num",
+                "image_size",
+                "max_text_length",
+            ),
+            return_artifacts=("output", "trajectory"),
+            executor_cls="vrl.models.families.janus_pro.runtime:JanusProPipelineExecutor",
+            runtime_builder="vrl.models.families.janus_pro.runtime:build_janus_pro_runtime_bundle",
+            runtime_spec_extractor=(
+                "vrl.models.families.janus_pro.runtime:extract_janus_pro_runtime_spec"
+            ),
+            gatherer=GathererRegistration(
+                import_path="vrl.models.families.janus_pro.runtime:JanusProChunkGatherer",
+            ),
+            capability=JANUS_PRO_FAMILY_CAPABILITY,
+        ),
+        RolloutRegistration(
+            family="janus_pro_r1",
+            task="ar_t2i_r1",
+            aliases=("janus_r1", "janus_pro_1b_r1"),
+            collector_kind="ar_r1",
+            collector_config_cls="vrl.rollouts.collector.configs:JanusProR1CollectorConfig",
+            request_prefix="janus_pro_r1",
+            sampling_fields=(
+                "cfg_weight",
+                "temperature",
+                "image_token_num",
+                "image_size",
+                "max_text_length",
+                "max_reflect_len",
+                "final_image_policy",
+                "train_segments",
+            ),
+            return_artifacts=("output", "trajectory"),
+            executor_cls="vrl.models.families.janus_pro.runtime:JanusProR1PipelineExecutor",
+            runtime_builder="vrl.models.families.janus_pro.runtime:build_janus_pro_runtime_bundle",
+            runtime_spec_extractor=(
+                "vrl.models.families.janus_pro.runtime:extract_janus_pro_runtime_spec"
+            ),
+            gatherer=GathererRegistration(
+                import_path="vrl.models.families.janus_pro.runtime:JanusProR1ChunkGatherer",
+            ),
+            capability=JANUS_PRO_R1_FAMILY_CAPABILITY,
+        ),
+    ),
+)
+
+
 __all__ = [
+    "JANUS_PRO_MODEL",
     "JanusProARChunkResult",
     "JanusProChunkGatherer",
     "JanusProPipelineExecutor",

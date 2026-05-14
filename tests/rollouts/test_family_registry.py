@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from vrl.models.registry import registered_models
 from vrl.rollouts.collector.configs import (
     CosmosPredict2CollectorConfig,
     JanusProCollectorConfig,
@@ -97,6 +98,16 @@ def test_collector_registry_reuses_family_registry_metadata() -> None:
         assert collector_entry.kind == family_entry.collector.kind
         assert collector_entry.config_cls is expected_config_cls[family]
         assert collector_config_cls(family) is expected_config_cls[family]
+
+
+def test_family_registry_is_derived_from_model_registrations() -> None:
+    registered_rollouts = {
+        rollout.family
+        for model in registered_models()
+        for rollout in model.rollouts
+    }
+
+    assert registered_rollouts == set(FAMILY_REGISTRY)
 
 
 def test_diffusion_request_shape_is_registry_declared() -> None:

@@ -88,16 +88,22 @@ class SD3_5Policy(DiffusionPolicy):
         from diffusers import StableDiffusion3Pipeline
 
         model_dtype = _resolve_torch_dtype(spec.dtype)
+        extra = getattr(spec, "extra", {}) or {}
+        frozen_dtype = _resolve_torch_dtype(extra.get("frozen_dtype", model_dtype))
         load_kwargs: dict[str, Any] = {}
-        if model_dtype != torch.float32:
+        if model_dtype == torch.float32 and frozen_dtype != torch.float32:
+            load_kwargs["torch_dtype"] = {
+                "transformer": torch.float32,
+                "vae": torch.float32,
+                "default": frozen_dtype,
+            }
+        elif model_dtype != torch.float32:
             load_kwargs["torch_dtype"] = model_dtype
         pipeline = StableDiffusion3Pipeline.from_pretrained(
             spec.model_name_or_path,
             **load_kwargs,
         )
         pipeline.vae.requires_grad_(False)
-        extra = getattr(spec, "extra", {}) or {}
-        frozen_dtype = _resolve_torch_dtype(extra.get("frozen_dtype", model_dtype))
         for enc in (
             pipeline.text_encoder,
             pipeline.text_encoder_2,

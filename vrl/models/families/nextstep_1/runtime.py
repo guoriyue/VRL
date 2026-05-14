@@ -30,6 +30,7 @@ from vrl.engine.execution.microbatching import MicroBatchPlan
 from vrl.engine.trajectory import build_ar_continuous_trajectory
 from vrl.models.families.nextstep_1.policy import NextStep1Config, NextStep1Policy
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
+from vrl.models.registry import register_ar_continuous_model
 
 logger = logging.getLogger(__name__)
 
@@ -746,7 +747,31 @@ class NextStep1ChunkGatherer:
         )
 
 
+NEXTSTEP_1_MODEL = register_ar_continuous_model(
+    "nextstep_1",
+    task="ar_t2i",
+    aliases=("nextstep", "nextstep_1_1"),
+    executor_cls=NextStep1PipelineExecutor,
+    runtime_builder=build_nextstep_1_runtime_bundle,
+    runtime_spec_extractor=extract_nextstep_1_runtime_spec,
+    collector_config_cls="vrl.rollouts.collector.configs:NextStep1CollectorConfig",
+    request_prefix="nextstep_1",
+    sampling_fields=(
+        "cfg_scale",
+        "num_flow_steps",
+        "noise_level",
+        "image_token_num",
+        "image_size",
+        "max_text_length",
+        "rescale_to_unit",
+    ),
+    metadata_key="rollout_metadata",
+    gatherer_import_path="vrl.models.families.nextstep_1.runtime:NextStep1ChunkGatherer",
+)
+
+
 __all__ = [
+    "NEXTSTEP_1_MODEL",
     "NextStep1ARChunkResult",
     "NextStep1ChunkGatherer",
     "NextStep1PipelineExecutor",

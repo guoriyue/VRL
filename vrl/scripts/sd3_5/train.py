@@ -6,9 +6,10 @@ from typing import Any
 
 from omegaconf import DictConfig
 
-from vrl.scripts.recipes.online import run_online_recipe
-from vrl.scripts.recipes.types import OnlineRecipeDefinition
+from vrl.scripts.common.online import run_online_recipe
+from vrl.scripts.common.types import OnlineRecipeDefinition
 from vrl.trainers.checkpointing import LORA_WEIGHTS_NAME
+from vrl.trainers.precision import torch_dtype_for_trainer_precision
 
 
 async def train_sd3_5_grpo(cfg: DictConfig) -> None:
@@ -56,28 +57,7 @@ def _export_modules(bundle: Any, cfg: DictConfig) -> dict[str, Any] | None:
 
 def _resolve_weight_dtype(cfg: DictConfig, trainer_config: Any, torch: Any) -> Any:
     del cfg
-    precision = str(trainer_config.mixed_precision or "").lower().strip()
-    aliases = {
-        "none": "no",
-        "off": "no",
-        "fp32": "no",
-        "float32": "no",
-        "float16": "fp16",
-        "bfloat16": "bf16",
-    }
-    precision = aliases.get(precision, precision)
-    if not precision:
-        precision = "bf16" if trainer_config.bf16 else "no"
-    if precision == "no":
-        return torch.float32
-    if precision == "bf16":
-        return torch.bfloat16
-    if precision == "fp16":
-        return torch.float16
-    raise ValueError(
-        "actor.mixed_precision must be one of 'no', 'fp16', or 'bf16', "
-        f"got {trainer_config.mixed_precision!r}",
-    )
+    return torch_dtype_for_trainer_precision(trainer_config, torch)
 
 
 def _offload_driver_frozen_modules(policy: object) -> None:

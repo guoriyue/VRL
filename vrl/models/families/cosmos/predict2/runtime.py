@@ -20,6 +20,7 @@ from vrl.engine.diffusion import (
 from vrl.engine.execution.microbatching import MicroBatchPlan
 from vrl.models.interfaces.diffusion_policy import VideoGenerationRequest
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
+from vrl.models.registry import register_diffusion_model
 
 logger = logging.getLogger(__name__)
 
@@ -129,10 +130,10 @@ def build_cosmos_predict2_runtime_bundle(
             "task_variant": spec.task_variant,
             "dtype": str(spec.dtype),
             "use_lora": spec.use_lora,
+            "reference_image": (spec.extra or {}).get("reference_image"),
             "runtime_role": "full_generation_policy",
             "loads_full_generation_modules": True,
             "requires_minimal_replay_loader": True,
-            "reference_image": (spec.extra or {}).get("reference_image"),
         },
     )
 
@@ -251,7 +252,26 @@ def _load_reference_image(reference_image: Any) -> Any:
     return Image.open(reference_image).convert("RGB")
 
 
+COSMOS_PREDICT2_MODEL = register_diffusion_model(
+    "cosmos-predict2",
+    task="v2w",
+    aliases=("cosmos", "cosmos_predict2", "cosmos_predict2_2b"),
+    executor_cls=CosmosPipelineExecutor,
+    runtime_builder=build_cosmos_predict2_runtime_bundle,
+    runtime_spec_extractor=extract_cosmos_predict2_runtime_spec,
+    collector_config_cls="vrl.rollouts.collector.configs:CosmosPredict2CollectorConfig",
+    request_prefix="cosmos-predict2",
+    default_task_type="video2world",
+    error_prefix="Cosmos",
+    video=True,
+    extra_sampling_fields=("fps",),
+    gatherer_kwargs={"model_family": "cosmos-predict2", "respect_cfg_flag": False},
+    include_reference_image=True,
+)
+
+
 __all__ = [
+    "COSMOS_PREDICT2_MODEL",
     "CosmosPipelineExecutor",
     "build_cosmos_predict2_runtime_bundle",
     "build_cosmos_predict2_runtime_bundle_from_cfg",

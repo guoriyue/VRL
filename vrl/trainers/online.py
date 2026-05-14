@@ -26,6 +26,7 @@ from vrl.trainers.diagnostics import (
     write_jsonl,
 )
 from vrl.trainers.ema import EMAModuleWrapper
+from vrl.trainers.precision import trainer_mixed_precision
 from vrl.trainers.types import TrainerConfig, TrainState
 from vrl.trainers.weight_sync import TrainableStateGetter, WeightSyncer
 
@@ -108,24 +109,7 @@ class PhaseTimer:
 
 
 def _resolve_mixed_precision(config: TrainerConfig) -> str:
-    precision = str(config.mixed_precision or "").lower().strip()
-    if not precision:
-        precision = "bf16" if config.bf16 else "no"
-    aliases = {
-        "none": "no",
-        "off": "no",
-        "fp32": "no",
-        "float32": "no",
-        "float16": "fp16",
-        "bfloat16": "bf16",
-    }
-    precision = aliases.get(precision, precision)
-    if precision not in {"no", "fp16", "bf16"}:
-        raise ValueError(
-            "actor.mixed_precision must be one of 'no', 'fp16', or 'bf16', "
-            f"got {config.mixed_precision!r}",
-        )
-    return precision
+    return trainer_mixed_precision(config)
 
 
 def _get_autocast(

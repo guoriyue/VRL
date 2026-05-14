@@ -18,11 +18,11 @@ from vrl.distributed.resources import (
 )
 from vrl.rollouts.runtime.backend import build_rollout_backend_from_cfg
 from vrl.rollouts.runtime.launch_inputs import build_rollout_runtime_inputs
-from vrl.scripts.recipes.factory import (
+from vrl.scripts.common.factory import (
     build_collector_from_cfg,
     build_online_recipe_components,
 )
-from vrl.scripts.recipes.types import (
+from vrl.scripts.common.types import (
     OnlineRecipeDefinition,
     OnlineRecipeStack,
     RecipeDeviceContext,
@@ -40,6 +40,7 @@ from vrl.trainers.checkpointing import (
 )
 from vrl.trainers.data import load_prompt_manifest
 from vrl.trainers.online import OnlineTrainer
+from vrl.trainers.precision import torch_dtype_for_trainer_precision
 from vrl.trainers.memory import log_host_memory
 from vrl.trainers.weight_sync import (
     build_runtime_weight_syncer,
@@ -75,7 +76,7 @@ async def run_online_recipe(
     weight_dtype = (
         definition.weight_dtype_getter(cfg, trainer_config, torch)
         if definition.weight_dtype_getter is not None
-        else torch.bfloat16 if trainer_config.bf16 else torch.float16
+        else torch_dtype_for_trainer_precision(trainer_config, torch)
     )
     context = RecipeDeviceContext(
         device=device,

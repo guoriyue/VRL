@@ -7,8 +7,8 @@ from typing import Any
 
 from omegaconf import DictConfig, OmegaConf
 
-from vrl.scripts.recipes.online import run_online_recipe
-from vrl.scripts.recipes.types import OnlineRecipeDefinition
+from vrl.scripts.common.online import run_online_recipe
+from vrl.scripts.common.types import OnlineRecipeDefinition
 from vrl.trainers.checkpointing import LORA_WEIGHTS_NAME
 
 

@@ -26,7 +26,9 @@ sampling:
 actor:
   optim:
     lr: 3.0e-4
-  mixed_precision: fp16
+  # SD3.5 OCR replay is numerically fragile under fp16; keep policy replay and
+  # trainable LoRA weights in full precision unless a recipe opts in explicitly.
+  mixed_precision: "no"
   bf16: false
   # Flow-GRPO SD3 OCR 1GPU uses num_batches_per_epoch=8 and
   # gradient_accumulation_steps=num_batches_per_epoch//2, yielding two

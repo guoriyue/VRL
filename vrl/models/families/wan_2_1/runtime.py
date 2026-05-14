@@ -20,6 +20,7 @@ from vrl.engine.diffusion import (
 from vrl.engine.execution.microbatching import MicroBatchPlan
 from vrl.models.interfaces.diffusion_policy import VideoGenerationRequest
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
+from vrl.models.registry import register_diffusion_model
 
 logger = logging.getLogger(__name__)
 
@@ -181,7 +182,24 @@ class Wan_2_1PipelineExecutor(DiffusionPipelineExecutorBase):
         return chunk_encoded
 
 
+WAN_2_1_MODEL = register_diffusion_model(
+    "wan_2_1",
+    task="t2v",
+    aliases=("wan", "wan_2_1_1_3b", "wan_2_1_14b"),
+    executor_cls=Wan_2_1PipelineExecutor,
+    runtime_builder=build_wan_2_1_runtime_bundle,
+    runtime_spec_extractor=extract_wan_2_1_runtime_spec,
+    collector_config_cls="vrl.rollouts.collector.configs:Wan_2_1CollectorConfig",
+    request_prefix="wan_2_1",
+    default_task_type="text_to_video",
+    error_prefix="Wan 2.1",
+    video=True,
+    gatherer_kwargs={"model_family": "wan_2_1"},
+)
+
+
 __all__ = [
+    "WAN_2_1_MODEL",
     "Wan_2_1PipelineExecutor",
     "build_wan_2_1_runtime_bundle",
     "build_wan_2_1_runtime_bundle_from_cfg",

@@ -1,6 +1,6 @@
 """Shared online training recipe helpers."""
 
-from vrl.scripts.recipes.factory import (
+from vrl.scripts.common.factory import (
     OnlineRecipeFactoryOutput,
     UnsupportedOnlineRecipeError,
     build_algorithm_and_evaluator_from_cfg,
@@ -10,8 +10,8 @@ from vrl.scripts.recipes.factory import (
     build_reward_from_cfg,
     resolve_online_family,
 )
-from vrl.scripts.recipes.online import run_online_recipe
-from vrl.scripts.recipes.types import (
+from vrl.scripts.common.online import run_online_recipe
+from vrl.scripts.common.types import (
     OnlineRecipeDefinition,
     OnlineRecipeStack,
     RecipeDeviceContext,

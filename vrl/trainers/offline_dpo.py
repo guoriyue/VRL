@@ -24,6 +24,7 @@ import torch.nn as nn
 
 from vrl.algorithms.dpo import diffusion_dpo_loss, diffusion_sft_loss
 from vrl.trainers.pickapic import PreferenceBatch
+from vrl.trainers.precision import normalize_mixed_precision
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,7 @@ class DPOStepMetrics:
 
 def _autocast(precision: str, device: torch.device) -> Any:
     import contextlib
+    precision = normalize_mixed_precision(precision)
     if precision == "fp16":
         return torch.amp.autocast(str(device), dtype=torch.float16)
     if precision == "bf16":

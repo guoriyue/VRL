@@ -1,21 +1,28 @@
-"""Canonical rollout family registry.
+"""Canonical rollout family registry derived from model registrations.
 
-The registry lives in ``vrl.rollouts`` because it wires training-time rollout
-components: collector metadata, executor import paths, runtime builders, and
-driver-side chunk gatherers. Distributed backends should consume the resolved
-entry instead of branching on concrete model families.
+Model runtime modules own the one-line registration of supported rollout modes.
+This module explicitly imports those built-in runtimes, then adapts their
+model-level declarations into the rollout-facing metadata consumed by
+collectors, runtime launchers, and distributed backends.
 """
 
 from __future__ import annotations
 
+import importlib
 from dataclasses import dataclass, field
 from typing import Literal
 
-from vrl.engine.core.capabilities import (
-    FamilyCapability,
-    ar_continuous_family_capability,
-    ar_discrete_family_capability,
-    diffusion_family_capability,
+from vrl.engine.core.capabilities import FamilyCapability
+from vrl.models.registry import (
+    DIFFUSION_COMMON_SAMPLING_FIELDS,
+    DIFFUSION_MIGRATED_RETURN_ARTIFACTS,
+    DIFFUSION_VIDEO_SAMPLING_FIELDS,
+    JANUS_PRO_MIGRATED_RETURN_ARTIFACTS,
+    JANUS_PRO_R1_MIGRATED_RETURN_ARTIFACTS,
+    NEXTSTEP_MIGRATED_RETURN_ARTIFACTS,
+    SD3_MIGRATED_RETURN_ARTIFACTS,
+    RolloutRegistration,
+    registered_models,
 )
 
 CollectorKind = Literal["diffusion", "ar_discrete", "ar_continuous", "ar_r1"]
@@ -69,267 +76,68 @@ class RolloutFamilyEntry:
     aliases: tuple[str, ...] = ()
 
 
-DIFFUSION_MIGRATED_RETURN_ARTIFACTS = (
-    "output",
-    "trajectory",
-)
-
-SD3_MIGRATED_RETURN_ARTIFACTS = DIFFUSION_MIGRATED_RETURN_ARTIFACTS
-
-JANUS_PRO_MIGRATED_RETURN_ARTIFACTS = (
-    "output",
-    "trajectory",
-)
-
-NEXTSTEP_MIGRATED_RETURN_ARTIFACTS = (
-    "output",
-    "trajectory",
-)
-
-JANUS_PRO_R1_MIGRATED_RETURN_ARTIFACTS = (
-    "output",
-    "trajectory",
-)
-
-DIFFUSION_COMMON_SAMPLING_FIELDS = (
-    "num_steps",
-    "guidance_scale",
-    "height",
-    "width",
-    "cfg",
-    "sample_batch_size",
-    "sde_type",
-    "sde_window_size",
-    "sde_window_range",
-    "same_latent",
-    "max_sequence_length",
-    "noise_level",
-    "return_kl",
-)
-
-DIFFUSION_VIDEO_SAMPLING_FIELDS = (
-    *DIFFUSION_COMMON_SAMPLING_FIELDS,
-    "num_frames",
+_BUILTIN_MODEL_RUNTIME_MODULES = (
+    "vrl.models.families.sd3_5.runtime",
+    "vrl.models.families.wan_2_1.runtime",
+    "vrl.models.families.cosmos.predict2.runtime",
+    "vrl.models.families.cosmos.predict2_5.runtime",
+    "vrl.models.families.janus_pro.runtime",
+    "vrl.models.families.nextstep_1.runtime",
 )
 
 
-FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {
-    "sd3_5": RolloutFamilyEntry(
-        family="sd3_5",
-        task="t2i",
-        aliases=("sd3.5", "sd35"),
+def _load_builtin_model_registrations() -> None:
+    for module_name in _BUILTIN_MODEL_RUNTIME_MODULES:
+        importlib.import_module(module_name)
+
+
+def _rollout_entry_from_model_registration(
+    registration: RolloutRegistration,
+) -> RolloutFamilyEntry:
+    return RolloutFamilyEntry(
+        family=registration.family,
+        task=registration.task,
+        aliases=registration.aliases,
         collector=CollectorMetadata(
-            kind="diffusion",
-            config_cls="vrl.rollouts.collector.configs:SD3_5CollectorConfig",
-            request_prefix="sd3_5",
-            default_task_type="text_to_image",
-            error_prefix="SD3.5",
-            sampling_fields=DIFFUSION_COMMON_SAMPLING_FIELDS,
-            return_artifacts=SD3_MIGRATED_RETURN_ARTIFACTS,
+            kind=registration.collector_kind,
+            config_cls=registration.collector_config_cls,
+            request_prefix=registration.request_prefix,
+            default_task_type=registration.default_task_type,
+            error_prefix=registration.error_prefix,
+            sampling_fields=registration.sampling_fields,
+            return_artifacts=registration.return_artifacts,
+            metadata_key=registration.metadata_key,
         ),
-        executor_cls="vrl.models.families.sd3_5.runtime:SD3_5PipelineExecutor",
-        runtime_builder="vrl.models.families.sd3_5.runtime:build_sd3_5_runtime_bundle",
-        runtime_spec_extractor=("vrl.models.families.sd3_5.runtime:extract_sd3_5_runtime_spec"),
+        executor_cls=registration.executor_cls,
+        runtime_builder=registration.runtime_builder,
+        runtime_spec_extractor=registration.runtime_spec_extractor,
         gatherer=GathererMetadata(
-            import_path="vrl.engine.execution.gather:DiffusionChunkGatherer",
-            kwargs={"model_family": "sd3_5"},
+            import_path=registration.gatherer.import_path,
+            kwargs=dict(registration.gatherer.kwargs),
         ),
-        capability=diffusion_family_capability("sd3_5", "t2i"),
-        executor_kwargs=ExecutorKwargsMetadata(include_sample_batch_size=True),
-    ),
-    "wan_2_1": RolloutFamilyEntry(
-        family="wan_2_1",
-        task="t2v",
-        aliases=("wan", "wan_2_1_1_3b", "wan_2_1_14b"),
-        collector=CollectorMetadata(
-            kind="diffusion",
-            config_cls="vrl.rollouts.collector.configs:Wan_2_1CollectorConfig",
-            request_prefix="wan_2_1",
-            default_task_type="text_to_video",
-            error_prefix="Wan 2.1",
-            sampling_fields=DIFFUSION_VIDEO_SAMPLING_FIELDS,
-            return_artifacts=DIFFUSION_MIGRATED_RETURN_ARTIFACTS,
-        ),
-        executor_cls="vrl.models.families.wan_2_1.runtime:Wan_2_1PipelineExecutor",
-        runtime_builder="vrl.models.families.wan_2_1.runtime:build_wan_2_1_runtime_bundle",
-        runtime_spec_extractor=(
-            "vrl.models.families.wan_2_1.runtime:extract_wan_2_1_runtime_spec"
-        ),
-        gatherer=GathererMetadata(
-            import_path="vrl.engine.execution.gather:DiffusionChunkGatherer",
-            kwargs={"model_family": "wan_2_1"},
-        ),
-        capability=diffusion_family_capability("wan_2_1", "t2v"),
-        executor_kwargs=ExecutorKwargsMetadata(include_sample_batch_size=True),
-    ),
-    "cosmos-predict2": RolloutFamilyEntry(
-        family="cosmos-predict2",
-        task="v2w",
-        aliases=("cosmos", "cosmos_predict2", "cosmos_predict2_2b"),
-        collector=CollectorMetadata(
-            kind="diffusion",
-            config_cls="vrl.rollouts.collector.configs:CosmosPredict2CollectorConfig",
-            request_prefix="cosmos-predict2",
-            default_task_type="video2world",
-            error_prefix="Cosmos",
-            sampling_fields=(
-                *DIFFUSION_VIDEO_SAMPLING_FIELDS,
-                "fps",
-            ),
-            return_artifacts=DIFFUSION_MIGRATED_RETURN_ARTIFACTS,
-        ),
-        executor_cls="vrl.models.families.cosmos.predict2.runtime:CosmosPipelineExecutor",
-        runtime_builder=(
-            "vrl.models.families.cosmos.predict2.runtime:"
-            "build_cosmos_predict2_runtime_bundle"
-        ),
-        runtime_spec_extractor=(
-            "vrl.models.families.cosmos.predict2.runtime:"
-            "extract_cosmos_predict2_runtime_spec"
-        ),
-        gatherer=GathererMetadata(
-            import_path="vrl.engine.execution.gather:DiffusionChunkGatherer",
-            kwargs={"model_family": "cosmos-predict2", "respect_cfg_flag": False},
-        ),
-        capability=diffusion_family_capability(
-            "cosmos-predict2",
-            "v2w",
-            supports_reference_conditioning=True,
-        ),
+        capability=registration.capability,
         executor_kwargs=ExecutorKwargsMetadata(
-            include_sample_batch_size=True,
-            include_reference_image=True,
-        ),
-    ),
-    "cosmos-predict2.5": RolloutFamilyEntry(
-        family="cosmos-predict2.5",
-        task="t2w",
-        aliases=("cosmos_predict25", "cosmos_predict2_5", "cosmos_predict2_5_2b"),
-        collector=CollectorMetadata(
-            kind="diffusion",
-            config_cls="vrl.rollouts.collector.configs:CosmosPredict2CollectorConfig",
-            request_prefix="cosmos-predict2.5",
-            default_task_type="text_to_video",
-            error_prefix="Cosmos Predict2.5",
-            sampling_fields=(
-                *DIFFUSION_VIDEO_SAMPLING_FIELDS,
-                "fps",
+            include_sample_batch_size=(
+                registration.executor_kwargs.include_sample_batch_size
             ),
-            return_artifacts=DIFFUSION_MIGRATED_RETURN_ARTIFACTS,
+            include_reference_image=registration.executor_kwargs.include_reference_image,
         ),
-        executor_cls=(
-            "vrl.models.families.cosmos.predict2_5.runtime:"
-            "CosmosPredict25PipelineExecutor"
-        ),
-        runtime_builder=(
-            "vrl.models.families.cosmos.predict2_5.runtime:"
-            "build_cosmos_predict25_runtime_bundle"
-        ),
-        runtime_spec_extractor=(
-            "vrl.models.families.cosmos.predict2_5.runtime:"
-            "extract_cosmos_predict25_runtime_spec"
-        ),
-        gatherer=GathererMetadata(
-            import_path="vrl.engine.execution.gather:DiffusionChunkGatherer",
-            kwargs={"model_family": "cosmos-predict2.5"},
-        ),
-        capability=diffusion_family_capability("cosmos-predict2.5", "t2w"),
-        executor_kwargs=ExecutorKwargsMetadata(include_sample_batch_size=True),
-    ),
-    "janus_pro": RolloutFamilyEntry(
-        family="janus_pro",
-        task="ar_t2i",
-        aliases=("janus", "janus_pro_1b"),
-        collector=CollectorMetadata(
-            kind="ar_discrete",
-            config_cls="vrl.rollouts.collector.configs:JanusProCollectorConfig",
-            request_prefix="janus_pro",
-            sampling_fields=(
-                "cfg_weight",
-                "temperature",
-                "image_token_num",
-                "image_size",
-                "max_text_length",
-            ),
-            return_artifacts=JANUS_PRO_MIGRATED_RETURN_ARTIFACTS,
-        ),
-        executor_cls="vrl.models.families.janus_pro.runtime:JanusProPipelineExecutor",
-        runtime_builder=("vrl.models.families.janus_pro.runtime:build_janus_pro_runtime_bundle"),
-        runtime_spec_extractor=(
-            "vrl.models.families.janus_pro.runtime:extract_janus_pro_runtime_spec"
-        ),
-        gatherer=GathererMetadata(
-            import_path="vrl.models.families.janus_pro.runtime:JanusProChunkGatherer",
-        ),
-        capability=ar_discrete_family_capability("janus_pro", "ar_t2i"),
-    ),
-    "janus_pro_r1": RolloutFamilyEntry(
-        family="janus_pro_r1",
-        task="ar_t2i_r1",
-        aliases=("janus_r1", "janus_pro_1b_r1"),
-        collector=CollectorMetadata(
-            kind="ar_r1",
-            config_cls="vrl.rollouts.collector.configs:JanusProR1CollectorConfig",
-            request_prefix="janus_pro_r1",
-            sampling_fields=(
-                "cfg_weight",
-                "temperature",
-                "image_token_num",
-                "image_size",
-                "max_text_length",
-                "max_reflect_len",
-                "final_image_policy",
-                "train_segments",
-            ),
-            return_artifacts=JANUS_PRO_R1_MIGRATED_RETURN_ARTIFACTS,
-        ),
-        executor_cls=(
-            "vrl.models.families.janus_pro.runtime:JanusProR1PipelineExecutor"
-        ),
-        runtime_builder=("vrl.models.families.janus_pro.runtime:build_janus_pro_runtime_bundle"),
-        runtime_spec_extractor=(
-            "vrl.models.families.janus_pro.runtime:extract_janus_pro_runtime_spec"
-        ),
-        gatherer=GathererMetadata(
-            import_path="vrl.models.families.janus_pro.runtime:JanusProR1ChunkGatherer",
-        ),
-        capability=ar_discrete_family_capability(
-            "janus_pro_r1",
-            "ar_t2i_r1",
-            multisegment=True,
-        ),
-    ),
-    "nextstep_1": RolloutFamilyEntry(
-        family="nextstep_1",
-        task="ar_t2i",
-        aliases=("nextstep", "nextstep_1_1"),
-        collector=CollectorMetadata(
-            kind="ar_continuous",
-            config_cls="vrl.rollouts.collector.configs:NextStep1CollectorConfig",
-            request_prefix="nextstep_1",
-            sampling_fields=(
-                "cfg_scale",
-                "num_flow_steps",
-                "noise_level",
-                "image_token_num",
-                "image_size",
-                "max_text_length",
-                "rescale_to_unit",
-            ),
-            return_artifacts=NEXTSTEP_MIGRATED_RETURN_ARTIFACTS,
-            metadata_key="rollout_metadata",
-        ),
-        executor_cls="vrl.models.families.nextstep_1.runtime:NextStep1PipelineExecutor",
-        runtime_builder=("vrl.models.families.nextstep_1.runtime:build_nextstep_1_runtime_bundle"),
-        runtime_spec_extractor=(
-            "vrl.models.families.nextstep_1.runtime:extract_nextstep_1_runtime_spec"
-        ),
-        gatherer=GathererMetadata(
-            import_path="vrl.models.families.nextstep_1.runtime:NextStep1ChunkGatherer",
-        ),
-        capability=ar_continuous_family_capability("nextstep_1", "ar_t2i"),
-    ),
-}
+    )
+
+
+def _build_family_registry() -> dict[str, RolloutFamilyEntry]:
+    _load_builtin_model_registrations()
+    entries: dict[str, RolloutFamilyEntry] = {}
+    for model_registration in registered_models():
+        for rollout_registration in model_registration.rollouts:
+            entry = _rollout_entry_from_model_registration(rollout_registration)
+            if entry.family in entries:
+                raise ValueError(f"duplicate rollout family registration: {entry.family!r}")
+            entries[entry.family] = entry
+    return entries
+
+
+FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = _build_family_registry()
 
 _FAMILY_ALIASES: dict[str, str] = {
     alias: family

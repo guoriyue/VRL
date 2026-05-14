@@ -27,6 +27,10 @@ from vrl.trainers.checkpointing import (
     save_resolved_config,
     save_training_checkpoint,
 )
+from vrl.trainers.precision import (
+    normalize_mixed_precision,
+    torch_dtype_for_mixed_precision,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +119,10 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
             f"{type(dpo_config).__name__}",
         )
 
-    mixed_precision = str(require(cfg, "actor.mixed_precision"))
+    mixed_precision = normalize_mixed_precision(
+        require(cfg, "actor.mixed_precision"),
+        bf16=bool(require(cfg, "actor.bf16")),
+    )
     resume_checkpoint = load_training_checkpoint_from_config(cfg)
     prepare_model_config_for_training_resume(
         cfg,
@@ -124,7 +131,11 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    weight_dtype = torch.bfloat16 if mixed_precision == "bf16" else torch.float16
+    weight_dtype = torch_dtype_for_mixed_precision(
+        mixed_precision,
+        bf16=bool(require(cfg, "actor.bf16")),
+        torch=torch,
+    )
 
     # 1. Runtime via family runtime (no diffusers import here)
     bundle = build_wan_2_1_runtime_bundle_from_cfg(cfg, device, weight_dtype)
