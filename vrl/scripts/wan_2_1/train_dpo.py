@@ -96,12 +96,12 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     from vrl.models.families.wan_2_1.runtime import (
         build_wan_2_1_runtime_bundle_from_cfg,
     )
-    from vrl.trainers.offline_dpo import (
+    from vrl.trainers.data import collate_preference, load_pickapic
+    from vrl.trainers.offline import (
         OfflineDPOTrainer,
         OfflineDPOTrainerConfig,
         wan_forward,
     )
-    from vrl.trainers.pickapic import collate_preference, load_pickapic
 
     # DPO doesn't go through `build_configs()`, so validate explicitly here
     # to keep the YAML-as-source-of-truth contract (SPRINT patch 3 Phase 6).

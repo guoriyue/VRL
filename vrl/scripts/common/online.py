@@ -39,9 +39,9 @@ from vrl.trainers.checkpointing import (
     save_training_checkpoint,
 )
 from vrl.trainers.data import load_prompt_manifest
+from vrl.trainers.memory import log_host_memory
 from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.precision import torch_dtype_for_trainer_precision
-from vrl.trainers.memory import log_host_memory
 from vrl.trainers.weight_sync import (
     build_runtime_weight_syncer,
     build_trainable_state_sync_getter,

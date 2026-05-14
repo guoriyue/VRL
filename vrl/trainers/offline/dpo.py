@@ -23,7 +23,7 @@ import torch
 import torch.nn as nn
 
 from vrl.algorithms.dpo import diffusion_dpo_loss, diffusion_sft_loss
-from vrl.trainers.pickapic import PreferenceBatch
+from vrl.trainers.data.preferences import PreferenceBatch
 from vrl.trainers.precision import normalize_mixed_precision
 
 logger = logging.getLogger(__name__)

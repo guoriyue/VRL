@@ -1,4 +1,4 @@
-"""Red-line tests for vrl.trainers.offline_dpo._sample_timesteps.
+"""Red-line tests for vrl.trainers.offline._sample_timesteps.
 
 Catches the silent fallback where an empty ``scheduler.timesteps`` would
 quietly substitute ``num_train_timesteps`` and shift the RL sampling
@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from vrl.trainers.offline_dpo import (
+from vrl.trainers.offline import (
     OfflineDPOTrainer,
     OfflineDPOTrainerConfig,
     wan_forward,
