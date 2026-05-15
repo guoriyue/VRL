@@ -20,7 +20,7 @@ from vrl.engine.core.types import GenerationRequest
 from vrl.engine.execution.gather import require_chunked_executor
 from vrl.engine.execution.microbatching import MicroBatchPlan
 from vrl.models.interfaces import require_runtime_model
-from vrl.trainers.types import TorchProfilerConfig
+from vrl.trainers.core.types import TorchProfilerConfig
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +107,7 @@ class RayRolloutWorker:
             metadata["executor_type"] = type(self.executor).__name__ if self.executor else None
             policy = getattr(self.executor, "model", None) if self.executor is not None else None
             if policy is not None:
-                from vrl.trainers.diagnostics import (
+                from vrl.trainers.online.diagnostics import (
                     parameter_state_summary,
                     trainable_state_digest,
                 )

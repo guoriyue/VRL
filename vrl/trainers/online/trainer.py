@@ -17,14 +17,14 @@ import torch.nn as nn
 from vrl.algorithms.base import Algorithm
 from vrl.algorithms.types import TrainStepMetrics
 from vrl.rollouts.batch import RolloutBatch, stack_batches
-from vrl.trainers.base import Trainer
-from vrl.trainers.diagnostics import (
+from vrl.trainers.core.base import Trainer
+from vrl.trainers.online.diagnostics import (
     parameter_state_summary,
     tensor_stats,
     trainable_state_digest,
     write_jsonl,
 )
-from vrl.trainers.ema import EMAModuleWrapper
+from vrl.trainers.online.ema import EMAModuleWrapper
 from vrl.trainers.online.batch_ops import (
     _apply_sample_mask,
     _move_training_batch_to_device,
@@ -40,7 +40,7 @@ from vrl.trainers.online.collection import (
     _release_collector_runtime_memory,
 )
 from vrl.trainers.precision import trainer_mixed_precision
-from vrl.trainers.types import TrainerConfig, TrainState
+from vrl.trainers.core.types import TrainerConfig, TrainState
 from vrl.trainers.weight_sync import TrainableStateGetter, WeightSyncer
 
 logger = logging.getLogger(__name__)

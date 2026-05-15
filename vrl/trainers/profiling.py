@@ -9,7 +9,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-from vrl.trainers.types import TorchProfilerConfig
+from vrl.trainers.core.types import TorchProfilerConfig
 
 logger = logging.getLogger(__name__)
 

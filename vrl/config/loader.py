@@ -588,7 +588,7 @@ def build_trainer_config(cfg: DictConfig):
     rollout group schema is family-specific: AR rollouts declare
     ``n_samples_per_prompt`` and diffusion rollouts declare ``n``.
     """
-    from vrl.trainers.types import (
+    from vrl.trainers.core.types import (
         DebugConfig,
         EMAConfig,
         OptimConfig,
