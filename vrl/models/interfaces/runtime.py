@@ -58,7 +58,8 @@ class RuntimeBundle:
     trainable adapter/backbone needed for exact resume.
 
     ``metadata`` may include generic replay/runtime flags used by shared
-    trainer infrastructure:
+    trainer infrastructure. Build these fields through
+    ``vrl.models.replay_loading`` so family runtimes share one contract:
 
     - ``runtime_role``: e.g. ``"full_generation_model"`` or
       ``"minimal_replay_model"``.

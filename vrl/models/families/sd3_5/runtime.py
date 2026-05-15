@@ -17,9 +17,18 @@ from vrl.engine.diffusion import (
     DiffusionPipelineExecutorBase,
     repeat_tensor_batch,
 )
-from vrl.engine.execution.microbatching import MicroBatchPlan
 from vrl.engine.diffusion.request import VideoGenerationRequest
+from vrl.engine.execution.microbatching import MicroBatchPlan
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
+from vrl.models.replay_loading import (
+    apply_lora_to_transformer,
+    compile_transformer,
+    enable_transformer_full_finetune,
+    full_generation_bundle_metadata,
+    load_diffusers_transformer_component,
+    load_flow_match_scheduler_component,
+    minimal_replay_bundle_metadata,
+)
 
 logger = logging.getLogger(__name__)
 SD3_5_FAMILY_CAPABILITY = diffusion_family_capability("sd3_5", "t2i")
@@ -125,9 +134,71 @@ def build_sd3_5_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
             "task_variant": spec.task_variant,
             "dtype": str(spec.dtype),
             "use_lora": spec.use_lora,
-            "runtime_role": "full_generation_model",
-            "loads_full_generation_modules": True,
-            "requires_minimal_replay_loader": True,
+            **full_generation_bundle_metadata(),
+        },
+    )
+
+
+def build_sd3_5_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
+    """Build the trainer replay bundle without loading SD3 prompt/VAE modules."""
+
+    from vrl.models.families.sd3_5.model import SD3_5ReplayModel
+
+    backend = spec.backend_preference[0]
+    if backend != "diffusers":
+        raise NotImplementedError("sd3_5 replay runtime currently supports diffusers only")
+
+    logger.info(
+        "Building sd3_5 replay runtime bundle (backend=%s) from %s",
+        backend,
+        spec.model_name_or_path,
+    )
+    model = SD3_5ReplayModel(
+        transformer=load_diffusers_transformer_component(
+            spec,
+            "SD3Transformer2DModel",
+        ),
+        scheduler=load_flow_match_scheduler_component(spec),
+        device=spec.device,
+    )
+
+    if spec.use_lora:
+        apply_lora_to_transformer(model, spec)
+    else:
+        enable_transformer_full_finetune(model)
+
+    compile_cfg = (spec.extra or {}).get("torch_compile") or {}
+    if compile_cfg.get("enable"):
+        compile_transformer(model, compile_cfg["mode"])
+
+    return RuntimeBundle(
+        model=model,
+        trainable_modules=model.trainable_modules,
+        scheduler=model.scheduler,
+        backend_kind=backend,
+        backend_handle=None,
+        runtime_caps={
+            "family_capability": SD3_5_FAMILY_CAPABILITY.to_dict(),
+            "supports_stepwise": True,
+            "supports_cfg": True,
+            "supports_batched_decode": False,
+            "supports_reference_conditioning": False,
+        },
+        metadata={
+            "model_path": spec.model_name_or_path,
+            "task_variant": spec.task_variant,
+            "dtype": str(spec.dtype),
+            "use_lora": spec.use_lora,
+            **minimal_replay_bundle_metadata(
+                replay_modules=("transformer", "scheduler"),
+                generation_only_modules=(
+                    "text_encoder",
+                    "text_encoder_2",
+                    "text_encoder_3",
+                    "vae",
+                    "pipeline",
+                ),
+            ),
         },
     )
 
@@ -138,6 +209,16 @@ def build_sd3_5_runtime_bundle_from_cfg(
     """Outer convenience: whole-cfg → spec → bundle."""
     spec = extract_sd3_5_runtime_spec(cfg, device, weight_dtype)
     return build_sd3_5_runtime_bundle(spec)
+
+
+def build_sd3_5_replay_runtime_bundle_from_cfg(
+    cfg: Any,
+    device: Any,
+    weight_dtype: Any,
+) -> RuntimeBundle:
+    """Outer convenience: whole-cfg → spec → replay bundle."""
+    spec = extract_sd3_5_runtime_spec(cfg, device, weight_dtype)
+    return build_sd3_5_replay_runtime_bundle(spec)
 
 
 def _dtype_name(value: Any) -> str:
@@ -201,6 +282,8 @@ class SD3_5PipelineExecutor(DiffusionPipelineExecutorBase):
 
 __all__ = [
     "SD3_5PipelineExecutor",
+    "build_sd3_5_replay_runtime_bundle",
+    "build_sd3_5_replay_runtime_bundle_from_cfg",
     "build_sd3_5_runtime_bundle",
     "build_sd3_5_runtime_bundle_from_cfg",
     "extract_sd3_5_runtime_spec",

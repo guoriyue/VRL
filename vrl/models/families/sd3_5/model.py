@@ -403,6 +403,53 @@ class SD3_5Model(DiffusionModelBase):
         return pipe.image_processor.postprocess(image, output_type="pt")
 
 
+class SD3_5ReplayModel(SD3_5Model):
+    """Replay-only SD3.5 model that owns no prompt encoders, VAE, or pipeline."""
+
+    def __init__(self, *, transformer: Any, scheduler: Any, device: Any = None) -> None:
+        DiffusionModelBase.__init__(self)
+        self.transformer = transformer
+        self._scheduler = scheduler
+        self._device = device
+
+    @property
+    def pipeline(self) -> Any:
+        raise RuntimeError("SD3_5ReplayModel does not own a diffusers pipeline")
+
+    def _set_transformer(self, transformer: Any) -> None:
+        self.transformer = transformer
+
+    @property
+    def scheduler(self) -> Any:
+        return self._scheduler
+
+    @property
+    def backend_handle(self) -> Any:
+        return None
+
+    def encode_prompt(
+        self,
+        prompt: str | list[str],
+        negative_prompt: str | list[str] | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        del prompt, negative_prompt, kwargs
+        raise RuntimeError("SD3_5ReplayModel cannot encode prompts")
+
+    def prepare_sampling(
+        self,
+        request: VideoGenerationRequest,
+        encoded: dict[str, Any],
+        **kwargs: Any,
+    ) -> SD3SamplingState:
+        del request, encoded, kwargs
+        raise RuntimeError("SD3_5ReplayModel cannot run rollout sampling")
+
+    def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
+        del latents
+        raise RuntimeError("SD3_5ReplayModel cannot decode latents")
+
+
 def _resolve_torch_dtype(value: Any) -> torch.dtype:
     if isinstance(value, torch.dtype):
         return value
@@ -421,3 +468,6 @@ def _resolve_torch_dtype(value: Any) -> torch.dtype:
         return aliases[key]
     except KeyError as exc:
         raise ValueError(f"unsupported torch dtype: {value!r}") from exc
+
+
+__all__ = ["SD3SamplingState", "SD3_5Model", "SD3_5ReplayModel"]

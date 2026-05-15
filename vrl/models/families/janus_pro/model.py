@@ -51,11 +51,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from vrl.engine.ar.types import ARStepResult
 from vrl.models.families.janus_pro.r1_types import (
     JanusR1GenerationResult,
     JanusR1Segment,
 )
-from vrl.engine.ar.types import ARStepResult
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 
 logger = logging.getLogger(__name__)
@@ -1393,6 +1393,99 @@ class JanusProModel(nn.Module):
         )
 
 
+class JanusProReplayCore(nn.Module):
+    """Minimal Janus module set needed for trainer replay.
+
+    The full upstream class constructs vision encoders and the VQ decoder in
+    ``__init__``. Replay only needs text/image-token logits, so this core keeps
+    the generation embedding/projection path and the language model only.
+    """
+
+    def __init__(self, config: Any) -> None:
+        super().__init__()
+        self.config = config
+
+        from janus.models.modeling_vlm import model_name_to_cls
+        from transformers import LlamaForCausalLM
+
+        gen_vision_config = config.gen_vision_config
+        gen_aligner_config = config.gen_aligner_config
+        gen_head_config = config.gen_head_config
+
+        gen_aligner_cls = model_name_to_cls(gen_aligner_config.cls)
+        self.gen_aligner = gen_aligner_cls(gen_aligner_config.params)
+
+        gen_head_cls = model_name_to_cls(gen_head_config.cls)
+        self.gen_head = gen_head_cls(gen_head_config.params)
+
+        self.gen_embed = nn.Embedding(
+            int(gen_vision_config.params.image_token_size),
+            int(gen_vision_config.params.n_embed),
+        )
+        self.language_model = LlamaForCausalLM(config.language_config)
+
+    def prepare_gen_img_embeds(self, image_ids: torch.LongTensor) -> torch.Tensor:
+        return self.gen_aligner(self.gen_embed(image_ids))
+
+
+class JanusProReplayModel(JanusProModel):
+    """Replay-only Janus wrapper without processor, vision tower, or VQ decoder."""
+
+    model_family: str = "janus-pro-t2i"
+
+    def __init__(
+        self,
+        config: JanusProConfig | None = None,
+        *,
+        mmgpt: Any | None = None,
+    ) -> None:
+        nn.Module.__init__(self)
+        self.config = config or JanusProConfig()
+        if mmgpt is None:
+            mmgpt = _load_janus_replay_core_from_pretrained(self.config)
+
+        for p in mmgpt.parameters():
+            p.requires_grad_(False)
+
+        if self.config.use_lora:
+            mmgpt = self._apply_lora(mmgpt)
+
+        self.mmgpt = mmgpt
+        base = self._base()
+        for attr in ("gen_head", "language_model", "prepare_gen_img_embeds"):
+            if not hasattr(base, attr):
+                raise RuntimeError(
+                    f"Loaded Janus replay model is missing required `{attr}`",
+                )
+        forbidden = [
+            attr
+            for attr in ("gen_vision_model", "vision_model", "aligner")
+            if hasattr(base, attr)
+        ]
+        if forbidden:
+            raise RuntimeError(
+                "Janus replay model unexpectedly loaded generation-only modules: "
+                f"{forbidden}",
+            )
+
+    @property
+    def processor(self) -> Any:
+        raise RuntimeError("JanusProReplayModel does not own a VLChatProcessor")
+
+    @property
+    def vq_model(self) -> nn.Module:
+        raise RuntimeError("JanusProReplayModel does not own a VQ decoder")
+
+    @torch.no_grad()
+    def decode_image_tokens(
+        self,
+        image_token_ids: torch.Tensor,
+        image_size: int = JANUS_IMAGE_PIXEL_SIZE,
+    ) -> torch.Tensor:
+        del image_token_ids, image_size
+        raise RuntimeError("JanusProReplayModel cannot decode image tokens")
+
+
 # ---------------------------------------------------------------------------
 # Loader — lazy import so this module is importable without the janus pkg.
 # ---------------------------------------------------------------------------
@@ -1438,3 +1531,89 @@ def _load_janus_from_pretrained(config: JanusProConfig) -> tuple[Any, Any]:
     )
     mmgpt = mmgpt.to(device=config.device, dtype=dtype).eval()
     return mmgpt, processor
+
+
+def _load_janus_replay_core_from_pretrained(config: JanusProConfig) -> JanusProReplayCore:
+    """Load Janus replay modules without constructing VQ or vision modules."""
+
+    try:
+        import janus.models.modeling_vlm  # noqa: F401
+    except ImportError as e:
+        raise ImportError(
+            "Cannot import deepseek-ai/Janus. Install via:\n"
+            "  git clone https://github.com/deepseek-ai/Janus\n"
+            "  cd Janus && pip install -e ."
+        ) from e
+
+    from transformers import AutoConfig
+
+    dtype_map = {
+        "bfloat16": torch.bfloat16,
+        "float16": torch.float16,
+        "float32": torch.float32,
+    }
+    dtype = dtype_map[config.dtype]
+    model_config = AutoConfig.from_pretrained(
+        config.model_path,
+        trust_remote_code=config.trust_remote_code,
+    )
+    core = JanusProReplayCore(model_config)
+    checkpoint_dir = _resolve_hf_checkpoint_dir(config.model_path)
+    missing_keys = _load_janus_replay_checkpoint(core, checkpoint_dir)
+    missing_replay = sorted(set(missing_keys) & set(core.state_dict()))
+    if missing_replay:
+        preview = ", ".join(missing_replay[:5])
+        suffix = " ..." if len(missing_replay) > 5 else ""
+        raise RuntimeError(f"Janus replay checkpoint is missing keys: {preview}{suffix}")
+    return core.to(device=config.device, dtype=dtype).eval()
+
+
+def _resolve_hf_checkpoint_dir(model_path: str) -> str:
+    import os
+
+    if os.path.isdir(model_path):
+        return model_path
+    from huggingface_hub import snapshot_download
+
+    return snapshot_download(model_path)
+
+
+def _load_janus_replay_checkpoint(model: nn.Module, checkpoint_dir: str) -> list[str]:
+    import os
+
+    from transformers.modeling_utils import load_sharded_checkpoint, load_state_dict
+
+    for name in (
+        "pytorch_model.bin.index.json",
+        "model.safetensors.index.json",
+    ):
+        if os.path.exists(os.path.join(checkpoint_dir, name)):
+            result = load_sharded_checkpoint(model, checkpoint_dir, strict=False)
+            return list(getattr(result, "missing_keys", result[0] if result else []))
+
+    for name in (
+        "model.safetensors",
+        "pytorch_model.bin",
+    ):
+        path = os.path.join(checkpoint_dir, name)
+        if os.path.exists(path):
+            state = load_state_dict(path)
+            missing, _unexpected = model.load_state_dict(state, strict=False)
+            return list(missing)
+
+    raise FileNotFoundError(
+        f"No supported Janus checkpoint file found in {checkpoint_dir}",
+    )
+
+
+__all__ = [
+    "JANUS_IMAGE_PATCH_SIZE",
+    "JANUS_IMAGE_PIXEL_SIZE",
+    "JANUS_IMAGE_TOKEN_NUM",
+    "JANUS_IMAGE_VOCAB_SIZE",
+    "JanusProARState",
+    "JanusProConfig",
+    "JanusProModel",
+    "JanusProReplayCore",
+    "JanusProReplayModel",
+]

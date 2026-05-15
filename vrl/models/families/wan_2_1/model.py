@@ -363,3 +363,53 @@ class WanT2VDiffusersModel(DiffusionModelBase):
         # -> [B, C, T, H, W]
         video = video.permute(0, 2, 1, 3, 4)
         return video
+
+
+class WanT2VReplayModel(WanT2VDiffusersModel):
+    """Replay-only Wan model that owns no text encoder, VAE, or pipeline."""
+
+    def __init__(self, *, transformer: Any, scheduler: Any, device: Any = None) -> None:
+        DiffusionModelBase.__init__(self)
+        self.transformer = transformer
+        self._scheduler = scheduler
+        self._device = device
+
+    @property
+    def pipeline(self) -> Any:
+        raise RuntimeError("WanT2VReplayModel does not own a diffusers pipeline")
+
+    def _set_transformer(self, transformer: Any) -> None:
+        self.transformer = transformer
+
+    @property
+    def scheduler(self) -> Any:
+        return self._scheduler
+
+    @property
+    def backend_handle(self) -> Any:
+        return None
+
+    def encode_prompt(
+        self,
+        prompt: str | list[str],
+        negative_prompt: str | list[str] | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        del prompt, negative_prompt, kwargs
+        raise RuntimeError("WanT2VReplayModel cannot encode prompts")
+
+    def prepare_sampling(
+        self,
+        request: VideoGenerationRequest,
+        encoded: dict[str, Any],
+        **kwargs: Any,
+    ) -> WanT2VSamplingState:
+        del request, encoded, kwargs
+        raise RuntimeError("WanT2VReplayModel cannot run rollout sampling")
+
+    def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
+        del latents
+        raise RuntimeError("WanT2VReplayModel cannot decode latents")
+
+
+__all__ = ["WanT2VDiffusersModel", "WanT2VReplayModel", "WanT2VSamplingState"]

@@ -38,19 +38,19 @@ from __future__ import annotations
 
 import contextlib
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any
 
 import torch
 import torch.nn as nn
 
+from vrl.engine.ar.cache import ar_concat_rows, ar_split_rows
+from vrl.engine.ar.types import ARStepResult
 from vrl.models.families.nextstep_1.flow_step import (
     flow_logprob_at,
     flow_sample_with_logprob,
 )
-from vrl.engine.ar.cache import ar_concat_rows, ar_split_rows
-from vrl.engine.ar.types import ARStepResult
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 
 logger = logging.getLogger(__name__)
@@ -244,6 +244,38 @@ class NextStep1Model(nn.Module):
 
     def trainable_param_count(self) -> int:
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
+
+    def load_trainable_state(self, state_dict: Mapping[str, Any]) -> Any:
+        """Load only trainable NextStep parameters from a rollout sync state."""
+
+        state = dict(state_dict)
+        if not state:
+            raise ValueError("load_trainable_state received an empty state dict")
+
+        trainable_keys = {
+            name
+            for name, parameter in self.named_parameters()
+            if parameter.requires_grad
+        }
+        if not trainable_keys:
+            raise ValueError("NextStep1Model has no trainable parameters to sync")
+
+        filtered: dict[str, Any] = {}
+        for key, value in state.items():
+            normalized_key = key.removeprefix("model.").removeprefix("policy.")
+            if normalized_key in trainable_keys:
+                filtered[normalized_key] = value
+
+        missing = sorted(trainable_keys - set(filtered))
+        if missing:
+            preview = ", ".join(missing[:5])
+            suffix = " ..." if len(missing) > 5 else ""
+            raise ValueError(
+                "load_trainable_state missing trainable NextStep keys: "
+                f"{preview}{suffix}",
+            )
+
+        return self.load_state_dict(filtered, strict=False)
 
     @property
     def device(self) -> torch.device:
@@ -704,3 +736,103 @@ class NextStep1Model(nn.Module):
             "last_hidden": out.hidden_states[-1][:, -1],
         }
         return kv2, kv2["last_hidden"]
+
+
+class NextStep1ReplayModel(NextStep1Model):
+    """Replay-only NextStep-1 wrapper without VAE, tokenizer, or pipeline."""
+
+    def __init__(
+        self,
+        config: NextStep1Config,
+        *,
+        language_model: Any | None = None,
+    ) -> None:
+        nn.Module.__init__(self)
+        self.config = config
+        self.dtype = _dtype_from_config(config.dtype)
+        self._device = torch.device(config.device)
+
+        self.language_model = (
+            language_model
+            if language_model is not None
+            else _load_nextstep_replay_model(config)
+        )
+        self.image_head = self.language_model.image_head
+        self._image_in_projector = self.language_model.image_in_projector
+        self._image_out_projector = self.language_model.image_out_projector
+        self.config.token_dim = int(
+            getattr(self.image_head, "input_dim", self.config.token_dim),
+        )
+
+        if config.use_lora:
+            self._attach_lora()
+
+    def _attach_lora(self) -> None:
+        from peft import LoraConfig, get_peft_model
+
+        lora_cfg = LoraConfig(
+            r=self.config.lora_rank,
+            lora_alpha=self.config.lora_alpha,
+            lora_dropout=self.config.lora_dropout,
+            target_modules=list(self.config.lora_target_modules),
+            init_lora_weights=self.config.lora_init,
+        )
+        self.language_model = get_peft_model(self.language_model, lora_cfg)
+
+    @torch.no_grad()
+    def decode_image_tokens(
+        self,
+        tokens: torch.Tensor,
+        image_size: int | None = None,
+    ) -> torch.Tensor:
+        del tokens, image_size
+        raise RuntimeError("NextStep1ReplayModel cannot decode image tokens")
+
+
+def _dtype_from_config(value: str) -> torch.dtype:
+    return {
+        "bfloat16": torch.bfloat16,
+        "float16": torch.float16,
+        "float32": torch.float32,
+    }[value]
+
+
+def _load_nextstep_replay_model(config: NextStep1Config) -> Any:
+    """Load the upstream NextStep model without the inference pipeline or VAE."""
+
+    import os
+    import sys
+
+    try:
+        import nextstep  # type: ignore[import-not-found]
+    except ImportError as e:
+        raise ImportError(
+            "NextStep-1 wrapper requires `stepfun-ai/NextStep-1`. Install with:\n"
+            "    git clone https://github.com/stepfun-ai/NextStep-1\n"
+            "    cd NextStep-1 && pip install -e ."
+        ) from e
+
+    repo_root = os.path.dirname(os.path.dirname(nextstep.__file__))
+    inference_dir = os.path.join(repo_root, "inference")
+    if inference_dir not in sys.path:
+        sys.path.insert(0, inference_dir)
+
+    from nextstep_model import NextStep  # type: ignore[import-not-found]
+
+    model = NextStep.from_pretrained(
+        config.model_path,
+        torch_dtype=_dtype_from_config(config.dtype),
+        enable_gradient_checkpointing=config.gradient_checkpointing,
+    )
+    return model.to(device=config.device, dtype=_dtype_from_config(config.dtype)).eval()
+
+
+__all__ = [
+    "NEXTSTEP_DEFAULT_PIXEL_SIZE",
+    "NEXTSTEP_DEFAULT_TOKEN_DIM",
+    "NEXTSTEP_DEFAULT_TOKEN_NUM",
+    "NextStep1ARState",
+    "NextStep1Config",
+    "NextStep1Model",
+    "NextStep1ReplayModel",
+]

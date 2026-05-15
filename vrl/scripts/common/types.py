@@ -45,6 +45,7 @@ class OnlineRecipeDefinition:
 
     family: str
     build_bundle: Callable[[DictConfig, Any, Any], Any]
+    build_replay_bundle: Callable[[DictConfig, Any, Any], Any] | None = None
     model_getter: Callable[[Any], RuntimeModel] = default_model_getter
     scheduler_getter: Callable[[Any], Any | None] = default_scheduler_getter
     reference_model_getter: Callable[[Any, DictConfig], Any | None] | None = None

@@ -1,6 +1,14 @@
 # SPRINT：各 family 最小 replay module 加载分析
 
-状态：planned。
+状态：implemented。
+
+实现说明：
+
+```text
+实际落地没有新增每个 family 的 replay_model.py / replay_runtime.py。
+Replay-only model class 收敛在各 family 现有 model.py。
+Replay runtime bundle builder 收敛在各 family 现有 runtime.py。
+```
 
 ## 核心目标
 

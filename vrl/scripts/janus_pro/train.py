@@ -40,22 +40,52 @@ async def _run_janus_recipe(cfg: DictConfig, *, family: str) -> None:
         cfg,
         OnlineRecipeDefinition(
             family=family,
-            build_bundle=_build_bundle,
+            build_bundle=lambda cfg, device, dtype: _build_bundle(
+                cfg,
+                device,
+                dtype,
+                family=family,
+            ),
+            build_replay_bundle=lambda cfg, device, dtype: _build_replay_bundle(
+                cfg,
+                device,
+                dtype,
+                family=family,
+            ),
             configure_trainer=_configure_trainer,
             export_modules_getter=_export_modules,
         ),
     )
 
 
-def _build_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
+def _build_bundle(cfg: DictConfig, device: Any, weight_dtype: Any, *, family: str) -> Any:
     from vrl.models.families.janus_pro.runtime import (
         build_janus_pro_runtime_bundle,
         extract_janus_pro_runtime_spec,
     )
 
-    return build_janus_pro_runtime_bundle(
-        extract_janus_pro_runtime_spec(cfg, device, weight_dtype),
+    spec = extract_janus_pro_runtime_spec(cfg, device, weight_dtype)
+    if family == "janus_pro_r1":
+        spec.task_variant = "ar_t2i_r1"
+    return build_janus_pro_runtime_bundle(spec)
+
+
+def _build_replay_bundle(
+    cfg: DictConfig,
+    device: Any,
+    weight_dtype: Any,
+    *,
+    family: str,
+) -> Any:
+    from vrl.models.families.janus_pro.runtime import (
+        build_janus_pro_replay_runtime_bundle,
+        extract_janus_pro_runtime_spec,
     )
+
+    spec = extract_janus_pro_runtime_spec(cfg, device, weight_dtype)
+    if family == "janus_pro_r1":
+        spec.task_variant = "ar_t2i_r1"
+    return build_janus_pro_replay_runtime_bundle(spec)
 
 
 def _configure_trainer(cfg: DictConfig, trainer_config: Any) -> None:

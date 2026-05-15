@@ -11,9 +11,15 @@ from vrl.engine.diffusion import (
     DiffusionPipelineExecutorBase,
     repeat_tensor_batch,
 )
-from vrl.engine.execution.microbatching import MicroBatchPlan
 from vrl.engine.diffusion.request import VideoGenerationRequest
+from vrl.engine.execution.microbatching import MicroBatchPlan
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
+from vrl.models.replay_loading import (
+    full_generation_bundle_metadata,
+    load_diffusers_scheduler_component,
+    load_diffusers_transformer_component,
+    minimal_replay_bundle_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -99,9 +105,63 @@ def build_cosmos_predict25_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBund
             "use_lora": spec.use_lora,
             "model_revision": (spec.extra or {}).get("model_revision"),
             "skip_text_encoder": bool((spec.extra or {}).get("skip_text_encoder", False)),
-            "runtime_role": "full_generation_model",
-            "loads_full_generation_modules": True,
-            "requires_minimal_replay_loader": True,
+            **full_generation_bundle_metadata(),
+        },
+    )
+
+
+def build_cosmos_predict25_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
+    """Build the trainer replay bundle without Cosmos2.5 text/VAE modules."""
+
+    from vrl.models.families.cosmos.predict2_5.model import CosmosPredict25ReplayModel
+
+    logger.info(
+        "Building cosmos-predict2.5 replay runtime bundle (backend=diffusers) from %s",
+        spec.model_name_or_path,
+    )
+    model = CosmosPredict25ReplayModel(
+        transformer=load_diffusers_transformer_component(
+            spec,
+            "CosmosTransformer3DModel",
+        ),
+        scheduler=load_diffusers_scheduler_component(
+            spec,
+            "UniPCMultistepScheduler",
+        ),
+        device=spec.device,
+    )
+    if spec.use_lora:
+        model.apply_lora(spec)
+    else:
+        model.enable_full_finetune()
+
+    compile_cfg = (spec.extra or {}).get("torch_compile") or {}
+    if compile_cfg.get("enable"):
+        model.torch_compile_transformer(compile_cfg["mode"])
+
+    return RuntimeBundle(
+        model=model,
+        trainable_modules=model.trainable_modules,
+        scheduler=model.scheduler,
+        backend_kind="diffusers",
+        backend_handle=None,
+        runtime_caps={
+            "supports_stepwise": True,
+            "supports_cfg": True,
+            "supports_batched_decode": False,
+            "supports_diffusion_nft": True,
+        },
+        metadata={
+            "model_path": spec.model_name_or_path,
+            "task_variant": spec.task_variant,
+            "dtype": str(spec.dtype),
+            "use_lora": spec.use_lora,
+            "model_revision": (spec.extra or {}).get("model_revision"),
+            "skip_text_encoder": bool((spec.extra or {}).get("skip_text_encoder", False)),
+            **minimal_replay_bundle_metadata(
+                replay_modules=("transformer", "scheduler"),
+                generation_only_modules=("text_encoder", "vae", "pipeline"),
+            ),
         },
     )
 
@@ -113,6 +173,15 @@ def build_cosmos_predict25_runtime_bundle_from_cfg(
 ) -> RuntimeBundle:
     spec = extract_cosmos_predict25_runtime_spec(cfg, device, weight_dtype)
     return build_cosmos_predict25_runtime_bundle(spec)
+
+
+def build_cosmos_predict25_replay_runtime_bundle_from_cfg(
+    cfg: Any,
+    device: Any,
+    weight_dtype: Any,
+) -> RuntimeBundle:
+    spec = extract_cosmos_predict25_runtime_spec(cfg, device, weight_dtype)
+    return build_cosmos_predict25_replay_runtime_bundle(spec)
 
 
 """Cosmos Predict2.5 diffusion executor."""
@@ -170,6 +239,8 @@ class CosmosPredict25PipelineExecutor(DiffusionPipelineExecutorBase):
 
 __all__ = [
     "CosmosPredict25PipelineExecutor",
+    "build_cosmos_predict25_replay_runtime_bundle",
+    "build_cosmos_predict25_replay_runtime_bundle_from_cfg",
     "build_cosmos_predict25_runtime_bundle",
     "build_cosmos_predict25_runtime_bundle_from_cfg",
     "extract_cosmos_predict25_runtime_spec",

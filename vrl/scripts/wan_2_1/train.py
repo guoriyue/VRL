@@ -19,6 +19,7 @@ async def train_wan_2_1_grpo(cfg: DictConfig) -> None:
         OnlineRecipeDefinition(
             family="wan_2_1",
             build_bundle=_build_bundle,
+            build_replay_bundle=_build_replay_bundle,
             after_bundle_built=_after_bundle_built,
             reference_model_getter=_reference_model,
             export_modules_getter=_export_modules,
@@ -30,6 +31,14 @@ def _build_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
     from vrl.models.families.wan_2_1.runtime import build_wan_2_1_runtime_bundle_from_cfg
 
     return build_wan_2_1_runtime_bundle_from_cfg(cfg, device, weight_dtype)
+
+
+def _build_replay_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
+    from vrl.models.families.wan_2_1.runtime import (
+        build_wan_2_1_replay_runtime_bundle_from_cfg,
+    )
+
+    return build_wan_2_1_replay_runtime_bundle_from_cfg(cfg, device, weight_dtype)
 
 
 def _after_bundle_built(bundle: Any, cfg: DictConfig) -> None:

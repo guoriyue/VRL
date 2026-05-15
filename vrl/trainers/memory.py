@@ -7,6 +7,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+from vrl.models.replay_loading import bundle_loads_full_generation_modules
 from vrl.rollouts.runtime.config import RolloutBackendConfig
 
 logger = logging.getLogger(__name__)
@@ -76,10 +77,9 @@ def validate_colocated_replay_memory(
     once those loaders exist.
     """
 
-    metadata = dict(getattr(bundle, "metadata", {}) or {})
     if not _is_colocated_gpu_rollout(rollout_config):
         return
-    if not bool(metadata.get("loads_full_generation_modules")):
+    if not bundle_loads_full_generation_modules(bundle):
         return
 
     message = (

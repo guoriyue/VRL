@@ -20,6 +20,7 @@ async def train_cosmos_predict2_grpo(cfg: DictConfig) -> None:
         OnlineRecipeDefinition(
             family="cosmos-predict2",
             build_bundle=_build_predict2_bundle,
+            build_replay_bundle=_build_predict2_replay_bundle,
             after_bundle_built=_after_bundle_built,
             reference_model_getter=_reference_model,
             export_modules_getter=_export_modules,
@@ -36,6 +37,7 @@ async def train_cosmos_predict25_diffusion_nft(cfg: DictConfig) -> None:
         OnlineRecipeDefinition(
             family="cosmos-predict2.5",
             build_bundle=_build_predict25_bundle,
+            build_replay_bundle=_build_predict25_replay_bundle,
             after_bundle_built=_after_bundle_built,
             export_modules_getter=_export_modules,
         ),
@@ -50,12 +52,36 @@ def _build_predict2_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> A
     return build_cosmos_predict2_runtime_bundle_from_cfg(cfg, device, weight_dtype)
 
 
+def _build_predict2_replay_bundle(
+    cfg: DictConfig,
+    device: Any,
+    weight_dtype: Any,
+) -> Any:
+    from vrl.models.families.cosmos.predict2.runtime import (
+        build_cosmos_predict2_replay_runtime_bundle_from_cfg,
+    )
+
+    return build_cosmos_predict2_replay_runtime_bundle_from_cfg(cfg, device, weight_dtype)
+
+
 def _build_predict25_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
     from vrl.models.families.cosmos.predict2_5.runtime import (
         build_cosmos_predict25_runtime_bundle_from_cfg,
     )
 
     return build_cosmos_predict25_runtime_bundle_from_cfg(cfg, device, weight_dtype)
+
+
+def _build_predict25_replay_bundle(
+    cfg: DictConfig,
+    device: Any,
+    weight_dtype: Any,
+) -> Any:
+    from vrl.models.families.cosmos.predict2_5.runtime import (
+        build_cosmos_predict25_replay_runtime_bundle_from_cfg,
+    )
+
+    return build_cosmos_predict25_replay_runtime_bundle_from_cfg(cfg, device, weight_dtype)
 
 
 def _after_bundle_built(bundle: Any, cfg: DictConfig) -> None:

@@ -19,6 +19,7 @@ async def train_nextstep_1_ocr_grpo(cfg: DictConfig) -> None:
         OnlineRecipeDefinition(
             family="nextstep_1",
             build_bundle=_build_bundle,
+            build_replay_bundle=_build_replay_bundle,
             configure_trainer=_configure_trainer,
             export_modules_getter=_export_modules,
         ),
@@ -32,6 +33,17 @@ def _build_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
     )
 
     return build_nextstep_1_runtime_bundle(
+        extract_nextstep_1_runtime_spec(cfg, device, weight_dtype),
+    )
+
+
+def _build_replay_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
+    from vrl.models.families.nextstep_1.runtime import (
+        build_nextstep_1_replay_runtime_bundle,
+        extract_nextstep_1_runtime_spec,
+    )
+
+    return build_nextstep_1_replay_runtime_bundle(
         extract_nextstep_1_runtime_spec(cfg, device, weight_dtype),
     )
 

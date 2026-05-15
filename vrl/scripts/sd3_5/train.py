@@ -20,6 +20,7 @@ async def train_sd3_5_grpo(cfg: DictConfig) -> None:
         OnlineRecipeDefinition(
             family="sd3_5",
             build_bundle=_build_bundle,
+            build_replay_bundle=_build_replay_bundle,
             after_bundle_built=_after_bundle_built,
             reference_model_getter=_reference_model,
             export_modules_getter=_export_modules,
@@ -32,6 +33,14 @@ def _build_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
     from vrl.models.families.sd3_5.runtime import build_sd3_5_runtime_bundle_from_cfg
 
     return build_sd3_5_runtime_bundle_from_cfg(cfg, device, weight_dtype)
+
+
+def _build_replay_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
+    from vrl.models.families.sd3_5.runtime import (
+        build_sd3_5_replay_runtime_bundle_from_cfg,
+    )
+
+    return build_sd3_5_replay_runtime_bundle_from_cfg(cfg, device, weight_dtype)
 
 
 def _after_bundle_built(bundle: Any, cfg: DictConfig) -> None:

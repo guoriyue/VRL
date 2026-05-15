@@ -16,9 +16,18 @@ from vrl.engine.diffusion import (
     DiffusionPipelineExecutorBase,
     repeat_tensor_batch,
 )
-from vrl.engine.execution.microbatching import MicroBatchPlan
 from vrl.engine.diffusion.request import VideoGenerationRequest
+from vrl.engine.execution.microbatching import MicroBatchPlan
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
+from vrl.models.replay_loading import (
+    apply_lora_to_transformer,
+    compile_transformer,
+    enable_transformer_full_finetune,
+    full_generation_bundle_metadata,
+    load_diffusers_transformer_component,
+    load_flow_match_scheduler_component,
+    minimal_replay_bundle_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -129,9 +138,74 @@ def build_cosmos_predict2_runtime_bundle(
             "dtype": str(spec.dtype),
             "use_lora": spec.use_lora,
             "reference_image": (spec.extra or {}).get("reference_image"),
-            "runtime_role": "full_generation_model",
-            "loads_full_generation_modules": True,
-            "requires_minimal_replay_loader": True,
+            **full_generation_bundle_metadata(),
+        },
+    )
+
+
+def build_cosmos_predict2_replay_runtime_bundle(
+    spec: RuntimeBuildSpec,
+) -> RuntimeBundle:
+    """Build the trainer replay bundle without Cosmos generation-only modules."""
+
+    from vrl.models.families.cosmos.predict2.model import CosmosPredict2ReplayModel
+
+    backend = spec.backend_preference[0]
+    if backend != "diffusers":
+        raise NotImplementedError(
+            "cosmos-predict2 replay runtime currently supports diffusers only",
+        )
+
+    logger.info(
+        "Building cosmos-predict2 replay runtime bundle (backend=%s) from %s",
+        backend,
+        spec.model_name_or_path,
+    )
+    model = CosmosPredict2ReplayModel(
+        transformer=load_diffusers_transformer_component(
+            spec,
+            "CosmosTransformer3DModel",
+        ),
+        scheduler=load_flow_match_scheduler_component(spec),
+        device=spec.device,
+    )
+
+    if spec.use_lora:
+        apply_lora_to_transformer(model, spec)
+    else:
+        enable_transformer_full_finetune(model)
+
+    compile_cfg = (spec.extra or {}).get("torch_compile") or {}
+    if compile_cfg.get("enable"):
+        compile_transformer(model, compile_cfg["mode"])
+
+    return RuntimeBundle(
+        model=model,
+        trainable_modules=model.trainable_modules,
+        scheduler=model.scheduler,
+        backend_kind=backend,
+        backend_handle=None,
+        runtime_caps={
+            "supports_stepwise": True,
+            "supports_cfg": True,
+            "supports_batched_decode": False,
+            "supports_reference_conditioning": True,
+        },
+        metadata={
+            "model_path": spec.model_name_or_path,
+            "task_variant": spec.task_variant,
+            "dtype": str(spec.dtype),
+            "use_lora": spec.use_lora,
+            "reference_image": (spec.extra or {}).get("reference_image"),
+            **minimal_replay_bundle_metadata(
+                replay_modules=("transformer", "scheduler"),
+                generation_only_modules=(
+                    "text_encoder",
+                    "vae",
+                    "safety_checker",
+                    "pipeline",
+                ),
+            ),
         },
     )
 
@@ -142,6 +216,17 @@ def build_cosmos_predict2_runtime_bundle_from_cfg(
     """Outer convenience: whole-cfg → spec → bundle."""
     spec = extract_cosmos_predict2_runtime_spec(cfg, device, weight_dtype)
     return build_cosmos_predict2_runtime_bundle(spec)
+
+
+def build_cosmos_predict2_replay_runtime_bundle_from_cfg(
+    cfg: Any,
+    device: Any,
+    weight_dtype: Any,
+) -> RuntimeBundle:
+    """Outer convenience: whole-cfg → spec → replay bundle."""
+    spec = extract_cosmos_predict2_runtime_spec(cfg, device, weight_dtype)
+    return build_cosmos_predict2_replay_runtime_bundle(spec)
+
 
 """Cosmos Predict2 Video2World diffusion pipeline executor."""
 
@@ -252,6 +337,8 @@ def _load_reference_image(reference_image: Any) -> Any:
 
 __all__ = [
     "CosmosPipelineExecutor",
+    "build_cosmos_predict2_replay_runtime_bundle",
+    "build_cosmos_predict2_replay_runtime_bundle_from_cfg",
     "build_cosmos_predict2_runtime_bundle",
     "build_cosmos_predict2_runtime_bundle_from_cfg",
     "extract_cosmos_predict2_runtime_spec",

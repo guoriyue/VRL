@@ -25,8 +25,8 @@ from typing import Any
 import torch
 
 from vrl.engine.diffusion.request import VideoGenerationRequest
-from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 from vrl.models.diffusion import DiffusionModelBase
+from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 
 
 @dataclass
@@ -584,3 +584,84 @@ class CosmosPredict2Model(DiffusionModelBase):
         video = pipe.video_processor.postprocess_video(video, output_type="pt")
         # [B, T, C, H, W] -> [B, C, T, H, W]
         return video.permute(0, 2, 1, 3, 4)
+
+
+class CosmosPredict2ReplayModel(CosmosPredict2Model):
+    """Replay-only Cosmos Predict2 model without pipeline-only modules."""
+
+    def __init__(self, *, transformer: Any, scheduler: Any, device: Any = None) -> None:
+        DiffusionModelBase.__init__(self)
+        self.transformer = transformer
+        self._scheduler = scheduler
+        self._device = device
+
+    @property
+    def pipeline(self) -> Any:
+        raise RuntimeError("CosmosPredict2ReplayModel does not own a diffusers pipeline")
+
+    def _set_transformer(self, transformer: Any) -> None:
+        self.transformer = transformer
+
+    @property
+    def scheduler(self) -> Any:
+        return self._scheduler
+
+    @property
+    def backend_handle(self) -> Any:
+        return None
+
+    def encode_prompt(
+        self,
+        prompt: str | list[str],
+        negative_prompt: str | list[str] | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        del prompt, negative_prompt, kwargs
+        raise RuntimeError("CosmosPredict2ReplayModel cannot encode prompts")
+
+    def prepare_sampling(
+        self,
+        request: VideoGenerationRequest,
+        encoded: dict[str, Any],
+        **kwargs: Any,
+    ) -> CosmosPredict2SamplingState:
+        del request, encoded, kwargs
+        raise RuntimeError("CosmosPredict2ReplayModel cannot run rollout sampling")
+
+    def restore_eval_state(
+        self,
+        replay_tensors: dict[str, Any],
+        batch_context: dict[str, Any],
+        latents: Any,
+        step_idx: int,
+    ) -> CosmosPredict2SamplingState:
+        del step_idx
+        return CosmosPredict2SamplingState(
+            latents=latents,
+            timesteps=self.scheduler.timesteps,
+            scheduler=self.scheduler,
+            prompt_embeds=replay_tensors["prompt_embeds"],
+            negative_prompt_embeds=replay_tensors.get("negative_prompt_embeds"),
+            guidance_scale=batch_context["guidance_scale"],
+            do_cfg=batch_context["cfg"] and batch_context["guidance_scale"] > 1.0,
+            init_latents=replay_tensors["init_latents"],
+            cond_mask=batch_context["cond_mask"],
+            uncond_mask=batch_context["uncond_mask"],
+            padding_mask=batch_context["padding_mask"],
+            cond_indicator=batch_context["cond_indicator"],
+            uncond_indicator=batch_context["uncond_indicator"],
+            fps=batch_context["fps"],
+            seed=0,
+            sigma_conditioning=batch_context.get("sigma_conditioning", 0.0001),
+        )
+
+    def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
+        del latents
+        raise RuntimeError("CosmosPredict2ReplayModel cannot decode latents")
+
+
+__all__ = [
+    "CosmosPredict2Model",
+    "CosmosPredict2ReplayModel",
+    "CosmosPredict2SamplingState",
+]

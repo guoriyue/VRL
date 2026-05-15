@@ -28,8 +28,16 @@ from vrl.engine.core.types import (
 )
 from vrl.engine.execution.microbatching import MicroBatchPlan
 from vrl.engine.trajectory import build_ar_continuous_trajectory
-from vrl.models.families.nextstep_1.model import NextStep1Config, NextStep1Model
+from vrl.models.families.nextstep_1.model import (
+    NextStep1Config,
+    NextStep1Model,
+    NextStep1ReplayModel,
+)
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
+from vrl.models.replay_loading import (
+    full_generation_bundle_metadata,
+    minimal_replay_bundle_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,9 +66,41 @@ def build_nextstep_1_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
             "model_path": spec.model_name_or_path,
             "task_variant": spec.task_variant,
             "use_lora": spec.use_lora,
-            "runtime_role": "full_generation_model",
-            "loads_full_generation_modules": True,
-            "requires_minimal_replay_loader": True,
+            **full_generation_bundle_metadata(),
+        },
+    )
+
+
+def build_nextstep_1_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
+    """Build a NextStep trainer replay bundle without VAE/tokenizer/pipeline."""
+
+    config = _nextstep_1_config_from_runtime_spec(spec)
+    model = NextStep1ReplayModel(NextStep1Config(**config))
+    return RuntimeBundle(
+        model=model,
+        trainable_modules={"model": model},
+        scheduler=None,
+        backend_kind="nextstep_1",
+        backend_handle=None,
+        runtime_caps={
+            "family_capability": NEXTSTEP_1_FAMILY_CAPABILITY.to_dict(),
+            "supports_chunked_execution": False,
+            "supports_token_logprobs": True,
+            "supports_cfg": True,
+            "supports_batched_decode": False,
+        },
+        metadata={
+            "model_path": spec.model_name_or_path,
+            "task_variant": spec.task_variant,
+            "use_lora": spec.use_lora,
+            **minimal_replay_bundle_metadata(
+                replay_modules=(
+                    "language_model",
+                    "image_head",
+                    "image_in_projector",
+                ),
+                generation_only_modules=("vae", "tokenizer", "pipeline"),
+            ),
         },
     )
 
@@ -750,6 +790,7 @@ __all__ = [
     "NextStep1ARChunkResult",
     "NextStep1ChunkGatherer",
     "NextStep1PipelineExecutor",
+    "build_nextstep_1_replay_runtime_bundle",
     "build_nextstep_1_runtime_bundle",
     "extract_nextstep_1_runtime_spec",
 ]

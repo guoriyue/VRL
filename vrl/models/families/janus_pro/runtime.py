@@ -30,9 +30,17 @@ from vrl.engine.core.types import (
 from vrl.engine.execution.microbatching import MicroBatchPlan
 from vrl.engine.execution.planner import attach_engine_plan, build_engine_plan
 from vrl.engine.trajectory import build_ar_discrete_trajectory, build_ar_multisegment_trajectory
-from vrl.models.families.janus_pro.model import JanusProConfig, JanusProModel
+from vrl.models.families.janus_pro.model import (
+    JanusProConfig,
+    JanusProModel,
+    JanusProReplayModel,
+)
 from vrl.models.families.janus_pro.r1_types import JanusR1Segment
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
+from vrl.models.replay_loading import (
+    full_generation_bundle_metadata,
+    minimal_replay_bundle_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -66,9 +74,47 @@ def build_janus_pro_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
             "model_path": spec.model_name_or_path,
             "task_variant": spec.task_variant,
             "use_lora": spec.use_lora,
-            "runtime_role": "full_generation_model",
-            "loads_full_generation_modules": True,
-            "requires_minimal_replay_loader": True,
+            **full_generation_bundle_metadata(),
+        },
+    )
+
+
+def build_janus_pro_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
+    """Build a Janus trainer replay bundle without VQ/vision/processor modules."""
+
+    config = _janus_config_from_runtime_spec(spec)
+    model = JanusProReplayModel(JanusProConfig(**config))
+    family_capability = (
+        JANUS_PRO_R1_FAMILY_CAPABILITY
+        if spec.task_variant == "ar_t2i_r1"
+        else JANUS_PRO_FAMILY_CAPABILITY
+    )
+    return RuntimeBundle(
+        model=model,
+        trainable_modules={"model": model},
+        scheduler=None,
+        backend_kind="janus_pro",
+        backend_handle=None,
+        runtime_caps={
+            "family_capability": family_capability.to_dict(),
+            "supports_chunked_execution": False,
+            "supports_token_logprobs": True,
+            "supports_cfg": True,
+            "supports_batched_decode": False,
+        },
+        metadata={
+            "model_path": spec.model_name_or_path,
+            "task_variant": spec.task_variant,
+            "use_lora": spec.use_lora,
+            **minimal_replay_bundle_metadata(
+                replay_modules=("language_model", "gen_embed", "gen_aligner", "gen_head"),
+                generation_only_modules=(
+                    "processor",
+                    "vision_model",
+                    "aligner",
+                    "gen_vision_model",
+                ),
+            ),
         },
     )
 
@@ -1142,6 +1188,7 @@ __all__ = [
     "JanusProR1ChunkGatherer",
     "JanusProR1ChunkResult",
     "JanusProR1PipelineExecutor",
+    "build_janus_pro_replay_runtime_bundle",
     "build_janus_pro_runtime_bundle",
     "extract_janus_pro_runtime_spec",
 ]

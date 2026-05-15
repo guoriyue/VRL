@@ -10,8 +10,8 @@ from typing import Any
 import torch
 
 from vrl.engine.diffusion.request import VideoGenerationRequest
-from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 from vrl.models.diffusion import DiffusionModelBase
+from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 
 
 class _NoOpCosmosSafetyChecker:
@@ -514,7 +514,163 @@ class CosmosPredict25Model(DiffusionModelBase):
         return video.permute(0, 2, 1, 3, 4)
 
 
-__all__ = ["CosmosPredict25Model", "CosmosPredict25SamplingState"]
+class CosmosPredict25ReplayModel(CosmosPredict25Model):
+    """Replay-only Cosmos Predict2.5 model without text encoder, VAE, or pipeline."""
+
+    def __init__(self, *, transformer: Any, scheduler: Any, device: Any = None) -> None:
+        DiffusionModelBase.__init__(self)
+        self.transformer = transformer
+        self._scheduler = scheduler
+        self._device = device
+        self.synthetic_prompt_embeds = False
+
+    @property
+    def pipeline(self) -> Any:
+        raise RuntimeError("CosmosPredict25ReplayModel does not own a diffusers pipeline")
+
+    @property
+    def scheduler(self) -> Any:
+        return self._scheduler
+
+    @property
+    def backend_handle(self) -> Any:
+        return None
+
+    def _set_transformer(self, transformer: Any) -> None:
+        self.transformer = transformer
+
+    def apply_lora(self, spec: Any) -> None:
+        from peft import LoraConfig, PeftModel, get_peft_model
+
+        self.transformer.requires_grad_(False)
+        self.transformer.to(self.device)
+        if spec.lora_path:
+            transformer = PeftModel.from_pretrained(
+                self.transformer,
+                spec.lora_path,
+                is_trainable=True,
+                adapter_name="default",
+            )
+        else:
+            if spec.lora_config is None:
+                raise ValueError("Cosmos Predict2.5 replay requires lora_config")
+            cfg = LoraConfig(
+                r=spec.lora_config["rank"],
+                lora_alpha=spec.lora_config["alpha"],
+                init_lora_weights="gaussian",
+                target_modules=spec.lora_config["target_modules"],
+            )
+            transformer = get_peft_model(self.transformer, cfg, adapter_name="default")
+
+        if "previous" not in getattr(transformer, "peft_config", {}):
+            if spec.lora_config is None:
+                raise ValueError("Cosmos Predict2.5 replay requires lora_config")
+            previous_cfg = LoraConfig(
+                r=spec.lora_config["rank"],
+                lora_alpha=spec.lora_config["alpha"],
+                init_lora_weights="gaussian",
+                target_modules=spec.lora_config["target_modules"],
+            )
+            transformer.add_adapter("previous", previous_cfg)
+        _copy_adapter_weights(transformer, src="default", dst="previous")
+        transformer.set_adapter("default")
+        self._set_transformer(transformer)
+
+    def torch_compile_transformer(self, mode: str) -> None:
+        self._set_transformer(torch.compile(self.transformer, mode=mode, fullgraph=False))
+
+    def set_num_steps(self, n: int) -> None:
+        self.scheduler.set_timesteps(n, device=self.device)
+
+    def encode_prompt(
+        self,
+        prompt: str | list[str],
+        negative_prompt: str | list[str] | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        del prompt, negative_prompt, kwargs
+        raise RuntimeError("CosmosPredict25ReplayModel cannot encode prompts")
+
+    def prepare_sampling(
+        self,
+        request: VideoGenerationRequest,
+        encoded: dict[str, Any],
+        **kwargs: Any,
+    ) -> CosmosPredict25SamplingState:
+        del request, encoded, kwargs
+        raise RuntimeError("CosmosPredict25ReplayModel cannot run rollout sampling")
+
+    def restore_eval_state(
+        self,
+        replay_tensors: dict[str, Any],
+        batch_context: dict[str, Any],
+        latents: Any,
+        step_idx: int,
+    ) -> CosmosPredict25SamplingState:
+        del step_idx
+        cond_latent = torch.zeros_like(latents)
+        return CosmosPredict25SamplingState(
+            latents=latents,
+            timesteps=self.scheduler.timesteps,
+            scheduler=self.scheduler,
+            prompt_embeds=replay_tensors["prompt_embeds"],
+            negative_prompt_embeds=replay_tensors.get("negative_prompt_embeds"),
+            guidance_scale=batch_context["guidance_scale"],
+            do_cfg=batch_context["cfg"] and batch_context["guidance_scale"] > 1.0,
+            cond_latent=cond_latent,
+            cond_mask=batch_context["cond_mask"],
+            cond_indicator=batch_context["cond_indicator"],
+            padding_mask=batch_context["padding_mask"],
+            seed=0,
+            height=batch_context["height"],
+            width=batch_context["width"],
+            num_frames=batch_context["num_frames"],
+            fps=batch_context["fps"],
+            conditional_frame_timestep=batch_context.get("conditional_frame_timestep", 0.1),
+        )
+
+    def diffusion_nft_prepare_transformer_input(
+        self,
+        *,
+        latents: torch.Tensor,
+        prompt_embeds: torch.Tensor,
+        prompt_attention_mask: torch.Tensor | None,
+        pooled_prompt_embeds: torch.Tensor | None,
+        timestep: torch.Tensor,
+        num_frames: int,
+        height: int,
+        width: int,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        del prompt_attention_mask, pooled_prompt_embeds, num_frames, kwargs
+        batch, _, latent_frames, latent_h, latent_w = latents.shape
+        cond_mask = torch.zeros(
+            (batch, 1, latent_frames, latent_h, latent_w),
+            dtype=latents.dtype,
+            device=latents.device,
+        )
+        padding_mask = latents.new_zeros(1, 1, height, width, dtype=latents.dtype)
+        return {
+            "hidden_states": latents,
+            "timestep": timestep,
+            "encoder_hidden_states": prompt_embeds,
+            "condition_mask": cond_mask,
+            "padding_mask": padding_mask,
+            "return_dict": False,
+        }
+
+    nft_prepare_transformer_input = diffusion_nft_prepare_transformer_input
+
+    def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
+        del latents
+        raise RuntimeError("CosmosPredict25ReplayModel cannot decode latents")
+
+
+__all__ = [
+    "CosmosPredict25Model",
+    "CosmosPredict25ReplayModel",
+    "CosmosPredict25SamplingState",
+]
 
 
 def _copy_adapter_weights(

@@ -86,9 +86,10 @@ async def run_online_recipe(
     )
     examples = load_prompt_manifest(Path(str(cfg.data.manifest)))
 
-    log_host_memory("before_bundle_build", log=logger)
-    bundle = definition.build_bundle(cfg, context.device, context.weight_dtype)
-    log_host_memory("after_bundle_build", log=logger)
+    bundle_builder = definition.build_replay_bundle or definition.build_bundle
+    log_host_memory("before_trainer_bundle_build", log=logger)
+    bundle = bundle_builder(cfg, context.device, context.weight_dtype)
+    log_host_memory("after_trainer_bundle_build", log=logger)
     if definition.after_bundle_built is not None:
         definition.after_bundle_built(bundle, cfg)
     model = require_runtime_model(
