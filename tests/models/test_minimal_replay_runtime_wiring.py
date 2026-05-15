@@ -180,3 +180,14 @@ def test_ar_replay_builders_return_minimal_bundles(
     require_minimal_replay_bundle(bundle)
     assert bundle.backend_handle is None
     assert set(bundle.trainable_modules) == {"model"}
+
+
+def test_sd3_after_bundle_hook_ignores_replay_model_without_pipeline() -> None:
+    from vrl.scripts.sd3_5.train import _offload_driver_frozen_modules
+
+    class _ReplayLike:
+        @property
+        def pipeline(self) -> Any:
+            raise RuntimeError("no pipeline")
+
+    _offload_driver_frozen_modules(_ReplayLike())

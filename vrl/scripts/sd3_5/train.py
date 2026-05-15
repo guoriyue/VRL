@@ -74,7 +74,7 @@ def _offload_driver_frozen_modules(policy: object) -> None:
 
     import torch
 
-    pipeline = getattr(policy, "pipeline", None)
+    pipeline = getattr(policy, "_pipeline", None)
     if pipeline is None:
         return
 
