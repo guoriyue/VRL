@@ -80,6 +80,14 @@ def ar_concat_rows(values: Sequence[Any]) -> Any:
 
 
 def _to_tuple_cache_if_needed(value: Any) -> Any:
+    """Normalize HF cache containers without pinning a transformers version.
+
+    transformers 4.38-4.46 moved cache internals around. Some DynamicCache
+    versions expose ``to_legacy_cache()``, while others behave like nested
+    tuple/list/mapping containers. Keep this helper duck-typed so AR runtimes
+    can split/concat per-row cache without importing a concrete cache class.
+    """
+
     to_legacy_cache = getattr(value, "to_legacy_cache", None)
     if callable(to_legacy_cache):
         return to_legacy_cache()

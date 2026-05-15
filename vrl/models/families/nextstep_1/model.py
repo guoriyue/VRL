@@ -124,6 +124,9 @@ class NextStep1ARState:
     generator: torch.Generator | None = None
     position: int = 0
     positions: torch.Tensor | None = None
+    prefill_forwards: int = 0
+    decode_forwards: int = 0
+    decode_tokens: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -317,7 +320,7 @@ class NextStep1Model(nn.Module):
                            replay the same trajectory deterministically.
             log_probs      ``[B, L_img]`` — Gaussian log-prob of each token.
         """
-        state = self.init_ar_state(
+        state = self.init_ar(
             prompt_embeds,
             uncond_embeds,
             prompt_mask,
@@ -330,10 +333,10 @@ class NextStep1Model(nn.Module):
         )
         while state.position < state.image_token_num:
             self._sample_ar_step(state)
-        return self.finalize_ar_state(state)
+        return self.finalize_ar(state)
 
     @torch.no_grad()
-    def init_ar_state(
+    def init_ar(
         self,
         prompt_embeds: torch.Tensor,
         uncond_embeds: torch.Tensor | None,
@@ -394,6 +397,7 @@ class NextStep1Model(nn.Module):
             image_token_num=int(image_token_num),
             generator=generator,
             positions=torch.zeros(batch_size, device=device, dtype=torch.long),
+            prefill_forwards=1 + int(kv_uncond is not None),
         )
 
     @torch.no_grad()
@@ -437,10 +441,16 @@ class NextStep1Model(nn.Module):
             token=step.token,
             log_prob=step.log_prob.float(),
             replay_extras={"saved_noise": step.initial_noise},
+            debug_counters={
+                "ar_kv_cache_enabled": True,
+                "ar_prefill_forwards": state.prefill_forwards,
+                "ar_decode_forwards": state.decode_forwards,
+                "ar_decode_tokens": state.decode_tokens,
+            },
         )
 
     @torch.no_grad()
-    def finalize_ar_state(
+    def finalize_ar(
         self,
         state: NextStep1ARState,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -509,6 +519,7 @@ class NextStep1Model(nn.Module):
         proj = self._image_in_projector(step.token)
         kv_cond = ar_concat_rows([state.kv_cond_rows[row] for row in row_indices])
         kv_cond, c_cond_next = self._step_llm(kv_cond, proj)
+        state.decode_forwards += 1
         for row, row_kv in zip(row_indices, ar_split_rows(kv_cond, batch_size), strict=True):
             state.kv_cond_rows[row] = row_kv
         state.c_cond.index_copy_(0, rows, c_cond_next)
@@ -519,6 +530,7 @@ class NextStep1Model(nn.Module):
                 [state.kv_uncond_rows[row] for row in row_indices]
             )
             kv_uncond, c_uncond_next = self._step_llm(kv_uncond, proj_u)
+            state.decode_forwards += 1
             for row, row_kv in zip(
                 row_indices,
                 ar_split_rows(kv_uncond, batch_size),
@@ -530,6 +542,7 @@ class NextStep1Model(nn.Module):
 
         state.positions[rows] += 1
         state.position = int(state.positions.min().item())
+        state.decode_tokens += batch_size
         return step
 
     # ------------------------------------------------------------------

@@ -5,3 +5,4 @@ sampling:
   image_size: 384
   cfg_weight: 5.0
   temperature: 1.0
+  ar_scheduler_batch_size: null

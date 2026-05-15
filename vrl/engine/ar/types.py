@@ -21,6 +21,7 @@ class ARStepResult:
     token: Any
     log_prob: Any
     replay_extras: dict[str, Any] = field(default_factory=dict)
+    debug_counters: dict[str, Any] = field(default_factory=dict)
 
 
 __all__ = ["ARStepResult"]

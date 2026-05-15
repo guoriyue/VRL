@@ -43,7 +43,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -51,6 +51,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from vrl.engine.ar.cache import ar_concat_rows, ar_split_rows
 from vrl.engine.ar.types import ARStepResult
 from vrl.models.families.janus_pro.r1_types import (
     JanusR1GenerationResult,
@@ -134,8 +135,8 @@ class JanusProARState:
 
     cond_past_rows: list[Any | None]
     uncond_past_rows: list[Any | None]
-    cond_cur_embeds_rows: list[torch.Tensor]
-    uncond_cur_embeds_rows: list[torch.Tensor]
+    cond_last_hidden_rows: list[torch.Tensor]
+    uncond_last_hidden_rows: list[torch.Tensor]
     cond_attn_rows: list[torch.Tensor]
     uncond_attn_rows: list[torch.Tensor]
     token_ids: torch.Tensor
@@ -144,6 +145,9 @@ class JanusProARState:
     temperature: float
     image_token_num: int
     positions: torch.Tensor
+    prefill_forwards: int = 0
+    decode_forwards: int = 0
+    decode_tokens: int = 0
     position: int = 0
 
 
@@ -638,7 +642,7 @@ class JanusProModel(nn.Module):
         temp = temperature if temperature is not None else self.config.temperature
         L_img = image_token_num or self.config.image_token_num
 
-        state = self.init_ar_state(
+        state = self.init_ar(
             cond_inputs_embeds,
             uncond_inputs_embeds,
             cond_attention_mask,
@@ -649,7 +653,7 @@ class JanusProModel(nn.Module):
         )
         while state.position < state.image_token_num:
             self._sample_ar_step(state)
-        return self.finalize_ar_state(state)
+        return self.finalize_ar(state)
 
     @torch.no_grad()
     def generate_with_refine(
@@ -666,6 +670,7 @@ class JanusProModel(nn.Module):
         uncond_attention_mask: torch.Tensor | None = None,
         image_size: int = JANUS_IMAGE_PIXEL_SIZE,
         refine_mode: str | None = None,
+        image_sampler: Callable[..., tuple[torch.Tensor, torch.Tensor]] | None = None,
     ) -> JanusR1GenerationResult:
         """Run Janus-Pro-R1-style first image, self-check, and regeneration.
 
@@ -712,7 +717,8 @@ class JanusProModel(nn.Module):
         no_token_id = self._last_token_id("No")
         eos_token_id = self._eos_token_id()
 
-        initial_ids, initial_logps = self.sample_image_tokens(
+        sample_image = image_sampler or self.sample_image_tokens
+        initial_ids, initial_logps = sample_image(
             cond_embeds,
             uncond_embeds,
             prompt_attention_mask,
@@ -830,7 +836,7 @@ class JanusProModel(nn.Module):
         )
 
         if "final_image" in stages and mode != "never":
-            refined_ids, refined_logps = self.sample_image_tokens(
+            refined_ids, refined_logps = sample_image(
                 final_cond_embeds,
                 final_uncond_embeds,
                 final_cond_mask,
@@ -946,6 +952,7 @@ class JanusProModel(nn.Module):
                 "uncond_input_ids": uncond_input_ids,
                 "uncond_attention_mask": uncond_attention_mask,
                 "model_family": getattr(self, "model_family", "janus_pro"),
+                "ar_kv_cache_enabled": True,
             },
         )
 
@@ -1123,7 +1130,7 @@ class JanusProModel(nn.Module):
         return token_ids, log_probs, mask, selfcheck
 
     @torch.no_grad()
-    def init_ar_state(
+    def init_ar(
         self,
         cond_inputs_embeds: torch.Tensor,
         uncond_inputs_embeds: torch.Tensor,
@@ -1141,16 +1148,20 @@ class JanusProModel(nn.Module):
         image_token_num = image_token_num or self.config.image_token_num
         batch_size = cond_inputs_embeds.shape[0]
         device = cond_inputs_embeds.device
+        cond_past_rows, cond_last_hidden_rows = self._prefill_ar_prompt(
+            cond_inputs_embeds,
+            cond_attention_mask,
+        )
+        uncond_past_rows, uncond_last_hidden_rows = self._prefill_ar_prompt(
+            uncond_inputs_embeds,
+            uncond_attention_mask,
+        )
 
         return JanusProARState(
-            cond_past_rows=[None for _ in range(batch_size)],
-            uncond_past_rows=[None for _ in range(batch_size)],
-            cond_cur_embeds_rows=[
-                cond_inputs_embeds[row : row + 1] for row in range(batch_size)
-            ],
-            uncond_cur_embeds_rows=[
-                uncond_inputs_embeds[row : row + 1] for row in range(batch_size)
-            ],
+            cond_past_rows=cond_past_rows,
+            uncond_past_rows=uncond_past_rows,
+            cond_last_hidden_rows=cond_last_hidden_rows,
+            uncond_last_hidden_rows=uncond_last_hidden_rows,
             cond_attn_rows=[
                 cond_attention_mask[row : row + 1] for row in range(batch_size)
             ],
@@ -1167,7 +1178,41 @@ class JanusProModel(nn.Module):
             temperature=float(temp),
             image_token_num=int(image_token_num),
             positions=torch.zeros(batch_size, device=device, dtype=torch.long),
+            prefill_forwards=2,
         )
+
+    def _prefill_ar_prompt(
+        self,
+        inputs_embeds: torch.Tensor,
+        attention_mask: torch.Tensor,
+    ) -> tuple[list[Any], list[torch.Tensor]]:
+        """Run one prompt prefill and split cache/last hidden into row state."""
+
+        outputs = self._lm_trunk()(
+            inputs_embeds=inputs_embeds,
+            attention_mask=attention_mask,
+            use_cache=True,
+        )
+        batch_size = inputs_embeds.shape[0]
+        past = getattr(outputs, "past_key_values", None)
+        last_hidden = self._last_token_hidden(outputs)
+        return ar_split_rows(past, batch_size), ar_split_rows(last_hidden, batch_size)
+
+    @staticmethod
+    def _last_token_hidden(outputs: Any) -> torch.Tensor:
+        hidden = getattr(outputs, "last_hidden_state", None)
+        if hidden is None:
+            hidden_states = getattr(outputs, "hidden_states", None)
+            if not hidden_states:
+                raise RuntimeError(
+                    "language model output must expose last_hidden_state or hidden_states",
+                )
+            hidden = hidden_states[-1]
+        if hidden.ndim == 3:
+            return hidden[:, -1, :]
+        if hidden.ndim == 2:
+            return hidden
+        raise RuntimeError(f"unexpected hidden state rank: {hidden.ndim}")
 
     @torch.no_grad()
     def step_ar(
@@ -1208,10 +1253,16 @@ class JanusProModel(nn.Module):
             positions=positions,
             token=token,
             log_prob=log_prob,
+            debug_counters={
+                "ar_kv_cache_enabled": True,
+                "ar_prefill_forwards": state.prefill_forwards,
+                "ar_decode_forwards": state.decode_forwards,
+                "ar_decode_tokens": state.decode_tokens,
+            },
         )
 
     @torch.no_grad()
-    def finalize_ar_state(
+    def finalize_ar(
         self,
         state: JanusProARState,
     ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -1226,6 +1277,25 @@ class JanusProModel(nn.Module):
         row_indices: list[int] | None = None,
         position: int | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        row_indices, rows, position = self._resolve_ar_step_request(
+            state,
+            row_indices=row_indices,
+            position=position,
+        )
+        return self._sample_ar_step_kv(
+            state,
+            row_indices=row_indices,
+            rows=rows,
+            position=position,
+        )
+
+    def _resolve_ar_step_request(
+        self,
+        state: JanusProARState,
+        *,
+        row_indices: list[int] | None,
+        position: int | None,
+    ) -> tuple[list[int], torch.Tensor, int]:
         if row_indices is None:
             row_indices = list(range(state.token_ids.shape[0]))
         if not row_indices:
@@ -1245,27 +1315,47 @@ class JanusProModel(nn.Module):
         rows = torch.tensor(
             row_indices, dtype=torch.long, device=state.token_ids.device
         )
+        return row_indices, rows, position
+
+    def _sample_ar_step_kv(
+        self,
+        state: JanusProARState,
+        *,
+        row_indices: list[int],
+        rows: torch.Tensor,
+        position: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         batch_size = len(row_indices)
-        cond_embeds = torch.cat(
-            [state.cond_cur_embeds_rows[row] for row in row_indices], dim=0
+        cond_hidden = ar_concat_rows(
+            [state.cond_last_hidden_rows[row] for row in row_indices]
         )
-        uncond_embeds = torch.cat(
-            [state.uncond_cur_embeds_rows[row] for row in row_indices], dim=0
+        uncond_hidden = ar_concat_rows(
+            [state.uncond_last_hidden_rows[row] for row in row_indices]
         )
-        cond_attn = torch.cat(
-            [state.cond_attn_rows[row] for row in row_indices], dim=0
-        )
-        uncond_attn = torch.cat(
-            [state.uncond_attn_rows[row] for row in row_indices], dim=0
-        )
+        hidden = torch.cat([cond_hidden, uncond_hidden], dim=0).unsqueeze(1)
+        sampled, lp = self._sample_cfg_image_token(state, hidden)
+        self._record_sampled_token(state, rows, position, sampled, lp)
 
-        outputs = self._lm_trunk()(
-            inputs_embeds=torch.cat([cond_embeds, uncond_embeds], dim=0),
-            attention_mask=torch.cat([cond_attn, uncond_attn], dim=0),
-            use_cache=False,
-        )
+        # The last sampled token does not need another LM call: no later token
+        # will consume the resulting hidden state. This keeps the KV path at
+        # one prompt prefill plus ``L_img - 1`` one-token decode forwards.
+        if position + 1 < state.image_token_num:
+            self._advance_kv_cache_after_sample(
+                state,
+                row_indices=row_indices,
+                sampled=sampled,
+            )
 
-        hidden = outputs.last_hidden_state[:, -1:, :]
+        state.positions[rows] += 1
+        state.position = int(state.positions.min().item())
+        state.decode_tokens += batch_size
+        return sampled, lp
+
+    def _sample_cfg_image_token(
+        self,
+        state: JanusProARState,
+        hidden: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         logits = image_token_logits_from_hidden(self.mmgpt, hidden).squeeze(1)
         cond_logits, uncond_logits = logits.chunk(2, dim=0)
         cond_logits = cond_logits.float()
@@ -1277,19 +1367,44 @@ class JanusProModel(nn.Module):
 
         log_probs = F.log_softmax(cond_logits / state.temperature, dim=-1)
         lp = log_probs.gather(-1, sampled.unsqueeze(-1)).squeeze(-1)
+        return sampled, lp
 
+    @staticmethod
+    def _record_sampled_token(
+        state: JanusProARState,
+        rows: torch.Tensor,
+        position: int,
+        sampled: torch.Tensor,
+        log_prob: torch.Tensor,
+    ) -> None:
         state.token_ids[rows, position] = sampled
-        state.logprobs[rows, position] = lp
+        state.logprobs[rows, position] = log_prob
 
-        next_embed = self._base().prepare_gen_img_embeds(
-            torch.cat([sampled, sampled], dim=0).unsqueeze(-1)
+    def _advance_kv_cache_after_sample(
+        self,
+        state: JanusProARState,
+        *,
+        row_indices: list[int],
+        sampled: torch.Tensor,
+    ) -> None:
+        batch_size = len(row_indices)
+        token_embed = self._base().prepare_gen_img_embeds(sampled.unsqueeze(-1))
+        inputs_embeds = torch.cat([token_embed, token_embed], dim=0)
+
+        cond_attn = torch.cat(
+            [state.cond_attn_rows[row] for row in row_indices], dim=0
         )
-        cond_next_embed, uncond_next_embed = next_embed.chunk(2, dim=0)
+        uncond_attn = torch.cat(
+            [state.uncond_attn_rows[row] for row in row_indices], dim=0
+        )
         cond_next_attn = torch.cat(
             [
                 cond_attn,
                 torch.ones(
-                    batch_size, 1, dtype=cond_attn.dtype, device=cond_attn.device
+                    batch_size,
+                    1,
+                    dtype=cond_attn.dtype,
+                    device=cond_attn.device,
                 ),
             ],
             dim=1,
@@ -1306,27 +1421,39 @@ class JanusProModel(nn.Module):
             ],
             dim=1,
         )
+
+        cond_past = ar_concat_rows(
+            [state.cond_past_rows[row] for row in row_indices]
+        )
+        uncond_past = ar_concat_rows(
+            [state.uncond_past_rows[row] for row in row_indices]
+        )
+        past = ar_concat_rows([cond_past, uncond_past])
+        outputs = self._lm_trunk()(
+            inputs_embeds=inputs_embeds,
+            attention_mask=torch.cat([cond_next_attn, uncond_next_attn], dim=0),
+            past_key_values=past,
+            use_cache=True,
+        )
+
+        updated_past_rows = ar_split_rows(
+            getattr(outputs, "past_key_values", None),
+            2 * batch_size,
+        )
+        updated_hidden_rows = ar_split_rows(
+            self._last_token_hidden(outputs),
+            2 * batch_size,
+        )
         for offset, row in enumerate(row_indices):
-            state.cond_cur_embeds_rows[row] = torch.cat(
-                [
-                    cond_embeds[offset : offset + 1],
-                    cond_next_embed[offset : offset + 1],
-                ],
-                dim=1,
-            )
-            state.uncond_cur_embeds_rows[row] = torch.cat(
-                [
-                    uncond_embeds[offset : offset + 1],
-                    uncond_next_embed[offset : offset + 1],
-                ],
-                dim=1,
-            )
+            state.cond_past_rows[row] = updated_past_rows[offset]
+            state.uncond_past_rows[row] = updated_past_rows[batch_size + offset]
+            state.cond_last_hidden_rows[row] = updated_hidden_rows[offset]
+            state.uncond_last_hidden_rows[row] = updated_hidden_rows[
+                batch_size + offset
+            ]
             state.cond_attn_rows[row] = cond_next_attn[offset : offset + 1]
             state.uncond_attn_rows[row] = uncond_next_attn[offset : offset + 1]
-
-        state.positions[rows] += 1
-        state.position = int(state.positions.min().item())
-        return sampled, lp
+        state.decode_forwards += 1
 
     # ------------------------------------------------------------------
     # VQ decode — image tokens → pixels

@@ -8,7 +8,7 @@ from vrl.engine.ar.sequence import ActiveSequence, ARSequenceKey
 
 
 @dataclass(slots=True)
-class ARTokenBatch:
+class TokenBatch:
     """One token-forward batch inside an AR executor."""
 
     key: ARSequenceKey
@@ -16,10 +16,10 @@ class ARTokenBatch:
 
     def __post_init__(self) -> None:
         if not self.sequences:
-            raise ValueError("ARTokenBatch.sequences must be non-empty")
+            raise ValueError("TokenBatch.sequences must be non-empty")
         for sequence in self.sequences:
             if sequence.key != self.key:
-                raise ValueError("ARTokenBatch sequences must share the same key")
+                raise ValueError("TokenBatch sequences must share the same key")
 
     @property
     def request_ids(self) -> list[str]:
@@ -30,8 +30,8 @@ class ARTokenBatch:
         return [sequence.sample_id for sequence in self.sequences]
 
 
-class ARTokenScheduler:
-    """Group active AR sequences into same-backend token batches.
+class TokenScheduler:
+    """Group active AR sequences into same-shape token batches.
 
     This is an executor-internal scheduler. The rollout runtime owns
     ``GenerationRequest`` lifecycle; this class only batches token forwards
@@ -56,7 +56,7 @@ class ARTokenScheduler:
         for sequence in sequences:
             self.add(sequence)
 
-    def pop_batch(self) -> ARTokenBatch | None:
+    def pop_batch(self) -> TokenBatch | None:
         groups: dict[tuple[ARSequenceKey, int], list[ActiveSequence]] = {}
         ordered_keys: list[tuple[ARSequenceKey, int]] = []
         retained: list[ActiveSequence] = []
@@ -82,9 +82,9 @@ class ARTokenScheduler:
         self._pending = [
             sequence for sequence in self._pending if id(sequence) not in selected_ids
         ]
-        return ARTokenBatch(key=key, sequences=selected)
+        return TokenBatch(key=key, sequences=selected)
 
-    def push_back_unfinished(self, batch: ARTokenBatch) -> None:
+    def push_back_unfinished(self, batch: TokenBatch) -> None:
         for sequence in batch.sequences:
             if not sequence.finished:
                 self._pending.append(sequence)

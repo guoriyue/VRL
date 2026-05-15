@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -11,12 +12,12 @@ import torch
 import torch.nn.functional as F
 
 from vrl.engine.ar import (
-    ActiveSequence,
     ARGenerationSpec,
     ARPipelineExecutorBase,
-    ARTokenScheduler,
+    chunk_sample_specs,
     max_peak_memory_mb,
     ordered_chunks,
+    run_kv_decode,
 )
 from vrl.engine.core.capabilities import FamilyCapability, ar_discrete_family_capability
 from vrl.engine.core.protocols import PipelineChunkResult
@@ -69,6 +70,7 @@ def build_janus_pro_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
             "supports_token_logprobs": True,
             "supports_cfg": True,
             "supports_batched_decode": True,
+            "supports_kv_decode": True,
         },
         metadata={
             "model_path": spec.model_name_or_path,
@@ -101,6 +103,7 @@ def build_janus_pro_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBund
             "supports_token_logprobs": True,
             "supports_cfg": True,
             "supports_batched_decode": False,
+            "supports_kv_decode": False,
         },
         metadata={
             "model_path": spec.model_name_or_path,
@@ -149,6 +152,9 @@ def extract_janus_pro_runtime_spec(
             "cfg_weight": float(_cfg_path(cfg, "sampling.cfg_weight", 5.0)),
             "temperature": float(_cfg_path(cfg, "sampling.temperature", 1.0)),
             "image_token_num": int(_cfg_path(cfg, "sampling.image_token_num", 576)),
+            "ar_scheduler_batch_size": _optional_int(
+                _cfg_path(cfg, "sampling.ar_scheduler_batch_size", None),
+            ),
         },
         extra={
             "freeze_vq": bool(_cfg_path(cfg, "model.freeze_vq", True)),
@@ -182,7 +188,11 @@ def _janus_config_from_runtime_spec(spec: RuntimeBuildSpec) -> dict[str, Any]:
             config["lora_init"] = str(spec.lora_config["init"])
 
     if spec.scheduler_config:
-        for key in ("cfg_weight", "temperature", "image_token_num"):
+        for key in (
+            "cfg_weight",
+            "temperature",
+            "image_token_num",
+        ):
             if key in spec.scheduler_config:
                 config[key] = spec.scheduler_config[key]
 
@@ -242,6 +252,42 @@ def _cfg_get(node: Any, key: str, default: Any) -> Any:
     return getattr(node, key, default)
 
 
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    return int(value)
+
+
+def _call_with_supported_kwargs(fn: Any, *args: Any, **kwargs: Any) -> Any:
+    try:
+        signature = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return fn(*args, **kwargs)
+    parameters = signature.parameters
+    if any(param.kind is inspect.Parameter.VAR_KEYWORD for param in parameters.values()):
+        return fn(*args, **kwargs)
+    supported = {key: value for key, value in kwargs.items() if key in parameters}
+    return fn(*args, **supported)
+
+
+def _ar_engine_counters(
+    *,
+    spec: ARGenerationSpec,
+    batch_rows: int,
+    scheduler_batches: int | None,
+) -> dict[str, Any]:
+    token_count = int(batch_rows) * int(spec.image_token_num)
+    return {
+        "ar_kv_cache_enabled": True,
+        "ar_prefill_forwards": 2,
+        "ar_decode_forwards": max(int(spec.image_token_num) - 1, 0),
+        "ar_decode_tokens": token_count,
+        "ar_scheduler_enabled": bool(spec.use_ar_scheduler),
+        "ar_scheduler_batch_size": spec.ar_scheduler_batch_size,
+        "ar_scheduler_batches": scheduler_batches,
+    }
+
+
 """Janus-Pro AR text-to-image pipeline executor.
 
 Owns the autoregressive image-token sampling + VQ decode previously
@@ -260,11 +306,10 @@ Boundary:
   forward), and the unconditional token ids/masks (needed for replay /
   audit).
 
-Difference from diffusion executors: AR runs a token loop. The default path
-uses the model's black-box ``sample_image_tokens`` method; setting
-``sampling.use_ar_scheduler`` routes through the executor-internal
-``ARTokenScheduler`` and the model's ``init_ar_state`` / ``step_ar`` /
-``finalize_ar_state`` contract.
+Difference from diffusion executors: AR runs a token loop. The runtime
+prepares embeddings and delegates token progression to
+``vrl.engine.ar.run_kv_decode`` through the model's ``init_ar`` /
+``step_ar`` / ``finalize_ar`` hooks.
 
 Parity contract: same prompts + same seed (when seeded) produce
 bitwise-equal token ids, log-probs, and images, since
@@ -414,32 +459,29 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
             "cfg_weight": cfg_weight,
             "temperature": temperature,
             "image_token_num": spec.image_token_num,
+            "ar_scheduler_batch_size": spec.ar_scheduler_batch_size,
         }
-        if spec.use_ar_scheduler:
-            with record_function("engine.decode_step"):
-                token_ids, token_log_probs = self._sample_with_ar_scheduler(
-                    request=request,
-                    sample_specs=sample_specs,
-                    cond_embeds=cond_embeds,
-                    uncond_embeds=uncond_embeds,
-                    prompt_mask=prompt_mask,
-                    uncond_mask=uncond_mask,
-                    image_token_num=spec.image_token_num,
-                    sample_kwargs=sample_kwargs,
-                )
-        else:
-            with (
-                record_function("engine.decode_step"),
-                record_function("engine.cache_read"),
-                record_function("engine.cache_write"),
-            ):
-                token_ids, token_log_probs = self.model.sample_image_tokens(
-                    cond_embeds,
-                    uncond_embeds,
-                    prompt_mask,
-                    uncond_mask,
-                    **sample_kwargs,
-                )  # both [B, L_img]
+        scheduler_batch_size = (
+            spec.ar_scheduler_batch_size if spec.use_ar_scheduler else len(sample_specs)
+        )
+        with (
+            record_function("engine.decode_step"),
+            record_function("engine.cache_read"),
+            record_function("engine.cache_write"),
+        ):
+            decode_result = run_kv_decode(
+                request=request,
+                sample_specs=sample_specs,
+                model=self.model,
+                init_args=(cond_embeds, uncond_embeds, prompt_mask, uncond_mask),
+                init_kwargs=sample_kwargs,
+                max_new_tokens=spec.image_token_num,
+                tokenizer_key="janus_pro",
+                dtype=str(cond_embeds.dtype),
+                scheduler_batch_size=scheduler_batch_size,
+            )
+        token_ids, token_log_probs = decode_result.finalized
+        scheduler_batches = decode_result.scheduler_batches
 
         # 4. VQ decode tokens → pixels in [-1, 1].
         with record_function("engine.vq_decode"):
@@ -454,18 +496,28 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
         token_mask = torch.ones_like(token_log_probs)
 
         peak_mem_mb = self.peak_memory_mb()
+        engine_counters = _ar_engine_counters(
+            spec=spec,
+            batch_rows=len(sample_specs),
+            scheduler_batches=scheduler_batches,
+        )
+        engine_counters.update(decode_result.engine_counters)
+        engine_counters["ar_scheduler_enabled"] = bool(spec.use_ar_scheduler)
+        engine_counters["ar_scheduler_batch_size"] = spec.ar_scheduler_batch_size
         metrics = GenerationMetrics(
             num_prompts=len(prompts),
             num_samples=len(sample_specs),
             num_steps=spec.image_token_num,
             micro_batches=1,
             peak_memory_mb=peak_mem_mb,
+            engine_counters=engine_counters,
         )
 
         trajectory_context: dict[str, Any] = {
             "cfg_weight": cfg_weight,
             "image_token_num": spec.image_token_num,
             "model_family": getattr(self.model, "model_family", "janus_pro"),
+            "ar_kv_cache_enabled": True,
         }
         trajectory = build_ar_discrete_trajectory(
             request=request,
@@ -537,22 +589,28 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
             cond_embeds = self._embed(prompt_ids)
             uncond_embeds = self._embed(uncond_ids)
 
-        # Distributed AR chunks stay at prompt/sample granularity. The
-        # token-level scheduler remains executor-internal for direct execution.
+        chunk_specs = chunk_sample_specs(request, chunk)
         with (
             record_function("engine.decode_step"),
             record_function("engine.cache_read"),
             record_function("engine.cache_write"),
         ):
-            token_ids, token_log_probs = self.model.sample_image_tokens(
-                cond_embeds,
-                uncond_embeds,
-                prompt_mask,
-                uncond_mask,
-                cfg_weight=cfg_weight,
-                temperature=temperature,
-                image_token_num=spec.image_token_num,
+            decode_result = run_kv_decode(
+                request=request,
+                sample_specs=chunk_specs,
+                model=self.model,
+                init_args=(cond_embeds, uncond_embeds, prompt_mask, uncond_mask),
+                init_kwargs={
+                    "cfg_weight": cfg_weight,
+                    "temperature": temperature,
+                    "image_token_num": spec.image_token_num,
+                },
+                max_new_tokens=spec.image_token_num,
+                tokenizer_key="janus_pro",
+                dtype=str(cond_embeds.dtype),
+                scheduler_batch_size=chunk.sample_count,
             )
+        token_ids, token_log_probs = decode_result.finalized
         with record_function("engine.vq_decode"):
             images = self.model.decode_image_tokens(
                 token_ids,
@@ -577,6 +635,7 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
                 "cfg_weight": cfg_weight,
                 "image_token_num": spec.image_token_num,
                 "model_family": getattr(self.model, "model_family", "janus_pro"),
+                "ar_kv_cache_enabled": True,
             },
             peak_memory_mb=peak_mem_mb,
         )
@@ -591,77 +650,6 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
         return attach_engine_plan(output, self.plan(request, list(sample_specs)))
 
     # -- internals -----------------------------------------------------
-
-    def _sample_with_ar_scheduler(
-        self,
-        *,
-        request: GenerationRequest,
-        sample_specs: list[GenerationSampleSpec],
-        cond_embeds: torch.Tensor,
-        uncond_embeds: torch.Tensor,
-        prompt_mask: torch.Tensor,
-        uncond_mask: torch.Tensor,
-        image_token_num: int,
-        sample_kwargs: dict[str, Any],
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Run Janus-Pro sampling through the executor-internal AR scheduler."""
-
-        required = ("init_ar_state", "step_ar", "finalize_ar_state")
-        missing = [name for name in required if not hasattr(self.model, name)]
-        if missing:
-            raise TypeError(
-                "use_ar_scheduler=True requires model step API methods: " + ", ".join(missing)
-            )
-
-        if cond_embeds.shape[0] != len(sample_specs):
-            raise ValueError(
-                "Scheduled AR expects one sample spec per embedded row: "
-                f"{len(sample_specs)} specs for {cond_embeds.shape[0]} rows"
-            )
-
-        state = self.model.init_ar_state(
-            cond_embeds,
-            uncond_embeds,
-            prompt_mask,
-            uncond_mask,
-            **sample_kwargs,
-        )
-        sequences = [
-            ActiveSequence(
-                request_id=request.request_id,
-                sample_id=spec.sample_id,
-                family=request.family,
-                task=request.task,
-                tokenizer_key="janus_pro",
-                dtype=str(cond_embeds.dtype),
-                max_new_tokens=image_token_num,
-                metadata={
-                    **dict(spec.metadata),
-                    "row_index": row_index,
-                    "prompt_index": spec.prompt_index,
-                    "sample_index": spec.sample_index,
-                },
-            )
-            for row_index, spec in enumerate(sample_specs)
-        ]
-        scheduler = ARTokenScheduler(
-            max_batch_size=max(
-                1,
-                int(request.sampling.get("ar_scheduler_batch_size", len(sequences))),
-            )
-        )
-        scheduler.add_many(sequences)
-
-        while True:
-            batch = scheduler.pop_batch()
-            if batch is None:
-                break
-            self.model.step_ar(state, batch.sequences)
-            for sequence in batch.sequences:
-                sequence.advance()
-            scheduler.push_back_unfinished(batch)
-
-        return self.model.finalize_ar_state(state)
 
     def _tokenize_prompts(
         self,
@@ -768,12 +756,25 @@ class JanusProChunkGatherer:
         )
         output = torch.cat([chunk.output for chunk in ordered_ar_chunks], dim=0)
         peak_mem_mb = max_peak_memory_mb(ordered_ar_chunks)
+        image_token_num = int(request.sampling.get("image_token_num", 576))
+        chunk_context = dict(ordered_ar_chunks[0].context)
         metrics = GenerationMetrics(
             num_prompts=len(request.prompts),
             num_samples=len(sample_specs),
-            num_steps=int(request.sampling.get("image_token_num", 576)),
+            num_steps=image_token_num,
             micro_batches=len(ordered_ar_chunks),
             peak_memory_mb=peak_mem_mb,
+            engine_counters={
+                "ar_kv_cache_enabled": True,
+                "ar_prefill_forwards": 2,
+                "ar_decode_forwards": max(image_token_num - 1, 0),
+                "ar_decode_tokens": len(sample_specs) * image_token_num,
+                "ar_scheduler_enabled": False,
+                "ar_scheduler_batch_size": request.sampling.get(
+                    "ar_scheduler_batch_size"
+                ),
+                "ar_scheduler_batches": None,
+            },
         )
         token_mask = torch.cat([chunk.token_mask for chunk in ordered_ar_chunks], dim=0)
         prompt_input_ids = torch.cat(
@@ -792,7 +793,7 @@ class JanusProChunkGatherer:
             [chunk.uncond_attention_mask for chunk in ordered_ar_chunks],
             dim=0,
         )
-        trajectory_context = dict(ordered_ar_chunks[0].context)
+        trajectory_context = chunk_context
         trajectory = build_ar_discrete_trajectory(
             request=request,
             sample_specs=list(sample_specs),
@@ -885,7 +886,9 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
             record_function("engine.cache_read"),
             record_function("engine.cache_write"),
         ):
-            result = self.model.generate_with_refine(
+            scheduler_batches: list[int] = []
+            result = _call_with_supported_kwargs(
+                self.model.generate_with_refine,
                 prompt_ids,
                 prompt_mask,
                 cfg_weight=float(sampling.get("cfg_weight", 5.0)),
@@ -897,6 +900,12 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
                 uncond_attention_mask=uncond_mask,
                 image_size=spec.image_size,
                 refine_mode=_resolve_refine_mode(sampling, self.model),
+                image_sampler=self._r1_image_sampler(
+                    request=request,
+                    sample_specs=sample_specs,
+                    spec=spec,
+                    scheduler_batches=scheduler_batches,
+                ),
             )
 
         peak_mem_mb = self.peak_memory_mb()
@@ -919,6 +928,11 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
             num_steps=_segment_token_steps(segment_extra),
             micro_batches=1,
             peak_memory_mb=peak_mem_mb,
+            engine_counters=_ar_engine_counters(
+                spec=spec,
+                batch_rows=len(sample_specs),
+                scheduler_batches=sum(scheduler_batches) if scheduler_batches else None,
+            ),
         )
 
         return attach_engine_plan(OutputBatch(
@@ -963,7 +977,10 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
             record_function("engine.cache_read"),
             record_function("engine.cache_write"),
         ):
-            result = self.model.generate_with_refine(
+            chunk_specs = chunk_sample_specs(request, chunk)
+            scheduler_batches: list[int] = []
+            result = _call_with_supported_kwargs(
+                self.model.generate_with_refine,
                 prompt_ids,
                 prompt_mask,
                 cfg_weight=float(sampling.get("cfg_weight", 5.0)),
@@ -975,6 +992,12 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
                 uncond_attention_mask=uncond_mask,
                 image_size=spec.image_size,
                 refine_mode=_resolve_refine_mode(sampling, self.model),
+                image_sampler=self._r1_image_sampler(
+                    request=request,
+                    sample_specs=chunk_specs,
+                    spec=spec,
+                    scheduler_batches=scheduler_batches,
+                ),
             )
 
         return JanusProR1ChunkResult(
@@ -986,7 +1009,7 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
             final_image=result.final_image,
             selfcheck=result.selfcheck,
             segments=result.segments,
-            context=result.context,
+            context={**result.context, "ar_kv_cache_enabled": True},
             peak_memory_mb=self.peak_memory_mb(),
         )
 
@@ -998,6 +1021,45 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
     ) -> OutputBatch:
         output = JanusProR1ChunkGatherer().gather_chunks(request, sample_specs, chunks)
         return attach_engine_plan(output, self.plan(request, list(sample_specs)))
+
+    def _r1_image_sampler(
+        self,
+        *,
+        request: GenerationRequest,
+        sample_specs: Sequence[GenerationSampleSpec],
+        spec: ARGenerationSpec,
+        scheduler_batches: list[int],
+    ) -> Any:
+        """Build an R1 image sampler backed by the shared AR KV decode driver."""
+
+        specs = list(sample_specs)
+        scheduler_batch_size = (
+            spec.ar_scheduler_batch_size if spec.use_ar_scheduler else len(specs)
+        )
+
+        def sample(
+            cond_embeds: torch.Tensor,
+            uncond_embeds: torch.Tensor,
+            cond_mask: torch.Tensor,
+            uncond_mask: torch.Tensor,
+            **kwargs: Any,
+        ) -> tuple[torch.Tensor, torch.Tensor]:
+            image_token_num = int(kwargs.get("image_token_num", spec.image_token_num))
+            decode_result = run_kv_decode(
+                request=request,
+                sample_specs=specs,
+                model=self.model,
+                init_args=(cond_embeds, uncond_embeds, cond_mask, uncond_mask),
+                init_kwargs=kwargs,
+                max_new_tokens=image_token_num,
+                tokenizer_key="janus_pro_r1",
+                dtype=str(cond_embeds.dtype),
+                scheduler_batch_size=scheduler_batch_size,
+            )
+            scheduler_batches.append(decode_result.scheduler_batches)
+            return decode_result.finalized
+
+        return sample
 
     def _tokenize_r1_prompts(
         self,
@@ -1048,6 +1110,7 @@ class JanusProR1ChunkGatherer:
         final_image = torch.cat([chunk.final_image for chunk in ordered], dim=0)
         selfcheck = torch.cat([chunk.selfcheck for chunk in ordered], dim=0)
         segment_extra = _cat_segment_extra(ordered)
+        context = dict(ordered[0].context)
         trajectory = build_ar_multisegment_trajectory(
             request=request,
             sample_specs=list(sample_specs),
@@ -1058,15 +1121,27 @@ class JanusProR1ChunkGatherer:
                 "selfcheck": selfcheck,
             },
             primary_segment="final_image",
-            context=dict(ordered[0].context),
+            context=context,
         )
         peak_mem_mb = self._max_peak_memory_mb(ordered)
+        num_steps = _segment_token_steps(segment_extra)
         metrics = GenerationMetrics(
             num_prompts=len(request.prompts),
             num_samples=len(sample_specs),
-            num_steps=_segment_token_steps(segment_extra),
+            num_steps=num_steps,
             micro_batches=len(ordered),
             peak_memory_mb=peak_mem_mb,
+            engine_counters={
+                "ar_kv_cache_enabled": True,
+                "ar_prefill_forwards": 2,
+                "ar_decode_forwards": max(num_steps - 1, 0),
+                "ar_decode_tokens": len(sample_specs) * num_steps,
+                "ar_scheduler_enabled": False,
+                "ar_scheduler_batch_size": request.sampling.get(
+                    "ar_scheduler_batch_size"
+                ),
+                "ar_scheduler_batches": None,
+            },
         )
 
         return OutputBatch(

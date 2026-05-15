@@ -32,3 +32,22 @@ def test_ar_split_and_concat_rows_preserve_nested_kv_order() -> None:
 def test_ar_split_rows_rejects_wrong_batch_size() -> None:
     with pytest.raises(ValueError, match="cannot split tensor"):
         ar_split_rows(torch.zeros(2, 4), 3)
+
+
+def test_ar_cache_helpers_accept_dynamic_cache_compatible_objects() -> None:
+    class _DynamicCacheLike:
+        def __init__(self, value: tuple[tuple[torch.Tensor, torch.Tensor], ...]) -> None:
+            self._value = value
+
+        def to_legacy_cache(self) -> tuple[tuple[torch.Tensor, torch.Tensor], ...]:
+            return self._value
+
+    key = torch.arange(2 * 3, dtype=torch.float32).reshape(2, 3)
+    value = key + 10
+    cache = _DynamicCacheLike(((key, value),))
+
+    rows = ar_split_rows(cache, 2)
+    assert torch.equal(rows[0][0][0], key[:1])
+
+    merged = ar_concat_rows(rows)
+    assert torch.equal(merged[0][0], key)

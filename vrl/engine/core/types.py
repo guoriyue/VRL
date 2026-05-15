@@ -29,6 +29,7 @@ class GenerationMetrics:
     trajectory_kind: str | None = None
     execution_units: tuple[str, ...] = ()
     engine_plan_id: str | None = None
+    engine_counters: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

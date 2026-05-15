@@ -19,6 +19,7 @@ class ARGenerationSpec:
     max_text_length: int
     seed: int | None
     use_ar_scheduler: bool
+    ar_scheduler_batch_size: int | None = None
 
 
 __all__ = ["ARGenerationSpec"]

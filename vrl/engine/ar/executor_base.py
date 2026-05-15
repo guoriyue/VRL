@@ -57,6 +57,7 @@ def parse_ar_generation_spec(
         ),
         seed=_optional_int(sampling.get("seed")),
         use_ar_scheduler=bool(sampling.get("use_ar_scheduler", False)),
+        ar_scheduler_batch_size=_optional_int(sampling.get("ar_scheduler_batch_size")),
     )
 
 
@@ -146,6 +147,28 @@ def chunk_seed_offset(request: GenerationRequest, chunk: MicroBatchPlan) -> int:
     """Return the prompt-major sample offset for deterministic chunk seeding."""
 
     return chunk.prompt_index * int(request.samples_per_prompt) + chunk.sample_start
+
+
+def chunk_sample_specs(
+    request: GenerationRequest,
+    chunk: MicroBatchPlan,
+) -> list[GenerationSampleSpec]:
+    """Build prompt-major sample specs for an AR microbatch chunk."""
+
+    return [
+        GenerationSampleSpec(
+            prompt_index=chunk.prompt_index,
+            sample_index=sample_index,
+            prompt=chunk.prompt,
+            prompt_id=f"{request.request_id}:prompt:{chunk.prompt_index}",
+            group_id=f"{request.request_id}:group:{chunk.prompt_index}",
+            sample_id=f"{request.request_id}:sample:{chunk.prompt_index}:{sample_index}",
+            trajectory_id=f"{request.request_id}:trajectory:{chunk.prompt_index}:{sample_index}",
+            seed=_optional_int(request.sampling.get("seed")),
+            metadata={},
+        )
+        for sample_index in range(chunk.sample_start, chunk.sample_end)
+    ]
 
 
 def max_peak_memory_mb(chunks: Sequence[ARChunkResult]) -> float | None:
