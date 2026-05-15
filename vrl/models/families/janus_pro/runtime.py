@@ -30,7 +30,7 @@ from vrl.engine.core.types import (
 from vrl.engine.execution.microbatching import MicroBatchPlan
 from vrl.engine.execution.planner import attach_engine_plan, build_engine_plan
 from vrl.engine.trajectory import build_ar_discrete_trajectory, build_ar_multisegment_trajectory
-from vrl.models.families.janus_pro.policy import JanusProConfig, JanusProPolicy
+from vrl.models.families.janus_pro.model import JanusProConfig, JanusProModel
 from vrl.models.families.janus_pro.r1_types import JanusR1Segment
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 
@@ -45,16 +45,16 @@ JANUS_PRO_R1_FAMILY_CAPABILITY = ar_discrete_family_capability(
 
 
 def build_janus_pro_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    """Build the Janus-Pro policy from a serializable runtime spec."""
+    """Build the Janus-Pro model from a serializable runtime spec."""
 
     config = _janus_config_from_runtime_spec(spec)
-    policy = JanusProPolicy(JanusProConfig(**config))
+    model = JanusProModel(JanusProConfig(**config))
     return RuntimeBundle(
-        policy=policy,
-        trainable_modules={"policy": policy},
+        model=model,
+        trainable_modules={"model": model},
         scheduler=None,
         backend_kind="janus_pro",
-        backend_handle=policy,
+        backend_handle=model,
         runtime_caps={
             "family_capability": JANUS_PRO_FAMILY_CAPABILITY.to_dict(),
             "supports_chunked_execution": True,
@@ -66,7 +66,7 @@ def build_janus_pro_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
             "model_path": spec.model_name_or_path,
             "task_variant": spec.task_variant,
             "use_lora": spec.use_lora,
-            "runtime_role": "full_generation_policy",
+            "runtime_role": "full_generation_model",
             "loads_full_generation_modules": True,
             "requires_minimal_replay_loader": True,
         },
@@ -289,7 +289,7 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
         """Construct the executor.
 
         Args:
-          model: a ``JanusProPolicy`` (or a stub exposing the same
+          model: a ``JanusProModel`` (or a stub exposing the same
             interface: ``processor``, ``device``, ``language_model``,
             ``sample_image_tokens``, ``decode_image_tokens``).
         """

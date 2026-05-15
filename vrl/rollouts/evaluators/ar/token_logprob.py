@@ -1,8 +1,8 @@
-"""Token-level log-probability evaluator for AR policies.
+"""Token-level log-probability evaluator for AR replay models.
 
 Wraps ``model.replay_forward`` (which returns full logits) and gathers the
-log-probabilities of the *sampled* tokens — both under the current policy
-and, when needed, under the LoRA-off reference policy.
+log-probabilities of the *sampled* tokens — both under the current model
+and, when needed, under the LoRA-off reference model.
 
 The returned ``TrajectorySignalBatch`` is consumed by the trainer/algorithm
 adapter.
@@ -13,45 +13,28 @@ intermediates are unused and stay ``None``.
 
 from __future__ import annotations
 
-from typing import Any
-
 import torch
 import torch.nn.functional as F
 
+from vrl.models.interfaces import ReplayModel, require_replay_model
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
+from vrl.rollouts.evaluators.replay_result import require_replay_segment, require_replay_value
 from vrl.rollouts.evaluators.trajectory import single_segment_trajectory_signals
 from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
 
 
-def _has_active_adapter(model: Any) -> bool:
-    """Detect whether ``model`` carries a real PEFT adapter we can disable.
-
-    PEFT injects ``disable_adapter`` onto the wrapped sub-module
-    (``model.language_model`` for ``JanusProPolicy``) — the *outer*
-    JanusProPolicy always exposes a ``disable_adapter`` method. We probe the
-    sub-module directly so ``need_ref=True`` only uses a real adapter.
-    """
-    sub = getattr(model, "language_model", None)
-    if sub is None:
-        sub = model
-    return hasattr(sub, "disable_adapter") and callable(sub.disable_adapter)
-
-
 class TokenLogProbEvaluator(Evaluator):
-    """Recompute per-token log-probs of sampled tokens under the policy.
+    """Recompute per-token log-probs of sampled tokens under the replay model.
 
     Two-pass when ``need_ref=True``:
       1. forward through ``model`` with the LoRA adapter ON  → log_prob
-      2. forward through ``model`` with the LoRA adapter OFF (or
-         through ``ref_model`` if provided) → ref_log_prob
+      2. forward through ``ref_model`` if provided, otherwise through
+         ``model`` inside ``ReplayModel.disable_adapter()`` → ref_log_prob
 
-    Refuses-to-fail-silently contract:
-      If the caller asks for ``need_ref=True`` but neither (a) provides
-      an explicit ``ref_model`` nor (b) supplies a model with a real
-      PEFT adapter, we raise — never silently produce ``ref_lp == lp``,
-      because that yields KL ≡ 0 and the trainer would happily report
-      sane-looking metrics on a broken loss.
+    ``disable_adapter()`` is part of the trainer-facing ReplayModel contract. If a
+    model has no adapter, it may return ``contextlib.nullcontext()``; callers
+    that need a distinct frozen reference must pass ``ref_model``.
     """
 
     def __init__(self, mask_key: str = "token_mask") -> None:
@@ -59,12 +42,15 @@ class TokenLogProbEvaluator(Evaluator):
 
     def evaluate(
         self,
-        model: Any,
+        model: ReplayModel,
         batch: RolloutBatch,
         timestep_idx: int = 0,
-        ref_model: Any | None = None,
+        ref_model: ReplayModel | None = None,
         signal_request: SignalRequest | None = None,
     ) -> TrajectorySignalBatch:
+        model = require_replay_model(model, owner="TokenLogProbEvaluator.model")
+        if ref_model is not None:
+            ref_model = require_replay_model(ref_model, owner="TokenLogProbEvaluator.ref_model")
         request = signal_request or SignalRequest()
         action_ids: torch.Tensor = batch.actions  # [B, L_img]
 
@@ -77,18 +63,6 @@ class TokenLogProbEvaluator(Evaluator):
                     ref_model, batch, action_ids,
                 )
             else:
-                if not _has_active_adapter(model):
-                    raise RuntimeError(
-                        "TokenLogProbEvaluator: signal_request.need_ref=True "
-                        "but the model has no PEFT adapter to disable AND no "
-                        "ref_model was provided. With use_lora=False you must "
-                        "pass a separate frozen ref_model — otherwise "
-                        "ref_log_prob would silently equal log_prob and the "
-                        "KL penalty would be identically zero, which the "
-                        "trainer cannot detect."
-                    )
-                # LoRA-off pass on the same module — only safe when the
-                # adapter is real (verified above).
                 with torch.no_grad(), model.disable_adapter():
                     ref_lp = self._compute_logprobs(
                         model, batch, action_ids,
@@ -112,13 +86,14 @@ class TokenLogProbEvaluator(Evaluator):
 
     @staticmethod
     def _compute_logprobs(
-        model: Any,
+        model: ReplayModel,
         batch: RolloutBatch,
         action_ids: torch.Tensor,
     ) -> torch.Tensor:
         """Forward + gather. Always returns ``[B, L]`` float32 log-probs."""
         out = model.replay_forward(batch, timestep_idx=0)
-        logits: torch.Tensor = out["logits"]   # [B, L, V_img]
+        result = require_replay_segment(out, "image_tokens")
+        logits: torch.Tensor = require_replay_value(result, "logits")   # [B, L, V_img]
         log_probs = F.log_softmax(logits.float(), dim=-1)
         gathered = log_probs.gather(-1, action_ids.unsqueeze(-1)).squeeze(-1)
         return gathered  # [B, L]

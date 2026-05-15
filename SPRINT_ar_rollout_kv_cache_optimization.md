@@ -37,8 +37,8 @@ outputs = self._lm_trunk()(
 已有代码状态：
 
 - `vrl/engine/ar/token_scheduler.py` 已经有 token-level scheduler 雏形。
-- `vrl/models/families/nextstep_1/policy.py` 已经有 `_init_kv()` / `_step_llm()` 的 KV cache path。
-- `vrl/models/families/janus_pro/policy.py` 还没有真正用 `past_key_values`，并且每步动态拼接 embedding 和 attention mask。
+- `vrl/models/families/nextstep_1/model.py` 已经有 `_init_kv()` / `_step_llm()` 的 KV cache path。
+- `vrl/models/families/janus_pro/model.py` 还没有真正用 `past_key_values`，并且每步动态拼接 embedding 和 attention mask。
 - Ray rollout worker 已经是常驻 actor 形态，但当前 chunk granularity 仍然是 prompt/sample chunk，不是 token decode engine。
 
 ## 2. 总原则
@@ -75,7 +75,7 @@ outputs = self._lm_trunk()(
 
 ### 4.1 统一 AR decode contract
 
-目标是在 `vrl/engine/ar` 和 `vrl/models/interfaces/ar_policy.py` 层表达一个通用能力：
+目标是在 `vrl/engine/ar` 层表达一个通用能力：
 
 ```text
 init_ar_state(...) -> family-specific state
@@ -149,7 +149,7 @@ Ray actor 现在已经有 `load_policy()` / `release_policy()`，但 sprint 需�
 编辑：
 
 ```text
-vrl/models/interfaces/ar_policy.py
+vrl/engine/ar/types.py
 vrl/engine/ar/sequence.py
 vrl/engine/ar/token_scheduler.py
 vrl/engine/ar/spec.py
@@ -174,7 +174,7 @@ vrl/engine/ar/kv_cache.py
 编辑：
 
 ```text
-vrl/models/families/janus_pro/policy.py
+vrl/models/families/janus_pro/model.py
 ```
 
 主要改动：
@@ -192,7 +192,7 @@ vrl/models/families/janus_pro/policy.py
 
 ```text
 vrl/models/families/janus_pro/runtime.py
-vrl/models/families/janus_pro/policy.py
+vrl/models/families/janus_pro/model.py
 vrl/models/families/janus_pro/r1_types.py
 configs/model/janus_pro/1b.yaml
 configs/sampling/janus_384_576tok.yaml
@@ -217,7 +217,7 @@ sampling:
 编辑：
 
 ```text
-vrl/models/families/nextstep_1/policy.py
+vrl/models/families/nextstep_1/model.py
 vrl/models/families/nextstep_1/runtime.py
 configs/sampling/*
 ```
@@ -256,7 +256,7 @@ vrl/engine/execution/worker.py
 tests/engine/generation/test_ar_token_scheduler.py
 tests/models/test_ar_cache.py
 tests/models/test_janus_wrapper.py
-tests/models/test_janus_r1_policy.py
+tests/models/test_janus_r1_model.py
 tests/distributed/ray/test_rollout_launcher.py
 ```
 
@@ -305,7 +305,7 @@ configs/profile/janus_pro_r1_codex_qa_kv_decode_1epoch.yaml
 
 完成标准：
 
-- `JanusProPolicy.init_ar_state()` 对 cond/uncond prompt 做 prefill。
+- `JanusProModel.init_ar_state()` 对 cond/uncond prompt 做 prefill。
 - `_sample_ar_step()` 使用 `past_key_values` 和 `use_cache=True`。
 - `sample_image_tokens()` 默认走 KV decode。
 - 旧 full-prefix path 可通过 `ar_decode_backend=legacy_full_prefix` 保留。
@@ -318,7 +318,7 @@ configs/profile/janus_pro_r1_codex_qa_kv_decode_1epoch.yaml
 - `generate_with_refine()` 的 initial/final image generation 使用同一 KV decode path。
 - self-check text generation 暂不强行纳入 image KV path，但不能破坏 image segment 的 cache。
 - segment payload、token logprob、token mask 与当前训练 packer 兼容。
-- `tests/models/test_janus_r1_policy.py` 覆盖 initial/final segment。
+- `tests/models/test_janus_r1_model.py` 覆盖 initial/final segment。
 
 ### Phase 3：AR scheduler 与 KV helper 收敛
 
@@ -359,7 +359,7 @@ pytest tests/engine/generation/test_ar_token_scheduler.py \
   tests/models/test_janus_wrapper.py \
   tests/models/test_janus_kv_decode.py \
   tests/models/test_janus_runtime_kv_decode.py \
-  tests/models/test_janus_r1_policy.py \
+  tests/models/test_janus_r1_model.py \
   tests/models/test_nextstep_1_kv_decode.py \
   tests/distributed/ray/test_rollout_launcher.py
 ```

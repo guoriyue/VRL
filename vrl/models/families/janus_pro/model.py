@@ -4,22 +4,22 @@ This file isolates every Janus-specific detail (image-token vocab range,
 ``gen_head`` projection, CFG sampling, VQ decode) behind a small surface
 that the generic GRPO trainer can call:
 
-  * ``JanusProPolicy.forward_image_logits(...)``
+  * ``JanusProModel.forward_image_logits(...)``
         Train-time forward — returns logits over the *image* vocab for
         each image-token position. Used by the evaluator to recompute
-        new log-probs under the current policy.
+        new log-probs under the current model.
 
-  * ``JanusProPolicy.sample_image_tokens(...)``
+  * ``JanusProModel.sample_image_tokens(...)``
         Inference-time AR sampler with classifier-free guidance.
         Returns ``(image_token_ids, sampling_logprobs)`` — these
         log-probs are the ``old_logprob`` of GRPO.
 
-  * ``JanusProPolicy.decode_image_tokens(...)``
+  * ``JanusProModel.decode_image_tokens(...)``
         Decode 24x24 image tokens → pixels via the frozen VQ model.
 
-  * ``JanusProPolicy.disable_adapter()``
+  * ``JanusProModel.disable_adapter()``
         Context manager that turns LoRA off so the same module can serve
-        as the reference policy (DPO-style ``disable_adapter`` trick).
+        as the reference model (DPO-style ``disable_adapter`` trick).
 
 Why a custom forward instead of stock ``forward()``?
 ====================================================
@@ -55,10 +55,8 @@ from vrl.models.families.janus_pro.r1_types import (
     JanusR1GenerationResult,
     JanusR1Segment,
 )
-from vrl.models.interfaces.ar_policy import (
-    ARStepResult,
-    AutoregressivePolicy,
-)
+from vrl.engine.ar.types import ARStepResult
+from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +72,15 @@ JANUS_R1_REGEN_PROMPT = (
     "<｜end▁of▁sentence｜>\nNext, I will draw a new image<begin_of_image>"  # noqa: RUF001
 )
 JANUS_R1_SEGMENTS = ("initial_image", "selfcheck_text", "final_image")
+
+
+def _trajectory_role_value(segment: Any, role: str) -> Any:
+    matches = [tensor.value for tensor in segment.tensors.values() if tensor.role == role]
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"trajectory segment {segment.name!r} requires exactly one {role!r} tensor",
+        )
+    return matches[0]
 
 
 @dataclass(slots=True)
@@ -161,7 +168,7 @@ def image_token_logits_from_hidden(
       ``[B, L_img, JANUS_IMAGE_VOCAB_SIZE]``.
     """
     # ``gen_head`` lives on the underlying mmgpt; PEFT wrapping preserves it.
-    # See JanusProPolicy._base for why we can't use hasattr(base_model) as the key.
+    # See JanusProModel._base for why we can't use hasattr(base_model) as the key.
     inner = getattr(mmgpt, "base_model", None)
     if inner is not None and hasattr(inner, "model") and inner.model is not mmgpt:
         base = inner.model
@@ -175,7 +182,7 @@ def image_token_logits_from_hidden(
 # ---------------------------------------------------------------------------
 
 
-class JanusProPolicy(nn.Module, AutoregressivePolicy):
+class JanusProModel(nn.Module):
     """Train-and-sample wrapper for Janus-Pro text-to-image generation.
 
     Keeps the LoRA-wrapped language model + frozen vq / vision / aligner
@@ -314,11 +321,11 @@ class JanusProPolicy(nn.Module, AutoregressivePolicy):
             if parameter.requires_grad
         }
         if not trainable_keys:
-            raise ValueError("JanusProPolicy has no trainable parameters to sync")
+            raise ValueError("JanusProModel has no trainable parameters to sync")
 
         filtered: dict[str, Any] = {}
         for key, value in state.items():
-            normalized_key = key.removeprefix("policy.")
+            normalized_key = key.removeprefix("model.").removeprefix("policy.")
             if normalized_key in trainable_keys:
                 filtered[normalized_key] = value
 
@@ -367,13 +374,7 @@ class JanusProPolicy(nn.Module, AutoregressivePolicy):
 
     @property
     def has_lora_adapter(self) -> bool:
-        """True iff this wrapper carries a real PEFT adapter we can disable.
-
-        Probes the *language-model* sub-module — that is where PEFT injects
-        ``disable_adapter``. The outer wrapper always exposes the method,
-        which is exactly the silent-failure trap callers should not fall
-        into.
-        """
+        """True iff this wrapper carries a real PEFT adapter we can disable."""
         lm = self.language_model
         return hasattr(lm, "disable_adapter") and callable(
             lm.disable_adapter
@@ -383,25 +384,12 @@ class JanusProPolicy(nn.Module, AutoregressivePolicy):
     def disable_adapter(self) -> Iterator[None]:
         """Temporarily disable the LoRA adapter — for reference forward.
 
-        Refuses-to-fail-silently contract:
-          If ``use_lora=False`` (or the language-model otherwise lacks a
-          PEFT adapter) we *raise*, never silently yield. The whole point
-          of ``disable_adapter`` is to give a different forward — yielding
-          a no-op produces ``ref == policy`` and KL ≡ 0, which the caller
-          cannot detect.
-
-        Callers without a LoRA adapter must pass an explicit ``ref_model``
-        wherever they were going to use this context manager.
+        Models without an attached adapter still satisfy the shared ReplayModel
+        contract by returning a no-op context manager.
         """
         if not self.has_lora_adapter:
-            raise RuntimeError(
-                "JanusProPolicy.disable_adapter() called but no PEFT adapter "
-                "is attached (use_lora=False or LoRA wrap was skipped). "
-                "A no-op yield would silently make ref_pred == policy_pred "
-                "and KL ≡ 0. Either construct with use_lora=True, or pass "
-                "a separate frozen ref_model to whatever needs the "
-                "reference forward."
-            )
+            yield
+            return
         with self.language_model.disable_adapter():
             yield
 
@@ -513,22 +501,35 @@ class JanusProPolicy(nn.Module, AutoregressivePolicy):
         self,
         batch: Any,
         timestep_idx: int = 0,
-    ) -> dict[str, Any]:
+        *,
+        request: ReplayRequest | None = None,
+    ) -> ReplayResult:
         """Single forward producing per-token logits over the image vocab.
 
         Train-time replay: read prompt ids, prompt masks, and sampled image
         tokens from ``batch.trajectory`` and recompute logits under the current
-        policy.
+        model.
 
         AR has no notion of "denoising step", so ``timestep_idx`` is ignored.
 
-        See ``vrl/models/interfaces/ar_policy.py::AutoregressivePolicy`` for the shared AR
-        replay protocol; see ``SPRINT_ar_support.md`` §5 for why Janus and
-        NextStep do not share a return-dict schema.
+        See ``vrl/models/interfaces/replay.py::ReplayModel`` for the shared
+        trainer replay protocol.
 
         Returns:
-          ``{"logits": Tensor[B, L_img, V_img], "image_token_ids": Tensor[B, L_img]}``.
+          ``ReplayResult`` with one or more segment payloads.
         """
+        if request is not None and request.segment_names:
+            segments = {
+                name: ReplaySegmentResult(
+                    segment=name,
+                    values=self.replay_r1_segment(
+                        self._r1_segment_payload_from_trajectory(batch, name),
+                    ),
+                )
+                for name in request.segment_names
+            }
+            return ReplayResult(segments=segments)
+
         from vrl.engine.trajectory import trajectory_replay_tensor_dict, trajectory_role_value
 
         replay = trajectory_replay_tensor_dict(batch, "image_tokens")
@@ -541,7 +542,39 @@ class JanusProPolicy(nn.Module, AutoregressivePolicy):
         logits = self.forward_image_logits(
             prompt_embeds, prompt_mask, image_token_ids,
         )  # [B, L_img, V_img]
-        return {"logits": logits, "image_token_ids": image_token_ids}
+        return ReplayResult(
+            segments={
+                "image_tokens": ReplaySegmentResult(
+                    segment="image_tokens",
+                    values={"logits": logits, "image_token_ids": image_token_ids},
+                ),
+            },
+        )
+
+    def _r1_segment_payload_from_trajectory(
+        self,
+        batch: Any,
+        segment_name: str,
+    ) -> dict[str, Any]:
+        trajectory = getattr(batch, "trajectory", None)
+        if trajectory is None or segment_name not in trajectory.segments:
+            raise RuntimeError(
+                f"Janus-Pro-R1 replay requires trajectory segment {segment_name!r}",
+            )
+        segment = trajectory.segments[segment_name]
+        payload: dict[str, Any] = {
+            "name": segment.name,
+            "token_ids": _trajectory_role_value(segment, "action"),
+            "visual": bool(segment.metadata.get("visual", segment.modality == "image")),
+            "modality": segment.modality,
+        }
+        for key in ("prompt_embeds", "attention_mask", "prompt_attention_mask"):
+            tensor = segment.tensors.get(key)
+            if tensor is not None:
+                payload[key] = tensor.value
+        if "attention_mask" not in payload and "prompt_attention_mask" in payload:
+            payload["attention_mask"] = payload["prompt_attention_mask"]
+        return payload
 
     def replay_r1_segment(self, segment: dict[str, Any]) -> dict[str, Any]:
         """Replay one Janus-Pro-R1 segment from packed rollout extras."""
@@ -598,7 +631,7 @@ class JanusProPolicy(nn.Module, AutoregressivePolicy):
 
         Returns:
           ``(image_token_ids, logprobs)`` — both shape ``[B, L_img]``.
-          ``logprobs`` is computed under the conditional policy distribution;
+          ``logprobs`` is computed under the conditional sampling distribution;
           CFG is used only to choose the sampled token.
         """
         cfg = cfg_weight if cfg_weight is not None else self.config.cfg_weight

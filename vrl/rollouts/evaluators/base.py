@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
+from vrl.models.interfaces import ReplayModel
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
 
@@ -15,16 +16,16 @@ class Evaluator(Protocol):
     Uses ``model.replay_forward`` for the train-time forward pass and
     extracts trajectory-native signals (log_prob, KL, masks, etc.).
 
-    Replay ownership lives on the policy. Evaluators must not route train-time
+    Replay ownership lives on the model. Evaluators must not route train-time
     replay through collectors.
     """
 
     def evaluate(
         self,
-        model: Any,
+        model: ReplayModel,
         batch: RolloutBatch,
         timestep_idx: int,
-        ref_model: Any | None = None,
+        ref_model: ReplayModel | None = None,
         signal_request: SignalRequest | None = None,
     ) -> TrajectorySignalBatch:
         """Run model.replay_forward() -> extract log_prob, KL, etc."""

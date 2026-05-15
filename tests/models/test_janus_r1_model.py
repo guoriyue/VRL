@@ -1,4 +1,4 @@
-"""Janus-Pro-R1 policy/executor contract tests with fake weights."""
+"""Janus-Pro-R1 model/executor contract tests with fake weights."""
 
 from __future__ import annotations
 
@@ -7,16 +7,19 @@ from types import SimpleNamespace
 import torch
 import torch.nn as nn
 
-from vrl.engine import GenerationIdFactory, GenerationRequest
-from vrl.models.families.janus_pro.policy import (
+from vrl.engine import GenerationIdFactory, GenerationRequest, GenerationSampleSpec
+from vrl.engine.trajectory import build_ar_multisegment_trajectory, build_training_view
+from vrl.models.families.janus_pro.model import (
     JanusProConfig,
-    JanusProPolicy,
+    JanusProModel,
 )
 from vrl.models.families.janus_pro.r1_types import (
     JanusR1GenerationResult,
     JanusR1Segment,
 )
 from vrl.models.families.janus_pro.runtime import JanusProR1PipelineExecutor
+from vrl.models.interfaces import ReplayRequest, ReplayResult
+from vrl.rollouts.batch import RolloutBatch
 
 HIDDEN = 16
 TEXT_VOCAB = 128
@@ -115,8 +118,8 @@ class _MMGPT(nn.Module):
         return self.gen_embed(ids.clamp_min(0) % IMAGE_VOCAB)
 
 
-def _policy() -> JanusProPolicy:
-    return JanusProPolicy(
+def _model() -> JanusProModel:
+    return JanusProModel(
         JanusProConfig(
             use_lora=False,
             device="cpu",
@@ -128,8 +131,92 @@ def _policy() -> JanusProPolicy:
     )
 
 
+def _sample_specs() -> list[GenerationSampleSpec]:
+    return [
+        GenerationSampleSpec(
+            prompt_index=0,
+            sample_index=index,
+            prompt="draw text",
+            prompt_id="p0",
+            group_id="g0",
+            sample_id=f"s{index}",
+            trajectory_id=f"t{index}",
+            seed=None,
+        )
+        for index in range(2)
+    ]
+
+
+def _segment_payload(
+    name: str,
+    token_ids: torch.Tensor,
+    *,
+    visual: bool,
+) -> dict[str, torch.Tensor | str | bool]:
+    batch = token_ids.shape[0]
+    prompt_len = 3
+    return {
+        "name": name,
+        "visual": visual,
+        "train": True,
+        "token_ids": token_ids,
+        "token_log_probs": torch.zeros_like(token_ids, dtype=torch.float32),
+        "token_mask": torch.ones_like(token_ids, dtype=torch.float32),
+        "prompt_embeds": torch.zeros(batch, prompt_len, HIDDEN),
+        "attention_mask": torch.ones(batch, prompt_len, dtype=torch.long),
+        "prompt_attention_mask": torch.ones(batch, prompt_len, dtype=torch.long),
+    }
+
+
+def _r1_rollout_batch() -> RolloutBatch:
+    final_ids = torch.tensor([[3, 4, 5], [4, 5, 6]])
+    selfcheck_ids = torch.tensor([[7, 8], [8, 9]])
+    initial_ids = torch.tensor([[1, 2], [2, 3]])
+    request = GenerationRequest(
+        request_id="r1",
+        family="janus_pro_r1",
+        task="ar_t2i_r1",
+        prompts=["draw text"],
+        samples_per_prompt=2,
+        return_artifacts={"output", "trajectory"},
+    )
+    trajectory = build_ar_multisegment_trajectory(
+        request=request,
+        sample_specs=_sample_specs(),
+        segments={
+            "initial_image": _segment_payload(
+                "initial_image",
+                initial_ids,
+                visual=True,
+            ),
+            "selfcheck_text": _segment_payload(
+                "selfcheck_text",
+                selfcheck_ids,
+                visual=False,
+            ),
+            "final_image": _segment_payload(
+                "final_image",
+                final_ids,
+                visual=True,
+            ),
+        },
+        decoded_outputs={"final_image": torch.ones(2, 3, 2, 2)},
+        primary_segment="final_image",
+        context={},
+    )
+    return RolloutBatch(
+        observations=torch.ones(2, 1, 3, dtype=torch.long),
+        actions=final_ids,
+        rewards=torch.zeros(2),
+        dones=torch.ones(2, dtype=torch.bool),
+        group_ids=torch.tensor([0, 0]),
+        trajectory=trajectory,
+        training_view=build_training_view(trajectory, primary_segment="final_image"),
+    )
+
+
 def test_generate_with_refine_returns_three_segments_and_selects_final_image() -> None:
-    policy = _policy()
+    model = _model()
     sample_calls: list[int] = []
 
     def sample_image_tokens(
@@ -188,13 +275,13 @@ def test_generate_with_refine_returns_three_segments_and_selects_final_image() -
         mask[:, 0] = 1.0
         return text, log_probs, mask, torch.tensor([True, False])
 
-    policy.sample_image_tokens = sample_image_tokens  # type: ignore[method-assign]
-    policy.decode_image_tokens = decode_image_tokens  # type: ignore[method-assign]
-    policy._sample_selfcheck_text = sample_selfcheck_text  # type: ignore[method-assign]
+    model.sample_image_tokens = sample_image_tokens  # type: ignore[method-assign]
+    model.decode_image_tokens = decode_image_tokens  # type: ignore[method-assign]
+    model._sample_selfcheck_text = sample_selfcheck_text  # type: ignore[method-assign]
 
     prompt_ids = torch.tensor([[5, 6, 0], [7, 8, 0]], dtype=torch.long)
     prompt_mask = torch.tensor([[1, 1, 0], [1, 1, 0]], dtype=torch.long)
-    out = policy.generate_with_refine(
+    out = model.generate_with_refine(
         prompt_ids,
         prompt_mask,
         cfg_weight=5.0,
@@ -215,7 +302,26 @@ def test_generate_with_refine_returns_three_segments_and_selects_final_image() -
     assert torch.equal(out.final_image[1], torch.full((3, 2, 2), 20.0))
 
 
-class _ExecutorPolicy:
+def test_r1_model_replay_forward_returns_requested_replay_segments() -> None:
+    model = _model()
+    batch = _r1_rollout_batch()
+
+    result = model.replay_forward(
+        batch,
+        request=ReplayRequest(segment_names=("selfcheck_text", "final_image")),
+    )
+
+    assert isinstance(result, ReplayResult)
+    assert set(result.segments) == {"selfcheck_text", "final_image"}
+    assert result.segments["selfcheck_text"].values["logits"].shape == (2, 2, TEXT_VOCAB)
+    assert result.segments["final_image"].values["logits"].shape == (2, 3, IMAGE_VOCAB)
+    assert torch.equal(
+        result.segments["final_image"].values["token_ids"],
+        batch.actions,
+    )
+
+
+class _ExecutorModel:
     processor = _Processor()
     device = torch.device("cpu")
     config = SimpleNamespace(r1_refine_mode="selfcheck")
@@ -277,7 +383,7 @@ class _ExecutorPolicy:
 
 
 def test_r1_executor_forward_emits_canonical_family_and_segment_schema() -> None:
-    executor = JanusProR1PipelineExecutor(_ExecutorPolicy())
+    executor = JanusProR1PipelineExecutor(_ExecutorModel())
     request = GenerationRequest(
         request_id="r1",
         family="janus_pro_r1",

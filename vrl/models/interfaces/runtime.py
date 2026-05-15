@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from vrl.models.interfaces.replay import RuntimeModel
+
 
 @dataclass
 class RuntimeBuildSpec:
@@ -41,8 +43,13 @@ class RuntimeBundle:
 
     ``backend_handle`` carries the raw backend object (e.g. diffusers pipeline
     or AR upstream wrapper) and must be treated as builder-internal — scripts
-    and trainers must not reach into it. Use ``policy`` as both the rollout
-    adapter and the trainer-facing model.
+    and trainers must not reach into it.
+
+    ``model`` is the family-provided general inference object. Shared trainer
+    runtime code only relies on the narrow ``vrl.models.interfaces.RuntimeModel``
+    contract: ``replay_forward``, ``disable_adapter``, and
+    ``load_trainable_state``.
+    Generation-only methods remain family/runtime implementation details.
 
     ``trainable_modules`` is the training-checkpoint contract. Every module
     registered here must expose PyTorch-compatible ``state_dict`` and
@@ -53,8 +60,8 @@ class RuntimeBundle:
     ``metadata`` may include generic replay/runtime flags used by shared
     trainer infrastructure:
 
-    - ``runtime_role``: e.g. ``"full_generation_policy"`` or
-      ``"minimal_replay_policy"``.
+    - ``runtime_role``: e.g. ``"full_generation_model"`` or
+      ``"minimal_replay_model"``.
     - ``loads_full_generation_modules``: true when the trainer bundle owns
       generation-only modules such as prompt encoders, VAE/VQ decoders, or a
       full pipeline object.
@@ -62,7 +69,7 @@ class RuntimeBundle:
       known to benefit from a family-specific replay-only loader.
     """
 
-    policy: Any
+    model: RuntimeModel
     trainable_modules: dict[str, Any]
     scheduler: Any
     backend_kind: str
@@ -70,3 +77,9 @@ class RuntimeBundle:
     ref_modules: dict[str, Any] | None = None
     runtime_caps: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def policy(self) -> RuntimeModel:
+        """Compatibility alias for older callers; new code should use ``model``."""
+
+        return self.model

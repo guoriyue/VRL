@@ -16,6 +16,7 @@ from vrl.distributed.resources import (
     resolve_distributed_resources,
     trainer_torch_device,
 )
+from vrl.models.interfaces import require_runtime_model
 from vrl.rollouts.runtime.backend import build_rollout_backend_from_cfg
 from vrl.rollouts.runtime.launch_inputs import build_rollout_runtime_inputs
 from vrl.scripts.common.factory import (
@@ -90,7 +91,10 @@ async def run_online_recipe(
     log_host_memory("after_bundle_build", log=logger)
     if definition.after_bundle_built is not None:
         definition.after_bundle_built(bundle, cfg)
-    policy = definition.policy_getter(bundle)
+    model = require_runtime_model(
+        definition.model_getter(bundle),
+        owner=f"{definition.family}.model_getter",
+    )
     scheduler = definition.scheduler_getter(bundle)
 
     components = build_online_recipe_components(
@@ -103,7 +107,7 @@ async def run_online_recipe(
     collector = build_collector_from_cfg(
         cfg,
         family=components.family_entry,
-        model=policy,
+        model=model,
         reward_fn=components.reward_fn,
         collector_config=components.collector_config,
         **(
@@ -138,7 +142,7 @@ async def run_online_recipe(
         algorithm=components.algorithm,
         collector=collector,
         evaluator=components.evaluator,
-        model=policy,
+        model=model,
         ref_model=ref_model,
         weight_syncer=build_runtime_weight_syncer(
             collector.runtime,
@@ -192,7 +196,7 @@ async def run_online_recipe(
         cfg=cfg,
         definition=definition,
         bundle=bundle,
-        policy=policy,
+        model=model,
         reward_fn=components.reward_fn,
         collector=collector,
         algorithm=components.algorithm,

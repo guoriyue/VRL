@@ -1,29 +1,25 @@
-"""SD 3.5 t2i diffusers adapter (DiffusionPolicy contract).
+"""Wan 2.1 t2v diffusers-backed model.
 
-Single-protocol adapter for Stable Diffusion 3.5-Medium image generation.
-The contract is:
+Diffusion implementation for Wan T2V on the RL path. The generation helper
+flow is:
 
     encode_prompt -> prepare_sampling -> forward_step xN -> decode_latents
 
-The collector (or default ``DiffusionPolicy.inference`` loop) owns the
-scheduler step / SDE step. ``forward_step`` does only one transformer
-forward (with optional batched CFG concat) and returns noise predictions.
+The collector owns the scheduler step / SDE step. ``forward_step`` does only
+one transformer forward (with optional batched CFG concat) and returns noise
+predictions.
 
-Per-family ``SD3SamplingState`` is private to this file — engine /
+Per-family ``WanT2VSamplingState`` is private to this file. The engine /
 collector code MUST NOT introspect it beyond the documented attributes
 (``latents``, ``timesteps``, ``scheduler``, plus the embeds the eval path
 re-builds explicitly).
 
-Timestep shape convention used by ``forward_step``:
-- During rollouts ``timesteps`` is a 1-D tensor ``[T]`` of scheduler
-  timesteps; ``state.timesteps[step_idx]`` is a scalar that we expand to
-  ``[B]`` for the transformer call.
-- During eval/training the collector pre-builds a ``SD3SamplingState``
-  whose ``timesteps`` is a ``[1, B]`` tensor (per-sample timestep at the
-  selected denoise step) and calls ``forward_step(state, 0, ...)``;
-  ``state.timesteps[0]`` is then ``[B]`` and ``forward_step``'s
-  ``t.expand(bsz)`` is a no-op (because the source already has shape
-  ``[B]`` — ``Tensor.expand`` accepts equal sizes).
+Differences from SD3:
+- ``prompt_embeds`` only (no pooled/CLIP); transformer signature lacks
+  ``pooled_projections``.
+- 5D latents ``[B, C, T, H, W]`` (Wan VAE temporal axis).
+- VAE decode applies Wan-specific per-channel ``latents_mean`` /
+  ``latents_std`` denormalization (over ``z_dim``).
 """
 
 from __future__ import annotations
@@ -35,29 +31,28 @@ from typing import Any
 
 import torch
 
-from vrl.models.interfaces.diffusion_policy import DiffusionPolicy, VideoGenerationRequest
+from vrl.engine.diffusion.request import VideoGenerationRequest
+from vrl.models.diffusion import DiffusionModelBase
 
 
 @dataclass
-class SD3SamplingState:
-    """Private SD3 sampling state. Engine MUST NOT introspect."""
+class WanT2VSamplingState:
+    """Private Wan T2V sampling state. Engine MUST NOT introspect."""
 
     latents: torch.Tensor
     timesteps: torch.Tensor
     scheduler: Any
     prompt_embeds: torch.Tensor
-    pooled_prompt_embeds: torch.Tensor
     negative_prompt_embeds: torch.Tensor | None
-    negative_pooled_prompt_embeds: torch.Tensor | None
     guidance_scale: float
     do_cfg: bool
     seed: int
 
 
-class SD3_5Policy(DiffusionPolicy):
-    """Diffusers-backed SD 3.5 t2i adapter."""
+class WanT2VDiffusersModel(DiffusionModelBase):
+    """Diffusers-backed Wan 2.1 T2V model (1.3B variant)."""
 
-    family = "sd3_5-diffusers-t2i"
+    family = "wan-diffusers-t2v"
 
     def __init__(self, *, pipeline: Any, device: Any = None) -> None:
         super().__init__()
@@ -83,44 +78,25 @@ class SD3_5Policy(DiffusionPolicy):
     # -- backend ownership (called by runtime, not by collectors) -------
 
     @classmethod
-    def from_spec(cls, spec: Any) -> SD3_5Policy:
-        """Load the diffusers SD3.5 pipeline + freeze non-trainable modules."""
-        from diffusers import StableDiffusion3Pipeline
+    def from_spec(cls, spec: Any) -> WanT2VDiffusersModel:
+        """Load the diffusers WanPipeline + freeze non-trainable modules."""
+        from diffusers import WanPipeline
 
-        model_dtype = _resolve_torch_dtype(spec.dtype)
-        extra = getattr(spec, "extra", {}) or {}
-        frozen_dtype = _resolve_torch_dtype(extra.get("frozen_dtype", model_dtype))
-        load_kwargs: dict[str, Any] = {}
-        if model_dtype == torch.float32 and frozen_dtype != torch.float32:
-            load_kwargs["torch_dtype"] = {
-                "transformer": torch.float32,
-                "vae": torch.float32,
-                "default": frozen_dtype,
-            }
-        elif model_dtype != torch.float32:
-            load_kwargs["torch_dtype"] = model_dtype
-        pipeline = StableDiffusion3Pipeline.from_pretrained(
-            spec.model_name_or_path,
-            **load_kwargs,
+        pipeline = WanPipeline.from_pretrained(
+            spec.model_name_or_path, torch_dtype=spec.dtype,
         )
         pipeline.vae.requires_grad_(False)
-        for enc in (
-            pipeline.text_encoder,
-            pipeline.text_encoder_2,
-            pipeline.text_encoder_3,
-        ):
-            if enc is not None:
-                enc.requires_grad_(False)
-                enc.to(spec.device, dtype=frozen_dtype)
+        pipeline.text_encoder.requires_grad_(False)
         pipeline.vae.to(spec.device, dtype=torch.float32)
+        pipeline.text_encoder.to(spec.device, dtype=spec.dtype)
         return cls(pipeline=pipeline, device=spec.device)
 
     def apply_lora(self, spec: Any) -> None:
-        """Wrap the SD3 transformer with PEFT LoRA per spec.lora_*."""
+        """Wrap the Wan transformer with PEFT LoRA per spec.lora_*."""
         from peft import LoraConfig, PeftModel, get_peft_model
 
         self.pipeline.transformer.requires_grad_(False)
-        self.pipeline.transformer.to(self.device, dtype=_resolve_torch_dtype(spec.dtype))
+        self.pipeline.transformer.to(self.device)
 
         if spec.lora_path:
             transformer = PeftModel.from_pretrained(
@@ -141,18 +117,15 @@ class SD3_5Policy(DiffusionPolicy):
             )
 
     def enable_full_finetune(self) -> None:
-        """Mark transformer fully trainable (no-LoRA path)."""
         self.pipeline.transformer.requires_grad_(True)
         self.pipeline.transformer.to(self.device)
 
     def torch_compile_transformer(self, mode: str) -> None:
-        """Apply torch.compile to the transformer in-place."""
         self._set_transformer(
             torch.compile(self.pipeline.transformer, mode=mode, fullgraph=False),
         )
 
     def set_num_steps(self, n: int) -> None:
-        """Initialize the scheduler timesteps for sampling."""
         self.pipeline.scheduler.set_timesteps(n, device=self.device)
 
     @property
@@ -175,47 +148,33 @@ class SD3_5Policy(DiffusionPolicy):
         negative_prompt: str | list[str] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Encode prompt via SD3's three text encoders (T5 + 2x CLIP).
+        """Encode prompt via Wan's T5 text encoder.
 
-        Returns prompt_embeds (joint T5+CLIP sequence), pooled_prompt_embeds
-        (CLIP pooled), and their negative counterparts when CFG is active.
+        Returns ``prompt_embeds`` and the matching ``negative_prompt_embeds``
+        when CFG is active. Wan does not use a pooled CLIP embedding.
         """
-        max_seq = kwargs.get("max_sequence_length", 128)
+        max_seq = kwargs.get("max_sequence_length", 512) or 512
         guidance_scale = kwargs.get("guidance_scale", 4.5)
         do_cfg = guidance_scale > 1.0
         neg = negative_prompt if negative_prompt is not None else ""
 
-        (
-            prompt_embeds,
-            negative_prompt_embeds,
-            pooled_prompt_embeds,
-            negative_pooled_prompt_embeds,
-        ) = self.pipeline.encode_prompt(
+        prompt_embeds, negative_prompt_embeds = self.pipeline.encode_prompt(
             prompt=prompt,
-            prompt_2=prompt,
-            prompt_3=prompt,
             negative_prompt=neg,
-            negative_prompt_2=neg,
-            negative_prompt_3=neg,
             do_classifier_free_guidance=do_cfg,
-            num_images_per_prompt=1,
+            num_videos_per_prompt=1,
             max_sequence_length=max_seq,
             device=self.device,
         )
 
         td = self.pipeline.transformer.dtype
         prompt_embeds = prompt_embeds.to(td)
-        pooled_prompt_embeds = pooled_prompt_embeds.to(td)
         if negative_prompt_embeds is not None:
             negative_prompt_embeds = negative_prompt_embeds.to(td)
-        if negative_pooled_prompt_embeds is not None:
-            negative_pooled_prompt_embeds = negative_pooled_prompt_embeds.to(td)
 
         return {
             "prompt_embeds": prompt_embeds,
-            "pooled_prompt_embeds": pooled_prompt_embeds,
             "negative_prompt_embeds": negative_prompt_embeds,
-            "negative_pooled_prompt_embeds": negative_pooled_prompt_embeds,
         }
 
     # -- prepare_sampling ----------------------------------------------
@@ -225,18 +184,22 @@ class SD3_5Policy(DiffusionPolicy):
         request: VideoGenerationRequest,
         encoded: dict[str, Any],
         **kwargs: Any,
-    ) -> SD3SamplingState:
-        """Build the per-request SamplingState for a denoise loop."""
+    ) -> WanT2VSamplingState:
+        """Build the per-request SamplingState for a Wan T2V denoise loop."""
         pipe = self.pipeline
         device = self.device
 
         prompt_embeds = encoded["prompt_embeds"]
-        pooled_prompt_embeds = encoded["pooled_prompt_embeds"]
         negative_prompt_embeds = encoded.get("negative_prompt_embeds")
-        negative_pooled_prompt_embeds = encoded.get("negative_pooled_prompt_embeds")
+
+        guidance_scale = request.guidance_scale
+        do_cfg = guidance_scale > 1.0
 
         pipe.scheduler.set_timesteps(request.num_steps, device=device)
         timesteps = pipe.scheduler.timesteps
+
+        num_channels_latents = pipe.transformer.config.in_channels
+        batch_size = prompt_embeds.shape[0]
 
         seed = (
             request.seed if request.seed is not None
@@ -245,31 +208,27 @@ class SD3_5Policy(DiffusionPolicy):
         generator = torch.Generator(device=device)
         generator.manual_seed(seed)
 
-        num_channels_latents = pipe.transformer.config.in_channels
-        batch_size = prompt_embeds.shape[0]
-        # SD3 prepare_latents: (batch, channels, height, width, dtype, device, generator, latents)
+        # Wan prepare_latents signature:
+        # (batch, channels, height, width, num_frames, dtype, device, generator, latents)
         latents = pipe.prepare_latents(
             batch_size,
             num_channels_latents,
             request.height,
             request.width,
+            request.frame_count,
             torch.float32,
             device,
             generator,
             None,
         )
 
-        do_cfg = request.guidance_scale > 1.0
-
-        return SD3SamplingState(
+        return WanT2VSamplingState(
             latents=latents,
             timesteps=timesteps,
             scheduler=pipe.scheduler,
             prompt_embeds=prompt_embeds,
-            pooled_prompt_embeds=pooled_prompt_embeds,
             negative_prompt_embeds=negative_prompt_embeds,
-            negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
-            guidance_scale=request.guidance_scale,
+            guidance_scale=guidance_scale,
             do_cfg=do_cfg,
             seed=seed,
         )
@@ -278,13 +237,17 @@ class SD3_5Policy(DiffusionPolicy):
 
     def forward_step(
         self,
-        state: SD3SamplingState,
+        state: WanT2VSamplingState,
         step_idx: int,
     ) -> dict[str, Any]:
-        """SD3 transformer forward + optional batched CFG.
+        """Wan T2V transformer forward + optional batched CFG.
 
         Returns noise_pred plus the un/conditional branches; the caller owns
         scheduler.step / SDE.
+
+        Timestep shape convention (mirrors SD3 model):
+        - rollouts: ``state.timesteps`` is 1-D ``[T]``; we expand a scalar to ``[B]``.
+        - eval/training: collector packs per-sample timestep as ``[B]``; expand is a no-op.
         """
         m = self.transformer
 
@@ -293,9 +256,6 @@ class SD3_5Policy(DiffusionPolicy):
         td = state.prompt_embeds.dtype
 
         latent_input = state.latents.to(td)
-        # SD3 timestep is broadcast across batch as the raw float (not /1000).
-        # If t is already shape [B] (eval path packs timesteps as [1, B]),
-        # Tensor.expand(bsz) is a no-op on the equal-sized dim.
         timestep_batch = t.expand(bsz) if t.ndim == 0 else t
 
         if state.do_cfg:
@@ -304,15 +264,10 @@ class SD3_5Policy(DiffusionPolicy):
             combined_embeds = torch.cat(
                 [state.negative_prompt_embeds, state.prompt_embeds], dim=0,
             )
-            combined_pooled = torch.cat(
-                [state.negative_pooled_prompt_embeds, state.pooled_prompt_embeds],
-                dim=0,
-            )
             combined_out = m(
                 hidden_states=combined_latents,
                 timestep=combined_t,
                 encoder_hidden_states=combined_embeds,
-                pooled_projections=combined_pooled,
                 return_dict=False,
             )[0]
             noise_pred_uncond, noise_pred_cond = combined_out.chunk(2, dim=0)
@@ -326,7 +281,6 @@ class SD3_5Policy(DiffusionPolicy):
                 hidden_states=latent_input,
                 timestep=timestep_batch,
                 encoder_hidden_states=state.prompt_embeds,
-                pooled_projections=state.pooled_prompt_embeds,
                 return_dict=False,
             )[0].to(td)
             noise_pred_uncond = torch.zeros_like(noise_pred_cond)
@@ -340,21 +294,19 @@ class SD3_5Policy(DiffusionPolicy):
 
     # -- collector boundary --------------------------------------------
 
-    def export_batch_context(self, state: SD3SamplingState) -> dict[str, Any]:
-        """Project SD3 sampling state into trajectory context."""
+    def export_batch_context(self, state: WanT2VSamplingState) -> dict[str, Any]:
+        """Project SamplingState -> RolloutBatch.context (shared metadata)."""
         return {
             "guidance_scale": state.guidance_scale,
             "cfg": state.do_cfg,
             "model_family": self.family,
         }
 
-    def export_replay_tensors(self, state: SD3SamplingState) -> dict[str, Any]:
-        """Project SD3 sampling state into trajectory replay tensors."""
+    def export_replay_tensors(self, state: WanT2VSamplingState) -> dict[str, Any]:
+        """Project SamplingState into trajectory replay tensors."""
         return {
             "prompt_embeds": state.prompt_embeds,
-            "pooled_prompt_embeds": state.pooled_prompt_embeds,
             "negative_prompt_embeds": state.negative_prompt_embeds,
-            "negative_pooled_prompt_embeds": state.negative_pooled_prompt_embeds,
         }
 
     def restore_eval_state(
@@ -363,25 +315,20 @@ class SD3_5Policy(DiffusionPolicy):
         batch_context: dict[str, Any],
         latents: Any,
         step_idx: int,
-    ) -> SD3SamplingState:
-        """Rebuild SD3SamplingState from a batch slice for the eval forward path.
-
-        Packs timesteps as ``[1, B]`` so ``state.timesteps[0]`` is ``[B]`` —
-        matches the eval-path convention documented in the class docstring.
-        """
+    ) -> WanT2VSamplingState:
+        """Rebuild SamplingState for the eval forward path from a batch slice."""
         ts = replay_tensors["timesteps"]
-        t = ts[:, step_idx] if ts.ndim > 1 else ts  # [B]
-        timesteps = t.unsqueeze(0) if t.ndim == 1 else t  # pack as [1, B]
-        return SD3SamplingState(
+        t = ts[:, step_idx] if ts.ndim > 1 else ts
+        # Pack as [1, B] so forward_step's state.timesteps[0] returns [B]
+        # (matches the rollout convention where timesteps is 1-D and indexed
+        # by step_idx; here we use step_idx=0 in the eval call).
+        timesteps = t.unsqueeze(0) if t.ndim == 1 else t
+        return WanT2VSamplingState(
             latents=latents,
             timesteps=timesteps,
-            scheduler=None,  # not needed for forward_step (no scheduler.step here)
+            scheduler=None,
             prompt_embeds=replay_tensors["prompt_embeds"],
-            pooled_prompt_embeds=replay_tensors["pooled_prompt_embeds"],
             negative_prompt_embeds=replay_tensors.get("negative_prompt_embeds"),
-            negative_pooled_prompt_embeds=replay_tensors.get(
-                "negative_pooled_prompt_embeds",
-            ),
             guidance_scale=batch_context["guidance_scale"],
             do_cfg=batch_context["cfg"] and batch_context["guidance_scale"] > 1.0,
             seed=0,
@@ -390,33 +337,29 @@ class SD3_5Policy(DiffusionPolicy):
     # -- decode_latents ------------------------------------------------
 
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
-        """Decode latents → image via SD3 VAE (4D, no T dim)."""
+        """Decode 5D latents -> video [B, C, T, H, W] via Wan VAE.
+
+        Applies Wan-specific per-channel denormalization using the VAE's
+        ``latents_mean`` / ``latents_std`` over the ``z_dim`` channel axis.
+        """
         pipe = self.pipeline
         x = latents.to(pipe.vae.dtype)
-        scaling_factor = pipe.vae.config.scaling_factor
-        shift_factor = getattr(pipe.vae.config, "shift_factor", 0.0) or 0.0
-        # SD3 VAE: latents = (z - shift) * scale → invert.
-        x = x / scaling_factor + shift_factor
-        image = pipe.vae.decode(x, return_dict=False)[0]
-        # postprocess to [0, 1] float tensor [B, C, H, W]
-        return pipe.image_processor.postprocess(image, output_type="pt")
 
+        latents_mean = (
+            torch.tensor(pipe.vae.config.latents_mean)
+            .view(1, pipe.vae.config.z_dim, 1, 1, 1)
+            .to(x.device, x.dtype)
+        )
+        latents_std = (
+            1.0 / torch.tensor(pipe.vae.config.latents_std)
+            .view(1, pipe.vae.config.z_dim, 1, 1, 1)
+            .to(x.device, x.dtype)
+        )
+        x = x / latents_std + latents_mean
 
-def _resolve_torch_dtype(value: Any) -> torch.dtype:
-    if isinstance(value, torch.dtype):
-        return value
-    key = str(value).removeprefix("torch.").lower()
-    aliases = {
-        "bf16": torch.bfloat16,
-        "bfloat16": torch.bfloat16,
-        "fp16": torch.float16,
-        "float16": torch.float16,
-        "half": torch.float16,
-        "fp32": torch.float32,
-        "float32": torch.float32,
-        "float": torch.float32,
-    }
-    try:
-        return aliases[key]
-    except KeyError as exc:
-        raise ValueError(f"unsupported torch dtype: {value!r}") from exc
+        video = pipe.vae.decode(x, return_dict=False)[0]
+        # video_processor.postprocess_video returns [B, T, C, H, W]
+        video = pipe.video_processor.postprocess_video(video, output_type="pt")
+        # -> [B, C, T, H, W]
+        video = video.permute(0, 2, 1, 3, 4)
+        return video

@@ -216,8 +216,8 @@ Diffusion policy 需要显式支持替换：
 
 AR family 需要先收窄 trainable contract：
 
-- Janus-Pro 当前是 `trainable_modules={"policy": policy}`，需要改成明确的 language model LoRA root。
-- NextStep-1 当前是 `trainable_modules={"policy": policy}`，需要改成 language model / image head 的明确 roots。
+- Janus-Pro 当前是 `trainable_modules={"model": model}`，后续还可以改成更明确的 language model LoRA root。
+- NextStep-1 当前是 `trainable_modules={"model": model}`，后续还可以改成 language model / image head 的明确 roots。
 
 第一阶段只要求 SD3 / Wan diffusers / Cosmos。Janus-Pro / NextStep-1 可以 fail-fast：
 
@@ -320,7 +320,7 @@ policy.load_trainable_state(state_ref)
 Diffusion families 当前要求 `transformer.*` prefix：
 
 ```python
-load_trainable_state only accepts policy keys prefixed with "transformer."
+load_trainable_state only accepts trainable keys prefixed with "transformer."
 ```
 
 因此 strategy 导出后要统一成 policy-facing key space，而不是 DDP/FSDP wrapper key space。
@@ -476,12 +476,12 @@ python -m pytest -q tests/config/test_load_all_experiments.py
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/trainers/fsdp.py`
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/trainers/data.py`
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/models/interfaces/runtime.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/models/interfaces/diffusion_policy.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/models/families/sd3_5/policy.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/models/families/wan_2_1/diffusers_policy.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/models/families/cosmos/policy.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/models/families/janus_pro/policy.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/models/families/nextstep_1/policy.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/models/diffusion/model_base.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/models/families/sd3_5/model.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/models/families/wan_2_1/model.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/models/families/cosmos/predict2/model.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/models/families/janus_pro/model.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/models/families/nextstep_1/model.py`
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/distributed/ray/train/group.py`
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/distributed/ray/rollout/worker.py`
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/distributed/ray/rollout/weight_sync.py`

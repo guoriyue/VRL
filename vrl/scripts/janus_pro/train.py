@@ -65,7 +65,7 @@ def _configure_trainer(cfg: DictConfig, trainer_config: Any) -> None:
 
 def _export_modules(bundle: Any, cfg: DictConfig) -> dict[str, Any] | None:
     if bool(cfg.model.use_lora):
-        return {LORA_WEIGHTS_NAME: bundle.policy.language_model}
+        return {LORA_WEIGHTS_NAME: bundle.model.language_model}
     return None
 
 

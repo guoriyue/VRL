@@ -1,7 +1,7 @@
-"""Cosmos Predict2 (Video2World) diffusers adapter — DiffusionPolicy contract.
+"""Cosmos Predict2 (Video2World) diffusers-backed model.
 
-Single-protocol adapter for the Cosmos Predict2 Video2World pipeline. The
-contract is:
+Diffusion implementation for the Cosmos Predict2 Video2World pipeline. The
+generation helper flow is:
 
     encode_prompt -> prepare_sampling -> forward_step xN -> decode_latents
 
@@ -24,7 +24,9 @@ from typing import Any
 
 import torch
 
-from vrl.models.interfaces.diffusion_policy import DiffusionPolicy, VideoGenerationRequest
+from vrl.engine.diffusion.request import VideoGenerationRequest
+from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
+from vrl.models.diffusion import DiffusionModelBase
 
 
 @dataclass
@@ -34,7 +36,7 @@ class CosmosPredict2SamplingState:
     Cosmos Predict2 Video2World needs the full conditioning bundle
     (``init_latents`` + cond/uncond masks + indicators + padding mask + fps)
     in the per-step transformer forward and in the SDE step. Keeping the
-    bundle local to the adapter avoids leaking these knobs into the engine
+    bundle local to the model avoids leaking these knobs into the engine
     contract.
     """
 
@@ -56,8 +58,8 @@ class CosmosPredict2SamplingState:
     sigma_conditioning: float = 0.0001
 
 
-class CosmosPredict2Policy(DiffusionPolicy):
-    """Diffusers-backed Cosmos Predict2 Video2World adapter (RL path).
+class CosmosPredict2Model(DiffusionModelBase):
+    """Diffusers-backed Cosmos Predict2 Video2World model (RL path).
 
     The pipeline is constructed by the family runtime
     (:func:`vrl.models.families.cosmos.predict2.runtime.build_cosmos_predict2_runtime_bundle`)
@@ -84,7 +86,7 @@ class CosmosPredict2Policy(DiffusionPolicy):
     # -- backend ownership (called by runtime, not by collectors) -------
 
     @classmethod
-    def from_spec(cls, spec: Any) -> CosmosPredict2Policy:
+    def from_spec(cls, spec: Any) -> CosmosPredict2Model:
         """Load Cosmos2VideoToWorldPipeline + freeze non-trainable modules.
 
         Patches the diffusers safety checker with a passthrough during load
@@ -448,7 +450,7 @@ class CosmosPredict2Policy(DiffusionPolicy):
         The cond/uncond/padding masks + indicators are shared across the
         batch (not per-sample), so they live in ``context`` rather than
         ``extras``. The scheduler is intentionally NOT packed — the eval
-        path reads ``self.pipeline.scheduler`` directly via this adapter
+        path reads ``self.pipeline.scheduler`` directly via this model
         so the collector never holds a reference to a private mutable
         object.
         """
@@ -492,7 +494,7 @@ class CosmosPredict2Policy(DiffusionPolicy):
         IMPORTANT: Cosmos's ``forward_step`` indexes BOTH
         ``state.timesteps[step_idx]`` AND ``state.scheduler.sigmas[step_idx]``
         for sigma scaling, so the eval path passes through the actual
-        ``step_idx`` (NOT 0 like sd3/wan). We hand back the adapter's
+        ``step_idx`` (NOT 0 like sd3/wan). We hand back the model's
         own scheduler + its full timesteps array so that indexing stays
         consistent with the rollout-time scheduler state.
         """
@@ -523,7 +525,9 @@ class CosmosPredict2Policy(DiffusionPolicy):
         self,
         batch: Any,
         timestep_idx: int,
-    ) -> dict[str, Any]:
+        *,
+        request: ReplayRequest | None = None,
+    ) -> ReplayResult:
         """Cosmos replay: forward with the real ``timestep_idx`` (NOT 0).
 
         Unlike sd3/wan which pack timesteps as ``[1, B]`` and call
@@ -532,6 +536,7 @@ class CosmosPredict2Policy(DiffusionPolicy):
         through the actual ``timestep_idx`` to keep sigma scaling consistent
         with the rollout-time scheduler state.
         """
+        del request
         from vrl.engine.trajectory import trajectory_replay_tensor_dict
 
         state = self.restore_eval_state(
@@ -540,7 +545,15 @@ class CosmosPredict2Policy(DiffusionPolicy):
             batch.observations[:, timestep_idx],
             timestep_idx,
         )
-        return self.forward_step(state, timestep_idx)
+        values = self.forward_step(state, timestep_idx)
+        return ReplayResult(
+            segments={
+                "denoise": ReplaySegmentResult(
+                    segment="denoise",
+                    values=dict(values),
+                ),
+            },
+        )
 
     # -- decode_latents ------------------------------------------------
 

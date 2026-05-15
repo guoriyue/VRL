@@ -1,42 +1,11 @@
-"""AutoregressivePolicy protocol for AR image-generation models.
-
-Janus-Pro and NextStep-1 explicitly inherit this Protocol while keeping
-family-specific replay math in their concrete policy classes
-(categorical for Janus, Gaussian/flow for NextStep). The Protocol captures
-only the minimum shared ownership: device, LoRA toggle, and the
-replay-forward call.
-
-The ``replay_forward`` return dict schema is intentionally NOT typed —
-Janus returns ``{"logits", "target_tokens"}``, NextStep returns
-``{"log_probs", "target_tokens"}``. Evaluators dispatch on dict keys.
-See ``SPRINT_ar_support.md`` §5 for the rationale on not unifying.
-"""
+"""AR per-row cache helpers."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from contextlib import AbstractContextManager
-from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 
 import torch
-
-
-@dataclass(slots=True)
-class ARStepResult:
-    """One scheduled AR token step.
-
-    ``sequence_ids`` and every tensor-like value must follow the same order as
-    the input active sequence list. ``replay_extras`` is reserved for per-step
-    tensors needed by training replay; for NextStep-1 it must include
-    ``saved_noise``.
-    """
-
-    sequence_ids: list[str]
-    positions: list[int]
-    token: Any
-    log_prob: Any
-    replay_extras: dict[str, Any] = field(default_factory=dict)
 
 
 def ar_split_rows(value: Any, batch_size: int) -> list[Any]:
@@ -54,7 +23,7 @@ def ar_split_rows(value: Any, batch_size: int) -> list[Any]:
         if value.shape[0] != batch_size:
             raise ValueError(
                 f"cannot split tensor with batch={value.shape[0]} into "
-                f"{batch_size} rows"
+                f"{batch_size} rows",
             )
         return [value[row : row + 1] for row in range(batch_size)]
     if isinstance(value, Mapping):
@@ -121,30 +90,4 @@ def _is_tensor(value: Any) -> bool:
     return isinstance(value, torch.Tensor)
 
 
-@runtime_checkable
-class AutoregressivePolicy(Protocol):
-    """Minimal AR policy protocol shared by Janus-Pro and NextStep-1."""
-
-    @property
-    def device(self) -> torch.device:
-        """Device the policy currently lives on."""
-        ...
-
-    def disable_adapter(self) -> AbstractContextManager[None]:
-        """Context manager that disables LoRA / adapter weights.
-
-        Used by evaluators to compute the reference-policy log-prob
-        (LoRA-off forward) without unloading weights.
-        """
-        ...
-
-    def replay_forward(self, batch: Any, timestep_idx: int = 0) -> dict[str, Any]:
-        """Recompute the training-time forward to produce logits / log-probs.
-
-        The return-dict schema is family-specific:
-          - Janus  → ``{"logits": Tensor[B, L, V], "target_tokens": Tensor[B, L]}``
-          - NextStep → ``{"log_probs": Tensor[B, L], "target_tokens": Tensor[B, L, D]}``
-
-        Evaluators dispatch on dict keys; do not unify the schema here.
-        """
-        ...
+__all__ = ["ar_concat_rows", "ar_split_rows"]

@@ -35,21 +35,21 @@ def _build_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
 
 
 def _after_bundle_built(bundle: Any, cfg: DictConfig) -> None:
-    transformer = bundle.policy.transformer
+    transformer = bundle.model.transformer
     if bool(cfg.actor.gradient_checkpointing):
         transformer.enable_gradient_checkpointing()
-    _offload_driver_frozen_modules(bundle.policy)
+    _offload_driver_frozen_modules(bundle.model)
 
 
 def _reference_model(bundle: Any, cfg: DictConfig) -> Any | None:
     init_kl_coef = float(getattr(cfg.algorithm, "init_kl_coef", 0.0))
     if bool(cfg.model.use_lora) and init_kl_coef > 0:
-        return bundle.policy
+        return bundle.model
     return None
 
 
 def _export_modules(bundle: Any, cfg: DictConfig) -> dict[str, Any] | None:
-    transformer = bundle.policy.transformer
+    transformer = bundle.model.transformer
     if bool(cfg.model.use_lora) and hasattr(transformer, "save_pretrained"):
         return {LORA_WEIGHTS_NAME: transformer}
     return None

@@ -10,6 +10,7 @@ from vrl.engine.diffusion.denoise import (
     select_sde_window,
 )
 from vrl.engine.diffusion.executor_base import DiffusionPipelineExecutorBase
+from vrl.engine.diffusion.request import VideoGenerationRequest
 from vrl.engine.diffusion.spec import (
     BaseDiffusionGenerationSpec,
     DiffusionGenerationSpec,
@@ -23,6 +24,7 @@ __all__ = [
     "DiffusionGenerationSpec",
     "DiffusionPipelineExecutorBase",
     "SDEDiffusionSpec",
+    "VideoGenerationRequest",
     "build_diffusion_output_batch",
     "peak_memory_mb",
     "repeat_tensor_batch",

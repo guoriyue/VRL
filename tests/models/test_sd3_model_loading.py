@@ -5,7 +5,7 @@ from typing import Any
 
 import torch
 
-from vrl.models.families.sd3_5.policy import SD3_5Policy
+from vrl.models.families.sd3_5.model import SD3_5Model
 
 
 class _FakeModule:
@@ -56,9 +56,9 @@ def test_sd3_fp32_runtime_loads_frozen_components_without_fp32_peak(monkeypatch)
         device="cuda:0",
     )
 
-    policy = SD3_5Policy.from_spec(spec)
+    model = SD3_5Model.from_spec(spec)
 
-    assert policy.pipeline is pipeline
+    assert model.pipeline is pipeline
     assert calls == [
         {
             "model_name_or_path": "stabilityai/stable-diffusion-3.5-medium",

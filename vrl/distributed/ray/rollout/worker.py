@@ -19,6 +19,7 @@ from vrl.engine.core.runtime_spec import GenerationRuntimeSpec
 from vrl.engine.core.types import GenerationRequest
 from vrl.engine.execution.gather import require_chunked_executor
 from vrl.engine.execution.microbatching import MicroBatchPlan
+from vrl.models.interfaces import require_runtime_model
 from vrl.trainers.types import TorchProfilerConfig
 
 logger = logging.getLogger(__name__)
@@ -76,18 +77,13 @@ class RayRolloutWorker:
         """Update rollout weights, then record the active policy version."""
 
         self.load_policy()
-        policy = getattr(self.executor, "model", None)
+        policy_obj = getattr(self.executor, "model", None)
         if state_ref is not None:
-            if policy is None:
-                raise RuntimeError(
-                    f"{type(self.executor).__name__} must expose model for weight sync",
-                )
-            apply_state = getattr(policy, "load_trainable_state", None)
-            if not callable(apply_state):
-                raise RuntimeError(
-                    f"{type(policy).__name__} must implement load_trainable_state()",
-                )
-            apply_state(state_ref)
+            model = require_runtime_model(
+                policy_obj,
+                owner=f"{type(self.executor).__name__}.model",
+            )
+            model.load_trainable_state(state_ref)
         self._policy_version = int(policy_version)
 
     def current_policy_version(self) -> int | None:
@@ -290,7 +286,8 @@ def _build_executor(runtime_spec: GenerationRuntimeSpec) -> ChunkedFamilyPipelin
             )
         ),
     )
-    built = executor_cls(bundle.policy, **dict(runtime_spec.executor_kwargs))
+    model = require_runtime_model(bundle.model, owner="RuntimeBundle.model")
+    built = executor_cls(model, **dict(runtime_spec.executor_kwargs))
     if getattr(bundle, "runtime_caps", None) is not None:
         built.runtime_caps = dict(bundle.runtime_caps)
     return require_chunked_executor(built)

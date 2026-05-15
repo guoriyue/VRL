@@ -111,7 +111,7 @@ def flow_sample_with_logprob(
     D = int(token_dim)
 
     # x_0 ~ N(0, I) — flow-matching prior is standard normal. This is the
-    # replay artifact saved by NextStepPolicy; when supplied explicitly, do
+    # replay artifact saved by NextStep1Model; when supplied explicitly, do
     # not sample another prior inside this helper.
     if initial_noise is None:
         x = torch.randn(B, D, device=device, dtype=dtype, generator=generator)

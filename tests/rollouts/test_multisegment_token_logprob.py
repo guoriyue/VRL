@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
+
 import torch
 
 from vrl.engine import GenerationRequest, GenerationSampleSpec
 from vrl.engine.trajectory import build_ar_multisegment_trajectory, build_training_view
+from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.ar.multi_segment_token_logprob import (
     MultiSegmentTokenLogProbEvaluator,
@@ -115,14 +118,45 @@ class _SegmentReplayModel:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
 
-    def replay_r1_segment(self, *, batch, segment_name, segment):
-        del batch
+    def replay_forward(
+        self,
+        batch,
+        timestep_idx: int = 0,
+        *,
+        request: ReplayRequest | None = None,
+    ) -> ReplayResult:
+        del batch, timestep_idx
+        names = request.segment_names if request is not None and request.segment_names else ()
+        segments = {}
+        for name in names:
+            trajectory_segment = self._segment_payload(name)
+            values = self.replay_r1_segment(segment_name=name, segment=trajectory_segment)
+            segments[name] = ReplaySegmentResult(segment=name, values=values)
+        return ReplayResult(segments=segments)
+
+    def disable_adapter(self):
+        return contextlib.nullcontext()
+
+    def load_trainable_state(self, state_dict):
+        del state_dict
+
+    def replay_r1_segment(self, *, segment_name, segment):
         modality = str(segment["modality"])
         self.calls.append((segment_name, modality))
         token_ids = segment["token_ids"]
         logits = torch.zeros(token_ids.shape[0], token_ids.shape[1], 20)
         logits.scatter_(-1, token_ids.unsqueeze(-1), 3.0)
-        return {"logits": logits}
+        return {"logits": logits, "token_ids": token_ids}
+
+    @staticmethod
+    def _segment_payload(name: str):
+        token_ids = {
+            "selfcheck_text": torch.tensor([[7, 8], [8, 9]]),
+            "final_image": torch.tensor([[3, 4, 5], [4, 5, 6]]),
+            "initial_image": torch.tensor([[1, 2], [2, 3]]),
+        }[name]
+        modality = "text" if name == "selfcheck_text" else "image"
+        return {"token_ids": token_ids, "modality": modality}
 
 
 def test_evaluator_can_replay_text_segment_without_using_image_path() -> None:

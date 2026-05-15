@@ -28,7 +28,7 @@ from vrl.engine.core.types import (
 )
 from vrl.engine.execution.microbatching import MicroBatchPlan
 from vrl.engine.trajectory import build_ar_continuous_trajectory
-from vrl.models.families.nextstep_1.policy import NextStep1Config, NextStep1Policy
+from vrl.models.families.nextstep_1.model import NextStep1Config, NextStep1Model
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 
 logger = logging.getLogger(__name__)
@@ -37,16 +37,16 @@ NEXTSTEP_1_FAMILY_CAPABILITY = ar_continuous_family_capability("nextstep_1", "ar
 
 
 def build_nextstep_1_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    """Build the NextStep-1 policy from a serializable runtime spec."""
+    """Build the NextStep-1 model from a serializable runtime spec."""
 
     config = _nextstep_1_config_from_runtime_spec(spec)
-    policy = NextStep1Policy(NextStep1Config(**config))
+    model = NextStep1Model(NextStep1Config(**config))
     return RuntimeBundle(
-        policy=policy,
-        trainable_modules={"policy": policy},
+        model=model,
+        trainable_modules={"model": model},
         scheduler=None,
         backend_kind="nextstep_1",
-        backend_handle=policy,
+        backend_handle=model,
         runtime_caps={
             "family_capability": NEXTSTEP_1_FAMILY_CAPABILITY.to_dict(),
             "supports_chunked_execution": True,
@@ -58,7 +58,7 @@ def build_nextstep_1_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
             "model_path": spec.model_name_or_path,
             "task_variant": spec.task_variant,
             "use_lora": spec.use_lora,
-            "runtime_role": "full_generation_policy",
+            "runtime_role": "full_generation_model",
             "loads_full_generation_modules": True,
             "requires_minimal_replay_loader": True,
         },
@@ -285,7 +285,7 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
 
     def __init__(
         self,
-        model: Any,  # NextStep1Policy
+        model: Any,  # NextStep1Model
     ) -> None:
         self.model = model
 
@@ -338,7 +338,7 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
         uncond_embeds = self._embed(uncond_ids)
 
         # Optional deterministic generator. ``sample_image_tokens`` accepts
-        # a ``generator`` kwarg (see NextStep1Policy.sample_image_tokens).
+        # a ``generator`` kwarg (see NextStep1Model.sample_image_tokens).
         generator: torch.Generator | None = None
         if spec.seed is not None:
             device = self.model.device

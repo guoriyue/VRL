@@ -12,7 +12,7 @@ from vrl.engine.diffusion import (
     repeat_tensor_batch,
 )
 from vrl.engine.execution.microbatching import MicroBatchPlan
-from vrl.models.interfaces.diffusion_policy import VideoGenerationRequest
+from vrl.engine.diffusion.request import VideoGenerationRequest
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 
 logger = logging.getLogger(__name__)
@@ -60,32 +60,32 @@ def extract_cosmos_predict25_runtime_spec(
 
 
 def build_cosmos_predict25_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    from vrl.models.families.cosmos.predict2_5.policy import CosmosPredict25Policy
+    from vrl.models.families.cosmos.predict2_5.model import CosmosPredict25Model
 
     logger.info(
         "Building cosmos-predict2.5 runtime bundle (backend=diffusers) from %s",
         spec.model_name_or_path,
     )
-    adapter = CosmosPredict25Policy.from_spec(spec)
+    model = CosmosPredict25Model.from_spec(spec)
     if spec.use_lora:
-        adapter.apply_lora(spec)
+        model.apply_lora(spec)
     else:
-        adapter.enable_full_finetune()
+        model.enable_full_finetune()
 
     compile_cfg = (spec.extra or {}).get("torch_compile") or {}
     if compile_cfg.get("enable"):
-        adapter.torch_compile_transformer(compile_cfg["mode"])
+        model.torch_compile_transformer(compile_cfg["mode"])
 
     num_steps = (spec.scheduler_config or {}).get("num_steps")
     if num_steps is not None:
-        adapter.set_num_steps(num_steps)
+        model.set_num_steps(num_steps)
 
     return RuntimeBundle(
-        policy=adapter,
-        trainable_modules=adapter.trainable_modules,
-        scheduler=adapter.scheduler,
+        model=model,
+        trainable_modules=model.trainable_modules,
+        scheduler=model.scheduler,
         backend_kind="diffusers",
-        backend_handle=adapter.backend_handle,
+        backend_handle=model.backend_handle,
         runtime_caps={
             "supports_stepwise": True,
             "supports_cfg": True,
@@ -99,7 +99,7 @@ def build_cosmos_predict25_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBund
             "use_lora": spec.use_lora,
             "model_revision": (spec.extra or {}).get("model_revision"),
             "skip_text_encoder": bool((spec.extra or {}).get("skip_text_encoder", False)),
-            "runtime_role": "full_generation_policy",
+            "runtime_role": "full_generation_model",
             "loads_full_generation_modules": True,
             "requires_minimal_replay_loader": True,
         },

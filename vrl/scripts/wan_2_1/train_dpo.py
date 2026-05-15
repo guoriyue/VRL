@@ -139,7 +139,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
 
     # 1. Runtime via family runtime (no diffusers import here)
     bundle = build_wan_2_1_runtime_bundle_from_cfg(cfg, device, weight_dtype)
-    wan_model = bundle.policy
+    wan_model = bundle.model
     pipeline = bundle.backend_handle
     transformer = wan_model.transformer
 

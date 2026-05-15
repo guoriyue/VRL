@@ -7,12 +7,15 @@ from types import SimpleNamespace
 import torch
 import torch.nn as nn
 
-from vrl.models.families.janus_pro.policy import (
+from vrl.engine import GenerationRequest, GenerationSampleSpec
+from vrl.engine.trajectory import build_ar_discrete_trajectory, build_training_view
+from vrl.models.families.janus_pro.model import (
     JANUS_IMAGE_VOCAB_SIZE,
     JanusProConfig,
-    JanusProPolicy,
+    JanusProModel,
 )
-from vrl.models.interfaces.ar_policy import AutoregressivePolicy
+from vrl.models.interfaces import ReplayResult
+from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.settings import RolloutSettings
 
@@ -73,13 +76,65 @@ class _StubMMGPT(nn.Module):
         return self.gen_embed(ids)
 
 
-def _build_stub_model(*, unfreeze_gen_head: bool = False) -> JanusProPolicy:
+def _build_stub_model(*, unfreeze_gen_head: bool = False) -> JanusProModel:
     cfg = JanusProConfig(use_lora=False)
-    model = JanusProPolicy(config=cfg, mmgpt=_StubMMGPT(), processor=object())
+    model = JanusProModel(config=cfg, mmgpt=_StubMMGPT(), processor=object())
     if unfreeze_gen_head:
         for p in model.mmgpt.gen_head.parameters():
             p.requires_grad_(True)
     return model
+
+
+def _request() -> GenerationRequest:
+    return GenerationRequest(
+        request_id="req",
+        family="janus_pro",
+        task="ar_t2i",
+        prompts=["draw text"],
+        samples_per_prompt=2,
+    )
+
+
+def _sample_specs() -> list[GenerationSampleSpec]:
+    request = _request()
+    return [
+        GenerationSampleSpec(
+            prompt_index=0,
+            sample_index=index,
+            prompt=request.prompts[0],
+            prompt_id="p0",
+            group_id="g0",
+            sample_id=f"s{index}",
+            trajectory_id=f"t{index}",
+            seed=None,
+        )
+        for index in range(2)
+    ]
+
+
+def _discrete_batch() -> RolloutBatch:
+    token_ids = torch.tensor([[1, 2], [2, 3]])
+    trajectory = build_ar_discrete_trajectory(
+        request=_request(),
+        sample_specs=_sample_specs(),
+        token_ids=token_ids,
+        token_log_probs=torch.zeros_like(token_ids, dtype=torch.float32),
+        token_mask=torch.ones_like(token_ids, dtype=torch.float32),
+        prompt_input_ids=torch.ones(2, 3, dtype=torch.long),
+        prompt_attention_mask=torch.ones(2, 3, dtype=torch.long),
+        uncond_input_ids=torch.zeros(2, 3, dtype=torch.long),
+        uncond_attention_mask=torch.ones(2, 3, dtype=torch.long),
+        context={"model_family": "janus_pro"},
+    )
+    return RolloutBatch(
+        observations=torch.ones(2, 1, 3, dtype=torch.long),
+        actions=token_ids,
+        rewards=torch.zeros(2),
+        dones=torch.ones(2, dtype=torch.bool),
+        group_ids=torch.tensor([0, 0]),
+        trajectory=trajectory,
+        training_view=build_training_view(trajectory),
+    )
 
 
 def test_janus_collector_has_no_forward_step() -> None:
@@ -108,7 +163,30 @@ def test_janus_collector_has_no_forward_step() -> None:
     assert not hasattr(collector, "forward_step")
 
 
-def test_janus_policy_inherits_ar_protocol() -> None:
+def test_janus_model_exposes_trainer_replay_methods() -> None:
     model = _build_stub_model()
-    assert AutoregressivePolicy in type(model).__mro__
-    assert isinstance(model, AutoregressivePolicy)
+    assert callable(model.replay_forward)
+    assert callable(model.disable_adapter)
+    assert callable(model.load_trainable_state)
+
+
+def test_janus_model_replay_forward_returns_typed_replay_result() -> None:
+    model = _build_stub_model()
+    batch = _discrete_batch()
+
+    result = model.replay_forward(batch)
+
+    assert isinstance(result, ReplayResult)
+    segment = result.segments["image_tokens"]
+    assert segment.segment == "image_tokens"
+    assert set(segment.values) == {"logits", "image_token_ids"}
+    assert segment.values["logits"].shape == (2, 2, JANUS_IMAGE_VOCAB_SIZE)
+    assert torch.equal(segment.values["image_token_ids"], batch.actions)
+
+
+def test_janus_disable_adapter_without_lora_is_noop() -> None:
+    model = _build_stub_model()
+
+    assert model.has_lora_adapter is False
+    with model.disable_adapter():
+        assert model.has_lora_adapter is False

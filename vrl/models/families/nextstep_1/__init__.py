@@ -15,9 +15,9 @@ log-probabilities (continuous tokens, no codebook).
 
 from __future__ import annotations
 
-from vrl.models.families.nextstep_1.policy import (
+from vrl.models.families.nextstep_1.model import (
     NextStep1Config,
-    NextStep1Policy,
+    NextStep1Model,
 )
 from vrl.models.families.nextstep_1.runtime import (
     NextStep1ChunkGatherer,
@@ -30,7 +30,7 @@ __all__ = [
     "NextStep1ChunkGatherer",
     "NextStep1Config",
     "NextStep1PipelineExecutor",
-    "NextStep1Policy",
+    "NextStep1Model",
     "build_nextstep_1_runtime_bundle",
     "extract_nextstep_1_runtime_spec",
 ]

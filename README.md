@@ -142,3 +142,15 @@ Specific run notes and curated qualitative results live under
 keep raw checkpoints and full generated artifacts under `outputs/`.
 
 - `docs/training_examples/sd3_5_ocr_grpo/`: SD3.5 OCR GRPO qualitative result.
+
+
+
+  1. Executor 调用 family model 的 generation 能力，生成图片/视频/token
+  2. TrajectoryBatch 记录 rollout 过程
+  3. Reward 给分
+  4. Evaluator 调用 family model 的 replay_forward，重看旧 trajectory
+  5. ReplayResult 给出当前模型 replay 的 raw output
+  6. Evaluator 用 ReplayResult + old_log_prob/mask/ref 得到 SegmentSignal
+  7. TrajectorySignalBatch 交给 Algorithm
+  8. Algorithm 算 loss
+  9. Trainer 更新模型

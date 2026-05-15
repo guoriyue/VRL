@@ -1,6 +1,6 @@
 """NextStep-1 wrapper for autoregressive image RL with continuous tokens.
 
-Mirrors ``vrl.models.families.janus_pro.JanusProPolicy`` but for StepFun's
+Mirrors ``vrl.models.families.janus_pro.JanusProModel`` but for StepFun's
 continuous-token AR model. The shape contract is:
 
   * ``sample_image_tokens(...)`` →
@@ -9,7 +9,7 @@ continuous-token AR model. The shape contract is:
          old_logprobs       [B, L])            # Gaussian per-token log-prob
 
   * ``recompute_logprobs(...)`` →
-        fresh_logprobs       [B, L]            # under current policy
+        fresh_logprobs       [B, L]            # under current model
 
   * ``decode_image_tokens(...)`` → pixels [B, 3, H, W]
 
@@ -49,12 +49,9 @@ from vrl.models.families.nextstep_1.flow_step import (
     flow_logprob_at,
     flow_sample_with_logprob,
 )
-from vrl.models.interfaces.ar_policy import (
-    ARStepResult,
-    AutoregressivePolicy,
-    ar_concat_rows,
-    ar_split_rows,
-)
+from vrl.engine.ar.cache import ar_concat_rows, ar_split_rows
+from vrl.engine.ar.types import ARStepResult
+from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +131,7 @@ class NextStep1ARState:
 # ---------------------------------------------------------------------------
 
 
-class NextStep1Policy(nn.Module, AutoregressivePolicy):
+class NextStep1Model(nn.Module):
     """Continuous-token AR T2I wrapper for the GRPO trainer.
 
     Composes:
@@ -520,7 +517,7 @@ class NextStep1Policy(nn.Module, AutoregressivePolicy):
         num_flow_steps: int | None = None,
         noise_level: float | None = None,
     ) -> torch.Tensor:
-        """Re-compute fresh per-token log-probs under the current policy.
+        """Re-compute fresh per-token log-probs under the current model.
 
         Returns ``[B, L_img]`` log-probs with grad through ``image_head``
         and (if LoRA is attached) through the LLM as well.
@@ -565,19 +562,21 @@ class NextStep1Policy(nn.Module, AutoregressivePolicy):
         return out
 
     # ------------------------------------------------------------------
-    # Replay forward — AutoregressivePolicy contract
+    # Replay forward — ReplayModel contract
     # ------------------------------------------------------------------
 
     def replay_forward(
         self,
         batch: Any,
         timestep_idx: int = 0,
-    ) -> dict[str, Any]:
+        *,
+        request: ReplayRequest | None = None,
+    ) -> ReplayResult:
         """Re-run the AR loop and return per-token log-probs.
 
         Train-time replay for ``ContinuousTokenLogProbEvaluator``: reads prompt
         ids, CFG inputs, sampled continuous tokens, and saved noise from
-        ``batch.trajectory``; returns log-probs under the current policy.
+        ``batch.trajectory``; returns log-probs under the current model.
 
         Differs from Janus's ``replay_forward`` (which returns logits) — for
         continuous tokens we go straight to log-probs since there is no
@@ -586,9 +585,9 @@ class NextStep1Policy(nn.Module, AutoregressivePolicy):
         AR has no notion of "denoising step", so ``timestep_idx`` is ignored.
 
         Returns:
-          ``{"log_probs": Tensor[B, L_img], "tokens": Tensor[B, L_img, D_token]}``.
+          ``ReplayResult`` with ``log_probs`` and ``tokens`` for ``image_tokens``.
         """
-        del timestep_idx
+        del request, timestep_idx
         from vrl.engine.trajectory import trajectory_replay_tensor_dict, trajectory_role_value
 
         replay = trajectory_replay_tensor_dict(batch, "image_tokens")
@@ -610,7 +609,14 @@ class NextStep1Policy(nn.Module, AutoregressivePolicy):
             num_flow_steps=batch.context.get("num_flow_steps"),
             noise_level=batch.context.get("noise_level"),
         )
-        return {"log_probs": log_probs, "tokens": tokens}
+        return ReplayResult(
+            segments={
+                "image_tokens": ReplaySegmentResult(
+                    segment="image_tokens",
+                    values={"log_probs": log_probs, "tokens": tokens},
+                ),
+            },
+        )
 
     # ------------------------------------------------------------------
     # Public: decode tokens → pixels
@@ -638,17 +644,15 @@ class NextStep1Policy(nn.Module, AutoregressivePolicy):
         return pixels.to(torch.float32)
 
     # ------------------------------------------------------------------
-    # Public: ref-policy hook
+    # Public: reference-model hook
     # ------------------------------------------------------------------
 
     @contextlib.contextmanager
     def disable_adapter(self) -> Iterator[None]:
-        """Run a forward pass with LoRA disabled (= reference policy)."""
+        """Run a forward pass with LoRA disabled (= reference model)."""
         if not hasattr(self.language_model, "disable_adapter"):
-            raise RuntimeError(
-                "NextStep1Policy.disable_adapter() called but no PEFT adapter "
-                "is attached. Pass an explicit ref_model instead.",
-            )
+            yield
+            return
         with self.language_model.disable_adapter():
             yield
 

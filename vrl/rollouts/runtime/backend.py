@@ -143,7 +143,9 @@ def _driver_cuda_devices(
 ) -> set[int]:
     policy = driver_policy
     if policy is None and driver_bundle is not None:
-        policy = getattr(driver_bundle, "policy", None)
+        policy = getattr(driver_bundle, "model", None)
+        if policy is None:
+            policy = getattr(driver_bundle, "policy", None)
 
     has_policy_device, device = _get_device(policy)
     if has_policy_device:

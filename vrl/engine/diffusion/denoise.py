@@ -74,7 +74,7 @@ def repeat_tensor_batch(value: Any, count: int) -> Any:
 
 def run_diffusion_denoise_chunk(
     *,
-    policy: Any,
+    model: Any,
     request: Any,
     encoded: dict[str, Any],
     config: DiffusionDenoiseConfig,
@@ -85,7 +85,7 @@ def run_diffusion_denoise_chunk(
     from vrl.trainers.profiling import record_function
 
     with record_function("engine.cache_write"):
-        state = policy.prepare_sampling(request, encoded, **(prepare_kwargs or {}))
+        state = model.prepare_sampling(request, encoded, **(prepare_kwargs or {}))
     chunk_batch = state.latents.shape[0]
     device = state.latents.device
     generator = _build_generator(
@@ -113,8 +113,8 @@ def run_diffusion_denoise_chunk(
                 latents_ori = state.latents.clone()
                 timestep = state.timesteps[step_idx]
                 with record_function("engine.cache_read"):
-                    fwd = policy.forward_step(state, step_idx)
-                noise_pred = fwd["noise_pred"]
+                    step_output = model.forward_step(state, step_idx)
+                noise_pred = step_output["noise_pred"]
 
                 in_sde_window = config.sde_window is None or (
                     config.sde_window[0] <= step_idx < config.sde_window[1]
@@ -152,7 +152,7 @@ def run_diffusion_denoise_chunk(
     )
     kl = torch.stack(kl_steps, dim=1)
     with record_function("engine.vq_decode"):
-        video = policy.decode_latents(state.latents)
+        video = model.decode_latents(state.latents)
 
     return DiffusionChunkResult(
         observations=observations,
@@ -161,8 +161,8 @@ def run_diffusion_denoise_chunk(
         timesteps=timesteps,
         kl=kl,
         video=video,
-        replay_tensors=policy.export_replay_tensors(state),
-        context=policy.export_batch_context(state),
+        replay_tensors=model.export_replay_tensors(state),
+        context=model.export_batch_context(state),
     )
 
 

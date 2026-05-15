@@ -1,5 +1,6 @@
 """Autoregressive generation helpers."""
 
+from vrl.engine.ar.cache import ar_concat_rows, ar_split_rows
 from vrl.engine.ar.executor_base import (
     ARChunkResult,
     ARPipelineExecutorBase,
@@ -16,7 +17,7 @@ from vrl.engine.ar.executor_base import (
 from vrl.engine.ar.sequence import ActiveSequence, ARSequenceKey
 from vrl.engine.ar.spec import ARGenerationSpec
 from vrl.engine.ar.token_scheduler import ARTokenBatch, ARTokenScheduler
-from vrl.models.interfaces.ar_policy import ARStepResult
+from vrl.engine.ar.types import ARStepResult
 
 __all__ = [
     "ARChunkResult",
@@ -28,6 +29,8 @@ __all__ = [
     "ARTokenScheduler",
     "ActiveSequence",
     "align_pair",
+    "ar_concat_rows",
+    "ar_split_rows",
     "chunk_seed_offset",
     "expand_prompt_major_prompts",
     "max_peak_memory_mb",

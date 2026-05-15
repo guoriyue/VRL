@@ -23,7 +23,7 @@ def test_format_host_memory_omits_unknown_fields() -> None:
 def test_colocated_full_generation_bundle_can_fail_strict_guard() -> None:
     bundle = SimpleNamespace(
         metadata={
-            "runtime_role": "full_generation_policy",
+            "runtime_role": "full_generation_model",
             "loads_full_generation_modules": True,
         },
     )

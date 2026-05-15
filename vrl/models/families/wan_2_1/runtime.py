@@ -1,9 +1,8 @@
 """Wan 2.1 family runtime.
 
-The runtime picks the adapter class by ``spec.backend_preference``,
-let the adapter load itself + apply LoRA, then assemble the bundle. No
-backend imports live here — diffusers / wan-library imports stay inside
-each adapter's ``from_spec``.
+The runtime picks the backend model class by ``spec.backend_preference``.
+Backend imports live inside the model's ``from_spec`` so the shared runtime
+does not import diffusers or wan-library backends eagerly.
 """
 
 from __future__ import annotations
@@ -18,25 +17,25 @@ from vrl.engine.diffusion import (
     repeat_tensor_batch,
 )
 from vrl.engine.execution.microbatching import MicroBatchPlan
-from vrl.models.interfaces.diffusion_policy import VideoGenerationRequest
+from vrl.engine.diffusion.request import VideoGenerationRequest
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 
 logger = logging.getLogger(__name__)
 
-_ADAPTER_BY_BACKEND: dict[str, str] = {
-    "diffusers": "vrl.models.families.wan_2_1.diffusers_policy:WanT2VDiffusersPolicy",
+_MODEL_BY_BACKEND: dict[str, str] = {
+    "diffusers": "vrl.models.families.wan_2_1.model:WanT2VDiffusersModel",
 }
 
 
-def _resolve_adapter_cls(backend: str) -> type:
+def _resolve_model_cls(backend: str) -> type:
     import importlib
 
-    if backend not in _ADAPTER_BY_BACKEND:
+    if backend not in _MODEL_BY_BACKEND:
         raise NotImplementedError(
-            f"wan_2_1 has no adapter for backend={backend!r}; "
-            f"registered: {sorted(_ADAPTER_BY_BACKEND)}",
+            f"wan_2_1 has no model for backend={backend!r}; "
+            f"registered: {sorted(_MODEL_BY_BACKEND)}",
         )
-    spec = _ADAPTER_BY_BACKEND[backend]
+    spec = _MODEL_BY_BACKEND[backend]
     mod_path, cls_name = spec.rsplit(":", 1)
     return getattr(importlib.import_module(mod_path), cls_name)
 
@@ -75,39 +74,39 @@ def extract_wan_2_1_runtime_spec(cfg: Any, device: Any, weight_dtype: Any) -> Ru
 
 
 def build_wan_2_1_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    """Generic build: dispatch adapter by backend, let it own its load."""
+    """Generic build: dispatch the backend model by runtime spec."""
     backend = spec.backend_preference[0]
-    adapter_cls = _resolve_adapter_cls(backend)
+    model_cls = _resolve_model_cls(backend)
 
     logger.info("Building wan_2_1 runtime bundle (backend=%s)", backend)
-    adapter = adapter_cls.from_spec(spec)
+    model = model_cls.from_spec(spec)
 
     if spec.use_lora:
-        adapter.apply_lora(spec)
+        model.apply_lora(spec)
         if spec.lora_config:
             logger.info(
                 "Applied LoRA (rank=%d, alpha=%d)",
                 spec.lora_config["rank"], spec.lora_config["alpha"],
             )
     else:
-        adapter.enable_full_finetune()
+        model.enable_full_finetune()
 
     compile_cfg = (spec.extra or {}).get("torch_compile") or {}
     if compile_cfg.get("enable"):
         logger.info("Compiling transformer with mode=%s", compile_cfg["mode"])
-        adapter.torch_compile_transformer(compile_cfg["mode"])
+        model.torch_compile_transformer(compile_cfg["mode"])
 
     num_steps = (spec.scheduler_config or {}).get("num_steps")
     if num_steps is not None:
-        adapter.set_num_steps(num_steps)
+        model.set_num_steps(num_steps)
     # If None, caller (e.g. DPO trainer) will set scheduler timesteps itself.
 
     return RuntimeBundle(
-        policy=adapter,
-        trainable_modules=adapter.trainable_modules,
-        scheduler=adapter.scheduler,
+        model=model,
+        trainable_modules=model.trainable_modules,
+        scheduler=model.scheduler,
         backend_kind=backend,
-        backend_handle=adapter.backend_handle,
+        backend_handle=model.backend_handle,
         runtime_caps={
             "supports_stepwise": True,
             "supports_cfg": True,
@@ -119,7 +118,7 @@ def build_wan_2_1_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
             "task_variant": spec.task_variant,
             "dtype": str(spec.dtype),
             "use_lora": spec.use_lora,
-            "runtime_role": "full_generation_policy",
+            "runtime_role": "full_generation_model",
             "loads_full_generation_modules": True,
             "requires_minimal_replay_loader": True,
         },
@@ -146,7 +145,7 @@ class Wan_2_1PipelineExecutor(DiffusionPipelineExecutorBase):
 
     def __init__(
         self,
-        model: Any,  # Wan_2_1Policy
+        model: Any,
         *,
         sample_batch_size: int = 1,
     ) -> None:

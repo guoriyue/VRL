@@ -11,10 +11,10 @@
 哪些 module 只属于 rollout / reward / decode，不应该出现在 trainer 进程？
 ```
 
-它接在 `SPRINT_sd3_trainer_memory_root_fix.md` 后面做。前一个 sprint 已经准备 shared infra：
+它接在前面的 trainer memory root-fix 工作后面做。前一轮已经准备 shared infra：
 
 ```text
-ReplayPolicy protocol
+Policy contract
 RuntimeBundle metadata
 trainable-only weight sync
 host memory guard
@@ -71,7 +71,7 @@ full upstream generation wrapper
 当前 full policy：
 
 ```text
-vrl/models/families/sd3_5/policy.py
+vrl/models/families/sd3_5/model.py
 vrl/models/families/sd3_5/runtime.py
 ```
 
@@ -112,9 +112,9 @@ mask
 候选新增文件：
 
 ```text
-vrl/models/families/sd3_5/replay_policy.py
+vrl/models/families/sd3_5/replay_model.py
 vrl/models/families/sd3_5/replay_runtime.py
-tests/models/test_sd3_5_replay_policy.py
+tests/models/test_sd3_5_replay_model.py
 ```
 
 风险点：
@@ -128,7 +128,7 @@ tests/models/test_sd3_5_replay_policy.py
 当前 full policy：
 
 ```text
-vrl/models/families/wan_2_1/diffusers_policy.py
+vrl/models/families/wan_2_1/model.py
 vrl/models/families/wan_2_1/runtime.py
 ```
 
@@ -163,9 +163,9 @@ full WanPipeline
 候选新增文件：
 
 ```text
-vrl/models/families/wan_2_1/replay_policy.py
+vrl/models/families/wan_2_1/replay_model.py
 vrl/models/families/wan_2_1/replay_runtime.py
-tests/models/test_wan_2_1_replay_policy.py
+tests/models/test_wan_2_1_replay_model.py
 ```
 
 风险点：
@@ -178,7 +178,7 @@ tests/models/test_wan_2_1_replay_policy.py
 当前 full policy：
 
 ```text
-vrl/models/families/cosmos/predict2/policy.py
+vrl/models/families/cosmos/predict2/model.py
 vrl/models/families/cosmos/predict2/runtime.py
 ```
 
@@ -217,9 +217,9 @@ full pipeline object
 候选新增文件：
 
 ```text
-vrl/models/families/cosmos/predict2/replay_policy.py
+vrl/models/families/cosmos/predict2/replay_model.py
 vrl/models/families/cosmos/predict2/replay_runtime.py
-tests/models/test_cosmos_predict2_replay_policy.py
+tests/models/test_cosmos_predict2_replay_model.py
 ```
 
 风险点：
@@ -232,7 +232,7 @@ tests/models/test_cosmos_predict2_replay_policy.py
 当前 full policy：
 
 ```text
-vrl/models/families/cosmos/predict2_5/policy.py
+vrl/models/families/cosmos/predict2_5/model.py
 vrl/models/families/cosmos/predict2_5/runtime.py
 ```
 
@@ -257,9 +257,9 @@ full pipeline object
 候选新增文件：
 
 ```text
-vrl/models/families/cosmos/predict2_5/replay_policy.py
+vrl/models/families/cosmos/predict2_5/replay_model.py
 vrl/models/families/cosmos/predict2_5/replay_runtime.py
-tests/models/test_cosmos_predict25_replay_policy.py
+tests/models/test_cosmos_predict25_replay_model.py
 ```
 
 风险点：
@@ -272,7 +272,7 @@ tests/models/test_cosmos_predict25_replay_policy.py
 当前 full policy：
 
 ```text
-vrl/models/families/janus_pro/policy.py
+vrl/models/families/janus_pro/model.py
 vrl/models/families/janus_pro/runtime.py
 ```
 
@@ -310,9 +310,9 @@ understanding vision encoder, unless replay explicitly needs image-reference enc
 候选新增文件：
 
 ```text
-vrl/models/families/janus_pro/replay_policy.py
+vrl/models/families/janus_pro/replay_model.py
 vrl/models/families/janus_pro/replay_runtime.py
-tests/models/test_janus_pro_replay_policy.py
+tests/models/test_janus_pro_replay_model.py
 ```
 
 风险点：
@@ -356,7 +356,7 @@ rollout-only sampling state
 当前 full policy：
 
 ```text
-vrl/models/families/nextstep_1/policy.py
+vrl/models/families/nextstep_1/model.py
 vrl/models/families/nextstep_1/runtime.py
 ```
 
@@ -394,9 +394,9 @@ full upstream pipeline wrapper
 候选新增文件：
 
 ```text
-vrl/models/families/nextstep_1/replay_policy.py
+vrl/models/families/nextstep_1/replay_model.py
 vrl/models/families/nextstep_1/replay_runtime.py
-tests/models/test_nextstep_1_replay_policy.py
+tests/models/test_nextstep_1_replay_model.py
 ```
 
 风险点：
@@ -430,19 +430,19 @@ tests/models/test_nextstep_1_replay_policy.py
 
 ```text
 trainer bundle metadata:
-  runtime_role: minimal_replay_policy
+  runtime_role: minimal_replay_model
   loads_full_generation_modules: false
   requires_minimal_replay_loader: false
 
 rollout worker bundle metadata:
-  runtime_role: full_generation_policy
+  runtime_role: full_generation_model
   loads_full_generation_modules: true
 ```
 
 测试必须覆盖：
 
-- replay policy 不暴露 decode-only module。
-- replay policy 不持有 full pipeline / upstream wrapper。
+- replay model 不暴露 decode-only module。
+- replay model 不持有 full pipeline / upstream wrapper。
 - evaluator 能用 replay policy 从 trajectory 复算 signal。
 - weight sync payload 只包含 trainable params。
 - rollout worker 仍能加载 full generation policy。

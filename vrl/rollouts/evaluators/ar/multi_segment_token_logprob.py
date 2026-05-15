@@ -8,15 +8,18 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
+from vrl.models.interfaces import (
+    ReplayModel,
+    ReplayRequest,
+    ReplayResult,
+    ReplaySegmentResult,
+    require_replay_model,
+)
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
+from vrl.rollouts.evaluators.replay_result import require_replay_segment, require_replay_value
 from vrl.rollouts.evaluators.trajectory import segment_signal_from_batch
 from vrl.rollouts.evaluators.types import SegmentSignal, SignalRequest, TrajectorySignalBatch
-
-
-def _has_active_adapter(model: Any) -> bool:
-    sub = getattr(model, "language_model", None) or model
-    return hasattr(sub, "disable_adapter") and callable(sub.disable_adapter)
 
 
 class MultiSegmentTokenLogProbEvaluator(Evaluator):
@@ -33,13 +36,19 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
 
     def evaluate(
         self,
-        model: Any,
+        model: ReplayModel,
         batch: RolloutBatch,
         timestep_idx: int = 0,
-        ref_model: Any | None = None,
+        ref_model: ReplayModel | None = None,
         signal_request: SignalRequest | None = None,
     ) -> TrajectorySignalBatch:
         del timestep_idx
+        model = require_replay_model(model, owner="MultiSegmentTokenLogProbEvaluator.model")
+        if ref_model is not None:
+            ref_model = require_replay_model(
+                ref_model,
+                owner="MultiSegmentTokenLogProbEvaluator.ref_model",
+            )
         request = signal_request or SignalRequest()
         segments = _segments_from_batch(batch)
         if not isinstance(segments, dict):
@@ -51,24 +60,24 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
         if not enabled_names:
             raise RuntimeError("no enabled R1 segments to evaluate")
 
+        replay_request = ReplayRequest(segment_names=tuple(enabled_names))
+        current_output = model.replay_forward(batch, request=replay_request)
+        ref_output = None
+        if request.need_ref:
+            if ref_model is not None:
+                ref_output = ref_model.replay_forward(batch, request=replay_request)
+            else:
+                with torch.no_grad(), model.disable_adapter():
+                    ref_output = model.replay_forward(batch, request=replay_request)
+
         segment_signals: dict[str, SegmentSignal] = {}
 
         for name in enabled_names:
             segment = segments[name]
-            new_lp = self._compute_segment_logprobs(model, batch, name, segment)
+            new_lp = self._compute_segment_logprobs(current_output, name, segment)
             ref_lp = None
-            if request.need_ref:
-                if ref_model is not None:
-                    ref_lp = self._compute_segment_logprobs(ref_model, batch, name, segment)
-                else:
-                    if not _has_active_adapter(model):
-                        raise RuntimeError(
-                            "MultiSegmentTokenLogProbEvaluator: need_ref=True but no "
-                            "ref_model was provided and the model has no PEFT adapter "
-                            "to disable.",
-                        )
-                    with torch.no_grad(), model.disable_adapter():
-                        ref_lp = self._compute_segment_logprobs(model, batch, name, segment)
+            if ref_output is not None:
+                ref_lp = self._compute_segment_logprobs(ref_output, name, segment)
 
             mask = _segment_tensor(segment, self.mask_key, required=False)
             if mask is None:
@@ -124,31 +133,12 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
 
     def _compute_segment_logprobs(
         self,
-        model: Any,
-        batch: RolloutBatch,
+        output: ReplayResult,
         name: str,
         segment: dict[str, Any],
     ) -> torch.Tensor:
-        if not hasattr(model, "replay_r1_segment"):
-            raise RuntimeError(
-                f"{type(model).__name__} must expose replay_r1_segment() for "
-                "multi-segment trajectory replay",
-            )
-        out = _call_replay_r1_segment(model, batch, name, segment)
-        return _extract_logprobs(out, segment)
-
-
-def _call_replay_r1_segment(
-    model: Any,
-    batch: RolloutBatch,
-    name: str,
-    segment: dict[str, Any],
-) -> Any:
-    method = model.replay_r1_segment
-    try:
-        return method(batch=batch, segment_name=name, segment=segment)
-    except TypeError:
-        return method(segment)
+        result = require_replay_segment(output, name)
+        return _extract_logprobs(result, segment)
 
 
 def _segments_from_batch(batch: RolloutBatch) -> dict[str, Any] | None:
@@ -191,23 +181,20 @@ def _trajectory_role_value(segment: Any, role: str) -> Any:
     return matches[0]
 
 
-def _extract_logprobs(out: Any, segment: dict[str, Any]) -> torch.Tensor:
-    if isinstance(out, torch.Tensor):
-        return out.float()
-    if not isinstance(out, dict):
-        raise TypeError("segment replay must return a Tensor or dict")
-    if "log_probs" in out:
-        return out["log_probs"].float()
+def _extract_logprobs(result: ReplaySegmentResult, segment: dict[str, Any]) -> torch.Tensor:
+    values = result.values
+    if "log_probs" in values:
+        return require_replay_value(result, "log_probs").float()
 
-    logits = out.get("logits")
+    logits = values.get("logits")
     if logits is None:
-        logits = out.get("image_logits")
+        logits = values.get("image_logits")
     if logits is None:
-        logits = out.get("text_logits")
+        logits = values.get("text_logits")
     if logits is None:
-        raise RuntimeError("segment replay output must include log_probs or logits")
+        logits = require_replay_value(result, "logits")
 
-    token_ids = out.get("token_ids")
+    token_ids = values.get("token_ids")
     if token_ids is None:
         token_ids = _segment_tensor(segment, "token_ids")
     log_probs = F.log_softmax(logits.float(), dim=-1)

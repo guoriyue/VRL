@@ -116,7 +116,7 @@ class _WanTransformerStub(torch.nn.Module):
         return (hidden_states * self.weight + encoder_hidden_states,)
 
 
-class _DiffusionPolicyWrapperStub(torch.nn.Module):
+class _DiffusionModelWrapperStub(torch.nn.Module):
     def __init__(self, transformer: _WanTransformerStub) -> None:
         super().__init__()
         self.transformer = transformer
@@ -125,14 +125,14 @@ class _DiffusionPolicyWrapperStub(torch.nn.Module):
         raise AssertionError("wan_forward must call the registered transformer")
 
 
-def test_wan_forward_unwraps_policy_transformer() -> None:
+def test_wan_forward_unwraps_model_transformer() -> None:
     transformer = _WanTransformerStub()
-    policy = _DiffusionPolicyWrapperStub(transformer)
+    model = _DiffusionModelWrapperStub(transformer)
     noisy = torch.ones(2, 3)
     timesteps = torch.tensor([1, 2])
     encoder_hidden_states = torch.full((2, 3), 0.5)
 
-    out = wan_forward(policy, noisy, timesteps, encoder_hidden_states)
+    out = wan_forward(model, noisy, timesteps, encoder_hidden_states)
 
     assert torch.equal(out, noisy * transformer.weight + encoder_hidden_states)
     assert transformer.calls == [

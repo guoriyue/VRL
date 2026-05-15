@@ -1,4 +1,4 @@
-"""Cosmos Predict2.5 diffusers adapter for DiffusionNFT RL."""
+"""Cosmos Predict2.5 diffusers-backed model for DiffusionNFT RL."""
 
 from __future__ import annotations
 
@@ -9,7 +9,9 @@ from typing import Any
 
 import torch
 
-from vrl.models.interfaces.diffusion_policy import DiffusionPolicy, VideoGenerationRequest
+from vrl.engine.diffusion.request import VideoGenerationRequest
+from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
+from vrl.models.diffusion import DiffusionModelBase
 
 
 class _NoOpCosmosSafetyChecker:
@@ -82,8 +84,8 @@ class CosmosPredict25SamplingState:
     conditional_frame_timestep: float = 0.1
 
 
-class CosmosPredict25Policy(DiffusionPolicy):
-    """Cosmos-Predict2.5 PredictBase adapter with DiffusionNFT training extras."""
+class CosmosPredict25Model(DiffusionModelBase):
+    """Cosmos-Predict2.5 PredictBase model with DiffusionNFT training extras."""
 
     family = "cosmos-predict2.5-diffusers"
 
@@ -125,7 +127,7 @@ class CosmosPredict25Policy(DiffusionPolicy):
         self.pipeline.transformer = transformer
 
     @classmethod
-    def from_spec(cls, spec: Any) -> CosmosPredict25Policy:
+    def from_spec(cls, spec: Any) -> CosmosPredict25Model:
         from diffusers import Cosmos2_5_PredictBasePipeline
 
         kwargs: dict[str, Any] = {"torch_dtype": spec.dtype}
@@ -440,7 +442,14 @@ class CosmosPredict25Policy(DiffusionPolicy):
             conditional_frame_timestep=batch_context.get("conditional_frame_timestep", 0.1),
         )
 
-    def replay_forward(self, batch: Any, timestep_idx: int) -> dict[str, Any]:
+    def replay_forward(
+        self,
+        batch: Any,
+        timestep_idx: int,
+        *,
+        request: ReplayRequest | None = None,
+    ) -> ReplayResult:
+        del request
         from vrl.engine.trajectory import trajectory_replay_tensor_dict
 
         state = self.restore_eval_state(
@@ -449,7 +458,15 @@ class CosmosPredict25Policy(DiffusionPolicy):
             batch.observations[:, timestep_idx],
             timestep_idx,
         )
-        return self.forward_step(state, timestep_idx)
+        values = self.forward_step(state, timestep_idx)
+        return ReplayResult(
+            segments={
+                "denoise": ReplaySegmentResult(
+                    segment="denoise",
+                    values=dict(values),
+                ),
+            },
+        )
 
     def diffusion_nft_prepare_transformer_input(
         self,
@@ -497,7 +514,7 @@ class CosmosPredict25Policy(DiffusionPolicy):
         return video.permute(0, 2, 1, 3, 4)
 
 
-__all__ = ["CosmosPredict25Policy", "CosmosPredict25SamplingState"]
+__all__ = ["CosmosPredict25Model", "CosmosPredict25SamplingState"]
 
 
 def _copy_adapter_weights(

@@ -22,6 +22,7 @@ from vrl.engine.diffusion.denoise import (
     run_diffusion_denoise_chunk,
     select_sde_window,
 )
+from vrl.engine.diffusion.request import VideoGenerationRequest
 from vrl.engine.diffusion.spec import (
     BaseDiffusionGenerationSpec,
     DiffusionGenerationSpec,
@@ -34,7 +35,6 @@ from vrl.engine.execution.microbatching import (
     run_microbatches_with_oom_retry,
 )
 from vrl.engine.execution.planner import attach_engine_plan, build_engine_plan
-from vrl.models.interfaces.diffusion_policy import VideoGenerationRequest
 
 
 class DiffusionPipelineExecutorBase(
@@ -231,7 +231,7 @@ class DiffusionPipelineExecutorBase(
             chunk=chunk,
         )
         return run_diffusion_denoise_chunk(
-            policy=self.model,
+            model=self.model,
             request=video_request,
             encoded=chunk_encoded,
             config=self.build_denoise_config(spec, chunk),
@@ -317,7 +317,7 @@ class DiffusionPipelineExecutorBase(
         spec: DiffusionGenerationSpec,
         chunk: MicroBatchPlan,
     ) -> dict[str, Any] | None:
-        """Return additional family kwargs for policy.prepare_sampling."""
+        """Return additional family kwargs for model.prepare_sampling."""
 
         del encoded, generation_request, video_request, spec, chunk
         return None

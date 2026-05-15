@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import contextlib
-from typing import Any
 
 import vrl.algorithms.flow_matching as flow_matching_math
+from vrl.models.interfaces import ReplayModel, require_replay_model
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
+from vrl.rollouts.evaluators.replay_result import require_replay_segment, require_replay_value
 from vrl.rollouts.evaluators.trajectory import single_segment_trajectory_signals
 from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
 
@@ -24,7 +25,7 @@ class FlowMatchingEvaluator(Evaluator):
 
     def __init__(
         self,
-        scheduler: Any,
+        scheduler: object,
         noise_level: float = 1.0,
         sde_type: str = "sde",
     ) -> None:
@@ -34,16 +35,16 @@ class FlowMatchingEvaluator(Evaluator):
 
     def evaluate(
         self,
-        model: Any,
+        model: ReplayModel,
         batch: RolloutBatch,
         timestep_idx: int,
-        ref_model: Any | None = None,
+        ref_model: ReplayModel | None = None,
         signal_request: SignalRequest | None = None,
     ) -> TrajectorySignalBatch:
         """Replay one diffusion step into trajectory-native signals.
 
-        Replay forward ownership lives on the family policy adapter. ``model``
-        must be that policy and must expose ``replay_forward``.
+        Replay forward ownership lives on the family model. ``model`` must
+        satisfy the trainer-facing ReplayModel contract.
 
         When ref_model is the same object as model (LoRA scenario),
         uses ``disable_adapter()`` to get base-model predictions —
@@ -51,6 +52,9 @@ class FlowMatchingEvaluator(Evaluator):
         """
         import torch
 
+        model = require_replay_model(model, owner="FlowMatchingEvaluator.model")
+        if ref_model is not None:
+            ref_model = require_replay_model(ref_model, owner="FlowMatchingEvaluator.ref_model")
         if signal_request is None:
             signal_request = SignalRequest()
 
@@ -62,8 +66,8 @@ class FlowMatchingEvaluator(Evaluator):
         observations = batch.observations[:, timestep_idx]  # x_t
         actions = batch.actions[:, timestep_idx]             # x_{t-1}
 
-        fwd = model.replay_forward(batch, timestep_idx)
-        noise_pred = fwd["noise_pred"]
+        fwd = require_replay_segment(model.replay_forward(batch, timestep_idx), "denoise")
+        noise_pred = require_replay_value(fwd, "noise_pred")
 
         # SDE step with log-prob
         result = flow_matching_math.sde_step_with_logprob(
@@ -84,18 +88,18 @@ class FlowMatchingEvaluator(Evaluator):
         # Reference model forward for KL
         if signal_request.need_ref and ref_model is not None:
             with torch.no_grad():
-                # Gap 7: LoRA disable_adapter() — when ref_model IS model,
-                # disable LoRA adapter to get base model output.
-                # Port from flow_grpo train_wan2_1.py:940:
-                #   with transformer.module.disable_adapter():
-                use_adapter_disable = ref_model is model and hasattr(
-                    model, "disable_adapter",
-                )
+                # ReplayModel.disable_adapter() may be a no-op for non-adapter
+                # models. A distinct frozen reference still comes through
+                # the explicit ref_model path.
+                use_adapter_disable = ref_model is model
                 ctx = model.disable_adapter() if use_adapter_disable else contextlib.nullcontext()
 
                 with ctx:
-                    ref_fwd = ref_model.replay_forward(batch, timestep_idx)
-                    ref_noise_pred = ref_fwd["noise_pred"]
+                    ref_fwd = require_replay_segment(
+                        ref_model.replay_forward(batch, timestep_idx),
+                        "denoise",
+                    )
+                    ref_noise_pred = require_replay_value(ref_fwd, "noise_pred")
 
                     ref_result = flow_matching_math.sde_step_with_logprob(
                         self.scheduler,

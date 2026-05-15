@@ -9,6 +9,8 @@ from typing import Any
 
 from omegaconf import DictConfig
 
+from vrl.models.interfaces import RuntimeModel, require_runtime_model
+
 MetricRowHook = Callable[[dict[str, Any], Any], None]
 StepHook = Callable[["OnlineRecipeStack", int, Sequence[Any]], Awaitable[None] | None]
 TrainerConfigHook = Callable[[DictConfig, Any], None]
@@ -16,10 +18,10 @@ WeightDTypeGetter = Callable[[DictConfig, Any, Any], Any]
 CollectorKwargsGetter = Callable[[DictConfig, Sequence[Any]], dict[str, Any]]
 
 
-def default_policy_getter(bundle: Any) -> Any:
-    """Return the policy object exposed by runtime bundles."""
+def default_model_getter(bundle: Any) -> RuntimeModel:
+    """Return the model object exposed by runtime bundles."""
 
-    return bundle.policy
+    return require_runtime_model(bundle.model, owner="RuntimeBundle.model")
 
 
 def default_scheduler_getter(bundle: Any) -> Any | None:
@@ -43,7 +45,7 @@ class OnlineRecipeDefinition:
 
     family: str
     build_bundle: Callable[[DictConfig, Any, Any], Any]
-    policy_getter: Callable[[Any], Any] = default_policy_getter
+    model_getter: Callable[[Any], RuntimeModel] = default_model_getter
     scheduler_getter: Callable[[Any], Any | None] = default_scheduler_getter
     reference_model_getter: Callable[[Any, DictConfig], Any | None] | None = None
     export_modules_getter: Callable[[Any, DictConfig], dict[str, Any] | None] | None = None
@@ -64,7 +66,7 @@ class OnlineRecipeStack:
     cfg: DictConfig
     definition: OnlineRecipeDefinition
     bundle: Any
-    policy: Any
+    model: RuntimeModel
     reward_fn: Any
     collector: Any
     algorithm: Any

@@ -1,23 +1,24 @@
-"""Shared model interfaces used by family implementations."""
+"""Shared public model interfaces."""
 
-from vrl.models.interfaces.ar_policy import (
-    ARStepResult,
-    AutoregressivePolicy,
-    ar_concat_rows,
-    ar_split_rows,
+from vrl.models.interfaces.replay import (
+    ReplayModel,
+    ReplayRequest,
+    ReplayResult,
+    ReplaySegmentResult,
+    RuntimeModel,
+    require_replay_model,
+    require_runtime_model,
 )
-from vrl.models.interfaces.diffusion_policy import DiffusionPolicy, VideoGenerationRequest
-from vrl.models.interfaces.replay_policy import ReplayPolicy
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 
 __all__ = [
-    "ARStepResult",
-    "AutoregressivePolicy",
-    "DiffusionPolicy",
-    "ReplayPolicy",
+    "ReplayModel",
+    "ReplayRequest",
+    "ReplayResult",
+    "ReplaySegmentResult",
     "RuntimeBuildSpec",
     "RuntimeBundle",
-    "VideoGenerationRequest",
-    "ar_concat_rows",
-    "ar_split_rows",
+    "RuntimeModel",
+    "require_replay_model",
+    "require_runtime_model",
 ]
