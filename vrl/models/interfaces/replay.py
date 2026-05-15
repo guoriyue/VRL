@@ -35,6 +35,16 @@ class ReplaySegmentResult:
         if not isinstance(self.values, dict):
             raise TypeError("ReplaySegmentResult.values must be a dict")
 
+    def require_value(self, key: str) -> Any:
+        """Return a named replay payload or fail with the available payload keys."""
+
+        if key not in self.values:
+            raise KeyError(
+                f"ReplaySegmentResult for segment {self.segment!r} "
+                f"missing required key {key!r}; got {sorted(self.values)}",
+            )
+        return self.values[key]
+
 
 @dataclass(slots=True)
 class ReplayResult:
@@ -54,6 +64,17 @@ class ReplayResult:
                     f"ReplayResult segment key {key!r} must match "
                     f"ReplaySegmentResult.segment={segment.segment!r}",
                 )
+
+    def require_segment(self, segment_name: str) -> ReplaySegmentResult:
+        """Return a replay segment result or fail with a helpful segment list."""
+
+        try:
+            return self.segments[segment_name]
+        except KeyError as err:
+            raise KeyError(
+                f"ReplayResult missing segment {segment_name!r}; "
+                f"got {sorted(self.segments)}",
+            ) from err
 
 
 @runtime_checkable

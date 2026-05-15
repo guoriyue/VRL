@@ -1,4 +1,4 @@
-"""Tests for ReplayResult lookup helpers and signal source ownership."""
+"""Tests for ReplayResult lookups and signal source ownership."""
 
 from __future__ import annotations
 
@@ -9,10 +9,6 @@ from vrl.engine import GenerationRequest, GenerationSampleSpec
 from vrl.engine.trajectory import build_ar_discrete_trajectory, build_training_view
 from vrl.models.interfaces import ReplayResult, ReplaySegmentResult
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.evaluators.replay_result import (
-    require_replay_segment,
-    require_replay_value,
-)
 from vrl.rollouts.evaluators.trajectory import segment_signal_from_batch
 
 
@@ -71,7 +67,7 @@ def _discrete_batch() -> tuple[RolloutBatch, torch.Tensor, torch.Tensor]:
     return batch, old_log_prob, token_mask
 
 
-def test_require_replay_segment_supports_single_segment_ar_lookup() -> None:
+def test_replay_result_supports_single_segment_ar_lookup() -> None:
     logits = torch.zeros(2, 2, 8)
     output = ReplayResult(
         segments={
@@ -82,12 +78,12 @@ def test_require_replay_segment_supports_single_segment_ar_lookup() -> None:
         },
     )
 
-    segment = require_replay_segment(output, "image_tokens")
+    segment = output.require_segment("image_tokens")
 
-    assert require_replay_value(segment, "logits") is logits
+    assert segment.require_value("logits") is logits
 
 
-def test_require_replay_segment_supports_single_segment_diffusion_lookup() -> None:
+def test_replay_result_supports_single_segment_diffusion_lookup() -> None:
     noise_pred = torch.ones(2, 4, 8, 8)
     output = ReplayResult(
         segments={
@@ -98,12 +94,12 @@ def test_require_replay_segment_supports_single_segment_diffusion_lookup() -> No
         },
     )
 
-    segment = require_replay_segment(output, "denoise")
+    segment = output.require_segment("denoise")
 
-    assert require_replay_value(segment, "noise_pred") is noise_pred
+    assert segment.require_value("noise_pred") is noise_pred
 
 
-def test_require_replay_segment_supports_multi_segment_r1_lookup() -> None:
+def test_replay_result_supports_multi_segment_r1_lookup() -> None:
     output = ReplayResult(
         segments={
             "selfcheck_text": ReplaySegmentResult(
@@ -117,12 +113,12 @@ def test_require_replay_segment_supports_multi_segment_r1_lookup() -> None:
         },
     )
 
-    segment = require_replay_segment(output, "final_image")
+    segment = output.require_segment("final_image")
 
     assert segment.segment == "final_image"
 
 
-def test_require_replay_segment_fails_fast_for_missing_ref_segment() -> None:
+def test_replay_result_fails_fast_for_missing_ref_segment() -> None:
     output = ReplayResult(
         segments={
             "selfcheck_text": ReplaySegmentResult(
@@ -133,17 +129,17 @@ def test_require_replay_segment_fails_fast_for_missing_ref_segment() -> None:
     )
 
     with pytest.raises(KeyError, match="missing segment 'final_image'"):
-        require_replay_segment(output, "final_image")
+        output.require_segment("final_image")
 
 
-def test_require_replay_value_fails_fast_with_available_keys() -> None:
+def test_replay_segment_result_fails_fast_with_available_keys() -> None:
     segment = ReplaySegmentResult(
         segment="image_tokens",
         values={"image_logits": torch.zeros(2, 2, 8), "token_ids": torch.ones(2, 2)},
     )
 
     with pytest.raises(KeyError, match="missing required key 'logits'.*image_logits"):
-        require_replay_value(segment, "logits")
+        segment.require_value("logits")
 
 
 def test_segment_signal_reads_old_logprob_mask_and_distribution_from_trajectory() -> None:
@@ -160,7 +156,7 @@ def test_segment_signal_reads_old_logprob_mask_and_distribution_from_trajectory(
             ),
         },
     )
-    segment = require_replay_segment(output, "image_tokens")
+    segment = output.require_segment("image_tokens")
 
     signal = segment_signal_from_batch(
         batch,

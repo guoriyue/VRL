@@ -1,4 +1,4 @@
-"""Collector protocol — collects training experience from model rollouts."""
+"""Collector protocol for building trainer rollout batches."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from vrl.rollouts.batch import RolloutBatch
 
 @runtime_checkable
 class Collector(Protocol):
-    """Collects training experience from model rollouts.
+    """Build trainer rollout batches from model rollouts.
 
     A collector owns rollout semantics only:
 

@@ -19,7 +19,6 @@ import torch.nn.functional as F
 from vrl.models.interfaces import ReplayModel, require_replay_model
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
-from vrl.rollouts.evaluators.replay_result import require_replay_segment, require_replay_value
 from vrl.rollouts.evaluators.trajectory import single_segment_trajectory_signals
 from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
 
@@ -92,8 +91,8 @@ class TokenLogProbEvaluator(Evaluator):
     ) -> torch.Tensor:
         """Forward + gather. Always returns ``[B, L]`` float32 log-probs."""
         out = model.replay_forward(batch, timestep_idx=0)
-        result = require_replay_segment(out, "image_tokens")
-        logits: torch.Tensor = require_replay_value(result, "logits")   # [B, L, V_img]
+        result = out.require_segment("image_tokens")
+        logits: torch.Tensor = result.require_value("logits")   # [B, L, V_img]
         log_probs = F.log_softmax(logits.float(), dim=-1)
         gathered = log_probs.gather(-1, action_ids.unsqueeze(-1)).squeeze(-1)
         return gathered  # [B, L]

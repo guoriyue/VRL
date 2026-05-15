@@ -8,7 +8,6 @@ import vrl.algorithms.flow_matching as flow_matching_math
 from vrl.models.interfaces import ReplayModel, require_replay_model
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
-from vrl.rollouts.evaluators.replay_result import require_replay_segment, require_replay_value
 from vrl.rollouts.evaluators.trajectory import single_segment_trajectory_signals
 from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
 
@@ -66,8 +65,8 @@ class FlowMatchingEvaluator(Evaluator):
         observations = batch.observations[:, timestep_idx]  # x_t
         actions = batch.actions[:, timestep_idx]             # x_{t-1}
 
-        fwd = require_replay_segment(model.replay_forward(batch, timestep_idx), "denoise")
-        noise_pred = require_replay_value(fwd, "noise_pred")
+        fwd = model.replay_forward(batch, timestep_idx).require_segment("denoise")
+        noise_pred = fwd.require_value("noise_pred")
 
         # SDE step with log-prob
         result = flow_matching_math.sde_step_with_logprob(
@@ -95,11 +94,10 @@ class FlowMatchingEvaluator(Evaluator):
                 ctx = model.disable_adapter() if use_adapter_disable else contextlib.nullcontext()
 
                 with ctx:
-                    ref_fwd = require_replay_segment(
-                        ref_model.replay_forward(batch, timestep_idx),
+                    ref_fwd = ref_model.replay_forward(batch, timestep_idx).require_segment(
                         "denoise",
                     )
-                    ref_noise_pred = require_replay_value(ref_fwd, "noise_pred")
+                    ref_noise_pred = ref_fwd.require_value("noise_pred")
 
                     ref_result = flow_matching_math.sde_step_with_logprob(
                         self.scheduler,

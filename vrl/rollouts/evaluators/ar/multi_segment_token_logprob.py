@@ -17,7 +17,6 @@ from vrl.models.interfaces import (
 )
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
-from vrl.rollouts.evaluators.replay_result import require_replay_segment, require_replay_value
 from vrl.rollouts.evaluators.trajectory import segment_signal_from_batch
 from vrl.rollouts.evaluators.types import SegmentSignal, SignalRequest, TrajectorySignalBatch
 
@@ -137,7 +136,7 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
         name: str,
         segment: dict[str, Any],
     ) -> torch.Tensor:
-        result = require_replay_segment(output, name)
+        result = output.require_segment(name)
         return _extract_logprobs(result, segment)
 
 
@@ -184,7 +183,7 @@ def _trajectory_role_value(segment: Any, role: str) -> Any:
 def _extract_logprobs(result: ReplaySegmentResult, segment: dict[str, Any]) -> torch.Tensor:
     values = result.values
     if "log_probs" in values:
-        return require_replay_value(result, "log_probs").float()
+        return result.require_value("log_probs").float()
 
     logits = values.get("logits")
     if logits is None:
@@ -192,7 +191,7 @@ def _extract_logprobs(result: ReplaySegmentResult, segment: dict[str, Any]) -> t
     if logits is None:
         logits = values.get("text_logits")
     if logits is None:
-        logits = require_replay_value(result, "logits")
+        logits = result.require_value("logits")
 
     token_ids = values.get("token_ids")
     if token_ids is None:

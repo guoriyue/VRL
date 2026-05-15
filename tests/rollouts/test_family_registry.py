@@ -15,7 +15,6 @@ from vrl.rollouts.family_registry import (
     normalize_rollout_family,
     registered_rollout_families,
 )
-from vrl.rollouts.packers.trajectory import TrajectoryRolloutPacker
 from vrl.rollouts.settings import RolloutSettings
 from vrl.scripts.common.factory import build_collector_config_from_cfg
 
@@ -157,7 +156,7 @@ def test_registry_keeps_return_artifacts_as_wiring_metadata() -> None:
         )
 
 
-def test_migrated_collectors_use_trajectory_packer_by_default() -> None:
+def test_migrated_collectors_build_direct_trajectory_collectors() -> None:
     for family in FAMILY_REGISTRY:
         collector = build_rollout_collector(
             family,
@@ -171,7 +170,8 @@ def test_migrated_collectors_use_trajectory_packer_by_default() -> None:
                 },
             ),
         )
-        assert isinstance(collector.packer, TrajectoryRolloutPacker)
+        assert collector.family == family
+        assert callable(collector.collect)
 
 
 def test_unknown_family_raises_clear_error() -> None:

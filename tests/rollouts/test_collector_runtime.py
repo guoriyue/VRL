@@ -7,11 +7,10 @@ from typing import Any
 import pytest
 import torch
 
-from vrl.engine import GenerationRequest, OutputBatch
-from vrl.rollouts.batch import RolloutBatch
+from vrl.engine import GenerationRequest, GenerationSampleSpec, OutputBatch
+from vrl.engine.trajectory import build_ar_discrete_trajectory
 from vrl.rollouts.collector.core import RolloutCollector
 from vrl.rollouts.collector.requests import RolloutRequestPlan
-from vrl.rollouts.packers.base import RolloutPackContext
 
 
 class _RequestBuilder:
@@ -46,13 +45,28 @@ class _Runtime:
     async def generate(self, request: GenerationRequest) -> OutputBatch:
         self.requests.append(request)
         batch_size = len(request.prompts) * request.samples_per_prompt
+        sample_specs = _sample_specs(request)
+        output = torch.ones(batch_size, 3, 2, 2)
+        trajectory = build_ar_discrete_trajectory(
+            request=request,
+            sample_specs=sample_specs,
+            token_ids=torch.arange(batch_size * 2, dtype=torch.long).reshape(batch_size, 2),
+            token_log_probs=torch.zeros(batch_size, 2),
+            token_mask=torch.ones(batch_size, 2),
+            prompt_input_ids=torch.ones(batch_size, 3, dtype=torch.long),
+            prompt_attention_mask=torch.ones(batch_size, 3, dtype=torch.long),
+            uncond_input_ids=torch.zeros(batch_size, 3, dtype=torch.long),
+            uncond_attention_mask=torch.ones(batch_size, 3, dtype=torch.long),
+            context={"collector": "test"},
+        )
         return OutputBatch(
             request_id=request.request_id,
             family=request.family,
             task=request.task,
             prompts=list(request.prompts),
-            sample_specs=[],
-            output=torch.ones(batch_size, 1),
+            sample_specs=sample_specs,
+            output=output,
+            trajectory=trajectory,
         )
 
 
@@ -78,50 +92,9 @@ class _RewardScorer:
         return torch.arange(outputs.shape[0], dtype=torch.float32)
 
 
-class _Packer:
-    def __init__(self) -> None:
-        self.reward_contexts: list[RolloutPackContext] = []
-        self.pack_contexts: list[RolloutPackContext] = []
-
-    def reward_outputs(
-        self,
-        output: OutputBatch,
-        context: RolloutPackContext,
-    ) -> torch.Tensor:
-        self.reward_contexts.append(context)
-        return output.output
-
-    def reward_prompts(
-        self,
-        output: OutputBatch,
-        context: RolloutPackContext,
-    ) -> list[str]:
-        del context
-        return output.prompts
-
-    async def pack(
-        self,
-        output: OutputBatch,
-        rewards_raw: torch.Tensor,
-        context: RolloutPackContext,
-    ) -> RolloutBatch:
-        self.pack_contexts.append(context)
-        batch_size = rewards_raw.shape[0]
-        return RolloutBatch(
-            observations=torch.zeros(batch_size, 1),
-            actions=torch.zeros(batch_size, 1),
-            rewards=rewards_raw,
-            dones=torch.ones(batch_size, dtype=torch.bool),
-            group_ids=torch.arange(batch_size),
-            context=dict(context.metadata),
-            prompts=output.prompts,
-        )
-
-
 def _collector(
     *,
     runtime: _Runtime | None = None,
-    packer: _Packer | None = None,
     reward_scorer: _RewardScorer | None = None,
 ) -> RolloutCollector:
     return RolloutCollector(
@@ -131,7 +104,6 @@ def _collector(
         task="collect",
         executor_cls=object,
         request_builder=_RequestBuilder(),
-        packer=packer or _Packer(),
         reward_scorer=reward_scorer or _RewardScorer(),
         runtime=runtime,
     )
@@ -146,15 +118,13 @@ def test_collector_requires_runtime_before_collect() -> None:
         asyncio.run(collector.collect(["p0"], group_size=1))
 
 
-def test_collector_routes_request_through_runtime_reward_and_packer() -> None:
+def test_collector_routes_request_through_runtime_reward_and_trajectory_batch() -> None:
     import asyncio
 
     runtime = _Runtime()
-    packer = _Packer()
     reward_scorer = _RewardScorer()
     collector = _collector(
         runtime=runtime,
-        packer=packer,
         reward_scorer=reward_scorer,
     )
 
@@ -169,10 +139,10 @@ def test_collector_routes_request_through_runtime_reward_and_packer() -> None:
     assert request.sampling == {"seed": 5}
     assert request.policy_version == 7
     assert reward_scorer.calls[0]["metadata"] == {"reward": "metadata"}
-    assert packer.reward_contexts[0].metadata == {"pack": "metadata"}
-    assert packer.pack_contexts[0].metadata == {"pack": "metadata"}
     assert batch.rewards.tolist() == [0.0, 1.0, 2.0, 3.0]
-    assert batch.context == {"pack": "metadata"}
+    assert batch.context == {"collector": "test"}
+    assert batch.trajectory is not None
+    assert batch.training_view is not None
 
 
 def test_collector_forwards_reference_metadata_to_request() -> None:
@@ -197,3 +167,23 @@ def test_collector_forwards_reference_metadata_to_request() -> None:
     assert plan.request.metadata["reference_image"] == "/tmp/reference.png"
     assert plan.reward_metadata["reference_image"] == "/tmp/reference.png"
     assert plan.pack_metadata["reference_image"] == "/tmp/reference.png"
+
+
+def _sample_specs(request: GenerationRequest) -> list[GenerationSampleSpec]:
+    specs: list[GenerationSampleSpec] = []
+    for prompt_index, prompt in enumerate(request.prompts):
+        for sample_index in range(request.samples_per_prompt):
+            sample_id = f"p{prompt_index}_s{sample_index}"
+            specs.append(
+                GenerationSampleSpec(
+                    prompt_index=prompt_index,
+                    sample_index=sample_index,
+                    prompt=prompt,
+                    prompt_id=f"p{prompt_index}",
+                    group_id=f"g{prompt_index}",
+                    sample_id=sample_id,
+                    trajectory_id=f"t_{sample_id}",
+                    seed=None,
+                ),
+            )
+    return specs

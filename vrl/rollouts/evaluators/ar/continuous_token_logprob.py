@@ -17,7 +17,6 @@ import torch
 from vrl.models.interfaces import ReplayModel, require_replay_model
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
-from vrl.rollouts.evaluators.replay_result import require_replay_segment, require_replay_value
 from vrl.rollouts.evaluators.trajectory import single_segment_trajectory_signals
 from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
 
@@ -82,6 +81,6 @@ class ContinuousTokenLogProbEvaluator(Evaluator):
         the returned ``log_probs`` and casts to float32.
         """
         out = model.replay_forward(batch, timestep_idx=0)
-        result = require_replay_segment(out, "image_tokens")
-        log_probs: torch.Tensor = require_replay_value(result, "log_probs")   # [B, L]
+        result = out.require_segment("image_tokens")
+        log_probs: torch.Tensor = result.require_value("log_probs")   # [B, L]
         return log_probs.float()

@@ -10,7 +10,7 @@ from typing import Any
 class RolloutBatch:
     """Trainer-ready batch collected from model rollouts.
 
-    The collector/packer fills in observations, actions, rewards, group IDs,
+    The collector fills in observations, actions, rewards, group IDs,
     and replay extras after the generation engine has returned an OutputBatch.
     """
 

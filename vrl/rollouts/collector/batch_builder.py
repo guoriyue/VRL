@@ -1,7 +1,8 @@
-"""Generic trajectory-backed OutputBatch to RolloutBatch packing."""
+"""Build trainer rollout batches from trajectory-backed engine outputs."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any
 
 import torch
@@ -15,60 +16,72 @@ from vrl.engine.trajectory import (
     require_output_trajectory,
 )
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.packers.base import RolloutPackContext
 
 
-class TrajectoryRolloutPacker:
-    """Pack migrated trajectory records into the legacy trainer batch."""
+@dataclass(slots=True)
+class RolloutBatchBuildContext:
+    """Non-engine metadata needed while building a trainer RolloutBatch."""
 
-    def reward_outputs(
-        self,
-        output: OutputBatch,
-        context: RolloutPackContext,
-    ) -> Any:
-        trajectory = require_output_trajectory(output)
-        segment = _primary_trainable_segment(
-            trajectory,
-            preferred=_primary_segment_name(trajectory),
-        )
-        reward_output = _reward_output_from_trajectory(output, trajectory)
-        if segment.distribution == "categorical" and context.rescale_to_unit:
-            reward_output = (reward_output + 1.0) * 0.5
-            reward_output = reward_output.clamp(0.0, 1.0)
-        return reward_output
+    metadata: dict[str, Any]
+    device: Any | None = None
+    kl_reward: float = 0.0
+    rescale_to_unit: bool = False
+    extra: dict[str, Any] = field(default_factory=dict)
 
-    def reward_prompts(
-        self,
-        output: OutputBatch,
-        context: RolloutPackContext,
-    ) -> list[str]:
-        del context
-        return [spec.prompt for spec in output.sample_specs]
 
-    async def pack(
-        self,
-        output: OutputBatch,
-        rewards_raw: torch.Tensor,
-        context: RolloutPackContext,
-    ) -> RolloutBatch:
-        trajectory = require_output_trajectory(output)
-        trainable = _trainable_segments(trajectory)
-        if _is_multisegment_categorical(trajectory, trainable):
-            return _pack_ar_multisegment(output, trajectory, trainable, rewards_raw, context)
-        segment = _primary_trainable_segment(
-            trajectory,
-            preferred=_primary_segment_name(trajectory),
-        )
-        if segment.distribution == "flow_matching":
-            return _pack_diffusion(output, trajectory, segment, rewards_raw, context)
-        if segment.distribution == "categorical":
-            return _pack_ar_discrete(output, trajectory, segment, rewards_raw, context)
-        if segment.distribution == "gaussian":
-            return _pack_ar_continuous(output, trajectory, segment, rewards_raw, context)
-        raise NotImplementedError(
-            "TrajectoryRolloutPacker does not support distribution="
-            f"{segment.distribution!r}",
-        )
+def reward_outputs_from_trajectory(
+    output: OutputBatch,
+    context: RolloutBatchBuildContext,
+) -> Any:
+    """Return the generated artifact that the reward scorer should inspect."""
+
+    trajectory = require_output_trajectory(output)
+    segment = _primary_trainable_segment(
+        trajectory,
+        preferred=_primary_segment_name(trajectory),
+    )
+    reward_output = _reward_output_from_trajectory(output, trajectory)
+    if segment.distribution == "categorical" and context.rescale_to_unit:
+        reward_output = (reward_output + 1.0) * 0.5
+        reward_output = reward_output.clamp(0.0, 1.0)
+    return reward_output
+
+
+def reward_prompts_from_output(
+    output: OutputBatch,
+    context: RolloutBatchBuildContext,
+) -> list[str]:
+    """Return prompts aligned with reward outputs."""
+
+    del context
+    return [spec.prompt for spec in output.sample_specs]
+
+
+def rollout_batch_from_trajectory(
+    output: OutputBatch,
+    rewards_raw: torch.Tensor,
+    context: RolloutBatchBuildContext,
+) -> RolloutBatch:
+    """Convert a trajectory-backed engine output into the trainer batch shape."""
+
+    trajectory = require_output_trajectory(output)
+    trainable = _trainable_segments(trajectory)
+    if _is_multisegment_categorical(trajectory, trainable):
+        return _pack_ar_multisegment(output, trajectory, trainable, rewards_raw, context)
+    segment = _primary_trainable_segment(
+        trajectory,
+        preferred=_primary_segment_name(trajectory),
+    )
+    if segment.distribution == "flow_matching":
+        return _pack_diffusion(output, trajectory, segment, rewards_raw, context)
+    if segment.distribution == "categorical":
+        return _pack_ar_discrete(output, trajectory, segment, rewards_raw, context)
+    if segment.distribution == "gaussian":
+        return _pack_ar_continuous(output, trajectory, segment, rewards_raw, context)
+    raise NotImplementedError(
+        "trajectory rollout collection does not support distribution="
+        f"{segment.distribution!r}",
+    )
 
 
 def _pack_diffusion(
@@ -76,7 +89,7 @@ def _pack_diffusion(
     trajectory: TrajectoryBatch,
     segment: TrajectorySegment,
     rewards_raw: torch.Tensor,
-    context: RolloutPackContext,
+    context: RolloutBatchBuildContext,
 ) -> RolloutBatch:
     observations = _role_tensor(segment, "observation").value
     actions = _role_tensor(segment, "action").value
@@ -115,7 +128,7 @@ def _pack_ar_discrete(
     trajectory: TrajectoryBatch,
     segment: TrajectorySegment,
     rewards_raw: torch.Tensor,
-    context: RolloutPackContext,
+    context: RolloutBatchBuildContext,
 ) -> RolloutBatch:
     token_ids = _role_tensor(segment, "action").value
     prompt_ids = _named_tensor(segment, "prompt_input_ids").value
@@ -142,7 +155,7 @@ def _pack_ar_continuous(
     trajectory: TrajectoryBatch,
     segment: TrajectorySegment,
     rewards_raw: torch.Tensor,
-    context: RolloutPackContext,
+    context: RolloutBatchBuildContext,
 ) -> RolloutBatch:
     tokens = _role_tensor(segment, "action").value
     prompt_ids = _named_tensor(segment, "prompt_input_ids").value
@@ -169,7 +182,7 @@ def _pack_ar_multisegment(
     trajectory: TrajectoryBatch,
     trainable: list[TrajectorySegment],
     rewards_raw: torch.Tensor,
-    context: RolloutPackContext,
+    context: RolloutBatchBuildContext,
 ) -> RolloutBatch:
     primary_name = _primary_segment_name(trajectory) or "final_image"
     primary = trajectory.segments.get(primary_name)
@@ -296,22 +309,9 @@ def _decoded_tensor(trajectory: TrajectoryBatch, name: str) -> Any | None:
     return None if tensor is None else tensor.value
 
 
-def _segment_payload_from_trajectory(segment: TrajectorySegment) -> dict[str, Any]:
-    payload = {
-        "name": segment.name,
-        "token_ids": _role_tensor(segment, "action").value,
-        "token_log_probs": _role_tensor(segment, "old_log_prob").value,
-        "token_mask": _role_tensor(segment, "mask").value,
-        "visual": bool(segment.metadata.get("visual", segment.modality == "image")),
-        "cfg": bool(segment.metadata.get("cfg", False)),
-        "train": bool(segment.metadata.get("train", segment.trainable)),
-        "modality": segment.modality,
-    }
-    for key in ("prompt_embeds", "attention_mask", "prompt_attention_mask", "prompt_input_ids"):
-        value = _optional_named_tensor(segment, key)
-        if value is not None:
-            payload[key] = value
-    return payload
-
-
-__all__ = ["TrajectoryRolloutPacker"]
+__all__ = [
+    "RolloutBatchBuildContext",
+    "reward_outputs_from_trajectory",
+    "reward_prompts_from_output",
+    "rollout_batch_from_trajectory",
+]

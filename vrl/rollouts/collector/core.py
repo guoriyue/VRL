@@ -12,13 +12,18 @@ from vrl.engine import (
     RolloutBackend,
 )
 from vrl.rollouts.batch import RolloutBatch
+from vrl.rollouts.collector.batch_builder import (
+    RolloutBatchBuildContext,
+    reward_outputs_from_trajectory,
+    reward_prompts_from_output,
+    rollout_batch_from_trajectory,
+)
 from vrl.rollouts.collector.requests import RolloutRequestBuilder, RolloutRequestPlan
 from vrl.rollouts.collector.rewards import RewardScorer
-from vrl.rollouts.packers.base import RolloutPackContext, RolloutPacker
 
 
 class RolloutCollector:
-    """Generic collector: request -> generation runtime -> reward -> pack."""
+    """Generic collector: request -> generation runtime -> reward -> trainer batch."""
 
     def __init__(
         self,
@@ -29,7 +34,6 @@ class RolloutCollector:
         task: str,
         executor_cls: type,
         request_builder: RolloutRequestBuilder,
-        packer: RolloutPacker,
         reward_scorer: RewardScorer,
         default_group_size: int = 1,
         runtime: RolloutBackend | None = None,
@@ -42,7 +46,6 @@ class RolloutCollector:
         self.task = task
         self.executor_cls = executor_cls
         self.request_builder = request_builder
-        self.packer = packer
         self.reward_scorer = reward_scorer
         self.default_group_size = max(1, int(default_group_size))
         self._runtime = runtime
@@ -100,7 +103,7 @@ class RolloutCollector:
             phases["collect.engine_generate"] = now - phase_t
             phase_t = now
 
-        batch = await self._output_batch_to_experience_batch(
+        batch = await self._output_batch_to_rollout_batch(
             output,
             request_plan=plan,
             phases=phases if profile else None,
@@ -113,7 +116,7 @@ class RolloutCollector:
 
         return batch
 
-    async def _output_batch_to_experience_batch(
+    async def _output_batch_to_rollout_batch(
         self,
         output: OutputBatch,
         *,
@@ -121,14 +124,14 @@ class RolloutCollector:
         phases: dict[str, float] | None = None,
         phase_t: float | None = None,
     ) -> RolloutBatch:
-        context = RolloutPackContext(
+        context = RolloutBatchBuildContext(
             metadata=dict(request_plan.pack_metadata),
             device=_device_from_model(self.model),
             kl_reward=float(getattr(self.config, "kl_reward", 0.0)),
             rescale_to_unit=bool(getattr(self.config, "rescale_to_unit", False)),
         )
-        reward_outputs = self.packer.reward_outputs(output, context)
-        reward_prompts = self.packer.reward_prompts(output, context)
+        reward_outputs = reward_outputs_from_trajectory(output, context)
+        reward_prompts = reward_prompts_from_output(output, context)
         from vrl.trainers.profiling import record_function
 
         with record_function("collector.reward_score"):
@@ -142,7 +145,7 @@ class RolloutCollector:
         if phases is not None and phase_t is not None:
             phases["collect.reward_score"] = _sync_time() - phase_t
 
-        return await self.packer.pack(output, rewards, context)
+        return rollout_batch_from_trajectory(output, rewards, context)
 
 
 def _device_from_model(model: Any | None) -> Any | None:

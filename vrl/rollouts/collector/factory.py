@@ -17,7 +17,6 @@ from vrl.rollouts.family_registry import (
     FAMILY_REGISTRY,
     normalize_rollout_family,
 )
-from vrl.rollouts.packers.trajectory import TrajectoryRolloutPacker
 
 CollectorKind = Literal["diffusion", "ar_discrete", "ar_continuous", "ar_r1"]
 
@@ -83,7 +82,6 @@ def build_rollout_collector(
         task=entry.task,
         executor_cls=entry.executor_cls,
         request_builder=request_builder,
-        packer=TrajectoryRolloutPacker(),
         reward_scorer=RewardScorer(reward_fn),
         default_group_size=_default_group_size(entry, settings),
         runtime=runtime,

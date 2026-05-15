@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-import asyncio
-
 import torch
 
 from vrl.engine import GenerationRequest, GenerationSampleSpec, OutputBatch
 from vrl.engine.trajectory import build_ar_multisegment_trajectory
+from vrl.rollouts.collector.batch_builder import (
+    RolloutBatchBuildContext,
+    rollout_batch_from_trajectory,
+)
 from vrl.rollouts.collector.factory import build_rollout_collector
-from vrl.rollouts.packers.base import RolloutPackContext
-from vrl.rollouts.packers.trajectory import TrajectoryRolloutPacker
 from vrl.rollouts.settings import RolloutSettings
 
 
@@ -53,7 +53,7 @@ def _segment(batch: int, length: int, *, visual: bool) -> dict[str, torch.Tensor
     }
 
 
-def test_r1_collector_uses_r1_task_request_and_packer() -> None:
+def test_r1_collector_uses_r1_task_request_and_trajectory_batch() -> None:
     settings = RolloutSettings(
         family="janus_pro_r1",
         values={
@@ -83,14 +83,13 @@ def test_r1_collector_uses_r1_task_request_and_packer() -> None:
 
     assert collector.family == "janus_pro_r1"
     assert collector.task == "ar_t2i_r1"
-    assert isinstance(collector.packer, TrajectoryRolloutPacker)
     assert plan.request.family == "janus_pro_r1"
     assert plan.request.task == "ar_t2i_r1"
     assert plan.request.sampling["max_reflect_len"] == 32
     assert "trajectory" in plan.request.return_artifacts
 
 
-def test_r1_packer_keeps_segments_separate() -> None:
+def test_r1_trajectory_batch_keeps_segments_separate() -> None:
     batch_size = 2
     initial_images = torch.ones(batch_size, 3, 2, 2)
     final_images = torch.zeros(batch_size, 3, 2, 2)
@@ -131,13 +130,10 @@ def test_r1_packer_keeps_segments_separate() -> None:
         extra={},
     )
 
-    packer = TrajectoryRolloutPacker()
-    packed = asyncio.run(
-        packer.pack(
-            output,
-            torch.tensor([1.0, 2.0]),
-            RolloutPackContext(metadata={}, device="cpu", rescale_to_unit=True),
-        ),
+    packed = rollout_batch_from_trajectory(
+        output,
+        torch.tensor([1.0, 2.0]),
+        RolloutBatchBuildContext(metadata={}, device="cpu", rescale_to_unit=True),
     )
 
     assert "r1_segments" not in packed.extras
