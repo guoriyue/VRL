@@ -6,7 +6,7 @@ import pytest
 import torch
 from transformers.cache_utils import DynamicCache
 
-from vrl.engine.ar.cache import ar_concat_rows, ar_split_rows
+from vrl.engine.ar.cache import ARCacheRows, ar_concat_rows, ar_split_rows
 
 
 def test_ar_split_and_concat_rows_preserve_nested_kv_order() -> None:
@@ -33,6 +33,54 @@ def test_ar_split_and_concat_rows_preserve_nested_kv_order() -> None:
 def test_ar_split_rows_rejects_wrong_batch_size() -> None:
     with pytest.raises(ValueError, match="cannot split tensor"):
         ar_split_rows(torch.zeros(2, 4), 3)
+
+
+def test_ar_cache_rows_gather_and_scatter_nested_values() -> None:
+    key = torch.arange(3 * 2 * 4, dtype=torch.float32).reshape(3, 2, 4)
+    value = key + 100
+    cache = {
+        "past_key_values": ((key, value),),
+        "last_hidden": torch.arange(3 * 5, dtype=torch.float32).reshape(3, 5),
+    }
+    rows = ARCacheRows.from_batched(cache, 3, owner="test.cache")
+
+    gathered = rows.gather([2, 0])
+    assert torch.equal(
+        gathered["past_key_values"][0][0],
+        torch.cat([key[2:3], key[:1]]),
+    )
+
+    replacement = {
+        "past_key_values": (
+            (torch.full((2, 2, 4), -1.0), torch.full((2, 2, 4), 7.0)),
+        ),
+        "last_hidden": torch.full((2, 5), 3.0),
+    }
+    rows.scatter([0, 2], replacement)
+
+    updated = rows.gather([0, 2])
+    assert torch.equal(
+        updated["past_key_values"][0][0],
+        replacement["past_key_values"][0][0],
+    )
+    assert torch.equal(updated["last_hidden"], replacement["last_hidden"])
+    assert torch.equal(rows.gather([1])["past_key_values"][0][0], key[1:2])
+
+    rows.scatter_rows([1], rows.select_rows([0]))
+    assert torch.equal(
+        rows.gather([1])["last_hidden"],
+        replacement["last_hidden"][:1],
+    )
+
+
+def test_ar_cache_rows_rejects_invalid_indices() -> None:
+    rows = ARCacheRows.from_batched(torch.zeros(2, 4), 2, owner="test.cache")
+
+    with pytest.raises(IndexError, match=r"test\.cache"):
+        rows.gather([2])
+
+    with pytest.raises(ValueError, match="received 1 rows"):
+        rows.scatter_rows([0, 1], rows.select_rows([0]))
 
 
 def test_ar_cache_helpers_preserve_transformers_dynamic_cache_objects() -> None:

@@ -14,12 +14,11 @@ import torch.nn.functional as F
 from vrl.engine.ar import (
     ARGenerationSpec,
     ARPipelineExecutorBase,
-    chunk_sample_specs,
-    max_peak_memory_mb,
-    ordered_chunks,
+    ARRequestLayout,
     run_kv_decode,
 )
-from vrl.engine.core.capabilities import FamilyCapability, ar_discrete_family_capability
+from vrl.engine.core.capabilities import FamilyCapability
+from vrl.engine.core.capability_presets import ar_discrete_family_capability
 from vrl.engine.core.protocols import PipelineChunkResult
 from vrl.engine.core.types import (
     GenerationMetrics,
@@ -589,7 +588,7 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
             cond_embeds = self._embed(prompt_ids)
             uncond_embeds = self._embed(uncond_ids)
 
-        chunk_specs = chunk_sample_specs(request, chunk)
+        chunk_specs = self.chunk_sample_specs(request, chunk)
         with (
             record_function("engine.decode_step"),
             record_function("engine.cache_read"),
@@ -726,6 +725,8 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
 class JanusProChunkGatherer:
     """Pure driver-side gatherer for Janus-Pro AR chunk payloads."""
 
+    layout = ARRequestLayout()
+
     def gather_chunks(
         self,
         request: GenerationRequest,
@@ -734,7 +735,7 @@ class JanusProChunkGatherer:
     ) -> OutputBatch:
         """Pack prompt/sample AR chunks back into the canonical OutputBatch."""
 
-        ordered_ar_chunks = ordered_chunks(
+        ordered_ar_chunks = self.layout.ordered_chunks(
             request,
             sample_specs,
             chunks,
@@ -755,7 +756,7 @@ class JanusProChunkGatherer:
             dim=0,
         )
         output = torch.cat([chunk.output for chunk in ordered_ar_chunks], dim=0)
-        peak_mem_mb = max_peak_memory_mb(ordered_ar_chunks)
+        peak_mem_mb = self.layout.max_peak_memory_mb(ordered_ar_chunks)
         image_token_num = int(request.sampling.get("image_token_num", 576))
         chunk_context = dict(ordered_ar_chunks[0].context)
         metrics = GenerationMetrics(
@@ -977,7 +978,7 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
             record_function("engine.cache_read"),
             record_function("engine.cache_write"),
         ):
-            chunk_specs = chunk_sample_specs(request, chunk)
+            chunk_specs = self.chunk_sample_specs(request, chunk)
             scheduler_batches: list[int] = []
             result = _call_with_supported_kwargs(
                 self.model.generate_with_refine,
@@ -1088,13 +1089,15 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
 class JanusProR1ChunkGatherer:
     """Driver-side gatherer for Janus-Pro-R1 chunk payloads."""
 
+    layout = ARRequestLayout()
+
     def gather_chunks(
         self,
         request: GenerationRequest,
         sample_specs: Sequence[GenerationSampleSpec],
         chunks: Sequence[JanusProR1ChunkResult],
     ) -> OutputBatch:
-        ordered = ordered_chunks(
+        ordered = self.layout.ordered_chunks(
             request,
             sample_specs,
             chunks,
@@ -1123,7 +1126,7 @@ class JanusProR1ChunkGatherer:
             primary_segment="final_image",
             context=context,
         )
-        peak_mem_mb = self._max_peak_memory_mb(ordered)
+        peak_mem_mb = self.layout.max_peak_memory_mb(ordered)
         num_steps = _segment_token_steps(segment_extra)
         metrics = GenerationMetrics(
             num_prompts=len(request.prompts),
@@ -1156,15 +1159,6 @@ class JanusProR1ChunkGatherer:
             metrics=metrics,
             peak_memory_mb=peak_mem_mb or 0.0,
         )
-
-    @staticmethod
-    def _max_peak_memory_mb(
-        chunks: Sequence[JanusProR1ChunkResult],
-    ) -> float | None:
-        peaks = [chunk.peak_memory_mb for chunk in chunks if chunk.peak_memory_mb is not None]
-        return max(peaks) if peaks else None
-
-
 def _parse_task_stages(value: Any) -> tuple[str, ...]:
     if value is None:
         return R1_SEGMENT_NAMES

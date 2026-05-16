@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from vrl.engine import GenerationRequest
-from vrl.engine.ar import ActiveSequence, parse_ar_generation_spec
+from vrl.engine.ar import ActiveSequence, ARRequestLayout
 
 
 def test_nextstep_ar_spec_carries_scheduler_batch_size() -> None:
@@ -22,7 +22,7 @@ def test_nextstep_ar_spec_carries_scheduler_batch_size() -> None:
         },
     )
 
-    spec = parse_ar_generation_spec(request)
+    spec = ARRequestLayout().parse_spec(request)
     sequence = ActiveSequence(
         request_id=request.request_id,
         sample_id="s0",

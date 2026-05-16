@@ -51,7 +51,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from vrl.engine.ar.cache import ar_concat_rows, ar_split_rows
+from vrl.engine.ar.cache import ARCacheRows, ar_concat_rows, ar_split_rows
 from vrl.engine.ar.types import ARStepResult
 from vrl.models.families.janus_pro.r1_types import (
     JanusR1GenerationResult,
@@ -133,8 +133,8 @@ class JanusProConfig:
 class JanusProARState:
     """Mutable per-row state for scheduled Janus-Pro AR sampling."""
 
-    cond_past_rows: list[Any | None]
-    uncond_past_rows: list[Any | None]
+    cond_past_rows: ARCacheRows
+    uncond_past_rows: ARCacheRows
     cond_last_hidden_rows: list[torch.Tensor]
     uncond_last_hidden_rows: list[torch.Tensor]
     cond_attn_rows: list[torch.Tensor]
@@ -1151,10 +1151,12 @@ class JanusProModel(nn.Module):
         cond_past_rows, cond_last_hidden_rows = self._prefill_ar_prompt(
             cond_inputs_embeds,
             cond_attention_mask,
+            owner="janus.cond_past",
         )
         uncond_past_rows, uncond_last_hidden_rows = self._prefill_ar_prompt(
             uncond_inputs_embeds,
             uncond_attention_mask,
+            owner="janus.uncond_past",
         )
 
         return JanusProARState(
@@ -1185,7 +1187,9 @@ class JanusProModel(nn.Module):
         self,
         inputs_embeds: torch.Tensor,
         attention_mask: torch.Tensor,
-    ) -> tuple[list[Any], list[torch.Tensor]]:
+        *,
+        owner: str,
+    ) -> tuple[ARCacheRows, list[torch.Tensor]]:
         """Run one prompt prefill and split cache/last hidden into row state."""
 
         outputs = self._lm_trunk()(
@@ -1196,7 +1200,10 @@ class JanusProModel(nn.Module):
         batch_size = inputs_embeds.shape[0]
         past = getattr(outputs, "past_key_values", None)
         last_hidden = self._last_token_hidden(outputs)
-        return ar_split_rows(past, batch_size), ar_split_rows(last_hidden, batch_size)
+        return (
+            ARCacheRows.from_batched(past, batch_size, owner=owner),
+            ar_split_rows(last_hidden, batch_size),
+        )
 
     @staticmethod
     def _last_token_hidden(outputs: Any) -> torch.Tensor:
@@ -1422,12 +1429,8 @@ class JanusProModel(nn.Module):
             dim=1,
         )
 
-        cond_past = ar_concat_rows(
-            [state.cond_past_rows[row] for row in row_indices]
-        )
-        uncond_past = ar_concat_rows(
-            [state.uncond_past_rows[row] for row in row_indices]
-        )
+        cond_past = state.cond_past_rows.gather(row_indices)
+        uncond_past = state.uncond_past_rows.gather(row_indices)
         past = ar_concat_rows([cond_past, uncond_past])
         outputs = self._lm_trunk()(
             inputs_embeds=inputs_embeds,
@@ -1436,17 +1439,24 @@ class JanusProModel(nn.Module):
             use_cache=True,
         )
 
-        updated_past_rows = ar_split_rows(
+        updated_past_rows = ARCacheRows.from_batched(
             getattr(outputs, "past_key_values", None),
             2 * batch_size,
+            owner="janus.updated_past",
         )
         updated_hidden_rows = ar_split_rows(
             self._last_token_hidden(outputs),
             2 * batch_size,
         )
+        state.cond_past_rows.scatter_rows(
+            row_indices,
+            updated_past_rows.select_rows(range(batch_size)),
+        )
+        state.uncond_past_rows.scatter_rows(
+            row_indices,
+            updated_past_rows.select_rows(range(batch_size, 2 * batch_size)),
+        )
         for offset, row in enumerate(row_indices):
-            state.cond_past_rows[row] = updated_past_rows[offset]
-            state.uncond_past_rows[row] = updated_past_rows[batch_size + offset]
             state.cond_last_hidden_rows[row] = updated_hidden_rows[offset]
             state.uncond_last_hidden_rows[row] = updated_hidden_rows[
                 batch_size + offset

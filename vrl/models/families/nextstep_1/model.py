@@ -45,7 +45,7 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from vrl.engine.ar.cache import ar_concat_rows, ar_split_rows
+from vrl.engine.ar.cache import ARCacheRows
 from vrl.engine.ar.types import ARStepResult
 from vrl.models.families.nextstep_1.flow_step import (
     flow_logprob_at,
@@ -110,8 +110,8 @@ class NextStep1Config:
 class NextStep1ARState:
     """Mutable per-row state for one scheduled NextStep AR sampling loop."""
 
-    kv_cond_rows: list[Any]
-    kv_uncond_rows: list[Any] | None
+    kv_cond_rows: ARCacheRows
+    kv_uncond_rows: ARCacheRows | None
     c_cond: torch.Tensor
     c_uncond: torch.Tensor | None
     tokens: torch.Tensor
@@ -383,9 +383,20 @@ class NextStep1Model(nn.Module):
         c_uncond = self._last_hidden(kv_uncond) if kv_uncond is not None else None
 
         return NextStep1ARState(
-            kv_cond_rows=ar_split_rows(kv_cond, batch_size),
-            kv_uncond_rows=ar_split_rows(kv_uncond, batch_size)
-            if kv_uncond is not None else None,
+            kv_cond_rows=ARCacheRows.from_batched(
+                kv_cond,
+                batch_size,
+                owner="nextstep.cond_kv",
+            ),
+            kv_uncond_rows=(
+                ARCacheRows.from_batched(
+                    kv_uncond,
+                    batch_size,
+                    owner="nextstep.uncond_kv",
+                )
+                if kv_uncond is not None
+                else None
+            ),
             c_cond=c_cond,
             c_uncond=c_uncond,
             tokens=tokens,
@@ -517,26 +528,18 @@ class NextStep1Model(nn.Module):
         state.logprobs[rows, position] = step.log_prob.float()
 
         proj = self._image_in_projector(step.token)
-        kv_cond = ar_concat_rows([state.kv_cond_rows[row] for row in row_indices])
+        kv_cond = state.kv_cond_rows.gather(row_indices)
         kv_cond, c_cond_next = self._step_llm(kv_cond, proj)
         state.decode_forwards += 1
-        for row, row_kv in zip(row_indices, ar_split_rows(kv_cond, batch_size), strict=True):
-            state.kv_cond_rows[row] = row_kv
+        state.kv_cond_rows.scatter(row_indices, kv_cond)
         state.c_cond.index_copy_(0, rows, c_cond_next)
 
         if state.kv_uncond_rows is not None:
             proj_u = self._image_in_projector(step.token)
-            kv_uncond = ar_concat_rows(
-                [state.kv_uncond_rows[row] for row in row_indices]
-            )
+            kv_uncond = state.kv_uncond_rows.gather(row_indices)
             kv_uncond, c_uncond_next = self._step_llm(kv_uncond, proj_u)
             state.decode_forwards += 1
-            for row, row_kv in zip(
-                row_indices,
-                ar_split_rows(kv_uncond, batch_size),
-                strict=True,
-            ):
-                state.kv_uncond_rows[row] = row_kv
+            state.kv_uncond_rows.scatter(row_indices, kv_uncond)
             assert state.c_uncond is not None
             state.c_uncond.index_copy_(0, rows, c_uncond_next)
 

@@ -12,12 +12,11 @@ import torch
 from vrl.engine.ar import (
     ARGenerationSpec,
     ARPipelineExecutorBase,
-    chunk_sample_specs,
-    max_peak_memory_mb,
-    ordered_chunks,
+    ARRequestLayout,
     run_kv_decode,
 )
-from vrl.engine.core.capabilities import FamilyCapability, ar_continuous_family_capability
+from vrl.engine.core.capabilities import FamilyCapability
+from vrl.engine.core.capability_presets import ar_continuous_family_capability
 from vrl.engine.core.protocols import PipelineChunkResult
 from vrl.engine.core.types import (
     GenerationMetrics,
@@ -547,7 +546,7 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
 
         decode_result = run_kv_decode(
             request=request,
-            sample_specs=chunk_sample_specs(request, chunk),
+            sample_specs=self.chunk_sample_specs(request, chunk),
             model=self.model,
             init_args=(cond_embeds, uncond_embeds, prompt_mask, uncond_mask),
             init_kwargs=sample_kwargs,
@@ -647,6 +646,8 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
 class NextStep1ChunkGatherer:
     """Pure driver-side gatherer for NextStep-1 AR chunk payloads."""
 
+    layout = ARRequestLayout()
+
     def gather_chunks(
         self,
         request: GenerationRequest,
@@ -655,7 +656,7 @@ class NextStep1ChunkGatherer:
     ) -> OutputBatch:
         """Pack prompt/sample AR chunks back into the canonical OutputBatch."""
 
-        ordered_ar_chunks = ordered_chunks(
+        ordered_ar_chunks = self.layout.ordered_chunks(
             request,
             sample_specs,
             chunks,
@@ -678,7 +679,7 @@ class NextStep1ChunkGatherer:
         )
         log_probs = torch.cat([chunk.log_probs for chunk in ordered_ar_chunks], dim=0)
         output = torch.cat([chunk.output for chunk in ordered_ar_chunks], dim=0)
-        peak_mem_mb = max_peak_memory_mb(ordered_ar_chunks)
+        peak_mem_mb = self.layout.max_peak_memory_mb(ordered_ar_chunks)
         image_token_num = int(request.sampling["image_token_num"])
         trajectory_context = dict(ordered_ar_chunks[0].context)
         metrics = GenerationMetrics(

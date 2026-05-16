@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -22,6 +23,85 @@ def ar_split_rows(value: Any, batch_size: int) -> list[Any]:
     if isinstance(value, Cache):
         return _split_hf_cache_rows(value, batch_size)
     return _split_plain_rows(value, batch_size)
+
+
+@dataclass(slots=True)
+class ARCacheRows:
+    """Mutable per-row AR cache store.
+
+    Family runtimes keep scheduling state, sampling math, and output tensors.
+    This class only owns the row-wise KV cache plumbing: split a batched cache,
+    gather scheduled rows into a batched cache, and scatter an updated batched
+    cache back into the original row slots.
+    """
+
+    rows: list[Any]
+    owner: str = "ar_cache"
+
+    def __post_init__(self) -> None:
+        self.rows = list(self.rows)
+        if not self.rows:
+            raise ValueError(f"{self.owner} requires at least one cache row")
+
+    @classmethod
+    def from_batched(
+        cls,
+        value: Any,
+        batch_size: int,
+        *,
+        owner: str = "ar_cache",
+    ) -> ARCacheRows:
+        """Create a row cache store from one batched cache value."""
+
+        return cls(ar_split_rows(value, batch_size), owner=owner)
+
+    def __len__(self) -> int:
+        return len(self.rows)
+
+    def __getitem__(self, index: int) -> Any:
+        return self.rows[index]
+
+    def gather(self, indices: Sequence[int]) -> Any:
+        """Return selected rows as one batched cache value."""
+
+        return ar_concat_rows(self.select_rows(indices))
+
+    def scatter(self, indices: Sequence[int], value: Any) -> None:
+        """Overwrite selected rows from one batched cache value."""
+
+        row_indices = self._validate_indices(indices)
+        self.scatter_rows(row_indices, ar_split_rows(value, len(row_indices)))
+
+    def select_rows(self, indices: Sequence[int]) -> list[Any]:
+        """Return selected row cache objects without batching them."""
+
+        row_indices = self._validate_indices(indices)
+        return [self.rows[index] for index in row_indices]
+
+    def scatter_rows(self, indices: Sequence[int], rows: Sequence[Any]) -> None:
+        """Overwrite selected rows from already-split row cache objects."""
+
+        row_indices = self._validate_indices(indices)
+        row_values = list(rows)
+        if len(row_values) != len(row_indices):
+            raise ValueError(
+                f"{self.owner} received {len(row_values)} rows for "
+                f"{len(row_indices)} row indices",
+            )
+        for index, row_value in zip(row_indices, row_values, strict=True):
+            self.rows[index] = row_value
+
+    def _validate_indices(self, indices: Sequence[int]) -> list[int]:
+        row_indices = [int(index) for index in indices]
+        if not row_indices:
+            raise ValueError(f"{self.owner} requires at least one row index")
+        size = len(self.rows)
+        invalid = [index for index in row_indices if index < 0 or index >= size]
+        if invalid:
+            raise IndexError(
+                f"{self.owner} row indices out of range for {size} rows: {invalid}",
+            )
+        return row_indices
 
 
 def _split_plain_rows(value: Any, batch_size: int) -> list[Any]:
@@ -117,4 +197,4 @@ def _is_tensor(value: Any) -> bool:
     return isinstance(value, torch.Tensor)
 
 
-__all__ = ["ar_concat_rows", "ar_split_rows"]
+__all__ = ["ARCacheRows", "ar_concat_rows", "ar_split_rows"]
