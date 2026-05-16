@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
+import socket
 from dataclasses import dataclass
 from typing import Any
 
 from vrl.distributed.ray.dependencies import require_ray
-from vrl.distributed.ray.placement.network import sort_node_gpu_key
 from vrl.distributed.resources import ResolvedDistributedResources
 from vrl.rollouts.runtime.config import RolloutBackendConfig
 
@@ -40,17 +40,6 @@ class _InfoActor:
             except (TypeError, ValueError):
                 continue
         return str(ray.util.get_node_ip_address()), tuple(gpu_ids)
-
-
-def _rollout_bundle(config: RolloutBackendConfig) -> dict[str, float]:
-    bundle = {"CPU": float(config.cpus_per_worker)}
-    if config.gpus_per_worker > 0:
-        bundle["GPU"] = float(config.gpus_per_worker)
-    return bundle
-
-
-def _trainer_reservation_bundle() -> dict[str, float]:
-    return {"CPU": 0.001, "GPU": 1.0}
 
 
 def create_rollout_placement_group(config: RolloutBackendConfig) -> RayPlacement:
@@ -102,6 +91,17 @@ def create_rollout_placement_group(config: RolloutBackendConfig) -> RayPlacement
         trainer_gpu_ids=trainer_gpu_ids,
         rollout_gpu_ids=rollout_gpu_ids,
     )
+
+
+def _rollout_bundle(config: RolloutBackendConfig) -> dict[str, float]:
+    bundle = {"CPU": float(config.cpus_per_worker)}
+    if config.gpus_per_worker > 0:
+        bundle["GPU"] = float(config.gpus_per_worker)
+    return bundle
+
+
+def _trainer_reservation_bundle() -> dict[str, float]:
+    return {"CPU": 0.001, "GPU": 1.0}
 
 
 def _start_trainer_reservations(
@@ -170,8 +170,23 @@ def _probe_rollout_bundles(
         bundle_infos.append((bundle_idx, node_ip, gpu_id))
         rollout_gpu_ids.extend(gpu_ids)
 
-    ordered = [idx for idx, _, _ in sorted(bundle_infos, key=sort_node_gpu_key)]
+    ordered = [idx for idx, _, _ in sorted(bundle_infos, key=_sort_node_gpu_key)]
     return ordered, tuple(rollout_gpu_ids)
+
+
+def _sort_node_gpu_key(item: tuple[int, str, int]) -> tuple[list[int], int, int]:
+    """Stable sort key for rollout placement bundles."""
+
+    index, node_identifier, gpu_id = item
+    try:
+        node_ip_parts = [int(part) for part in node_identifier.split(".")]
+    except ValueError:
+        try:
+            resolved = socket.gethostbyname(node_identifier)
+            node_ip_parts = [int(part) for part in resolved.split(".")]
+        except (socket.gaierror, TypeError):
+            node_ip_parts = [ord(char) for char in node_identifier]
+    return node_ip_parts, gpu_id, index
 
 
 def _log_placement(
@@ -203,3 +218,6 @@ def _log_placement(
             list(resources.rollout_devices),
             list(rollout_gpu_ids),
         )
+
+
+__all__ = ["RayPlacement", "create_rollout_placement_group"]

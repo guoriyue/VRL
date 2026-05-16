@@ -59,7 +59,16 @@ class DistributedExecutionPlanner:
         max_samples = int(
             request.sampling.get("sample_batch_size", request.samples_per_prompt),
         )
-        capability = self.capability or _capability_from_request(request)
+        capability = self.capability
+        if capability is None:
+            capability = family_capability_from_value(
+                request.metadata.get("family_capability"),
+            )
+        if capability is None:
+            raise ValueError(
+                "GenerationRequest.metadata['family_capability'] is required for "
+                "distributed rollout planning",
+            )
         engine_plan = build_engine_plan(
             request,
             sample_specs,
@@ -95,17 +104,6 @@ class DistributedExecutionPlanner:
             engine_plan=engine_plan,
             assignments=tuple(assignments),
         )
-
-
-def _capability_from_request(request: GenerationRequest) -> object:
-    raw = request.metadata.get("family_capability")
-    capability = family_capability_from_value(raw)
-    if capability is not None:
-        return capability
-    raise ValueError(
-        "GenerationRequest.metadata['family_capability'] is required for "
-        "distributed rollout planning",
-    )
 
 
 __all__ = [

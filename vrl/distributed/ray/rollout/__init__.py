@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 from vrl.distributed.ray.rollout.executor import DistributedRolloutExecutor
-from vrl.distributed.ray.rollout.launcher import (
-    RayRolloutLauncher,
-    launch_ray_rollout_runtime,
-)
+from vrl.distributed.ray.rollout.launcher import RayRolloutLauncher
+from vrl.distributed.ray.rollout.placement import RayPlacement, create_rollout_placement_group
 from vrl.distributed.ray.rollout.planner import (
     DeviceAssignment,
     DistributedExecutionPlanner,
@@ -29,10 +27,11 @@ __all__ = [
     "RayChunkExecutionEnvelope",
     "RayChunkResult",
     "RayDistributedRuntime",
+    "RayPlacement",
     "RayRolloutLauncher",
     "RayRolloutWeightSync",
     "RayRolloutWorker",
     "RayWorkerHandle",
     "RolloutWeightSync",
-    "launch_ray_rollout_runtime",
+    "create_rollout_placement_group",
 ]

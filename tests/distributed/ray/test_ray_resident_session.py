@@ -28,16 +28,16 @@ def test_ray_rollout_worker_load_policy_is_idempotent(monkeypatch: Any) -> None:
     )
     built: list[_Executor] = []
 
-    def _build_executor(_: GenerationRuntimeSpec) -> _Executor:
+    def _build_executor(_: RayRolloutWorker) -> _Executor:
         executor = _Executor()
         built.append(executor)
         return executor
 
-    monkeypatch.setattr(worker_mod, "_build_executor", _build_executor)
+    monkeypatch.setattr(worker_mod.RayRolloutWorker, "_build_executor", _build_executor)
     monkeypatch.setattr(
-        worker_mod,
+        worker_mod.RayRolloutWorker,
         "_merge_loaded_capability",
-        lambda current, executor: current,
+        lambda self, executor: self.capability,
     )
 
     worker = RayRolloutWorker("rollout-0", spec)

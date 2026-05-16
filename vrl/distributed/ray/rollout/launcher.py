@@ -9,8 +9,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from vrl.distributed.ray.dependencies import require_ray
-from vrl.distributed.ray.placement.group import create_rollout_placement_group
 from vrl.distributed.ray.rollout.executor import DistributedRolloutExecutor
+from vrl.distributed.ray.rollout.placement import create_rollout_placement_group
 from vrl.distributed.ray.rollout.planner import DistributedExecutionPlanner
 from vrl.distributed.ray.rollout.runtime import RayDistributedRuntime
 from vrl.distributed.ray.rollout.types import RayWorkerHandle
@@ -129,22 +129,6 @@ class RayRolloutLauncher:
         return runtime
 
 
-def launch_ray_rollout_runtime(
-    config: RolloutBackendConfig | Mapping[str, Any],
-    runtime_spec: GenerationRuntimeSpec | Mapping[str, Any],
-    gatherer: ChunkGatherer,
-    *,
-    init_ray: bool = True,
-    ray_init_kwargs: dict[str, Any] | None = None,
-) -> RayDistributedRuntime:
-    """Functional wrapper around ``RayRolloutLauncher``."""
-
-    return RayRolloutLauncher(
-        init_ray=init_ray,
-        ray_init_kwargs={} if ray_init_kwargs is None else dict(ray_init_kwargs),
-    ).launch(config, runtime_spec, gatherer)
-
-
 def _kill_actors(ray: Any, actors: list[Any]) -> None:
     for actor in actors:
         with contextlib.suppress(Exception):
@@ -191,5 +175,4 @@ def _remove_placement_group(ray: Any, placement_group: Any) -> None:
 
 __all__ = [
     "RayRolloutLauncher",
-    "launch_ray_rollout_runtime",
 ]

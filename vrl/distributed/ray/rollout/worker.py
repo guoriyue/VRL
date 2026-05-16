@@ -7,8 +7,11 @@ import logging
 from collections.abc import Mapping
 from typing import Any
 
-from vrl.distributed.ray.dependencies import current_gpu_ids, current_node_ip
-from vrl.distributed.ray.module_loading import import_from_path
+from vrl.distributed.ray.dependencies import (
+    current_gpu_ids,
+    current_node_ip,
+    import_from_path,
+)
 from vrl.distributed.ray.rollout.types import RayChunkExecutionEnvelope, RayChunkResult
 from vrl.engine.core.capabilities import (
     FamilyCapability,
@@ -16,9 +19,7 @@ from vrl.engine.core.capabilities import (
 )
 from vrl.engine.core.protocols import ChunkedFamilyPipelineExecutor
 from vrl.engine.core.runtime_spec import GenerationRuntimeSpec
-from vrl.engine.core.types import GenerationRequest
 from vrl.engine.execution.gather import require_chunked_executor
-from vrl.engine.execution.microbatching import MicroBatchPlan
 from vrl.models.interfaces import require_runtime_model
 from vrl.trainers.core.types import TorchProfilerConfig
 
@@ -34,16 +35,16 @@ class RayRolloutWorker:
         runtime_spec: GenerationRuntimeSpec | Mapping[str, Any],
     ) -> None:
         self.worker_id = worker_id
-        self.runtime_spec = _normalize_runtime_spec(runtime_spec)
+        self.runtime_spec = self._normalize_runtime_spec(runtime_spec)
         self.family = self.runtime_spec.family
         self.executor: ChunkedFamilyPipelineExecutor | None = None
         self._policy_version: int | None = self.runtime_spec.policy_version
-        self._profiler_config = _profiler_config_from_spec(self.runtime_spec)
+        self._profiler_config = self._profiler_config_from_spec(self.runtime_spec)
         self._profiler_output_dir = str(
             self.runtime_spec.extra.get("profiler_output_dir", "outputs/"),
         )
         self._profiler_step = 0
-        self.capability = _capability_from_spec(self.runtime_spec)
+        self.capability = self._capability_from_spec(self.runtime_spec)
 
     def load_policy(self) -> None:
         """Build the family executor from the serialized runtime spec."""
@@ -53,8 +54,8 @@ class RayRolloutWorker:
         from vrl.trainers.memory import log_host_memory
 
         log_host_memory(f"ray_worker:{self.worker_id}:before_load_policy", log=logger)
-        self.executor = _build_executor(self.runtime_spec)
-        self.capability = _merge_loaded_capability(self.capability, self.executor)
+        self.executor = self._build_executor()
+        self.capability = self._merge_loaded_capability(self.executor)
         log_host_memory(f"ray_worker:{self.worker_id}:after_load_policy", log=logger)
 
     def release_policy(self) -> None:
@@ -117,19 +118,8 @@ class RayRolloutWorker:
                 metadata["policy_type"] = type(policy).__name__
         return metadata
 
-    def execute_chunk(
-        self,
-        request_or_envelope: GenerationRequest | RayChunkExecutionEnvelope,
-        chunk: MicroBatchPlan | None = None,
-        profiler_label: str | None = None,
-    ) -> RayChunkResult:
+    def execute_chunk(self, envelope: RayChunkExecutionEnvelope) -> RayChunkResult:
         self.load_policy()
-        envelope = _normalize_execution_envelope(
-            request_or_envelope,
-            chunk,
-            profiler_label,
-            self.capability,
-        )
         request = envelope.request
         chunk = envelope.chunk
         runtime_debug = bool(request.metadata.get("_runtime_debug"))
@@ -159,7 +149,7 @@ class RayRolloutWorker:
                 request_id=request.request_id,
                 worker_id=self.worker_id,
                 chunk=chunk,
-                output=_to_cpu(output),
+                output=self._to_cpu(output),
                 metrics=self._chunk_metrics(
                     envelope,
                     runtime_debug=runtime_debug,
@@ -204,10 +194,8 @@ class RayRolloutWorker:
             f"policy{self._policy_version}_chunk{chunk.prompt_index}_{chunk.sample_start}"
         )
         try:
-            device = _executor_device(self.executor)
-            event_name = envelope.profiler_label or _default_chunk_profiler_label(
-                self.capability,
-            )
+            device = self._executor_device(self.executor)
+            event_name = envelope.profiler_label or "engine.forward_chunk"
             forward_chunk_plan = getattr(self.executor, "forward_chunk_plan", None)
             if not callable(forward_chunk_plan):
                 raise TypeError(
@@ -257,178 +245,169 @@ class RayRolloutWorker:
             metrics["plan_aware_chunk"] = plan_aware_chunk
         return metrics
 
+    @staticmethod
+    def _normalize_runtime_spec(
+        runtime_spec: GenerationRuntimeSpec | Mapping[str, Any],
+    ) -> GenerationRuntimeSpec:
+        spec = GenerationRuntimeSpec.from_value(runtime_spec)
+        if spec.family is None:
+            raise ValueError("GenerationRuntimeSpec.family is required")
+        return spec
 
-def _normalize_runtime_spec(
-    runtime_spec: GenerationRuntimeSpec | Mapping[str, Any],
-) -> GenerationRuntimeSpec:
-    spec = GenerationRuntimeSpec.from_value(runtime_spec)
-    if spec.family is None:
-        raise ValueError("GenerationRuntimeSpec.family is required")
-    return spec
-
-
-def _build_executor(runtime_spec: GenerationRuntimeSpec) -> ChunkedFamilyPipelineExecutor:
-    builder_path = runtime_spec.runtime_builder
-    executor_path = runtime_spec.executor_cls
-    if builder_path is None or executor_path is None:
-        raise ValueError(
-            "GenerationRuntimeSpec requires runtime_builder and executor_cls import paths",
-        )
-
-    from vrl.models.interfaces.runtime import RuntimeBuildSpec
-
-    build_runtime_bundle = import_from_path(str(builder_path))
-    executor_cls = import_from_path(str(executor_path))
-    bundle = build_runtime_bundle(
-        RuntimeBuildSpec(
-            **_normalize_runtime_build_spec_payload(
-                runtime_spec.build_spec_payload(),
+    def _build_executor(self) -> ChunkedFamilyPipelineExecutor:
+        runtime_spec = self.runtime_spec
+        builder_path = runtime_spec.runtime_builder
+        executor_path = runtime_spec.executor_cls
+        if builder_path is None or executor_path is None:
+            raise ValueError(
+                "GenerationRuntimeSpec requires runtime_builder and executor_cls import paths",
             )
-        ),
-    )
-    model = require_runtime_model(bundle.model, owner="RuntimeBundle.model")
-    built = executor_cls(model, **dict(runtime_spec.executor_kwargs))
-    if getattr(bundle, "runtime_caps", None) is not None:
-        built.runtime_caps = dict(bundle.runtime_caps)
-    return require_chunked_executor(built)
 
+        from vrl.models.interfaces.runtime import RuntimeBuildSpec
 
-def _profiler_config_from_spec(runtime_spec: GenerationRuntimeSpec) -> TorchProfilerConfig:
-    raw = runtime_spec.extra.get("torch_profiler", {})
-    if isinstance(raw, Mapping):
-        return TorchProfilerConfig(**dict(raw))
-    return TorchProfilerConfig()
-
-
-def _capability_from_spec(runtime_spec: GenerationRuntimeSpec) -> FamilyCapability:
-    capability = family_capability_from_value(runtime_spec.extra.get("family_capability"))
-    if capability is not None:
-        return capability
-    raise ValueError(
-        "GenerationRuntimeSpec.extra['family_capability'] is required for Ray rollout",
-    )
-
-
-def _normalize_execution_envelope(
-    request_or_envelope: GenerationRequest | RayChunkExecutionEnvelope,
-    chunk: MicroBatchPlan | None,
-    profiler_label: str | None,
-    capability: FamilyCapability,
-) -> RayChunkExecutionEnvelope:
-    if isinstance(request_or_envelope, RayChunkExecutionEnvelope):
-        return request_or_envelope
-    del chunk, profiler_label, capability
-    raise TypeError(
-        "RayRolloutWorker.execute_chunk requires RayChunkExecutionEnvelope; "
-        "request+chunk execution is no longer supported",
-    )
-
-
-def _merge_loaded_capability(
-    capability: FamilyCapability,
-    executor: ChunkedFamilyPipelineExecutor,
-) -> FamilyCapability:
-    runtime_caps = getattr(executor, "runtime_caps", None)
-    merged = capability.with_runtime_caps(runtime_caps if isinstance(runtime_caps, Mapping) else None)
-    declared = _declared_executor_capability(executor)
-    if declared is None:
-        return merged
-    if declared.family != merged.family or declared.task != merged.task:
-        raise ValueError(
-            "executor capability does not match runtime spec: "
-            f"{declared.family}/{declared.task} != {merged.family}/{merged.task}",
+        build_runtime_bundle = import_from_path(str(builder_path))
+        executor_cls = import_from_path(str(executor_path))
+        bundle = build_runtime_bundle(
+            RuntimeBuildSpec(
+                **self._normalize_runtime_build_spec_payload(
+                    runtime_spec.build_spec_payload(),
+                )
+            ),
         )
-    if declared.trajectory_kind != merged.trajectory_kind:
+        model = require_runtime_model(bundle.model, owner="RuntimeBundle.model")
+        built = executor_cls(model, **dict(runtime_spec.executor_kwargs))
+        if getattr(bundle, "runtime_caps", None) is not None:
+            built.runtime_caps = dict(bundle.runtime_caps)
+        return require_chunked_executor(built)
+
+    @staticmethod
+    def _profiler_config_from_spec(
+        runtime_spec: GenerationRuntimeSpec,
+    ) -> TorchProfilerConfig:
+        raw = runtime_spec.extra.get("torch_profiler", {})
+        if isinstance(raw, Mapping):
+            return TorchProfilerConfig(**dict(raw))
+        return TorchProfilerConfig()
+
+    @staticmethod
+    def _capability_from_spec(runtime_spec: GenerationRuntimeSpec) -> FamilyCapability:
+        capability = family_capability_from_value(runtime_spec.extra.get("family_capability"))
+        if capability is not None:
+            return capability
         raise ValueError(
-            "executor trajectory capability does not match runtime spec: "
-            f"{declared.trajectory_kind} != {merged.trajectory_kind}",
+            "GenerationRuntimeSpec.extra['family_capability'] is required for Ray rollout",
         )
-    return declared.with_runtime_caps(runtime_caps if isinstance(runtime_caps, Mapping) else None)
 
+    def _merge_loaded_capability(
+        self,
+        executor: ChunkedFamilyPipelineExecutor,
+    ) -> FamilyCapability:
+        runtime_caps = getattr(executor, "runtime_caps", None)
+        merged = self.capability.with_runtime_caps(
+            runtime_caps if isinstance(runtime_caps, Mapping) else None,
+        )
+        declared = self._declared_executor_capability(executor)
+        if declared is None:
+            return merged
+        if declared.family != merged.family or declared.task != merged.task:
+            raise ValueError(
+                "executor capability does not match runtime spec: "
+                f"{declared.family}/{declared.task} != {merged.family}/{merged.task}",
+            )
+        if declared.trajectory_kind != merged.trajectory_kind:
+            raise ValueError(
+                "executor trajectory capability does not match runtime spec: "
+                f"{declared.trajectory_kind} != {merged.trajectory_kind}",
+            )
+        return declared.with_runtime_caps(
+            runtime_caps if isinstance(runtime_caps, Mapping) else None,
+        )
 
-def _declared_executor_capability(
-    executor: ChunkedFamilyPipelineExecutor,
-) -> FamilyCapability | None:
-    method = getattr(executor, "capability", None)
-    if callable(method):
-        return family_capability_from_value(method())
-    for attr_name in ("family_capability", "capability_metadata"):
-        value = getattr(executor, attr_name, None)
-        if value is not None:
-            return family_capability_from_value(value)
-    return None
+    @staticmethod
+    def _declared_executor_capability(
+        executor: ChunkedFamilyPipelineExecutor,
+    ) -> FamilyCapability | None:
+        method = getattr(executor, "capability", None)
+        if callable(method):
+            return family_capability_from_value(method())
+        for attr_name in ("family_capability", "capability_metadata"):
+            value = getattr(executor, attr_name, None)
+            if value is not None:
+                return family_capability_from_value(value)
+        return None
 
+    @staticmethod
+    def _executor_device(executor: Any) -> Any:
+        policy = getattr(executor, "model", None)
+        device = getattr(policy, "device", None)
+        if device is not None:
+            return device
+        try:
+            import torch
 
-def _default_chunk_profiler_label(capability: FamilyCapability) -> str:
-    del capability
-    return "engine.forward_chunk"
+            return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        except Exception:
+            return "cpu"
 
+    @classmethod
+    def _normalize_runtime_build_spec_payload(
+        cls,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        normalized = dict(payload)
+        device = normalized.get("device")
+        if isinstance(device, str):
+            import torch
 
-def _executor_device(executor: Any) -> Any:
-    policy = getattr(executor, "model", None)
-    device = getattr(policy, "device", None)
-    if device is not None:
-        return device
-    try:
+            normalized["device"] = torch.device(device)
+        dtype = normalized.get("dtype")
+        if isinstance(dtype, str):
+            normalized["dtype"] = cls._torch_dtype_from_string(dtype)
+        return normalized
+
+    @staticmethod
+    def _torch_dtype_from_string(value: str) -> Any:
         import torch
 
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    except Exception:
-        return "cpu"
-
-
-def _normalize_runtime_build_spec_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    normalized = dict(payload)
-    device = normalized.get("device")
-    if isinstance(device, str):
-        import torch
-
-        normalized["device"] = torch.device(device)
-    dtype = normalized.get("dtype")
-    if isinstance(dtype, str):
-        normalized["dtype"] = _torch_dtype_from_string(dtype)
-    return normalized
-
-
-def _torch_dtype_from_string(value: str) -> Any:
-    import torch
-
-    key = value.removeprefix("torch.").lower()
-    aliases = {
-        "bf16": torch.bfloat16,
-        "bfloat16": torch.bfloat16,
-        "fp16": torch.float16,
-        "float16": torch.float16,
-        "half": torch.float16,
-        "fp32": torch.float32,
-        "float32": torch.float32,
-        "float": torch.float32,
-    }
-    try:
-        return aliases[key]
-    except KeyError as exc:
-        raise ValueError(f"unsupported torch dtype string in runtime_spec: {value!r}") from exc
-
-
-def _to_cpu(value: Any) -> Any:
-    if _is_tensor(value):
-        return value.detach().cpu()
-    if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        payload = {
-            field.name: _to_cpu(getattr(value, field.name)) for field in dataclasses.fields(value)
+        key = value.removeprefix("torch.").lower()
+        aliases = {
+            "bf16": torch.bfloat16,
+            "bfloat16": torch.bfloat16,
+            "fp16": torch.float16,
+            "float16": torch.float16,
+            "half": torch.float16,
+            "fp32": torch.float32,
+            "float32": torch.float32,
+            "float": torch.float32,
         }
-        return type(value)(**payload)
-    if isinstance(value, dict):
-        return {key: _to_cpu(inner) for key, inner in value.items()}
-    if isinstance(value, list):
-        return [_to_cpu(inner) for inner in value]
-    if isinstance(value, tuple):
-        return tuple(_to_cpu(inner) for inner in value)
-    return value
+        try:
+            return aliases[key]
+        except KeyError as exc:
+            raise ValueError(
+                f"unsupported torch dtype string in runtime_spec: {value!r}",
+            ) from exc
 
+    @classmethod
+    def _to_cpu(cls, value: Any) -> Any:
+        if cls._is_tensor(value):
+            return value.detach().cpu()
+        if dataclasses.is_dataclass(value) and not isinstance(value, type):
+            payload = {
+                field.name: cls._to_cpu(getattr(value, field.name))
+                for field in dataclasses.fields(value)
+            }
+            return type(value)(**payload)
+        if isinstance(value, dict):
+            return {key: cls._to_cpu(inner) for key, inner in value.items()}
+        if isinstance(value, list):
+            return [cls._to_cpu(inner) for inner in value]
+        if isinstance(value, tuple):
+            return tuple(cls._to_cpu(inner) for inner in value)
+        return value
 
-def _is_tensor(value: Any) -> bool:
-    return hasattr(value, "detach") and hasattr(value, "cpu")
+    @staticmethod
+    def _is_tensor(value: Any) -> bool:
+        return hasattr(value, "detach") and hasattr(value, "cpu")
 
 
 __all__ = ["RayRolloutWorker"]
