@@ -1,0 +1,9 @@
+# Continuous AR image-token sampling preset: 256 px, 1024 tokens (32x32),
+# 20 Euler flow steps, CFG 4.5, terminal-noise SDE multiplier 1.0.
+sampling:
+  image_size: 256
+  image_token_num: 1024
+  num_flow_steps: 20
+  noise_level: 1.0
+  cfg_scale: 4.5
+  ar_scheduler_batch_size: null

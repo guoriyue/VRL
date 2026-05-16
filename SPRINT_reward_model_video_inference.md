@@ -53,7 +53,7 @@ Cosmos-Predict2.5 + DiffusionNFT 只作为第一条真实验收 consumer。不�
 ```text
 vrl/rewards/video_reward.py
 vrl/rewards/remote_video.py
-configs/base/reward/video_reward.yaml
+configs/reward/video_reward.yaml
 ```
 
 但当前 `VideoReward` 还是 reward entrypoint + runtime selection + media stack + remote client glue 混在一起：
@@ -1056,7 +1056,7 @@ vrl/rewards/video_reward.py
 
 ### 8. Config
 
-建议在当前 `configs/base/reward/video_reward.yaml` 上增量扩展，不做一次性 config rename：
+建议在当前 `configs/reward/video_reward.yaml` 上增量扩展，不做一次性 config rename：
 
 ```yaml
 distributed:
@@ -1095,7 +1095,7 @@ reward:
 
 原则：
 
-- 当前 `configs/base/reward/video_reward.yaml` 仍然是 legacy `backend: stub`；这是必须删除的 code debt，不是目标 public config。Phase 4 必须把默认/local debug 路径迁到 `inference_runtime=ray` Ray fake scorer path。
+- 当前 `configs/reward/video_reward.yaml` 仍然是 legacy `backend: stub`；这是必须删除的 code debt，不是目标 public config。Phase 4 必须把默认/local debug 路径迁到 `inference_runtime=ray` Ray fake scorer path。
 - 保持当前 `video_reward` kwargs 命名，不把 legacy backend 字段迁到另一套 namespace。
 - Ray reward runtime 的 GPU/worker sizing 只走 `distributed.resources.reward`。
 - `model_path` / `dtype` / `reward_model_version` 是 Ray runtime 的 model config，不是 GPU placement。
@@ -1170,7 +1170,7 @@ tests/rewards/test_external_http_video_reward_runtime.py
 
 ```text
 vrl/rewards/video_reward.py
-configs/base/reward/video_reward.yaml
+configs/reward/video_reward.yaml
 tests/rewards/test_video_reward.py
 ```
 
@@ -1253,7 +1253,7 @@ tests/rewards/test_video_reward_versioning.py
 编辑：
 
 ```text
-configs/experiment/cosmos_predict2_5_2b_diffusionnft.yaml
+configs/experiment/online/ocr/video_diffusion_nft.yaml
 vrl/scripts/cosmos/train.py
 tests/config/test_load_all_experiments.py
 ```
@@ -1310,7 +1310,7 @@ pytest tests/config/test_load_all_experiments.py
 Cosmos consumer：
 
 ```bash
-python -m vrl.scripts.train --config experiment/cosmos_predict2_5_2b_diffusionnft
+python -m vrl.scripts.train --config experiment/online/ocr/video_diffusion_nft
 ```
 
 ## 完成标准
@@ -1332,5 +1332,5 @@ python -m vrl.scripts.train --config experiment/cosmos_predict2_5_2b_diffusionnf
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/rewards/remote_video.py`
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/rewards/base.py`
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/rewards/multi.py`
-- `/home/mingfeiguo/Desktop/wm-infra/configs/base/reward/video_reward.yaml`
-- `/home/mingfeiguo/Desktop/wm-infra/configs/experiment/cosmos_predict2_5_2b_diffusionnft.yaml`
+- `/home/mingfeiguo/Desktop/wm-infra/configs/reward/video_reward.yaml`
+- `/home/mingfeiguo/Desktop/wm-infra/configs/experiment/online/ocr/video_diffusion_nft.yaml`

@@ -1,6 +1,6 @@
 # Rollout / sampling config for diffusion models — pure RL sampling knobs.
 # Sampling shape (resolution / steps / guidance_scale / cfg flag) lives in
-# model.sampling.* so it travels with the model checkpoint.
+# configs/sampling/{image,video} plus configs/sampling/denoise.
 rollout:
   n: 4
   rollout_batch_size: 4

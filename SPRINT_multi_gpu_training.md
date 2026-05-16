@@ -409,7 +409,7 @@ distributed.training.strategy=megatron is reserved for a future Megatron backend
 
 ```bash
 torchrun --nproc-per-node=2 -m vrl.scripts.train \
-  --config experiment/sd3_5_ocr_grpo \
+  --config experiment/online/ocr/image_flow_grpo \
   distributed.training.strategy=ddp \
   distributed.resources.trainer.num_gpus=2
 ```
@@ -418,7 +418,7 @@ torchrun --nproc-per-node=2 -m vrl.scripts.train \
 
 ```bash
 torchrun --nproc-per-node=2 -m vrl.scripts.train \
-  --config experiment/sd3_5_ocr_grpo \
+  --config experiment/online/ocr/image_flow_grpo \
   distributed.training.strategy=fsdp \
   distributed.resources.trainer.num_gpus=2
 ```

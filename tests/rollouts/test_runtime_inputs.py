@@ -22,11 +22,26 @@ from vrl.rollouts.runtime.launch_inputs import (
 @pytest.mark.parametrize(
     ("experiment", "family", "expected_task", "expected_gatherer"),
     [
-        ("sd3_5_ocr_grpo", "sd3_5", "t2i", DiffusionChunkGatherer),
-        ("wan_2_1_1_3b_ocr_grpo", "wan_2_1", "t2v", DiffusionChunkGatherer),
-        ("cosmos_predict2_2b_grpo", "cosmos-predict2", "v2w", DiffusionChunkGatherer),
-        ("janus_pro_1b_ocr_grpo", "janus_pro", "ar_t2i", JanusProChunkGatherer),
-        ("nextstep_1_ocr_grpo", "nextstep_1", "ar_t2i", NextStep1ChunkGatherer),
+        ("online/ocr/image_flow_grpo", "sd3_5", "t2i", DiffusionChunkGatherer),
+        ("online/ocr/video_diffusion_grpo", "wan_2_1", "t2v", DiffusionChunkGatherer),
+        (
+            "online/aesthetic/video_diffusion_grpo",
+            "cosmos-predict2",
+            "v2w",
+            DiffusionChunkGatherer,
+        ),
+        (
+            "online/ocr/ar_discrete_token_grpo",
+            "janus_pro",
+            "ar_t2i",
+            JanusProChunkGatherer,
+        ),
+        (
+            "online/ocr/ar_continuous_token_grpo",
+            "nextstep_1",
+            "ar_t2i",
+            NextStep1ChunkGatherer,
+        ),
     ],
 )
 def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
@@ -70,7 +85,7 @@ def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
 
 def test_diffusion_launch_contract_uses_worker_primitive_device_and_dtype() -> None:
     cfg = load_config(
-        "experiment/sd3_5_ocr_grpo",
+        "experiment/online/ocr/image_flow_grpo",
         overrides=[
             "distributed.backend=ray",
             "distributed.resources.visible_devices=[0,1]",
@@ -95,7 +110,7 @@ def test_diffusion_launch_contract_uses_worker_primitive_device_and_dtype() -> N
 
 def test_cosmos_runtime_inputs_include_reference_image_from_cfg() -> None:
     cfg = load_config(
-        "experiment/cosmos_predict2_2b_grpo",
+        "experiment/online/aesthetic/video_diffusion_grpo",
         overrides=[
             "distributed.backend=ray",
             "distributed.resources.visible_devices=[]",
@@ -122,7 +137,7 @@ def test_cosmos_runtime_inputs_include_reference_image_from_cfg() -> None:
 
 def test_explicit_executor_kwargs_override_registry_defaults() -> None:
     cfg = load_config(
-        "experiment/sd3_5_ocr_grpo",
+        "experiment/online/ocr/image_flow_grpo",
         overrides=[
             "distributed.backend=ray",
             "distributed.resources.visible_devices=[]",

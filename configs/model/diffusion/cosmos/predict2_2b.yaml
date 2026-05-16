@@ -1,0 +1,30 @@
+# Cosmos Predict2 2B Video2World — checkpoint + LoRA + compile only.
+# Sampling shape and denoise defaults live under configs/sampling/.
+model:
+  family: cosmos-predict2
+  path: nvidia/Cosmos-Predict2-2B-Video2World
+
+  use_lora: true
+  lora:
+    rank: 64
+    alpha: 32
+    path: ""
+    target_modules:
+      - to_k
+      - to_q
+      - to_v
+      - to_out.0
+      - add_k_proj
+      - add_q_proj
+      - add_v_proj
+      - to_add_out
+
+  torch_compile:
+    enable: false
+    mode: default
+
+  # Reference image for global Video2World conditioning. Empty string fails
+  # fast in the trainer; zero-conditioning is not a valid training objective.
+  # For per-sample conditioning, set cosmos.reference_mode=per_sample and put
+  # reference_image in each JSONL manifest row.
+  reference_image: ""

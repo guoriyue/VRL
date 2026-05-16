@@ -1,0 +1,6 @@
+# Offline diffusion DPO recipe.
+defaults:
+  - /base/algorithm/dpo
+  - /base/actor
+  - /base/trainer
+

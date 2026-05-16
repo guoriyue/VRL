@@ -7,7 +7,7 @@ from vrl.rollouts.runtime.launch_inputs import build_rollout_runtime_inputs
 
 
 def test_janus_pro_r1_experiment_loads_with_multisegment_algorithm() -> None:
-    cfg = load_config("experiment/janus_pro_1b_r1_ocr_grpo")
+    cfg = load_config("experiment/online/ocr/ar_multisegment_token_grpo")
     built = build_configs(cfg)
 
     assert cfg.trainer.entrypoint == (
@@ -26,7 +26,7 @@ def test_janus_pro_r1_experiment_loads_with_multisegment_algorithm() -> None:
 
 def test_janus_pro_r1_runtime_inputs_select_r1_task_and_executor() -> None:
     cfg = load_config(
-        "experiment/janus_pro_1b_r1_ocr_grpo",
+        "experiment/online/ocr/ar_multisegment_token_grpo",
         overrides=[
             "distributed.resources.visible_devices=[]",
             "distributed.resources.trainer.num_gpus=0",
@@ -49,7 +49,7 @@ def test_janus_pro_r1_runtime_inputs_select_r1_task_and_executor() -> None:
 
 
 def test_janus_pro_r1_codex_qa_experiment_loads() -> None:
-    cfg = load_config("experiment/janus_pro_1b_r1_codex_qa_grpo")
+    cfg = load_config("experiment/online/codex_qa/ar_multisegment_token_grpo")
     built = build_configs(cfg)
 
     assert cfg.reward.components.codex_image_qa == 1.0
@@ -62,7 +62,7 @@ def test_janus_pro_r1_codex_qa_experiment_loads() -> None:
 
 
 def test_janus_pro_r1_codex_qa_profile_wrapper_enables_profiler() -> None:
-    cfg = load_config("profile/janus_pro_r1_codex_qa_1epoch")
+    cfg = load_config("profile/one_epoch/r1_codex_qa")
     built = build_configs(cfg)
 
     assert cfg.trainer.entrypoint == (
@@ -76,7 +76,7 @@ def test_janus_pro_r1_codex_qa_profile_wrapper_enables_profiler() -> None:
 
 def test_janus_pro_r1_codex_qa_rollout_profiler_reaches_launch_contract() -> None:
     cfg = load_config(
-        "profile/janus_pro_r1_codex_qa_1epoch",
+        "profile/one_epoch/r1_codex_qa",
         overrides=[
             "distributed.resources.visible_devices=[]",
             "distributed.resources.trainer.num_gpus=0",

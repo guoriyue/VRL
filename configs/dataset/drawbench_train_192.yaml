@@ -1,0 +1,3 @@
+# DrawBench prompt subset used by image/video alignment experiments.
+data:
+  manifest: datasets/drawbench/train_192.txt

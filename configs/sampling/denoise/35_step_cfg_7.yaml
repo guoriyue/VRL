@@ -1,0 +1,6 @@
+# Shared diffusion denoise preset: 35 steps, CFG 7.0.
+sampling:
+  num_steps: 35
+  guidance_scale: 7.0
+  cfg: true
+

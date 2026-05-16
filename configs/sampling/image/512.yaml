@@ -1,0 +1,5 @@
+# Shared 512x512 image sampling shape.
+sampling:
+  width: 512
+  height: 512
+  max_sequence_length: 128

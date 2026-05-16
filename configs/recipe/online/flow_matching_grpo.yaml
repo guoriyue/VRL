@@ -1,0 +1,8 @@
+# Online flow-matching GRPO recipe: SD3-style SDE rollout defaults.
+defaults:
+  - /base/algorithm/grpo
+  - /base/actor
+  - /base/rollout/flow_matching_sde
+  - /base/distributed/ray_rollout_single_gpu
+  - /base/trainer
+

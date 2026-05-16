@@ -1,0 +1,7 @@
+# Shared 512x512 video sampling shape with 93 frames.
+sampling:
+  width: 512
+  height: 512
+  num_frames: 93
+  fps: 16
+  max_sequence_length: 512

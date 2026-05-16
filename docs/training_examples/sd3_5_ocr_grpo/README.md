@@ -9,7 +9,7 @@ Base command for this example:
 
 ```bash
 python -m vrl.scripts.train \
-  --config experiment/sd3_5_ocr_grpo \
+  --config experiment/online/ocr/image_flow_grpo \
   trainer.total_epochs=200 \
   trainer.output_dir=outputs/sd3_5_ocr_grpo_200ep_20260507_0011
 ```

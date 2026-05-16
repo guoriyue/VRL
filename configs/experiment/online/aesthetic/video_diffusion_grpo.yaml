@@ -1,0 +1,50 @@
+# Cosmos Predict2 2B Video2World + GRPO (single-GPU Ray rollout backend).
+# This recipe requires real Video2World conditioning. Use either:
+#   1. global mode: override model.reference_image=/path/to/reference.png
+#   2. per-sample mode: set cosmos.reference_mode=per_sample and use JSONL rows:
+#      {"prompt": "...", "reference_image": "path/to/frame.png"}
+defaults:
+  - /recipe/online/diffusion_grpo
+  - /model/diffusion/cosmos/predict2_2b
+  - /sampling/video/704p_93f
+  - /sampling/denoise/35_step_cfg_7
+  - /reward/aesthetic
+  - /dataset/drawbench_train_192
+
+# Cosmos source defaults: lr=1e-5, beta=0.004, eps_clip=1e-3, n=4, ppo_epochs=1.
+actor:
+  optim:
+    lr: 1.0e-5
+  ppo_epochs: 1
+
+algorithm:
+  eps_clip: 1.0e-3
+  init_kl_coef: 0.004
+
+rollout:
+  n: 4
+  rollout_batch_size: 1
+  sample_batch_size: 8
+  same_latent: false
+
+cosmos:
+  reference_mode: global   # global | per_sample
+
+trainer:
+  entrypoint: vrl.scripts.cosmos.train:train_cosmos_predict2_grpo
+  output_dir: outputs/cosmos_pred2_2b_grpo
+  save_freq: 100
+  log_freq: 1
+
+# Cosmos-specific eval / sanity-gate / paired-LoRA-vs-base config.
+# eval.eval_only=true switches the driver into base-vs-LoRA comparison
+# mode (no training); requires model.lora.path to point at a trained
+# checkpoint.
+eval:
+  eval_only: false
+  prompts_file: datasets/drawbench/eval_64.txt
+  seeds: 1                         # seeds per eval prompt
+  sanity_gates:
+    enable: true
+    clip_fraction_threshold: 0.5
+    approx_kl_threshold: 0.1

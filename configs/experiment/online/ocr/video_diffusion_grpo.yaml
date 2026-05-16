@@ -1,0 +1,18 @@
+# Wan 2.1 1.3B + OCR GRPO (flow_grpo general_ocr_wan2_1 parity)
+defaults:
+  - /recipe/online/diffusion_grpo
+  - /model/diffusion/wan_2_1/1_3b
+  - /sampling/video/240p_33f
+  - /sampling/denoise/20_step_cfg_4_5
+  - /reward/ocr
+  - /dataset/ocr
+
+actor:
+  optim:
+    lr: 1.0e-4
+
+trainer:
+  entrypoint: vrl.scripts.wan_2_1.train:train_wan_2_1_grpo
+  output_dir: outputs/wan_1_3b_ocr_grpo
+  debug:
+    first_step: true

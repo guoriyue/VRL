@@ -1,0 +1,6 @@
+# Shared 832x480 video sampling shape with 33 frames.
+sampling:
+  width: 832
+  height: 480
+  num_frames: 33
+  max_sequence_length: 512

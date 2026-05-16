@@ -26,6 +26,7 @@ from vrl.config.validation import (
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXPERIMENT_DIR = REPO_ROOT / "configs" / "experiment"
+CONFIGS_ROOT = REPO_ROOT / "configs"
 
 EXPECTED_ALGO_TYPE = {
     "grpo": GRPOConfig,
@@ -37,7 +38,47 @@ EXPECTED_ALGO_TYPE = {
 
 
 def _experiment_names() -> list[str]:
-    return sorted(p.stem for p in EXPERIMENT_DIR.glob("*.yaml"))
+    return sorted(
+        p.relative_to(EXPERIMENT_DIR).with_suffix("").as_posix()
+        for p in EXPERIMENT_DIR.rglob("*.yaml")
+    )
+
+
+def test_config_groups_are_not_flattened() -> None:
+    flattened = [
+        path
+        for group in ("experiment", "model", "sampling")
+        for path in (CONFIGS_ROOT / group).glob("*.yaml")
+    ]
+
+    assert flattened == []
+    assert not (CONFIGS_ROOT / "profiling").exists()
+
+
+def test_only_model_configs_are_split_by_model_name() -> None:
+    model_name_tokens = ("sd3", "wan", "janus", "nextstep", "cosmos", "predict2")
+    offenders = [
+        path.relative_to(CONFIGS_ROOT).as_posix()
+        for group in ("experiment", "sampling", "profile", "reward", "dataset")
+        for path in (CONFIGS_ROOT / group).rglob("*.yaml")
+        if any(
+            token in path.relative_to(CONFIGS_ROOT / group).as_posix()
+            for token in model_name_tokens
+        )
+    ]
+
+    assert offenders == []
+
+
+def test_experiments_compose_reward_and_dataset_groups() -> None:
+    inline_fields = []
+    for path in EXPERIMENT_DIR.rglob("*.yaml"):
+        raw = OmegaConf.load(path)
+        for key in ("reward", "data"):
+            if key in raw:
+                inline_fields.append(f"{path.relative_to(CONFIGS_ROOT).as_posix()}:{key}")
+
+    assert inline_fields == []
 
 
 def test_all_experiments_load_and_validate() -> None:
@@ -47,6 +88,8 @@ def test_all_experiments_load_and_validate() -> None:
         assert "trainer" in cfg, f"{name} missing trainer.*"
         assert "algorithm" in cfg, f"{name} missing algorithm.*"
         assert "data" in cfg, f"{name} missing data.* source"
+        if name.startswith("online/"):
+            assert "reward" in cfg, f"{name} missing reward.* source"
         assert "path" in cfg.model, f"{name} missing model.path"
         assert "entrypoint" in cfg.trainer, f"{name} missing trainer.entrypoint"
         assert "output_dir" in cfg.trainer, f"{name} missing trainer.output_dir"
@@ -57,25 +100,25 @@ def test_all_experiments_load_and_validate() -> None:
 
 def test_algorithm_config_dispatches_representative_kinds() -> None:
     examples = {
-        "sd3_5_ocr_grpo": GRPOConfig,
-        "janus_pro_1b_ocr_grpo": TokenGRPOConfig,
-        "janus_pro_1b_r1_ocr_grpo": MultiSegmentTokenGRPOConfig,
-        "wan_2_1_1_3b_dpo": DiffusionDPOConfig,
-        "cosmos_predict2_5_2b_diffusionnft": DiffusionNFTConfig,
+        "online/ocr/image_flow_grpo": GRPOConfig,
+        "online/ocr/ar_discrete_token_grpo": TokenGRPOConfig,
+        "online/ocr/ar_multisegment_token_grpo": MultiSegmentTokenGRPOConfig,
+        "offline/dpo/diffusion": DiffusionDPOConfig,
+        "online/ocr/video_diffusion_nft": DiffusionNFTConfig,
     }
     for name, expected_type in examples.items():
         cfg = load_config(f"experiment/{name}")
         algo_cfg = build_algorithm_config(cfg)
         assert isinstance(algo_cfg, expected_type)
         assert isinstance(algo_cfg, EXPECTED_ALGO_TYPE[str(cfg.algorithm.kind)])
-        if name == "janus_pro_1b_ocr_grpo":
+        if name == "online/ocr/ar_discrete_token_grpo":
             assert algo_cfg.kl_estimator == "k2"
 
 
 def test_unified_train_entrypoint_reads_yaml_entrypoint() -> None:
     from vrl.scripts.train import _import_callable, resolve_train_target
 
-    cfg = load_config("experiment/sd3_5_ocr_grpo")
+    cfg = load_config("experiment/online/ocr/image_flow_grpo")
     target = resolve_train_target(cfg)
 
     assert target.import_path == cfg.trainer.entrypoint
@@ -84,7 +127,7 @@ def test_unified_train_entrypoint_reads_yaml_entrypoint() -> None:
 
 def test_cli_overrides_reach_typed_trainer_config() -> None:
     cfg = load_config(
-        "experiment/sd3_5_ocr_grpo",
+        "experiment/online/ocr/image_flow_grpo",
         overrides=[
             "trainer.resume_from=/tmp/checkpoint-10",
             "trainer.torch_profiler.enabled=true",
@@ -109,7 +152,7 @@ def test_invalid_algorithm_kind_fails_fast() -> None:
 
 
 def test_reward_backbone_kwargs_are_required() -> None:
-    cfg = load_config("experiment/cosmos_predict2_2b_grpo")
+    cfg = load_config("experiment/online/aesthetic/video_diffusion_grpo")
     del cfg.reward.kwargs.aesthetic["model_name"]
 
     with pytest.raises(ValueError, match="aesthetic"):
@@ -117,14 +160,14 @@ def test_reward_backbone_kwargs_are_required() -> None:
 
 
 def test_required_training_fields_fail_fast() -> None:
-    cfg = load_config("experiment/wan_2_1_1_3b_ocr_grpo")
+    cfg = load_config("experiment/online/ocr/video_diffusion_grpo")
     cfg.trainer.output_dir = "???"
     with pytest.raises(ValueError, match=r"trainer\.output_dir"):
         validate_training_config(cfg)
 
 
 def test_dpo_allows_explicit_null_max_train_samples() -> None:
-    cfg = load_config("experiment/wan_2_1_1_3b_dpo")
+    cfg = load_config("experiment/offline/dpo/diffusion")
     cfg.data.max_train_samples = None
 
     assert optional_none(cfg, "data.max_train_samples") is None

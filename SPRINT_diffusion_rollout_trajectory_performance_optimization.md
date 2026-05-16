@@ -288,9 +288,9 @@ vrl/engine/trajectory/resolver.py
 
 ```text
 configs/base/rollout/diffusion.yaml
-configs/experiment/sd3_5_ocr_grpo.yaml
+configs/experiment/online/ocr/image_flow_grpo.yaml
 configs/profile/*
-configs/profiling/torch_profiler.yaml
+configs/profile/torch_profiler.yaml
 README.md
 ```
 
@@ -406,7 +406,7 @@ git diff --check
 Profile：
 
 ```bash
-python -m vrl.scripts.train --config experiment/sd3_5_ocr_grpo \
+python -m vrl.scripts.train --config experiment/online/ocr/image_flow_grpo \
   trainer.profile=true
 ```
 

@@ -1,0 +1,40 @@
+# Janus-Pro-1B + Janus-Pro-R1-style Codex image-QA alignment GRPO baseline.
+defaults:
+  - /recipe/online/ar_multisegment_token_grpo
+  - /model/ar/janus_pro/1b
+  - /sampling/ar/r1_image_384_576tok
+  - /reward/codex_image_qa
+  - /dataset/drawbench_train_192
+
+actor:
+  optim:
+    lr: 1.0e-4
+
+trainer:
+  entrypoint: vrl.scripts.janus_pro.train:train_janus_pro_r1_codex_qa_grpo
+  output_dir: outputs/janus_pro_1b_r1_codex_qa_grpo
+  total_epochs: 80
+  save_freq: 10
+  debug:
+    # Multi-segment old log-probs are kept per segment; the legacy first-step
+    # scalar parity check is for single-trajectory token GRPO only.
+    first_step: false
+
+rollout:
+  n_samples_per_prompt: 4
+  rollout_batch_size: 1
+
+eval:
+  fixed:
+    enabled: true
+    interval_epochs: 40
+    output_dir: ${trainer.output_dir}/fixed_eval
+    prompts:
+      - An elephant under the sea.
+      - A storefront with "Google Brain Toronto" written on it.
+      - A pyramid made of falafel with a partial solar eclipse in the background.
+      - A maglev train going vertically downward in high speed, New York Times photojournalism.
+      - A photo of a red cube on top of a blue sphere.
+      - A watercolor painting of a robot playing chess in a library.
+      - A close-up photo of a glass teapot filled with glowing green tea.
+      - A cinematic still of a small wooden boat floating through a neon city canal.

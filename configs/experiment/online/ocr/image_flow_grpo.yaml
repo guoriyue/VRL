@@ -1,0 +1,59 @@
+# SD 3.5 Medium + OCR GRPO
+defaults:
+  - /recipe/online/flow_matching_grpo
+  - /model/diffusion/sd3_5/medium
+  - /sampling/image/512
+  - /sampling/denoise/10_step_cfg_4_5
+  - /reward/ocr
+  - /dataset/ocr
+
+sampling:
+  max_sequence_length: 128
+
+actor:
+  optim:
+    lr: 3.0e-4
+  # SD3.5 OCR replay is numerically fragile under fp16; keep policy replay and
+  # trainable LoRA weights in full precision unless a recipe opts in explicitly.
+  mixed_precision: "no"
+  bf16: false
+  # Flow-GRPO SD3 OCR 1GPU uses num_batches_per_epoch=8 and
+  # gradient_accumulation_steps=num_batches_per_epoch//2, yielding two
+  # optimizer updates per outer rollout epoch.
+  gradient_accumulation_steps: 4
+
+algorithm:
+  init_kl_coef: 0.04
+  global_std: true
+
+rollout:
+  # Flow-GRPO SD3 OCR 1GPU parity: one prompt group per rollout batch,
+  # eight images per prompt, eight prompt groups per outer epoch.
+  n: 8
+  rollout_batch_size: 8
+  sample_batch_size: 8
+
+eval:
+  enable: true
+  freq: 60
+  manifest: datasets/ocr/test.txt
+  max_prompts: 16
+  num_steps: 40
+  sample_batch_size: 8
+  noise_level: 0.0
+  seed: 20260504
+  use_ema: true
+
+trainer:
+  entrypoint: vrl.scripts.sd3_5.train:train_sd3_5_grpo
+  output_dir: outputs/sd3_5_ocr_grpo
+  save_freq: 60
+  debug:
+    first_step: true
+
+model:
+  # Flow-GRPO SD3 does not compile the transformer during GRPO. Keeping this
+  # off also avoids repeated recompiles when zero-advantage filtering changes
+  # the effective replay microbatch size.
+  torch_compile:
+    enable: false

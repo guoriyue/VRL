@@ -1,7 +1,7 @@
 """Unified YAML-driven training entry point.
 
 The experiment name and implementation entrypoint belong in
-``configs/experiment/*.yaml``. This module is only the CLI/import layer: it
+``configs/experiment/**/*.yaml``. This module is only the CLI/import layer: it
 loads one YAML config, imports ``trainer.entrypoint``, then runs it.
 """
 

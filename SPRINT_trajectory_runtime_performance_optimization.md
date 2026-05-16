@@ -328,7 +328,7 @@ vrl/rollouts/evaluators/diffusion/flow_matching.py
 
 ```text
 configs/base/rollout/*.yaml
-configs/profiling/torch_profiler.yaml
+configs/profile/torch_profiler.yaml
 README.md
 ```
 

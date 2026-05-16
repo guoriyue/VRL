@@ -1,0 +1,7 @@
+# Aesthetic reward using the configured image aesthetic scorer backbone.
+reward:
+  components:
+    aesthetic: 1.0
+  kwargs:
+    aesthetic:
+      model_name: openai/clip-vit-large-patch14

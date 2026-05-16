@@ -473,7 +473,7 @@ README 需要新增两个例子：
 
 ```bash
 CUDA_VISIBLE_DEVICES=0,1,2,3 python -m vrl.scripts.train \
-  --config experiment/sd3_5_ocr_grpo \
+  --config experiment/online/ocr/image_flow_grpo \
   distributed.resources.trainer.num_gpus=1 \
   distributed.resources.rollout.num_gpus=auto
 ```
@@ -482,7 +482,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python -m vrl.scripts.train \
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python -m vrl.scripts.train \
-  --config experiment/sd3_5_ocr_grpo \
+  --config experiment/online/ocr/image_flow_grpo \
   /base/distributed=ray_rollout_single_gpu
 ```
 
@@ -490,7 +490,7 @@ CUDA_VISIBLE_DEVICES=0 python -m vrl.scripts.train \
 
 ```bash
 python -m vrl.scripts.train \
-  --config experiment/sd3_5_ocr_grpo \
+  --config experiment/online/ocr/image_flow_grpo \
   distributed.resources.visible_devices='[0,1,2,3]' \
   distributed.resources.trainer.devices='[0]' \
   distributed.resources.rollout.devices='[1,2,3]'
@@ -803,7 +803,7 @@ README.md
 
 ```bash
 CUDA_VISIBLE_DEVICES=0,1,2,3 python -m vrl.scripts.train \
-  --config experiment/sd3_5_ocr_grpo \
+  --config experiment/online/ocr/image_flow_grpo \
   distributed.resources.trainer.num_gpus=1 \
   distributed.resources.rollout.num_gpus=auto
 ```
@@ -812,7 +812,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python -m vrl.scripts.train \
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python -m vrl.scripts.train \
-  --config experiment/sd3_5_ocr_grpo \
+  --config experiment/online/ocr/image_flow_grpo \
   /base/distributed=ray_rollout_single_gpu
 ```
 
