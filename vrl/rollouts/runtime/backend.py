@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from vrl.engine.execution.runtime import RolloutBackend
+from vrl.engine.core.backend import RolloutBackend
 from vrl.rollouts.runtime.config import RolloutBackendConfig
 
 DRIVER_CUDA_OWNERSHIP_ERROR = (

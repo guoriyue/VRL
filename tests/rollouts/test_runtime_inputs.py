@@ -8,7 +8,7 @@ import pytest
 import torch
 
 from vrl.config.loader import load_config
-from vrl.engine import ChunkedFamilyPipelineExecutor
+from vrl.engine.core.protocols import ChunkedFamilyPipelineExecutor
 from vrl.engine.execution.gather import DiffusionChunkGatherer
 from vrl.models.families.janus_pro.runtime import JanusProChunkGatherer
 from vrl.models.families.nextstep_1.runtime import NextStep1ChunkGatherer

@@ -1,5 +1,6 @@
-"""Engine execution planning, batching, gathering, and worker runtime."""
+"""Engine execution planning, batching, and gathering."""
 
+from vrl.engine.core.backend import RolloutBackend
 from vrl.engine.execution.batching import forward_batch_by_merging_prompts
 from vrl.engine.execution.gather import (
     ChunkGatherer,
@@ -9,6 +10,7 @@ from vrl.engine.execution.gather import (
     require_chunk_gatherer,
     require_chunked_executor,
 )
+from vrl.engine.execution.ids import GenerationIdFactory
 from vrl.engine.execution.microbatching import (
     ExecutionPlan,
     MicroBatchPlan,
@@ -25,8 +27,6 @@ from vrl.engine.execution.planner import (
     profiler_label_for_unit,
     resolve_executor_capability,
 )
-from vrl.engine.execution.runtime import GenerationRuntime, RolloutBackend
-from vrl.engine.execution.worker import GenerationIdFactory, GenerationWorker
 
 __all__ = [
     "AxisPlan",
@@ -36,8 +36,6 @@ __all__ = [
     "ExecutionPlan",
     "ExecutionUnit",
     "GenerationIdFactory",
-    "GenerationRuntime",
-    "GenerationWorker",
     "MicroBatchPlan",
     "RolloutBackend",
     "RolloutShardPlan",

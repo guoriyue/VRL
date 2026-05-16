@@ -16,8 +16,8 @@ from vrl.distributed.ray.rollout.types import (
 from vrl.engine.core.protocols import PipelineChunkResult
 from vrl.engine.core.types import GenerationRequest, OutputBatch
 from vrl.engine.execution.gather import ChunkGatherer, gather_pipeline_chunks
+from vrl.engine.execution.ids import GenerationIdFactory
 from vrl.engine.execution.planner import attach_engine_plan
-from vrl.engine.execution.worker import GenerationIdFactory
 
 
 class DistributedRolloutExecutor:

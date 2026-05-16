@@ -15,7 +15,7 @@ from vrl.engine.execution.gather import (
     gather_pipeline_chunks,
     require_chunk_gatherer,
 )
-from vrl.engine.execution.worker import GenerationIdFactory
+from vrl.engine.execution.ids import GenerationIdFactory
 
 
 class _PureGatherer:
