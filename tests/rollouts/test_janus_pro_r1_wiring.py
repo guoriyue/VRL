@@ -4,11 +4,11 @@ import torch
 
 from vrl.engine import GenerationRequest, GenerationSampleRow, OutputBatch
 from vrl.engine.trajectory import build_ar_multisegment_trajectory
+from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
     TrajectoryRolloutBatchBuilder,
 )
-from vrl.rollouts.collector.factory import build_rollout_collector
 from vrl.rollouts.settings import RolloutSettings
 
 

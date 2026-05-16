@@ -212,7 +212,6 @@ def build_collector_from_cfg(
     family: str | RolloutFamilyEntry | None = None,
     collector_config: Any | None = None,
     runtime: Any | None = None,
-    reference_image: Any = None,
 ) -> Any:
     """Build a rollout collector through the canonical family registry."""
 
@@ -224,7 +223,6 @@ def build_collector_from_cfg(
         reward_fn=reward_fn,
         config=collector_config,
         runtime=runtime,
-        reference_image=reference_image,
     )
 
 

@@ -14,7 +14,7 @@ from vrl.rollouts.collector.batch_builder import (
     TrajectoryRolloutBatchBuilder,
 )
 from vrl.rollouts.collector.core import RolloutCollector
-from vrl.rollouts.collector.requests import RolloutRequestPlan
+from vrl.rollouts.collector.requests import CollectorRequest
 from vrl.rollouts.collector.rewards import RewardScoringInput
 
 
@@ -24,7 +24,7 @@ class _RequestBuilder:
         prompts: list[str],
         group_size: int,
         kwargs: dict[str, Any],
-    ) -> RolloutRequestPlan:
+    ) -> CollectorRequest:
         request = GenerationRequest(
             request_id="unit-request",
             family="unit",
@@ -36,10 +36,9 @@ class _RequestBuilder:
             metadata={"source": "collector-test"},
             policy_version=kwargs.get("policy_version"),
         )
-        return RolloutRequestPlan(
+        return CollectorRequest(
             request=request,
-            reward_metadata={"reward": "metadata"},
-            pack_metadata={"pack": "metadata"},
+            metadata={"collector": "metadata"},
         )
 
 
@@ -139,7 +138,7 @@ def test_collector_routes_request_through_runtime_reward_and_trajectory_batch() 
     assert request.samples_per_prompt == 2
     assert request.sampling == {"seed": 5}
     assert request.policy_version == 7
-    assert reward_scorer.calls[0]["metadata"] == {"reward": "metadata"}
+    assert reward_scorer.calls[0]["metadata"] == {"collector": "metadata"}
     assert batch.rewards.tolist() == [0.0, 1.0, 2.0, 3.0]
     assert batch.context == {"collector": "test"}
     assert batch.trajectory is not None
@@ -201,15 +200,14 @@ def test_collector_forwards_reference_metadata_to_request() -> None:
         default_task_type="video2world",
     )
 
-    plan = builder.build(
+    collector_request = builder.build(
         ["prompt"],
         1,
         {"reference_image": "/tmp/reference.png"},
     )
 
-    assert plan.request.metadata["reference_image"] == "/tmp/reference.png"
-    assert plan.reward_metadata["reference_image"] == "/tmp/reference.png"
-    assert plan.pack_metadata["reference_image"] == "/tmp/reference.png"
+    assert collector_request.request.metadata["reference_image"] == "/tmp/reference.png"
+    assert collector_request.metadata["reference_image"] == "/tmp/reference.png"
 
 
 def _sample_rows(request: GenerationRequest) -> list[GenerationSampleRow]:

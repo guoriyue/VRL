@@ -23,7 +23,7 @@ def test_engine_request_builder_reads_resolved_request_sampling() -> None:
         default_task_type="text_to_image",
     )
 
-    plan = builder.build(
+    collector_request = builder.build(
         ["prompt"],
         3,
         {
@@ -34,19 +34,22 @@ def test_engine_request_builder_reads_resolved_request_sampling() -> None:
         },
     )
 
-    assert plan.request.family == "fake"
-    assert plan.request.task == "t2i"
-    assert plan.request.samples_per_prompt == 3
-    assert plan.request.policy_version == 11
-    assert plan.request.sampling == {"alpha": 1, "window": [0, 2], "seed": 7}
-    assert plan.request.return_artifacts == {"output"}
-    assert plan.request.metadata == {
+    assert collector_request.request.family == "fake"
+    assert collector_request.request.task == "t2i"
+    assert collector_request.request.samples_per_prompt == 3
+    assert collector_request.request.policy_version == 11
+    assert collector_request.request.sampling == {
+        "alpha": 1,
+        "window": [0, 2],
+        "seed": 7,
+    }
+    assert collector_request.request.return_artifacts == {"output"}
+    assert collector_request.request.metadata == {
         "difficulty": "easy",
         "target_text": "HELLO",
         "task_type": "text_to_image",
     }
-    assert plan.reward_metadata == plan.request.metadata
-    assert plan.pack_metadata == plan.request.metadata
+    assert collector_request.metadata == collector_request.request.metadata
 
 
 def test_engine_request_builder_applies_request_overrides_last() -> None:
@@ -58,10 +61,10 @@ def test_engine_request_builder_applies_request_overrides_last() -> None:
         return_artifacts=("output",),
     )
 
-    plan = builder.build(
+    collector_request = builder.build(
         ["prompt"],
         1,
         {"request_overrides": {"alpha": 2, "beta": 3}},
     )
 
-    assert plan.request.sampling == {"alpha": 2, "beta": 3}
+    assert collector_request.request.sampling == {"alpha": 2, "beta": 3}

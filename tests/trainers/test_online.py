@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-from vrl.rollouts.collector.base import Collector
 from vrl.rollouts.evaluators.base import Evaluator
 
 
@@ -82,7 +81,7 @@ class TestOnlineTrainerCeaRegressions:
                 )
                 return loss, metrics
 
-        class _Collector(Collector):
+        class _Collector:
             def __init__(self, reward_values: list[float]) -> None:
                 self._reward_values = reward_values
                 self._cursor = 0
@@ -201,7 +200,7 @@ class TestOnlineTrainerCeaRegressions:
                     approx_kl=0.0,
                 )
 
-        class _CapturingCollector(Collector):
+        class _CapturingCollector:
             async def collect(self, prompts, **kwargs):
                 captured_kwargs.append(dict(kwargs))
                 group_size = int(kwargs.get("group_size", 1))
@@ -300,7 +299,7 @@ class TestOnlineTrainerCeaRegressions:
                     approx_kl=float(old_log_probs.mean().item()),
                 )
 
-        class _Collector(Collector):
+        class _Collector:
             async def collect(self, prompts, **kwargs):
                 prompts = list(prompts)
                 collect_calls.append(prompts)
@@ -404,7 +403,7 @@ class TestOnlineTrainerCeaRegressions:
 
         syncer = _Syncer()
 
-        class _Collector(Collector):
+        class _Collector:
             async def collect(self, prompts, **kwargs):
                 collect_seen_sync_counts.append(len(syncer.calls))
                 group_size = int(kwargs.get("group_size", 1))
@@ -464,7 +463,7 @@ class TestOnlineTrainerCeaRegressions:
 
             config = _Config()
 
-        class _Collector(Collector):
+        class _Collector:
             async def collect(self, prompts, **kwargs):
                 del prompts, kwargs
                 raise AssertionError("constructor guard should run before collect")
@@ -531,7 +530,7 @@ class TestOnlineTrainerCeaRegressions:
                     policy_loss=loss.item(),
                 )
 
-        class _Collector(Collector):
+        class _Collector:
             async def collect(self, prompts, **kwargs):
                 assert kwargs["runtime_debug"] is True
                 group_size = int(kwargs.get("group_size", 1))
@@ -638,7 +637,7 @@ class TestOnlineTrainerCeaRegressions:
                     policy_loss=policy_loss.item(),
                 )
 
-        class _Collector(Collector):
+        class _Collector:
             async def collect(self, prompts, **kwargs):
                 group_size = int(kwargs.get("group_size", 1))
                 return RolloutBatch(
@@ -711,7 +710,7 @@ class TestOnlineTrainerCeaRegressions:
                 loss = signals.log_prob.mean()
                 return loss, TrainStepMetrics(loss=loss.item(), policy_loss=loss.item())
 
-        class _Collector(Collector):
+        class _Collector:
             async def collect(self, prompts, **kwargs):
                 prompts = list(prompts)
                 group_size = int(kwargs.get("group_size", 1))
@@ -796,7 +795,7 @@ class TestOnlineTrainerCeaRegressions:
                 loss = signals.log_prob.mean()
                 return loss, TrainStepMetrics(loss=loss.item(), policy_loss=loss.item())
 
-        class _Collector(Collector):
+        class _Collector:
             async def collect(self, prompts, **kwargs):
                 prompts = list(prompts)
                 group_size = int(kwargs.get("group_size", 1))
@@ -911,7 +910,7 @@ class TestOnlineTrainerCeaRegressions:
             def clear(self):
                 pass
 
-        class _Collector(Collector):
+        class _Collector:
             async def collect(self, prompts, **kwargs):
                 prompts = list(prompts)
                 group_size = int(kwargs.get("group_size", 1))
@@ -1013,7 +1012,7 @@ class TestOnlineTrainerCeaRegressions:
             def clear(self):
                 pass
 
-        class _Collector(Collector):
+        class _Collector:
             async def collect(self, prompts, **kwargs):
                 group_size = int(kwargs.get("group_size", 1))
                 prompts = list(prompts)

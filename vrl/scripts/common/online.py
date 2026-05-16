@@ -105,23 +105,23 @@ async def run_online_recipe(
         scheduler=scheduler,
         built=built,
     )
+    rollout_executor_kwargs = (
+        definition.collector_kwargs_getter(cfg, examples)
+        if definition.collector_kwargs_getter is not None
+        else {}
+    )
     collector = build_collector_from_cfg(
         cfg,
         family=components.family_entry,
         model=model,
         reward_fn=components.reward_fn,
         collector_config=components.collector_config,
-        **(
-            definition.collector_kwargs_getter(cfg, examples)
-            if definition.collector_kwargs_getter is not None
-            else {}
-        ),
     )
     runtime_inputs = build_rollout_runtime_inputs(
         cfg,
         components.family,
         weight_dtype=weight_dtype,
-        executor_kwargs=dict(getattr(collector, "executor_kwargs", {}) or {}),
+        executor_kwargs=dict(rollout_executor_kwargs),
     )
     log_host_memory("before_rollout_backend_build", log=logger)
     collector.set_runtime(

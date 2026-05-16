@@ -16,8 +16,15 @@ from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
     TrajectoryRolloutBatchBuilder,
 )
-from vrl.rollouts.collector.requests import RolloutRequestBuilder, RolloutRequestPlan
+from vrl.rollouts.collector.requests import (
+    CollectorRequest,
+    RolloutEngineRequestBuilder,
+)
 from vrl.rollouts.collector.rewards import RewardScorer
+from vrl.rollouts.family_registry import get_rollout_family_entry
+from vrl.rollouts.settings import RolloutSettings
+
+LAST_COLLECT_PHASES: dict[str, float] = {}
 
 
 class RolloutCollector:
@@ -30,7 +37,7 @@ class RolloutCollector:
         config: Any,
         family: str,
         task: str,
-        request_builder: RolloutRequestBuilder,
+        request_builder: Any,
         reward_scorer: RewardScorer,
         default_group_size: int = 1,
         runtime: RolloutBackend | None = None,
@@ -79,17 +86,17 @@ class RolloutCollector:
         **kwargs: Any,
     ) -> RolloutBatch:
         group_size = int(kwargs.get("group_size", self.default_group_size))
-        plan = self.request_builder.build(prompts, group_size, dict(kwargs))
+        collector_request = self.request_builder.build(prompts, group_size, dict(kwargs))
 
         profile = os.environ.get("VRL_PROFILE_COLLECT") == "1"
         phases: dict[str, float] = {}
         phase_t = _sync_time() if profile else None
 
-        output = await self.runtime.generate(plan.request)
+        output = await self.runtime.generate(collector_request.request)
         if output.error:
             raise RuntimeError(
                 f"{self.family}/{self.task} generation failed "
-                f"(request_id={plan.request.request_id}): {output.error}",
+                f"(request_id={collector_request.request.request_id}): {output.error}",
             )
 
         if profile and phase_t is not None:
@@ -99,7 +106,7 @@ class RolloutCollector:
 
         batch = await self._output_batch_to_rollout_batch(
             output,
-            request_plan=plan,
+            collector_request=collector_request,
             phases=phases if profile else None,
             phase_t=phase_t,
         )
@@ -114,12 +121,12 @@ class RolloutCollector:
         self,
         output: OutputBatch,
         *,
-        request_plan: RolloutRequestPlan,
+        collector_request: CollectorRequest,
         phases: dict[str, float] | None = None,
         phase_t: float | None = None,
     ) -> RolloutBatch:
         context = RolloutBatchBuildContext(
-            metadata=dict(request_plan.pack_metadata),
+            metadata=dict(collector_request.metadata),
             device=_device_from_model(self.model),
             kl_reward=float(_config_get(self.config, "kl_reward", 0.0)),
             rescale_to_unit=bool(_config_get(self.config, "rescale_to_unit", False)),
@@ -129,13 +136,58 @@ class RolloutCollector:
 
         with _record_function("collector.reward_score"):
             rewards = await self.reward_scorer.score(
-                batch_builder.reward_scoring_input(request_plan.reward_metadata),
+                batch_builder.reward_scoring_input(collector_request.metadata),
             )
 
         if phases is not None and phase_t is not None:
             phases["collect.reward_score"] = _sync_time() - phase_t
 
         return batch_builder.build(rewards)
+
+
+def build_rollout_collector(
+    family: str,
+    *,
+    model: Any | None,
+    reward_fn: Any | None,
+    config: RolloutSettings | None = None,
+    runtime: RolloutBackend | None = None,
+) -> RolloutCollector:
+    """Build a rollout collector from the canonical family registry."""
+
+    entry = get_rollout_family_entry(family)
+    if config is None:
+        raise ValueError(
+            f"{entry.family} collector requires resolved rollout settings; "
+            "build them from YAML before constructing the collector",
+        )
+    collector = entry.collector
+    if collector.request_prefix is None:
+        raise ValueError(f"{entry.family} collector registry entry is incomplete")
+
+    return RolloutCollector(
+        model=model,
+        config=config,
+        family=entry.family,
+        task=entry.task,
+        request_builder=RolloutEngineRequestBuilder(
+            family=entry.family,
+            task=entry.task,
+            request_prefix=collector.request_prefix,
+            config=config,
+            return_artifacts=collector.return_artifacts,
+            default_task_type=collector.default_task_type,
+            metadata_key=collector.metadata_key,
+        ),
+        reward_scorer=RewardScorer(reward_fn),
+        default_group_size=(
+            1
+            if collector.kind == "diffusion"
+            else int(config.require("n_samples_per_prompt"))
+        ),
+        runtime=runtime,
+        phase_sink=LAST_COLLECT_PHASES,
+    )
 
 
 def _device_from_model(model: Any | None) -> Any | None:
@@ -173,4 +225,8 @@ def _sync_time() -> float:
     return time.perf_counter()
 
 
-__all__ = ["RolloutCollector"]
+__all__ = [
+    "LAST_COLLECT_PHASES",
+    "RolloutCollector",
+    "build_rollout_collector",
+]

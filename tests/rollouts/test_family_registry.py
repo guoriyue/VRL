@@ -5,10 +5,7 @@ from __future__ import annotations
 import pytest
 from omegaconf import OmegaConf
 
-from vrl.rollouts.collector.factory import (
-    COLLECTOR_REGISTRY,
-    build_rollout_collector,
-)
+from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.family_registry import (
     FAMILY_REGISTRY,
     get_rollout_family_entry,
@@ -58,17 +55,6 @@ def test_family_aliases_resolve_to_canonical_entries() -> None:
     for alias, expected in expected_aliases.items():
         assert normalize_rollout_family(alias) == expected
         assert get_rollout_family_entry(alias) is FAMILY_REGISTRY[expected]
-
-
-def test_collector_registry_reuses_family_registry_metadata() -> None:
-    assert set(COLLECTOR_REGISTRY) == set(FAMILY_REGISTRY)
-    for family, family_entry in FAMILY_REGISTRY.items():
-        collector_entry = COLLECTOR_REGISTRY[family]
-        assert collector_entry.family == family_entry.family
-        assert collector_entry.task == family_entry.task
-        assert collector_entry.kind == family_entry.collector.kind
-        assert collector_entry.request_prefix == family_entry.collector.request_prefix
-        assert collector_entry.return_artifacts == family_entry.collector.return_artifacts
 
 
 def test_rollout_settings_are_projected_from_yaml() -> None:
