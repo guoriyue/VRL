@@ -71,7 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
-    from vrl.config.loader import load_config
+    from vrl.config.loading import load_config
 
     logging.basicConfig(
         level=logging.INFO,

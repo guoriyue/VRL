@@ -10,7 +10,7 @@ from typing import Any
 import torch
 from omegaconf import DictConfig
 
-from vrl.config.loader import build_configs
+from vrl.config.builders import build_configs
 from vrl.distributed.resources import (
     format_distributed_resource_plan,
     resolve_distributed_resources,

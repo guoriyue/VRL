@@ -1,7 +1,7 @@
 # Actor / training-loop config
 actor:
   optim:
-    lr: 1.0e-4
+    lr: ???
     adam_beta1: 0.9
     adam_beta2: 0.999
     weight_decay: 1.0e-4

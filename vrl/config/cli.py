@@ -12,7 +12,7 @@ def parse_and_load(default_config: str, description: str) -> DictConfig:
     """Build the standard ``--config`` + dotlist-overrides argparse parser
     and return the merged ``DictConfig``.
     """
-    from vrl.config.loader import load_config
+    from vrl.config.loading import load_config
 
     logging.basicConfig(
         level=logging.INFO,

@@ -13,6 +13,10 @@ algorithm:
   init_kl_coef: 0.01
   kl_estimator: k2
 
+actor:
+  optim:
+    lr: 1.0e-4
+
 reward:
   components:
     ocr: 1.0

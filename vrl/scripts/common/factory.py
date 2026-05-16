@@ -7,7 +7,7 @@ from typing import Any
 
 from omegaconf import DictConfig, OmegaConf
 
-from vrl.config.loader import build_configs
+from vrl.config.builders import build_configs
 from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.family_registry import (
     RolloutFamilyEntry,

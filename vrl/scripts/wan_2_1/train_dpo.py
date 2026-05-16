@@ -87,12 +87,8 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     from torch.utils.data import DataLoader
 
     from vrl.algorithms.dpo import DiffusionDPOConfig
-    from vrl.config.loader import (
-        build_algorithm_config,
-        optional_none,
-        require,
-        validate_training_config,
-    )
+    from vrl.config.builders import build_algorithm_config
+    from vrl.config.validation import optional_none, require, validate_training_config
     from vrl.models.families.wan_2_1.runtime import (
         build_wan_2_1_runtime_bundle_from_cfg,
     )

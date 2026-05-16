@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from vrl.algorithms.grpo.multisegment import MultiSegmentTokenGRPOConfig
-from vrl.config.loader import build_configs, load_config
+from vrl.config.builders import build_configs
+from vrl.config.loading import load_config
 from vrl.rollouts.runtime.launch_inputs import build_rollout_runtime_inputs
 
 

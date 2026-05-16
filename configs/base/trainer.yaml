@@ -1,9 +1,10 @@
 # Trainer lifecycle / IO / debug
 trainer:
+  entrypoint: ???
   total_epochs: 10000
   save_freq: 50
   log_freq: 1
-  output_dir: outputs/
+  output_dir: ???
   seed: 0
   profile: false
   torch_profiler:

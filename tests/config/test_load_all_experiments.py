@@ -16,10 +16,9 @@ from vrl.algorithms.dpo import DiffusionDPOConfig
 from vrl.algorithms.grpo.continuous import GRPOConfig
 from vrl.algorithms.grpo.multisegment import MultiSegmentTokenGRPOConfig
 from vrl.algorithms.grpo.token import TokenGRPOConfig
-from vrl.config.loader import (
-    build_algorithm_config,
-    build_configs,
-    load_config,
+from vrl.config.builders import build_algorithm_config, build_configs
+from vrl.config.loading import load_config
+from vrl.config.validation import (
     optional_none,
     validate_reward_config,
     validate_training_config,
@@ -119,7 +118,7 @@ def test_reward_backbone_kwargs_are_required() -> None:
 
 def test_required_training_fields_fail_fast() -> None:
     cfg = load_config("experiment/wan_2_1_1_3b_ocr_grpo")
-    del cfg.trainer["output_dir"]
+    cfg.trainer.output_dir = "???"
     with pytest.raises(ValueError, match=r"trainer\.output_dir"):
         validate_training_config(cfg)
 
