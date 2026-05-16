@@ -289,10 +289,7 @@ class OnlineTrainer(Trainer):
     async def _step_impl(self, prompts: list[str] | None = None) -> TrainStepMetrics:
         """Run one full training step without profiler wrapping."""
         from vrl.algorithms.trajectory import AlgorithmAdapter, AlgorithmInput
-        from vrl.rollouts.evaluators.trajectory import (
-            to_trajectory_signals,
-        )
-        from vrl.rollouts.evaluators.types import SignalRequest
+        from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
         from vrl.trainers.data import PromptExample
         from vrl.trainers.profiling import record_function
 
@@ -552,7 +549,12 @@ class OnlineTrainer(Trainer):
                     ref_model=self.ref_model,
                     signal_request=SignalRequest(need_ref=False, need_kl_intermediates=False),
                 )
-            _dbg_trajectory_signals = to_trajectory_signals(_dbg_signals)
+            if not isinstance(_dbg_signals, TrajectorySignalBatch):
+                raise TypeError(
+                    "evaluator output must be TrajectorySignalBatch; "
+                    f"got {type(_dbg_signals).__name__}",
+                )
+            _dbg_trajectory_signals = _dbg_signals
             _dbg_log_prob = _dbg_trajectory_signals.primary.log_prob
             _old_lp_0 = _dbg_trajectory_signals.primary.old_log_prob
             _diff = (_dbg_log_prob - _old_lp_0).abs()
@@ -656,7 +658,12 @@ class OnlineTrainer(Trainer):
                                     )
                                 with record_function("trainer.loss"):
                                     mask_key = _algorithm_mask_key(self.algorithm)
-                                    trajectory_signals = to_trajectory_signals(signals)
+                                    if not isinstance(signals, TrajectorySignalBatch):
+                                        raise TypeError(
+                                            "evaluator output must be TrajectorySignalBatch; "
+                                            f"got {type(signals).__name__}",
+                                        )
+                                    trajectory_signals = signals
                                     loss, metrics = algorithm_adapter.compute_loss(
                                         self.algorithm,
                                         AlgorithmInput(

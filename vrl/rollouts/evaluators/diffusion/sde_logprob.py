@@ -1,4 +1,4 @@
-"""Flow-matching signal extraction for diffusion model training."""
+"""SDE log-probability signal extraction for diffusion model training."""
 
 from __future__ import annotations
 
@@ -8,14 +8,11 @@ import vrl.math.diffusion.flow_matching as flow_matching_math
 from vrl.models.interfaces import ReplayModel, require_replay_model
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
-from vrl.rollouts.evaluators.trajectory import single_segment_trajectory_signals
+from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
 
-# ------------------------------------------------------------------
-# FlowMatchingEvaluator
-# ------------------------------------------------------------------
 
-class FlowMatchingEvaluator(Evaluator):
+class DiffusionSDELogProbEvaluator(Evaluator):
     """Signal extraction for flow-matching diffusion models.
 
     Uses ``sde_step_with_logprob`` to compute log-probabilities and
@@ -51,9 +48,12 @@ class FlowMatchingEvaluator(Evaluator):
         """
         import torch
 
-        model = require_replay_model(model, owner="FlowMatchingEvaluator.model")
+        model = require_replay_model(model, owner="DiffusionSDELogProbEvaluator.model")
         if ref_model is not None:
-            ref_model = require_replay_model(ref_model, owner="FlowMatchingEvaluator.ref_model")
+            ref_model = require_replay_model(
+                ref_model,
+                owner="DiffusionSDELogProbEvaluator.ref_model",
+            )
         if signal_request is None:
             signal_request = SignalRequest()
 
@@ -116,8 +116,7 @@ class FlowMatchingEvaluator(Evaluator):
                     ref_prev_sample_mean = ref_result.prev_sample_mean
                     ref_sqrt_neg_dt = ref_result.sqrt_neg_dt
 
-        return single_segment_trajectory_signals(
-            batch,
+        return TrajectorySignalBuilder(batch).single_segment(
             segment_name="denoise",
             log_prob=result.log_prob,
             ref_log_prob=ref_log_prob,

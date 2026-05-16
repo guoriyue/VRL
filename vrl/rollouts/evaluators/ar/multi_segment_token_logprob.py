@@ -17,7 +17,7 @@ from vrl.models.interfaces import (
 )
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
-from vrl.rollouts.evaluators.trajectory import segment_signal_from_batch
+from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.rollouts.evaluators.types import SegmentSignal, SignalRequest, TrajectorySignalBatch
 
 
@@ -69,6 +69,7 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
                 with torch.no_grad(), model.disable_adapter():
                     ref_output = model.replay_forward(batch, request=replay_request)
 
+        signal_builder = TrajectorySignalBuilder(batch)
         segment_signals: dict[str, SegmentSignal] = {}
 
         for name in enabled_names:
@@ -83,8 +84,7 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
                 mask = torch.ones_like(new_lp)
             old_lp = _segment_tensor(segment, "token_log_probs")
 
-            segment_signals[name] = segment_signal_from_batch(
-                batch,
+            segment_signals[name] = signal_builder.segment_signal(
                 segment_name=name,
                 log_prob=new_lp,
                 old_log_prob=old_lp.detach(),

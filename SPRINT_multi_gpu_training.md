@@ -477,11 +477,11 @@ python -m pytest -q tests/config/test_load_all_experiments.py
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/trainers/data.py`
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/models/interfaces/runtime.py`
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/models/diffusion/model_base.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/models/families/sd3_5/model.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/models/families/wan_2_1/model.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/models/families/cosmos/predict2/model.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/models/families/janus_pro/model.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/models/families/nextstep_1/model.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/models/diffusion/sd3_5/model.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/models/diffusion/wan_2_1/model.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/models/diffusion/cosmos/predict2/model.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/models/ar/janus_pro/model.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/models/ar/nextstep_1/model.py`
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/distributed/ray/train/group.py`
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/distributed/ray/rollout/worker.py`
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/distributed/ray/rollout/weight_sync.py`

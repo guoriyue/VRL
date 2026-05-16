@@ -71,15 +71,6 @@ def build_rollout_settings_from_cfg(
     )
 
 
-def build_collector_config_from_cfg(
-    cfg: DictConfig,
-    family: str | RolloutFamilyEntry | None = None,
-) -> Any:
-    """Compatibility wrapper for the old collector config factory name."""
-
-    return build_rollout_settings_from_cfg(cfg, family)
-
-
 def build_reward_from_cfg(
     cfg: DictConfig,
     *,
@@ -123,7 +114,9 @@ def build_algorithm_and_evaluator_from_cfg(
     if kind == "grpo":
         from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
         from vrl.algorithms.grpo.token import TokenGRPOConfig
-        from vrl.rollouts.evaluators.diffusion.flow_matching import FlowMatchingEvaluator
+        from vrl.rollouts.evaluators.diffusion.sde_logprob import (
+            DiffusionSDELogProbEvaluator,
+        )
 
         if not isinstance(algorithm_config, GRPOConfig) or isinstance(
             algorithm_config,
@@ -133,10 +126,10 @@ def build_algorithm_and_evaluator_from_cfg(
                 f"{entry.family} GRPO expects GRPOConfig, got "
                 f"{type(algorithm_config).__name__}",
             )
-        collector_config = collector_config or build_collector_config_from_cfg(cfg, entry)
+        collector_config = collector_config or build_rollout_settings_from_cfg(cfg, entry)
         return AlgorithmEvaluatorPair(
             algorithm=GRPO(algorithm_config),
-            evaluator=FlowMatchingEvaluator(
+            evaluator=DiffusionSDELogProbEvaluator(
                 scheduler,
                 noise_level=float(getattr(collector_config, "noise_level", 1.0)),
                 sde_type=str(getattr(collector_config, "sde_type", "sde")),
@@ -224,7 +217,7 @@ def build_collector_from_cfg(
     """Build a rollout collector through the canonical family registry."""
 
     entry = _entry_from_family(cfg, family)
-    collector_config = collector_config or build_collector_config_from_cfg(cfg, entry)
+    collector_config = collector_config or build_rollout_settings_from_cfg(cfg, entry)
     return build_rollout_collector(
         entry.family,
         model=model,
@@ -247,7 +240,7 @@ def build_online_recipe_components(
 
     built = built or build_configs(cfg)
     entry = _entry_from_family(cfg, family)
-    collector_config = build_collector_config_from_cfg(cfg, entry)
+    collector_config = build_rollout_settings_from_cfg(cfg, entry)
     reward_fn = build_reward_from_cfg(cfg, built=built, device=device)
     pair = build_algorithm_and_evaluator_from_cfg(
         cfg,
@@ -294,7 +287,6 @@ __all__ = [
     "OnlineRecipeFactoryOutput",
     "UnsupportedOnlineRecipeError",
     "build_algorithm_and_evaluator_from_cfg",
-    "build_collector_config_from_cfg",
     "build_collector_from_cfg",
     "build_online_recipe_components",
     "build_reward_from_cfg",

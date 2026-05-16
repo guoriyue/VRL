@@ -26,8 +26,8 @@ from vrl.engine.core.types import (
 )
 from vrl.engine.execution.microbatching import MicroBatchSample
 from vrl.engine.trajectory import build_ar_continuous_trajectory
-from vrl.models.capability_builders import ar_continuous_family_capability
-from vrl.models.families.nextstep_1.model import (
+from vrl.models.ar.capabilities import ar_continuous_family_capability
+from vrl.models.ar.nextstep_1.model import (
     NextStep1Config,
     NextStep1Model,
     NextStep1ReplayModel,

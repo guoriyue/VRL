@@ -59,7 +59,7 @@ async def _run_janus_recipe(cfg: DictConfig, *, family: str) -> None:
 
 
 def _build_bundle(cfg: DictConfig, device: Any, weight_dtype: Any, *, family: str) -> Any:
-    from vrl.models.families.janus_pro.runtime import (
+    from vrl.models.ar.janus_pro.runtime import (
         build_janus_pro_runtime_bundle,
         extract_janus_pro_runtime_spec,
     )
@@ -77,7 +77,7 @@ def _build_replay_bundle(
     *,
     family: str,
 ) -> Any:
-    from vrl.models.families.janus_pro.runtime import (
+    from vrl.models.ar.janus_pro.runtime import (
         build_janus_pro_replay_runtime_bundle,
         extract_janus_pro_runtime_spec,
     )

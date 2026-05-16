@@ -6,7 +6,7 @@ from vrl.engine import GenerationRequest, GenerationSampleRow, OutputBatch
 from vrl.engine.trajectory import build_ar_multisegment_trajectory
 from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
-    rollout_batch_from_trajectory,
+    TrajectoryRolloutBatchBuilder,
 )
 from vrl.rollouts.collector.factory import build_rollout_collector
 from vrl.rollouts.settings import RolloutSettings
@@ -130,11 +130,10 @@ def test_r1_trajectory_batch_keeps_segments_separate() -> None:
         extra={},
     )
 
-    packed = rollout_batch_from_trajectory(
+    packed = TrajectoryRolloutBatchBuilder(
         output,
-        torch.tensor([1.0, 2.0]),
         RolloutBatchBuildContext(metadata={}, device="cpu", rescale_to_unit=True),
-    )
+    ).build(torch.tensor([1.0, 2.0]))
 
     assert "r1_segments" not in packed.extras
     assert packed.trajectory is trajectory

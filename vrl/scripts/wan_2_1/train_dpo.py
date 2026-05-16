@@ -89,7 +89,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     from vrl.algorithms.dpo import DiffusionDPOConfig
     from vrl.config.builders import build_algorithm_config
     from vrl.config.validation import optional_none, require, validate_training_config
-    from vrl.models.families.wan_2_1.runtime import (
+    from vrl.models.diffusion.wan_2_1.runtime import (
         build_wan_2_1_runtime_bundle_from_cfg,
     )
     from vrl.trainers.data import collate_preference, load_pickapic

@@ -29,13 +29,13 @@ from vrl.engine.core.types import (
 from vrl.engine.execution.microbatching import MicroBatchSample
 from vrl.engine.execution.planner import attach_engine_plan, build_engine_plan
 from vrl.engine.trajectory import build_ar_discrete_trajectory, build_ar_multisegment_trajectory
-from vrl.models.capability_builders import ar_discrete_family_capability
-from vrl.models.families.janus_pro.model import (
+from vrl.models.ar.capabilities import ar_discrete_family_capability
+from vrl.models.ar.janus_pro.model import (
     JanusProConfig,
     JanusProModel,
     JanusProReplayModel,
 )
-from vrl.models.families.janus_pro.r1_types import JanusR1Segment
+from vrl.models.ar.janus_pro.r1_types import JanusR1Segment
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.replay_loading import (
     full_generation_bundle_metadata,

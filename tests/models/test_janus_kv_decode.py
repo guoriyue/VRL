@@ -8,7 +8,7 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from vrl.models.families.janus_pro.model import (
+from vrl.models.ar.janus_pro.model import (
     JANUS_IMAGE_VOCAB_SIZE,
     JanusProConfig,
     JanusProModel,

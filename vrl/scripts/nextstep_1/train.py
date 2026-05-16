@@ -27,7 +27,7 @@ async def train_nextstep_1_ocr_grpo(cfg: DictConfig) -> None:
 
 
 def _build_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
-    from vrl.models.families.nextstep_1.runtime import (
+    from vrl.models.ar.nextstep_1.runtime import (
         build_nextstep_1_runtime_bundle,
         extract_nextstep_1_runtime_spec,
     )
@@ -38,7 +38,7 @@ def _build_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
 
 
 def _build_replay_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
-    from vrl.models.families.nextstep_1.runtime import (
+    from vrl.models.ar.nextstep_1.runtime import (
         build_nextstep_1_replay_runtime_bundle,
         extract_nextstep_1_runtime_spec,
     )

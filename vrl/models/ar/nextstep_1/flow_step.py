@@ -4,7 +4,7 @@ NextStep-1 generates each image token via a small flow-matching MLP head
 conditioned on the LLM's hidden state. For RL we need both the sampled
 token and a Gaussian log-probability so we can form the GRPO ratio.
 
-This mirrors ``vrl.rollouts.evaluators.diffusion.flow_matching`` but at
+This mirrors ``vrl.rollouts.evaluators.diffusion.sde_logprob`` but at
 the per-token granularity: each AR step does its own K-step flow ODE
 internally, then injects one Gaussian noise at the final step. The
 log-probability is the standard isotropic-Gaussian density of that noise.

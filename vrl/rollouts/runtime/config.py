@@ -44,80 +44,47 @@ class RolloutBackendConfig:
 
     @classmethod
     def from_cfg(cls, cfg: Any) -> RolloutBackendConfig:
-        """Build rollout backend config from a full training cfg or rollout cfg slice."""
+        """Build rollout backend config from a full training cfg."""
         if isinstance(cfg, cls):
             return cfg
 
-        direct_backend = _config_get(cfg, "backend", _MISSING)
         distributed = _config_get(cfg, "distributed", _MISSING)
         if distributed is _MISSING:
-            if direct_backend is _MISSING:
-                raise ValueError("distributed.backend or backend is required")
-            distributed = cfg
-        rollout = _config_get(distributed, "rollout", _MISSING)
-        if rollout is _MISSING:
-            rollout = distributed
+            raise ValueError("distributed.backend is required")
 
-        backend = _config_get(distributed, "backend", _config_get(rollout, "backend", _MISSING))
+        backend = _config_get(distributed, "backend", _MISSING)
         if backend is _MISSING:
-            raise ValueError("distributed.backend or backend is required")
+            raise ValueError("distributed.backend is required")
 
         resources_node = _config_get(distributed, "resources", _MISSING)
-        resources = None
-        if resources_node is not _MISSING:
-            resources = resolve_distributed_resources(cfg)
-
-        legacy_num_workers = _rollout_get(distributed, rollout, "num_workers", _MISSING)
-        legacy_gpus_per_worker = _rollout_get(
-            distributed,
-            rollout,
-            "gpus_per_worker",
-            _MISSING,
-        )
-        legacy_overlap = _rollout_get(
-            distributed,
-            rollout,
-            "allow_driver_gpu_overlap",
-            _MISSING,
-        )
-
-        if resources is not None:
-            num_workers = resources.rollout_num_workers
-            gpus_per_worker = resources.rollout_gpus_per_worker
-            allow_driver_gpu_overlap = bool(resources.colocated)
-        else:
-            num_workers = int(1 if legacy_num_workers is _MISSING else legacy_num_workers)
-            gpus_per_worker = float(
-                1.0 if legacy_gpus_per_worker is _MISSING else legacy_gpus_per_worker,
-            )
-            allow_driver_gpu_overlap = bool(
-                False if legacy_overlap is _MISSING else legacy_overlap,
-            )
+        if resources_node is _MISSING:
+            raise ValueError("distributed.resources is required")
+        resources = resolve_distributed_resources(cfg)
+        rollout = _config_get(distributed, "rollout", {})
 
         return cls(
             backend=str(backend),
-            num_workers=num_workers,
-            gpus_per_worker=gpus_per_worker,
+            num_workers=resources.rollout_num_workers,
+            gpus_per_worker=resources.rollout_gpus_per_worker,
             cpus_per_worker=float(
-                _rollout_get(distributed, rollout, "cpus_per_worker", 1.0),
+                _config_get(rollout, "cpus_per_worker", 1.0),
             ),
             placement_strategy=str(
-                _rollout_get(distributed, rollout, "placement_strategy", "SPREAD"),
+                _config_get(rollout, "placement_strategy", "SPREAD"),
             ),
-            allow_driver_gpu_overlap=allow_driver_gpu_overlap,
+            allow_driver_gpu_overlap=bool(resources.colocated),
             max_inflight_chunks_per_worker=int(
-                _rollout_get(
-                    distributed,
+                _config_get(
                     rollout,
                     "max_inflight_chunks_per_worker",
                     1,
                 ),
             ),
             sync_trainable_state=str(
-                _rollout_get(distributed, rollout, "sync_trainable_state", "disabled"),
+                _config_get(rollout, "sync_trainable_state", "disabled"),
             ),
             release_after_collect=bool(
-                _rollout_get(distributed, rollout, "release_after_collect", False),
+                _config_get(rollout, "release_after_collect", False),
             ),
             resources=resources,
         )
@@ -154,10 +121,6 @@ def _config_get(node: Any, key: str, default: Any) -> Any:
     except (KeyError, IndexError, TypeError):
         pass
     return getattr(node, key, default)
-
-
-def _rollout_get(distributed: Any, rollout: Any, key: str, default: Any) -> Any:
-    return _config_get(rollout, key, _config_get(distributed, key, default))
 
 
 __all__ = ["RolloutBackendConfig"]

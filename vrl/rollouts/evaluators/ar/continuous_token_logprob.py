@@ -17,7 +17,7 @@ import torch
 from vrl.models.interfaces import ReplayModel, require_replay_model
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
-from vrl.rollouts.evaluators.trajectory import single_segment_trajectory_signals
+from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
 
 
@@ -57,8 +57,7 @@ class ContinuousTokenLogProbEvaluator(Evaluator):
                 with torch.no_grad(), model.disable_adapter():
                     ref_lp = self._compute_logprobs(model, batch)
 
-        return single_segment_trajectory_signals(
-            batch,
+        return TrajectorySignalBuilder(batch).single_segment(
             segment_name="image_tokens",
             log_prob=new_lp,
             ref_log_prob=ref_lp,

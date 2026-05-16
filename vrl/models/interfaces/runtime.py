@@ -78,9 +78,3 @@ class RuntimeBundle:
     ref_modules: dict[str, Any] | None = None
     runtime_caps: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
-
-    @property
-    def policy(self) -> RuntimeModel:
-        """Compatibility alias for older callers; new code should use ``model``."""
-
-        return self.model

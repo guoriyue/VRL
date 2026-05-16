@@ -1,7 +1,7 @@
 """Diffusion-based training signal evaluators."""
 
-from vrl.rollouts.evaluators.diffusion.flow_matching import FlowMatchingEvaluator
+from vrl.rollouts.evaluators.diffusion.sde_logprob import DiffusionSDELogProbEvaluator
 
 __all__ = [
-    "FlowMatchingEvaluator",
+    "DiffusionSDELogProbEvaluator",
 ]

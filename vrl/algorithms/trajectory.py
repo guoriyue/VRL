@@ -53,10 +53,6 @@ class AlgorithmAdapter:
         algorithm: Any,
         inputs: AlgorithmInput,
     ) -> tuple[Any, TrainStepMetrics]:
-        dpo_loss = _try_compute_dpo_loss(algorithm, inputs)
-        if dpo_loss is not None:
-            return dpo_loss
-
         compute_loss = getattr(algorithm, "compute_loss", None)
         if not callable(compute_loss):
             raise TypeError(
@@ -89,19 +85,6 @@ def _with_advantages(
         old_log_probs=inputs.old_log_probs,
         metadata=inputs.metadata,
     )
-
-
-def _try_compute_dpo_loss(
-    algorithm: Any,
-    inputs: AlgorithmInput,
-) -> tuple[Any, TrainStepMetrics] | None:
-    from vrl.algorithms.dpo import DiffusionDPO, DiffusionDPOConfig
-
-    if isinstance(algorithm, DiffusionDPO):
-        return algorithm.compute_loss(inputs)
-    if not isinstance(algorithm, DiffusionDPOConfig):
-        return None
-    return DiffusionDPO(algorithm).compute_loss(inputs)
 
 
 __all__ = [

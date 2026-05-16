@@ -5,7 +5,7 @@ from __future__ import annotations
 from omegaconf import OmegaConf
 
 from vrl.engine import GenerationRequest
-from vrl.models.families.janus_pro.runtime import (
+from vrl.models.ar.janus_pro.runtime import (
     JanusProPipelineExecutor,
     extract_janus_pro_runtime_spec,
 )

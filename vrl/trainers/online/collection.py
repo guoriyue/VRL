@@ -7,13 +7,14 @@ from typing import Any
 import torch
 import torch.nn as nn
 
+from vrl.utils.cuda_memory import empty_cuda_cache
+
 
 async def _release_collector_runtime_memory(collector: Any) -> None:
     release = getattr(collector, "release_runtime_memory", None)
     if callable(release):
         await release()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+    empty_cuda_cache()
 
 
 def _collector_runtime_requires_driver_model_offload(collector: Any) -> bool:
@@ -26,8 +27,7 @@ def _collector_runtime_requires_driver_model_offload(collector: Any) -> bool:
 
 def _move_model_to_device(model: nn.Module, device: torch.device | str) -> None:
     model.to(device)
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+    empty_cuda_cache()
 
 
 __all__ = [

@@ -8,9 +8,14 @@ import pytest
 import torch
 
 from vrl.engine import GenerationRequest, GenerationSampleRow, OutputBatch
-from vrl.engine.trajectory import build_ar_discrete_trajectory
+from vrl.engine.trajectory import RewardView, build_ar_discrete_trajectory
+from vrl.rollouts.collector.batch_builder import (
+    RolloutBatchBuildContext,
+    TrajectoryRolloutBatchBuilder,
+)
 from vrl.rollouts.collector.core import RolloutCollector
 from vrl.rollouts.collector.requests import RolloutRequestPlan
+from vrl.rollouts.collector.rewards import RewardScoringInput
 
 
 class _RequestBuilder:
@@ -76,20 +81,17 @@ class _RewardScorer:
 
     async def score(
         self,
-        outputs: torch.Tensor,
-        prompts: list[str],
-        metadata: dict[str, Any],
-        device: Any,
+        request: RewardScoringInput,
     ) -> torch.Tensor:
         self.calls.append(
             {
-                "outputs": outputs,
-                "prompts": prompts,
-                "metadata": metadata,
-                "device": device,
+                "outputs": request.outputs,
+                "prompts": request.prompts,
+                "metadata": request.metadata,
+                "device": request.device,
             },
         )
-        return torch.arange(outputs.shape[0], dtype=torch.float32)
+        return torch.arange(request.batch_size, dtype=torch.float32)
 
 
 def _collector(
@@ -102,7 +104,6 @@ def _collector(
         config=object(),
         family="unit",
         task="collect",
-        executor_cls=object,
         request_builder=_RequestBuilder(),
         reward_scorer=reward_scorer or _RewardScorer(),
         runtime=runtime,
@@ -143,6 +144,48 @@ def test_collector_routes_request_through_runtime_reward_and_trajectory_batch() 
     assert batch.context == {"collector": "test"}
     assert batch.trajectory is not None
     assert batch.training_view is not None
+
+
+def test_reward_scoring_input_rejects_prompt_output_mismatch() -> None:
+    with pytest.raises(ValueError, match="prompt/output batch mismatch"):
+        RewardScoringInput(
+            outputs=torch.ones(2, 3),
+            prompts=["p0"],
+            metadata={},
+            device="cpu",
+        )
+
+
+def test_reward_view_selection_fails_fast_when_ambiguous() -> None:
+    import asyncio
+
+    request = GenerationRequest(
+        request_id="unit-request",
+        family="unit",
+        task="collect",
+        prompts=["p0"],
+        samples_per_prompt=1,
+    )
+    output = asyncio.run(_Runtime().generate(request))
+    assert output.trajectory is not None
+    output.trajectory.reward_views["alternate"] = RewardView(
+        name="alternate",
+        modality="image",
+        metadata={"output_ref": "OutputBatch.output"},
+    )
+
+    with pytest.raises(RuntimeError, match="multiple reward views"):
+        TrajectoryRolloutBatchBuilder(
+            output,
+            RolloutBatchBuildContext(metadata={}),
+        ).reward_outputs()
+
+    selected = TrajectoryRolloutBatchBuilder(
+        output,
+        RolloutBatchBuildContext(metadata={}, reward_view_name="image"),
+    ).reward_outputs()
+
+    assert selected.shape[0] == len(output.sample_rows)
 
 
 def test_collector_forwards_reference_metadata_to_request() -> None:

@@ -28,13 +28,13 @@ async def train_wan_2_1_grpo(cfg: DictConfig) -> None:
 
 
 def _build_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
-    from vrl.models.families.wan_2_1.runtime import build_wan_2_1_runtime_bundle_from_cfg
+    from vrl.models.diffusion.wan_2_1.runtime import build_wan_2_1_runtime_bundle_from_cfg
 
     return build_wan_2_1_runtime_bundle_from_cfg(cfg, device, weight_dtype)
 
 
 def _build_replay_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
-    from vrl.models.families.wan_2_1.runtime import (
+    from vrl.models.diffusion.wan_2_1.runtime import (
         build_wan_2_1_replay_runtime_bundle_from_cfg,
     )
 

@@ -10,16 +10,16 @@ Requires the upstream package ``deepseek-ai/Janus`` (not on PyPI):
 
 from __future__ import annotations
 
-from vrl.models.families.janus_pro.model import (
+from vrl.models.ar.janus_pro.model import (
     JanusProConfig,
     JanusProModel,
     image_token_logits_from_hidden,
 )
-from vrl.models.families.janus_pro.r1_types import (
+from vrl.models.ar.janus_pro.r1_types import (
     JanusR1GenerationResult,
     JanusR1Segment,
 )
-from vrl.models.families.janus_pro.runtime import (
+from vrl.models.ar.janus_pro.runtime import (
     JanusProChunkGatherer,
     JanusProPipelineExecutor,
     JanusProR1ChunkGatherer,
@@ -31,8 +31,8 @@ from vrl.models.families.janus_pro.runtime import (
 __all__ = [
     "JanusProChunkGatherer",
     "JanusProConfig",
-    "JanusProPipelineExecutor",
     "JanusProModel",
+    "JanusProPipelineExecutor",
     "JanusProR1ChunkGatherer",
     "JanusProR1PipelineExecutor",
     "JanusR1GenerationResult",

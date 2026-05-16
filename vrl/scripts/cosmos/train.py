@@ -45,7 +45,7 @@ async def train_cosmos_predict25_diffusion_nft(cfg: DictConfig) -> None:
 
 
 def _build_predict2_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
-    from vrl.models.families.cosmos.predict2.runtime import (
+    from vrl.models.diffusion.cosmos.predict2.runtime import (
         build_cosmos_predict2_runtime_bundle_from_cfg,
     )
 
@@ -57,7 +57,7 @@ def _build_predict2_replay_bundle(
     device: Any,
     weight_dtype: Any,
 ) -> Any:
-    from vrl.models.families.cosmos.predict2.runtime import (
+    from vrl.models.diffusion.cosmos.predict2.runtime import (
         build_cosmos_predict2_replay_runtime_bundle_from_cfg,
     )
 
@@ -65,7 +65,7 @@ def _build_predict2_replay_bundle(
 
 
 def _build_predict25_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
-    from vrl.models.families.cosmos.predict2_5.runtime import (
+    from vrl.models.diffusion.cosmos.predict2_5.runtime import (
         build_cosmos_predict25_runtime_bundle_from_cfg,
     )
 
@@ -77,7 +77,7 @@ def _build_predict25_replay_bundle(
     device: Any,
     weight_dtype: Any,
 ) -> Any:
-    from vrl.models.families.cosmos.predict2_5.runtime import (
+    from vrl.models.diffusion.cosmos.predict2_5.runtime import (
         build_cosmos_predict25_replay_runtime_bundle_from_cfg,
     )
 

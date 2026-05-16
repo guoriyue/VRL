@@ -12,7 +12,7 @@ from vrl.engine.diffusion import (
 )
 from vrl.engine.diffusion.layout import VideoGenerationRequest
 from vrl.engine.execution.microbatching import MicroBatchSample
-from vrl.models.capability_builders import diffusion_family_capability
+from vrl.models.diffusion.capabilities import diffusion_family_capability
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.replay_loading import (
     full_generation_bundle_metadata,
@@ -70,7 +70,7 @@ def extract_cosmos_predict25_runtime_spec(
 
 
 def build_cosmos_predict25_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    from vrl.models.families.cosmos.predict2_5.model import CosmosPredict25Model
+    from vrl.models.diffusion.cosmos.predict2_5.model import CosmosPredict25Model
 
     logger.info(
         "Building cosmos-predict2.5 runtime bundle (backend=diffusers) from %s",
@@ -117,7 +117,7 @@ def build_cosmos_predict25_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBund
 def build_cosmos_predict25_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
     """Build the trainer replay bundle without Cosmos2.5 text/VAE modules."""
 
-    from vrl.models.families.cosmos.predict2_5.model import CosmosPredict25ReplayModel
+    from vrl.models.diffusion.cosmos.predict2_5.model import CosmosPredict25ReplayModel
 
     logger.info(
         "Building cosmos-predict2.5 replay runtime bundle (backend=diffusers) from %s",

@@ -44,7 +44,7 @@ def test_janus_pro_r1_runtime_inputs_select_r1_task_and_executor() -> None:
     assert inputs.launch_contract.family == "janus_pro_r1"
     assert inputs.launch_contract.task == "ar_t2i_r1"
     assert inputs.launch_contract.executor_cls == (
-        "vrl.models.families.janus_pro.runtime:JanusProR1PipelineExecutor"
+        "vrl.models.ar.janus_pro.runtime:JanusProR1PipelineExecutor"
     )
 
 

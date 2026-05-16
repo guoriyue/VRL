@@ -17,7 +17,7 @@ from vrl.engine.diffusion import (
 )
 from vrl.engine.diffusion.layout import VideoGenerationRequest
 from vrl.engine.execution.microbatching import MicroBatchSample
-from vrl.models.capability_builders import diffusion_family_capability
+from vrl.models.diffusion.capabilities import diffusion_family_capability
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.replay_loading import (
     apply_lora_to_transformer,
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 SD3_5_FAMILY_CAPABILITY = diffusion_family_capability("sd3_5", "t2i")
 
 _MODEL_BY_BACKEND: dict[str, str] = {
-    "diffusers": "vrl.models.families.sd3_5.model:SD3_5Model",
+    "diffusers": "vrl.models.diffusion.sd3_5.model:SD3_5Model",
 }
 
 
@@ -141,7 +141,7 @@ def build_sd3_5_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
 def build_sd3_5_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
     """Build the trainer replay bundle without loading SD3 prompt/VAE modules."""
 
-    from vrl.models.families.sd3_5.model import SD3_5ReplayModel
+    from vrl.models.diffusion.sd3_5.model import SD3_5ReplayModel
 
     backend = spec.backend_preference[0]
     if backend != "diffusers":

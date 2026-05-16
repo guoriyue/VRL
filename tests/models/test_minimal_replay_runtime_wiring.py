@@ -69,15 +69,15 @@ def _spec(**overrides: Any) -> RuntimeBuildSpec:
     ("module_path", "builder_name"),
     [
         (
-            "vrl.models.families.sd3_5.runtime",
+            "vrl.models.diffusion.sd3_5.runtime",
             "build_sd3_5_replay_runtime_bundle",
         ),
         (
-            "vrl.models.families.wan_2_1.runtime",
+            "vrl.models.diffusion.wan_2_1.runtime",
             "build_wan_2_1_replay_runtime_bundle",
         ),
         (
-            "vrl.models.families.cosmos.predict2.runtime",
+            "vrl.models.diffusion.cosmos.predict2.runtime",
             "build_cosmos_predict2_replay_runtime_bundle",
         ),
     ],
@@ -114,8 +114,8 @@ def test_diffusion_replay_builders_return_minimal_bundles(
 def test_cosmos_predict25_replay_builder_keeps_diffusion_nft_surface(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from vrl.models.families.cosmos import predict2_5
-    from vrl.models.families.cosmos.predict2_5 import runtime
+    from vrl.models.diffusion.cosmos import predict2_5
+    from vrl.models.diffusion.cosmos.predict2_5 import runtime
 
     monkeypatch.setattr(
         runtime,
@@ -152,13 +152,13 @@ def test_cosmos_predict25_replay_builder_keeps_diffusion_nft_surface(
     ("module_path", "builder_name", "model_attr", "spec_kwargs"),
     [
         (
-            "vrl.models.families.janus_pro.runtime",
+            "vrl.models.ar.janus_pro.runtime",
             "build_janus_pro_replay_runtime_bundle",
             "JanusProReplayModel",
             {"backend_preference": ("native",), "task_variant": "ar_t2i"},
         ),
         (
-            "vrl.models.families.nextstep_1.runtime",
+            "vrl.models.ar.nextstep_1.runtime",
             "build_nextstep_1_replay_runtime_bundle",
             "NextStep1ReplayModel",
             {"backend_preference": ("native",), "task_variant": "ar_t2i"},

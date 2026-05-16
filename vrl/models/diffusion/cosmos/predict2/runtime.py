@@ -17,7 +17,7 @@ from vrl.engine.diffusion import (
 )
 from vrl.engine.diffusion.layout import VideoGenerationRequest
 from vrl.engine.execution.microbatching import MicroBatchSample
-from vrl.models.capability_builders import diffusion_family_capability
+from vrl.models.diffusion.capabilities import diffusion_family_capability
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.replay_loading import (
     apply_lora_to_transformer,
@@ -37,7 +37,7 @@ COSMOS_PREDICT2_FAMILY_CAPABILITY = diffusion_family_capability(
 )
 
 _MODEL_BY_BACKEND: dict[str, str] = {
-    "diffusers": "vrl.models.families.cosmos.predict2.model:CosmosPredict2Model",
+    "diffusers": "vrl.models.diffusion.cosmos.predict2.model:CosmosPredict2Model",
 }
 
 
@@ -153,7 +153,7 @@ def build_cosmos_predict2_replay_runtime_bundle(
 ) -> RuntimeBundle:
     """Build the trainer replay bundle without Cosmos generation-only modules."""
 
-    from vrl.models.families.cosmos.predict2.model import CosmosPredict2ReplayModel
+    from vrl.models.diffusion.cosmos.predict2.model import CosmosPredict2ReplayModel
 
     backend = spec.backend_preference[0]
     if backend != "diffusers":

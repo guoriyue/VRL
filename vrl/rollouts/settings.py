@@ -11,16 +11,10 @@ from omegaconf import DictConfig, ListConfig, OmegaConf
 
 @dataclass(frozen=True, slots=True)
 class RolloutSettings:
-    """Resolved rollout settings with attribute-style access for legacy callers."""
+    """Resolved rollout settings projected from user YAML configs."""
 
     family: str
     values: dict[str, Any] = field(default_factory=dict)
-
-    def __getattr__(self, name: str) -> Any:
-        try:
-            return self.values[name]
-        except KeyError as exc:
-            raise AttributeError(name) from exc
 
     def get(self, name: str, default: Any = None) -> Any:
         """Return a resolved setting or ``default`` when absent."""
@@ -195,6 +189,8 @@ _REQUEST_SAMPLING_EXCLUDES = {
     "kl_reward",
     "n",
     "n_samples_per_prompt",
+    "reward_view",
+    "reward_view_name",
     "rollout_batch_size",
 }
 

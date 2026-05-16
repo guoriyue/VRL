@@ -41,7 +41,7 @@ class _FakeModule:
 
 @dataclass
 class _Bundle:
-    policy: Any
+    model: Any
     trainable_modules: dict[str, Any]
 
 
@@ -74,13 +74,23 @@ def _cfg(
     overlap: bool = False,
     release_after_collect: bool = False,
 ):
+    rollout_devices = [0] if overlap else [1]
+    visible_devices = [0] if overlap else [0, 1]
     return OmegaConf.create(
         {
             "distributed": {
                 "backend": backend,
+                "resources": {
+                    "visible_devices": visible_devices,
+                    "trainer": {"devices": [0]},
+                    "rollout": {
+                        "devices": rollout_devices,
+                        "gpus_per_worker": 1,
+                        "num_workers": num_workers,
+                    },
+                    "allow_overlap": overlap,
+                },
                 "rollout": {
-                    "num_workers": num_workers,
-                    "allow_driver_gpu_overlap": overlap,
                     "release_after_collect": release_after_collect,
                 },
             },
@@ -119,7 +129,7 @@ def _resource_cfg(
 
 
 def test_rollout_backend_config_from_cfg_requires_explicit_backend() -> None:
-    with pytest.raises(ValueError, match=r"distributed\.backend or backend"):
+    with pytest.raises(ValueError, match=r"distributed\.backend"):
         RolloutBackendConfig.from_cfg({})
 
 
@@ -150,9 +160,13 @@ def test_ray_backend_requires_launch_contract_and_gatherer(
 
 
 def test_ray_backend_rejects_driver_cuda_policy_without_overlap() -> None:
-    with pytest.raises(ValueError, match=r"no distributed\.resources plan"):
+    with pytest.raises(ValueError, match=r"resources\.allow_overlap=false"):
         validate_rollout_backend_config(
-            _cfg(),
+            _resource_cfg(
+                trainer_devices=[0],
+                rollout_devices=[0],
+                allow_overlap=False,
+            ),
             driver_policy=_CudaPolicy(),
         )
 
@@ -161,20 +175,29 @@ def test_ray_backend_rejects_driver_cuda_policy_without_overlap() -> None:
 
 def test_ray_backend_detects_cuda_trainable_module_when_policy_has_no_device() -> None:
     bundle = _Bundle(
-        policy=object(),
-        trainable_modules={"transformer": _FakeModule("cuda:1")},
+        model=object(),
+        trainable_modules={"transformer": _FakeModule("cuda:0")},
     )
 
-    with pytest.raises(ValueError, match=r"no distributed\.resources plan"):
+    with pytest.raises(ValueError, match=r"resources\.allow_overlap=false"):
         validate_rollout_backend_config(
-            _cfg(),
+            _resource_cfg(
+                trainer_devices=[0],
+                rollout_devices=[0],
+                allow_overlap=False,
+            ),
             driver_bundle=bundle,
         )
 
 
 def test_ray_backend_allows_driver_cuda_policy_with_explicit_overlap() -> None:
     config = validate_rollout_backend_config(
-        _cfg(overlap=True, release_after_collect=True),
+        _resource_cfg(
+            trainer_devices=[0],
+            rollout_devices=[0],
+            allow_overlap=True,
+            release_after_collect=True,
+        ),
         driver_policy=_CudaPolicy(),
     )
 

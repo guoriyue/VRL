@@ -7,7 +7,7 @@ Requires the upstream package ``stepfun-ai/NextStep-1`` (not on PyPI):
     git clone https://github.com/stepfun-ai/NextStep-1
     cd NextStep-1 && pip install -e .
 
-The wrapper here mirrors ``vrl.models.families.janus_pro`` so the same
+The wrapper here mirrors ``vrl.models.ar.janus_pro`` so the same
 ``OnlineTrainer + TokenGRPO`` machinery works without changes — the only
 substantive difference is that "logits" become per-token Gaussian
 log-probabilities (continuous tokens, no codebook).
@@ -15,11 +15,11 @@ log-probabilities (continuous tokens, no codebook).
 
 from __future__ import annotations
 
-from vrl.models.families.nextstep_1.model import (
+from vrl.models.ar.nextstep_1.model import (
     NextStep1Config,
     NextStep1Model,
 )
-from vrl.models.families.nextstep_1.runtime import (
+from vrl.models.ar.nextstep_1.runtime import (
     NextStep1ChunkGatherer,
     NextStep1PipelineExecutor,
     build_nextstep_1_runtime_bundle,
@@ -29,8 +29,8 @@ from vrl.models.families.nextstep_1.runtime import (
 __all__ = [
     "NextStep1ChunkGatherer",
     "NextStep1Config",
-    "NextStep1PipelineExecutor",
     "NextStep1Model",
+    "NextStep1PipelineExecutor",
     "build_nextstep_1_runtime_bundle",
     "extract_nextstep_1_runtime_spec",
 ]

@@ -53,7 +53,7 @@ import torch.nn.functional as F
 
 from vrl.engine.ar.cache import ARCacheRows, ar_concat_rows, ar_split_rows
 from vrl.engine.ar.types import ARStepResult
-from vrl.models.families.janus_pro.r1_types import (
+from vrl.models.ar.janus_pro.r1_types import (
     JanusR1GenerationResult,
     JanusR1Segment,
 )

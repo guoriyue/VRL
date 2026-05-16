@@ -9,7 +9,7 @@ import torch.nn as nn
 
 from vrl.engine import GenerationRequest, GenerationSampleRow
 from vrl.engine.trajectory import build_ar_discrete_trajectory, build_training_view
-from vrl.models.families.janus_pro.model import (
+from vrl.models.ar.janus_pro.model import (
     JANUS_IMAGE_VOCAB_SIZE,
     JanusProConfig,
     JanusProModel,

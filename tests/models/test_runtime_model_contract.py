@@ -132,7 +132,7 @@ def test_require_runtime_model_reports_missing_state_loader() -> None:
         require_runtime_model(_ReplayOnlyModel(), owner="test.model")
 
 
-def test_runtime_bundle_exposes_model_and_policy_compat_property() -> None:
+def test_runtime_bundle_exposes_model_contract() -> None:
     model = _MinimalRuntimeModel()
     bundle = RuntimeBundle(
         model=model,
@@ -143,7 +143,6 @@ def test_runtime_bundle_exposes_model_and_policy_compat_property() -> None:
     )
 
     assert bundle.model is model
-    assert bundle.policy is model
 
 
 def test_diffusion_load_trainable_state_accepts_trainable_only_payload() -> None:

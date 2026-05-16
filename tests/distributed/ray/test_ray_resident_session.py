@@ -6,7 +6,7 @@ from typing import Any
 
 from vrl.distributed.ray.rollout.worker import RayRolloutWorker
 from vrl.engine.core.launch_contract import GenerationRuntimeLaunchContract
-from vrl.models.capability_builders import ar_discrete_family_capability
+from vrl.models.ar.capabilities import ar_discrete_family_capability
 
 
 class _Executor:

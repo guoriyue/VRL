@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import importlib
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 from vrl.engine import RolloutBackend
 from vrl.rollouts.collector.core import RolloutCollector
@@ -14,11 +13,10 @@ from vrl.rollouts.collector.requests import (
 )
 from vrl.rollouts.collector.rewards import RewardScorer
 from vrl.rollouts.family_registry import (
+    CollectorKind,
     FAMILY_REGISTRY,
     normalize_rollout_family,
 )
-
-CollectorKind = Literal["diffusion", "ar_discrete", "ar_continuous", "ar_r1"]
 
 LAST_COLLECT_PHASES: dict[str, float] = {}
 
@@ -30,17 +28,10 @@ class CollectorRegistryEntry:
     family: str
     task: str
     kind: CollectorKind
-    executor_cls: type
     request_prefix: str | None = None
     default_task_type: str | None = None
     return_artifacts: tuple[str, ...] = ()
     metadata_key: str | None = None
-
-
-def _import_from_path(path: str) -> Any:
-    module_path, attr = path.split(":", 1)
-    module = importlib.import_module(module_path)
-    return getattr(module, attr)
 
 
 COLLECTOR_REGISTRY: dict[str, CollectorRegistryEntry] = {
@@ -48,7 +39,6 @@ COLLECTOR_REGISTRY: dict[str, CollectorRegistryEntry] = {
         family=entry.family,
         task=entry.task,
         kind=entry.collector.kind,
-        executor_cls=_import_from_path(entry.executor_cls),
         request_prefix=entry.collector.request_prefix,
         default_task_type=entry.collector.default_task_type,
         return_artifacts=entry.collector.return_artifacts,
@@ -73,19 +63,17 @@ def build_rollout_collector(
     entry = _entry_for(registry_key)
     settings = _resolve_settings(entry, config)
     request_builder = _build_request_builder(entry, settings)
-    executor_kwargs = _build_executor_kwargs(entry, settings, reference_image)
+    del reference_image
 
     return RolloutCollector(
         model=model,
         config=settings,
         family=entry.family,
         task=entry.task,
-        executor_cls=entry.executor_cls,
         request_builder=request_builder,
         reward_scorer=RewardScorer(reward_fn),
         default_group_size=_default_group_size(entry, settings),
         runtime=runtime,
-        executor_kwargs=executor_kwargs,
         phase_sink=LAST_COLLECT_PHASES,
     )
 
@@ -113,34 +101,17 @@ def _build_request_builder(
     entry: CollectorRegistryEntry,
     config: Any,
 ) -> RolloutRequestBuilder:
-    if entry.kind in {"diffusion", "ar_discrete", "ar_continuous", "ar_r1"}:
-        if entry.request_prefix is None:
-            raise ValueError(f"{entry.family} collector registry entry is incomplete")
-        return RolloutEngineRequestBuilder(
-            family=entry.family,
-            task=entry.task,
-            request_prefix=entry.request_prefix,
-            config=config,
-            return_artifacts=entry.return_artifacts,
-            default_task_type=entry.default_task_type,
-            metadata_key=entry.metadata_key,
-        )
-    raise AssertionError(f"unhandled collector kind: {entry.kind}")
-
-
-def _build_executor_kwargs(
-    entry: CollectorRegistryEntry,
-    config: Any,
-    reference_image: Any,
-) -> dict[str, Any]:
-    if entry.kind != "diffusion":
-        return {}
-    kwargs: dict[str, Any] = {
-        "sample_batch_size": _require_config_value(entry, config, "sample_batch_size"),
-    }
-    if reference_image is not None:
-        kwargs["reference_image"] = reference_image
-    return kwargs
+    if entry.request_prefix is None:
+        raise ValueError(f"{entry.family} collector registry entry is incomplete")
+    return RolloutEngineRequestBuilder(
+        family=entry.family,
+        task=entry.task,
+        request_prefix=entry.request_prefix,
+        config=config,
+        return_artifacts=entry.return_artifacts,
+        default_task_type=entry.default_task_type,
+        metadata_key=entry.metadata_key,
+    )
 
 
 def _default_group_size(entry: CollectorRegistryEntry, config: Any) -> int:

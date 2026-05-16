@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import time
-from collections.abc import Mapping
+from contextlib import nullcontext
 from typing import Any
 
 from vrl.engine import (
@@ -14,9 +14,7 @@ from vrl.engine import (
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
-    reward_outputs_from_trajectory,
-    reward_prompts_from_output,
-    rollout_batch_from_trajectory,
+    TrajectoryRolloutBatchBuilder,
 )
 from vrl.rollouts.collector.requests import RolloutRequestBuilder, RolloutRequestPlan
 from vrl.rollouts.collector.rewards import RewardScorer
@@ -32,24 +30,20 @@ class RolloutCollector:
         config: Any,
         family: str,
         task: str,
-        executor_cls: type,
         request_builder: RolloutRequestBuilder,
         reward_scorer: RewardScorer,
         default_group_size: int = 1,
         runtime: RolloutBackend | None = None,
-        executor_kwargs: Mapping[str, Any] | None = None,
         phase_sink: dict[str, float] | None = None,
     ) -> None:
         self.model = model
         self.config = config
         self.family = family
         self.task = task
-        self.executor_cls = executor_cls
         self.request_builder = request_builder
         self.reward_scorer = reward_scorer
         self.default_group_size = max(1, int(default_group_size))
         self._runtime = runtime
-        self.executor_kwargs = dict(executor_kwargs or {})
         self.phase_sink = phase_sink
 
     def set_runtime(self, runtime: RolloutBackend) -> None:
@@ -127,38 +121,48 @@ class RolloutCollector:
         context = RolloutBatchBuildContext(
             metadata=dict(request_plan.pack_metadata),
             device=_device_from_model(self.model),
-            kl_reward=float(getattr(self.config, "kl_reward", 0.0)),
-            rescale_to_unit=bool(getattr(self.config, "rescale_to_unit", False)),
+            kl_reward=float(_config_get(self.config, "kl_reward", 0.0)),
+            rescale_to_unit=bool(_config_get(self.config, "rescale_to_unit", False)),
+            reward_view_name=_reward_view_name(self.config),
         )
-        reward_outputs = reward_outputs_from_trajectory(output, context)
-        reward_prompts = reward_prompts_from_output(output, context)
-        from vrl.trainers.profiling import record_function
+        batch_builder = TrajectoryRolloutBatchBuilder(output, context)
 
-        with record_function("collector.reward_score"):
+        with _record_function("collector.reward_score"):
             rewards = await self.reward_scorer.score(
-                reward_outputs,
-                reward_prompts,
-                request_plan.reward_metadata,
-                _infer_device(reward_outputs, context.device),
+                batch_builder.reward_scoring_input(request_plan.reward_metadata),
             )
 
         if phases is not None and phase_t is not None:
             phases["collect.reward_score"] = _sync_time() - phase_t
 
-        return rollout_batch_from_trajectory(output, rewards, context)
+        return batch_builder.build(rewards)
 
 
 def _device_from_model(model: Any | None) -> Any | None:
     return getattr(model, "device", None)
 
 
-def _infer_device(value: Any, fallback: Any | None) -> Any:
-    if fallback is not None:
-        return fallback
-    device = getattr(value, "device", None)
-    if device is not None:
-        return device
-    return "cpu"
+def _config_get(config: Any, name: str, default: Any) -> Any:
+    getter = getattr(config, "get", None)
+    if callable(getter):
+        return getter(name, default)
+    return getattr(config, name, default)
+
+
+def _reward_view_name(config: Any) -> str | None:
+    for name in ("reward_view", "reward_view_name"):
+        value = _config_get(config, name, None)
+        if value:
+            return str(value)
+    return None
+
+
+def _record_function(name: str) -> Any:
+    try:
+        from vrl.trainers.profiling import record_function
+    except ImportError:
+        return nullcontext()
+    return record_function(name)
 
 
 def _sync_time() -> float:

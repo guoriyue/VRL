@@ -9,7 +9,7 @@ from vrl.engine import GenerationRequest, GenerationSampleRow
 from vrl.engine.trajectory import build_ar_discrete_trajectory, build_training_view
 from vrl.models.interfaces import ReplayResult, ReplaySegmentResult
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.evaluators.trajectory import segment_signal_from_batch
+from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 
 
 def _request() -> GenerationRequest:
@@ -158,8 +158,7 @@ def test_segment_signal_reads_old_logprob_mask_and_distribution_from_trajectory(
     )
     segment = output.require_segment("image_tokens")
 
-    signal = segment_signal_from_batch(
-        batch,
+    signal = TrajectorySignalBuilder(batch).segment_signal(
         segment_name=segment.segment,
         log_prob=torch.full((2, 2), -1.0),
         distribution="wrong",

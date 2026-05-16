@@ -18,7 +18,7 @@ from vrl.algorithms.dpo import (
     diffusion_dpo_loss,
     diffusion_sft_loss,
 )
-from vrl.algorithms.trajectory import AlgorithmAdapter, AlgorithmInput
+from vrl.algorithms.trajectory import AlgorithmInput
 
 
 def _reference_dpo_loss(
@@ -195,25 +195,3 @@ def test_dpo_algorithm_wrapper_matches_functional_loss() -> None:
 
     assert torch.allclose(loss, expected)
     assert metrics.loss == pytest.approx(float(expected.detach().item()))
-
-
-def test_algorithm_adapter_accepts_dpo_config_for_backward_compatibility() -> None:
-    torch.manual_seed(7)
-    model_pred = torch.randn(4, 4, 8, 8)
-    ref_pred = torch.randn(4, 4, 8, 8)
-    target = torch.randn(4, 4, 8, 8)
-
-    loss, metrics = AlgorithmAdapter().compute_loss(
-        DiffusionDPOConfig(beta=100.0),
-        AlgorithmInput(
-            metadata={
-                "model_pred": model_pred,
-                "ref_pred": ref_pred,
-                "target": target,
-            },
-        ),
-    )
-
-    expected = diffusion_dpo_loss(model_pred, ref_pred, target, beta=100.0)["loss"]
-    assert torch.allclose(loss, expected)
-    assert metrics.policy_loss == pytest.approx(float(expected.detach().item()))

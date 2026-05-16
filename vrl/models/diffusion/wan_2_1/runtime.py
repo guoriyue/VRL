@@ -17,7 +17,7 @@ from vrl.engine.diffusion import (
 )
 from vrl.engine.diffusion.layout import VideoGenerationRequest
 from vrl.engine.execution.microbatching import MicroBatchSample
-from vrl.models.capability_builders import diffusion_family_capability
+from vrl.models.diffusion.capabilities import diffusion_family_capability
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.replay_loading import (
     apply_lora_to_transformer,
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 WAN_2_1_FAMILY_CAPABILITY = diffusion_family_capability("wan_2_1", "t2v")
 
 _MODEL_BY_BACKEND: dict[str, str] = {
-    "diffusers": "vrl.models.families.wan_2_1.model:WanT2VDiffusersModel",
+    "diffusers": "vrl.models.diffusion.wan_2_1.model:WanT2VDiffusersModel",
 }
 
 
@@ -136,7 +136,7 @@ def build_wan_2_1_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
 def build_wan_2_1_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
     """Build the trainer replay bundle without loading Wan text/VAE modules."""
 
-    from vrl.models.families.wan_2_1.model import WanT2VReplayModel
+    from vrl.models.diffusion.wan_2_1.model import WanT2VReplayModel
 
     backend = spec.backend_preference[0]
     if backend != "diffusers":

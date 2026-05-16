@@ -62,7 +62,7 @@ class CosmosPredict2Model(DiffusionModelBase):
     """Diffusers-backed Cosmos Predict2 Video2World model (RL path).
 
     The pipeline is constructed by the family runtime
-    (:func:`vrl.models.families.cosmos.predict2.runtime.build_cosmos_predict2_runtime_bundle`)
+    (:func:`vrl.models.diffusion.cosmos.predict2.runtime.build_cosmos_predict2_runtime_bundle`)
     and passed in. Scripts must NOT instantiate the diffusers pipeline
     directly.
     """

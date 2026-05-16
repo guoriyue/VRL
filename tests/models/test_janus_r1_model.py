@@ -9,15 +9,15 @@ import torch.nn as nn
 
 from vrl.engine import GenerationIdFactory, GenerationRequest, GenerationSampleRow
 from vrl.engine.trajectory import build_ar_multisegment_trajectory, build_training_view
-from vrl.models.families.janus_pro.model import (
+from vrl.models.ar.janus_pro.model import (
     JanusProConfig,
     JanusProModel,
 )
-from vrl.models.families.janus_pro.r1_types import (
+from vrl.models.ar.janus_pro.r1_types import (
     JanusR1GenerationResult,
     JanusR1Segment,
 )
-from vrl.models.families.janus_pro.runtime import JanusProR1PipelineExecutor
+from vrl.models.ar.janus_pro.runtime import JanusProR1PipelineExecutor
 from vrl.models.interfaces import ReplayRequest, ReplayResult
 from vrl.rollouts.batch import RolloutBatch
 

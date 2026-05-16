@@ -109,7 +109,7 @@ def require_replay_model(value: Any, *, owner: str = "model") -> ReplayModel:
     """Return ``value`` as a ReplayModel or fail at the replay boundary."""
 
     if isinstance(value, ReplayModel):
-        return cast(ReplayModel, value)
+        return cast("ReplayModel", value)
     missing = _missing_callables(value, ("replay_forward", "disable_adapter"))
     detail = f"; missing: {', '.join(missing)}" if missing else ""
     raise TypeError(f"{owner} must satisfy ReplayModel(replay_forward, disable_adapter){detail}")
@@ -119,7 +119,7 @@ def require_runtime_model(value: Any, *, owner: str = "model") -> RuntimeModel:
     """Return ``value`` as a RuntimeModel or fail at the runtime boundary."""
 
     if isinstance(value, RuntimeModel):
-        return cast(RuntimeModel, value)
+        return cast("RuntimeModel", value)
     missing = _missing_callables(
         value,
         ("replay_forward", "disable_adapter", "load_trainable_state"),

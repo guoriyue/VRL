@@ -97,14 +97,6 @@ def _validate_driver_cuda_ownership(
 
     resources = config.resources
     if resources is None:
-        if config.allow_driver_gpu_overlap:
-            if config.release_after_collect:
-                return
-            raise ValueError(
-                "Driver CUDA placement uses legacy overlap config but "
-                "distributed.rollout.release_after_collect=false. "
-                "Set release_after_collect=true for single-GPU Ray debug.",
-            )
         raise ValueError(
             "Driver loaded rollout policy on CUDA, but no distributed.resources "
             "plan is available to prove rollout devices do not overlap. "
@@ -144,8 +136,6 @@ def _driver_cuda_devices(
     policy = driver_policy
     if policy is None and driver_bundle is not None:
         policy = getattr(driver_bundle, "model", None)
-        if policy is None:
-            policy = getattr(driver_bundle, "policy", None)
 
     has_policy_device, device = _get_device(policy)
     if has_policy_device:

@@ -4,11 +4,52 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Any
 
 import torch
 
 from vrl.rewards.types import RewardRollout, RewardTrajectory
+
+
+@dataclass(frozen=True, slots=True)
+class RewardScoringInput:
+    """Batch-aligned reward scorer input built from one engine OutputBatch."""
+
+    outputs: Any
+    prompts: Sequence[str]
+    metadata: Mapping[str, Any]
+    device: Any
+    expected_count: int | None = None
+    batch_size: int = field(init=False)
+
+    def __post_init__(self) -> None:
+        batch_size = self._outputs_batch_size(self.outputs)
+        if self.expected_count is not None and batch_size != self.expected_count:
+            raise ValueError(
+                "reward output/sample batch mismatch: "
+                f"outputs={batch_size}, samples={self.expected_count}",
+            )
+        if len(self.prompts) != batch_size:
+            raise ValueError(
+                "reward prompt/output batch mismatch: "
+                f"prompts={len(self.prompts)}, outputs={batch_size}",
+            )
+        object.__setattr__(self, "batch_size", batch_size)
+
+    @staticmethod
+    def _outputs_batch_size(outputs: Any) -> int:
+        shape = getattr(outputs, "shape", None)
+        if shape is not None:
+            if len(shape) == 0:
+                raise ValueError("reward outputs must have a batch dimension")
+            return int(shape[0])
+        try:
+            return len(outputs)
+        except TypeError as exc:
+            raise TypeError(
+                "reward outputs must expose shape[0] or len()",
+            ) from exc
 
 
 class RewardScorer:
@@ -19,26 +60,23 @@ class RewardScorer:
 
     async def score(
         self,
-        outputs: Any,
-        prompts: Sequence[str],
-        metadata: Mapping[str, Any],
-        device: Any,
+        request: RewardScoringInput,
     ) -> torch.Tensor:
         if self.reward_fn is None:
-            return torch.zeros(_batch_size(outputs), device=device)
+            return torch.zeros(request.batch_size, device=request.device)
 
         rollouts = [
             RewardRollout(
                 request=None,
                 trajectory=RewardTrajectory(
-                    prompt=prompts[i],
+                    prompt=request.prompts[i],
                     seed=0,
                     steps=[],
-                    output=outputs[i],
+                    output=request.outputs[i],
                 ),
-                metadata=dict(metadata),
+                metadata=dict(request.metadata),
             )
-            for i in range(_batch_size(outputs))
+            for i in range(request.batch_size)
         ]
 
         batch_fn = getattr(self.reward_fn, "score_batch", None)
@@ -54,18 +92,13 @@ class RewardScorer:
                     value = await value
                 raw.append(value)
 
-        return torch.tensor(
-            [float(score) for score in raw],
-            device=device,
-            dtype=torch.float32,
-        )
+        scores = [float(score) for score in raw]
+        if len(scores) != request.batch_size:
+            raise ValueError(
+                "reward function returned wrong number of scores: "
+                f"scores={len(scores)}, expected={request.batch_size}",
+            )
+        return torch.tensor(scores, device=request.device, dtype=torch.float32)
 
 
-def _batch_size(outputs: Any) -> int:
-    shape = getattr(outputs, "shape", None)
-    if shape is not None:
-        return int(shape[0])
-    return len(outputs)
-
-
-__all__ = ["RewardScorer"]
+__all__ = ["RewardScorer", "RewardScoringInput"]

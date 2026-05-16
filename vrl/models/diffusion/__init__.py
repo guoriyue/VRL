@@ -1,5 +1,5 @@
 """Shared diffusion model implementation helpers."""
 
-from vrl.models.diffusion.model_base import DiffusionModelBase
+from vrl.models.diffusion.base import DiffusionModelBase
 
 __all__ = ["DiffusionModelBase"]

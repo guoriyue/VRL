@@ -19,7 +19,7 @@ from vrl.math.ar.logprob import gather_categorical_log_probs
 from vrl.models.interfaces import ReplayModel, require_replay_model
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
-from vrl.rollouts.evaluators.trajectory import single_segment_trajectory_signals
+from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
 
 
@@ -67,8 +67,7 @@ class TokenLogProbEvaluator(Evaluator):
                         model, batch, action_ids,
                     )
 
-        return single_segment_trajectory_signals(
-            batch,
+        return TrajectorySignalBuilder(batch).single_segment(
             segment_name="image_tokens",
             log_prob=new_lp,
             old_log_prob=None,

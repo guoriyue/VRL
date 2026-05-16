@@ -1,6 +1,6 @@
 """NextStep-1 wrapper for autoregressive image RL with continuous tokens.
 
-Mirrors ``vrl.models.families.janus_pro.JanusProModel`` but for StepFun's
+Mirrors ``vrl.models.ar.janus_pro.JanusProModel`` but for StepFun's
 continuous-token AR model. The shape contract is:
 
   * ``sample_image_tokens(...)`` →
@@ -31,7 +31,7 @@ done ``pip install -e .`` from ``stepfun-ai/NextStep-1``, fill in:
     - ``_decode_via_vae``    : token sequence → pixels via the f8ch16 VAE
 
 The flow head's velocity-call signature is handled in
-``vrl.models.families.nextstep_1.flow_step``.
+``vrl.models.ar.nextstep_1.flow_step``.
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ import torch.nn as nn
 
 from vrl.engine.ar.cache import ARCacheRows
 from vrl.engine.ar.types import ARStepResult
-from vrl.models.families.nextstep_1.flow_step import (
+from vrl.models.ar.nextstep_1.flow_step import (
     flow_logprob_at,
     flow_sample_with_logprob,
 )

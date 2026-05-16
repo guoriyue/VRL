@@ -15,8 +15,7 @@ from vrl.rollouts.family_registry import (
     normalize_rollout_family,
     registered_rollout_families,
 )
-from vrl.rollouts.settings import RolloutSettings
-from vrl.scripts.common.factory import build_collector_config_from_cfg
+from vrl.rollouts.settings import RolloutSettings, build_rollout_settings_from_cfg
 
 
 def test_family_registry_covers_current_rollout_families() -> None:
@@ -32,12 +31,17 @@ def test_family_registry_covers_current_rollout_families() -> None:
 
     for family in registered_rollout_families():
         entry = FAMILY_REGISTRY[family]
+        expected_model_prefix = (
+            "vrl.models.diffusion."
+            if entry.collector.kind == "diffusion"
+            else "vrl.models.ar."
+        )
         assert entry.family == family
         assert entry.task
         assert entry.collector.request_prefix
-        assert entry.executor_cls.startswith("vrl.models.families.")
-        assert entry.runtime_builder.startswith("vrl.models.families.")
-        assert entry.runtime_spec_extractor.startswith("vrl.models.families.")
+        assert entry.executor_cls.startswith(expected_model_prefix)
+        assert entry.runtime_builder.startswith(expected_model_prefix)
+        assert entry.runtime_spec_extractor.startswith(expected_model_prefix)
         assert ":" in entry.gatherer.import_path
 
 
@@ -94,13 +98,13 @@ def test_rollout_settings_are_projected_from_yaml() -> None:
         },
     )
 
-    settings = build_collector_config_from_cfg(cfg, "cosmos-predict2")
+    settings = build_rollout_settings_from_cfg(cfg, family="cosmos-predict2")
 
-    assert settings.width == 1280
-    assert settings.num_steps == 35
-    assert settings.sample_batch_size == 8
-    assert settings.sde_window_range == (0, 10)
-    assert settings.return_kl is True
+    assert settings.require("width") == 1280
+    assert settings.require("num_steps") == 35
+    assert settings.require("sample_batch_size") == 8
+    assert settings.require("sde_window_range") == (0, 10)
+    assert settings.require("return_kl") is True
 
 
 def test_request_sampling_is_projected_from_resolved_yaml_settings() -> None:
@@ -119,6 +123,7 @@ def test_request_sampling_is_projected_from_resolved_yaml_settings() -> None:
                 "n": 4,
                 "rollout_batch_size": 1,
                 "sample_batch_size": 8,
+                "reward_view": "image",
                 "noise_level": 1.0,
                 "same_latent": False,
                 "sde": {
@@ -131,9 +136,9 @@ def test_request_sampling_is_projected_from_resolved_yaml_settings() -> None:
         },
     )
 
-    sampling = build_collector_config_from_cfg(
+    sampling = build_rollout_settings_from_cfg(
         cfg,
-        "cosmos-predict2",
+        family="cosmos-predict2",
     ).request_sampling()
 
     assert sampling["width"] == 1280
@@ -145,6 +150,7 @@ def test_request_sampling_is_projected_from_resolved_yaml_settings() -> None:
     assert sampling["return_kl"] is False
     assert "kl_reward" not in sampling
     assert "n" not in sampling
+    assert "reward_view" not in sampling
     assert "rollout_batch_size" not in sampling
 
 
