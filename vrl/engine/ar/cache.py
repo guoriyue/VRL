@@ -6,19 +6,25 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 import torch
+from transformers.cache_utils import Cache, DynamicCache
 
 
 def ar_split_rows(value: Any, batch_size: int) -> list[Any]:
     """Split a batched AR cache/value into one-row values.
 
-    HF-style ``past_key_values`` are nested tuples whose tensors carry batch as
-    dim 0. Splitting to per-row caches avoids invalid scatter when partial AR
-    scheduling lets rows reach different sequence lengths.
+    HF ``DynamicCache`` stays as ``DynamicCache``. The real transformers
+    forward path rejects legacy tuple caches, so cache objects must not be
+    normalized into tuple form after prefill/decode.
     """
 
     if batch_size < 1:
         raise ValueError("batch_size must be >= 1")
-    value = _to_tuple_cache_if_needed(value)
+    if isinstance(value, Cache):
+        return _split_hf_cache_rows(value, batch_size)
+    return _split_plain_rows(value, batch_size)
+
+
+def _split_plain_rows(value: Any, batch_size: int) -> list[Any]:
     if _is_tensor(value):
         if value.shape[0] != batch_size:
             raise ValueError(
@@ -54,9 +60,16 @@ def ar_concat_rows(values: Sequence[Any]) -> Any:
 
     if not values:
         raise ValueError("values must be non-empty")
-    first = _to_tuple_cache_if_needed(values[0])
-    rest = [_to_tuple_cache_if_needed(value) for value in values[1:]]
-    values = [first, *rest]
+    first = values[0]
+    if isinstance(first, Cache):
+        return _concat_hf_cache_rows(values)
+    if any(isinstance(value, Cache) for value in values[1:]):
+        raise TypeError("cannot concatenate mixed HF cache and non-cache rows")
+    return _concat_plain_rows(values)
+
+
+def _concat_plain_rows(values: Sequence[Any]) -> Any:
+    first = values[0]
     if _is_tensor(first):
         return torch.cat(list(values), dim=0)
     if isinstance(first, Mapping):
@@ -79,19 +92,25 @@ def ar_concat_rows(values: Sequence[Any]) -> Any:
     return first
 
 
-def _to_tuple_cache_if_needed(value: Any) -> Any:
-    """Normalize HF cache containers without pinning a transformers version.
+def _split_hf_cache_rows(value: Cache, batch_size: int) -> list[Cache]:
+    if not isinstance(value, DynamicCache):
+        raise TypeError(
+            "AR KV row scheduling currently supports transformers DynamicCache; "
+            f"got {type(value).__name__}",
+        )
+    rows = value.batch_split(full_batch_size=batch_size, split_size=1)
+    if len(rows) != batch_size:
+        raise RuntimeError(
+            f"DynamicCache.batch_split returned {len(rows)} rows for batch={batch_size}",
+        )
+    return rows
 
-    transformers 4.38-4.46 moved cache internals around. Some DynamicCache
-    versions expose ``to_legacy_cache()``, while others behave like nested
-    tuple/list/mapping containers. Keep this helper duck-typed so AR runtimes
-    can split/concat per-row cache without importing a concrete cache class.
-    """
 
-    to_legacy_cache = getattr(value, "to_legacy_cache", None)
-    if callable(to_legacy_cache):
-        return to_legacy_cache()
-    return value
+def _concat_hf_cache_rows(values: Sequence[Any]) -> DynamicCache:
+    if not all(isinstance(value, DynamicCache) for value in values):
+        got = ", ".join(type(value).__name__ for value in values)
+        raise TypeError(f"cannot concatenate mixed HF cache row types: {got}")
+    return DynamicCache.from_batch_splits(list(values))
 
 
 def _is_tensor(value: Any) -> bool:
