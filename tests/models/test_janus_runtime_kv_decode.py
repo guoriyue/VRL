@@ -33,7 +33,7 @@ def test_janus_runtime_spec_does_not_expose_decode_strategy() -> None:
     assert spec.scheduler_config["ar_scheduler_batch_size"] == 2
 
 
-def test_janus_executor_parse_spec_reads_scheduler_batch_size() -> None:
+def test_janus_executor_parse_sampling_params_reads_scheduler_batch_size() -> None:
     request = GenerationRequest(
         request_id="req",
         family="janus_pro",
@@ -48,6 +48,6 @@ def test_janus_executor_parse_spec_reads_scheduler_batch_size() -> None:
         },
     )
 
-    spec = JanusProPipelineExecutor(model=object()).parse_spec(request)
+    params = JanusProPipelineExecutor(model=object()).parse_sampling_params(request)
 
-    assert spec.ar_scheduler_batch_size == 8
+    assert params.ar_scheduler_batch_size == 8

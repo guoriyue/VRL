@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from vrl.engine import GenerationRequest, GenerationSampleSpec
+from vrl.engine import GenerationRequest, GenerationSampleRow
 from vrl.engine.trajectory import build_ar_discrete_trajectory, build_training_view
 from vrl.models.interfaces import ReplayResult, ReplaySegmentResult
 from vrl.rollouts.batch import RolloutBatch
@@ -22,10 +22,10 @@ def _request() -> GenerationRequest:
     )
 
 
-def _sample_specs() -> list[GenerationSampleSpec]:
+def _sample_rows() -> list[GenerationSampleRow]:
     request = _request()
     return [
-        GenerationSampleSpec(
+        GenerationSampleRow(
             prompt_index=0,
             sample_index=index,
             prompt=request.prompts[0],
@@ -45,7 +45,7 @@ def _discrete_batch() -> tuple[RolloutBatch, torch.Tensor, torch.Tensor]:
     token_mask = torch.tensor([[1.0, 0.0], [1.0, 1.0]])
     trajectory = build_ar_discrete_trajectory(
         request=_request(),
-        sample_specs=_sample_specs(),
+        sample_rows=_sample_rows(),
         token_ids=token_ids,
         token_log_probs=old_log_prob,
         token_mask=token_mask,
@@ -138,7 +138,7 @@ def test_replay_segment_result_fails_fast_with_available_keys() -> None:
         values={"image_logits": torch.zeros(2, 2, 8), "token_ids": torch.ones(2, 2)},
     )
 
-    with pytest.raises(KeyError, match="missing required key 'logits'.*image_logits"):
+    with pytest.raises(KeyError, match=r"missing required key 'logits'.*image_logits"):
         segment.require_value("logits")
 
 

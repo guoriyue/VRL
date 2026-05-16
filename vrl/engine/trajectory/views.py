@@ -5,7 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from vrl.engine.trajectory.types import AdvantageScope
+from vrl.engine.trajectory.types import (
+    AdvantageScope,
+    TrajectoryBatch,
+    TrajectorySegment,
+    TrajectoryTensor,
+)
 
 RewardModality = Literal["image", "video", "text", "mixed"]
 AlgorithmFamily = Literal["policy_gradient", "supervised", "preference", "custom"]
@@ -75,10 +80,71 @@ class TrainingView:
             raise ValueError("TrainingView.primary_segment must be non-empty when set")
 
 
+def build_training_view(
+    trajectory: TrajectoryBatch,
+    *,
+    primary_segment: str | None = None,
+) -> TrainingView:
+    """Build a default policy-gradient TrainingView for trainable segments."""
+
+    from vrl.engine.trajectory.validation import (
+        replay_input_ref,
+        tensor_ref,
+        validate_training_view,
+    )
+
+    loss_units: list[LossUnit] = []
+    for segment in trajectory.segments.values():
+        if not segment.trainable:
+            continue
+        action = _role_tensor(segment, "action")
+        old_log_prob = _role_tensor(segment, "old_log_prob")
+        mask = _role_tensor(segment, "mask")
+        loss_axis = _loss_axis(action.axes)
+        loss_units.append(
+            LossUnit(
+                segment=segment.name,
+                axis=loss_axis,
+                axis_index=None,
+                action_ref=tensor_ref(segment.name, action.name),
+                old_log_prob_ref=tensor_ref(segment.name, old_log_prob.name),
+                mask_ref=tensor_ref(segment.name, mask.name),
+                advantage_scope=segment.advantage_scope,
+                replay_input_refs=tuple(
+                    replay_input_ref(segment.name, name)
+                    for name in segment.replay_inputs
+                ),
+            )
+        )
+
+    view = TrainingView(
+        loss_units=tuple(loss_units),
+        primary_segment=primary_segment or (loss_units[0].segment if loss_units else None),
+    )
+    return validate_training_view(trajectory, view)
+
+
 def _require_string_tuple(name: str, values: tuple[str, ...]) -> None:
     for value in values:
         if not isinstance(value, str) or not value:
             raise ValueError(f"{name} must contain non-empty strings")
+
+
+def _role_tensor(segment: TrajectorySegment, role: str) -> TrajectoryTensor:
+    matches = [tensor for tensor in segment.tensors.values() if tensor.role == role]
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"segment {segment.name!r} requires exactly one role {role!r}, "
+            f"found {len(matches)}",
+        )
+    return matches[0]
+
+
+def _loss_axis(axes: tuple[str, ...]) -> str:
+    for axis in axes:
+        if axis != "sample":
+            return axis
+    return axes[-1]
 
 
 __all__ = [
@@ -87,4 +153,5 @@ __all__ = [
     "RewardModality",
     "RewardView",
     "TrainingView",
+    "build_training_view",
 ]

@@ -1,11 +1,11 @@
-"""Tests for the shared AR KV decode driver."""
+"""Tests for the shared AR decode loop driver."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from vrl.engine.ar import ARStepResult, run_kv_decode
-from vrl.engine.core.types import GenerationRequest, GenerationSampleSpec
+from vrl.engine.ar import ARDecodeLoop, ARStepResult
+from vrl.engine.core.types import GenerationRequest, GenerationSampleRow
 
 
 def _request() -> GenerationRequest:
@@ -18,8 +18,8 @@ def _request() -> GenerationRequest:
     )
 
 
-def _spec(index: int) -> GenerationSampleSpec:
-    return GenerationSampleSpec(
+def _sample_row(index: int) -> GenerationSampleRow:
+    return GenerationSampleRow(
         prompt_index=0,
         sample_index=index,
         prompt="p0",
@@ -69,23 +69,23 @@ class _FakeARModel:
         return state
 
 
-def test_run_kv_decode_drives_family_hooks_and_batches_by_position() -> None:
+def test_ar_decode_loop_drives_family_hooks_and_batches_by_position() -> None:
     model = _FakeARModel()
     request = _request()
-    specs = [_spec(index) for index in range(3)]
+    rows = [_sample_row(index) for index in range(3)]
 
-    result = run_kv_decode(
+    result = ARDecodeLoop(
         request=request,
-        sample_specs=specs,
+        sample_rows=rows,
         model=model,
-        init_args=("embeds",),
-        init_kwargs={"unused": "kept-for-init"},
         max_new_tokens=2,
         tokenizer_key="fake-tokenizer",
         dtype="float32",
         scheduler_batch_size=2,
+        init_args=("embeds",),
+        init_kwargs={"unused": "kept-for-init"},
         step_kwargs={"accepted": True, "ignored": "filtered"},
-    )
+    ).run()
 
     assert model.init_calls == [(("embeds",), {"unused": "kept-for-init"})]
     assert model.step_calls == [
@@ -97,25 +97,25 @@ def test_run_kv_decode_drives_family_hooks_and_batches_by_position() -> None:
     assert model.finalized is True
     assert result.finalized == {"steps": model.step_calls}
     assert result.scheduler_batches == 4
-    assert result.engine_counters["ar_kv_cache_enabled"] is True
+    assert result.engine_counters["ar_decode_loop_enabled"] is True
     assert result.engine_counters["ar_scheduler_batches"] == 4
     assert result.engine_counters["last_batch_size"] == 1
 
 
-def test_run_kv_decode_requires_family_hooks() -> None:
+def test_ar_decode_loop_requires_family_hooks() -> None:
     try:
-        run_kv_decode(
+        ARDecodeLoop(
             request=_request(),
-            sample_specs=[_spec(0)],
+            sample_rows=[_sample_row(0)],
             model=object(),
             max_new_tokens=1,
             tokenizer_key="fake-tokenizer",
             dtype="float32",
             scheduler_batch_size=None,
-        )
+        ).run()
     except TypeError as exc:
         assert "init_ar" in str(exc)
         assert "step_ar" in str(exc)
         assert "finalize_ar" in str(exc)
     else:
-        raise AssertionError("run_kv_decode should reject models without AR hooks")
+        raise AssertionError("ARDecodeLoop should reject models without AR hooks")

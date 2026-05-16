@@ -9,7 +9,7 @@ from typing import Any
 
 from omegaconf import DictConfig, ListConfig, OmegaConf
 
-from vrl.engine.core.runtime_spec import GenerationRuntimeSpec
+from vrl.engine.core.launch_contract import GenerationRuntimeLaunchContract
 from vrl.engine.execution.gather import ChunkGatherer
 from vrl.rollouts.family_registry import (
     RolloutFamilyEntry,
@@ -20,9 +20,9 @@ from vrl.rollouts.runtime.config import RolloutBackendConfig
 
 @dataclass(frozen=True, slots=True)
 class RolloutRuntimeInputs:
-    """Serializable worker spec plus driver-side pure gatherer."""
+    """Serializable worker launch contract plus driver-side pure gatherer."""
 
-    runtime_spec: GenerationRuntimeSpec
+    launch_contract: GenerationRuntimeLaunchContract
     gatherer: ChunkGatherer
 
 
@@ -40,7 +40,7 @@ def build_rollout_runtime_inputs(
 
     entry = get_rollout_family_entry(family)
     rollout_device = "cuda" if rollout_config.gpus_per_worker > 0 else "cpu"
-    runtime_build_spec = _call_runtime_spec_extractor(
+    runtime_build = _call_runtime_build_extractor(
         entry,
         cfg,
         rollout_device,
@@ -52,10 +52,10 @@ def build_rollout_runtime_inputs(
     runtime_extra["family_capability"] = entry.capability.to_dict()
 
     return RolloutRuntimeInputs(
-        runtime_spec=GenerationRuntimeSpec(
+        launch_contract=GenerationRuntimeLaunchContract(
             family=entry.family,
             task=entry.task,
-            build_spec=_runtime_build_spec_payload(runtime_build_spec),
+            model_build=_runtime_build_payload(runtime_build),
             executor_kwargs=resolved_executor_kwargs,
             policy_version=policy_version,
             runtime_builder=entry.runtime_builder,
@@ -66,7 +66,7 @@ def build_rollout_runtime_inputs(
     )
 
 
-def _call_runtime_spec_extractor(
+def _call_runtime_build_extractor(
     entry: RolloutFamilyEntry,
     cfg: Any,
     device: str,
@@ -95,8 +95,8 @@ def _build_executor_kwargs(entry: RolloutFamilyEntry, cfg: Any) -> dict[str, Any
     return kwargs
 
 
-def _runtime_build_spec_payload(spec: Any) -> dict[str, Any]:
-    payload = asdict(spec)
+def _runtime_build_payload(runtime_build: Any) -> dict[str, Any]:
+    payload = asdict(runtime_build)
     payload["device"] = _device_to_string(payload["device"])
     payload["dtype"] = _dtype_to_string(payload["dtype"])
     return payload

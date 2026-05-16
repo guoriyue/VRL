@@ -6,7 +6,7 @@ import contextlib
 
 import torch
 
-from vrl.engine import GenerationRequest, GenerationSampleSpec
+from vrl.engine import GenerationRequest, GenerationSampleRow
 from vrl.engine.trajectory import build_ar_multisegment_trajectory, build_training_view
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 from vrl.rollouts.batch import RolloutBatch
@@ -15,9 +15,9 @@ from vrl.rollouts.evaluators.ar.multi_segment_token_logprob import (
 )
 
 
-def _sample_specs() -> list[GenerationSampleSpec]:
+def _sample_rows() -> list[GenerationSampleRow]:
     return [
-        GenerationSampleSpec(
+        GenerationSampleRow(
             prompt_index=0,
             sample_index=0,
             prompt="draw a chart",
@@ -27,7 +27,7 @@ def _sample_specs() -> list[GenerationSampleSpec]:
             trajectory_id="t0",
             seed=None,
         ),
-        GenerationSampleSpec(
+        GenerationSampleRow(
             prompt_index=0,
             sample_index=1,
             prompt="draw a chart",
@@ -75,7 +75,7 @@ def _trajectory_batch() -> RolloutBatch:
     )
     trajectory = build_ar_multisegment_trajectory(
         request=request,
-        sample_specs=_sample_specs(),
+        sample_rows=_sample_rows(),
         segments={
             "initial_image": _trajectory_segment(
                 "initial_image",

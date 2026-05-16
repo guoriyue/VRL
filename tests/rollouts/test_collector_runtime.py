@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 import torch
 
-from vrl.engine import GenerationRequest, GenerationSampleSpec, OutputBatch
+from vrl.engine import GenerationRequest, GenerationSampleRow, OutputBatch
 from vrl.engine.trajectory import build_ar_discrete_trajectory
 from vrl.rollouts.collector.core import RolloutCollector
 from vrl.rollouts.collector.requests import RolloutRequestPlan
@@ -45,11 +45,11 @@ class _Runtime:
     async def generate(self, request: GenerationRequest) -> OutputBatch:
         self.requests.append(request)
         batch_size = len(request.prompts) * request.samples_per_prompt
-        sample_specs = _sample_specs(request)
+        sample_rows = _sample_rows(request)
         output = torch.ones(batch_size, 3, 2, 2)
         trajectory = build_ar_discrete_trajectory(
             request=request,
-            sample_specs=sample_specs,
+            sample_rows=sample_rows,
             token_ids=torch.arange(batch_size * 2, dtype=torch.long).reshape(batch_size, 2),
             token_log_probs=torch.zeros(batch_size, 2),
             token_mask=torch.ones(batch_size, 2),
@@ -64,7 +64,7 @@ class _Runtime:
             family=request.family,
             task=request.task,
             prompts=list(request.prompts),
-            sample_specs=sample_specs,
+            sample_rows=sample_rows,
             output=output,
             trajectory=trajectory,
         )
@@ -169,13 +169,13 @@ def test_collector_forwards_reference_metadata_to_request() -> None:
     assert plan.pack_metadata["reference_image"] == "/tmp/reference.png"
 
 
-def _sample_specs(request: GenerationRequest) -> list[GenerationSampleSpec]:
-    specs: list[GenerationSampleSpec] = []
+def _sample_rows(request: GenerationRequest) -> list[GenerationSampleRow]:
+    rows: list[GenerationSampleRow] = []
     for prompt_index, prompt in enumerate(request.prompts):
         for sample_index in range(request.samples_per_prompt):
             sample_id = f"p{prompt_index}_s{sample_index}"
-            specs.append(
-                GenerationSampleSpec(
+            rows.append(
+                GenerationSampleRow(
                     prompt_index=prompt_index,
                     sample_index=sample_index,
                     prompt=prompt,
@@ -186,4 +186,4 @@ def _sample_specs(request: GenerationRequest) -> list[GenerationSampleSpec]:
                     seed=None,
                 ),
             )
-    return specs
+    return rows

@@ -1,16 +1,11 @@
 """Trajectory contract types for generation RL."""
 
-from vrl.engine.trajectory.axes import AxisKind, AxisSpec
+from vrl.engine.trajectory.axes import AxisKind, TrajectoryAxis
 from vrl.engine.trajectory.builders import (
     build_ar_continuous_trajectory,
     build_ar_discrete_trajectory,
     build_ar_multisegment_trajectory,
     build_diffusion_trajectory,
-)
-from vrl.engine.trajectory.compat import (
-    TRAJECTORY_EXTRA_KEY,
-    get_output_trajectory,
-    require_output_trajectory,
 )
 from vrl.engine.trajectory.resolver import (
     ResolvedContextValue,
@@ -18,14 +13,8 @@ from vrl.engine.trajectory.resolver import (
     ResolvedReplayInput,
     ResolvedTrainingView,
     ResolvedTrajectoryTensor,
+    TrajectoryResolver,
     TrajectoryResolverError,
-    primary_trainable_segment_name,
-    require_batch_trajectory,
-    resolve_loss_unit,
-    resolve_training_view,
-    trajectory_replay_tensor_dict,
-    trajectory_role_value,
-    trajectory_tensor_value,
 )
 from vrl.engine.trajectory.types import (
     AdvantageScope,
@@ -48,21 +37,19 @@ from vrl.engine.trajectory.validation import (
     validate_training_view,
     validate_trajectory_batch,
 )
-from vrl.engine.trajectory.view_builders import build_training_view
 from vrl.engine.trajectory.views import (
     AlgorithmFamily,
     LossUnit,
     RewardModality,
     RewardView,
     TrainingView,
+    build_training_view,
 )
 
 __all__ = [
-    "TRAJECTORY_EXTRA_KEY",
     "AdvantageScope",
     "AlgorithmFamily",
     "AxisKind",
-    "AxisSpec",
     "DistributionKind",
     "LossUnit",
     "ReplayInput",
@@ -77,8 +64,10 @@ __all__ = [
     "SegmentModality",
     "TensorRole",
     "TrainingView",
+    "TrajectoryAxis",
     "TrajectoryBatch",
     "TrajectoryMetrics",
+    "TrajectoryResolver",
     "TrajectoryResolverError",
     "TrajectorySegment",
     "TrajectoryTensor",
@@ -88,17 +77,8 @@ __all__ = [
     "build_ar_multisegment_trajectory",
     "build_diffusion_trajectory",
     "build_training_view",
-    "get_output_trajectory",
-    "primary_trainable_segment_name",
     "replay_input_ref",
-    "require_batch_trajectory",
-    "require_output_trajectory",
-    "resolve_loss_unit",
-    "resolve_training_view",
     "tensor_ref",
-    "trajectory_replay_tensor_dict",
-    "trajectory_role_value",
-    "trajectory_tensor_value",
     "validate_loss_unit",
     "validate_reward_view",
     "validate_training_view",

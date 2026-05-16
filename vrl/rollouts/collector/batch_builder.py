@@ -13,7 +13,6 @@ from vrl.engine.trajectory import (
     TrajectorySegment,
     TrajectoryTensor,
     build_training_view,
-    require_output_trajectory,
 )
 from vrl.rollouts.batch import RolloutBatch
 
@@ -35,7 +34,7 @@ def reward_outputs_from_trajectory(
 ) -> Any:
     """Return the generated artifact that the reward scorer should inspect."""
 
-    trajectory = require_output_trajectory(output)
+    trajectory = _require_output_trajectory(output)
     segment = _primary_trainable_segment(
         trajectory,
         preferred=_primary_segment_name(trajectory),
@@ -54,7 +53,7 @@ def reward_prompts_from_output(
     """Return prompts aligned with reward outputs."""
 
     del context
-    return [spec.prompt for spec in output.sample_specs]
+    return [row.prompt for row in output.sample_rows]
 
 
 def rollout_batch_from_trajectory(
@@ -64,7 +63,7 @@ def rollout_batch_from_trajectory(
 ) -> RolloutBatch:
     """Convert a trajectory-backed engine output into the trainer batch shape."""
 
-    trajectory = require_output_trajectory(output)
+    trajectory = _require_output_trajectory(output)
     trainable = _trainable_segments(trajectory)
     if _is_multisegment_categorical(trajectory, trainable):
         return _pack_ar_multisegment(output, trajectory, trainable, rewards_raw, context)
@@ -117,7 +116,7 @@ def _pack_diffusion(
         extras={},
         context=rollout_context,
         videos=output.output,
-        prompts=[spec.prompt for spec in output.sample_specs],
+        prompts=[row.prompt for row in output.sample_rows],
         trajectory=trajectory,
         training_view=build_training_view(trajectory, primary_segment=segment.name),
     )
@@ -139,12 +138,12 @@ def _pack_ar_discrete(
         observations=prompt_ids.unsqueeze(1),
         actions=token_ids,
         rewards=rewards_raw.to(device),
-        dones=torch.ones(len(output.sample_specs), dtype=torch.bool, device=device),
+        dones=torch.ones(len(output.sample_rows), dtype=torch.bool, device=device),
         group_ids=_group_ids_from_trajectory(trajectory, device=device),
         extras={},
         context=dict(trajectory.context),
         videos=images.unsqueeze(2),
-        prompts=[spec.prompt for spec in output.sample_specs],
+        prompts=[row.prompt for row in output.sample_rows],
         trajectory=trajectory,
         training_view=build_training_view(trajectory, primary_segment=segment.name),
     )
@@ -166,12 +165,12 @@ def _pack_ar_continuous(
         observations=prompt_ids.unsqueeze(1),
         actions=tokens,
         rewards=rewards_raw.to(device),
-        dones=torch.ones(len(output.sample_specs), dtype=torch.bool, device=device),
+        dones=torch.ones(len(output.sample_rows), dtype=torch.bool, device=device),
         group_ids=_group_ids_from_trajectory(trajectory, device=device),
         extras={},
         context=dict(trajectory.context),
         videos=images.unsqueeze(2),
-        prompts=[spec.prompt for spec in output.sample_specs],
+        prompts=[row.prompt for row in output.sample_rows],
         trajectory=trajectory,
         training_view=build_training_view(trajectory, primary_segment=segment.name),
     )
@@ -211,7 +210,7 @@ def _pack_ar_multisegment(
         observations=prompt_ids.unsqueeze(1),
         actions=token_ids,
         rewards=rewards_raw.to(device),
-        dones=torch.ones(len(output.sample_specs), dtype=torch.bool, device=device),
+        dones=torch.ones(len(output.sample_rows), dtype=torch.bool, device=device),
         group_ids=_group_ids_from_trajectory(trajectory, device=device),
         extras={},
         context={**rollout_context, "r1_segment_names": tuple(
@@ -220,7 +219,7 @@ def _pack_ar_multisegment(
             if segment.distribution == "categorical"
         )},
         videos=final_image.unsqueeze(2),
-        prompts=[spec.prompt for spec in output.sample_specs],
+        prompts=[row.prompt for row in output.sample_rows],
         trajectory=trajectory,
         training_view=build_training_view(trajectory, primary_segment=primary_name),
     )
@@ -228,6 +227,13 @@ def _pack_ar_multisegment(
 
 def _trainable_segments(trajectory: TrajectoryBatch) -> list[TrajectorySegment]:
     return [segment for segment in trajectory.segments.values() if segment.trainable]
+
+
+def _require_output_trajectory(output: OutputBatch) -> TrajectoryBatch:
+    trajectory = output.trajectory
+    if not isinstance(trajectory, TrajectoryBatch):
+        raise RuntimeError(f"OutputBatch {output.request_id!r} is missing TrajectoryBatch")
+    return trajectory
 
 
 def _primary_trainable_segment(

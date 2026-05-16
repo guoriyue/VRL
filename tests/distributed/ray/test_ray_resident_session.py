@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from vrl.distributed.ray.rollout.worker import RayRolloutWorker
-from vrl.engine.core.runtime_spec import GenerationRuntimeSpec
+from vrl.engine.core.launch_contract import GenerationRuntimeLaunchContract
 from vrl.models.capability_builders import ar_discrete_family_capability
 
 
@@ -18,7 +18,7 @@ def test_ray_rollout_worker_load_policy_is_idempotent(monkeypatch: Any) -> None:
     import vrl.distributed.ray.rollout.worker as worker_mod
 
     capability = ar_discrete_family_capability("janus_pro", "ar_t2i")
-    spec = GenerationRuntimeSpec(
+    launch_contract = GenerationRuntimeLaunchContract(
         family="janus_pro",
         task="ar_t2i",
         policy_version=1,
@@ -40,7 +40,7 @@ def test_ray_rollout_worker_load_policy_is_idempotent(monkeypatch: Any) -> None:
         lambda self, executor: self.capability,
     )
 
-    worker = RayRolloutWorker("rollout-0", spec)
+    worker = RayRolloutWorker("rollout-0", launch_contract)
     worker.load_policy()
     first_executor = worker.executor
     worker.load_policy()

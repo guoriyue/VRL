@@ -21,7 +21,7 @@ class _PureGatherer:
     def gather_chunks(
         self,
         request: GenerationRequest,
-        sample_specs: Sequence[Any],
+        sample_rows: Sequence[Any],
         chunks: Sequence[Any],
     ) -> OutputBatch:
         return OutputBatch(
@@ -29,28 +29,28 @@ class _PureGatherer:
             family=request.family,
             task=request.task,
             prompts=list(request.prompts),
-            sample_specs=list(sample_specs),
+            sample_rows=list(sample_rows),
             output=list(chunks),
         )
 
 
 def test_chunk_gatherer_accepts_pure_object_without_forward_chunk_plan() -> None:
     request = _request()
-    sample_specs = GenerationIdFactory().build_sample_specs(request)
+    sample_rows = GenerationIdFactory().build_sample_rows(request)
     gatherer = _PureGatherer()
 
     assert isinstance(gatherer, ChunkGatherer)
     assert not hasattr(gatherer, "forward_chunk_plan")
     assert require_chunk_gatherer(gatherer) is gatherer
 
-    output = gather_pipeline_chunks(gatherer, request, sample_specs, ["chunk"])
+    output = gather_pipeline_chunks(gatherer, request, sample_rows, ["chunk"])
 
     assert output.output == ["chunk"]
 
 
 def test_diffusion_chunk_gatherer_gathers_without_model_object() -> None:
     request = _request(cfg=False)
-    sample_specs = GenerationIdFactory().build_sample_specs(request)
+    sample_rows = GenerationIdFactory().build_sample_rows(request)
     gatherer = DiffusionChunkGatherer()
     context = {
         "guidance_scale": 4.5,
@@ -58,7 +58,7 @@ def test_diffusion_chunk_gatherer_gathers_without_model_object() -> None:
         "model_family": "sd3_5",
     }
 
-    output = gatherer.gather_chunks(request, sample_specs, _diffusion_chunks(context))
+    output = gatherer.gather_chunks(request, sample_rows, _diffusion_chunks(context))
 
     assert output.output.device.type == "cpu"
     assert output.metrics is not None
@@ -75,7 +75,7 @@ def test_diffusion_chunk_gatherer_gathers_without_model_object() -> None:
 
 def test_diffusion_chunk_gatherer_orders_prompt_major_chunks() -> None:
     request = _request(cfg=False)
-    sample_specs = GenerationIdFactory().build_sample_specs(request)
+    sample_rows = GenerationIdFactory().build_sample_rows(request)
     gatherer = DiffusionChunkGatherer()
     context = {
         "guidance_scale": 4.5,
@@ -85,7 +85,7 @@ def test_diffusion_chunk_gatherer_orders_prompt_major_chunks() -> None:
 
     output = gatherer.gather_chunks(
         request,
-        sample_specs,
+        sample_rows,
         list(reversed(_diffusion_chunks(context))),
     )
 
@@ -94,7 +94,7 @@ def test_diffusion_chunk_gatherer_orders_prompt_major_chunks() -> None:
 
 def test_diffusion_chunk_gatherer_keeps_rollout_context() -> None:
     request = _request(family="cosmos", task="v2w", cfg=False)
-    sample_specs = GenerationIdFactory().build_sample_specs(request)
+    sample_rows = GenerationIdFactory().build_sample_rows(request)
     gatherer = DiffusionChunkGatherer()
     context = {
         "guidance_scale": 4.5,
@@ -102,7 +102,7 @@ def test_diffusion_chunk_gatherer_keeps_rollout_context() -> None:
         "model_family": "cosmos",
     }
 
-    output = gatherer.gather_chunks(request, sample_specs, _diffusion_chunks(context))
+    output = gatherer.gather_chunks(request, sample_rows, _diffusion_chunks(context))
 
     assert output.trajectory is not None
     assert output.trajectory.context == context

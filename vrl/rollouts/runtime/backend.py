@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from vrl.engine.core.backend import RolloutBackend
+from vrl.engine.core.protocols import RolloutBackend
 from vrl.rollouts.runtime.config import RolloutBackendConfig
 
 DRIVER_CUDA_OWNERSHIP_ERROR = (
@@ -49,12 +49,12 @@ def build_rollout_backend_from_cfg(
     driver_bundle: Any | None = None,
     driver_policy: Any | None = None,
     trainable_modules: Mapping[str, Any] | Iterable[Any] | None = None,
-    runtime_spec: Any | None = None,
+    launch_contract: Any | None = None,
     gatherer: Any | None = None,
 ) -> RolloutBackend:
     """Build the Ray rollout backend selected by config.
 
-    Ray launch requires a serializable ``runtime_spec`` plus pure chunk
+    Ray launch requires a serializable ``launch_contract`` plus pure chunk
     ``gatherer`` so the launcher can create rollout workers without receiving
     live model objects.
     """
@@ -65,24 +65,24 @@ def build_rollout_backend_from_cfg(
         trainable_modules=trainable_modules,
     )
 
-    runtime_spec = (
-        runtime_spec
-        if runtime_spec is not None
+    launch_contract = (
+        launch_contract
+        if launch_contract is not None
         else _cfg_path(
             cfg,
-            "distributed.rollout.runtime_spec",
+            "distributed.rollout.launch_contract",
             None,
         )
     )
-    if runtime_spec is not None and gatherer is not None:
+    if launch_contract is not None and gatherer is not None:
         from vrl.distributed.ray.rollout.launcher import RayRolloutLauncher
 
         if config.release_after_collect:
-            return ReleasableRayRolloutBackend(config, runtime_spec, gatherer)
-        return RayRolloutLauncher().launch(config, runtime_spec, gatherer)
+            return ReleasableRayRolloutBackend(config, launch_contract, gatherer)
+        return RayRolloutLauncher().launch(config, launch_contract, gatherer)
 
     raise ValueError(
-        "Ray-only rollout backend requires runtime_spec plus gatherer so "
+        "Ray-only rollout backend requires launch_contract plus gatherer so "
         "RayRolloutLauncher can construct workers through the "
         "runtime_builder+executor_cls path.",
     )
@@ -243,15 +243,15 @@ class ReleasableRayRolloutBackend(RolloutBackend):
     def __init__(
         self,
         config: RolloutBackendConfig,
-        runtime_spec: Any,
+        launch_contract: Any,
         gatherer: Any,
     ) -> None:
         self.config = config
-        self.runtime_spec = runtime_spec
+        self.launch_contract = launch_contract
         self.gatherer = gatherer
         self.weight_sync = object() if config.sync_trainable_state != "disabled" else None
         self.requires_driver_model_offload = config.gpus_per_worker > 0
-        self.current_policy_version = _runtime_spec_policy_version(runtime_spec)
+        self.current_policy_version = _launch_contract_policy_version(launch_contract)
         self._runtime: Any | None = None
         self._last_state: Any | None = None
 
@@ -283,7 +283,7 @@ class ReleasableRayRolloutBackend(RolloutBackend):
 
             runtime = RayRolloutLauncher().launch(
                 self.config,
-                self.runtime_spec,
+                self.launch_contract,
                 self.gatherer,
             )
             self._runtime = runtime
@@ -295,16 +295,16 @@ class ReleasableRayRolloutBackend(RolloutBackend):
         return self._runtime
 
 
-def _runtime_spec_policy_version(runtime_spec: Any) -> int | None:
+def _launch_contract_policy_version(launch_contract: Any) -> int | None:
     try:
-        from vrl.engine.core.runtime_spec import GenerationRuntimeSpec
+        from vrl.engine.core.launch_contract import GenerationRuntimeLaunchContract
 
-        spec = GenerationRuntimeSpec.from_value(runtime_spec)
+        contract = GenerationRuntimeLaunchContract.from_value(launch_contract)
     except Exception:
         return None
-    if spec.policy_version is None:
+    if contract.policy_version is None:
         return None
-    return int(spec.policy_version)
+    return int(contract.policy_version)
 
 
 def _cfg_path(cfg: Any, path: str, default: Any) -> Any:

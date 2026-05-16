@@ -128,7 +128,7 @@ async def run_online_recipe(
         build_rollout_backend_from_cfg(
             cfg,
             driver_bundle=bundle,
-            runtime_spec=runtime_inputs.runtime_spec,
+            launch_contract=runtime_inputs.launch_contract,
             gatherer=runtime_inputs.gatherer,
         ),
     )

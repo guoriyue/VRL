@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import torch
 import torch.nn as nn
 
-from vrl.engine import GenerationIdFactory, GenerationRequest, GenerationSampleSpec
+from vrl.engine import GenerationIdFactory, GenerationRequest, GenerationSampleRow
 from vrl.engine.trajectory import build_ar_multisegment_trajectory, build_training_view
 from vrl.models.families.janus_pro.model import (
     JanusProConfig,
@@ -131,9 +131,9 @@ def _model() -> JanusProModel:
     )
 
 
-def _sample_specs() -> list[GenerationSampleSpec]:
+def _sample_rows() -> list[GenerationSampleRow]:
     return [
-        GenerationSampleSpec(
+        GenerationSampleRow(
             prompt_index=0,
             sample_index=index,
             prompt="draw text",
@@ -182,7 +182,7 @@ def _r1_rollout_batch() -> RolloutBatch:
     )
     trajectory = build_ar_multisegment_trajectory(
         request=request,
-        sample_specs=_sample_specs(),
+        sample_rows=_sample_rows(),
         segments={
             "initial_image": _segment_payload(
                 "initial_image",
@@ -399,7 +399,7 @@ def test_r1_executor_forward_emits_canonical_family_and_segment_schema() -> None
         },
         return_artifacts={"output", "r1_segments"},
     )
-    specs = GenerationIdFactory().build_sample_specs(request)
+    specs = GenerationIdFactory().build_sample_rows(request)
 
     out = executor.forward_plan(request, specs, executor.plan(request, specs))
 

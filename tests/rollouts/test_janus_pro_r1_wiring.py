@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from vrl.engine import GenerationRequest, GenerationSampleSpec, OutputBatch
+from vrl.engine import GenerationRequest, GenerationSampleRow, OutputBatch
 from vrl.engine.trajectory import build_ar_multisegment_trajectory
 from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
@@ -12,9 +12,9 @@ from vrl.rollouts.collector.factory import build_rollout_collector
 from vrl.rollouts.settings import RolloutSettings
 
 
-def _sample_specs() -> list[GenerationSampleSpec]:
+def _sample_rows() -> list[GenerationSampleRow]:
     return [
-        GenerationSampleSpec(
+        GenerationSampleRow(
             prompt_index=0,
             sample_index=0,
             prompt="draw text",
@@ -24,7 +24,7 @@ def _sample_specs() -> list[GenerationSampleSpec]:
             trajectory_id="t0",
             seed=None,
         ),
-        GenerationSampleSpec(
+        GenerationSampleRow(
             prompt_index=0,
             sample_index=1,
             prompt="draw text",
@@ -109,7 +109,7 @@ def test_r1_trajectory_batch_keeps_segments_separate() -> None:
     }
     trajectory = build_ar_multisegment_trajectory(
         request=request,
-        sample_specs=_sample_specs(),
+        sample_rows=_sample_rows(),
         segments=segments,
         decoded_outputs={
             "initial_image": initial_images,
@@ -124,7 +124,7 @@ def test_r1_trajectory_batch_keeps_segments_separate() -> None:
         family=request.family,
         task=request.task,
         prompts=list(request.prompts),
-        sample_specs=_sample_specs(),
+        sample_rows=_sample_rows(),
         output=final_images,
         trajectory=trajectory,
         extra={},

@@ -7,9 +7,9 @@ from typing import Any
 
 from vrl.distributed.ray.rollout.types import RayChunkExecutionEnvelope, RayWorkerHandle
 from vrl.engine.core.capabilities import family_capability_from_value
-from vrl.engine.core.types import GenerationRequest, GenerationSampleSpec
+from vrl.engine.core.types import GenerationRequest, GenerationSampleRow
 from vrl.engine.execution.microbatching import (
-    MicroBatchPlan,
+    MicroBatchSample,
 )
 from vrl.engine.execution.planner import EnginePlan, ExecutionUnit, build_engine_plan
 
@@ -21,7 +21,7 @@ class DeviceAssignment:
     worker_id: str
     node_id: str
     gpu_ids: tuple[int, ...]
-    chunk: MicroBatchPlan
+    chunk: MicroBatchSample
     execution_unit: ExecutionUnit | None = None
     envelope: RayChunkExecutionEnvelope | None = None
 
@@ -52,7 +52,7 @@ class DistributedExecutionPlanner:
         request: GenerationRequest,
         workers: list[RayWorkerHandle],
         *,
-        sample_specs: list[GenerationSampleSpec] | None = None,
+        sample_rows: list[GenerationSampleRow] | None = None,
     ) -> DistributedRolloutPlan:
         if not workers:
             raise ValueError("DistributedExecutionPlanner requires at least one worker")
@@ -71,7 +71,7 @@ class DistributedExecutionPlanner:
             )
         engine_plan = build_engine_plan(
             request,
-            sample_specs,
+            sample_rows,
             capability=capability,
             max_samples_per_microbatch=max(1, max_samples),
         )

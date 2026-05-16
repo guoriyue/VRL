@@ -10,7 +10,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from vrl.engine import GenerationRequest, GenerationSampleSpec
+from vrl.engine import GenerationRequest, GenerationSampleRow
 from vrl.engine.diffusion.layout import VideoGenerationRequest
 from vrl.engine.trajectory import build_diffusion_trajectory, build_training_view
 from vrl.models.diffusion import DiffusionModelBase
@@ -183,8 +183,8 @@ def test_replay_forward_returns_typed_replay_result() -> None:
             prompts=["a", "b"],
             samples_per_prompt=1,
         ),
-        sample_specs=[
-            GenerationSampleSpec(
+        sample_rows=[
+            GenerationSampleRow(
                 prompt_index=index,
                 sample_index=0,
                 prompt=prompt,

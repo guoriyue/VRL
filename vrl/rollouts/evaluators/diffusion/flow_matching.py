@@ -57,9 +57,12 @@ class FlowMatchingEvaluator(Evaluator):
         if signal_request is None:
             signal_request = SignalRequest()
 
-        from vrl.engine.trajectory import trajectory_tensor_value
+        from vrl.engine.trajectory import TrajectoryResolver
 
-        timesteps = trajectory_tensor_value(batch, "denoise", "timesteps")
+        timesteps = TrajectoryResolver.from_batch(batch).tensor_value(
+            "denoise",
+            "timesteps",
+        )
         t = timesteps[:, timestep_idx] if timesteps.ndim > 1 else timesteps
 
         observations = batch.observations[:, timestep_idx]  # x_t

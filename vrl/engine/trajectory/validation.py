@@ -32,8 +32,8 @@ class TrajectoryValidationError(ValueError):
 def validate_trajectory_batch(batch: TrajectoryBatch) -> TrajectoryBatch:
     """Validate structural trajectory invariants and return ``batch``."""
 
-    if not batch.sample_specs:
-        _fail("TrajectoryBatch.sample_specs must be non-empty")
+    if not batch.sample_rows:
+        _fail("TrajectoryBatch.sample_rows must be non-empty")
     if not batch.axes:
         _fail("TrajectoryBatch.axes must be non-empty")
     if "sample" not in batch.axes:
@@ -43,30 +43,30 @@ def validate_trajectory_batch(batch: TrajectoryBatch) -> TrajectoryBatch:
 
     for axis_name, axis in batch.axes.items():
         if axis_name != axis.name:
-            _fail(f"Axis key {axis_name!r} does not match AxisSpec.name={axis.name!r}")
+            _fail(f"Axis key {axis_name!r} does not match TrajectoryAxis.name={axis.name!r}")
         if axis.length is not None and axis.length < 0:
             _fail(f"Axis {axis_name!r} length must be >= 0")
 
     sample_axis = batch.axes["sample"]
-    if sample_axis.length is not None and sample_axis.length != len(batch.sample_specs):
+    if sample_axis.length is not None and sample_axis.length != len(batch.sample_rows):
         _fail(
-            "sample axis length does not match sample_specs: "
-            f"{sample_axis.length} != {len(batch.sample_specs)}",
+            "sample axis length does not match sample_rows: "
+            f"{sample_axis.length} != {len(batch.sample_rows)}",
         )
     group_length = _leading_length(batch.group_ids)
     if group_length is None:
         _fail("TrajectoryBatch.group_ids must be a sample-aligned sequence")
-    if group_length != len(batch.sample_specs):
+    if group_length != len(batch.sample_rows):
         _fail(
-            "group_ids length does not match sample_specs: "
-            f"{group_length} != {len(batch.sample_specs)}",
+            "group_ids length does not match sample_rows: "
+            f"{group_length} != {len(batch.sample_rows)}",
         )
     if batch.metrics.num_samples is not None and batch.metrics.num_samples != len(
-        batch.sample_specs,
+        batch.sample_rows,
     ):
         _fail(
-            "TrajectoryMetrics.num_samples does not match sample_specs: "
-            f"{batch.metrics.num_samples} != {len(batch.sample_specs)}",
+            "TrajectoryMetrics.num_samples does not match sample_rows: "
+            f"{batch.metrics.num_samples} != {len(batch.sample_rows)}",
         )
     for axis_name, length in batch.metrics.axis_lengths.items():
         axis = batch.axes.get(axis_name)
@@ -75,7 +75,7 @@ def validate_trajectory_batch(batch: TrajectoryBatch) -> TrajectoryBatch:
         if axis.length is not None and int(length) != axis.length:
             _fail(
                 f"TrajectoryMetrics.axis_lengths[{axis_name!r}]={length} "
-                f"does not match AxisSpec.length={axis.length}",
+                f"does not match TrajectoryAxis.length={axis.length}",
             )
     forbidden_metrics = FORBIDDEN_TRAJECTORY_METRICS.intersection(batch.metrics.values)
     if forbidden_metrics:

@@ -1,22 +1,22 @@
 """Core engine contracts."""
 
-from vrl.engine.core.backend import RolloutBackend
 from vrl.engine.core.capabilities import (
     AxisCapability,
     ExecutionUnitCapability,
     FamilyCapability,
     family_capability_from_value,
 )
+from vrl.engine.core.launch_contract import GenerationRuntimeLaunchContract
 from vrl.engine.core.protocols import (
     ChunkedFamilyPipelineExecutor,
     FamilyPipelineExecutor,
     PipelineChunkResult,
+    RolloutBackend,
 )
-from vrl.engine.core.runtime_spec import GenerationRuntimeSpec
 from vrl.engine.core.types import (
     GenerationMetrics,
     GenerationRequest,
-    GenerationSampleSpec,
+    GenerationSampleRow,
     OutputBatch,
     WorkloadSignature,
 )
@@ -29,8 +29,8 @@ __all__ = [
     "FamilyPipelineExecutor",
     "GenerationMetrics",
     "GenerationRequest",
-    "GenerationRuntimeSpec",
-    "GenerationSampleSpec",
+    "GenerationRuntimeLaunchContract",
+    "GenerationSampleRow",
     "OutputBatch",
     "PipelineChunkResult",
     "RolloutBackend",

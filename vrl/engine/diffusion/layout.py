@@ -9,7 +9,7 @@ from typing import Any, TypeVar
 
 import torch
 
-from vrl.engine.core.types import GenerationRequest, GenerationSampleSpec
+from vrl.engine.core.types import GenerationRequest, GenerationSampleRow
 
 TChunk = TypeVar("TChunk")
 
@@ -170,10 +170,10 @@ class DiffusionRequestLayout:
     def ordered_chunks(
         self,
         request: GenerationRequest,
-        sample_specs: Sequence[GenerationSampleSpec],
+        sample_rows: Sequence[GenerationSampleRow],
         chunks: Sequence[TChunk],
     ) -> list[TChunk]:
-        """Sort diffusion chunks and ensure they exactly cover sample specs."""
+        """Sort diffusion chunks and ensure they exactly cover sample rows."""
 
         if not chunks:
             raise ValueError("chunks must be non-empty")
@@ -181,7 +181,7 @@ class DiffusionRequestLayout:
             chunks,
             key=lambda chunk: (int(chunk.prompt_index), int(chunk.sample_start)),
         )
-        expected = [(spec.prompt_index, spec.sample_index) for spec in sample_specs]
+        expected = [(row.prompt_index, row.sample_index) for row in sample_rows]
         actual: list[tuple[int, int]] = []
         for chunk in ordered:
             prompt_index = int(chunk.prompt_index)
@@ -205,7 +205,7 @@ class DiffusionRequestLayout:
             )
         if actual != expected:
             raise ValueError(
-                "Diffusion chunks do not cover sample_specs in prompt-major order",
+                "Diffusion chunks do not cover sample_rows in prompt-major order",
             )
         return ordered
 

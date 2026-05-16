@@ -8,9 +8,9 @@ from types import ModuleType, SimpleNamespace
 from typing import Any
 
 from vrl.distributed.ray.rollout.runtime import RayDistributedRuntime
+from vrl.engine.core.launch_contract import GenerationRuntimeLaunchContract
 from vrl.engine.core.protocols import PipelineChunkResult
-from vrl.engine.core.runtime_spec import GenerationRuntimeSpec
-from vrl.engine.core.types import GenerationRequest, GenerationSampleSpec, OutputBatch
+from vrl.engine.core.types import GenerationRequest, GenerationSampleRow, OutputBatch
 from vrl.rollouts.runtime.config import RolloutBackendConfig
 
 
@@ -41,11 +41,11 @@ class _FakeActorHandle:
     def __init__(
         self,
         worker_id: str,
-        spec: GenerationRuntimeSpec,
+        launch_contract: GenerationRuntimeLaunchContract,
         strategy: _PlacementGroupSchedulingStrategy,
     ) -> None:
         self.worker_id = worker_id
-        self.spec = spec
+        self.launch_contract = launch_contract
         self.strategy = strategy
         self.load_policy = _FakeRemoteMethod(lambda: None)
         self.worker_metadata = _FakeRemoteMethod(self._metadata)
@@ -64,15 +64,23 @@ class _FakeRemoteClass:
         self._resource_options = resource_options
         self._strategy: _PlacementGroupSchedulingStrategy | None = None
 
-    def options(self, *, scheduling_strategy: _PlacementGroupSchedulingStrategy) -> _FakeRemoteClass:
+    def options(
+        self,
+        *,
+        scheduling_strategy: _PlacementGroupSchedulingStrategy,
+    ) -> _FakeRemoteClass:
         child = _FakeRemoteClass(self._ray, self._resource_options)
         child._strategy = scheduling_strategy
         return child
 
-    def remote(self, worker_id: str, spec: GenerationRuntimeSpec) -> _FakeActorHandle:
+    def remote(
+        self,
+        worker_id: str,
+        launch_contract: GenerationRuntimeLaunchContract,
+    ) -> _FakeActorHandle:
         if self._strategy is None:
             raise AssertionError("launcher must set a scheduling strategy for rollout actors")
-        actor = _FakeActorHandle(worker_id, spec, self._strategy)
+        actor = _FakeActorHandle(worker_id, launch_contract, self._strategy)
         self._ray.actors.append(actor)
         return actor
 
@@ -109,7 +117,7 @@ class _Gatherer:
     def gather_chunks(
         self,
         request: GenerationRequest,
-        sample_specs: Sequence[GenerationSampleSpec],
+        sample_rows: Sequence[GenerationSampleRow],
         chunks: Sequence[PipelineChunkResult],
     ) -> OutputBatch:
         return OutputBatch(
@@ -117,7 +125,7 @@ class _Gatherer:
             family=request.family,
             task=request.task,
             prompts=list(request.prompts),
-            sample_specs=list(sample_specs),
+            sample_rows=list(sample_rows),
             output=list(chunks),
         )
 
@@ -134,8 +142,8 @@ def _install_fake_ray_modules(monkeypatch: Any) -> None:
     monkeypatch.setitem(sys.modules, "ray.util.scheduling_strategies", scheduling_module)
 
 
-def _runtime_spec() -> GenerationRuntimeSpec:
-    return GenerationRuntimeSpec(
+def _launch_contract() -> GenerationRuntimeLaunchContract:
+    return GenerationRuntimeLaunchContract(
         family="fake",
         task="t2i",
         policy_version=7,
@@ -158,7 +166,11 @@ def test_ray_rollout_launcher_builds_worker_runtime_without_real_ray(monkeypatch
         rollout_gpu_ids=(),
     )
     monkeypatch.setattr(launcher_mod, "require_ray", lambda: fake_ray)
-    monkeypatch.setattr(launcher_mod, "create_rollout_placement_group", lambda config: placement)
+    monkeypatch.setattr(
+        launcher_mod,
+        "create_rollout_placement_group",
+        lambda config: placement,
+    )
 
     runtime = launcher_mod.RayRolloutLauncher(
         init_ray=True,
@@ -171,7 +183,7 @@ def test_ray_rollout_launcher_builds_worker_runtime_without_real_ray(monkeypatch
             cpus_per_worker=2.0,
             sync_trainable_state="disabled",
         ),
-        _runtime_spec(),
+        _launch_contract(),
         _Gatherer(),
     )
 
@@ -189,12 +201,18 @@ def test_ray_rollout_launcher_builds_worker_runtime_without_real_ray(monkeypatch
         "node-for-rollout-0",
         "node-for-rollout-1",
     ]
-    assert [actor.spec for actor in fake_ray.actors] == [_runtime_spec(), _runtime_spec()]
+    assert [actor.launch_contract for actor in fake_ray.actors] == [
+        _launch_contract(),
+        _launch_contract(),
+    ]
     assert [actor.load_policy.calls for actor in fake_ray.actors] == [1, 1]
     assert [actor.worker_metadata.calls for actor in fake_ray.actors] == [1, 1]
     assert [actor.strategy.placement_group for actor in fake_ray.actors] == [
         placement_group,
         placement_group,
     ]
-    assert [actor.strategy.placement_group_bundle_index for actor in fake_ray.actors] == [3, 1]
+    assert [actor.strategy.placement_group_bundle_index for actor in fake_ray.actors] == [
+        3,
+        1,
+    ]
     assert all(actor.strategy.placement_group_capture_child_tasks for actor in fake_ray.actors)

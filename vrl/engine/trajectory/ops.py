@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any
 
-from vrl.engine.core.types import GenerationRequest, GenerationSampleSpec
+from vrl.engine.core.types import GenerationRequest, GenerationSampleRow
 from vrl.engine.trajectory.types import (
     TrajectoryBatch,
     TrajectoryMetrics,
@@ -24,7 +24,7 @@ def slice_trajectory_batch(
     data: Any,
     *,
     request: GenerationRequest,
-    sample_specs: list[GenerationSampleSpec],
+    sample_rows: list[GenerationSampleRow],
     offset: int,
     count: int,
     total: int,
@@ -41,7 +41,7 @@ def slice_trajectory_batch(
         request_id=request.request_id,
         family=request.family,
         task=request.task,
-        sample_specs=list(sample_specs),
+        sample_rows=list(sample_rows),
         group_ids=_slice_value(data.group_ids, offset, count, total),
         tensor_value_fn=lambda tensor: _slice_value(tensor.value, offset, count, total)
         if tensor.axes and tensor.axes[0] == "sample"
@@ -68,15 +68,15 @@ def select_trajectory_batch(data: Any, selector: Any) -> Any:
         request_id=data.request_id,
         family=data.family,
         task=data.task,
-        sample_specs=[data.sample_specs[i] for i in positions],
-        group_ids=_select_value(data.group_ids, selector, len(data.sample_specs)),
-        tensor_value_fn=lambda tensor: _select_value(tensor.value, selector, len(data.sample_specs))
+        sample_rows=[data.sample_rows[i] for i in positions],
+        group_ids=_select_value(data.group_ids, selector, len(data.sample_rows)),
+        tensor_value_fn=lambda tensor: _select_value(tensor.value, selector, len(data.sample_rows))
         if tensor.axes and tensor.axes[0] == "sample"
         else tensor.value,
         axes_sample_length=count,
         metrics_sample_count=count,
-        metrics_values=_select_value(data.metrics.values, selector, len(data.sample_specs)),
-        context=_select_value(data.context, selector, len(data.sample_specs)),
+        metrics_values=_select_value(data.metrics.values, selector, len(data.sample_rows)),
+        context=_select_value(data.context, selector, len(data.sample_rows)),
     )
 
 
@@ -94,17 +94,17 @@ def stack_trajectory_batches(batches: list[TrajectoryBatch | None]) -> Trajector
     first = typed[0]
     _validate_stack_compatible(typed)
 
-    sample_specs: list[GenerationSampleSpec] = []
+    sample_rows: list[GenerationSampleRow] = []
     for batch in typed:
-        sample_specs.extend(batch.sample_specs)
-    sample_count = len(sample_specs)
+        sample_rows.extend(batch.sample_rows)
+    sample_count = len(sample_rows)
 
     return _rebuild_trajectory(
         first,
         request_id=first.request_id,
         family=first.family,
         task=first.task,
-        sample_specs=sample_specs,
+        sample_rows=sample_rows,
         group_ids=_stack_values([batch.group_ids for batch in typed]),
         tensor_value_fn=lambda tensor: _stack_values(
             [
@@ -136,7 +136,7 @@ def move_trajectory_batch(data: Any, device: Any) -> Any:
         request_id=data.request_id,
         family=data.family,
         task=data.task,
-        sample_specs=list(data.sample_specs),
+        sample_rows=list(data.sample_rows),
         group_ids=_move_value(data.group_ids, device),
         tensor_value_fn=lambda tensor: _move_value(tensor.value, device),
         axes_sample_length=data.axes["sample"].length,
@@ -152,7 +152,7 @@ def _rebuild_trajectory(
     request_id: str,
     family: str,
     task: str,
-    sample_specs: list[GenerationSampleSpec],
+    sample_rows: list[GenerationSampleRow],
     group_ids: Any,
     tensor_value_fn: Any,
     axes_sample_length: int | None,
@@ -195,7 +195,7 @@ def _rebuild_trajectory(
         request_id=request_id,
         family=family,
         task=task,
-        sample_specs=sample_specs,
+        sample_rows=sample_rows,
         group_ids=group_ids,
         axes=axes,
         segments=segments,

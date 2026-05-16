@@ -974,7 +974,7 @@ class TestOnlineTrainerCeaRegressions:
         import torch.nn as nn
 
         from vrl.algorithms.types import TrainStepMetrics
-        from vrl.engine import GenerationRequest, GenerationSampleSpec
+        from vrl.engine import GenerationRequest, GenerationSampleRow
         from vrl.engine.trajectory import build_ar_discrete_trajectory, build_training_view
         from vrl.rollouts.batch import RolloutBatch
         from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
@@ -1024,8 +1024,8 @@ class TestOnlineTrainerCeaRegressions:
                     prompts=prompts,
                     samples_per_prompt=group_size,
                 )
-                sample_specs = [
-                    GenerationSampleSpec(
+                sample_rows = [
+                    GenerationSampleRow(
                         prompt_index=index // group_size,
                         sample_index=index % group_size,
                         prompt=prompts[index // group_size],
@@ -1037,18 +1037,18 @@ class TestOnlineTrainerCeaRegressions:
                     )
                     for index in range(len(prompts) * group_size)
                 ]
-                batch_size = len(sample_specs)
+                batch_size = len(sample_rows)
                 token_ids = torch.arange(batch_size * 2).view(batch_size, 2)
                 trajectory = build_ar_discrete_trajectory(
                     request=request,
-                    sample_specs=sample_specs,
+                    sample_rows=sample_rows,
                     token_ids=token_ids,
                     token_log_probs=torch.zeros_like(token_ids, dtype=torch.float32),
                     token_mask=torch.ones_like(token_ids, dtype=torch.float32),
-                    prompt_input_ids=torch.ones(len(sample_specs), 3, dtype=torch.long),
-                    prompt_attention_mask=torch.ones(len(sample_specs), 3, dtype=torch.long),
-                    uncond_input_ids=torch.zeros(len(sample_specs), 3, dtype=torch.long),
-                    uncond_attention_mask=torch.ones(len(sample_specs), 3, dtype=torch.long),
+                    prompt_input_ids=torch.ones(len(sample_rows), 3, dtype=torch.long),
+                    prompt_attention_mask=torch.ones(len(sample_rows), 3, dtype=torch.long),
+                    uncond_input_ids=torch.zeros(len(sample_rows), 3, dtype=torch.long),
+                    uncond_attention_mask=torch.ones(len(sample_rows), 3, dtype=torch.long),
                     context={"model_family": "janus_pro"},
                 )
                 return RolloutBatch(
@@ -1290,7 +1290,7 @@ def _adam_exp_avg_values(optimizer) -> list[float]:
 def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:
     import torch
 
-    from vrl.engine import GenerationRequest, GenerationSampleSpec
+    from vrl.engine import GenerationRequest, GenerationSampleRow
     from vrl.engine.trajectory import build_ar_discrete_trajectory, build_training_view
     from vrl.rollouts.batch import RolloutBatch
     from vrl.trainers.online import (
@@ -1306,8 +1306,8 @@ def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:
         prompts=["a", "b"],
         samples_per_prompt=2,
     )
-    sample_specs = [
-        GenerationSampleSpec(
+    sample_rows = [
+        GenerationSampleRow(
             prompt_index=index // 2,
             sample_index=index % 2,
             prompt=request.prompts[index // 2],
@@ -1322,7 +1322,7 @@ def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:
     token_ids = torch.arange(8).view(4, 2)
     trajectory = build_ar_discrete_trajectory(
         request=request,
-        sample_specs=sample_specs,
+        sample_rows=sample_rows,
         token_ids=token_ids,
         token_log_probs=torch.zeros(4, 2),
         token_mask=torch.ones(4, 2),

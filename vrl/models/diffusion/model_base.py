@@ -100,10 +100,10 @@ class DiffusionModelBase(nn.Module, ABC):
     ) -> ReplayResult:
         """Rebuild diffusion sampling state and run one replay forward."""
         del request
-        from vrl.engine.trajectory import trajectory_replay_tensor_dict
+        from vrl.engine.trajectory import TrajectoryResolver
 
         state = self.restore_eval_state(
-            trajectory_replay_tensor_dict(batch, "denoise"),
+            TrajectoryResolver.from_batch(batch).replay_tensor_dict("denoise"),
             batch.context,
             batch.observations[:, timestep_idx],
             timestep_idx,

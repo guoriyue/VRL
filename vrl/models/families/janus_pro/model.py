@@ -534,12 +534,13 @@ class JanusProModel(nn.Module):
             }
             return ReplayResult(segments=segments)
 
-        from vrl.engine.trajectory import trajectory_replay_tensor_dict, trajectory_role_value
+        from vrl.engine.trajectory import TrajectoryResolver
 
-        replay = trajectory_replay_tensor_dict(batch, "image_tokens")
+        resolver = TrajectoryResolver.from_batch(batch)
+        replay = resolver.replay_tensor_dict("image_tokens")
         prompt_ids = replay["prompt_input_ids"]
         prompt_mask = replay["prompt_attention_mask"]
-        image_token_ids = trajectory_role_value(batch, "image_tokens", "action")
+        image_token_ids = resolver.role_value("image_tokens", "action")
 
         embed = self.language_model.get_input_embeddings()
         prompt_embeds = embed(prompt_ids)

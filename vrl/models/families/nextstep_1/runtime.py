@@ -10,21 +10,21 @@ from typing import Any
 import torch
 
 from vrl.engine.ar import (
-    ARGenerationSpec,
+    ARDecodeLoop,
     ARPipelineExecutorBase,
     ARRequestLayout,
-    run_kv_decode,
+    ARSamplingParams,
 )
 from vrl.engine.core.capabilities import FamilyCapability
 from vrl.engine.core.protocols import PipelineChunkResult
 from vrl.engine.core.types import (
     GenerationMetrics,
     GenerationRequest,
-    GenerationSampleSpec,
+    GenerationSampleRow,
     OutputBatch,
     WorkloadSignature,
 )
-from vrl.engine.execution.microbatching import MicroBatchPlan
+from vrl.engine.execution.microbatching import MicroBatchSample
 from vrl.engine.trajectory import build_ar_continuous_trajectory
 from vrl.models.capability_builders import ar_continuous_family_capability
 from vrl.models.families.nextstep_1.model import (
@@ -348,12 +348,12 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
     def forward_plan(
         self,
         request: GenerationRequest,
-        sample_specs: list[GenerationSampleSpec],
+        sample_rows: list[GenerationSampleRow],
         engine_plan: Any,
     ) -> OutputBatch:
         del engine_plan
         sampling = request.sampling
-        spec: ARGenerationSpec = self.parse_spec(request)
+        params: ARSamplingParams = self.parse_sampling_params(request)
         prompts = list(request.prompts)
 
         cfg_scale = float(sampling["cfg_scale"])
@@ -367,11 +367,11 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
 
         prompt_ids, prompt_mask = self._tokenize_prompts(
             repeated_prompts,
-            max_text_length=spec.max_text_length,
+            max_text_length=params.max_text_length,
         )
         uncond_ids, uncond_mask = self._tokenize_prompts(
             [""] * len(repeated_prompts),
-            max_text_length=spec.max_text_length,
+            max_text_length=params.max_text_length,
         )
         pad_id = getattr(self.model.processor, "pad_token_id", None) or 0
         prompt_ids, prompt_mask, uncond_ids, uncond_mask = self.align_pair(
@@ -388,42 +388,42 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
         # Optional deterministic generator. ``sample_image_tokens`` accepts
         # a ``generator`` kwarg (see NextStep1Model.sample_image_tokens).
         generator: torch.Generator | None = None
-        if spec.seed is not None:
+        if params.seed is not None:
             device = self.model.device
             generator = torch.Generator(device=device)
-            generator.manual_seed(spec.seed)
+            generator.manual_seed(params.seed)
 
         sample_kwargs: dict[str, Any] = {
             "cfg_scale": cfg_scale,
             "num_flow_steps": num_flow_steps,
             "noise_level": noise_level,
-            "image_token_num": spec.image_token_num,
+            "image_token_num": params.image_token_num,
         }
         if generator is not None:
             sample_kwargs["generator"] = generator
 
         scheduler_batch_size = (
-            spec.ar_scheduler_batch_size if spec.use_ar_scheduler else len(sample_specs)
+            params.ar_scheduler_batch_size if params.use_ar_scheduler else len(sample_rows)
         )
-        decode_result = run_kv_decode(
+        decode_result = ARDecodeLoop(
             request=request,
-            sample_specs=sample_specs,
+            sample_rows=sample_rows,
             model=self.model,
-            init_args=(cond_embeds, uncond_embeds, prompt_mask, uncond_mask),
-            init_kwargs=sample_kwargs,
-            max_new_tokens=spec.image_token_num,
+            max_new_tokens=params.image_token_num,
             tokenizer_key="nextstep_1",
             dtype=str(cond_embeds.dtype),
             scheduler_batch_size=scheduler_batch_size,
+            init_args=(cond_embeds, uncond_embeds, prompt_mask, uncond_mask),
+            init_kwargs=sample_kwargs,
             step_kwargs=sample_kwargs,
-        )
+        ).run()
         tokens, saved_noise, old_logprobs = decode_result.finalized
         scheduler_batches = decode_result.scheduler_batches
         # tokens:        [B, L_img, D_token]
         # saved_noise:   [B, L_img, D_token]
         # old_logprobs:  [B, L_img]
 
-        images = self.model.decode_image_tokens(tokens, image_size=spec.image_size)
+        images = self.model.decode_image_tokens(tokens, image_size=params.image_size)
 
         if rescale_to_unit:
             images_for_reward = (images + 1.0) * 0.5
@@ -433,21 +433,21 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
 
         peak_mem_mb = self.peak_memory_mb()
         engine_counters = {
-            "ar_kv_cache_enabled": True,
+            "ar_decode_loop_enabled": True,
             "ar_prefill_forwards": 1,
-            "ar_decode_forwards": max(spec.image_token_num - 1, 0),
-            "ar_decode_tokens": len(sample_specs) * spec.image_token_num,
-            "ar_scheduler_enabled": bool(spec.use_ar_scheduler),
-            "ar_scheduler_batch_size": spec.ar_scheduler_batch_size,
+            "ar_decode_forwards": max(params.image_token_num - 1, 0),
+            "ar_decode_tokens": len(sample_rows) * params.image_token_num,
+            "ar_scheduler_enabled": bool(params.use_ar_scheduler),
+            "ar_scheduler_batch_size": params.ar_scheduler_batch_size,
             "ar_scheduler_batches": scheduler_batches,
         }
         engine_counters.update(decode_result.engine_counters)
-        engine_counters["ar_scheduler_enabled"] = bool(spec.use_ar_scheduler)
-        engine_counters["ar_scheduler_batch_size"] = spec.ar_scheduler_batch_size
+        engine_counters["ar_scheduler_enabled"] = bool(params.use_ar_scheduler)
+        engine_counters["ar_scheduler_batch_size"] = params.ar_scheduler_batch_size
         metrics = GenerationMetrics(
             num_prompts=len(prompts),
-            num_samples=len(sample_specs),
-            num_steps=spec.image_token_num,
+            num_samples=len(sample_rows),
+            num_steps=params.image_token_num,
             micro_batches=1,
             peak_memory_mb=peak_mem_mb,
             engine_counters=engine_counters,
@@ -457,14 +457,14 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
             "cfg_scale": cfg_scale,
             "num_flow_steps": num_flow_steps,
             "noise_level": noise_level,
-            "image_token_num": spec.image_token_num,
-            "image_size": spec.image_size,
+            "image_token_num": params.image_token_num,
+            "image_size": params.image_size,
             "rescale_to_unit": rescale_to_unit,
-            "ar_kv_cache_enabled": True,
+            "ar_decode_loop_enabled": True,
         }
         trajectory = build_ar_continuous_trajectory(
             request=request,
-            sample_specs=sample_specs,
+            sample_rows=sample_rows,
             tokens=tokens,
             saved_noise=saved_noise,
             token_log_probs=old_logprobs,
@@ -482,7 +482,7 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
             family=request.family,
             task=request.task,
             prompts=prompts,
-            sample_specs=sample_specs,
+            sample_rows=sample_rows,
             output=images,
             trajectory=trajectory,
             extra={},
@@ -493,7 +493,7 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
     def forward_chunk_plan(
         self,
         request: GenerationRequest,
-        chunk: MicroBatchPlan,
+        chunk: MicroBatchSample,
         execution_unit: Any,
         plan_summary: Mapping[str, object],
     ) -> NextStep1ARChunkResult:
@@ -502,7 +502,7 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
         del execution_unit, plan_summary
         self.validate_chunk(request, chunk)
         sampling = request.sampling
-        spec: ARGenerationSpec = self.parse_spec(request)
+        params: ARSamplingParams = self.parse_sampling_params(request)
 
         cfg_scale = float(sampling["cfg_scale"])
         num_flow_steps = int(sampling["num_flow_steps"])
@@ -512,11 +512,11 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
         repeated_prompts = [chunk.prompt] * chunk.sample_count
         prompt_ids, prompt_mask = self._tokenize_prompts(
             repeated_prompts,
-            max_text_length=spec.max_text_length,
+            max_text_length=params.max_text_length,
         )
         uncond_ids, uncond_mask = self._tokenize_prompts(
             [""] * chunk.sample_count,
-            max_text_length=spec.max_text_length,
+            max_text_length=params.max_text_length,
         )
         pad_id = getattr(self.model.processor, "pad_token_id", None) or 0
         prompt_ids, prompt_mask, uncond_ids, uncond_mask = self.align_pair(
@@ -531,34 +531,34 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
         uncond_embeds = self._embed(uncond_ids)
 
         generator: torch.Generator | None = None
-        if spec.seed is not None:
+        if params.seed is not None:
             generator = torch.Generator(device=self.model.device)
-            generator.manual_seed(spec.seed + self.chunk_seed_offset(request, chunk))
+            generator.manual_seed(params.seed + self.chunk_seed_offset(request, chunk))
 
         sample_kwargs: dict[str, Any] = {
             "cfg_scale": cfg_scale,
             "num_flow_steps": num_flow_steps,
             "noise_level": noise_level,
-            "image_token_num": spec.image_token_num,
+            "image_token_num": params.image_token_num,
         }
         if generator is not None:
             sample_kwargs["generator"] = generator
 
-        decode_result = run_kv_decode(
+        decode_result = ARDecodeLoop(
             request=request,
-            sample_specs=self.chunk_sample_specs(request, chunk),
+            sample_rows=self.chunk_sample_rows(request, chunk),
             model=self.model,
-            init_args=(cond_embeds, uncond_embeds, prompt_mask, uncond_mask),
-            init_kwargs=sample_kwargs,
-            max_new_tokens=spec.image_token_num,
+            max_new_tokens=params.image_token_num,
             tokenizer_key="nextstep_1",
             dtype=str(cond_embeds.dtype),
             scheduler_batch_size=chunk.sample_count,
+            init_args=(cond_embeds, uncond_embeds, prompt_mask, uncond_mask),
+            init_kwargs=sample_kwargs,
             step_kwargs=sample_kwargs,
-        )
+        ).run()
         tokens, saved_noise, old_logprobs = decode_result.finalized
 
-        images = self.model.decode_image_tokens(tokens, image_size=spec.image_size)
+        images = self.model.decode_image_tokens(tokens, image_size=params.image_size)
         if rescale_to_unit:
             images_for_reward = (images + 1.0) * 0.5
             images_for_reward = images_for_reward.clamp(0.0, 1.0)
@@ -583,10 +583,10 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
                 "cfg_scale": cfg_scale,
                 "num_flow_steps": num_flow_steps,
                 "noise_level": noise_level,
-                "image_token_num": spec.image_token_num,
-                "image_size": spec.image_size,
+                "image_token_num": params.image_token_num,
+                "image_size": params.image_size,
                 "rescale_to_unit": rescale_to_unit,
-                "ar_kv_cache_enabled": True,
+                "ar_decode_loop_enabled": True,
             },
             peak_memory_mb=peak_mem_mb,
         )
@@ -594,10 +594,10 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
     def gather_chunks(
         self,
         request: GenerationRequest,
-        sample_specs: Sequence[GenerationSampleSpec],
+        sample_rows: Sequence[GenerationSampleRow],
         chunks: Sequence[NextStep1ARChunkResult],
     ) -> OutputBatch:
-        return NextStep1ChunkGatherer().gather_chunks(request, sample_specs, chunks)
+        return NextStep1ChunkGatherer().gather_chunks(request, sample_rows, chunks)
 
     # -- internals -----------------------------------------------------
 
@@ -651,14 +651,14 @@ class NextStep1ChunkGatherer:
     def gather_chunks(
         self,
         request: GenerationRequest,
-        sample_specs: Sequence[GenerationSampleSpec],
+        sample_rows: Sequence[GenerationSampleRow],
         chunks: Sequence[NextStep1ARChunkResult],
     ) -> OutputBatch:
         """Pack prompt/sample AR chunks back into the canonical OutputBatch."""
 
         ordered_ar_chunks = self.layout.ordered_chunks(
             request,
-            sample_specs,
+            sample_rows,
             chunks,
             row_fields=(
                 "output",
@@ -684,15 +684,15 @@ class NextStep1ChunkGatherer:
         trajectory_context = dict(ordered_ar_chunks[0].context)
         metrics = GenerationMetrics(
             num_prompts=len(request.prompts),
-            num_samples=len(sample_specs),
+            num_samples=len(sample_rows),
             num_steps=image_token_num,
             micro_batches=len(ordered_ar_chunks),
             peak_memory_mb=peak_mem_mb,
             engine_counters={
-                "ar_kv_cache_enabled": True,
+                "ar_decode_loop_enabled": True,
                 "ar_prefill_forwards": 1,
                 "ar_decode_forwards": max(image_token_num - 1, 0),
-                "ar_decode_tokens": len(sample_specs) * image_token_num,
+                "ar_decode_tokens": len(sample_rows) * image_token_num,
                 "ar_scheduler_enabled": False,
                 "ar_scheduler_batch_size": request.sampling.get(
                     "ar_scheduler_batch_size"
@@ -722,7 +722,7 @@ class NextStep1ChunkGatherer:
         )
         trajectory = build_ar_continuous_trajectory(
             request=request,
-            sample_specs=list(sample_specs),
+            sample_rows=list(sample_rows),
             tokens=tokens,
             saved_noise=saved_noise,
             token_log_probs=log_probs,
@@ -740,7 +740,7 @@ class NextStep1ChunkGatherer:
             family=request.family,
             task=request.task,
             prompts=list(request.prompts),
-            sample_specs=list(sample_specs),
+            sample_rows=list(sample_rows),
             output=output,
             trajectory=trajectory,
             extra={},

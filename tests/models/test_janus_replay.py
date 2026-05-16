@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import torch
 import torch.nn as nn
 
-from vrl.engine import GenerationRequest, GenerationSampleSpec
+from vrl.engine import GenerationRequest, GenerationSampleRow
 from vrl.engine.trajectory import build_ar_discrete_trajectory, build_training_view
 from vrl.models.families.janus_pro.model import (
     JANUS_IMAGE_VOCAB_SIZE,
@@ -95,10 +95,10 @@ def _request() -> GenerationRequest:
     )
 
 
-def _sample_specs() -> list[GenerationSampleSpec]:
+def _sample_rows() -> list[GenerationSampleRow]:
     request = _request()
     return [
-        GenerationSampleSpec(
+        GenerationSampleRow(
             prompt_index=0,
             sample_index=index,
             prompt=request.prompts[0],
@@ -116,7 +116,7 @@ def _discrete_batch() -> RolloutBatch:
     token_ids = torch.tensor([[1, 2], [2, 3]])
     trajectory = build_ar_discrete_trajectory(
         request=_request(),
-        sample_specs=_sample_specs(),
+        sample_rows=_sample_rows(),
         token_ids=token_ids,
         token_log_probs=torch.zeros_like(token_ids, dtype=torch.float32),
         token_mask=torch.ones_like(token_ids, dtype=torch.float32),

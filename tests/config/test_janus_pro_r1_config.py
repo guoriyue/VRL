@@ -41,9 +41,9 @@ def test_janus_pro_r1_runtime_inputs_select_r1_task_and_executor() -> None:
         weight_dtype=str(cfg.model.dtype),
     )
 
-    assert inputs.runtime_spec.family == "janus_pro_r1"
-    assert inputs.runtime_spec.task == "ar_t2i_r1"
-    assert inputs.runtime_spec.executor_cls == (
+    assert inputs.launch_contract.family == "janus_pro_r1"
+    assert inputs.launch_contract.task == "ar_t2i_r1"
+    assert inputs.launch_contract.executor_cls == (
         "vrl.models.families.janus_pro.runtime:JanusProR1PipelineExecutor"
     )
 
@@ -74,7 +74,7 @@ def test_janus_pro_r1_codex_qa_profile_wrapper_enables_profiler() -> None:
     assert cfg.rollout.torch_profiler.enabled is True
 
 
-def test_janus_pro_r1_codex_qa_rollout_profiler_reaches_runtime_spec() -> None:
+def test_janus_pro_r1_codex_qa_rollout_profiler_reaches_launch_contract() -> None:
     cfg = load_config(
         "profile/janus_pro_r1_codex_qa_1epoch",
         overrides=[
@@ -91,7 +91,7 @@ def test_janus_pro_r1_codex_qa_rollout_profiler_reaches_runtime_spec() -> None:
         weight_dtype=str(cfg.model.dtype),
     )
 
-    assert inputs.runtime_spec.extra["profiler_output_dir"] == (
+    assert inputs.launch_contract.extra["profiler_output_dir"] == (
         "outputs/profile_janus_r1_codex_qa_1epoch"
     )
-    assert inputs.runtime_spec.extra["torch_profiler"]["enabled"] is True
+    assert inputs.launch_contract.extra["torch_profiler"]["enabled"] is True

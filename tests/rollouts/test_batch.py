@@ -205,7 +205,7 @@ class TestStackBatches:
 def _trajectory(request_id: str, token_ids):
     import torch
 
-    from vrl.engine import GenerationRequest, GenerationSampleSpec
+    from vrl.engine import GenerationRequest, GenerationSampleRow
     from vrl.engine.trajectory import build_ar_discrete_trajectory
 
     request = GenerationRequest(
@@ -215,8 +215,8 @@ def _trajectory(request_id: str, token_ids):
         prompts=["p"],
         samples_per_prompt=1,
     )
-    sample_specs = [
-        GenerationSampleSpec(
+    sample_rows = [
+        GenerationSampleRow(
             prompt_index=0,
             sample_index=0,
             prompt="p",
@@ -229,7 +229,7 @@ def _trajectory(request_id: str, token_ids):
     ]
     return build_ar_discrete_trajectory(
         request=request,
-        sample_specs=sample_specs,
+        sample_rows=sample_rows,
         token_ids=token_ids,
         token_log_probs=torch.zeros_like(token_ids, dtype=torch.float32),
         token_mask=torch.ones_like(token_ids, dtype=torch.float32),

@@ -8,16 +8,22 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from vrl.engine.core.types import (
         GenerationRequest,
-        GenerationSampleSpec,
+        GenerationSampleRow,
         OutputBatch,
         WorkloadSignature,
     )
-    from vrl.engine.execution.microbatching import MicroBatchPlan
+    from vrl.engine.execution.microbatching import MicroBatchSample
     from vrl.engine.execution.planner import ExecutionUnit
 
 
 class PipelineChunkResult(Protocol):
     """Family-specific chunk payload returned before final OutputBatch gather."""
+
+
+class RolloutBackend(Protocol):
+    """Generation backend consumed by rollout collectors."""
+
+    async def generate(self, request: GenerationRequest) -> OutputBatch: ...
 
 
 @runtime_checkable
@@ -40,7 +46,7 @@ class ChunkedFamilyPipelineExecutor(FamilyPipelineExecutor, Protocol):
     def forward_chunk_plan(
         self,
         request: GenerationRequest,
-        chunk: MicroBatchPlan,
+        chunk: MicroBatchSample,
         execution_unit: ExecutionUnit,
         plan_summary: Mapping[str, object],
     ) -> PipelineChunkResult: ...
@@ -48,6 +54,6 @@ class ChunkedFamilyPipelineExecutor(FamilyPipelineExecutor, Protocol):
     def gather_chunks(
         self,
         request: GenerationRequest,
-        sample_specs: Sequence[GenerationSampleSpec],
+        sample_rows: Sequence[GenerationSampleRow],
         chunks: Sequence[PipelineChunkResult],
     ) -> OutputBatch: ...

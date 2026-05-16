@@ -7,7 +7,7 @@ from typing import Any
 
 from vrl.engine.core.protocols import PipelineChunkResult
 from vrl.engine.core.types import GenerationRequest
-from vrl.engine.execution.microbatching import MicroBatchPlan
+from vrl.engine.execution.microbatching import MicroBatchSample
 from vrl.engine.execution.planner import ExecutionUnit
 
 
@@ -26,7 +26,7 @@ class RayChunkExecutionEnvelope:
     """Authoritative chunk execution payload sent from the driver to a worker."""
 
     request: GenerationRequest
-    chunk: MicroBatchPlan
+    chunk: MicroBatchSample
     plan_id: str
     execution_unit: ExecutionUnit | None = None
     profiler_label: str | None = None
@@ -52,7 +52,7 @@ class RayChunkResult:
 
     request_id: str
     worker_id: str
-    chunk: MicroBatchPlan
+    chunk: MicroBatchSample
     output: PipelineChunkResult | None
     metrics: dict[str, Any] = field(default_factory=dict)
     plan_id: str | None = None

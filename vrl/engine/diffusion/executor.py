@@ -16,7 +16,7 @@ from vrl.engine.core.protocols import (
 )
 from vrl.engine.core.types import (
     GenerationRequest,
-    GenerationSampleSpec,
+    GenerationSampleRow,
     OutputBatch,
     WorkloadSignature,
 )
@@ -31,7 +31,7 @@ from vrl.engine.execution.microbatching import (
     run_microbatch_samples_with_oom_retry,
 )
 from vrl.engine.execution.planner import attach_engine_plan, build_engine_plan
-from vrl.engine.execution.request_batching import RequestBatcher
+from vrl.engine.execution.request_batch import RequestBatch
 from vrl.math.diffusion.flow_matching import sde_step_with_logprob
 
 
@@ -109,12 +109,12 @@ class DiffusionPipelineExecutorBase(
     def plan(
         self,
         request: GenerationRequest,
-        sample_specs: list[GenerationSampleSpec],
+        sample_rows: list[GenerationSampleRow],
     ) -> Any:
         params = self.parse_sampling_params(request)
         return build_engine_plan(
             request,
-            sample_specs,
+            sample_rows,
             capability=self.capability(),
             max_samples_per_microbatch=params.base.sample_batch_size,
         )
@@ -190,7 +190,7 @@ class DiffusionPipelineExecutorBase(
     def forward_plan(
         self,
         request: GenerationRequest,
-        sample_specs: list[GenerationSampleSpec],
+        sample_rows: list[GenerationSampleRow],
         plan: Any,
     ) -> OutputBatch:
         chunks = run_microbatch_samples_with_oom_retry(
@@ -202,7 +202,7 @@ class DiffusionPipelineExecutorBase(
                 plan.summary(),
             ),
         )
-        return attach_engine_plan(self.gather_chunks(request, sample_specs, chunks), plan)
+        return attach_engine_plan(self.gather_chunks(request, sample_rows, chunks), plan)
 
     def forward_chunk_plan(
         self,
@@ -365,27 +365,43 @@ class DiffusionPipelineExecutorBase(
     def gather_chunks(
         self,
         request: GenerationRequest,
-        sample_specs: Sequence[GenerationSampleSpec],
+        sample_rows: Sequence[GenerationSampleRow],
         chunks: Sequence[DiffusionChunkResult],
     ) -> OutputBatch:
         return DiffusionChunkGatherer().gather_chunks(
             request,
-            sample_specs,
+            sample_rows,
             chunks,
         )
 
     def forward_batch_plan(
         self,
         requests: list[GenerationRequest],
-        sample_rows_by_request: dict[str, list[GenerationSampleSpec]],
+        sample_rows_by_request: dict[str, list[GenerationSampleRow]],
         engine_plans_by_request: dict[str, Any],
     ) -> dict[str, OutputBatch]:
-        return RequestBatcher(
-            executor=self,
+        def forward(
+            request: GenerationRequest,
+            sample_rows: list[GenerationSampleRow],
+        ) -> OutputBatch:
+            plan = engine_plans_by_request.get(request.request_id)
+            if plan is None:
+                plan = self.plan(request, sample_rows)
+            output = self.forward_plan(request, sample_rows, plan)
+            execution_extra = output.extra.setdefault("engine_execution", {})
+            if isinstance(execution_extra, dict):
+                execution_extra["plan_aware_forward"] = True
+                execution_extra["forward_plan_id"] = plan.request_id
+            return output
+
+        outputs = RequestBatch(
             requests=requests,
             sample_rows_by_request=sample_rows_by_request,
-            engine_plans_by_request=engine_plans_by_request,
-        ).run()
+        ).run(forward)
+        return {
+            request_id: attach_engine_plan(output, engine_plans_by_request[request_id])
+            for request_id, output in outputs.items()
+        }
 
     # -- family hooks --------------------------------------------------
 

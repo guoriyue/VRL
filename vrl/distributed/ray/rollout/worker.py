@@ -17,8 +17,8 @@ from vrl.engine.core.capabilities import (
     FamilyCapability,
     family_capability_from_value,
 )
+from vrl.engine.core.launch_contract import GenerationRuntimeLaunchContract
 from vrl.engine.core.protocols import ChunkedFamilyPipelineExecutor
-from vrl.engine.core.runtime_spec import GenerationRuntimeSpec
 from vrl.engine.execution.gather import require_chunked_executor
 from vrl.models.interfaces import require_runtime_model
 from vrl.trainers.core.types import TorchProfilerConfig
@@ -32,22 +32,22 @@ class RayRolloutWorker:
     def __init__(
         self,
         worker_id: str,
-        runtime_spec: GenerationRuntimeSpec | Mapping[str, Any],
+        launch_contract: GenerationRuntimeLaunchContract | Mapping[str, Any],
     ) -> None:
         self.worker_id = worker_id
-        self.runtime_spec = self._normalize_runtime_spec(runtime_spec)
-        self.family = self.runtime_spec.family
+        self.launch_contract = self._normalize_launch_contract(launch_contract)
+        self.family = self.launch_contract.family
         self.executor: ChunkedFamilyPipelineExecutor | None = None
-        self._policy_version: int | None = self.runtime_spec.policy_version
-        self._profiler_config = self._profiler_config_from_spec(self.runtime_spec)
+        self._policy_version: int | None = self.launch_contract.policy_version
+        self._profiler_config = self._profiler_config_from_contract(self.launch_contract)
         self._profiler_output_dir = str(
-            self.runtime_spec.extra.get("profiler_output_dir", "outputs/"),
+            self.launch_contract.extra.get("profiler_output_dir", "outputs/"),
         )
         self._profiler_step = 0
-        self.capability = self._capability_from_spec(self.runtime_spec)
+        self.capability = self._capability_from_contract(self.launch_contract)
 
     def load_policy(self) -> None:
-        """Build the family executor from the serialized runtime spec."""
+        """Build the family executor from the serialized launch contract."""
 
         if self.executor is not None:
             return
@@ -190,7 +190,7 @@ class RayRolloutWorker:
         step = self._profiler_step
         self._profiler_step += 1
         worker_name = (
-            f"{self.worker_id}_{self.family}_{self.runtime_spec.task}_"
+            f"{self.worker_id}_{self.family}_{self.launch_contract.task}_"
             f"policy{self._policy_version}_chunk{chunk.prompt_index}_{chunk.sample_start}"
         )
         try:
@@ -246,21 +246,22 @@ class RayRolloutWorker:
         return metrics
 
     @staticmethod
-    def _normalize_runtime_spec(
-        runtime_spec: GenerationRuntimeSpec | Mapping[str, Any],
-    ) -> GenerationRuntimeSpec:
-        spec = GenerationRuntimeSpec.from_value(runtime_spec)
-        if spec.family is None:
-            raise ValueError("GenerationRuntimeSpec.family is required")
-        return spec
+    def _normalize_launch_contract(
+        launch_contract: GenerationRuntimeLaunchContract | Mapping[str, Any],
+    ) -> GenerationRuntimeLaunchContract:
+        contract = GenerationRuntimeLaunchContract.from_value(launch_contract)
+        if contract.family is None:
+            raise ValueError("GenerationRuntimeLaunchContract.family is required")
+        return contract
 
     def _build_executor(self) -> ChunkedFamilyPipelineExecutor:
-        runtime_spec = self.runtime_spec
-        builder_path = runtime_spec.runtime_builder
-        executor_path = runtime_spec.executor_cls
+        launch_contract = self.launch_contract
+        builder_path = launch_contract.runtime_builder
+        executor_path = launch_contract.executor_cls
         if builder_path is None or executor_path is None:
             raise ValueError(
-                "GenerationRuntimeSpec requires runtime_builder and executor_cls import paths",
+                "GenerationRuntimeLaunchContract requires runtime_builder and "
+                "executor_cls import paths",
             )
 
         from vrl.models.interfaces.runtime import RuntimeBuildSpec
@@ -269,33 +270,38 @@ class RayRolloutWorker:
         executor_cls = import_from_path(str(executor_path))
         bundle = build_runtime_bundle(
             RuntimeBuildSpec(
-                **self._normalize_runtime_build_spec_payload(
-                    runtime_spec.build_spec_payload(),
+                **self._normalize_runtime_build_payload(
+                    launch_contract.model_build_payload(),
                 )
             ),
         )
         model = require_runtime_model(bundle.model, owner="RuntimeBundle.model")
-        built = executor_cls(model, **dict(runtime_spec.executor_kwargs))
+        built = executor_cls(model, **dict(launch_contract.executor_kwargs))
         if getattr(bundle, "runtime_caps", None) is not None:
             built.runtime_caps = dict(bundle.runtime_caps)
         return require_chunked_executor(built)
 
     @staticmethod
-    def _profiler_config_from_spec(
-        runtime_spec: GenerationRuntimeSpec,
+    def _profiler_config_from_contract(
+        launch_contract: GenerationRuntimeLaunchContract,
     ) -> TorchProfilerConfig:
-        raw = runtime_spec.extra.get("torch_profiler", {})
+        raw = launch_contract.extra.get("torch_profiler", {})
         if isinstance(raw, Mapping):
             return TorchProfilerConfig(**dict(raw))
         return TorchProfilerConfig()
 
     @staticmethod
-    def _capability_from_spec(runtime_spec: GenerationRuntimeSpec) -> FamilyCapability:
-        capability = family_capability_from_value(runtime_spec.extra.get("family_capability"))
+    def _capability_from_contract(
+        launch_contract: GenerationRuntimeLaunchContract,
+    ) -> FamilyCapability:
+        capability = family_capability_from_value(
+            launch_contract.extra.get("family_capability"),
+        )
         if capability is not None:
             return capability
         raise ValueError(
-            "GenerationRuntimeSpec.extra['family_capability'] is required for Ray rollout",
+            "GenerationRuntimeLaunchContract.extra['family_capability'] is required "
+            "for Ray rollout",
         )
 
     def _merge_loaded_capability(
@@ -311,12 +317,12 @@ class RayRolloutWorker:
             return merged
         if declared.family != merged.family or declared.task != merged.task:
             raise ValueError(
-                "executor capability does not match runtime spec: "
+                "executor capability does not match launch contract: "
                 f"{declared.family}/{declared.task} != {merged.family}/{merged.task}",
             )
         if declared.trajectory_kind != merged.trajectory_kind:
             raise ValueError(
-                "executor trajectory capability does not match runtime spec: "
+                "executor trajectory capability does not match launch contract: "
                 f"{declared.trajectory_kind} != {merged.trajectory_kind}",
             )
         return declared.with_runtime_caps(
@@ -350,7 +356,7 @@ class RayRolloutWorker:
             return "cpu"
 
     @classmethod
-    def _normalize_runtime_build_spec_payload(
+    def _normalize_runtime_build_payload(
         cls,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
@@ -384,7 +390,7 @@ class RayRolloutWorker:
             return aliases[key]
         except KeyError as exc:
             raise ValueError(
-                f"unsupported torch dtype string in runtime_spec: {value!r}",
+                f"unsupported torch dtype string in launch_contract: {value!r}",
             ) from exc
 
     @classmethod

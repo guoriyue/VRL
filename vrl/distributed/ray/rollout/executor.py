@@ -45,12 +45,12 @@ class DistributedRolloutExecutor:
     async def execute(self, request: GenerationRequest) -> OutputBatch:
         from vrl.trainers.profiling import record_function
 
-        sample_specs = self.id_factory.build_sample_specs(request)
+        sample_rows = self.id_factory.build_sample_rows(request)
         with record_function("engine.plan"):
             rollout_plan = self.planner.plan_with_engine(
                 request,
                 self.workers,
-                sample_specs=sample_specs,
+                sample_rows=sample_rows,
             )
         assignments = list(rollout_plan.assignments)
         engine_plan = rollout_plan.engine_plan
@@ -114,7 +114,7 @@ class DistributedRolloutExecutor:
         output = gather_pipeline_chunks(
             self.gatherer,
             request,
-            sample_specs,
+            sample_rows,
             chunk_outputs,
         )
         attach_engine_plan(output, engine_plan)

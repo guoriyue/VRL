@@ -102,10 +102,10 @@ class DiffusionNFT(Algorithm):
 
         import torch
 
-        from vrl.engine.trajectory import trajectory_replay_tensor_dict
+        from vrl.engine.trajectory import TrajectoryResolver
 
         cfg = self.config
-        replay_tensors = trajectory_replay_tensor_dict(batch, "denoise")
+        replay_tensors = TrajectoryResolver.from_batch(batch).replay_tensor_dict("denoise")
         required_tensors = {}
         for key in ("latents_clean", "prompt_embeds", "timesteps"):
             value = replay_tensors.get(key)

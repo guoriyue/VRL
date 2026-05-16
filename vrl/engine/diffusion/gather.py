@@ -12,7 +12,7 @@ from vrl.engine.core.protocols import PipelineChunkResult
 from vrl.engine.core.types import (
     GenerationMetrics,
     GenerationRequest,
-    GenerationSampleSpec,
+    GenerationSampleRow,
     OutputBatch,
 )
 from vrl.engine.diffusion.layout import DiffusionRequestLayout
@@ -29,14 +29,14 @@ class DiffusionChunkGatherer:
     def gather_chunks(
         self,
         request: GenerationRequest,
-        sample_specs: Sequence[GenerationSampleSpec],
+        sample_rows: Sequence[GenerationSampleRow],
         chunks: Sequence[PipelineChunkResult],
     ) -> OutputBatch:
         sampling = request.sampling
         layout = DiffusionRequestLayout()
         ordered_chunks = layout.ordered_chunks(
             request,
-            sample_specs,
+            sample_rows,
             cast("Sequence[DiffusionChunkResult]", chunks),
         )
 
@@ -59,19 +59,19 @@ class DiffusionChunkGatherer:
         if not rollout_context:
             raise ValueError("DiffusionChunkResult.context must be non-empty")
 
-        specs = list(sample_specs)
+        rows = list(sample_rows)
         prompts = list(request.prompts)
         peak_mem_mb = layout.max_peak_memory_mb(ordered_chunks)
         metrics = GenerationMetrics(
             num_prompts=len(prompts),
-            num_samples=len(specs),
+            num_samples=len(rows),
             num_steps=int(sampling["num_steps"]),
             micro_batches=len(ordered_chunks),
             peak_memory_mb=peak_mem_mb,
         )
         trajectory = build_diffusion_trajectory(
             request=request,
-            sample_specs=specs,
+            sample_rows=rows,
             observations=observations,
             actions=actions,
             old_log_prob=log_probs,
@@ -86,7 +86,7 @@ class DiffusionChunkGatherer:
             family=request.family,
             task=request.task,
             prompts=prompts,
-            sample_specs=specs,
+            sample_rows=rows,
             output=video,
             trajectory=trajectory,
             extra={},

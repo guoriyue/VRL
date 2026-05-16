@@ -57,18 +57,18 @@ def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
     )
 
     assert isinstance(inputs, RolloutRuntimeInputs)
-    assert pickle.loads(pickle.dumps(inputs.runtime_spec)) == inputs.runtime_spec
-    assert inputs.runtime_spec.family == family
-    assert inputs.runtime_spec.task == expected_task
-    assert inputs.runtime_spec.policy_version == 0
-    assert inputs.runtime_spec.runtime_builder == entry.runtime_builder
-    assert inputs.runtime_spec.executor_cls == entry.executor_cls
-    assert inputs.runtime_spec.executor_kwargs == {"sample_batch_size": 2}
+    assert pickle.loads(pickle.dumps(inputs.launch_contract)) == inputs.launch_contract
+    assert inputs.launch_contract.family == family
+    assert inputs.launch_contract.task == expected_task
+    assert inputs.launch_contract.policy_version == 0
+    assert inputs.launch_contract.runtime_builder == entry.runtime_builder
+    assert inputs.launch_contract.executor_cls == entry.executor_cls
+    assert inputs.launch_contract.executor_kwargs == {"sample_batch_size": 2}
     assert isinstance(inputs.gatherer, expected_gatherer)
     assert not isinstance(inputs.gatherer, ChunkedFamilyPipelineExecutor)
 
 
-def test_diffusion_runtime_spec_uses_worker_primitive_device_and_dtype() -> None:
+def test_diffusion_launch_contract_uses_worker_primitive_device_and_dtype() -> None:
     cfg = load_config(
         "experiment/sd3_5_ocr_grpo",
         overrides=[
@@ -88,9 +88,9 @@ def test_diffusion_runtime_spec_uses_worker_primitive_device_and_dtype() -> None
     )
 
     assert isinstance(inputs, RolloutRuntimeInputs)
-    assert inputs.runtime_spec.build_spec is not None
-    assert inputs.runtime_spec.build_spec["device"] == "cuda"
-    assert inputs.runtime_spec.build_spec["dtype"] == "float16"
+    assert inputs.launch_contract.model_build is not None
+    assert inputs.launch_contract.model_build["device"] == "cuda"
+    assert inputs.launch_contract.model_build["dtype"] == "float16"
 
 
 def test_cosmos_runtime_inputs_include_reference_image_from_cfg() -> None:
@@ -114,10 +114,10 @@ def test_cosmos_runtime_inputs_include_reference_image_from_cfg() -> None:
     )
 
     assert isinstance(inputs, RolloutRuntimeInputs)
-    assert inputs.runtime_spec.family == "cosmos-predict2"
-    assert inputs.runtime_spec.executor_kwargs["reference_image"] == "/tmp/reference.png"
-    assert inputs.runtime_spec.build_spec is not None
-    assert inputs.runtime_spec.build_spec["extra"]["reference_image"] == "/tmp/reference.png"
+    assert inputs.launch_contract.family == "cosmos-predict2"
+    assert inputs.launch_contract.executor_kwargs["reference_image"] == "/tmp/reference.png"
+    assert inputs.launch_contract.model_build is not None
+    assert inputs.launch_contract.model_build["extra"]["reference_image"] == "/tmp/reference.png"
 
 
 def test_explicit_executor_kwargs_override_registry_defaults() -> None:
@@ -142,4 +142,4 @@ def test_explicit_executor_kwargs_override_registry_defaults() -> None:
     )
 
     assert isinstance(inputs, RolloutRuntimeInputs)
-    assert inputs.runtime_spec.executor_kwargs == {"sample_batch_size": 3}
+    assert inputs.launch_contract.executor_kwargs == {"sample_batch_size": 3}

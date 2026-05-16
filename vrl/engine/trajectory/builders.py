@@ -6,8 +6,8 @@ from typing import Any
 
 import torch
 
-from vrl.engine.core.types import GenerationRequest, GenerationSampleSpec
-from vrl.engine.trajectory.axes import AxisSpec
+from vrl.engine.core.types import GenerationRequest, GenerationSampleRow
+from vrl.engine.trajectory.axes import TrajectoryAxis
 from vrl.engine.trajectory.types import (
     ReplayInput,
     TrajectoryBatch,
@@ -25,7 +25,7 @@ from vrl.engine.trajectory.views import RewardView
 def build_diffusion_trajectory(
     *,
     request: GenerationRequest,
-    sample_specs: list[GenerationSampleSpec],
+    sample_rows: list[GenerationSampleRow],
     observations: Any,
     actions: Any,
     old_log_prob: Any,
@@ -36,7 +36,7 @@ def build_diffusion_trajectory(
 ) -> TrajectoryBatch:
     """Build a denoise-step trajectory from shared diffusion rollout tensors."""
 
-    batch_size = len(sample_specs)
+    batch_size = len(sample_rows)
     timestep_count = int(old_log_prob.shape[1])
     device = getattr(old_log_prob, "device", None)
     tensors: dict[str, TrajectoryTensor] = {
@@ -97,11 +97,11 @@ def build_diffusion_trajectory(
         request_id=request.request_id,
         family=request.family,
         task=request.task,
-        sample_specs=list(sample_specs),
-        group_ids=_prompt_group_ids(sample_specs, device=device),
+        sample_rows=list(sample_rows),
+        group_ids=_prompt_group_ids(sample_rows, device=device),
         axes={
-            "sample": AxisSpec("sample", "sample", batch_size),
-            "timestep": AxisSpec("timestep", "denoise_step", timestep_count),
+            "sample": TrajectoryAxis("sample", "sample", batch_size),
+            "timestep": TrajectoryAxis("timestep", "denoise_step", timestep_count),
         },
         segments={
             "denoise": TrajectorySegment(
@@ -139,7 +139,7 @@ def build_diffusion_trajectory(
 def build_ar_discrete_trajectory(
     *,
     request: GenerationRequest,
-    sample_specs: list[GenerationSampleSpec],
+    sample_rows: list[GenerationSampleRow],
     token_ids: Any,
     token_log_probs: Any,
     token_mask: Any,
@@ -151,18 +151,18 @@ def build_ar_discrete_trajectory(
 ) -> TrajectoryBatch:
     """Build a discrete image-token trajectory from Janus-Pro rollout tensors."""
 
-    batch_size = len(sample_specs)
+    batch_size = len(sample_rows)
     token_count = int(token_ids.shape[1])
     device = getattr(token_ids, "device", None)
     trajectory = TrajectoryBatch(
         request_id=request.request_id,
         family=request.family,
         task=request.task,
-        sample_specs=list(sample_specs),
-        group_ids=_prompt_group_ids(sample_specs, device=device),
+        sample_rows=list(sample_rows),
+        group_ids=_prompt_group_ids(sample_rows, device=device),
         axes={
-            "sample": AxisSpec("sample", "sample", batch_size),
-            "token": AxisSpec("token", "discrete_token", token_count),
+            "sample": TrajectoryAxis("sample", "sample", batch_size),
+            "token": TrajectoryAxis("token", "discrete_token", token_count),
         },
         segments={
             "image_tokens": TrajectorySegment(
@@ -249,7 +249,7 @@ def build_ar_discrete_trajectory(
 def build_ar_continuous_trajectory(
     *,
     request: GenerationRequest,
-    sample_specs: list[GenerationSampleSpec],
+    sample_rows: list[GenerationSampleRow],
     tokens: Any,
     saved_noise: Any,
     token_log_probs: Any,
@@ -263,7 +263,7 @@ def build_ar_continuous_trajectory(
 ) -> TrajectoryBatch:
     """Build a continuous image-token trajectory from NextStep rollout tensors."""
 
-    batch_size = len(sample_specs)
+    batch_size = len(sample_rows)
     token_count = int(token_log_probs.shape[1])
     device = getattr(token_log_probs, "device", None)
     segments: dict[str, TrajectorySegment] = {
@@ -360,11 +360,11 @@ def build_ar_continuous_trajectory(
         request_id=request.request_id,
         family=request.family,
         task=request.task,
-        sample_specs=list(sample_specs),
-        group_ids=_prompt_group_ids(sample_specs, device=device),
+        sample_rows=list(sample_rows),
+        group_ids=_prompt_group_ids(sample_rows, device=device),
         axes={
-            "sample": AxisSpec("sample", "sample", batch_size),
-            "token": AxisSpec("token", "continuous_token", token_count),
+            "sample": TrajectoryAxis("sample", "sample", batch_size),
+            "token": TrajectoryAxis("token", "continuous_token", token_count),
         },
         segments=segments,
         reward_views={
@@ -388,7 +388,7 @@ def build_ar_continuous_trajectory(
 def build_ar_multisegment_trajectory(
     *,
     request: GenerationRequest,
-    sample_specs: list[GenerationSampleSpec],
+    sample_rows: list[GenerationSampleRow],
     segments: dict[str, dict[str, Any]],
     decoded_outputs: dict[str, Any],
     primary_segment: str,
@@ -399,11 +399,11 @@ def build_ar_multisegment_trajectory(
 
     if not segments:
         raise ValueError("segments must be non-empty")
-    batch_size = len(sample_specs)
+    batch_size = len(sample_rows)
     first_segment = next(iter(segments.values()))
     device = getattr(first_segment.get("token_ids"), "device", None)
 
-    axes = {"sample": AxisSpec("sample", "sample", batch_size)}
+    axes = {"sample": TrajectoryAxis("sample", "sample", batch_size)}
     trajectory_segments: dict[str, TrajectorySegment] = {}
     for name, payload in segments.items():
         token_ids = payload["token_ids"]
@@ -418,7 +418,7 @@ def build_ar_multisegment_trajectory(
 
         axis_name = f"{name}_token"
         token_count = int(token_ids.shape[1])
-        axes[axis_name] = AxisSpec(axis_name, "discrete_token", token_count)
+        axes[axis_name] = TrajectoryAxis(axis_name, "discrete_token", token_count)
         modality = "image" if bool(payload.get("visual", not name.endswith("_text"))) else "text"
         trainable = _segment_trainable(request.sampling.get("train_segments"), name, payload)
         trajectory_segments[name] = TrajectorySegment(
@@ -514,8 +514,8 @@ def build_ar_multisegment_trajectory(
         request_id=request.request_id,
         family=request.family,
         task=request.task,
-        sample_specs=list(sample_specs),
-        group_ids=_prompt_group_ids(sample_specs, device=device),
+        sample_rows=list(sample_rows),
+        group_ids=_prompt_group_ids(sample_rows, device=device),
         axes=axes,
         segments=trajectory_segments,
         reward_views={
@@ -541,12 +541,12 @@ def build_ar_multisegment_trajectory(
 
 
 def _prompt_group_ids(
-    sample_specs: list[GenerationSampleSpec],
+    sample_rows: list[GenerationSampleRow],
     *,
     device: Any,
 ) -> Any:
     return torch.tensor(
-        [spec.prompt_index for spec in sample_specs],
+        [row.prompt_index for row in sample_rows],
         dtype=torch.long,
         device=device,
     )

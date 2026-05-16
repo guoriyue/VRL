@@ -1,54 +1,46 @@
-"""Batch compatible generation requests into one executor call."""
+"""Request batch for compatible generation requests."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
 from vrl.engine.core.types import (
     GenerationRequest,
-    GenerationSampleSpec,
+    GenerationSampleRow,
     OutputBatch,
 )
 from vrl.engine.trajectory.ops import slice_trajectory_batch
 
 
 @dataclass(slots=True)
-class RequestBatcher:
-    """Batch compatible generation requests into one executor call."""
+class RequestBatch:
+    """Compatible generation requests grouped for one executor call."""
 
-    executor: Any
     requests: list[GenerationRequest]
-    sample_rows_by_request: dict[str, list[GenerationSampleSpec]]
-    engine_plans_by_request: dict[str, Any]
-    batched_plan: Any | None = None
+    sample_rows_by_request: dict[str, list[GenerationSampleRow]]
 
-    def run(self) -> dict[str, OutputBatch]:
+    def run(
+        self,
+        forward: Callable[[GenerationRequest, list[GenerationSampleRow]], OutputBatch],
+    ) -> dict[str, OutputBatch]:
         """Run the batched forward path and split output back per request."""
 
         if not self.requests:
             return {}
         if len(self.requests) == 1:
             request = self.requests[0]
-            plan = self.engine_plans_by_request[request.request_id]
-            output = self._forward_request(
-                request,
-                self.sample_rows_by_request[request.request_id],
-                plan=plan,
-            )
-            return {request.request_id: self._attach_plan(output, plan)}
+            return {
+                request.request_id: forward(
+                    request,
+                    self.sample_rows_by_request[request.request_id],
+                )
+            }
 
         self._validate_batchable()
         batched_request, batched_sample_rows, request_sample_counts = self._batch_requests()
-        batched_plan = self.batched_plan or self._build_plan(
-            batched_request,
-            batched_sample_rows,
-        )
-        batched_output = self._forward_request(
-            batched_request,
-            batched_sample_rows,
-            plan=batched_plan,
-        )
+        batched_output = forward(batched_request, batched_sample_rows)
 
         outputs: dict[str, OutputBatch] = {}
         offset = 0
@@ -62,20 +54,16 @@ class RequestBatcher:
                 count=count,
                 total=len(batched_sample_rows),
             )
-            output = self._attach_plan(
-                output,
-                self.engine_plans_by_request[request.request_id],
-            )
             outputs[request.request_id] = output
             offset += count
         return outputs
 
     def _batch_requests(
         self,
-    ) -> tuple[GenerationRequest, list[GenerationSampleSpec], dict[str, int]]:
+    ) -> tuple[GenerationRequest, list[GenerationSampleRow], dict[str, int]]:
         first = self.requests[0]
         prompts: list[str] = []
-        batched_sample_rows: list[GenerationSampleSpec] = []
+        batched_sample_rows: list[GenerationSampleRow] = []
         request_sample_counts: dict[str, int] = {}
         for request in self.requests:
             prompts.extend(request.prompts)
@@ -100,48 +88,6 @@ class RequestBatcher:
             request_sample_counts,
         )
 
-    def _forward_request(
-        self,
-        request: GenerationRequest,
-        sample_rows: list[GenerationSampleSpec],
-        *,
-        plan: Any,
-    ) -> OutputBatch:
-        forward_plan = getattr(self.executor, "forward_plan", None)
-        if not callable(forward_plan):
-            raise TypeError(
-                f"{type(self.executor).__name__} must implement forward_plan(...) "
-                "for request batching",
-            )
-        output = forward_plan(request, sample_rows, plan)
-        execution_extra = output.extra.setdefault("engine_execution", {})
-        if isinstance(execution_extra, dict):
-            execution_extra["plan_aware_forward"] = True
-            execution_extra["forward_plan_id"] = plan.request_id
-        return output
-
-    def _build_plan(
-        self,
-        request: GenerationRequest,
-        sample_rows: list[GenerationSampleSpec],
-    ) -> Any:
-        plan_method = getattr(self.executor, "plan", None)
-        if callable(plan_method):
-            return plan_method(request, sample_rows)
-        from vrl.engine.execution.planner import build_engine_plan, resolve_executor_capability
-
-        return build_engine_plan(
-            request,
-            sample_rows,
-            capability=resolve_executor_capability(self.executor, request),
-        )
-
-    @staticmethod
-    def _attach_plan(output: OutputBatch, plan: Any) -> OutputBatch:
-        from vrl.engine.execution.planner import attach_engine_plan
-
-        return attach_engine_plan(output, plan)
-
     def _validate_batchable(self) -> None:
         first = self.requests[0]
         for request in self.requests[1:]:
@@ -161,7 +107,7 @@ class RequestBatcher:
         output: OutputBatch,
         *,
         request: GenerationRequest,
-        sample_rows: list[GenerationSampleSpec],
+        sample_rows: list[GenerationSampleRow],
         offset: int,
         count: int,
         total: int,
@@ -180,7 +126,7 @@ class RequestBatcher:
             family=request.family,
             task=request.task,
             prompts=list(request.prompts),
-            sample_specs=sample_rows,
+            sample_rows=sample_rows,
             output=self._slice_value(output.output, offset, count, total),
             trajectory=trajectory,
             extra=extra,
@@ -200,7 +146,7 @@ class RequestBatcher:
         data: Any,
         *,
         request: GenerationRequest,
-        sample_rows: list[GenerationSampleSpec],
+        sample_rows: list[GenerationSampleRow],
         offset: int,
         count: int,
         total: int,
@@ -208,7 +154,7 @@ class RequestBatcher:
         return slice_trajectory_batch(
             data,
             request=request,
-            sample_specs=sample_rows,
+            sample_rows=sample_rows,
             offset=offset,
             count=count,
             total=total,
@@ -233,4 +179,4 @@ class RequestBatcher:
         return value
 
 
-__all__ = ["RequestBatcher"]
+__all__ = ["RequestBatch"]

@@ -9,7 +9,7 @@ import pytest
 from omegaconf import OmegaConf
 
 from vrl.engine import OutputBatch
-from vrl.engine.core.runtime_spec import GenerationRuntimeSpec
+from vrl.engine.core.launch_contract import GenerationRuntimeLaunchContract
 from vrl.rollouts.runtime.backend import (
     DRIVER_CUDA_OWNERSHIP_ERROR,
     build_rollout_backend_from_cfg,
@@ -46,20 +46,20 @@ class _Bundle:
 
 
 class _FakeGatherer:
-    def gather_chunks(self, request: Any, sample_specs: Any, chunks: Any) -> OutputBatch:
-        del sample_specs, chunks
+    def gather_chunks(self, request: Any, sample_rows: Any, chunks: Any) -> OutputBatch:
+        del sample_rows, chunks
         return OutputBatch(
             request_id=request.request_id,
             family=request.family,
             task=request.task,
             prompts=list(request.prompts),
-            sample_specs=[],
+            sample_rows=[],
             output=None,
         )
 
 
-def _runtime_spec() -> GenerationRuntimeSpec:
-    return GenerationRuntimeSpec(
+def _launch_contract() -> GenerationRuntimeLaunchContract:
+    return GenerationRuntimeLaunchContract(
         family="fake",
         task="t2i",
         runtime_builder="tests.fake:build_runtime",
@@ -129,21 +129,21 @@ def test_rollout_backend_config_from_cfg_rejects_non_ray_backend() -> None:
 
 
 @pytest.mark.parametrize(
-    ("runtime_spec", "gatherer"),
+    ("launch_contract", "gatherer"),
     [
-        pytest.param(None, _FakeGatherer(), id="missing-runtime-spec"),
-        pytest.param(_runtime_spec(), None, id="missing-gatherer"),
+        pytest.param(None, _FakeGatherer(), id="missing-launch-contract"),
+        pytest.param(_launch_contract(), None, id="missing-gatherer"),
         pytest.param(None, None, id="missing-both"),
     ],
 )
-def test_ray_backend_requires_runtime_spec_and_gatherer(
-    runtime_spec: Any,
+def test_ray_backend_requires_launch_contract_and_gatherer(
+    launch_contract: Any,
     gatherer: Any,
 ) -> None:
-    with pytest.raises(ValueError, match="runtime_spec plus gatherer"):
+    with pytest.raises(ValueError, match="launch_contract plus gatherer"):
         build_rollout_backend_from_cfg(
             _cfg(),
-            runtime_spec=runtime_spec,
+            launch_contract=launch_contract,
             gatherer=gatherer,
             driver_policy=_CpuPolicy(),
         )

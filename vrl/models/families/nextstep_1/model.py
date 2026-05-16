@@ -636,14 +636,15 @@ class NextStep1Model(nn.Module):
           ``ReplayResult`` with ``log_probs`` and ``tokens`` for ``image_tokens``.
         """
         del request, timestep_idx
-        from vrl.engine.trajectory import trajectory_replay_tensor_dict, trajectory_role_value
+        from vrl.engine.trajectory import TrajectoryResolver
 
-        replay = trajectory_replay_tensor_dict(batch, "image_tokens")
+        resolver = TrajectoryResolver.from_batch(batch)
+        replay = resolver.replay_tensor_dict("image_tokens")
         prompt_ids = replay["prompt_input_ids"]
         prompt_mask = replay["prompt_attention_mask"]
         uncond_ids = replay.get("uncond_input_ids")
         uncond_mask = replay.get("uncond_attention_mask")
-        tokens = trajectory_role_value(batch, "image_tokens", "action")
+        tokens = resolver.role_value("image_tokens", "action")
         saved_noise = replay["saved_noise"]
 
         embed = self.language_model.get_input_embeddings()

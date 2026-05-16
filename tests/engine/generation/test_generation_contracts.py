@@ -69,11 +69,11 @@ def test_generation_request_validation() -> None:
 
 def test_generation_id_factory_is_deterministic() -> None:
     request = _request()
-    specs = GenerationIdFactory().build_sample_specs(request)
+    rows = GenerationIdFactory().build_sample_rows(request)
 
-    assert [spec.sample_id for spec in specs] == [
+    assert [row.sample_id for row in rows] == [
         "req-1:prompt:0:sample:0",
         "req-1:prompt:0:sample:1",
     ]
-    assert [spec.seed for spec in specs] == [7, 8]
-    assert {spec.group_id for spec in specs} == {"req-1:prompt:0"}
+    assert [row.seed for row in rows] == [7, 8]
+    assert {row.group_id for row in rows} == {"req-1:prompt:0"}

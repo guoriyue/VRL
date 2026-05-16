@@ -10,8 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-from vrl.engine.core.types import GenerationSampleSpec
-from vrl.engine.trajectory.axes import AxisSpec
+from vrl.engine.core.types import GenerationSampleRow
+from vrl.engine.trajectory.axes import TrajectoryAxis
 
 if TYPE_CHECKING:
     from vrl.engine.trajectory.views import RewardView
@@ -115,9 +115,9 @@ class TrajectoryBatch:
     request_id: str
     family: str
     task: str
-    sample_specs: list[GenerationSampleSpec]
+    sample_rows: list[GenerationSampleRow]
     group_ids: Any
-    axes: dict[str, AxisSpec]
+    axes: dict[str, TrajectoryAxis]
     segments: dict[str, TrajectorySegment]
     reward_views: dict[str, RewardView] = field(default_factory=dict)
     metrics: TrajectoryMetrics = field(default_factory=TrajectoryMetrics)

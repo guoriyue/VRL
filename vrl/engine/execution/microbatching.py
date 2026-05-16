@@ -163,28 +163,9 @@ def _clear_cuda_cache() -> None:
         torch.cuda.empty_cache()
 
 
-MicroBatchPlan = MicroBatchSample
-ExecutionPlan = MicroBatchSchedule
-plan_prompt_group_microbatches = build_prompt_microbatch_schedule
-run_microbatches_with_oom_retry = run_microbatch_samples_with_oom_retry
-
-
-@dataclass(frozen=True, slots=True)
-class RolloutShardPlan:
-    """Executable chunks for one large rollout request."""
-
-    request_id: str
-    chunks: tuple[MicroBatchSample, ...]
-
-
 __all__ = [
-    "ExecutionPlan",
-    "MicroBatchPlan",
     "MicroBatchSample",
     "MicroBatchSchedule",
-    "RolloutShardPlan",
     "build_prompt_microbatch_schedule",
-    "plan_prompt_group_microbatches",
     "run_microbatch_samples_with_oom_retry",
-    "run_microbatches_with_oom_retry",
 ]

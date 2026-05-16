@@ -8,7 +8,7 @@ from typing import Any, Protocol, runtime_checkable
 from vrl.engine.core.protocols import ChunkedFamilyPipelineExecutor, PipelineChunkResult
 from vrl.engine.core.types import (
     GenerationRequest,
-    GenerationSampleSpec,
+    GenerationSampleRow,
     OutputBatch,
 )
 
@@ -20,7 +20,7 @@ class ChunkGatherer(Protocol):
     def gather_chunks(
         self,
         request: GenerationRequest,
-        sample_specs: Sequence[GenerationSampleSpec],
+        sample_rows: Sequence[GenerationSampleRow],
         chunks: Sequence[PipelineChunkResult],
     ) -> OutputBatch: ...
 
@@ -52,13 +52,13 @@ def require_chunk_gatherer(gatherer: Any) -> ChunkGatherer:
 def gather_pipeline_chunks(
     gatherer: Any,
     request: GenerationRequest,
-    sample_specs: Sequence[GenerationSampleSpec],
+    sample_rows: Sequence[GenerationSampleRow],
     chunks: Sequence[PipelineChunkResult],
 ) -> OutputBatch:
     """Gather family-specific chunk payloads into one canonical OutputBatch."""
 
     chunk_gatherer = require_chunk_gatherer(gatherer)
-    return chunk_gatherer.gather_chunks(request, sample_specs, chunks)
+    return chunk_gatherer.gather_chunks(request, sample_rows, chunks)
 
 
 __all__ = [

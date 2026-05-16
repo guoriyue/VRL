@@ -1,4 +1,4 @@
-"""Shared scaffolding for autoregressive generation executors."""
+"""Request layout helpers shared by AR executors and gatherers."""
 
 from __future__ import annotations
 
@@ -8,18 +8,9 @@ from typing import Any, Protocol, TypeVar
 
 import torch
 
-from vrl.engine.ar.spec import ARGenerationSpec
-from vrl.engine.core.protocols import (
-    ChunkedFamilyPipelineExecutor,
-    PipelineChunkResult,
-)
-from vrl.engine.core.types import (
-    GenerationRequest,
-    GenerationSampleSpec,
-    OutputBatch,
-)
-from vrl.engine.execution.batching import forward_batch_by_merging_prompts
-from vrl.engine.execution.microbatching import MicroBatchPlan
+from vrl.engine.core.protocols import PipelineChunkResult
+from vrl.engine.core.types import GenerationRequest, GenerationSampleRow
+from vrl.engine.execution.microbatching import MicroBatchSample
 
 
 class ARChunkResult(PipelineChunkResult, Protocol):
@@ -35,18 +26,30 @@ TChunk = TypeVar("TChunk", bound=ARChunkResult)
 
 
 @dataclass(frozen=True, slots=True)
+class ARSamplingParams:
+    """Parsed AR sampling fields from ``GenerationRequest.sampling``."""
+
+    image_token_num: int
+    image_size: int
+    max_text_length: int
+    seed: int | None
+    use_ar_scheduler: bool
+    ar_scheduler_batch_size: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ARRequestLayout:
     """Prompt-major request layout shared by AR executors and gatherers."""
 
-    default_image_token_num: int | None = 576
-    default_image_size: int | None = 384
-    default_max_text_length: int | None = 256
+    default_image_token_num: int | None = None
+    default_image_size: int | None = None
+    default_max_text_length: int | None = None
 
-    def parse_spec(self, request: GenerationRequest) -> ARGenerationSpec:
+    def parse_sampling_params(self, request: GenerationRequest) -> ARSamplingParams:
         """Parse family-neutral AR fields from ``GenerationRequest.sampling``."""
 
         sampling = request.sampling
-        return ARGenerationSpec(
+        return ARSamplingParams(
             image_token_num=self._sampling_int(
                 sampling,
                 "image_token_num",
@@ -70,12 +73,12 @@ class ARRequestLayout:
         )
 
     def expand_prompts(self, request: GenerationRequest) -> list[str]:
-        """Repeat prompts in the same prompt-major order as sample specs."""
+        """Repeat prompts in the same prompt-major order as sample rows."""
 
         samples_per_prompt = int(request.samples_per_prompt)
         return [prompt for prompt in request.prompts for _ in range(samples_per_prompt)]
 
-    def validate_chunk(self, request: GenerationRequest, chunk: MicroBatchPlan) -> None:
+    def validate_chunk(self, request: GenerationRequest, chunk: MicroBatchSample) -> None:
         """Validate one prompt/sample AR chunk against its request."""
 
         if chunk.prompt_index >= len(request.prompts):
@@ -96,7 +99,7 @@ class ARRequestLayout:
     def ordered_chunks(
         self,
         request: GenerationRequest,
-        sample_specs: Sequence[GenerationSampleSpec],
+        sample_rows: Sequence[GenerationSampleRow],
         chunks: Sequence[TChunk],
         *,
         row_fields: Sequence[str] = (),
@@ -113,7 +116,7 @@ class ARRequestLayout:
                 int(chunk.sample_start),
             ),
         )
-        expected = [(spec.prompt_index, spec.sample_index) for spec in sample_specs]
+        expected = [(row.prompt_index, row.sample_index) for row in sample_rows]
         actual: list[tuple[int, int]] = []
         for chunk in ordered:
             prompt_index = int(chunk.prompt_index)
@@ -133,7 +136,7 @@ class ARRequestLayout:
             )
         if actual != expected:
             raise ValueError(
-                "AR chunks do not cover sample_specs in prompt-major sample order",
+                "AR chunks do not cover sample_rows in prompt-major sample order",
             )
         return ordered
 
@@ -148,20 +151,20 @@ class ARRequestLayout:
                 f"chunk {name} has {shape[0]} rows, expected {count}",
             )
 
-    def chunk_seed_offset(self, request: GenerationRequest, chunk: MicroBatchPlan) -> int:
+    def chunk_seed_offset(self, request: GenerationRequest, chunk: MicroBatchSample) -> int:
         """Return the prompt-major sample offset for deterministic chunk seeding."""
 
         return chunk.prompt_index * int(request.samples_per_prompt) + chunk.sample_start
 
-    def chunk_sample_specs(
+    def chunk_sample_rows(
         self,
         request: GenerationRequest,
-        chunk: MicroBatchPlan,
-    ) -> list[GenerationSampleSpec]:
-        """Build prompt-major sample specs for an AR microbatch chunk."""
+        chunk: MicroBatchSample,
+    ) -> list[GenerationSampleRow]:
+        """Build prompt-major sample rows for an AR microbatch chunk."""
 
         return [
-            GenerationSampleSpec(
+            GenerationSampleRow(
                 prompt_index=chunk.prompt_index,
                 sample_index=sample_index,
                 prompt=chunk.prompt,
@@ -251,7 +254,7 @@ class ARRequestLayout:
         if key in sampling:
             return int(sampling[key])
         if default is None:
-            raise KeyError(key)
+            raise ValueError(f"request.sampling.{key} is required")
         return int(default)
 
     @staticmethod
@@ -282,105 +285,4 @@ class ARRequestLayout:
             )
 
 
-class ARPipelineExecutorBase(
-    ChunkedFamilyPipelineExecutor,
-):
-    """Base helpers for AR family executors.
-
-    Subclasses still own tokenization details, sampling math, decoding, and
-    family-specific output packing.
-    """
-
-    family: str
-    task: str
-    default_image_token_num: int | None = 576
-    default_image_size: int | None = 384
-    default_max_text_length: int | None = 256
-
-    @property
-    def layout(self) -> ARRequestLayout:
-        return ARRequestLayout(
-            default_image_token_num=self.default_image_token_num,
-            default_image_size=self.default_image_size,
-            default_max_text_length=self.default_max_text_length,
-        )
-
-    def parse_spec(self, request: GenerationRequest) -> ARGenerationSpec:
-        return self.layout.parse_spec(request)
-
-    def expand_prompts(self, request: GenerationRequest) -> list[str]:
-        return self.layout.expand_prompts(request)
-
-    def forward_batch_plan(
-        self,
-        requests: list[GenerationRequest],
-        sample_specs_by_request: dict[str, list[GenerationSampleSpec]],
-        engine_plans_by_request: dict[str, Any],
-    ) -> dict[str, OutputBatch]:
-        return forward_batch_by_merging_prompts(
-            self,
-            requests,
-            sample_specs_by_request,
-            engine_plans_by_request=engine_plans_by_request,
-        )
-
-    def validate_chunk(self, request: GenerationRequest, chunk: MicroBatchPlan) -> None:
-        self.layout.validate_chunk(request, chunk)
-
-    def ordered_chunks(
-        self,
-        request: GenerationRequest,
-        sample_specs: Sequence[GenerationSampleSpec],
-        chunks: Sequence[TChunk],
-        *,
-        row_fields: Sequence[str] = (),
-    ) -> list[TChunk]:
-        return self.layout.ordered_chunks(
-            request,
-            sample_specs,
-            chunks,
-            row_fields=row_fields,
-        )
-
-    def require_rows(self, name: str, value: Any, count: int) -> None:
-        self.layout.require_rows(name, value, count)
-
-    def chunk_seed_offset(
-        self,
-        request: GenerationRequest,
-        chunk: MicroBatchPlan,
-    ) -> int:
-        return self.layout.chunk_seed_offset(request, chunk)
-
-    def chunk_sample_specs(
-        self,
-        request: GenerationRequest,
-        chunk: MicroBatchPlan,
-    ) -> list[GenerationSampleSpec]:
-        return self.layout.chunk_sample_specs(request, chunk)
-
-    def max_peak_memory_mb(
-        self,
-        chunks: Sequence[ARChunkResult],
-    ) -> float | None:
-        return self.layout.max_peak_memory_mb(chunks)
-
-    def align_pair(
-        self,
-        a_ids: torch.Tensor,
-        a_mask: torch.Tensor,
-        b_ids: torch.Tensor,
-        b_mask: torch.Tensor,
-        pad_id: int = 0,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        return self.layout.align_pair(a_ids, a_mask, b_ids, b_mask, pad_id=pad_id)
-
-    def peak_memory_mb(self) -> float | None:
-        return self.layout.peak_memory_mb()
-
-
-__all__ = [
-    "ARChunkResult",
-    "ARPipelineExecutorBase",
-    "ARRequestLayout",
-]
+__all__ = ["ARChunkResult", "ARRequestLayout", "ARSamplingParams"]

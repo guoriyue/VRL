@@ -63,7 +63,7 @@ class GenerationRequest:
 
 
 @dataclass(slots=True)
-class GenerationSampleSpec:
+class GenerationSampleRow:
     """Expanded sample-level unit inside a generation request."""
 
     prompt_index: int
@@ -96,19 +96,23 @@ class WorkloadSignature:
     @classmethod
     def from_request(cls, request: GenerationRequest) -> WorkloadSignature:
         sampling = request.sampling
+        height = sampling.get("height")
+        width = sampling.get("width")
+        num_frames = sampling.get("num_frames", sampling.get("frame_count"))
+        num_steps = sampling.get("num_steps", sampling.get("num_inference_steps"))
+        max_new_tokens = sampling.get(
+            "max_new_tokens",
+            sampling.get("max_new_image_tokens"),
+        )
         return cls(
             family=request.family,
             task=request.task,
-            height=_optional_int(sampling.get("height")),
-            width=_optional_int(sampling.get("width")),
-            num_frames=_optional_int(sampling.get("num_frames", sampling.get("frame_count"))),
-            num_steps=_optional_int(
-                sampling.get("num_steps", sampling.get("num_inference_steps"))
-            ),
+            height=None if height is None else int(height),
+            width=None if width is None else int(width),
+            num_frames=None if num_frames is None else int(num_frames),
+            num_steps=None if num_steps is None else int(num_steps),
             artifact_mode=tuple(sorted(request.return_artifacts)),
-            max_new_tokens=_optional_int(
-                sampling.get("max_new_tokens", sampling.get("max_new_image_tokens"))
-            ),
+            max_new_tokens=None if max_new_tokens is None else int(max_new_tokens),
         )
 
     @classmethod
@@ -132,6 +136,7 @@ class WorkloadSignature:
             capability_key=capability.batch_signature(),
         )
 
+
 @dataclass(slots=True)
 class OutputBatch:
     """Engine runtime output batch.
@@ -144,7 +149,7 @@ class OutputBatch:
     family: str
     task: str
     prompts: list[str]
-    sample_specs: list[GenerationSampleSpec]
+    sample_rows: list[GenerationSampleRow]
     output: Any
     trajectory: TrajectoryBatch | None = None
     engine_plan: EnginePlan | None = None
@@ -152,9 +157,3 @@ class OutputBatch:
     metrics: GenerationMetrics | None = None
     peak_memory_mb: float = 0.0
     error: str | None = None
-
-
-def _optional_int(value: Any) -> int | None:
-    if value is None:
-        return None
-    return int(value)

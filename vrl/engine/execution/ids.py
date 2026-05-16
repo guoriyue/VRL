@@ -2,24 +2,24 @@
 
 from __future__ import annotations
 
-from vrl.engine.core.types import GenerationRequest, GenerationSampleSpec
+from vrl.engine.core.types import GenerationRequest, GenerationSampleRow
 
 
 class GenerationIdFactory:
-    """Build deterministic sample specs from a generation request."""
+    """Build deterministic sample rows from a generation request."""
 
-    def build_sample_specs(
+    def build_sample_rows(
         self,
         request: GenerationRequest,
-    ) -> list[GenerationSampleSpec]:
+    ) -> list[GenerationSampleRow]:
         base_seed = request.sampling.get("seed")
         seed_int = int(base_seed) if base_seed is not None else None
-        specs: list[GenerationSampleSpec] = []
+        rows: list[GenerationSampleRow] = []
         for prompt_index, prompt in enumerate(request.prompts):
             prompt_id = f"{request.request_id}:prompt:{prompt_index}"
             group_id = prompt_id
             for sample_index in range(request.samples_per_prompt):
-                flat_index = len(specs)
+                flat_index = len(rows)
                 sample_id = f"{prompt_id}:sample:{sample_index}"
                 metadata = dict(request.metadata)
                 metadata.update(
@@ -31,8 +31,8 @@ class GenerationIdFactory:
                         "policy_version": request.policy_version,
                     }
                 )
-                specs.append(
-                    GenerationSampleSpec(
+                rows.append(
+                    GenerationSampleRow(
                         prompt_index=prompt_index,
                         sample_index=sample_index,
                         prompt=prompt,
@@ -44,7 +44,7 @@ class GenerationIdFactory:
                         metadata=metadata,
                     )
                 )
-        return specs
+        return rows
 
 
 __all__ = ["GenerationIdFactory"]

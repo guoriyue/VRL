@@ -17,7 +17,7 @@ from vrl.distributed.ray.rollout.types import RayWorkerHandle
 from vrl.distributed.ray.rollout.weight_sync import RayRolloutWeightSync
 from vrl.distributed.ray.rollout.worker import RayRolloutWorker
 from vrl.distributed.resources import format_distributed_resource_plan
-from vrl.engine.core.runtime_spec import GenerationRuntimeSpec
+from vrl.engine.core.launch_contract import GenerationRuntimeLaunchContract
 from vrl.engine.execution.gather import ChunkGatherer, require_chunk_gatherer
 from vrl.rollouts.runtime.config import RolloutBackendConfig
 
@@ -34,7 +34,7 @@ class RayRolloutLauncher:
     def launch(
         self,
         config: RolloutBackendConfig | Mapping[str, Any],
-        runtime_spec: GenerationRuntimeSpec | Mapping[str, Any],
+        launch_contract: GenerationRuntimeLaunchContract | Mapping[str, Any],
         gatherer: ChunkGatherer,
     ) -> RayDistributedRuntime:
         rollout_config = RolloutBackendConfig.from_cfg(config)
@@ -44,9 +44,9 @@ class RayRolloutLauncher:
                 f"got {rollout_config.backend!r}",
             )
 
-        spec = GenerationRuntimeSpec.from_value(runtime_spec)
-        if not spec.family:
-            raise ValueError("GenerationRuntimeSpec.family is required")
+        contract = GenerationRuntimeLaunchContract.from_value(launch_contract)
+        if not contract.family:
+            raise ValueError("GenerationRuntimeLaunchContract.family is required")
         chunk_gatherer = require_chunk_gatherer(gatherer)
 
         ray = require_ray()
@@ -82,7 +82,7 @@ class RayRolloutLauncher:
                     placement_group_capture_child_tasks=True,
                     placement_group_bundle_index=bundle_idx,
                 ),
-            ).remote(worker_id, spec)
+            ).remote(worker_id, contract)
             actors.append(actor)
             worker_ids.append(worker_id)
 
@@ -107,7 +107,7 @@ class RayRolloutLauncher:
         ]
 
         executor = DistributedRolloutExecutor(
-            DistributedExecutionPlanner(spec.extra.get("family_capability")),
+            DistributedExecutionPlanner(contract.extra.get("family_capability")),
             workers,
             chunk_gatherer,
             max_inflight_chunks_per_worker=rollout_config.max_inflight_chunks_per_worker,
@@ -124,8 +124,8 @@ class RayRolloutLauncher:
             owned_actors=placement.trainer_reservation_actors,
             placement_group=placement.placement_group,
         )
-        if spec.policy_version is not None:
-            runtime.current_policy_version = spec.policy_version
+        if contract.policy_version is not None:
+            runtime.current_policy_version = contract.policy_version
         return runtime
 
 

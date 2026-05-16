@@ -19,7 +19,7 @@ AxisKind = Literal[
 
 
 @dataclass(frozen=True, slots=True)
-class AxisSpec:
+class TrajectoryAxis:
     """Named logical axis used by trajectory tensors."""
 
     name: str
@@ -29,9 +29,9 @@ class AxisSpec:
 
     def __post_init__(self) -> None:
         if not self.name:
-            raise ValueError("AxisSpec.name must be non-empty")
+            raise ValueError("TrajectoryAxis.name must be non-empty")
         if self.length is not None and self.length < 0:
-            raise ValueError("AxisSpec.length must be >= 0 when set")
+            raise ValueError("TrajectoryAxis.length must be >= 0 when set")
 
 
-__all__ = ["AxisKind", "AxisSpec"]
+__all__ = ["AxisKind", "TrajectoryAxis"]
