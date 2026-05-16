@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.algorithms.types import Rollout
 from vrl.rewards.base import RewardFunction
+from vrl.rewards.types import RewardRollout
 
 
 class AestheticReward(RewardFunction):
@@ -86,7 +86,7 @@ class AestheticReward(RewardFunction):
 
         self._scorer = _AestheticScorer(self._device, dtype).to(self._device)
 
-    async def score(self, rollout: Rollout) -> float:
+    async def score(self, rollout: RewardRollout) -> float:
         self._ensure_loaded()
         import torch
 
@@ -117,5 +117,5 @@ class AestheticReward(RewardFunction):
         scores = self._scorer(images)
         return float(scores.mean().item())
 
-    async def score_batch(self, rollouts: list[Rollout]) -> list[float]:
+    async def score_batch(self, rollouts: list[RewardRollout]) -> list[float]:
         return [await self.score(r) for r in rollouts]

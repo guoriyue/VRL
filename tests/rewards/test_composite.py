@@ -4,26 +4,29 @@ from __future__ import annotations
 
 import pytest
 
-from vrl.algorithms import Rollout, Trajectory, TrajectoryStep
 from vrl.rewards.base import RewardFunction
 from vrl.rewards.composite import CompositeReward
+from vrl.rewards.types import RewardRollout, RewardTrajectory, RewardTrajectoryStep
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_rollout(prompt: str, reward: float, log_probs: list[float] | None = None) -> Rollout:
+def _make_rollout(prompt: str, reward: float, log_probs: list[float] | None = None) -> RewardRollout:
     log_probs = log_probs or [-1.0]
-    steps = [TrajectoryStep(timestep=i, log_prob=lp, noise_pred=None) for i, lp in enumerate(log_probs)]
-    traj = Trajectory(prompt=prompt, seed=42, steps=steps, output=None)
-    return Rollout(request=None, trajectory=traj, reward=reward)
+    steps = [
+        RewardTrajectoryStep(timestep=i, log_prob=lp, noise_pred=None)
+        for i, lp in enumerate(log_probs)
+    ]
+    traj = RewardTrajectory(prompt=prompt, seed=42, steps=steps, output=None)
+    return RewardRollout(request=None, trajectory=traj, reward=reward)
 
 
 class _ConstantReward(RewardFunction):
     def __init__(self, value: float) -> None:
         self.value = value
 
-    async def score(self, rollout: Rollout) -> float:
+    async def score(self, rollout: RewardRollout) -> float:
         return self.value
 
 

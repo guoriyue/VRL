@@ -55,17 +55,17 @@ _skip_no_rapidocr = pytest.mark.skipif(
 
 
 def _make_ocr_rollout(target_text: str, video_tensor=None):
-    """Build a minimal Rollout with target_text metadata and a video tensor."""
+    """Build a minimal RewardRollout with target_text metadata and a video tensor."""
     import torch
 
-    from vrl.algorithms.types import Rollout, Trajectory
+    from vrl.rewards.types import RewardRollout, RewardTrajectory
 
     if video_tensor is None:
         # Black frames — no OCR text expected
         video_tensor = torch.zeros(3, 8, 64, 64)
 
-    traj = Trajectory(prompt="test", seed=0, steps=[], output=video_tensor)
-    return Rollout(request=None, trajectory=traj, metadata={"target_text": target_text})
+    traj = RewardTrajectory(prompt="test", seed=0, steps=[], output=video_tensor)
+    return RewardRollout(request=None, trajectory=traj, metadata={"target_text": target_text})
 
 
 @_skip_no_rapidocr

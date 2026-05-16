@@ -8,7 +8,7 @@ from typing import Any
 
 import torch
 
-from vrl.algorithms.types import Rollout, Trajectory
+from vrl.rewards.types import RewardRollout, RewardTrajectory
 
 
 class RewardScorer:
@@ -28,9 +28,9 @@ class RewardScorer:
             return torch.zeros(_batch_size(outputs), device=device)
 
         rollouts = [
-            Rollout(
+            RewardRollout(
                 request=None,
-                trajectory=Trajectory(
+                trajectory=RewardTrajectory(
                     prompt=prompts[i],
                     seed=0,
                     steps=[],

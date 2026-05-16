@@ -12,8 +12,8 @@ from typing import Any
 
 import numpy as np
 
-from vrl.algorithms.types import Rollout
 from vrl.rewards.base import RewardFunction
+from vrl.rewards.types import RewardRollout
 
 DEFAULT_PROMPT_TEMPLATE = """You are a strict image-text alignment judge.
 Evaluate whether the attached image matches the text prompt.
@@ -62,22 +62,22 @@ class CodexImageQAReward(RewardFunction):
         self.pass_prompt_stdin = bool(pass_prompt_stdin)
         self.max_concurrency = max(1, int(max_concurrency))
 
-    async def score(self, rollout: Rollout) -> float:
+    async def score(self, rollout: RewardRollout) -> float:
         scores = await self.score_batch([rollout])
         return float(scores[0])
 
-    async def score_batch(self, rollouts: list[Rollout]) -> list[float]:
+    async def score_batch(self, rollouts: list[RewardRollout]) -> list[float]:
         if not rollouts:
             return []
         semaphore = asyncio.Semaphore(self.max_concurrency)
 
-        async def _score_one(rollout: Rollout) -> float:
+        async def _score_one(rollout: RewardRollout) -> float:
             async with semaphore:
                 return await self._score_one(rollout)
 
         return list(await asyncio.gather(*(_score_one(rollout) for rollout in rollouts)))
 
-    async def _score_one(self, rollout: Rollout) -> float:
+    async def _score_one(self, rollout: RewardRollout) -> float:
         prompt = rollout.trajectory.prompt
         prompt_text = _render_prompt_template(self.prompt_template, prompt=prompt)
         with tempfile.TemporaryDirectory(prefix="vrl-codex-image-qa-") as tmp:

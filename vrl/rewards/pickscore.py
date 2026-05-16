@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.algorithms.types import Rollout
 from vrl.rewards.base import RewardFunction
+from vrl.rewards.types import RewardRollout
 
 
 class PickScoreReward(RewardFunction):
@@ -66,7 +66,7 @@ class PickScoreReward(RewardFunction):
 
         self._scorer = _PickScoreScorer(self._device, dtype)
 
-    async def score(self, rollout: Rollout) -> float:
+    async def score(self, rollout: RewardRollout) -> float:
         self._ensure_loaded()
         import numpy as np
         import torch
@@ -96,5 +96,5 @@ class PickScoreReward(RewardFunction):
         scores = self._scorer([prompt] * len(images), images)
         return float(scores.mean().item())
 
-    async def score_batch(self, rollouts: list[Rollout]) -> list[float]:
+    async def score_batch(self, rollouts: list[RewardRollout]) -> list[float]:
         return [await self.score(r) for r in rollouts]

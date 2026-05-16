@@ -6,9 +6,9 @@ from typing import Any
 
 import torch
 
-from vrl.algorithms.types import Rollout
 from vrl.rewards.base import RewardFunction
 from vrl.rewards.remote_video import RemoteVideoRewardClient, RemoteVideoRewardConfig
+from vrl.rewards.types import RewardRollout
 
 
 class VideoReward(RewardFunction):
@@ -64,10 +64,10 @@ class VideoReward(RewardFunction):
                 "dance_grpo/cosmos_reason1 wrapper; use backend='stub' or 'remote'.",
             )
 
-    async def score(self, rollout: Rollout) -> float:
+    async def score(self, rollout: RewardRollout) -> float:
         return (await self.score_batch([rollout]))[0]
 
-    async def score_batch(self, rollouts: list[Rollout]) -> list[float]:
+    async def score_batch(self, rollouts: list[RewardRollout]) -> list[float]:
         if not rollouts:
             return []
         if self.backend == "stub":
@@ -83,7 +83,7 @@ class VideoReward(RewardFunction):
         )
         return scores
 
-    def _stub_scores(self, rollouts: list[Rollout]) -> list[float]:
+    def _stub_scores(self, rollouts: list[RewardRollout]) -> list[float]:
         scores: list[float] = []
         for idx, rollout in enumerate(rollouts):
             output = rollout.trajectory.output

@@ -6,8 +6,8 @@ from typing import Any
 
 import aiohttp
 
-from vrl.algorithms.types import Rollout
 from vrl.rewards.base import RewardFunction
+from vrl.rewards.types import RewardRollout
 
 
 class RemoteReward(RewardFunction):
@@ -22,7 +22,7 @@ class RemoteReward(RewardFunction):
         self.url = url
         self.timeout = aiohttp.ClientTimeout(total=timeout)
 
-    def _serialize_rollout(self, rollout: Rollout) -> dict[str, Any]:
+    def _serialize_rollout(self, rollout: RewardRollout) -> dict[str, Any]:
         return {
             "prompt": rollout.trajectory.prompt,
             "seed": rollout.trajectory.seed,
@@ -30,7 +30,7 @@ class RemoteReward(RewardFunction):
             "metadata": rollout.metadata,
         }
 
-    async def score(self, rollout: Rollout) -> float:
+    async def score(self, rollout: RewardRollout) -> float:
         payload = self._serialize_rollout(rollout)
         async with aiohttp.ClientSession(timeout=self.timeout) as session, session.post(
             self.url, json=payload
@@ -39,7 +39,7 @@ class RemoteReward(RewardFunction):
             data = await resp.json()
             return float(data["score"])
 
-    async def score_batch(self, rollouts: list[Rollout]) -> list[float]:
+    async def score_batch(self, rollouts: list[RewardRollout]) -> list[float]:
         payload = {"rollouts": [self._serialize_rollout(r) for r in rollouts]}
         async with aiohttp.ClientSession(timeout=self.timeout) as session, session.post(
             self.url, json=payload

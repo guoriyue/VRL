@@ -7,8 +7,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.algorithms.types import Rollout
 from vrl.rewards.base import RewardFunction
+from vrl.rewards.types import RewardRollout
 
 # Registry of reward function factories.
 # Each factory takes (device,) and returns a RewardFunction instance.
@@ -95,7 +95,7 @@ class MultiReward(RewardFunction):
             triples.append((name, weight, reward_cls(device=device, **extra)))
         return cls(triples)
 
-    async def score(self, rollout: Rollout) -> float:
+    async def score(self, rollout: RewardRollout) -> float:
         total = 0.0
         components: dict[str, list[float]] = {}
         for name, weight, fn in self.rewards:
@@ -105,7 +105,7 @@ class MultiReward(RewardFunction):
         self._append_components(components)
         return total
 
-    async def score_batch(self, rollouts: list[Rollout]) -> list[float]:
+    async def score_batch(self, rollouts: list[RewardRollout]) -> list[float]:
         totals = [0.0] * len(rollouts)
         components: dict[str, list[float]] = {}
         for name, weight, fn in self.rewards:

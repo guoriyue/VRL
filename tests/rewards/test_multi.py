@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import pytest
 
-from vrl.algorithms import Rollout, Trajectory
 from vrl.rewards.base import RewardFunction
 from vrl.rewards.multi import MultiReward
+from vrl.rewards.types import RewardRollout, RewardTrajectory
 
 
-def _make_rollout(prompt: str) -> Rollout:
-    return Rollout(
+def _make_rollout(prompt: str) -> RewardRollout:
+    return RewardRollout(
         request=None,
-        trajectory=Trajectory(prompt=prompt, seed=0, steps=[], output=None),
+        trajectory=RewardTrajectory(prompt=prompt, seed=0, steps=[], output=None),
     )
 
 
@@ -20,10 +20,10 @@ class _QueuedBatchReward(RewardFunction):
     def __init__(self, batches: list[list[float]]) -> None:
         self.batches = list(batches)
 
-    async def score(self, rollout: Rollout) -> float:
+    async def score(self, rollout: RewardRollout) -> float:
         return self.batches.pop(0)[0]
 
-    async def score_batch(self, rollouts: list[Rollout]) -> list[float]:
+    async def score_batch(self, rollouts: list[RewardRollout]) -> list[float]:
         scores = self.batches.pop(0)
         assert len(scores) == len(rollouts)
         return scores

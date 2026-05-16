@@ -15,8 +15,8 @@ import re
 from pathlib import Path
 from typing import Any
 
-from vrl.algorithms.types import Rollout
 from vrl.rewards.base import RewardFunction
+from vrl.rewards.types import RewardRollout
 
 
 def _safe_filename_fragment(text: str, max_len: int = 24) -> str:
@@ -100,7 +100,7 @@ class OCRReward(RewardFunction):
             show_log=False,
         )
 
-    async def score(self, rollout: Rollout) -> float:
+    async def score(self, rollout: RewardRollout) -> float:
         self._ensure_loaded()
         import numpy as np
         import torch
@@ -212,5 +212,5 @@ class OCRReward(RewardFunction):
         except Exception:
             pass
 
-    async def score_batch(self, rollouts: list[Rollout]) -> list[float]:
+    async def score_batch(self, rollouts: list[RewardRollout]) -> list[float]:
         return [await self.score(r) for r in rollouts]

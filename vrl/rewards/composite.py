@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from vrl.algorithms.types import Rollout
 from vrl.rewards.base import RewardFunction
+from vrl.rewards.types import RewardRollout
 
 
 class CompositeReward(RewardFunction):
@@ -12,13 +12,13 @@ class CompositeReward(RewardFunction):
     def __init__(self, rewards: list[tuple[float, RewardFunction]]) -> None:
         self.rewards = rewards
 
-    async def score(self, rollout: Rollout) -> float:
+    async def score(self, rollout: RewardRollout) -> float:
         total = 0.0
         for weight, fn in self.rewards:
             total += weight * await fn.score(rollout)
         return total
 
-    async def score_batch(self, rollouts: list[Rollout]) -> list[float]:
+    async def score_batch(self, rollouts: list[RewardRollout]) -> list[float]:
         # Accumulate weighted scores from each sub-function
         totals = [0.0] * len(rollouts)
         for weight, fn in self.rewards:
