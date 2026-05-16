@@ -12,11 +12,11 @@ from typing import Any
 
 from vrl.engine.core.types import GenerationRequest
 from vrl.engine.diffusion import (
-    DiffusionGenerationSpec,
     DiffusionPipelineExecutorBase,
+    DiffusionSamplingParams,
 )
-from vrl.engine.diffusion.request import VideoGenerationRequest
-from vrl.engine.execution.microbatching import MicroBatchPlan
+from vrl.engine.diffusion.layout import VideoGenerationRequest
+from vrl.engine.execution.microbatching import MicroBatchSample
 from vrl.models.capability_builders import diffusion_family_capability
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.replay_loading import (
@@ -235,12 +235,12 @@ class Wan_2_1PipelineExecutor(DiffusionPipelineExecutorBase):
         encoded: dict[str, Any],
         generation_request: GenerationRequest,
         video_request: VideoGenerationRequest,
-        spec: DiffusionGenerationSpec,
-        chunk: MicroBatchPlan,
+        params: DiffusionSamplingParams,
+        chunk: MicroBatchSample,
     ) -> dict[str, Any]:
         """Repeat Wan text embeds across the chunk batch."""
 
-        del generation_request, video_request, spec
+        del generation_request, video_request, params
         chunk_g = chunk.sample_count
         chunk_encoded: dict[str, Any] = {
             "prompt_embeds": self.layout.repeat_batch(

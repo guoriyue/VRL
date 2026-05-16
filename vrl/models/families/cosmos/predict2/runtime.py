@@ -12,11 +12,11 @@ from typing import Any
 
 from vrl.engine.core.types import GenerationRequest
 from vrl.engine.diffusion import (
-    DiffusionGenerationSpec,
     DiffusionPipelineExecutorBase,
+    DiffusionSamplingParams,
 )
-from vrl.engine.diffusion.request import VideoGenerationRequest
-from vrl.engine.execution.microbatching import MicroBatchPlan
+from vrl.engine.diffusion.layout import VideoGenerationRequest
+from vrl.engine.execution.microbatching import MicroBatchSample
 from vrl.models.capability_builders import diffusion_family_capability
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.replay_loading import (
@@ -245,7 +245,6 @@ class CosmosPipelineExecutor(DiffusionPipelineExecutorBase):
     default_num_frames: int = 93
     default_fps: int | None = 16
     default_max_sequence_length: int = 512
-    respect_cfg_flag: bool = False
     include_max_sequence_length_extra: bool = False
 
     def __init__(
@@ -264,8 +263,8 @@ class CosmosPipelineExecutor(DiffusionPipelineExecutorBase):
         *,
         generation_request: GenerationRequest,
         video_request: VideoGenerationRequest,
-        spec: DiffusionGenerationSpec,
-        chunk: MicroBatchPlan,
+        params: DiffusionSamplingParams,
+        chunk: MicroBatchSample,
     ) -> dict[str, Any]:
         """Encode Cosmos text and preserve the Video2World reference image."""
 
@@ -273,8 +272,8 @@ class CosmosPipelineExecutor(DiffusionPipelineExecutorBase):
         return self.model.encode_prompt(
             chunk.prompt,
             video_request.negative_prompt or None,
-            max_sequence_length=spec.base.max_sequence_length,
-            guidance_scale=spec.base.guidance_scale,
+            max_sequence_length=params.base.max_sequence_length,
+            guidance_scale=params.base.guidance_scale,
             reference_image=reference_image,
         )
 
@@ -284,12 +283,12 @@ class CosmosPipelineExecutor(DiffusionPipelineExecutorBase):
         encoded: dict[str, Any],
         generation_request: GenerationRequest,
         video_request: VideoGenerationRequest,
-        spec: DiffusionGenerationSpec,
-        chunk: MicroBatchPlan,
+        params: DiffusionSamplingParams,
+        chunk: MicroBatchSample,
     ) -> dict[str, Any]:
         """Repeat Cosmos text embeds and pass reference image through unchanged."""
 
-        del video_request, spec
+        del video_request, params
         chunk_g = chunk.sample_count
         reference_image = self._reference_image_for_request(generation_request)
         chunk_encoded: dict[str, Any] = {
@@ -315,12 +314,12 @@ class CosmosPipelineExecutor(DiffusionPipelineExecutorBase):
         encoded: dict[str, Any],
         generation_request: GenerationRequest,
         video_request: VideoGenerationRequest,
-        spec: DiffusionGenerationSpec,
-        chunk: MicroBatchPlan,
+        params: DiffusionSamplingParams,
+        chunk: MicroBatchSample,
     ) -> dict[str, Any]:
         """Thread the active reference image into Cosmos prepare_sampling."""
 
-        del encoded, video_request, spec, chunk
+        del encoded, video_request, params, chunk
         return {
             "reference_image": self._reference_image_for_request(
                 generation_request,

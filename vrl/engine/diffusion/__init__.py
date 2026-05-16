@@ -1,30 +1,27 @@
 """Diffusion generation helpers."""
 
-from vrl.engine.diffusion.denoise import (
+from vrl.engine.diffusion.executor import (
     DiffusionChunkResult,
     DiffusionDenoiseConfig,
-    run_diffusion_denoise_chunk,
+    DiffusionPipelineExecutorBase,
 )
-from vrl.engine.diffusion.executor_base import DiffusionPipelineExecutorBase
-from vrl.engine.diffusion.gather import DiffusionChunkGatherer, gather_diffusion_chunks
-from vrl.engine.diffusion.layout import DiffusionRequestLayout
-from vrl.engine.diffusion.request import VideoGenerationRequest
-from vrl.engine.diffusion.spec import (
-    BaseDiffusionGenerationSpec,
-    DiffusionGenerationSpec,
-    SDEDiffusionSpec,
+from vrl.engine.diffusion.gather import DiffusionChunkGatherer
+from vrl.engine.diffusion.layout import (
+    DiffusionBaseParams,
+    DiffusionRequestLayout,
+    DiffusionSamplingParams,
+    DiffusionSDEParams,
+    VideoGenerationRequest,
 )
 
 __all__ = [
-    "BaseDiffusionGenerationSpec",
+    "DiffusionBaseParams",
     "DiffusionChunkGatherer",
     "DiffusionChunkResult",
     "DiffusionDenoiseConfig",
-    "DiffusionGenerationSpec",
     "DiffusionPipelineExecutorBase",
     "DiffusionRequestLayout",
-    "SDEDiffusionSpec",
+    "DiffusionSDEParams",
+    "DiffusionSamplingParams",
     "VideoGenerationRequest",
-    "gather_diffusion_chunks",
-    "run_diffusion_denoise_chunk",
 ]

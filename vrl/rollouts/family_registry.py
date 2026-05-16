@@ -93,7 +93,6 @@ def _diffusion_entry(
     runtime_spec_extractor: str,
     request_prefix: str,
     default_task_type: str,
-    gatherer_kwargs: dict[str, object] | None = None,
     supports_reference_conditioning: bool = False,
 ) -> RolloutFamilyEntry:
     return RolloutFamilyEntry(
@@ -111,7 +110,6 @@ def _diffusion_entry(
         runtime_spec_extractor=runtime_spec_extractor,
         gatherer=GathererMetadata(
             import_path="vrl.engine.diffusion.gather:DiffusionChunkGatherer",
-            kwargs=dict(gatherer_kwargs or {"model_family": family}),
         ),
         capability=diffusion_family_capability(
             family,
@@ -135,7 +133,6 @@ register_rollout_family(
         runtime_spec_extractor="vrl.models.families.sd3_5.runtime:extract_sd3_5_runtime_spec",
         request_prefix="sd3_5",
         default_task_type="text_to_image",
-        gatherer_kwargs={"model_family": "sd3_5"},
     ),
 )
 
@@ -149,7 +146,6 @@ register_rollout_family(
         runtime_spec_extractor="vrl.models.families.wan_2_1.runtime:extract_wan_2_1_runtime_spec",
         request_prefix="wan_2_1",
         default_task_type="text_to_video",
-        gatherer_kwargs={"model_family": "wan_2_1"},
     ),
 )
 
@@ -169,7 +165,6 @@ register_rollout_family(
         ),
         request_prefix="cosmos-predict2",
         default_task_type="video2world",
-        gatherer_kwargs={"model_family": "cosmos-predict2", "respect_cfg_flag": False},
         supports_reference_conditioning=True,
     ),
 )
@@ -193,7 +188,6 @@ register_rollout_family(
         ),
         request_prefix="cosmos-predict2.5",
         default_task_type="text_to_video",
-        gatherer_kwargs={"model_family": "cosmos-predict2.5"},
     ),
 )
 

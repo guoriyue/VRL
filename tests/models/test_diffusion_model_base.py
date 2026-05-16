@@ -11,12 +11,12 @@ import torch
 import torch.nn as nn
 
 from vrl.engine import GenerationRequest, GenerationSampleSpec
+from vrl.engine.diffusion.layout import VideoGenerationRequest
 from vrl.engine.trajectory import build_diffusion_trajectory, build_training_view
+from vrl.models.diffusion import DiffusionModelBase
 from vrl.models.families.cosmos.predict2.model import CosmosPredict2Model
 from vrl.models.families.sd3_5.model import SD3_5Model
 from vrl.models.families.wan_2_1.model import WanT2VDiffusersModel
-from vrl.engine.diffusion.request import VideoGenerationRequest
-from vrl.models.diffusion import DiffusionModelBase
 from vrl.models.interfaces import ReplayResult
 from vrl.rollouts.batch import RolloutBatch
 

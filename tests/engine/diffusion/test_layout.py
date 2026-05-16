@@ -18,7 +18,7 @@ def test_diffusion_layout_rejects_oversized_sde_window() -> None:
     )
 
     with pytest.raises(ValueError, match="sde_window_size"):
-        DiffusionRequestLayout().parse_spec(request)
+        DiffusionRequestLayout().parse_sampling_params(request)
 
 
 def test_diffusion_layout_repeat_batch_rejects_unexpected_batch_size() -> None:

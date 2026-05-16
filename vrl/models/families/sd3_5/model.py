@@ -35,7 +35,7 @@ from typing import Any
 
 import torch
 
-from vrl.engine.diffusion.request import VideoGenerationRequest
+from vrl.engine.diffusion.layout import VideoGenerationRequest
 from vrl.models.diffusion import DiffusionModelBase
 
 

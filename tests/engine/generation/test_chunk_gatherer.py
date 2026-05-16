@@ -51,7 +51,7 @@ def test_chunk_gatherer_accepts_pure_object_without_forward_chunk_plan() -> None
 def test_diffusion_chunk_gatherer_gathers_without_model_object() -> None:
     request = _request(cfg=False)
     sample_specs = GenerationIdFactory().build_sample_specs(request)
-    gatherer = DiffusionChunkGatherer(model_family="sd3_5")
+    gatherer = DiffusionChunkGatherer()
     context = {
         "guidance_scale": 4.5,
         "cfg": False,
@@ -76,7 +76,7 @@ def test_diffusion_chunk_gatherer_gathers_without_model_object() -> None:
 def test_diffusion_chunk_gatherer_orders_prompt_major_chunks() -> None:
     request = _request(cfg=False)
     sample_specs = GenerationIdFactory().build_sample_specs(request)
-    gatherer = DiffusionChunkGatherer(model_family="sd3_5")
+    gatherer = DiffusionChunkGatherer()
     context = {
         "guidance_scale": 4.5,
         "cfg": False,
@@ -92,13 +92,10 @@ def test_diffusion_chunk_gatherer_orders_prompt_major_chunks() -> None:
     assert torch.equal(output.output[:, 0, 0, 0], torch.tensor([1.0, 2.0]))
 
 
-def test_diffusion_chunk_gatherer_can_ignore_cfg_sampling_flag() -> None:
+def test_diffusion_chunk_gatherer_keeps_rollout_context() -> None:
     request = _request(family="cosmos", task="v2w", cfg=False)
     sample_specs = GenerationIdFactory().build_sample_specs(request)
-    gatherer = DiffusionChunkGatherer(
-        model_family="cosmos",
-        respect_cfg_flag=False,
-    )
+    gatherer = DiffusionChunkGatherer()
     context = {
         "guidance_scale": 4.5,
         "cfg": True,

@@ -10,7 +10,7 @@ T = TypeVar("T")
 
 
 @dataclass(frozen=True, slots=True)
-class MicroBatchPlan:
+class MicroBatchSample:
     """One executor micro-batch for a prompt-major rollout request."""
 
     prompt_index: int
@@ -36,20 +36,20 @@ class MicroBatchPlan:
 
         return f"prompt:{self.prompt_index}:samples:{self.sample_start}:{self.sample_end}"
 
-    def split(self) -> tuple[MicroBatchPlan, MicroBatchPlan]:
+    def split(self) -> tuple[MicroBatchSample, MicroBatchSample]:
         """Split this micro-batch into two ordered smaller chunks."""
 
         if self.sample_count <= 1:
             raise ValueError("Cannot split a single-sample micro-batch")
         left_count = self.sample_count // 2
         right_count = self.sample_count - left_count
-        left = MicroBatchPlan(
+        left = MicroBatchSample(
             prompt_index=self.prompt_index,
             prompt=self.prompt,
             sample_start=self.sample_start,
             sample_count=left_count,
         )
-        right = MicroBatchPlan(
+        right = MicroBatchSample(
             prompt_index=self.prompt_index,
             prompt=self.prompt,
             sample_start=self.sample_start + left_count,
@@ -59,13 +59,13 @@ class MicroBatchPlan:
 
 
 @dataclass(frozen=True, slots=True)
-class ExecutionPlan:
-    """Prompt-major execution plan for one GenerationRequest."""
+class MicroBatchSchedule:
+    """Prompt-major micro-batch schedule for one GenerationRequest."""
 
     prompts: tuple[str, ...]
     samples_per_prompt: int
     max_samples_per_microbatch: int
-    micro_batches: tuple[MicroBatchPlan, ...]
+    micro_batches: tuple[MicroBatchSample, ...]
     trajectory_kind: str | None = None
     batchable_axes: tuple[str, ...] = ()
 
@@ -74,21 +74,13 @@ class ExecutionPlan:
         return len(self.prompts) * self.samples_per_prompt
 
 
-@dataclass(frozen=True, slots=True)
-class RolloutShardPlan:
-    """Executable chunks for one large rollout request."""
-
-    request_id: str
-    chunks: tuple[MicroBatchPlan, ...]
-
-
-def plan_prompt_group_microbatches(
+def build_prompt_microbatch_schedule(
     prompts: Sequence[str],
     samples_per_prompt: int,
     max_samples_per_microbatch: int,
     *,
     capability: Any | None = None,
-) -> ExecutionPlan:
+) -> MicroBatchSchedule:
     """Plan prompt-major micro-batches without changing RL group semantics."""
 
     if not prompts:
@@ -103,14 +95,14 @@ def plan_prompt_group_microbatches(
     ):
         max_samples_per_microbatch = samples_per_prompt
 
-    micro_batches: list[MicroBatchPlan] = []
+    micro_batches: list[MicroBatchSample] = []
     for prompt_index, prompt in enumerate(prompts):
         sample_start = 0
         remaining = samples_per_prompt
         while remaining > 0:
             sample_count = min(max_samples_per_microbatch, remaining)
             micro_batches.append(
-                MicroBatchPlan(
+                MicroBatchSample(
                     prompt_index=prompt_index,
                     prompt=prompt,
                     sample_start=sample_start,
@@ -120,7 +112,7 @@ def plan_prompt_group_microbatches(
             sample_start += sample_count
             remaining -= sample_count
 
-    return ExecutionPlan(
+    return MicroBatchSchedule(
         prompts=tuple(prompts),
         samples_per_prompt=samples_per_prompt,
         max_samples_per_microbatch=max_samples_per_microbatch,
@@ -130,9 +122,9 @@ def plan_prompt_group_microbatches(
     )
 
 
-def run_microbatches_with_oom_retry(
-    micro_batches: Sequence[MicroBatchPlan],
-    run_one: Callable[[MicroBatchPlan], T],
+def run_microbatch_samples_with_oom_retry(
+    sample_batches: Sequence[MicroBatchSample],
+    run_one: Callable[[MicroBatchSample], T],
     *,
     min_sample_count: int = 1,
 ) -> list[T]:
@@ -142,7 +134,7 @@ def run_microbatches_with_oom_retry(
         raise ValueError("min_sample_count must be >= 1")
 
     results: list[T] = []
-    pending = list(micro_batches)
+    pending = list(sample_batches)
     while pending:
         micro_batch = pending.pop(0)
         try:
@@ -171,10 +163,28 @@ def _clear_cuda_cache() -> None:
         torch.cuda.empty_cache()
 
 
+MicroBatchPlan = MicroBatchSample
+ExecutionPlan = MicroBatchSchedule
+plan_prompt_group_microbatches = build_prompt_microbatch_schedule
+run_microbatches_with_oom_retry = run_microbatch_samples_with_oom_retry
+
+
+@dataclass(frozen=True, slots=True)
+class RolloutShardPlan:
+    """Executable chunks for one large rollout request."""
+
+    request_id: str
+    chunks: tuple[MicroBatchSample, ...]
+
+
 __all__ = [
     "ExecutionPlan",
     "MicroBatchPlan",
+    "MicroBatchSample",
+    "MicroBatchSchedule",
     "RolloutShardPlan",
+    "build_prompt_microbatch_schedule",
     "plan_prompt_group_microbatches",
+    "run_microbatch_samples_with_oom_retry",
     "run_microbatches_with_oom_retry",
 ]

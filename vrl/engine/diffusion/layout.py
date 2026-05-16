@@ -4,21 +4,80 @@ from __future__ import annotations
 
 import random
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
 import torch
 
 from vrl.engine.core.types import GenerationRequest, GenerationSampleSpec
-from vrl.engine.diffusion.denoise import DiffusionChunkResult, DiffusionDenoiseConfig
-from vrl.engine.diffusion.spec import (
-    BaseDiffusionGenerationSpec,
-    DiffusionGenerationSpec,
-    SDEDiffusionSpec,
-)
-from vrl.engine.execution.microbatching import MicroBatchPlan
 
-TChunk = TypeVar("TChunk", bound=DiffusionChunkResult)
+TChunk = TypeVar("TChunk")
+
+
+@dataclass(slots=True)
+class VideoGenerationRequest:
+    """Per-request diffusion inference parameters."""
+
+    prompt: str = ""
+    negative_prompt: str = ""
+    references: list[str] = field(default_factory=list)
+    task_type: str = "text_to_video"
+    width: int = 1024
+    height: int = 640
+    frame_count: int = 16
+    num_steps: int = 35
+    guidance_scale: float = 5.0
+    high_noise_guidance_scale: float | None = None
+    seed: int | None = None
+    model_name: str = ""
+    model_size: str = "A14B"
+    ckpt_dir: str | None = None
+    fps: int = 16
+    sample_solver: str = "dpmpp"
+    shift: float = 1.0
+    t5_cpu: bool = True
+    convert_model_dtype: bool = True
+    offload_model: bool = False
+    action_sequence: list[list[float]] | None = None
+    action_dim: int | None = None
+    action_conditioning_mode: str = "none"
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class DiffusionBaseParams:
+    """Common parsed sampling fields every diffusion executor needs."""
+
+    num_steps: int
+    guidance_scale: float
+    height: int
+    width: int
+    num_frames: int
+    fps: int | None
+    sample_batch_size: int
+    max_sequence_length: int
+    seed: int | None
+    negative_prompt: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class DiffusionSDEParams:
+    """Parsed SDE rollout knobs for diffusion executors that collect logprobs."""
+
+    noise_level: float
+    sde_type: str
+    sde_window_size: int
+    sde_window_range: tuple[int, int]
+    same_latent: bool
+    return_kl: bool
+
+
+@dataclass(frozen=True, slots=True)
+class DiffusionSamplingParams:
+    """Parsed diffusion sampling fields for one generation request."""
+
+    base: DiffusionBaseParams
+    sde: DiffusionSDEParams | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,14 +90,14 @@ class DiffusionRequestLayout:
     default_max_sequence_length: int = 512
     sde_type: str = "sde"
 
-    def parse_spec(self, request: GenerationRequest) -> DiffusionGenerationSpec:
+    def parse_sampling_params(self, request: GenerationRequest) -> DiffusionSamplingParams:
         """Parse shared diffusion sampling fields from GenerationRequest."""
 
         sampling = request.sampling
         num_steps = int(sampling["num_steps"])
         fps_value = sampling.get("fps", self.default_fps)
         seed = sampling.get("seed")
-        base = BaseDiffusionGenerationSpec(
+        base = DiffusionBaseParams(
             num_steps=num_steps,
             guidance_scale=float(sampling["guidance_scale"]),
             height=int(sampling["height"]),
@@ -74,7 +133,7 @@ class DiffusionRequestLayout:
         )
         sde_window_size = int(sampling.get("sde_window_size", 0))
         self._validate_sde_window_size(sde_window_size, sde_window_range)
-        sde = SDEDiffusionSpec(
+        sde = DiffusionSDEParams(
             noise_level=float(sampling.get("noise_level", 1.0)),
             sde_type=self._parse_sde_type(sampling.get("sde_type", self.sde_type)),
             sde_window_size=sde_window_size,
@@ -82,31 +141,7 @@ class DiffusionRequestLayout:
             same_latent=bool(sampling.get("same_latent", False)),
             return_kl=bool(sampling.get("return_kl", False)),
         )
-        return DiffusionGenerationSpec(base=base, sde=sde)
-
-    def build_denoise_config(
-        self,
-        spec: DiffusionGenerationSpec,
-        chunk: MicroBatchPlan,
-    ) -> DiffusionDenoiseConfig:
-        """Build the SDE denoise config for one micro-batch."""
-
-        if spec.sde is None:
-            raise NotImplementedError("non-SDE diffusion requires a custom denoise path")
-        return DiffusionDenoiseConfig(
-            prompt_index=chunk.prompt_index,
-            sample_start=chunk.sample_start,
-            sample_count=chunk.sample_count,
-            seed=spec.base.seed,
-            same_latent=spec.sde.same_latent,
-            sde_window=self.select_sde_window(
-                spec.sde.sde_window_size,
-                spec.sde.sde_window_range,
-            ),
-            return_kl=spec.sde.return_kl,
-            noise_level=spec.sde.noise_level,
-            sde_type=spec.sde.sde_type,
-        )
+        return DiffusionSamplingParams(base=base, sde=sde)
 
     def repeat_encoded_batch(self, encoded: dict[str, Any], count: int) -> dict[str, Any]:
         """Repeat singleton-batch encoded tensors for a chunk sample count."""
@@ -174,7 +209,7 @@ class DiffusionRequestLayout:
             )
         return ordered
 
-    def max_peak_memory_mb(self, chunks: Sequence[DiffusionChunkResult]) -> float | None:
+    def max_peak_memory_mb(self, chunks: Sequence[Any]) -> float | None:
         """Return the maximum non-null peak memory metric across chunk results."""
 
         peaks = [chunk.peak_memory_mb for chunk in chunks if chunk.peak_memory_mb is not None]
@@ -258,4 +293,10 @@ class DiffusionRequestLayout:
             )
 
 
-__all__ = ["DiffusionRequestLayout"]
+__all__ = [
+    "DiffusionBaseParams",
+    "DiffusionRequestLayout",
+    "DiffusionSDEParams",
+    "DiffusionSamplingParams",
+    "VideoGenerationRequest",
+]
