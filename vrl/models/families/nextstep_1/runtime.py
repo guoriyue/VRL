@@ -16,7 +16,7 @@ from vrl.engine.ar import (
     run_kv_decode,
 )
 from vrl.engine.core.capabilities import FamilyCapability
-from vrl.engine.core.capability_presets import ar_continuous_family_capability
+from vrl.engine.capability_templates import ar_continuous_family_capability
 from vrl.engine.core.protocols import PipelineChunkResult
 from vrl.engine.core.types import (
     GenerationMetrics,

@@ -8,7 +8,7 @@ from typing import Any
 
 import torch
 
-from vrl.algorithms.flow_matching import sde_step_with_logprob
+from vrl.math.diffusion.flow_matching import sde_step_with_logprob
 from vrl.engine.core.protocols import PipelineChunkResult
 from vrl.engine.core.types import (
     GenerationMetrics,

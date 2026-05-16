@@ -392,6 +392,7 @@ def build_ar_multisegment_trajectory(
     segments: dict[str, dict[str, Any]],
     decoded_outputs: dict[str, Any],
     primary_segment: str,
+    reward_segments: tuple[str, ...] | None = None,
     context: dict[str, Any],
 ) -> TrajectoryBatch:
     """Build a multi-segment categorical trajectory without flattening segments."""
@@ -492,6 +493,7 @@ def build_ar_multisegment_trajectory(
         for name, value in decoded_outputs.items()
         if value is not None
     }
+    reward_segment_names = reward_segments or (primary_segment,)
     reward_refs: tuple[str, ...] = ()
     if decoded_tensors:
         trajectory_segments["decoded"] = TrajectorySegment(
@@ -501,10 +503,11 @@ def build_ar_multisegment_trajectory(
             distribution="deterministic",
             tensors=decoded_tensors,
         )
-        if primary_segment in decoded_tensors:
-            reward_refs = (tensor_ref("decoded", primary_segment),)
-        elif "final_image" in decoded_tensors:
-            reward_refs = (tensor_ref("decoded", "final_image"),)
+        reward_refs = tuple(
+            tensor_ref("decoded", name)
+            for name in reward_segment_names
+            if name in decoded_tensors
+        )
 
     axis_lengths = {name: axis.length for name, axis in axes.items() if axis.length is not None}
     trajectory = TrajectoryBatch(
@@ -596,7 +599,7 @@ def _segment_trainable(value: Any, name: str, payload: dict[str, Any]) -> bool:
     if "enabled" in payload:
         return bool(payload["enabled"])
     if value is None:
-        return name != "selfcheck_text"
+        return bool(payload.get("visual", True))
     if isinstance(value, dict):
         return bool(value.get(name, False))
     if isinstance(value, str):

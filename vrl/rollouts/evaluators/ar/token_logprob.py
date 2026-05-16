@@ -14,8 +14,8 @@ intermediates are unused and stay ``None``.
 from __future__ import annotations
 
 import torch
-import torch.nn.functional as F
 
+from vrl.math.ar.logprob import gather_categorical_log_probs
 from vrl.models.interfaces import ReplayModel, require_replay_model
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
@@ -93,6 +93,4 @@ class TokenLogProbEvaluator(Evaluator):
         out = model.replay_forward(batch, timestep_idx=0)
         result = out.require_segment("image_tokens")
         logits: torch.Tensor = result.require_value("logits")   # [B, L, V_img]
-        log_probs = F.log_softmax(logits.float(), dim=-1)
-        gathered = log_probs.gather(-1, action_ids.unsqueeze(-1)).squeeze(-1)
-        return gathered  # [B, L]
+        return gather_categorical_log_probs(logits, action_ids)  # [B, L]

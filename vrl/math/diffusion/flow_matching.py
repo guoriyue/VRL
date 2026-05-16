@@ -9,13 +9,13 @@ from typing import Any
 
 @dataclass(slots=True)
 class SDEStepResult:
-    """Result of a single SDE denoising step with log-probability."""
+    """Named outputs of one flow-matching SDE denoising step."""
 
     prev_sample: Any
     log_prob: Any
     prev_sample_mean: Any
     std_dev_t: Any
-    dt: Any | None = None
+    sqrt_neg_dt: Any | None = None
 
 
 def sde_step_with_logprob(
@@ -130,7 +130,7 @@ def sde_step_with_logprob(
         log_prob=log_prob,
         prev_sample_mean=prev_sample_mean,
         std_dev_t=std_dev_t,
-        dt=sqrt_neg_dt,
+        sqrt_neg_dt=sqrt_neg_dt,
     )
 
 
@@ -138,12 +138,12 @@ def compute_kl_divergence(
     prev_sample_mean: Any,
     prev_sample_mean_ref: Any,
     std_dev_t: Any,
-    dt: Any | None = None,
+    sqrt_neg_dt: Any | None = None,
 ) -> Any:
     """KL divergence between current and reference model in latent space."""
     denom = 2 * std_dev_t**2
-    if dt is not None:
-        denom = 2 * (std_dev_t * dt) ** 2
+    if sqrt_neg_dt is not None:
+        denom = 2 * (std_dev_t * sqrt_neg_dt) ** 2
     return ((prev_sample_mean - prev_sample_mean_ref) ** 2).mean(
         dim=tuple(range(1, prev_sample_mean.ndim))
     ) / denom.squeeze()

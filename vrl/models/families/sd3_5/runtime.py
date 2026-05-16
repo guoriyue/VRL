@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from vrl.engine.core.capabilities import diffusion_family_capability
+from vrl.engine.capability_templates import diffusion_family_capability
 from vrl.engine.core.types import GenerationRequest
 from vrl.engine.diffusion import (
     DiffusionGenerationSpec,

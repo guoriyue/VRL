@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import contextlib
 
-import vrl.algorithms.flow_matching as flow_matching_math
+import vrl.math.diffusion.flow_matching as flow_matching_math
 from vrl.models.interfaces import ReplayModel, require_replay_model
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
@@ -82,7 +82,7 @@ class FlowMatchingEvaluator(Evaluator):
 
         ref_log_prob = None
         ref_prev_sample_mean = None
-        ref_dt = None
+        ref_sqrt_neg_dt = None
 
         # Reference model forward for KL
         if signal_request.need_ref and ref_model is not None:
@@ -111,7 +111,7 @@ class FlowMatchingEvaluator(Evaluator):
                     )
                     ref_log_prob = ref_result.log_prob
                     ref_prev_sample_mean = ref_result.prev_sample_mean
-                    ref_dt = ref_result.dt
+                    ref_sqrt_neg_dt = ref_result.sqrt_neg_dt
 
         return single_segment_trajectory_signals(
             batch,
@@ -121,7 +121,7 @@ class FlowMatchingEvaluator(Evaluator):
             prev_sample_mean=result.prev_sample_mean,
             ref_prev_sample_mean=ref_prev_sample_mean,
             std_dev_t=result.std_dev_t,
-            dt=result.dt if result.dt is not None else ref_dt,
+            dt=result.sqrt_neg_dt if result.sqrt_neg_dt is not None else ref_sqrt_neg_dt,
             distribution="flow_matching",
             timestep_idx=timestep_idx,
             mask_key="mask",

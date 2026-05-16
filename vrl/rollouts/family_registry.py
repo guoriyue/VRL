@@ -10,8 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-from vrl.engine.core.capabilities import (
-    FamilyCapability,
+from vrl.engine.core.capabilities import FamilyCapability
+from vrl.engine.capability_templates import (
     ar_continuous_family_capability,
     ar_discrete_family_capability,
     diffusion_family_capability,
@@ -240,7 +240,8 @@ register_rollout_family(
         capability=ar_discrete_family_capability(
             "janus_pro_r1",
             "ar_t2i_r1",
-            multisegment=True,
+            trajectory_kind="multisegment",
+            trainable_segments=("initial_image", "selfcheck_text", "final_image"),
         ),
     ),
 )

@@ -1,8 +1,10 @@
-"""Typed capability view for engine planning.
+"""Typed capability contract for engine planning.
 
 Family routing still lives in the rollout family registry and backend-specific
 flags still live in ``RuntimeBundle.runtime_caps``. This module only provides
-the normalized view that the engine planner can consume.
+the normalized view that the engine planner can consume. It is not user config:
+configs describe what a run wants, while capabilities describe what a family
+executor can safely support.
 """
 
 from __future__ import annotations
@@ -320,127 +322,6 @@ def family_capability_from_value(value: Any) -> FamilyCapability | None:
     )
 
 
-def diffusion_family_capability(
-    family: str,
-    task: str,
-    *,
-    supports_reference_conditioning: bool = False,
-) -> FamilyCapability:
-    """Capability template for diffusion timestep rollouts."""
-
-    return FamilyCapability(
-        family=family,
-        task=task,
-        trajectory_kind="diffusion",
-        expected_axes=(
-            AxisCapability("sample", "sample", batchable=True, chunkable=True),
-            AxisCapability("timestep", "denoise_step", batchable=True, chunkable=False),
-        ),
-        execution_units=(
-            ExecutionUnitCapability(
-                "denoise_step",
-                segment="denoise",
-                axis="timestep",
-                cache_read=True,
-                cache_write=True,
-            ),
-            ExecutionUnitCapability("vq_decode", segment="denoise"),
-            ExecutionUnitCapability("reward_artifact", profiler_name="collector.reward_score"),
-        ),
-        trainable_segments=("denoise",),
-        reward_views=("image",),
-        supports_stepwise=True,
-        supports_cfg=True,
-        supports_batched_decode=True,
-        supports_reference_conditioning=supports_reference_conditioning,
-        supports_resident_rollout_state=True,
-        cache_kinds=("prompt_embed_cache", "latent_cache"),
-    )
-
-
-def ar_discrete_family_capability(
-    family: str,
-    task: str,
-    *,
-    multisegment: bool = False,
-) -> FamilyCapability:
-    """Capability template for discrete-token AR image generation."""
-
-    trajectory_kind: TrajectoryKind = "multisegment" if multisegment else "ar_discrete"
-    trainable_segments = (
-        ("initial_image", "selfcheck_text", "final_image")
-        if multisegment
-        else ("image_tokens",)
-    )
-    return FamilyCapability(
-        family=family,
-        task=task,
-        trajectory_kind=trajectory_kind,
-        expected_axes=(
-            AxisCapability("sample", "sample", batchable=True, chunkable=True),
-            AxisCapability("token", "discrete_token", batchable=True, chunkable=False),
-        ),
-        execution_units=(
-            ExecutionUnitCapability(
-                "prefill",
-                segment=trainable_segments[0],
-                cache_write=True,
-            ),
-            ExecutionUnitCapability(
-                "decode_step",
-                segment=trainable_segments[0],
-                axis="token",
-                cache_read=True,
-                cache_write=True,
-            ),
-            ExecutionUnitCapability("vq_decode", segment=trainable_segments[-1]),
-            ExecutionUnitCapability("reward_artifact", profiler_name="collector.reward_score"),
-        ),
-        trainable_segments=trainable_segments,
-        reward_views=("image",),
-        supports_stepwise=True,
-        supports_cfg=True,
-        supports_batched_decode=True,
-        supports_token_logprobs=True,
-        supports_resident_rollout_state=True,
-        cache_kinds=("kv_cache", "prompt_embed_cache", "token_buffer"),
-    )
-
-
-def ar_continuous_family_capability(family: str, task: str) -> FamilyCapability:
-    """Capability template for continuous-token AR image generation."""
-
-    return FamilyCapability(
-        family=family,
-        task=task,
-        trajectory_kind="ar_continuous",
-        expected_axes=(
-            AxisCapability("sample", "sample", batchable=True, chunkable=True),
-            AxisCapability("token", "continuous_token", batchable=True, chunkable=False),
-        ),
-        execution_units=(
-            ExecutionUnitCapability("prefill", segment="image_tokens", cache_write=True),
-            ExecutionUnitCapability(
-                "decode_step",
-                segment="image_tokens",
-                axis="token",
-                cache_read=True,
-                cache_write=True,
-            ),
-            ExecutionUnitCapability("vq_decode", segment="image_tokens"),
-            ExecutionUnitCapability("reward_artifact", profiler_name="collector.reward_score"),
-        ),
-        trainable_segments=("image_tokens",),
-        reward_views=("image",),
-        supports_stepwise=True,
-        supports_cfg=True,
-        supports_batched_decode=True,
-        supports_token_logprobs=True,
-        supports_resident_rollout_state=True,
-        cache_kinds=("prompt_embed_cache", "token_buffer"),
-    )
-
-
 def _optional_int(value: Any) -> int | None:
     if value is None:
         return None
@@ -471,8 +352,5 @@ __all__ = [
     "ExecutionUnitCapability",
     "FamilyCapability",
     "TrajectoryKind",
-    "ar_continuous_family_capability",
-    "ar_discrete_family_capability",
-    "diffusion_family_capability",
     "family_capability_from_value",
 ]

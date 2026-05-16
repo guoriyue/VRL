@@ -6,8 +6,8 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 import torch
-import torch.nn.functional as F
 
+from vrl.math.ar.logprob import gather_categorical_log_probs
 from vrl.models.interfaces import (
     ReplayModel,
     ReplayRequest,
@@ -196,8 +196,7 @@ def _extract_logprobs(result: ReplaySegmentResult, segment: dict[str, Any]) -> t
     token_ids = values.get("token_ids")
     if token_ids is None:
         token_ids = _segment_tensor(segment, "token_ids")
-    log_probs = F.log_softmax(logits.float(), dim=-1)
-    return log_probs.gather(-1, token_ids.unsqueeze(-1)).squeeze(-1)
+    return gather_categorical_log_probs(logits, token_ids)
 
 
 def _segment_tensor(

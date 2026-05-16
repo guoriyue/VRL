@@ -2,11 +2,6 @@
 
 from vrl.algorithms.base import Algorithm
 from vrl.algorithms.diffusion_nft import DiffusionNFT, DiffusionNFTConfig
-from vrl.algorithms.flow_matching import (
-    SDEStepResult,
-    compute_kl_divergence,
-    sde_step_with_logprob,
-)
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
 from vrl.algorithms.grpo.multisegment import (
     MultiSegmentTokenGRPO,
@@ -32,12 +27,9 @@ __all__ = [
     "MultiSegmentTokenGRPO",
     "MultiSegmentTokenGRPOConfig",
     "Rollout",
-    "SDEStepResult",
     "TokenGRPO",
     "TokenGRPOConfig",
     "TrainStepMetrics",
     "Trajectory",
     "TrajectoryStep",
-    "compute_kl_divergence",
-    "sde_step_with_logprob",
 ]

@@ -5,9 +5,6 @@ from vrl.engine.core.capabilities import (
     AxisCapability,
     ExecutionUnitCapability,
     FamilyCapability,
-    ar_continuous_family_capability,
-    ar_discrete_family_capability,
-    diffusion_family_capability,
     family_capability_from_value,
 )
 from vrl.engine.core.protocols import (
@@ -38,8 +35,5 @@ __all__ = [
     "PipelineChunkResult",
     "RolloutBackend",
     "WorkloadSignature",
-    "ar_continuous_family_capability",
-    "ar_discrete_family_capability",
-    "diffusion_family_capability",
     "family_capability_from_value",
 ]

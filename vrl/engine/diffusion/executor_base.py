@@ -5,7 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from vrl.engine.core.capabilities import FamilyCapability, diffusion_family_capability
+from vrl.engine.core.capabilities import FamilyCapability
+from vrl.engine.capability_templates import diffusion_family_capability
 from vrl.engine.core.protocols import (
     ChunkedFamilyPipelineExecutor,
 )

@@ -18,7 +18,7 @@ from vrl.engine.ar import (
     run_kv_decode,
 )
 from vrl.engine.core.capabilities import FamilyCapability
-from vrl.engine.core.capability_presets import ar_discrete_family_capability
+from vrl.engine.capability_templates import ar_discrete_family_capability
 from vrl.engine.core.protocols import PipelineChunkResult
 from vrl.engine.core.types import (
     GenerationMetrics,
@@ -48,7 +48,8 @@ JANUS_PRO_FAMILY_CAPABILITY = ar_discrete_family_capability("janus_pro", "ar_t2i
 JANUS_PRO_R1_FAMILY_CAPABILITY = ar_discrete_family_capability(
     "janus_pro_r1",
     "ar_t2i_r1",
-    multisegment=True,
+    trajectory_kind="multisegment",
+    trainable_segments=("initial_image", "selfcheck_text", "final_image"),
 )
 
 

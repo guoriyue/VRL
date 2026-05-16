@@ -88,7 +88,7 @@ class GRPO(Algorithm):
         """
         import torch
 
-        from vrl.algorithms.flow_matching import compute_kl_divergence
+        from vrl.math.diffusion.flow_matching import compute_kl_divergence
 
         cfg = self.config
         signals = _primary_signal(inputs)
@@ -118,7 +118,7 @@ class GRPO(Algorithm):
                     signals.prev_sample_mean,
                     signals.ref_prev_sample_mean,
                     signals.std_dev_t,
-                    dt=signals.dt if cfg.flow_kl_use_dt else None,
+                    sqrt_neg_dt=signals.dt if cfg.flow_kl_use_dt else None,
                 )
                 kl_loss = torch.mean(kl)
             else:
