@@ -9,10 +9,10 @@ from vrl.engine.core.types import GenerationRequest
 from vrl.engine.diffusion import (
     DiffusionGenerationSpec,
     DiffusionPipelineExecutorBase,
-    repeat_tensor_batch,
 )
 from vrl.engine.diffusion.request import VideoGenerationRequest
 from vrl.engine.execution.microbatching import MicroBatchPlan
+from vrl.models.capability_builders import diffusion_family_capability
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.replay_loading import (
     full_generation_bundle_metadata,
@@ -22,6 +22,10 @@ from vrl.models.replay_loading import (
 )
 
 logger = logging.getLogger(__name__)
+COSMOS_PREDICT25_FAMILY_CAPABILITY = diffusion_family_capability(
+    "cosmos-predict2.5",
+    "t2w",
+)
 
 
 def extract_cosmos_predict25_runtime_spec(
@@ -192,6 +196,7 @@ class CosmosPredict25PipelineExecutor(DiffusionPipelineExecutorBase):
 
     family: str = "cosmos-predict2.5"
     task: str = "t2w"
+    family_capability = COSMOS_PREDICT25_FAMILY_CAPABILITY
     default_num_frames: int = 93
     default_fps: int | None = 16
     default_max_sequence_length: int = 512
@@ -232,7 +237,7 @@ class CosmosPredict25PipelineExecutor(DiffusionPipelineExecutorBase):
     ) -> dict[str, Any]:
         del generation_request, video_request, spec
         return {
-            key: repeat_tensor_batch(value, chunk.sample_count)
+            key: self.layout.repeat_batch(value, chunk.sample_count)
             for key, value in encoded.items()
         }
 

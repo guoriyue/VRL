@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 from vrl.distributed.ray.rollout.worker import RayRolloutWorker
-from vrl.engine.capability_templates import ar_discrete_family_capability
 from vrl.engine.core.runtime_spec import GenerationRuntimeSpec
+from vrl.models.capability_builders import ar_discrete_family_capability
 
 
 class _Executor:

@@ -14,10 +14,10 @@ from vrl.engine.core.types import GenerationRequest
 from vrl.engine.diffusion import (
     DiffusionGenerationSpec,
     DiffusionPipelineExecutorBase,
-    repeat_tensor_batch,
 )
 from vrl.engine.diffusion.request import VideoGenerationRequest
 from vrl.engine.execution.microbatching import MicroBatchPlan
+from vrl.models.capability_builders import diffusion_family_capability
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.replay_loading import (
     apply_lora_to_transformer,
@@ -30,6 +30,7 @@ from vrl.models.replay_loading import (
 )
 
 logger = logging.getLogger(__name__)
+WAN_2_1_FAMILY_CAPABILITY = diffusion_family_capability("wan_2_1", "t2v")
 
 _MODEL_BY_BACKEND: dict[str, str] = {
     "diffusers": "vrl.models.families.wan_2_1.model:WanT2VDiffusersModel",
@@ -215,6 +216,7 @@ class Wan_2_1PipelineExecutor(DiffusionPipelineExecutorBase):
 
     family: str = "wan_2_1"
     task: str = "t2v"
+    family_capability = WAN_2_1_FAMILY_CAPABILITY
     default_num_frames: int = 1
     default_max_sequence_length: int = 512
 
@@ -241,14 +243,14 @@ class Wan_2_1PipelineExecutor(DiffusionPipelineExecutorBase):
         del generation_request, video_request, spec
         chunk_g = chunk.sample_count
         chunk_encoded: dict[str, Any] = {
-            "prompt_embeds": repeat_tensor_batch(
+            "prompt_embeds": self.layout.repeat_batch(
                 encoded["prompt_embeds"],
                 chunk_g,
             ),
         }
         neg = encoded.get("negative_prompt_embeds")
         if neg is not None:
-            chunk_encoded["negative_prompt_embeds"] = repeat_tensor_batch(
+            chunk_encoded["negative_prompt_embeds"] = self.layout.repeat_batch(
                 neg,
                 chunk_g,
             )

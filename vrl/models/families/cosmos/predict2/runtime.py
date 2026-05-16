@@ -14,10 +14,10 @@ from vrl.engine.core.types import GenerationRequest
 from vrl.engine.diffusion import (
     DiffusionGenerationSpec,
     DiffusionPipelineExecutorBase,
-    repeat_tensor_batch,
 )
 from vrl.engine.diffusion.request import VideoGenerationRequest
 from vrl.engine.execution.microbatching import MicroBatchPlan
+from vrl.models.capability_builders import diffusion_family_capability
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.replay_loading import (
     apply_lora_to_transformer,
@@ -30,6 +30,11 @@ from vrl.models.replay_loading import (
 )
 
 logger = logging.getLogger(__name__)
+COSMOS_PREDICT2_FAMILY_CAPABILITY = diffusion_family_capability(
+    "cosmos-predict2",
+    "v2w",
+    supports_reference_conditioning=True,
+)
 
 _MODEL_BY_BACKEND: dict[str, str] = {
     "diffusers": "vrl.models.families.cosmos.predict2.model:CosmosPredict2Model",
@@ -236,6 +241,7 @@ class CosmosPipelineExecutor(DiffusionPipelineExecutorBase):
 
     family: str = "cosmos-predict2"
     task: str = "v2w"
+    family_capability = COSMOS_PREDICT2_FAMILY_CAPABILITY
     default_num_frames: int = 93
     default_fps: int | None = 16
     default_max_sequence_length: int = 512
@@ -287,7 +293,7 @@ class CosmosPipelineExecutor(DiffusionPipelineExecutorBase):
         chunk_g = chunk.sample_count
         reference_image = self._reference_image_for_request(generation_request)
         chunk_encoded: dict[str, Any] = {
-            "prompt_embeds": repeat_tensor_batch(
+            "prompt_embeds": self.layout.repeat_batch(
                 encoded["prompt_embeds"],
                 chunk_g,
             ),
@@ -295,7 +301,7 @@ class CosmosPipelineExecutor(DiffusionPipelineExecutorBase):
         }
         neg = encoded.get("negative_prompt_embeds")
         if neg is not None:
-            chunk_encoded["negative_prompt_embeds"] = repeat_tensor_batch(
+            chunk_encoded["negative_prompt_embeds"] = self.layout.repeat_batch(
                 neg,
                 chunk_g,
             )

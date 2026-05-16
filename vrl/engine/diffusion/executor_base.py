@@ -6,7 +6,6 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from vrl.engine.core.capabilities import FamilyCapability
-from vrl.engine.capability_templates import diffusion_family_capability
 from vrl.engine.core.protocols import (
     ChunkedFamilyPipelineExecutor,
 )
@@ -19,18 +18,13 @@ from vrl.engine.core.types import (
 from vrl.engine.diffusion.denoise import (
     DiffusionChunkResult,
     DiffusionDenoiseConfig,
-    repeat_tensor_batch,
     run_diffusion_denoise_chunk,
-    select_sde_window,
 )
+from vrl.engine.diffusion.gather import gather_diffusion_chunks
+from vrl.engine.diffusion.layout import DiffusionRequestLayout
 from vrl.engine.diffusion.request import VideoGenerationRequest
-from vrl.engine.diffusion.spec import (
-    BaseDiffusionGenerationSpec,
-    DiffusionGenerationSpec,
-    SDEDiffusionSpec,
-)
+from vrl.engine.diffusion.spec import DiffusionGenerationSpec
 from vrl.engine.execution.batching import forward_batch_by_merging_prompts
-from vrl.engine.execution.gather import gather_diffusion_chunks
 from vrl.engine.execution.microbatching import (
     MicroBatchPlan,
     run_microbatches_with_oom_retry,
@@ -57,11 +51,25 @@ class DiffusionPipelineExecutorBase(
 
     # -- protocol ------------------------------------------------------
 
+    @property
+    def layout(self) -> DiffusionRequestLayout:
+        return DiffusionRequestLayout(
+            default_sample_batch_size=self.default_sample_batch_size,
+            default_num_frames=self.default_num_frames,
+            default_fps=self.default_fps,
+            default_max_sequence_length=self.default_max_sequence_length,
+            sde_type=self.sde_type,
+        )
+
     def workload_signature(self, request: GenerationRequest) -> WorkloadSignature:
         return WorkloadSignature.from_request_and_capability(request, self.capability())
 
     def capability(self) -> FamilyCapability:
-        return self.family_capability or diffusion_family_capability(self.family, self.task)
+        if self.family_capability is None:
+            raise RuntimeError(
+                f"{type(self).__name__} must declare family_capability explicitly"
+            )
+        return self.family_capability
 
     def plan(
         self,
@@ -77,53 +85,7 @@ class DiffusionPipelineExecutorBase(
         )
 
     def parse_spec(self, request: GenerationRequest) -> DiffusionGenerationSpec:
-        """Parse shared diffusion sampling fields from GenerationRequest."""
-
-        sampling = request.sampling
-        num_steps = int(sampling["num_steps"])
-        fps_value = sampling.get("fps", self.default_fps)
-        seed = sampling.get("seed")
-        base = BaseDiffusionGenerationSpec(
-            num_steps=num_steps,
-            guidance_scale=float(sampling["guidance_scale"]),
-            height=int(sampling["height"]),
-            width=int(sampling["width"]),
-            num_frames=int(
-                sampling.get(
-                    "num_frames",
-                    sampling.get("frame_count", self.default_num_frames),
-                )
-            ),
-            fps=None if fps_value is None else int(fps_value),
-            sample_batch_size=max(
-                1,
-                int(
-                    sampling.get(
-                        "sample_batch_size",
-                        self.default_sample_batch_size,
-                    )
-                ),
-            ),
-            max_sequence_length=int(
-                sampling.get(
-                    "max_sequence_length",
-                    self.default_max_sequence_length,
-                )
-            ),
-            seed=None if seed is None else int(seed),
-            negative_prompt=sampling.get("negative_prompt"),
-        )
-        sde = SDEDiffusionSpec(
-            noise_level=float(sampling.get("noise_level", 1.0)),
-            sde_type=_parse_sde_type(sampling.get("sde_type", self.sde_type)),
-            sde_window_size=int(sampling.get("sde_window_size", 0)),
-            sde_window_range=_parse_sde_window_range(
-                sampling.get("sde_window_range", (0, num_steps)),
-            ),
-            same_latent=bool(sampling.get("same_latent", False)),
-            return_kl=bool(sampling.get("return_kl", False)),
-        )
-        return DiffusionGenerationSpec(base=base, sde=sde)
+        return self.layout.parse_spec(request)
 
     def build_video_request(
         self,
@@ -174,19 +136,7 @@ class DiffusionPipelineExecutorBase(
             raise NotImplementedError(
                 f"{type(self).__name__} must override denoise for non-SDE diffusion",
             )
-        sde_window = select_sde_window(
-            spec.sde.sde_window_size,
-            spec.sde.sde_window_range,
-        )
-        return DiffusionDenoiseConfig(
-            sample_start=chunk.sample_start,
-            seed=spec.base.seed,
-            same_latent=spec.sde.same_latent,
-            sde_window=sde_window,
-            return_kl=spec.sde.return_kl,
-            noise_level=spec.sde.noise_level,
-            sde_type=spec.sde.sde_type,
-        )
+        return self.layout.build_denoise_config(spec, chunk)
 
     def forward_plan(
         self,
@@ -305,9 +255,7 @@ class DiffusionPipelineExecutorBase(
         """Build per-sample encoded tensors for one micro-batch."""
 
         del generation_request, video_request, spec
-        return {
-            key: repeat_tensor_batch(value, chunk.sample_count) for key, value in encoded.items()
-        }
+        return self.layout.repeat_encoded_batch(encoded, chunk.sample_count)
 
     def build_prepare_kwargs(
         self,
@@ -323,23 +271,4 @@ class DiffusionPipelineExecutorBase(
         del encoded, generation_request, video_request, spec, chunk
         return None
 
-
-def _parse_sde_window_range(value: Any) -> tuple[int, int]:
-    try:
-        lo = int(value[0])
-        hi = int(value[1])
-    except (TypeError, IndexError, ValueError) as exc:
-        raise ValueError(
-            "sampling.sde_window_range must contain two integer values",
-        ) from exc
-    return lo, hi
-
-
-def _parse_sde_type(value: Any) -> str:
-    sde_type = str(value)
-    if sde_type not in {"sde", "cps"}:
-        raise ValueError("sampling.sde_type must be 'sde' or 'cps'")
-    return sde_type
-
-
-__all__ = ["DiffusionPipelineExecutorBase"]
+__all__ = ["DiffusionPipelineExecutorBase", "DiffusionRequestLayout"]

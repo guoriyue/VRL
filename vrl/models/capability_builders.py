@@ -1,4 +1,4 @@
-"""Generic capability templates for trajectory families.
+"""Generic capability builders for model trajectory families.
 
 This module is intentionally not a registry. ``vrl.rollouts.family_registry``
 owns concrete family registration; these helpers only build reusable capability

@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from vrl.engine.core.capabilities import FamilyCapability
-from vrl.engine.capability_templates import (
+from vrl.models.capability_builders import (
     ar_continuous_family_capability,
     ar_discrete_family_capability,
     diffusion_family_capability,
@@ -110,7 +110,7 @@ def _diffusion_entry(
         runtime_builder=runtime_builder,
         runtime_spec_extractor=runtime_spec_extractor,
         gatherer=GathererMetadata(
-            import_path="vrl.engine.execution.gather:DiffusionChunkGatherer",
+            import_path="vrl.engine.diffusion.gather:DiffusionChunkGatherer",
             kwargs=dict(gatherer_kwargs or {"model_family": family}),
         ),
         capability=diffusion_family_capability(

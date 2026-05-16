@@ -18,7 +18,6 @@ from vrl.engine.ar import (
     run_kv_decode,
 )
 from vrl.engine.core.capabilities import FamilyCapability
-from vrl.engine.capability_templates import ar_discrete_family_capability
 from vrl.engine.core.protocols import PipelineChunkResult
 from vrl.engine.core.types import (
     GenerationMetrics,
@@ -30,6 +29,7 @@ from vrl.engine.core.types import (
 from vrl.engine.execution.microbatching import MicroBatchPlan
 from vrl.engine.execution.planner import attach_engine_plan, build_engine_plan
 from vrl.engine.trajectory import build_ar_discrete_trajectory, build_ar_multisegment_trajectory
+from vrl.models.capability_builders import ar_discrete_family_capability
 from vrl.models.families.janus_pro.model import (
     JanusProConfig,
     JanusProModel,

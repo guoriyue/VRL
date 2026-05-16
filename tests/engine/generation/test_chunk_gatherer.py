@@ -8,10 +8,9 @@ from typing import Any
 import torch
 
 from vrl.engine.core.types import GenerationRequest, OutputBatch
-from vrl.engine.diffusion import DiffusionChunkResult
+from vrl.engine.diffusion import DiffusionChunkGatherer, DiffusionChunkResult
 from vrl.engine.execution.gather import (
     ChunkGatherer,
-    DiffusionChunkGatherer,
     gather_pipeline_chunks,
     require_chunk_gatherer,
 )
@@ -70,6 +69,27 @@ def test_diffusion_chunk_gatherer_gathers_without_model_object() -> None:
     assert output.trajectory.segments["denoise"].distribution == "flow_matching"
     assert output.trajectory.axes["sample"].length == 2
     assert output.trajectory.axes["timestep"].length == 2
+    assert torch.equal(output.output[:, 0, 0, 0], torch.tensor([1.0, 2.0]))
+    assert output.metrics.peak_memory_mb == 20.0
+
+
+def test_diffusion_chunk_gatherer_orders_prompt_major_chunks() -> None:
+    request = _request(cfg=False)
+    sample_specs = GenerationIdFactory().build_sample_specs(request)
+    gatherer = DiffusionChunkGatherer(model_family="sd3_5")
+    context = {
+        "guidance_scale": 4.5,
+        "cfg": False,
+        "model_family": "sd3_5",
+    }
+
+    output = gatherer.gather_chunks(
+        request,
+        sample_specs,
+        list(reversed(_diffusion_chunks(context))),
+    )
+
+    assert torch.equal(output.output[:, 0, 0, 0], torch.tensor([1.0, 2.0]))
 
 
 def test_diffusion_chunk_gatherer_can_ignore_cfg_sampling_flag() -> None:
@@ -114,11 +134,23 @@ def _request(
 
 
 def _diffusion_chunks(context: dict[str, Any]) -> list[DiffusionChunkResult]:
-    return [_diffusion_chunk(1.0, context), _diffusion_chunk(2.0, context)]
+    return [
+        _diffusion_chunk(1.0, context, sample_start=0, peak_memory_mb=10.0),
+        _diffusion_chunk(2.0, context, sample_start=1, peak_memory_mb=20.0),
+    ]
 
 
-def _diffusion_chunk(value: float, context: dict[str, Any]) -> DiffusionChunkResult:
+def _diffusion_chunk(
+    value: float,
+    context: dict[str, Any],
+    *,
+    sample_start: int,
+    peak_memory_mb: float,
+) -> DiffusionChunkResult:
     return DiffusionChunkResult(
+        prompt_index=0,
+        sample_start=sample_start,
+        sample_count=1,
         observations=torch.full((1, 2, 1), value),
         actions=torch.full((1, 2, 1), value + 1),
         log_probs=torch.full((1, 2), value + 2),
@@ -127,4 +159,5 @@ def _diffusion_chunk(value: float, context: dict[str, Any]) -> DiffusionChunkRes
         video=torch.full((1, 3, 4, 4), value),
         replay_tensors={},
         context=context,
+        peak_memory_mb=peak_memory_mb,
     )

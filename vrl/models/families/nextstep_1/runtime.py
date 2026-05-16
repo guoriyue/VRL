@@ -16,7 +16,6 @@ from vrl.engine.ar import (
     run_kv_decode,
 )
 from vrl.engine.core.capabilities import FamilyCapability
-from vrl.engine.capability_templates import ar_continuous_family_capability
 from vrl.engine.core.protocols import PipelineChunkResult
 from vrl.engine.core.types import (
     GenerationMetrics,
@@ -27,6 +26,7 @@ from vrl.engine.core.types import (
 )
 from vrl.engine.execution.microbatching import MicroBatchPlan
 from vrl.engine.trajectory import build_ar_continuous_trajectory
+from vrl.models.capability_builders import ar_continuous_family_capability
 from vrl.models.families.nextstep_1.model import (
     NextStep1Config,
     NextStep1Model,

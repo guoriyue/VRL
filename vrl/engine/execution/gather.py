@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from vrl.engine.core.protocols import ChunkedFamilyPipelineExecutor, PipelineChunkResult
 from vrl.engine.core.types import (
@@ -12,9 +11,6 @@ from vrl.engine.core.types import (
     GenerationSampleSpec,
     OutputBatch,
 )
-
-if TYPE_CHECKING:
-    from vrl.engine.diffusion import DiffusionChunkResult
 
 
 @runtime_checkable
@@ -65,56 +61,8 @@ def gather_pipeline_chunks(
     return chunk_gatherer.gather_chunks(request, sample_specs, chunks)
 
 
-def gather_diffusion_chunks(
-    request: GenerationRequest,
-    sample_specs: Sequence[GenerationSampleSpec],
-    chunks: Sequence[PipelineChunkResult],
-    *,
-    model_family: str,
-    respect_cfg_flag: bool = True,
-) -> OutputBatch:
-    """Gather diffusion chunks using only request metadata and CPU payloads."""
-
-    from vrl.engine.diffusion import build_diffusion_output_batch
-
-    del model_family, respect_cfg_flag
-    sampling = request.sampling
-    num_steps = int(sampling["num_steps"])
-    return build_diffusion_output_batch(
-        request=request,
-        sample_specs=list(sample_specs),
-        prompts=list(request.prompts),
-        chunks=cast("list[DiffusionChunkResult]", list(chunks)),
-        num_steps=num_steps,
-    )
-
-
-@dataclass(frozen=True, slots=True)
-class DiffusionChunkGatherer:
-    """Pure gatherer for shared diffusion chunk payloads."""
-
-    model_family: str
-    respect_cfg_flag: bool = True
-
-    def gather_chunks(
-        self,
-        request: GenerationRequest,
-        sample_specs: Sequence[GenerationSampleSpec],
-        chunks: Sequence[PipelineChunkResult],
-    ) -> OutputBatch:
-        return gather_diffusion_chunks(
-            request,
-            sample_specs,
-            chunks,
-            model_family=self.model_family,
-            respect_cfg_flag=self.respect_cfg_flag,
-        )
-
-
 __all__ = [
     "ChunkGatherer",
-    "DiffusionChunkGatherer",
-    "gather_diffusion_chunks",
     "gather_pipeline_chunks",
     "require_chunk_gatherer",
     "require_chunked_executor",

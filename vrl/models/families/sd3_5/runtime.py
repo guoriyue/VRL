@@ -10,15 +10,14 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from vrl.engine.capability_templates import diffusion_family_capability
 from vrl.engine.core.types import GenerationRequest
 from vrl.engine.diffusion import (
     DiffusionGenerationSpec,
     DiffusionPipelineExecutorBase,
-    repeat_tensor_batch,
 )
 from vrl.engine.diffusion.request import VideoGenerationRequest
 from vrl.engine.execution.microbatching import MicroBatchPlan
+from vrl.models.capability_builders import diffusion_family_capability
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.replay_loading import (
     apply_lora_to_transformer,
@@ -256,11 +255,11 @@ class SD3_5PipelineExecutor(DiffusionPipelineExecutorBase):
         del generation_request, video_request, spec
         chunk_g = chunk.sample_count
         chunk_encoded: dict[str, Any] = {
-            "prompt_embeds": repeat_tensor_batch(
+            "prompt_embeds": self.layout.repeat_batch(
                 encoded["prompt_embeds"],
                 chunk_g,
             ),
-            "pooled_prompt_embeds": repeat_tensor_batch(
+            "pooled_prompt_embeds": self.layout.repeat_batch(
                 encoded["pooled_prompt_embeds"],
                 chunk_g,
             ),
@@ -268,12 +267,12 @@ class SD3_5PipelineExecutor(DiffusionPipelineExecutorBase):
         neg = encoded.get("negative_prompt_embeds")
         neg_pool = encoded.get("negative_pooled_prompt_embeds")
         if neg is not None:
-            chunk_encoded["negative_prompt_embeds"] = repeat_tensor_batch(
+            chunk_encoded["negative_prompt_embeds"] = self.layout.repeat_batch(
                 neg,
                 chunk_g,
             )
         if neg_pool is not None:
-            chunk_encoded["negative_pooled_prompt_embeds"] = repeat_tensor_batch(
+            chunk_encoded["negative_pooled_prompt_embeds"] = self.layout.repeat_batch(
                 neg_pool,
                 chunk_g,
             )

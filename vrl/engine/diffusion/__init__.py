@@ -3,13 +3,11 @@
 from vrl.engine.diffusion.denoise import (
     DiffusionChunkResult,
     DiffusionDenoiseConfig,
-    build_diffusion_output_batch,
-    peak_memory_mb,
-    repeat_tensor_batch,
     run_diffusion_denoise_chunk,
-    select_sde_window,
 )
 from vrl.engine.diffusion.executor_base import DiffusionPipelineExecutorBase
+from vrl.engine.diffusion.gather import DiffusionChunkGatherer, gather_diffusion_chunks
+from vrl.engine.diffusion.layout import DiffusionRequestLayout
 from vrl.engine.diffusion.request import VideoGenerationRequest
 from vrl.engine.diffusion.spec import (
     BaseDiffusionGenerationSpec,
@@ -19,15 +17,14 @@ from vrl.engine.diffusion.spec import (
 
 __all__ = [
     "BaseDiffusionGenerationSpec",
+    "DiffusionChunkGatherer",
     "DiffusionChunkResult",
     "DiffusionDenoiseConfig",
     "DiffusionGenerationSpec",
     "DiffusionPipelineExecutorBase",
+    "DiffusionRequestLayout",
     "SDEDiffusionSpec",
     "VideoGenerationRequest",
-    "build_diffusion_output_batch",
-    "peak_memory_mb",
-    "repeat_tensor_batch",
+    "gather_diffusion_chunks",
     "run_diffusion_denoise_chunk",
-    "select_sde_window",
 ]

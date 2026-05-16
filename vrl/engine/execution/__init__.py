@@ -4,8 +4,6 @@ from vrl.engine.core.backend import RolloutBackend
 from vrl.engine.execution.batching import forward_batch_by_merging_prompts
 from vrl.engine.execution.gather import (
     ChunkGatherer,
-    DiffusionChunkGatherer,
-    gather_diffusion_chunks,
     gather_pipeline_chunks,
     require_chunk_gatherer,
     require_chunked_executor,
@@ -31,7 +29,6 @@ from vrl.engine.execution.planner import (
 __all__ = [
     "AxisPlan",
     "ChunkGatherer",
-    "DiffusionChunkGatherer",
     "EnginePlan",
     "ExecutionPlan",
     "ExecutionUnit",
@@ -42,7 +39,6 @@ __all__ = [
     "attach_engine_plan",
     "build_engine_plan",
     "forward_batch_by_merging_prompts",
-    "gather_diffusion_chunks",
     "gather_pipeline_chunks",
     "plan_prompt_group_microbatches",
     "profiler_label_for_unit",

@@ -2,28 +2,22 @@
 
 from __future__ import annotations
 
-import random
 from dataclasses import dataclass
 from typing import Any
 
 import torch
 
-from vrl.math.diffusion.flow_matching import sde_step_with_logprob
 from vrl.engine.core.protocols import PipelineChunkResult
-from vrl.engine.core.types import (
-    GenerationMetrics,
-    GenerationRequest,
-    GenerationSampleSpec,
-    OutputBatch,
-)
-from vrl.engine.trajectory import build_diffusion_trajectory
+from vrl.math.diffusion.flow_matching import sde_step_with_logprob
 
 
 @dataclass(frozen=True, slots=True)
 class DiffusionDenoiseConfig:
     """Runtime knobs for one diffusion micro-batch denoise loop."""
 
+    prompt_index: int
     sample_start: int
+    sample_count: int
     seed: int | None
     same_latent: bool
     sde_window: tuple[int, int] | None
@@ -36,6 +30,9 @@ class DiffusionDenoiseConfig:
 class DiffusionChunkResult(PipelineChunkResult):
     """Output of one fused diffusion micro-batch."""
 
+    prompt_index: int
+    sample_start: int
+    sample_count: int
     observations: Any
     actions: Any
     log_probs: Any
@@ -44,32 +41,7 @@ class DiffusionChunkResult(PipelineChunkResult):
     video: Any
     replay_tensors: dict[str, Any]
     context: dict[str, Any]
-
-
-def select_sde_window(
-    sde_window_size: int,
-    sde_window_range: tuple[int, int] | list[int],
-) -> tuple[int, int] | None:
-    """Pick the stochastic denoise-step window for a request."""
-
-    if sde_window_size <= 0:
-        return None
-    lo, hi = int(sde_window_range[0]), int(sde_window_range[1])
-    start = random.randint(lo, max(lo, hi - sde_window_size))
-    return (start, start + sde_window_size)
-
-
-def repeat_tensor_batch(value: Any, count: int) -> Any:
-    """Repeat a tensor whose first dimension is a singleton batch."""
-
-    if count < 1:
-        raise ValueError("count must be >= 1")
-    if not isinstance(value, torch.Tensor):
-        return value
-    if count == 1:
-        return value
-    repeat_shape = (count,) + (1,) * (value.ndim - 1)
-    return value.repeat(*repeat_shape)
+    peak_memory_mb: float | None = None
 
 
 def run_diffusion_denoise_chunk(
@@ -87,6 +59,11 @@ def run_diffusion_denoise_chunk(
     with record_function("engine.cache_write"):
         state = model.prepare_sampling(request, encoded, **(prepare_kwargs or {}))
     chunk_batch = state.latents.shape[0]
+    if int(chunk_batch) != config.sample_count:
+        raise ValueError(
+            "Diffusion denoise chunk produced "
+            f"{chunk_batch} rows, expected {config.sample_count}",
+        )
     device = state.latents.device
     generator = _build_generator(
         device=device,
@@ -155,6 +132,9 @@ def run_diffusion_denoise_chunk(
         video = model.decode_latents(state.latents)
 
     return DiffusionChunkResult(
+        prompt_index=config.prompt_index,
+        sample_start=config.sample_start,
+        sample_count=config.sample_count,
         observations=observations,
         actions=actions,
         log_probs=log_probs,
@@ -163,68 +143,11 @@ def run_diffusion_denoise_chunk(
         video=video,
         replay_tensors=model.export_replay_tensors(state),
         context=model.export_batch_context(state),
+        peak_memory_mb=_peak_memory_mb(),
     )
 
 
-def build_diffusion_output_batch(
-    *,
-    request: GenerationRequest,
-    sample_specs: list[GenerationSampleSpec],
-    prompts: list[str],
-    chunks: list[DiffusionChunkResult],
-    num_steps: int,
-) -> OutputBatch:
-    """Pack diffusion chunks into the canonical engine OutputBatch."""
-
-    if not chunks:
-        raise ValueError("chunks must be non-empty")
-
-    observations = torch.cat([chunk.observations for chunk in chunks], dim=0)
-    actions = torch.cat([chunk.actions for chunk in chunks], dim=0)
-    log_probs = torch.cat([chunk.log_probs for chunk in chunks], dim=0)
-    timesteps_tensor = torch.cat([chunk.timesteps for chunk in chunks], dim=0)
-    kl_tensor = torch.cat([chunk.kl for chunk in chunks], dim=0)
-    video = torch.cat([chunk.video for chunk in chunks], dim=0)
-    replay_tensors = _concat_replay_tensors([chunk.replay_tensors for chunk in chunks])
-    rollout_context = chunks[0].context
-    if not rollout_context:
-        raise ValueError("DiffusionChunkResult.context must be non-empty")
-
-    peak_mem_mb = peak_memory_mb()
-    metrics = GenerationMetrics(
-        num_prompts=len(prompts),
-        num_samples=len(sample_specs),
-        num_steps=num_steps,
-        micro_batches=len(chunks),
-        peak_memory_mb=peak_mem_mb,
-    )
-    trajectory = build_diffusion_trajectory(
-        request=request,
-        sample_specs=sample_specs,
-        observations=observations,
-        actions=actions,
-        old_log_prob=log_probs,
-        timesteps=timesteps_tensor,
-        kl=kl_tensor,
-        replay_tensors=replay_tensors,
-        context=rollout_context,
-    )
-
-    return OutputBatch(
-        request_id=request.request_id,
-        family=request.family,
-        task=request.task,
-        prompts=prompts,
-        sample_specs=sample_specs,
-        output=video,
-        trajectory=trajectory,
-        extra={},
-        metrics=metrics,
-        peak_memory_mb=peak_mem_mb or 0.0,
-    )
-
-
-def peak_memory_mb() -> float | None:
+def _peak_memory_mb() -> float | None:
     """Return CUDA peak memory if available."""
 
     if not torch.cuda.is_available():
@@ -262,21 +185,6 @@ def _autocast_for_dtype(device: Any, dtype: Any) -> Any:
     return torch.amp.autocast("cuda", dtype=dtype)
 
 
-def _concat_replay_tensors(chunks: list[dict[str, Any]]) -> dict[str, Any]:
-    replay_tensors: dict[str, Any] = {}
-    if not chunks:
-        return replay_tensors
-    for key in chunks[0]:
-        vals = [chunk[key] for chunk in chunks]
-        if any(value is None for value in vals):
-            replay_tensors[key] = None
-        elif all(isinstance(value, torch.Tensor) for value in vals):
-            replay_tensors[key] = torch.cat(vals, dim=0)
-        else:
-            replay_tensors[key] = vals[0]
-    return replay_tensors
-
-
 class _NullCtx:
     def __enter__(self) -> None:
         return None
@@ -288,9 +196,5 @@ class _NullCtx:
 __all__ = [
     "DiffusionChunkResult",
     "DiffusionDenoiseConfig",
-    "build_diffusion_output_batch",
-    "peak_memory_mb",
-    "repeat_tensor_batch",
     "run_diffusion_denoise_chunk",
-    "select_sde_window",
 ]
