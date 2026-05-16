@@ -13,9 +13,8 @@ from vrl.distributed.ray.rollout.types import (
     RayChunkResult,
     RayWorkerHandle,
 )
-from vrl.engine.core.protocols import PipelineChunkResult
+from vrl.engine.core.protocols import ChunkGatherer, PipelineChunkResult
 from vrl.engine.core.types import GenerationRequest, OutputBatch
-from vrl.engine.execution.gather import ChunkGatherer, gather_pipeline_chunks
 from vrl.engine.execution.ids import GenerationIdFactory
 from vrl.engine.execution.planner import attach_engine_plan
 
@@ -111,12 +110,7 @@ class DistributedRolloutExecutor:
                 )
             chunk_outputs.append(result.output)
 
-        output = gather_pipeline_chunks(
-            self.gatherer,
-            request,
-            sample_rows,
-            chunk_outputs,
-        )
+        output = self.gatherer.gather_chunks(request, sample_rows, chunk_outputs)
         attach_engine_plan(output, engine_plan)
         output.extra["ray_chunk_metrics"] = [dict(result.metrics) for result in results]
         runtime_debug = [

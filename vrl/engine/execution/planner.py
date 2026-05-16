@@ -137,7 +137,10 @@ class EnginePlan:
         raise KeyError(f"no execution unit found for chunk {sample_batch.chunk_key!r}")
 
     def profiler_label(self, unit_name: str) -> str:
-        return profiler_label_for_unit(self, unit_name)
+        for unit in self.execution_units:
+            if unit.name == unit_name:
+                return unit.profiler_name
+        return f"engine.{unit_name}"
 
     def summary(self) -> dict[str, Any]:
         """Return a lightweight, serializable plan summary for logs/metrics."""
@@ -188,6 +191,201 @@ class EnginePlan:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class EnginePlanner:
+    """Build an EnginePlan for one request and resolved family capability."""
+
+    request: GenerationRequest
+    capability: FamilyCapability
+    sample_rows: tuple[GenerationSampleRow, ...] = ()
+    max_samples_per_microbatch: int | None = None
+
+    def build(self) -> EnginePlan:
+        """Build the immutable execution plan."""
+
+        from vrl.trainers.profiling import record_function
+
+        with record_function("engine.plan"):
+            return self._build()
+
+    def _build(self) -> EnginePlan:
+        microbatch_schedule = build_prompt_microbatch_schedule(
+            self.request.prompts,
+            samples_per_prompt=self.request.samples_per_prompt,
+            max_samples_per_microbatch=self._microbatch_size(),
+            capability=self.capability,
+        )
+        resolved_axes = self._resolved_axes()
+        execution_units = self._execution_units(
+            resolved_axes,
+            microbatch_schedule.micro_batches,
+        )
+        return EnginePlan(
+            request_id=self.request.request_id,
+            family=self.request.family,
+            task=self.request.task,
+            sample_rows=self.sample_rows,
+            workload=WorkloadSignature.from_request_and_capability(
+                self.request,
+                self.capability,
+            ),
+            capability=self.capability,
+            trajectory_kind=self.capability.trajectory_kind,
+            expected_axes=resolved_axes,
+            micro_batches=microbatch_schedule.micro_batches,
+            execution_units=execution_units,
+            metadata={
+                "samples_per_prompt": self.request.samples_per_prompt,
+                "num_prompts": len(self.request.prompts),
+            },
+        )
+
+    def _microbatch_size(self) -> int:
+        if self.max_samples_per_microbatch is not None:
+            return max(1, int(self.max_samples_per_microbatch))
+        if self.capability.default_max_samples_per_microbatch is not None:
+            return self.capability.default_max_samples_per_microbatch
+        return max(
+            1,
+            int(
+                self.request.sampling.get(
+                    "sample_batch_size",
+                    self.request.samples_per_prompt,
+                )
+            ),
+        )
+
+    def _resolved_axes(self) -> dict[str, ResolvedAxis]:
+        return {
+            axis.name: ResolvedAxis.from_capability(
+                axis,
+                length=self._axis_length(axis.name),
+            )
+            for axis in self.capability.expected_axes
+        }
+
+    def _axis_length(self, axis_name: str) -> int | None:
+        sampling = self.request.sampling
+        if axis_name == "sample":
+            return (
+                len(self.sample_rows)
+                if self.sample_rows
+                else len(self.request.prompts) * self.request.samples_per_prompt
+            )
+        if axis_name == "timestep":
+            value = sampling.get("num_steps", sampling.get("num_inference_steps"))
+            return None if value is None else int(value)
+        if axis_name == "token":
+            value = sampling.get(
+                "image_token_num",
+                sampling.get("max_new_image_tokens", sampling.get("max_new_tokens")),
+            )
+            return None if value is None else int(value)
+        if axis_name == "segment":
+            return None
+        return None
+
+    def _execution_units(
+        self,
+        resolved_axes: dict[str, ResolvedAxis],
+        sample_batches: tuple[MicroBatchSample, ...],
+    ) -> tuple[ExecutionUnit, ...]:
+        units = [
+            ExecutionUnit(
+                name="plan",
+                unit_id=f"{self.request.request_id}:plan",
+                profiler_name="engine.plan",
+                batch_group_key=(
+                    self.request.family,
+                    self.request.task,
+                    self.capability.trajectory_kind,
+                ),
+            ),
+        ]
+        units.extend(self._chunk_units(sample_batches))
+        for unit in self.capability.execution_units:
+            axis = resolved_axes.get(unit.axis or "")
+            units.append(
+                ExecutionUnit(
+                    name=unit.name,
+                    unit_id=f"{self.request.request_id}:unit:{unit.name}",
+                    segment=unit.segment,
+                    axis=unit.axis,
+                    axis_index=None,
+                    batch_group_key=self._batch_group_key(axis),
+                    cache_read=unit.cache_read,
+                    cache_write=unit.cache_write,
+                    profiler_name=unit.profiler_label,
+                    metadata=dict(unit.metadata),
+                )
+            )
+            if unit.cache_read:
+                units.append(
+                    ExecutionUnit(
+                        name="cache_read",
+                        unit_id=f"{self.request.request_id}:unit:{unit.name}:cache_read",
+                        segment=unit.segment,
+                        axis=unit.axis,
+                        profiler_name="engine.cache_read",
+                    )
+                )
+            if unit.cache_write:
+                units.append(
+                    ExecutionUnit(
+                        name="cache_write",
+                        unit_id=f"{self.request.request_id}:unit:{unit.name}:cache_write",
+                        segment=unit.segment,
+                        axis=unit.axis,
+                        profiler_name="engine.cache_write",
+                    )
+                )
+        return tuple(units)
+
+    def _chunk_units(
+        self,
+        sample_batches: tuple[MicroBatchSample, ...],
+    ) -> list[ExecutionUnit]:
+        units: list[ExecutionUnit] = []
+        for index, sample_batch in enumerate(sample_batches):
+            units.append(
+                ExecutionUnit(
+                    name="forward_chunk",
+                    unit_id=(
+                        f"{self.request.request_id}:chunk:"
+                        f"p{sample_batch.prompt_index}:"
+                        f"s{sample_batch.sample_start}:"
+                        f"n{sample_batch.sample_count}"
+                    ),
+                    axis="sample",
+                    axis_index=sample_batch.sample_start,
+                    prompt_index=sample_batch.prompt_index,
+                    sample_start=sample_batch.sample_start,
+                    sample_count=sample_batch.sample_count,
+                    batch_group_key=(
+                        self.request.family,
+                        self.request.task,
+                        self.capability.trajectory_kind,
+                    ),
+                    profiler_name="engine.forward_chunk",
+                    metadata={
+                        "unit_kind": "chunk",
+                        "chunk_index": index,
+                        "chunk_key": sample_batch.chunk_key,
+                    },
+                )
+            )
+        return units
+
+    def _batch_group_key(self, axis: ResolvedAxis | None) -> tuple[Any, ...]:
+        return (
+            self.request.family,
+            self.request.task,
+            self.capability.trajectory_kind,
+            None if axis is None else axis.name,
+            None if axis is None else axis.kind,
+        )
+
+
 def build_engine_plan(
     request: GenerationRequest,
     sample_rows: Sequence[GenerationSampleRow] | None = None,
@@ -197,59 +395,18 @@ def build_engine_plan(
 ) -> EnginePlan:
     """Build a request-level plan from sample rows and family capability metadata."""
 
-    from vrl.trainers.profiling import record_function
-
-    with record_function("engine.plan"):
-        resolved_capability = family_capability_from_value(capability)
-        if resolved_capability is None:
-            raise ValueError(
-                "build_engine_plan requires an explicit FamilyCapability; "
-                f"got None for {request.family}/{request.task}",
-            )
-        sample_rows_tuple = tuple(sample_rows or ())
-        max_samples_per_batch = _resolve_microbatch_size(
-            request,
-            resolved_capability,
-            max_samples_per_microbatch=max_samples_per_microbatch,
+    resolved_capability = family_capability_from_value(capability)
+    if resolved_capability is None:
+        raise ValueError(
+            "build_engine_plan requires an explicit FamilyCapability; "
+            f"got None for {request.family}/{request.task}",
         )
-        microbatch_schedule = build_prompt_microbatch_schedule(
-            request.prompts,
-            samples_per_prompt=request.samples_per_prompt,
-            max_samples_per_microbatch=max_samples_per_batch,
-            capability=resolved_capability,
-        )
-        axis_plans = {
-            axis.name: ResolvedAxis.from_capability(
-                axis,
-                length=_axis_length(axis.name, request, sample_rows_tuple),
-            )
-            for axis in resolved_capability.expected_axes
-        }
-        execution_units = _build_execution_units(
-            resolved_capability,
-            request,
-            axis_plans,
-            microbatch_schedule.micro_batches,
-        )
-        return EnginePlan(
-            request_id=request.request_id,
-            family=request.family,
-            task=request.task,
-            sample_rows=sample_rows_tuple,
-            workload=WorkloadSignature.from_request_and_capability(
-                request,
-                resolved_capability,
-            ),
-            capability=resolved_capability,
-            trajectory_kind=resolved_capability.trajectory_kind,
-            expected_axes=axis_plans,
-            micro_batches=microbatch_schedule.micro_batches,
-            execution_units=execution_units,
-            metadata={
-                "samples_per_prompt": request.samples_per_prompt,
-                "num_prompts": len(request.prompts),
-            },
-        )
+    return EnginePlanner(
+        request=request,
+        capability=resolved_capability,
+        sample_rows=tuple(sample_rows or ()),
+        max_samples_per_microbatch=max_samples_per_microbatch,
+    ).build()
 
 
 def resolve_executor_capability(
@@ -288,15 +445,6 @@ def attach_engine_plan(output: OutputBatch, plan: EnginePlan) -> OutputBatch:
     return output
 
 
-def profiler_label_for_unit(plan: EnginePlan, unit_name: str) -> str:
-    """Return the profiler label for a named unit in a plan."""
-
-    for unit in plan.execution_units:
-        if unit.name == unit_name:
-            return unit.profiler_name
-    return f"engine.{unit_name}"
-
-
 def _merge_runtime_caps(
     value: Any,
     executor: Any,
@@ -314,152 +462,12 @@ def _merge_runtime_caps(
     return capability
 
 
-def _resolve_microbatch_size(
-    request: GenerationRequest,
-    capability: FamilyCapability,
-    *,
-    max_samples_per_microbatch: int | None,
-) -> int:
-    if max_samples_per_microbatch is not None:
-        return max(1, int(max_samples_per_microbatch))
-    if capability.default_max_samples_per_microbatch is not None:
-        return capability.default_max_samples_per_microbatch
-    return max(1, int(request.sampling.get("sample_batch_size", request.samples_per_prompt)))
-
-
-def _axis_length(
-    axis_name: str,
-    request: GenerationRequest,
-    sample_rows: tuple[GenerationSampleRow, ...],
-) -> int | None:
-    sampling = request.sampling
-    if axis_name == "sample":
-        return (
-            len(sample_rows)
-            if sample_rows
-            else len(request.prompts) * request.samples_per_prompt
-        )
-    if axis_name == "timestep":
-        value = sampling.get("num_steps", sampling.get("num_inference_steps"))
-        return None if value is None else int(value)
-    if axis_name == "token":
-        value = sampling.get(
-            "image_token_num",
-            sampling.get("max_new_image_tokens", sampling.get("max_new_tokens")),
-        )
-        return None if value is None else int(value)
-    if axis_name == "segment":
-        return None
-    return None
-
-
-def _build_execution_units(
-    capability: FamilyCapability,
-    request: GenerationRequest,
-    axis_plans: dict[str, ResolvedAxis],
-    sample_batches: tuple[MicroBatchSample, ...],
-) -> tuple[ExecutionUnit, ...]:
-    units = [
-        ExecutionUnit(
-            name="plan",
-            unit_id=f"{request.request_id}:plan",
-            profiler_name="engine.plan",
-            batch_group_key=(request.family, request.task, capability.trajectory_kind),
-        ),
-    ]
-    units.extend(_build_chunk_units(capability, request, sample_batches))
-    for unit in capability.execution_units:
-        axis_plan = axis_plans.get(unit.axis or "")
-        units.append(
-            ExecutionUnit(
-                name=unit.name,
-                unit_id=f"{request.request_id}:unit:{unit.name}",
-                segment=unit.segment,
-                axis=unit.axis,
-                axis_index=None,
-                batch_group_key=_batch_group_key(request, capability, axis_plan),
-                cache_read=unit.cache_read,
-                cache_write=unit.cache_write,
-                profiler_name=unit.profiler_label,
-                metadata=dict(unit.metadata),
-            )
-        )
-        if unit.cache_read:
-            units.append(
-                ExecutionUnit(
-                    name="cache_read",
-                    unit_id=f"{request.request_id}:unit:{unit.name}:cache_read",
-                    segment=unit.segment,
-                    axis=unit.axis,
-                    profiler_name="engine.cache_read",
-                )
-            )
-        if unit.cache_write:
-            units.append(
-                ExecutionUnit(
-                    name="cache_write",
-                    unit_id=f"{request.request_id}:unit:{unit.name}:cache_write",
-                    segment=unit.segment,
-                    axis=unit.axis,
-                    profiler_name="engine.cache_write",
-                )
-            )
-    return tuple(units)
-
-
-def _build_chunk_units(
-    capability: FamilyCapability,
-    request: GenerationRequest,
-    sample_batches: tuple[MicroBatchSample, ...],
-) -> list[ExecutionUnit]:
-    units: list[ExecutionUnit] = []
-    for index, sample_batch in enumerate(sample_batches):
-        units.append(
-            ExecutionUnit(
-                name="forward_chunk",
-                unit_id=(
-                    f"{request.request_id}:chunk:"
-                    f"p{sample_batch.prompt_index}:"
-                    f"s{sample_batch.sample_start}:"
-                    f"n{sample_batch.sample_count}"
-                ),
-                axis="sample",
-                axis_index=sample_batch.sample_start,
-                prompt_index=sample_batch.prompt_index,
-                sample_start=sample_batch.sample_start,
-                sample_count=sample_batch.sample_count,
-                batch_group_key=(request.family, request.task, capability.trajectory_kind),
-                profiler_name="engine.forward_chunk",
-                metadata={
-                    "unit_kind": "chunk",
-                    "chunk_index": index,
-                    "chunk_key": sample_batch.chunk_key,
-                },
-            )
-        )
-    return units
-
-
-def _batch_group_key(
-    request: GenerationRequest,
-    capability: FamilyCapability,
-    axis_plan: ResolvedAxis | None,
-) -> tuple[Any, ...]:
-    return (
-        request.family,
-        request.task,
-        capability.trajectory_kind,
-        None if axis_plan is None else axis_plan.name,
-        None if axis_plan is None else axis_plan.kind,
-    )
-
-
 __all__ = [
     "EnginePlan",
+    "EnginePlanner",
     "ExecutionUnit",
     "ResolvedAxis",
     "attach_engine_plan",
     "build_engine_plan",
-    "profiler_label_for_unit",
     "resolve_executor_capability",
 ]

@@ -10,7 +10,7 @@ from typing import Any
 from omegaconf import DictConfig, ListConfig, OmegaConf
 
 from vrl.engine.core.launch_contract import GenerationRuntimeLaunchContract
-from vrl.engine.execution.gather import ChunkGatherer
+from vrl.engine.core.protocols import ChunkGatherer
 from vrl.rollouts.family_registry import (
     RolloutFamilyEntry,
     get_rollout_family_entry,

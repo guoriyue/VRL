@@ -1,12 +1,6 @@
-"""Engine execution planning, request batches, and gathering."""
+"""Engine execution planning and request batches."""
 
 from vrl.engine.core.protocols import RolloutBackend
-from vrl.engine.execution.gather import (
-    ChunkGatherer,
-    gather_pipeline_chunks,
-    require_chunk_gatherer,
-    require_chunked_executor,
-)
 from vrl.engine.execution.ids import GenerationIdFactory
 from vrl.engine.execution.microbatching import (
     MicroBatchSample,
@@ -16,18 +10,18 @@ from vrl.engine.execution.microbatching import (
 )
 from vrl.engine.execution.planner import (
     EnginePlan,
+    EnginePlanner,
     ExecutionUnit,
     ResolvedAxis,
     attach_engine_plan,
     build_engine_plan,
-    profiler_label_for_unit,
     resolve_executor_capability,
 )
 from vrl.engine.execution.request_batch import RequestBatch
 
 __all__ = [
-    "ChunkGatherer",
     "EnginePlan",
+    "EnginePlanner",
     "ExecutionUnit",
     "GenerationIdFactory",
     "MicroBatchSample",
@@ -38,10 +32,6 @@ __all__ = [
     "attach_engine_plan",
     "build_engine_plan",
     "build_prompt_microbatch_schedule",
-    "gather_pipeline_chunks",
-    "profiler_label_for_unit",
-    "require_chunk_gatherer",
-    "require_chunked_executor",
     "resolve_executor_capability",
     "run_microbatch_samples_with_oom_retry",
 ]

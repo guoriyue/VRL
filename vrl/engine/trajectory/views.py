@@ -88,9 +88,9 @@ def build_training_view(
     """Build a default policy-gradient TrainingView for trainable segments."""
 
     from vrl.engine.trajectory.validation import (
+        TrajectoryValidator,
         replay_input_ref,
         tensor_ref,
-        validate_training_view,
     )
 
     loss_units: list[LossUnit] = []
@@ -121,7 +121,7 @@ def build_training_view(
         loss_units=tuple(loss_units),
         primary_segment=primary_segment or (loss_units[0].segment if loss_units else None),
     )
-    return validate_training_view(trajectory, view)
+    return TrajectoryValidator(trajectory).validate_training_view(view)
 
 
 def _require_string_tuple(name: str, values: tuple[str, ...]) -> None:

@@ -16,8 +16,8 @@ from vrl.engine.trajectory.types import (
     TrajectoryTensor,
 )
 from vrl.engine.trajectory.validation import (
+    TrajectoryValidator,
     tensor_ref,
-    validate_trajectory_batch,
 )
 from vrl.engine.trajectory.views import RewardView
 
@@ -133,7 +133,7 @@ def build_diffusion_trajectory(
         ),
         context=_serializable_context(context),
     )
-    return validate_trajectory_batch(trajectory)
+    return TrajectoryValidator(trajectory).validate_batch()
 
 
 def build_ar_discrete_trajectory(
@@ -243,7 +243,7 @@ def build_ar_discrete_trajectory(
         ),
         context=_serializable_context(context),
     )
-    return validate_trajectory_batch(trajectory)
+    return TrajectoryValidator(trajectory).validate_batch()
 
 
 def build_ar_continuous_trajectory(
@@ -382,7 +382,7 @@ def build_ar_continuous_trajectory(
         ),
         context=_serializable_context(context),
     )
-    return validate_trajectory_batch(trajectory)
+    return TrajectoryValidator(trajectory).validate_batch()
 
 
 def build_ar_multisegment_trajectory(
@@ -537,7 +537,7 @@ def build_ar_multisegment_trajectory(
             "segment_names": tuple(segments),
         },
     )
-    return validate_trajectory_batch(trajectory)
+    return TrajectoryValidator(trajectory).validate_batch()
 
 
 def _prompt_group_ids(

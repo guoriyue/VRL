@@ -13,9 +13,8 @@ from vrl.engine.trajectory.types import (
     TrajectoryTensor,
 )
 from vrl.engine.trajectory.validation import (
+    TrajectoryValidator,
     tensor_ref,
-    validate_training_view,
-    validate_trajectory_batch,
 )
 from vrl.engine.trajectory.views import LossUnit, TrainingView
 
@@ -82,7 +81,7 @@ class TrajectoryResolver:
     training_view: TrainingView | None = None
 
     def __post_init__(self) -> None:
-        validate_trajectory_batch(self.trajectory)
+        TrajectoryValidator(self.trajectory).validate_batch()
 
     @classmethod
     def from_batch(cls, batch: Any) -> TrajectoryResolver:
@@ -176,7 +175,7 @@ class TrajectoryResolver:
     def resolve_training_view(self, view: TrainingView) -> ResolvedTrainingView:
         """Resolve a training view into typed tensors owned by the trajectory."""
 
-        validate_training_view(self.trajectory, view)
+        TrajectoryValidator(self.trajectory).validate_training_view(view)
         resolved_units = tuple(self._resolve_loss_unit(unit) for unit in view.loss_units)
         return ResolvedTrainingView(
             trajectory=self.trajectory,
@@ -187,9 +186,8 @@ class TrajectoryResolver:
     def resolve_loss_unit(self, unit: LossUnit) -> ResolvedLossUnit:
         """Resolve a single loss unit after validating it against the trajectory."""
 
-        validate_training_view(
-            self.trajectory,
-            TrainingView(loss_units=(unit,), primary_segment=unit.segment),
+        TrajectoryValidator(self.trajectory).validate_training_view(
+            TrainingView(loss_units=(unit,), primary_segment=unit.segment)
         )
         return self._resolve_loss_unit(unit)
 

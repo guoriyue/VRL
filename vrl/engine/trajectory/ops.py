@@ -17,7 +17,7 @@ from vrl.engine.trajectory.types import (
     TrajectorySegment,
     TrajectoryTensor,
 )
-from vrl.engine.trajectory.validation import validate_trajectory_batch
+from vrl.engine.trajectory.validation import TrajectoryValidator
 
 
 def slice_trajectory_batch(
@@ -207,7 +207,7 @@ def _rebuild_trajectory(
         ),
         context=context,
     )
-    return validate_trajectory_batch(out)
+    return TrajectoryValidator(out).validate_batch()
 
 
 def _slice_value(value: Any, offset: int, count: int, total: int) -> Any:

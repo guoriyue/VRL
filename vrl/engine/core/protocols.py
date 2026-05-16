@@ -20,6 +20,18 @@ class PipelineChunkResult(Protocol):
     """Family-specific chunk payload returned before final OutputBatch gather."""
 
 
+@runtime_checkable
+class ChunkGatherer(Protocol):
+    """Pure chunk gather contract that does not require an executor/model."""
+
+    def gather_chunks(
+        self,
+        request: GenerationRequest,
+        sample_rows: Sequence[GenerationSampleRow],
+        chunks: Sequence[PipelineChunkResult],
+    ) -> OutputBatch: ...
+
+
 class RolloutBackend(Protocol):
     """Generation backend consumed by rollout collectors."""
 

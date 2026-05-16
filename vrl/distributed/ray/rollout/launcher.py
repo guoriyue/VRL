@@ -18,7 +18,7 @@ from vrl.distributed.ray.rollout.weight_sync import RayRolloutWeightSync
 from vrl.distributed.ray.rollout.worker import RayRolloutWorker
 from vrl.distributed.resources import format_distributed_resource_plan
 from vrl.engine.core.launch_contract import GenerationRuntimeLaunchContract
-from vrl.engine.execution.gather import ChunkGatherer, require_chunk_gatherer
+from vrl.engine.core.protocols import ChunkGatherer
 from vrl.rollouts.runtime.config import RolloutBackendConfig
 
 logger = logging.getLogger(__name__)
@@ -47,7 +47,7 @@ class RayRolloutLauncher:
         contract = GenerationRuntimeLaunchContract.from_value(launch_contract)
         if not contract.family:
             raise ValueError("GenerationRuntimeLaunchContract.family is required")
-        chunk_gatherer = require_chunk_gatherer(gatherer)
+        chunk_gatherer = _require_chunk_gatherer(gatherer)
 
         ray = require_ray()
         if self.init_ray and not ray.is_initialized():
@@ -133,6 +133,15 @@ def _kill_actors(ray: Any, actors: list[Any]) -> None:
     for actor in actors:
         with contextlib.suppress(Exception):
             ray.kill(actor, no_restart=True)
+
+
+def _require_chunk_gatherer(gatherer: Any) -> ChunkGatherer:
+    gather_chunks = getattr(gatherer, "gather_chunks", None)
+    if not callable(gather_chunks):
+        raise TypeError(
+            f"{type(gatherer).__name__} does not implement gather_chunks(...)",
+        )
+    return gatherer
 
 
 def _validate_worker_gpu_ids(

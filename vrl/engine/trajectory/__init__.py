@@ -30,12 +30,9 @@ from vrl.engine.trajectory.types import (
 )
 from vrl.engine.trajectory.validation import (
     TrajectoryValidationError,
+    TrajectoryValidator,
     replay_input_ref,
     tensor_ref,
-    validate_loss_unit,
-    validate_reward_view,
-    validate_training_view,
-    validate_trajectory_batch,
 )
 from vrl.engine.trajectory.views import (
     AlgorithmFamily,
@@ -72,6 +69,7 @@ __all__ = [
     "TrajectorySegment",
     "TrajectoryTensor",
     "TrajectoryValidationError",
+    "TrajectoryValidator",
     "build_ar_continuous_trajectory",
     "build_ar_discrete_trajectory",
     "build_ar_multisegment_trajectory",
@@ -79,8 +77,4 @@ __all__ = [
     "build_training_view",
     "replay_input_ref",
     "tensor_ref",
-    "validate_loss_unit",
-    "validate_reward_view",
-    "validate_training_view",
-    "validate_trajectory_batch",
 ]

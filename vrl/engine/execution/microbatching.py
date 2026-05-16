@@ -6,6 +6,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
+from vrl.utils.cuda_memory import empty_cuda_cache, is_cuda_out_of_memory
+
 T = TypeVar("T")
 
 
@@ -140,27 +142,16 @@ def run_microbatch_samples_with_oom_retry(
         try:
             results.append(run_one(micro_batch))
         except RuntimeError as exc:
-            if not _is_cuda_oom(exc) or micro_batch.sample_count <= min_sample_count:
+            if (
+                not is_cuda_out_of_memory(exc)
+                or micro_batch.sample_count <= min_sample_count
+            ):
                 raise
-            _clear_cuda_cache()
+            empty_cuda_cache()
             left, right = micro_batch.split()
             pending.insert(0, right)
             pending.insert(0, left)
     return results
-
-
-def _is_cuda_oom(exc: RuntimeError) -> bool:
-    msg = str(exc).lower()
-    return "cuda" in msg and "out of memory" in msg
-
-
-def _clear_cuda_cache() -> None:
-    try:
-        import torch
-    except Exception:
-        return
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
 
 
 __all__ = [

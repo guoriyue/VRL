@@ -19,9 +19,9 @@ from vrl.engine.core.capabilities import (
 )
 from vrl.engine.core.launch_contract import GenerationRuntimeLaunchContract
 from vrl.engine.core.protocols import ChunkedFamilyPipelineExecutor
-from vrl.engine.execution.gather import require_chunked_executor
 from vrl.models.interfaces import require_runtime_model
 from vrl.trainers.core.types import TorchProfilerConfig
+from vrl.utils.cuda_memory import release_cuda_memory
 
 logger = logging.getLogger(__name__)
 
@@ -62,17 +62,7 @@ class RayRolloutWorker:
         """Drop loaded model state so the actor releases CUDA memory before exit."""
 
         self.executor = None
-        import gc
-
-        gc.collect()
-        try:
-            import torch
-
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                torch.cuda.ipc_collect()
-        except Exception:
-            pass
+        release_cuda_memory(gc_collect=True, ipc_collect=True)
 
     def update_weights(self, state_ref: Any, policy_version: int) -> None:
         """Update rollout weights, then record the active policy version."""
@@ -279,7 +269,7 @@ class RayRolloutWorker:
         built = executor_cls(model, **dict(launch_contract.executor_kwargs))
         if getattr(bundle, "runtime_caps", None) is not None:
             built.runtime_caps = dict(bundle.runtime_caps)
-        return require_chunked_executor(built)
+        return _require_chunked_executor(built)
 
     @staticmethod
     def _profiler_config_from_contract(
@@ -414,6 +404,17 @@ class RayRolloutWorker:
     @staticmethod
     def _is_tensor(value: Any) -> bool:
         return hasattr(value, "detach") and hasattr(value, "cpu")
+
+
+def _require_chunked_executor(executor: Any) -> ChunkedFamilyPipelineExecutor:
+    forward_chunk_plan = getattr(executor, "forward_chunk_plan", None)
+    gather_chunks = getattr(executor, "gather_chunks", None)
+    if not callable(forward_chunk_plan) or not callable(gather_chunks):
+        raise TypeError(
+            f"{type(executor).__name__} does not implement "
+            "forward_chunk_plan(...) and gather_chunks(...)",
+        )
+    return executor
 
 
 __all__ = ["RayRolloutWorker"]

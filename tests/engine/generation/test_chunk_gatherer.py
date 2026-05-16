@@ -7,13 +7,9 @@ from typing import Any
 
 import torch
 
+from vrl.engine.core.protocols import ChunkGatherer
 from vrl.engine.core.types import GenerationRequest, OutputBatch
 from vrl.engine.diffusion import DiffusionChunkGatherer, DiffusionChunkResult
-from vrl.engine.execution.gather import (
-    ChunkGatherer,
-    gather_pipeline_chunks,
-    require_chunk_gatherer,
-)
 from vrl.engine.execution.ids import GenerationIdFactory
 
 
@@ -41,9 +37,8 @@ def test_chunk_gatherer_accepts_pure_object_without_forward_chunk_plan() -> None
 
     assert isinstance(gatherer, ChunkGatherer)
     assert not hasattr(gatherer, "forward_chunk_plan")
-    assert require_chunk_gatherer(gatherer) is gatherer
 
-    output = gather_pipeline_chunks(gatherer, request, sample_rows, ["chunk"])
+    output = gatherer.gather_chunks(request, sample_rows, ["chunk"])
 
     assert output.output == ["chunk"]
 
