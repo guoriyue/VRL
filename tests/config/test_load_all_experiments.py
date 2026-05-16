@@ -69,6 +69,8 @@ def test_algorithm_config_dispatches_representative_kinds() -> None:
         algo_cfg = build_algorithm_config(cfg)
         assert isinstance(algo_cfg, expected_type)
         assert isinstance(algo_cfg, EXPECTED_ALGO_TYPE[str(cfg.algorithm.kind)])
+        if name == "janus_pro_1b_ocr_grpo":
+            assert algo_cfg.kl_estimator == "k2"
 
 
 def test_unified_train_entrypoint_reads_yaml_entrypoint() -> None:

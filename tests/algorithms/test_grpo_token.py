@@ -4,7 +4,7 @@ Validates:
   * Inherits group-relative advantage from GRPO unchanged.
   * Per-token PPO clipped surrogate broadcasts [B] advantages → [B, L].
   * Mask zero → token excluded from loss.
-  * KL k1 vs k3 estimators.
+  * KL k1, k2, and k3 estimators.
   * Loss == 0 when ratio==1 and KL==0.
 """
 
@@ -164,6 +164,27 @@ class TestKL:
         algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=1.0, kl_estimator="k3"))
         _, m = algo.compute_loss(_inputs(new_lp, old_lp, adv, ref_lp=ref_lp))
         assert m.kl_penalty >= 0.0
+
+    def test_k2_half_squared_log_ratio(self) -> None:
+        new_lp = torch.tensor([[1.0, -1.0, 0.0, 2.0]])
+        ref_lp = torch.zeros(1, 4)
+        old_lp = torch.zeros(1, 4)
+        adv = torch.zeros(1)
+        algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=1.0, kl_estimator="k2"))
+        _, m = algo.compute_loss(_inputs(new_lp, old_lp, adv, ref_lp=ref_lp))
+
+        expected = 0.5 * (new_lp - ref_lp).square().mean()
+        assert m.kl_penalty == pytest.approx(float(expected), abs=1e-6)
+
+    def test_k2_does_not_exponentiate_large_log_ratio(self) -> None:
+        new_lp = torch.full((1, 2), 10.0)
+        ref_lp = torch.zeros(1, 2)
+        old_lp = torch.zeros(1, 2)
+        adv = torch.zeros(1)
+        algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=1.0, kl_estimator="k2"))
+        _, m = algo.compute_loss(_inputs(new_lp, old_lp, adv, ref_lp=ref_lp))
+
+        assert m.kl_penalty == pytest.approx(50.0, abs=1e-6)
 
     def test_unknown_estimator_raises(self) -> None:
         new_lp = torch.zeros(1, 2)

@@ -71,12 +71,7 @@ class TokenGRPO(GRPO):
                 )
             ref_lp: torch.Tensor = signals.ref_log_prob
             log_ratio = new_lp - ref_lp
-            if cfg.kl_estimator == "k3":
-                kl_per_tok = torch.exp(log_ratio) * (log_ratio - 1.0) + 1.0
-            elif cfg.kl_estimator == "k1":
-                kl_per_tok = log_ratio
-            else:
-                raise ValueError(f"unknown kl_estimator: {cfg.kl_estimator}")
+            kl_per_tok = _token_kl_per_token(log_ratio, cfg.kl_estimator)
             kl_loss = (kl_per_tok * mask).sum() / denom
             loss = policy_loss + cfg.init_kl_coef * kl_loss
         else:
@@ -113,3 +108,15 @@ def _required_advantages(inputs: AlgorithmInput) -> Any:
     if inputs.advantages is None:
         raise RuntimeError("AlgorithmInput.advantages is required for TokenGRPO")
     return inputs.advantages
+
+
+def _token_kl_per_token(log_ratio: torch.Tensor, estimator: str) -> torch.Tensor:
+    if estimator == "k1":
+        return log_ratio
+    if estimator == "k2":
+        # Quadratic log-ratio penalty avoids the exp(log_ratio) spikes that can
+        # dominate token RL when the current policy briefly outruns the reference.
+        return 0.5 * log_ratio.square()
+    if estimator == "k3":
+        return torch.exp(log_ratio) * (log_ratio - 1.0) + 1.0
+    raise ValueError(f"unknown kl_estimator: {estimator}")

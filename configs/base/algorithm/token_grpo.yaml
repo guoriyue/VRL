@@ -1,9 +1,9 @@
 # Token-GRPO algorithm hyper-parameters — extends GRPO for AR (Janus, NextStep).
-# Adds mask_key (which token positions to score) and kl_estimator (k1/k3).
+# Adds mask_key (which token positions to score) and kl_estimator (k1/k2/k3).
 defaults:
   - /base/algorithm/grpo
 
 algorithm:
   kind: token_grpo
   mask_key: token_mask          # Trajectory segment mask tensor for [B, L] token scoring
-  kl_estimator: k3              # k1 = logp-logp_ref signed; k3 = Schulman 2020 unbiased
+  kl_estimator: k3              # k1 = signed log-ratio; k2 = 0.5 * log-ratio^2; k3 = exponential unbiased form
