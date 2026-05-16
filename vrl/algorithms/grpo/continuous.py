@@ -91,8 +91,12 @@ class GRPO(Algorithm):
         from vrl.math.diffusion.flow_matching import compute_kl_divergence
 
         cfg = self.config
-        signals = _primary_signal(inputs)
-        advantages = _required_advantages(inputs)
+        if inputs.signals is None:
+            raise RuntimeError("AlgorithmInput.signals is required for GRPO")
+        if inputs.advantages is None:
+            raise RuntimeError("AlgorithmInput.advantages is required for GRPO")
+        signals = inputs.signals.primary
+        advantages = inputs.advantages
         old_log_probs = signals.old_log_prob
 
         ratio = torch.exp(signals.log_prob - old_log_probs)
@@ -145,15 +149,3 @@ class GRPO(Algorithm):
         )
 
         return loss, metrics
-
-
-def _primary_signal(inputs: AlgorithmInput) -> Any:
-    if inputs.signals is None:
-        raise RuntimeError("AlgorithmInput.signals is required for GRPO")
-    return inputs.signals.primary
-
-
-def _required_advantages(inputs: AlgorithmInput) -> Any:
-    if inputs.advantages is None:
-        raise RuntimeError("AlgorithmInput.advantages is required for GRPO")
-    return inputs.advantages

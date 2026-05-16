@@ -5,16 +5,21 @@ reference implementation at github.com/SalesforceAIResearch/DiffusionDPO
 (see ``train.py:1119-1145``).
 
 DPO is offline preference learning, fundamentally different from GRPO/PPO
-(no rollouts, no advantages). For that reason this module provides a
-pure functional loss rather than implementing the ``Algorithm`` ABC.
+(no rollouts, no advantages). The module keeps the pure functional loss for
+offline trainers and exposes ``DiffusionDPO`` for the shared algorithm adapter.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import torch
 import torch.nn.functional as F
+
+from vrl.algorithms.base import Algorithm
+from vrl.algorithms.trajectory import AlgorithmInput
+from vrl.algorithms.types import TrainStepMetrics
 
 
 @dataclass(slots=True)
@@ -29,6 +34,60 @@ class DiffusionDPOConfig:
 
     beta: float = 5000.0
     sft_weight: float = 0.0  # optional auxiliary SFT-on-winner loss
+
+
+class DiffusionDPO(Algorithm):
+    """Algorithm wrapper for Diffusion-DPO preference loss.
+
+    DPO does not compute reward-normalized advantages. It consumes preference
+    tensors from ``AlgorithmInput.metadata``:
+
+    - ``model_pred``: policy prediction, shape ``[2B, ...]``
+    - ``ref_pred``: frozen reference prediction, shape ``[2B, ...]``
+    - ``target``: ground-truth noise/velocity target, shape ``[2B, ...]``
+    """
+
+    def __init__(self, config: DiffusionDPOConfig | None = None) -> None:
+        self.config = config or DiffusionDPOConfig()
+
+    def compute_advantages_from_tensors(
+        self,
+        rewards: Any,
+        group_ids: Any,
+    ) -> Any:
+        del rewards, group_ids
+        raise RuntimeError("DiffusionDPO is an offline preference objective")
+
+    def compute_loss(
+        self,
+        inputs: AlgorithmInput,
+    ) -> tuple[Any, TrainStepMetrics]:
+        model_pred = inputs.metadata.get("model_pred")
+        ref_pred = inputs.metadata.get("ref_pred")
+        target = inputs.metadata.get("target")
+        if model_pred is None or ref_pred is None or target is None:
+            raise RuntimeError(
+                "DiffusionDPO AlgorithmInput.metadata requires "
+                "model_pred, ref_pred, and target",
+            )
+
+        beta = float(inputs.metadata.get("beta", self.config.beta))
+        out = diffusion_dpo_loss(model_pred, ref_pred, target, beta=beta)
+        dpo_loss = out["loss"]
+        loss = dpo_loss
+        if self.config.sft_weight > 0:
+            half = model_pred.shape[0] // 2
+            loss = loss + float(self.config.sft_weight) * diffusion_sft_loss(
+                model_pred[:half],
+                target[:half],
+            )
+
+        return loss, TrainStepMetrics(
+            loss=float(loss.detach().item()),
+            policy_loss=float(dpo_loss.detach().item()),
+            approx_kl=float(out["raw_model_loss"].detach().item()),
+            clip_fraction=float(out["implicit_acc"].detach().item()),
+        )
 
 
 def diffusion_dpo_loss(
@@ -112,3 +171,11 @@ def diffusion_sft_loss(
     Pass ``model_pred[:B]`` and ``target[:B]`` (the winner halves).
     """
     return F.mse_loss(model_pred_winner.float(), target_winner.float(), reduction="mean")
+
+
+__all__ = [
+    "DiffusionDPO",
+    "DiffusionDPOConfig",
+    "diffusion_dpo_loss",
+    "diffusion_sft_loss",
+]

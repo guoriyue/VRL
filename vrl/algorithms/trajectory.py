@@ -95,32 +95,13 @@ def _try_compute_dpo_loss(
     algorithm: Any,
     inputs: AlgorithmInput,
 ) -> tuple[Any, TrainStepMetrics] | None:
-    from vrl.algorithms.dpo import DiffusionDPOConfig, diffusion_dpo_loss, diffusion_sft_loss
+    from vrl.algorithms.dpo import DiffusionDPO, DiffusionDPOConfig
 
+    if isinstance(algorithm, DiffusionDPO):
+        return algorithm.compute_loss(inputs)
     if not isinstance(algorithm, DiffusionDPOConfig):
         return None
-    model_pred = inputs.metadata.get("model_pred")
-    ref_pred = inputs.metadata.get("ref_pred")
-    target = inputs.metadata.get("target")
-    if model_pred is None or ref_pred is None or target is None:
-        raise RuntimeError(
-            "DiffusionDPO AlgorithmInput.metadata requires model_pred, ref_pred, and target",
-        )
-    beta = float(inputs.metadata.get("beta", algorithm.beta))
-    out = diffusion_dpo_loss(model_pred, ref_pred, target, beta=beta)
-    loss = out["loss"]
-    if algorithm.sft_weight > 0:
-        half = model_pred.shape[0] // 2
-        loss = loss + float(algorithm.sft_weight) * diffusion_sft_loss(
-            model_pred[:half],
-            target[:half],
-        )
-    return loss, TrainStepMetrics(
-        loss=float(loss.detach().item()),
-        policy_loss=float(out["loss"].detach().item()),
-        approx_kl=float(out["raw_model_loss"].detach().item()),
-        clip_fraction=float(out["implicit_acc"].detach().item()),
-    )
+    return DiffusionDPO(algorithm).compute_loss(inputs)
 
 
 __all__ = [

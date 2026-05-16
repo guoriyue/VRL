@@ -34,10 +34,14 @@ class TokenGRPO(GRPO):
     ) -> tuple[Any, TrainStepMetrics]:
         cfg = self.config
 
-        signals = _primary_signal(inputs)
+        if inputs.signals is None:
+            raise RuntimeError("AlgorithmInput.signals is required for TokenGRPO")
+        if inputs.advantages is None:
+            raise RuntimeError("AlgorithmInput.advantages is required for TokenGRPO")
+        signals = inputs.signals.primary
         new_lp: torch.Tensor = signals.log_prob
         old_lp: torch.Tensor = signals.old_log_prob
-        advantages = _required_advantages(inputs)
+        advantages = inputs.advantages
         if new_lp.shape != old_lp.shape:
             raise ValueError(
                 f"log_prob shape mismatch: new={tuple(new_lp.shape)} old={tuple(old_lp.shape)}"
@@ -96,18 +100,6 @@ class TokenGRPO(GRPO):
             approx_kl=approx_kl,
         )
         return loss, metrics
-
-
-def _primary_signal(inputs: AlgorithmInput) -> Any:
-    if inputs.signals is None:
-        raise RuntimeError("AlgorithmInput.signals is required for TokenGRPO")
-    return inputs.signals.primary
-
-
-def _required_advantages(inputs: AlgorithmInput) -> Any:
-    if inputs.advantages is None:
-        raise RuntimeError("AlgorithmInput.advantages is required for TokenGRPO")
-    return inputs.advantages
 
 
 def _token_kl_per_token(log_ratio: torch.Tensor, estimator: str) -> torch.Tensor:

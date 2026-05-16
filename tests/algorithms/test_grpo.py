@@ -5,8 +5,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from vrl.algorithms import GRPO
-from vrl.algorithms.grpo.continuous import GRPOConfig
+from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
 

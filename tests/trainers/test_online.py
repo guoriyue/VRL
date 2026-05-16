@@ -48,8 +48,8 @@ class TestOnlineTrainerCeaRegressions:
 
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.rollouts.batch import RolloutBatch
+        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
         from vrl.trainers.online import OnlineTrainer
-        from vrl.trainers.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
 
         class _Algorithm:
             class _Config:
@@ -165,9 +165,9 @@ class TestOnlineTrainerCeaRegressions:
 
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.rollouts.batch import RolloutBatch
+        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
         from vrl.trainers.data import PromptExample
         from vrl.trainers.online import OnlineTrainer
-        from vrl.trainers.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
 
         captured_kwargs: list[dict] = []
 
@@ -267,8 +267,8 @@ class TestOnlineTrainerCeaRegressions:
 
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.rollouts.batch import RolloutBatch
+        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
         from vrl.trainers.online import OnlineTrainer
-        from vrl.trainers.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
 
         collect_calls: list[list[str]] = []
         evaluate_batch_sizes: list[int] = []
@@ -365,8 +365,8 @@ class TestOnlineTrainerCeaRegressions:
 
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.rollouts.batch import RolloutBatch
+        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
         from vrl.trainers.online import OnlineTrainer
-        from vrl.trainers.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
 
         collect_seen_sync_counts: list[int] = []
 
@@ -452,8 +452,8 @@ class TestOnlineTrainerCeaRegressions:
         import pytest
         import torch.nn as nn
 
+        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
         from vrl.trainers.online import OnlineTrainer
-        from vrl.trainers.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
 
         class _Algorithm:
             class _Config:
@@ -506,8 +506,8 @@ class TestOnlineTrainerCeaRegressions:
 
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.rollouts.batch import RolloutBatch
+        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
         from vrl.trainers.online import OnlineTrainer
-        from vrl.trainers.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
 
         class _Algorithm:
             class _Config:
@@ -554,9 +554,12 @@ class TestOnlineTrainerCeaRegressions:
                     prompts=list(prompts) * group_size,
                 )
 
+        grad_enabled: list[bool] = []
+
         class _Evaluator(Evaluator):
             def evaluate(self, model, batch, timestep_idx, **kw):
                 del kw
+                grad_enabled.append(torch.is_grad_enabled())
                 return _trajectory_signals(batch, model.weight.view(1).expand(batch.rewards.shape[0]), timestep_idx)
 
         model = nn.Linear(1, 1, bias=False)
@@ -593,6 +596,8 @@ class TestOnlineTrainerCeaRegressions:
         assert record["driver_trainable_before_step"]["tensor_count"] == 1
         assert record["driver_trainable_after_step"]["tensor_count"] == 1
         assert record["runtime_debug"]["ray_chunks"][0]["worker_id"] == "rollout-0"
+        assert grad_enabled[0] is False
+        assert any(grad_enabled[1:])
 
     def test_algorithm_diagnostic_tensors_are_cleared_after_backward(self) -> None:
         import asyncio
@@ -602,8 +607,8 @@ class TestOnlineTrainerCeaRegressions:
 
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.rollouts.batch import RolloutBatch
+        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
         from vrl.trainers.online import OnlineTrainer
-        from vrl.trainers.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
 
         class _Algorithm:
             class _Config:
@@ -684,8 +689,8 @@ class TestOnlineTrainerCeaRegressions:
 
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.rollouts.batch import RolloutBatch
+        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
         from vrl.trainers.online import OnlineTrainer
-        from vrl.trainers.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
 
         class _Algorithm:
             class _Config:
@@ -767,8 +772,8 @@ class TestOnlineTrainerCeaRegressions:
 
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.rollouts.batch import RolloutBatch
+        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
         from vrl.trainers.online import OnlineTrainer
-        from vrl.trainers.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
 
         recorded_grads: list[float] = []
 
@@ -863,8 +868,8 @@ class TestOnlineTrainerCeaRegressions:
 
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.rollouts.batch import RolloutBatch
+        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
         from vrl.trainers.online import OnlineTrainer
-        from vrl.trainers.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
 
         seen_batch_sizes: list[int] = []
 
@@ -969,9 +974,11 @@ class TestOnlineTrainerCeaRegressions:
         import torch.nn as nn
 
         from vrl.algorithms.types import TrainStepMetrics
+        from vrl.engine import GenerationRequest, GenerationSampleSpec
+        from vrl.engine.trajectory import build_ar_discrete_trajectory, build_training_view
         from vrl.rollouts.batch import RolloutBatch
+        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
         from vrl.trainers.online import OnlineTrainer
-        from vrl.trainers.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
 
         class _Algorithm:
             class _Config:
@@ -1009,13 +1016,50 @@ class TestOnlineTrainerCeaRegressions:
         class _Collector(Collector):
             async def collect(self, prompts, **kwargs):
                 group_size = int(kwargs.get("group_size", 1))
+                prompts = list(prompts)
+                request = GenerationRequest(
+                    request_id="zero-adv",
+                    family="janus_pro",
+                    task="ar_t2i",
+                    prompts=prompts,
+                    samples_per_prompt=group_size,
+                )
+                sample_specs = [
+                    GenerationSampleSpec(
+                        prompt_index=index // group_size,
+                        sample_index=index % group_size,
+                        prompt=prompts[index // group_size],
+                        prompt_id=f"prompt-{index // group_size}",
+                        group_id=f"group-{index // group_size}",
+                        sample_id=f"sample-{index}",
+                        trajectory_id=f"trajectory-{index}",
+                        seed=None,
+                    )
+                    for index in range(len(prompts) * group_size)
+                ]
+                batch_size = len(sample_specs)
+                token_ids = torch.arange(batch_size * 2).view(batch_size, 2)
+                trajectory = build_ar_discrete_trajectory(
+                    request=request,
+                    sample_specs=sample_specs,
+                    token_ids=token_ids,
+                    token_log_probs=torch.zeros_like(token_ids, dtype=torch.float32),
+                    token_mask=torch.ones_like(token_ids, dtype=torch.float32),
+                    prompt_input_ids=torch.ones(len(sample_specs), 3, dtype=torch.long),
+                    prompt_attention_mask=torch.ones(len(sample_specs), 3, dtype=torch.long),
+                    uncond_input_ids=torch.zeros(len(sample_specs), 3, dtype=torch.long),
+                    uncond_attention_mask=torch.ones(len(sample_specs), 3, dtype=torch.long),
+                    context={"model_family": "janus_pro"},
+                )
                 return RolloutBatch(
-                    observations=torch.zeros(group_size, 1, 1),
-                    actions=torch.zeros(group_size, 1, 1),
-                    rewards=torch.ones(group_size, dtype=torch.float32),
-                    dones=torch.ones(group_size, dtype=torch.bool),
-                    group_ids=torch.zeros(group_size, dtype=torch.long),
-                    prompts=list(prompts) * group_size,
+                    observations=torch.zeros(batch_size, 1, 1),
+                    actions=torch.zeros(batch_size, 1, 1),
+                    rewards=torch.ones(batch_size, dtype=torch.float32),
+                    dones=torch.ones(batch_size, dtype=torch.bool),
+                    group_ids=torch.zeros(batch_size, dtype=torch.long),
+                    prompts=prompts * group_size,
+                    trajectory=trajectory,
+                    training_view=build_training_view(trajectory),
                 )
 
         class _Evaluator(Evaluator):
@@ -1206,8 +1250,8 @@ def _make_resume_trainer(
     import torch
     import torch.nn as nn
 
+    from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
     from vrl.trainers.online import OnlineTrainer
-    from vrl.trainers.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
 
     model = nn.Linear(1, 1, bias=False)
     with torch.no_grad():

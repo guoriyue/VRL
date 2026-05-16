@@ -1,4 +1,4 @@
-"""Per-prompt advantage statistics tracker.
+"""Trainer-side per-prompt advantage statistics tracker.
 
 Ported from flow_grpo's ``flow_grpo/stat_tracking.py``. Intended usage
 mirrors flow_grpo's ``train_wan2_1.py:829`` pattern: caller invokes

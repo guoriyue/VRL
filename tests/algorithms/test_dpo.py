@@ -13,10 +13,12 @@ import torch
 import torch.nn.functional as F
 
 from vrl.algorithms.dpo import (
+    DiffusionDPO,
     DiffusionDPOConfig,
     diffusion_dpo_loss,
     diffusion_sft_loss,
 )
+from vrl.algorithms.trajectory import AlgorithmAdapter, AlgorithmInput
 
 
 def _reference_dpo_loss(
@@ -168,3 +170,50 @@ def test_dpo_config_defaults() -> None:
     cfg = DiffusionDPOConfig()
     assert cfg.beta == 5000.0
     assert cfg.sft_weight == 0.0
+
+
+def test_dpo_algorithm_wrapper_matches_functional_loss() -> None:
+    torch.manual_seed(6)
+    model_pred = torch.randn(4, 4, 8, 8)
+    ref_pred = torch.randn(4, 4, 8, 8)
+    target = torch.randn(4, 4, 8, 8)
+    cfg = DiffusionDPOConfig(beta=100.0, sft_weight=0.1)
+
+    expected = diffusion_dpo_loss(model_pred, ref_pred, target, beta=cfg.beta)["loss"]
+    expected = expected + cfg.sft_weight * diffusion_sft_loss(model_pred[:2], target[:2])
+
+    algo = DiffusionDPO(cfg)
+    loss, metrics = algo.compute_loss(
+        AlgorithmInput(
+            metadata={
+                "model_pred": model_pred,
+                "ref_pred": ref_pred,
+                "target": target,
+            },
+        ),
+    )
+
+    assert torch.allclose(loss, expected)
+    assert metrics.loss == pytest.approx(float(expected.detach().item()))
+
+
+def test_algorithm_adapter_accepts_dpo_config_for_backward_compatibility() -> None:
+    torch.manual_seed(7)
+    model_pred = torch.randn(4, 4, 8, 8)
+    ref_pred = torch.randn(4, 4, 8, 8)
+    target = torch.randn(4, 4, 8, 8)
+
+    loss, metrics = AlgorithmAdapter().compute_loss(
+        DiffusionDPOConfig(beta=100.0),
+        AlgorithmInput(
+            metadata={
+                "model_pred": model_pred,
+                "ref_pred": ref_pred,
+                "target": target,
+            },
+        ),
+    )
+
+    expected = diffusion_dpo_loss(model_pred, ref_pred, target, beta=100.0)["loss"]
+    assert torch.allclose(loss, expected)
+    assert metrics.policy_loss == pytest.approx(float(expected.detach().item()))

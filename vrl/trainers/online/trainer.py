@@ -18,13 +18,7 @@ from vrl.algorithms.base import Algorithm
 from vrl.algorithms.types import TrainStepMetrics
 from vrl.rollouts.batch import RolloutBatch, stack_batches
 from vrl.trainers.core.base import Trainer
-from vrl.trainers.online.diagnostics import (
-    parameter_state_summary,
-    tensor_stats,
-    trainable_state_digest,
-    write_jsonl,
-)
-from vrl.trainers.online.ema import EMAModuleWrapper
+from vrl.trainers.core.types import TrainerConfig, TrainState
 from vrl.trainers.online.batch_ops import (
     _apply_sample_mask,
     _move_training_batch_to_device,
@@ -39,8 +33,14 @@ from vrl.trainers.online.collection import (
     _move_model_to_device,
     _release_collector_runtime_memory,
 )
+from vrl.trainers.online.diagnostics import (
+    parameter_state_summary,
+    tensor_stats,
+    trainable_state_digest,
+    write_jsonl,
+)
+from vrl.trainers.online.ema import EMAModuleWrapper
 from vrl.trainers.precision import trainer_mixed_precision
-from vrl.trainers.core.types import TrainerConfig, TrainState
 from vrl.trainers.weight_sync import TrainableStateGetter, WeightSyncer
 
 logger = logging.getLogger(__name__)
@@ -460,6 +460,8 @@ class OnlineTrainer(Trainer):
             else:
                 for b, adv_b in zip(all_batches, adv_split, strict=True):
                     mask = _nonzero_advantage_mask(adv_b)
+                    if not bool(mask.any()):
+                        continue
                     if not bool(mask.all()):
                         b = _apply_sample_mask(b, mask)
                         adv_b = adv_b[mask.to(adv_b.device)]
@@ -542,7 +544,7 @@ class OnlineTrainer(Trainer):
         first_step_debug_record: dict[str, Any] | None = None
         if cfg.debug.first_step and self.state.step == 0 and uses_evaluator:
             _dbg_batch = filtered_batches[0]
-            with autocast_ctx, record_function("trainer.replay"):
+            with torch.no_grad(), autocast_ctx, record_function("trainer.replay"):
                 _dbg_signals = self.evaluator.evaluate(
                     self.model,
                     _dbg_batch,

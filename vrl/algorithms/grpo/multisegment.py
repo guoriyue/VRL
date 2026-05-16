@@ -48,6 +48,8 @@ class MultiSegmentTokenGRPO(TokenGRPO):
     ) -> tuple[Any, TrainStepMetrics]:
         if inputs.signals is None:
             raise RuntimeError("AlgorithmInput.signals is required for MultiSegmentTokenGRPO")
+        if inputs.advantages is None:
+            raise RuntimeError("AlgorithmInput.advantages is required for MultiSegmentTokenGRPO")
         signals = inputs.signals
 
         total_loss: torch.Tensor | None = None
@@ -62,7 +64,19 @@ class MultiSegmentTokenGRPO(TokenGRPO):
         self.last_segment_metrics = {}
         train_segments = dict(self.config.train_segments or {})
         weights = dict(self.config.segment_weights or {})
-        for name in _ordered_segment_names(inputs, weights):
+        if inputs.training_view is not None and inputs.training_view.loss_units:
+            segment_names: list[str] = []
+            seen: set[str] = set()
+            for unit in inputs.training_view.loss_units:
+                if unit.segment not in seen:
+                    segment_names.append(unit.segment)
+                    seen.add(unit.segment)
+        elif weights:
+            segment_names = list(weights)
+        else:
+            segment_names = list(signals.segments)
+
+        for name in segment_names:
             if not bool(train_segments.get(name, True)):
                 continue
             weight = float(weights.get(name, 1.0))
@@ -71,7 +85,16 @@ class MultiSegmentTokenGRPO(TokenGRPO):
             segment_signal = signals.segments.get(name)
             if segment_signal is None:
                 raise RuntimeError(f"missing multi-segment GRPO segment: {name}")
-            segment_advantages = _segment_advantages(inputs.advantages, name)
+            segment_advantages = inputs.advantages
+            if isinstance(segment_advantages, dict):
+                if name in segment_advantages:
+                    segment_advantages = segment_advantages[name]
+                elif "__default__" in segment_advantages:
+                    segment_advantages = segment_advantages["__default__"]
+                else:
+                    raise RuntimeError(
+                        f"missing multi-segment advantages for segment: {name}"
+                    )
             loss, metrics = super().compute_loss(
                 AlgorithmInput(
                     trajectory=inputs.trajectory,
@@ -118,30 +141,3 @@ class MultiSegmentTokenGRPO(TokenGRPO):
             clip_fraction=_weighted_avg("clip_fraction"),
             approx_kl=_weighted_avg("approx_kl"),
         )
-
-
-def _ordered_segment_names(inputs: AlgorithmInput, weights: dict[str, float]) -> list[str]:
-    if inputs.training_view is not None and inputs.training_view.loss_units:
-        out: list[str] = []
-        seen: set[str] = set()
-        for unit in inputs.training_view.loss_units:
-            if unit.segment not in seen:
-                out.append(unit.segment)
-                seen.add(unit.segment)
-        return out
-
-    if weights:
-        return list(weights)
-    if inputs.signals is None:
-        return []
-    return list(inputs.signals.segments)
-
-
-def _segment_advantages(advantages: Any, name: str) -> Any:
-    if isinstance(advantages, dict):
-        if name in advantages:
-            return advantages[name]
-        if "__default__" in advantages:
-            return advantages["__default__"]
-        raise RuntimeError(f"missing multi-segment advantages for segment: {name}")
-    return advantages

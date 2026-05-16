@@ -8,6 +8,7 @@ from typing import Any
 from vrl.algorithms.base import Algorithm
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.types import TrainStepMetrics
+from vrl.math.diffusion.nft import normalized_mse
 
 
 @dataclass(slots=True)
@@ -105,9 +106,18 @@ class DiffusionNFT(Algorithm):
 
         cfg = self.config
         replay_tensors = trajectory_replay_tensor_dict(batch, "denoise")
-        x0 = _required_replay_tensor(replay_tensors, "latents_clean")
-        prompt_embeds = _required_replay_tensor(replay_tensors, "prompt_embeds")
-        timesteps = _required_replay_tensor(replay_tensors, "timesteps")
+        required_tensors = {}
+        for key in ("latents_clean", "prompt_embeds", "timesteps"):
+            value = replay_tensors.get(key)
+            if not isinstance(value, torch.Tensor):
+                raise RuntimeError(
+                    f"DiffusionNFT requires trajectory replay tensor {key!r}; "
+                    f"got {type(value).__name__}",
+                )
+            required_tensors[key] = value
+        x0 = required_tensors["latents_clean"]
+        prompt_embeds = required_tensors["prompt_embeds"]
+        timesteps = required_tensors["timesteps"]
         if timesteps.ndim == 1:
             t_raw = timesteps
         else:
@@ -142,7 +152,10 @@ class DiffusionNFT(Algorithm):
                 "or nft_prepare_transformer_input(...)",
             )
 
-        t = _normalize_timesteps(t_raw, device=x0.device, dtype=x0.dtype)
+        t = t_raw.to(device=x0.device, dtype=torch.float32)
+        if bool((t > 1.0).any()):
+            t = t / 1000.0
+        t = t.to(dtype=x0.dtype)
         t_expanded = t.view(-1, *([1] * (x0.ndim - 1)))
         noise = replay_tensors.get("diffusion_nft_noise")
         if noise is None:
@@ -157,7 +170,12 @@ class DiffusionNFT(Algorithm):
             prompt_attention_mask=replay_tensors.get("prompt_attention_mask"),
             pooled_prompt_embeds=replay_tensors.get("pooled_prompt_embeds"),
             timestep=t_raw,
-            num_frames=int(batch.context.get("num_frames", _infer_num_frames(x0))),
+            num_frames=int(
+                batch.context.get(
+                    "num_frames",
+                    int(x0.shape[2]) if getattr(x0, "ndim", 0) >= 3 else 1,
+                )
+            ),
             height=int(batch.context.get("height", 0)),
             width=int(batch.context.get("width", 0)),
         )
@@ -184,8 +202,8 @@ class DiffusionNFT(Algorithm):
         x0_float = x0.float()
         positive_x0 = xt - t_expanded * positive_prediction.float()
         negative_x0 = xt - t_expanded * negative_prediction.float()
-        positive_loss = _normalized_mse(positive_x0, x0_float)
-        negative_loss = _normalized_mse(negative_x0, x0_float)
+        positive_loss = normalized_mse(positive_x0, x0_float)
+        negative_loss = normalized_mse(negative_x0, x0_float)
 
         flat_mix = reward_mix.flatten(start_dim=1).mean(dim=1)
         original_policy_loss = (
@@ -238,40 +256,6 @@ class DiffusionNFT(Algorithm):
             )
         sync(decay=float(self.config.weight_copy_decay))
 
-
-def _required_replay_tensor(replay_tensors: dict[str, Any], key: str) -> Any:
-    import torch
-
-    value = replay_tensors.get(key)
-    if not isinstance(value, torch.Tensor):
-        raise RuntimeError(
-            f"DiffusionNFT requires trajectory replay tensor {key!r}; "
-            f"got {type(value).__name__}",
-        )
-    return value
-
-
-def _normalize_timesteps(timesteps: Any, *, device: Any, dtype: Any) -> Any:
-    import torch
-
-    t = timesteps.to(device=device, dtype=torch.float32)
-    if bool((t > 1.0).any()):
-        t = t / 1000.0
-    return t.to(dtype=dtype)
-
-
-def _normalized_mse(prediction: Any, target: Any) -> Any:
-    import torch
-
-    reduce_dims = tuple(range(1, target.ndim))
-    with torch.no_grad():
-        weight = torch.abs(prediction.double() - target.double()).mean(
-            dim=reduce_dims,
-            keepdim=True,
-        ).clip(min=1e-5)
-    return ((prediction - target) ** 2 / weight).mean(dim=reduce_dims)
-
-
 def _forward_previous_policy_adapter(transformer: Any, inputs: dict[str, Any]) -> Any:
     set_adapter = getattr(transformer, "set_adapter", None)
     if not callable(set_adapter):
@@ -279,12 +263,14 @@ def _forward_previous_policy_adapter(transformer: Any, inputs: dict[str, Any]) -
             "DiffusionNFT requires transformer.set_adapter('previous') "
             "for the previous-policy branch",
         )
-    with _AdapterRestore(transformer):
-        set_adapter("previous")
-        import torch
+    set_adapter("previous")
+    import torch
 
+    try:
         with torch.no_grad():
             return transformer(**inputs)[0].detach()
+    finally:
+        set_adapter("default")
 
 
 def _forward_reference(transformer: Any, inputs: dict[str, Any]) -> Any:
@@ -313,25 +299,5 @@ def _forward_reference(transformer: Any, inputs: dict[str, Any]) -> Any:
         "DiffusionNFT requires a reference branch via transformer.disable_adapters() "
         "or transformer.disable_adapter()",
     )
-
-
-class _AdapterRestore:
-    def __init__(self, transformer: Any) -> None:
-        self.transformer = transformer
-
-    def __enter__(self) -> None:
-        return None
-
-    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
-        set_adapter = getattr(self.transformer, "set_adapter", None)
-        if callable(set_adapter):
-            set_adapter("default")
-
-
-def _infer_num_frames(latents: Any) -> int:
-    if getattr(latents, "ndim", 0) >= 3:
-        return int(latents.shape[2])
-    return 1
-
 
 __all__ = ["DiffusionNFT", "DiffusionNFTConfig"]

@@ -269,7 +269,7 @@ async def run_online_recipe(
 def _build_stat_tracker(cfg: DictConfig, algorithm: Any) -> Any | None:
     if not bool(cfg.algorithm.get("per_prompt_stat_tracking", True)):
         return None
-    from vrl.algorithms.stat_tracking import PerPromptStatTracker
+    from vrl.trainers.online.stat_tracking import PerPromptStatTracker
 
     config = getattr(algorithm, "config", None)
     return PerPromptStatTracker(global_std=bool(getattr(config, "global_std", False)))
