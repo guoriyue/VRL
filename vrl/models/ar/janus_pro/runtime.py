@@ -418,7 +418,7 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
         sample_rows: list[GenerationSampleRow],
         engine_plan: Any,
     ) -> OutputBatch:
-        from vrl.trainers.profiling import record_function
+        from vrl.utils.profiling import record_function
 
         sampling = request.sampling
         params: ARSamplingParams = self.parse_sampling_params(request)
@@ -561,7 +561,7 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
     ) -> JanusProARChunkResult:
         """Run one prompt-major AR chunk through the black-box sampling path."""
 
-        from vrl.trainers.profiling import record_function
+        from vrl.utils.profiling import record_function
 
         del execution_unit, plan_summary
         self.validate_chunk(request, chunk)
@@ -874,7 +874,7 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
         sample_rows: list[GenerationSampleRow],
         engine_plan: Any,
     ) -> OutputBatch:
-        from vrl.trainers.profiling import record_function
+        from vrl.utils.profiling import record_function
 
         sampling = request.sampling
         params: ARSamplingParams = self.parse_sampling_params(request)
@@ -964,7 +964,7 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
         execution_unit: Any,
         plan_summary: Mapping[str, object],
     ) -> JanusProR1ChunkResult:
-        from vrl.trainers.profiling import record_function
+        from vrl.utils.profiling import record_function
 
         del execution_unit, plan_summary
         self.validate_chunk(request, chunk)

@@ -42,7 +42,7 @@ class DistributedRolloutExecutor:
         self.max_inflight_chunks_per_worker = int(max_inflight_chunks_per_worker)
 
     async def execute(self, request: GenerationRequest) -> OutputBatch:
-        from vrl.trainers.profiling import record_function
+        from vrl.utils.profiling import record_function
 
         sample_rows = self.id_factory.build_sample_rows(request)
         with record_function("engine.plan"):

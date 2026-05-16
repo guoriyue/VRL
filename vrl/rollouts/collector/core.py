@@ -211,7 +211,7 @@ def _reward_view_name(config: Any) -> str | None:
 
 def _record_function(name: str) -> Any:
     try:
-        from vrl.trainers.profiling import record_function
+        from vrl.utils.profiling import record_function
     except ImportError:
         return nullcontext()
     return record_function(name)

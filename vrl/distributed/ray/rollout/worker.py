@@ -51,7 +51,7 @@ class RayRolloutWorker:
 
         if self.executor is not None:
             return
-        from vrl.trainers.memory import log_host_memory
+        from vrl.utils.memory import log_host_memory
 
         log_host_memory(f"ray_worker:{self.worker_id}:before_load_policy", log=logger)
         self.executor = self._build_executor()
@@ -172,7 +172,7 @@ class RayRolloutWorker:
         self,
         envelope: RayChunkExecutionEnvelope,
     ) -> Any:
-        from vrl.trainers.profiling import record_function, torch_profiler_step
+        from vrl.utils.profiling import record_function, torch_profiler_step
 
         assert self.executor is not None
         request = envelope.request

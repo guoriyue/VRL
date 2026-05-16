@@ -211,7 +211,7 @@ class DiffusionPipelineExecutorBase(
         execution_unit: Any,
         plan_summary: Mapping[str, object],
     ) -> DiffusionChunkResult:
-        from vrl.trainers.profiling import record_function
+        from vrl.utils.profiling import record_function
 
         del execution_unit, plan_summary
         params = self.parse_sampling_params(request)
@@ -253,7 +253,7 @@ class DiffusionPipelineExecutorBase(
     ) -> DiffusionChunkResult:
         """Run one fused diffusion micro-batch: prepare -> denoise -> decode."""
 
-        from vrl.trainers.profiling import record_function
+        from vrl.utils.profiling import record_function
 
         model = self.model
         with record_function("engine.cache_write"):

@@ -203,7 +203,7 @@ class EnginePlanner:
     def build(self) -> EnginePlan:
         """Build the immutable execution plan."""
 
-        from vrl.trainers.profiling import record_function
+        from vrl.utils.profiling import record_function
 
         with record_function("engine.plan"):
             return self._build()

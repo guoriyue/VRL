@@ -275,7 +275,7 @@ class OnlineTrainer(Trainer):
 
     async def step(self, prompts: list[str] | None = None) -> TrainStepMetrics:
         """Run one full training step: collect -> evaluate -> advantage -> loss -> backward -> step."""
-        from vrl.trainers.profiling import torch_profiler_step
+        from vrl.utils.profiling import torch_profiler_step
 
         with torch_profiler_step(
             self.config.torch_profiler,
@@ -291,7 +291,7 @@ class OnlineTrainer(Trainer):
         from vrl.algorithms.trajectory import AlgorithmAdapter, AlgorithmInput
         from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
         from vrl.trainers.data import PromptExample
-        from vrl.trainers.profiling import record_function
+        from vrl.utils.profiling import record_function
 
         if prompts is not None:
             self.prompts = prompts

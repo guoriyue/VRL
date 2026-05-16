@@ -33,7 +33,7 @@ def validate_rollout_backend_config(
     )
     _validate_driver_cuda_ownership(config, driver_cuda_devices)
     if driver_bundle is not None:
-        from vrl.trainers.memory import validate_colocated_replay_memory
+        from vrl.utils.memory import validate_colocated_replay_memory
 
         validate_colocated_replay_memory(
             bundle=driver_bundle,

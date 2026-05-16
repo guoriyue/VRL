@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from vrl.rollouts.runtime.config import RolloutBackendConfig
-from vrl.trainers.memory import (
+from vrl.utils.memory import (
     HostMemorySnapshot,
     format_host_memory,
     validate_colocated_replay_memory,
