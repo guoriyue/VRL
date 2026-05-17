@@ -7,8 +7,7 @@ from typing import Any
 import pytest
 import torch
 
-from vrl.engine import GenerationRequest, GenerationSampleRow, OutputBatch
-from vrl.engine.trajectory import RewardView, build_ar_discrete_trajectory
+from vrl.generation import GenerationRequest, GenerationSampleRow, OutputBatch
 from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
     TrajectoryRolloutBatchBuilder,
@@ -16,6 +15,7 @@ from vrl.rollouts.collector.batch_builder import (
 from vrl.rollouts.collector.core import RolloutCollector
 from vrl.rollouts.collector.requests import CollectorRequest
 from vrl.rollouts.collector.rewards import RewardScoringInput
+from vrl.trajectory import RewardView, build_ar_discrete_trajectory
 
 
 class _RequestBuilder:
@@ -170,7 +170,7 @@ def test_reward_view_selection_fails_fast_when_ambiguous() -> None:
     output.trajectory.reward_views["alternate"] = RewardView(
         name="alternate",
         modality="image",
-        metadata={"output_ref": "OutputBatch.output"},
+        metadata={"output_ref": "GenerationOutput.output"},
     )
 
     with pytest.raises(RuntimeError, match="multiple reward views"):

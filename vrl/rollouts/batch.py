@@ -63,7 +63,7 @@ def stack_batches(batches: list[RolloutBatch]) -> RolloutBatch:
     for key in first:
         extras[key] = _stack_extra_values([b.extras[key] for b in batches])
 
-    from vrl.engine.trajectory.ops import stack_trajectory_batches
+    from vrl.trajectory.ops import stack_trajectory_batches
 
     # Context: shared metadata — take from first batch (not stacked)
     context: dict[str, Any] = dict(batches[0].context)

@@ -8,11 +8,11 @@ from vrl.rollouts.settings import RolloutSettings
 
 def test_engine_request_builder_reads_resolved_request_sampling() -> None:
     builder = RolloutEngineRequestBuilder(
-        family="fake",
+        family="sd3_5",
         task="t2i",
-        request_prefix="fake",
+        request_prefix="sd3_5",
         config=RolloutSettings(
-            family="fake",
+            family="sd3_5",
             values={
                 "alpha": 1,
                 "window": (0, 2),
@@ -34,7 +34,7 @@ def test_engine_request_builder_reads_resolved_request_sampling() -> None:
         },
     )
 
-    assert collector_request.request.family == "fake"
+    assert collector_request.request.family == "sd3_5"
     assert collector_request.request.task == "t2i"
     assert collector_request.request.samples_per_prompt == 3
     assert collector_request.request.policy_version == 11
@@ -54,10 +54,10 @@ def test_engine_request_builder_reads_resolved_request_sampling() -> None:
 
 def test_engine_request_builder_applies_request_overrides_last() -> None:
     builder = RolloutEngineRequestBuilder(
-        family="fake",
+        family="sd3_5",
         task="t2i",
-        request_prefix="fake",
-        config=RolloutSettings(family="fake", values={"alpha": 1}),
+        request_prefix="sd3_5",
+        config=RolloutSettings(family="sd3_5", values={"alpha": 1}),
         return_artifacts=("output",),
     )
 

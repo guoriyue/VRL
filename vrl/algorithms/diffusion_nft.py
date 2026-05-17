@@ -101,7 +101,7 @@ class DiffusionNFT(Algorithm):
 
         import torch
 
-        from vrl.engine.trajectory import TrajectoryResolver
+        from vrl.trajectory import TrajectoryResolver
 
         cfg = self.config
         replay_tensors = TrajectoryResolver.from_batch(batch).replay_tensor_dict("denoise")

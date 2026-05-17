@@ -5,11 +5,11 @@ from __future__ import annotations
 import pytest
 import torch
 
-from vrl.engine import GenerationRequest, GenerationSampleRow
-from vrl.engine.trajectory import build_ar_discrete_trajectory, build_training_view
+from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.models.interfaces import ReplayResult, ReplaySegmentResult
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
+from vrl.trajectory import build_ar_discrete_trajectory, build_training_view
 
 
 def _request() -> GenerationRequest:

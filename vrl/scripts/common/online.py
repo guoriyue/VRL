@@ -11,7 +11,7 @@ import torch
 from omegaconf import DictConfig
 
 from vrl.config.builders import build_configs
-from vrl.distributed.resources import (
+from vrl.generation.resources import (
     format_distributed_resource_plan,
     resolve_distributed_resources,
     trainer_torch_device,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from vrl.engine.ar import ActiveSequence, TokenScheduler
+from vrl.generation.ar import ActiveSequence, TokenScheduler
 
 
 def _seq(

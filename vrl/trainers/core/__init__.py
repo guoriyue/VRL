@@ -14,8 +14,8 @@ __all__ = [
     "DebugConfig",
     "EMAConfig",
     "OptimConfig",
-    "Trainer",
     "TorchProfilerConfig",
-    "TrainerConfig",
     "TrainState",
+    "Trainer",
+    "TrainerConfig",
 ]

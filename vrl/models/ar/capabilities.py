@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from vrl.engine.core.capabilities import (
+from vrl.generation.capabilities import (
     AxisCapability,
     ExecutionStageCapability,
     FamilyCapability,

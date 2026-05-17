@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 import torch
 
-from vrl.engine.core.types import GenerationRequest
-from vrl.engine.diffusion import DiffusionRequestLayout
+from vrl.generation.diffusion import DiffusionRequestLayout
+from vrl.generation.types import GenerationRequest
 
 
 def test_diffusion_layout_rejects_oversized_sde_window() -> None:

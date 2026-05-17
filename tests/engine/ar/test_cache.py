@@ -6,7 +6,7 @@ import pytest
 import torch
 from transformers.cache_utils import DynamicCache
 
-from vrl.engine.ar.cache import ARCacheRows, ar_concat_rows, ar_split_rows
+from vrl.generation.ar.token_loop.row_cache import ARCacheRows, ar_concat_rows, ar_split_rows
 
 
 def test_ar_split_and_concat_rows_preserve_nested_kv_order() -> None:

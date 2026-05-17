@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from vrl.engine import (
+from vrl.generation import (
     GenerationIdFactory,
     GenerationRequest,
 )
@@ -27,7 +27,7 @@ def _request(
         sampling["seed"] = seed
     return GenerationRequest(
         request_id=request_id,
-        family="fake",
+        family="sd3_5",
         task="t2i",
         prompts=["a test prompt"],
         samples_per_prompt=2,
@@ -41,7 +41,7 @@ def test_generation_request_validation() -> None:
     with pytest.raises(ValueError, match="prompts"):
         GenerationRequest(
             request_id="req",
-            family="fake",
+            family="sd3_5",
             task="t2i",
             prompts=[],
             samples_per_prompt=1,
@@ -50,7 +50,7 @@ def test_generation_request_validation() -> None:
     with pytest.raises(ValueError, match="samples_per_prompt"):
         GenerationRequest(
             request_id="req",
-            family="fake",
+            family="sd3_5",
             task="t2i",
             prompts=["x"],
             samples_per_prompt=0,
@@ -59,7 +59,7 @@ def test_generation_request_validation() -> None:
     with pytest.raises(ValueError, match="policy_version"):
         GenerationRequest(
             request_id="req",
-            family="fake",
+            family="sd3_5",
             task="t2i",
             prompts=["x"],
             samples_per_prompt=1,

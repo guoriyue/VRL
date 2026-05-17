@@ -7,10 +7,7 @@ import time
 from contextlib import nullcontext
 from typing import Any
 
-from vrl.engine import (
-    OutputBatch,
-    RolloutBackend,
-)
+from vrl.generation import GenerationOutput, GenerationRuntime
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
@@ -18,7 +15,7 @@ from vrl.rollouts.collector.batch_builder import (
 )
 from vrl.rollouts.collector.requests import (
     CollectorRequest,
-    RolloutEngineRequestBuilder,
+    GenerationRequestBuilder,
 )
 from vrl.rollouts.collector.rewards import RewardScorer
 from vrl.rollouts.family_registry import get_rollout_family_entry
@@ -40,7 +37,7 @@ class RolloutCollector:
         request_builder: Any,
         reward_scorer: RewardScorer,
         default_group_size: int = 1,
-        runtime: RolloutBackend | None = None,
+        runtime: GenerationRuntime | None = None,
         phase_sink: dict[str, float] | None = None,
     ) -> None:
         self.model = model
@@ -53,15 +50,15 @@ class RolloutCollector:
         self._runtime = runtime
         self.phase_sink = phase_sink
 
-    def set_runtime(self, runtime: RolloutBackend) -> None:
+    def set_runtime(self, runtime: GenerationRuntime) -> None:
         if not callable(getattr(runtime, "generate", None)):
             raise TypeError(
-                "rollout runtime must implement async generate(request) -> OutputBatch",
+                "generation runtime must implement async generate(request) -> GenerationOutput",
             )
         self._runtime = runtime
 
     @property
-    def runtime(self) -> RolloutBackend:
+    def runtime(self) -> GenerationRuntime:
         if self._runtime is None:
             raise RuntimeError(
                 "RolloutCollector runtime is not initialized; "
@@ -119,7 +116,7 @@ class RolloutCollector:
 
     async def _output_batch_to_rollout_batch(
         self,
-        output: OutputBatch,
+        output: GenerationOutput,
         *,
         collector_request: CollectorRequest,
         phases: dict[str, float] | None = None,
@@ -151,7 +148,7 @@ def build_rollout_collector(
     model: Any | None,
     reward_fn: Any | None,
     config: RolloutSettings | None = None,
-    runtime: RolloutBackend | None = None,
+    runtime: GenerationRuntime | None = None,
 ) -> RolloutCollector:
     """Build a rollout collector from the canonical family registry."""
 
@@ -170,7 +167,7 @@ def build_rollout_collector(
         config=config,
         family=entry.family,
         task=entry.task,
-        request_builder=RolloutEngineRequestBuilder(
+        request_builder=GenerationRequestBuilder(
             family=entry.family,
             task=entry.task,
             request_prefix=collector.request_prefix,

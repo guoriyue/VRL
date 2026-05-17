@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-from vrl.engine.core.capabilities import FamilyCapability
+from vrl.generation.capabilities import FamilyCapability
 from vrl.models.ar.capabilities import (
     ar_continuous_family_capability,
     ar_discrete_family_capability,
@@ -109,7 +109,7 @@ def _diffusion_entry(
         runtime_builder=runtime_builder,
         runtime_spec_extractor=runtime_spec_extractor,
         gatherer=GathererMetadata(
-            import_path="vrl.engine.diffusion.gather:DiffusionChunkGatherer",
+            import_path="vrl.generation.diffusion.gather:DiffusionChunkGatherer",
         ),
         capability=diffusion_family_capability(
             family,

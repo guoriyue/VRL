@@ -8,11 +8,14 @@ from typing import Any
 import torch
 import torch.nn as nn
 
+from vrl.generation.ar import ARDecodeLoop
+from vrl.generation.types import GenerationRequest, GenerationSampleRow
 from vrl.models.ar.janus_pro.model import (
     JANUS_IMAGE_VOCAB_SIZE,
     JanusProConfig,
     JanusProModel,
 )
+from vrl.models.ar.janus_pro.runner import JanusProARModelRunner
 
 HIDDEN = 8
 TEXT_VOCAB = 32
@@ -114,11 +117,47 @@ def _prompt_tensors() -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.T
     return cond, uncond, cond_mask, uncond_mask
 
 
+def _run_ar_decode(model: JanusProModel) -> None:
+    batch_size = 2
+    request = GenerationRequest(
+        request_id="test-janus-kv",
+        family="janus_pro",
+        task="ar_t2i",
+        prompts=[""],
+        samples_per_prompt=batch_size,
+    )
+    rows = [
+        GenerationSampleRow(
+            prompt_index=0,
+            sample_index=index,
+            prompt="",
+            prompt_id="prompt-0",
+            group_id="group-0",
+            sample_id=f"sample-{index}",
+            trajectory_id=f"trajectory-{index}",
+            seed=None,
+            metadata={},
+        )
+        for index in range(batch_size)
+    ]
+    ARDecodeLoop(
+        request=request,
+        sample_rows=rows,
+        runner=JanusProARModelRunner(model),
+        max_new_tokens=2,
+        tokenizer_key="janus_pro",
+        dtype="float32",
+        scheduler_batch_size=batch_size,
+        init_args=_prompt_tensors(),
+        init_kwargs={"image_token_num": 2},
+    ).run()
+
+
 def test_janus_kv_decode_uses_prompt_prefill_for_first_token_logits() -> None:
     torch.manual_seed(0)
     model = _model()
 
-    model.sample_image_tokens(*_prompt_tensors(), image_token_num=2)
+    _run_ar_decode(model)
 
     lm = model.mmgpt.language_model
     assert [call["shape"] for call in lm.calls] == [

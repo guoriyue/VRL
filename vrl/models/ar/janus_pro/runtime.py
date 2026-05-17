@@ -9,26 +9,24 @@ from dataclasses import dataclass
 from typing import Any
 
 import torch
-import torch.nn.functional as F
 
-from vrl.engine.ar import (
+from vrl.generation.ar import (
     ARDecodeLoop,
     ARPipelineExecutorBase,
     ARRequestLayout,
     ARSamplingParams,
 )
-from vrl.engine.core.capabilities import FamilyCapability
-from vrl.engine.core.protocols import PipelineChunkResult
-from vrl.engine.core.types import (
+from vrl.generation.capabilities import FamilyCapability
+from vrl.generation.execution.microbatching import MicroBatchSample
+from vrl.generation.execution.planner import attach_engine_plan, build_engine_plan
+from vrl.generation.protocols import PipelineChunkResult
+from vrl.generation.types import (
     GenerationMetrics,
     GenerationRequest,
     GenerationSampleRow,
     OutputBatch,
     WorkloadSignature,
 )
-from vrl.engine.execution.microbatching import MicroBatchSample
-from vrl.engine.execution.planner import attach_engine_plan, build_engine_plan
-from vrl.engine.trajectory import build_ar_discrete_trajectory, build_ar_multisegment_trajectory
 from vrl.models.ar.capabilities import ar_discrete_family_capability
 from vrl.models.ar.janus_pro.model import (
     JanusProConfig,
@@ -36,11 +34,13 @@ from vrl.models.ar.janus_pro.model import (
     JanusProReplayModel,
 )
 from vrl.models.ar.janus_pro.r1_types import JanusR1Segment
+from vrl.models.ar.janus_pro.runner import JanusProARModelRunner
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.replay_loading import (
     full_generation_bundle_metadata,
     minimal_replay_bundle_metadata,
 )
+from vrl.trajectory import build_ar_discrete_trajectory, build_ar_multisegment_trajectory
 
 logger = logging.getLogger(__name__)
 
@@ -315,13 +315,13 @@ Boundary:
 
 Difference from diffusion executors: AR runs a token loop. The runtime
 prepares embeddings and delegates token progression to
-``vrl.engine.ar.ARDecodeLoop`` through the model's ``init_ar`` /
-``step_ar`` / ``finalize_ar`` hooks.
+``vrl.generation.ar.ARDecodeLoop`` through ``JanusProARModelRunner`` so the
+engine owns row scheduling and KV-cache lane transport.
 
 Parity contract: same prompts + same seed (when seeded) produce
 bitwise-equal token ids, log-probs, and images, since
-``sample_image_tokens`` is wrapped under ``torch.no_grad`` and the only
-randomness is ``torch.multinomial``. The collector must apply
+``JanusProARModelRunner.step_ar`` runs under ``torch.no_grad`` and the
+only randomness is ``torch.multinomial``. The collector must apply
 ``torch.manual_seed(seed)`` before calling the runtime to make this
 reproducible.
 """
@@ -389,7 +389,7 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
         Args:
           model: a ``JanusProModel`` (or a stub exposing the same
             interface: ``processor``, ``device``, ``language_model``,
-            ``sample_image_tokens``, ``decode_image_tokens``).
+            runner-step primitives, and ``decode_image_tokens``).
         """
         self.model = model
 
@@ -429,7 +429,7 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
 
         if params.seed is not None:
             # AR sampling uses torch.multinomial — we seed the global RNG
-            # because that's the only entropy source in sample_image_tokens.
+            # because that's the only entropy source in the AR runner.
             # This makes parity tests deterministic.
             torch.manual_seed(params.seed)
 
@@ -479,7 +479,7 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
             decode_result = ARDecodeLoop(
                 request=request,
                 sample_rows=sample_rows,
-                model=self.model,
+                runner=JanusProARModelRunner(self.model),
                 max_new_tokens=params.image_token_num,
                 tokenizer_key="janus_pro",
                 dtype=str(cond_embeds.dtype),
@@ -605,7 +605,7 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
             decode_result = ARDecodeLoop(
                 request=request,
                 sample_rows=chunk_specs,
-                model=self.model,
+                runner=JanusProARModelRunner(self.model),
                 max_new_tokens=params.image_token_num,
                 tokenizer_key="janus_pro",
                 dtype=str(cond_embeds.dtype),
@@ -830,12 +830,6 @@ class JanusProChunkGatherer:
         )
 
 
-# F is imported for potential future uses (entropy etc.) — keep silent
-# usage so linters don't strip the import; Janus' executor itself only
-# uses model.sample_image_tokens which already does softmax internally.
-_ = F
-
-
 """Janus-Pro-R1 AR text-to-image pipeline executor.
 
 This executor owns generation only. Reward computation, advantage
@@ -1057,7 +1051,7 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
             decode_result = ARDecodeLoop(
                 request=request,
                 sample_rows=specs,
-                model=self.model,
+                runner=JanusProARModelRunner(self.model),
                 max_new_tokens=image_token_num,
                 tokenizer_key="janus_pro_r1",
                 dtype=str(cond_embeds.dtype),

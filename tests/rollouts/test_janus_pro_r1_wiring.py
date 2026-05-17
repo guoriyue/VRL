@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import torch
 
-from vrl.engine import GenerationRequest, GenerationSampleRow, OutputBatch
-from vrl.engine.trajectory import build_ar_multisegment_trajectory
+from vrl.generation import GenerationRequest, GenerationSampleRow, OutputBatch
 from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
     TrajectoryRolloutBatchBuilder,
 )
 from vrl.rollouts.settings import RolloutSettings
+from vrl.trajectory import build_ar_multisegment_trajectory
 
 
 def _sample_rows() -> list[GenerationSampleRow]:

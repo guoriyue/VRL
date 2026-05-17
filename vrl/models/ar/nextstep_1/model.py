@@ -3,11 +3,6 @@
 Mirrors ``vrl.models.ar.janus_pro.JanusProModel`` but for StepFun's
 continuous-token AR model. The shape contract is:
 
-  * ``sample_image_tokens(...)`` →
-        (continuous_tokens [B, L, D_token],
-         saved_noise        [B, L, D_token],   # x_0 prior, for replay
-         old_logprobs       [B, L])            # Gaussian per-token log-prob
-
   * ``recompute_logprobs(...)`` →
         fresh_logprobs       [B, L]            # under current model
 
@@ -45,11 +40,8 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from vrl.engine.ar.cache import ARCacheRows
-from vrl.engine.ar.types import ARStepResult
 from vrl.models.ar.nextstep_1.flow_step import (
     flow_logprob_at,
-    flow_sample_with_logprob,
 )
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 
@@ -88,7 +80,7 @@ class NextStep1Config:
     )
     lora_init: str = "gaussian"
 
-    # Flow-head sampling — used by sample_image_tokens
+    # Flow-head sampling — used by the AR runtime runner.
     num_flow_steps: int = 20             # K Euler steps inside the flow ODE
     noise_level: float = 1.0             # final-step Gaussian std multiplier
     cfg_scale: float = 4.5               # CFG strength on the velocity field
@@ -104,29 +96,6 @@ class NextStep1Config:
 
     # Memory
     gradient_checkpointing: bool = True
-
-
-@dataclass(slots=True)
-class NextStep1ARState:
-    """Mutable per-row state for one scheduled NextStep AR sampling loop."""
-
-    kv_cond_rows: ARCacheRows
-    kv_uncond_rows: ARCacheRows | None
-    c_cond: torch.Tensor
-    c_uncond: torch.Tensor | None
-    tokens: torch.Tensor
-    saved_noise: torch.Tensor
-    logprobs: torch.Tensor
-    cfg_scale: float
-    num_flow_steps: int
-    noise_level: float
-    image_token_num: int
-    generator: torch.Generator | None = None
-    position: int = 0
-    positions: torch.Tensor | None = None
-    prefill_forwards: int = 0
-    decode_forwards: int = 0
-    decode_tokens: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -286,269 +255,6 @@ class NextStep1Model(nn.Module):
         return self._device
 
     # ------------------------------------------------------------------
-    # Public: AR sampling with per-token log-probabilities
-    # ------------------------------------------------------------------
-
-    @torch.no_grad()
-    def sample_image_tokens(
-        self,
-        prompt_embeds: torch.Tensor,         # [B, L_text, D_hidden]
-        uncond_embeds: torch.Tensor | None,  # [B, L_text, D_hidden] or None
-        prompt_mask: torch.Tensor,           # [B, L_text]
-        uncond_mask: torch.Tensor | None,    # [B, L_text]
-        *,
-        cfg_scale: float | None = None,
-        num_flow_steps: int | None = None,
-        noise_level: float | None = None,
-        image_token_num: int | None = None,
-        generator: torch.Generator | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Run the AR loop and return (tokens, saved_noise, log_probs).
-
-        Args:
-            prompt_embeds:  text-prompt embeddings (caller invokes
-                            ``self.language_model.get_input_embeddings()``)
-            uncond_embeds:  unconditional embeddings for CFG; pass ``None`` to
-                            skip CFG.
-            prompt_mask:    attention mask for ``prompt_embeds``.
-            uncond_mask:    attention mask for ``uncond_embeds`` (or None).
-
-        Returns:
-            tokens         ``[B, L_img, D_token]`` — continuous tokens.
-            saved_noise    ``[B, L_img, D_token]`` — flow ODE prior x_0 used
-                           per token. Stash so ``recompute_logprobs`` can
-                           replay the same trajectory deterministically.
-            log_probs      ``[B, L_img]`` — Gaussian log-prob of each token.
-        """
-        state = self.init_ar(
-            prompt_embeds,
-            uncond_embeds,
-            prompt_mask,
-            uncond_mask,
-            cfg_scale=cfg_scale,
-            num_flow_steps=num_flow_steps,
-            noise_level=noise_level,
-            image_token_num=image_token_num,
-            generator=generator,
-        )
-        while state.position < state.image_token_num:
-            self._sample_ar_step(state)
-        return self.finalize_ar(state)
-
-    @torch.no_grad()
-    def init_ar(
-        self,
-        prompt_embeds: torch.Tensor,
-        uncond_embeds: torch.Tensor | None,
-        prompt_mask: torch.Tensor,
-        uncond_mask: torch.Tensor | None,
-        *,
-        cfg_scale: float | None = None,
-        num_flow_steps: int | None = None,
-        noise_level: float | None = None,
-        image_token_num: int | None = None,
-        generator: torch.Generator | None = None,
-    ) -> NextStep1ARState:
-        """Initialize full-row AR state for scheduled executor sampling."""
-        cfg = self.config
-        cfg_scale = cfg_scale if cfg_scale is not None else cfg.cfg_scale
-        num_flow_steps = (
-            num_flow_steps if num_flow_steps is not None else cfg.num_flow_steps
-        )
-        noise_level = noise_level if noise_level is not None else cfg.noise_level
-        image_token_num = (
-            image_token_num if image_token_num is not None else cfg.image_token_num
-        )
-
-        batch_size = prompt_embeds.shape[0]
-        token_dim = cfg.token_dim
-        device = prompt_embeds.device
-
-        tokens = torch.zeros(
-            batch_size, image_token_num, token_dim, device=device, dtype=self.dtype
-        )
-        saved_noise = torch.zeros(
-            batch_size, image_token_num, token_dim, device=device, dtype=self.dtype
-        )
-        logprobs = torch.zeros(
-            batch_size, image_token_num, device=device, dtype=torch.float32
-        )
-
-        kv_cond = self._init_kv(prompt_embeds, prompt_mask)
-        kv_uncond = (
-            self._init_kv(uncond_embeds, uncond_mask)
-            if uncond_embeds is not None else None
-        )
-        c_cond = self._last_hidden(kv_cond)
-        c_uncond = self._last_hidden(kv_uncond) if kv_uncond is not None else None
-
-        return NextStep1ARState(
-            kv_cond_rows=ARCacheRows.from_batched(
-                kv_cond,
-                batch_size,
-                owner="nextstep.cond_kv",
-            ),
-            kv_uncond_rows=(
-                ARCacheRows.from_batched(
-                    kv_uncond,
-                    batch_size,
-                    owner="nextstep.uncond_kv",
-                )
-                if kv_uncond is not None
-                else None
-            ),
-            c_cond=c_cond,
-            c_uncond=c_uncond,
-            tokens=tokens,
-            saved_noise=saved_noise,
-            logprobs=logprobs,
-            cfg_scale=float(cfg_scale),
-            num_flow_steps=int(num_flow_steps),
-            noise_level=float(noise_level),
-            image_token_num=int(image_token_num),
-            generator=generator,
-            positions=torch.zeros(batch_size, device=device, dtype=torch.long),
-            prefill_forwards=1 + int(kv_uncond is not None),
-        )
-
-    @torch.no_grad()
-    def step_ar(
-        self,
-        state: NextStep1ARState,
-        sequences: list[Any],
-        *,
-        generator: torch.Generator | None = None,
-    ) -> ARStepResult:
-        """Run one scheduled AR token step for rows at the same position."""
-        if not sequences:
-            raise ValueError("step_ar requires at least one ActiveSequence")
-
-        row_indices = [int(seq.metadata.get("row_index", -1)) for seq in sequences]
-        if any(row < 0 or row >= state.tokens.shape[0] for row in row_indices):
-            raise ValueError(f"invalid NextStep row indices: {row_indices}")
-
-        positions = [int(seq.position) for seq in sequences]
-        if len(set(positions)) != 1:
-            raise ValueError("ActiveSequence positions must match within one AR step")
-        if state.positions is None:
-            raise ValueError("NextStep1ARState.positions is required")
-        expected_positions = [
-            int(state.positions[row].item()) for row in row_indices
-        ]
-        if positions != expected_positions:
-            raise ValueError(
-                "ActiveSequence positions must match NextStep1ARState row positions"
-            )
-
-        step = self._sample_ar_step(
-            state,
-            row_indices=row_indices,
-            position=positions[0],
-            generator=generator,
-        )
-        return ARStepResult(
-            sequence_ids=[str(seq.sample_id) for seq in sequences],
-            positions=positions,
-            token=step.token,
-            log_prob=step.log_prob.float(),
-            replay_extras={"saved_noise": step.initial_noise},
-            debug_counters={
-                "ar_kv_cache_enabled": True,
-                "ar_prefill_forwards": state.prefill_forwards,
-                "ar_decode_forwards": state.decode_forwards,
-                "ar_decode_tokens": state.decode_tokens,
-            },
-        )
-
-    @torch.no_grad()
-    def finalize_ar(
-        self,
-        state: NextStep1ARState,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Return sampled tokens, replay noise, and old log-probs."""
-        return state.tokens, state.saved_noise, state.logprobs
-
-    def _sample_ar_step(
-        self,
-        state: NextStep1ARState,
-        *,
-        row_indices: list[int] | None = None,
-        position: int | None = None,
-        generator: torch.Generator | None = None,
-    ) -> Any:
-        if state.positions is None:
-            raise ValueError("NextStep1ARState.positions is required")
-
-        if row_indices is None:
-            row_indices = list(range(state.tokens.shape[0]))
-        if not row_indices:
-            raise ValueError("row_indices must be non-empty")
-        if any(row < 0 or row >= state.tokens.shape[0] for row in row_indices):
-            raise ValueError(f"invalid NextStep row indices: {row_indices}")
-
-        row_positions = [int(state.positions[row].item()) for row in row_indices]
-        if len(set(row_positions)) != 1:
-            raise ValueError("NextStep rows in one AR step must share a position")
-        position = row_positions[0] if position is None else int(position)
-        if any(pos != position for pos in row_positions):
-            raise ValueError("requested position does not match row positions")
-        if position >= state.image_token_num:
-            raise ValueError("NextStep1ARState has already finished sampling")
-
-        step_generator = generator if generator is not None else state.generator
-        batch_size = len(row_indices)
-        token_dim = state.tokens.shape[-1]
-        device = state.tokens.device
-        rows = torch.tensor(row_indices, device=device, dtype=torch.long)
-        initial_noise = torch.randn(
-            batch_size,
-            token_dim,
-            device=device,
-            dtype=self.dtype,
-            generator=step_generator,
-        )
-        c_cond = state.c_cond.index_select(0, rows)
-        c_uncond = (
-            state.c_uncond.index_select(0, rows)
-            if state.c_uncond is not None else None
-        )
-        step = flow_sample_with_logprob(
-            self.image_head,
-            cond=c_cond,
-            num_flow_steps=state.num_flow_steps,
-            noise_level=state.noise_level,
-            cfg_uncond=c_uncond,
-            cfg_scale=state.cfg_scale,
-            generator=step_generator,
-            initial_noise=initial_noise,
-        )
-
-        state.tokens[rows, position] = step.token
-        state.saved_noise[rows, position] = step.initial_noise
-        state.logprobs[rows, position] = step.log_prob.float()
-
-        proj = self._image_in_projector(step.token)
-        kv_cond = state.kv_cond_rows.gather(row_indices)
-        kv_cond, c_cond_next = self._step_llm(kv_cond, proj)
-        state.decode_forwards += 1
-        state.kv_cond_rows.scatter(row_indices, kv_cond)
-        state.c_cond.index_copy_(0, rows, c_cond_next)
-
-        if state.kv_uncond_rows is not None:
-            proj_u = self._image_in_projector(step.token)
-            kv_uncond = state.kv_uncond_rows.gather(row_indices)
-            kv_uncond, c_uncond_next = self._step_llm(kv_uncond, proj_u)
-            state.decode_forwards += 1
-            state.kv_uncond_rows.scatter(row_indices, kv_uncond)
-            assert state.c_uncond is not None
-            state.c_uncond.index_copy_(0, rows, c_uncond_next)
-
-        state.positions[rows] += 1
-        state.position = int(state.positions.min().item())
-        state.decode_tokens += batch_size
-        return step
-
-    # ------------------------------------------------------------------
     # Public: training-time log-prob recomputation
     # ------------------------------------------------------------------
 
@@ -636,7 +342,7 @@ class NextStep1Model(nn.Module):
           ``ReplayResult`` with ``log_probs`` and ``tokens`` for ``image_tokens``.
         """
         del request, timestep_idx
-        from vrl.engine.trajectory import TrajectoryResolver
+        from vrl.trajectory import TrajectoryResolver
 
         resolver = TrajectoryResolver.from_batch(batch)
         replay = resolver.replay_tensor_dict("image_tokens")
@@ -848,7 +554,6 @@ __all__ = [
     "NEXTSTEP_DEFAULT_PIXEL_SIZE",
     "NEXTSTEP_DEFAULT_TOKEN_DIM",
     "NEXTSTEP_DEFAULT_TOKEN_NUM",
-    "NextStep1ARState",
     "NextStep1Config",
     "NextStep1Model",
     "NextStep1ReplayModel",

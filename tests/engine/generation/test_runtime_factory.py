@@ -8,8 +8,8 @@ from typing import Any
 import pytest
 from omegaconf import OmegaConf
 
-from vrl.engine import OutputBatch
-from vrl.engine.core.launch_contract import GenerationRuntimeLaunchContract
+from vrl.generation import OutputBatch
+from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.rollouts.runtime.backend import (
     DRIVER_CUDA_OWNERSHIP_ERROR,
     build_rollout_backend_from_cfg,
@@ -60,10 +60,12 @@ class _FakeGatherer:
 
 def _launch_contract() -> GenerationRuntimeLaunchContract:
     return GenerationRuntimeLaunchContract(
-        family="fake",
-        task="t2i",
-        runtime_builder="tests.fake:build_runtime",
-        executor_cls="tests.fake:Executor",
+        family="janus_pro",
+        task="ar_t2i",
+        runtime_builder=(
+            "tests.generation.ray.test_rollout_launcher:build_tiny_runtime_bundle"
+        ),
+        executor_cls="tests.generation.ray.test_rollout_launcher:_TinyChunkExecutor",
     )
 
 

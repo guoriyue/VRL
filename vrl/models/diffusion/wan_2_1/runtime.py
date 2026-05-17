@@ -10,13 +10,13 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from vrl.engine.core.types import GenerationRequest
-from vrl.engine.diffusion import (
+from vrl.generation.diffusion import (
     DiffusionPipelineExecutorBase,
     DiffusionSamplingParams,
 )
-from vrl.engine.diffusion.layout import VideoGenerationRequest
-from vrl.engine.execution.microbatching import MicroBatchSample
+from vrl.generation.diffusion.layout import VideoGenerationRequest
+from vrl.generation.execution.microbatching import MicroBatchSample
+from vrl.generation.types import GenerationRequest
 from vrl.models.diffusion.capabilities import diffusion_family_capability
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.replay_loading import (

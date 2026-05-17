@@ -973,11 +973,11 @@ class TestOnlineTrainerCeaRegressions:
         import torch.nn as nn
 
         from vrl.algorithms.types import TrainStepMetrics
-        from vrl.engine import GenerationRequest, GenerationSampleRow
-        from vrl.engine.trajectory import build_ar_discrete_trajectory, build_training_view
+        from vrl.generation import GenerationRequest, GenerationSampleRow
         from vrl.rollouts.batch import RolloutBatch
         from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
         from vrl.trainers.online import OnlineTrainer
+        from vrl.trajectory import build_ar_discrete_trajectory, build_training_view
 
         class _Algorithm:
             class _Config:
@@ -1289,14 +1289,14 @@ def _adam_exp_avg_values(optimizer) -> list[float]:
 def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:
     import torch
 
-    from vrl.engine import GenerationRequest, GenerationSampleRow
-    from vrl.engine.trajectory import build_ar_discrete_trajectory, build_training_view
+    from vrl.generation import GenerationRequest, GenerationSampleRow
     from vrl.rollouts.batch import RolloutBatch
     from vrl.trainers.online import (
         _move_training_batch_to_device,
         _remap_group_ids_,
         _select_batch,
     )
+    from vrl.trajectory import build_ar_discrete_trajectory, build_training_view
 
     request = GenerationRequest(
         request_id="req",

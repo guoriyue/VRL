@@ -10,15 +10,15 @@ import pytest
 import torch
 import torch.nn as nn
 
-from vrl.engine import GenerationRequest, GenerationSampleRow
-from vrl.engine.diffusion.layout import VideoGenerationRequest
-from vrl.engine.trajectory import build_diffusion_trajectory, build_training_view
+from vrl.generation import GenerationRequest, GenerationSampleRow
+from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.diffusion import DiffusionModelBase
 from vrl.models.diffusion.cosmos.predict2.model import CosmosPredict2Model
 from vrl.models.diffusion.sd3_5.model import SD3_5Model
 from vrl.models.diffusion.wan_2_1.model import WanT2VDiffusersModel
 from vrl.models.interfaces import ReplayResult
 from vrl.rollouts.batch import RolloutBatch
+from vrl.trajectory import build_diffusion_trajectory, build_training_view
 
 
 class _AdapterTransformer(nn.Linear):

@@ -1,4 +1,4 @@
-"""Rollout-to-engine request adapter for collectors."""
+"""Rollout-to-generation request adapter for collectors."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from vrl.engine import GenerationRequest
+from vrl.generation import GenerationRequest
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,7 +18,7 @@ class CollectorRequest:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-class RolloutEngineRequestBuilder:
+class GenerationRequestBuilder:
     """Build ``GenerationRequest`` payloads from resolved rollout settings."""
 
     def __init__(
@@ -118,7 +118,11 @@ class RolloutEngineRequestBuilder:
         return metadata
 
 
+RolloutEngineRequestBuilder = GenerationRequestBuilder
+
+
 __all__ = [
     "CollectorRequest",
+    "GenerationRequestBuilder",
     "RolloutEngineRequestBuilder",
 ]

@@ -6,8 +6,8 @@ from typing import Any
 
 import torch
 
-from vrl.engine.trajectory.ops import move_trajectory_batch, select_trajectory_batch
 from vrl.rollouts.batch import RolloutBatch, stack_batches
+from vrl.trajectory.ops import move_trajectory_batch, select_trajectory_batch
 
 
 def _select_batch(batch: RolloutBatch, selector: torch.Tensor) -> RolloutBatch:

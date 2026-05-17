@@ -57,7 +57,7 @@ class DiffusionSDELogProbEvaluator(Evaluator):
         if signal_request is None:
             signal_request = SignalRequest()
 
-        from vrl.engine.trajectory import TrajectoryResolver
+        from vrl.trajectory import TrajectoryResolver
 
         timesteps = TrajectoryResolver.from_batch(batch).tensor_value(
             "denoise",

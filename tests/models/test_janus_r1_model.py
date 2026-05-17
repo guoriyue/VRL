@@ -7,8 +7,7 @@ from types import SimpleNamespace
 import torch
 import torch.nn as nn
 
-from vrl.engine import GenerationIdFactory, GenerationRequest, GenerationSampleRow
-from vrl.engine.trajectory import build_ar_multisegment_trajectory, build_training_view
+from vrl.generation import GenerationIdFactory, GenerationRequest, GenerationSampleRow
 from vrl.models.ar.janus_pro.model import (
     JanusProConfig,
     JanusProModel,
@@ -20,6 +19,7 @@ from vrl.models.ar.janus_pro.r1_types import (
 from vrl.models.ar.janus_pro.runtime import JanusProR1PipelineExecutor
 from vrl.models.interfaces import ReplayRequest, ReplayResult
 from vrl.rollouts.batch import RolloutBatch
+from vrl.trajectory import build_ar_multisegment_trajectory, build_training_view
 
 HIDDEN = 16
 TEXT_VOCAB = 128
@@ -219,7 +219,7 @@ def test_generate_with_refine_returns_three_segments_and_selects_final_image() -
     model = _model()
     sample_calls: list[int] = []
 
-    def sample_image_tokens(
+    def image_sampler(
         cond_inputs_embeds: torch.Tensor,
         uncond_inputs_embeds: torch.Tensor,
         cond_attention_mask: torch.Tensor,
@@ -275,7 +275,6 @@ def test_generate_with_refine_returns_three_segments_and_selects_final_image() -
         mask[:, 0] = 1.0
         return text, log_probs, mask, torch.tensor([True, False])
 
-    model.sample_image_tokens = sample_image_tokens  # type: ignore[method-assign]
     model.decode_image_tokens = decode_image_tokens  # type: ignore[method-assign]
     model._sample_selfcheck_text = sample_selfcheck_text  # type: ignore[method-assign]
 
@@ -289,6 +288,7 @@ def test_generate_with_refine_returns_three_segments_and_selects_final_image() -
         image_token_num=4,
         max_reflect_len=3,
         refine_mode="selfcheck",
+        image_sampler=image_sampler,
     )
 
     assert sample_calls == [10, 20]

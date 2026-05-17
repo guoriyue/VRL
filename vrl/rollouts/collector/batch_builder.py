@@ -1,4 +1,4 @@
-"""Build trainer rollout batches from trajectory-backed engine outputs."""
+"""Build trainer rollout batches from trajectory-backed generation outputs."""
 
 from __future__ import annotations
 
@@ -8,16 +8,16 @@ from typing import Any
 
 import torch
 
-from vrl.engine import OutputBatch
-from vrl.engine.trajectory import (
+from vrl.generation import GenerationOutput
+from vrl.rollouts.batch import RolloutBatch
+from vrl.rollouts.collector.rewards import RewardScoringInput
+from vrl.trajectory import (
     RewardView,
     TrajectoryBatch,
     TrajectorySegment,
     TrajectoryTensor,
     build_training_view,
 )
-from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.collector.rewards import RewardScoringInput
 
 
 @dataclass(slots=True)
@@ -33,11 +33,11 @@ class RolloutBatchBuildContext:
 
 
 class TrajectoryRolloutBatchBuilder:
-    """Convert one trajectory-backed OutputBatch into reward and trainer inputs."""
+    """Convert one trajectory-backed GenerationOutput into reward and trainer inputs."""
 
     def __init__(
         self,
-        output: OutputBatch,
+        output: GenerationOutput,
         context: RolloutBatchBuildContext,
     ) -> None:
         self.output = output
@@ -256,7 +256,7 @@ class TrajectoryRolloutBatchBuilder:
             return self._tensor_value_from_ref(view.tensor_refs[0])
 
         output_ref = view.metadata.get("output_ref")
-        if output_ref == "OutputBatch.output":
+        if output_ref == "GenerationOutput.output":
             return self.output.output
         raise RuntimeError(
             f"RewardView {view.name!r} has no tensor_refs and no supported output_ref",
@@ -392,11 +392,11 @@ class TrajectoryRolloutBatchBuilder:
         return "cpu"
 
     @staticmethod
-    def _require_output_trajectory(output: OutputBatch) -> TrajectoryBatch:
+    def _require_output_trajectory(output: GenerationOutput) -> TrajectoryBatch:
         trajectory = output.trajectory
         if not isinstance(trajectory, TrajectoryBatch):
             raise RuntimeError(
-                f"OutputBatch {output.request_id!r} is missing TrajectoryBatch",
+                f"GenerationOutput {output.request_id!r} is missing TrajectoryBatch",
             )
         return trajectory
 

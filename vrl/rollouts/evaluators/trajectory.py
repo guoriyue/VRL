@@ -7,9 +7,9 @@ from typing import Any
 
 import torch
 
-from vrl.engine.trajectory import TrainingView, TrajectoryBatch
-from vrl.engine.trajectory.views import LossUnit
 from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
+from vrl.trajectory import TrainingView, TrajectoryBatch
+from vrl.trajectory.views import LossUnit
 
 
 @dataclass(slots=True)

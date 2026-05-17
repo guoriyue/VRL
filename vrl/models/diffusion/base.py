@@ -15,7 +15,7 @@ from typing import Any
 
 import torch.nn as nn
 
-from vrl.engine.diffusion.layout import VideoGenerationRequest
+from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 
 
@@ -100,7 +100,7 @@ class DiffusionModelBase(nn.Module, ABC):
     ) -> ReplayResult:
         """Rebuild diffusion sampling state and run one replay forward."""
         del request
-        from vrl.engine.trajectory import TrajectoryResolver
+        from vrl.trajectory import TrajectoryResolver
 
         state = self.restore_eval_state(
             TrajectoryResolver.from_batch(batch).replay_tensor_dict("denoise"),

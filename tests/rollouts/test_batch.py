@@ -166,8 +166,8 @@ class TestStackBatches:
         """Trajectory-backed batches keep first-class trajectory metadata when stacked."""
         import torch
 
-        from vrl.engine.trajectory import build_training_view
         from vrl.rollouts.batch import RolloutBatch, stack_batches
+        from vrl.trajectory import build_training_view
 
         t1 = _trajectory("req-a", torch.tensor([[1, 2]]))
         t2 = _trajectory("req-b", torch.tensor([[3, 4]]))
@@ -205,8 +205,8 @@ class TestStackBatches:
 def _trajectory(request_id: str, token_ids):
     import torch
 
-    from vrl.engine import GenerationRequest, GenerationSampleRow
-    from vrl.engine.trajectory import build_ar_discrete_trajectory
+    from vrl.generation import GenerationRequest, GenerationSampleRow
+    from vrl.trajectory import build_ar_discrete_trajectory
 
     request = GenerationRequest(
         request_id=request_id,

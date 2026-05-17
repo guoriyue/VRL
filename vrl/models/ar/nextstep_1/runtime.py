@@ -9,34 +9,35 @@ from typing import Any
 
 import torch
 
-from vrl.engine.ar import (
+from vrl.generation.ar import (
     ARDecodeLoop,
     ARPipelineExecutorBase,
     ARRequestLayout,
     ARSamplingParams,
 )
-from vrl.engine.core.capabilities import FamilyCapability
-from vrl.engine.core.protocols import PipelineChunkResult
-from vrl.engine.core.types import (
+from vrl.generation.capabilities import FamilyCapability
+from vrl.generation.execution.microbatching import MicroBatchSample
+from vrl.generation.protocols import PipelineChunkResult
+from vrl.generation.types import (
     GenerationMetrics,
     GenerationRequest,
     GenerationSampleRow,
     OutputBatch,
     WorkloadSignature,
 )
-from vrl.engine.execution.microbatching import MicroBatchSample
-from vrl.engine.trajectory import build_ar_continuous_trajectory
 from vrl.models.ar.capabilities import ar_continuous_family_capability
 from vrl.models.ar.nextstep_1.model import (
     NextStep1Config,
     NextStep1Model,
     NextStep1ReplayModel,
 )
+from vrl.models.ar.nextstep_1.runner import NextStep1ARModelRunner
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.replay_loading import (
     full_generation_bundle_metadata,
     minimal_replay_bundle_metadata,
 )
+from vrl.trajectory import build_ar_continuous_trajectory
 
 logger = logging.getLogger(__name__)
 
@@ -276,9 +277,9 @@ Boundary:
                                               (i.e. ``old_log_prob``).
 
 Determinism contract: same prompts + same generator state ⇒ same
-``tokens``/``saved_noise``/``log_probs``. The model's
-``sample_image_tokens`` is a single black-box call, so determinism reduces
-to "we call it once with the same arguments".
+``tokens``/``saved_noise``/``log_probs``. The runtime passes the generator
+into ``NextStep1ARModelRunner`` so each scheduled token step consumes the
+same random stream for the same request.
 """
 
 
@@ -385,8 +386,7 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
         cond_embeds = self._embed(prompt_ids)
         uncond_embeds = self._embed(uncond_ids)
 
-        # Optional deterministic generator. ``sample_image_tokens`` accepts
-        # a ``generator`` kwarg (see NextStep1Model.sample_image_tokens).
+        # Optional deterministic generator consumed by the AR runner.
         generator: torch.Generator | None = None
         if params.seed is not None:
             device = self.model.device
@@ -408,7 +408,7 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
         decode_result = ARDecodeLoop(
             request=request,
             sample_rows=sample_rows,
-            model=self.model,
+            runner=NextStep1ARModelRunner(self.model),
             max_new_tokens=params.image_token_num,
             tokenizer_key="nextstep_1",
             dtype=str(cond_embeds.dtype),
@@ -547,7 +547,7 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
         decode_result = ARDecodeLoop(
             request=request,
             sample_rows=self.chunk_sample_rows(request, chunk),
-            model=self.model,
+            runner=NextStep1ARModelRunner(self.model),
             max_new_tokens=params.image_token_num,
             tokenizer_key="nextstep_1",
             dtype=str(cond_embeds.dtype),

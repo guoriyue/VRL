@@ -24,7 +24,7 @@ from typing import Any
 
 import torch
 
-from vrl.engine.diffusion.layout import VideoGenerationRequest
+from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.diffusion import DiffusionModelBase
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 
@@ -537,7 +537,7 @@ class CosmosPredict2Model(DiffusionModelBase):
         with the rollout-time scheduler state.
         """
         del request
-        from vrl.engine.trajectory import TrajectoryResolver
+        from vrl.trajectory import TrajectoryResolver
 
         state = self.restore_eval_state(
             TrajectoryResolver.from_batch(batch).replay_tensor_dict("denoise"),

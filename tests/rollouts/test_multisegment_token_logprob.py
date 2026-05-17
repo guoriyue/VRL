@@ -6,13 +6,13 @@ import contextlib
 
 import torch
 
-from vrl.engine import GenerationRequest, GenerationSampleRow
-from vrl.engine.trajectory import build_ar_multisegment_trajectory, build_training_view
+from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.ar.multi_segment_token_logprob import (
     MultiSegmentTokenLogProbEvaluator,
 )
+from vrl.trajectory import build_ar_multisegment_trajectory, build_training_view
 
 
 def _sample_rows() -> list[GenerationSampleRow]:
