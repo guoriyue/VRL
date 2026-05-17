@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from vrl.distributed.ray.rollout.executor import DistributedRolloutExecutor
-from vrl.distributed.ray.rollout.launcher import RayRolloutLauncher
-from vrl.distributed.ray.rollout.placement import RayPlacement, create_rollout_placement_group
+from vrl.distributed.ray.rollout.launcher import (
+    RayPlacement,
+    RayRolloutLauncher,
+    create_rollout_placement_group,
+)
 from vrl.distributed.ray.rollout.planner import (
     DeviceAssignment,
     DistributedExecutionPlanner,
