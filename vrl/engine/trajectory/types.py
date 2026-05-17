@@ -11,11 +11,21 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from vrl.engine.core.types import GenerationSampleRow
-from vrl.engine.trajectory.axes import TrajectoryAxis
 
 if TYPE_CHECKING:
     from vrl.engine.trajectory.views import RewardView
 
+AxisKind = Literal[
+    "sample",
+    "discrete_token",
+    "continuous_token",
+    "denoise_step",
+    "text_token",
+    "segment",
+    "frame",
+    "media",
+    "custom",
+]
 TensorRole = Literal[
     "observation",
     "action",
@@ -33,6 +43,22 @@ DistributionKind = Literal[
 ]
 AdvantageScope = Literal["sample", "segment", "axis"]
 ReplaySignalKind = Literal["logprob", "kl_intermediates", "prediction", "custom"]
+
+
+@dataclass(frozen=True, slots=True)
+class TrajectoryAxis:
+    """Named logical axis used by trajectory tensors."""
+
+    name: str
+    kind: AxisKind
+    length: int | None = None
+    metadata: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("TrajectoryAxis.name must be non-empty")
+        if self.length is not None and self.length < 0:
+            raise ValueError("TrajectoryAxis.length must be >= 0 when set")
 
 
 @dataclass(slots=True)
@@ -140,11 +166,13 @@ def _require_string_tuple(name: str, values: tuple[str, ...]) -> None:
 
 __all__ = [
     "AdvantageScope",
+    "AxisKind",
     "DistributionKind",
     "ReplayInput",
     "ReplaySignalKind",
     "SegmentModality",
     "TensorRole",
+    "TrajectoryAxis",
     "TrajectoryBatch",
     "TrajectoryMetrics",
     "TrajectorySegment",

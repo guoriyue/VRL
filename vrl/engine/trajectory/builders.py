@@ -7,9 +7,9 @@ from typing import Any
 import torch
 
 from vrl.engine.core.types import GenerationRequest, GenerationSampleRow
-from vrl.engine.trajectory.axes import TrajectoryAxis
 from vrl.engine.trajectory.types import (
     ReplayInput,
+    TrajectoryAxis,
     TrajectoryBatch,
     TrajectoryMetrics,
     TrajectorySegment,

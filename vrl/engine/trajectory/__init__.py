@@ -1,6 +1,5 @@
 """Trajectory contract types for generation RL."""
 
-from vrl.engine.trajectory.axes import AxisKind, TrajectoryAxis
 from vrl.engine.trajectory.builders import (
     build_ar_continuous_trajectory,
     build_ar_discrete_trajectory,
@@ -18,11 +17,13 @@ from vrl.engine.trajectory.resolver import (
 )
 from vrl.engine.trajectory.types import (
     AdvantageScope,
+    AxisKind,
     DistributionKind,
     ReplayInput,
     ReplaySignalKind,
     SegmentModality,
     TensorRole,
+    TrajectoryAxis,
     TrajectoryBatch,
     TrajectoryMetrics,
     TrajectorySegment,
