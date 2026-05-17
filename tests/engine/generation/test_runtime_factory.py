@@ -8,14 +8,14 @@ from typing import Any
 import pytest
 from omegaconf import OmegaConf
 
-from vrl.generation import OutputBatch
+from vrl.generation import GenerationOutput
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
-from vrl.rollouts.runtime.backend import (
+from vrl.generation.runtime.config import GenerationRuntimeConfig
+from vrl.generation.runtime.factory import (
     DRIVER_CUDA_OWNERSHIP_ERROR,
-    build_rollout_backend_from_cfg,
-    validate_rollout_backend_config,
+    build_generation_runtime_from_cfg,
+    validate_generation_runtime_config,
 )
-from vrl.rollouts.runtime.config import RolloutBackendConfig
 
 
 class _CudaPolicy:
@@ -46,9 +46,9 @@ class _Bundle:
 
 
 class _FakeGatherer:
-    def gather_chunks(self, request: Any, sample_rows: Any, chunks: Any) -> OutputBatch:
+    def gather_chunks(self, request: Any, sample_rows: Any, chunks: Any) -> GenerationOutput:
         del sample_rows, chunks
-        return OutputBatch(
+        return GenerationOutput(
             request_id=request.request_id,
             family=request.family,
             task=request.task,
@@ -132,12 +132,12 @@ def _resource_cfg(
 
 def test_rollout_backend_config_from_cfg_requires_explicit_backend() -> None:
     with pytest.raises(ValueError, match=r"distributed\.backend"):
-        RolloutBackendConfig.from_cfg({})
+        GenerationRuntimeConfig.from_cfg({})
 
 
 def test_rollout_backend_config_from_cfg_rejects_non_ray_backend() -> None:
     with pytest.raises(ValueError, match="backend must be 'ray'"):
-        RolloutBackendConfig.from_cfg(_cfg(backend="local"))
+        GenerationRuntimeConfig.from_cfg(_cfg(backend="local"))
 
 
 @pytest.mark.parametrize(
@@ -153,7 +153,7 @@ def test_ray_backend_requires_launch_contract_and_gatherer(
     gatherer: Any,
 ) -> None:
     with pytest.raises(ValueError, match="launch_contract plus gatherer"):
-        build_rollout_backend_from_cfg(
+        build_generation_runtime_from_cfg(
             _cfg(),
             launch_contract=launch_contract,
             gatherer=gatherer,
@@ -163,7 +163,7 @@ def test_ray_backend_requires_launch_contract_and_gatherer(
 
 def test_ray_backend_rejects_driver_cuda_policy_without_overlap() -> None:
     with pytest.raises(ValueError, match=r"resources\.allow_overlap=false"):
-        validate_rollout_backend_config(
+        validate_generation_runtime_config(
             _resource_cfg(
                 trainer_devices=[0],
                 rollout_devices=[0],
@@ -182,7 +182,7 @@ def test_ray_backend_detects_cuda_trainable_module_when_policy_has_no_device() -
     )
 
     with pytest.raises(ValueError, match=r"resources\.allow_overlap=false"):
-        validate_rollout_backend_config(
+        validate_generation_runtime_config(
             _resource_cfg(
                 trainer_devices=[0],
                 rollout_devices=[0],
@@ -193,7 +193,7 @@ def test_ray_backend_detects_cuda_trainable_module_when_policy_has_no_device() -
 
 
 def test_ray_backend_allows_driver_cuda_policy_with_explicit_overlap() -> None:
-    config = validate_rollout_backend_config(
+    config = validate_generation_runtime_config(
         _resource_cfg(
             trainer_devices=[0],
             rollout_devices=[0],
@@ -208,7 +208,7 @@ def test_ray_backend_allows_driver_cuda_policy_with_explicit_overlap() -> None:
 
 
 def test_ray_backend_allows_split_driver_cuda_when_devices_do_not_overlap() -> None:
-    config = validate_rollout_backend_config(
+    config = validate_generation_runtime_config(
         _resource_cfg(trainer_devices=[0], rollout_devices=[1]),
         driver_policy=_CudaPolicy(),
     )
@@ -221,7 +221,7 @@ def test_ray_backend_allows_split_driver_cuda_when_devices_do_not_overlap() -> N
 
 def test_ray_backend_overlap_requires_release_after_collect() -> None:
     with pytest.raises(ValueError, match="release_after_collect=false"):
-        validate_rollout_backend_config(
+        validate_generation_runtime_config(
             _resource_cfg(
                 trainer_devices=[0],
                 rollout_devices=[0],

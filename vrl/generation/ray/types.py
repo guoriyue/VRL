@@ -42,18 +42,6 @@ class RayChunkExecutionEnvelope:
         return None if self.execution_stage is None else self.execution_stage.name
 
     @property
-    def execution_unit(self) -> ExecutionStage | None:
-        return self.execution_stage
-
-    @property
-    def unit_id(self) -> str | None:
-        return self.stage_id
-
-    @property
-    def unit_name(self) -> str | None:
-        return self.stage_name
-
-    @property
     def chunk_key(self) -> str:
         return self.chunk.chunk_key
 
@@ -74,15 +62,6 @@ class RayChunkResult:
     chunk_key: str | None = None
     policy_version: int | None = None
     error: str | None = None
-
-    @property
-    def unit_id(self) -> str | None:
-        return self.stage_id
-
-    @property
-    def unit_name(self) -> str | None:
-        return self.stage_name
-
 
 __all__ = [
     "RayChunkExecutionEnvelope",

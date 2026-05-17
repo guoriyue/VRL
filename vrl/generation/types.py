@@ -31,14 +31,6 @@ class GenerationMetrics:
     engine_plan_id: str | None = None
     engine_counters: dict[str, Any] = field(default_factory=dict)
 
-    @property
-    def execution_units(self) -> tuple[str, ...]:
-        return self.execution_stages
-
-    @execution_units.setter
-    def execution_units(self, value: tuple[str, ...]) -> None:
-        self.execution_stages = tuple(value)
-
 
 @dataclass(slots=True)
 class GenerationRequest:
@@ -146,7 +138,7 @@ class WorkloadSignature:
 
 
 @dataclass(slots=True)
-class OutputBatch:
+class GenerationOutput:
     """Engine runtime output batch.
 
     This is the generation-side output, not the trainer-side RolloutBatch.
@@ -167,14 +159,10 @@ class OutputBatch:
     error: str | None = None
 
 
-GenerationOutput = OutputBatch
-
-
 __all__ = [
     "GenerationMetrics",
     "GenerationOutput",
     "GenerationRequest",
     "GenerationSampleRow",
-    "OutputBatch",
     "WorkloadSignature",
 ]

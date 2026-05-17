@@ -16,7 +16,7 @@ from vrl.generation.ray.types import (
     RayChunkResult,
     RayWorkerHandle,
 )
-from vrl.generation.types import GenerationRequest, OutputBatch
+from vrl.generation.types import GenerationOutput, GenerationRequest
 
 
 class DistributedGenerationExecutor:
@@ -41,7 +41,7 @@ class DistributedGenerationExecutor:
         self.id_factory = id_factory or GenerationIdFactory()
         self.max_inflight_chunks_per_worker = int(max_inflight_chunks_per_worker)
 
-    async def execute(self, request: GenerationRequest) -> OutputBatch:
+    async def execute(self, request: GenerationRequest) -> GenerationOutput:
         from vrl.utils.profiling import record_function
 
         sample_rows = self.id_factory.build_sample_rows(request)

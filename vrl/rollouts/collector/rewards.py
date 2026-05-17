@@ -14,7 +14,7 @@ from vrl.rewards.types import RewardRollout, RewardTrajectory
 
 @dataclass(frozen=True, slots=True)
 class RewardScoringInput:
-    """Batch-aligned reward scorer input built from one engine OutputBatch."""
+    """Batch-aligned reward scorer input built from one engine GenerationOutput."""
 
     outputs: Any
     prompts: Sequence[str]

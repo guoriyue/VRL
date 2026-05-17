@@ -17,14 +17,12 @@ from vrl.generation.protocols import (
     FamilyPipelineExecutor,
     GenerationRuntime,
     PipelineChunkResult,
-    RolloutBackend,
 )
 from vrl.generation.types import (
     GenerationMetrics,
     GenerationOutput,
     GenerationRequest,
     GenerationSampleRow,
-    OutputBatch,
     WorkloadSignature,
 )
 
@@ -41,9 +39,7 @@ __all__ = [
     "GenerationRuntime",
     "GenerationRuntimeLaunchContract",
     "GenerationSampleRow",
-    "OutputBatch",
     "PipelineChunkResult",
-    "RolloutBackend",
     "WorkloadSignature",
     "family_capability_from_value",
 ]

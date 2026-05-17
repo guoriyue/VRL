@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 import torch
 
-from vrl.generation import GenerationRequest, GenerationSampleRow, OutputBatch
+from vrl.generation import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
     TrajectoryRolloutBatchBuilder,
@@ -46,7 +46,7 @@ class _Runtime:
     def __init__(self) -> None:
         self.requests: list[GenerationRequest] = []
 
-    async def generate(self, request: GenerationRequest) -> OutputBatch:
+    async def generate(self, request: GenerationRequest) -> GenerationOutput:
         self.requests.append(request)
         batch_size = len(request.prompts) * request.samples_per_prompt
         sample_rows = _sample_rows(request)
@@ -63,7 +63,7 @@ class _Runtime:
             uncond_attention_mask=torch.ones(batch_size, 3, dtype=torch.long),
             context={"collector": "test"},
         )
-        return OutputBatch(
+        return GenerationOutput(
             request_id=request.request_id,
             family=request.family,
             task=request.task,
@@ -189,7 +189,7 @@ def test_reward_view_selection_fails_fast_when_ambiguous() -> None:
 
 def test_collector_forwards_reference_metadata_to_request() -> None:
     from vrl.rollouts.collector.requests import RolloutEngineRequestBuilder
-    from vrl.rollouts.settings import RolloutSettings
+    from vrl.rollouts.config import RolloutSettings
 
     builder = RolloutEngineRequestBuilder(
         family="cosmos",

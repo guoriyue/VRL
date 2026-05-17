@@ -20,9 +20,9 @@ from vrl.generation.execution.microbatching import MicroBatchSample
 from vrl.generation.protocols import PipelineChunkResult
 from vrl.generation.types import (
     GenerationMetrics,
+    GenerationOutput,
     GenerationRequest,
     GenerationSampleRow,
-    OutputBatch,
     WorkloadSignature,
 )
 from vrl.models.ar.capabilities import ar_continuous_family_capability
@@ -261,7 +261,7 @@ Boundary:
 - This module MUST NOT import ``vrl.rollouts.*`` or ``RolloutBatch``.
 - This module MUST NOT compute reward.
 - Inputs come from ``GenerationRequest.sampling`` (collector packs them).
-- Outputs are the canonical ``OutputBatch``. NextStep-1 is AR with
+- Outputs are the canonical ``GenerationOutput``. NextStep-1 is AR with
   continuous tokens + a flow-matching head, so there is no diffusion
   trajectory; instead, ``output`` is the decoded image and ``extra``
   carries the three replay-determinism artifacts:
@@ -321,7 +321,7 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
     And whose ``metadata`` may carry ``rollout_metadata`` (target_text,
     references, etc.) for the collector's reward layer.
 
-    The executor returns an ``OutputBatch`` whose first-class trajectory carries
+    The executor returns an ``GenerationOutput`` whose first-class trajectory carries
     tokens, saved noise, log-probs, decoded reward images, and prompt-side replay
     context.
     """
@@ -351,7 +351,7 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
         request: GenerationRequest,
         sample_rows: list[GenerationSampleRow],
         engine_plan: Any,
-    ) -> OutputBatch:
+    ) -> GenerationOutput:
         del engine_plan
         sampling = request.sampling
         params: ARSamplingParams = self.parse_sampling_params(request)
@@ -477,7 +477,7 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
             context=trajectory_context,
         )
 
-        return OutputBatch(
+        return GenerationOutput(
             request_id=request.request_id,
             family=request.family,
             task=request.task,
@@ -596,7 +596,7 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
         chunks: Sequence[NextStep1ARChunkResult],
-    ) -> OutputBatch:
+    ) -> GenerationOutput:
         return NextStep1ChunkGatherer().gather_chunks(request, sample_rows, chunks)
 
     # -- internals -----------------------------------------------------
@@ -653,8 +653,8 @@ class NextStep1ChunkGatherer:
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
         chunks: Sequence[NextStep1ARChunkResult],
-    ) -> OutputBatch:
-        """Pack prompt/sample AR chunks back into the canonical OutputBatch."""
+    ) -> GenerationOutput:
+        """Pack prompt/sample AR chunks back into the canonical GenerationOutput."""
 
         ordered_ar_chunks = self.layout.ordered_chunks(
             request,
@@ -735,7 +735,7 @@ class NextStep1ChunkGatherer:
             context=trajectory_context,
         )
 
-        return OutputBatch(
+        return GenerationOutput(
             request_id=request.request_id,
             family=request.family,
             task=request.task,

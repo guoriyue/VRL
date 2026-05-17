@@ -16,9 +16,9 @@ from vrl.generation.resources import (
     resolve_distributed_resources,
     trainer_torch_device,
 )
+from vrl.generation.runtime.factory import build_generation_runtime_from_cfg
 from vrl.models.interfaces import require_runtime_model
-from vrl.rollouts.runtime.backend import build_rollout_backend_from_cfg
-from vrl.rollouts.runtime.launch_inputs import build_rollout_runtime_inputs
+from vrl.rollouts.families import build_generation_runtime_inputs_for_family
 from vrl.scripts.common.factory import (
     build_collector_from_cfg,
     build_online_recipe_components,
@@ -117,7 +117,7 @@ async def run_online_recipe(
         reward_fn=components.reward_fn,
         collector_config=components.collector_config,
     )
-    runtime_inputs = build_rollout_runtime_inputs(
+    runtime_inputs = build_generation_runtime_inputs_for_family(
         cfg,
         components.family,
         weight_dtype=weight_dtype,
@@ -125,7 +125,7 @@ async def run_online_recipe(
     )
     log_host_memory("before_rollout_backend_build", log=logger)
     collector.set_runtime(
-        build_rollout_backend_from_cfg(
+        build_generation_runtime_from_cfg(
             cfg,
             driver_bundle=bundle,
             launch_contract=runtime_inputs.launch_contract,

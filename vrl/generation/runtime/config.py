@@ -123,7 +123,4 @@ def _config_get(node: Any, key: str, default: Any) -> Any:
     return getattr(node, key, default)
 
 
-RolloutBackendConfig = GenerationRuntimeConfig
-
-
-__all__ = ["GenerationRuntimeConfig", "RolloutBackendConfig"]
+__all__ = ["GenerationRuntimeConfig"]

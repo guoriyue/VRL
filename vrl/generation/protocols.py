@@ -9,9 +9,9 @@ if TYPE_CHECKING:
     from vrl.generation.execution.microbatching import MicroBatchSample
     from vrl.generation.execution.planner import ExecutionStage
     from vrl.generation.types import (
+        GenerationOutput,
         GenerationRequest,
         GenerationSampleRow,
-        OutputBatch,
         WorkloadSignature,
     )
 
@@ -29,16 +29,13 @@ class ChunkGatherer(Protocol):
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
         chunks: Sequence[PipelineChunkResult],
-    ) -> OutputBatch: ...
+    ) -> GenerationOutput: ...
 
 
 class GenerationRuntime(Protocol):
     """Generation runtime consumed by rollout collectors."""
 
-    async def generate(self, request: GenerationRequest) -> OutputBatch: ...
-
-
-RolloutBackend = GenerationRuntime
+    async def generate(self, request: GenerationRequest) -> GenerationOutput: ...
 
 
 @runtime_checkable
@@ -71,7 +68,7 @@ class ChunkedFamilyPipelineExecutor(FamilyPipelineExecutor, Protocol):
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
         chunks: Sequence[PipelineChunkResult],
-    ) -> OutputBatch: ...
+    ) -> GenerationOutput: ...
 
 
 __all__ = [
@@ -80,5 +77,4 @@ __all__ = [
     "FamilyPipelineExecutor",
     "GenerationRuntime",
     "PipelineChunkResult",
-    "RolloutBackend",
 ]

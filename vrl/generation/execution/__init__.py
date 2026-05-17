@@ -11,26 +11,22 @@ from vrl.generation.execution.planner import (
     EnginePlan,
     EnginePlanner,
     ExecutionStage,
-    ExecutionUnit,
     ResolvedAxis,
     attach_engine_plan,
     build_engine_plan,
     resolve_executor_capability,
 )
 from vrl.generation.execution.request_batch import RequestBatch
-from vrl.generation.protocols import RolloutBackend
 
 __all__ = [
     "EnginePlan",
     "EnginePlanner",
     "ExecutionStage",
-    "ExecutionUnit",
     "GenerationIdFactory",
     "MicroBatchSample",
     "MicroBatchSchedule",
     "RequestBatch",
     "ResolvedAxis",
-    "RolloutBackend",
     "attach_engine_plan",
     "build_engine_plan",
     "build_prompt_microbatch_schedule",

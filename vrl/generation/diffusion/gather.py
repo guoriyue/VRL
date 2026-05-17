@@ -12,9 +12,9 @@ from vrl.generation.diffusion.layout import DiffusionRequestLayout
 from vrl.generation.protocols import PipelineChunkResult
 from vrl.generation.types import (
     GenerationMetrics,
+    GenerationOutput,
     GenerationRequest,
     GenerationSampleRow,
-    OutputBatch,
 )
 from vrl.trajectory import build_diffusion_trajectory
 
@@ -31,7 +31,7 @@ class DiffusionChunkGatherer:
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
         chunks: Sequence[PipelineChunkResult],
-    ) -> OutputBatch:
+    ) -> GenerationOutput:
         sampling = request.sampling
         layout = DiffusionRequestLayout()
         ordered_chunks = layout.ordered_chunks(
@@ -81,7 +81,7 @@ class DiffusionChunkGatherer:
             context=rollout_context,
         )
 
-        return OutputBatch(
+        return GenerationOutput(
             request_id=request.request_id,
             family=request.family,
             task=request.task,

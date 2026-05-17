@@ -7,9 +7,9 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from vrl.generation.types import (
+    GenerationOutput,
     GenerationRequest,
     GenerationSampleRow,
-    OutputBatch,
 )
 from vrl.trajectory.ops import slice_trajectory_batch
 
@@ -23,8 +23,8 @@ class RequestBatch:
 
     def run(
         self,
-        forward: Callable[[GenerationRequest, list[GenerationSampleRow]], OutputBatch],
-    ) -> dict[str, OutputBatch]:
+        forward: Callable[[GenerationRequest, list[GenerationSampleRow]], GenerationOutput],
+    ) -> dict[str, GenerationOutput]:
         """Run the batched forward path and split output back per request."""
 
         if not self.requests:
@@ -42,7 +42,7 @@ class RequestBatch:
         batched_request, batched_sample_rows, request_sample_counts = self._batch_requests()
         batched_output = forward(batched_request, batched_sample_rows)
 
-        outputs: dict[str, OutputBatch] = {}
+        outputs: dict[str, GenerationOutput] = {}
         offset = 0
         for request in self.requests:
             count = request_sample_counts[request.request_id]
@@ -104,14 +104,14 @@ class RequestBatch:
 
     def _slice_output_batch(
         self,
-        output: OutputBatch,
+        output: GenerationOutput,
         *,
         request: GenerationRequest,
         sample_rows: list[GenerationSampleRow],
         offset: int,
         count: int,
         total: int,
-    ) -> OutputBatch:
+    ) -> GenerationOutput:
         trajectory = self._slice_trajectory(
             output.trajectory,
             request=request,
@@ -121,7 +121,7 @@ class RequestBatch:
             total=total,
         )
         extra = self._slice_value(output.extra, offset, count, total)
-        return OutputBatch(
+        return GenerationOutput(
             request_id=request.request_id,
             family=request.family,
             task=request.task,

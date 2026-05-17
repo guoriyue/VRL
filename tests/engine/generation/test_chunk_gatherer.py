@@ -10,7 +10,7 @@ import torch
 from vrl.generation.diffusion import DiffusionChunkGatherer, DiffusionChunkResult
 from vrl.generation.execution.ids import GenerationIdFactory
 from vrl.generation.protocols import ChunkGatherer
-from vrl.generation.types import GenerationRequest, OutputBatch
+from vrl.generation.types import GenerationOutput, GenerationRequest
 
 
 class _PureGatherer:
@@ -19,8 +19,8 @@ class _PureGatherer:
         request: GenerationRequest,
         sample_rows: Sequence[Any],
         chunks: Sequence[Any],
-    ) -> OutputBatch:
-        return OutputBatch(
+    ) -> GenerationOutput:
+        return GenerationOutput(
             request_id=request.request_id,
             family=request.family,
             task=request.task,

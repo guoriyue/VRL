@@ -22,9 +22,9 @@ from vrl.generation.execution.planner import attach_engine_plan, build_engine_pl
 from vrl.generation.protocols import PipelineChunkResult
 from vrl.generation.types import (
     GenerationMetrics,
+    GenerationOutput,
     GenerationRequest,
     GenerationSampleRow,
-    OutputBatch,
     WorkloadSignature,
 )
 from vrl.models.ar.capabilities import ar_discrete_family_capability
@@ -307,7 +307,7 @@ Boundary:
 - This module MUST NOT compute reward.
 - Inputs come from ``GenerationRequest.sampling`` + ``prompts`` (the
   collector packs them).
-- Outputs are the canonical ``OutputBatch`` whose ``output`` is the
+- Outputs are the canonical ``GenerationOutput`` whose ``output`` is the
   decoded image tensor and whose ``extra`` carries per-token ids,
   per-token log-probs, the prompt token ids/masks (needed for replay
   forward), and the unconditional token ids/masks (needed for replay /
@@ -360,7 +360,7 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
     - ``seed``: int | None — when set, ``torch.manual_seed(seed)`` is
       applied before sampling for parity tests.
 
-    The executor returns an ``OutputBatch`` whose ``output`` is the
+    The executor returns an ``GenerationOutput`` whose ``output`` is the
     decoded ``[B, 3, H, W]`` image tensor in ``[-1, 1]`` and whose
     ``extra`` dict carries:
 
@@ -417,7 +417,7 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
         request: GenerationRequest,
         sample_rows: list[GenerationSampleRow],
         engine_plan: Any,
-    ) -> OutputBatch:
+    ) -> GenerationOutput:
         from vrl.utils.profiling import record_function
 
         sampling = request.sampling
@@ -539,7 +539,7 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
             context=trajectory_context,
         )
 
-        return attach_engine_plan(OutputBatch(
+        return attach_engine_plan(GenerationOutput(
             request_id=request.request_id,
             family=request.family,
             task=request.task,
@@ -652,7 +652,7 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
         chunks: Sequence[JanusProARChunkResult],
-    ) -> OutputBatch:
+    ) -> GenerationOutput:
         output = JanusProChunkGatherer().gather_chunks(request, sample_rows, chunks)
         return attach_engine_plan(output, self.plan(request, list(sample_rows)))
 
@@ -740,8 +740,8 @@ class JanusProChunkGatherer:
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
         chunks: Sequence[JanusProARChunkResult],
-    ) -> OutputBatch:
-        """Pack prompt/sample AR chunks back into the canonical OutputBatch."""
+    ) -> GenerationOutput:
+        """Pack prompt/sample AR chunks back into the canonical GenerationOutput."""
 
         ordered_ar_chunks = self.layout.ordered_chunks(
             request,
@@ -816,7 +816,7 @@ class JanusProChunkGatherer:
             context=trajectory_context,
         )
 
-        return OutputBatch(
+        return GenerationOutput(
             request_id=request.request_id,
             family=request.family,
             task=request.task,
@@ -867,7 +867,7 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
         request: GenerationRequest,
         sample_rows: list[GenerationSampleRow],
         engine_plan: Any,
-    ) -> OutputBatch:
+    ) -> GenerationOutput:
         from vrl.utils.profiling import record_function
 
         sampling = request.sampling
@@ -938,7 +938,7 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
             ),
         )
 
-        return attach_engine_plan(OutputBatch(
+        return attach_engine_plan(GenerationOutput(
             request_id=request.request_id,
             family=request.family,
             task=request.task,
@@ -1021,7 +1021,7 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
         chunks: Sequence[JanusProR1ChunkResult],
-    ) -> OutputBatch:
+    ) -> GenerationOutput:
         output = JanusProR1ChunkGatherer().gather_chunks(request, sample_rows, chunks)
         return attach_engine_plan(output, self.plan(request, list(sample_rows)))
 
@@ -1098,7 +1098,7 @@ class JanusProR1ChunkGatherer:
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
         chunks: Sequence[JanusProR1ChunkResult],
-    ) -> OutputBatch:
+    ) -> GenerationOutput:
         ordered = self.layout.ordered_chunks(
             request,
             sample_rows,
@@ -1149,7 +1149,7 @@ class JanusProR1ChunkGatherer:
             },
         )
 
-        return OutputBatch(
+        return GenerationOutput(
             request_id=request.request_id,
             family=request.family,
             task=request.task,

@@ -163,11 +163,7 @@ def _cfg_get(node: Any, key: str, default: Any) -> Any:
     return getattr(node, key, default)
 
 
-RolloutRuntimeInputs = GenerationRuntimeInputs
-
-
 __all__ = [
     "GenerationRuntimeInputs",
-    "RolloutRuntimeInputs",
     "build_generation_runtime_inputs",
 ]

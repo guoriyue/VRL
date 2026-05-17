@@ -12,10 +12,10 @@ from vrl.generation.diffusion import DiffusionChunkGatherer
 from vrl.generation.protocols import ChunkedFamilyPipelineExecutor
 from vrl.models.ar.janus_pro.runtime import JanusProChunkGatherer
 from vrl.models.ar.nextstep_1.runtime import NextStep1ChunkGatherer
-from vrl.rollouts.family_registry import get_rollout_family_entry
-from vrl.rollouts.runtime.launch_inputs import (
-    RolloutRuntimeInputs,
-    build_rollout_runtime_inputs,
+from vrl.rollouts.families import (
+    GenerationRuntimeInputs,
+    build_generation_runtime_inputs_for_family,
+    get_rollout_family_entry,
 )
 
 
@@ -64,14 +64,14 @@ def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
     )
     entry = get_rollout_family_entry(family)
 
-    inputs = build_rollout_runtime_inputs(
+    inputs = build_generation_runtime_inputs_for_family(
         cfg,
         family,
         weight_dtype=torch.bfloat16,
         executor_kwargs={"sample_batch_size": 2},
     )
 
-    assert isinstance(inputs, RolloutRuntimeInputs)
+    assert isinstance(inputs, GenerationRuntimeInputs)
     assert pickle.loads(pickle.dumps(inputs.launch_contract)) == inputs.launch_contract
     assert inputs.launch_contract.family == family
     assert inputs.launch_contract.task == expected_task
@@ -96,13 +96,13 @@ def test_diffusion_launch_contract_uses_worker_primitive_device_and_dtype() -> N
         ],
     )
 
-    inputs = build_rollout_runtime_inputs(
+    inputs = build_generation_runtime_inputs_for_family(
         cfg,
         "sd3_5",
         weight_dtype=torch.float16,
     )
 
-    assert isinstance(inputs, RolloutRuntimeInputs)
+    assert isinstance(inputs, GenerationRuntimeInputs)
     assert inputs.launch_contract.model_build is not None
     assert inputs.launch_contract.model_build["device"] == "cuda"
     assert inputs.launch_contract.model_build["dtype"] == "float16"
@@ -122,13 +122,13 @@ def test_cosmos_runtime_inputs_include_reference_image_from_cfg() -> None:
         ],
     )
 
-    inputs = build_rollout_runtime_inputs(
+    inputs = build_generation_runtime_inputs_for_family(
         cfg,
         "cosmos-predict2",
         weight_dtype=torch.bfloat16,
     )
 
-    assert isinstance(inputs, RolloutRuntimeInputs)
+    assert isinstance(inputs, GenerationRuntimeInputs)
     assert inputs.launch_contract.family == "cosmos-predict2"
     assert inputs.launch_contract.executor_kwargs["reference_image"] == "/tmp/reference.png"
     assert inputs.launch_contract.model_build is not None
@@ -149,12 +149,12 @@ def test_explicit_executor_kwargs_override_registry_defaults() -> None:
         ],
     )
 
-    inputs = build_rollout_runtime_inputs(
+    inputs = build_generation_runtime_inputs_for_family(
         cfg,
         "sd3_5",
         weight_dtype=torch.bfloat16,
         executor_kwargs={"sample_batch_size": 3},
     )
 
-    assert isinstance(inputs, RolloutRuntimeInputs)
+    assert isinstance(inputs, GenerationRuntimeInputs)
     assert inputs.launch_contract.executor_kwargs == {"sample_batch_size": 3}

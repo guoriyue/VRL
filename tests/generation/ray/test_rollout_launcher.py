@@ -12,10 +12,10 @@ import pytest
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import PipelineChunkResult
 from vrl.generation.ray.runtime import RayDistributedRuntime
-from vrl.generation.types import GenerationRequest, GenerationSampleRow, OutputBatch
+from vrl.generation.runtime.config import GenerationRuntimeConfig
+from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.models.ar.capabilities import ar_discrete_family_capability
 from vrl.models.interfaces import ReplayResult, RuntimeBuildSpec, RuntimeBundle
-from vrl.rollouts.runtime.config import RolloutBackendConfig
 
 
 class _TinyRuntimeModel:
@@ -50,8 +50,8 @@ class _TinyChunkExecutor:
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
         chunks: Sequence[PipelineChunkResult],
-    ) -> OutputBatch:
-        return OutputBatch(
+    ) -> GenerationOutput:
+        return GenerationOutput(
             request_id=request.request_id,
             family=request.family,
             task=request.task,
@@ -67,8 +67,8 @@ class _Gatherer:
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
         chunks: Sequence[PipelineChunkResult],
-    ) -> OutputBatch:
-        return OutputBatch(
+    ) -> GenerationOutput:
+        return GenerationOutput(
             request_id=request.request_id,
             family=request.family,
             task=request.task,
@@ -124,7 +124,7 @@ def test_ray_generation_launcher_builds_worker_runtime_with_local_ray() -> None:
                 "log_to_driver": False,
             },
         ).launch(
-            RolloutBackendConfig(
+            GenerationRuntimeConfig(
                 backend="ray",
                 num_workers=1,
                 gpus_per_worker=0.0,

@@ -13,9 +13,9 @@ from vrl.generation.execution.planner import attach_engine_plan
 from vrl.generation.execution.request_batch import RequestBatch
 from vrl.generation.protocols import ChunkedFamilyPipelineExecutor
 from vrl.generation.types import (
+    GenerationOutput,
     GenerationRequest,
     GenerationSampleRow,
-    OutputBatch,
 )
 
 TChunk = TypeVar("TChunk", bound=ARChunkResult)
@@ -55,11 +55,11 @@ class ARPipelineExecutorBase(
         requests: list[GenerationRequest],
         sample_rows_by_request: dict[str, list[GenerationSampleRow]],
         engine_plans_by_request: dict[str, Any],
-    ) -> dict[str, OutputBatch]:
+    ) -> dict[str, GenerationOutput]:
         def forward(
             request: GenerationRequest,
             sample_rows: list[GenerationSampleRow],
-        ) -> OutputBatch:
+        ) -> GenerationOutput:
             plan = engine_plans_by_request.get(request.request_id)
             if plan is None:
                 plan_method = getattr(self, "plan", None)

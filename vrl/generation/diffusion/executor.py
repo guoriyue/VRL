@@ -27,9 +27,9 @@ from vrl.generation.protocols import (
     PipelineChunkResult,
 )
 from vrl.generation.types import (
+    GenerationOutput,
     GenerationRequest,
     GenerationSampleRow,
-    OutputBatch,
     WorkloadSignature,
 )
 from vrl.math.diffusion.flow_matching import sde_step_with_logprob
@@ -192,7 +192,7 @@ class DiffusionPipelineExecutorBase(
         request: GenerationRequest,
         sample_rows: list[GenerationSampleRow],
         plan: Any,
-    ) -> OutputBatch:
+    ) -> GenerationOutput:
         chunks = run_microbatch_samples_with_oom_retry(
             plan.micro_batches,
             lambda micro_batch: self.forward_chunk_plan(
@@ -367,7 +367,7 @@ class DiffusionPipelineExecutorBase(
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
         chunks: Sequence[DiffusionChunkResult],
-    ) -> OutputBatch:
+    ) -> GenerationOutput:
         return DiffusionChunkGatherer().gather_chunks(
             request,
             sample_rows,
@@ -379,11 +379,11 @@ class DiffusionPipelineExecutorBase(
         requests: list[GenerationRequest],
         sample_rows_by_request: dict[str, list[GenerationSampleRow]],
         engine_plans_by_request: dict[str, Any],
-    ) -> dict[str, OutputBatch]:
+    ) -> dict[str, GenerationOutput]:
         def forward(
             request: GenerationRequest,
             sample_rows: list[GenerationSampleRow],
-        ) -> OutputBatch:
+        ) -> GenerationOutput:
             plan = engine_plans_by_request.get(request.request_id)
             if plan is None:
                 plan = self.plan(request, sample_rows)

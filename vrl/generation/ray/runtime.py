@@ -11,7 +11,7 @@ from vrl.generation.ray.dependencies import require_ray
 from vrl.generation.ray.executor import DistributedGenerationExecutor
 from vrl.generation.ray.types import RayWorkerHandle
 from vrl.generation.ray.weight_sync import GenerationWeightSync
-from vrl.generation.types import GenerationRequest, OutputBatch
+from vrl.generation.types import GenerationOutput, GenerationRequest
 
 
 class RayGenerationRuntime(GenerationRuntime):
@@ -33,7 +33,7 @@ class RayGenerationRuntime(GenerationRuntime):
         self._placement_group = placement_group
         self.current_policy_version: int | None = None
 
-    async def generate(self, request: GenerationRequest) -> OutputBatch:
+    async def generate(self, request: GenerationRequest) -> GenerationOutput:
         if request.policy_version is None and self.current_policy_version is not None:
             request = replace(request, policy_version=self.current_policy_version)
         return await self.executor.execute(request)

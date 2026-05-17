@@ -9,7 +9,7 @@ from typing import Any
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import PipelineChunkResult
 from vrl.generation.ray.worker import RayRolloutWorker
-from vrl.generation.types import GenerationRequest, GenerationSampleRow, OutputBatch
+from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.models.ar.capabilities import ar_discrete_family_capability
 from vrl.models.interfaces import ReplayResult, RuntimeBuildSpec, RuntimeBundle
 
@@ -48,8 +48,8 @@ class _TinyChunkExecutor:
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
         chunks: Sequence[PipelineChunkResult],
-    ) -> OutputBatch:
-        return OutputBatch(
+    ) -> GenerationOutput:
+        return GenerationOutput(
             request_id=request.request_id,
             family=request.family,
             task=request.task,

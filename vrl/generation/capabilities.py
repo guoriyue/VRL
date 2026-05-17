@@ -174,10 +174,6 @@ class FamilyCapability:
     def profiler_labels(self) -> tuple[str, ...]:
         return tuple(stage.profiler_label for stage in self.execution_stages)
 
-    @property
-    def execution_units(self) -> tuple[ExecutionStageCapability, ...]:
-        return self.execution_stages
-
     def batch_signature(self) -> tuple[Any, ...]:
         """Return the capability portion of a request batching key."""
 
@@ -270,7 +266,6 @@ class FamilyCapability:
     ) -> FamilyCapability:
         if isinstance(value, cls):
             return value
-        stage_values = value.get("execution_stages", value.get("execution_units", ()))
         return cls(
             family=str(value["family"]),
             task=str(value["task"]),
@@ -281,7 +276,7 @@ class FamilyCapability:
             ),
             execution_stages=tuple(
                 ExecutionStageCapability.from_value(stage)
-                for stage in stage_values
+                for stage in value.get("execution_stages", ())
             ),
             trainable_segments=tuple(str(item) for item in value.get("trainable_segments", ())),
             reward_views=tuple(str(item) for item in value.get("reward_views", ())),
@@ -352,14 +347,9 @@ def _trajectory_kind(value: Any) -> TrajectoryKind:
     raise ValueError(f"unsupported trajectory_kind: {value!r}")
 
 
-# Keep the old name as a source-compatibility alias while launch contracts migrate.
-ExecutionUnitCapability = ExecutionStageCapability
-
-
 __all__ = [
     "AxisCapability",
     "ExecutionStageCapability",
-    "ExecutionUnitCapability",
     "FamilyCapability",
     "TrajectoryKind",
     "family_capability_from_value",

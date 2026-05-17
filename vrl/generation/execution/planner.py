@@ -17,9 +17,9 @@ from vrl.generation.execution.microbatching import (
 )
 from vrl.generation.types import (
     GenerationMetrics,
+    GenerationOutput,
     GenerationRequest,
     GenerationSampleRow,
-    OutputBatch,
     WorkloadSignature,
 )
 
@@ -85,10 +85,6 @@ class ExecutionStage:
             raise ValueError("ExecutionStage.sample_count must be >= 1 when set")
 
     @property
-    def unit_id(self) -> str:
-        return self.stage_id
-
-    @property
     def chunk_key(self) -> str | None:
         if (
             self.prompt_index is None
@@ -121,10 +117,6 @@ class EnginePlan:
         return tuple(dict.fromkeys(stage.profiler_name for stage in self.execution_stages))
 
     @property
-    def execution_units(self) -> tuple[ExecutionStage, ...]:
-        return self.execution_stages
-
-    @property
     def primary_chunk_stage(self) -> ExecutionStage:
         for preferred in ("forward_chunk", "forward"):
             for stage in self.execution_stages:
@@ -133,18 +125,10 @@ class EnginePlan:
         return self.execution_stages[0]
 
     @property
-    def primary_chunk_unit(self) -> ExecutionStage:
-        return self.primary_chunk_stage
-
-    @property
     def chunk_execution_stages(self) -> tuple[ExecutionStage, ...]:
         return tuple(
             stage for stage in self.execution_stages if stage.name == "forward_chunk"
         )
-
-    @property
-    def chunk_execution_units(self) -> tuple[ExecutionStage, ...]:
-        return self.chunk_execution_stages
 
     def chunk_stage_for(self, sample_batch: MicroBatchSample) -> ExecutionStage:
         """Return the materialized execution stage for one micro-batch."""
@@ -153,9 +137,6 @@ class EnginePlan:
             if stage.chunk_key == sample_batch.chunk_key:
                 return stage
         raise KeyError(f"no execution stage found for chunk {sample_batch.chunk_key!r}")
-
-    def chunk_unit_for(self, sample_batch: MicroBatchSample) -> ExecutionStage:
-        return self.chunk_stage_for(sample_batch)
 
     def profiler_label(self, stage_name: str) -> str:
         for stage in self.execution_stages:
@@ -453,7 +434,7 @@ def resolve_executor_capability(
     )
 
 
-def attach_engine_plan(output: OutputBatch, plan: EnginePlan) -> OutputBatch:
+def attach_engine_plan(output: GenerationOutput, plan: EnginePlan) -> GenerationOutput:
     """Attach a plan to a GenerationOutput without changing decoded artifacts."""
 
     output.engine_plan = plan
@@ -487,15 +468,10 @@ def _merge_runtime_caps(
     return capability
 
 
-# Keep the old name as a source-compatibility alias while call sites migrate.
-ExecutionUnit = ExecutionStage
-
-
 __all__ = [
     "EnginePlan",
     "EnginePlanner",
     "ExecutionStage",
-    "ExecutionUnit",
     "ResolvedAxis",
     "attach_engine_plan",
     "build_engine_plan",

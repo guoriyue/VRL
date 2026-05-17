@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import torch
 
-from vrl.generation import GenerationRequest, GenerationSampleRow, OutputBatch
+from vrl.generation import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
     TrajectoryRolloutBatchBuilder,
 )
-from vrl.rollouts.settings import RolloutSettings
+from vrl.rollouts.config import RolloutSettings
 from vrl.trajectory import build_ar_multisegment_trajectory
 
 
@@ -119,7 +119,7 @@ def test_r1_trajectory_batch_keeps_segments_separate() -> None:
         primary_segment="final_image",
         context={"mode": "r1"},
     )
-    output = OutputBatch(
+    output = GenerationOutput(
         request_id=request.request_id,
         family=request.family,
         task=request.task,
