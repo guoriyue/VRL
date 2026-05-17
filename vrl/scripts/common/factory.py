@@ -9,8 +9,8 @@ from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.builders import build_configs
 from vrl.rollouts.collector import build_rollout_collector
-from vrl.rollouts.collector.settings import (
-    build_rollout_settings_from_cfg as _build_rollout_settings_from_cfg,
+from vrl.rollouts.collector.config import (
+    build_rollout_config_from_cfg as _build_rollout_config_from_cfg,
 )
 from vrl.rollouts.families import (
     RolloutFamilyEntry,
@@ -58,14 +58,14 @@ def resolve_online_family(cfg: DictConfig) -> str:
     return family
 
 
-def build_rollout_settings_from_cfg(
+def build_rollout_config_from_cfg(
     cfg: DictConfig,
     family: str | RolloutFamilyEntry | None = None,
 ) -> Any:
-    """Build resolved rollout settings from YAML."""
+    """Build resolved rollout config from YAML."""
 
     entry = _entry_from_family(cfg, family)
-    return _build_rollout_settings_from_cfg(
+    return _build_rollout_config_from_cfg(
         cfg,
         family=entry.family,
     )
@@ -126,7 +126,7 @@ def build_algorithm_and_evaluator_from_cfg(
                 f"{entry.family} GRPO expects GRPOConfig, got "
                 f"{type(algorithm_config).__name__}",
             )
-        collector_config = collector_config or build_rollout_settings_from_cfg(cfg, entry)
+        collector_config = collector_config or build_rollout_config_from_cfg(cfg, entry)
         return AlgorithmEvaluatorPair(
             algorithm=GRPO(algorithm_config),
             evaluator=DiffusionSDELogProbEvaluator(
@@ -216,7 +216,7 @@ def build_collector_from_cfg(
     """Build a rollout collector through the canonical family registry."""
 
     entry = _entry_from_family(cfg, family)
-    collector_config = collector_config or build_rollout_settings_from_cfg(cfg, entry)
+    collector_config = collector_config or build_rollout_config_from_cfg(cfg, entry)
     return build_rollout_collector(
         entry.family,
         model=model,
@@ -238,7 +238,7 @@ def build_online_recipe_components(
 
     built = built or build_configs(cfg)
     entry = _entry_from_family(cfg, family)
-    collector_config = build_rollout_settings_from_cfg(cfg, entry)
+    collector_config = build_rollout_config_from_cfg(cfg, entry)
     reward_fn = build_reward_from_cfg(cfg, built=built, device=device)
     pair = build_algorithm_and_evaluator_from_cfg(
         cfg,
@@ -288,6 +288,6 @@ __all__ = [
     "build_collector_from_cfg",
     "build_online_recipe_components",
     "build_reward_from_cfg",
-    "build_rollout_settings_from_cfg",
+    "build_rollout_config_from_cfg",
     "resolve_online_family",
 ]

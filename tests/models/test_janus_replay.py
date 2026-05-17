@@ -16,7 +16,7 @@ from vrl.models.ar.janus_pro.model import (
 from vrl.models.interfaces import ReplayResult
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.collector import build_rollout_collector
-from vrl.rollouts.collector.settings import RolloutSettings
+from vrl.rollouts.collector.config import RolloutConfig
 from vrl.trajectory import build_ar_discrete_trajectory, build_training_view
 
 HIDDEN = 32
@@ -147,7 +147,7 @@ def test_janus_collector_has_no_forward_step() -> None:
         "janus_pro",
         model=_build_stub_model(),
         reward_fn=None,
-        config=RolloutSettings(
+        config=RolloutConfig(
             family="janus_pro",
             values={
                 "n_samples_per_prompt": 1,

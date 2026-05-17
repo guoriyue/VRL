@@ -19,7 +19,7 @@ class CollectorRequest:
 
 
 class GenerationRequestBuilder:
-    """Build ``GenerationRequest`` payloads from resolved rollout settings."""
+    """Build ``GenerationRequest`` payloads from resolved rollout config."""
 
     def __init__(
         self,

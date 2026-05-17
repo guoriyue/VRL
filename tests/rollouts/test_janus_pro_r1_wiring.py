@@ -8,7 +8,7 @@ from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
     TrajectoryRolloutBatchBuilder,
 )
-from vrl.rollouts.collector.settings import RolloutSettings
+from vrl.rollouts.collector.config import RolloutConfig
 from vrl.trajectory import build_ar_multisegment_trajectory
 
 
@@ -54,7 +54,7 @@ def _segment(batch: int, length: int, *, visual: bool) -> dict[str, torch.Tensor
 
 
 def test_r1_collector_uses_r1_task_request_and_trajectory_batch() -> None:
-    settings = RolloutSettings(
+    rollout_config = RolloutConfig(
         family="janus_pro_r1",
         values={
             "n_samples_per_prompt": 2,
@@ -77,7 +77,7 @@ def test_r1_collector_uses_r1_task_request_and_trajectory_batch() -> None:
         "janus_pro_r1",
         model=None,
         reward_fn=None,
-        config=settings,
+        config=rollout_config,
     )
     plan = collector.request_builder.build(["draw text"], 2, {})
 

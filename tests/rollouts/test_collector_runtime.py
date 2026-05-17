@@ -188,14 +188,14 @@ def test_reward_view_selection_fails_fast_when_ambiguous() -> None:
 
 
 def test_collector_forwards_reference_metadata_to_request() -> None:
+    from vrl.rollouts.collector.config import RolloutConfig
     from vrl.rollouts.collector.requests import RolloutEngineRequestBuilder
-    from vrl.rollouts.collector.settings import RolloutSettings
 
     builder = RolloutEngineRequestBuilder(
         family="cosmos",
         task="v2w",
         request_prefix="cosmos",
-        config=RolloutSettings(family="cosmos", values={"num_steps": 1}),
+        config=RolloutConfig(family="cosmos", values={"num_steps": 1}),
         return_artifacts=("trajectory",),
         default_task_type="video2world",
     )

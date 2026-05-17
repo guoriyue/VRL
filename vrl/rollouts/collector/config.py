@@ -1,4 +1,4 @@
-"""Rollout settings projection from user YAML configs."""
+"""Rollout config projection from user YAML configs."""
 
 from __future__ import annotations
 
@@ -10,29 +10,29 @@ from omegaconf import DictConfig, ListConfig, OmegaConf
 
 
 @dataclass(frozen=True, slots=True)
-class RolloutSettings:
-    """Resolved rollout settings projected from user YAML configs."""
+class RolloutConfig:
+    """Resolved rollout config projected from user YAML configs."""
 
     family: str
     values: dict[str, Any] = field(default_factory=dict)
 
     def get(self, name: str, default: Any = None) -> Any:
-        """Return a resolved setting or ``default`` when absent."""
+        """Return a resolved config value or ``default`` when absent."""
 
         return self.values.get(name, default)
 
     def require(self, name: str) -> Any:
-        """Return a resolved setting or fail with a clear family-scoped error."""
+        """Return a resolved config value or fail with a clear family-scoped error."""
 
         try:
             return self.values[name]
         except KeyError as exc:
             raise ValueError(
-                f"{self.family} rollout settings missing required field {name!r}",
+                f"{self.family} rollout config missing required field {name!r}",
             ) from exc
 
     def request_sampling(self) -> dict[str, Any]:
-        """Return settings that should be serialized into an engine request."""
+        """Return config values that should be serialized into an engine request."""
 
         return {
             key: value
@@ -41,12 +41,12 @@ class RolloutSettings:
         }
 
 
-def build_rollout_settings_from_cfg(
+def build_rollout_config_from_cfg(
     cfg: Any,
     *,
     family: str,
-) -> RolloutSettings:
-    """Resolve one rollout family's settings from YAML."""
+) -> RolloutConfig:
+    """Resolve one rollout family's config from YAML."""
 
     values: dict[str, Any] = {}
     _merge_flat_section_values(values, cfg, "rollout")
@@ -70,7 +70,7 @@ def build_rollout_settings_from_cfg(
         ),
     )
     _add_derived_values(values)
-    return RolloutSettings(family=family, values=values)
+    return RolloutConfig(family=family, values=values)
 
 
 def _merge_flat_section_values(
@@ -196,6 +196,6 @@ _REQUEST_SAMPLING_EXCLUDES = {
 
 
 __all__ = [
-    "RolloutSettings",
-    "build_rollout_settings_from_cfg",
+    "RolloutConfig",
+    "build_rollout_config_from_cfg",
 ]

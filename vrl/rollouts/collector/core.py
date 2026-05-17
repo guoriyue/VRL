@@ -13,12 +13,12 @@ from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
     TrajectoryRolloutBatchBuilder,
 )
+from vrl.rollouts.collector.config import RolloutConfig
 from vrl.rollouts.collector.requests import (
     CollectorRequest,
     GenerationRequestBuilder,
 )
 from vrl.rollouts.collector.rewards import RewardScorer
-from vrl.rollouts.collector.settings import RolloutSettings
 from vrl.rollouts.families import get_rollout_family_entry
 
 LAST_COLLECT_PHASES: dict[str, float] = {}
@@ -147,7 +147,7 @@ def build_rollout_collector(
     *,
     model: Any | None,
     reward_fn: Any | None,
-    config: RolloutSettings | None = None,
+    config: RolloutConfig | None = None,
     runtime: GenerationRuntime | None = None,
 ) -> RolloutCollector:
     """Build a rollout collector from the canonical family registry."""
@@ -155,7 +155,7 @@ def build_rollout_collector(
     entry = get_rollout_family_entry(family)
     if config is None:
         raise ValueError(
-            f"{entry.family} collector requires resolved rollout settings; "
+            f"{entry.family} collector requires resolved rollout config; "
             "build them from YAML before constructing the collector",
         )
     collector = entry.collector

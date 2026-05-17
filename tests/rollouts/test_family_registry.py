@@ -6,7 +6,7 @@ import pytest
 from omegaconf import OmegaConf
 
 from vrl.rollouts.collector import build_rollout_collector
-from vrl.rollouts.collector.settings import RolloutSettings, build_rollout_settings_from_cfg
+from vrl.rollouts.collector.config import RolloutConfig, build_rollout_config_from_cfg
 from vrl.rollouts.families import (
     FAMILY_REGISTRY,
     get_rollout_family_entry,
@@ -57,7 +57,7 @@ def test_family_aliases_resolve_to_canonical_entries() -> None:
         assert get_rollout_family_entry(alias) is FAMILY_REGISTRY[expected]
 
 
-def test_rollout_settings_are_projected_from_yaml() -> None:
+def test_rollout_config_is_projected_from_yaml() -> None:
     cfg = OmegaConf.create(
         {
             "sampling": {
@@ -84,16 +84,16 @@ def test_rollout_settings_are_projected_from_yaml() -> None:
         },
     )
 
-    settings = build_rollout_settings_from_cfg(cfg, family="cosmos-predict2")
+    rollout_config = build_rollout_config_from_cfg(cfg, family="cosmos-predict2")
 
-    assert settings.require("width") == 1280
-    assert settings.require("num_steps") == 35
-    assert settings.require("sample_batch_size") == 8
-    assert settings.require("sde_window_range") == (0, 10)
-    assert settings.require("return_kl") is True
+    assert rollout_config.require("width") == 1280
+    assert rollout_config.require("num_steps") == 35
+    assert rollout_config.require("sample_batch_size") == 8
+    assert rollout_config.require("sde_window_range") == (0, 10)
+    assert rollout_config.require("return_kl") is True
 
 
-def test_request_sampling_is_projected_from_resolved_yaml_settings() -> None:
+def test_request_sampling_is_projected_from_resolved_yaml_config() -> None:
     cfg = OmegaConf.create(
         {
             "sampling": {
@@ -122,7 +122,7 @@ def test_request_sampling_is_projected_from_resolved_yaml_settings() -> None:
         },
     )
 
-    sampling = build_rollout_settings_from_cfg(
+    sampling = build_rollout_config_from_cfg(
         cfg,
         family="cosmos-predict2",
     ).request_sampling()
@@ -154,7 +154,7 @@ def test_migrated_collectors_build_direct_trajectory_collectors() -> None:
             family,
             model=None,
             reward_fn=None,
-            config=RolloutSettings(
+            config=RolloutConfig(
                 family=family,
                 values={
                     "n_samples_per_prompt": 1,
