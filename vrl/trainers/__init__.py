@@ -1,7 +1,11 @@
 """RL trainers: training loop orchestration and weight sync."""
 
 from vrl.trainers.core.base import Trainer
-from vrl.trainers.core.types import TrainerConfig, TrainState
+from vrl.trainers.core.types import (
+    RolloutOrchestrationConfig,
+    TrainerConfig,
+    TrainState,
+)
 from vrl.trainers.data import DistributedKRepeatSampler, TextPromptDataset
 from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.online.ema import EMAModuleWrapper
@@ -20,6 +24,7 @@ __all__ = [
     "InMemoryWeightSyncer",
     "OnlineTrainer",
     "RayRuntimeWeightSyncer",
+    "RolloutOrchestrationConfig",
     "TextPromptDataset",
     "TrainState",
     "Trainer",

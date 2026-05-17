@@ -9,13 +9,13 @@ from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.builders import build_configs
 from vrl.rollouts.collector import build_rollout_collector
-from vrl.rollouts.family_registry import (
+from vrl.rollouts.collector.settings import (
+    build_rollout_settings_from_cfg as _build_rollout_settings_from_cfg,
+)
+from vrl.rollouts.families import (
     RolloutFamilyEntry,
     get_rollout_family_entry,
     normalize_rollout_family,
-)
-from vrl.rollouts.settings import (
-    build_rollout_settings_from_cfg as _build_rollout_settings_from_cfg,
 )
 
 

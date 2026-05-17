@@ -18,8 +18,8 @@ from vrl.rollouts.collector.requests import (
     GenerationRequestBuilder,
 )
 from vrl.rollouts.collector.rewards import RewardScorer
-from vrl.rollouts.family_registry import get_rollout_family_entry
-from vrl.rollouts.settings import RolloutSettings
+from vrl.rollouts.collector.settings import RolloutSettings
+from vrl.rollouts.families import get_rollout_family_entry
 
 LAST_COLLECT_PHASES: dict[str, float] = {}
 

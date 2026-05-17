@@ -189,7 +189,7 @@ def test_reward_view_selection_fails_fast_when_ambiguous() -> None:
 
 def test_collector_forwards_reference_metadata_to_request() -> None:
     from vrl.rollouts.collector.requests import RolloutEngineRequestBuilder
-    from vrl.rollouts.config import RolloutSettings
+    from vrl.rollouts.collector.settings import RolloutSettings
 
     builder = RolloutEngineRequestBuilder(
         family="cosmos",

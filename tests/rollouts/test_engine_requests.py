@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from vrl.rollouts.collector.requests import RolloutEngineRequestBuilder
-from vrl.rollouts.settings import RolloutSettings
+from vrl.rollouts.collector.settings import RolloutSettings
 
 
 def test_engine_request_builder_reads_resolved_request_sampling() -> None:

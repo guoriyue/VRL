@@ -37,6 +37,7 @@ def build_trainer_config(cfg: DictConfig):
         DebugConfig,
         EMAConfig,
         OptimConfig,
+        RolloutOrchestrationConfig,
         TorchProfilerConfig,
         TrainerConfig,
     )
@@ -44,6 +45,11 @@ def build_trainer_config(cfg: DictConfig):
     optim_dict = require(cfg, "actor.optim")
     ema_dict = require(cfg, "actor.ema")
     debug_dict = require(cfg, "trainer.debug")
+    rollout_orchestration_dict = (
+        require(cfg, "trainer.rollout_orchestration")
+        if path_exists(cfg, "trainer.rollout_orchestration")
+        else {}
+    )
     torch_profiler_dict = require(cfg, "trainer.torch_profiler")
 
     if path_exists(cfg, "rollout.n_samples_per_prompt"):
@@ -60,6 +66,9 @@ def build_trainer_config(cfg: DictConfig):
         optim=OptimConfig(**optim_dict),
         ema=EMAConfig(**ema_dict),
         debug=DebugConfig(**debug_dict),
+        rollout_orchestration=RolloutOrchestrationConfig(
+            **rollout_orchestration_dict,
+        ),
         torch_profiler=TorchProfilerConfig(**torch_profiler_dict),
         max_norm=require(cfg, "actor.max_norm"),
         ppo_epochs=require(cfg, "actor.ppo_epochs"),

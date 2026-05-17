@@ -6,13 +6,13 @@ import pytest
 from omegaconf import OmegaConf
 
 from vrl.rollouts.collector import build_rollout_collector
-from vrl.rollouts.family_registry import (
+from vrl.rollouts.collector.settings import RolloutSettings, build_rollout_settings_from_cfg
+from vrl.rollouts.families import (
     FAMILY_REGISTRY,
     get_rollout_family_entry,
     normalize_rollout_family,
     registered_rollout_families,
 )
-from vrl.rollouts.settings import RolloutSettings, build_rollout_settings_from_cfg
 
 
 def test_family_registry_covers_current_rollout_families() -> None:

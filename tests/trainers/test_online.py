@@ -1291,10 +1291,10 @@ def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:
 
     from vrl.generation import GenerationRequest, GenerationSampleRow
     from vrl.rollouts.batch import RolloutBatch
-    from vrl.trainers.online import (
-        _move_training_batch_to_device,
-        _remap_group_ids_,
-        _select_batch,
+    from vrl.rollouts.batch.ops import (
+        move_training_batch_to_device,
+        remap_group_ids_,
+        select_batch,
     )
     from vrl.trajectory import build_ar_discrete_trajectory, build_training_view
 
@@ -1341,7 +1341,7 @@ def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:
         training_view=build_training_view(trajectory),
     )
 
-    selected = _select_batch(batch, torch.tensor([True, False, True, False]))
+    selected = select_batch(batch, torch.tensor([True, False, True, False]))
 
     assert selected.trajectory is not None
     assert selected.training_view == batch.training_view
@@ -1352,11 +1352,11 @@ def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:
         torch.tensor([[0, 1], [4, 5]]),
     )
 
-    moved = _move_training_batch_to_device(selected, torch.device("cpu"))
+    moved = move_training_batch_to_device(selected, torch.device("cpu"))
     assert moved.trajectory is not None
     assert moved.trajectory.group_ids.device.type == "cpu"
 
-    _remap_group_ids_(moved, [10, 11])
+    remap_group_ids_(moved, [10, 11])
     assert torch.equal(moved.group_ids, torch.tensor([10, 11]))
     assert moved.trajectory is not None
     assert torch.equal(moved.trajectory.group_ids, torch.tensor([10, 11]))

@@ -17,22 +17,16 @@ import torch.nn as nn
 from vrl.algorithms.base import Algorithm
 from vrl.algorithms.types import TrainStepMetrics
 from vrl.rollouts.batch import RolloutBatch, stack_batches
+from vrl.rollouts.batch.ops import (
+    apply_sample_mask,
+    move_training_batch_to_device,
+    nonzero_advantage_mask,
+    pad_zero_advantage_mask,
+    shuffle_and_rebatch_batches,
+)
+from vrl.rollouts.orchestration import build_rollout_schedule
 from vrl.trainers.core.base import Trainer
 from vrl.trainers.core.types import TrainerConfig, TrainState
-from vrl.trainers.online.batch_ops import (
-    _apply_sample_mask,
-    _move_training_batch_to_device,
-    _nonzero_advantage_mask,
-    _pad_zero_advantage_mask,
-    _remap_group_ids_,
-    _shuffle_and_rebatch_batches,
-    _split_batch_by_group,
-)
-from vrl.trainers.online.collection import (
-    _collector_runtime_requires_driver_model_offload,
-    _move_model_to_device,
-    _release_collector_runtime_memory,
-)
 from vrl.trainers.online.diagnostics import (
     parameter_state_summary,
     tensor_stats,
@@ -192,6 +186,16 @@ class OnlineTrainer(Trainer):
         self._optimizer: torch.optim.Optimizer | None = None
         self._ema: EMAModuleWrapper | None = None
         self._rollout_weights_initialized = False
+        self.rollout_schedule = build_rollout_schedule(
+            self.config.rollout_orchestration,
+            collector=self.collector,
+            model=self.model,
+            device=self.device,
+            weight_syncer=self.weight_syncer,
+            sync_state_getter=self.sync_state_getter,
+            weights_initialized=lambda: self._rollout_weights_initialized,
+            set_weights_initialized=self._set_rollout_weights_initialized,
+        )
 
         if self.config.optim.allow_tf32:
             torch.backends.cuda.matmul.allow_tf32 = True
@@ -219,19 +223,8 @@ class OnlineTrainer(Trainer):
             )
         return self._ema
 
-    async def _ensure_rollout_weights_initialized(self) -> None:
-        """Synchronize driver weights before the first remote rollout.
-
-        Ray workers build their own model/adapters. Without an explicit initial
-        sync, rollout old log-probs can come from a different random adapter
-        initialization than the driver replay path.
-        """
-
-        if self._rollout_weights_initialized or self.weight_syncer is None:
-            return
-        assert self.sync_state_getter is not None
-        await self.weight_syncer.push(self.sync_state_getter())
-        self._rollout_weights_initialized = True
+    def _set_rollout_weights_initialized(self, value: bool) -> None:
+        self._rollout_weights_initialized = bool(value)
 
     # ------------------------------------------------------------------
     # Accelerator-aware backward/step helpers
@@ -285,7 +278,6 @@ class OnlineTrainer(Trainer):
         """Run one full training step without profiler wrapping."""
         from vrl.algorithms.trajectory import AlgorithmAdapter, AlgorithmInput
         from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
-        from vrl.trainers.data import PromptExample
         from vrl.utils.profiling import record_function
 
         if prompts is not None:
@@ -298,83 +290,13 @@ class OnlineTrainer(Trainer):
         timer = PhaseTimer(enabled=cfg.profile)
         runtime_debug_collect = bool(cfg.debug.first_step and self.state.step == 0)
 
-        await self._ensure_rollout_weights_initialized()
-
-        offload_driver_model_for_rollout = (
-            self.device.type == "cuda"
-            and _collector_runtime_requires_driver_model_offload(self.collector)
+        # 1. The rollout schedule owns collect/offload/release/sync timing.
+        iteration = await self.rollout_schedule.next_iteration(
+            list(self.prompts),
+            group_size=cfg.n,
+            runtime_debug=runtime_debug_collect,
         )
-        if offload_driver_model_for_rollout:
-            with timer.time("offload_driver_model"):
-                _move_model_to_device(self.model, "cpu")
-
-        # 1. Collect group_size samples per prompt.
-        # Plain string prompts are batched into one rollout request so the
-        # executor can plan prompt x group_size micro-batches directly. Rich
-        # PromptExample items stay single-prompt because reward metadata and
-        # request_overrides are per prompt.
-        all_batches: list[RolloutBatch] = []
-        with timer.time("collect"):
-            pending_prompts: list[str] = []
-            pending_indices: list[int] = []
-
-            async def flush_pending_prompts() -> None:
-                if not pending_prompts:
-                    return
-                collect_kwargs: dict[str, Any] = {"group_size": cfg.n}
-                if runtime_debug_collect:
-                    collect_kwargs["runtime_debug"] = True
-                b = await self.collector.collect(
-                    list(pending_prompts),
-                    **collect_kwargs,
-                )
-                _remap_group_ids_(b, pending_indices)
-                all_batches.extend(_split_batch_by_group(b))
-                pending_prompts.clear()
-                pending_indices.clear()
-
-            for prompt_idx, item in enumerate(self.prompts):
-                if isinstance(item, PromptExample):
-                    await flush_pending_prompts()
-                    prompt_str = item.prompt
-                    collect_kwargs: dict[str, Any] = {
-                        "target_text": item.target_text,
-                        "references": item.references,
-                        "task_type": item.task_type,
-                        "request_overrides": item.request_overrides,
-                        "sample_metadata": item.metadata,
-                    }
-                    if item.reference_image:
-                        collect_kwargs["reference_image"] = item.reference_image
-                    if item.reference_video:
-                        collect_kwargs["reference_video"] = item.reference_video
-                    if runtime_debug_collect:
-                        collect_kwargs["runtime_debug"] = True
-                    # Group-batched collect: one call produces cfg.n samples.
-                    b = await self.collector.collect(
-                        [prompt_str],
-                        group_size=cfg.n,
-                        **collect_kwargs,
-                    )
-                    b.group_ids[:] = prompt_idx
-                    all_batches.extend(_split_batch_by_group(b))
-                else:
-                    pending_prompts.append(str(item))
-                    pending_indices.append(prompt_idx)
-
-            await flush_pending_prompts()
-
-            # Gradient accumulation: collect can run prompt x group_size as one
-            # large rollout request, then this trainer splits by group so each
-            # forward/backward still sees only one prompt group. That keeps
-            # training memory bounded while rollout gets a larger execution plan.
-
-        with timer.time("release_rollout"):
-            await _release_collector_runtime_memory(self.collector)
-
-        if offload_driver_model_for_rollout:
-            with timer.time("restore_driver_model"):
-                _move_model_to_device(self.model, self.device)
+        all_batches: list[RolloutBatch] = iteration.batches
 
         # 2. Compute advantages (per-prompt normalization).
         # Rewards + prompts are concatenated across all collected batches so
@@ -437,25 +359,25 @@ class OnlineTrainer(Trainer):
         if self.stat_tracker is not None:
             if cfg.gradient_accumulation_steps > 0:
                 combined = stack_batches(all_batches)
-                mask = _pad_zero_advantage_mask(
-                    _nonzero_advantage_mask(advantages_all),
+                mask = pad_zero_advantage_mask(
+                    nonzero_advantage_mask(advantages_all),
                     num_batches=len(all_batches),
                 )
                 if bool(mask.any()):
-                    combined = _apply_sample_mask(combined, mask)
+                    combined = apply_sample_mask(combined, mask)
                     adv_all = advantages_all[mask.to(advantages_all.device)]
-                    filtered_batches, filtered_advs = _shuffle_and_rebatch_batches(
+                    filtered_batches, filtered_advs = shuffle_and_rebatch_batches(
                         [combined],
                         [adv_all],
                         num_batches=len(all_batches),
                     )
             else:
                 for b, adv_b in zip(all_batches, adv_split, strict=True):
-                    mask = _nonzero_advantage_mask(adv_b)
+                    mask = nonzero_advantage_mask(adv_b)
                     if not bool(mask.any()):
                         continue
                     if not bool(mask.all()):
-                        b = _apply_sample_mask(b, mask)
+                        b = apply_sample_mask(b, mask)
                         adv_b = adv_b[mask.to(adv_b.device)]
                     if b.rewards.shape[0] > 0:
                         filtered_batches.append(b)
@@ -464,7 +386,7 @@ class OnlineTrainer(Trainer):
             filtered_batches = list(all_batches)
             filtered_advs = adv_split
             if cfg.gradient_accumulation_steps > 0:
-                filtered_batches, filtered_advs = _shuffle_and_rebatch_batches(
+                filtered_batches, filtered_advs = shuffle_and_rebatch_batches(
                     filtered_batches,
                     filtered_advs,
                     num_batches=len(all_batches),
@@ -506,11 +428,11 @@ class OnlineTrainer(Trainer):
                 adv_zero_rate=adv_zero_rate,
                 group_size=tracker_group_size,
                 trained_prompt_num=tracker_trained_prompt_num,
-                phase_times=dict(timer.times),
+                phase_times={**iteration.phase_times, **dict(timer.times)},
             )
 
         filtered_batches = [
-            _move_training_batch_to_device(batch, self.device)
+            move_training_batch_to_device(batch, self.device)
             for batch in filtered_batches
         ]
         filtered_advs = [adv.to(self.device) for adv in filtered_advs]
@@ -784,7 +706,9 @@ class OnlineTrainer(Trainer):
         reward_std = pre_filter_reward_std
         adv_mean = pre_filter_adv_mean
 
-        phase_times = dict(timer.times)
+        phase_times = dict(iteration.phase_times)
+        for key, value in timer.times.items():
+            phase_times[key] = phase_times.get(key, 0.0) + value
         if cfg.profile:
             try:
                 from vrl.rollouts.collector import LAST_COLLECT_PHASES
@@ -843,10 +767,9 @@ class OnlineTrainer(Trainer):
         self.state.total_reward += metrics.reward_mean
         self.state.total_loss += metrics.loss
 
-        # Sync weights
-        if self.weight_syncer is not None:
-            assert self.sync_state_getter is not None
-            await self.weight_syncer.push(self.sync_state_getter())
+        sync_phase_times = await self.rollout_schedule.after_train_step()
+        for key, value in sync_phase_times.items():
+            phase_times[key] = phase_times.get(key, 0.0) + value
 
         if first_step_debug_record is not None:
             first_step_debug_record["driver_trainable_after_step"] = (
@@ -929,6 +852,7 @@ class OnlineTrainer(Trainer):
         # next Ray rollout. The policy version and worker state are runtime
         # concerns, not persisted as an initialized rollout flag.
         self._rollout_weights_initialized = False
+        self.rollout_schedule.reset()
 
 
 def _validate_ema_state_shapes(

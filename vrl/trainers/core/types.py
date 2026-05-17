@@ -40,6 +40,31 @@ class DebugConfig:
 
 
 @dataclass(slots=True)
+class RolloutOrchestrationConfig:
+    """RL rollout schedule configuration."""
+
+    mode: str = "strict_on_policy"
+    max_pending_rollouts: int = 1
+    require_separate_gpus: bool = True
+    weight_sync_barrier: str = "before_sync"
+
+    def __post_init__(self) -> None:
+        if self.mode not in {"strict_on_policy", "one_batch_overlap"}:
+            raise ValueError(
+                "rollout_orchestration.mode must be 'strict_on_policy' "
+                "or 'one_batch_overlap'",
+            )
+        if int(self.max_pending_rollouts) != 1:
+            raise ValueError(
+                "rollout_orchestration.max_pending_rollouts must be 1",
+            )
+        if self.weight_sync_barrier != "before_sync":
+            raise ValueError(
+                "rollout_orchestration.weight_sync_barrier must be 'before_sync'",
+            )
+
+
+@dataclass(slots=True)
 class TrainerConfig:
     """Configuration for the online RL training loop."""
 
@@ -47,6 +72,9 @@ class TrainerConfig:
     optim: OptimConfig = field(default_factory=OptimConfig)
     ema: EMAConfig = field(default_factory=EMAConfig)
     debug: DebugConfig = field(default_factory=DebugConfig)
+    rollout_orchestration: RolloutOrchestrationConfig = field(
+        default_factory=RolloutOrchestrationConfig,
+    )
     torch_profiler: TorchProfilerConfig = field(default_factory=TorchProfilerConfig)
 
     # --- gradient ---

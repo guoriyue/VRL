@@ -11,7 +11,7 @@ class RolloutBatch:
     """Trainer-ready batch collected from model rollouts.
 
     The collector fills in observations, actions, rewards, group IDs,
-    and replay extras after the generation engine has returned an OutputBatch.
+    and replay extras after the generation engine has returned a GenerationOutput.
     """
 
     observations: Any   # x_t — current state [B, T, ...]

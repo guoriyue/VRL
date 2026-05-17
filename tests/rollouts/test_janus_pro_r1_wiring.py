@@ -8,7 +8,7 @@ from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
     TrajectoryRolloutBatchBuilder,
 )
-from vrl.rollouts.config import RolloutSettings
+from vrl.rollouts.collector.settings import RolloutSettings
 from vrl.trajectory import build_ar_multisegment_trajectory
 
 

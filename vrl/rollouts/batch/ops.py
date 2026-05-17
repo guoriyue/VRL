@@ -1,4 +1,4 @@
-"""Rollout batch operations used by the online trainer."""
+"""Rollout batch operations shared by collectors, schedules, and trainers."""
 
 from __future__ import annotations
 
@@ -10,18 +10,14 @@ from vrl.rollouts.batch import RolloutBatch, stack_batches
 from vrl.trajectory.ops import move_trajectory_batch, select_trajectory_batch
 
 
-def _select_batch(batch: RolloutBatch, selector: torch.Tensor) -> RolloutBatch:
-    """Select RolloutBatch rows by a boolean mask or long indices.
+def select_batch(batch: RolloutBatch, selector: torch.Tensor) -> RolloutBatch:
+    """Select ``RolloutBatch`` rows by a boolean mask or long indices."""
 
-    All per-sample tensors (observations, actions, rewards, dones, group_ids,
-    videos, and extras whose leading dim matches the batch) are indexed by
-    ``selector``. Non-per-sample extras and context are carried through unchanged.
-    """
     selector = selector.detach()
     new_extras: dict[str, Any] = {}
     batch_size = batch.rewards.shape[0]
-    for k, v in batch.extras.items():
-        new_extras[k] = _select_tensor_tree(v, selector, batch_size)
+    for key, value in batch.extras.items():
+        new_extras[key] = select_tensor_tree(value, selector, batch_size)
     videos = (
         batch.videos[selector.to(batch.videos.device)]
         if batch.videos is not None
@@ -51,7 +47,7 @@ def _select_batch(batch: RolloutBatch, selector: torch.Tensor) -> RolloutBatch:
     )
 
 
-def _select_tensor_tree(value: Any, selector: torch.Tensor, batch_size: int) -> Any:
+def select_tensor_tree(value: Any, selector: torch.Tensor, batch_size: int) -> Any:
     """Select per-sample tensor leaves inside nested rollout metadata."""
 
     if isinstance(value, torch.Tensor):
@@ -60,23 +56,23 @@ def _select_tensor_tree(value: Any, selector: torch.Tensor, batch_size: int) -> 
         return value
     if isinstance(value, dict):
         return {
-            key: _select_tensor_tree(inner, selector, batch_size)
+            key: select_tensor_tree(inner, selector, batch_size)
             for key, inner in value.items()
         }
     if isinstance(value, list):
-        return [_select_tensor_tree(inner, selector, batch_size) for inner in value]
+        return [select_tensor_tree(inner, selector, batch_size) for inner in value]
     if isinstance(value, tuple):
-        return tuple(_select_tensor_tree(inner, selector, batch_size) for inner in value)
+        return tuple(select_tensor_tree(inner, selector, batch_size) for inner in value)
     return value
 
 
-def _apply_sample_mask(batch: RolloutBatch, mask: torch.Tensor) -> RolloutBatch:
-    """Filter RolloutBatch along sample dim by a boolean mask."""
+def apply_sample_mask(batch: RolloutBatch, mask: torch.Tensor) -> RolloutBatch:
+    """Filter ``RolloutBatch`` along the sample dimension."""
 
-    return _select_batch(batch, mask)
+    return select_batch(batch, mask)
 
 
-def _nonzero_advantage_mask(advantages: torch.Tensor) -> torch.Tensor:
+def nonzero_advantage_mask(advantages: torch.Tensor) -> torch.Tensor:
     """Return Flow-GRPO's mask for samples with non-zero total advantage."""
 
     adv_abs = advantages.detach().abs()
@@ -86,13 +82,8 @@ def _nonzero_advantage_mask(advantages: torch.Tensor) -> torch.Tensor:
     return adv_abs.sum(dim=reduce_dims) != 0
 
 
-def _pad_zero_advantage_mask(mask: torch.Tensor, num_batches: int) -> torch.Tensor:
-    """Pad zero-advantage samples back in so rebatching divides evenly.
-
-    Flow-GRPO filters all-zero-advantage samples, then randomly re-includes
-    enough zero-advantage rows to make the remaining batch count divisible by
-    ``num_batches_per_epoch``. That keeps the later reshape/rebatch step exact.
-    """
+def pad_zero_advantage_mask(mask: torch.Tensor, num_batches: int) -> torch.Tensor:
+    """Pad zero-advantage samples back in so rebatching divides evenly."""
 
     if num_batches <= 0:
         return mask
@@ -110,7 +101,7 @@ def _pad_zero_advantage_mask(mask: torch.Tensor, num_batches: int) -> torch.Tens
     return padded
 
 
-def _shuffle_and_rebatch_batches(
+def shuffle_and_rebatch_batches(
     batches: list[RolloutBatch],
     advantages: list[torch.Tensor],
     *,
@@ -130,7 +121,7 @@ def _shuffle_and_rebatch_batches(
         )
 
     perm = torch.randperm(total_batch_size, device=combined.rewards.device)
-    combined = _select_batch(combined, perm)
+    combined = select_batch(combined, perm)
     adv_all = adv_all[perm.to(adv_all.device)]
 
     microbatch_size = total_batch_size // num_batches
@@ -142,12 +133,12 @@ def _shuffle_and_rebatch_batches(
             start + microbatch_size,
             device=combined.rewards.device,
         )
-        rebatches.append(_select_batch(combined, idx))
+        rebatches.append(select_batch(combined, idx))
         rebatch_advs.append(adv_all[idx.to(adv_all.device)])
     return rebatches, rebatch_advs
 
 
-def _split_batch_by_group(batch: RolloutBatch) -> list[RolloutBatch]:
+def split_batch_by_group(batch: RolloutBatch) -> list[RolloutBatch]:
     """Split a rollout batch into group-local batches for bounded training memory."""
 
     group_ids = batch.group_ids
@@ -160,10 +151,10 @@ def _split_batch_by_group(batch: RolloutBatch) -> list[RolloutBatch]:
             ordered_ids.append(gid)
     if len(ordered_ids) <= 1:
         return [batch]
-    return [_apply_sample_mask(batch, group_ids == group_id) for group_id in ordered_ids]
+    return [apply_sample_mask(batch, group_ids == group_id) for group_id in ordered_ids]
 
 
-def _remap_group_ids_(batch: RolloutBatch, global_prompt_indices: list[int]) -> None:
+def remap_group_ids_(batch: RolloutBatch, global_prompt_indices: list[int]) -> None:
     """Map collector-local prompt groups back to trainer-global prompt indices."""
 
     if not global_prompt_indices:
@@ -178,28 +169,20 @@ def _remap_group_ids_(batch: RolloutBatch, global_prompt_indices: list[int]) -> 
         batch.trajectory.group_ids = remapped.to(device)
 
 
-def _move_tensor_tree(value: Any, device: torch.device) -> Any:
+def move_tensor_tree(value: Any, device: torch.device) -> Any:
     if isinstance(value, torch.Tensor):
         return value.to(device)
     if isinstance(value, dict):
-        return {k: _move_tensor_tree(v, device) for k, v in value.items()}
+        return {key: move_tensor_tree(inner, device) for key, inner in value.items()}
     if isinstance(value, list):
-        return [_move_tensor_tree(v, device) for v in value]
+        return [move_tensor_tree(inner, device) for inner in value]
     if isinstance(value, tuple):
-        return tuple(_move_tensor_tree(v, device) for v in value)
+        return tuple(move_tensor_tree(inner, device) for inner in value)
     return value
 
 
-def _move_training_batch_to_device(batch: RolloutBatch, device: torch.device) -> RolloutBatch:
-    """Move replay tensors to the trainer device.
-
-    Ray rollout workers return CPU tensors so the driver can gather chunks
-    without owning the worker GPU memory. Training replay runs on the driver
-    policy, so latent trajectories, actions, log-probs, embeds, and timesteps
-    must move to the trainer device before evaluator/model forward. Videos stay
-    on CPU because reward scoring already consumed them and replay does not use
-    decoded frames.
-    """
+def move_training_batch_to_device(batch: RolloutBatch, device: torch.device) -> RolloutBatch:
+    """Move replay tensors to the trainer device."""
 
     return RolloutBatch(
         observations=batch.observations.to(device),
@@ -207,8 +190,8 @@ def _move_training_batch_to_device(batch: RolloutBatch, device: torch.device) ->
         rewards=batch.rewards.to(device),
         dones=batch.dones.to(device),
         group_ids=batch.group_ids.to(device),
-        extras=_move_tensor_tree(batch.extras, device),
-        context=_move_tensor_tree(batch.context, device),
+        extras=move_tensor_tree(batch.extras, device),
+        context=move_tensor_tree(batch.context, device),
         videos=batch.videos,
         prompts=batch.prompts,
         trajectory=move_trajectory_batch(batch.trajectory, device),
@@ -217,14 +200,14 @@ def _move_training_batch_to_device(batch: RolloutBatch, device: torch.device) ->
 
 
 __all__ = [
-    "_apply_sample_mask",
-    "_move_tensor_tree",
-    "_move_training_batch_to_device",
-    "_nonzero_advantage_mask",
-    "_pad_zero_advantage_mask",
-    "_remap_group_ids_",
-    "_select_batch",
-    "_select_tensor_tree",
-    "_shuffle_and_rebatch_batches",
-    "_split_batch_by_group",
+    "apply_sample_mask",
+    "move_tensor_tree",
+    "move_training_batch_to_device",
+    "nonzero_advantage_mask",
+    "pad_zero_advantage_mask",
+    "remap_group_ids_",
+    "select_batch",
+    "select_tensor_tree",
+    "shuffle_and_rebatch_batches",
+    "split_batch_by_group",
 ]

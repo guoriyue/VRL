@@ -16,7 +16,7 @@ from vrl.models.ar.janus_pro.model import (
 from vrl.models.interfaces import ReplayResult
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.collector import build_rollout_collector
-from vrl.rollouts.settings import RolloutSettings
+from vrl.rollouts.collector.settings import RolloutSettings
 from vrl.trajectory import build_ar_discrete_trajectory, build_training_view
 
 HIDDEN = 32
