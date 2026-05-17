@@ -33,9 +33,8 @@ class DiffusionNFT(Algorithm):
 
     This objective does not consume evaluator log-prob signals. It trains from
     generated clean latents, prompt embeddings, sampled diffusion timesteps, and
-    video-level rewards. The strict algorithm entrypoint is
-    ``compute_loss(AlgorithmInput)``; replay tensors are resolved from the
-    trajectory contract, not from ``RolloutBatch.extras``.
+    video-level rewards. This algorithm is diffusion-specific and owns its
+    model-forward objective assembly.
     """
 
     uses_evaluator = False
@@ -133,6 +132,7 @@ class DiffusionNFT(Algorithm):
                 "DiffusionNFT batch mismatch: latents_clean and prompt_embeds "
                 f"have leading dims {x0.shape[0]} and {prompt_embeds.shape[0]}",
             )
+
         if advantages.shape[0] != x0.shape[0]:
             raise RuntimeError(
                 "DiffusionNFT batch mismatch: advantages and latents_clean "
@@ -256,6 +256,7 @@ class DiffusionNFT(Algorithm):
             )
         sync(decay=float(self.config.weight_copy_decay))
 
+
 def _forward_previous_policy_adapter(transformer: Any, inputs: dict[str, Any]) -> Any:
     set_adapter = getattr(transformer, "set_adapter", None)
     if not callable(set_adapter):
@@ -299,5 +300,6 @@ def _forward_reference(transformer: Any, inputs: dict[str, Any]) -> Any:
         "DiffusionNFT requires a reference branch via transformer.disable_adapters() "
         "or transformer.disable_adapter()",
     )
+
 
 __all__ = ["DiffusionNFT", "DiffusionNFTConfig"]

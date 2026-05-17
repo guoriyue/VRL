@@ -141,11 +141,6 @@ def _get_autocast(
     return contextlib.nullcontext()
 
 
-def _algorithm_mask_key(algorithm: Any) -> str:
-    config = getattr(algorithm, "config", None)
-    return str(getattr(config, "mask_key", "token_mask"))
-
-
 # ---------------------------------------------------------------------------
 # OnlineTrainer
 # ---------------------------------------------------------------------------
@@ -624,8 +619,6 @@ class OnlineTrainer(Trainer):
                                     loss, metrics = algorithm_adapter.compute_loss(
                                         self.algorithm,
                                         AlgorithmInput(
-                                            trajectory=b.trajectory,
-                                            training_view=b.training_view,
                                             rewards=b.rewards,
                                             group_ids=b.group_ids,
                                             advantages=adv_b,
@@ -633,7 +626,6 @@ class OnlineTrainer(Trainer):
                                                 "model": self.model,
                                                 "rollout_batch": b,
                                                 "timestep_index": j,
-                                                "signal_context": b.context,
                                             },
                                         ),
                                     )
@@ -657,7 +649,6 @@ class OnlineTrainer(Trainer):
                                         ),
                                     )
                                 with record_function("trainer.loss"):
-                                    mask_key = _algorithm_mask_key(self.algorithm)
                                     if not isinstance(signals, TrajectorySignalBatch):
                                         raise TypeError(
                                             "evaluator output must be TrajectorySignalBatch; "
@@ -667,16 +658,9 @@ class OnlineTrainer(Trainer):
                                     loss, metrics = algorithm_adapter.compute_loss(
                                         self.algorithm,
                                         AlgorithmInput(
-                                            trajectory=b.trajectory,
-                                            training_view=b.training_view,
                                             signals=trajectory_signals,
                                             advantages=adv_b,
-                                            old_log_probs=trajectory_signals.primary.old_log_prob,
                                             group_ids=b.group_ids,
-                                            metadata={
-                                                "signal_context": b.context,
-                                                "mask_key": mask_key,
-                                            },
                                         ),
                                     )
                             # Average across rollout micro-batches inside this

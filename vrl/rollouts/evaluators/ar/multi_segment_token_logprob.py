@@ -79,16 +79,14 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
             if ref_output is not None:
                 ref_lp = self._compute_segment_logprobs(ref_output, name, segment)
 
-            mask = _segment_tensor(segment, self.mask_key, required=False)
-            if mask is None:
-                mask = torch.ones_like(new_lp)
-            old_lp = _segment_tensor(segment, "token_log_probs")
-
             segment_signals[name] = signal_builder.segment_signal(
                 segment_name=name,
                 log_prob=new_lp,
-                old_log_prob=old_lp.detach(),
-                mask=mask.to(dtype=new_lp.dtype, device=new_lp.device),
+                old_log_prob=_segment_tensor(segment, "token_log_probs").detach(),
+                mask=_segment_tensor(segment, self.mask_key).to(
+                    dtype=new_lp.dtype,
+                    device=new_lp.device,
+                ),
                 ref_log_prob=ref_lp,
                 entropy=None,
                 distribution="categorical",
@@ -122,12 +120,12 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
             return [
                 name
                 for name, enabled in self.enabled_segments.items()
-                if enabled and name in segments and _segment_enabled(segments[name])
+                if enabled and name in segments
             ]
         return [
             name
             for name in self.enabled_segments
-            if name in segments and _segment_enabled(segments[name])
+            if name in segments
         ]
 
     def _compute_segment_logprobs(
@@ -180,7 +178,10 @@ def _trajectory_role_value(segment: Any, role: str) -> Any:
     return matches[0]
 
 
-def _extract_logprobs(result: ReplaySegmentResult, segment: dict[str, Any]) -> torch.Tensor:
+def _extract_logprobs(
+    result: ReplaySegmentResult,
+    segment: dict[str, Any],
+) -> torch.Tensor:
     values = result.values
     if "log_probs" in values:
         return result.require_value("log_probs").float()
@@ -199,22 +200,15 @@ def _extract_logprobs(result: ReplaySegmentResult, segment: dict[str, Any]) -> t
     return gather_categorical_log_probs(logits, token_ids)
 
 
-def _segment_tensor(
-    segment: dict[str, Any],
-    key: str,
-    *,
-    required: bool = True,
-) -> torch.Tensor | None:
+def _segment_tensor(segment: dict[str, Any], key: str) -> torch.Tensor:
     value = segment.get(key)
     if value is None:
         replay = segment.get("replay")
         if isinstance(replay, dict):
             value = replay.get(key)
     if value is None:
-        if required:
-            name = segment.get("name", "<unknown>")
-            raise RuntimeError(f"R1 segment {name!r} is missing tensor field {key!r}")
-        return None
+        name = segment.get("name", "<unknown>")
+        raise RuntimeError(f"R1 segment {name!r} is missing tensor field {key!r}")
     if not isinstance(value, torch.Tensor):
         name = segment.get("name", "<unknown>")
         raise RuntimeError(f"R1 segment {name!r} field {key!r} must be a tensor")

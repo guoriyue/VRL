@@ -64,13 +64,9 @@ class MultiSegmentTokenGRPO(TokenGRPO):
         self.last_segment_metrics = {}
         train_segments = dict(self.config.train_segments or {})
         weights = dict(self.config.segment_weights or {})
-        if inputs.training_view is not None and inputs.training_view.loss_units:
-            segment_names: list[str] = []
-            seen: set[str] = set()
-            for unit in inputs.training_view.loss_units:
-                if unit.segment not in seen:
-                    segment_names.append(unit.segment)
-                    seen.add(unit.segment)
+        raw_order = signals.context.get("segment_order")
+        if isinstance(raw_order, (list, tuple)) and raw_order:
+            segment_names = [str(name) for name in raw_order]
         elif weights:
             segment_names = list(weights)
         else:
@@ -97,8 +93,6 @@ class MultiSegmentTokenGRPO(TokenGRPO):
                     )
             loss, metrics = super().compute_loss(
                 AlgorithmInput(
-                    trajectory=inputs.trajectory,
-                    training_view=inputs.training_view,
                     signals=TrajectorySignalBatch(
                         segments={name: segment_signal},
                         group_ids=signals.group_ids,
@@ -108,7 +102,6 @@ class MultiSegmentTokenGRPO(TokenGRPO):
                     rewards=inputs.rewards,
                     group_ids=inputs.group_ids,
                     advantages=segment_advantages,
-                    old_log_probs=inputs.old_log_probs,
                     metadata=inputs.metadata,
                 ),
             )

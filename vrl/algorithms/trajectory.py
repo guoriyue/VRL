@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from vrl.algorithms.types import TrainStepMetrics
-from vrl.engine.trajectory import TrainingView, TrajectoryBatch
 from vrl.rollouts.evaluators.types import TrajectorySignalBatch
 
 
@@ -14,13 +13,10 @@ from vrl.rollouts.evaluators.types import TrajectorySignalBatch
 class AlgorithmInput:
     """Unified algorithm-facing input derived from trajectory contracts."""
 
-    trajectory: TrajectoryBatch | None = None
-    training_view: TrainingView | None = None
     signals: TrajectorySignalBatch | None = None
     rewards: Any | None = None
     group_ids: Any | None = None
     advantages: Any | None = None
-    old_log_probs: Any | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -42,8 +38,6 @@ class AlgorithmAdapter:
         if group_ids is None and inputs.signals is not None:
             signals = _ensure_trajectory_signals(inputs)
             group_ids = signals.group_ids
-        if group_ids is None and inputs.trajectory is not None:
-            group_ids = inputs.trajectory.group_ids
         if group_ids is None:
             raise RuntimeError("AlgorithmInput.group_ids is required to compute advantages")
         return algorithm.compute_advantages_from_tensors(inputs.rewards, group_ids)
@@ -76,13 +70,10 @@ def _with_advantages(
     if inputs.advantages is not None:
         return inputs
     return AlgorithmInput(
-        trajectory=inputs.trajectory,
-        training_view=inputs.training_view,
         signals=inputs.signals,
         rewards=inputs.rewards,
         group_ids=inputs.group_ids,
         advantages=adapter.compute_advantages(algorithm, inputs),
-        old_log_probs=inputs.old_log_probs,
         metadata=inputs.metadata,
     )
 
