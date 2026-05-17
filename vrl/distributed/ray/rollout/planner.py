@@ -11,7 +11,7 @@ from vrl.engine.core.types import GenerationRequest, GenerationSampleRow
 from vrl.engine.execution.microbatching import (
     MicroBatchSample,
 )
-from vrl.engine.execution.planner import EnginePlan, ExecutionUnit, build_engine_plan
+from vrl.engine.execution.planner import EnginePlan, ExecutionStage, build_engine_plan
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,8 +22,12 @@ class DeviceAssignment:
     node_id: str
     gpu_ids: tuple[int, ...]
     chunk: MicroBatchSample
-    execution_unit: ExecutionUnit | None = None
+    execution_stage: ExecutionStage | None = None
     envelope: RayChunkExecutionEnvelope | None = None
+
+    @property
+    def execution_unit(self) -> ExecutionStage | None:
+        return self.execution_stage
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,13 +84,13 @@ class DistributedExecutionPlanner:
         assignments: list[DeviceAssignment] = []
         for idx, chunk in enumerate(engine_plan.micro_batches):
             worker = workers[idx % len(workers)]
-            chunk_unit = engine_plan.chunk_unit_for(chunk)
+            chunk_stage = engine_plan.chunk_stage_for(chunk)
             envelope = RayChunkExecutionEnvelope(
                 request=request,
                 chunk=chunk,
                 plan_id=engine_plan.request_id,
-                execution_unit=chunk_unit,
-                profiler_label=chunk_unit.profiler_name,
+                execution_stage=chunk_stage,
+                profiler_label=chunk_stage.profiler_name,
                 capability_summary=capability_summary,
                 plan_summary=plan_summary,
             )
@@ -96,7 +100,7 @@ class DistributedExecutionPlanner:
                     node_id=worker.node_id,
                     gpu_ids=worker.gpu_ids,
                     chunk=chunk,
-                    execution_unit=chunk_unit,
+                    execution_stage=chunk_stage,
                     envelope=envelope,
                 )
             )

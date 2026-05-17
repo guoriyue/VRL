@@ -198,7 +198,7 @@ class DiffusionPipelineExecutorBase(
             lambda micro_batch: self.forward_chunk_plan(
                 request,
                 micro_batch,
-                plan.chunk_unit_for(micro_batch),
+                plan.chunk_stage_for(micro_batch),
                 plan.summary(),
             ),
         )
@@ -208,12 +208,12 @@ class DiffusionPipelineExecutorBase(
         self,
         request: GenerationRequest,
         chunk: MicroBatchSample,
-        execution_unit: Any,
+        execution_stage: Any,
         plan_summary: Mapping[str, object],
     ) -> DiffusionChunkResult:
         from vrl.utils.profiling import record_function
 
-        del execution_unit, plan_summary
+        del execution_stage, plan_summary
         params = self.parse_sampling_params(request)
         video_request = self.build_video_request(chunk.prompt, params)
         with record_function("engine.prefill"):

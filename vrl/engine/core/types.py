@@ -27,9 +27,17 @@ class GenerationMetrics:
     num_steps: int | None = None
     micro_batches: int = 0
     trajectory_kind: str | None = None
-    execution_units: tuple[str, ...] = ()
+    execution_stages: tuple[str, ...] = ()
     engine_plan_id: str | None = None
     engine_counters: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def execution_units(self) -> tuple[str, ...]:
+        return self.execution_stages
+
+    @execution_units.setter
+    def execution_units(self, value: tuple[str, ...]) -> None:
+        self.execution_stages = tuple(value)
 
 
 @dataclass(slots=True)

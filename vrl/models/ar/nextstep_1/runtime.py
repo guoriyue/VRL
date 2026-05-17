@@ -494,12 +494,12 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
         self,
         request: GenerationRequest,
         chunk: MicroBatchSample,
-        execution_unit: Any,
+        execution_stage: Any,
         plan_summary: Mapping[str, object],
     ) -> NextStep1ARChunkResult:
         """Run one prompt-major AR chunk through the black-box sampling path."""
 
-        del execution_unit, plan_summary
+        del execution_stage, plan_summary
         self.validate_chunk(request, chunk)
         sampling = request.sampling
         params: ARSamplingParams = self.parse_sampling_params(request)

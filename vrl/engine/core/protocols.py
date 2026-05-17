@@ -13,7 +13,7 @@ if TYPE_CHECKING:
         WorkloadSignature,
     )
     from vrl.engine.execution.microbatching import MicroBatchSample
-    from vrl.engine.execution.planner import ExecutionUnit
+    from vrl.engine.execution.planner import ExecutionStage
 
 
 class PipelineChunkResult(Protocol):
@@ -40,7 +40,7 @@ class RolloutBackend(Protocol):
 
 @runtime_checkable
 class FamilyPipelineExecutor(Protocol):
-    """Family-specific model execution unit."""
+    """Family-specific model executor."""
 
     family: str
     task: str
@@ -59,7 +59,7 @@ class ChunkedFamilyPipelineExecutor(FamilyPipelineExecutor, Protocol):
         self,
         request: GenerationRequest,
         chunk: MicroBatchSample,
-        execution_unit: ExecutionUnit,
+        execution_stage: ExecutionStage,
         plan_summary: Mapping[str, object],
     ) -> PipelineChunkResult: ...
 

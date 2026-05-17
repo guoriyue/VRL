@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from vrl.engine.core.capabilities import (
     AxisCapability,
-    ExecutionUnitCapability,
+    ExecutionStageCapability,
     FamilyCapability,
 )
 
@@ -26,16 +26,19 @@ def diffusion_family_capability(
             AxisCapability("sample", "sample", batchable=True, chunkable=True),
             AxisCapability("timestep", "denoise_step", batchable=True, chunkable=False),
         ),
-        execution_units=(
-            ExecutionUnitCapability(
+        execution_stages=(
+            ExecutionStageCapability(
                 "denoise_step",
                 segment=trainable_segment,
                 axis="timestep",
                 cache_read=True,
                 cache_write=True,
             ),
-            ExecutionUnitCapability("vq_decode", segment=trainable_segment),
-            ExecutionUnitCapability("reward_artifact", profiler_name="collector.reward_score"),
+            ExecutionStageCapability("vq_decode", segment=trainable_segment),
+            ExecutionStageCapability(
+                "reward_artifact",
+                profiler_name="collector.reward_score",
+            ),
         ),
         trainable_segments=(trainable_segment,),
         reward_views=("image",),

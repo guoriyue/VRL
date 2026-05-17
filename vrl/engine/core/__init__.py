@@ -2,6 +2,7 @@
 
 from vrl.engine.core.capabilities import (
     AxisCapability,
+    ExecutionStageCapability,
     ExecutionUnitCapability,
     FamilyCapability,
     family_capability_from_value,
@@ -24,6 +25,7 @@ from vrl.engine.core.types import (
 __all__ = [
     "AxisCapability",
     "ChunkedFamilyPipelineExecutor",
+    "ExecutionStageCapability",
     "ExecutionUnitCapability",
     "FamilyCapability",
     "FamilyPipelineExecutor",

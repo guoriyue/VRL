@@ -51,11 +51,11 @@ class ResolvedAxis:
 
 
 @dataclass(frozen=True, slots=True)
-class ExecutionUnit:
-    """One logical engine execution region and profiler label."""
+class ExecutionStage:
+    """One planner-visible execution stage and profiler label."""
 
     name: str
-    unit_id: str = ""
+    stage_id: str = ""
     segment: str | None = None
     axis: str | None = None
     axis_index: int | None = None
@@ -70,19 +70,23 @@ class ExecutionUnit:
 
     def __post_init__(self) -> None:
         if not self.name:
-            raise ValueError("ExecutionUnit.name must be non-empty")
-        if not self.unit_id:
-            object.__setattr__(self, "unit_id", self.name)
+            raise ValueError("ExecutionStage.name must be non-empty")
+        if not self.stage_id:
+            object.__setattr__(self, "stage_id", self.name)
         if not self.profiler_name:
             object.__setattr__(self, "profiler_name", f"engine.{self.name}")
         if self.axis_index is not None and self.axis_index < 0:
-            raise ValueError("ExecutionUnit.axis_index must be >= 0 when set")
+            raise ValueError("ExecutionStage.axis_index must be >= 0 when set")
         if self.prompt_index is not None and self.prompt_index < 0:
-            raise ValueError("ExecutionUnit.prompt_index must be >= 0 when set")
+            raise ValueError("ExecutionStage.prompt_index must be >= 0 when set")
         if self.sample_start is not None and self.sample_start < 0:
-            raise ValueError("ExecutionUnit.sample_start must be >= 0 when set")
+            raise ValueError("ExecutionStage.sample_start must be >= 0 when set")
         if self.sample_count is not None and self.sample_count < 1:
-            raise ValueError("ExecutionUnit.sample_count must be >= 1 when set")
+            raise ValueError("ExecutionStage.sample_count must be >= 1 when set")
+
+    @property
+    def unit_id(self) -> str:
+        return self.stage_id
 
     @property
     def chunk_key(self) -> str | None:
@@ -109,38 +113,55 @@ class EnginePlan:
     trajectory_kind: str
     expected_axes: dict[str, ResolvedAxis]
     micro_batches: tuple[MicroBatchSample, ...]
-    execution_units: tuple[ExecutionUnit, ...]
+    execution_stages: tuple[ExecutionStage, ...]
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def profiler_labels(self) -> tuple[str, ...]:
-        return tuple(dict.fromkeys(unit.profiler_name for unit in self.execution_units))
+        return tuple(dict.fromkeys(stage.profiler_name for stage in self.execution_stages))
 
     @property
-    def primary_chunk_unit(self) -> ExecutionUnit:
+    def execution_units(self) -> tuple[ExecutionStage, ...]:
+        return self.execution_stages
+
+    @property
+    def primary_chunk_stage(self) -> ExecutionStage:
         for preferred in ("forward_chunk", "forward"):
-            for unit in self.execution_units:
-                if unit.name == preferred:
-                    return unit
-        return self.execution_units[0]
+            for stage in self.execution_stages:
+                if stage.name == preferred:
+                    return stage
+        return self.execution_stages[0]
 
     @property
-    def chunk_execution_units(self) -> tuple[ExecutionUnit, ...]:
-        return tuple(unit for unit in self.execution_units if unit.name == "forward_chunk")
+    def primary_chunk_unit(self) -> ExecutionStage:
+        return self.primary_chunk_stage
 
-    def chunk_unit_for(self, sample_batch: MicroBatchSample) -> ExecutionUnit:
-        """Return the materialized execution unit for one micro-batch."""
+    @property
+    def chunk_execution_stages(self) -> tuple[ExecutionStage, ...]:
+        return tuple(
+            stage for stage in self.execution_stages if stage.name == "forward_chunk"
+        )
 
-        for unit in self.chunk_execution_units:
-            if unit.chunk_key == sample_batch.chunk_key:
-                return unit
-        raise KeyError(f"no execution unit found for chunk {sample_batch.chunk_key!r}")
+    @property
+    def chunk_execution_units(self) -> tuple[ExecutionStage, ...]:
+        return self.chunk_execution_stages
 
-    def profiler_label(self, unit_name: str) -> str:
-        for unit in self.execution_units:
-            if unit.name == unit_name:
-                return unit.profiler_name
-        return f"engine.{unit_name}"
+    def chunk_stage_for(self, sample_batch: MicroBatchSample) -> ExecutionStage:
+        """Return the materialized execution stage for one micro-batch."""
+
+        for stage in self.chunk_execution_stages:
+            if stage.chunk_key == sample_batch.chunk_key:
+                return stage
+        raise KeyError(f"no execution stage found for chunk {sample_batch.chunk_key!r}")
+
+    def chunk_unit_for(self, sample_batch: MicroBatchSample) -> ExecutionStage:
+        return self.chunk_stage_for(sample_batch)
+
+    def profiler_label(self, stage_name: str) -> str:
+        for stage in self.execution_stages:
+            if stage.name == stage_name:
+                return stage.profiler_name
+        return f"engine.{stage_name}"
 
     def summary(self) -> dict[str, Any]:
         """Return a lightweight, serializable plan summary for logs/metrics."""
@@ -170,23 +191,23 @@ class EnginePlan:
                 }
                 for sample_batch in self.micro_batches
             ],
-            "execution_units": [
+            "execution_stages": [
                 {
-                    "unit_id": unit.unit_id,
-                    "name": unit.name,
-                    "segment": unit.segment,
-                    "axis": unit.axis,
-                    "axis_index": unit.axis_index,
-                    "prompt_index": unit.prompt_index,
-                    "sample_start": unit.sample_start,
-                    "sample_count": unit.sample_count,
-                    "chunk_key": unit.chunk_key,
-                    "profiler_name": unit.profiler_name,
-                    "cache_read": unit.cache_read,
-                    "cache_write": unit.cache_write,
-                    "metadata": dict(unit.metadata),
+                    "stage_id": stage.stage_id,
+                    "name": stage.name,
+                    "segment": stage.segment,
+                    "axis": stage.axis,
+                    "axis_index": stage.axis_index,
+                    "prompt_index": stage.prompt_index,
+                    "sample_start": stage.sample_start,
+                    "sample_count": stage.sample_count,
+                    "chunk_key": stage.chunk_key,
+                    "profiler_name": stage.profiler_name,
+                    "cache_read": stage.cache_read,
+                    "cache_write": stage.cache_write,
+                    "metadata": dict(stage.metadata),
                 }
-                for unit in self.execution_units
+                for stage in self.execution_stages
             ],
         }
 
@@ -216,7 +237,7 @@ class EnginePlanner:
             capability=self.capability,
         )
         resolved_axes = self._resolved_axes()
-        execution_units = self._execution_units(
+        execution_stages = self._execution_stages(
             resolved_axes,
             microbatch_schedule.micro_batches,
         )
@@ -233,7 +254,7 @@ class EnginePlanner:
             trajectory_kind=self.capability.trajectory_kind,
             expected_axes=resolved_axes,
             micro_batches=microbatch_schedule.micro_batches,
-            execution_units=execution_units,
+            execution_stages=execution_stages,
             metadata={
                 "samples_per_prompt": self.request.samples_per_prompt,
                 "num_prompts": len(self.request.prompts),
@@ -285,15 +306,15 @@ class EnginePlanner:
             return None
         return None
 
-    def _execution_units(
+    def _execution_stages(
         self,
         resolved_axes: dict[str, ResolvedAxis],
         sample_batches: tuple[MicroBatchSample, ...],
-    ) -> tuple[ExecutionUnit, ...]:
+    ) -> tuple[ExecutionStage, ...]:
         units = [
-            ExecutionUnit(
+            ExecutionStage(
                 name="plan",
-                unit_id=f"{self.request.request_id}:plan",
+                stage_id=f"{self.request.request_id}:stage:plan",
                 profiler_name="engine.plan",
                 batch_group_key=(
                     self.request.family,
@@ -302,55 +323,59 @@ class EnginePlanner:
                 ),
             ),
         ]
-        units.extend(self._chunk_units(sample_batches))
-        for unit in self.capability.execution_units:
-            axis = resolved_axes.get(unit.axis or "")
+        units.extend(self._chunk_stages(sample_batches))
+        for stage in self.capability.execution_stages:
+            axis = resolved_axes.get(stage.axis or "")
             units.append(
-                ExecutionUnit(
-                    name=unit.name,
-                    unit_id=f"{self.request.request_id}:unit:{unit.name}",
-                    segment=unit.segment,
-                    axis=unit.axis,
+                ExecutionStage(
+                    name=stage.name,
+                    stage_id=f"{self.request.request_id}:stage:{stage.name}",
+                    segment=stage.segment,
+                    axis=stage.axis,
                     axis_index=None,
                     batch_group_key=self._batch_group_key(axis),
-                    cache_read=unit.cache_read,
-                    cache_write=unit.cache_write,
-                    profiler_name=unit.profiler_label,
-                    metadata=dict(unit.metadata),
+                    cache_read=stage.cache_read,
+                    cache_write=stage.cache_write,
+                    profiler_name=stage.profiler_label,
+                    metadata=dict(stage.metadata),
                 )
             )
-            if unit.cache_read:
+            if stage.cache_read:
                 units.append(
-                    ExecutionUnit(
+                    ExecutionStage(
                         name="cache_read",
-                        unit_id=f"{self.request.request_id}:unit:{unit.name}:cache_read",
-                        segment=unit.segment,
-                        axis=unit.axis,
+                        stage_id=(
+                            f"{self.request.request_id}:stage:{stage.name}:cache_read"
+                        ),
+                        segment=stage.segment,
+                        axis=stage.axis,
                         profiler_name="engine.cache_read",
                     )
                 )
-            if unit.cache_write:
+            if stage.cache_write:
                 units.append(
-                    ExecutionUnit(
+                    ExecutionStage(
                         name="cache_write",
-                        unit_id=f"{self.request.request_id}:unit:{unit.name}:cache_write",
-                        segment=unit.segment,
-                        axis=unit.axis,
+                        stage_id=(
+                            f"{self.request.request_id}:stage:{stage.name}:cache_write"
+                        ),
+                        segment=stage.segment,
+                        axis=stage.axis,
                         profiler_name="engine.cache_write",
                     )
                 )
         return tuple(units)
 
-    def _chunk_units(
+    def _chunk_stages(
         self,
         sample_batches: tuple[MicroBatchSample, ...],
-    ) -> list[ExecutionUnit]:
-        units: list[ExecutionUnit] = []
+    ) -> list[ExecutionStage]:
+        units: list[ExecutionStage] = []
         for index, sample_batch in enumerate(sample_batches):
             units.append(
-                ExecutionUnit(
+                ExecutionStage(
                     name="forward_chunk",
-                    unit_id=(
+                    stage_id=(
                         f"{self.request.request_id}:chunk:"
                         f"p{sample_batch.prompt_index}:"
                         f"s{sample_batch.sample_start}:"
@@ -368,7 +393,7 @@ class EnginePlanner:
                     ),
                     profiler_name="engine.forward_chunk",
                     metadata={
-                        "unit_kind": "chunk",
+                        "stage_kind": "chunk",
                         "chunk_index": index,
                         "chunk_key": sample_batch.chunk_key,
                     },
@@ -439,7 +464,7 @@ def attach_engine_plan(output: OutputBatch, plan: EnginePlan) -> OutputBatch:
         )
     if output.metrics is not None:
         output.metrics.trajectory_kind = plan.trajectory_kind
-        output.metrics.execution_units = plan.profiler_labels
+        output.metrics.execution_stages = plan.profiler_labels
         output.metrics.engine_plan_id = plan.request_id
     output.extra["engine_plan"] = plan.summary()
     return output
@@ -462,9 +487,14 @@ def _merge_runtime_caps(
     return capability
 
 
+# Keep the old name as a source-compatibility alias while call sites migrate.
+ExecutionUnit = ExecutionStage
+
+
 __all__ = [
     "EnginePlan",
     "EnginePlanner",
+    "ExecutionStage",
     "ExecutionUnit",
     "ResolvedAxis",
     "attach_engine_plan",

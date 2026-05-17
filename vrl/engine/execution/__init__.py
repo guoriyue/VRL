@@ -11,6 +11,7 @@ from vrl.engine.execution.microbatching import (
 from vrl.engine.execution.planner import (
     EnginePlan,
     EnginePlanner,
+    ExecutionStage,
     ExecutionUnit,
     ResolvedAxis,
     attach_engine_plan,
@@ -22,6 +23,7 @@ from vrl.engine.execution.request_batch import RequestBatch
 __all__ = [
     "EnginePlan",
     "EnginePlanner",
+    "ExecutionStage",
     "ExecutionUnit",
     "GenerationIdFactory",
     "MicroBatchSample",

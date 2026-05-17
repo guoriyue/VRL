@@ -8,7 +8,7 @@ from typing import Any
 from vrl.engine.core.protocols import PipelineChunkResult
 from vrl.engine.core.types import GenerationRequest
 from vrl.engine.execution.microbatching import MicroBatchSample
-from vrl.engine.execution.planner import ExecutionUnit
+from vrl.engine.execution.planner import ExecutionStage
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,18 +28,30 @@ class RayChunkExecutionEnvelope:
     request: GenerationRequest
     chunk: MicroBatchSample
     plan_id: str
-    execution_unit: ExecutionUnit | None = None
+    execution_stage: ExecutionStage | None = None
     profiler_label: str | None = None
     capability_summary: dict[str, Any] = field(default_factory=dict)
     plan_summary: dict[str, Any] = field(default_factory=dict)
 
     @property
+    def stage_id(self) -> str | None:
+        return None if self.execution_stage is None else self.execution_stage.stage_id
+
+    @property
+    def stage_name(self) -> str | None:
+        return None if self.execution_stage is None else self.execution_stage.name
+
+    @property
+    def execution_unit(self) -> ExecutionStage | None:
+        return self.execution_stage
+
+    @property
     def unit_id(self) -> str | None:
-        return None if self.execution_unit is None else self.execution_unit.unit_id
+        return self.stage_id
 
     @property
     def unit_name(self) -> str | None:
-        return None if self.execution_unit is None else self.execution_unit.name
+        return self.stage_name
 
     @property
     def chunk_key(self) -> str:
@@ -56,12 +68,20 @@ class RayChunkResult:
     output: PipelineChunkResult | None
     metrics: dict[str, Any] = field(default_factory=dict)
     plan_id: str | None = None
-    unit_id: str | None = None
-    unit_name: str | None = None
+    stage_id: str | None = None
+    stage_name: str | None = None
     profiler_label: str | None = None
     chunk_key: str | None = None
     policy_version: int | None = None
     error: str | None = None
+
+    @property
+    def unit_id(self) -> str | None:
+        return self.stage_id
+
+    @property
+    def unit_name(self) -> str | None:
+        return self.stage_name
 
 
 __all__ = [

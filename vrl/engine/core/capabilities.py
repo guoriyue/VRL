@@ -58,8 +58,8 @@ class AxisCapability:
 
 
 @dataclass(frozen=True, slots=True)
-class ExecutionUnitCapability:
-    """A stable execution unit kind a family can expose to the planner."""
+class ExecutionStageCapability:
+    """Planner-visible execution stage, not a full pipeline graph node."""
 
     name: str
     segment: str | None = None
@@ -71,10 +71,10 @@ class ExecutionUnitCapability:
 
     def __post_init__(self) -> None:
         if not self.name:
-            raise ValueError("ExecutionUnitCapability.name must be non-empty")
+            raise ValueError("ExecutionStageCapability.name must be non-empty")
         if self.profiler_name is not None and not self.profiler_name:
             raise ValueError(
-                "ExecutionUnitCapability.profiler_name must be non-empty when set"
+                "ExecutionStageCapability.profiler_name must be non-empty when set"
             )
 
     def to_dict(self) -> dict[str, Any]:
@@ -95,8 +95,8 @@ class ExecutionUnitCapability:
     @classmethod
     def from_value(
         cls,
-        value: ExecutionUnitCapability | Mapping[str, Any],
-    ) -> ExecutionUnitCapability:
+        value: ExecutionStageCapability | Mapping[str, Any],
+    ) -> ExecutionStageCapability:
         if isinstance(value, cls):
             return value
         return cls(
@@ -118,7 +118,7 @@ class FamilyCapability:
     task: str
     trajectory_kind: TrajectoryKind
     expected_axes: tuple[AxisCapability, ...]
-    execution_units: tuple[ExecutionUnitCapability, ...]
+    execution_stages: tuple[ExecutionStageCapability, ...]
     trainable_segments: tuple[str, ...] = ()
     reward_views: tuple[str, ...] = ()
     supports_batched_requests: bool = True
@@ -145,8 +145,8 @@ class FamilyCapability:
             raise ValueError("FamilyCapability.task must be non-empty")
         if not self.expected_axes:
             raise ValueError("FamilyCapability.expected_axes must be non-empty")
-        if not self.execution_units:
-            raise ValueError("FamilyCapability.execution_units must be non-empty")
+        if not self.execution_stages:
+            raise ValueError("FamilyCapability.execution_stages must be non-empty")
         _require_string_tuple("FamilyCapability.trainable_segments", self.trainable_segments)
         _require_string_tuple("FamilyCapability.reward_views", self.reward_views)
         _require_string_tuple("FamilyCapability.cache_kinds", self.cache_kinds)
@@ -172,7 +172,11 @@ class FamilyCapability:
 
     @property
     def profiler_labels(self) -> tuple[str, ...]:
-        return tuple(unit.profiler_label for unit in self.execution_units)
+        return tuple(stage.profiler_label for stage in self.execution_stages)
+
+    @property
+    def execution_units(self) -> tuple[ExecutionStageCapability, ...]:
+        return self.execution_stages
 
     def batch_signature(self) -> tuple[Any, ...]:
         """Return the capability portion of a request batching key."""
@@ -223,7 +227,7 @@ class FamilyCapability:
                     {
                         "trajectory_kind": dynamic.trajectory_kind,
                         "expected_axes": dynamic.expected_axes,
-                        "execution_units": dynamic.execution_units,
+                        "execution_stages": dynamic.execution_stages,
                         "trainable_segments": dynamic.trainable_segments,
                         "reward_views": dynamic.reward_views,
                     }
@@ -238,7 +242,7 @@ class FamilyCapability:
             "task": self.task,
             "trajectory_kind": self.trajectory_kind,
             "expected_axes": [axis.to_dict() for axis in self.expected_axes],
-            "execution_units": [unit.to_dict() for unit in self.execution_units],
+            "execution_stages": [stage.to_dict() for stage in self.execution_stages],
             "trainable_segments": list(self.trainable_segments),
             "reward_views": list(self.reward_views),
             "supports_batched_requests": self.supports_batched_requests,
@@ -266,6 +270,7 @@ class FamilyCapability:
     ) -> FamilyCapability:
         if isinstance(value, cls):
             return value
+        stage_values = value.get("execution_stages", value.get("execution_units", ()))
         return cls(
             family=str(value["family"]),
             task=str(value["task"]),
@@ -274,9 +279,9 @@ class FamilyCapability:
                 AxisCapability.from_value(axis)
                 for axis in value.get("expected_axes", ())
             ),
-            execution_units=tuple(
-                ExecutionUnitCapability.from_value(unit)
-                for unit in value.get("execution_units", ())
+            execution_stages=tuple(
+                ExecutionStageCapability.from_value(stage)
+                for stage in stage_values
             ),
             trainable_segments=tuple(str(item) for item in value.get("trainable_segments", ())),
             reward_views=tuple(str(item) for item in value.get("reward_views", ())),
@@ -347,8 +352,13 @@ def _trajectory_kind(value: Any) -> TrajectoryKind:
     raise ValueError(f"unsupported trajectory_kind: {value!r}")
 
 
+# Keep the old name as a source-compatibility alias while launch contracts migrate.
+ExecutionUnitCapability = ExecutionStageCapability
+
+
 __all__ = [
     "AxisCapability",
+    "ExecutionStageCapability",
     "ExecutionUnitCapability",
     "FamilyCapability",
     "TrajectoryKind",

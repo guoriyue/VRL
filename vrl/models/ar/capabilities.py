@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from vrl.engine.core.capabilities import (
     AxisCapability,
-    ExecutionUnitCapability,
+    ExecutionStageCapability,
     FamilyCapability,
     TrajectoryKind,
 )
@@ -29,21 +29,24 @@ def ar_discrete_family_capability(
             AxisCapability("sample", "sample", batchable=True, chunkable=True),
             AxisCapability("token", "discrete_token", batchable=True, chunkable=False),
         ),
-        execution_units=(
-            ExecutionUnitCapability(
+        execution_stages=(
+            ExecutionStageCapability(
                 "prefill",
                 segment=trainable_segments[0],
                 cache_write=True,
             ),
-            ExecutionUnitCapability(
+            ExecutionStageCapability(
                 "decode_step",
                 segment=trainable_segments[0],
                 axis="token",
                 cache_read=True,
                 cache_write=True,
             ),
-            ExecutionUnitCapability("vq_decode", segment=trainable_segments[-1]),
-            ExecutionUnitCapability("reward_artifact", profiler_name="collector.reward_score"),
+            ExecutionStageCapability("vq_decode", segment=trainable_segments[-1]),
+            ExecutionStageCapability(
+                "reward_artifact",
+                profiler_name="collector.reward_score",
+            ),
         ),
         trainable_segments=trainable_segments,
         reward_views=("image",),
@@ -72,17 +75,24 @@ def ar_continuous_family_capability(
             AxisCapability("sample", "sample", batchable=True, chunkable=True),
             AxisCapability("token", "continuous_token", batchable=True, chunkable=False),
         ),
-        execution_units=(
-            ExecutionUnitCapability("prefill", segment=trainable_segment, cache_write=True),
-            ExecutionUnitCapability(
+        execution_stages=(
+            ExecutionStageCapability(
+                "prefill",
+                segment=trainable_segment,
+                cache_write=True,
+            ),
+            ExecutionStageCapability(
                 "decode_step",
                 segment=trainable_segment,
                 axis="token",
                 cache_read=True,
                 cache_write=True,
             ),
-            ExecutionUnitCapability("vq_decode", segment=trainable_segment),
-            ExecutionUnitCapability("reward_artifact", profiler_name="collector.reward_score"),
+            ExecutionStageCapability("vq_decode", segment=trainable_segment),
+            ExecutionStageCapability(
+                "reward_artifact",
+                profiler_name="collector.reward_score",
+            ),
         ),
         trainable_segments=(trainable_segment,),
         reward_views=("image",),

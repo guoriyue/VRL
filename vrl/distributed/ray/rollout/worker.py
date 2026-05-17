@@ -122,8 +122,8 @@ class RayRolloutWorker:
                 output=None,
                 metrics=self._chunk_metrics(envelope, runtime_debug=runtime_debug),
                 plan_id=envelope.plan_id,
-                unit_id=envelope.unit_id,
-                unit_name=envelope.unit_name,
+                stage_id=envelope.stage_id,
+                stage_name=envelope.stage_name,
                 profiler_label=envelope.profiler_label,
                 chunk_key=envelope.chunk_key,
                 policy_version=self._policy_version,
@@ -146,8 +146,8 @@ class RayRolloutWorker:
                     plan_aware_chunk=True,
                 ),
                 plan_id=envelope.plan_id,
-                unit_id=envelope.unit_id,
-                unit_name=envelope.unit_name,
+                stage_id=envelope.stage_id,
+                stage_name=envelope.stage_name,
                 profiler_label=envelope.profiler_label,
                 chunk_key=envelope.chunk_key,
                 policy_version=self._policy_version,
@@ -160,8 +160,8 @@ class RayRolloutWorker:
                 output=None,
                 metrics=self._chunk_metrics(envelope, runtime_debug=runtime_debug),
                 plan_id=envelope.plan_id,
-                unit_id=envelope.unit_id,
-                unit_name=envelope.unit_name,
+                stage_id=envelope.stage_id,
+                stage_name=envelope.stage_name,
                 profiler_label=envelope.profiler_label,
                 chunk_key=envelope.chunk_key,
                 policy_version=self._policy_version,
@@ -192,8 +192,8 @@ class RayRolloutWorker:
                     f"{type(self.executor).__name__} must implement "
                     "forward_chunk_plan(...) for Ray chunk execution",
                 )
-            if envelope.execution_unit is None:
-                raise RuntimeError("Ray chunk execution requires an EnginePlan execution unit")
+            if envelope.execution_stage is None:
+                raise RuntimeError("Ray chunk execution requires an EnginePlan execution stage")
             with torch_profiler_step(
                 self._profiler_config,
                 output_dir=self._profiler_output_dir,
@@ -205,7 +205,7 @@ class RayRolloutWorker:
                 return forward_chunk_plan(
                     request,
                     chunk,
-                    envelope.execution_unit,
+                    envelope.execution_stage,
                     envelope.plan_summary,
                 )
         except Exception:
@@ -224,8 +224,8 @@ class RayRolloutWorker:
             {
                 "plan_id": envelope.plan_id,
                 "engine_plan_id": envelope.plan_id,
-                "unit_id": envelope.unit_id,
-                "unit_name": envelope.unit_name,
+                "stage_id": envelope.stage_id,
+                "stage_name": envelope.stage_name,
                 "profiler_label": envelope.profiler_label,
                 "chunk_key": envelope.chunk_key,
                 "capability": dict(envelope.capability_summary),
