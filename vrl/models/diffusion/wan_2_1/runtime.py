@@ -15,7 +15,7 @@ from vrl.generation.diffusion import (
     DiffusionSamplingParams,
 )
 from vrl.generation.diffusion.layout import VideoGenerationRequest
-from vrl.generation.execution.microbatching import MicroBatchSample
+from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
 from vrl.models.diffusion.capabilities import diffusion_family_capability
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
@@ -236,7 +236,7 @@ class Wan_2_1PipelineExecutor(DiffusionPipelineExecutorBase):
         generation_request: GenerationRequest,
         video_request: VideoGenerationRequest,
         params: DiffusionSamplingParams,
-        chunk: MicroBatchSample,
+        chunk: SampleChunk,
     ) -> dict[str, Any]:
         """Repeat Wan text embeds across the chunk batch."""
 

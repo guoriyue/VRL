@@ -11,9 +11,9 @@ from vrl.generation.capabilities import (
     FamilyCapability,
     family_capability_from_value,
 )
-from vrl.generation.execution.microbatching import (
-    MicroBatchSample,
-    build_prompt_microbatch_schedule,
+from vrl.generation.execution.chunks import (
+    SampleChunk,
+    build_prompt_chunk_schedule,
 )
 from vrl.generation.types import (
     GenerationMetrics,
@@ -108,7 +108,7 @@ class EnginePlan:
     capability: FamilyCapability
     trajectory_kind: str
     expected_axes: dict[str, ResolvedAxis]
-    micro_batches: tuple[MicroBatchSample, ...]
+    chunks: tuple[SampleChunk, ...]
     execution_stages: tuple[ExecutionStage, ...]
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -130,13 +130,13 @@ class EnginePlan:
             stage for stage in self.execution_stages if stage.name == "forward_chunk"
         )
 
-    def chunk_stage_for(self, sample_batch: MicroBatchSample) -> ExecutionStage:
-        """Return the materialized execution stage for one micro-batch."""
+    def chunk_stage_for(self, sample_chunk: SampleChunk) -> ExecutionStage:
+        """Return the materialized execution stage for one sample chunk."""
 
         for stage in self.chunk_execution_stages:
-            if stage.chunk_key == sample_batch.chunk_key:
+            if stage.chunk_key == sample_chunk.chunk_key:
                 return stage
-        raise KeyError(f"no execution stage found for chunk {sample_batch.chunk_key!r}")
+        raise KeyError(f"no execution stage found for chunk {sample_chunk.chunk_key!r}")
 
     def profiler_label(self, stage_name: str) -> str:
         for stage in self.execution_stages:
@@ -163,14 +163,14 @@ class EnginePlan:
                 }
                 for name, axis in self.expected_axes.items()
             },
-            "micro_batches": [
+            "chunks": [
                 {
-                    "prompt_index": sample_batch.prompt_index,
-                    "chunk_key": sample_batch.chunk_key,
-                    "sample_start": sample_batch.sample_start,
-                    "sample_count": sample_batch.sample_count,
+                    "prompt_index": sample_chunk.prompt_index,
+                    "chunk_key": sample_chunk.chunk_key,
+                    "sample_start": sample_chunk.sample_start,
+                    "sample_count": sample_chunk.sample_count,
                 }
-                for sample_batch in self.micro_batches
+                for sample_chunk in self.chunks
             ],
             "execution_stages": [
                 {
@@ -200,7 +200,7 @@ class EnginePlanner:
     request: GenerationRequest
     capability: FamilyCapability
     sample_rows: tuple[GenerationSampleRow, ...] = ()
-    max_samples_per_microbatch: int | None = None
+    max_samples_per_chunk: int | None = None
 
     def build(self) -> EnginePlan:
         """Build the immutable execution plan."""
@@ -211,16 +211,16 @@ class EnginePlanner:
             return self._build()
 
     def _build(self) -> EnginePlan:
-        microbatch_schedule = build_prompt_microbatch_schedule(
+        chunk_schedule = build_prompt_chunk_schedule(
             self.request.prompts,
             samples_per_prompt=self.request.samples_per_prompt,
-            max_samples_per_microbatch=self._microbatch_size(),
+            max_samples_per_chunk=self._chunk_size(),
             capability=self.capability,
         )
         resolved_axes = self._resolved_axes()
         execution_stages = self._execution_stages(
             resolved_axes,
-            microbatch_schedule.micro_batches,
+            chunk_schedule.chunks,
         )
         return EnginePlan(
             request_id=self.request.request_id,
@@ -234,7 +234,7 @@ class EnginePlanner:
             capability=self.capability,
             trajectory_kind=self.capability.trajectory_kind,
             expected_axes=resolved_axes,
-            micro_batches=microbatch_schedule.micro_batches,
+            chunks=chunk_schedule.chunks,
             execution_stages=execution_stages,
             metadata={
                 "samples_per_prompt": self.request.samples_per_prompt,
@@ -242,11 +242,11 @@ class EnginePlanner:
             },
         )
 
-    def _microbatch_size(self) -> int:
-        if self.max_samples_per_microbatch is not None:
-            return max(1, int(self.max_samples_per_microbatch))
-        if self.capability.default_max_samples_per_microbatch is not None:
-            return self.capability.default_max_samples_per_microbatch
+    def _chunk_size(self) -> int:
+        if self.max_samples_per_chunk is not None:
+            return max(1, int(self.max_samples_per_chunk))
+        if self.capability.default_max_samples_per_chunk is not None:
+            return self.capability.default_max_samples_per_chunk
         return max(
             1,
             int(
@@ -290,7 +290,7 @@ class EnginePlanner:
     def _execution_stages(
         self,
         resolved_axes: dict[str, ResolvedAxis],
-        sample_batches: tuple[MicroBatchSample, ...],
+        sample_chunks: tuple[SampleChunk, ...],
     ) -> tuple[ExecutionStage, ...]:
         units = [
             ExecutionStage(
@@ -304,7 +304,7 @@ class EnginePlanner:
                 ),
             ),
         ]
-        units.extend(self._chunk_stages(sample_batches))
+        units.extend(self._chunk_stages(sample_chunks))
         for stage in self.capability.execution_stages:
             axis = resolved_axes.get(stage.axis or "")
             units.append(
@@ -349,24 +349,24 @@ class EnginePlanner:
 
     def _chunk_stages(
         self,
-        sample_batches: tuple[MicroBatchSample, ...],
+        sample_chunks: tuple[SampleChunk, ...],
     ) -> list[ExecutionStage]:
         units: list[ExecutionStage] = []
-        for index, sample_batch in enumerate(sample_batches):
+        for index, sample_chunk in enumerate(sample_chunks):
             units.append(
                 ExecutionStage(
                     name="forward_chunk",
                     stage_id=(
                         f"{self.request.request_id}:chunk:"
-                        f"p{sample_batch.prompt_index}:"
-                        f"s{sample_batch.sample_start}:"
-                        f"n{sample_batch.sample_count}"
+                        f"p{sample_chunk.prompt_index}:"
+                        f"s{sample_chunk.sample_start}:"
+                        f"n{sample_chunk.sample_count}"
                     ),
                     axis="sample",
-                    axis_index=sample_batch.sample_start,
-                    prompt_index=sample_batch.prompt_index,
-                    sample_start=sample_batch.sample_start,
-                    sample_count=sample_batch.sample_count,
+                    axis_index=sample_chunk.sample_start,
+                    prompt_index=sample_chunk.prompt_index,
+                    sample_start=sample_chunk.sample_start,
+                    sample_count=sample_chunk.sample_count,
                     batch_group_key=(
                         self.request.family,
                         self.request.task,
@@ -376,7 +376,7 @@ class EnginePlanner:
                     metadata={
                         "stage_kind": "chunk",
                         "chunk_index": index,
-                        "chunk_key": sample_batch.chunk_key,
+                        "chunk_key": sample_chunk.chunk_key,
                     },
                 )
             )
@@ -397,7 +397,7 @@ def build_engine_plan(
     sample_rows: Sequence[GenerationSampleRow] | None = None,
     *,
     capability: FamilyCapability | Mapping[str, Any] | None = None,
-    max_samples_per_microbatch: int | None = None,
+    max_samples_per_chunk: int | None = None,
 ) -> EnginePlan:
     """Build a request-level plan from sample rows and family capability metadata."""
 
@@ -411,7 +411,7 @@ def build_engine_plan(
         request=request,
         capability=resolved_capability,
         sample_rows=tuple(sample_rows or ()),
-        max_samples_per_microbatch=max_samples_per_microbatch,
+        max_samples_per_chunk=max_samples_per_chunk,
     ).build()
 
 

@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from vrl.generation.capabilities import family_capability_from_value
-from vrl.generation.execution.microbatching import (
-    MicroBatchSample,
+from vrl.generation.execution.chunks import (
+    SampleChunk,
 )
 from vrl.generation.execution.planner import EnginePlan, ExecutionStage, build_engine_plan
 from vrl.generation.ray.types import RayChunkExecutionEnvelope, RayWorkerHandle
@@ -21,7 +21,7 @@ class DeviceAssignment:
     worker_id: str
     node_id: str
     gpu_ids: tuple[int, ...]
-    chunk: MicroBatchSample
+    chunk: SampleChunk
     execution_stage: ExecutionStage | None = None
     envelope: RayChunkExecutionEnvelope | None = None
 
@@ -77,12 +77,12 @@ class DistributedExecutionPlanner:
             request,
             sample_rows,
             capability=capability,
-            max_samples_per_microbatch=max(1, max_samples),
+            max_samples_per_chunk=max(1, max_samples),
         )
         plan_summary = engine_plan.summary()
         capability_summary = engine_plan.capability.to_dict()
         assignments: list[DeviceAssignment] = []
-        for idx, chunk in enumerate(engine_plan.micro_batches):
+        for idx, chunk in enumerate(engine_plan.chunks):
             worker = workers[idx % len(workers)]
             chunk_stage = engine_plan.chunk_stage_for(chunk)
             envelope = RayChunkExecutionEnvelope(

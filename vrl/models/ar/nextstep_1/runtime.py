@@ -12,7 +12,7 @@ import torch
 from vrl.generation.ar import ARPipelineExecutorBase, ARRequestLayout, ARSamplingParams
 from vrl.generation.ar.decode_loop import ARDecodeLoop
 from vrl.generation.capabilities import FamilyCapability
-from vrl.generation.execution.microbatching import MicroBatchSample
+from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.protocols import PipelineChunkResult
 from vrl.generation.types import (
     GenerationMetrics,
@@ -448,7 +448,7 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
             num_prompts=len(prompts),
             num_samples=len(sample_rows),
             num_steps=params.image_token_num,
-            micro_batches=1,
+            chunks=1,
             peak_memory_mb=peak_mem_mb,
             engine_counters=engine_counters,
         )
@@ -493,7 +493,7 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
     def forward_chunk_plan(
         self,
         request: GenerationRequest,
-        chunk: MicroBatchSample,
+        chunk: SampleChunk,
         execution_stage: Any,
         plan_summary: Mapping[str, object],
     ) -> NextStep1ARChunkResult:
@@ -702,7 +702,7 @@ class NextStep1ChunkGatherer:
             num_prompts=len(request.prompts),
             num_samples=len(sample_rows),
             num_steps=image_token_num,
-            micro_batches=len(ordered_ar_chunks),
+            chunks=len(ordered_ar_chunks),
             peak_memory_mb=peak_mem_mb,
             engine_counters={
                 "ar_decode_loop_enabled": True,

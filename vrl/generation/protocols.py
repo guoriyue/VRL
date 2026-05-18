@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from vrl.generation.execution.microbatching import MicroBatchSample
+    from vrl.generation.execution.chunks import SampleChunk
     from vrl.generation.execution.planner import ExecutionStage
     from vrl.generation.types import (
         GenerationOutput,
@@ -58,7 +58,7 @@ class ChunkedFamilyPipelineExecutor(FamilyPipelineExecutor, Protocol):
     def forward_chunk_plan(
         self,
         request: GenerationRequest,
-        chunk: MicroBatchSample,
+        chunk: SampleChunk,
         execution_stage: ExecutionStage,
         plan_summary: Mapping[str, object],
     ) -> PipelineChunkResult: ...

@@ -8,7 +8,7 @@ from typing import Any, Protocol, TypeVar
 
 import torch
 
-from vrl.generation.execution.microbatching import MicroBatchSample
+from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.protocols import PipelineChunkResult
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
 
@@ -78,7 +78,7 @@ class ARRequestLayout:
         samples_per_prompt = int(request.samples_per_prompt)
         return [prompt for prompt in request.prompts for _ in range(samples_per_prompt)]
 
-    def validate_chunk(self, request: GenerationRequest, chunk: MicroBatchSample) -> None:
+    def validate_chunk(self, request: GenerationRequest, chunk: SampleChunk) -> None:
         """Validate one prompt/sample AR chunk against its request."""
 
         if chunk.prompt_index >= len(request.prompts):
@@ -151,7 +151,7 @@ class ARRequestLayout:
                 f"chunk {name} has {shape[0]} rows, expected {count}",
             )
 
-    def chunk_seed_offset(self, request: GenerationRequest, chunk: MicroBatchSample) -> int:
+    def chunk_seed_offset(self, request: GenerationRequest, chunk: SampleChunk) -> int:
         """Return the prompt-major sample offset for deterministic chunk seeding."""
 
         return chunk.prompt_index * int(request.samples_per_prompt) + chunk.sample_start
@@ -159,9 +159,9 @@ class ARRequestLayout:
     def chunk_sample_rows(
         self,
         request: GenerationRequest,
-        chunk: MicroBatchSample,
+        chunk: SampleChunk,
     ) -> list[GenerationSampleRow]:
-        """Build prompt-major sample rows for an AR microbatch chunk."""
+        """Build prompt-major sample rows for an AR sample chunk."""
 
         return [
             GenerationSampleRow(

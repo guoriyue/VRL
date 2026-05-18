@@ -1,11 +1,11 @@
 """Engine execution planning and request batches."""
 
 from vrl.generation.execution.ids import GenerationIdFactory
-from vrl.generation.execution.microbatching import (
-    MicroBatchSample,
-    MicroBatchSchedule,
-    build_prompt_microbatch_schedule,
-    run_microbatch_samples_with_oom_retry,
+from vrl.generation.execution.chunks import (
+    SampleChunk,
+    SampleChunkSchedule,
+    build_prompt_chunk_schedule,
+    run_sample_chunks_with_oom_retry,
 )
 from vrl.generation.execution.planner import (
     EnginePlan,
@@ -25,14 +25,14 @@ __all__ = [
     "ExecutionStage",
     "GenerationIdFactory",
     "GenerationStagePlan",
-    "MicroBatchSample",
-    "MicroBatchSchedule",
+    "SampleChunk",
+    "SampleChunkSchedule",
     "RequestBatch",
     "ResolvedAxis",
     "StagePlacement",
     "attach_engine_plan",
     "build_engine_plan",
-    "build_prompt_microbatch_schedule",
+    "build_prompt_chunk_schedule",
     "resolve_executor_capability",
-    "run_microbatch_samples_with_oom_retry",
+    "run_sample_chunks_with_oom_retry",
 ]

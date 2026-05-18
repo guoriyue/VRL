@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from vrl.generation.execution.microbatching import MicroBatchSample
+from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.execution.planner import ExecutionStage
 from vrl.generation.protocols import PipelineChunkResult
 from vrl.generation.types import GenerationRequest
@@ -26,7 +26,7 @@ class RayChunkExecutionEnvelope:
     """Authoritative chunk execution payload sent from the driver to a worker."""
 
     request: GenerationRequest
-    chunk: MicroBatchSample
+    chunk: SampleChunk
     plan_id: str
     execution_stage: ExecutionStage | None = None
     profiler_label: str | None = None
@@ -52,7 +52,7 @@ class RayChunkResult:
 
     request_id: str
     worker_id: str
-    chunk: MicroBatchSample
+    chunk: SampleChunk
     output: PipelineChunkResult | None
     metrics: dict[str, Any] = field(default_factory=dict)
     plan_id: str | None = None

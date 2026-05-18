@@ -58,7 +58,7 @@ def test_diffusion_chunk_gatherer_gathers_without_model_object() -> None:
     assert output.output.device.type == "cpu"
     assert output.metrics is not None
     assert output.metrics.num_steps == 2
-    assert output.metrics.micro_batches == 2
+    assert output.metrics.chunks == 2
     assert output.trajectory is not None
     assert "trajectory" not in output.extra
     assert output.trajectory.segments["denoise"].distribution == "flow_matching"

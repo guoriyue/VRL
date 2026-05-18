@@ -1,4 +1,4 @@
-"""Micro-batching helpers for generation executors."""
+"""Sample chunk helpers for generation executors."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ T = TypeVar("T")
 
 
 @dataclass(frozen=True, slots=True)
-class MicroBatchSample:
-    """One executor micro-batch for a prompt-major rollout request."""
+class SampleChunk:
+    """One prompt-major sample chunk for a generation request."""
 
     prompt_index: int
     prompt: str
@@ -38,20 +38,20 @@ class MicroBatchSample:
 
         return f"prompt:{self.prompt_index}:samples:{self.sample_start}:{self.sample_end}"
 
-    def split(self) -> tuple[MicroBatchSample, MicroBatchSample]:
-        """Split this micro-batch into two ordered smaller chunks."""
+    def split(self) -> tuple[SampleChunk, SampleChunk]:
+        """Split this chunk into two ordered smaller chunks."""
 
         if self.sample_count <= 1:
-            raise ValueError("Cannot split a single-sample micro-batch")
+            raise ValueError("Cannot split a single-sample chunk")
         left_count = self.sample_count // 2
         right_count = self.sample_count - left_count
-        left = MicroBatchSample(
+        left = SampleChunk(
             prompt_index=self.prompt_index,
             prompt=self.prompt,
             sample_start=self.sample_start,
             sample_count=left_count,
         )
-        right = MicroBatchSample(
+        right = SampleChunk(
             prompt_index=self.prompt_index,
             prompt=self.prompt,
             sample_start=self.sample_start + left_count,
@@ -61,13 +61,13 @@ class MicroBatchSample:
 
 
 @dataclass(frozen=True, slots=True)
-class MicroBatchSchedule:
-    """Prompt-major micro-batch schedule for one GenerationRequest."""
+class SampleChunkSchedule:
+    """Prompt-major chunk schedule for one GenerationRequest."""
 
     prompts: tuple[str, ...]
     samples_per_prompt: int
-    max_samples_per_microbatch: int
-    micro_batches: tuple[MicroBatchSample, ...]
+    max_samples_per_chunk: int
+    chunks: tuple[SampleChunk, ...]
     trajectory_kind: str | None = None
     batchable_axes: tuple[str, ...] = ()
 
@@ -76,35 +76,35 @@ class MicroBatchSchedule:
         return len(self.prompts) * self.samples_per_prompt
 
 
-def build_prompt_microbatch_schedule(
+def build_prompt_chunk_schedule(
     prompts: Sequence[str],
     samples_per_prompt: int,
-    max_samples_per_microbatch: int,
+    max_samples_per_chunk: int,
     *,
     capability: Any | None = None,
-) -> MicroBatchSchedule:
-    """Plan prompt-major micro-batches without changing RL group semantics."""
+) -> SampleChunkSchedule:
+    """Plan prompt-major sample chunks without changing RL group semantics."""
 
     if not prompts:
         raise ValueError("prompts must be non-empty")
     if samples_per_prompt < 1:
         raise ValueError("samples_per_prompt must be >= 1")
-    if max_samples_per_microbatch < 1:
-        raise ValueError("max_samples_per_microbatch must be >= 1")
+    if max_samples_per_chunk < 1:
+        raise ValueError("max_samples_per_chunk must be >= 1")
 
     if capability is not None and not bool(
         getattr(capability, "supports_chunked_execution", True),
     ):
-        max_samples_per_microbatch = samples_per_prompt
+        max_samples_per_chunk = samples_per_prompt
 
-    micro_batches: list[MicroBatchSample] = []
+    chunks: list[SampleChunk] = []
     for prompt_index, prompt in enumerate(prompts):
         sample_start = 0
         remaining = samples_per_prompt
         while remaining > 0:
-            sample_count = min(max_samples_per_microbatch, remaining)
-            micro_batches.append(
-                MicroBatchSample(
+            sample_count = min(max_samples_per_chunk, remaining)
+            chunks.append(
+                SampleChunk(
                     prompt_index=prompt_index,
                     prompt=prompt,
                     sample_start=sample_start,
@@ -114,49 +114,49 @@ def build_prompt_microbatch_schedule(
             sample_start += sample_count
             remaining -= sample_count
 
-    return MicroBatchSchedule(
+    return SampleChunkSchedule(
         prompts=tuple(prompts),
         samples_per_prompt=samples_per_prompt,
-        max_samples_per_microbatch=max_samples_per_microbatch,
-        micro_batches=tuple(micro_batches),
+        max_samples_per_chunk=max_samples_per_chunk,
+        chunks=tuple(chunks),
         trajectory_kind=getattr(capability, "trajectory_kind", None),
         batchable_axes=tuple(getattr(capability, "batchable_axes", ())),
     )
 
 
-def run_microbatch_samples_with_oom_retry(
-    sample_batches: Sequence[MicroBatchSample],
-    run_one: Callable[[MicroBatchSample], T],
+def run_sample_chunks_with_oom_retry(
+    chunks: Sequence[SampleChunk],
+    run_one: Callable[[SampleChunk], T],
     *,
     min_sample_count: int = 1,
 ) -> list[T]:
-    """Run micro-batches, splitting CUDA-OOM chunks until the floor is reached."""
+    """Run chunks, splitting CUDA-OOM chunks until the floor is reached."""
 
     if min_sample_count < 1:
         raise ValueError("min_sample_count must be >= 1")
 
     results: list[T] = []
-    pending = list(sample_batches)
+    pending = list(chunks)
     while pending:
-        micro_batch = pending.pop(0)
+        chunk = pending.pop(0)
         try:
-            results.append(run_one(micro_batch))
+            results.append(run_one(chunk))
         except RuntimeError as exc:
             if (
                 not is_cuda_out_of_memory(exc)
-                or micro_batch.sample_count <= min_sample_count
+                or chunk.sample_count <= min_sample_count
             ):
                 raise
             empty_cuda_cache()
-            left, right = micro_batch.split()
+            left, right = chunk.split()
             pending.insert(0, right)
             pending.insert(0, left)
     return results
 
 
 __all__ = [
-    "MicroBatchSample",
-    "MicroBatchSchedule",
-    "build_prompt_microbatch_schedule",
-    "run_microbatch_samples_with_oom_retry",
+    "SampleChunk",
+    "SampleChunkSchedule",
+    "build_prompt_chunk_schedule",
+    "run_sample_chunks_with_oom_retry",
 ]

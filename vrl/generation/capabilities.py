@@ -135,7 +135,7 @@ class FamilyCapability:
     supports_torch_compile: bool = False
     supports_cuda_graph: bool = False
     cache_kinds: tuple[str, ...] = ()
-    default_max_samples_per_microbatch: int | None = None
+    default_max_samples_per_chunk: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -151,11 +151,11 @@ class FamilyCapability:
         _require_string_tuple("FamilyCapability.reward_views", self.reward_views)
         _require_string_tuple("FamilyCapability.cache_kinds", self.cache_kinds)
         if (
-            self.default_max_samples_per_microbatch is not None
-            and self.default_max_samples_per_microbatch < 1
+            self.default_max_samples_per_chunk is not None
+            and self.default_max_samples_per_chunk < 1
         ):
             raise ValueError(
-                "FamilyCapability.default_max_samples_per_microbatch must be >= 1"
+                "FamilyCapability.default_max_samples_per_chunk must be >= 1"
             )
 
     @property
@@ -211,9 +211,9 @@ class FamilyCapability:
                 updates[field_name] = bool(runtime_caps[field_name])
         if "cache_kinds" in runtime_caps:
             updates["cache_kinds"] = tuple(str(item) for item in runtime_caps["cache_kinds"])
-        if "default_max_samples_per_microbatch" in runtime_caps:
-            value = runtime_caps["default_max_samples_per_microbatch"]
-            updates["default_max_samples_per_microbatch"] = (
+        if "default_max_samples_per_chunk" in runtime_caps:
+            value = runtime_caps["default_max_samples_per_chunk"]
+            updates["default_max_samples_per_chunk"] = (
                 None if value is None else int(value)
             )
         if "family_capability" in runtime_caps:
@@ -255,7 +255,7 @@ class FamilyCapability:
             "supports_torch_compile": self.supports_torch_compile,
             "supports_cuda_graph": self.supports_cuda_graph,
             "cache_kinds": list(self.cache_kinds),
-            "default_max_samples_per_microbatch": self.default_max_samples_per_microbatch,
+            "default_max_samples_per_chunk": self.default_max_samples_per_chunk,
             "metadata": dict(self.metadata),
         }
 
@@ -300,8 +300,8 @@ class FamilyCapability:
             supports_torch_compile=bool(value.get("supports_torch_compile", False)),
             supports_cuda_graph=bool(value.get("supports_cuda_graph", False)),
             cache_kinds=tuple(str(item) for item in value.get("cache_kinds", ())),
-            default_max_samples_per_microbatch=_optional_int(
-                value.get("default_max_samples_per_microbatch")
+            default_max_samples_per_chunk=_optional_int(
+                value.get("default_max_samples_per_chunk")
             ),
             metadata=dict(value.get("metadata") or {}),
         )

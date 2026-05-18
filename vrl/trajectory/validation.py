@@ -20,7 +20,7 @@ FORBIDDEN_TRAJECTORY_METRICS = frozenset(
         "queue_wait_s",
         "execution_s",
         "peak_memory_mb",
-        "micro_batches",
+        "chunks",
     }
 )
 SINGLETON_TENSOR_ROLES = frozenset({"action", "old_log_prob", "mask"})

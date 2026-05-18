@@ -17,9 +17,9 @@ from vrl.generation.diffusion.layout import (
     DiffusionSamplingParams,
     VideoGenerationRequest,
 )
-from vrl.generation.execution.microbatching import (
-    MicroBatchSample,
-    run_microbatch_samples_with_oom_retry,
+from vrl.generation.execution.chunks import (
+    SampleChunk,
+    run_sample_chunks_with_oom_retry,
 )
 from vrl.generation.execution.planner import attach_engine_plan, build_engine_plan
 from vrl.generation.execution.request_batch import RequestBatch
@@ -38,7 +38,7 @@ from vrl.math.diffusion.flow_matching import sde_step_with_logprob
 
 @dataclass(frozen=True, slots=True)
 class DiffusionDenoiseConfig:
-    """Runtime knobs for one diffusion micro-batch denoise loop."""
+    """Runtime knobs for one diffusion sample chunk denoise loop."""
 
     prompt_index: int
     sample_start: int
@@ -66,7 +66,7 @@ class DiffusionDenoiseResult:
 
 @dataclass(slots=True)
 class DiffusionChunkResult(PipelineChunkResult):
-    """Output of one fused diffusion micro-batch."""
+    """Output of one fused diffusion sample chunk."""
 
     prompt_index: int
     sample_start: int
@@ -131,7 +131,7 @@ class DiffusionPipelineExecutorBase(
             request,
             sample_rows,
             capability=self.capability(),
-            max_samples_per_microbatch=params.base.sample_batch_size,
+            max_samples_per_chunk=params.base.sample_batch_size,
         )
 
     def parse_sampling_params(self, request: GenerationRequest) -> DiffusionSamplingParams:
@@ -178,9 +178,9 @@ class DiffusionPipelineExecutorBase(
     def build_denoise_config(
         self,
         params: DiffusionSamplingParams,
-        chunk: MicroBatchSample,
+        chunk: SampleChunk,
     ) -> DiffusionDenoiseConfig:
-        """Build the SDE denoise config for one micro-batch."""
+        """Build the SDE denoise config for one sample chunk."""
 
         if params.sde is None:
             raise NotImplementedError(
@@ -208,12 +208,12 @@ class DiffusionPipelineExecutorBase(
         sample_rows: list[GenerationSampleRow],
         plan: Any,
     ) -> GenerationOutput:
-        chunks = run_microbatch_samples_with_oom_retry(
-            plan.micro_batches,
-            lambda micro_batch: self.forward_chunk_plan(
+        chunks = run_sample_chunks_with_oom_retry(
+            plan.chunks,
+            lambda chunk: self.forward_chunk_plan(
                 request,
-                micro_batch,
-                plan.chunk_stage_for(micro_batch),
+                chunk,
+                plan.chunk_stage_for(chunk),
                 plan.summary(),
             ),
         )
@@ -222,7 +222,7 @@ class DiffusionPipelineExecutorBase(
     def forward_chunk_plan(
         self,
         request: GenerationRequest,
-        chunk: MicroBatchSample,
+        chunk: SampleChunk,
         execution_stage: Any,
         plan_summary: Mapping[str, object],
     ) -> DiffusionChunkResult:
@@ -291,7 +291,7 @@ class DiffusionPipelineExecutorBase(
         config: DiffusionDenoiseConfig,
         prepare_kwargs: dict[str, Any] | None = None,
     ) -> DiffusionChunkResult:
-        """Run one fused diffusion micro-batch: prepare -> denoise -> decode."""
+        """Run one fused diffusion sample chunk: prepare -> denoise -> decode."""
 
         state = self.prepare_denoise_state(
             request=request,
@@ -318,7 +318,7 @@ class DiffusionPipelineExecutorBase(
         config: DiffusionDenoiseConfig,
         prepare_kwargs: dict[str, Any] | None = None,
     ) -> Any:
-        """Prepare latent state for one diffusion micro-batch."""
+        """Prepare latent state for one diffusion sample chunk."""
 
         from vrl.utils.profiling import record_function
 
@@ -518,7 +518,7 @@ class DiffusionPipelineExecutorBase(
         generation_request: GenerationRequest,
         video_request: VideoGenerationRequest,
         params: DiffusionSamplingParams,
-        chunk: MicroBatchSample,
+        chunk: SampleChunk,
     ) -> dict[str, Any]:
         """Encode prompt conditioning for a single prompt chunk."""
 
@@ -538,9 +538,9 @@ class DiffusionPipelineExecutorBase(
         generation_request: GenerationRequest,
         video_request: VideoGenerationRequest,
         params: DiffusionSamplingParams,
-        chunk: MicroBatchSample,
+        chunk: SampleChunk,
     ) -> dict[str, Any]:
-        """Build per-sample encoded tensors for one micro-batch."""
+        """Build per-sample encoded tensors for one sample chunk."""
 
         del generation_request, video_request, params
         return self.layout.repeat_encoded_batch(encoded, chunk.sample_count)
@@ -552,7 +552,7 @@ class DiffusionPipelineExecutorBase(
         generation_request: GenerationRequest,
         video_request: VideoGenerationRequest,
         params: DiffusionSamplingParams,
-        chunk: MicroBatchSample,
+        chunk: SampleChunk,
     ) -> dict[str, Any] | None:
         """Return additional family kwargs for model.prepare_sampling."""
 

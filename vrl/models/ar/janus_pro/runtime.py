@@ -13,7 +13,7 @@ import torch
 from vrl.generation.ar import ARPipelineExecutorBase, ARRequestLayout, ARSamplingParams
 from vrl.generation.ar.decode_loop import ARDecodeLoop
 from vrl.generation.capabilities import FamilyCapability
-from vrl.generation.execution.microbatching import MicroBatchSample
+from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.execution.planner import attach_engine_plan, build_engine_plan
 from vrl.generation.protocols import PipelineChunkResult
 from vrl.generation.types import (
@@ -515,7 +515,7 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
             num_prompts=len(prompts),
             num_samples=len(sample_rows),
             num_steps=params.image_token_num,
-            micro_batches=1,
+            chunks=1,
             peak_memory_mb=peak_mem_mb,
             engine_counters=engine_counters,
         )
@@ -555,7 +555,7 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
     def forward_chunk_plan(
         self,
         request: GenerationRequest,
-        chunk: MicroBatchSample,
+        chunk: SampleChunk,
         execution_stage: Any,
         plan_summary: Mapping[str, object],
     ) -> JanusProARChunkResult:
@@ -787,7 +787,7 @@ class JanusProChunkGatherer:
             num_prompts=len(request.prompts),
             num_samples=len(sample_rows),
             num_steps=image_token_num,
-            micro_batches=len(ordered_ar_chunks),
+            chunks=len(ordered_ar_chunks),
             peak_memory_mb=peak_mem_mb,
             engine_counters={
                 "ar_decode_loop_enabled": True,
@@ -946,7 +946,7 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
             num_prompts=len(prompts),
             num_samples=len(sample_rows),
             num_steps=_segment_token_steps(segment_extra),
-            micro_batches=1,
+            chunks=1,
             peak_memory_mb=peak_mem_mb,
             engine_counters=_ar_engine_counters(
                 params=params,
@@ -971,7 +971,7 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
     def forward_chunk_plan(
         self,
         request: GenerationRequest,
-        chunk: MicroBatchSample,
+        chunk: SampleChunk,
         execution_stage: Any,
         plan_summary: Mapping[str, object],
     ) -> JanusProR1ChunkResult:
@@ -1152,7 +1152,7 @@ class JanusProR1ChunkGatherer:
             num_prompts=len(request.prompts),
             num_samples=len(sample_rows),
             num_steps=num_steps,
-            micro_batches=len(ordered),
+            chunks=len(ordered),
             peak_memory_mb=peak_mem_mb,
             engine_counters={
                 "ar_decode_loop_enabled": True,

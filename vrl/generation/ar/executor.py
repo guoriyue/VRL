@@ -8,7 +8,7 @@ from typing import Any, TypeVar
 import torch
 
 from vrl.generation.ar.layout import ARChunkResult, ARRequestLayout, ARSamplingParams
-from vrl.generation.execution.microbatching import MicroBatchSample
+from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.execution.planner import attach_engine_plan
 from vrl.generation.execution.request_batch import RequestBatch
 from vrl.generation.protocols import ChunkedFamilyPipelineExecutor
@@ -99,7 +99,7 @@ class ARPipelineExecutorBase(
             for request_id, output in outputs.items()
         }
 
-    def validate_chunk(self, request: GenerationRequest, chunk: MicroBatchSample) -> None:
+    def validate_chunk(self, request: GenerationRequest, chunk: SampleChunk) -> None:
         self.layout.validate_chunk(request, chunk)
 
     def ordered_chunks(
@@ -123,14 +123,14 @@ class ARPipelineExecutorBase(
     def chunk_seed_offset(
         self,
         request: GenerationRequest,
-        chunk: MicroBatchSample,
+        chunk: SampleChunk,
     ) -> int:
         return self.layout.chunk_seed_offset(request, chunk)
 
     def chunk_sample_rows(
         self,
         request: GenerationRequest,
-        chunk: MicroBatchSample,
+        chunk: SampleChunk,
     ) -> list[GenerationSampleRow]:
         return self.layout.chunk_sample_rows(request, chunk)
 

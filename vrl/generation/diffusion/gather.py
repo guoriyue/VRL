@@ -70,7 +70,7 @@ class DiffusionChunkGatherer:
             num_prompts=len(prompts),
             num_samples=len(rows),
             num_steps=int(sampling["num_steps"]),
-            micro_batches=len(ordered_chunks),
+            chunks=len(ordered_chunks),
             peak_memory_mb=peak_mem_mb,
             engine_counters={"stage_durations_s": stage_durations},
         )

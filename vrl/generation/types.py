@@ -25,7 +25,7 @@ class GenerationMetrics:
     num_prompts: int = 0
     num_samples: int = 0
     num_steps: int | None = None
-    micro_batches: int = 0
+    chunks: int = 0
     trajectory_kind: str | None = None
     execution_stages: tuple[str, ...] = ()
     engine_plan_id: str | None = None
