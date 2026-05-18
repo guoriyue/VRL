@@ -9,12 +9,8 @@ from typing import Any
 
 import torch
 
-from vrl.generation.ar import (
-    ARDecodeLoop,
-    ARPipelineExecutorBase,
-    ARRequestLayout,
-    ARSamplingParams,
-)
+from vrl.generation.ar import ARPipelineExecutorBase, ARRequestLayout, ARSamplingParams
+from vrl.generation.ar.decode_loop import ARDecodeLoop
 from vrl.generation.capabilities import FamilyCapability
 from vrl.generation.execution.microbatching import MicroBatchSample
 from vrl.generation.protocols import PipelineChunkResult
@@ -31,7 +27,10 @@ from vrl.models.ar.nextstep_1.model import (
     NextStep1Model,
     NextStep1ReplayModel,
 )
-from vrl.models.ar.nextstep_1.runner import NextStep1ARModelRunner
+from vrl.models.ar.nextstep_1.runner import (
+    NextStep1ARModelRunner,
+    build_nextstep_vllm_paged_attention_backend,
+)
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.replay_loading import (
     full_generation_bundle_metadata,
@@ -353,6 +352,7 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
         engine_plan: Any,
     ) -> GenerationOutput:
         del engine_plan
+        self.require_native_ar_engine(request)
         sampling = request.sampling
         params: ARSamplingParams = self.parse_sampling_params(request)
         prompts = list(request.prompts)
@@ -408,7 +408,7 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
         decode_result = ARDecodeLoop(
             request=request,
             sample_rows=sample_rows,
-            runner=NextStep1ARModelRunner(self.model),
+            runner=self._ar_runner(request),
             max_new_tokens=params.image_token_num,
             tokenizer_key="nextstep_1",
             dtype=str(cond_embeds.dtype),
@@ -500,6 +500,7 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
         """Run one prompt-major AR chunk through the black-box sampling path."""
 
         del execution_stage, plan_summary
+        self.require_native_ar_engine(request)
         self.validate_chunk(request, chunk)
         sampling = request.sampling
         params: ARSamplingParams = self.parse_sampling_params(request)
@@ -547,7 +548,7 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
         decode_result = ARDecodeLoop(
             request=request,
             sample_rows=self.chunk_sample_rows(request, chunk),
-            runner=NextStep1ARModelRunner(self.model),
+            runner=self._ar_runner(request),
             max_new_tokens=params.image_token_num,
             tokenizer_key="nextstep_1",
             dtype=str(cond_embeds.dtype),
@@ -600,6 +601,21 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
         return NextStep1ChunkGatherer().gather_chunks(request, sample_rows, chunks)
 
     # -- internals -----------------------------------------------------
+
+    def _ar_runner(self, request: GenerationRequest) -> NextStep1ARModelRunner:
+        sampling = request.sampling
+        if not bool(sampling.get("use_vllm_paged_attention", True)):
+            return NextStep1ARModelRunner(self.model)
+        block_size = int(sampling.get("ar_paged_block_size", 16))
+        cache_dtype = str(sampling.get("ar_paged_cache_dtype", "auto"))
+        return NextStep1ARModelRunner(
+            self.model,
+            paged_attention_backend=build_nextstep_vllm_paged_attention_backend(
+                self.model,
+                block_size=block_size,
+                cache_dtype=cache_dtype,
+            ),
+        )
 
     def _tokenize_prompts(
         self,

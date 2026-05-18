@@ -10,12 +10,8 @@ from typing import Any
 
 import torch
 
-from vrl.generation.ar import (
-    ARDecodeLoop,
-    ARPipelineExecutorBase,
-    ARRequestLayout,
-    ARSamplingParams,
-)
+from vrl.generation.ar import ARPipelineExecutorBase, ARRequestLayout, ARSamplingParams
+from vrl.generation.ar.decode_loop import ARDecodeLoop
 from vrl.generation.capabilities import FamilyCapability
 from vrl.generation.execution.microbatching import MicroBatchSample
 from vrl.generation.execution.planner import attach_engine_plan, build_engine_plan
@@ -34,7 +30,10 @@ from vrl.models.ar.janus_pro.model import (
     JanusProReplayModel,
 )
 from vrl.models.ar.janus_pro.r1_types import JanusR1Segment
-from vrl.models.ar.janus_pro.runner import JanusProARModelRunner
+from vrl.models.ar.janus_pro.runner import (
+    JanusProARModelRunner,
+    build_janus_vllm_paged_attention_backend,
+)
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.replay_loading import (
     full_generation_bundle_metadata,
@@ -315,8 +314,9 @@ Boundary:
 
 Difference from diffusion executors: AR runs a token loop. The runtime
 prepares embeddings and delegates token progression to
-``vrl.generation.ar.ARDecodeLoop`` through ``JanusProARModelRunner`` so the
-engine owns row scheduling and KV-cache lane transport.
+``vrl.generation.ar.decode_loop.ARDecodeLoop`` through ``JanusProARModelRunner`` so the
+scheduled decode loop owns row scheduling and KV-cache lane transport while
+vLLM is brought up.
 
 Parity contract: same prompts + same seed (when seeded) produce
 bitwise-equal token ids, log-probs, and images, since
@@ -420,6 +420,7 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
     ) -> GenerationOutput:
         from vrl.utils.profiling import record_function
 
+        self.require_native_ar_engine(request)
         sampling = request.sampling
         params: ARSamplingParams = self.parse_sampling_params(request)
         prompts = list(request.prompts)
@@ -479,7 +480,7 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
             decode_result = ARDecodeLoop(
                 request=request,
                 sample_rows=sample_rows,
-                runner=JanusProARModelRunner(self.model),
+                runner=self._ar_runner(request),
                 max_new_tokens=params.image_token_num,
                 tokenizer_key="janus_pro",
                 dtype=str(cond_embeds.dtype),
@@ -564,6 +565,7 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
         from vrl.utils.profiling import record_function
 
         del execution_stage, plan_summary
+        self.require_native_ar_engine(request)
         self.validate_chunk(request, chunk)
         sampling = request.sampling
         params: ARSamplingParams = self.parse_sampling_params(request)
@@ -605,7 +607,7 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
             decode_result = ARDecodeLoop(
                 request=request,
                 sample_rows=chunk_specs,
-                runner=JanusProARModelRunner(self.model),
+                runner=self._ar_runner(request),
                 max_new_tokens=params.image_token_num,
                 tokenizer_key="janus_pro",
                 dtype=str(cond_embeds.dtype),
@@ -657,6 +659,21 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
         return attach_engine_plan(output, self.plan(request, list(sample_rows)))
 
     # -- internals -----------------------------------------------------
+
+    def _ar_runner(self, request: GenerationRequest) -> JanusProARModelRunner:
+        sampling = request.sampling
+        if not bool(sampling.get("use_vllm_paged_attention", True)):
+            return JanusProARModelRunner(self.model)
+        block_size = int(sampling.get("ar_paged_block_size", 16))
+        cache_dtype = str(sampling.get("ar_paged_cache_dtype", "auto"))
+        return JanusProARModelRunner(
+            self.model,
+            paged_attention_backend=build_janus_vllm_paged_attention_backend(
+                self.model,
+                block_size=block_size,
+                cache_dtype=cache_dtype,
+            ),
+        )
 
     def _tokenize_prompts(
         self,
@@ -870,6 +887,7 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
     ) -> GenerationOutput:
         from vrl.utils.profiling import record_function
 
+        self.require_native_ar_engine(request)
         sampling = request.sampling
         params: ARSamplingParams = self.parse_sampling_params(request)
         prompts = list(request.prompts)
@@ -961,6 +979,7 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
         from vrl.utils.profiling import record_function
 
         del execution_stage, plan_summary
+        self.require_native_ar_engine(request)
         self.validate_chunk(request, chunk)
         sampling = request.sampling
         params: ARSamplingParams = self.parse_sampling_params(request)
@@ -1051,7 +1070,7 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
             decode_result = ARDecodeLoop(
                 request=request,
                 sample_rows=specs,
-                runner=JanusProARModelRunner(self.model),
+                runner=self._ar_runner(request),
                 max_new_tokens=image_token_num,
                 tokenizer_key="janus_pro_r1",
                 dtype=str(cond_embeds.dtype),

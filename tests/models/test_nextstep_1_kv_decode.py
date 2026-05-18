@@ -5,7 +5,8 @@ from __future__ import annotations
 import pytest
 
 from vrl.generation import GenerationRequest
-from vrl.generation.ar import ActiveSequence, ARRequestLayout
+from vrl.generation.ar import ARRequestLayout
+from vrl.generation.ar.decode_loop import ActiveSequence
 
 
 def test_nextstep_ar_sampling_params_carry_scheduler_batch_size() -> None:

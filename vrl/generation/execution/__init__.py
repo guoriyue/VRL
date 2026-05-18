@@ -17,16 +17,19 @@ from vrl.generation.execution.planner import (
     resolve_executor_capability,
 )
 from vrl.generation.execution.request_batch import RequestBatch
+from vrl.generation.execution.stage_plan import GenerationStagePlan, StagePlacement
 
 __all__ = [
     "EnginePlan",
     "EnginePlanner",
     "ExecutionStage",
     "GenerationIdFactory",
+    "GenerationStagePlan",
     "MicroBatchSample",
     "MicroBatchSchedule",
     "RequestBatch",
     "ResolvedAxis",
+    "StagePlacement",
     "attach_engine_plan",
     "build_engine_plan",
     "build_prompt_microbatch_schedule",

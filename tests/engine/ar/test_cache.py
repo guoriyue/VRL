@@ -6,7 +6,7 @@ import pytest
 import torch
 from transformers.cache_utils import DynamicCache
 
-from vrl.generation.ar.token_loop.row_cache import ARCacheRows, ar_concat_rows, ar_split_rows
+from vrl.generation.ar.decode_loop import ARCacheRows, ar_concat_rows, ar_split_rows
 
 
 def test_ar_split_and_concat_rows_preserve_nested_kv_order() -> None:
@@ -92,13 +92,14 @@ def test_ar_cache_helpers_preserve_transformers_dynamic_cache_objects() -> None:
     rows = ar_split_rows(cache, 2)
     assert len(rows) == 2
     assert all(isinstance(row, DynamicCache) for row in rows)
-    assert torch.equal(rows[0].key_cache[0], key[:1])
-    assert torch.equal(rows[1].value_cache[0], value[1:2])
+    assert torch.equal(rows[0].to_legacy_cache()[0][0], key[:1])
+    assert torch.equal(rows[1].to_legacy_cache()[0][1], value[1:2])
 
     merged = ar_concat_rows([rows[1], rows[0]])
     assert isinstance(merged, DynamicCache)
-    assert torch.equal(merged.key_cache[0], torch.cat([key[1:2], key[:1]], dim=0))
+    merged_key, merged_value = merged.to_legacy_cache()[0]
+    assert torch.equal(merged_key, torch.cat([key[1:2], key[:1]], dim=0))
     assert torch.equal(
-        merged.value_cache[0],
+        merged_value,
         torch.cat([value[1:2], value[:1]], dim=0),
     )

@@ -6,7 +6,7 @@ from typing import Any
 
 import torch
 
-from vrl.generation.ar import (
+from vrl.generation.ar.decode_loop import (
     ARDecodeLoop,
     ARStepBatch,
     ARStepOutput,
@@ -102,7 +102,7 @@ def test_ar_decode_loop_schedules_contract_cache_lanes() -> None:
         ([2], 1, [12.0], [31.0]),
     ]
     assert result.scheduler_batches == 4
-    assert result.engine_counters["ar_decode_loop_enabled"] is True
+    assert result.engine_counters["ar_scheduled_decode_loop_enabled"] is True
     assert result.engine_counters["ar_scheduler_batches"] == 4
 
 

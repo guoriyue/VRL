@@ -62,12 +62,17 @@ class DiffusionChunkGatherer:
         rows = list(sample_rows)
         prompts = list(request.prompts)
         peak_mem_mb = layout.max_peak_memory_mb(ordered_chunks)
+        stage_durations: dict[str, float] = {}
+        for chunk in ordered_chunks:
+            for stage, duration in getattr(chunk, "stage_durations", {}).items():
+                stage_durations[stage] = stage_durations.get(stage, 0.0) + float(duration)
         metrics = GenerationMetrics(
             num_prompts=len(prompts),
             num_samples=len(rows),
             num_steps=int(sampling["num_steps"]),
             micro_batches=len(ordered_chunks),
             peak_memory_mb=peak_mem_mb,
+            engine_counters={"stage_durations_s": stage_durations},
         )
         trajectory = build_diffusion_trajectory(
             request=request,

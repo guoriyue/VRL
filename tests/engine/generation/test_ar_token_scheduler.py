@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from vrl.generation.ar import ActiveSequence, TokenScheduler
+from vrl.generation.ar.decode_loop import ActiveSequence, TokenScheduler
 
 
 def _seq(

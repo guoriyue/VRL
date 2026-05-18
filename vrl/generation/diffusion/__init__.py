@@ -3,6 +3,7 @@
 from vrl.generation.diffusion.executor import (
     DiffusionChunkResult,
     DiffusionDenoiseConfig,
+    DiffusionDenoiseResult,
     DiffusionPipelineExecutorBase,
 )
 from vrl.generation.diffusion.gather import DiffusionChunkGatherer
@@ -19,6 +20,7 @@ __all__ = [
     "DiffusionChunkGatherer",
     "DiffusionChunkResult",
     "DiffusionDenoiseConfig",
+    "DiffusionDenoiseResult",
     "DiffusionPipelineExecutorBase",
     "DiffusionRequestLayout",
     "DiffusionSDEParams",

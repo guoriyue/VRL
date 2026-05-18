@@ -47,6 +47,20 @@ class ARPipelineExecutorBase(
     def parse_sampling_params(self, request: GenerationRequest) -> ARSamplingParams:
         return self.layout.parse_sampling_params(request)
 
+    def require_native_ar_engine(self, request: GenerationRequest) -> str:
+        """Reject unsupported full-engine AR selectors before native parity runs."""
+
+        engine = str(request.sampling.get("ar_engine", "native"))
+        if engine == "native":
+            return engine
+        if engine == "vllm":
+            raise ValueError(
+                "request.sampling.ar_engine='vllm' is not a supported full-engine "
+                "backend. AR paged attention is wired inside family runners, not "
+                "through a vLLM LLMEngine adapter.",
+            )
+        raise ValueError("request.sampling.ar_engine must be 'native' if set")
+
     def expand_prompts(self, request: GenerationRequest) -> list[str]:
         return self.layout.expand_prompts(request)
 

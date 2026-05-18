@@ -442,6 +442,19 @@ class NextStep1Model(nn.Module):
     def _last_hidden(kv: Any) -> torch.Tensor:
         return kv["last_hidden"]
 
+    def _lm_trunk(self) -> Any:
+        """Return the Qwen-style decoder trunk, peeling PEFT when attached."""
+
+        lm = self.language_model
+        peft_inner = getattr(lm, "base_model", None)
+        if (
+            peft_inner is not None
+            and hasattr(peft_inner, "model")
+            and peft_inner.model is not lm
+        ):
+            return peft_inner.model
+        return lm
+
     def _step_llm(
         self,
         kv: Any,

@@ -8,7 +8,7 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from vrl.generation.ar import ARDecodeLoop
+from vrl.generation.ar.decode_loop import ARDecodeLoop
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
 from vrl.models.ar.janus_pro.model import (
     JANUS_IMAGE_VOCAB_SIZE,
