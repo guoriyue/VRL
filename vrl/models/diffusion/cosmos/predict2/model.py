@@ -26,6 +26,17 @@ import torch
 
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.diffusion import DiffusionModelBase
+from vrl.models.diffusion.common import (
+    ChunkedLatentDecoder,
+    DiffusionBackboneCaller,
+    DiffusionBackboneInput,
+    LatentDecodeSpec,
+    LatentDecodeTransform,
+    broadcast_spatial_timestep,
+)
+from vrl.models.diffusion.cosmos.predict2.runner import (
+    CosmosPredict2DiffusionBackboneRunner,
+)
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 
 
@@ -328,27 +339,19 @@ class CosmosPredict2Model(DiffusionModelBase):
         Returns ``{"noise_pred", "noise_pred_cond", "noise_pred_uncond"}``.
         NO scheduler step happens here.
         """
-        m = self.transformer
-
         batch_size = state.latents.shape[0]
         transformer_dtype = state.prompt_embeds.dtype
 
         # Sigma scaling coefficients from the scheduler.
         current_sigma = state.scheduler.sigmas[step_idx]
         current_t = current_sigma / (current_sigma + 1)
-        c_in = 1 - current_t
-        c_skip = 1 - current_t
-        c_out = -current_t
 
         # Spatial timestep tensor [B, 1, T, 1, 1]
-        timestep = current_t.view(1, 1, 1, 1, 1).expand(
-            batch_size, -1, state.latents.size(2), -1, -1,
+        timestep = broadcast_spatial_timestep(
+            current_t,
+            batch_size=batch_size,
+            frames=state.latents.size(2),
         )
-        t_conditioning = torch.tensor(
-            state.sigma_conditioning,
-            device=state.latents.device,
-            dtype=timestep.dtype,
-        ).view(1, 1, 1, 1, 1).expand_as(timestep)
 
         # Expand cond/uncond fields to runtime batch (prepare_latents may
         # return [1,...] but the collector may have stacked groups).
@@ -366,78 +369,34 @@ class CosmosPredict2Model(DiffusionModelBase):
             if state.uncond_indicator is not None else None
         )
 
-        # Conditional pass: blend conditioning latents into the scaled noise.
-        cond_latent = state.latents * c_in
-        cond_latent = (
-            cond_indicator * init_latents
-            + (1 - cond_indicator) * cond_latent
+        output = DiffusionBackboneCaller(
+            self.transformer,
+            CosmosPredict2DiffusionBackboneRunner(
+                current_sigma=current_sigma,
+                sigma_conditioning=state.sigma_conditioning,
+            ),
+        )(
+            DiffusionBackboneInput(
+                hidden_states=state.latents,
+                timestep=timestep,
+                prompt_embeds=state.prompt_embeds,
+                negative_prompt_embeds=state.negative_prompt_embeds,
+                guidance_scale=state.guidance_scale,
+                do_cfg=state.do_cfg,
+                output_dtype=transformer_dtype,
+                extra={
+                    "init_latents": init_latents,
+                    "cond_mask": cond_mask,
+                    "uncond_mask": uncond_mask,
+                    "padding_mask": padding_mask,
+                    "cond_indicator": cond_indicator,
+                    "uncond_indicator": uncond_indicator,
+                    "fps": state.fps,
+                    "transformer_dtype": transformer_dtype,
+                },
+            ),
         )
-        cond_timestep = (
-            cond_indicator * t_conditioning
-            + (1 - cond_indicator) * timestep
-        )
-
-        raw_cond = m(
-            hidden_states=cond_latent.to(transformer_dtype),
-            timestep=cond_timestep.to(transformer_dtype),
-            encoder_hidden_states=state.prompt_embeds,
-            fps=state.fps,
-            condition_mask=cond_mask,
-            padding_mask=padding_mask,
-            return_dict=False,
-        )[0]
-        noise_pred_cond = (
-            c_skip * state.latents + c_out * raw_cond.float()
-        ).to(transformer_dtype)
-        noise_pred_cond = (
-            cond_indicator * init_latents
-            + (1 - cond_indicator) * noise_pred_cond
-        )
-
-        if state.do_cfg:
-            uncond_latent = state.latents * c_in
-            uncond_latent = (
-                uncond_indicator * init_latents
-                + (1 - uncond_indicator) * uncond_latent
-            )
-            uncond_timestep = (
-                uncond_indicator * t_conditioning
-                + (1 - uncond_indicator) * timestep
-            )
-
-            raw_uncond = m(
-                hidden_states=uncond_latent.to(transformer_dtype),
-                timestep=uncond_timestep.to(transformer_dtype),
-                encoder_hidden_states=state.negative_prompt_embeds,
-                fps=state.fps,
-                condition_mask=uncond_mask,
-                padding_mask=padding_mask,
-                return_dict=False,
-            )[0]
-            noise_pred_uncond = (
-                c_skip * state.latents + c_out * raw_uncond.float()
-            ).to(transformer_dtype)
-            noise_pred_uncond = (
-                uncond_indicator * init_latents
-                + (1 - uncond_indicator) * noise_pred_uncond
-            )
-
-            combined = noise_pred_cond + state.guidance_scale * (
-                noise_pred_cond - noise_pred_uncond
-            )
-        else:
-            noise_pred_uncond = torch.zeros_like(noise_pred_cond)
-            combined = noise_pred_cond
-
-        # Convert to the velocity-shaped noise_pred consumed by the
-        # FlowMatchEulerDiscreteScheduler.
-        noise_pred = (state.latents - combined) / current_sigma
-
-        return {
-            "noise_pred": noise_pred,
-            "noise_pred_cond": noise_pred_cond,
-            "noise_pred_uncond": noise_pred_uncond,
-        }
+        return output.as_dict()
 
     # -- collector boundary --------------------------------------------
 
@@ -568,22 +527,36 @@ class CosmosPredict2Model(DiffusionModelBase):
         pipe = self.pipeline
         sigma_data = pipe.scheduler.config.sigma_data
 
-        x = latents.to(pipe.vae.dtype)
-        latents_mean = (
-            torch.tensor(pipe.vae.config.latents_mean)
-            .view(1, pipe.vae.config.z_dim, 1, 1, 1)
-            .to(x.device, x.dtype)
+        def _transform(chunk: torch.Tensor) -> torch.Tensor:
+            x = chunk.to(pipe.vae.dtype)
+            latents_mean = (
+                torch.tensor(pipe.vae.config.latents_mean)
+                .view(1, pipe.vae.config.z_dim, 1, 1, 1)
+                .to(x.device, x.dtype)
+            )
+            latents_std = (
+                torch.tensor(pipe.vae.config.latents_std)
+                .view(1, pipe.vae.config.z_dim, 1, 1, 1)
+                .to(x.device, x.dtype)
+            )
+            return x * latents_std / sigma_data + latents_mean
+
+        decoder = ChunkedLatentDecoder(
+            LatentDecodeSpec(
+                transform=LatentDecodeTransform(_transform),
+                vae_decode=lambda chunk: pipe.vae.decode(
+                    chunk,
+                    return_dict=False,
+                )[0],
+                postprocess=lambda video: pipe.video_processor.postprocess_video(
+                    video,
+                    output_type="pt",
+                ),
+                output_layout="video_btchw",
+                decode_batch_size=getattr(pipe, "decode_batch_size", None),
+            ),
         )
-        latents_std = (
-            torch.tensor(pipe.vae.config.latents_std)
-            .view(1, pipe.vae.config.z_dim, 1, 1, 1)
-            .to(x.device, x.dtype)
-        )
-        x = x * latents_std / sigma_data + latents_mean
-        video = pipe.vae.decode(x, return_dict=False)[0]
-        video = pipe.video_processor.postprocess_video(video, output_type="pt")
-        # [B, T, C, H, W] -> [B, C, T, H, W]
-        return video.permute(0, 2, 1, 3, 4)
+        return decoder(latents)
 
 
 class CosmosPredict2ReplayModel(CosmosPredict2Model):

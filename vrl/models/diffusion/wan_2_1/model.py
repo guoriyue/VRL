@@ -33,6 +33,16 @@ import torch
 
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.diffusion import DiffusionModelBase
+from vrl.models.diffusion.common import (
+    ChunkedLatentDecoder,
+    DiffusionBackboneCaller,
+    DiffusionBackboneInput,
+    LatentDecodeSpec,
+    LatentDecodeTransform,
+    expand_batch_timestep,
+    pack_eval_timestep,
+)
+from vrl.models.diffusion.wan_2_1.runner import WanDiffusionBackboneRunner
 
 
 @dataclass
@@ -249,48 +259,27 @@ class WanT2VDiffusersModel(DiffusionModelBase):
         - rollouts: ``state.timesteps`` is 1-D ``[T]``; we expand a scalar to ``[B]``.
         - eval/training: collector packs per-sample timestep as ``[B]``; expand is a no-op.
         """
-        m = self.transformer
-
         t = state.timesteps[step_idx]
         bsz = state.latents.shape[0]
         td = state.prompt_embeds.dtype
 
         latent_input = state.latents.to(td)
-        timestep_batch = t.expand(bsz) if t.ndim == 0 else t
-
-        if state.do_cfg:
-            combined_latents = torch.cat([latent_input, latent_input], dim=0)
-            combined_t = torch.cat([timestep_batch, timestep_batch], dim=0)
-            combined_embeds = torch.cat(
-                [state.negative_prompt_embeds, state.prompt_embeds], dim=0,
-            )
-            combined_out = m(
-                hidden_states=combined_latents,
-                timestep=combined_t,
-                encoder_hidden_states=combined_embeds,
-                return_dict=False,
-            )[0]
-            noise_pred_uncond, noise_pred_cond = combined_out.chunk(2, dim=0)
-            noise_pred_uncond = noise_pred_uncond.to(td)
-            noise_pred_cond = noise_pred_cond.to(td)
-            noise_pred = noise_pred_uncond + state.guidance_scale * (
-                noise_pred_cond - noise_pred_uncond
-            )
-        else:
-            noise_pred_cond = m(
+        timestep_batch = expand_batch_timestep(t, bsz)
+        output = DiffusionBackboneCaller(
+            self.transformer,
+            WanDiffusionBackboneRunner(),
+        )(
+            DiffusionBackboneInput(
                 hidden_states=latent_input,
                 timestep=timestep_batch,
-                encoder_hidden_states=state.prompt_embeds,
-                return_dict=False,
-            )[0].to(td)
-            noise_pred_uncond = torch.zeros_like(noise_pred_cond)
-            noise_pred = noise_pred_cond
-
-        return {
-            "noise_pred": noise_pred,
-            "noise_pred_cond": noise_pred_cond,
-            "noise_pred_uncond": noise_pred_uncond,
-        }
+                prompt_embeds=state.prompt_embeds,
+                negative_prompt_embeds=state.negative_prompt_embeds,
+                guidance_scale=state.guidance_scale,
+                do_cfg=state.do_cfg,
+                output_dtype=td,
+            ),
+        )
+        return output.as_dict()
 
     # -- collector boundary --------------------------------------------
 
@@ -318,11 +307,8 @@ class WanT2VDiffusersModel(DiffusionModelBase):
     ) -> WanT2VSamplingState:
         """Rebuild SamplingState for the eval forward path from a batch slice."""
         ts = replay_tensors["timesteps"]
-        t = ts[:, step_idx] if ts.ndim > 1 else ts
-        # Pack as [1, B] so forward_step's state.timesteps[0] returns [B]
-        # (matches the rollout convention where timesteps is 1-D and indexed
-        # by step_idx; here we use step_idx=0 in the eval call).
-        timesteps = t.unsqueeze(0) if t.ndim == 1 else t
+        # Pack as [1, B] so forward_step's state.timesteps[0] returns [B].
+        timesteps = pack_eval_timestep(ts, step_idx)
         return WanT2VSamplingState(
             latents=latents,
             timesteps=timesteps,
@@ -343,26 +329,37 @@ class WanT2VDiffusersModel(DiffusionModelBase):
         ``latents_mean`` / ``latents_std`` over the ``z_dim`` channel axis.
         """
         pipe = self.pipeline
-        x = latents.to(pipe.vae.dtype)
 
-        latents_mean = (
-            torch.tensor(pipe.vae.config.latents_mean)
-            .view(1, pipe.vae.config.z_dim, 1, 1, 1)
-            .to(x.device, x.dtype)
-        )
-        latents_std = (
-            1.0 / torch.tensor(pipe.vae.config.latents_std)
-            .view(1, pipe.vae.config.z_dim, 1, 1, 1)
-            .to(x.device, x.dtype)
-        )
-        x = x / latents_std + latents_mean
+        def _transform(chunk: torch.Tensor) -> torch.Tensor:
+            x = chunk.to(pipe.vae.dtype)
+            latents_mean = (
+                torch.tensor(pipe.vae.config.latents_mean)
+                .view(1, pipe.vae.config.z_dim, 1, 1, 1)
+                .to(x.device, x.dtype)
+            )
+            latents_std = (
+                1.0 / torch.tensor(pipe.vae.config.latents_std)
+                .view(1, pipe.vae.config.z_dim, 1, 1, 1)
+                .to(x.device, x.dtype)
+            )
+            return x / latents_std + latents_mean
 
-        video = pipe.vae.decode(x, return_dict=False)[0]
-        # video_processor.postprocess_video returns [B, T, C, H, W]
-        video = pipe.video_processor.postprocess_video(video, output_type="pt")
-        # -> [B, C, T, H, W]
-        video = video.permute(0, 2, 1, 3, 4)
-        return video
+        decoder = ChunkedLatentDecoder(
+            LatentDecodeSpec(
+                transform=LatentDecodeTransform(_transform),
+                vae_decode=lambda chunk: pipe.vae.decode(
+                    chunk,
+                    return_dict=False,
+                )[0],
+                postprocess=lambda video: pipe.video_processor.postprocess_video(
+                    video,
+                    output_type="pt",
+                ),
+                output_layout="video_btchw",
+                decode_batch_size=getattr(pipe, "decode_batch_size", None),
+            ),
+        )
+        return decoder(latents)
 
 
 class WanT2VReplayModel(WanT2VDiffusersModel):

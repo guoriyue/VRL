@@ -37,6 +37,19 @@ import torch
 
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.diffusion import DiffusionModelBase
+from vrl.models.diffusion.common import (
+    ChunkedLatentDecoder,
+    DiffusionBackboneCaller,
+    DiffusionBackboneInput,
+    LatentDecodeSpec,
+    LatentDecodeTransform,
+    expand_batch_timestep,
+    pack_eval_timestep,
+)
+from vrl.models.diffusion.sd3_5.runner import (
+    SD3DiffusionBackboneRunner,
+    install_sd3_joint_attention_processor,
+)
 
 
 @dataclass
@@ -65,6 +78,9 @@ class SD3_5Model(DiffusionModelBase):
         object.__setattr__(self, "_pipeline", pipeline)
         self.transformer = pipeline.transformer
         self._device = device
+        self.uses_vrl_attention_processor = install_sd3_joint_attention_processor(
+            self.transformer,
+        )
 
     @property
     def pipeline(self) -> Any:
@@ -73,6 +89,9 @@ class SD3_5Model(DiffusionModelBase):
     def _set_transformer(self, transformer: Any) -> None:
         self.transformer = transformer
         self.pipeline.transformer = transformer
+        self.uses_vrl_attention_processor = install_sd3_joint_attention_processor(
+            transformer,
+        )
 
     @property
     def device(self) -> Any:
@@ -287,8 +306,6 @@ class SD3_5Model(DiffusionModelBase):
         Returns noise_pred plus the un/conditional branches; the caller owns
         scheduler.step / SDE.
         """
-        m = self.transformer
-
         t = state.timesteps[step_idx]
         bsz = state.latents.shape[0]
         td = state.prompt_embeds.dtype
@@ -297,47 +314,26 @@ class SD3_5Model(DiffusionModelBase):
         # SD3 timestep is broadcast across batch as the raw float (not /1000).
         # If t is already shape [B] (eval path packs timesteps as [1, B]),
         # Tensor.expand(bsz) is a no-op on the equal-sized dim.
-        timestep_batch = t.expand(bsz) if t.ndim == 0 else t
-
-        if state.do_cfg:
-            combined_latents = torch.cat([latent_input, latent_input], dim=0)
-            combined_t = torch.cat([timestep_batch, timestep_batch], dim=0)
-            combined_embeds = torch.cat(
-                [state.negative_prompt_embeds, state.prompt_embeds], dim=0,
-            )
-            combined_pooled = torch.cat(
-                [state.negative_pooled_prompt_embeds, state.pooled_prompt_embeds],
-                dim=0,
-            )
-            combined_out = m(
-                hidden_states=combined_latents,
-                timestep=combined_t,
-                encoder_hidden_states=combined_embeds,
-                pooled_projections=combined_pooled,
-                return_dict=False,
-            )[0]
-            noise_pred_uncond, noise_pred_cond = combined_out.chunk(2, dim=0)
-            noise_pred_uncond = noise_pred_uncond.to(td)
-            noise_pred_cond = noise_pred_cond.to(td)
-            noise_pred = noise_pred_uncond + state.guidance_scale * (
-                noise_pred_cond - noise_pred_uncond
-            )
-        else:
-            noise_pred_cond = m(
+        timestep_batch = expand_batch_timestep(t, bsz)
+        output = DiffusionBackboneCaller(
+            self.transformer,
+            SD3DiffusionBackboneRunner(),
+        )(
+            DiffusionBackboneInput(
                 hidden_states=latent_input,
                 timestep=timestep_batch,
-                encoder_hidden_states=state.prompt_embeds,
-                pooled_projections=state.pooled_prompt_embeds,
-                return_dict=False,
-            )[0].to(td)
-            noise_pred_uncond = torch.zeros_like(noise_pred_cond)
-            noise_pred = noise_pred_cond
-
-        return {
-            "noise_pred": noise_pred,
-            "noise_pred_cond": noise_pred_cond,
-            "noise_pred_uncond": noise_pred_uncond,
-        }
+                prompt_embeds=state.prompt_embeds,
+                negative_prompt_embeds=state.negative_prompt_embeds,
+                guidance_scale=state.guidance_scale,
+                do_cfg=state.do_cfg,
+                output_dtype=td,
+                extra={
+                    "pooled_prompt_embeds": state.pooled_prompt_embeds,
+                    "negative_pooled_prompt_embeds": state.negative_pooled_prompt_embeds,
+                },
+            ),
+        )
+        return output.as_dict()
 
     # -- collector boundary --------------------------------------------
 
@@ -371,8 +367,7 @@ class SD3_5Model(DiffusionModelBase):
         matches the eval-path convention documented in the class docstring.
         """
         ts = replay_tensors["timesteps"]
-        t = ts[:, step_idx] if ts.ndim > 1 else ts  # [B]
-        timesteps = t.unsqueeze(0) if t.ndim == 1 else t  # pack as [1, B]
+        timesteps = pack_eval_timestep(ts, step_idx)
         return SD3SamplingState(
             latents=latents,
             timesteps=timesteps,
@@ -393,14 +388,27 @@ class SD3_5Model(DiffusionModelBase):
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
         """Decode latents → image via SD3 VAE (4D, no T dim)."""
         pipe = self.pipeline
-        x = latents.to(pipe.vae.dtype)
         scaling_factor = pipe.vae.config.scaling_factor
         shift_factor = getattr(pipe.vae.config, "shift_factor", 0.0) or 0.0
-        # SD3 VAE: latents = (z - shift) * scale → invert.
-        x = x / scaling_factor + shift_factor
-        image = pipe.vae.decode(x, return_dict=False)[0]
-        # postprocess to [0, 1] float tensor [B, C, H, W]
-        return pipe.image_processor.postprocess(image, output_type="pt")
+        decoder = ChunkedLatentDecoder(
+            LatentDecodeSpec(
+                transform=LatentDecodeTransform(
+                    lambda chunk: chunk.to(pipe.vae.dtype) / scaling_factor
+                    + shift_factor,
+                ),
+                vae_decode=lambda chunk: pipe.vae.decode(
+                    chunk,
+                    return_dict=False,
+                )[0],
+                postprocess=lambda image: pipe.image_processor.postprocess(
+                    image,
+                    output_type="pt",
+                ),
+                output_layout="image_bchw",
+                decode_batch_size=getattr(pipe, "decode_batch_size", None),
+            ),
+        )
+        return decoder(latents)
 
 
 class SD3_5ReplayModel(SD3_5Model):
@@ -411,6 +419,9 @@ class SD3_5ReplayModel(SD3_5Model):
         self.transformer = transformer
         self._scheduler = scheduler
         self._device = device
+        self.uses_vrl_attention_processor = install_sd3_joint_attention_processor(
+            transformer,
+        )
 
     @property
     def pipeline(self) -> Any:
@@ -418,6 +429,9 @@ class SD3_5ReplayModel(SD3_5Model):
 
     def _set_transformer(self, transformer: Any) -> None:
         self.transformer = transformer
+        self.uses_vrl_attention_processor = install_sd3_joint_attention_processor(
+            transformer,
+        )
 
     @property
     def scheduler(self) -> Any:

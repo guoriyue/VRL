@@ -11,6 +11,16 @@ import torch
 
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.diffusion import DiffusionModelBase
+from vrl.models.diffusion.common import (
+    ChunkedLatentDecoder,
+    DiffusionBackboneCaller,
+    DiffusionBackboneInput,
+    LatentDecodeSpec,
+    LatentDecodeTransform,
+)
+from vrl.models.diffusion.cosmos.predict2_5.runner import (
+    CosmosPredict25DiffusionBackboneRunner,
+)
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 
 
@@ -351,43 +361,31 @@ class CosmosPredict25Model(DiffusionModelBase):
             .unsqueeze(0)
             .to(device=state.latents.device, dtype=transformer_dtype)
         )
-        cond_timestep = torch.ones_like(state.cond_indicator) * state.conditional_frame_timestep
-        in_latents = state.cond_mask * state.cond_latent + (1 - state.cond_mask) * state.latents
-        in_latents = in_latents.to(transformer_dtype)
-        in_timestep = state.cond_indicator * cond_timestep + (1 - state.cond_indicator) * sigma_t
-
-        noise_pred_cond = self.transformer(
-            hidden_states=in_latents,
-            condition_mask=state.cond_mask.to(transformer_dtype),
-            timestep=in_timestep.to(transformer_dtype),
-            encoder_hidden_states=state.prompt_embeds,
-            padding_mask=state.padding_mask,
-            return_dict=False,
-        )[0]
-        gt_velocity = (state.latents - state.cond_latent) * state.cond_mask
-        noise_pred_cond = gt_velocity + noise_pred_cond * (1 - state.cond_mask)
-
-        if state.do_cfg:
-            noise_pred_uncond = self.transformer(
-                hidden_states=in_latents,
-                condition_mask=state.cond_mask.to(transformer_dtype),
-                timestep=in_timestep.to(transformer_dtype),
-                encoder_hidden_states=state.negative_prompt_embeds,
-                padding_mask=state.padding_mask,
-                return_dict=False,
-            )[0]
-            noise_pred_uncond = gt_velocity + noise_pred_uncond * (1 - state.cond_mask)
-            noise_pred = noise_pred_cond + state.guidance_scale * (
-                noise_pred_cond - noise_pred_uncond
-            )
-        else:
-            noise_pred_uncond = torch.zeros_like(noise_pred_cond)
-            noise_pred = noise_pred_cond
-        return {
-            "noise_pred": noise_pred,
-            "noise_pred_cond": noise_pred_cond,
-            "noise_pred_uncond": noise_pred_uncond,
-        }
+        output = DiffusionBackboneCaller(
+            self.transformer,
+            CosmosPredict25DiffusionBackboneRunner(
+                sigma=sigma_t,
+                conditional_frame_timestep=state.conditional_frame_timestep,
+            ),
+        )(
+            DiffusionBackboneInput(
+                hidden_states=state.latents,
+                timestep=sigma_t,
+                prompt_embeds=state.prompt_embeds,
+                negative_prompt_embeds=state.negative_prompt_embeds,
+                guidance_scale=state.guidance_scale,
+                do_cfg=state.do_cfg,
+                output_dtype=transformer_dtype,
+                extra={
+                    "cond_latent": state.cond_latent,
+                    "cond_mask": state.cond_mask,
+                    "cond_indicator": state.cond_indicator,
+                    "padding_mask": state.padding_mask,
+                    "transformer_dtype": transformer_dtype,
+                },
+            ),
+        )
+        return output.as_dict()
 
     def export_batch_context(self, state: CosmosPredict25SamplingState) -> dict[str, Any]:
         return {
@@ -507,11 +505,29 @@ class CosmosPredict25Model(DiffusionModelBase):
         pipe = self.pipeline
         latents_mean = pipe.latents_mean.to(latents.device, latents.dtype)
         latents_std = pipe.latents_std.to(latents.device, latents.dtype)
-        x = latents * latents_std + latents_mean
-        video = pipe.vae.decode(x.to(pipe.vae.dtype), return_dict=False)[0]
-        video = pipe._match_num_frames(video, int((latents.shape[2] - 1) * pipe.vae_scale_factor_temporal + 1))
-        video = pipe.video_processor.postprocess_video(video, output_type="pt")
-        return video.permute(0, 2, 1, 3, 4)
+        frame_count = int((latents.shape[2] - 1) * pipe.vae_scale_factor_temporal + 1)
+        decoder = ChunkedLatentDecoder(
+            LatentDecodeSpec(
+                transform=LatentDecodeTransform(
+                    lambda chunk: (chunk * latents_std + latents_mean).to(pipe.vae.dtype),
+                ),
+                vae_decode=lambda chunk: pipe.vae.decode(
+                    chunk,
+                    return_dict=False,
+                )[0],
+                match_num_frames=lambda video: pipe._match_num_frames(
+                    video,
+                    frame_count,
+                ),
+                postprocess=lambda video: pipe.video_processor.postprocess_video(
+                    video,
+                    output_type="pt",
+                ),
+                output_layout="video_btchw",
+                decode_batch_size=getattr(pipe, "decode_batch_size", None),
+            ),
+        )
+        return decoder(latents)
 
 
 class CosmosPredict25ReplayModel(CosmosPredict25Model):
