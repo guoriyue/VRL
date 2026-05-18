@@ -5,11 +5,11 @@ from __future__ import annotations
 import pytest
 import torch
 
-from vrl.generation.ar.paged_attention import (
+from vrl.nn.kernels.attention.vllm_paged import VllmPagedAttentionKernels
+from vrl.nn.layers.attention.paged import (
     ARPagedAttentionConfig,
     ARPagedAttentionUnavailable,
 )
-from vrl.generation.ar.vllm_paged_attention import VllmPagedAttentionKernels
 
 
 def test_vllm_paged_attention_writes_real_cuda_kv_cache() -> None:

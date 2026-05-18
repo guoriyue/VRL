@@ -29,7 +29,6 @@ from vrl.models.ar.janus_pro.model import (
     JanusProModel,
     JanusProReplayModel,
 )
-from vrl.models.ar.janus_pro.r1_types import JanusR1Segment
 from vrl.models.ar.janus_pro.runner import (
     JanusProARModelRunner,
     build_janus_vllm_paged_attention_backend,
@@ -867,7 +866,7 @@ class JanusProR1ChunkResult(PipelineChunkResult):
     initial_image: torch.Tensor
     final_image: torch.Tensor
     selfcheck: torch.Tensor
-    segments: dict[str, JanusR1Segment]
+    segments: dict[str, dict[str, Any]]
     context: dict[str, Any]
     peak_memory_mb: float | None = None
 
@@ -930,18 +929,18 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
             )
 
         peak_mem_mb = self.peak_memory_mb()
-        segment_extra = _segments_to_extra(result.segments)
+        segment_extra = result["segments"]
         trajectory = build_ar_multisegment_trajectory(
             request=request,
             sample_rows=sample_rows,
             segments=segment_extra,
             decoded_outputs={
-                "initial_image": result.initial_image,
-                "final_image": result.final_image,
-                "selfcheck": result.selfcheck,
+                "initial_image": result["initial_image"],
+                "final_image": result["final_image"],
+                "selfcheck": result["selfcheck"],
             },
             primary_segment="final_image",
-            context=result.context,
+            context=result["context"],
         )
         metrics = GenerationMetrics(
             num_prompts=len(prompts),
@@ -962,7 +961,7 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
             task=request.task,
             prompts=prompts,
             sample_rows=sample_rows,
-            output=result.final_image,
+            output=result["final_image"],
             trajectory=trajectory,
             extra={},
             metrics=metrics,
@@ -1026,12 +1025,12 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
             prompt_index=chunk.prompt_index,
             sample_start=chunk.sample_start,
             sample_count=chunk.sample_count,
-            output=result.final_image,
-            initial_image=result.initial_image,
-            final_image=result.final_image,
-            selfcheck=result.selfcheck,
-            segments=result.segments,
-            context={**result.context, "ar_decode_loop_enabled": True},
+            output=result["final_image"],
+            initial_image=result["initial_image"],
+            final_image=result["final_image"],
+            selfcheck=result["selfcheck"],
+            segments=result["segments"],
+            context={**result["context"], "ar_decode_loop_enabled": True},
             peak_memory_mb=self.peak_memory_mb(),
         )
 
@@ -1202,26 +1201,6 @@ def _resolve_refine_mode(sampling: dict[str, Any], model: Any) -> str:
     )
 
 
-def _segment_to_extra(segment: JanusR1Segment) -> dict[str, Any]:
-    return {
-        "name": segment.name,
-        "token_ids": segment.token_ids,
-        "token_log_probs": segment.token_log_probs,
-        "token_mask": segment.token_mask,
-        "prompt_embeds": segment.prompt_embeds,
-        "attention_mask": segment.attention_mask,
-        "prompt_attention_mask": segment.attention_mask,
-        "visual": segment.visual,
-        "cfg": segment.cfg,
-    }
-
-
-def _segments_to_extra(
-    segments: dict[str, JanusR1Segment],
-) -> dict[str, dict[str, Any]]:
-    return {name: _segment_to_extra(segment) for name, segment in segments.items()}
-
-
 def _cat_segment_extra(
     chunks: Sequence[JanusProR1ChunkResult],
 ) -> dict[str, dict[str, Any]]:
@@ -1233,36 +1212,36 @@ def _cat_segment_extra(
     for name in names:
         first = chunks[0].segments[name]
         token_log_probs = None
-        if first.token_log_probs is not None:
+        if first["token_log_probs"] is not None:
             token_log_probs = torch.cat(
-                [chunk.segments[name].token_log_probs for chunk in chunks],
+                [chunk.segments[name]["token_log_probs"] for chunk in chunks],
                 dim=0,
             )
         out[name] = {
             "name": name,
             "token_ids": torch.cat(
-                [chunk.segments[name].token_ids for chunk in chunks],
+                [chunk.segments[name]["token_ids"] for chunk in chunks],
                 dim=0,
             ),
             "token_log_probs": token_log_probs,
             "token_mask": torch.cat(
-                [chunk.segments[name].token_mask for chunk in chunks],
+                [chunk.segments[name]["token_mask"] for chunk in chunks],
                 dim=0,
             ),
             "prompt_embeds": torch.cat(
-                [chunk.segments[name].prompt_embeds for chunk in chunks],
+                [chunk.segments[name]["prompt_embeds"] for chunk in chunks],
                 dim=0,
             ),
             "attention_mask": torch.cat(
-                [chunk.segments[name].attention_mask for chunk in chunks],
+                [chunk.segments[name]["attention_mask"] for chunk in chunks],
                 dim=0,
             ),
             "prompt_attention_mask": torch.cat(
-                [chunk.segments[name].attention_mask for chunk in chunks],
+                [chunk.segments[name]["prompt_attention_mask"] for chunk in chunks],
                 dim=0,
             ),
-            "visual": first.visual,
-            "cfg": first.cfg,
+            "visual": first["visual"],
+            "cfg": first["cfg"],
         }
     return out
 

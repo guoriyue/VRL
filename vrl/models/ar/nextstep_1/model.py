@@ -26,7 +26,7 @@ done ``pip install -e .`` from ``stepfun-ai/NextStep-1``, fill in:
     - ``_decode_via_vae``    : token sequence → pixels via the f8ch16 VAE
 
 The flow head's velocity-call signature is handled in
-``vrl.models.ar.nextstep_1.flow_step``.
+``vrl.math.ar.flow_matching``.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from vrl.models.ar.nextstep_1.flow_step import (
+from vrl.math.ar.flow_matching import (
     flow_logprob_at,
 )
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult

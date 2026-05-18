@@ -12,10 +12,6 @@ from vrl.models.ar.janus_pro.model import (
     JanusProConfig,
     JanusProModel,
 )
-from vrl.models.ar.janus_pro.r1_types import (
-    JanusR1GenerationResult,
-    JanusR1Segment,
-)
 from vrl.models.ar.janus_pro.runtime import JanusProR1PipelineExecutor
 from vrl.models.interfaces import ReplayRequest, ReplayResult
 from vrl.rollouts.batch import RolloutBatch
@@ -292,14 +288,20 @@ def test_generate_with_refine_returns_three_segments_and_selects_final_image() -
     )
 
     assert sample_calls == [10, 20]
-    assert set(out.segments) == {"initial_image", "selfcheck_text", "final_image"}
-    assert out.segments["initial_image"].token_ids.shape == (2, 4)
-    assert out.segments["selfcheck_text"].token_ids.shape == (2, 3)
-    assert out.segments["final_image"].token_ids.shape == (2, 4)
-    assert torch.equal(out.segments["final_image"].token_ids[0], torch.full((4,), 10))
-    assert torch.equal(out.segments["final_image"].token_ids[1], torch.full((4,), 20))
-    assert torch.equal(out.final_image[0], torch.full((3, 2, 2), 10.0))
-    assert torch.equal(out.final_image[1], torch.full((3, 2, 2), 20.0))
+    assert set(out["segments"]) == {"initial_image", "selfcheck_text", "final_image"}
+    assert out["segments"]["initial_image"]["token_ids"].shape == (2, 4)
+    assert out["segments"]["selfcheck_text"]["token_ids"].shape == (2, 3)
+    assert out["segments"]["final_image"]["token_ids"].shape == (2, 4)
+    assert torch.equal(
+        out["segments"]["final_image"]["token_ids"][0],
+        torch.full((4,), 10),
+    )
+    assert torch.equal(
+        out["segments"]["final_image"]["token_ids"][1],
+        torch.full((4,), 20),
+    )
+    assert torch.equal(out["final_image"][0], torch.full((3, 2, 2), 10.0))
+    assert torch.equal(out["final_image"][1], torch.full((3, 2, 2), 20.0))
 
 
 def test_r1_model_replay_forward_returns_requested_replay_segments() -> None:
@@ -342,7 +344,7 @@ class _ExecutorModel:
         uncond_attention_mask: torch.Tensor,
         image_size: int,
         refine_mode: str,
-    ) -> JanusR1GenerationResult:
+    ) -> dict[str, object]:
         del (
             cfg_weight,
             temperature,
@@ -358,28 +360,33 @@ class _ExecutorModel:
         prompt_embeds = torch.zeros(batch, prompt_input_ids.shape[1], HIDDEN)
         image = torch.ones(batch, 3, 2, 2)
         segments = {
-            name: JanusR1Segment(
-                name=name,
-                token_ids=torch.full((batch, image_token_num), idx, dtype=torch.long),
-                token_log_probs=torch.zeros(batch, image_token_num),
-                token_mask=token_mask,
-                prompt_embeds=prompt_embeds,
-                attention_mask=prompt_attention_mask,
-                visual=name != "selfcheck_text",
-                cfg=name != "selfcheck_text",
-            )
+            name: {
+                "name": name,
+                "token_ids": torch.full(
+                    (batch, image_token_num),
+                    idx,
+                    dtype=torch.long,
+                ),
+                "token_log_probs": torch.zeros(batch, image_token_num),
+                "token_mask": token_mask,
+                "prompt_embeds": prompt_embeds,
+                "attention_mask": prompt_attention_mask,
+                "prompt_attention_mask": prompt_attention_mask,
+                "visual": name != "selfcheck_text",
+                "cfg": name != "selfcheck_text",
+            }
             for idx, name in enumerate(
                 ("initial_image", "selfcheck_text", "final_image"),
                 start=1,
             )
         }
-        return JanusR1GenerationResult(
-            initial_image=image * 1,
-            final_image=image * 2,
-            selfcheck=torch.zeros(batch, dtype=torch.bool),
-            segments=segments,
-            context={"source": "fake"},
-        )
+        return {
+            "initial_image": image * 1,
+            "final_image": image * 2,
+            "selfcheck": torch.zeros(batch, dtype=torch.bool),
+            "segments": segments,
+            "context": {"source": "fake"},
+        }
 
 
 def test_r1_executor_forward_emits_canonical_family_and_segment_schema() -> None:

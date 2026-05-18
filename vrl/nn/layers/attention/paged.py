@@ -1,7 +1,7 @@
-"""Shared AR paged-attention contract for model-family runners.
+"""Shared AR paged-attention layer contract for model-family runners.
 
 This module intentionally does not import vLLM. Concrete vLLM internal API
-calls live in ``vrl.generation.ar.vllm_paged_attention``.
+calls live in ``vrl.nn.kernels.attention.vllm_paged``.
 """
 
 from __future__ import annotations

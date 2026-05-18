@@ -10,14 +10,6 @@ import torch
 import torch.nn as nn
 
 from vrl.generation.ar.decode_loop import ARDecodeLoop
-from vrl.generation.ar.paged_attention import (
-    ARPagedAttentionBackend,
-    ARPagedAttentionConfig,
-    ARPagedAttentionPrefillInput,
-    ARPagedAttentionPrefillOutput,
-    ARPagedAttentionStepInput,
-    ARPagedAttentionStepOutput,
-)
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
 from vrl.models.ar.janus_pro import runtime as janus_runtime
 from vrl.models.ar.janus_pro.model import (
@@ -27,6 +19,14 @@ from vrl.models.ar.janus_pro.model import (
 )
 from vrl.models.ar.janus_pro.runner import JanusProARModelRunner
 from vrl.models.ar.janus_pro.runtime import JanusProPipelineExecutor
+from vrl.nn.layers.attention.paged import (
+    ARPagedAttentionBackend,
+    ARPagedAttentionConfig,
+    ARPagedAttentionPrefillInput,
+    ARPagedAttentionPrefillOutput,
+    ARPagedAttentionStepInput,
+    ARPagedAttentionStepOutput,
+)
 
 HIDDEN = 8
 TEXT_VOCAB = 32

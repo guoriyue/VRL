@@ -8,12 +8,12 @@ import pytest
 import torch
 from transformers import LlamaConfig, LlamaModel
 
-from vrl.generation.ar.paged_attention import (
+from vrl.models.ar.janus_pro.runner import build_janus_vllm_paged_attention_backend
+from vrl.nn.layers.attention.paged import (
     ARPagedAttentionPrefillInput,
     ARPagedAttentionStepInput,
     ARPagedAttentionUnavailable,
 )
-from vrl.models.ar.janus_pro.runner import build_janus_vllm_paged_attention_backend
 
 
 def test_janus_vllm_paged_attention_matches_hf_llama_one_step() -> None:

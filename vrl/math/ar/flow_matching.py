@@ -21,21 +21,9 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
 
 import torch
-
-
-@dataclass(slots=True)
-class FlowStepResult:
-    """Output of one AR step's flow-matching sample-with-logprob."""
-
-    token: torch.Tensor          # [B, D_token]    — sampled continuous token
-    log_prob: torch.Tensor       # [B]             — Gaussian log p(token | mean)
-    mean: torch.Tensor           # [B, D_token]    — deterministic flow ODE solution
-    std: torch.Tensor            # [B] or scalar   — Gaussian std at sampling step
-    initial_noise: torch.Tensor  # [B, D_token]    — x_0 prior used by replay
 
 
 def flow_sample_with_logprob(
@@ -49,7 +37,7 @@ def flow_sample_with_logprob(
     generator: torch.Generator | None = None,
     initial_noise: torch.Tensor | None = None,
     velocity_fn: Callable[..., torch.Tensor] | None = None,
-) -> FlowStepResult:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Sample one continuous token from the flow head and return its log-prob.
 
     Algorithm (matching the diffusion side's SDE-with-logprob convention):
@@ -82,12 +70,13 @@ def flow_sample_with_logprob(
         generator: Optional torch.Generator for reproducibility.
         initial_noise: Optional explicit ``x_0`` prior. When provided, this
             exact tensor is used as the deterministic flow prefix and returned
-            as ``FlowStepResult.initial_noise`` for replay.
+            for replay.
         velocity_fn: Optional override for how to call image_head. If None,
             we try ``image_head.velocity(...)`` then ``image_head(...)``.
 
     Returns:
-        ``FlowStepResult`` with the sampled token and its scalar log-prob.
+        ``(token, log_prob, initial_noise)`` where ``token`` is ``[B, D]``,
+        ``log_prob`` is ``[B]``, and ``initial_noise`` is the replay prior.
 
     NOTE
     ----
@@ -160,8 +149,6 @@ def flow_sample_with_logprob(
     # SDE-from-ODE: std = noise_level * sqrt(dt) (matches flow_grpo's
     # final-step parameterisation; sigma_min ≪ sigma_max in flat schedule)
     std_scalar = noise_level * math.sqrt(dt)
-    std = torch.full((B,), std_scalar, device=device, dtype=dtype)
-
     eps = torch.randn(
         mean.shape,
         device=mean.device,
@@ -180,13 +167,7 @@ def flow_sample_with_logprob(
         - 0.5 * float(D) * math.log(2.0 * math.pi)
     )
 
-    return FlowStepResult(
-        token=token,
-        log_prob=log_prob,
-        mean=mean,
-        std=std,
-        initial_noise=x0,
-    )
+    return token, log_prob, x0
 
 
 def flow_logprob_at(

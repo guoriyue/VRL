@@ -1,0 +1,29 @@
+"""Reusable attention layer contracts."""
+
+from vrl.nn.layers.attention.base import AttentionCacheView, AttentionLayerBase
+from vrl.nn.layers.attention.paged import (
+    ARPagedAttentionBackend,
+    ARPagedAttentionConfig,
+    ARPagedAttentionPrefillInput,
+    ARPagedAttentionPrefillOutput,
+    ARPagedAttentionStepInput,
+    ARPagedAttentionStepOutput,
+    ARPagedAttentionUnavailable,
+    ARPrefixCacheKey,
+    ARPrefixCachePolicy,
+)
+
+__all__ = [
+    "ARPagedAttentionBackend",
+    "ARPagedAttentionConfig",
+    "ARPagedAttentionPrefillInput",
+    "ARPagedAttentionPrefillOutput",
+    "ARPagedAttentionStepInput",
+    "ARPagedAttentionStepOutput",
+    "ARPagedAttentionUnavailable",
+    "ARPrefixCacheKey",
+    "ARPrefixCachePolicy",
+    "AttentionCacheView",
+    "AttentionLayerBase",
+]
+

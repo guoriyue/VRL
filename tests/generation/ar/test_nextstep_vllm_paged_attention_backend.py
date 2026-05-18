@@ -8,11 +8,6 @@ import pytest
 import torch
 from transformers import Qwen2Config, Qwen2Model
 
-from vrl.generation.ar.paged_attention import (
-    ARPagedAttentionPrefillInput,
-    ARPagedAttentionStepInput,
-    ARPagedAttentionUnavailable,
-)
 from vrl.generation.types import GenerationRequest
 from vrl.models.ar.nextstep_1 import runtime as nextstep_runtime
 from vrl.models.ar.nextstep_1.runner import (
@@ -20,6 +15,11 @@ from vrl.models.ar.nextstep_1.runner import (
     build_nextstep_vllm_paged_attention_backend,
 )
 from vrl.models.ar.nextstep_1.runtime import NextStep1PipelineExecutor
+from vrl.nn.layers.attention.paged import (
+    ARPagedAttentionPrefillInput,
+    ARPagedAttentionStepInput,
+    ARPagedAttentionUnavailable,
+)
 
 
 def test_nextstep_vllm_paged_attention_matches_hf_qwen_one_step() -> None:

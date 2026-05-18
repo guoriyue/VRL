@@ -13,16 +13,16 @@ from vrl.generation.ar.decode_loop import (
     ARStepResult,
     ARTokenLoopInit,
 )
-from vrl.generation.ar.paged_attention import (
+from vrl.math.ar.flow_matching import flow_sample_with_logprob
+from vrl.nn.layers.attention.paged import (
     ARPagedAttentionBackend,
     ARPagedAttentionConfig,
     ARPagedAttentionPrefillInput,
     ARPagedAttentionStepInput,
 )
-from vrl.generation.ar.vllm_paged_attention import (
+from vrl.nn.modules.ar_decoder import (
     VllmDecoderPagedAttentionBackend,
 )
-from vrl.models.ar.nextstep_1.flow_step import flow_sample_with_logprob
 
 
 @dataclass(slots=True)
@@ -173,7 +173,7 @@ class NextStep1ARModelRunner:
         *,
         generator: torch.Generator | None = None,
     ) -> ARStepOutput:
-        step, cache_updates, row_updates = self._sample_ar_step(
+        token, log_prob, replay_noise, cache_updates, row_updates = self._sample_ar_step(
             state,
             batch,
             generator=generator,
@@ -182,9 +182,9 @@ class NextStep1ARModelRunner:
             result=ARStepResult(
                 sequence_ids=batch.sequence_ids,
                 positions=batch.positions,
-                token=step.token,
-                log_prob=step.log_prob.float(),
-                replay_extras={"saved_noise": step.initial_noise},
+                token=token,
+                log_prob=log_prob.float(),
+                replay_extras={"saved_noise": replay_noise},
                 debug_counters={
                     "ar_kv_cache_enabled": True,
                     "ar_paged_attention_enabled": state.paged_cond_states is not None,
@@ -209,7 +209,13 @@ class NextStep1ARModelRunner:
         state: NextStep1ARState,
         batch: ARStepBatch,
         generator: torch.Generator | None = None,
-    ) -> tuple[Any, dict[str, Any], dict[str, Any]]:
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        dict[str, Any],
+        dict[str, Any],
+    ]:
         row_indices = batch.row_indices
         if not row_indices:
             raise ValueError("row_indices must be non-empty")
@@ -233,7 +239,7 @@ class NextStep1ARModelRunner:
             dtype=self.model.dtype,
             generator=step_generator,
         )
-        step = flow_sample_with_logprob(
+        token, log_prob, replay_noise = flow_sample_with_logprob(
             self.model.image_head,
             cond=batch.row_lanes["c_cond"],
             num_flow_steps=state.num_flow_steps,
@@ -244,20 +250,20 @@ class NextStep1ARModelRunner:
             initial_noise=initial_noise,
         )
 
-        state.tokens[rows, position] = step.token
-        state.saved_noise[rows, position] = step.initial_noise
-        state.logprobs[rows, position] = step.log_prob.float()
+        state.tokens[rows, position] = token
+        state.saved_noise[rows, position] = replay_noise
+        state.logprobs[rows, position] = log_prob.float()
 
         if self.paged_attention_backend is not None:
             cache_updates, row_updates = self._advance_paged_attention(
                 state,
                 batch=batch,
-                token=step.token,
+                token=token,
             )
             state.decode_tokens += batch_size
-            return step, cache_updates, row_updates
+            return token, log_prob, replay_noise, cache_updates, row_updates
 
-        proj = self.model._image_in_projector(step.token)
+        proj = self.model._image_in_projector(token)
         kv_cond = batch.cache_lanes["kv_cond"]
         kv_cond, c_cond_next = self.model._step_llm(kv_cond, proj)
         state.decode_forwards += 1
@@ -265,7 +271,7 @@ class NextStep1ARModelRunner:
         row_updates = {"c_cond": c_cond_next}
 
         if "kv_uncond" in batch.cache_lanes:
-            proj_u = self.model._image_in_projector(step.token)
+            proj_u = self.model._image_in_projector(token)
             kv_uncond = batch.cache_lanes["kv_uncond"]
             kv_uncond, c_uncond_next = self.model._step_llm(kv_uncond, proj_u)
             state.decode_forwards += 1
@@ -273,7 +279,7 @@ class NextStep1ARModelRunner:
             row_updates["c_uncond"] = c_uncond_next
 
         state.decode_tokens += batch_size
-        return step, cache_updates, row_updates
+        return token, log_prob, replay_noise, cache_updates, row_updates
 
     def _prefill_paged(
         self,

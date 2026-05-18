@@ -180,7 +180,7 @@ repo-owned executor context
 - 定义 executor forward context / attention metadata / KV cache layout 边界。
 - 新增 vLLM attention adapter，必须 lazy import。
 - 新增 torch reference attention path，只用于 parity/debug。
-- 新增 generic executor ops/layers/kernel dispatch 目录。
+- 消费 `SPRINT_nn_layers_kernels.md` 提供的 `vrl.nn` layers/modules/kernels。
 - 新增 Janus executor 目录和 architecture audit。
 - 新增 Janus replay forward parity path。
 - 新增 Janus visual token embedding / image-token logits projection parity hooks。
@@ -201,41 +201,9 @@ repo-owned executor context
 ## 目标目录
 
 ```text
-vrl/models/executor/
-  context.py              # executor forward context / mode / metadata carrier
-  cache.py                # KV / activation cache contracts, no family imports
-  dispatch.py             # torch | vllm | triton dispatch policy
-  weights.py              # shared weight mapping helpers
-
-  ops/
-    attention.py          # attention op wrapper: torch reference or vLLM adapter
-    logits.py             # projection/logprob helpers
-    mlp.py                # gated MLP / fused MLP op wrapper
-    norm.py               # RMSNorm / LayerNorm op wrapper
-    rotary.py             # rotary / position embedding helper
-    patch.py              # patchify / token-latent reshape helpers
-    flow.py               # flow / denoise math helpers
-
-  vllm/
-    attention.py          # lazy vLLM attention primitive adapter
-    metadata.py           # slot mapping / block table / seq metadata adapter
-    cache.py              # vLLM-compatible KV layout view, not a scheduler
-
-  kernels/
-    torch/
-      attention.py
-      mlp.py
-      norm.py
-      rotary.py
-    triton/
-      README.md           # future extension point; no production dependency yet
-
-  layers/
-    attention.py          # nn.Module wrapper around ops + context/cache
-    linear.py             # packed/fused mapping boundary
-    mlp.py
-    norm.py
-    transformer_block.py
+vrl/nn/
+  # generic layers/modules/kernels owned by:
+  # SPRINT_nn_layers_kernels.md
 
 vrl/models/ar/janus_pro/
   executor/
@@ -256,11 +224,11 @@ vrl/models/diffusion/sd3_5/
 
 Rules:
 
-- `vrl/models/executor/` must not import Janus / NextStep / SD3 / Wan / Cosmos.
-- `vrl/models/executor/` must not import rollout / reward / trainer.
-- `vrl/models/executor/vllm/*` must lazy import vLLM.
-- `vrl/models/ar/janus_pro/executor/` may import generic executor layers.
-- `vrl/models/diffusion/sd3_5/executor/` may import generic executor layers.
+- `vrl/nn/` must not import Janus / NextStep / SD3 / Wan / Cosmos.
+- `vrl/nn/` must not import rollout / reward / trainer.
+- `vrl/nn/kernels/*` must lazy import optional backend dependencies.
+- `vrl/models/ar/janus_pro/executor/` may import generic NN layers/modules.
+- `vrl/models/diffusion/sd3_5/executor/` may import generic NN layers/modules.
 - family code must not import Triton directly.
 - `vrl/generation` must not import Janus executor internals.
 - `TrajectoryBatch` / `RolloutBatch` must never store live KV/cache handles.
@@ -279,12 +247,13 @@ Generic layer 的边界服务三个目标：
 
 ```text
 family executor
-  -> vrl.models.executor.layers.*
-  -> vrl.models.executor.ops.*
+  -> vrl.nn.modules.*
+  -> vrl.nn.layers.*
+  -> vrl.nn.kernels.*
   -> dispatch selects torch | vllm | triton
 ```
 
-允许进入 generic executor 的内容：
+允许进入 generic NN layer/kernel 的内容：
 
 - causal attention / block attention wrapper。
 - vLLM attention metadata adapter。
@@ -296,7 +265,7 @@ family executor
 - patchify / unpatchify / token-latent reshape。
 - flow / denoise math 中可以跨 family 复用的 tensor op。
 
-不允许进入 generic executor 的内容：
+不允许进入 generic NN layer/kernel 的内容：
 
 - Janus CFG policy。
 - Janus VQ decoder workflow。
@@ -371,7 +340,7 @@ family executor
 - 可以写出 explicit weight mapping 表。
 - 能解释当前 `forward_image_logits` 和 rollout prefill/step 用的是哪条 trunk path。
 
-## Phase 2：executor context / dispatch contract
+## Phase 2：NN context / dispatch contract
 
 新增：
 
@@ -397,7 +366,7 @@ ExecutorKernelConfig
 
 完成标准：
 
-- generic executor contract 不 import family code。
+- generic NN contract 不 import family code。
 - `backend=torch` reference path 可以独立测试。
 - `backend=vllm` adapter lazy import vLLM。
 - vLLM 不存在或 ABI 不匹配时，非 vLLM tests 不受影响。
@@ -409,8 +378,8 @@ ExecutorKernelConfig
 
 工作：
 
-- 新增 `vrl/models/executor/vllm/attention.py`。
-- 新增 `vrl/models/executor/vllm/metadata.py`。
+- 新增 `vrl/nn/kernels/attention/vllm_paged.py`。
+- 新增 `vrl/nn/layers/attention/paged.py`。
 - lazy import vLLM attention 相关模块。
 - 记录 vLLM attention API 需要的：
   - forward context
@@ -422,7 +391,7 @@ ExecutorKernelConfig
 
 完成标准：
 
-- `import vrl.models.executor` 不触发 vLLM import。
+- `import vrl.nn` 不触发 vLLM import。
 - vLLM import failure 有清楚错误，不破坏普通 tests。
 - 有 test 覆盖 vLLM unavailable path。
 - torch reference path 和 vLLM path 的输入输出 contract 对齐。
@@ -551,7 +520,7 @@ SD3.5 这条线不是为了替换完整 diffusion rollout runtime。它的目的
 
 ```text
 1. 当 vLLM-Omni 暴露 replay hooks 不足时，repo 有 fallback/parity primitive。
-2. 让 generic executor ops 不只服务 AR。
+2. 让 generic NN layers/kernels 不只服务 AR。
 ```
 
 新增可选目录：
@@ -595,7 +564,7 @@ NextStep 等 Janus executor boundary 稳定后再迁移。
 
 - 复用 executor context / cache layout。
 - continuous-token + flow head 留在 family executor。
-- flow tensor ops 可以复用 `vrl.models.executor.ops.flow`。
+- flow tensor ops 可以复用 `vrl.nn.layers` / `vrl.nn.kernels` 中的通用 tensor boundary。
 - 对齐 replay logprob / saved noise / flow old_log_prob。
 
 完成标准：
@@ -605,10 +574,10 @@ NextStep 等 Janus executor boundary 稳定后再迁移。
 
 ## Boundary gates
 
-Generic executor 不能 import family：
+Generic nn package 不能 import family：
 
 ```bash
-rg "janus|nextstep|sd3|wan|cosmos|vq|cfg|reward|trainer|rollout" vrl/models/executor
+rg "janus|nextstep|sd3|wan|cosmos|vq|cfg|reward|trainer|rollout" vrl/nn
 ```
 
 Family code 不能直接 import Triton：
@@ -621,6 +590,7 @@ vLLM import 只能在 adapter 内 lazy import：
 
 ```bash
 rg "import vllm|from vllm" vrl/models vrl/generation
+rg "import vllm|from vllm" vrl/nn | rg -v "vrl/nn/kernels/attention/vllm_paged.py"
 ```
 
 Runner 不应访问 model private internals after integration gate：
@@ -672,8 +642,8 @@ rg "CacheHandle|KVCache|block_table|slot_mapping" vrl/trajectory vrl/rollouts
 这个 sprint 完成时应满足：
 
 ```text
-vrl/models/executor/ exists and has no family imports.
-vrl/models/executor/vllm/ contains lazy vLLM attention adapter boundary.
+vrl/nn/ exists and has no family imports.
+vrl/nn/kernels/attention/vllm_paged.py contains lazy vLLM attention adapter boundary.
 Janus executor has replay parity against HF wrapper.
 Janus executor has prefill/decode primitive parity.
 HF wrapper remains as oracle until production integration gate passes.

@@ -46,10 +46,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from vrl.models.ar.janus_pro.r1_types import (
-    JanusR1GenerationResult,
-    JanusR1Segment,
-)
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 
 logger = logging.getLogger(__name__)
@@ -588,7 +584,7 @@ class JanusProModel(nn.Module):
         image_size: int = JANUS_IMAGE_PIXEL_SIZE,
         refine_mode: str | None = None,
         image_sampler: Callable[..., tuple[torch.Tensor, torch.Tensor]] | None = None,
-    ) -> JanusR1GenerationResult:
+    ) -> dict[str, Any]:
         """Run Janus-Pro-R1-style first image, self-check, and regeneration.
 
         Each returned segment includes the prefix embeddings and attention
@@ -818,43 +814,46 @@ class JanusProModel(nn.Module):
         ones_initial = torch.ones_like(initial_logps)
         ones_final = torch.ones_like(final_logps)
         segments = {
-            "initial_image": JanusR1Segment(
-                name="initial_image",
-                token_ids=initial_ids,
-                token_log_probs=initial_logps,
-                token_mask=ones_initial,
-                prompt_embeds=cond_embeds,
-                attention_mask=prompt_attention_mask,
-                visual=True,
-                cfg=True,
-            ),
-            "selfcheck_text": JanusR1Segment(
-                name="selfcheck_text",
-                token_ids=text_ids,
-                token_log_probs=text_logps,
-                token_mask=text_mask.to(dtype=text_logps.dtype),
-                prompt_embeds=selfcheck_prompt_embeds,
-                attention_mask=selfcheck_prompt_mask,
-                visual=False,
-                cfg=False,
-            ),
-            "final_image": JanusR1Segment(
-                name="final_image",
-                token_ids=final_ids,
-                token_log_probs=final_logps,
-                token_mask=ones_final,
-                prompt_embeds=final_prompt_embeds,
-                attention_mask=final_prompt_mask,
-                visual=True,
-                cfg=True,
-            ),
+            "initial_image": {
+                "name": "initial_image",
+                "token_ids": initial_ids,
+                "token_log_probs": initial_logps,
+                "token_mask": ones_initial,
+                "prompt_embeds": cond_embeds,
+                "attention_mask": prompt_attention_mask,
+                "prompt_attention_mask": prompt_attention_mask,
+                "visual": True,
+                "cfg": True,
+            },
+            "selfcheck_text": {
+                "name": "selfcheck_text",
+                "token_ids": text_ids,
+                "token_log_probs": text_logps,
+                "token_mask": text_mask.to(dtype=text_logps.dtype),
+                "prompt_embeds": selfcheck_prompt_embeds,
+                "attention_mask": selfcheck_prompt_mask,
+                "prompt_attention_mask": selfcheck_prompt_mask,
+                "visual": False,
+                "cfg": False,
+            },
+            "final_image": {
+                "name": "final_image",
+                "token_ids": final_ids,
+                "token_log_probs": final_logps,
+                "token_mask": ones_final,
+                "prompt_embeds": final_prompt_embeds,
+                "attention_mask": final_prompt_mask,
+                "prompt_attention_mask": final_prompt_mask,
+                "visual": True,
+                "cfg": True,
+            },
         }
-        return JanusR1GenerationResult(
-            initial_image=initial_image,
-            final_image=final_image,
-            selfcheck=selfcheck,
-            segments=segments,
-            context={
+        return {
+            "initial_image": initial_image,
+            "final_image": final_image,
+            "selfcheck": selfcheck,
+            "segments": segments,
+            "context": {
                 "cfg_weight": float(cfg_weight),
                 "temperature": float(temperature),
                 "image_token_num": int(image_token_num),
@@ -876,7 +875,7 @@ class JanusProModel(nn.Module):
                 "model_family": getattr(self, "model_family", "janus_pro"),
                 "ar_kv_cache_enabled": True,
             },
-        )
+        }
 
     def _image_embeds(self, image_token_ids: torch.Tensor) -> torch.Tensor:
         return self._base().prepare_gen_img_embeds(image_token_ids)
