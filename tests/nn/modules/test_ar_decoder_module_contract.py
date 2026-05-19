@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from vrl.nn.layers.attention.paged import ARPagedAttentionBackend
-from vrl.nn.modules.ar_decoder import ARDecoderModule, VllmDecoderPagedAttentionBackend
+from vrl.nn.modules.ar_decoder import VllmDecoderPagedAttentionBackend
 
 
-def test_ar_decoder_module_uses_paged_attention_contract() -> None:
-    assert issubclass(ARDecoderModule, ARPagedAttentionBackend)
-    assert issubclass(VllmDecoderPagedAttentionBackend, ARDecoderModule)
+def test_vllm_decoder_backend_uses_paged_attention_contract() -> None:
+    assert issubclass(VllmDecoderPagedAttentionBackend, ARPagedAttentionBackend)

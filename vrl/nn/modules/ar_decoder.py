@@ -21,10 +21,6 @@ from vrl.nn.layers.attention.paged import (
 )
 
 
-class ARDecoderModule(ARPagedAttentionBackend):
-    """Model primitive contract for AR prefill and one-token decode steps."""
-
-
 @dataclass(frozen=True, slots=True)
 class VllmDecoderPagedSequenceState:
     """Per-sequence physical vLLM KV page ownership for decoder-only AR."""
@@ -34,36 +30,6 @@ class VllmDecoderPagedSequenceState:
     row: int
     length: int
     block_ids: tuple[int, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class _PackedPrefill:
-    inputs_embeds: torch.Tensor
-    positions: torch.Tensor
-    query_start_loc: torch.Tensor
-    seq_lens: torch.Tensor
-    last_token_offsets: torch.Tensor
-    states: tuple[VllmDecoderPagedSequenceState, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class _PackedStep:
-    inputs_embeds: torch.Tensor
-    positions: torch.Tensor
-    query_start_loc: torch.Tensor
-    seq_lens: torch.Tensor
-    states: tuple[VllmDecoderPagedSequenceState, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class _PagedForwardContext:
-    query_start_loc: torch.Tensor
-    seq_lens: torch.Tensor
-    block_table: torch.Tensor
-    slot_mapping: torch.Tensor
-    num_actual_tokens: int
-    max_query_len: int
-    max_seq_len: int
 
 
 class _VllmAttentionScaleShim(torch.nn.Module):
@@ -77,7 +43,7 @@ class _VllmAttentionScaleShim(torch.nn.Module):
         self.register_buffer("_v_scale", scale.clone(), persistent=False)
 
 
-class VllmDecoderPagedAttentionBackend(ARDecoderModule):
+class VllmDecoderPagedAttentionBackend(ARPagedAttentionBackend):
     """Run a HF-style decoder trunk with vLLM block tables and paged KV cache."""
 
     def __init__(
@@ -106,40 +72,53 @@ class VllmDecoderPagedAttentionBackend(ARDecoderModule):
         self,
         request: ARPagedAttentionPrefillInput,
     ) -> ARPagedAttentionPrefillOutput:
-        packed = self._pack_prefill(request)
+        (
+            inputs_embeds,
+            positions,
+            query_start_loc,
+            seq_lens,
+            last_token_offsets,
+            states,
+        ) = self._pack_prefill(request)
         last_hidden_states = self._forward_paged_trunk(
-            packed.inputs_embeds,
-            positions=packed.positions,
-            query_start_loc=packed.query_start_loc,
-            seq_lens=packed.seq_lens,
-            states=packed.states,
+            inputs_embeds,
+            positions=positions,
+            query_start_loc=query_start_loc,
+            seq_lens=seq_lens,
+            states=states,
         )
         return ARPagedAttentionPrefillOutput(
-            last_hidden=last_hidden_states.index_select(0, packed.last_token_offsets),
-            sequence_states=packed.states,
+            last_hidden=last_hidden_states.index_select(0, last_token_offsets),
+            sequence_states=states,
             metrics={
                 "backend": self.backend_label,
-                "prefill_tokens": int(packed.inputs_embeds.shape[0]),
+                "prefill_tokens": int(inputs_embeds.shape[0]),
                 "allocated_blocks": self._next_block_id,
             },
         )
 
     @torch.no_grad()
     def step(self, request: ARPagedAttentionStepInput) -> ARPagedAttentionStepOutput:
-        packed = self._pack_step(request)
+        (
+            inputs_embeds,
+            positions,
+            query_start_loc,
+            seq_lens,
+            states,
+        ) = self._pack_step(request)
         last_hidden_states = self._forward_paged_trunk(
-            packed.inputs_embeds,
-            positions=packed.positions,
-            query_start_loc=packed.query_start_loc,
-            seq_lens=packed.seq_lens,
-            states=packed.states,
+            inputs_embeds,
+            positions=positions,
+            query_start_loc=query_start_loc,
+            seq_lens=seq_lens,
+            states=states,
         )
         return ARPagedAttentionStepOutput(
             last_hidden=last_hidden_states,
-            sequence_states=packed.states,
+            sequence_states=states,
             metrics={
                 "backend": self.backend_label,
-                "decode_tokens": int(packed.inputs_embeds.shape[0]),
+                "decode_tokens": int(inputs_embeds.shape[0]),
                 "allocated_blocks": self._next_block_id,
             },
         )
@@ -153,7 +132,17 @@ class VllmDecoderPagedAttentionBackend(ARDecoderModule):
             "vllm": self.kernels.debug_info(),
         }
 
-    def _pack_prefill(self, request: ARPagedAttentionPrefillInput) -> _PackedPrefill:
+    def _pack_prefill(
+        self,
+        request: ARPagedAttentionPrefillInput,
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        tuple[VllmDecoderPagedSequenceState, ...],
+    ]:
         embeds = request.inputs_embeds
         mask = request.attention_mask
         self._validate_runtime_tensor(embeds)
@@ -191,24 +180,33 @@ class VllmDecoderPagedAttentionBackend(ARDecoderModule):
                 )
             )
         self._next_sequence_id += embeds.shape[0]
-        return _PackedPrefill(
-            inputs_embeds=torch.cat(packed_embeds, dim=0),
-            positions=torch.cat(packed_positions, dim=0),
-            query_start_loc=torch.tensor(
+        return (
+            torch.cat(packed_embeds, dim=0),
+            torch.cat(packed_positions, dim=0),
+            torch.tensor(
                 query_starts,
                 dtype=torch.int32,
                 device=embeds.device,
             ),
-            seq_lens=lengths.to(device=embeds.device, dtype=torch.int32),
-            last_token_offsets=torch.tensor(
+            lengths.to(device=embeds.device, dtype=torch.int32),
+            torch.tensor(
                 last_offsets,
                 dtype=torch.long,
                 device=embeds.device,
             ),
-            states=tuple(states),
+            tuple(states),
         )
 
-    def _pack_step(self, request: ARPagedAttentionStepInput) -> _PackedStep:
+    def _pack_step(
+        self,
+        request: ARPagedAttentionStepInput,
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        tuple[VllmDecoderPagedSequenceState, ...],
+    ]:
         embeds = request.input_embeds
         self._validate_runtime_tensor(embeds)
         if embeds.shape[1] != 1:
@@ -239,20 +237,20 @@ class VllmDecoderPagedAttentionBackend(ARDecoderModule):
             device=embeds.device,
         )
         batch = embeds.shape[0]
-        return _PackedStep(
-            inputs_embeds=embeds[:, 0, :],
-            positions=positions,
-            query_start_loc=torch.arange(
+        return (
+            embeds[:, 0, :],
+            positions,
+            torch.arange(
                 batch + 1,
                 dtype=torch.int32,
                 device=embeds.device,
             ),
-            seq_lens=torch.tensor(
+            torch.tensor(
                 [state.length for state in next_states],
                 dtype=torch.int32,
                 device=embeds.device,
             ),
-            states=next_states,
+            next_states,
         )
 
     def _forward_paged_trunk(
@@ -268,7 +266,13 @@ class VllmDecoderPagedAttentionBackend(ARDecoderModule):
             device=inputs_embeds.device,
             dtype=inputs_embeds.dtype,
         )
-        context = self._build_paged_forward_context(
+        (
+            block_table,
+            slot_mapping,
+            num_actual_tokens,
+            max_query_len,
+            max_seq_len,
+        ) = self._build_paged_forward_inputs(
             positions=positions,
             query_start_loc=query_start_loc,
             seq_lens=seq_lens,
@@ -289,7 +293,13 @@ class VllmDecoderPagedAttentionBackend(ARDecoderModule):
                 decoder_layer.self_attn,
                 hidden_states,
                 position_embeddings=position_embeddings,
-                context=context,
+                query_start_loc=query_start_loc,
+                seq_lens=seq_lens,
+                block_table=block_table,
+                slot_mapping=slot_mapping,
+                num_actual_tokens=num_actual_tokens,
+                max_query_len=max_query_len,
+                max_seq_len=max_seq_len,
             )
             hidden_states = residual + hidden_states
 
@@ -306,7 +316,13 @@ class VllmDecoderPagedAttentionBackend(ARDecoderModule):
         hidden_states: torch.Tensor,
         *,
         position_embeddings: tuple[torch.Tensor, torch.Tensor],
-        context: _PagedForwardContext,
+        query_start_loc: torch.Tensor,
+        seq_lens: torch.Tensor,
+        block_table: torch.Tensor,
+        slot_mapping: torch.Tensor,
+        num_actual_tokens: int,
+        max_query_len: int,
+        max_seq_len: int,
     ) -> torch.Tensor:
         num_heads = self._num_attention_heads(attention)
         num_kv_heads = self._num_key_value_heads(attention)
@@ -334,16 +350,16 @@ class VllmDecoderPagedAttentionBackend(ARDecoderModule):
             key=key_states,
             value=value_states,
             kv_cache=kv_cache,
-            slot_mapping=context.slot_mapping,
+            slot_mapping=slot_mapping,
         )
         metadata = self.kernels.make_flash_attention_metadata(
-            num_actual_tokens=context.num_actual_tokens,
-            max_query_len=context.max_query_len,
-            query_start_loc=context.query_start_loc,
-            max_seq_len=context.max_seq_len,
-            seq_lens=context.seq_lens,
-            block_table=context.block_table,
-            slot_mapping=context.slot_mapping,
+            num_actual_tokens=num_actual_tokens,
+            max_query_len=max_query_len,
+            query_start_loc=query_start_loc,
+            max_seq_len=max_seq_len,
+            seq_lens=seq_lens,
+            block_table=block_table,
+            slot_mapping=slot_mapping,
         )
         output = self.kernels.run_flash_attention(
             impl=impl,
@@ -356,14 +372,14 @@ class VllmDecoderPagedAttentionBackend(ARDecoderModule):
         )
         return attention.o_proj(output)
 
-    def _build_paged_forward_context(
+    def _build_paged_forward_inputs(
         self,
         *,
         positions: torch.Tensor,
         query_start_loc: torch.Tensor,
         seq_lens: torch.Tensor,
         states: SequenceABC[VllmDecoderPagedSequenceState],
-    ) -> _PagedForwardContext:
+    ) -> tuple[torch.Tensor, torch.Tensor, int, int, int]:
         max_blocks = max(len(state.block_ids) for state in states)
         block_table = self.kernels.new_block_table(
             max_num_reqs=len(states),
@@ -380,14 +396,12 @@ class VllmDecoderPagedAttentionBackend(ARDecoderModule):
             query_start_loc=query_start_loc,
             positions=positions,
         )
-        return _PagedForwardContext(
-            query_start_loc=query_start_loc,
-            seq_lens=seq_lens,
-            block_table=block_table.get_device_tensor(len(states))[:, :max_blocks],
-            slot_mapping=slot_mapping,
-            num_actual_tokens=int(positions.shape[0]),
-            max_query_len=int((query_start_loc[1:] - query_start_loc[:-1]).max().item()),
-            max_seq_len=int(seq_lens.max().item()),
+        return (
+            block_table.get_device_tensor(len(states))[:, :max_blocks],
+            slot_mapping,
+            int(positions.shape[0]),
+            int((query_start_loc[1:] - query_start_loc[:-1]).max().item()),
+            int(seq_lens.max().item()),
         )
 
     def _ensure_runtime_objects(self, *, device: torch.device, dtype: torch.dtype) -> None:
@@ -563,7 +577,6 @@ def _apply_rotary_pos_emb(
 
 
 __all__ = [
-    "ARDecoderModule",
     "VllmDecoderPagedAttentionBackend",
     "VllmDecoderPagedSequenceState",
 ]
