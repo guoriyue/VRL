@@ -131,8 +131,12 @@ def build_algorithm_and_evaluator_from_cfg(
             algorithm=GRPO(algorithm_config),
             evaluator=DiffusionSDELogProbEvaluator(
                 scheduler,
-                noise_level=float(getattr(collector_config, "noise_level", 1.0)),
-                sde_type=str(getattr(collector_config, "sde_type", "sde")),
+                noise_level=float(
+                    _collector_config_value(collector_config, "noise_level", 1.0),
+                ),
+                sde_type=str(
+                    _collector_config_value(collector_config, "sde_type", "sde"),
+                ),
             ),
         )
 
@@ -278,6 +282,13 @@ def _cfg_select(cfg: DictConfig, path: str, default: Any) -> Any:
     if hasattr(value, "_metadata"):
         container = OmegaConf.to_container(value, resolve=True)
     return container
+
+
+def _collector_config_value(config: Any, name: str, default: Any) -> Any:
+    getter = getattr(config, "get", None)
+    if callable(getter):
+        return getter(name, default)
+    return getattr(config, name, default)
 
 
 __all__ = [

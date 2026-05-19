@@ -396,9 +396,6 @@ class CosmosPredict25Model(DiffusionModelBase):
             "width": state.width,
             "num_frames": state.num_frames,
             "fps": state.fps,
-            "cond_mask": state.cond_mask,
-            "cond_indicator": state.cond_indicator,
-            "padding_mask": state.padding_mask,
             "conditional_frame_timestep": state.conditional_frame_timestep,
         }
 
@@ -409,6 +406,15 @@ class CosmosPredict25Model(DiffusionModelBase):
             "prompt_attention_mask": None,
             "pooled_prompt_embeds": None,
             "latents_clean": state.latents.detach(),
+            "cond_mask": _align_replay_tensor(state.cond_mask, state.latents.shape[0]),
+            "cond_indicator": _align_replay_tensor(
+                state.cond_indicator,
+                state.latents.shape[0],
+            ),
+            "padding_mask": _align_replay_tensor(
+                state.padding_mask,
+                state.latents.shape[0],
+            ),
         }
 
     def restore_eval_state(
@@ -429,9 +435,13 @@ class CosmosPredict25Model(DiffusionModelBase):
             guidance_scale=batch_context["guidance_scale"],
             do_cfg=batch_context["cfg"] and batch_context["guidance_scale"] > 1.0,
             cond_latent=cond_latent,
-            cond_mask=batch_context["cond_mask"],
-            cond_indicator=batch_context["cond_indicator"],
-            padding_mask=batch_context["padding_mask"],
+            cond_mask=_replay_tensor(replay_tensors, batch_context, "cond_mask"),
+            cond_indicator=_replay_tensor(replay_tensors, batch_context, "cond_indicator"),
+            padding_mask=_shared_replay_tensor(
+                replay_tensors,
+                batch_context,
+                "padding_mask",
+            ),
             seed=0,
             height=batch_context["height"],
             width=batch_context["width"],
@@ -634,9 +644,13 @@ class CosmosPredict25ReplayModel(CosmosPredict25Model):
             guidance_scale=batch_context["guidance_scale"],
             do_cfg=batch_context["cfg"] and batch_context["guidance_scale"] > 1.0,
             cond_latent=cond_latent,
-            cond_mask=batch_context["cond_mask"],
-            cond_indicator=batch_context["cond_indicator"],
-            padding_mask=batch_context["padding_mask"],
+            cond_mask=_replay_tensor(replay_tensors, batch_context, "cond_mask"),
+            cond_indicator=_replay_tensor(replay_tensors, batch_context, "cond_indicator"),
+            padding_mask=_shared_replay_tensor(
+                replay_tensors,
+                batch_context,
+                "padding_mask",
+            ),
             seed=0,
             height=batch_context["height"],
             width=batch_context["width"],
@@ -680,6 +694,33 @@ class CosmosPredict25ReplayModel(CosmosPredict25Model):
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
         del latents
         raise RuntimeError("CosmosPredict25ReplayModel cannot decode latents")
+
+
+def _align_replay_tensor(value: Any, batch_size: int) -> Any:
+    if not isinstance(value, torch.Tensor) or value.shape[:1] != (1,) or batch_size == 1:
+        return value
+    return value.expand(batch_size, *value.shape[1:]).contiguous()
+
+
+def _replay_tensor(
+    replay_tensors: dict[str, Any],
+    batch_context: dict[str, Any],
+    name: str,
+) -> Any:
+    if name in replay_tensors:
+        return replay_tensors[name]
+    return batch_context[name]
+
+
+def _shared_replay_tensor(
+    replay_tensors: dict[str, Any],
+    batch_context: dict[str, Any],
+    name: str,
+) -> Any:
+    value = _replay_tensor(replay_tensors, batch_context, name)
+    if isinstance(value, torch.Tensor) and value.ndim > 0:
+        return value[:1]
+    return value
 
 
 __all__ = [

@@ -25,6 +25,8 @@ rollout:
   rollout_batch_size: 1
   sample_batch_size: 1
   noise_level: 0.7
+  sde:
+    type: cps
   same_latent: false
 
 trainer:

@@ -406,23 +406,14 @@ class CosmosPredict2Model(DiffusionModelBase):
     ) -> dict[str, Any]:
         """Project SamplingState -> RolloutBatch.context (shared metadata).
 
-        The cond/uncond/padding masks + indicators are shared across the
-        batch (not per-sample), so they live in ``context`` rather than
-        ``extras``. The scheduler is intentionally NOT packed — the eval
-        path reads ``self.pipeline.scheduler`` directly via this model
-        so the collector never holds a reference to a private mutable
-        object.
+        Tensor conditioning is packed in replay tensors, not context, because
+        trajectory context is intentionally JSON-safe metadata only.
         """
         return {
             "guidance_scale": state.guidance_scale,
             "cfg": state.do_cfg,
             "model_family": self.family,
             "fps": state.fps,
-            "cond_mask": state.cond_mask,
-            "uncond_mask": state.uncond_mask,
-            "padding_mask": state.padding_mask,
-            "cond_indicator": state.cond_indicator,
-            "uncond_indicator": state.uncond_indicator,
             "sigma_conditioning": state.sigma_conditioning,
         }
 
@@ -439,6 +430,23 @@ class CosmosPredict2Model(DiffusionModelBase):
             "prompt_embeds": state.prompt_embeds,
             "negative_prompt_embeds": state.negative_prompt_embeds,
             "init_latents": state.init_latents,
+            "cond_mask": _align_replay_tensor(state.cond_mask, state.latents.shape[0]),
+            "uncond_mask": _align_replay_tensor(
+                state.uncond_mask,
+                state.latents.shape[0],
+            ),
+            "padding_mask": _align_replay_tensor(
+                state.padding_mask,
+                state.latents.shape[0],
+            ),
+            "cond_indicator": _align_replay_tensor(
+                state.cond_indicator,
+                state.latents.shape[0],
+            ),
+            "uncond_indicator": _align_replay_tensor(
+                state.uncond_indicator,
+                state.latents.shape[0],
+            ),
         }
 
     def restore_eval_state(
@@ -470,11 +478,19 @@ class CosmosPredict2Model(DiffusionModelBase):
             guidance_scale=batch_context["guidance_scale"],
             do_cfg=batch_context["cfg"] and batch_context["guidance_scale"] > 1.0,
             init_latents=replay_tensors["init_latents"],
-            cond_mask=batch_context["cond_mask"],
-            uncond_mask=batch_context["uncond_mask"],
-            padding_mask=batch_context["padding_mask"],
-            cond_indicator=batch_context["cond_indicator"],
-            uncond_indicator=batch_context["uncond_indicator"],
+            cond_mask=_replay_tensor(replay_tensors, batch_context, "cond_mask"),
+            uncond_mask=_replay_tensor(replay_tensors, batch_context, "uncond_mask"),
+            padding_mask=_shared_replay_tensor(
+                replay_tensors,
+                batch_context,
+                "padding_mask",
+            ),
+            cond_indicator=_replay_tensor(replay_tensors, batch_context, "cond_indicator"),
+            uncond_indicator=_replay_tensor(
+                replay_tensors,
+                batch_context,
+                "uncond_indicator",
+            ),
             fps=batch_context["fps"],
             seed=0,
             sigma_conditioning=batch_context.get("sigma_conditioning", 0.0001),
@@ -618,11 +634,19 @@ class CosmosPredict2ReplayModel(CosmosPredict2Model):
             guidance_scale=batch_context["guidance_scale"],
             do_cfg=batch_context["cfg"] and batch_context["guidance_scale"] > 1.0,
             init_latents=replay_tensors["init_latents"],
-            cond_mask=batch_context["cond_mask"],
-            uncond_mask=batch_context["uncond_mask"],
-            padding_mask=batch_context["padding_mask"],
-            cond_indicator=batch_context["cond_indicator"],
-            uncond_indicator=batch_context["uncond_indicator"],
+            cond_mask=_replay_tensor(replay_tensors, batch_context, "cond_mask"),
+            uncond_mask=_replay_tensor(replay_tensors, batch_context, "uncond_mask"),
+            padding_mask=_shared_replay_tensor(
+                replay_tensors,
+                batch_context,
+                "padding_mask",
+            ),
+            cond_indicator=_replay_tensor(replay_tensors, batch_context, "cond_indicator"),
+            uncond_indicator=_replay_tensor(
+                replay_tensors,
+                batch_context,
+                "uncond_indicator",
+            ),
             fps=batch_context["fps"],
             seed=0,
             sigma_conditioning=batch_context.get("sigma_conditioning", 0.0001),
@@ -631,6 +655,33 @@ class CosmosPredict2ReplayModel(CosmosPredict2Model):
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
         del latents
         raise RuntimeError("CosmosPredict2ReplayModel cannot decode latents")
+
+
+def _align_replay_tensor(value: Any, batch_size: int) -> Any:
+    if not isinstance(value, torch.Tensor) or value.shape[:1] != (1,) or batch_size == 1:
+        return value
+    return value.expand(batch_size, *value.shape[1:]).contiguous()
+
+
+def _replay_tensor(
+    replay_tensors: dict[str, Any],
+    batch_context: dict[str, Any],
+    name: str,
+) -> Any:
+    if name in replay_tensors:
+        return replay_tensors[name]
+    return batch_context[name]
+
+
+def _shared_replay_tensor(
+    replay_tensors: dict[str, Any],
+    batch_context: dict[str, Any],
+    name: str,
+) -> Any:
+    value = _replay_tensor(replay_tensors, batch_context, name)
+    if isinstance(value, torch.Tensor) and value.ndim > 0:
+        return value[:1]
+    return value
 
 
 __all__ = [
