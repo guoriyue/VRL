@@ -9,10 +9,6 @@ from vrl.rewards.types import RewardRollout, RewardTrajectory, RewardTrajectoryS
 
 
 def __getattr__(name: str) -> Any:
-    if name == "RemoteReward":
-        from vrl.rewards.remote import RemoteReward
-
-        return RemoteReward
     if name == "VideoReward":
         from vrl.rewards.video_reward import VideoReward
 
@@ -22,7 +18,6 @@ def __getattr__(name: str) -> Any:
 __all__ = [
     "CompositeReward",
     "MultiReward",
-    "RemoteReward",
     "RewardFunction",
     "RewardRollout",
     "RewardTrajectory",

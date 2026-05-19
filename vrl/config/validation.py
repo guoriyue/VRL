@@ -156,6 +156,24 @@ def validate_reward_config(cfg: DictConfig) -> None:
         for subkey in required_subkeys:
             if subkey not in sub:
                 raise ValueError(f"config missing required field: reward.kwargs.{name}.{subkey}")
+        if name == "video_reward":
+            backend = str(sub.get("backend"))
+            if backend != "stub":
+                raise ValueError(
+                    "reward.kwargs.video_reward.backend only supports 'stub' until the "
+                    "Ray reward inference runtime is implemented",
+                )
+            removed_endpoint_fields = [
+                key
+                for key in ("enqueue_url", "fetch_url", "token", "poll_interval_s", "max_wait_s")
+                if key in sub
+            ]
+            if removed_endpoint_fields:
+                fields = ", ".join(sorted(removed_endpoint_fields))
+                raise ValueError(
+                    "reward.kwargs.video_reward no longer supports external reward "
+                    f"endpoint fields: {fields}",
+                )
 
 
 def validate_training_config(cfg: DictConfig) -> None:
