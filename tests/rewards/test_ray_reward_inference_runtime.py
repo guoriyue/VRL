@@ -9,8 +9,8 @@ import pytest
 from vrl.rewards.inference import (
     RewardInferenceArtifact,
     RewardInferenceRequest,
-    build_reward_inference_runtime,
 )
+from vrl.rewards.ray.launcher import build_reward_ray_runtime
 
 
 def test_ray_reward_runtime_scores_artifacts_with_fake_worker() -> None:
@@ -18,7 +18,7 @@ def test_ray_reward_runtime_scores_artifacts_with_fake_worker() -> None:
     ray.shutdown()
     runtime = None
     try:
-        runtime = build_reward_inference_runtime(
+        runtime = build_reward_ray_runtime(
             {
                 "inference_runtime": "ray",
                 "worker_config": {

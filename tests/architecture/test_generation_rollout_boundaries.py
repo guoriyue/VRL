@@ -57,8 +57,24 @@ def test_shared_ray_substrate_stays_domain_neutral() -> None:
     assert not violations, _format_violations(violations)
 
 
-def test_reward_runtime_does_not_recreate_ray_wrapper_package() -> None:
-    assert not (VRL_ROOT / "rewards" / "ray").exists()
+def test_reward_ray_adapter_stays_lean() -> None:
+    ray_root = VRL_ROOT / "rewards" / "ray"
+    assert _module_filenames(ray_root) == {
+        "__init__.py",
+        "launcher.py",
+        "runtime.py",
+    }
+    forbidden_text = (
+        "class RewardInferenceArtifact",
+        "class RewardInferenceRequest",
+        "class RewardInferenceResult",
+        "class RewardScoringWorker",
+        "class VideoRewardArtifactStore",
+    )
+    for path in _python_files(ray_root):
+        text = path.read_text(encoding="utf-8")
+        for snippet in forbidden_text:
+            assert snippet not in text
     assert not (VRL_ROOT / "rewards" / "ray.py").exists()
     assert not (VRL_ROOT / "rewards" / "inference").exists()
     assert not (VRL_ROOT / "rewards" / "video_inference").exists()

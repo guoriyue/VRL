@@ -7,8 +7,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
-from vrl.ray.runtime import RayActorMethodRuntime
-
 
 @dataclass(frozen=True, slots=True)
 class RewardInferenceArtifact:
@@ -153,30 +151,6 @@ class RewardInferenceRuntime(Protocol):
     async def shutdown(self) -> None: ...
 
 
-@dataclass(slots=True)
-class RewardInferenceActorRuntime:
-    """Reward request/result adapter over a generic actor-method runtime."""
-
-    actor_runtime: RayActorMethodRuntime
-
-    async def score_batch(
-        self,
-        request: RewardInferenceRequest,
-    ) -> list[RewardInferenceResult]:
-        if not request.artifacts:
-            return []
-        shards = shard_reward_request(
-            request,
-            num_shards=self.actor_runtime.num_workers,
-        )
-        nested = await self.actor_runtime.map(shards)
-        results = [result for shard_results in nested for result in shard_results]
-        return validate_reward_results(request, results)
-
-    async def shutdown(self) -> None:
-        await self.actor_runtime.shutdown()
-
-
 def shard_reward_request(
     request: RewardInferenceRequest,
     *,
@@ -244,28 +218,16 @@ def build_reward_inference_runtime(
     if not isinstance(worker_config, Mapping):
         raise TypeError("reward worker_config must be a mapping")
 
-    from vrl.rewards.scoring_worker import RewardScoringWorker
+    from vrl.rewards.ray.launcher import build_reward_ray_runtime
 
-    return RewardInferenceActorRuntime(
-        RayActorMethodRuntime(
-            worker_cls=RewardScoringWorker,
-            worker_config=worker_config,
-            method_name="score_batch",
-            worker_id_prefix="reward",
-            num_workers=int(cfg.get("num_workers", 1)),
-            cpus_per_worker=float(cfg.get("cpus_per_worker", 0.5)),
-            gpus_per_worker=float(cfg.get("gpus_per_worker", 0.0)),
-            max_inflight_per_worker=int(cfg.get("max_inflight_batches", 1)),
-            startup_method="load_scorer",
-            init_ray=init_ray,
-            ray_init_kwargs=dict(ray_init_kwargs or {}),
-            release_after_call=bool(cfg.get("release_after_score", False)),
-        ),
+    return build_reward_ray_runtime(
+        cfg,
+        init_ray=init_ray,
+        ray_init_kwargs=ray_init_kwargs,
     )
 
 
 __all__ = [
-    "RewardInferenceActorRuntime",
     "RewardInferenceArtifact",
     "RewardInferenceRequest",
     "RewardInferenceResult",
