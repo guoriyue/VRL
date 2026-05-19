@@ -6,11 +6,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from vrl.generation.capabilities import family_capability_from_value
-from vrl.generation.execution.chunks import (
-    SampleChunk,
+from vrl.generation.execution.chunks import SampleChunk
+from vrl.generation.execution.distributed.types import (
+    ChunkExecutionEnvelope,
+    DistributedWorkerHandle,
 )
 from vrl.generation.execution.planner import EnginePlan, ExecutionStage, build_engine_plan
-from vrl.generation.ray.types import RayChunkExecutionEnvelope, RayWorkerHandle
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
 
 
@@ -23,7 +24,7 @@ class DeviceAssignment:
     gpu_ids: tuple[int, ...]
     chunk: SampleChunk
     execution_stage: ExecutionStage | None = None
-    envelope: RayChunkExecutionEnvelope | None = None
+    envelope: ChunkExecutionEnvelope | None = None
 
     @property
     def execution_unit(self) -> ExecutionStage | None:
@@ -39,7 +40,7 @@ class DistributedGenerationPlan:
 
 
 class DistributedExecutionPlanner:
-    """Plan chunk placement across Ray generation workers."""
+    """Plan chunk placement across generation workers."""
 
     def __init__(self, capability: Any | None = None) -> None:
         self.capability = family_capability_from_value(capability)
@@ -47,14 +48,14 @@ class DistributedExecutionPlanner:
     def plan(
         self,
         request: GenerationRequest,
-        workers: list[RayWorkerHandle],
+        workers: list[DistributedWorkerHandle],
     ) -> list[DeviceAssignment]:
         return list(self.plan_with_engine(request, workers).assignments)
 
     def plan_with_engine(
         self,
         request: GenerationRequest,
-        workers: list[RayWorkerHandle],
+        workers: list[DistributedWorkerHandle],
         *,
         sample_rows: list[GenerationSampleRow] | None = None,
     ) -> DistributedGenerationPlan:
@@ -85,7 +86,7 @@ class DistributedExecutionPlanner:
         for idx, chunk in enumerate(engine_plan.chunks):
             worker = workers[idx % len(workers)]
             chunk_stage = engine_plan.chunk_stage_for(chunk)
-            envelope = RayChunkExecutionEnvelope(
+            envelope = ChunkExecutionEnvelope(
                 request=request,
                 chunk=chunk,
                 plan_id=engine_plan.request_id,
@@ -102,7 +103,7 @@ class DistributedExecutionPlanner:
                     chunk=chunk,
                     execution_stage=chunk_stage,
                     envelope=envelope,
-                )
+                ),
             )
         return DistributedGenerationPlan(
             engine_plan=engine_plan,

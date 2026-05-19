@@ -1,4 +1,4 @@
-"""Types shared by Ray-backed generation execution."""
+"""Types for distributed generation execution."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from vrl.generation.types import GenerationRequest
 
 
 @dataclass(frozen=True, slots=True)
-class RayWorkerHandle:
+class DistributedWorkerHandle:
     """Scheduler-visible metadata for one generation worker actor."""
 
     worker_id: str
@@ -22,7 +22,7 @@ class RayWorkerHandle:
 
 
 @dataclass(frozen=True, slots=True)
-class RayChunkExecutionEnvelope:
+class ChunkExecutionEnvelope:
     """Authoritative chunk execution payload sent from the driver to a worker."""
 
     request: GenerationRequest
@@ -47,7 +47,7 @@ class RayChunkExecutionEnvelope:
 
 
 @dataclass(slots=True)
-class RayChunkResult:
+class ChunkExecutionResult:
     """Envelope returned by a generation worker for one generation chunk."""
 
     request_id: str
@@ -63,8 +63,9 @@ class RayChunkResult:
     policy_version: int | None = None
     error: str | None = None
 
+
 __all__ = [
-    "RayChunkExecutionEnvelope",
-    "RayChunkResult",
-    "RayWorkerHandle",
+    "ChunkExecutionEnvelope",
+    "ChunkExecutionResult",
+    "DistributedWorkerHandle",
 ]

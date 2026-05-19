@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Protocol
 
-from vrl.generation.ray.dependencies import require_ray
-from vrl.generation.ray.types import RayWorkerHandle
+from vrl.generation.execution.distributed import DistributedWorkerHandle
+from vrl.ray.dependencies import require_ray
 
 
 class GenerationWeightSync(Protocol):
@@ -23,7 +23,7 @@ class GenerationWeightSync(Protocol):
 class RayGenerationWeightSync(GenerationWeightSync):
     """Call ``update_weights`` on every Ray generation worker."""
 
-    def __init__(self, workers: list[RayWorkerHandle]) -> None:
+    def __init__(self, workers: list[DistributedWorkerHandle]) -> None:
         self.workers = list(workers)
 
     async def push_to_rollout_workers(

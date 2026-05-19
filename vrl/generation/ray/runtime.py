@@ -6,12 +6,12 @@ import contextlib
 from dataclasses import replace
 from typing import Any
 
+from vrl.generation.execution.distributed import DistributedWorkerHandle
 from vrl.generation.protocols import GenerationRuntime
-from vrl.generation.ray.dependencies import require_ray
-from vrl.generation.ray.executor import DistributedGenerationExecutor
-from vrl.generation.ray.types import RayWorkerHandle
+from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.weight_sync import GenerationWeightSync
 from vrl.generation.types import GenerationOutput, GenerationRequest
+from vrl.ray.dependencies import require_ray
 
 
 class RayGenerationRuntime(GenerationRuntime):
@@ -19,10 +19,10 @@ class RayGenerationRuntime(GenerationRuntime):
 
     def __init__(
         self,
-        executor: DistributedGenerationExecutor,
+        executor: RayGenerationExecutor,
         *,
         weight_sync: GenerationWeightSync | None = None,
-        owned_workers: list[RayWorkerHandle] | None = None,
+        owned_workers: list[DistributedWorkerHandle] | None = None,
         owned_actors: list[Any] | None = None,
         placement_group: Any | None = None,
     ) -> None:

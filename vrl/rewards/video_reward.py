@@ -2,41 +2,66 @@
 
 from __future__ import annotations
 
+import json
+import uuid
+from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
-import torch
-
+from vrl.rewards.artifacts import VideoRewardArtifactStore
 from vrl.rewards.base import RewardFunction
+from vrl.rewards.inference import (
+    RewardInferenceRequest,
+    RewardInferenceRuntime,
+    build_reward_inference_runtime,
+    validate_reward_results,
+)
 from vrl.rewards.types import RewardRollout
 
 
 class VideoReward(RewardFunction):
-    """Video/image reward placeholder until the Ray reward runtime is wired."""
+    """Video/image reward adapter over the generic reward inference runtime."""
 
     def __init__(
         self,
         *,
-        backend: str,
+        inference_runtime: str = "ray",
         reward_name: str,
         score_key: str,
-        device: str = "cuda",
         media_type: str = "video",
-        timeout_s: float = 60.0,
+        artifact_dir: str = "outputs/reward_artifacts",
         debug_dir: str = "",
-        stub_scale: float = 0.01,
+        timeout_s: float = 60.0,
+        max_inflight_batches: int = 1,
+        backend: str | None = None,
+        runtime: RewardInferenceRuntime | None = None,
         **kwargs: Any,
     ) -> None:
-        del device, timeout_s, debug_dir, kwargs
-        self.backend = str(backend)
+        del timeout_s
+        if backend is not None:
+            raise ValueError(
+                "reward.kwargs.video_reward.backend is no longer supported; "
+                "use inference_runtime='ray'",
+            )
+        self.inference_runtime = str(inference_runtime)
         self.reward_name = str(reward_name)
         self.score_key = str(score_key)
         self.media_type = str(media_type)
-        self.stub_scale = float(stub_scale)
-        if self.backend != "stub":
-            raise NotImplementedError(
-                "video_reward only supports backend='stub' until the Ray reward "
-                f"inference runtime is implemented; got backend={self.backend!r}.",
-            )
+        self.artifact_store = VideoRewardArtifactStore(
+            artifact_dir,
+            media_type=self.media_type,
+        )
+        self.debug_dir = str(debug_dir)
+        self.last_results: list[Any] = []
+        if runtime is not None:
+            self.runtime = runtime
+        else:
+            runtime_cfg = {
+                **dict(kwargs),
+                "inference_runtime": self.inference_runtime,
+                "max_inflight_batches": max_inflight_batches,
+            }
+            self.runtime = build_reward_inference_runtime(runtime_cfg)
 
     async def score(self, rollout: RewardRollout) -> float:
         return (await self.score_batch([rollout]))[0]
@@ -44,18 +69,38 @@ class VideoReward(RewardFunction):
     async def score_batch(self, rollouts: list[RewardRollout]) -> list[float]:
         if not rollouts:
             return []
-        return self._stub_scores(rollouts)
+        artifacts = self.artifact_store.materialize(rollouts)
+        policy_version = artifacts[0].policy_version if artifacts else None
+        request = RewardInferenceRequest(
+            request_id=f"video-reward-{uuid.uuid4().hex}",
+            artifacts=tuple(artifacts),
+            reward_name=self.reward_name,
+            score_key=self.score_key,
+            policy_version=policy_version,
+            metadata={"media_type": self.media_type},
+        )
+        results = validate_reward_results(request, await self.runtime.score_batch(request))
+        self.last_results = list(results)
+        self._write_debug(request, results)
+        return [float(result.selected_score) for result in results]
 
-    def _stub_scores(self, rollouts: list[RewardRollout]) -> list[float]:
-        scores: list[float] = []
-        for idx, rollout in enumerate(rollouts):
-            output = rollout.trajectory.output
-            if isinstance(output, torch.Tensor):
-                base = float(output.detach().float().mean().item())
-            else:
-                base = 0.0
-            scores.append(base + self.stub_scale * (idx + 1))
-        return scores
+    def _write_debug(self, request: RewardInferenceRequest, results: list[Any]) -> None:
+        if not self.debug_dir:
+            return
+        debug_path = Path(self.debug_dir)
+        debug_path.mkdir(parents=True, exist_ok=True)
+        request_row = {
+            "request_id": request.request_id,
+            "artifact_ids": [artifact.artifact_id for artifact in request.artifacts],
+            "reward_name": request.reward_name,
+            "score_key": request.score_key,
+            "policy_version": request.policy_version,
+        }
+        with (debug_path / "video_reward_requests.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(request_row, sort_keys=True) + "\n")
+        with (debug_path / "video_reward_results.jsonl").open("a", encoding="utf-8") as handle:
+            for result in results:
+                handle.write(json.dumps(asdict(result), sort_keys=True) + "\n")
 
 
 __all__ = ["VideoReward"]

@@ -1,38 +1,35 @@
-"""Distributed generation executor that gathers Ray chunk results."""
+"""Ray-backed generation executor that gathers chunk results."""
 
 from __future__ import annotations
 
-import asyncio
-from collections import deque
 from typing import Any
 
+from vrl.generation.execution.distributed.planner import DistributedExecutionPlanner
+from vrl.generation.execution.distributed.types import (
+    ChunkExecutionResult,
+    DistributedWorkerHandle,
+)
 from vrl.generation.execution.ids import GenerationIdFactory
 from vrl.generation.execution.planner import attach_engine_plan
 from vrl.generation.protocols import ChunkGatherer, PipelineChunkResult
-from vrl.generation.ray.dependencies import require_ray
-from vrl.generation.ray.planner import DistributedExecutionPlanner
-from vrl.generation.ray.types import (
-    RayChunkExecutionEnvelope,
-    RayChunkResult,
-    RayWorkerHandle,
-)
 from vrl.generation.types import GenerationOutput, GenerationRequest
+from vrl.ray.actor_pool import RayActorJob, run_actor_jobs
 
 
-class DistributedGenerationExecutor:
+class RayGenerationExecutor:
     """Execute one GenerationRequest across generation workers."""
 
     def __init__(
         self,
         planner: DistributedExecutionPlanner,
-        workers: list[RayWorkerHandle],
+        workers: list[DistributedWorkerHandle],
         gatherer: ChunkGatherer,
         *,
         id_factory: GenerationIdFactory | None = None,
         max_inflight_chunks_per_worker: int = 1,
     ) -> None:
         if not workers:
-            raise ValueError("DistributedGenerationExecutor requires at least one worker")
+            raise ValueError("RayGenerationExecutor requires at least one worker")
         if max_inflight_chunks_per_worker < 1:
             raise ValueError("max_inflight_chunks_per_worker must be >= 1")
         self.planner = planner
@@ -54,8 +51,8 @@ class DistributedGenerationExecutor:
         assignments = list(generation_plan.assignments)
         engine_plan = generation_plan.engine_plan
         worker_by_id = {worker.worker_id: worker for worker in self.workers}
-        remote_jobs: list[tuple[int, Any, RayWorkerHandle, RayChunkExecutionEnvelope]] = []
-        result_pairs: list[tuple[int, RayChunkResult]] = []
+        remote_jobs: list[RayActorJob] = []
+        result_pairs: list[tuple[int, ChunkExecutionResult]] = []
 
         for job_index, assignment in enumerate(assignments):
             worker = worker_by_id[assignment.worker_id]
@@ -67,14 +64,23 @@ class DistributedGenerationExecutor:
             execute_chunk = actor.execute_chunk
             remote = getattr(execute_chunk, "remote", None)
             if callable(remote):
-                remote_jobs.append((job_index, remote, worker, assignment.envelope))
+                remote_jobs.append(
+                    RayActorJob(
+                        job_index=job_index,
+                        worker_id=worker.worker_id,
+                        remote_method=remote,
+                        payload=assignment.envelope,
+                    ),
+                )
             else:
                 result_pairs.append(
-                    (job_index, execute_chunk(assignment.envelope))
+                    (job_index, execute_chunk(assignment.envelope)),
                 )
 
         if remote_jobs:
-            result_pairs.extend(await self._run_remote_jobs(remote_jobs))
+            result_pairs.extend(
+                await self._run_remote_jobs(remote_jobs),
+            )
 
         results = [result for _, result in sorted(result_pairs, key=lambda pair: pair[0])]
 
@@ -122,45 +128,15 @@ class DistributedGenerationExecutor:
 
     async def _run_remote_jobs(
         self,
-        jobs: list[tuple[int, Any, RayWorkerHandle, RayChunkExecutionEnvelope]],
-    ) -> list[tuple[int, RayChunkResult]]:
-        ray = require_ray()
-        pending = deque(jobs)
-        inflight_by_worker = {worker.worker_id: 0 for _, _, worker, _ in jobs}
-        ref_to_job: dict[Any, tuple[int, str]] = {}
-        result_pairs: list[tuple[int, RayChunkResult]] = []
-
-        def _submit_ready() -> None:
-            made_progress = True
-            while pending and made_progress:
-                made_progress = False
-                for _ in range(len(pending)):
-                    job_index, remote, worker, envelope = pending.popleft()
-                    if inflight_by_worker[worker.worker_id] >= self.max_inflight_chunks_per_worker:
-                        pending.append((job_index, remote, worker, envelope))
-                        continue
-                    ref = remote(envelope)
-                    ref_to_job[ref] = (job_index, worker.worker_id)
-                    inflight_by_worker[worker.worker_id] += 1
-                    made_progress = True
-
-        _submit_ready()
-        while ref_to_job:
-            ready, _ = await asyncio.to_thread(
-                ray.wait,
-                list(ref_to_job),
-                num_returns=1,
-            )
-            job_index, worker_id = ref_to_job.pop(ready[0])
-            inflight_by_worker[worker_id] -= 1
-            result = await asyncio.to_thread(ray.get, ready[0])
-            result_pairs.append((job_index, result))
-            _submit_ready()
-
-        return result_pairs
+        jobs: list[RayActorJob],
+    ) -> list[tuple[int, Any]]:
+        return await run_actor_jobs(
+            jobs,
+            max_inflight_per_actor=self.max_inflight_chunks_per_worker,
+        )
 
 
-DistributedRolloutExecutor = DistributedGenerationExecutor
+RayRolloutExecutor = RayGenerationExecutor
 
 
-__all__ = ["DistributedGenerationExecutor", "DistributedRolloutExecutor"]
+__all__ = ["RayGenerationExecutor", "RayRolloutExecutor"]

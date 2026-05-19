@@ -24,7 +24,7 @@ _REWARD_REQUIRED_KWARGS: dict[str, tuple[str, ...]] = {
     "image_qa_cli": ("command",),
     "pickscore": ("processor_name", "model_name"),
     "ocr": ("debug_dir",),
-    "video_reward": ("backend", "reward_name", "score_key"),
+    "video_reward": ("inference_runtime", "reward_name", "score_key"),
 }
 
 
@@ -157,15 +157,25 @@ def validate_reward_config(cfg: DictConfig) -> None:
             if subkey not in sub:
                 raise ValueError(f"config missing required field: reward.kwargs.{name}.{subkey}")
         if name == "video_reward":
-            backend = str(sub.get("backend"))
-            if backend != "stub":
+            if "backend" in sub:
                 raise ValueError(
-                    "reward.kwargs.video_reward.backend only supports 'stub' until the "
-                    "Ray reward inference runtime is implemented",
+                    "reward.kwargs.video_reward.backend is no longer supported; "
+                    "use reward.kwargs.video_reward.inference_runtime=ray",
                 )
+            inference_runtime = str(sub.get("inference_runtime"))
+            if inference_runtime != "ray":
+                raise ValueError("reward.kwargs.video_reward.inference_runtime must be 'ray'")
             removed_endpoint_fields = [
                 key
-                for key in ("enqueue_url", "fetch_url", "token", "poll_interval_s", "max_wait_s")
+                for key in (
+                    "enqueue_url",
+                    "fetch_url",
+                    "token",
+                    "poll_interval_s",
+                    "max_wait_s",
+                    "stub_scale",
+                    "device",
+                )
                 if key in sub
             ]
             if removed_endpoint_fields:

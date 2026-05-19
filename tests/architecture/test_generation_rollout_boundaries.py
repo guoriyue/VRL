@@ -44,6 +44,82 @@ def test_removed_boundary_packages_stay_removed() -> None:
     assert not (VRL_ROOT / "runtime").exists()
 
 
+def test_shared_ray_substrate_stays_domain_neutral() -> None:
+    violations = _forbidden_imports(
+        VRL_ROOT / "ray",
+        forbidden=(
+            "vrl.generation",
+            "vrl.rewards",
+            "vrl.rollouts",
+            "vrl.trainers",
+        ),
+    )
+    assert not violations, _format_violations(violations)
+
+
+def test_reward_runtime_does_not_recreate_ray_wrapper_package() -> None:
+    assert not (VRL_ROOT / "rewards" / "ray").exists()
+    assert not (VRL_ROOT / "rewards" / "ray.py").exists()
+    assert not (VRL_ROOT / "rewards" / "inference").exists()
+    assert not (VRL_ROOT / "rewards" / "video_inference").exists()
+    assert not list((VRL_ROOT / "rewards").rglob("spec.py"))
+
+
+def test_reward_inference_is_a_single_domain_module() -> None:
+    assert (VRL_ROOT / "rewards" / "inference.py").exists()
+    assert not (VRL_ROOT / "rewards" / "inference_runtime.py").exists()
+    assert not (VRL_ROOT / "rewards" / "inference_worker.py").exists()
+    assert not (VRL_ROOT / "rewards" / "inference_scheduler.py").exists()
+
+
+def test_generation_ray_adapter_stays_lean() -> None:
+    ray_root = VRL_ROOT / "generation" / "ray"
+    assert _module_filenames(ray_root) == {
+        "__init__.py",
+        "executor.py",
+        "launcher.py",
+        "placement.py",
+        "runtime.py",
+        "weight_sync.py",
+        "worker.py",
+    }
+    ray_adapter_files = (
+        ray_root / "executor.py",
+        ray_root / "launcher.py",
+        ray_root / "placement.py",
+        ray_root / "runtime.py",
+        ray_root / "worker.py",
+        ray_root / "weight_sync.py",
+    )
+    for path in ray_adapter_files:
+        text = path.read_text(encoding="utf-8")
+        assert "vrl.generation.execution.planner import build_engine_plan" not in text
+        assert "vrl.generation.execution.chunks import" not in text
+
+
+def test_generation_distributed_execution_is_grouped_under_subpackage() -> None:
+    execution_root = VRL_ROOT / "generation" / "execution"
+    distributed_root = execution_root / "distributed"
+    assert distributed_root.is_dir()
+    for expected in (
+        "__init__.py",
+        "planner.py",
+        "types.py",
+        "worker.py",
+    ):
+        assert (distributed_root / expected).exists()
+    for ray_specific in ("executor.py", "placement.py"):
+        assert not (distributed_root / ray_specific).exists()
+    for obsolete in (
+        "distributed_executor.py",
+        "distributed_planner.py",
+        "distributed_types.py",
+        "placement.py",
+        "worker_core.py",
+    ):
+        assert not (execution_root / obsolete).exists()
+
+
 def test_new_runtime_code_does_not_import_engine_compat_paths() -> None:
     violations = []
     for path in _python_files(VRL_ROOT):
@@ -91,6 +167,14 @@ def _python_files(root: Path) -> Iterable[Path]:
         for path in root.rglob("*.py")
         if "__pycache__" not in path.parts
     )
+
+
+def _module_filenames(root: Path) -> set[str]:
+    return {
+        path.name
+        for path in root.glob("*.py")
+        if "__pycache__" not in path.parts
+    }
 
 
 def _is_relative_to(path: Path, prefix: Path) -> bool:

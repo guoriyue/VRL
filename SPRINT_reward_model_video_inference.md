@@ -40,7 +40,8 @@ Phase 5-8 是后续 gate，用来约束资源规划、GPU placement smoke、版�
 - 保持 rollout 已有 Ray path。
 - 新增 generic reward inference artifact / request / result contract。
 - 新增 `RewardInferenceRuntime` protocol 和 test fake runtime。
-- 新增 repo-owned Ray reward runtime package boundary。
+- 新增 repo-owned Ray-backed reward runtime boundary，Ray mechanics 复用 `vrl/ray/`。
+- 把 generation 现有 Ray launcher 逐步改成 `vrl/ray/` 的 thin adapter consumer，不能让 reward 另起一套 Ray wrapper。
 - 把 video reward 作为第一条 media-specific adapter 接到 generic reward inference runtime。
 - 删除 public `backend=stub/local/remote` 语义；fake scorer 只能留在 tests。
 - 保持 trainer 只 await scored batch，不感知 reward worker 细节。
@@ -51,7 +52,7 @@ Phase 5-8 是后续 gate，用来约束资源规划、GPU placement smoke、版�
 - 不在这个 sprint 接 FSDP trainer。
 - 不做 multi-node training rank orchestration。
 - 不做 rollout / reward / train full async pipeline。
-- Phase 1-4 不迁 `vrl/generation/resources.py` 到 `vrl/ray/resources.py`。
+- Phase 1-4 可以抽 `vrl/ray/actor_group.py` / `dependencies.py` / actor lifecycle primitives，并让 generation launcher 复用；但不迁 `vrl/generation/resources.py` 到 `vrl/ray/resources.py`。
 - Phase 1-4 不做真实 GPU reward model smoke；Ray fake/test scorer 只用于 runtime boundary。
 - Phase 1-4 不接真实 `cosmos_reason1` / `dance_grpo` wrapper。
 
@@ -63,7 +64,8 @@ Phase 5-8 是后续 gate，用来约束资源规划、GPU placement smoke、版�
 
 - `backend=stub/local/remote` 必须从 public config 删除；fake scorer 只能作为 unit test double 或 Ray integration test scorer，不进入 recipe。
 - public `inference_runtime` 第一版只支持 `ray`。GPU ownership 只在 `distributed.resources.reward`，不放进 `reward.kwargs.video_reward.device`。
-- Ray reward runtime 不能复用 rollout worker；reward latency、OOM、release lifecycle 必须和 generation worker 分开。
+- Reward runtime 不能复用 rollout worker；reward latency、OOM、release lifecycle 必须和 generation worker 分开，但 Ray actor group/placement/lifecycle mechanics 必须复用 `vrl/ray/`。
+- Generation 也必须复用同一套 `vrl/ray/` mechanics。`vrl/generation/ray/launcher.py` 可以保留为 generation-specific adapter，但不能长期拥有 generic actor group、placement probing、kill/shutdown helper。
 - 第一版只做外层同步、内部异步；trainer 等完整 scored batch，runtime 内部可以用 Ray actor pool / bounded shard gather。
 - 当前实现 checkpoint 只到 Phase 4。Phase 5-8 保留为后续 gate，不作为本次小重构的完成条件。
 
@@ -85,6 +87,12 @@ RolloutCollector.collect(...)
 
 内部异步的意思是：`RewardInferenceRuntime.score_batch(...)` 可以用 Ray actor pool、bounded concurrency 或 shard/gather，但 trainer 进程只 await 一个 future，并只拿回 CPU float scores 和 debug metadata。
 
+为什么 rollout 有 schedule，而 reward 第一版没有单独 schedule：
+
+- rollout schedule 是 RL phase schedule：它管理 `generate -> reward -> pack -> train` 的跨 step 顺序、policy weight sync、driver model offload、release-after-collect、以及 one-batch-overlap correctness。
+- reward runtime 是这个 schedule 里的 scoring data-plane stage。第一版只负责把一个已完成的 rollout batch 评分完成，不拥有训练 step 推进权，也不独立决定 stale batch 是否可训练。
+- 如果以后做 rollout/reward/train full async pipeline，新增的应该是 rollouts orchestration / pipeline schedule，而不是 `vrl/rewards/*` 私有 schedule。reward 只提供 versioned request/result、latency、queue wait 和 release hooks。
+
 当前不要把 heavy video reward forward 放在这些位置：
 
 ```text
@@ -97,10 +105,10 @@ algorithm loss
 正确归属是：
 
 ```text
-vrl/rewards/inference/*
-  owns generic request -> runtime -> result scheduling.
+vrl/rewards/inference.py
+  owns generic request -> runtime -> result contract and reward-specific sharding.
 
-vrl/rewards/video_inference/*
+vrl/rewards/artifacts.py
   owns image/video artifact materialization and video_reward adapter glue.
 
 vrl/rollouts/collector/rewards.py
@@ -120,7 +128,7 @@ configs/reward/video_reward.yaml
 vrl/rollouts/collector/rewards.py
 vrl/rollouts/collector/core.py
 vrl/generation/resources.py
-vrl/generation/ray/*
+vrl/generation/ray/*.py
 vrl/rollouts/orchestration/*
 ```
 
@@ -139,7 +147,7 @@ Rollout -> VideoReward -> legacy remote client -> float score
 - Cosmos recipe 容易被误写成“真实 video reward 已验证”，但当前 recipe 可以退回 OCR/simple reward。
 - 当前没有 dedicated `tests/rewards/test_video_reward.py`；这个 sprint 应新增它，而不是假设它已经存在。
 - 当前资源 resolver 在 `vrl/generation/resources.py`，只覆盖 trainer / rollout。加 reward role 时，这个名字会过窄；Phase 5 应迁到 domain-neutral `vrl/ray/resources.py`。
-- 当前 Ray helper 在 `vrl/generation/ray/dependencies.py`。reward Ray runtime 不能反向 import generation Ray package；共享 Ray helper 应进入 `vrl/ray/`。
+- 当前 Ray helper 在 `vrl/ray/dependencies.py`。reward runtime 不能反向 import generation Ray package；共享 Ray helper 应进入 `vrl/ray/`。
 
 ## 命名收敛规则
 
@@ -159,12 +167,12 @@ RewardScorer
 新增内部模块也应该贴近现有名字：
 
 ```text
-vrl/rewards/inference/
+vrl/rewards/inference.py
 RewardInferenceArtifact
 RewardInferenceRequest
 RewardInferenceResult
 RewardInferenceRuntime
-RewardInferenceScheduler
+shard_reward_request
 
 vrl/ray/
 RayResourcePlan
@@ -172,19 +180,19 @@ RayPlacement
 RayActorPool
 RayLifecycle
 
-vrl/rewards/video_inference/
+vrl/rewards/artifacts.py
 VideoRewardArtifact
 VideoRewardArtifactStore
 ```
 
 边界规则：
 
-- `vrl/rewards/inference/` 是 generic reward model inference substrate，未来 OCR service、image QA judge、VLM verifier、video reward 都应该复用。
-- `vrl/rewards/video_inference/` 只放 video/image artifact materialization、media metadata、`VideoReward` 的 media-specific glue。
-- Ray actor pool、request sharding、latency/version guard、resource lifecycle 不属于 `video_inference`，不能被 video reward 私有化。
+- `vrl/rewards/inference.py` 是 generic reward model inference substrate，未来 OCR service、image QA judge、VLM verifier、video reward 都应该复用。
+- `vrl/rewards/artifacts.py` 只放 video/image/tensor artifact materialization 和 media metadata；`VideoReward` glue 留在 `vrl/rewards/video_reward.py`。
+- Ray actor pool、request sharding、latency/version guard、resource lifecycle 不属于 `vrl/rewards/artifacts.py`，不能被 video reward 私有化。
 - `vrl/ray/` 是 domain-neutral Ray scheduling substrate。它只表达 worker pool、placement、resources、lifecycle，不知道 generation chunk 或 reward artifact。
 - 可以新增顶层 `vrl/ray/`，但不恢复 `vrl/distributed/ray/` 作为主结构。
-- 顶层 `vrl/ray/` 允许直接叫 Ray，因为它的职责就是 Ray scheduling substrate；domain workload 仍然留在 `vrl/generation/ray/` 和 `vrl/rewards/inference/runtimes/ray/`。
+- 顶层 `vrl/ray/` 允许直接叫 Ray，因为它的职责就是 Ray scheduling substrate。generation 现有 `vrl/generation/ray/*.py` 是兼容层；reward 不新增 `vrl/rewards/ray/`，只在 `vrl/rewards/inference.py` 和 `vrl/rewards/scoring_worker.py` 提供 request/result/worker semantics。
 - `vrl/generation/execution/` 继续保留 generation-specific planner、request batching、stage plan、chunk id 逻辑；这个 sprint 不把它迁到共享层。
 - `vrl/ray/` 只做 domain-neutral resource / placement / actor pool / lifecycle，不能 import generation 或 rewards。
 - 如果未来有非 Ray backend，另开对应 substrate sprint；当前 sprint 不抽象一个 generic backend registry。
@@ -307,18 +315,26 @@ MultiReward.from_dict(...)
 - `RewardFunction.score_batch(...)` 仍然是 reward function 的外部入口。
 - `MultiReward` 不感知 reward inference artifact / Ray worker 细节。
 - `RolloutCollector` 仍然是 `generate -> reward_score -> rollout_batch_from_trajectory`。
-- trainer 不 import `vrl.rewards.inference.*` 或 `vrl.rewards.video_inference.*`，只看到 `RolloutBatch.rewards`。
+- trainer 不 import `vrl.rewards.inference.*` 或 `vrl.rewards.artifacts`，只看到 `RolloutBatch.rewards`。
 
 改变：
 
 - `VideoReward` 从“backend selector”变成 thin adapter。
 - 旧 remote client path 不升级成新 runtime；它是 legacy cleanup target，不进入目标 public path。
 - `distributed.resources` 从 trainer / rollout 扩展到 trainer / rollout / reward。
-- Ray reward runtime 独立于 Ray rollout runtime；两者可以复用 placement/logging style，但不要共用 rollout worker class。
+- Reward runtime 独立于 rollout runtime；两者可以复用 `vrl/ray/` 的 placement/logging/actor group mechanics，但不要共用 rollout worker class。
 
 ### 0.1 Directory migration map
 
 这里的“继承”不是 Python inheritance，而是职责继承和依赖方向：generation / reward 继续拥有自己的 request/result contract，只复用 `vrl/ray/` 的底层资源和 Ray primitive。
+
+旧的 `vrl/generation/ray/` 偏重，是历史上把三类职责放在了一起：
+
+- generation worker semantics：load policy、execute chunk、weight sync、policy_version。
+- generation execution semantics：chunk planner、engine plan、gatherer、stage plan。
+- Ray substrate mechanics：placement group、actor construction、submit/wait/gather、healthcheck、shutdown。
+
+reward 不应该复制旧结构。这个 sprint 只抽第三类里的通用部分到 `vrl/ray/`，generation 自己保留一个很薄的 `vrl/generation/ray/` adapter，reward 自己只保留 request/result/worker 语义。这样第一版不会出现 `vrl/rewards/ray/` 这种平行但内容很薄的 package。
 
 不搬的目录：
 
@@ -357,15 +373,18 @@ trainer_torch_device(...)
 format_distributed_resource_plan(...)
 ```
 
-会抽成 shared Ray primitive 的内容：
+已抽成 shared Ray primitive 的内容：
 
 ```text
-vrl/generation/ray/dependencies.py
-  -> vrl/ray/dependencies.py
+vrl/ray/dependencies.py
+vrl/ray/placement.py
+vrl/ray/lifecycle.py
+vrl/ray/actor_group.py
+vrl/ray/actor_pool.py
+vrl/ray/runtime.py
 
-vrl/generation/ray/launcher.py generic placement/lifecycle helpers
-  -> vrl/ray/placement.py
-  -> vrl/ray/lifecycle.py
+vrl/generation/ray/launcher.py generation-specific placement builder
+  -> vrl/generation/ray/placement.py
 ```
 
 具体包括：
@@ -378,44 +397,55 @@ vrl/generation/ray/launcher.py generic placement/lifecycle helpers
 - generic actor kill/shutdown helpers
 - generic placement probing helpers where they do not mention generation request/chunk semantics
 
-继续留在 `vrl/generation/ray/` 的内容：
+继续留在 `vrl/generation/ray/*.py` 的内容：
 
 ```text
+vrl/generation/ray/executor.py
 vrl/generation/ray/launcher.py
+vrl/generation/ray/placement.py
 vrl/generation/ray/runtime.py
 vrl/generation/ray/worker.py
-vrl/generation/ray/executor.py
-vrl/generation/ray/planner.py
-vrl/generation/ray/types.py
 vrl/generation/ray/weight_sync.py
 ```
 
 原因：
 
-- launcher 仍然负责创建 `RayGenerationWorker`，组装 `RayGenerationRuntime`。
+- launcher 仍然负责把 generation launch contract 转成 `RayGenerationRuntime`，但它应该是 thin adapter：把 `RayGenerationWorker`、worker config、资源 role 交给 `vrl/ray/RayActorGroup`，不再私有实现 generic placement probing / actor kill / shutdown。
+- generation-specific placement builder 放在 `vrl/generation/ray/placement.py`，不让 `vrl/generation/ray/launcher.py` 继续膨胀。
+- executor 是 Ray actor-method gatherer，使用 `vrl/ray/actor_pool.py`；它不拥有 chunk plan 构造。
 - runtime 仍然实现 `GenerationRuntime.generate(...)` 和 generation weight sync。
 - worker 仍然加载 policy / generation model，只处理 generation chunks。
-- executor/planner 仍然调度 `GenerationRequest` chunks，不变成 reward actor pool。
+- planner / payload types / worker core 仍在 `vrl/generation/execution/distributed/`，不变成 reward actor pool，也不进入 shared `vrl/ray/`。
 - weight sync 是 train -> generation worker 的 domain-specific 逻辑，不属于 generic compute。
 
 reward 新增的内容：
 
 ```text
-vrl/rewards/inference/
+vrl/rewards/inference.py
   generic RewardInferenceRequest / RewardInferenceResult / RewardInferenceRuntime
 
-vrl/rewards/video_inference/
+vrl/rewards/scoring_worker.py
+  reward scorer worker semantics
+
+vrl/rewards/artifacts.py
   video/image artifact materialization and VideoReward glue
 ```
 
 依赖方向：
 
 ```text
-vrl/generation/ray/*
+vrl/generation/ray/*.py
   imports vrl.ray.* for Ray primitives
+  keeps Ray launcher/runtime/actor adapter only
 
-vrl/rewards/inference/runtimes/ray/
-  imports vrl.ray.* for Ray primitives
+vrl/generation/execution/*
+  keeps generation chunk planner, payload types, and worker core
+
+vrl/rewards/inference.py
+  keeps reward request/result contract, sharding, runtime protocol, and runtime factory
+
+vrl/rewards/scoring_worker.py
+  keeps reward scorer/model worker semantics
 
 vrl/ray/*
   imports neither vrl.generation nor vrl.rewards
@@ -434,42 +464,30 @@ vrl/ray/
   __init__.py
   resources.py          # trainer / rollout / reward role resource plan
   placement.py          # domain-neutral Ray placement intent
+  actor_group.py        # domain-neutral Ray actor construction / healthcheck / lifecycle
   actor_pool.py         # domain-neutral Ray submit / wait / gather protocol
   lifecycle.py          # release / shutdown contracts
+  runtime.py            # domain-neutral actor-method runtime
   types.py
   dependencies.py
 
-vrl/rewards/inference/
-  __init__.py
-  types.py              # generic RewardInferenceArtifact identity and metadata
-  schema.py             # RewardInferenceRequest / RewardInferenceResult
-  runtime.py            # runtime factory selected by inference_runtime
-  scheduler.py          # shard / gather / bounded concurrency helpers
-  runtimes/
-    __init__.py
-    base.py             # RewardInferenceRuntime protocol
-    ray/
-      __init__.py
-      runtime.py        # request shard/gather and public runtime
-      launcher.py       # reward Ray actor construction and placement
-      worker.py         # load scorer/model and score request shards
-      types.py          # reward Ray envelopes/results
-      spec.py           # serializable scorer/model construction spec
+vrl/rewards/inference.py        # RewardInferenceArtifact / Request / Result / runtime factory
+vrl/rewards/scoring_worker.py   # load scorer/model, validate worker config, score shards
 
-vrl/rewards/video_inference/
-  __init__.py
-  artifacts.py
-  schema.py             # video/media-specific request enrichment if needed
+vrl/rewards/artifacts.py        # video/image/tensor artifact materialization
 ```
 
 职责：
 
 - `vrl/ray/*`：domain-neutral Ray scheduling substrate，包含 Ray actor pool、placement、dependency checks、lifecycle helpers，不能 import generation / rewards。
-- `vrl/rewards/inference/schema.py`：通用 `RewardInferenceRequest` / `RewardInferenceResult`、score key aggregation、validation。
-- `vrl/rewards/inference/runtime.py`：从 config 选择 `RewardInferenceRuntime`，只认 `inference_runtime`。
-- `vrl/rewards/inference/runtimes/base.py`：`RewardInferenceRuntime` protocol。
-- `vrl/rewards/inference/runtimes/ray/`：reward-specific Ray runtime package over generic Ray scheduling substrate。
-- `vrl/rewards/video_inference/artifacts.py`：把 image/video rollout output materialize 到 image/video/npy path，并写 manifest。
+- `vrl/generation/ray/launcher.py`：保留 generation adapter 入口，但要消费 `vrl/ray/actor_group.py` / `placement.py` / `lifecycle.py`，不能继续拥有通用 Ray substrate，也不能承载 chunk planner/executor。
+- `vrl/generation/ray/executor.py`：承载 Ray actor-method submit / gather 和 generation chunk result validation；它不构造 EnginePlan。
+- `vrl/generation/execution/distributed/`：承载 generation distributed execution semantics；`planner.py` / `types.py` / `worker.py` 不放在 Ray adapter package 里，也不散落在 `execution/` 根目录。
+- `vrl/generation/ray/worker.py`：只允许是 Ray actor wrapper；模型加载、chunk execution、profiling 逻辑放在 `vrl/generation/execution/distributed/worker.py`。
+- `vrl/ray/runtime.py`：通用 Ray actor-method runtime；reward 不再自己定义 Ray runtime class。
+- `vrl/rewards/inference.py`：通用 `RewardInferenceRequest` / `RewardInferenceResult`、score key aggregation、validation、request sharding、runtime protocol 和 factory。
+- `vrl/rewards/scoring_worker.py`：reward-specific scorer worker semantics；它可以被 `vrl/ray/` 的 generic actor runtime 包起来，但不自己定义 Ray launcher/runtime。
+- `vrl/rewards/artifacts.py`：把 image/video rollout output materialize 到 image/video/npy path，并写 manifest。
 
 不要新增：
 
@@ -477,6 +495,10 @@ vrl/rewards/video_inference/
 vrl/distributed/ray/
 vrl/rollouts/orchestration/runtime/
 vrl/rewards/inference/ray/
+vrl/rewards/inference/runtimes/
+vrl/rewards/ray/
+vrl/rewards/ray.py
+vrl/rewards/video_inference/
 vrl/rewards/video_inference/backends/
 vrl/rewards/video_inference/ray/
 vrl/rewards/video_inference/runtimes/base.py
@@ -512,7 +534,7 @@ VideoReward.score_batch(rollouts)
 关键规则：
 
 - `backend` 参数从 public config 删除；如果用户传 `backend=stub/local/remote`，Phase 4 后 fail-fast，并提示使用 `inference_runtime=ray`。
-- fake scorer 只在 tests 里通过 direct runtime/test double 或 Ray worker scorer spec 注入。
+- fake scorer 只在 tests 里通过 direct runtime/test double 或 Ray worker config 注入。
 - `VideoReward` 不直接调用 legacy network client，也不直接 import heavy reward model wrapper。
 - `VideoReward` 不持有 GPU tensor；artifact materialization 后只把 path/schema 发给 runtime。
 - `last_results` 只做 debug/metrics，不参与 trainer 主语义。
@@ -522,7 +544,7 @@ VideoReward.score_batch(rollouts)
 目标文件：
 
 ```text
-vrl/rewards/video_inference/artifacts.py
+vrl/rewards/artifacts.py
 ```
 
 输入来自当前 collector 构造的 `Rollout`：
@@ -548,66 +570,83 @@ outputs/<run>/reward_artifacts/manifest.jsonl
 - `policy_version` 从 rollout metadata 透传；没有就写 `None`，但 async mode 必须要求非空。
 - unit tests 也用 temp path artifact，不引入 `tensor_ref`。
 
-### 4. Ray reward runtime package
+### 4. Ray-backed reward runtime boundary
 
 目标文件：
 
 ```text
-vrl/rewards/inference/runtimes/ray/
-  __init__.py
-  runtime.py
-  launcher.py
-  worker.py
-  types.py
-  spec.py
+vrl/ray/
+  actor_group.py        # generic Ray actor construction, healthcheck, submit/wait/gather
+  runtime.py            # generic actor-method runtime
+  placement.py
+  lifecycle.py
+  resources.py
+
+vrl/rewards/inference.py        # RewardInferenceRuntime protocol, request/result contract, factory
+vrl/rewards/scoring_worker.py   # reward scorer/model worker semantics and config validation
 ```
 
-Ray reward runtime 是 reward-specific package，不是单个 `ray.py` 文件。它和 `vrl/generation/ray/` 一样拥有自己的 workload contract，但复用 `vrl/ray/` 的通用 Ray substrate：
+不要新增 reward-specific Ray package，也不要把 Ray runtime helper 换名塞到 reward 下面。reward 的 workload contract 放在 `vrl/rewards/inference.py`，worker scorer 语义放在 `vrl/rewards/scoring_worker.py`，Ray 的 actor / placement / lifecycle / actor-method runtime mechanics 放在 `vrl/ray/`：
 
 ```text
 RewardInferenceRequest
-  -> RayRewardInferenceRuntime
-  -> RayRewardInferenceLauncher
-  -> RayRewardInferenceWorker.score_batch(...)
+  -> RewardInferenceRuntime
+  -> vrl.ray.RayActorMethodRuntime
+  -> RewardScoringWorker.score_batch(...)
   -> list[RewardInferenceResult]
 ```
 
-拆包规则：
+拆分规则：
 
-- `runtime.py`：实现 `score_batch(...)`、shard/gather、release-after-score。
-- `launcher.py`：创建 Ray actors、placement、GPU metadata validation。
-- `worker.py`：加载 scorer/model，执行 request shard，返回 CPU result。
-- `types.py`：定义 Ray reward shard envelope、worker result、worker metadata。
-- `spec.py`：定义 serializable scorer/model construction spec，禁止 live model/callable 直接穿过 Ray boundary。
+- `vrl/rewards/inference.py`：实现 reward request sharding、result validation、runtime factory；它只能调用 `vrl.ray.runtime.RayActorMethodRuntime`，不能自己管理 actor lifecycle。
+- `vrl/rewards/scoring_worker.py`：加载 scorer/model，校验 serializable worker config，执行 request shard，返回 CPU result；不 import generation。
+- 不单独拆 worker config 文件；禁止 live model/callable 直接穿过 Ray boundary，worker config 必须是普通可序列化数据。
+- `vrl/ray/actor_group.py`：创建 Ray actors、healthcheck、submit/wait/gather。
+- `vrl/ray/runtime.py`：通用 actor-method runtime，负责 actor group lifecycle、bounded method call、release-after-call。
+- `vrl/ray/placement.py`：根据 resolved role resources 创建 placement/bundles，并验证 assigned GPU metadata。
 
-### 5. Ray reward runtime
+### 5. Shared Ray actor substrate
 
-Ray reward runtime 使用通用 actor pool，但不复用 rollout worker。通用 submit / wait / gather / placement / lifecycle 必须先进 `vrl/ray/`。
+Reward runtime 和 generation runtime 都使用同一个 actor substrate，但不共享 worker class。通用 submit / wait / gather / placement / lifecycle 必须先进 `vrl/ray/`。
 
 新增：
 
 ```text
 vrl/ray/
   dependencies.py
+  actor_group.py
   actor_pool.py
+  runtime.py
   placement.py
+  resources.py
   lifecycle.py
   types.py
 
-vrl/rewards/inference/runtimes/ray/
+vrl/rewards/inference.py
+vrl/rewards/scoring_worker.py
+vrl/generation/ray/executor.py
+vrl/generation/execution/distributed/planner.py
+vrl/generation/execution/distributed/types.py
+vrl/generation/execution/distributed/worker.py
+vrl/generation/ray/launcher.py
 ```
 
 职责：
 
+- `vrl/ray/actor_group.py`：generic Ray actor construction / healthcheck / lifecycle wrapper。
 - `vrl/ray/actor_pool.py`：generic Ray actor submit / wait / gather。
+- `vrl/ray/runtime.py`：generic Ray actor-method runtime for workload adapters。
 - `vrl/ray/placement.py`：generic placement group / bundle helpers。
 - `vrl/ray/lifecycle.py`：generic shutdown / release helpers。
-- `vrl/rewards/inference/runtimes/ray/`：加载 reward scorer wrapper、构造 reward shard request、调用 generic Ray actor pool、返回 `RewardInferenceResult`。
+- `vrl/generation/ray/launcher.py`：改成 shared Ray actor substrate 的 generation adapter，仍然组装 `RayGenerationRuntime`。
+- `vrl/generation/execution/distributed/*`：保留 chunk planner、payload types、worker core；这些不是 Ray package 的职责。
+- `vrl/rewards/inference.py`：构造 reward shard request、验证 `RewardInferenceResult`。
+- `vrl/rewards/scoring_worker.py`：加载 reward scorer wrapper、返回 `RewardInferenceResult`。
 
 Ray actor 形状：
 
 ```text
-RewardInferenceRayActor(worker_id, spec)
+RayActorMethodRuntime(RewardScoringWorker, worker_id, worker_config)
   load_scorer()
   score_batch(request_shard) -> list[RewardInferenceResult]
   worker_metadata() -> {worker_id, node_ip, gpu_ids, reward_model_version}
@@ -617,9 +656,9 @@ RewardInferenceRayActor(worker_id, spec)
 Runtime 形状：
 
 ```text
-RayRewardInferenceRuntime.score_batch(request)
+RewardInferenceRuntime.score_batch(request)
   -> shard artifacts by artifact count / frame count
-  -> vrl.ray actor pool submit/wait/gather
+  -> vrl.ray actor group submit/wait/gather
   -> preserve original artifact order
   -> validate one result per artifact
 ```
@@ -697,22 +736,22 @@ distributed.resources.allow_overlap=false
 
 ### 7. Placement / lifecycle
 
-Ray reward launcher 应该镜像 rollout launcher 的风格，但不能复用 rollout worker：
+Reward runtime 应该复用 `vrl/ray/` 的 actor group / placement / lifecycle，不新增 reward-specific launcher：
 
 ```text
 RayRolloutLauncher
   -> RayRolloutWorker
   -> RayDistributedRuntime
 
-RayRewardInferenceLauncher
-  -> RayRewardInferenceWorker
-  -> RayRewardInferenceRuntime
+RewardInferenceRuntime
+  -> vrl.ray.RayActorGroup
+  -> RewardInferenceWorker
 ```
 
-新增 release wrapper：
+新增 release wrapper 不需要单独命名成 reward Ray launcher；它可以是 `RewardInferenceRuntime` 的 lifecycle policy：
 
 ```text
-ReleasableRayRewardInferenceRuntime
+RewardInferenceRuntime(release_after_score=true)
 ```
 
 语义：
@@ -796,7 +835,7 @@ reward:
 
 1. 加 `RewardInferenceRequest` / `RewardInferenceResult` schema 和 tests。
 2. 加 `VideoRewardArtifactStore`，让 tensor/image/video 都能 materialize 到 temp/run dir。
-3. 加 Ray reward runtime package boundary，先用 fake/test scorer 验证 worker/launcher/runtime contract。
+3. 加 shared Ray actor substrate；generation launcher 和 reward runtime 都必须通过它启动 actors，reward 先用 fake/test scorer 验证 actor group / worker / runtime contract。
 4. 把 `VideoReward` 改成 adapter，删除 public stub/remote/local backend。
 
 后续 gate：
@@ -855,7 +894,7 @@ VideoReward adapter
 新增 artifact contract，表达 reward model 实际看到的媒体：
 
 ```text
-vrl/rewards/video_inference/artifacts.py
+vrl/rewards/artifacts.py
 ```
 
 建议字段：
@@ -888,7 +927,7 @@ policy_version: str | int | None
 新增 artifact store，把 rollout 输出稳定保存：
 
 ```text
-vrl/rewards/video_inference/artifacts.py
+vrl/rewards/artifacts.py
 ```
 
 建议输出：
@@ -931,7 +970,7 @@ metadata
 新增统一 request/result schema：
 
 ```text
-vrl/rewards/inference/schema.py
+vrl/rewards/inference.py
 ```
 
 `RewardInferenceRequest`：
@@ -979,7 +1018,7 @@ error: str | None
 新增 runtime protocol：
 
 ```text
-vrl/rewards/inference/runtimes/base.py
+vrl/rewards/inference.py
 ```
 
 接口：
@@ -995,12 +1034,13 @@ class RewardInferenceRuntime(Protocol):
 实现一个 production runtime：
 
 ```text
-vrl/rewards/inference/runtimes/ray/
+vrl/rewards/inference.py
+vrl/ray/runtime.py
 ```
 
 要求：
 
-- `ray` 定义 repo-owned generic reward worker runtime 边界，第一版可以 fail-fast，直到接入明确的 reward model wrapper。
+- `ray` 通过 `vrl/ray/runtime.py` 的 generic actor-method runtime 执行 repo-owned reward worker，第一版可以 fail-fast，直到接入明确的 reward model wrapper。
 - fake scorer 不是 public runtime；Phase 1-4 可以作为 tests 的 direct runtime/test double，也可以作为 `inference_runtime=ray` Ray worker 的 scorer implementation 注入；不能出现在 `reward.kwargs.video_reward` 的生产配置里。
 
 ### 4.1 Sync semantics vs async execution
@@ -1030,7 +1070,7 @@ batch N rollout
 但这不等于 reward inference 要在 trainer process 里同步串行执行。正确边界是：
 
 - `RewardScorer` / `VideoReward` 只 await 一个 runtime future。
-- Ray reward runtime 用 Ray actors 执行 GPU inference。
+- Reward runtime 用 `vrl/ray/` actor group 执行 GPU inference。
 - trainer 进程只拿回 CPU float scores 和 debug records。
 - artifact 写盘和 reward inference 不应该保留 trainer GPU tensor。
 
@@ -1200,33 +1240,31 @@ rollout(N+1) runs while reward(N) or train(N) runs
 
 如果 GPU 数少，P2 不一定比 P1 好；没有足够独立 GPU 时，所谓 async 只会变成排队和频繁 reload。
 
-### 5. Ray reward runtime
+### 5. Reward runtime over shared Ray substrate
 
-Ray reward runtime 是未来大块，必须先设计边界再接模型。这里的重点不是“能在本进程 import 一个 reward model”，而是把本地 reward model 作为 Ray-managed GPU worker runtime。
+Reward runtime 是未来大块，必须先设计边界再接模型。这里的重点不是“能在本进程 import 一个 reward model”，而是把本地 reward model 作为 shared `vrl/ray/` 管理的 GPU actor worker。
 
 目标：
 
 ```text
 RewardInferenceRuntime
-  load reward model
-  score artifacts
-  release resources
+  shard request
+  submit to vrl.ray.RayActorMethodRuntime
+  gather RewardInferenceResult
+  apply release policy
 ```
 
 建议文件：
 
 ```text
-vrl/rewards/inference/runtimes/ray/
-  __init__.py
-  runtime.py
-  launcher.py
-  worker.py
-  types.py
-  spec.py
-vrl/rewards/inference/runtime.py
+vrl/rewards/inference.py
+vrl/rewards/scoring_worker.py
 vrl/ray/dependencies.py
+vrl/ray/actor_group.py
 vrl/ray/actor_pool.py
+vrl/ray/runtime.py
 vrl/ray/placement.py
+vrl/ray/resources.py
 vrl/ray/lifecycle.py
 vrl/ray/types.py
 ```
@@ -1234,15 +1272,16 @@ vrl/ray/types.py
 设计原则：
 
 - reward model wrapper 不和 policy model 混在同一个 module。
-- Ray reward runtime 默认就是 Ray actor worker。
+- reward worker 默认通过 `vrl/ray/` actor group 运行。
+- worker config 由 `runtime.py` 从 config 组装，由 `worker.py` 校验；不要单独拆文件。
 - 独立 device / worker count 来自 `distributed.resources.reward`，不从 `reward.kwargs.video_reward` 私自解析 GPU。
 - in-process local 不作为 recipe runtime；schema/unit tests 使用 direct fake runtime/test double，Ray integration tests 使用 `inference_runtime=ray` + fake scorer worker。
-- Ray reward wrapper 必须声明 `reward_model_version`。
-- Ray reward runtime 不存在时 fail-fast，不能自动退回 fake scorer。
+- reward wrapper 必须声明 `reward_model_version`。
+- shared Ray actor substrate 不存在时 fail-fast，不能自动退回 fake scorer。
 - worker 启动时加载 reward model 一次，后续只接收 artifact request。
 - Ray worker pool 按 artifact count / frame count shard，不能按 rollout loop 一个个串行调用。
-- launcher 负责 resource allocation、worker healthcheck、shutdown、debug metadata。
-- reward Ray runtime 不能 import `vrl.generation.ray.dependencies`；共享 Ray import/healthcheck helper 先放到 `vrl/ray/dependencies.py`。
+- `vrl/ray/actor_group.py` 负责 resource allocation、worker healthcheck、shutdown、debug metadata。
+- reward runtime 不能 import `vrl.ray.dependencies`；共享 Ray import/healthcheck helper 先放到 `vrl/ray/dependencies.py`。
 
 后续 candidate：
 
@@ -1311,7 +1350,7 @@ reward:
 
 - 当前 `configs/reward/video_reward.yaml` 仍然是 legacy `backend: stub`；这是必须删除的 code debt，不是目标 public config。Phase 4 删除默认/local debug recipe path，相关测试迁到 direct fake runtime/test double 或 Phase 3 Ray fake scorer integration test。
 - 保持当前 `video_reward` kwargs 命名，不把 legacy backend 字段迁到另一套 namespace。
-- Ray reward runtime 的 GPU/worker sizing 只走 `distributed.resources.reward`。
+- Ray-backed reward worker 的 GPU/worker sizing 只走 `distributed.resources.reward`。
 - `model_path` / `dtype` / `reward_model_version` 是 Ray runtime 的 model config，不是 GPU placement。
 - `scheduling: sync` 是第一版默认值；phase-shared 或 pipeline async 必须单独打开并记录 version。
 
@@ -1320,7 +1359,7 @@ reward:
 当前实现 checkpoint 是 Phase 1-4：
 
 ```text
-generic schema -> video artifact store -> runtime protocol -> Ray reward runtime boundary -> VideoReward adapter
+generic schema -> video artifact store -> runtime protocol -> shared Ray actor substrate -> VideoReward adapter
 ```
 
 后续 gate 才进入：
@@ -1337,9 +1376,8 @@ reward resource resolver -> GPU reward smoke worker
 编辑：
 
 ```text
-vrl/rewards/inference/types.py
-vrl/rewards/inference/schema.py
-vrl/rewards/video_inference/artifacts.py
+vrl/rewards/inference.py
+vrl/rewards/artifacts.py
 tests/rewards/test_video_reward_artifacts.py
 tests/rewards/test_reward_inference_schema.py
 ```
@@ -1357,8 +1395,7 @@ tests/rewards/test_reward_inference_schema.py
 编辑：
 
 ```text
-vrl/rewards/inference/runtimes/base.py
-vrl/rewards/inference/scheduler.py
+vrl/rewards/inference.py
 tests/rewards/test_reward_inference_runtime.py
 ```
 
@@ -1368,30 +1405,41 @@ tests/rewards/test_reward_inference_runtime.py
 - test fake scorer 直接实现 `RewardInferenceRuntime` protocol；Phase 2 不经过 `backend=stub` config，也不走 Ray worker。
 - score key 缺失、NaN、长度不匹配 fail-fast。
 
-### Phase 3：Ray reward runtime boundary
+### Phase 3：shared Ray actor substrate + generation/reward adapters
 
 编辑：
 
 ```text
-vrl/rewards/inference/runtimes/ray/__init__.py
-vrl/rewards/inference/runtimes/ray/runtime.py
-vrl/rewards/inference/runtimes/ray/launcher.py
-vrl/rewards/inference/runtimes/ray/worker.py
-vrl/rewards/inference/runtimes/ray/types.py
-vrl/rewards/inference/runtimes/ray/spec.py
-vrl/rewards/inference/runtime.py
+vrl/rewards/inference.py
+vrl/rewards/scoring_worker.py
 vrl/ray/dependencies.py
+vrl/ray/actor_group.py
 vrl/ray/actor_pool.py
+vrl/ray/runtime.py
 vrl/ray/placement.py
 vrl/ray/lifecycle.py
 vrl/ray/types.py
+vrl/generation/ray/executor.py
+vrl/generation/execution/distributed/planner.py
+vrl/generation/execution/distributed/types.py
+vrl/generation/execution/distributed/worker.py
+vrl/generation/ray/launcher.py
 tests/ray/test_ray_actor_pool.py
+tests/generation/ray/test_rollout_launcher.py
 tests/rewards/test_ray_reward_inference_runtime.py
 ```
 
 完成标准：
 
-- Ray reward runtime package 存在，且不是单个 `ray.py` 大文件。
+- 不新增 `vrl/rewards/ray/` 或 `vrl/rewards/ray.py`。
+- `vrl/ray/` 提供 generic actor group / actor pool / placement / lifecycle。
+- `vrl/generation/ray/launcher.py` 变成 thin adapter，复用 `vrl/ray/actor_group.py` / `placement.py` / `lifecycle.py`，现有 rollout launcher tests 继续通过。
+- `vrl/generation/execution/distributed/` 承载真实 chunk planner、payload types、worker core；不能重新拆成 `execution/distributed_*.py`。
+- `vrl/generation/ray/executor.py` 承载 Ray actor-method submit / gather；不能把 EnginePlan 构造塞回 Ray adapter。
+- `vrl/generation/ray/worker.py` 只能是 Ray actor wrapper；真实 worker core 必须在 `vrl/generation/execution/distributed/worker.py`。
+- 不新增 `vrl/rewards/inference/` package；`vrl/rewards/inference.py` 是单个 domain contract/factory module。
+- `vrl/ray/runtime.py` 提供 actor-method runtime；reward 不拥有 Ray runtime helper。
+- `vrl/rewards/scoring_worker.py` 提供 reward-specific worker semantics，并校验 serializable worker config；不单独拆 worker config 文件。
 - runtime 配置存在但没有 scorer wrapper 时 fail-fast。
 - `inference_runtime=ray` 可以用 fake/test wrapper 启动 N 个 Ray reward workers，并把 request shard 分发给 workers。
 - worker count / GPU ownership 来自 `distributed.resources.reward`。
@@ -1417,7 +1465,7 @@ tests/rewards/test_video_reward.py
 - Phase 4 删除 public `backend=stub` 行为。所有 legacy stub configs/tests 必须迁到 direct fake runtime unit tests；`inference_runtime=ray` Ray fake scorer integration tests 在 Phase 3 覆盖。
 - adapter 把现有 `score_key: "a+b"` 映射成 `RewardInferenceRequest.score_key="a+b"` 和 `score_aggregation="sum"`，不引入 user-facing `score_keys` plural config。
 
-### Phase 5：reward resource resolver and lifecycle
+### Phase 5：shared resource resolver and lifecycle
 
 编辑：
 
@@ -1427,13 +1475,15 @@ vrl/generation/runtime/config.py
 vrl/generation/ray/launcher.py
 vrl/scripts/common/online.py
 tests/ray/test_resources.py
+tests/generation/ray/test_rollout_launcher.py
 tests/rewards/test_reward_resource_lifecycle.py
 ```
 
 完成标准：
 
-- `distributed.resources.reward` 进入同一个 resolver，不在 reward launcher 里私自解析 GPU。
+- `distributed.resources.reward` 进入同一个 resolver，不在 reward runtime 里私自解析 GPU。
 - 当前 `vrl/generation/resources.py` 迁到 `vrl/ray/resources.py`；更新所有 imports，不保留长期 alias。
+- generation runtime config 和 launcher 必须消费 `vrl/ray/resources.py`，不能继续从 `vrl/generation/resources.py` 读全局 trainer/rollout resource plan。
 - P0 static role allocation 能解析 trainer / rollout / reward 三个 role，overlap 默认 fail-fast。
 - P1 `share_with_rollout: true` 能表达 rollout/reward phase-exclusive shared inference GPU pool。
 - `distributed.reward.release_after_score=true` 是 release lifecycle 的显式开关。
@@ -1442,13 +1492,14 @@ tests/rewards/test_reward_resource_lifecycle.py
 
 ### Phase 6：GPU reward runtime smoke
 
-这一阶段补 Ray runtime boundary 和真实 Cosmos consumer 之间的缺口。它不接 `cosmos_reason1`，只验证 repo-owned reward GPU worker 链路真的可用。
+这一阶段补 shared Ray actor substrate 和真实 Cosmos consumer 之间的缺口。它不接 `cosmos_reason1`，只验证 repo-owned reward GPU worker 链路真的可用。
 
 编辑：
 
 ```text
-vrl/rewards/inference/runtimes/ray/
-vrl/rewards/inference/runtime.py
+vrl/rewards/inference.py
+vrl/rewards/scoring_worker.py
+vrl/ray/runtime.py
 tests/rewards/test_ray_reward_gpu_smoke.py
 ```
 
@@ -1468,7 +1519,7 @@ tests/rewards/test_ray_reward_gpu_smoke.py
 ```text
 vrl/rollouts/collector/rewards.py
 vrl/rewards/video_reward.py
-vrl/rewards/inference/schema.py
+vrl/rewards/inference.py
 tests/rewards/test_video_reward_versioning.py
 ```
 
@@ -1522,6 +1573,7 @@ pytest tests/rewards/test_video_reward_artifacts.py \
   tests/rewards/test_reward_inference_schema.py \
   tests/rewards/test_reward_inference_runtime.py \
   tests/ray/test_ray_actor_pool.py \
+  tests/generation/ray/test_rollout_launcher.py \
   tests/rewards/test_ray_reward_inference_runtime.py \
   tests/rewards/test_video_reward.py
 ```
@@ -1531,6 +1583,7 @@ pytest tests/rewards/test_video_reward_artifacts.py \
 ```bash
 pytest tests/ray/test_resources.py \
   tests/ray/test_ray_actor_pool.py \
+  tests/generation/ray/test_rollout_launcher.py \
   tests/rewards/test_reward_resource_lifecycle.py \
   tests/rewards/test_ray_reward_inference_runtime.py \
   tests/rewards/test_ray_reward_gpu_smoke.py \
@@ -1553,7 +1606,8 @@ python -m vrl.scripts.train --config experiment/online/ocr/video_diffusion_nft
 
 - `video_reward` inference 有独立 schema、artifact store、runtime protocol。
 - `VideoReward` 是 thin adapter，不再混 runtime protocol 细节。
-- Ray reward runtime package 边界清楚；fake scorer 不作为 public runtime。
+- shared Ray actor substrate + reward worker boundary 清楚；fake scorer 不作为 public runtime。
+- generation launcher 已复用 shared Ray actor substrate，不再独占 generic placement / actor lifecycle helper。
 - 默认训练语义仍是 synchronous scored batch，不引入 silent stale RL。
 - public config 不再有 `backend` 字段，包括 `backend=stub`；fake scorer 不能作为真实验收。
 - reward artifact 和 reward debug result 可复现一次 reward call。
@@ -1561,7 +1615,8 @@ python -m vrl.scripts.train --config experiment/online/ocr/video_diffusion_nft
 ## Full sprint 完成标准
 
 - heavy video reward 可以作为独立 Ray worker runtime 运行，不常驻 trainer policy module 或 rollout worker。
-- Ray reward runtime 边界清楚，且不复用 rollout worker。
+- Ray-backed reward runtime 边界清楚，且不复用 rollout worker。
+- generation 和 reward 都通过同一个 `vrl/ray/` substrate 启动 / 放置 / 释放 actors。
 - `distributed.resources.reward -> Ray placement -> assigned GPU -> RewardInferenceResult` 有 trivial GPU scorer smoke 覆盖。
 - reward latency 和 version 信息可追踪，后续可以安全扩展 async overlap。
 - Cosmos-Predict2.5 + DiffusionNFT 可以作为 consumer 跑真实 video reward optimizer update。

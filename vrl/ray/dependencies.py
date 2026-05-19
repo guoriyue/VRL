@@ -1,4 +1,4 @@
-"""Lazy Ray dependency, actor import, and runtime metadata helpers."""
+"""Lazy Ray dependency, dynamic import, and actor metadata helpers."""
 
 from __future__ import annotations
 
@@ -12,10 +12,7 @@ def require_ray() -> Any:
     try:
         import ray
     except ImportError as exc:  # pragma: no cover - exercised only without Ray
-        raise ImportError(
-            "Ray generation runtime requires `ray`. Install Ray or disable "
-            "the Ray backend.",
-        ) from exc
+        raise ImportError("Ray runtime requires `ray`. Install Ray or disable Ray usage.") from exc
     return ray
 
 
@@ -43,14 +40,11 @@ def current_gpu_ids() -> list[int]:
     """Return integer GPU IDs assigned to the current Ray actor."""
 
     ray = require_ray()
-    ids = ray.get_gpu_ids()
     out: list[int] = []
-    for gpu_id in ids:
+    for gpu_id in ray.get_gpu_ids():
         try:
             out.append(int(gpu_id))
         except (TypeError, ValueError):
-            # Ray may report accelerator IDs that are not CUDA ordinals. Keep
-            # this metadata path best-effort instead of failing generation work.
             continue
     return out
 
