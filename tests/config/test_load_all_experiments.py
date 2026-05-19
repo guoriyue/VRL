@@ -153,9 +153,9 @@ def test_invalid_algorithm_kind_fails_fast() -> None:
 
 def test_reward_backbone_kwargs_are_required() -> None:
     cfg = load_config("experiment/online/aesthetic/video_diffusion_grpo")
-    del cfg.reward.kwargs.aesthetic["model_name"]
+    del cfg.reward.kwargs.video_reward["score_key"]
 
-    with pytest.raises(ValueError, match="aesthetic"):
+    with pytest.raises(ValueError, match="video_reward"):
         validate_reward_config(cfg)
 
 

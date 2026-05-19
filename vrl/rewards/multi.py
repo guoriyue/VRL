@@ -5,6 +5,7 @@ Ported from the multi_score() pattern in flow_grpo/rewards.py.
 
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 from vrl.rewards.base import RewardFunction
@@ -73,6 +74,15 @@ class MultiReward(RewardFunction):
     def reset_components(self) -> None:
         """Clear component score history before a new trainer step."""
         self.last_components = {}
+
+    async def shutdown(self) -> None:
+        for _, _, fn in self.rewards:
+            shutdown = getattr(fn, "shutdown", None)
+            if shutdown is None:
+                continue
+            result = shutdown()
+            if inspect.isawaitable(result):
+                await result
 
     @classmethod
     def from_dict(

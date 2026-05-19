@@ -5,9 +5,15 @@ reward:
   kwargs:
     video_reward:
       inference_runtime: ray
-      reward_name: dance_grpo
+      reward_name: cosmos_reason1
       score_key: overall_reward
       media_type: video
       artifact_dir: outputs/reward_artifacts
       timeout_s: 60.0
       debug_dir: ""
+      num_workers: 1
+      cpus_per_worker: 0.5
+      gpus_per_worker: 0.0
+      worker_config:
+        scorer: tensor_mean
+        reward_model_version: tensor-mean-v1

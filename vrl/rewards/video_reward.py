@@ -66,6 +66,11 @@ class VideoReward(RewardFunction):
     async def score(self, rollout: RewardRollout) -> float:
         return (await self.score_batch([rollout]))[0]
 
+    async def shutdown(self) -> None:
+        shutdown = getattr(self.runtime, "shutdown", None)
+        if shutdown is not None:
+            await shutdown()
+
     async def score_batch(self, rollouts: list[RewardRollout]) -> list[float]:
         if not rollouts:
             return []

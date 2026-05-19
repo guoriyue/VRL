@@ -6,7 +6,7 @@ defaults:
   - /model/diffusion/cosmos/predict2_5_2b
   - /sampling/video/512p_93f
   - /sampling/denoise/10_step_no_cfg
-  - /reward/ocr
+  - /reward/video_reward
   - /dataset/ocr
 
 actor:

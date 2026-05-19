@@ -8,7 +8,7 @@ defaults:
   - /model/diffusion/cosmos/predict2_2b
   - /sampling/video/704p_93f
   - /sampling/denoise/35_step_cfg_7
-  - /reward/aesthetic
+  - /reward/video_reward
   - /dataset/drawbench_train_192
 
 # Cosmos source defaults: lr=1e-5, beta=0.004, eps_clip=1e-3, n=4, ppo_epochs=1.

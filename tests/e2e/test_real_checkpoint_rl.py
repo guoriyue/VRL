@@ -25,6 +25,7 @@ from vrl.rollouts.families import RolloutFamilyEntry, get_rollout_family_entry
 from vrl.scripts.common.factory import (
     build_algorithm_and_evaluator_from_cfg,
     build_collector_from_cfg,
+    build_reward_from_cfg,
     build_rollout_config_from_cfg,
 )
 from vrl.trainers.online import OnlineTrainer
@@ -52,6 +53,7 @@ class RealCheckpointCase:
     overrides: tuple[str, ...]
     min_cuda_memory_gib: float
     reference_image_cfg_path: str | None = None
+    use_config_reward: bool = False
 
 
 CASES: tuple[RealCheckpointCase, ...] = (
@@ -203,6 +205,7 @@ CASES: tuple[RealCheckpointCase, ...] = (
         ),
         min_cuda_memory_gib=28.0,
         reference_image_cfg_path="model.reference_image",
+        use_config_reward=True,
     ),
     RealCheckpointCase(
         case_id="cosmos_predict2_5",
@@ -245,6 +248,7 @@ CASES: tuple[RealCheckpointCase, ...] = (
             "sampling.max_sequence_length=64",
         ),
         min_cuda_memory_gib=28.0,
+        use_config_reward=True,
     ),
     RealCheckpointCase(
         case_id="nextstep_1",
@@ -336,6 +340,8 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
         case_overrides.append(
             f"{case.reference_image_cfg_path}={reference_image.as_posix()}",
         )
+    if case.use_config_reward:
+        case_overrides.extend(_ray_reward_overrides(tmp_path))
 
     cfg = load_config(
         case.config,
@@ -352,6 +358,7 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
     bundle: Any | None = None
     collector: Any | None = None
     trainer: OnlineTrainer | None = None
+    reward_fn: Any | None = None
     try:
         device = torch.device("cuda")
         built = build_configs(cfg)
@@ -360,10 +367,14 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
         bundle = _build_runtime_bundle(entry, cfg, device, dtype)
         executor = _build_executor(entry, bundle.model, cfg)
         collector_config = build_rollout_config_from_cfg(cfg, entry)
+        reward_fn = (
+            build_reward_from_cfg(cfg, built=built, device=str(device))
+            if case.use_config_reward else _IndexReward()
+        )
         collector = build_collector_from_cfg(
             cfg,
             model=bundle.model,
-            reward_fn=_IndexReward(),
+            reward_fn=reward_fn,
             family=entry,
             collector_config=collector_config,
             runtime=_InProcessGenerationRuntime(executor),
@@ -400,10 +411,14 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
         assert metrics.adv_zero_rate < 1.0
         _assert_finite("loss", metrics.loss)
         _assert_finite_positive("grad_norm", metrics.grad_norm)
+        if case.use_config_reward:
+            _assert_ray_reward_artifacts(tmp_path, reward_fn)
     finally:
+        if reward_fn is not None:
+            asyncio.run(_shutdown_if_present(reward_fn))
         if collector is not None:
             asyncio.run(collector.shutdown())
-        del trainer, collector, bundle
+        del trainer, collector, reward_fn, bundle
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -426,6 +441,37 @@ def _common_training_overrides(tmp_path: Path) -> tuple[str, ...]:
         "actor.ema.enable=false",
         "actor.optim.use_8bit_adam=false",
     )
+
+
+def _ray_reward_overrides(tmp_path: Path) -> tuple[str, ...]:
+    artifact_dir = tmp_path / "reward_artifacts"
+    debug_dir = tmp_path / "reward_debug"
+    return (
+        f"reward.kwargs.video_reward.artifact_dir={artifact_dir.as_posix()}",
+        f"reward.kwargs.video_reward.debug_dir={debug_dir.as_posix()}",
+        "reward.kwargs.video_reward.release_after_score=true",
+        "reward.kwargs.video_reward.num_workers=1",
+        "reward.kwargs.video_reward.cpus_per_worker=0.5",
+        "reward.kwargs.video_reward.gpus_per_worker=0.0",
+        "reward.kwargs.video_reward.worker_config.scorer=tensor_mean",
+        "reward.kwargs.video_reward.worker_config.reward_model_version=e2e-tensor-mean",
+    )
+
+
+def _assert_ray_reward_artifacts(tmp_path: Path, reward_fn: Any) -> None:
+    components = getattr(reward_fn, "last_components", {})
+    assert "video_reward" in components
+    assert len(components["video_reward"]) >= 2
+    assert (tmp_path / "reward_artifacts" / "manifest.jsonl").exists()
+    assert (tmp_path / "reward_debug" / "video_reward_results.jsonl").exists()
+
+
+async def _shutdown_if_present(value: Any) -> None:
+    shutdown = getattr(value, "shutdown", None)
+    if shutdown is not None:
+        result = shutdown()
+        if inspect.isawaitable(result):
+            await result
 
 
 def _build_runtime_bundle(
