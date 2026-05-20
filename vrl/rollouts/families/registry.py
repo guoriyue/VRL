@@ -197,6 +197,25 @@ register_rollout_family(
 )
 
 register_rollout_family(
+    _diffusion_entry(
+        family="cosmos-predict2-anima",
+        task="t2i",
+        aliases=("anima", "cosmos_anima", "anima_preview3"),
+        executor_cls="vrl.models.diffusion.cosmos.anima.runtime:AnimaPipelineExecutor",
+        runtime_builder=(
+            "vrl.models.diffusion.cosmos.anima.runtime:"
+            "build_anima_runtime_bundle"
+        ),
+        runtime_spec_extractor=(
+            "vrl.models.diffusion.cosmos.anima.runtime:"
+            "extract_anima_runtime_spec"
+        ),
+        request_prefix="anima",
+        default_task_type="text_to_image",
+    ),
+)
+
+register_rollout_family(
     RolloutFamilyEntry(
         family="janus_pro",
         task="ar_t2i",

@@ -44,6 +44,22 @@ async def train_cosmos_predict25_diffusion_nft(cfg: DictConfig) -> None:
     )
 
 
+async def train_anima_grpo(cfg: DictConfig) -> None:
+    """Run Anima Preview3 GRPO through the common online recipe."""
+
+    await run_online_recipe(
+        cfg,
+        OnlineRecipeDefinition(
+            family="cosmos-predict2-anima",
+            build_bundle=_build_anima_bundle,
+            build_replay_bundle=_build_anima_replay_bundle,
+            after_bundle_built=_after_bundle_built,
+            reference_model_getter=_reference_model,
+            export_modules_getter=_export_modules,
+        ),
+    )
+
+
 def _build_predict2_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
     from vrl.models.diffusion.cosmos.predict2.runtime import (
         build_cosmos_predict2_runtime_bundle_from_cfg,
@@ -82,6 +98,26 @@ def _build_predict25_replay_bundle(
     )
 
     return build_cosmos_predict25_replay_runtime_bundle_from_cfg(cfg, device, weight_dtype)
+
+
+def _build_anima_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
+    from vrl.models.diffusion.cosmos.anima.runtime import (
+        build_anima_runtime_bundle_from_cfg,
+    )
+
+    return build_anima_runtime_bundle_from_cfg(cfg, device, weight_dtype)
+
+
+def _build_anima_replay_bundle(
+    cfg: DictConfig,
+    device: Any,
+    weight_dtype: Any,
+) -> Any:
+    from vrl.models.diffusion.cosmos.anima.runtime import (
+        build_anima_replay_runtime_bundle_from_cfg,
+    )
+
+    return build_anima_replay_runtime_bundle_from_cfg(cfg, device, weight_dtype)
 
 
 def _after_bundle_built(bundle: Any, cfg: DictConfig) -> None:
@@ -170,6 +206,7 @@ def _normalize_per_sample_reference_images(
 
 
 __all__ = [
+    "train_anima_grpo",
     "train_cosmos_predict2_grpo",
     "train_cosmos_predict25_diffusion_nft",
 ]

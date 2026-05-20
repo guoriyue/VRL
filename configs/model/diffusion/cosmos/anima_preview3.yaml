@@ -1,0 +1,31 @@
+# Anima Preview3 single-file Cosmos Predict2 Text2Image checkpoint.
+# The default path matches the local ComfyUI-style checkout on this machine.
+# Replay/trainer loading needs only model.path or model.transformer_path.
+# Full generation also needs text_encoder_path, vae_path, and tokenizer_root.
+model:
+  family: cosmos-predict2-anima
+  path: /home/mingfeiguo/Desktop/anima-inference/models
+  transformer_path: ""
+  text_encoder_path: ""
+  vae_path: ""
+  tokenizer_root: /home/mingfeiguo/Desktop/anima-inference/ComfyUI/comfy/text_encoders
+  scheduler_shift: 3.0
+
+  use_lora: true
+  lora:
+    rank: 32
+    alpha: 16
+    path: ""
+    target_modules:
+      - to_k
+      - to_q
+      - to_v
+      - to_out.0
+      - add_k_proj
+      - add_q_proj
+      - add_v_proj
+      - to_add_out
+
+  torch_compile:
+    enable: false
+    mode: default

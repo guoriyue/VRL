@@ -41,6 +41,7 @@ class CheckpointField:
     cfg_path: str
     repo_id: str
     required_files: tuple[str, ...] = ()
+    allow_file: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +55,9 @@ class RealCheckpointCase:
     min_cuda_memory_gib: float
     reference_image_cfg_path: str | None = None
     use_config_reward: bool = False
+    replay_runtime_builder: str | None = None
+    replay_runtime_spec_extractor: str | None = None
+    synthetic_replay_rollout: bool = False
 
 
 CASES: tuple[RealCheckpointCase, ...] = (
@@ -251,6 +255,51 @@ CASES: tuple[RealCheckpointCase, ...] = (
         use_config_reward=True,
     ),
     RealCheckpointCase(
+        case_id="cosmos_anima",
+        config="experiment/online/aesthetic/image_anima_grpo",
+        family="cosmos-predict2-anima",
+        prompt="anime portrait of a small white sign that says RL",
+        checkpoints=(
+            CheckpointField(
+                cfg_path="model.path",
+                repo_id="circlestone-labs/Anima",
+                required_files=(
+                    "diffusion_models/anima-preview3-base.safetensors",
+                ),
+                allow_file=True,
+            ),
+        ),
+        overrides=(
+            "model.torch_compile.enable=false",
+            "actor.gradient_accumulation_steps=0",
+            "algorithm.init_kl_coef=0.0",
+            "algorithm.kl_reward=0.0",
+            "algorithm.per_prompt_stat_tracking=false",
+            "rollout.n=2",
+            "rollout.rollout_batch_size=1",
+            "rollout.sample_batch_size=1",
+            "rollout.noise_level=0.7",
+            "rollout.sde.window_size=0",
+            "rollout.sde.window_range=[0,1]",
+            "sampling.num_steps=1",
+            "sampling.guidance_scale=1.0",
+            "sampling.cfg=false",
+            "sampling.height=128",
+            "sampling.width=128",
+            "sampling.max_sequence_length=64",
+        ),
+        min_cuda_memory_gib=28.0,
+        replay_runtime_builder=(
+            "vrl.models.diffusion.cosmos.anima.runtime:"
+            "build_anima_replay_runtime_bundle"
+        ),
+        replay_runtime_spec_extractor=(
+            "vrl.models.diffusion.cosmos.anima.runtime:"
+            "extract_anima_replay_runtime_spec"
+        ),
+        synthetic_replay_rollout=True,
+    ),
+    RealCheckpointCase(
         case_id="nextstep_1",
         config="experiment/online/ocr/ar_continuous_token_grpo",
         family="nextstep_1",
@@ -320,6 +369,46 @@ class _InProcessGenerationRuntime:
             torch.cuda.empty_cache()
 
 
+class _SyntheticDiffusionReplayCollector:
+    """Collector that exercises replay training without full generation assets."""
+
+    def __init__(
+        self,
+        *,
+        model: Any,
+        case: RealCheckpointCase,
+        cfg: Any,
+        device: torch.device,
+    ) -> None:
+        self.model = model
+        self.case = case
+        self.cfg = cfg
+        self.device = device
+        self.runtime = _StaticPolicyRuntime()
+
+    async def collect(self, prompts: list[str], **kwargs: Any) -> Any:
+        return _synthetic_diffusion_replay_batch(
+            model=self.model,
+            case=self.case,
+            cfg=self.cfg,
+            prompts=prompts,
+            group_size=int(kwargs.get("group_size", 2)),
+            policy_version=kwargs.get("policy_version"),
+            device=self.device,
+        )
+
+    async def release_runtime_memory(self) -> None:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    async def shutdown(self) -> None:
+        return None
+
+
+class _StaticPolicyRuntime:
+    current_policy_version = 0
+
+
 @pytest.mark.e2e
 @pytest.mark.parametrize("case", CASES, ids=lambda case: case.case_id)
 def test_real_checkpoint_online_rl_updates_trainable_weights(
@@ -364,21 +453,30 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
         built = build_configs(cfg)
         trainer_config = built["trainer"]
         dtype = torch_dtype_for_trainer_precision(trainer_config, torch)
-        bundle = _build_runtime_bundle(entry, cfg, device, dtype)
-        executor = _build_executor(entry, bundle.model, cfg)
+        bundle = _build_runtime_bundle(case, entry, cfg, device, dtype)
         collector_config = build_rollout_config_from_cfg(cfg, entry)
-        reward_fn = (
-            build_reward_from_cfg(cfg, built=built, device=str(device))
-            if case.use_config_reward else _IndexReward()
-        )
-        collector = build_collector_from_cfg(
-            cfg,
-            model=bundle.model,
-            reward_fn=reward_fn,
-            family=entry,
-            collector_config=collector_config,
-            runtime=_InProcessGenerationRuntime(executor),
-        )
+        if case.synthetic_replay_rollout:
+            collector = _SyntheticDiffusionReplayCollector(
+                model=bundle.model,
+                case=case,
+                cfg=cfg,
+                device=device,
+            )
+            reward_fn = None
+        else:
+            executor = _build_executor(entry, bundle.model, cfg)
+            reward_fn = (
+                build_reward_from_cfg(cfg, built=built, device=str(device))
+                if case.use_config_reward else _IndexReward()
+            )
+            collector = build_collector_from_cfg(
+                cfg,
+                model=bundle.model,
+                reward_fn=reward_fn,
+                family=entry,
+                collector_config=collector_config,
+                runtime=_InProcessGenerationRuntime(executor),
+            )
         pair = build_algorithm_and_evaluator_from_cfg(
             cfg,
             family=entry,
@@ -475,13 +573,16 @@ async def _shutdown_if_present(value: Any) -> None:
 
 
 def _build_runtime_bundle(
+    case: RealCheckpointCase,
     entry: RolloutFamilyEntry,
     cfg: Any,
     device: torch.device,
     dtype: torch.dtype,
 ) -> Any:
-    extractor = import_from_path(entry.runtime_spec_extractor)
-    builder = import_from_path(entry.runtime_builder)
+    extractor_path = case.replay_runtime_spec_extractor or entry.runtime_spec_extractor
+    builder_path = case.replay_runtime_builder or entry.runtime_builder
+    extractor = import_from_path(extractor_path)
+    builder = import_from_path(builder_path)
     spec = extractor(cfg, device, dtype)
     if entry.family == "janus_pro_r1":
         spec.task_variant = "ar_t2i_r1"
@@ -501,6 +602,154 @@ def _build_executor(
     if "reference_image" in signature.parameters:
         kwargs["reference_image"] = getattr(cfg.model, "reference_image", None)
     return executor_cls(model, **kwargs)
+
+
+def _synthetic_diffusion_replay_batch(
+    *,
+    model: Any,
+    case: RealCheckpointCase,
+    cfg: Any,
+    prompts: list[str],
+    group_size: int,
+    policy_version: int | None,
+    device: torch.device,
+) -> Any:
+    from vrl.math.diffusion.flow_matching import sde_step_with_logprob
+    from vrl.rollouts.batch import RolloutBatch
+    from vrl.trajectory import build_diffusion_trajectory, build_training_view
+
+    num_steps = max(1, int(cfg.sampling.num_steps))
+    height = int(cfg.sampling.height)
+    width = int(cfg.sampling.width)
+    latent_scale = 8
+    transformer_cfg = getattr(getattr(model, "transformer", None), "config", None)
+    in_channels = int(getattr(transformer_cfg, "in_channels", 16))
+    text_embed_dim = int(getattr(transformer_cfg, "text_embed_dim", 1024))
+    dtype = _model_tensor_dtype(model)
+
+    if hasattr(model, "set_num_steps"):
+        model.set_num_steps(num_steps)
+    else:
+        model.scheduler.set_timesteps(num_steps, device=device)
+
+    request = GenerationRequest(
+        request_id=f"{case.case_id}:synthetic-replay",
+        family=case.family,
+        task="text_to_image",
+        prompts=list(prompts),
+        samples_per_prompt=group_size,
+        sampling={
+            "height": height,
+            "width": width,
+            "num_frames": 1,
+            "num_steps": num_steps,
+            "guidance_scale": float(cfg.sampling.guidance_scale),
+            "cfg": bool(cfg.sampling.cfg),
+        },
+        return_artifacts={"trajectory"},
+        policy_version=None if policy_version is None else int(policy_version),
+    )
+    sample_rows = GenerationIdFactory().build_sample_rows(request)
+    batch_size = len(sample_rows)
+    generator = torch.Generator(device=device)
+    generator.manual_seed(1729)
+
+    observations = torch.randn(
+        (
+            batch_size,
+            num_steps,
+            in_channels,
+            1,
+            max(1, height // latent_scale),
+            max(1, width // latent_scale),
+        ),
+        generator=generator,
+        device=device,
+        dtype=torch.float32,
+    )
+    prompt_embeds = torch.randn(
+        (batch_size, 512, text_embed_dim),
+        generator=generator,
+        device=device,
+        dtype=dtype,
+    )
+    padding_mask = torch.zeros(
+        (batch_size, 1, height, width),
+        device=device,
+        dtype=dtype,
+    )
+    replay_tensors: dict[str, Any] = {
+        "prompt_embeds": prompt_embeds,
+        "negative_prompt_embeds": None,
+        "padding_mask": padding_mask,
+    }
+    context = {
+        "guidance_scale": float(cfg.sampling.guidance_scale),
+        "cfg": bool(cfg.sampling.cfg),
+        "model_family": case.family,
+    }
+    timesteps = model.scheduler.timesteps[:num_steps].to(device)
+    timesteps = timesteps.unsqueeze(0).expand(batch_size, -1).clone()
+    noise_level = float(cfg.rollout.noise_level)
+    sde_type = str(getattr(getattr(cfg.rollout, "sde", None), "type", "sde"))
+
+    action_steps: list[torch.Tensor] = []
+    old_log_prob_steps: list[torch.Tensor] = []
+    with torch.no_grad():
+        for step_idx in range(num_steps):
+            state = model.restore_eval_state(
+                replay_tensors,
+                context,
+                observations[:, step_idx],
+                step_idx,
+            )
+            noise_pred = model.forward_step(state, step_idx)["noise_pred"]
+            sde = sde_step_with_logprob(
+                model.scheduler,
+                noise_pred,
+                timesteps[:, step_idx],
+                observations[:, step_idx],
+                generator=generator,
+                noise_level=noise_level,
+                sde_type=sde_type,
+            )
+            action_steps.append(sde.prev_sample.detach())
+            old_log_prob_steps.append(sde.log_prob.detach())
+
+    actions = torch.stack(action_steps, dim=1)
+    old_log_prob = torch.stack(old_log_prob_steps, dim=1)
+    kl = torch.zeros_like(old_log_prob)
+    trajectory = build_diffusion_trajectory(
+        request=request,
+        sample_rows=sample_rows,
+        observations=observations.detach(),
+        actions=actions,
+        old_log_prob=old_log_prob,
+        timesteps=timesteps,
+        kl=kl,
+        replay_tensors=replay_tensors,
+        context=context,
+    )
+    rewards = torch.arange(batch_size, device=device, dtype=torch.float32)
+    return RolloutBatch(
+        observations=observations.detach(),
+        actions=actions,
+        rewards=rewards,
+        dones=torch.ones(batch_size, device=device, dtype=torch.bool),
+        group_ids=trajectory.group_ids,
+        extras={},
+        context=dict(trajectory.context),
+        videos=None,
+        prompts=[row.prompt for row in sample_rows],
+        trajectory=trajectory,
+        training_view=build_training_view(trajectory, primary_segment="denoise"),
+    )
+
+
+def _model_tensor_dtype(model: Any) -> torch.dtype:
+    for parameter in model.parameters():
+        return parameter.dtype
+    return torch.bfloat16
 
 
 def _skip_unless_case_enabled(case: RealCheckpointCase) -> None:
@@ -534,6 +783,8 @@ def _resolve_checkpoint_path(case: RealCheckpointCase, field: CheckpointField) -
         path = Path(override).expanduser()
         if not path.exists():
             pytest.skip(f"{env_name} points to a missing checkpoint: {path}")
+        if path.is_file() and field.allow_file:
+            return path
         missing = _missing_required_files(path, field.required_files)
         if missing:
             pytest.skip(

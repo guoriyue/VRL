@@ -148,6 +148,46 @@ def test_cosmos_predict25_replay_builder_keeps_diffusion_nft_surface(
         _ = bundle.model.pipeline
 
 
+def test_anima_replay_builder_uses_only_transformer_checkpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vrl.models.diffusion.cosmos.anima import runtime
+
+    monkeypatch.setattr(
+        runtime,
+        "_load_anima_transformer_component",
+        lambda _spec: _TinyTransformer(),
+    )
+
+    bundle = runtime.build_anima_replay_runtime_bundle(
+        _spec(
+            task_variant="text_to_image",
+            extra={
+                "resolved_paths": {"transformer": "/tmp/anima-preview3-base.safetensors"},
+                "scheduler_shift": 3.0,
+            },
+        ),
+    )
+
+    require_minimal_replay_bundle(bundle)
+    profile = module_loading_profile_from_metadata(bundle.metadata)
+    assert profile.runtime_role == MINIMAL_REPLAY_RUNTIME_ROLE
+    assert profile.generation_only_modules == (
+        "text_encoder",
+        "llm_adapter",
+        "vae",
+        "tokenizers",
+    )
+    assert bundle.backend_handle is None
+    assert set(bundle.trainable_modules) == {"transformer"}
+    assert not hasattr(bundle.model, "text_encoder")
+    assert not hasattr(bundle.model, "vae")
+    with pytest.raises(RuntimeError, match="pipeline"):
+        _ = bundle.model.pipeline
+    with pytest.raises(RuntimeError, match="encode prompts"):
+        bundle.model.encode_prompt("prompt")
+
+
 @pytest.mark.parametrize(
     ("module_path", "builder_name", "model_attr", "spec_kwargs"),
     [
