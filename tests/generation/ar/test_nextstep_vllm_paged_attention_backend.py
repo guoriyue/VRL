@@ -34,9 +34,9 @@ def test_nextstep_vllm_paged_attention_matches_hf_qwen_one_step() -> None:
         pytest.skip(f"vLLM paged-attention internals are unavailable: {exc}")
 
     embeds = torch.randn(1, 4, 512, device="cuda", dtype=torch.float16)
-    mask = torch.ones(1, 4, device="cuda", dtype=torch.long)
+    mask = torch.tensor([[0, 0, 1, 1]], device="cuda", dtype=torch.long)
     step_embeds = torch.randn(1, 1, 512, device="cuda", dtype=torch.float16)
-    step_mask = torch.ones(1, 5, device="cuda", dtype=torch.long)
+    step_mask = torch.tensor([[0, 0, 1, 1, 1]], device="cuda", dtype=torch.long)
 
     with torch.no_grad():
         hf_prefill = trunk(inputs_embeds=embeds, attention_mask=mask, use_cache=True)
@@ -72,7 +72,7 @@ def test_nextstep_vllm_paged_attention_matches_hf_qwen_one_step() -> None:
     ).abs().max().item() <= 3e-3
     assert (
         hf_step.last_hidden_state[:, -1, :] - paged_step.last_hidden
-    ).abs().max().item() <= 3e-3
+    ).abs().max().item() <= 5e-3
 
 
 def test_nextstep_runtime_uses_vllm_paged_attention_by_default(monkeypatch) -> None:

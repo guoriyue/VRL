@@ -29,6 +29,7 @@ class VllmDecoderPagedSequenceState:
     branch: str
     row: int
     length: int
+    next_position_id: int
     block_ids: tuple[int, ...]
 
 
@@ -74,7 +75,8 @@ class VllmDecoderPagedAttentionBackend(ARPagedAttentionBackend):
     ) -> ARPagedAttentionPrefillOutput:
         (
             inputs_embeds,
-            positions,
+            cache_positions,
+            position_ids,
             query_start_loc,
             seq_lens,
             last_token_offsets,
@@ -82,7 +84,8 @@ class VllmDecoderPagedAttentionBackend(ARPagedAttentionBackend):
         ) = self._pack_prefill(request)
         last_hidden_states = self._forward_paged_trunk(
             inputs_embeds,
-            positions=positions,
+            cache_positions=cache_positions,
+            position_ids=position_ids,
             query_start_loc=query_start_loc,
             seq_lens=seq_lens,
             states=states,
@@ -101,14 +104,16 @@ class VllmDecoderPagedAttentionBackend(ARPagedAttentionBackend):
     def step(self, request: ARPagedAttentionStepInput) -> ARPagedAttentionStepOutput:
         (
             inputs_embeds,
-            positions,
+            cache_positions,
+            position_ids,
             query_start_loc,
             seq_lens,
             states,
         ) = self._pack_step(request)
         last_hidden_states = self._forward_paged_trunk(
             inputs_embeds,
-            positions=positions,
+            cache_positions=cache_positions,
+            position_ids=position_ids,
             query_start_loc=query_start_loc,
             seq_lens=seq_lens,
             states=states,
@@ -150,10 +155,10 @@ class VllmDecoderPagedAttentionBackend(ARPagedAttentionBackend):
         lengths = mask_bool.sum(dim=1).to(dtype=torch.long)
         if bool((lengths <= 0).any()):
             raise ValueError(f"{self.backend_label} prefill requires non-empty prompts")
-        self._validate_right_padded_mask(mask_bool, lengths)
 
         packed_embeds: list[torch.Tensor] = []
-        packed_positions: list[torch.Tensor] = []
+        packed_cache_positions: list[torch.Tensor] = []
+        packed_position_ids: list[torch.Tensor] = []
         query_starts = [0]
         last_offsets: list[int] = []
         states: list[VllmDecoderPagedSequenceState] = []
@@ -164,9 +169,13 @@ class VllmDecoderPagedAttentionBackend(ARPagedAttentionBackend):
         )
         for row, length_tensor in enumerate(lengths):
             length = int(length_tensor.item())
-            packed_embeds.append(embeds[row, :length])
-            packed_positions.append(
+            start, end = self._contiguous_valid_token_span(mask_bool[row], length)
+            packed_embeds.append(embeds[row, start:end])
+            packed_cache_positions.append(
                 torch.arange(length, dtype=torch.long, device=embeds.device)
+            )
+            packed_position_ids.append(
+                torch.arange(start, end, dtype=torch.long, device=embeds.device)
             )
             query_starts.append(query_starts[-1] + length)
             last_offsets.append(query_starts[-1] - 1)
@@ -176,13 +185,15 @@ class VllmDecoderPagedAttentionBackend(ARPagedAttentionBackend):
                     branch=request.branch,
                     row=row,
                     length=length,
+                    next_position_id=end,
                     block_ids=self._allocate_blocks(length + max_new_tokens),
                 )
             )
         self._next_sequence_id += embeds.shape[0]
         return (
             torch.cat(packed_embeds, dim=0),
-            torch.cat(packed_positions, dim=0),
+            torch.cat(packed_cache_positions, dim=0),
+            torch.cat(packed_position_ids, dim=0),
             torch.tensor(
                 query_starts,
                 dtype=torch.int32,
@@ -201,6 +212,7 @@ class VllmDecoderPagedAttentionBackend(ARPagedAttentionBackend):
         self,
         request: ARPagedAttentionStepInput,
     ) -> tuple[
+        torch.Tensor,
         torch.Tensor,
         torch.Tensor,
         torch.Tensor,
@@ -227,19 +239,26 @@ class VllmDecoderPagedAttentionBackend(ARPagedAttentionBackend):
                 branch=branch,
                 row=state.row,
                 length=state.length + 1,
+                next_position_id=state.next_position_id + 1,
                 block_ids=state.block_ids,
             )
             for state, branch in zip(states, request.branch_names, strict=True)
         )
-        positions = torch.tensor(
+        cache_positions = torch.tensor(
             [state.length for state in states],
+            dtype=torch.long,
+            device=embeds.device,
+        )
+        position_ids = torch.tensor(
+            [state.next_position_id for state in states],
             dtype=torch.long,
             device=embeds.device,
         )
         batch = embeds.shape[0]
         return (
             embeds[:, 0, :],
-            positions,
+            cache_positions,
+            position_ids,
             torch.arange(
                 batch + 1,
                 dtype=torch.int32,
@@ -257,7 +276,8 @@ class VllmDecoderPagedAttentionBackend(ARPagedAttentionBackend):
         self,
         inputs_embeds: torch.Tensor,
         *,
-        positions: torch.Tensor,
+        cache_positions: torch.Tensor,
+        position_ids: torch.Tensor,
         query_start_loc: torch.Tensor,
         seq_lens: torch.Tensor,
         states: SequenceABC[VllmDecoderPagedSequenceState],
@@ -273,14 +293,14 @@ class VllmDecoderPagedAttentionBackend(ARPagedAttentionBackend):
             max_query_len,
             max_seq_len,
         ) = self._build_paged_forward_inputs(
-            positions=positions,
+            cache_positions=cache_positions,
             query_start_loc=query_start_loc,
             seq_lens=seq_lens,
             states=states,
         )
 
         hidden_states = inputs_embeds
-        position_ids = positions.unsqueeze(0)
+        position_ids = position_ids.unsqueeze(0)
         position_embeddings = self.trunk.rotary_emb(
             hidden_states.unsqueeze(0),
             position_ids,
@@ -375,7 +395,7 @@ class VllmDecoderPagedAttentionBackend(ARPagedAttentionBackend):
     def _build_paged_forward_inputs(
         self,
         *,
-        positions: torch.Tensor,
+        cache_positions: torch.Tensor,
         query_start_loc: torch.Tensor,
         seq_lens: torch.Tensor,
         states: SequenceABC[VllmDecoderPagedSequenceState],
@@ -384,8 +404,8 @@ class VllmDecoderPagedAttentionBackend(ARPagedAttentionBackend):
         block_table = self.kernels.new_block_table(
             max_num_reqs=len(states),
             max_num_blocks_per_req=max_blocks,
-            max_num_batched_tokens=int(positions.shape[0]),
-            device=positions.device,
+            max_num_batched_tokens=int(cache_positions.shape[0]),
+            device=cache_positions.device,
         )
         for row_idx, state in enumerate(states):
             block_table.add_row(list(state.block_ids), row_idx=row_idx)
@@ -394,12 +414,12 @@ class VllmDecoderPagedAttentionBackend(ARPagedAttentionBackend):
             block_table=block_table,
             num_reqs=len(states),
             query_start_loc=query_start_loc,
-            positions=positions,
+            positions=cache_positions,
         )
         return (
             block_table.get_device_tensor(len(states))[:, :max_blocks],
             slot_mapping,
-            int(positions.shape[0]),
+            int(cache_positions.shape[0]),
             int((query_start_loc[1:] - query_start_loc[:-1]).max().item()),
             int(seq_lens.max().item()),
         )
@@ -498,12 +518,22 @@ class VllmDecoderPagedAttentionBackend(ARPagedAttentionBackend):
         if tensor.ndim != 3:
             raise ValueError(f"{self.backend_label} input embeddings must be [B, T, H]")
 
-    @staticmethod
-    def _validate_right_padded_mask(mask: torch.Tensor, lengths: torch.Tensor) -> None:
-        positions = torch.arange(mask.shape[1], device=mask.device).unsqueeze(0)
-        expected = positions < lengths.unsqueeze(1)
-        if not torch.equal(mask, expected):
-            raise ValueError("vLLM paged attention requires right-padded prompt masks")
+    def _contiguous_valid_token_span(
+        self,
+        mask: torch.Tensor,
+        length: int,
+    ) -> tuple[int, int]:
+        valid_positions = torch.nonzero(mask, as_tuple=False).flatten()
+        if int(valid_positions.numel()) != int(length):
+            raise ValueError(f"{self.backend_label} prompt mask length mismatch")
+        start = int(valid_positions[0].item())
+        end = int(valid_positions[-1].item()) + 1
+        if end - start != int(length):
+            raise ValueError(
+                f"{self.backend_label} requires prompt masks with one contiguous "
+                "valid-token span",
+            )
+        return start, end
 
     @staticmethod
     def _typed_states(

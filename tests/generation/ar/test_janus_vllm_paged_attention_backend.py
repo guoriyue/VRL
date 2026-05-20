@@ -28,9 +28,9 @@ def test_janus_vllm_paged_attention_matches_hf_llama_one_step() -> None:
         pytest.skip(f"vLLM paged-attention internals are unavailable: {exc}")
 
     embeds = torch.randn(1, 4, 512, device="cuda", dtype=torch.float16)
-    mask = torch.ones(1, 4, device="cuda", dtype=torch.long)
+    mask = torch.tensor([[0, 0, 1, 1]], device="cuda", dtype=torch.long)
     step_embeds = torch.randn(1, 1, 512, device="cuda", dtype=torch.float16)
-    step_mask = torch.ones(1, 5, device="cuda", dtype=torch.long)
+    step_mask = torch.tensor([[0, 0, 1, 1, 1]], device="cuda", dtype=torch.long)
 
     with torch.no_grad():
         hf_prefill = trunk(inputs_embeds=embeds, attention_mask=mask, use_cache=True)
