@@ -59,6 +59,10 @@ def test_ray_reward_runtime_scores_artifacts_with_fake_worker() -> None:
         assert [result.selected_score for result in results] == pytest.approx([2.0, 2.0, 2.0])
         assert {result.reward_model_version for result in results} == {"fake-v1"}
         assert {result.policy_version for result in results} == {7}
+        assert all(result.latency_ms is not None for result in results)
+        assert all(result.queue_wait_ms is not None for result in results)
+        assert all(result.inference_ms is not None for result in results)
+        assert all(result.metadata["worker"]["worker_id"].startswith("reward-") for result in results)
     finally:
         if runtime is not None:
             asyncio.run(runtime.shutdown())

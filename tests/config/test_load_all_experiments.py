@@ -6,9 +6,12 @@ instead of parametrizing the same assertion into dozens of collected tests.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+import torch
 from omegaconf import OmegaConf
 
 from vrl.algorithms.diffusion_nft import DiffusionNFTConfig
@@ -113,6 +116,73 @@ def test_algorithm_config_dispatches_representative_kinds() -> None:
         assert isinstance(algo_cfg, EXPECTED_ALGO_TYPE[str(cfg.algorithm.kind)])
         if name == "online/ocr/ar_discrete_token_grpo":
             assert algo_cfg.kl_estimator == "k2"
+
+
+def test_cosmos_diffusion_nft_video_reward_validation_config() -> None:
+    cfg = load_config("experiment/online/ocr/video_diffusion_nft")
+
+    assert cfg.reward.kwargs.video_reward.inference_runtime == "ray"
+    assert cfg.reward.kwargs.video_reward.artifact_dir == (
+        f"{cfg.trainer.output_dir}/reward_artifacts"
+    )
+    assert cfg.reward.kwargs.video_reward.debug_dir == (
+        f"{cfg.trainer.output_dir}/reward_debug"
+    )
+    assert cfg.distributed.resources.reward.num_gpus == 1
+    assert cfg.distributed.resources.reward.share_with_rollout is True
+    assert cfg.distributed.reward.release_after_score is True
+    assert cfg.trainer.total_epochs == 1
+
+
+def test_cosmos_optimization_check_records_trainable_change(tmp_path: Path) -> None:
+    from vrl.scripts.cosmos.train import (
+        _capture_optimization_check_before,
+        _capture_optimization_check_metrics,
+        _write_optimization_check_after,
+    )
+
+    module = torch.nn.Linear(1, 1, bias=False)
+    cfg = OmegaConf.create(
+        {
+            "reward": {
+                "components": {"video_reward": 1.0},
+                "kwargs": {
+                    "video_reward": {
+                        "inference_runtime": "ray",
+                        "reward_name": "cosmos_reason1",
+                        "artifact_dir": str(tmp_path / "reward_artifacts"),
+                        "debug_dir": str(tmp_path / "reward_debug"),
+                        "worker_config": {"reward_model_version": "reward-v1"},
+                    },
+                },
+            },
+        },
+    )
+    stack = SimpleNamespace(
+        cfg=cfg,
+        bundle=SimpleNamespace(trainable_modules={"module": module}),
+        output_dir=tmp_path,
+        trainer=SimpleNamespace(state=SimpleNamespace(global_step=1, step=1)),
+    )
+    state: dict[str, object] = {}
+
+    _capture_optimization_check_before(state, stack, 0)
+    with torch.no_grad():
+        module.weight.add_(1.0)
+    _capture_optimization_check_metrics(
+        state,
+        {"grad_norm": 2.0, "reward_mean": 1.0, "reward_std": 0.5, "advantage_mean": 0.25},
+        SimpleNamespace(grad_norm=2.0, reward_mean=1.0, reward_std=0.5, advantage_mean=0.25),
+    )
+    _write_optimization_check_after(state, stack, 0)
+
+    payload = json.loads((tmp_path / "optimization_check.json").read_text())
+    assert payload["global_step"] == 1
+    assert payload["grad_norm"] == pytest.approx(2.0)
+    assert payload["reward_std"] == pytest.approx(0.5)
+    assert payload["trainable_sha256_changed"] is True
+    assert payload["reward_runtime"] == "ray"
+    assert payload["reward_artifacts_manifest"].endswith("reward_artifacts/manifest.jsonl")
 
 
 def test_unified_train_entrypoint_reads_yaml_entrypoint() -> None:

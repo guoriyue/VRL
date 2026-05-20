@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
 from vrl.ray.runtime import RayActorMethodRuntime
@@ -29,6 +30,11 @@ class RewardInferenceActorRuntime:
             request,
             num_shards=self.actor_runtime.num_workers,
         )
+        queued_at_ns = time.perf_counter_ns()
+        shards = [
+            shard.with_metadata({"ray_queued_at_ns": queued_at_ns})
+            for shard in shards
+        ]
         nested = await self.actor_runtime.map(shards)
         results = [result for shard_results in nested for result in shard_results]
         return validate_reward_results(request, results)

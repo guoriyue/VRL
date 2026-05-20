@@ -30,12 +30,12 @@ def get_reward(name: str) -> type[RewardFunction]:
 
 def _register_builtins() -> None:
     """Register the built-in reward functions (lazy to avoid import errors)."""
-    from vrl.rewards.aesthetic import AestheticReward
-    from vrl.rewards.clip import CLIPScoreReward
-    from vrl.rewards.codex_image_qa import CodexImageQAReward
-    from vrl.rewards.ocr import OCRReward
-    from vrl.rewards.pickscore import PickScoreReward
-    from vrl.rewards.video_reward import VideoReward
+    from vrl.rewards.functions.aesthetic import AestheticReward
+    from vrl.rewards.functions.clip import CLIPScoreReward
+    from vrl.rewards.functions.codex_image_qa import CodexImageQAReward
+    from vrl.rewards.functions.ocr import OCRReward
+    from vrl.rewards.functions.pickscore import PickScoreReward
+    from vrl.rewards.functions.video_reward import VideoReward
 
     register_reward("aesthetic", AestheticReward)
     register_reward("clipscore", CLIPScoreReward)

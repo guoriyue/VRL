@@ -1,4 +1,4 @@
-"""Reward inference contract and factory."""
+"""Reward inference contract."""
 
 from __future__ import annotations
 
@@ -98,6 +98,13 @@ class RewardInferenceRequest:
             metadata["shard_index"] = int(shard_index)
         return replace(self, artifacts=artifacts, metadata=metadata)
 
+    def with_metadata(self, values: Mapping[str, Any]) -> RewardInferenceRequest:
+        """Return a copy with additional request metadata."""
+
+        metadata = dict(self.metadata)
+        metadata.update(dict(values))
+        return replace(self, metadata=metadata)
+
 
 @dataclass(frozen=True, slots=True)
 class RewardInferenceResult:
@@ -112,6 +119,8 @@ class RewardInferenceResult:
     policy_version: int | None = None
     reward_model_version: str | None = None
     latency_ms: float | None = None
+    queue_wait_ms: float | None = None
+    inference_ms: float | None = None
     worker_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     raw_response: dict[str, Any] = field(default_factory=dict)
@@ -138,6 +147,10 @@ class RewardInferenceResult:
             )
         if self.latency_ms is not None and float(self.latency_ms) < 0:
             raise ValueError("RewardInferenceResult.latency_ms must be non-negative")
+        if self.queue_wait_ms is not None and float(self.queue_wait_ms) < 0:
+            raise ValueError("RewardInferenceResult.queue_wait_ms must be non-negative")
+        if self.inference_ms is not None and float(self.inference_ms) < 0:
+            raise ValueError("RewardInferenceResult.inference_ms must be non-negative")
 
 
 class RewardInferenceRuntime(Protocol):
@@ -199,40 +212,11 @@ def validate_reward_results(
     return [by_id[artifact_id] for artifact_id in expected_ids]
 
 
-def build_reward_inference_runtime(
-    cfg: Mapping[str, Any],
-    *,
-    init_ray: bool = True,
-    ray_init_kwargs: dict[str, Any] | None = None,
-) -> RewardInferenceRuntime:
-    """Build the reward inference runtime selected by config."""
-
-    runtime = str(cfg.get("inference_runtime", ""))
-    if runtime != "ray":
-        raise ValueError("reward inference_runtime must be 'ray'")
-    worker_config = cfg.get("worker_config")
-    if worker_config is None:
-        raise ValueError(
-            "reward inference_runtime='ray' requires reward.kwargs.video_reward.worker_config",
-        )
-    if not isinstance(worker_config, Mapping):
-        raise TypeError("reward worker_config must be a mapping")
-
-    from vrl.rewards.ray.launcher import build_reward_ray_runtime
-
-    return build_reward_ray_runtime(
-        cfg,
-        init_ray=init_ray,
-        ray_init_kwargs=ray_init_kwargs,
-    )
-
-
 __all__ = [
     "RewardInferenceArtifact",
     "RewardInferenceRequest",
     "RewardInferenceResult",
     "RewardInferenceRuntime",
-    "build_reward_inference_runtime",
     "select_score",
     "shard_reward_request",
     "split_score_key",

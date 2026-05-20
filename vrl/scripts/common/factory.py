@@ -8,6 +8,10 @@ from typing import Any
 from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.builders import build_configs
+from vrl.ray.resources import (
+    resolve_distributed_resources,
+    reward_runtime_resource_kwargs,
+)
 from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.collector.config import (
     build_rollout_config_from_cfg as _build_rollout_config_from_cfg,
@@ -87,13 +91,36 @@ def build_reward_from_cfg(
     reward_weights, reward_kwargs = built["reward"]
     if not reward_weights:
         raise ValueError("At least one reward component must have weight > 0.")
-    from vrl.rewards.multi import MultiReward
+    reward_kwargs = _with_resolved_reward_runtime_kwargs(cfg, reward_weights, reward_kwargs)
+    from vrl.rewards.functions.registry import MultiReward
 
     return MultiReward.from_dict(
         reward_weights,
         device=str(device),
         reward_kwargs=reward_kwargs,
     )
+
+
+def _with_resolved_reward_runtime_kwargs(
+    cfg: DictConfig,
+    reward_weights: dict[str, float],
+    reward_kwargs: dict[str, dict],
+) -> dict[str, dict]:
+    if float(reward_weights.get("video_reward", 0.0)) <= 0:
+        return reward_kwargs
+
+    video_kwargs = dict(reward_kwargs.get("video_reward", {}))
+    if str(video_kwargs.get("inference_runtime", "")) != "ray":
+        return reward_kwargs
+
+    resources = resolve_distributed_resources(cfg)
+    resolved_runtime = reward_runtime_resource_kwargs(resources)
+    merged = dict(video_kwargs)
+    merged.update(resolved_runtime)
+
+    out = dict(reward_kwargs)
+    out["video_reward"] = merged
+    return out
 
 
 def build_algorithm_and_evaluator_from_cfg(

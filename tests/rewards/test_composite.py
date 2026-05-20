@@ -1,11 +1,11 @@
-"""Tests for vrl.rewards.composite (CompositeReward)."""
+"""Tests for vrl.rewards.functions.composite (CompositeReward)."""
 
 from __future__ import annotations
 
 import pytest
 
 from vrl.rewards.base import RewardFunction
-from vrl.rewards.composite import CompositeReward
+from vrl.rewards.functions.composite import CompositeReward
 from vrl.rewards.types import RewardRollout, RewardTrajectory, RewardTrajectoryStep
 
 # ---------------------------------------------------------------------------

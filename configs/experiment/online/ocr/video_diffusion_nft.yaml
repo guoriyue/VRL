@@ -32,6 +32,7 @@ rollout:
 trainer:
   entrypoint: vrl.scripts.cosmos.train:train_cosmos_predict25_diffusion_nft
   output_dir: outputs/cosmos_predict2_5_2b_diffusionnft
+  total_epochs: 1
   save_freq: 20
   log_freq: 1
 

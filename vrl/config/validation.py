@@ -165,6 +165,11 @@ def validate_reward_config(cfg: DictConfig) -> None:
             inference_runtime = str(sub.get("inference_runtime"))
             if inference_runtime != "ray":
                 raise ValueError("reward.kwargs.video_reward.inference_runtime must be 'ray'")
+            scheduling = str(sub.get("scheduling", "sync"))
+            if scheduling != "sync":
+                raise ValueError(
+                    "reward.kwargs.video_reward.scheduling currently supports only 'sync'",
+                )
             removed_endpoint_fields = [
                 key
                 for key in (

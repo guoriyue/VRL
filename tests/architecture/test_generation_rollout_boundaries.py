@@ -66,12 +66,12 @@ def test_reward_ray_adapter_stays_lean() -> None:
         "__init__.py",
         "launcher.py",
         "runtime.py",
+        "worker.py",
     }
     forbidden_text = (
         "class RewardInferenceArtifact",
         "class RewardInferenceRequest",
         "class RewardInferenceResult",
-        "class RewardScoringWorker",
         "class VideoRewardArtifactStore",
     )
     for path in _python_files(ray_root):
@@ -85,10 +85,38 @@ def test_reward_ray_adapter_stays_lean() -> None:
 
 
 def test_reward_inference_is_a_single_domain_module() -> None:
-    assert (VRL_ROOT / "rewards" / "inference.py").exists()
+    inference_path = VRL_ROOT / "rewards" / "inference.py"
+    assert inference_path.exists()
+    inference_text = inference_path.read_text(encoding="utf-8")
+    assert "build_reward_inference_runtime" not in inference_text
+    assert "vrl.ray" not in inference_text
+    assert "vrl.rewards.ray" not in inference_text
     assert not (VRL_ROOT / "rewards" / "inference_runtime.py").exists()
     assert not (VRL_ROOT / "rewards" / "inference_worker.py").exists()
     assert not (VRL_ROOT / "rewards" / "inference_scheduler.py").exists()
+    assert not (VRL_ROOT / "rewards" / "scoring_worker.py").exists()
+
+
+def test_reward_function_implementations_live_under_functions() -> None:
+    rewards_root = VRL_ROOT / "rewards"
+    assert _module_filenames(rewards_root) == {
+        "__init__.py",
+        "artifacts.py",
+        "base.py",
+        "inference.py",
+        "types.py",
+    }
+    assert _module_filenames(rewards_root / "functions") == {
+        "__init__.py",
+        "aesthetic.py",
+        "clip.py",
+        "codex_image_qa.py",
+        "composite.py",
+        "ocr.py",
+        "pickscore.py",
+        "registry.py",
+        "video_reward.py",
+    }
 
 
 def test_generation_ray_adapter_stays_lean() -> None:

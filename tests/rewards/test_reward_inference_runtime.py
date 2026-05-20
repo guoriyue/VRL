@@ -7,9 +7,9 @@ import pytest
 from vrl.rewards.inference import (
     RewardInferenceArtifact,
     RewardInferenceRequest,
-    build_reward_inference_runtime,
     shard_reward_request,
 )
+from vrl.rewards.ray.launcher import build_reward_inference_runtime
 
 
 def _request(count: int = 3) -> RewardInferenceRequest:

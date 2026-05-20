@@ -1,11 +1,11 @@
-"""Tests for vrl.rewards.multi."""
+"""Tests for vrl.rewards.functions.registry."""
 
 from __future__ import annotations
 
 import pytest
 
 from vrl.rewards.base import RewardFunction
-from vrl.rewards.multi import MultiReward
+from vrl.rewards.functions.registry import MultiReward
 from vrl.rewards.types import RewardRollout, RewardTrajectory
 
 

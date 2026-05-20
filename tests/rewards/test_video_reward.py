@@ -10,9 +10,9 @@ import torch
 from omegaconf import OmegaConf
 
 from vrl.config.validation import validate_reward_config
+from vrl.rewards.functions.video_reward import VideoReward
 from vrl.rewards.inference import RewardInferenceResult, select_score
 from vrl.rewards.types import RewardRollout, RewardTrajectory
-from vrl.rewards.video_reward import VideoReward
 
 
 class _FakeRuntime:

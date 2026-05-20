@@ -1,10 +1,10 @@
-"""Tests for vrl.rewards.ocr (OCRReward)."""
+"""Tests for vrl.rewards.functions.ocr (OCRReward)."""
 
 from __future__ import annotations
 
 import pytest
 
-from vrl.rewards.ocr import (
+from vrl.rewards.functions.ocr import (
     OCRReward,
     _normalize_text,
     _normalized_edit_distance,

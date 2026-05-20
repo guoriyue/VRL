@@ -1,4 +1,17 @@
 # Video-level reward for world-model RL.
+distributed:
+  resources:
+    reward:
+      num_gpus: 1
+      gpus_per_worker: 1.0
+      num_workers: 1
+      share_with_rollout: true
+  reward:
+    cpus_per_worker: 4.0
+    placement_strategy: STRICT_PACK
+    max_inflight_batches: 1
+    release_after_score: true
+
 reward:
   components:
     video_reward: 1.0
@@ -7,13 +20,14 @@ reward:
       inference_runtime: ray
       reward_name: cosmos_reason1
       score_key: overall_reward
+      scheduling: sync
       media_type: video
-      artifact_dir: outputs/reward_artifacts
+      artifact_dir: ${trainer.output_dir}/reward_artifacts
       timeout_s: 60.0
-      debug_dir: ""
-      num_workers: 1
-      cpus_per_worker: 0.5
-      gpus_per_worker: 0.0
+      debug_dir: ${trainer.output_dir}/reward_debug
       worker_config:
-        scorer: tensor_mean
-        reward_model_version: tensor-mean-v1
+        scorer: import_path
+        import_path: ${oc.env:VIDEO_REWARD_SCORER,""}
+        model_path: ${oc.env:VIDEO_REWARD_MODEL_PATH,""}
+        dtype: ${oc.env:VIDEO_REWARD_DTYPE,"bfloat16"}
+        reward_model_version: ${oc.env:VIDEO_REWARD_MODEL_VERSION,"cosmos-reward-local"}
