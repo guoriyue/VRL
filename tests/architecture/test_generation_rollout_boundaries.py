@@ -42,9 +42,12 @@ def test_trajectory_layer_stays_family_neutral() -> None:
 def test_removed_boundary_packages_stay_removed() -> None:
     assert not (VRL_ROOT / "distributed").exists()
     assert not (VRL_ROOT / "runtime").exists()
+    assert not (VRL_ROOT / "generation" / "runtime").exists()
 
 
 def test_shared_ray_substrate_stays_domain_neutral() -> None:
+    assert (VRL_ROOT / "ray" / "resources.py").exists()
+    assert not (VRL_ROOT / "generation" / "resources.py").exists()
     violations = _forbidden_imports(
         VRL_ROOT / "ray",
         forbidden=(
@@ -92,6 +95,7 @@ def test_generation_ray_adapter_stays_lean() -> None:
     ray_root = VRL_ROOT / "generation" / "ray"
     assert _module_filenames(ray_root) == {
         "__init__.py",
+        "config.py",
         "executor.py",
         "launcher.py",
         "placement.py",
@@ -100,6 +104,7 @@ def test_generation_ray_adapter_stays_lean() -> None:
         "worker.py",
     }
     ray_adapter_files = (
+        ray_root / "config.py",
         ray_root / "executor.py",
         ray_root / "launcher.py",
         ray_root / "placement.py",
@@ -113,24 +118,24 @@ def test_generation_ray_adapter_stays_lean() -> None:
         assert "vrl.generation.execution.chunks import" not in text
 
 
-def test_generation_distributed_execution_is_grouped_under_subpackage() -> None:
+def test_generation_execution_core_stays_flat_and_ray_neutral() -> None:
     execution_root = VRL_ROOT / "generation" / "execution"
-    distributed_root = execution_root / "distributed"
-    assert distributed_root.is_dir()
     for expected in (
         "__init__.py",
-        "planner.py",
+        "scheduler.py",
         "types.py",
         "worker.py",
     ):
-        assert (distributed_root / expected).exists()
+        assert (execution_root / expected).exists()
     for ray_specific in ("executor.py", "placement.py"):
-        assert not (distributed_root / ray_specific).exists()
+        assert not (execution_root / ray_specific).exists()
+    assert not (execution_root / "distributed").exists()
     for obsolete in (
         "distributed_executor.py",
         "distributed_planner.py",
         "distributed_types.py",
         "placement.py",
+        "stage_plan.py",
         "worker_core.py",
     ):
         assert not (execution_root / obsolete).exists()

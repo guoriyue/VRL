@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
-from collections.abc import Mapping
-from dataclasses import dataclass, field
+from collections.abc import Iterable, Mapping
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from vrl.generation.execution.distributed import (
+from omegaconf import DictConfig, ListConfig, OmegaConf
+
+from vrl.generation.execution import (
     DistributedExecutionPlanner,
     DistributedWorkerHandle,
 )
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
-from vrl.generation.protocols import ChunkGatherer
+from vrl.generation.protocols import ChunkGatherer, GenerationRuntime
+from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.placement import (
     RayPlacement,
@@ -21,14 +25,22 @@ from vrl.generation.ray.placement import (
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.weight_sync import RayGenerationWeightSync
 from vrl.generation.ray.worker import RayGenerationWorker
-from vrl.generation.resources import format_distributed_resource_plan
-from vrl.generation.runtime.config import GenerationRuntimeConfig
 from vrl.ray.actor_group import RayActorGroup
 from vrl.ray.dependencies import require_ray
 from vrl.ray.lifecycle import kill_actors, remove_placement_group
 from vrl.ray.placement import validate_actor_gpu_ids
+from vrl.ray.resources import format_distributed_resource_plan
 
 logger = logging.getLogger(__name__)
+_MISSING = object()
+
+
+@dataclass(frozen=True, slots=True)
+class RayGenerationLaunchInputs:
+    """Serializable worker launch contract plus driver-side pure gatherer."""
+
+    launch_contract: GenerationRuntimeLaunchContract
+    gatherer: ChunkGatherer
 
 
 @dataclass(slots=True)
@@ -40,16 +52,11 @@ class RayGenerationLauncher:
 
     def launch(
         self,
-        config: GenerationRuntimeConfig | Mapping[str, Any],
+        config: RayGenerationConfig | Mapping[str, Any],
         launch_contract: GenerationRuntimeLaunchContract | Mapping[str, Any],
         gatherer: ChunkGatherer,
     ) -> RayGenerationRuntime:
-        rollout_config = GenerationRuntimeConfig.from_cfg(config)
-        if rollout_config.backend != "ray":
-            raise ValueError(
-                "RayGenerationLauncher requires distributed backend='ray', "
-                f"got {rollout_config.backend!r}",
-            )
+        rollout_config = RayGenerationConfig.from_cfg(config)
 
         contract = GenerationRuntimeLaunchContract.from_value(launch_contract)
         if not contract.family:
@@ -138,6 +145,84 @@ class RayGenerationLauncher:
             runtime.current_policy_version = contract.policy_version
         return runtime
 
+    def launch_from_cfg(
+        self,
+        cfg: Any,
+        *,
+        driver_bundle: Any | None = None,
+        driver_policy: Any | None = None,
+        trainable_modules: Mapping[str, Any] | Iterable[Any] | None = None,
+        launch_contract: Any | None = None,
+        gatherer: Any | None = None,
+    ) -> GenerationRuntime:
+        """Build the Ray generation runtime from training config and launch inputs."""
+
+        config = RayGenerationConfig.from_cfg(cfg).validate_driver_state(
+            driver_bundle=driver_bundle,
+            driver_policy=driver_policy,
+            trainable_modules=trainable_modules,
+        )
+        resolved_contract = (
+            launch_contract
+            if launch_contract is not None
+            else _cfg_path(
+                cfg,
+                "distributed.rollout.launch_contract",
+                None,
+            )
+        )
+        if resolved_contract is not None and gatherer is not None:
+            if config.release_after_collect:
+                from vrl.generation.ray.runtime import ReleasableRayGenerationRuntime
+
+                return ReleasableRayGenerationRuntime(config, resolved_contract, gatherer)
+            return self.launch(config, resolved_contract, gatherer)
+
+        raise ValueError(
+            "Ray generation launch requires launch_contract plus gatherer so "
+            "RayGenerationLauncher can construct workers through the "
+            "runtime_builder+executor_cls path.",
+        )
+
+    @staticmethod
+    def build_inputs(
+        cfg: Any,
+        entry: Any,
+        *,
+        weight_dtype: Any,
+        executor_kwargs: Mapping[str, Any] | None = None,
+        policy_version: int = 0,
+    ) -> RayGenerationLaunchInputs:
+        """Build Ray generation launch inputs from a resolved family entry."""
+
+        ray_config = RayGenerationConfig.from_cfg(cfg)
+
+        runtime_device = "cuda" if ray_config.gpus_per_worker > 0 else "cpu"
+        runtime_build = _call_runtime_build_extractor(
+            entry,
+            cfg,
+            runtime_device,
+            _dtype_to_string(weight_dtype),
+        )
+        resolved_executor_kwargs = _build_executor_kwargs(entry, cfg)
+        resolved_executor_kwargs.update(dict(executor_kwargs or {}))
+        runtime_extra = _runtime_extra(cfg)
+        runtime_extra["family_capability"] = entry.capability.to_dict()
+
+        return RayGenerationLaunchInputs(
+            launch_contract=GenerationRuntimeLaunchContract(
+                family=entry.family,
+                task=entry.task,
+                model_build=_runtime_build_payload(runtime_build),
+                executor_kwargs=resolved_executor_kwargs,
+                policy_version=policy_version,
+                runtime_builder=entry.runtime_builder,
+                executor_cls=entry.executor_cls,
+                extra=runtime_extra,
+            ),
+            gatherer=_build_gatherer(entry),
+        )
+
 
 def _require_chunk_gatherer(gatherer: Any) -> ChunkGatherer:
     gather_chunks = getattr(gatherer, "gather_chunks", None)
@@ -149,7 +234,7 @@ def _require_chunk_gatherer(gatherer: Any) -> ChunkGatherer:
 
 
 def _validate_worker_gpu_ids(
-    config: GenerationRuntimeConfig,
+    config: RayGenerationConfig,
     metadata: list[Mapping[str, Any]],
 ) -> None:
     resources = config.resources
@@ -163,14 +248,107 @@ def _validate_worker_gpu_ids(
     )
 
 
-RayRolloutLauncher = RayGenerationLauncher
-create_rollout_placement_group = create_generation_placement_group
+def _call_runtime_build_extractor(
+    entry: Any,
+    cfg: Any,
+    device: str,
+    weight_dtype: str,
+) -> Any:
+    extractor = _import_from_path(entry.runtime_spec_extractor)
+    return extractor(cfg, device, weight_dtype)
 
+
+def _build_gatherer(entry: Any) -> ChunkGatherer:
+    gatherer_cls = _import_from_path(entry.gatherer.import_path)
+    return gatherer_cls(**entry.gatherer.kwargs)
+
+
+def _build_executor_kwargs(entry: Any, cfg: Any) -> dict[str, Any]:
+    kwargs: dict[str, Any] = {}
+    metadata = entry.executor_kwargs
+    if metadata.include_sample_batch_size:
+        sample_batch_size = _cfg_path(cfg, "rollout.sample_batch_size", None)
+        if sample_batch_size is not None:
+            kwargs["sample_batch_size"] = int(sample_batch_size)
+    if metadata.include_reference_image:
+        reference_image = _cfg_path(cfg, "model.reference_image", None)
+        if reference_image:
+            kwargs["reference_image"] = str(reference_image)
+    return kwargs
+
+
+def _runtime_build_payload(runtime_build: Any) -> dict[str, Any]:
+    payload = asdict(runtime_build)
+    payload["device"] = _device_to_string(payload["device"])
+    payload["dtype"] = _dtype_to_string(payload["dtype"])
+    return payload
+
+
+def _runtime_extra(cfg: Any) -> dict[str, Any]:
+    profiler_cfg = _cfg_path(cfg, "rollout.torch_profiler", None)
+    if profiler_cfg is None:
+        return {}
+    profiler = _to_builtin(profiler_cfg)
+    if not isinstance(profiler, dict):
+        return {}
+    return {
+        "torch_profiler": profiler,
+        "profiler_output_dir": str(_cfg_path(cfg, "trainer.output_dir", "outputs/")),
+    }
+
+
+def _import_from_path(path: str) -> Any:
+    module_path, attr = path.split(":", 1)
+    module = importlib.import_module(module_path)
+    return getattr(module, attr)
+
+
+def _device_to_string(value: Any) -> str:
+    return str(value)
+
+
+def _dtype_to_string(value: Any) -> str:
+    text = str(value)
+    return text.removeprefix("torch.")
+
+
+def _to_builtin(value: Any) -> Any:
+    if isinstance(value, (DictConfig, ListConfig)):
+        return OmegaConf.to_container(value, resolve=True)
+    if isinstance(value, Mapping):
+        return {str(key): _to_builtin(inner) for key, inner in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_builtin(inner) for inner in value]
+    return value
+
+
+def _cfg_path(cfg: Any, path: str, default: Any) -> Any:
+    node = cfg
+    for key in path.split("."):
+        node = _cfg_get(node, key, _MISSING)
+        if node is _MISSING:
+            return default
+    return node
+
+
+def _cfg_get(node: Any, key: str, default: Any) -> Any:
+    if node is None:
+        return default
+    getter = getattr(node, "get", None)
+    if callable(getter):
+        try:
+            return getter(key, default)
+        except TypeError:
+            pass
+    try:
+        return node[key]
+    except (KeyError, IndexError, TypeError):
+        pass
+    return getattr(node, key, default)
 
 __all__ = [
+    "RayGenerationLaunchInputs",
     "RayGenerationLauncher",
     "RayPlacement",
-    "RayRolloutLauncher",
     "create_generation_placement_group",
-    "create_rollout_placement_group",
 ]

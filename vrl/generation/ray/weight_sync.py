@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Protocol
 
-from vrl.generation.execution.distributed import DistributedWorkerHandle
+from vrl.generation.execution.types import DistributedWorkerHandle
 from vrl.ray.dependencies import require_ray
 
 
@@ -47,14 +47,7 @@ class RayGenerationWeightSync(GenerationWeightSync):
             ray = require_ray()
             await asyncio.to_thread(ray.get, refs)
 
-
-RolloutWeightSync = GenerationWeightSync
-RayRolloutWeightSync = RayGenerationWeightSync
-
-
 __all__ = [
     "GenerationWeightSync",
     "RayGenerationWeightSync",
-    "RayRolloutWeightSync",
-    "RolloutWeightSync",
 ]

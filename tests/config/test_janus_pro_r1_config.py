@@ -3,7 +3,7 @@ from __future__ import annotations
 from vrl.algorithms.grpo.multisegment import MultiSegmentTokenGRPOConfig
 from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
-from vrl.rollouts.families import build_generation_runtime_inputs_for_family
+from vrl.rollouts.families import build_ray_generation_inputs_for_family
 
 
 def test_janus_pro_r1_experiment_loads_with_multisegment_algorithm() -> None:
@@ -35,7 +35,7 @@ def test_janus_pro_r1_runtime_inputs_select_r1_task_and_executor() -> None:
             "distributed.resources.rollout.num_workers=1",
         ],
     )
-    inputs = build_generation_runtime_inputs_for_family(
+    inputs = build_ray_generation_inputs_for_family(
         cfg,
         "janus_pro_r1",
         weight_dtype=str(cfg.model.dtype),
@@ -85,7 +85,7 @@ def test_janus_pro_r1_codex_qa_rollout_profiler_reaches_launch_contract() -> Non
             "distributed.resources.rollout.num_workers=1",
         ],
     )
-    inputs = build_generation_runtime_inputs_for_family(
+    inputs = build_ray_generation_inputs_for_family(
         cfg,
         "janus_pro_r1",
         weight_dtype=str(cfg.model.dtype),

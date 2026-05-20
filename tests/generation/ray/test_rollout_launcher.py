@@ -11,8 +11,8 @@ import pytest
 
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import PipelineChunkResult
-from vrl.generation.ray.runtime import RayDistributedRuntime
-from vrl.generation.runtime.config import GenerationRuntimeConfig
+from vrl.generation.ray.config import RayGenerationConfig
+from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.models.ar.capabilities import ar_discrete_family_capability
 from vrl.models.interfaces import ReplayResult, RuntimeBuildSpec, RuntimeBundle
@@ -113,9 +113,9 @@ def test_ray_generation_launcher_builds_worker_runtime_with_local_ray() -> None:
     import vrl.generation.ray.launcher as launcher_mod
 
     ray.shutdown()
-    runtime: RayDistributedRuntime | None = None
+    runtime: RayGenerationRuntime | None = None
     try:
-        runtime = launcher_mod.RayRolloutLauncher(
+        runtime = launcher_mod.RayGenerationLauncher(
             init_ray=True,
             ray_init_kwargs={
                 "ignore_reinit_error": True,
@@ -124,8 +124,7 @@ def test_ray_generation_launcher_builds_worker_runtime_with_local_ray() -> None:
                 "log_to_driver": False,
             },
         ).launch(
-            GenerationRuntimeConfig(
-                backend="ray",
+            RayGenerationConfig(
                 num_workers=1,
                 gpus_per_worker=0.0,
                 cpus_per_worker=0.5,
@@ -135,7 +134,7 @@ def test_ray_generation_launcher_builds_worker_runtime_with_local_ray() -> None:
             _Gatherer(),
         )
 
-        assert isinstance(runtime, RayDistributedRuntime)
+        assert isinstance(runtime, RayGenerationRuntime)
         assert runtime.current_policy_version == 7
         assert runtime.weight_sync is None
         assert runtime._placement_group is not None

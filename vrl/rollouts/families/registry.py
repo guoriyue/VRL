@@ -12,9 +12,9 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from vrl.generation.capabilities import FamilyCapability
-from vrl.generation.runtime.launch_inputs import GenerationRuntimeInputs
-from vrl.generation.runtime.launch_inputs import (
-    build_generation_runtime_inputs as _build_generation_runtime_inputs,
+from vrl.generation.ray.launcher import (
+    RayGenerationLauncher,
+    RayGenerationLaunchInputs,
 )
 from vrl.models.ar.capabilities import (
     ar_continuous_family_capability,
@@ -300,17 +300,17 @@ def registered_rollout_families() -> tuple[str, ...]:
     return tuple(FAMILY_REGISTRY)
 
 
-def build_generation_runtime_inputs_for_family(
+def build_ray_generation_inputs_for_family(
     cfg: Any,
     family: str,
     *,
     weight_dtype: Any,
     executor_kwargs: Mapping[str, Any] | None = None,
     policy_version: int = 0,
-) -> GenerationRuntimeInputs:
-    """Build generation runtime inputs for a registered rollout family."""
+) -> RayGenerationLaunchInputs:
+    """Build Ray generation launch inputs for a registered rollout family."""
 
-    return _build_generation_runtime_inputs(
+    return RayGenerationLauncher.build_inputs(
         cfg,
         get_rollout_family_entry(family),
         weight_dtype=weight_dtype,
@@ -326,9 +326,9 @@ __all__ = [
     "ExecutorKwargsMetadata",
     "FamilyCapability",
     "GathererMetadata",
-    "GenerationRuntimeInputs",
+    "RayGenerationLaunchInputs",
     "RolloutFamilyEntry",
-    "build_generation_runtime_inputs_for_family",
+    "build_ray_generation_inputs_for_family",
     "get_rollout_family_entry",
     "normalize_rollout_family",
     "register_rollout_family",

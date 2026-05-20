@@ -6,15 +6,6 @@ from vrl.generation.execution.chunks import (
     build_prompt_chunk_schedule,
     run_sample_chunks_with_oom_retry,
 )
-from vrl.generation.execution.distributed import (
-    ChunkExecutionEnvelope,
-    ChunkExecutionResult,
-    DeviceAssignment,
-    DistributedExecutionPlanner,
-    DistributedGenerationPlan,
-    DistributedRolloutPlan,
-    DistributedWorkerHandle,
-)
 from vrl.generation.execution.ids import GenerationIdFactory
 from vrl.generation.execution.planner import (
     EnginePlan,
@@ -26,7 +17,17 @@ from vrl.generation.execution.planner import (
     resolve_executor_capability,
 )
 from vrl.generation.execution.request_batch import RequestBatch
-from vrl.generation.execution.stage_plan import GenerationStagePlan, StagePlacement
+from vrl.generation.execution.scheduler import (
+    DeviceAssignment,
+    DistributedExecutionPlanner,
+    DistributedGenerationPlan,
+)
+from vrl.generation.execution.types import (
+    ChunkExecutionEnvelope,
+    ChunkExecutionResult,
+    DistributedWorkerHandle,
+)
+from vrl.generation.execution.worker import GenerationWorkerCore
 
 __all__ = [
     "ChunkExecutionEnvelope",
@@ -34,18 +35,16 @@ __all__ = [
     "DeviceAssignment",
     "DistributedExecutionPlanner",
     "DistributedGenerationPlan",
-    "DistributedRolloutPlan",
     "DistributedWorkerHandle",
     "EnginePlan",
     "EnginePlanner",
     "ExecutionStage",
     "GenerationIdFactory",
-    "GenerationStagePlan",
+    "GenerationWorkerCore",
     "RequestBatch",
     "ResolvedAxis",
     "SampleChunk",
     "SampleChunkSchedule",
-    "StagePlacement",
     "attach_engine_plan",
     "build_engine_plan",
     "build_prompt_chunk_schedule",

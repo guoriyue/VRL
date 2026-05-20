@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from vrl.generation.runtime.config import GenerationRuntimeConfig
+from vrl.generation.ray.config import RayGenerationConfig
 from vrl.utils.memory import (
     HostMemorySnapshot,
     format_host_memory,
@@ -27,8 +27,7 @@ def test_colocated_full_generation_bundle_can_fail_strict_guard() -> None:
             "loads_full_generation_modules": True,
         },
     )
-    config = GenerationRuntimeConfig(
-        backend="ray",
+    config = RayGenerationConfig(
         num_workers=1,
         gpus_per_worker=1.0,
         cpus_per_worker=1.0,
@@ -46,8 +45,7 @@ def test_colocated_full_generation_bundle_can_fail_strict_guard() -> None:
 
 def test_non_colocated_full_generation_bundle_passes_memory_guard() -> None:
     bundle = SimpleNamespace(metadata={"loads_full_generation_modules": True})
-    config = GenerationRuntimeConfig(
-        backend="ray",
+    config = RayGenerationConfig(
         num_workers=1,
         gpus_per_worker=1.0,
         cpus_per_worker=1.0,

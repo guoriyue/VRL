@@ -7,12 +7,12 @@ import socket
 from dataclasses import dataclass
 from typing import Any
 
-from vrl.generation.resources import (
-    ResolvedDistributedResources,
-)
-from vrl.generation.runtime.config import GenerationRuntimeConfig
+from vrl.generation.ray.config import RayGenerationConfig
 from vrl.ray.dependencies import require_ray
 from vrl.ray.placement import actor_scheduling_strategy, create_placement_group
+from vrl.ray.resources import (
+    ResolvedDistributedResources,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ class _InfoActor:
         return str(ray.util.get_node_ip_address()), tuple(gpu_ids)
 
 
-def create_generation_placement_group(config: GenerationRuntimeConfig) -> RayPlacement:
+def create_generation_placement_group(config: RayGenerationConfig) -> RayPlacement:
     """Create a placement group for generation workers and stable-sort bundles."""
 
     ray = require_ray()
@@ -94,7 +94,7 @@ def create_generation_placement_group(config: GenerationRuntimeConfig) -> RayPla
     )
 
 
-def _rollout_bundle(config: GenerationRuntimeConfig) -> dict[str, float]:
+def _rollout_bundle(config: RayGenerationConfig) -> dict[str, float]:
     bundle = {"CPU": float(config.cpus_per_worker)}
     if config.gpus_per_worker > 0:
         bundle["GPU"] = float(config.gpus_per_worker)
@@ -134,7 +134,7 @@ def _start_trainer_reservations(
 def _probe_rollout_bundles(
     ray: Any,
     pg: Any,
-    config: GenerationRuntimeConfig,
+    config: RayGenerationConfig,
     rollout_bundle_indices: list[int],
 ) -> tuple[list[int], tuple[int, ...]]:
     RemoteInfoActor = ray.remote(
@@ -216,12 +216,7 @@ def _log_placement(
             list(rollout_gpu_ids),
         )
 
-
-create_rollout_placement_group = create_generation_placement_group
-
-
 __all__ = [
     "RayPlacement",
     "create_generation_placement_group",
-    "create_rollout_placement_group",
 ]

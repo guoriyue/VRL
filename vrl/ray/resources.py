@@ -24,25 +24,52 @@ class RolloutResourceConfig(RoleResourceConfig):
 
 
 @dataclass(frozen=True, slots=True)
+class RewardResourceConfig(RoleResourceConfig):
+    """GPU ownership request for reward inference workers."""
+
+    gpus_per_worker: float = 1.0
+    num_workers: int | str = "auto"
+    share_with_rollout: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class DistributedResourceConfig:
-    """Top-level trainer/rollout resource request."""
+    """Top-level role resource request."""
 
     visible_devices: list[int] | str = "auto"
     trainer: RoleResourceConfig = field(default_factory=RoleResourceConfig)
     rollout: RolloutResourceConfig = field(default_factory=RolloutResourceConfig)
+    reward: RewardResourceConfig = field(
+        default_factory=lambda: RewardResourceConfig(num_gpus=0, devices=[]),
+    )
     allow_overlap: bool = False
+    rollout_release_after_collect: bool = False
+    reward_release_after_score: bool = False
+    reward_placement_strategy: str = "SPREAD"
+    reward_cpus_per_worker: float = 0.5
+    reward_max_inflight_batches: int = 1
 
 
 @dataclass(frozen=True, slots=True)
 class ResolvedDistributedResources:
-    """Concrete resource plan consumed by trainer and Ray rollout launchers."""
+    """Concrete resource plan consumed by trainer and Ray role launchers."""
 
     visible_devices: tuple[int, ...]
     trainer_devices: tuple[int, ...]
     rollout_devices: tuple[int, ...]
+    reward_devices: tuple[int, ...]
     rollout_num_gpus: int
     rollout_num_workers: int
     rollout_gpus_per_worker: float
+    reward_num_gpus: int
+    reward_num_workers: int
+    reward_gpus_per_worker: float
+    reward_shared_with_rollout: bool
+    reward_release_after_score: bool
+    reward_placement_strategy: str
+    reward_cpus_per_worker: float
+    reward_max_inflight_batches: int
+    reward_gpu_reservation_count: int
     total_gpu_slots: int
     ray_total_bundles: int
     requires_trainer_reservation: bool
@@ -55,9 +82,9 @@ _MISSING = object()
 def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
     """Resolve role-level resource config into concrete CUDA ordinals.
 
-    This is the single source of truth for trainer/rollout GPU ownership. It
-    intentionally does static ownership checks only; memory pressure is still a
-    runtime concern.
+    This is the single source of truth for trainer/rollout/reward GPU
+    ownership. It intentionally does static ownership checks only; memory
+    pressure is still a runtime concern.
     """
 
     config = _distributed_resource_config_from_cfg(cfg)
@@ -112,14 +139,61 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
             f"trainer={list(trainer_devices)} rollout={list(rollout_devices)}",
         )
 
+    reward_gpus_per_worker = float(config.reward.gpus_per_worker)
+    if reward_gpus_per_worker not in {0.0, 1.0}:
+        raise ValueError(
+            "distributed.resources.reward.gpus_per_worker currently supports "
+            f"0 or 1, got {reward_gpus_per_worker}",
+        )
+    reward_devices = _resolve_reward_devices(
+        visible_devices=visible_devices,
+        trainer_devices=trainer_devices,
+        rollout_devices=rollout_devices,
+        reward_config=config.reward,
+        allow_overlap=config.allow_overlap,
+        rollout_release_after_collect=config.rollout_release_after_collect,
+        reward_release_after_score=config.reward_release_after_score,
+    )
+    reward_num_gpus = len(reward_devices)
+    if _uses_ray_video_reward(cfg) and reward_gpus_per_worker > 0 and reward_num_gpus == 0:
+        raise ValueError(
+            "reward.kwargs.video_reward.inference_runtime=ray requires "
+            "distributed.resources.reward.num_gpus > 0",
+        )
+    reward_num_workers = _resolve_role_num_workers(
+        role="reward",
+        num_workers=config.reward.num_workers,
+        num_gpus=reward_num_gpus,
+        gpus_per_worker=reward_gpus_per_worker,
+    )
+    if reward_gpus_per_worker > 0 and reward_num_gpus == 0 and reward_num_workers > 0:
+        raise ValueError(
+            "distributed.resources.reward requested GPU workers but no reward GPUs "
+            "were resolved",
+        )
+
+    reward_shared_with_rollout = bool(set(reward_devices) & set(rollout_devices))
+    reward_overlaps_trainer = bool(set(reward_devices) & set(trainer_devices))
+    if reward_overlaps_trainer and not config.allow_overlap:
+        raise ValueError(
+            "Trainer and reward devices overlap but "
+            "distributed.resources.allow_overlap=false: "
+            f"trainer={list(trainer_devices)} reward={list(reward_devices)}",
+        )
+
     requires_trainer_reservation = (
         bool(trainer_devices)
         and rollout_gpus_per_worker > 0
         and not colocated
         and rollout_num_workers > 0
     )
-    total_gpu_slots = len(set(trainer_devices) | set(rollout_devices))
-    ray_total_bundles = rollout_num_workers + (
+    reward_gpu_reservation_count = _reward_gpu_reservation_count(
+        visible_devices=visible_devices,
+        reward_devices=reward_devices,
+        reward_gpus_per_worker=reward_gpus_per_worker,
+    )
+    total_gpu_slots = len(set(trainer_devices) | set(rollout_devices) | set(reward_devices))
+    ray_total_bundles = rollout_num_workers + reward_num_workers + (
         len(trainer_devices) if requires_trainer_reservation else 0
     )
 
@@ -127,9 +201,19 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
         visible_devices=visible_devices,
         trainer_devices=trainer_devices,
         rollout_devices=rollout_devices,
+        reward_devices=reward_devices,
         rollout_num_gpus=rollout_num_gpus,
         rollout_num_workers=rollout_num_workers,
         rollout_gpus_per_worker=rollout_gpus_per_worker,
+        reward_num_gpus=reward_num_gpus,
+        reward_num_workers=reward_num_workers,
+        reward_gpus_per_worker=reward_gpus_per_worker,
+        reward_shared_with_rollout=reward_shared_with_rollout,
+        reward_release_after_score=config.reward_release_after_score,
+        reward_placement_strategy=config.reward_placement_strategy,
+        reward_cpus_per_worker=config.reward_cpus_per_worker,
+        reward_max_inflight_batches=config.reward_max_inflight_batches,
+        reward_gpu_reservation_count=reward_gpu_reservation_count,
         total_gpu_slots=total_gpu_slots,
         ray_total_bundles=ray_total_bundles,
         requires_trainer_reservation=requires_trainer_reservation,
@@ -161,8 +245,13 @@ def format_distributed_resource_plan(
         f"visible={list(resolved.visible_devices)}",
         f"trainer={list(resolved.trainer_devices)}",
         f"rollout={list(resolved.rollout_devices)}",
-        f"workers={resolved.rollout_num_workers}",
-        f"gpus_per_worker={resolved.rollout_gpus_per_worker:g}",
+        f"reward={list(resolved.reward_devices)}",
+        f"rollout_workers={resolved.rollout_num_workers}",
+        f"rollout_gpus_per_worker={resolved.rollout_gpus_per_worker:g}",
+        f"reward_workers={resolved.reward_num_workers}",
+        f"reward_gpus_per_worker={resolved.reward_gpus_per_worker:g}",
+        f"reward_shared_with_rollout={resolved.reward_shared_with_rollout}",
+        f"reward_release_after_score={resolved.reward_release_after_score}",
         f"colocated={resolved.colocated}",
         f"trainer_reservation={resolved.requires_trainer_reservation}",
         f"ray_bundles={resolved.ray_total_bundles}",
@@ -177,6 +266,9 @@ def _distributed_resource_config_from_cfg(cfg: Any) -> DistributedResourceConfig
     resources = _cfg_get(distributed, "resources", {})
     trainer_node = _cfg_get(resources, "trainer", {})
     rollout_node = _cfg_get(resources, "rollout", {})
+    reward_node = _cfg_get(resources, "reward", _MISSING)
+    rollout_runtime = _cfg_get(distributed, "rollout", {})
+    reward_runtime = _cfg_get(distributed, "reward", {})
 
     trainer = RoleResourceConfig(
         num_gpus=_cfg_get(trainer_node, "num_gpus", "auto"),
@@ -188,11 +280,37 @@ def _distributed_resource_config_from_cfg(cfg: Any) -> DistributedResourceConfig
         gpus_per_worker=float(_cfg_get(rollout_node, "gpus_per_worker", 1.0)),
         num_workers=_cfg_get(rollout_node, "num_workers", "auto"),
     )
+    if reward_node is _MISSING:
+        reward = RewardResourceConfig(num_gpus=0, devices=[])
+    else:
+        reward = RewardResourceConfig(
+            num_gpus=_cfg_get(reward_node, "num_gpus", "auto"),
+            devices=_parse_devices(_cfg_get(reward_node, "devices", "auto")),
+            gpus_per_worker=float(_cfg_get(reward_node, "gpus_per_worker", 1.0)),
+            num_workers=_cfg_get(reward_node, "num_workers", "auto"),
+            share_with_rollout=bool(_cfg_get(reward_node, "share_with_rollout", False)),
+        )
     return DistributedResourceConfig(
         visible_devices=_parse_devices(_cfg_get(resources, "visible_devices", "auto")),
         trainer=trainer,
         rollout=rollout,
+        reward=reward,
         allow_overlap=bool(_cfg_get(resources, "allow_overlap", False)),
+        rollout_release_after_collect=bool(
+            _cfg_get(rollout_runtime, "release_after_collect", False),
+        ),
+        reward_release_after_score=bool(
+            _cfg_get(reward_runtime, "release_after_score", False),
+        ),
+        reward_placement_strategy=str(
+            _cfg_get(reward_runtime, "placement_strategy", "SPREAD"),
+        ),
+        reward_cpus_per_worker=float(
+            _cfg_get(reward_runtime, "cpus_per_worker", 0.5),
+        ),
+        reward_max_inflight_batches=int(
+            _cfg_get(reward_runtime, "max_inflight_batches", 1),
+        ),
     )
 
 
@@ -350,6 +468,242 @@ def _resolve_rollout_num_workers(
     return workers
 
 
+def _resolve_reward_devices(
+    *,
+    visible_devices: tuple[int, ...],
+    trainer_devices: tuple[int, ...],
+    rollout_devices: tuple[int, ...],
+    reward_config: RewardResourceConfig,
+    allow_overlap: bool,
+    rollout_release_after_collect: bool,
+    reward_release_after_score: bool,
+) -> tuple[int, ...]:
+    explicit_devices = _parse_devices(reward_config.devices)
+    num_gpus = _parse_num_gpus(
+        reward_config.num_gpus,
+        field_name="reward.num_gpus",
+    )
+
+    if explicit_devices != "auto":
+        devices = tuple(
+            _dedupe_ints(explicit_devices, field_name="distributed.resources.reward.devices"),
+        )
+        _validate_subset(
+            devices,
+            visible_devices,
+            field_name="distributed.resources.reward.devices",
+        )
+        if num_gpus != "auto" and num_gpus is not None and int(num_gpus) != len(devices):
+            raise ValueError(
+                "distributed.resources.reward.num_gpus does not match "
+                f"len(distributed.resources.reward.devices): {num_gpus} vs {len(devices)}",
+            )
+        _validate_reward_overlap(
+            devices=devices,
+            trainer_devices=trainer_devices,
+            rollout_devices=rollout_devices,
+            reward_config=reward_config,
+            allow_overlap=allow_overlap,
+            rollout_release_after_collect=rollout_release_after_collect,
+            reward_release_after_score=reward_release_after_score,
+        )
+        return devices
+
+    if reward_config.share_with_rollout:
+        requested = _requested_role_gpu_count(
+            role="reward",
+            num_gpus=reward_config.num_gpus,
+            num_workers=reward_config.num_workers,
+            gpus_per_worker=reward_config.gpus_per_worker,
+            available_count=len(rollout_devices),
+        )
+        if requested > len(rollout_devices):
+            raise ValueError(
+                "Not enough rollout GPUs for reward shared inference pool: "
+                f"requested={requested}, rollout={list(rollout_devices)}",
+            )
+        devices = tuple(rollout_devices[:requested])
+        _validate_reward_overlap(
+            devices=devices,
+            trainer_devices=trainer_devices,
+            rollout_devices=rollout_devices,
+            reward_config=reward_config,
+            allow_overlap=allow_overlap,
+            rollout_release_after_collect=rollout_release_after_collect,
+            reward_release_after_score=reward_release_after_score,
+        )
+        return devices
+
+    excluded = set(trainer_devices) | set(rollout_devices)
+    pool = tuple(device for device in visible_devices if device not in excluded)
+    requested = _requested_role_gpu_count(
+        role="reward",
+        num_gpus=reward_config.num_gpus,
+        num_workers=reward_config.num_workers,
+        gpus_per_worker=reward_config.gpus_per_worker,
+        available_count=len(pool),
+    )
+    if requested == 0:
+        return ()
+    if requested <= len(pool):
+        return tuple(pool[:requested])
+    if not allow_overlap:
+        raise ValueError(
+            "Not enough non-overlapping reward GPUs: "
+            f"requested={requested}, available={len(pool)}, "
+            f"trainer={list(trainer_devices)}, rollout={list(rollout_devices)}, "
+            f"visible={list(visible_devices)}. Use "
+            "distributed.resources.reward.share_with_rollout=true with "
+            "release_after_collect/release_after_score for a shared inference pool, "
+            "or expose a separate reward GPU.",
+        )
+
+    fallback = tuple(device for device in visible_devices if device in excluded)
+    combined = pool + fallback
+    if requested > len(combined):
+        raise ValueError(
+            "Not enough visible GPUs for reward even with overlap allowed: "
+            f"requested={requested}, visible={list(visible_devices)}",
+        )
+    devices = tuple(combined[:requested])
+    _validate_reward_overlap(
+        devices=devices,
+        trainer_devices=trainer_devices,
+        rollout_devices=rollout_devices,
+        reward_config=reward_config,
+        allow_overlap=allow_overlap,
+        rollout_release_after_collect=rollout_release_after_collect,
+        reward_release_after_score=reward_release_after_score,
+    )
+    return devices
+
+
+def _validate_reward_overlap(
+    *,
+    devices: tuple[int, ...],
+    trainer_devices: tuple[int, ...],
+    rollout_devices: tuple[int, ...],
+    reward_config: RewardResourceConfig,
+    allow_overlap: bool,
+    rollout_release_after_collect: bool,
+    reward_release_after_score: bool,
+) -> None:
+    rollout_overlap = sorted(set(devices) & set(rollout_devices))
+    if rollout_overlap:
+        if not reward_config.share_with_rollout:
+            raise ValueError(
+                "Reward and rollout devices overlap but "
+                "distributed.resources.reward.share_with_rollout=false: "
+                f"reward={list(devices)} rollout={list(rollout_devices)}",
+            )
+        if not rollout_release_after_collect or not reward_release_after_score:
+            raise ValueError(
+                "Reward/rollout shared inference pool requires "
+                "distributed.rollout.release_after_collect=true and "
+                "distributed.reward.release_after_score=true",
+            )
+
+    trainer_overlap = sorted(set(devices) & set(trainer_devices))
+    if trainer_overlap and not allow_overlap:
+        raise ValueError(
+            "Trainer and reward devices overlap but "
+            "distributed.resources.allow_overlap=false: "
+            f"trainer={list(trainer_devices)} reward={list(devices)}",
+        )
+
+
+def _requested_role_gpu_count(
+    *,
+    role: str,
+    num_gpus: int | str | None,
+    num_workers: int | str,
+    gpus_per_worker: float,
+    available_count: int,
+) -> int:
+    parsed_num_gpus = _parse_num_gpus(num_gpus, field_name=f"{role}.num_gpus")
+    if parsed_num_gpus != "auto" and parsed_num_gpus is not None:
+        count = int(parsed_num_gpus)
+        if count < 0:
+            raise ValueError(f"distributed.resources.{role}.num_gpus must be >= 0")
+        return count
+    if float(gpus_per_worker) == 0.0:
+        return 0
+
+    parsed_workers = _parse_num_workers(num_workers, role=role)
+    if parsed_workers != "auto":
+        return int(parsed_workers * float(gpus_per_worker))
+    return int(available_count)
+
+
+def _resolve_role_num_workers(
+    *,
+    role: str,
+    num_workers: int | str,
+    num_gpus: int,
+    gpus_per_worker: float,
+) -> int:
+    requested = _parse_num_workers(num_workers, role=role)
+    if gpus_per_worker == 0:
+        workers = 1 if requested == "auto" else int(requested)
+        if workers < 1:
+            raise ValueError(f"distributed.resources.{role}.num_workers must be >= 1")
+        return workers
+
+    if num_gpus == 0 and requested == "auto":
+        return 0
+
+    if requested == "auto":
+        workers_float = num_gpus / gpus_per_worker
+        if int(workers_float) != workers_float:
+            raise ValueError(
+                f"distributed.resources.{role}.num_gpus must be divisible by "
+                f"distributed.resources.{role}.gpus_per_worker",
+            )
+        workers = int(workers_float)
+    else:
+        workers = int(requested)
+        expected_gpus = int(workers * gpus_per_worker)
+        if expected_gpus != num_gpus:
+            raise ValueError(
+                f"distributed.resources.{role}.num_workers * gpus_per_worker must "
+                f"equal {role} GPU count: {workers} * {gpus_per_worker:g} "
+                f"!= {num_gpus}",
+            )
+
+    if workers < 1:
+        raise ValueError(f"distributed.resources.{role}.num_workers must be >= 1")
+    return workers
+
+
+def reward_runtime_resource_kwargs(
+    resolved: ResolvedDistributedResources,
+) -> dict[str, Any]:
+    """Return flat reward Ray runtime kwargs derived from the shared plan."""
+
+    return {
+        "num_workers": resolved.reward_num_workers,
+        "gpus_per_worker": resolved.reward_gpus_per_worker,
+        "cpus_per_worker": resolved.reward_cpus_per_worker,
+        "max_inflight_batches": resolved.reward_max_inflight_batches,
+        "release_after_score": resolved.reward_release_after_score,
+        "placement_strategy": resolved.reward_placement_strategy,
+        "expected_gpu_ids": tuple(resolved.reward_devices),
+        "gpu_reservation_count": resolved.reward_gpu_reservation_count,
+    }
+
+
+def _reward_gpu_reservation_count(
+    *,
+    visible_devices: tuple[int, ...],
+    reward_devices: tuple[int, ...],
+    reward_gpus_per_worker: float,
+) -> int:
+    if reward_gpus_per_worker <= 0 or not reward_devices:
+        return 0
+    positions = [visible_devices.index(device) for device in reward_devices if device in visible_devices]
+    return min(positions) if positions else 0
+
+
 def _parse_devices(value: Any) -> list[int] | str:
     value = _to_plain(value)
     if _is_auto(value):
@@ -385,17 +739,33 @@ def _parse_num_gpus(value: Any, *, field_name: str) -> int | str | None:
     return parsed
 
 
-def _parse_num_workers(value: Any) -> int | str:
+def _parse_num_workers(value: Any, *, role: str = "rollout") -> int | str:
     value = _to_plain(value)
     if _is_auto(value):
         return "auto"
     try:
         parsed = int(value)
     except (TypeError, ValueError) as exc:
-        raise ValueError("distributed.resources.rollout.num_workers must be int or auto") from exc
+        raise ValueError(
+            f"distributed.resources.{role}.num_workers must be int or auto",
+        ) from exc
     if parsed < 1:
-        raise ValueError("distributed.resources.rollout.num_workers must be >= 1")
+        raise ValueError(f"distributed.resources.{role}.num_workers must be >= 1")
     return parsed
+
+
+def _uses_ray_video_reward(cfg: Any) -> bool:
+    reward = _cfg_get(cfg, "reward", {})
+    components = _cfg_get(reward, "components", {})
+    try:
+        video_weight = float(_cfg_get(components, "video_reward", 0.0))
+    except (TypeError, ValueError):
+        video_weight = 0.0
+    if video_weight <= 0:
+        return False
+    kwargs = _cfg_get(reward, "kwargs", {})
+    video_kwargs = _cfg_get(kwargs, "video_reward", {})
+    return str(_cfg_get(video_kwargs, "inference_runtime", "")) == "ray"
 
 
 def _dedupe_ints(values: list[int], *, field_name: str) -> list[int]:
@@ -472,9 +842,11 @@ def _to_plain(value: Any) -> Any:
 __all__ = [
     "DistributedResourceConfig",
     "ResolvedDistributedResources",
+    "RewardResourceConfig",
     "RoleResourceConfig",
     "RolloutResourceConfig",
     "format_distributed_resource_plan",
     "resolve_distributed_resources",
+    "reward_runtime_resource_kwargs",
     "trainer_torch_device",
 ]

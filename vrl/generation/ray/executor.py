@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.generation.execution.distributed.planner import DistributedExecutionPlanner
-from vrl.generation.execution.distributed.types import (
+from vrl.generation.execution.ids import GenerationIdFactory
+from vrl.generation.execution.planner import attach_engine_plan
+from vrl.generation.execution.scheduler import DistributedExecutionPlanner
+from vrl.generation.execution.types import (
     ChunkExecutionResult,
     DistributedWorkerHandle,
 )
-from vrl.generation.execution.ids import GenerationIdFactory
-from vrl.generation.execution.planner import attach_engine_plan
 from vrl.generation.protocols import ChunkGatherer, PipelineChunkResult
 from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.actor_pool import RayActorJob, run_actor_jobs
@@ -135,8 +135,4 @@ class RayGenerationExecutor:
             max_inflight_per_actor=self.max_inflight_chunks_per_worker,
         )
 
-
-RayRolloutExecutor = RayGenerationExecutor
-
-
-__all__ = ["RayGenerationExecutor", "RayRolloutExecutor"]
+__all__ = ["RayGenerationExecutor"]

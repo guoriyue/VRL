@@ -7,11 +7,11 @@ from typing import Any
 
 from vrl.generation.capabilities import family_capability_from_value
 from vrl.generation.execution.chunks import SampleChunk
-from vrl.generation.execution.distributed.types import (
+from vrl.generation.execution.planner import EnginePlan, ExecutionStage, build_engine_plan
+from vrl.generation.execution.types import (
     ChunkExecutionEnvelope,
     DistributedWorkerHandle,
 )
-from vrl.generation.execution.planner import EnginePlan, ExecutionStage, build_engine_plan
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
 
 
@@ -110,13 +110,8 @@ class DistributedExecutionPlanner:
             assignments=tuple(assignments),
         )
 
-
-DistributedRolloutPlan = DistributedGenerationPlan
-
-
 __all__ = [
     "DeviceAssignment",
     "DistributedExecutionPlanner",
     "DistributedGenerationPlan",
-    "DistributedRolloutPlan",
 ]

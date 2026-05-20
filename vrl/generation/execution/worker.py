@@ -12,7 +12,7 @@ from vrl.generation.capabilities import (
     FamilyCapability,
     family_capability_from_value,
 )
-from vrl.generation.execution.distributed.types import (
+from vrl.generation.execution.types import (
     ChunkExecutionEnvelope,
     ChunkExecutionResult,
 )

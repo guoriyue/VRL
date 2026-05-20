@@ -10,12 +10,11 @@ from omegaconf import OmegaConf
 
 from vrl.generation import GenerationOutput
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
-from vrl.generation.runtime.config import GenerationRuntimeConfig
-from vrl.generation.runtime.factory import (
+from vrl.generation.ray.config import (
     DRIVER_CUDA_OWNERSHIP_ERROR,
-    build_generation_runtime_from_cfg,
-    validate_generation_runtime_config,
+    RayGenerationConfig,
 )
+from vrl.generation.ray.launcher import RayGenerationLauncher
 
 
 class _CudaPolicy:
@@ -71,31 +70,33 @@ def _launch_contract() -> GenerationRuntimeLaunchContract:
 
 def _cfg(
     *,
-    backend: str = "ray",
+    backend: str | None = "ray",
     num_workers: int = 1,
     overlap: bool = False,
     release_after_collect: bool = False,
 ):
     rollout_devices = [0] if overlap else [1]
     visible_devices = [0] if overlap else [0, 1]
+    distributed = {
+        "resources": {
+            "visible_devices": visible_devices,
+            "trainer": {"devices": [0]},
+            "rollout": {
+                "devices": rollout_devices,
+                "gpus_per_worker": 1,
+                "num_workers": num_workers,
+            },
+            "allow_overlap": overlap,
+        },
+        "rollout": {
+            "release_after_collect": release_after_collect,
+        },
+    }
+    if backend is not None:
+        distributed["backend"] = backend
     return OmegaConf.create(
         {
-            "distributed": {
-                "backend": backend,
-                "resources": {
-                    "visible_devices": visible_devices,
-                    "trainer": {"devices": [0]},
-                    "rollout": {
-                        "devices": rollout_devices,
-                        "gpus_per_worker": 1,
-                        "num_workers": num_workers,
-                    },
-                    "allow_overlap": overlap,
-                },
-                "rollout": {
-                    "release_after_collect": release_after_collect,
-                },
-            },
+            "distributed": distributed,
         },
     )
 
@@ -130,14 +131,16 @@ def _resource_cfg(
     )
 
 
-def test_rollout_backend_config_from_cfg_requires_explicit_backend() -> None:
-    with pytest.raises(ValueError, match=r"distributed\.backend"):
-        GenerationRuntimeConfig.from_cfg({})
+def test_rollout_backend_config_from_cfg_uses_ray_by_default() -> None:
+    config = RayGenerationConfig.from_cfg(_cfg(backend=None))
+
+    assert config.resources is not None
+    assert config.num_workers == 1
 
 
 def test_rollout_backend_config_from_cfg_rejects_non_ray_backend() -> None:
-    with pytest.raises(ValueError, match="backend must be 'ray'"):
-        GenerationRuntimeConfig.from_cfg(_cfg(backend="local"))
+    with pytest.raises(ValueError, match=r"distributed\.backend only supports 'ray'"):
+        RayGenerationConfig.from_cfg(_cfg(backend="local"))
 
 
 @pytest.mark.parametrize(
@@ -153,7 +156,7 @@ def test_ray_backend_requires_launch_contract_and_gatherer(
     gatherer: Any,
 ) -> None:
     with pytest.raises(ValueError, match="launch_contract plus gatherer"):
-        build_generation_runtime_from_cfg(
+        RayGenerationLauncher().launch_from_cfg(
             _cfg(),
             launch_contract=launch_contract,
             gatherer=gatherer,
@@ -163,14 +166,13 @@ def test_ray_backend_requires_launch_contract_and_gatherer(
 
 def test_ray_backend_rejects_driver_cuda_policy_without_overlap() -> None:
     with pytest.raises(ValueError, match=r"resources\.allow_overlap=false"):
-        validate_generation_runtime_config(
+        RayGenerationConfig.from_cfg(
             _resource_cfg(
                 trainer_devices=[0],
                 rollout_devices=[0],
                 allow_overlap=False,
             ),
-            driver_policy=_CudaPolicy(),
-        )
+        ).validate_driver_state(driver_policy=_CudaPolicy())
 
     assert "overlaps rollout devices" in DRIVER_CUDA_OWNERSHIP_ERROR
 
@@ -182,36 +184,32 @@ def test_ray_backend_detects_cuda_trainable_module_when_policy_has_no_device() -
     )
 
     with pytest.raises(ValueError, match=r"resources\.allow_overlap=false"):
-        validate_generation_runtime_config(
+        RayGenerationConfig.from_cfg(
             _resource_cfg(
                 trainer_devices=[0],
                 rollout_devices=[0],
                 allow_overlap=False,
             ),
-            driver_bundle=bundle,
-        )
+        ).validate_driver_state(driver_bundle=bundle)
 
 
 def test_ray_backend_allows_driver_cuda_policy_with_explicit_overlap() -> None:
-    config = validate_generation_runtime_config(
+    config = RayGenerationConfig.from_cfg(
         _resource_cfg(
             trainer_devices=[0],
             rollout_devices=[0],
             allow_overlap=True,
             release_after_collect=True,
         ),
-        driver_policy=_CudaPolicy(),
-    )
+    ).validate_driver_state(driver_policy=_CudaPolicy())
 
-    assert config.backend == "ray"
     assert config.allow_driver_gpu_overlap is True
 
 
 def test_ray_backend_allows_split_driver_cuda_when_devices_do_not_overlap() -> None:
-    config = validate_generation_runtime_config(
+    config = RayGenerationConfig.from_cfg(
         _resource_cfg(trainer_devices=[0], rollout_devices=[1]),
-        driver_policy=_CudaPolicy(),
-    )
+    ).validate_driver_state(driver_policy=_CudaPolicy())
 
     assert config.resources is not None
     assert config.resources.trainer_devices == (0,)
@@ -221,12 +219,11 @@ def test_ray_backend_allows_split_driver_cuda_when_devices_do_not_overlap() -> N
 
 def test_ray_backend_overlap_requires_release_after_collect() -> None:
     with pytest.raises(ValueError, match="release_after_collect=false"):
-        validate_generation_runtime_config(
+        RayGenerationConfig.from_cfg(
             _resource_cfg(
                 trainer_devices=[0],
                 rollout_devices=[0],
                 allow_overlap=True,
                 release_after_collect=False,
             ),
-            driver_policy=_CudaPolicy(),
-        )
+        ).validate_driver_state(driver_policy=_CudaPolicy())

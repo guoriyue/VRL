@@ -11,14 +11,14 @@ import torch
 from omegaconf import DictConfig
 
 from vrl.config.builders import build_configs
-from vrl.generation.resources import (
+from vrl.generation.ray.launcher import RayGenerationLauncher
+from vrl.models.interfaces import require_runtime_model
+from vrl.ray.resources import (
     format_distributed_resource_plan,
     resolve_distributed_resources,
     trainer_torch_device,
 )
-from vrl.generation.runtime.factory import build_generation_runtime_from_cfg
-from vrl.models.interfaces import require_runtime_model
-from vrl.rollouts.families import build_generation_runtime_inputs_for_family
+from vrl.rollouts.families import build_ray_generation_inputs_for_family
 from vrl.scripts.common.factory import (
     build_collector_from_cfg,
     build_online_recipe_components,
@@ -117,7 +117,7 @@ async def run_online_recipe(
         reward_fn=components.reward_fn,
         collector_config=components.collector_config,
     )
-    runtime_inputs = build_generation_runtime_inputs_for_family(
+    runtime_inputs = build_ray_generation_inputs_for_family(
         cfg,
         components.family,
         weight_dtype=weight_dtype,
@@ -125,7 +125,7 @@ async def run_online_recipe(
     )
     log_host_memory("before_rollout_backend_build", log=logger)
     collector.set_runtime(
-        build_generation_runtime_from_cfg(
+        RayGenerationLauncher().launch_from_cfg(
             cfg,
             driver_bundle=bundle,
             launch_contract=runtime_inputs.launch_contract,

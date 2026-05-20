@@ -5,11 +5,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from vrl.generation.execution.distributed import (
+from vrl.generation.execution.types import (
     ChunkExecutionEnvelope,
     ChunkExecutionResult,
 )
-from vrl.generation.execution.distributed.worker import GenerationWorkerCore
+from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.ray.dependencies import current_gpu_ids, current_node_ip
 
@@ -63,8 +63,4 @@ class RayGenerationWorker:
             gpu_ids = []
         return {"worker_id": self.worker_id, "node_ip": node_ip, "gpu_ids": gpu_ids}
 
-
-RayRolloutWorker = RayGenerationWorker
-
-
-__all__ = ["RayGenerationWorker", "RayRolloutWorker"]
+__all__ = ["RayGenerationWorker"]

@@ -8,7 +8,7 @@ from typing import Any
 
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import PipelineChunkResult
-from vrl.generation.ray.worker import RayRolloutWorker
+from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.models.ar.capabilities import ar_discrete_family_capability
 from vrl.models.interfaces import ReplayResult, RuntimeBuildSpec, RuntimeBundle
@@ -91,7 +91,7 @@ def _launch_contract() -> GenerationRuntimeLaunchContract:
 
 def test_ray_generation_worker_load_policy_is_idempotent() -> None:
     _TinyChunkExecutor.build_count = 0
-    worker = RayRolloutWorker("rollout-0", _launch_contract())
+    worker = RayGenerationWorker("rollout-0", _launch_contract())
 
     worker.load_policy()
     first_executor = worker.executor

@@ -7,7 +7,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
-from vrl.generation.runtime.config import GenerationRuntimeConfig
+from vrl.generation.ray.config import RayGenerationConfig
 from vrl.models.replay_loading import bundle_loads_full_generation_modules
 
 logger = logging.getLogger(__name__)
@@ -66,7 +66,7 @@ def format_host_memory(snapshot: HostMemorySnapshot) -> str:
 def validate_colocated_replay_memory(
     *,
     bundle: Any,
-    rollout_config: GenerationRuntimeConfig,
+    rollout_config: RayGenerationConfig,
     strict: bool | None = None,
     log: logging.Logger | None = None,
 ) -> None:
@@ -95,7 +95,7 @@ def validate_colocated_replay_memory(
     (log or logger).warning(message)
 
 
-def _is_colocated_gpu_rollout(config: GenerationRuntimeConfig) -> bool:
+def _is_colocated_gpu_rollout(config: RayGenerationConfig) -> bool:
     return bool(
         config.allow_driver_gpu_overlap
         and config.num_workers >= 1
