@@ -239,8 +239,8 @@ def test_anima_runtime_spec_uses_explicit_local_paths(tmp_path: Any) -> None:
     for path in (transformer, text_encoder, vae):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"placeholder")
-    qwen_tokenizer = tmp_path / "tokenizers" / "qwen25_tokenizer"
-    t5_tokenizer = tmp_path / "tokenizers" / "t5_tokenizer"
+    qwen_tokenizer = tmp_path / "tokenizers" / "qwen"
+    t5_tokenizer = tmp_path / "tokenizers" / "t5"
     qwen_tokenizer.mkdir(parents=True)
     t5_tokenizer.mkdir(parents=True)
 
@@ -269,6 +269,41 @@ def test_anima_runtime_spec_uses_explicit_local_paths(tmp_path: Any) -> None:
     assert "resolved_paths" not in full.extra
     assert replay.extra["transformer_path"] == str(transformer)
     assert "resolved_paths" not in replay.extra
+
+
+def test_anima_hf_runtime_spec_defers_artifact_downloads() -> None:
+    from vrl.config.loading import load_config
+    from vrl.models.diffusion.cosmos.anima.runtime import (
+        extract_anima_replay_runtime_spec,
+        extract_anima_runtime_spec,
+    )
+
+    cfg = load_config(
+        "experiment/diffusion/anima_preview3/online_grpo_aesthetic",
+        overrides=[
+            "sampling.num_steps=1",
+            "model.use_lora=false",
+        ],
+    )
+
+    full = extract_anima_runtime_spec(cfg, "cpu", torch.float32)
+    replay = extract_anima_replay_runtime_spec(cfg, "cpu", torch.float32)
+
+    assert full.model_name_or_path == "circlestone-labs/Anima"
+    assert full.extra["transformer_path"] == (
+        "hf://circlestone-labs/Anima/diffusion_models/anima-preview3-base.safetensors"
+    )
+    assert full.extra["text_encoder_path"] == (
+        "hf://circlestone-labs/Anima/text_encoders/qwen_3_06b_base.safetensors"
+    )
+    assert full.extra["vae_path"] == "hf://circlestone-labs/Anima/vae/qwen_image_vae.safetensors"
+    assert full.extra["qwen_tokenizer_path"] == "Qwen/Qwen2.5-0.5B"
+    assert full.extra["t5_tokenizer_path"] == "google-t5/t5-base"
+    assert replay.extra["transformer_path"] == full.extra["transformer_path"]
+    assert "text_encoder_path" not in replay.extra
+    assert "vae_path" not in replay.extra
+    assert "qwen_tokenizer_path" not in replay.extra
+    assert "t5_tokenizer_path" not in replay.extra
 
 
 @pytest.mark.parametrize(

@@ -1,15 +1,14 @@
 # Anima Preview3 single-file Cosmos Predict2 Text2Image checkpoint.
-# Replay/trainer loading needs only transformer_path. Full generation
-# additionally loads text_encoder_path, vae_path, and the two local tokenizer
-# directories below.
+# Replay/trainer loading needs only the transformer artifact. Full generation
+# additionally materializes the text encoder, VAE, and explicit tokenizer sources.
 model:
   family: cosmos-predict2-anima
-  path: /home/mingfeiguo/Desktop/anima-inference/models
-  transformer_path: /home/mingfeiguo/Desktop/anima-inference/models/diffusion_models/anima-preview3-base.safetensors
-  text_encoder_path: /home/mingfeiguo/Desktop/anima-inference/models/text_encoders/qwen_3_06b_base.safetensors
-  vae_path: /home/mingfeiguo/Desktop/anima-inference/models/vae/qwen_image_vae.safetensors
-  qwen_tokenizer_path: /home/mingfeiguo/Desktop/anima-inference/ComfyUI/comfy/text_encoders/qwen25_tokenizer
-  t5_tokenizer_path: /home/mingfeiguo/Desktop/anima-inference/ComfyUI/comfy/text_encoders/t5_tokenizer
+  path: circlestone-labs/Anima
+  transformer_path: ""
+  text_encoder_path: ""
+  vae_path: ""
+  qwen_tokenizer_path: Qwen/Qwen2.5-0.5B
+  t5_tokenizer_path: google-t5/t5-base
   scheduler_shift: 3.0
 
   use_lora: true

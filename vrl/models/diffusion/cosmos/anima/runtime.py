@@ -7,6 +7,11 @@ from typing import Any
 
 from vrl.generation.diffusion import DiffusionPipelineExecutorBase
 from vrl.models.diffusion.capabilities import diffusion_family_capability
+from vrl.models.diffusion.cosmos.anima.artifacts import (
+    materialize_anima_artifact,
+    resolve_anima_paths,
+    resolve_anima_replay_paths,
+)
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.replay_loading import (
     full_generation_bundle_metadata,
@@ -36,12 +41,13 @@ def extract_anima_runtime_spec(
             "target_modules": list(cfg.model.lora.target_modules),
         }
 
+    paths = resolve_anima_paths(cfg.model)
     extra: dict[str, Any] = {
-        "transformer_path": _required_model_path(cfg.model, "transformer_path"),
-        "text_encoder_path": _required_model_path(cfg.model, "text_encoder_path"),
-        "vae_path": _required_model_path(cfg.model, "vae_path"),
-        "qwen_tokenizer_path": _required_model_path(cfg.model, "qwen_tokenizer_path"),
-        "t5_tokenizer_path": _required_model_path(cfg.model, "t5_tokenizer_path"),
+        "transformer_path": paths["transformer_path"],
+        "text_encoder_path": paths["text_encoder_path"],
+        "vae_path": paths["vae_path"],
+        "qwen_tokenizer_path": paths["qwen_tokenizer_path"],
+        "t5_tokenizer_path": paths["t5_tokenizer_path"],
         "scheduler_shift": float(getattr(cfg.model, "scheduler_shift", 3.0)),
     }
     torch_compile_cfg = getattr(cfg.model, "torch_compile", None)
@@ -82,8 +88,9 @@ def extract_anima_replay_runtime_spec(
             "target_modules": list(cfg.model.lora.target_modules),
         }
 
+    paths = resolve_anima_replay_paths(cfg.model)
     extra: dict[str, Any] = {
-        "transformer_path": _required_model_path(cfg.model, "transformer_path"),
+        "transformer_path": paths["transformer_path"],
         "scheduler_shift": float(getattr(cfg.model, "scheduler_shift", 3.0)),
     }
     torch_compile_cfg = getattr(cfg.model, "torch_compile", None)
@@ -254,7 +261,7 @@ def _load_anima_transformer_component(spec: RuntimeBuildSpec) -> Any:
     if not path:
         raise ValueError("Anima runtime spec is missing transformer_path")
     return _load_anima_transformer(
-        load_file(path, device="cpu"),
+        load_file(materialize_anima_artifact(path), device="cpu"),
         dtype=_resolve_torch_dtype(spec.dtype),
     ).to(spec.device, dtype=_resolve_torch_dtype(spec.dtype))
 
@@ -286,14 +293,6 @@ def _resolve_torch_dtype(value: Any) -> Any:
         "bfloat16": torch.bfloat16,
         "bf16": torch.bfloat16,
     }.get(text, torch.bfloat16)
-
-
-def _required_model_path(model_cfg: Any, name: str) -> str:
-    value = getattr(model_cfg, name, None)
-    text = str(value or "").strip()
-    if not text:
-        raise ValueError(f"model.{name} is required for Anima runtime")
-    return text
 
 
 __all__ = [

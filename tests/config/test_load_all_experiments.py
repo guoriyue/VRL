@@ -176,17 +176,19 @@ def test_anima_safe_reward_config_uses_cpu_nsfw_penalty() -> None:
     assert [name for name, _, _ in reward_fn.rewards] == ["aesthetic", "nsfw_safety"]
 
 
-def test_anima_config_uses_local_filesystem_sources() -> None:
+def test_anima_config_does_not_depend_on_external_comfyui_checkout() -> None:
     cfg = load_config("experiment/diffusion/anima_preview3/online_grpo_aesthetic")
+    model_yaml = OmegaConf.to_yaml(cfg.model)
 
-    assert cfg.model.path == "/home/mingfeiguo/Desktop/anima-inference/models"
-    assert cfg.model.transformer_path.endswith("anima-preview3-base.safetensors")
-    assert cfg.model.text_encoder_path.endswith("qwen_3_06b_base.safetensors")
-    assert cfg.model.vae_path.endswith("qwen_image_vae.safetensors")
+    assert cfg.model.path == "circlestone-labs/Anima"
+    assert cfg.model.transformer_path == ""
+    assert cfg.model.text_encoder_path == ""
+    assert cfg.model.vae_path == ""
     assert "tokenizer_root" not in cfg.model
-    assert "circlestone-labs/Anima" not in OmegaConf.to_yaml(cfg.model)
-    assert cfg.model.qwen_tokenizer_path.endswith("qwen25_tokenizer")
-    assert cfg.model.t5_tokenizer_path.endswith("t5_tokenizer")
+    assert "anima-inference" not in model_yaml
+    assert "ComfyUI" not in model_yaml
+    assert cfg.model.qwen_tokenizer_path == "Qwen/Qwen2.5-0.5B"
+    assert cfg.model.t5_tokenizer_path == "google-t5/t5-base"
 
 
 def test_cosmos_optimization_check_records_trainable_change(tmp_path: Path) -> None:

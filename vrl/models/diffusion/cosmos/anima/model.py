@@ -23,6 +23,12 @@ from vrl.models.diffusion.common import (
     LatentDecodeSpec,
     LatentDecodeTransform,
 )
+from vrl.models.diffusion.cosmos.anima.artifacts import (
+    DEFAULT_QWEN_TOKENIZER,
+    DEFAULT_T5_TOKENIZER,
+    is_local_tokenizer_source,
+    materialize_anima_artifact,
+)
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 
 _COSMOS_T2I_TRANSFORMER_CONFIG: dict[str, Any] = {
@@ -91,7 +97,7 @@ class AnimaModel(DiffusionModelBase):
 
     @classmethod
     def from_spec(cls, spec: Any) -> AnimaModel:
-        """Load Anima's transformer, Qwen3 encoder, and VAE from local files."""
+        """Load Anima's transformer, Qwen3 encoder, and VAE from component refs."""
 
         from diffusers import AutoencoderKLQwenImage, FlowMatchEulerDiscreteScheduler
         from diffusers.image_processor import VaeImageProcessor
@@ -102,12 +108,18 @@ class AnimaModel(DiffusionModelBase):
         paths = spec.extra
         dtype = _resolve_torch_dtype(spec.dtype)
 
-        transformer_checkpoint = load_file(paths["transformer_path"], device="cpu")
+        transformer_checkpoint = load_file(
+            materialize_anima_artifact(paths["transformer_path"]),
+            device="cpu",
+        )
         transformer = _load_anima_transformer(transformer_checkpoint, dtype=dtype)
         llm_adapter = _load_anima_llm_adapter(transformer_checkpoint, dtype=dtype)
         del transformer_checkpoint
 
-        text_encoder_state = load_file(paths["text_encoder_path"], device="cpu")
+        text_encoder_state = load_file(
+            materialize_anima_artifact(paths["text_encoder_path"]),
+            device="cpu",
+        )
         text_encoder = Qwen3Model(_qwen3_06b_config())
         text_encoder.load_state_dict(
             {
@@ -119,7 +131,7 @@ class AnimaModel(DiffusionModelBase):
         del text_encoder_state
 
         vae_state = convert_wan_vae_to_diffusers(
-            load_file(paths["vae_path"], device="cpu"),
+            load_file(materialize_anima_artifact(paths["vae_path"]), device="cpu"),
         )
         vae = AutoencoderKLQwenImage()
         vae.load_state_dict(vae_state, strict=True)
@@ -130,15 +142,20 @@ class AnimaModel(DiffusionModelBase):
         )
         scheduler.register_to_config(sigma_data=1.0, sigma_max=1.0)
 
+        qwen_tokenizer_source = paths.get(
+            "qwen_tokenizer_path",
+            DEFAULT_QWEN_TOKENIZER,
+        )
         qwen_tokenizer = Qwen2Tokenizer.from_pretrained(
-            paths["qwen_tokenizer_path"],
-            local_files_only=True,
+            qwen_tokenizer_source,
+            local_files_only=is_local_tokenizer_source(qwen_tokenizer_source),
         )
         if qwen_tokenizer.pad_token is None:
             qwen_tokenizer.pad_token = qwen_tokenizer.eos_token
+        t5_tokenizer_source = paths.get("t5_tokenizer_path", DEFAULT_T5_TOKENIZER)
         t5_tokenizer = T5TokenizerFast.from_pretrained(
-            paths["t5_tokenizer_path"],
-            local_files_only=True,
+            t5_tokenizer_source,
+            local_files_only=is_local_tokenizer_source(t5_tokenizer_source),
         )
 
         transformer.requires_grad_(False)
