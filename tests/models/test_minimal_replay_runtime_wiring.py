@@ -194,7 +194,7 @@ def test_anima_replay_builder_uses_only_transformer_checkpoint(
         _spec(
             task_variant="text_to_image",
             extra={
-                "resolved_paths": {"transformer": "/tmp/anima-preview3-base.safetensors"},
+                "transformer_path": "/tmp/anima-preview3-base.safetensors",
                 "scheduler_shift": 3.0,
             },
         ),
@@ -225,18 +225,34 @@ def test_anima_empty_prompts_are_replaced_before_tokenization() -> None:
     assert _non_empty_prompts(["", "  ", "anime"]) == [".", ".", "anime"]
 
 
-def test_anima_hf_runtime_spec_defers_artifact_downloads() -> None:
-    from omegaconf import OmegaConf
-
+def test_anima_runtime_spec_uses_explicit_local_paths(tmp_path: Any) -> None:
     from vrl.config.loading import load_config
     from vrl.models.diffusion.cosmos.anima.runtime import (
         extract_anima_replay_runtime_spec,
         extract_anima_runtime_spec,
     )
 
+    model_root = tmp_path / "models"
+    transformer = model_root / "diffusion_models" / "anima-preview3-base.safetensors"
+    text_encoder = model_root / "text_encoders" / "qwen_3_06b_base.safetensors"
+    vae = model_root / "vae" / "qwen_image_vae.safetensors"
+    for path in (transformer, text_encoder, vae):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"placeholder")
+    qwen_tokenizer = tmp_path / "tokenizers" / "qwen25_tokenizer"
+    t5_tokenizer = tmp_path / "tokenizers" / "t5_tokenizer"
+    qwen_tokenizer.mkdir(parents=True)
+    t5_tokenizer.mkdir(parents=True)
+
     cfg = load_config(
         "experiment/diffusion/anima_preview3/online_grpo_aesthetic",
         overrides=[
+            f"model.path={model_root.as_posix()}",
+            f"model.transformer_path={transformer.as_posix()}",
+            f"model.text_encoder_path={text_encoder.as_posix()}",
+            f"model.vae_path={vae.as_posix()}",
+            f"model.qwen_tokenizer_path={qwen_tokenizer.as_posix()}",
+            f"model.t5_tokenizer_path={t5_tokenizer.as_posix()}",
             "sampling.num_steps=1",
             "model.use_lora=false",
         ],
@@ -245,24 +261,14 @@ def test_anima_hf_runtime_spec_defers_artifact_downloads() -> None:
     full = extract_anima_runtime_spec(cfg, "cpu", torch.float32)
     replay = extract_anima_replay_runtime_spec(cfg, "cpu", torch.float32)
 
-    full_paths = full.extra["resolved_paths"]
-    replay_paths = replay.extra["resolved_paths"]
-    assert full_paths["transformer"] == (
-        "hf://circlestone-labs/Anima/diffusion_models/anima-preview3-base.safetensors"
-    )
-    assert full_paths["text_encoder"] == (
-        "hf://circlestone-labs/Anima/text_encoders/qwen_3_06b_base.safetensors"
-    )
-    assert full_paths["vae"] == "hf://circlestone-labs/Anima/vae/qwen_image_vae.safetensors"
-    assert full_paths["qwen_tokenizer"] == "Qwen/Qwen2.5-0.5B"
-    assert full_paths["t5_tokenizer"] == "google-t5/t5-base"
-    assert replay_paths == {
-        "transformer": (
-            "hf://circlestone-labs/Anima/diffusion_models/"
-            "anima-preview3-base.safetensors"
-        ),
-    }
-    assert "tokenizer_root" not in OmegaConf.to_container(cfg.model)
+    assert full.extra["transformer_path"] == str(transformer)
+    assert full.extra["text_encoder_path"] == str(text_encoder)
+    assert full.extra["vae_path"] == str(vae)
+    assert full.extra["qwen_tokenizer_path"] == str(qwen_tokenizer)
+    assert full.extra["t5_tokenizer_path"] == str(t5_tokenizer)
+    assert "resolved_paths" not in full.extra
+    assert replay.extra["transformer_path"] == str(transformer)
+    assert "resolved_paths" not in replay.extra
 
 
 @pytest.mark.parametrize(

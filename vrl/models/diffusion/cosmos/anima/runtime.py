@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Any
 
 from vrl.generation.diffusion import DiffusionPipelineExecutorBase
@@ -38,7 +37,11 @@ def extract_anima_runtime_spec(
         }
 
     extra: dict[str, Any] = {
-        "resolved_paths": _resolve_anima_paths(cfg.model),
+        "transformer_path": _required_model_path(cfg.model, "transformer_path"),
+        "text_encoder_path": _required_model_path(cfg.model, "text_encoder_path"),
+        "vae_path": _required_model_path(cfg.model, "vae_path"),
+        "qwen_tokenizer_path": _required_model_path(cfg.model, "qwen_tokenizer_path"),
+        "t5_tokenizer_path": _required_model_path(cfg.model, "t5_tokenizer_path"),
         "scheduler_shift": float(getattr(cfg.model, "scheduler_shift", 3.0)),
     }
     torch_compile_cfg = getattr(cfg.model, "torch_compile", None)
@@ -80,7 +83,7 @@ def extract_anima_replay_runtime_spec(
         }
 
     extra: dict[str, Any] = {
-        "resolved_paths": _resolve_anima_replay_paths(cfg.model),
+        "transformer_path": _required_model_path(cfg.model, "transformer_path"),
         "scheduler_shift": float(getattr(cfg.model, "scheduler_shift", 3.0)),
     }
     torch_compile_cfg = getattr(cfg.model, "torch_compile", None)
@@ -122,7 +125,7 @@ def build_anima_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
     if num_steps is not None:
         model.set_num_steps(int(num_steps))
 
-    paths = (spec.extra or {}).get("resolved_paths", {})
+    extra = spec.extra or {}
     return RuntimeBundle(
         model=model,
         trainable_modules=model.trainable_modules,
@@ -140,9 +143,9 @@ def build_anima_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
             "task_variant": spec.task_variant,
             "dtype": str(spec.dtype),
             "use_lora": spec.use_lora,
-            "transformer_path": paths.get("transformer"),
-            "text_encoder_path": paths.get("text_encoder"),
-            "vae_path": paths.get("vae"),
+            "transformer_path": extra.get("transformer_path"),
+            "text_encoder_path": extra.get("text_encoder_path"),
+            "vae_path": extra.get("vae_path"),
             **full_generation_bundle_metadata(
                 replay_modules=("transformer", "scheduler"),
                 generation_only_modules=("text_encoder", "llm_adapter", "vae"),
@@ -177,7 +180,7 @@ def build_anima_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
     if num_steps is not None:
         model.set_num_steps(int(num_steps))
 
-    paths = (spec.extra or {}).get("resolved_paths", {})
+    extra = spec.extra or {}
     return RuntimeBundle(
         model=model,
         trainable_modules=model.trainable_modules,
@@ -195,7 +198,7 @@ def build_anima_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
             "task_variant": spec.task_variant,
             "dtype": str(spec.dtype),
             "use_lora": spec.use_lora,
-            "transformer_path": paths.get("transformer"),
+            "transformer_path": extra.get("transformer_path"),
             **minimal_replay_bundle_metadata(
                 replay_modules=("transformer", "scheduler"),
                 generation_only_modules=(
@@ -242,56 +245,16 @@ class AnimaPipelineExecutor(DiffusionPipelineExecutorBase):
         self.default_sample_batch_size = max(1, int(sample_batch_size))
 
 
-def _resolve_anima_paths(model_cfg: Any) -> dict[str, str]:
-    return {
-        "transformer": _resolve_anima_artifact_ref(
-            model_cfg,
-            field_name="transformer_path",
-            relative_path="diffusion_models/anima-preview3-base.safetensors",
-        ),
-        "text_encoder": _resolve_anima_artifact_ref(
-            model_cfg,
-            field_name="text_encoder_path",
-            relative_path="text_encoders/qwen_3_06b_base.safetensors",
-        ),
-        "vae": _resolve_anima_artifact_ref(
-            model_cfg,
-            field_name="vae_path",
-            relative_path="vae/qwen_image_vae.safetensors",
-        ),
-        "qwen_tokenizer": _resolve_tokenizer_source(
-            model_cfg,
-            "qwen_tokenizer_path",
-            default="Qwen/Qwen2.5-0.5B",
-        ),
-        "t5_tokenizer": _resolve_tokenizer_source(
-            model_cfg,
-            "t5_tokenizer_path",
-            default="google-t5/t5-base",
-        ),
-    }
-
-
-def _resolve_anima_replay_paths(model_cfg: Any) -> dict[str, str]:
-    return {
-        "transformer": _resolve_anima_artifact_ref(
-            model_cfg,
-            field_name="transformer_path",
-            relative_path="diffusion_models/anima-preview3-base.safetensors",
-        ),
-    }
-
-
 def _load_anima_transformer_component(spec: RuntimeBuildSpec) -> Any:
     from safetensors.torch import load_file
 
     from vrl.models.diffusion.cosmos.anima.model import _load_anima_transformer
 
-    path = (spec.extra or {}).get("resolved_paths", {}).get("transformer")
+    path = (spec.extra or {}).get("transformer_path")
     if not path:
-        raise ValueError("Anima runtime spec is missing resolved_paths.transformer")
+        raise ValueError("Anima runtime spec is missing transformer_path")
     return _load_anima_transformer(
-        load_file(_materialize_anima_artifact(path), device="cpu"),
+        load_file(path, device="cpu"),
         dtype=_resolve_torch_dtype(spec.dtype),
     ).to(spec.device, dtype=_resolve_torch_dtype(spec.dtype))
 
@@ -325,82 +288,12 @@ def _resolve_torch_dtype(value: Any) -> Any:
     }.get(text, torch.bfloat16)
 
 
-def _optional_path(model_cfg: Any, name: str) -> Path | None:
+def _required_model_path(model_cfg: Any, name: str) -> str:
     value = getattr(model_cfg, name, None)
     text = str(value or "").strip()
     if not text:
-        return None
-    return Path(text).expanduser()
-
-
-def _resolve_anima_artifact_ref(
-    model_cfg: Any,
-    *,
-    field_name: str,
-    relative_path: str,
-) -> str:
-    explicit = _optional_path(model_cfg, field_name)
-    if explicit is not None:
-        return _filesystem_file_ref(explicit, field_name=field_name)
-
-    root_text = str(getattr(model_cfg, "path", "") or "").strip()
-    if not root_text:
-        raise ValueError("model.path is required for Anima checkpoint resolution")
-
-    root = Path(root_text).expanduser()
-    if root.exists():
-        if root.is_file():
-            if relative_path != "diffusion_models/anima-preview3-base.safetensors":
-                raise FileNotFoundError(
-                    "Anima filesystem file model.path can only supply the transformer; "
-                    f"set {field_name} explicitly for {relative_path}",
-                )
-            return str(root)
-        return _filesystem_file_ref(
-            root / relative_path,
-            field_name=f"model.path/{relative_path}",
-        )
-
-    return f"hf://{root_text}/{relative_path}"
-
-
-def _filesystem_file_ref(path: Path, *, field_name: str) -> str:
-    if not path.exists():
-        raise FileNotFoundError(f"Anima {field_name} points to a missing file: {path}")
-    if not path.is_file():
-        raise FileNotFoundError(f"Anima {field_name} must be a file: {path}")
-    return str(path)
-
-
-def _resolve_tokenizer_source(model_cfg: Any, name: str, *, default: str) -> str:
-    value = getattr(model_cfg, name, None)
-    text = str(value or "").strip() or default
-    path = Path(text).expanduser()
-    if path.exists():
-        if not path.is_dir():
-            raise FileNotFoundError(f"Anima {name} must be a tokenizer directory: {path}")
-        return str(path)
+        raise ValueError(f"model.{name} is required for Anima runtime")
     return text
-
-
-def _materialize_anima_artifact(ref: str) -> str:
-    text = str(ref)
-    if not text.startswith("hf://"):
-        return text
-    repo_and_file = text[len("hf://"):]
-    if "/" not in repo_and_file:
-        raise ValueError(f"invalid Anima Hugging Face artifact reference: {ref!r}")
-    owner, rest = repo_and_file.split("/", 1)
-    repo_name, filename = rest.split("/", 1)
-    repo_id = f"{owner}/{repo_name}"
-    try:
-        from huggingface_hub import hf_hub_download
-    except ImportError as exc:
-        raise ImportError(
-            "Install huggingface_hub to load Anima artifacts from Hugging Face "
-            f"reference {ref!r}",
-        ) from exc
-    return hf_hub_download(repo_id=repo_id, filename=filename)
 
 
 __all__ = [

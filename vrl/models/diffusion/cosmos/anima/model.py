@@ -1,6 +1,6 @@
 """Cosmos Predict2 Anima text-to-image runtime.
 
-Anima is distributed as ComfyUI-format single files. The diffusion backbone is
+Anima is distributed as single-file checkpoints. The diffusion backbone is
 Cosmos Predict2 Text2Image, but Anima replaces the prompt path with Qwen3-0.6B
 plus a learned LLM adapter before feeding Cosmos' 1024-wide text context.
 """
@@ -10,7 +10,6 @@ from __future__ import annotations
 import random
 import sys
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import torch
@@ -60,7 +59,7 @@ class AnimaSamplingState:
 
 
 class AnimaModel(DiffusionModelBase):
-    """ComfyUI-weight Anima model on the shared diffusion RL path."""
+    """Single-file Anima model on the shared diffusion RL path."""
 
     family = "cosmos-predict2-anima-t2i"
 
@@ -92,7 +91,7 @@ class AnimaModel(DiffusionModelBase):
 
     @classmethod
     def from_spec(cls, spec: Any) -> AnimaModel:
-        """Load Anima's ComfyUI-format transformer, Qwen3 encoder, and VAE."""
+        """Load Anima's transformer, Qwen3 encoder, and VAE from local files."""
 
         from diffusers import AutoencoderKLQwenImage, FlowMatchEulerDiscreteScheduler
         from diffusers.image_processor import VaeImageProcessor
@@ -100,21 +99,15 @@ class AnimaModel(DiffusionModelBase):
         from safetensors.torch import load_file
         from transformers import Qwen2Tokenizer, Qwen3Model, T5TokenizerFast
 
-        paths = spec.extra["resolved_paths"]
+        paths = spec.extra
         dtype = _resolve_torch_dtype(spec.dtype)
 
-        transformer_checkpoint = load_file(
-            _materialize_anima_artifact(paths["transformer"]),
-            device="cpu",
-        )
+        transformer_checkpoint = load_file(paths["transformer_path"], device="cpu")
         transformer = _load_anima_transformer(transformer_checkpoint, dtype=dtype)
         llm_adapter = _load_anima_llm_adapter(transformer_checkpoint, dtype=dtype)
         del transformer_checkpoint
 
-        text_encoder_state = load_file(
-            _materialize_anima_artifact(paths["text_encoder"]),
-            device="cpu",
-        )
+        text_encoder_state = load_file(paths["text_encoder_path"], device="cpu")
         text_encoder = Qwen3Model(_qwen3_06b_config())
         text_encoder.load_state_dict(
             {
@@ -126,7 +119,7 @@ class AnimaModel(DiffusionModelBase):
         del text_encoder_state
 
         vae_state = convert_wan_vae_to_diffusers(
-            load_file(_materialize_anima_artifact(paths["vae"]), device="cpu"),
+            load_file(paths["vae_path"], device="cpu"),
         )
         vae = AutoencoderKLQwenImage()
         vae.load_state_dict(vae_state, strict=True)
@@ -138,14 +131,14 @@ class AnimaModel(DiffusionModelBase):
         scheduler.register_to_config(sigma_data=1.0, sigma_max=1.0)
 
         qwen_tokenizer = Qwen2Tokenizer.from_pretrained(
-            paths.get("qwen_tokenizer", "Qwen/Qwen2.5-0.5B"),
-            local_files_only=_is_local_tokenizer_source(paths.get("qwen_tokenizer")),
+            paths["qwen_tokenizer_path"],
+            local_files_only=True,
         )
         if qwen_tokenizer.pad_token is None:
             qwen_tokenizer.pad_token = qwen_tokenizer.eos_token
         t5_tokenizer = T5TokenizerFast.from_pretrained(
-            paths.get("t5_tokenizer", "google-t5/t5-base"),
-            local_files_only=_is_local_tokenizer_source(paths.get("t5_tokenizer")),
+            paths["t5_tokenizer_path"],
+            local_files_only=True,
         )
 
         transformer.requires_grad_(False)
@@ -499,29 +492,6 @@ def _non_empty_prompts(prompts: list[str]) -> list[str]:
     # Anima uses add_special_tokens=False; empty strings produce zero-length
     # Qwen/T5 token tensors and crash Qwen attention during CFG negative prompts.
     return [prompt if str(prompt).strip() else "." for prompt in prompts]
-
-
-def _is_local_tokenizer_source(value: Any) -> bool:
-    if value is None:
-        return False
-    return Path(str(value)).expanduser().exists()
-
-
-def _materialize_anima_artifact(ref: str) -> str:
-    text = str(ref)
-    if not text.startswith("hf://"):
-        return text
-    repo_and_file = text[len("hf://"):]
-    owner, rest = repo_and_file.split("/", 1)
-    repo_name, filename = rest.split("/", 1)
-    try:
-        from huggingface_hub import hf_hub_download
-    except ImportError as exc:
-        raise ImportError(
-            "Install huggingface_hub to load Anima artifacts from Hugging Face "
-            f"reference {ref!r}",
-        ) from exc
-    return hf_hub_download(repo_id=f"{owner}/{repo_name}", filename=filename)
 
 
 class AnimaReplayModel(AnimaModel):
