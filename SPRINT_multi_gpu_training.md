@@ -14,9 +14,9 @@ fsdp
 
 `megatron` 只保留 schema 和设计边界，不在第一阶段实现。原因是 Megatron 不是简单的 wrapper；它要求 tensor/pipeline parallel 模型切分、Megatron checkpoint 格式、optimizer/state sharding、权重同步协议和 family model adapter 都重新定义。它应该是后续独立 backend，而不是混在 DDP/FSDP sprint 里。
 
-本 sprint 依赖 `SPRINT_distributed_resource_config.md` 的资源解析结果，但职责不同：
+本 sprint 基于已经落地的 role-level resource resolver，但职责不同：
 
-- `SPRINT_distributed_resource_config.md`：决定 trainer / rollout 拿多少资源。
+- `vrl/ray/resources.py` 和 `vrl/generation/ray/*`：决定 trainer / rollout 拿多少资源并创建 Ray placement。
 - 本 sprint：决定 trainer 如何在这些资源上创建 rank、wrap model、shard batch、同步梯度、保存 checkpoint、向 rollout workers 推送权重。
 
 ## 1. Current Code Reality
@@ -488,7 +488,8 @@ python -m pytest -q tests/config/test_load_all_experiments.py
 
 相关设计：
 
-- `/home/mingfeiguo/Desktop/wm-infra/SPRINT_distributed_resource_config.md`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/ray/resources.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/generation/ray/placement.py`
 - `/home/mingfeiguo/Desktop/slime/slime/utils/arguments.py`
 - `/home/mingfeiguo/Desktop/slime/slime/ray/placement_group.py`
 - `/home/mingfeiguo/Desktop/miles/miles/utils/arguments.py`
