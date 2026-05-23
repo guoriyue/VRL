@@ -4,8 +4,15 @@ defaults:
   - /model/diffusion/cosmos/anima_preview3
   - /sampling/image/512
   - /sampling/denoise/10_step_cfg_4_5
-  - /reward/aesthetic_nsfw_safety
+  - /reward/aesthetic
+  - /reward/nsfw_safety
   - /dataset/anime_safety_stress
+
+# Multi-reward composition belongs in the experiment. Keep configs/reward/*
+# as single-reward building blocks, then set experiment-specific weights here.
+reward:
+  components:
+    nsfw_safety: 0.5
 
 actor:
   optim:

@@ -80,15 +80,30 @@ def test_experiments_are_grouped_by_model_family() -> None:
     } == {"ar", "diffusion"}
 
 
-def test_experiments_compose_reward_and_dataset_groups() -> None:
-    inline_fields = []
+def test_experiments_use_dataset_groups_and_only_override_reward_weights() -> None:
+    inline_data = []
+    inline_reward_kwargs = []
     for path in EXPERIMENT_DIR.rglob("*.yaml"):
         raw = OmegaConf.load(path)
-        for key in ("reward", "data"):
-            if key in raw:
-                inline_fields.append(f"{path.relative_to(CONFIGS_ROOT).as_posix()}:{key}")
+        if "data" in raw:
+            inline_data.append(path.relative_to(CONFIGS_ROOT).as_posix())
+        reward = raw.get("reward", None)
+        if reward is not None and "kwargs" in reward:
+            inline_reward_kwargs.append(path.relative_to(CONFIGS_ROOT).as_posix())
 
-    assert inline_fields == []
+    assert inline_data == []
+    assert inline_reward_kwargs == []
+
+
+def test_reward_configs_are_single_reward_building_blocks() -> None:
+    offenders = []
+    for path in (CONFIGS_ROOT / "reward").rglob("*.yaml"):
+        raw = OmegaConf.load(path)
+        components = raw.get("reward", {}).get("components", {})
+        if len(components) != 1:
+            offenders.append(path.relative_to(CONFIGS_ROOT).as_posix())
+
+    assert offenders == []
 
 
 def test_all_experiments_load_and_validate() -> None:
