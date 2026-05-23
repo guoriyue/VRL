@@ -58,19 +58,26 @@ def test_config_groups_are_not_flattened() -> None:
     assert not (CONFIGS_ROOT / "profiling").exists()
 
 
-def test_only_model_configs_are_split_by_model_name() -> None:
-    model_name_tokens = ("sd3", "wan", "janus", "nextstep", "cosmos", "predict2")
-    offenders = [
-        path.relative_to(CONFIGS_ROOT).as_posix()
-        for group in ("experiment", "sampling", "profile", "reward", "dataset")
-        for path in (CONFIGS_ROOT / group).rglob("*.yaml")
-        if any(
-            token in path.relative_to(CONFIGS_ROOT / group).as_posix()
-            for token in model_name_tokens
-        )
-    ]
+def test_experiments_are_grouped_by_model_family() -> None:
+    expected = {
+        "ar/janus_pro/online_grpo_ocr",
+        "ar/janus_pro/online_r1_grpo_codex_qa",
+        "ar/janus_pro/online_r1_grpo_ocr",
+        "ar/nextstep_1/online_grpo_ocr",
+        "diffusion/anima_preview3/online_grpo_aesthetic",
+        "diffusion/anima_preview3/online_grpo_aesthetic_nsfw_safety",
+        "diffusion/cosmos_predict2/online_grpo_video_reward",
+        "diffusion/cosmos_predict2_5/online_nft_video_reward",
+        "diffusion/sd3_5/online_grpo_ocr",
+        "diffusion/wan_2_1/offline_dpo_pickapic",
+        "diffusion/wan_2_1/online_grpo_ocr",
+    }
 
-    assert offenders == []
+    assert set(_experiment_names()) == expected
+    assert {
+        Path(name).parts[0]
+        for name in _experiment_names()
+    } == {"ar", "diffusion"}
 
 
 def test_experiments_compose_reward_and_dataset_groups() -> None:
@@ -91,7 +98,7 @@ def test_all_experiments_load_and_validate() -> None:
         assert "trainer" in cfg, f"{name} missing trainer.*"
         assert "algorithm" in cfg, f"{name} missing algorithm.*"
         assert "data" in cfg, f"{name} missing data.* source"
-        if name.startswith("online/"):
+        if str(cfg.algorithm.kind) != "diffusion_dpo":
             assert "reward" in cfg, f"{name} missing reward.* source"
         assert "path" in cfg.model, f"{name} missing model.path"
         assert "entrypoint" in cfg.trainer, f"{name} missing trainer.entrypoint"
@@ -103,23 +110,23 @@ def test_all_experiments_load_and_validate() -> None:
 
 def test_algorithm_config_dispatches_representative_kinds() -> None:
     examples = {
-        "online/ocr/image_flow_grpo": GRPOConfig,
-        "online/ocr/ar_discrete_token_grpo": TokenGRPOConfig,
-        "online/ocr/ar_multisegment_token_grpo": MultiSegmentTokenGRPOConfig,
-        "offline/dpo/diffusion": DiffusionDPOConfig,
-        "online/ocr/video_diffusion_nft": DiffusionNFTConfig,
+        "diffusion/sd3_5/online_grpo_ocr": GRPOConfig,
+        "ar/janus_pro/online_grpo_ocr": TokenGRPOConfig,
+        "ar/janus_pro/online_r1_grpo_ocr": MultiSegmentTokenGRPOConfig,
+        "diffusion/wan_2_1/offline_dpo_pickapic": DiffusionDPOConfig,
+        "diffusion/cosmos_predict2_5/online_nft_video_reward": DiffusionNFTConfig,
     }
     for name, expected_type in examples.items():
         cfg = load_config(f"experiment/{name}")
         algo_cfg = build_algorithm_config(cfg)
         assert isinstance(algo_cfg, expected_type)
         assert isinstance(algo_cfg, EXPECTED_ALGO_TYPE[str(cfg.algorithm.kind)])
-        if name == "online/ocr/ar_discrete_token_grpo":
+        if name == "ar/janus_pro/online_grpo_ocr":
             assert algo_cfg.kl_estimator == "k2"
 
 
 def test_cosmos_diffusion_nft_video_reward_validation_config() -> None:
-    cfg = load_config("experiment/online/ocr/video_diffusion_nft")
+    cfg = load_config("experiment/diffusion/cosmos_predict2_5/online_nft_video_reward")
 
     assert cfg.reward.kwargs.video_reward.inference_runtime == "ray"
     assert cfg.reward.kwargs.video_reward.artifact_dir == (
@@ -137,7 +144,7 @@ def test_cosmos_diffusion_nft_video_reward_validation_config() -> None:
 def test_anima_safe_reward_config_uses_cpu_nsfw_penalty() -> None:
     from vrl.scripts.common.factory import build_reward_from_cfg
 
-    cfg = load_config("experiment/online/aesthetic/image_anima_safe_grpo")
+    cfg = load_config("experiment/diffusion/anima_preview3/online_grpo_aesthetic_nsfw_safety")
     built = build_configs(cfg)
 
     reward_weights, reward_kwargs = built["reward"]
@@ -208,7 +215,7 @@ def test_cosmos_optimization_check_records_trainable_change(tmp_path: Path) -> N
 def test_unified_train_entrypoint_reads_yaml_entrypoint() -> None:
     from vrl.scripts.train import _import_callable, resolve_train_target
 
-    cfg = load_config("experiment/online/ocr/image_flow_grpo")
+    cfg = load_config("experiment/diffusion/sd3_5/online_grpo_ocr")
     target = resolve_train_target(cfg)
 
     assert target.import_path == cfg.trainer.entrypoint
@@ -217,7 +224,7 @@ def test_unified_train_entrypoint_reads_yaml_entrypoint() -> None:
 
 def test_cli_overrides_reach_typed_trainer_config() -> None:
     cfg = load_config(
-        "experiment/online/ocr/image_flow_grpo",
+        "experiment/diffusion/sd3_5/online_grpo_ocr",
         overrides=[
             "trainer.resume_from=/tmp/checkpoint-10",
             "trainer.torch_profiler.enabled=true",
@@ -242,7 +249,7 @@ def test_invalid_algorithm_kind_fails_fast() -> None:
 
 
 def test_reward_backbone_kwargs_are_required() -> None:
-    cfg = load_config("experiment/online/aesthetic/video_diffusion_grpo")
+    cfg = load_config("experiment/diffusion/cosmos_predict2/online_grpo_video_reward")
     del cfg.reward.kwargs.video_reward["score_key"]
 
     with pytest.raises(ValueError, match="video_reward"):
@@ -250,7 +257,7 @@ def test_reward_backbone_kwargs_are_required() -> None:
 
 
 def test_negative_reward_component_weights_are_rejected() -> None:
-    cfg = load_config("experiment/online/aesthetic/image_anima_safe_grpo")
+    cfg = load_config("experiment/diffusion/anima_preview3/online_grpo_aesthetic_nsfw_safety")
     cfg.reward.components.nsfw_safety = -0.5
 
     with pytest.raises(ValueError, match=r"reward\.components\.nsfw_safety must be >= 0"):
@@ -258,14 +265,14 @@ def test_negative_reward_component_weights_are_rejected() -> None:
 
 
 def test_required_training_fields_fail_fast() -> None:
-    cfg = load_config("experiment/online/ocr/video_diffusion_grpo")
+    cfg = load_config("experiment/diffusion/wan_2_1/online_grpo_ocr")
     cfg.trainer.output_dir = "???"
     with pytest.raises(ValueError, match=r"trainer\.output_dir"):
         validate_training_config(cfg)
 
 
 def test_dpo_allows_explicit_null_max_train_samples() -> None:
-    cfg = load_config("experiment/offline/dpo/diffusion")
+    cfg = load_config("experiment/diffusion/wan_2_1/offline_dpo_pickapic")
     cfg.data.max_train_samples = None
 
     assert optional_none(cfg, "data.max_train_samples") is None

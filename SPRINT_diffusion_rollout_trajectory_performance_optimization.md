@@ -269,7 +269,7 @@ git diff --check
 Profile：
 
 ```bash
-python -m vrl.scripts.train --config experiment/online/ocr/image_flow_grpo \
+python -m vrl.scripts.train --config experiment/diffusion/sd3_5/online_grpo_ocr \
   trainer.profile=true
 ```
 

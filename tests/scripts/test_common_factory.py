@@ -10,7 +10,7 @@ from vrl.scripts.common.factory import (
 
 def test_diffusion_grpo_evaluator_uses_resolved_rollout_sde_config() -> None:
     cfg = load_config(
-        "experiment/online/ocr/video_diffusion_grpo",
+        "experiment/diffusion/wan_2_1/online_grpo_ocr",
         overrides=[
             "rollout.noise_level=0.37",
             "rollout.sde.type=cps",

@@ -5,7 +5,7 @@ RL-style post-training infrastructure for visual generative models.
 This README promotes only training recipes that have enough real-run validation
 to be treated as current canonical entries. The current promoted recipe is:
 
-- `experiment/online/ocr/image_flow_grpo`
+- `experiment/diffusion/sd3_5/online_grpo_ocr`
 
 Do not add Cosmos-Predict2.5 README recipe entries or gap docs until a real
 DiffusionNFT training run proves optimizer updates, non-flat rewards, generated
@@ -21,7 +21,7 @@ Legend:
 
 | Model | Modality | Algorithm | Config | Current progress |
 | --- | --- | --- | --- | --- |
-| SD3.5 | text-to-image diffusion | GRPO | ✅ `experiment/online/ocr/image_flow_grpo` | Canonical active recipe: OCR GRPO. |
+| SD3.5 | text-to-image diffusion | GRPO | ✅ `experiment/diffusion/sd3_5/online_grpo_ocr` | Canonical active recipe: OCR GRPO. |
 
 ## Algorithm Kinds
 
@@ -32,19 +32,19 @@ Legend:
 Run the current canonical experiment with:
 
 ```bash
-python -m vrl.scripts.train --config experiment/online/ocr/image_flow_grpo
+python -m vrl.scripts.train --config experiment/diffusion/sd3_5/online_grpo_ocr
 ```
 
 ## SD3.5 OCR GRPO Recipe
 
-`experiment/online/ocr/image_flow_grpo` is the canonical SD3.5 OCR training recipe. It is
+`experiment/diffusion/sd3_5/online_grpo_ocr` is the canonical SD3.5 OCR training recipe. It is
 configured for the `stabilityai/stable-diffusion-3.5-medium` checkpoint with
 LoRA training and a Ray-backed single-GPU rollout worker.
 
 Run the recipe:
 
 ```bash
-python -m vrl.scripts.train --config experiment/online/ocr/image_flow_grpo
+python -m vrl.scripts.train --config experiment/diffusion/sd3_5/online_grpo_ocr
 ```
 
 The recipe composes these reusable config layers:
@@ -61,7 +61,7 @@ The recipe composes these reusable config layers:
 - `configs/base/distributed/ray_rollout_single_gpu.yaml`: one Ray rollout
   worker on one visible GPU.
 
-Important defaults in `configs/experiment/online/ocr/image_flow_grpo.yaml`:
+Important defaults in `configs/experiment/diffusion/sd3_5/online_grpo_ocr.yaml`:
 
 - OCR-only reward: `reward.components.ocr=1.0`.
 - Flow-GRPO parity rollout shape: `rollout.n=8`,
@@ -87,7 +87,7 @@ Use a fresh output directory for a new run:
 
 ```bash
 python -m vrl.scripts.train \
-  --config experiment/online/ocr/image_flow_grpo \
+  --config experiment/diffusion/sd3_5/online_grpo_ocr \
   trainer.output_dir=outputs/sd3_5_ocr_grpo_run_001
 ```
 
@@ -95,7 +95,7 @@ Resume from a checkpoint:
 
 ```bash
 python -m vrl.scripts.train \
-  --config experiment/online/ocr/image_flow_grpo \
+  --config experiment/diffusion/sd3_5/online_grpo_ocr \
   trainer.resume_from=outputs/sd3_5_ocr_grpo/checkpoint-60
 ```
 
@@ -103,7 +103,7 @@ Use overrides for one-off reward/model/data changes:
 
 ```bash
 python -m vrl.scripts.train \
-  --config experiment/online/ocr/image_flow_grpo \
+  --config experiment/diffusion/sd3_5/online_grpo_ocr \
   reward.components.ocr=0.0 \
   reward.components.aesthetic=1.0 \
   reward.kwargs.aesthetic.model_name=openai/clip-vit-large-patch14 \
@@ -117,13 +117,13 @@ the colocated preset so rollout actors are released before replay/backward:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0,1,2,3 python -m vrl.scripts.train \
-  --config experiment/online/ocr/image_flow_grpo \
+  --config experiment/diffusion/sd3_5/online_grpo_ocr \
   /base/distributed=ray_rollout \
   distributed.resources.trainer.num_gpus=1 \
   distributed.resources.rollout.num_gpus=auto
 
 CUDA_VISIBLE_DEVICES=0 python -m vrl.scripts.train \
-  --config experiment/online/ocr/image_flow_grpo \
+  --config experiment/diffusion/sd3_5/online_grpo_ocr \
   /base/distributed=ray_rollout_single_gpu
 ```
 
@@ -132,7 +132,7 @@ jobs:
 
 ```bash
 python -m vrl.scripts.train \
-  --config experiment/online/ocr/image_flow_grpo \
+  --config experiment/diffusion/sd3_5/online_grpo_ocr \
   distributed.resources.visible_devices='[0,1,2,3]' \
   distributed.resources.trainer.devices='[0]' \
   distributed.resources.rollout.devices='[1,2,3]'

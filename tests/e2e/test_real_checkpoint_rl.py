@@ -63,7 +63,7 @@ class RealCheckpointCase:
 CASES: tuple[RealCheckpointCase, ...] = (
     RealCheckpointCase(
         case_id="wan_2_1",
-        config="experiment/online/ocr/video_diffusion_grpo",
+        config="experiment/diffusion/wan_2_1/online_grpo_ocr",
         family="wan_2_1",
         prompt="A clear white sign that says RL",
         checkpoints=(
@@ -97,7 +97,7 @@ CASES: tuple[RealCheckpointCase, ...] = (
     ),
     RealCheckpointCase(
         case_id="sd3_5",
-        config="experiment/online/ocr/image_flow_grpo",
+        config="experiment/diffusion/sd3_5/online_grpo_ocr",
         family="sd3_5",
         prompt="A square poster that says RL",
         checkpoints=(
@@ -132,7 +132,7 @@ CASES: tuple[RealCheckpointCase, ...] = (
     ),
     RealCheckpointCase(
         case_id="janus_pro",
-        config="experiment/online/ocr/ar_discrete_token_grpo",
+        config="experiment/ar/janus_pro/online_grpo_ocr",
         family="janus_pro",
         prompt="Text RL on a small label",
         checkpoints=(
@@ -166,7 +166,7 @@ CASES: tuple[RealCheckpointCase, ...] = (
     ),
     RealCheckpointCase(
         case_id="cosmos_predict2",
-        config="experiment/online/aesthetic/video_diffusion_grpo",
+        config="experiment/diffusion/cosmos_predict2/online_grpo_video_reward",
         family="cosmos-predict2",
         prompt="A quiet street with a clear RL sign",
         checkpoints=(
@@ -213,7 +213,7 @@ CASES: tuple[RealCheckpointCase, ...] = (
     ),
     RealCheckpointCase(
         case_id="cosmos_predict2_5",
-        config="experiment/online/ocr/video_diffusion_nft",
+        config="experiment/diffusion/cosmos_predict2_5/online_nft_video_reward",
         family="cosmos-predict2.5",
         prompt="A clear white sign that says RL",
         checkpoints=(
@@ -256,7 +256,7 @@ CASES: tuple[RealCheckpointCase, ...] = (
     ),
     RealCheckpointCase(
         case_id="cosmos_anima",
-        config="experiment/online/aesthetic/image_anima_grpo",
+        config="experiment/diffusion/anima_preview3/online_grpo_aesthetic",
         family="cosmos-predict2-anima",
         prompt="anime portrait of a small white sign that says RL",
         checkpoints=(
@@ -301,7 +301,7 @@ CASES: tuple[RealCheckpointCase, ...] = (
     ),
     RealCheckpointCase(
         case_id="cosmos_anima_safe",
-        config="experiment/online/aesthetic/image_anima_safe_grpo",
+        config="experiment/diffusion/anima_preview3/online_grpo_aesthetic_nsfw_safety",
         family="cosmos-predict2-anima",
         prompt="anime portrait of a small white sign that says RL",
         checkpoints=(
@@ -346,7 +346,7 @@ CASES: tuple[RealCheckpointCase, ...] = (
     ),
     RealCheckpointCase(
         case_id="nextstep_1",
-        config="experiment/online/ocr/ar_continuous_token_grpo",
+        config="experiment/ar/nextstep_1/online_grpo_ocr",
         family="nextstep_1",
         prompt="Text RL on a small label",
         checkpoints=(

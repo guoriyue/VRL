@@ -22,34 +22,34 @@ from vrl.rollouts.families import (
 @pytest.mark.parametrize(
     ("experiment", "family", "expected_task", "expected_gatherer"),
     [
-        ("online/ocr/image_flow_grpo", "sd3_5", "t2i", DiffusionChunkGatherer),
-        ("online/ocr/video_diffusion_grpo", "wan_2_1", "t2v", DiffusionChunkGatherer),
+        ("diffusion/sd3_5/online_grpo_ocr", "sd3_5", "t2i", DiffusionChunkGatherer),
+        ("diffusion/wan_2_1/online_grpo_ocr", "wan_2_1", "t2v", DiffusionChunkGatherer),
         (
-            "online/aesthetic/video_diffusion_grpo",
+            "diffusion/cosmos_predict2/online_grpo_video_reward",
             "cosmos-predict2",
             "v2w",
             DiffusionChunkGatherer,
         ),
         (
-            "online/aesthetic/image_anima_grpo",
+            "diffusion/anima_preview3/online_grpo_aesthetic",
             "cosmos-predict2-anima",
             "t2i",
             DiffusionChunkGatherer,
         ),
         (
-            "online/aesthetic/image_anima_safe_grpo",
+            "diffusion/anima_preview3/online_grpo_aesthetic_nsfw_safety",
             "cosmos-predict2-anima",
             "t2i",
             DiffusionChunkGatherer,
         ),
         (
-            "online/ocr/ar_discrete_token_grpo",
+            "ar/janus_pro/online_grpo_ocr",
             "janus_pro",
             "ar_t2i",
             JanusProChunkGatherer,
         ),
         (
-            "online/ocr/ar_continuous_token_grpo",
+            "ar/nextstep_1/online_grpo_ocr",
             "nextstep_1",
             "ar_t2i",
             NextStep1ChunkGatherer,
@@ -99,7 +99,7 @@ def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
 
 def test_diffusion_launch_contract_uses_worker_primitive_device_and_dtype() -> None:
     cfg = load_config(
-        "experiment/online/ocr/image_flow_grpo",
+        "experiment/diffusion/sd3_5/online_grpo_ocr",
         overrides=[
             "distributed.backend=ray",
             "distributed.resources.visible_devices=[0,1]",
@@ -124,7 +124,7 @@ def test_diffusion_launch_contract_uses_worker_primitive_device_and_dtype() -> N
 
 def test_cosmos_runtime_inputs_include_reference_image_from_cfg() -> None:
     cfg = load_config(
-        "experiment/online/aesthetic/video_diffusion_grpo",
+        "experiment/diffusion/cosmos_predict2/online_grpo_video_reward",
         overrides=[
             "distributed.backend=ray",
             "distributed.resources.visible_devices=[]",
@@ -153,7 +153,7 @@ def test_cosmos_runtime_inputs_include_reference_image_from_cfg() -> None:
 
 def test_explicit_executor_kwargs_override_registry_defaults() -> None:
     cfg = load_config(
-        "experiment/online/ocr/image_flow_grpo",
+        "experiment/diffusion/sd3_5/online_grpo_ocr",
         overrides=[
             "distributed.backend=ray",
             "distributed.resources.visible_devices=[]",

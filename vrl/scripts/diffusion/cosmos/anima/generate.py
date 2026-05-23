@@ -37,7 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--config",
-        default="experiment/online/aesthetic/image_anima_safe_grpo",
+        default="experiment/diffusion/anima_preview3/online_grpo_aesthetic_nsfw_safety",
         help="Hydra-style config under configs/ or an absolute path.",
     )
     parser.add_argument(

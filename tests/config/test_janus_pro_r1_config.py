@@ -7,7 +7,7 @@ from vrl.rollouts.families import build_ray_generation_inputs_for_family
 
 
 def test_janus_pro_r1_experiment_loads_with_multisegment_algorithm() -> None:
-    cfg = load_config("experiment/online/ocr/ar_multisegment_token_grpo")
+    cfg = load_config("experiment/ar/janus_pro/online_r1_grpo_ocr")
     built = build_configs(cfg)
 
     assert cfg.trainer.entrypoint == (
@@ -26,7 +26,7 @@ def test_janus_pro_r1_experiment_loads_with_multisegment_algorithm() -> None:
 
 def test_janus_pro_r1_runtime_inputs_select_r1_task_and_executor() -> None:
     cfg = load_config(
-        "experiment/online/ocr/ar_multisegment_token_grpo",
+        "experiment/ar/janus_pro/online_r1_grpo_ocr",
         overrides=[
             "distributed.resources.visible_devices=[]",
             "distributed.resources.trainer.num_gpus=0",
@@ -49,7 +49,7 @@ def test_janus_pro_r1_runtime_inputs_select_r1_task_and_executor() -> None:
 
 
 def test_janus_pro_r1_codex_qa_experiment_loads() -> None:
-    cfg = load_config("experiment/online/codex_qa/ar_multisegment_token_grpo")
+    cfg = load_config("experiment/ar/janus_pro/online_r1_grpo_codex_qa")
     built = build_configs(cfg)
 
     assert cfg.reward.components.codex_image_qa == 1.0

@@ -1,6 +1,6 @@
 # One-epoch Janus-Pro-R1 Codex-QA profiling wrapper.
 defaults:
-  - /experiment/online/codex_qa/ar_multisegment_token_grpo
+  - /experiment/ar/janus_pro/online_r1_grpo_codex_qa
   - /profile/torch_profiler
 
 trainer:
