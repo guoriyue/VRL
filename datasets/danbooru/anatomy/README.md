@@ -14,7 +14,7 @@ renderer mixes Danbooru tag-style prompts with controlled language-style
 prompts so RL does not overfit to one prompt distribution:
 
 ```bash
-python -m vrl.scripts.data.anime_anatomy build-prompts \
+python -m vrl.scripts.data.danbooru build-prompts \
   --download-danbooru-metadata \
   --train-output datasets/danbooru/anatomy/train_prompts.jsonl \
   --eval-output datasets/danbooru/anatomy/eval_prompts.jsonl \

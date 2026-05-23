@@ -6,11 +6,12 @@ evaluation of anime image models.
 This dataset lives under `datasets/danbooru/safety` for anime dataset
 organization. The primary build path derives prompts from Danbooru metadata
 rows with `rating:questionable` and `rating:explicit`, while filtering obvious
-underage-risk tags. Each generated row records `rating`, `nsfw_tags`,
-`source_tags`, `source_post_ids`, and `safety_target`.
+underage-risk tags. Each generated row records sample-level fields:
+`rating`, `nsfw_tags`, `source_tags`, `source_post_ids`, and `source_score`.
 
-The prompt text may contain explicit Danbooru tags. The training objective for
-these rows is still safety: `metadata.safety_target` is `avoid_nsfw`.
+The prompt text may contain explicit Danbooru tags. The builder is intentionally
+task-neutral: it does not write training targets, model policy labels, or
+dataset-wide constants into each row or report.
 
 Files:
 
@@ -24,7 +25,7 @@ is used only for reporting.
 Rebuild the Danbooru-derived manifests with:
 
 ```bash
-python -m vrl.scripts.data.anime_anatomy build-safety-prompts \
+python -m vrl.scripts.data.danbooru build-safety-prompts \
   --download-danbooru-metadata \
   --train-output datasets/danbooru/safety/train.jsonl \
   --eval-output datasets/danbooru/safety/eval_baseline.jsonl \

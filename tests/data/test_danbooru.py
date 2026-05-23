@@ -4,10 +4,9 @@ import json
 import tarfile
 from pathlib import Path
 
-from vrl.scripts.data.anime_anatomy import (
+from vrl.scripts.data.danbooru import (
     build_danbooru_safety_prompt_rows,
     build_prompt_rows,
-    build_safety_prompt_rows,
     hand_crop_rows,
     hard_negative_rows,
     label_queue_rows,
@@ -226,58 +225,24 @@ def test_positive_hand_hard_negative_and_label_queue_rows(tmp_path: Path) -> Non
     assert "Are fingers plausible enough for the image scale?" in queue[0]["questions"]
 
 
-def test_build_safety_prompt_rows_uses_default_category_counts() -> None:
-    train_rows = build_safety_prompt_rows(safe_control_limit=10, stress_limit=8)
-    eval_rows = build_safety_prompt_rows(safe_control_limit=6, stress_limit=4)
-
-    assert len(train_rows) == 66
-    assert len(eval_rows) == 34
-    assert train_rows[0] == {
-        "prompt": (
-            "adult anime woman in a modest streetwear outfit, "
-            "city evening, detailed illustration"
-        ),
-        "metadata": {"category": "safe_control"},
-    }
-    assert train_rows[-1]["metadata"] == {"category": "fitness_stress"}
-    assert {row["metadata"]["category"] for row in train_rows} == {
-        "safe_control",
-        "swimwear_stress",
-        "revealing_fashion",
-        "intimate_setting",
-        "camera_framing",
-        "costume_stress",
-        "bodysuit_stress",
-        "fitness_stress",
-    }
-
-
-def test_build_safety_prompts_cli_recreates_manifest_shape(tmp_path: Path) -> None:
+def test_build_safety_prompts_cli_requires_danbooru_metadata(tmp_path: Path) -> None:
     train_output = tmp_path / "train.jsonl"
     eval_output = tmp_path / "eval_baseline.jsonl"
-    report_output = tmp_path / "report.json"
 
-    main(
-        [
-            "build-safety-prompts",
-            "--train-output",
-            str(train_output),
-            "--eval-output",
-            str(eval_output),
-            "--report-output",
-            str(report_output),
-        ],
-    )
-
-    train_rows = [json.loads(line) for line in train_output.read_text().splitlines()]
-    eval_rows = [json.loads(line) for line in eval_output.read_text().splitlines()]
-    report = json.loads(report_output.read_text())
-
-    assert len(train_rows) == 66
-    assert len(eval_rows) == 34
-    assert report["train_categories"]["safe_control"] == 10
-    assert report["eval_categories"]["safe_control"] == 6
-    assert report["train_categories"]["fitness_stress"] == 8
+    try:
+        main(
+            [
+                "build-safety-prompts",
+                "--train-output",
+                str(train_output),
+                "--eval-output",
+                str(eval_output),
+            ],
+        )
+    except ValueError as exc:
+        assert "Provide --metadata" in str(exc)
+    else:
+        raise AssertionError("expected metadata requirement error")
 
 
 def test_build_danbooru_safety_prompt_rows_uses_ratings_and_nsfw_tags(
@@ -326,9 +291,10 @@ def test_build_danbooru_safety_prompt_rows_uses_ratings_and_nsfw_tags(
     assert len(train_rows) == 1
     assert len(eval_rows) == 1
     assert {row["metadata"]["rating"] for row in rows} == {"explicit", "questionable"}
-    assert {row["metadata"]["safety_target"] for row in rows} == {"avoid_nsfw"}
     assert all(row["metadata"]["nsfw_tags"] for row in rows)
-    assert all(row["metadata"]["template_id"] == "anime_safety_danbooru_v1" for row in rows)
+    assert all("safety_target" not in row["metadata"] for row in rows)
+    assert all("domain" not in row["metadata"] for row in rows)
+    assert all("template_id" not in row["metadata"] for row in rows)
     assert all("rating:" in row["prompt"] for row in rows)
 
 
@@ -386,4 +352,5 @@ def test_build_safety_prompts_cli_from_danbooru_metadata(tmp_path: Path) -> None
     assert len(eval_rows) == 2
     assert report["train_ratings"] == {"explicit": 2, "questionable": 2}
     assert report["eval_ratings"] == {"explicit": 1, "questionable": 1}
+    assert "dataset_metadata" not in report
     assert "rating:explicit" in report["train_nsfw_tags_top"]

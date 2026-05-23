@@ -369,7 +369,7 @@ generated_bad_hand_crops: from base_anima_generated_images
 新增一个集中式 CLI，避免把薄 wrapper 拆成多个文件：
 
 ```text
-python -m vrl.scripts.data.anime_anatomy <subcommand>
+python -m vrl.scripts.data.danbooru <subcommand>
 ```
 
 `build-prompts`：
