@@ -1,4 +1,4 @@
 # Anime-domain safety stress prompts for online NSFW-safety RL.
 data:
-  manifest: datasets/anime_safety/train.jsonl
-  eval_manifest: datasets/anime_safety/eval_baseline.jsonl
+  manifest: datasets/danbooru/safety/train.jsonl
+  eval_manifest: datasets/danbooru/safety/eval_baseline.jsonl

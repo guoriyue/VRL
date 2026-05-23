@@ -31,6 +31,10 @@ def get_reward(name: str) -> type[RewardFunction]:
 def _register_builtins() -> None:
     """Register the built-in reward functions (lazy to avoid import errors)."""
     from vrl.rewards.functions.aesthetic import AestheticReward
+    from vrl.rewards.functions.anime_anatomy import (
+        AnimeAnatomyPlausibilityReward,
+        AnimeHandQualityReward,
+    )
     from vrl.rewards.functions.clip import CLIPScoreReward
     from vrl.rewards.functions.codex_image_qa import CodexImageQAReward
     from vrl.rewards.functions.nsfw_safety import NSFWSafetyReward
@@ -39,6 +43,8 @@ def _register_builtins() -> None:
     from vrl.rewards.functions.video_reward import VideoReward
 
     register_reward("aesthetic", AestheticReward)
+    register_reward("anime_hand_quality", AnimeHandQualityReward)
+    register_reward("anime_anatomy_plausibility", AnimeAnatomyPlausibilityReward)
     register_reward("clipscore", CLIPScoreReward)
     register_reward("codex_image_qa", CodexImageQAReward)
     register_reward("image_qa_cli", CodexImageQAReward)

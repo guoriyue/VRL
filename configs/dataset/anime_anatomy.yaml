@@ -1,0 +1,4 @@
+# Anime anatomy prompts for Anima online RL.
+data:
+  manifest: datasets/danbooru/anatomy/train_prompts.jsonl
+  eval_manifest: datasets/danbooru/anatomy/eval_prompts.jsonl

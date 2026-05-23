@@ -1,0 +1,38 @@
+{
+  "eval_buckets": {
+    "action_pose": 166,
+    "arms_visible": 86,
+    "feet_visible": 76,
+    "hand_focus": 106,
+    "hands_visible": 146,
+    "kneeling": 106,
+    "running": 50,
+    "sitting_full_body": 76,
+    "standing_front": 76,
+    "standing_side": 6,
+    "walking": 106
+  },
+  "eval_count": 1000,
+  "eval_prompt_styles": {
+    "language": 503,
+    "tag": 497
+  },
+  "train_buckets": {
+    "action_pose": 3318,
+    "arms_visible": 1717,
+    "feet_visible": 1518,
+    "hand_focus": 2118,
+    "hands_visible": 2918,
+    "kneeling": 2118,
+    "running": 1015,
+    "sitting_full_body": 1518,
+    "standing_front": 1518,
+    "standing_side": 124,
+    "walking": 2118
+  },
+  "train_count": 20000,
+  "train_prompt_styles": {
+    "language": 10071,
+    "tag": 9929
+  }
+}

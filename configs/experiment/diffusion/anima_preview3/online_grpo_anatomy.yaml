@@ -1,0 +1,35 @@
+# Anima Preview3 + anatomy GRPO.
+defaults:
+  - /recipe/online/flow_matching_grpo
+  - /model/diffusion/cosmos/anima_preview3
+  - /sampling/image/512
+  - /sampling/denoise/10_step_cfg_4_5
+  - /reward/anime_anatomy_plausibility
+  - /reward/anime_hand_quality
+  - /dataset/anime_anatomy
+
+reward:
+  components:
+    anime_hand_quality: 0.4
+
+actor:
+  optim:
+    lr: 1.0e-5
+  ppo_epochs: 1
+  gradient_accumulation_steps: 4
+
+algorithm:
+  init_kl_coef: 0.004
+
+rollout:
+  n: 4
+  rollout_batch_size: 1
+  sample_batch_size: 4
+  sde:
+    type: sde
+
+trainer:
+  entrypoint: vrl.scripts.diffusion.cosmos.train:train_anima_grpo
+  output_dir: outputs/anima_preview3_anatomy_grpo
+  save_freq: 100
+  log_freq: 1

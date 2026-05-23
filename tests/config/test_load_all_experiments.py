@@ -65,6 +65,7 @@ def test_experiments_are_grouped_by_model_family() -> None:
         "ar/janus_pro/online_r1_grpo_ocr",
         "ar/nextstep_1/online_grpo_ocr",
         "diffusion/anima_preview3/online_grpo_aesthetic",
+        "diffusion/anima_preview3/online_grpo_anatomy",
         "diffusion/anima_preview3/online_grpo_aesthetic_nsfw_safety",
         "diffusion/cosmos_predict2/online_grpo_video_reward",
         "diffusion/cosmos_predict2_5/online_nft_video_reward",
@@ -169,11 +170,33 @@ def test_anima_safe_reward_config_uses_cpu_nsfw_penalty() -> None:
     }
     assert reward_kwargs["nsfw_safety"]["classifier_device"] == "cpu"
     assert reward_kwargs["nsfw_safety"]["threshold"] == pytest.approx(0.35)
-    assert cfg.data.manifest == "datasets/anime_safety/train.jsonl"
-    assert cfg.data.eval_manifest == "datasets/anime_safety/eval_baseline.jsonl"
+    assert cfg.data.manifest == "datasets/danbooru/safety/train.jsonl"
+    assert cfg.data.eval_manifest == "datasets/danbooru/safety/eval_baseline.jsonl"
     assert cfg.rollout.sample_batch_size == 1
     reward_fn = build_reward_from_cfg(cfg, built=built, device="cpu")
     assert [name for name, _, _ in reward_fn.rewards] == ["aesthetic", "nsfw_safety"]
+
+
+def test_anima_anatomy_reward_config_uses_anime_components() -> None:
+    from vrl.scripts.common.factory import build_reward_from_cfg
+
+    cfg = load_config("experiment/diffusion/anima_preview3/online_grpo_anatomy")
+    built = build_configs(cfg)
+
+    reward_weights, reward_kwargs = built["reward"]
+    assert reward_weights == {
+        "anime_anatomy_plausibility": pytest.approx(1.0),
+        "anime_hand_quality": pytest.approx(0.4),
+    }
+    assert cfg.data.manifest == "datasets/danbooru/anatomy/train_prompts.jsonl"
+    assert cfg.data.eval_manifest == "datasets/danbooru/anatomy/eval_prompts.jsonl"
+    assert reward_kwargs["anime_anatomy_plausibility"]["model_name"] == ""
+    assert reward_kwargs["anime_hand_quality"]["model_name"] == ""
+    reward_fn = build_reward_from_cfg(cfg, built=built, device="cpu")
+    assert [name for name, _, _ in reward_fn.rewards] == [
+        "anime_anatomy_plausibility",
+        "anime_hand_quality",
+    ]
 
 
 def test_anima_config_keeps_artifact_names_without_local_paths() -> None:
