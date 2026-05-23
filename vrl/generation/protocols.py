@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from vrl.generation.execution.chunks import SampleChunk
@@ -16,8 +16,7 @@ if TYPE_CHECKING:
     )
 
 
-class PipelineChunkResult(Protocol):
-    """Family-specific chunk payload returned before final GenerationOutput gather."""
+ChunkResult = Any
 
 
 @runtime_checkable
@@ -28,7 +27,7 @@ class ChunkGatherer(Protocol):
         self,
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
-        chunks: Sequence[PipelineChunkResult],
+        chunks: Sequence[ChunkResult],
     ) -> GenerationOutput: ...
 
 
@@ -39,8 +38,8 @@ class GenerationRuntime(Protocol):
 
 
 @runtime_checkable
-class FamilyPipelineExecutor(Protocol):
-    """Family-specific model executor."""
+class PipelineExecutor(Protocol):
+    """Family-specific distributed chunk executor."""
 
     family: str
     task: str
@@ -50,31 +49,25 @@ class FamilyPipelineExecutor(Protocol):
         request: GenerationRequest,
     ) -> WorkloadSignature: ...
 
-
-@runtime_checkable
-class ChunkedFamilyPipelineExecutor(FamilyPipelineExecutor, Protocol):
-    """Distributed chunk executor that receives its EnginePlan envelope."""
-
     def forward_chunk_plan(
         self,
         request: GenerationRequest,
         chunk: SampleChunk,
         execution_stage: ExecutionStage,
         plan_summary: Mapping[str, object],
-    ) -> PipelineChunkResult: ...
+    ) -> ChunkResult: ...
 
     def gather_chunks(
         self,
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
-        chunks: Sequence[PipelineChunkResult],
+        chunks: Sequence[ChunkResult],
     ) -> GenerationOutput: ...
 
 
 __all__ = [
     "ChunkGatherer",
-    "ChunkedFamilyPipelineExecutor",
-    "FamilyPipelineExecutor",
+    "ChunkResult",
     "GenerationRuntime",
-    "PipelineChunkResult",
+    "PipelineExecutor",
 ]

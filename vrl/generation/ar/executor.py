@@ -11,7 +11,7 @@ from vrl.generation.ar.layout import ARChunkResult, ARRequestLayout, ARSamplingP
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.execution.planner import attach_engine_plan
 from vrl.generation.execution.request_batch import RequestBatch
-from vrl.generation.protocols import ChunkedFamilyPipelineExecutor
+from vrl.generation.protocols import PipelineExecutor
 from vrl.generation.types import (
     GenerationOutput,
     GenerationRequest,
@@ -22,7 +22,7 @@ TChunk = TypeVar("TChunk", bound=ARChunkResult)
 
 
 class ARPipelineExecutorBase(
-    ChunkedFamilyPipelineExecutor,
+    PipelineExecutor,
 ):
     """Base helpers for AR family executors.
 

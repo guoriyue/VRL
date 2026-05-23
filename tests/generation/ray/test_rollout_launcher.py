@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
-from vrl.generation.protocols import PipelineChunkResult
+from vrl.generation.protocols import ChunkResult
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
@@ -42,14 +42,14 @@ class _TinyChunkExecutor:
         del request
         return None
 
-    def forward_chunk_plan(self, *args: Any, **kwargs: Any) -> PipelineChunkResult:
+    def forward_chunk_plan(self, *args: Any, **kwargs: Any) -> ChunkResult:
         raise NotImplementedError("Ray launcher test only verifies worker construction")
 
     def gather_chunks(
         self,
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
-        chunks: Sequence[PipelineChunkResult],
+        chunks: Sequence[ChunkResult],
     ) -> GenerationOutput:
         return GenerationOutput(
             request_id=request.request_id,
@@ -66,7 +66,7 @@ class _Gatherer:
         self,
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
-        chunks: Sequence[PipelineChunkResult],
+        chunks: Sequence[ChunkResult],
     ) -> GenerationOutput:
         return GenerationOutput(
             request_id=request.request_id,

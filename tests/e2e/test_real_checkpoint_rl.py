@@ -18,7 +18,7 @@ import torch
 
 from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
-from vrl.generation import GenerationIdFactory, GenerationOutput, GenerationRequest
+from vrl.generation import GenerationOutput, GenerationRequest, build_sample_rows
 from vrl.generation.execution.planner import build_engine_plan
 from vrl.ray.dependencies import import_from_path
 from vrl.rollouts.families import RolloutFamilyEntry, get_rollout_family_entry
@@ -396,7 +396,7 @@ class _InProcessGenerationRuntime:
         self.current_policy_version = 0
 
     async def generate(self, request: GenerationRequest) -> GenerationOutput:
-        rows = GenerationIdFactory().build_sample_rows(request)
+        rows = build_sample_rows(request)
         with torch.no_grad():
             plan_fn = getattr(self.executor, "plan", None)
             if callable(plan_fn):
@@ -694,7 +694,7 @@ def _synthetic_diffusion_replay_batch(
         return_artifacts={"trajectory"},
         policy_version=None if policy_version is None else int(policy_version),
     )
-    sample_rows = GenerationIdFactory().build_sample_rows(request)
+    sample_rows = build_sample_rows(request)
     batch_size = len(sample_rows)
     generator = torch.Generator(device=device)
     generator.manual_seed(1729)

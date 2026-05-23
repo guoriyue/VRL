@@ -8,7 +8,7 @@ from typing import Any
 import torch
 
 from vrl.generation.diffusion import DiffusionChunkGatherer, DiffusionChunkResult
-from vrl.generation.execution.ids import GenerationIdFactory
+from vrl.generation.execution.ids import build_sample_rows
 from vrl.generation.protocols import ChunkGatherer
 from vrl.generation.types import GenerationOutput, GenerationRequest
 
@@ -32,7 +32,7 @@ class _PureGatherer:
 
 def test_chunk_gatherer_accepts_pure_object_without_forward_chunk_plan() -> None:
     request = _request()
-    sample_rows = GenerationIdFactory().build_sample_rows(request)
+    sample_rows = build_sample_rows(request)
     gatherer = _PureGatherer()
 
     assert isinstance(gatherer, ChunkGatherer)
@@ -45,7 +45,7 @@ def test_chunk_gatherer_accepts_pure_object_without_forward_chunk_plan() -> None
 
 def test_diffusion_chunk_gatherer_gathers_without_model_object() -> None:
     request = _request(cfg=False)
-    sample_rows = GenerationIdFactory().build_sample_rows(request)
+    sample_rows = build_sample_rows(request)
     gatherer = DiffusionChunkGatherer()
     context = {
         "guidance_scale": 4.5,
@@ -70,7 +70,7 @@ def test_diffusion_chunk_gatherer_gathers_without_model_object() -> None:
 
 def test_diffusion_chunk_gatherer_orders_prompt_major_chunks() -> None:
     request = _request(cfg=False)
-    sample_rows = GenerationIdFactory().build_sample_rows(request)
+    sample_rows = build_sample_rows(request)
     gatherer = DiffusionChunkGatherer()
     context = {
         "guidance_scale": 4.5,
@@ -89,7 +89,7 @@ def test_diffusion_chunk_gatherer_orders_prompt_major_chunks() -> None:
 
 def test_diffusion_chunk_gatherer_keeps_rollout_context() -> None:
     request = _request(family="cosmos", task="v2w", cfg=False)
-    sample_rows = GenerationIdFactory().build_sample_rows(request)
+    sample_rows = build_sample_rows(request)
     gatherer = DiffusionChunkGatherer()
     context = {
         "guidance_scale": 4.5,

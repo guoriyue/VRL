@@ -111,7 +111,7 @@ def test_reward_function_implementations_live_under_functions() -> None:
         "aesthetic.py",
         "clip.py",
         "codex_image_qa.py",
-        "composite.py",
+        "nsfw_safety.py",
         "ocr.py",
         "pickscore.py",
         "registry.py",

@@ -9,14 +9,13 @@ from vrl.generation.capabilities import (
     FamilyCapability,
     family_capability_from_value,
 )
-from vrl.generation.execution.ids import GenerationIdFactory
+from vrl.generation.execution.ids import build_sample_rows
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import (
-    ChunkedFamilyPipelineExecutor,
     ChunkGatherer,
-    FamilyPipelineExecutor,
+    ChunkResult,
     GenerationRuntime,
-    PipelineChunkResult,
+    PipelineExecutor,
 )
 from vrl.generation.types import (
     GenerationMetrics,
@@ -28,18 +27,17 @@ from vrl.generation.types import (
 
 __all__ = [
     "ChunkGatherer",
-    "ChunkedFamilyPipelineExecutor",
+    "ChunkResult",
     "ExecutionStageCapability",
     "FamilyCapability",
-    "FamilyPipelineExecutor",
-    "GenerationIdFactory",
     "GenerationMetrics",
     "GenerationOutput",
     "GenerationRequest",
     "GenerationRuntime",
     "GenerationRuntimeLaunchContract",
     "GenerationSampleRow",
-    "PipelineChunkResult",
+    "PipelineExecutor",
     "WorkloadSignature",
+    "build_sample_rows",
     "family_capability_from_value",
 ]

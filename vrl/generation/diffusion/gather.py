@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, cast
 import torch
 
 from vrl.generation.diffusion.layout import DiffusionRequestLayout
-from vrl.generation.protocols import PipelineChunkResult
+from vrl.generation.protocols import ChunkResult
 from vrl.generation.types import (
     GenerationMetrics,
     GenerationOutput,
@@ -30,7 +30,7 @@ class DiffusionChunkGatherer:
         self,
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
-        chunks: Sequence[PipelineChunkResult],
+        chunks: Sequence[ChunkResult],
     ) -> GenerationOutput:
         sampling = request.sampling
         layout = DiffusionRequestLayout()

@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 
 from vrl.generation import (
-    GenerationIdFactory,
     GenerationRequest,
+    build_sample_rows,
 )
 
 
@@ -67,9 +67,9 @@ def test_generation_request_validation() -> None:
         )
 
 
-def test_generation_id_factory_is_deterministic() -> None:
+def test_build_sample_rows_is_deterministic() -> None:
     request = _request()
-    rows = GenerationIdFactory().build_sample_rows(request)
+    rows = build_sample_rows(request)
 
     assert [row.sample_id for row in rows] == [
         "req-1:prompt:0:sample:0",

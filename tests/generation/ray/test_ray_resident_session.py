@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
-from vrl.generation.protocols import PipelineChunkResult
+from vrl.generation.protocols import ChunkResult
 from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.models.ar.capabilities import ar_discrete_family_capability
@@ -40,14 +40,14 @@ class _TinyChunkExecutor:
         del request
         return None
 
-    def forward_chunk_plan(self, *args: Any, **kwargs: Any) -> PipelineChunkResult:
+    def forward_chunk_plan(self, *args: Any, **kwargs: Any) -> ChunkResult:
         raise NotImplementedError("Ray worker idempotency test never executes chunks")
 
     def gather_chunks(
         self,
         request: GenerationRequest,
         sample_rows: Sequence[GenerationSampleRow],
-        chunks: Sequence[PipelineChunkResult],
+        chunks: Sequence[ChunkResult],
     ) -> GenerationOutput:
         return GenerationOutput(
             request_id=request.request_id,

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import torch
 import torch.nn as nn
 
-from vrl.generation import GenerationIdFactory, GenerationRequest, GenerationSampleRow
+from vrl.generation import GenerationRequest, GenerationSampleRow, build_sample_rows
 from vrl.models.ar.janus_pro.model import (
     JanusProConfig,
     JanusProModel,
@@ -406,7 +406,7 @@ def test_r1_executor_forward_emits_canonical_family_and_segment_schema() -> None
         },
         return_artifacts={"output", "r1_segments"},
     )
-    specs = GenerationIdFactory().build_sample_rows(request)
+    specs = build_sample_rows(request)
 
     out = executor.forward_plan(request, specs, executor.plan(request, specs))
 

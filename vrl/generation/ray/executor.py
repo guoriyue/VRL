@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.generation.execution.ids import GenerationIdFactory
+from vrl.generation.execution.ids import build_sample_rows
 from vrl.generation.execution.planner import attach_engine_plan
 from vrl.generation.execution.scheduler import DistributedExecutionPlanner
 from vrl.generation.execution.types import (
     ChunkExecutionResult,
     DistributedWorkerHandle,
 )
-from vrl.generation.protocols import ChunkGatherer, PipelineChunkResult
+from vrl.generation.protocols import ChunkGatherer, ChunkResult
 from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.actor_pool import RayActorJob, run_actor_jobs
 
@@ -25,7 +25,6 @@ class RayGenerationExecutor:
         workers: list[DistributedWorkerHandle],
         gatherer: ChunkGatherer,
         *,
-        id_factory: GenerationIdFactory | None = None,
         max_inflight_chunks_per_worker: int = 1,
     ) -> None:
         if not workers:
@@ -35,13 +34,12 @@ class RayGenerationExecutor:
         self.planner = planner
         self.workers = list(workers)
         self.gatherer = gatherer
-        self.id_factory = id_factory or GenerationIdFactory()
         self.max_inflight_chunks_per_worker = int(max_inflight_chunks_per_worker)
 
     async def execute(self, request: GenerationRequest) -> GenerationOutput:
         from vrl.utils.profiling import record_function
 
-        sample_rows = self.id_factory.build_sample_rows(request)
+        sample_rows = build_sample_rows(request)
         with record_function("engine.plan"):
             generation_plan = self.planner.plan_with_engine(
                 request,
@@ -108,7 +106,7 @@ class RayGenerationExecutor:
                     f"actual={result.policy_version})",
                 )
 
-        chunk_outputs: list[PipelineChunkResult] = []
+        chunk_outputs: list[ChunkResult] = []
         for result in results:
             if result.output is None:
                 raise RuntimeError(

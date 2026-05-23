@@ -3,7 +3,6 @@
 from typing import Any
 
 from vrl.rewards.base import RewardFunction
-from vrl.rewards.functions.composite import CompositeReward
 from vrl.rewards.functions.registry import MultiReward, get_reward, register_reward
 from vrl.rewards.types import RewardRollout, RewardTrajectory, RewardTrajectoryStep
 
@@ -16,7 +15,6 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
-    "CompositeReward",
     "MultiReward",
     "RewardFunction",
     "RewardRollout",

@@ -6,7 +6,7 @@ from vrl.generation.execution.chunks import (
     build_prompt_chunk_schedule,
     run_sample_chunks_with_oom_retry,
 )
-from vrl.generation.execution.ids import GenerationIdFactory
+from vrl.generation.execution.ids import build_sample_rows
 from vrl.generation.execution.planner import (
     EnginePlan,
     EnginePlanner,
@@ -39,7 +39,6 @@ __all__ = [
     "EnginePlan",
     "EnginePlanner",
     "ExecutionStage",
-    "GenerationIdFactory",
     "GenerationWorkerCore",
     "RequestBatch",
     "ResolvedAxis",
@@ -48,6 +47,7 @@ __all__ = [
     "attach_engine_plan",
     "build_engine_plan",
     "build_prompt_chunk_schedule",
+    "build_sample_rows",
     "resolve_executor_capability",
     "run_sample_chunks_with_oom_retry",
 ]

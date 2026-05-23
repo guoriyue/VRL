@@ -13,7 +13,6 @@ from vrl.generation.ar import ARPipelineExecutorBase, ARRequestLayout, ARSamplin
 from vrl.generation.ar.decode_loop import ARDecodeLoop
 from vrl.generation.capabilities import FamilyCapability
 from vrl.generation.execution.chunks import SampleChunk
-from vrl.generation.protocols import PipelineChunkResult
 from vrl.generation.types import (
     GenerationMetrics,
     GenerationOutput,
@@ -283,7 +282,7 @@ same random stream for the same request.
 
 
 @dataclass(slots=True)
-class NextStep1ARChunkResult(PipelineChunkResult):
+class NextStep1ARChunkResult:
     """Output of one prompt/sample NextStep-1 AR chunk."""
 
     prompt_index: int

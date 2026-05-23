@@ -7,7 +7,7 @@ from typing import Any
 
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.execution.planner import ExecutionStage
-from vrl.generation.protocols import PipelineChunkResult
+from vrl.generation.protocols import ChunkResult
 from vrl.generation.types import GenerationRequest
 
 
@@ -53,7 +53,7 @@ class ChunkExecutionResult:
     request_id: str
     worker_id: str
     chunk: SampleChunk
-    output: PipelineChunkResult | None
+    output: ChunkResult | None
     metrics: dict[str, Any] = field(default_factory=dict)
     plan_id: str | None = None
     stage_id: str | None = None

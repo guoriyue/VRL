@@ -24,8 +24,7 @@ from vrl.generation.execution.chunks import (
 from vrl.generation.execution.planner import attach_engine_plan, build_engine_plan
 from vrl.generation.execution.request_batch import RequestBatch
 from vrl.generation.protocols import (
-    ChunkedFamilyPipelineExecutor,
-    PipelineChunkResult,
+    PipelineExecutor,
 )
 from vrl.generation.types import (
     GenerationOutput,
@@ -65,7 +64,7 @@ class DiffusionDenoiseResult:
 
 
 @dataclass(slots=True)
-class DiffusionChunkResult(PipelineChunkResult):
+class DiffusionChunkResult:
     """Output of one fused diffusion sample chunk."""
 
     prompt_index: int
@@ -84,7 +83,7 @@ class DiffusionChunkResult(PipelineChunkResult):
 
 
 class DiffusionPipelineExecutorBase(
-    ChunkedFamilyPipelineExecutor,
+    PipelineExecutor,
 ):
     """Common GenerationRequest -> diffusion GenerationOutput execution path."""
 

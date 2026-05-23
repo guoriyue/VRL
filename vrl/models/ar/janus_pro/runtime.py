@@ -15,7 +15,6 @@ from vrl.generation.ar.decode_loop import ARDecodeLoop
 from vrl.generation.capabilities import FamilyCapability
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.execution.planner import attach_engine_plan, build_engine_plan
-from vrl.generation.protocols import PipelineChunkResult
 from vrl.generation.types import (
     GenerationMetrics,
     GenerationOutput,
@@ -326,7 +325,7 @@ reproducible.
 """
 
 @dataclass(slots=True)
-class JanusProARChunkResult(PipelineChunkResult):
+class JanusProARChunkResult:
     """Output of one prompt/sample Janus-Pro AR chunk."""
 
     prompt_index: int
@@ -435,7 +434,7 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
 
         # Repeat prompts samples_per_prompt times so the AR loop runs
         # samples_per_prompt independent sequences per prompt. Order is
-        # prompt-major to match GenerationIdFactory.build_sample_rows.
+        # prompt-major to match build_sample_rows.build_sample_rows.
         repeated_prompts = self.expand_prompts(request)
 
         with record_function("engine.prefill"):
@@ -856,7 +855,7 @@ R1_SEGMENT_NAMES = ("initial_image", "selfcheck_text", "final_image")
 
 
 @dataclass(slots=True)
-class JanusProR1ChunkResult(PipelineChunkResult):
+class JanusProR1ChunkResult:
     """Output of one prompt/sample Janus-Pro-R1 chunk."""
 
     prompt_index: int

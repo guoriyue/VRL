@@ -9,11 +9,10 @@ from typing import Any, Protocol, TypeVar
 import torch
 
 from vrl.generation.execution.chunks import SampleChunk
-from vrl.generation.protocols import PipelineChunkResult
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
 
 
-class ARChunkResult(PipelineChunkResult, Protocol):
+class ARChunkResult(Protocol):
     """Common metadata every prompt-major AR chunk result carries."""
 
     prompt_index: int
