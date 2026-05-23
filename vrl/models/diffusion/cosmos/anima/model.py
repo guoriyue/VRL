@@ -437,12 +437,14 @@ class AnimaModel(DiffusionModelBase):
         request: ReplayRequest | None = None,
     ) -> ReplayResult:
         del request
-        from vrl.trajectory import TrajectoryResolver
-
+        replay_tensors, batch_context, latents = self._replay_inputs_for_step(
+            batch,
+            timestep_idx,
+        )
         state = self.restore_eval_state(
-            TrajectoryResolver.from_batch(batch).replay_tensor_dict("denoise"),
-            batch.context,
-            batch.observations[:, timestep_idx],
+            replay_tensors,
+            batch_context,
+            latents,
             timestep_idx,
         )
         values = self.forward_step(state, timestep_idx)

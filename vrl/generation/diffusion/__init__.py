@@ -2,9 +2,11 @@
 
 from vrl.generation.diffusion.executor import (
     DiffusionChunkResult,
+    DiffusionDenoiseBuffers,
     DiffusionDenoiseConfig,
     DiffusionDenoiseResult,
     DiffusionPipelineExecutorBase,
+    preallocate_denoise_buffers,
 )
 from vrl.generation.diffusion.gather import DiffusionChunkGatherer
 from vrl.generation.diffusion.layout import (
@@ -19,6 +21,7 @@ __all__ = [
     "DiffusionBaseParams",
     "DiffusionChunkGatherer",
     "DiffusionChunkResult",
+    "DiffusionDenoiseBuffers",
     "DiffusionDenoiseConfig",
     "DiffusionDenoiseResult",
     "DiffusionPipelineExecutorBase",
@@ -26,4 +29,5 @@ __all__ = [
     "DiffusionSDEParams",
     "DiffusionSamplingParams",
     "VideoGenerationRequest",
+    "preallocate_denoise_buffers",
 ]

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from vrl.trajectory.device import move_value_to_device
 from vrl.trajectory.types import (
     ReplayInput,
     TensorRole,
@@ -148,6 +149,9 @@ class TrajectoryResolver:
         segment_name: str | None = None,
         *,
         replay_input_name: str = "logprob",
+        axis: str | None = None,
+        axis_index: int | None = None,
+        device: Any | None = None,
     ) -> dict[str, Any]:
         """Return named replay tensors declared by a segment ReplayInput."""
 
@@ -169,7 +173,16 @@ class TrajectoryResolver:
                     f"replay input {name}.{replay_input_name} crosses segment boundary "
                     f"with tensor ref {ref!r}",
                 )
-            out[tensor_name] = self.tensor_value(segment_ref, tensor_name)
+            tensor = self.tensor(segment_ref, tensor_name)
+            value = tensor.value
+            if axis is not None and axis_index is not None and axis in tensor.axes:
+                value = _slice_axis(
+                    value,
+                    tensor_ref(segment_ref, tensor_name),
+                    tensor.axes.index(axis),
+                    axis_index,
+                )
+            out[tensor_name] = move_value_to_device(value, device)
         return out
 
     def resolve_training_view(self, view: TrainingView) -> ResolvedTrainingView:

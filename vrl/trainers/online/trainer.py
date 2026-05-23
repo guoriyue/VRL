@@ -431,8 +431,15 @@ class OnlineTrainer(Trainer):
                 phase_times={**iteration.phase_times, **dict(timer.times)},
             )
 
+        defer_replay_tensor_move = uses_evaluator and bool(
+            getattr(self.evaluator, "supports_deferred_replay_tensor_move", False),
+        )
         filtered_batches = [
-            move_training_batch_to_device(batch, self.device)
+            move_training_batch_to_device(
+                batch,
+                self.device,
+                defer_replay_tensors=defer_replay_tensor_move,
+            )
             for batch in filtered_batches
         ]
         filtered_advs = [adv.to(self.device) for adv in filtered_advs]

@@ -10,6 +10,7 @@ from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
+from vrl.trajectory.device import move_value_to_device
 
 
 class DiffusionSDELogProbEvaluator(Evaluator):
@@ -18,6 +19,8 @@ class DiffusionSDELogProbEvaluator(Evaluator):
     Uses ``sde_step_with_logprob`` to compute log-probabilities and
     optionally reference model signals for latent-space KL.
     """
+
+    supports_deferred_replay_tensor_move = True
 
     def __init__(
         self,
@@ -70,6 +73,10 @@ class DiffusionSDELogProbEvaluator(Evaluator):
 
         fwd = model.replay_forward(batch, timestep_idx).require_segment("denoise")
         noise_pred = fwd.require_value("noise_pred")
+        device = getattr(noise_pred, "device", None)
+        t = move_value_to_device(t, device)
+        observations = move_value_to_device(observations, device)
+        actions = move_value_to_device(actions, device)
 
         # SDE step with log-prob
         result = flow_matching_math.sde_step_with_logprob(

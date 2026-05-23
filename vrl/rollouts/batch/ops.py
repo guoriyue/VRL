@@ -181,20 +181,31 @@ def move_tensor_tree(value: Any, device: torch.device) -> Any:
     return value
 
 
-def move_training_batch_to_device(batch: RolloutBatch, device: torch.device) -> RolloutBatch:
-    """Move replay tensors to the trainer device."""
+def move_training_batch_to_device(
+    batch: RolloutBatch,
+    device: torch.device,
+    *,
+    defer_replay_tensors: bool = False,
+) -> RolloutBatch:
+    """Move trainer-owned tensors to the trainer device.
+
+    Diffusion CPU-offload keeps timestep-indexed replay tensors on their
+    storage device until the evaluator slices the current denoise step.
+    """
 
     return RolloutBatch(
-        observations=batch.observations.to(device),
-        actions=batch.actions.to(device),
+        observations=batch.observations if defer_replay_tensors else batch.observations.to(device),
+        actions=batch.actions if defer_replay_tensors else batch.actions.to(device),
         rewards=batch.rewards.to(device),
         dones=batch.dones.to(device),
         group_ids=batch.group_ids.to(device),
-        extras=move_tensor_tree(batch.extras, device),
-        context=move_tensor_tree(batch.context, device),
+        extras=batch.extras if defer_replay_tensors else move_tensor_tree(batch.extras, device),
+        context=batch.context if defer_replay_tensors else move_tensor_tree(batch.context, device),
         videos=batch.videos,
         prompts=batch.prompts,
-        trajectory=move_trajectory_batch(batch.trajectory, device),
+        trajectory=batch.trajectory
+        if defer_replay_tensors
+        else move_trajectory_batch(batch.trajectory, device),
         training_view=batch.training_view,
     )
 

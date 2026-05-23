@@ -63,6 +63,10 @@ def test_diffusion_chunk_gatherer_gathers_without_model_object() -> None:
     assert output.metrics.chunks == 2
     assert output.trajectory is not None
     assert "trajectory" not in output.extra
+    assert output.metrics.engine_counters["diffusion_num_denoise_steps"] == 2
+    assert output.metrics.engine_counters["diffusion_video_bytes"] == (
+        output.output.numel() * output.output.element_size()
+    )
     assert output.trajectory.segments["denoise"].distribution == "flow_matching"
     assert output.trajectory.axes["sample"].length == 2
     assert output.trajectory.axes["timestep"].length == 2

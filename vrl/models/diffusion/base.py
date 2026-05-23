@@ -17,6 +17,7 @@ import torch.nn as nn
 
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
+from vrl.trajectory.device import move_value_to_device
 
 
 class DiffusionModelBase(nn.Module, ABC):
@@ -100,12 +101,14 @@ class DiffusionModelBase(nn.Module, ABC):
     ) -> ReplayResult:
         """Rebuild diffusion sampling state and run one replay forward."""
         del request
-        from vrl.trajectory import TrajectoryResolver
-
+        replay_tensors, batch_context, latents = self._replay_inputs_for_step(
+            batch,
+            timestep_idx,
+        )
         state = self.restore_eval_state(
-            TrajectoryResolver.from_batch(batch).replay_tensor_dict("denoise"),
-            batch.context,
-            batch.observations[:, timestep_idx],
+            replay_tensors,
+            batch_context,
+            latents,
             timestep_idx,
         )
         values = self.forward(state, 0)
@@ -117,6 +120,28 @@ class DiffusionModelBase(nn.Module, ABC):
                 ),
             },
         )
+
+    def _replay_inputs_for_step(
+        self,
+        batch: Any,
+        timestep_idx: int,
+    ) -> tuple[dict[str, Any], dict[str, Any], Any]:
+        """Resolve only the current denoise step's replay tensors on model device."""
+
+        from vrl.trajectory import TrajectoryResolver
+
+        try:
+            device = self.device
+        except Exception:
+            device = None
+        replay_tensors = TrajectoryResolver.from_batch(batch).replay_tensor_dict(
+            "denoise",
+            axis="timestep",
+            axis_index=timestep_idx,
+            device=device,
+        )
+        latents = move_value_to_device(batch.observations[:, timestep_idx], device)
+        return replay_tensors, dict(batch.context), latents
 
     def _require_transformer(self) -> Any:
         """Return the registered trainable transformer."""

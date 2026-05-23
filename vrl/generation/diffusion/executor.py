@@ -33,6 +33,7 @@ from vrl.generation.types import (
     WorkloadSignature,
 )
 from vrl.math.diffusion.flow_matching import sde_step_with_logprob
+from vrl.trajectory.storage import trajectory_tensor_bytes
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +62,18 @@ class DiffusionDenoiseResult:
     timesteps: Any
     kl: Any
     peak_memory_mb: float | None = None
+    engine_counters: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class DiffusionDenoiseBuffers:
+    """Preallocated replay tensors written once per denoise step."""
+
+    observations: torch.Tensor
+    actions: torch.Tensor
+    log_probs: torch.Tensor
+    timesteps: torch.Tensor
+    kl: torch.Tensor
 
 
 @dataclass(slots=True)
@@ -80,6 +93,86 @@ class DiffusionChunkResult:
     context: dict[str, Any]
     peak_memory_mb: float | None = None
     stage_durations: dict[str, float] = field(default_factory=dict)
+    engine_counters: dict[str, Any] = field(default_factory=dict)
+
+
+def preallocate_denoise_buffers(
+    *,
+    state: Any,
+    config: DiffusionDenoiseConfig,
+) -> DiffusionDenoiseBuffers:
+    """Allocate final denoise replay tensors before entering the step loop."""
+
+    latents = state.latents
+    if not isinstance(latents, torch.Tensor):
+        raise TypeError("diffusion denoise state.latents must be a torch.Tensor")
+    chunk_batch = int(latents.shape[0])
+    if chunk_batch != int(config.sample_count):
+        raise ValueError(
+            "Diffusion denoise chunk produced "
+            f"{chunk_batch} rows, expected {config.sample_count}",
+        )
+    num_steps = len(state.timesteps)
+    latent_shape = tuple(latents.shape[1:])
+    device = latents.device
+    timestep_dtype = _timestep_dtype(state.timesteps)
+
+    return DiffusionDenoiseBuffers(
+        observations=torch.empty(
+            (chunk_batch, num_steps, *latent_shape),
+            dtype=latents.dtype,
+            device=device,
+        ),
+        actions=torch.empty(
+            (chunk_batch, num_steps, *latent_shape),
+            dtype=latents.dtype,
+            device=device,
+        ),
+        log_probs=torch.empty((chunk_batch, num_steps), dtype=torch.float32, device=device),
+        timesteps=torch.empty(
+            (chunk_batch, num_steps),
+            dtype=timestep_dtype,
+            device=device,
+        ),
+        kl=torch.empty((chunk_batch, num_steps), dtype=torch.float32, device=device),
+    )
+
+
+def _timestep_dtype(timesteps: Any) -> torch.dtype:
+    if isinstance(timesteps, torch.Tensor):
+        return timesteps.dtype
+    try:
+        first = timesteps[0]
+    except Exception:
+        return torch.float32
+    if isinstance(first, torch.Tensor):
+        return first.dtype
+    return torch.float32
+
+
+def _expand_timestep_for_buffer(
+    timestep: Any,
+    *,
+    chunk_batch: int,
+    dtype: torch.dtype,
+    device: torch.device,
+) -> torch.Tensor:
+    if not isinstance(timestep, torch.Tensor):
+        timestep = torch.as_tensor(timestep)
+    timestep = timestep.to(device=device, dtype=dtype)
+    if timestep.ndim == 0:
+        return timestep.expand(chunk_batch)
+    if tuple(timestep.shape) == (chunk_batch,):
+        return timestep
+    if timestep.numel() == 1:
+        return timestep.reshape(()).expand(chunk_batch)
+    try:
+        return timestep.reshape(chunk_batch)
+    except RuntimeError as exc:
+        raise ValueError(
+            "diffusion timestep cannot be expanded to chunk batch "
+            f"{chunk_batch}: shape={tuple(timestep.shape)}",
+        ) from exc
 
 
 class DiffusionPipelineExecutorBase(
@@ -357,11 +450,7 @@ class DiffusionPipelineExecutorBase(
         else:
             generator = None
 
-        obs_steps: list[Any] = []
-        act_steps: list[Any] = []
-        lp_steps: list[Any] = []
-        kl_steps: list[Any] = []
-        t_steps: list[Any] = []
+        buffers = preallocate_denoise_buffers(state=state, config=config)
 
         prompt_embeds = encoded.get("prompt_embeds")
         transformer_dtype = (
@@ -406,23 +495,29 @@ class DiffusionPipelineExecutorBase(
                         state.latents = prev_latents
 
                 with record_function("generation.trajectory_buffer_write"):
-                    obs_steps.append(latents_ori.detach())
-                    act_steps.append(prev_latents.detach())
-                    lp_steps.append(sde_result.log_prob.detach())
-                    t_steps.append(timestep.detach())
+                    buffers.observations[:, step_idx].copy_(latents_ori.detach())
+                    buffers.actions[:, step_idx].copy_(
+                        prev_latents.detach().to(dtype=buffers.actions.dtype),
+                    )
+                    buffers.log_probs[:, step_idx].copy_(
+                        sde_result.log_prob.detach().to(dtype=buffers.log_probs.dtype),
+                    )
+                    buffers.timesteps[:, step_idx].copy_(
+                        _expand_timestep_for_buffer(
+                            timestep.detach(),
+                            chunk_batch=chunk_batch,
+                            dtype=buffers.timesteps.dtype,
+                            device=device,
+                        ),
+                    )
                     if config.return_kl:
-                        kl_steps.append(sde_result.log_prob.detach().abs())
+                        buffers.kl[:, step_idx].copy_(
+                            sde_result.log_prob.detach()
+                            .abs()
+                            .to(dtype=buffers.kl.dtype),
+                        )
                     else:
-                        kl_steps.append(torch.zeros(chunk_batch, device=device))
-
-        observations = torch.stack(obs_steps, dim=1)
-        actions = torch.stack(act_steps, dim=1)
-        log_probs = torch.stack(lp_steps, dim=1)
-        timesteps = torch.stack(
-            [timestep.expand(chunk_batch) for timestep in t_steps],
-            dim=1,
-        )
-        kl = torch.stack(kl_steps, dim=1)
+                        buffers.kl[:, step_idx].zero_()
         peak_memory_mb = None
         if torch.cuda.is_available():
             try:
@@ -432,12 +527,25 @@ class DiffusionPipelineExecutorBase(
 
         return DiffusionDenoiseResult(
             state=state,
-            observations=observations,
-            actions=actions,
-            log_probs=log_probs,
-            timesteps=timesteps,
-            kl=kl,
+            observations=buffers.observations,
+            actions=buffers.actions,
+            log_probs=buffers.log_probs,
+            timesteps=buffers.timesteps,
+            kl=buffers.kl,
             peak_memory_mb=peak_memory_mb,
+            engine_counters={
+                "diffusion_num_denoise_steps": int(buffers.timesteps.shape[1]),
+                "diffusion_sample_batch_size": int(chunk_batch),
+                "diffusion_observation_bytes": trajectory_tensor_bytes(
+                    buffers.observations,
+                ),
+                "diffusion_action_bytes": trajectory_tensor_bytes(buffers.actions),
+                "diffusion_old_logprob_bytes": trajectory_tensor_bytes(
+                    buffers.log_probs,
+                ),
+                "diffusion_timestep_bytes": trajectory_tensor_bytes(buffers.timesteps),
+                "diffusion_kl_bytes": trajectory_tensor_bytes(buffers.kl),
+            },
         )
 
     def decode_denoise_result(
@@ -456,6 +564,7 @@ class DiffusionPipelineExecutorBase(
         state = denoise_result.state
         with record_function("generation.decode_latents"):
             video = model.decode_latents(state.latents)
+        replay_tensors = model.export_replay_tensors(state)
 
         return DiffusionChunkResult(
             prompt_index=config.prompt_index,
@@ -467,10 +576,15 @@ class DiffusionPipelineExecutorBase(
             timesteps=denoise_result.timesteps,
             kl=denoise_result.kl,
             video=video,
-            replay_tensors=model.export_replay_tensors(state),
+            replay_tensors=replay_tensors,
             context=model.export_batch_context(state),
             peak_memory_mb=denoise_result.peak_memory_mb,
             stage_durations=dict(stage_durations or {}),
+            engine_counters={
+                **denoise_result.engine_counters,
+                "diffusion_replay_tensor_bytes": trajectory_tensor_bytes(replay_tensors),
+                "diffusion_video_bytes": trajectory_tensor_bytes(video),
+            },
         )
 
     def gather_chunks(

@@ -11,6 +11,7 @@ from dataclasses import replace
 from typing import Any
 
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
+from vrl.trajectory.device import move_value_to_device
 from vrl.trajectory.types import (
     TrajectoryBatch,
     TrajectoryMetrics,
@@ -137,12 +138,12 @@ def move_trajectory_batch(data: Any, device: Any) -> Any:
         family=data.family,
         task=data.task,
         sample_rows=list(data.sample_rows),
-        group_ids=_move_value(data.group_ids, device),
-        tensor_value_fn=lambda tensor: _move_value(tensor.value, device),
+        group_ids=move_value_to_device(data.group_ids, device),
+        tensor_value_fn=lambda tensor: move_value_to_device(tensor.value, device),
         axes_sample_length=data.axes["sample"].length,
         metrics_sample_count=data.metrics.num_samples,
-        metrics_values=_move_value(data.metrics.values, device),
-        context=_move_value(data.context, device),
+        metrics_values=move_value_to_device(data.metrics.values, device),
+        context=move_value_to_device(data.context, device),
     )
 
 
@@ -266,21 +267,6 @@ def _stack_values(values: list[Any]) -> Any:
                 raise ValueError("trajectory dict leaves must have matching keys")
         return {key: _stack_values([value[key] for value in values]) for key in first}
     return first
-
-
-def _move_value(value: Any, device: Any) -> Any:
-    if hasattr(value, "to"):
-        try:
-            return value.to(device)
-        except TypeError:
-            return value
-    if isinstance(value, dict):
-        return {key: _move_value(inner, device) for key, inner in value.items()}
-    if isinstance(value, list):
-        return [_move_value(inner, device) for inner in value]
-    if isinstance(value, tuple):
-        return tuple(_move_value(inner, device) for inner in value)
-    return value
 
 
 def _selector_positions(selector: Any) -> list[int]:

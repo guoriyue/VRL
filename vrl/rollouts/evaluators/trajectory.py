@@ -9,6 +9,7 @@ import torch
 
 from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
 from vrl.trajectory import TrainingView, TrajectoryBatch
+from vrl.trajectory.device import move_value_to_device
 from vrl.trajectory.views import LossUnit
 
 
@@ -109,6 +110,14 @@ class TrajectorySignalBuilder:
                 timestep_idx=timestep_idx,
                 mask_key=mask_key,
             )
+        resolved_old = move_value_to_device(
+            resolved_old,
+            getattr(log_prob, "device", None),
+        )
+        resolved_mask = move_value_to_device(
+            resolved_mask,
+            getattr(log_prob, "device", None),
+        )
 
         self._validate_signal_shapes(
             log_prob=log_prob,

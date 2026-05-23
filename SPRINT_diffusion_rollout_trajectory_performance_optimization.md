@@ -1,6 +1,11 @@
 # SPRINT：Diffusion Generation 性能与内存优化
 
-状态：deferred，但仍然有效。
+状态：代码阶段已落地；Phase 6 真实模型 profile gate 待在有模型 artifact 的环境跑数确认。
+
+落地范围：
+
+- Phase 1-5 已实现并有单测覆盖。
+- Phase 6 未在本文档中写入性能结论；当前本机缺少部分 Anima artifact，profile gate 仍需要 SD3.5 / Wan / Cosmos 真实运行数据。
 
 依赖关系：
 
@@ -42,12 +47,12 @@ SD3.5 / Wan / Cosmos profile gate
 
 ## 当前代码事实
 
-- `vrl/generation/diffusion/executor.py::run_denoise_steps(...)` 仍然每步 append Python list，最后 `torch.stack(...)`。
-- diffusion path 仍使用 `engine.cache_read` / `engine.cache_write` profile label，但 diffusion denoise 不是 AR KV cache。
-- decode label 仍叫 `engine.vq_decode`，对 latent diffusion 的 SD3 / Wan / Cosmos 不准确。
-- `vrl/generation/diffusion/gather.py` 目前只写 `stage_durations_s`，没有 diffusion tensor byte counters。
-- `vrl/models/diffusion/capabilities.py` 仍把 denoise stage 标成 `cache_read/cache_write`，并使用 `vq_decode` stage name。
-- `vrl/trajectory/resolver.py` 已经支持 `LossUnit.axis_index`，所以 replay slice 的重点不是盲目改写所有 slicing，而是防止 storage/offload path 先整条 move 再 slice。
+- `vrl/generation/diffusion/executor.py::run_denoise_steps(...)` 已改为预分配 denoise trajectory buffer，再按 timestep 写入。
+- diffusion path 已使用 `generation.denoise_step` / `generation.denoise_forward` / `generation.scheduler_step` / `generation.latent_write` / `generation.trajectory_buffer_write` / `generation.decode_latents` profile label。
+- diffusion capability 不再把 denoise stage 表达成 AR/KV cache read/write。
+- `vrl/generation/diffusion/gather.py` 已聚合 diffusion-specific byte counters 和 storage policy counters。
+- `configs/base/rollout/diffusion.yaml` 默认显式保留 `trajectory_storage.device: preserve` 和 `trajectory_storage.dtype: preserve`，不默认 CPU offload。
+- replay evaluator 和 diffusion model replay forward 已支持按 timestep 先 slice 再 move，避免 storage/offload path 搬整条 trajectory。
 
 ## 非目标
 

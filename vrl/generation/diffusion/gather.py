@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, cast
 import torch
 
 from vrl.generation.diffusion.layout import DiffusionRequestLayout
+from vrl.generation.diffusion.metrics import diffusion_rollout_engine_counters
 from vrl.generation.protocols import ChunkResult
 from vrl.generation.types import (
     GenerationMetrics,
@@ -66,13 +67,27 @@ class DiffusionChunkGatherer:
         for chunk in ordered_chunks:
             for stage, duration in getattr(chunk, "stage_durations", {}).items():
                 stage_durations[stage] = stage_durations.get(stage, 0.0) + float(duration)
+        engine_counters = diffusion_rollout_engine_counters(
+            stage_durations=stage_durations,
+            num_denoise_steps=int(timesteps_tensor.shape[1]),
+            sample_batch_size=max(chunk.sample_count for chunk in ordered_chunks),
+            byte_values={
+                "observation": observations,
+                "action": actions,
+                "old_logprob": log_probs,
+                "timestep": timesteps_tensor,
+                "kl": kl_tensor,
+                "replay_tensor": replay_tensors,
+                "video": video,
+            },
+        )
         metrics = GenerationMetrics(
             num_prompts=len(prompts),
             num_samples=len(rows),
             num_steps=int(sampling["num_steps"]),
             chunks=len(ordered_chunks),
             peak_memory_mb=peak_mem_mb,
-            engine_counters={"stage_durations_s": stage_durations},
+            engine_counters=engine_counters,
         )
         trajectory = build_diffusion_trajectory(
             request=request,
