@@ -37,6 +37,12 @@ from vrl.rollouts.families import (
             DiffusionChunkGatherer,
         ),
         (
+            "online/aesthetic/image_anima_safe_grpo",
+            "cosmos-predict2-anima",
+            "t2i",
+            DiffusionChunkGatherer,
+        ),
+        (
             "online/ocr/ar_discrete_token_grpo",
             "janus_pro",
             "ar_t2i",

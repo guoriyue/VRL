@@ -188,6 +188,12 @@ def test_anima_replay_builder_uses_only_transformer_checkpoint(
         bundle.model.encode_prompt("prompt")
 
 
+def test_anima_empty_prompts_are_replaced_before_tokenization() -> None:
+    from vrl.models.diffusion.cosmos.anima.model import _non_empty_prompts
+
+    assert _non_empty_prompts(["", "  ", "anime"]) == [".", ".", "anime"]
+
+
 @pytest.mark.parametrize(
     ("module_path", "builder_name", "model_attr", "spec_kwargs"),
     [

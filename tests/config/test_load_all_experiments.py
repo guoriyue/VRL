@@ -134,6 +134,26 @@ def test_cosmos_diffusion_nft_video_reward_validation_config() -> None:
     assert cfg.trainer.total_epochs == 1
 
 
+def test_anima_safe_reward_config_uses_cpu_nsfw_penalty() -> None:
+    from vrl.scripts.common.factory import build_reward_from_cfg
+
+    cfg = load_config("experiment/online/aesthetic/image_anima_safe_grpo")
+    built = build_configs(cfg)
+
+    reward_weights, reward_kwargs = built["reward"]
+    assert reward_weights == {
+        "aesthetic": pytest.approx(1.0),
+        "nsfw_safety": pytest.approx(0.5),
+    }
+    assert reward_kwargs["nsfw_safety"]["classifier_device"] == "cpu"
+    assert reward_kwargs["nsfw_safety"]["threshold"] == pytest.approx(0.35)
+    assert cfg.data.manifest == "datasets/anime_safety/train.jsonl"
+    assert cfg.data.eval_manifest == "datasets/anime_safety/eval_baseline.jsonl"
+    assert cfg.rollout.sample_batch_size == 1
+    reward_fn = build_reward_from_cfg(cfg, built=built, device="cpu")
+    assert [name for name, _, _ in reward_fn.rewards] == ["aesthetic", "nsfw_safety"]
+
+
 def test_cosmos_optimization_check_records_trainable_change(tmp_path: Path) -> None:
     from vrl.scripts.cosmos.train import (
         _capture_optimization_check_before,
@@ -226,6 +246,14 @@ def test_reward_backbone_kwargs_are_required() -> None:
     del cfg.reward.kwargs.video_reward["score_key"]
 
     with pytest.raises(ValueError, match="video_reward"):
+        validate_reward_config(cfg)
+
+
+def test_negative_reward_component_weights_are_rejected() -> None:
+    cfg = load_config("experiment/online/aesthetic/image_anima_safe_grpo")
+    cfg.reward.components.nsfw_safety = -0.5
+
+    with pytest.raises(ValueError, match=r"reward\.components\.nsfw_safety must be >= 0"):
         validate_reward_config(cfg)
 
 

@@ -33,6 +33,7 @@ def _register_builtins() -> None:
     from vrl.rewards.functions.aesthetic import AestheticReward
     from vrl.rewards.functions.clip import CLIPScoreReward
     from vrl.rewards.functions.codex_image_qa import CodexImageQAReward
+    from vrl.rewards.functions.nsfw_safety import NSFWSafetyReward
     from vrl.rewards.functions.ocr import OCRReward
     from vrl.rewards.functions.pickscore import PickScoreReward
     from vrl.rewards.functions.video_reward import VideoReward
@@ -41,6 +42,7 @@ def _register_builtins() -> None:
     register_reward("clipscore", CLIPScoreReward)
     register_reward("codex_image_qa", CodexImageQAReward)
     register_reward("image_qa_cli", CodexImageQAReward)
+    register_reward("nsfw_safety", NSFWSafetyReward)
     register_reward("ocr", OCRReward)
     register_reward("pickscore", PickScoreReward)
     register_reward("video_reward", VideoReward)

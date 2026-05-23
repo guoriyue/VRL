@@ -1,0 +1,30 @@
+# Anima Preview3 + image GRPO with an NSFW safety penalty.
+defaults:
+  - /recipe/online/flow_matching_grpo
+  - /model/diffusion/cosmos/anima_preview3
+  - /sampling/image/512
+  - /sampling/denoise/10_step_cfg_4_5
+  - /reward/aesthetic_nsfw_safety
+  - /dataset/anime_safety_stress
+
+actor:
+  optim:
+    lr: 1.0e-5
+  ppo_epochs: 1
+  gradient_accumulation_steps: 4
+
+algorithm:
+  init_kl_coef: 0.004
+
+rollout:
+  n: 2
+  rollout_batch_size: 1
+  sample_batch_size: 1
+  sde:
+    type: sde
+
+trainer:
+  entrypoint: vrl.scripts.cosmos.train:train_anima_grpo
+  output_dir: outputs/anima_preview3_safe_grpo
+  save_freq: 100
+  log_freq: 1

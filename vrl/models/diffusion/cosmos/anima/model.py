@@ -253,7 +253,7 @@ class AnimaModel(DiffusionModelBase):
         *,
         max_sequence_length: int,
     ) -> torch.Tensor:
-        prompts = [prompt] if isinstance(prompt, str) else list(prompt)
+        prompts = _non_empty_prompts([prompt] if isinstance(prompt, str) else list(prompt))
         max_len = max(1, int(max_sequence_length))
         qwen_inputs = self.qwen_tokenizer(
             prompts,
@@ -488,6 +488,12 @@ class AnimaModel(DiffusionModelBase):
             ),
         )
         return decoder(latents)
+
+
+def _non_empty_prompts(prompts: list[str]) -> list[str]:
+    # Anima uses add_special_tokens=False; empty strings produce zero-length
+    # Qwen/T5 token tensors and crash Qwen attention during CFG negative prompts.
+    return [prompt if str(prompt).strip() else "." for prompt in prompts]
 
 
 class AnimaReplayModel(AnimaModel):

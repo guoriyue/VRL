@@ -22,11 +22,11 @@ _REWARD_REQUIRED_KWARGS: dict[str, tuple[str, ...]] = {
     "clipscore": ("model_name",),
     "codex_image_qa": ("command",),
     "image_qa_cli": ("command",),
+    "nsfw_safety": ("model_name", "threshold"),
     "pickscore": ("processor_name", "model_name"),
     "ocr": ("debug_dir",),
     "video_reward": ("inference_runtime", "reward_name", "score_key"),
 }
-
 
 def require(cfg: DictConfig, path: str) -> Any:
     """Fetch a required dotted path from a config.
@@ -145,13 +145,15 @@ def validate_reward_config(cfg: DictConfig) -> None:
             raise ValueError(
                 f"reward.components.{name} must be numeric, got {components_raw[name]!r}",
             ) from exc
-        if weight <= 0:
+        if weight < 0:
+            raise ValueError(f"reward.components.{name} must be >= 0, got {weight}")
+        if weight == 0:
             continue
         sub = kwargs_dict.get(name)
         if not isinstance(sub, dict):
             raise ValueError(
                 f"config missing required field: reward.kwargs.{name} "
-                f"(component {name!r} has weight {weight} > 0)",
+                f"(component {name!r} has non-zero weight {weight})",
             )
         for subkey in required_subkeys:
             if subkey not in sub:

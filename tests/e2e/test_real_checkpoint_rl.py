@@ -300,6 +300,51 @@ CASES: tuple[RealCheckpointCase, ...] = (
         synthetic_replay_rollout=True,
     ),
     RealCheckpointCase(
+        case_id="cosmos_anima_safe",
+        config="experiment/online/aesthetic/image_anima_safe_grpo",
+        family="cosmos-predict2-anima",
+        prompt="anime portrait of a small white sign that says RL",
+        checkpoints=(
+            CheckpointField(
+                cfg_path="model.path",
+                repo_id="circlestone-labs/Anima",
+                required_files=(
+                    "diffusion_models/anima-preview3-base.safetensors",
+                ),
+                allow_file=True,
+            ),
+        ),
+        overrides=(
+            "model.torch_compile.enable=false",
+            "actor.gradient_accumulation_steps=0",
+            "algorithm.init_kl_coef=0.0",
+            "algorithm.kl_reward=0.0",
+            "algorithm.per_prompt_stat_tracking=false",
+            "rollout.n=2",
+            "rollout.rollout_batch_size=1",
+            "rollout.sample_batch_size=1",
+            "rollout.noise_level=0.7",
+            "rollout.sde.window_size=0",
+            "rollout.sde.window_range=[0,1]",
+            "sampling.num_steps=1",
+            "sampling.guidance_scale=1.0",
+            "sampling.cfg=false",
+            "sampling.height=128",
+            "sampling.width=128",
+            "sampling.max_sequence_length=64",
+        ),
+        min_cuda_memory_gib=28.0,
+        replay_runtime_builder=(
+            "vrl.models.diffusion.cosmos.anima.runtime:"
+            "build_anima_replay_runtime_bundle"
+        ),
+        replay_runtime_spec_extractor=(
+            "vrl.models.diffusion.cosmos.anima.runtime:"
+            "extract_anima_replay_runtime_spec"
+        ),
+        synthetic_replay_rollout=True,
+    ),
+    RealCheckpointCase(
         case_id="nextstep_1",
         config="experiment/online/ocr/ar_continuous_token_grpo",
         family="nextstep_1",

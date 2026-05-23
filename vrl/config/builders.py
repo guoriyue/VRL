@@ -138,7 +138,11 @@ def build_reward_config(cfg: DictConfig) -> tuple[dict[str, float], dict[str, di
         resolve=True,
         throw_on_missing=True,
     ) or {}
-    weights = {name: float(weight) for name, weight in components.items() if float(weight) > 0}
+    weights: dict[str, float] = {}
+    for name, weight in components.items():
+        component_weight = float(weight)
+        if component_weight > 0:
+            weights[name] = component_weight
 
     raw_kwargs = reward.get("kwargs", None)
     kwargs: dict[str, dict] = (
