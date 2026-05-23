@@ -1,9 +1,12 @@
 # Anima Preview3 single-file Cosmos Predict2 Text2Image checkpoint.
-# Replay/trainer loading needs only the transformer artifact. Full generation
-# additionally materializes the text encoder, VAE, and explicit tokenizer sources.
+# Default model.path is a Hugging Face cache repo id; runtime uses cached files
+# only and does not download artifacts.
 model:
   family: cosmos-predict2-anima
   path: circlestone-labs/Anima
+  transformer_file: diffusion_models/anima-preview3-base.safetensors
+  text_encoder_file: text_encoders/qwen_3_06b_base.safetensors
+  vae_file: vae/qwen_image_vae.safetensors
   transformer_path: ""
   text_encoder_path: ""
   vae_path: ""

@@ -176,11 +176,14 @@ def test_anima_safe_reward_config_uses_cpu_nsfw_penalty() -> None:
     assert [name for name, _, _ in reward_fn.rewards] == ["aesthetic", "nsfw_safety"]
 
 
-def test_anima_config_does_not_depend_on_external_comfyui_checkout() -> None:
+def test_anima_config_keeps_artifact_names_without_local_paths() -> None:
     cfg = load_config("experiment/diffusion/anima_preview3/online_grpo_aesthetic")
     model_yaml = OmegaConf.to_yaml(cfg.model)
 
     assert cfg.model.path == "circlestone-labs/Anima"
+    assert cfg.model.transformer_file == "diffusion_models/anima-preview3-base.safetensors"
+    assert cfg.model.text_encoder_file == "text_encoders/qwen_3_06b_base.safetensors"
+    assert cfg.model.vae_file == "vae/qwen_image_vae.safetensors"
     assert cfg.model.transformer_path == ""
     assert cfg.model.text_encoder_path == ""
     assert cfg.model.vae_path == ""

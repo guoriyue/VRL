@@ -3,15 +3,12 @@
 from __future__ import annotations
 
 import logging
+import os
+from pathlib import Path
 from typing import Any
 
 from vrl.generation.diffusion import DiffusionPipelineExecutorBase
 from vrl.models.diffusion.capabilities import diffusion_family_capability
-from vrl.models.diffusion.cosmos.anima.artifacts import (
-    materialize_anima_artifact,
-    resolve_anima_paths,
-    resolve_anima_replay_paths,
-)
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.replay_loading import (
     full_generation_bundle_metadata,
@@ -41,13 +38,24 @@ def extract_anima_runtime_spec(
             "target_modules": list(cfg.model.lora.target_modules),
         }
 
-    paths = resolve_anima_paths(cfg.model)
     extra: dict[str, Any] = {
-        "transformer_path": paths["transformer_path"],
-        "text_encoder_path": paths["text_encoder_path"],
-        "vae_path": paths["vae_path"],
-        "qwen_tokenizer_path": paths["qwen_tokenizer_path"],
-        "t5_tokenizer_path": paths["t5_tokenizer_path"],
+        "transformer_path": _required_model_artifact(
+            cfg.model,
+            path_field="transformer_path",
+            file_field="transformer_file",
+        ),
+        "text_encoder_path": _required_model_artifact(
+            cfg.model,
+            path_field="text_encoder_path",
+            file_field="text_encoder_file",
+        ),
+        "vae_path": _required_model_artifact(
+            cfg.model,
+            path_field="vae_path",
+            file_field="vae_file",
+        ),
+        "qwen_tokenizer_path": _required_model_path(cfg.model, "qwen_tokenizer_path"),
+        "t5_tokenizer_path": _required_model_path(cfg.model, "t5_tokenizer_path"),
         "scheduler_shift": float(getattr(cfg.model, "scheduler_shift", 3.0)),
     }
     torch_compile_cfg = getattr(cfg.model, "torch_compile", None)
@@ -88,9 +96,12 @@ def extract_anima_replay_runtime_spec(
             "target_modules": list(cfg.model.lora.target_modules),
         }
 
-    paths = resolve_anima_replay_paths(cfg.model)
     extra: dict[str, Any] = {
-        "transformer_path": paths["transformer_path"],
+        "transformer_path": _required_model_artifact(
+            cfg.model,
+            path_field="transformer_path",
+            file_field="transformer_file",
+        ),
         "scheduler_shift": float(getattr(cfg.model, "scheduler_shift", 3.0)),
     }
     torch_compile_cfg = getattr(cfg.model, "torch_compile", None)
@@ -261,7 +272,7 @@ def _load_anima_transformer_component(spec: RuntimeBuildSpec) -> Any:
     if not path:
         raise ValueError("Anima runtime spec is missing transformer_path")
     return _load_anima_transformer(
-        load_file(materialize_anima_artifact(path), device="cpu"),
+        load_file(path, device="cpu"),
         dtype=_resolve_torch_dtype(spec.dtype),
     ).to(spec.device, dtype=_resolve_torch_dtype(spec.dtype))
 
@@ -293,6 +304,79 @@ def _resolve_torch_dtype(value: Any) -> Any:
         "bfloat16": torch.bfloat16,
         "bf16": torch.bfloat16,
     }.get(text, torch.bfloat16)
+
+
+def _required_model_path(model_cfg: Any, name: str) -> str:
+    value = getattr(model_cfg, name, None)
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError(f"model.{name} is required for Anima runtime")
+    return text
+
+
+def _required_model_artifact(model_cfg: Any, *, path_field: str, file_field: str) -> str:
+    explicit_path = str(getattr(model_cfg, path_field, None) or "").strip()
+    if explicit_path:
+        return explicit_path
+
+    root = str(getattr(model_cfg, "path", None) or "").strip()
+    relative_file = str(getattr(model_cfg, file_field, None) or "").strip()
+    if root and relative_file:
+        return str(
+            _resolve_model_root(root, relative_file=relative_file, path_field=path_field)
+            / relative_file,
+        )
+
+    raise ValueError(
+        f"model.{path_field} or model.path + model.{file_field} "
+        "is required for Anima runtime",
+    )
+
+
+def _resolve_model_root(root: str, *, relative_file: str, path_field: str) -> Path:
+    root_path = Path(root).expanduser()
+    if root_path.exists() or _looks_like_filesystem_root(root):
+        return root_path
+
+    cached = _latest_cached_hf_snapshot(root, required_file=relative_file)
+    if cached is not None:
+        return cached
+
+    raise ValueError(
+        f"model.path={root!r} is not a local artifact root and no cached "
+        f"Hugging Face snapshot contains {relative_file!r}; set model.path "
+        f"or model.{path_field}",
+    )
+
+
+def _latest_cached_hf_snapshot(repo_id: str, *, required_file: str) -> Path | None:
+    repo_cache = _hf_hub_root() / ("models--" + repo_id.replace("/", "--"))
+    snapshots_dir = repo_cache / "snapshots"
+    if not snapshots_dir.is_dir():
+        return None
+
+    snapshots = [
+        path
+        for path in snapshots_dir.iterdir()
+        if path.is_dir() and (path / required_file).exists()
+    ]
+    if not snapshots:
+        return None
+    return max(snapshots, key=lambda path: path.stat().st_mtime)
+
+
+def _hf_hub_root() -> Path:
+    hub_cache = os.environ.get("HF_HUB_CACHE")
+    if hub_cache:
+        return Path(hub_cache).expanduser()
+    hf_home = os.environ.get("HF_HOME")
+    if hf_home:
+        return Path(hf_home).expanduser() / "hub"
+    return Path.home() / ".cache" / "huggingface" / "hub"
+
+
+def _looks_like_filesystem_root(value: str) -> bool:
+    return value.startswith(("/", "./", "../", "~"))
 
 
 __all__ = [
