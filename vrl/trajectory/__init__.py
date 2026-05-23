@@ -15,6 +15,12 @@ from vrl.trajectory.resolver import (
     TrajectoryResolver,
     TrajectoryResolverError,
 )
+from vrl.trajectory.storage import (
+    TrajectoryStoragePolicy,
+    apply_trajectory_storage_policy,
+    trajectory_storage_policy_from_cfg,
+    trajectory_tensor_bytes,
+)
 from vrl.trajectory.types import (
     AdvantageScope,
     AxisKind,
@@ -68,9 +74,11 @@ __all__ = [
     "TrajectoryResolver",
     "TrajectoryResolverError",
     "TrajectorySegment",
+    "TrajectoryStoragePolicy",
     "TrajectoryTensor",
     "TrajectoryValidationError",
     "TrajectoryValidator",
+    "apply_trajectory_storage_policy",
     "build_ar_continuous_trajectory",
     "build_ar_discrete_trajectory",
     "build_ar_multisegment_trajectory",
@@ -78,4 +86,6 @@ __all__ = [
     "build_training_view",
     "replay_input_ref",
     "tensor_ref",
+    "trajectory_storage_policy_from_cfg",
+    "trajectory_tensor_bytes",
 ]

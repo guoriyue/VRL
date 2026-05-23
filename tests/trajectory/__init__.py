@@ -1,0 +1,1 @@
+"""Trajectory contract tests."""

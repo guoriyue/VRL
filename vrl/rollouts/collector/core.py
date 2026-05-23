@@ -9,6 +9,10 @@ from typing import Any
 
 from vrl.generation import GenerationOutput, GenerationRuntime
 from vrl.rollouts.batch import RolloutBatch
+from vrl.rollouts.collector.artifacts import (
+    release_reward_artifact_if_needed,
+    reward_artifact_policy_from_cfg,
+)
 from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
     TrajectoryRolloutBatchBuilder,
@@ -20,6 +24,7 @@ from vrl.rollouts.collector.requests import (
 )
 from vrl.rollouts.collector.rewards import RewardScorer
 from vrl.rollouts.families import get_rollout_family_entry
+from vrl.trajectory import trajectory_storage_policy_from_cfg
 
 LAST_COLLECT_PHASES: dict[str, float] = {}
 
@@ -128,6 +133,12 @@ class RolloutCollector:
             kl_reward=float(_config_get(self.config, "kl_reward", 0.0)),
             rescale_to_unit=bool(_config_get(self.config, "rescale_to_unit", False)),
             reward_view_name=_reward_view_name(self.config),
+            trajectory_storage_policy=trajectory_storage_policy_from_cfg(
+                _config_get(self.config, "trajectory_storage", None),
+            ),
+            reward_artifact_policy=reward_artifact_policy_from_cfg(
+                _config_get(self.config, "reward_artifact", None),
+            ),
         )
         batch_builder = TrajectoryRolloutBatchBuilder(output, context)
 
@@ -139,7 +150,10 @@ class RolloutCollector:
         if phases is not None and phase_t is not None:
             phases["collect.reward_score"] = _sync_time() - phase_t
 
-        return batch_builder.build(rewards)
+        batch = batch_builder.build(rewards)
+        release_reward_artifact_if_needed(batch, context.reward_artifact_policy)
+        release_reward_artifact_if_needed(output, context.reward_artifact_policy)
+        return batch
 
 
 def build_rollout_collector(

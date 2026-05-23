@@ -10,12 +10,18 @@ import torch
 
 from vrl.generation import GenerationOutput
 from vrl.rollouts.batch import RolloutBatch
+from vrl.rollouts.collector.artifacts import (
+    RewardArtifactPolicy,
+    extract_reward_artifact,
+)
 from vrl.rollouts.collector.rewards import RewardScoringInput
 from vrl.trajectory import (
     RewardView,
     TrajectoryBatch,
     TrajectorySegment,
+    TrajectoryStoragePolicy,
     TrajectoryTensor,
+    apply_trajectory_storage_policy,
     build_training_view,
 )
 
@@ -29,6 +35,10 @@ class RolloutBatchBuildContext:
     kl_reward: float = 0.0
     rescale_to_unit: bool = False
     reward_view_name: str | None = None
+    trajectory_storage_policy: TrajectoryStoragePolicy = field(
+        default_factory=TrajectoryStoragePolicy,
+    )
+    reward_artifact_policy: RewardArtifactPolicy = field(default_factory=RewardArtifactPolicy)
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -42,7 +52,11 @@ class TrajectoryRolloutBatchBuilder:
     ) -> None:
         self.output = output
         self.context = context
-        self.trajectory = self._require_output_trajectory(output)
+        self.trajectory = apply_trajectory_storage_policy(
+            self._require_output_trajectory(output),
+            context.trajectory_storage_policy,
+        )
+        self.output.trajectory = self.trajectory
 
     def reward_scoring_input(
         self,
@@ -257,7 +271,7 @@ class TrajectoryRolloutBatchBuilder:
 
         output_ref = view.metadata.get("output_ref")
         if output_ref == "GenerationOutput.output":
-            return self.output.output
+            return extract_reward_artifact(self.output)
         raise RuntimeError(
             f"RewardView {view.name!r} has no tensor_refs and no supported output_ref",
         )

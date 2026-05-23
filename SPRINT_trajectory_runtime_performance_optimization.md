@@ -29,9 +29,9 @@ vrl/rollouts/evaluators
 - `GenerationMetrics.engine_counters` 已经存在于 `vrl/generation/types.py`，但 key schema 还不统一。
 - `vrl/generation/diffusion/gather.py` 目前只聚合 `stage_durations_s`，还不能回答 trajectory / reward artifact / replay tensor 占多少。
 - `vrl/trajectory/validation.py` 已经拒绝 runtime-only state，这个方向正确。
-- `vrl/trajectory/ops.py::move_trajectory_batch(...)` 会移动整个 `TrajectoryBatch` 的 tensor leaves；显式 CPU/offload policy 需要在这里有清楚语义。
+- `vrl/trajectory/storage.py` 已经提供 `TrajectoryStoragePolicy`、config parser、apply helper 和 trajectory byte counter。
 - `vrl/trajectory/resolver.py` 已经支持 `LossUnit.axis_index`，可以先 slice 当前 loss unit，再返回 resolved tensor。
-- reward artifact 当前主要通过 `vrl/rollouts/collector/batch_builder.py` 从 `GenerationOutput.output` 取，没有独立 lifecycle policy。
+- `vrl/rollouts/collector/artifacts.py` 已经提供 reward artifact lifecycle policy；collector 可在 reward scoring 后显式释放 reward-only decoded output。
 
 ## 非目标
 
@@ -88,7 +88,7 @@ reward 完成后，如果 trainer replay 不需要 decoded output，就不应继
 
 ### 3. Storage policy 是 runtime policy
 
-新增 storage policy 只决定 trajectory tensor 存放位置和 dtype：
+Storage policy 只决定 trajectory tensor 存放位置和 dtype：
 
 ```yaml
 rollout:
@@ -153,100 +153,6 @@ diffusion_*
 ar_*
 ```
 
-### Trajectory storage policy
-
-新增：
-
-```text
-vrl/trajectory/storage.py
-```
-
-最小 API：
-
-```python
-@dataclass(frozen=True, slots=True)
-class TrajectoryStoragePolicy:
-    device: str = "preserve"
-    dtype: str = "preserve"
-
-def trajectory_storage_policy_from_cfg(value: object) -> TrajectoryStoragePolicy:
-    ...
-
-def apply_trajectory_storage_policy(
-    batch: TrajectoryBatch,
-    policy: TrajectoryStoragePolicy,
-) -> TrajectoryBatch:
-    ...
-
-def trajectory_tensor_bytes(value: object) -> int:
-    ...
-```
-
-编辑：
-
-```text
-vrl/trajectory/__init__.py
-vrl/trajectory/ops.py
-vrl/trajectory/resolver.py
-vrl/trajectory/validation.py
-```
-
-目标：
-
-- 默认 `preserve` 不改变现有行为。
-- CPU policy 只在显式配置时发生。
-- dtype policy 必须有 numerical tolerance test。
-- byte counting helper 可被 generation gatherer 和 collector 复用。
-- `move_trajectory_batch(...)` 继续保留，但 storage policy 成为更清楚的 public entry。
-
-### Reward artifact lifecycle
-
-新增：
-
-```text
-vrl/rollouts/collector/artifacts.py
-```
-
-最小 API：
-
-```python
-@dataclass(frozen=True, slots=True)
-class RewardArtifactPolicy:
-    keep_after_reward: bool = True
-
-def reward_artifact_policy_from_cfg(value: object) -> RewardArtifactPolicy:
-    ...
-
-def extract_reward_artifact(output: GenerationOutput) -> object:
-    ...
-
-def reward_artifact_bytes(artifact: object) -> int:
-    ...
-
-def release_reward_artifact_if_needed(
-    batch: object,
-    policy: RewardArtifactPolicy,
-) -> None:
-    ...
-```
-
-编辑：
-
-```text
-vrl/rollouts/collector/config.py
-vrl/rollouts/collector/core.py
-vrl/rollouts/collector/batch_builder.py
-vrl/rollouts/collector/rewards.py
-vrl/rollouts/batch/ops.py
-```
-
-目标：
-
-- reward artifact 从 `GenerationOutput.output` 进入 reward scoring。
-- reward-only decoded output 不进入 `TrajectoryBatch.context`。
-- `RolloutBatch` 不把 decoded image/video 当 trainer replay source of truth。
-- `keep_after_reward=True` 保持当前行为。
-
 ### Evaluator slice access
 
 编辑：
@@ -279,23 +185,7 @@ vrl/rollouts/evaluators/diffusion/sde_logprob.py
 - counters 可 JSON 序列化。
 - counters 不进入 trajectory context。
 
-### Phase 2：TrajectoryStoragePolicy
-
-完成标准：
-
-- 新增 storage policy dataclass、parser、apply helper、byte helper。
-- 默认 preserve 行为不改变现有 tests。
-- validation 继续拒绝 runtime-only state。
-
-### Phase 3：reward artifact lifecycle
-
-完成标准：
-
-- reward artifact helper 有单测。
-- `keep_after_reward=True` 保持当前 debug 行为。
-- 显式 release 时，trainer replay 仍从 `TrajectoryBatch` / `TrainingView` 获取需要的 tensors。
-
-### Phase 4：evaluator slice access
+### Phase 2：evaluator slice access
 
 完成标准：
 
@@ -303,23 +193,18 @@ vrl/rollouts/evaluators/diffusion/sde_logprob.py
 - diffusion timestep、AR token、R1 segment 都不依赖 duplicated extras。
 - 对 tensor view / copy 行为有 regression guard。
 
-### Phase 5：family first adoption
+### Phase 3：family first adoption
 
 完成标准：
 
-- 至少一个 family 端到端采用 storage policy 和 reward artifact helper。
-- 建议第一批采用 diffusion OCR，因为 tensor 最大、最容易暴露内存问题。
-- adopted family 的 counters 能输出 trajectory bytes、reward artifact bytes、storage policy device/dtype。
+- 至少一个 family 的 counters 能输出 trajectory bytes、reward artifact bytes、storage policy device/dtype。
+- 建议第一批接入 diffusion OCR，因为 tensor 最大、最容易暴露内存问题。
 
 ## Tests
 
 新增或编辑：
 
 ```text
-tests/trajectory/test_storage_policy.py
-tests/trajectory/test_trajectory_byte_counters.py
-tests/rollouts/test_reward_artifact_lifetime.py
-tests/rollouts/test_rollout_batch_no_duplicate_artifacts.py
 tests/rollouts/test_evaluator_slice_access.py
 tests/generation/ray/test_ray_resident_session.py
 tests/engine/generation/test_chunk_gatherer.py
@@ -328,21 +213,13 @@ tests/trainers/test_memory_guards.py
 
 测试要求：
 
-- storage policy 不改变 trajectory axis / segment / role / distribution。
-- CPU policy 只在显式配置时发生。
-- dtype policy 有 tolerance test。
-- reward artifact 不进 `TrajectoryBatch.context`。
-- reward artifact lifecycle policy 不属于 `TrajectoryStoragePolicy`。
 - counters 可 JSON 序列化。
 - evaluator 仍输出 `TrajectorySignalBatch`。
 
 ## 验收命令
 
 ```bash
-pytest tests/trajectory \
-  tests/rollouts/test_reward_artifact_lifetime.py \
-  tests/rollouts/test_rollout_batch_no_duplicate_artifacts.py \
-  tests/rollouts/test_evaluator_slice_access.py \
+pytest tests/rollouts/test_evaluator_slice_access.py \
   tests/engine/generation/test_chunk_gatherer.py \
   tests/generation/ray/test_ray_resident_session.py
 
@@ -357,5 +234,4 @@ git diff --check
 
 - 每个 rollout batch 的 trajectory / reward artifact / replay tensor 大概占多少内存。
 - storage policy 是否能跨 diffusion、AR、R1、NextStep 复用。
-- reward artifact 是否和 trainer replay record 解耦。
 - evaluator 是否严格从 `TrajectoryBatch` / `TrainingView` 取 old logprob、mask、distribution。

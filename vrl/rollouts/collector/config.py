@@ -69,6 +69,8 @@ def build_rollout_config_from_cfg(
             "sampling.r1.train_segments",
         ),
     )
+    _copy_first_present(values, cfg, "trajectory_storage", ("rollout.trajectory_storage",))
+    _copy_first_present(values, cfg, "reward_artifact", ("rollout.reward_artifact",))
     _add_derived_values(values)
     return RolloutConfig(family=family, values=values)
 
