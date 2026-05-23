@@ -11,7 +11,7 @@ actor:
     lr: 1.0e-4
 
 trainer:
-  entrypoint: vrl.scripts.janus_pro.train:train_janus_pro_r1_ocr_grpo
+  entrypoint: vrl.scripts.ar.janus_pro.train:train_janus_pro_r1_ocr_grpo
   output_dir: outputs/janus_pro_1b_r1_ocr_grpo
   total_epochs: 80
   save_freq: 10

@@ -11,7 +11,7 @@ def test_janus_pro_r1_experiment_loads_with_multisegment_algorithm() -> None:
     built = build_configs(cfg)
 
     assert cfg.trainer.entrypoint == (
-        "vrl.scripts.janus_pro.train:train_janus_pro_r1_ocr_grpo"
+        "vrl.scripts.ar.janus_pro.train:train_janus_pro_r1_ocr_grpo"
     )
     assert cfg.algorithm.kind == "token_grpo_multisegment"
     assert isinstance(built["algorithm"], MultiSegmentTokenGRPOConfig)
@@ -54,7 +54,7 @@ def test_janus_pro_r1_codex_qa_experiment_loads() -> None:
 
     assert cfg.reward.components.codex_image_qa == 1.0
     assert cfg.trainer.entrypoint == (
-        "vrl.scripts.janus_pro.train:train_janus_pro_r1_codex_qa_grpo"
+        "vrl.scripts.ar.janus_pro.train:train_janus_pro_r1_codex_qa_grpo"
     )
     assert cfg.reward.kwargs.codex_image_qa.command[0] == "codex"
     assert cfg.data.manifest == "datasets/drawbench/train_192.txt"
@@ -66,7 +66,7 @@ def test_janus_pro_r1_codex_qa_profile_wrapper_enables_profiler() -> None:
     built = build_configs(cfg)
 
     assert cfg.trainer.entrypoint == (
-        "vrl.scripts.janus_pro.train:train_janus_pro_r1_codex_qa_grpo"
+        "vrl.scripts.ar.janus_pro.train:train_janus_pro_r1_codex_qa_grpo"
     )
     assert cfg.trainer.total_epochs == 1
     assert cfg.trainer.output_dir == "outputs/profile_janus_r1_codex_qa_1epoch"

@@ -45,7 +45,7 @@ eval:
   use_ema: true
 
 trainer:
-  entrypoint: vrl.scripts.sd3_5.train:train_sd3_5_grpo
+  entrypoint: vrl.scripts.diffusion.sd3_5.train:train_sd3_5_grpo
   output_dir: outputs/sd3_5_ocr_grpo
   save_freq: 60
   debug:

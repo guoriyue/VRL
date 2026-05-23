@@ -1,0 +1,78 @@
+from __future__ import annotations
+
+import numpy as np
+import pytest
+from omegaconf import OmegaConf
+
+from vrl.scripts.diffusion.cosmos.anima import generate
+
+
+def test_generate_disables_empty_training_lora_for_inference() -> None:
+    cfg = OmegaConf.create({"model": {"use_lora": True, "lora": {"path": ""}}})
+
+    generate._configure_lora_for_inference(
+        cfg,
+        lora_path="",
+        use_config_lora=False,
+    )
+
+    assert cfg.model.use_lora is False
+
+
+def test_generate_accepts_checkpoint_dir_as_lora_path(tmp_path) -> None:
+    checkpoint = tmp_path / "checkpoint-final"
+    exported = checkpoint / "lora_weights"
+    exported.mkdir(parents=True)
+
+    assert generate._resolve_lora_path(str(checkpoint)) == exported
+
+
+def test_generate_image_conversion_accepts_chw_float() -> None:
+    image = np.zeros((3, 2, 2), dtype=np.float32)
+    image[0] = 1.0
+
+    out = generate._image_to_uint8_hwc(image)
+
+    assert out.shape == (2, 2, 3)
+    assert out.dtype == np.uint8
+    assert out[..., 0].max() == 255
+
+
+def test_generate_sampling_defaults_follow_config() -> None:
+    cfg = OmegaConf.create(
+        {
+            "sampling": {
+                "width": 768,
+                "height": 512,
+                "num_steps": 12,
+                "guidance_scale": 4.0,
+                "max_sequence_length": 256,
+            },
+        },
+    )
+    args = generate.build_parser().parse_args(["--prompt", "adult anime portrait"])
+
+    sampling = generate._resolve_sampling(args, cfg)
+
+    assert sampling["width"] == 768
+    assert sampling["height"] == 512
+    assert sampling["num_steps"] == 12
+    assert sampling["guidance_scale"] == 4.0
+    assert sampling["max_sequence_length"] == 256
+
+
+def test_generate_cuda_device_fails_fast_when_unavailable() -> None:
+    class _Cuda:
+        @staticmethod
+        def is_available() -> bool:
+            return False
+
+    class _Torch:
+        cuda = _Cuda()
+
+        @staticmethod
+        def device(value: str) -> object:
+            return type("Device", (), {"type": value.split(":", 1)[0]})()
+
+    with pytest.raises(RuntimeError, match="CUDA device was requested"):
+        generate._resolve_device("cuda:0", _Torch)

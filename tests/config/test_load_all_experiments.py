@@ -155,7 +155,7 @@ def test_anima_safe_reward_config_uses_cpu_nsfw_penalty() -> None:
 
 
 def test_cosmos_optimization_check_records_trainable_change(tmp_path: Path) -> None:
-    from vrl.scripts.cosmos.train import (
+    from vrl.scripts.diffusion.cosmos.train import (
         _capture_optimization_check_before,
         _capture_optimization_check_metrics,
         _write_optimization_check_after,

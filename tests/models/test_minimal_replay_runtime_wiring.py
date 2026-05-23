@@ -229,7 +229,7 @@ def test_ar_replay_builders_return_minimal_bundles(
 
 
 def test_sd3_after_bundle_hook_ignores_replay_model_without_pipeline() -> None:
-    from vrl.scripts.sd3_5.train import _offload_driver_frozen_modules
+    from vrl.scripts.diffusion.sd3_5.train import _offload_driver_frozen_modules
 
     class _ReplayLike:
         @property

@@ -16,7 +16,7 @@ actor:
     lr: 1.0e-4
 
 trainer:
-  entrypoint: vrl.scripts.janus_pro.train:train_janus_pro_ocr_grpo
+  entrypoint: vrl.scripts.ar.janus_pro.train:train_janus_pro_ocr_grpo
   output_dir: outputs/janus_pro_1b_ocr_grpo
   debug:
     first_step: false
