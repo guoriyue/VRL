@@ -28,13 +28,24 @@ def diffusion_family_capability(
         ),
         execution_stages=(
             ExecutionStageCapability(
+                "prompt_encode",
+                profiler_name="generation.prompt_encode",
+            ),
+            ExecutionStageCapability(
+                "prepare_sampling",
+                profiler_name="generation.prepare_sampling",
+            ),
+            ExecutionStageCapability(
                 "denoise_step",
                 segment=trainable_segment,
                 axis="timestep",
-                cache_read=True,
-                cache_write=True,
+                profiler_name="generation.denoise_step",
             ),
-            ExecutionStageCapability("vq_decode", segment=trainable_segment),
+            ExecutionStageCapability(
+                "decode_latents",
+                segment=trainable_segment,
+                profiler_name="generation.decode_latents",
+            ),
             ExecutionStageCapability(
                 "reward_artifact",
                 profiler_name="collector.reward_score",

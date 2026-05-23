@@ -9,8 +9,10 @@ import torch
 
 from vrl.generation.diffusion import DiffusionChunkGatherer, DiffusionChunkResult
 from vrl.generation.execution.ids import build_sample_rows
+from vrl.generation.execution.planner import build_engine_plan
 from vrl.generation.protocols import ChunkGatherer
 from vrl.generation.types import GenerationOutput, GenerationRequest
+from vrl.models.diffusion.capabilities import diffusion_family_capability
 
 
 class _PureGatherer:
@@ -102,6 +104,34 @@ def test_diffusion_chunk_gatherer_keeps_rollout_context() -> None:
     assert output.trajectory is not None
     assert output.trajectory.context == context
     assert output.trajectory.segments["denoise"].reward_view == "video"
+
+
+def test_diffusion_engine_plan_uses_generation_profiler_labels() -> None:
+    request = _request(cfg=False)
+    sample_rows = build_sample_rows(request)
+    plan = build_engine_plan(
+        request,
+        sample_rows,
+        capability=diffusion_family_capability("sd3_5", "t2i"),
+        max_samples_per_chunk=1,
+    )
+
+    labels = set(plan.profiler_labels)
+    stage_names = {stage.name for stage in plan.execution_stages}
+
+    assert {
+        "generation.prompt_encode",
+        "generation.prepare_sampling",
+        "generation.denoise_step",
+        "generation.decode_latents",
+    }.issubset(labels)
+    assert "decode_latents" in stage_names
+    assert "vq_decode" not in stage_names
+    assert "engine.cache_read" not in labels
+    assert "engine.cache_write" not in labels
+    assert "engine.vq_decode" not in labels
+    assert all(not stage.cache_read for stage in plan.execution_stages)
+    assert all(not stage.cache_write for stage in plan.execution_stages)
 
 
 def _request(

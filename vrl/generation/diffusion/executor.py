@@ -227,17 +227,20 @@ class DiffusionPipelineExecutorBase(
     ) -> DiffusionChunkResult:
         del execution_stage, plan_summary
 
+        from vrl.utils.profiling import record_function
+
         params = self.parse_sampling_params(request)
         video_request = self.build_video_request(chunk.prompt, params)
         stage_durations: dict[str, float] = {}
 
         started = time.perf_counter()
-        encoded = self.encode_prompt_for_chunk(
-            generation_request=request,
-            video_request=video_request,
-            params=params,
-            chunk=chunk,
-        )
+        with record_function("generation.prompt_encode"):
+            encoded = self.encode_prompt_for_chunk(
+                generation_request=request,
+                video_request=video_request,
+                params=params,
+                chunk=chunk,
+            )
         stage_durations["encode"] = time.perf_counter() - started
 
         started = time.perf_counter()
@@ -322,7 +325,7 @@ class DiffusionPipelineExecutorBase(
         from vrl.utils.profiling import record_function
 
         model = self.model
-        with record_function("engine.cache_write"):
+        with record_function("generation.prepare_sampling"):
             state = model.prepare_sampling(request, encoded, **(prepare_kwargs or {}))
         chunk_batch = state.latents.shape[0]
         if int(chunk_batch) != config.sample_count:
@@ -376,39 +379,41 @@ class DiffusionPipelineExecutorBase(
 
         with autocast_ctx, torch.no_grad():
             for step_idx in range(len(state.timesteps)):
-                with record_function("engine.denoise_step"):
+                with record_function("generation.denoise_step"):
                     latents_ori = state.latents.clone()
                     timestep = state.timesteps[step_idx]
-                    with record_function("engine.cache_read"):
+                    with record_function("generation.denoise_forward"):
                         step_output = model.forward_step(state, step_idx)
                     noise_pred = step_output["noise_pred"]
 
                     in_sde_window = config.sde_window is None or (
                         config.sde_window[0] <= step_idx < config.sde_window[1]
                     )
-                    sde_result = sde_step_with_logprob(
-                        state.scheduler,
-                        noise_pred.float(),
-                        timestep.unsqueeze(0),
-                        state.latents.float(),
-                        generator=generator if in_sde_window else None,
-                        deterministic=not in_sde_window,
-                        return_dt=config.return_kl,
-                        noise_level=config.noise_level,
-                        sde_type=config.sde_type,
-                    )
+                    with record_function("generation.scheduler_step"):
+                        sde_result = sde_step_with_logprob(
+                            state.scheduler,
+                            noise_pred.float(),
+                            timestep.unsqueeze(0),
+                            state.latents.float(),
+                            generator=generator if in_sde_window else None,
+                            deterministic=not in_sde_window,
+                            return_dt=config.return_kl,
+                            noise_level=config.noise_level,
+                            sde_type=config.sde_type,
+                        )
                     prev_latents = sde_result.prev_sample
-                    with record_function("engine.cache_write"):
+                    with record_function("generation.latent_write"):
                         state.latents = prev_latents
 
-                obs_steps.append(latents_ori.detach())
-                act_steps.append(prev_latents.detach())
-                lp_steps.append(sde_result.log_prob.detach())
-                t_steps.append(timestep.detach())
-                if config.return_kl:
-                    kl_steps.append(sde_result.log_prob.detach().abs())
-                else:
-                    kl_steps.append(torch.zeros(chunk_batch, device=device))
+                with record_function("generation.trajectory_buffer_write"):
+                    obs_steps.append(latents_ori.detach())
+                    act_steps.append(prev_latents.detach())
+                    lp_steps.append(sde_result.log_prob.detach())
+                    t_steps.append(timestep.detach())
+                    if config.return_kl:
+                        kl_steps.append(sde_result.log_prob.detach().abs())
+                    else:
+                        kl_steps.append(torch.zeros(chunk_batch, device=device))
 
         observations = torch.stack(obs_steps, dim=1)
         actions = torch.stack(act_steps, dim=1)
@@ -449,7 +454,7 @@ class DiffusionPipelineExecutorBase(
 
         model = self.model
         state = denoise_result.state
-        with record_function("engine.vq_decode"):
+        with record_function("generation.decode_latents"):
             video = model.decode_latents(state.latents)
 
         return DiffusionChunkResult(
