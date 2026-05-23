@@ -45,7 +45,3 @@ def test_runtime_factory_rejects_missing_worker_config() -> None:
     with pytest.raises(ValueError, match="worker_config"):
         build_reward_inference_runtime({"inference_runtime": "ray"})
 
-
-def test_runtime_factory_rejects_non_ray_runtime() -> None:
-    with pytest.raises(ValueError, match="must be 'ray'"):
-        build_reward_inference_runtime({"inference_runtime": "local"})

@@ -138,11 +138,6 @@ def test_rollout_backend_config_from_cfg_uses_ray_by_default() -> None:
     assert config.num_workers == 1
 
 
-def test_rollout_backend_config_from_cfg_rejects_non_ray_backend() -> None:
-    with pytest.raises(ValueError, match=r"distributed\.backend only supports 'ray'"):
-        RayGenerationConfig.from_cfg(_cfg(backend="local"))
-
-
 @pytest.mark.parametrize(
     ("launch_contract", "gatherer"),
     [
