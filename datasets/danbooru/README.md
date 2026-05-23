@@ -7,8 +7,8 @@ Subdirectories:
 
 - `anatomy/`: quota-balanced anatomy prompt manifests for Anima RL.
 - `safety/`: anime safety prompt manifests and baseline eval prompts. These
-  prompts are grouped here for dataset organization; they are not generated
-  from Danbooru metadata.
+  prompts are grouped here for dataset organization; the primary build path
+  derives explicit/questionable prompt tags from Danbooru metadata.
 
 Shared files:
 

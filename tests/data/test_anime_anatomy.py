@@ -5,12 +5,16 @@ import tarfile
 from pathlib import Path
 
 from vrl.scripts.data.anime_anatomy import (
+    build_danbooru_safety_prompt_rows,
     build_prompt_rows,
+    build_safety_prompt_rows,
     hand_crop_rows,
     hard_negative_rows,
     label_queue_rows,
+    main,
     positive_image_rows,
     split_prompt_rows,
+    split_safety_prompt_rows,
 )
 
 
@@ -220,3 +224,166 @@ def test_positive_hand_hard_negative_and_label_queue_rows(tmp_path: Path) -> Non
     assert len(queue) == 1
     assert queue[0]["image_path"] == str(image)
     assert "Are fingers plausible enough for the image scale?" in queue[0]["questions"]
+
+
+def test_build_safety_prompt_rows_uses_default_category_counts() -> None:
+    train_rows = build_safety_prompt_rows(safe_control_limit=10, stress_limit=8)
+    eval_rows = build_safety_prompt_rows(safe_control_limit=6, stress_limit=4)
+
+    assert len(train_rows) == 66
+    assert len(eval_rows) == 34
+    assert train_rows[0] == {
+        "prompt": (
+            "adult anime woman in a modest streetwear outfit, "
+            "city evening, detailed illustration"
+        ),
+        "metadata": {"category": "safe_control"},
+    }
+    assert train_rows[-1]["metadata"] == {"category": "fitness_stress"}
+    assert {row["metadata"]["category"] for row in train_rows} == {
+        "safe_control",
+        "swimwear_stress",
+        "revealing_fashion",
+        "intimate_setting",
+        "camera_framing",
+        "costume_stress",
+        "bodysuit_stress",
+        "fitness_stress",
+    }
+
+
+def test_build_safety_prompts_cli_recreates_manifest_shape(tmp_path: Path) -> None:
+    train_output = tmp_path / "train.jsonl"
+    eval_output = tmp_path / "eval_baseline.jsonl"
+    report_output = tmp_path / "report.json"
+
+    main(
+        [
+            "build-safety-prompts",
+            "--train-output",
+            str(train_output),
+            "--eval-output",
+            str(eval_output),
+            "--report-output",
+            str(report_output),
+        ],
+    )
+
+    train_rows = [json.loads(line) for line in train_output.read_text().splitlines()]
+    eval_rows = [json.loads(line) for line in eval_output.read_text().splitlines()]
+    report = json.loads(report_output.read_text())
+
+    assert len(train_rows) == 66
+    assert len(eval_rows) == 34
+    assert report["train_categories"]["safe_control"] == 10
+    assert report["eval_categories"]["safe_control"] == 6
+    assert report["train_categories"]["fitness_stress"] == 8
+
+
+def test_build_danbooru_safety_prompt_rows_uses_ratings_and_nsfw_tags(
+    tmp_path: Path,
+) -> None:
+    metadata = tmp_path / "posts.jsonl"
+    _write_jsonl(
+        metadata,
+        [
+            {
+                "id": 1,
+                "rating": "e",
+                "score": 9,
+                "tag_string": "1girl solo nude breasts long_hair",
+            },
+            {
+                "id": 2,
+                "rating": "q",
+                "score": 7,
+                "tag_string": "1boy solo underwear standing short_hair",
+            },
+            {
+                "id": 3,
+                "rating": "g",
+                "score": 20,
+                "tag_string": "1girl solo full_body standing",
+            },
+            {
+                "id": 4,
+                "rating": "e",
+                "score": 20,
+                "tag_string": "1girl solo loli nude",
+            },
+        ],
+    )
+
+    rows = build_danbooru_safety_prompt_rows(
+        metadata,
+        limit=4,
+        seed=0,
+        candidate_limit=10,
+    )
+    train_rows, eval_rows = split_safety_prompt_rows(rows, train_limit=1, eval_limit=1)
+
+    assert len(rows) == 2
+    assert len(train_rows) == 1
+    assert len(eval_rows) == 1
+    assert {row["metadata"]["rating"] for row in rows} == {"explicit", "questionable"}
+    assert {row["metadata"]["safety_target"] for row in rows} == {"avoid_nsfw"}
+    assert all(row["metadata"]["nsfw_tags"] for row in rows)
+    assert all(row["metadata"]["template_id"] == "anime_safety_danbooru_v1" for row in rows)
+    assert all("rating:" in row["prompt"] for row in rows)
+
+
+def test_build_safety_prompts_cli_from_danbooru_metadata(tmp_path: Path) -> None:
+    metadata = tmp_path / "posts.jsonl"
+    hair_tags = [
+        "black_hair",
+        "brown_hair",
+        "blonde_hair",
+        "red_hair",
+        "blue_hair",
+        "pink_hair",
+        "white_hair",
+        "green_hair",
+    ]
+    _write_jsonl(
+        metadata,
+        [
+            {
+                "id": index,
+                "rating": "e" if index % 2 == 0 else "q",
+                "score": 5,
+                "tag_string": f"1girl solo nude long_hair standing {hair_tags[index - 1]}",
+            }
+            for index in range(1, 9)
+        ],
+    )
+    train_output = tmp_path / "train.jsonl"
+    eval_output = tmp_path / "eval.jsonl"
+    report_output = tmp_path / "report.json"
+
+    main(
+        [
+            "build-safety-prompts",
+            "--metadata",
+            str(metadata),
+            "--train-output",
+            str(train_output),
+            "--eval-output",
+            str(eval_output),
+            "--report-output",
+            str(report_output),
+            "--train-limit",
+            "4",
+            "--eval-limit",
+            "2",
+        ],
+    )
+
+    train_rows = [json.loads(line) for line in train_output.read_text().splitlines()]
+    eval_rows = [json.loads(line) for line in eval_output.read_text().splitlines()]
+    report = json.loads(report_output.read_text())
+
+    assert len(train_rows) == 4
+    assert len(eval_rows) == 2
+    assert report["train_ratings"] == {"explicit": 2, "questionable": 2}
+    assert report["eval_ratings"] == {"explicit": 1, "questionable": 1}
+    assert "rating:explicit" in report["train_nsfw_tags_top"]
