@@ -176,6 +176,16 @@ def test_anima_safe_reward_config_uses_cpu_nsfw_penalty() -> None:
     assert [name for name, _, _ in reward_fn.rewards] == ["aesthetic", "nsfw_safety"]
 
 
+def test_anima_config_does_not_depend_on_external_comfyui_checkout() -> None:
+    cfg = load_config("experiment/diffusion/anima_preview3/online_grpo_aesthetic")
+
+    assert cfg.model.path == "circlestone-labs/Anima"
+    assert "tokenizer_root" not in cfg.model
+    assert "anima-inference" not in OmegaConf.to_yaml(cfg.model)
+    assert cfg.model.qwen_tokenizer_path == "Qwen/Qwen2.5-0.5B"
+    assert cfg.model.t5_tokenizer_path == "google-t5/t5-base"
+
+
 def test_cosmos_optimization_check_records_trainable_change(tmp_path: Path) -> None:
     from vrl.scripts.diffusion.cosmos.train import (
         _capture_optimization_check_before,
@@ -292,3 +302,17 @@ def test_dpo_allows_explicit_null_max_train_samples() -> None:
 
     assert optional_none(cfg, "data.max_train_samples") is None
     validate_training_config(cfg)
+
+
+def test_dpo_recipe_declares_trainer_only_resource_plan() -> None:
+    from vrl.ray.resources import resolve_distributed_resources
+
+    cfg = load_config(
+        "experiment/diffusion/wan_2_1/offline_dpo_pickapic",
+        overrides=["distributed.resources.visible_devices=[0]"],
+    )
+    resolved = resolve_distributed_resources(cfg)
+
+    assert resolved.trainer_devices == (0,)
+    assert resolved.rollout_devices == ()
+    assert resolved.rollout_num_workers == 0

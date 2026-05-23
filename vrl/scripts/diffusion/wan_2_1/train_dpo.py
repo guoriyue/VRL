@@ -16,6 +16,11 @@ from pathlib import Path
 
 from omegaconf import DictConfig
 
+from vrl.ray.resources import (
+    format_distributed_resource_plan,
+    resolve_distributed_resources,
+    trainer_torch_device,
+)
 from vrl.trainers.checkpointing import (
     LORA_WEIGHTS_NAME,
     capture_rng_state,
@@ -126,7 +131,9 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         strict=bool(require(cfg, "trainer.resume_strict")),
     )
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    resources = resolve_distributed_resources(cfg)
+    logger.info(format_distributed_resource_plan(resources))
+    device = torch.device(trainer_torch_device(resources))
     weight_dtype = torch_dtype_for_mixed_precision(
         mixed_precision,
         bf16=bool(require(cfg, "actor.bf16")),

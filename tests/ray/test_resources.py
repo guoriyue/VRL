@@ -182,6 +182,28 @@ def test_cpu_only_rollout_uses_no_gpu_bundles() -> None:
     assert trainer_torch_device(resolved) == "cpu"
 
 
+def test_trainer_only_plan_allows_zero_rollout_workers() -> None:
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0],
+                "trainer": {"num_gpus": 1},
+                "rollout": {
+                    "num_gpus": 0,
+                    "gpus_per_worker": 0,
+                    "num_workers": 0,
+                },
+            },
+        ),
+    )
+
+    assert resolved.trainer_devices == (0,)
+    assert resolved.rollout_devices == ()
+    assert resolved.rollout_num_workers == 0
+    assert resolved.ray_total_bundles == 0
+    assert trainer_torch_device(resolved) == "cuda:0"
+
+
 def test_resource_plan_formatter_includes_key_fields() -> None:
     resolved = resolve_distributed_resources(
         _cfg(

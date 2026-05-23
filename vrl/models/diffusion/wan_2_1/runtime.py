@@ -24,8 +24,8 @@ from vrl.models.replay_loading import (
     compile_transformer,
     enable_transformer_full_finetune,
     full_generation_bundle_metadata,
+    load_diffusers_scheduler_component,
     load_diffusers_transformer_component,
-    load_flow_match_scheduler_component,
     minimal_replay_bundle_metadata,
 )
 
@@ -152,7 +152,10 @@ def build_wan_2_1_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle
             spec,
             "WanTransformer3DModel",
         ),
-        scheduler=load_flow_match_scheduler_component(spec),
+        scheduler=load_diffusers_scheduler_component(
+            spec,
+            "UniPCMultistepScheduler",
+        ),
         device=spec.device,
     )
 

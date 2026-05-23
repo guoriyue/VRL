@@ -1,14 +1,17 @@
 # Anima Preview3 single-file Cosmos Predict2 Text2Image checkpoint.
-# The default path matches the local ComfyUI-style checkout on this machine.
-# Replay/trainer loading needs only model.path or model.transformer_path.
-# Full generation also needs text_encoder_path, vae_path, and tokenizer_root.
+# `model.path` is the Anima artifact source. It may be a Hugging Face repo id
+# or a local directory with diffusion_models/, text_encoders/, and vae/.
+# Replay/trainer loading needs only the transformer checkpoint. Full generation
+# additionally loads the Qwen text encoder, Qwen Image VAE, and the two explicit
+# tokenizer sources below; it must not depend on a ComfyUI checkout.
 model:
   family: cosmos-predict2-anima
-  path: /home/mingfeiguo/Desktop/anima-inference/models
+  path: circlestone-labs/Anima
   transformer_path: ""
   text_encoder_path: ""
   vae_path: ""
-  tokenizer_root: /home/mingfeiguo/Desktop/anima-inference/ComfyUI/comfy/text_encoders
+  qwen_tokenizer_path: Qwen/Qwen2.5-0.5B
+  t5_tokenizer_path: google-t5/t5-base
   scheduler_shift: 3.0
 
   use_lora: true

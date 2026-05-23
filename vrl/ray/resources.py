@@ -438,11 +438,14 @@ def _resolve_rollout_num_workers(
     rollout_num_gpus: int,
     gpus_per_worker: float,
 ) -> int:
-    requested = _parse_num_workers(rollout_config.num_workers)
+    requested = _parse_num_workers(
+        rollout_config.num_workers,
+        allow_zero=gpus_per_worker == 0 and rollout_num_gpus == 0,
+    )
     if gpus_per_worker == 0:
         workers = 1 if requested == "auto" else int(requested)
-        if workers < 1:
-            raise ValueError("distributed.resources.rollout.num_workers must be >= 1")
+        if workers < 0:
+            raise ValueError("distributed.resources.rollout.num_workers must be >= 0")
         return workers
 
     if requested == "auto":
@@ -739,7 +742,12 @@ def _parse_num_gpus(value: Any, *, field_name: str) -> int | str | None:
     return parsed
 
 
-def _parse_num_workers(value: Any, *, role: str = "rollout") -> int | str:
+def _parse_num_workers(
+    value: Any,
+    *,
+    role: str = "rollout",
+    allow_zero: bool = False,
+) -> int | str:
     value = _to_plain(value)
     if _is_auto(value):
         return "auto"
@@ -749,8 +757,9 @@ def _parse_num_workers(value: Any, *, role: str = "rollout") -> int | str:
         raise ValueError(
             f"distributed.resources.{role}.num_workers must be int or auto",
         ) from exc
-    if parsed < 1:
-        raise ValueError(f"distributed.resources.{role}.num_workers must be >= 1")
+    if parsed < 0 or (parsed == 0 and not allow_zero):
+        minimum = 0 if allow_zero else 1
+        raise ValueError(f"distributed.resources.{role}.num_workers must be >= {minimum}")
     return parsed
 
 

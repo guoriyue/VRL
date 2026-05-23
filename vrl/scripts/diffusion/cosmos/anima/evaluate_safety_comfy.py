@@ -60,8 +60,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--base-dir",
-        default="/home/mingfeiguo/Desktop/anima-inference",
-        help="Anima/ComfyUI checkout root.",
+        required=True,
+        help="Explicit ComfyUI checkout root for reference-only safety audits.",
     )
     parser.add_argument(
         "--negative-prompt",
@@ -151,7 +151,7 @@ def main() -> None:
 
 
 def _start_comfy(args: argparse.Namespace, *, image_dir: Path, log_path: Path) -> subprocess.Popen:
-    base = Path(args.base_dir)
+    base = Path(args.base_dir).expanduser().resolve()
     comfy = base / "ComfyUI"
     if not comfy.exists():
         raise FileNotFoundError(f"ComfyUI not found: {comfy}")

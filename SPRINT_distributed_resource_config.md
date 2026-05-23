@@ -1,5 +1,12 @@
 # SPRINT: Ray Distributed Resource Configuration
 
+状态：near-complete implementation。当前 repo 的实现路径已经从早期设计里的
+`vrl/distributed/*` / `vrl/rollouts/runtime/*` 收敛到
+`vrl/ray/resources.py` 和 `vrl/generation/ray/*`。代码层 resolver、Ray
+placement、single-GPU colocate preset、多 GPU split preset 和结构测试已落地。
+2026-05-23 已完成 SD3.5 single-GPU colocate real-checkpoint validation。
+剩余关闭项是一次真实 4 visible GPU split placement validation。
+
 ## 0. Core Decision
 
 Ray 在本 repo 里的目标是做 rollout execution / serving data plane，不是第一阶段的 trainer parallelism。
@@ -139,16 +146,19 @@ assert not args.colocate, "Colocation is not supported for async training."
 
 ## 1.1 Current Code Reality
 
-当前代码已经有数据闭环，但资源 ownership 还不够清晰：
+当前代码已经有数据闭环，并且 role-level resource resolver 已落地：
 
-```python
-RemoteRolloutWorker = ray.remote(
-    num_cpus=rollout_config.cpus_per_worker,
-    num_gpus=rollout_config.gpus_per_worker,
-)(RayRolloutWorker)
+```text
+vrl/ray/resources.py
+vrl/generation/ray/config.py
+vrl/generation/ray/placement.py
+vrl/generation/ray/launcher.py
 ```
 
-`RolloutBackendConfig` 现在还同时持有 `num_workers`、`gpus_per_worker`、`allow_driver_gpu_overlap`。这把 rollout execution 参数和 trainer/rollout GPU ownership 混在了一起。
+`RayGenerationConfig.from_cfg(...)` 从 `ResolvedDistributedResources` 派生
+`num_workers` 和 `gpus_per_worker`。训练入口不应该重新解析 GPU ownership。
+online recipes 统一经过 `vrl/scripts/common/online.py`，Wan DPO 走 trainer-only
+resource plan。
 
 rollout 数据回流方向是对的：Ray worker 返回 CPU payload，trainer 再把 batch move 到自己的 device。这个 contract 应保留，并在新 resolver 里显式表达。
 
@@ -283,10 +293,10 @@ rollout worker 到 trainer 的数据边界必须是 CPU/Ray object boundary。
 
 ## 3. Target Internal Types
 
-新增文件：
+实现文件：
 
 ```text
-vrl/distributed/resources.py
+vrl/ray/resources.py
 ```
 
 目标 dataclass：
@@ -344,7 +354,8 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
 ```text
 configs/base/distributed/ray_rollout.yaml
 configs/base/distributed/ray_rollout_single_gpu.yaml
-vrl/rollouts/runtime/config.py
+configs/recipe/offline/diffusion_dpo.yaml
+vrl/generation/ray/config.py
 ```
 
 目标：
@@ -352,9 +363,9 @@ vrl/rollouts/runtime/config.py
 - `ray_rollout.yaml` 使用 `distributed.resources`，默认多 GPU split。
 - `ray_rollout_single_gpu.yaml` 使用 explicit overlap，并设置 `release_after_collect=true`。
 - 两个 preset 都不应该显式写 `devices`。多 GPU split 由 `trainer.num_gpus` / `rollout.num_gpus` 自动 resolve；单 GPU local debug 由 `allow_overlap=true` + `release_after_collect=true` 表达。
-- `RolloutBackendConfig` 继续保留 rollout execution 参数，但不再负责 trainer/rollout device allocation。
+- `RayGenerationConfig` 继续保留 rollout execution 参数，但不再负责 trainer/rollout device allocation。
 
-`RolloutBackendConfig` 应保留：
+`RayGenerationConfig` / `distributed.rollout` 应保留：
 
 ```yaml
 distributed:
@@ -366,7 +377,7 @@ distributed:
     release_after_collect: false
 ```
 
-`RolloutBackendConfig` 不应继续拥有：
+`distributed.rollout` 不应继续拥有：
 
 ```yaml
 num_workers
@@ -378,11 +389,11 @@ allow_driver_gpu_overlap
 
 ### Phase 2: Resource Resolver
 
-新增：
+实现：
 
 ```text
-vrl/distributed/resources.py
-tests/distributed/test_resources.py
+vrl/ray/resources.py
+tests/ray/test_resources.py
 ```
 
 测试覆盖：
@@ -404,14 +415,14 @@ tests/distributed/test_resources.py
 修改：
 
 ```text
-vrl/distributed/ray/placement/group.py
-vrl/distributed/ray/rollout/launcher.py
-vrl/distributed/ray/rollout/types.py
+vrl/generation/ray/placement.py
+vrl/generation/ray/launcher.py
+vrl/generation/execution/types.py
 ```
 
 目标：
 
-- `RayRolloutLauncher.launch()` 接收 `ResolvedDistributedResources` 或从 cfg 内部 resolve。
+- `RayGenerationLauncher.launch()` 接收带 `ResolvedDistributedResources` 的 `RayGenerationConfig`，或从 cfg 内部 resolve。
 - 非重叠 split 下，placement group bundle 数量来自 trainer reservation slots + `resolved.rollout_num_workers`。
 - colocate 下，placement group bundle 数量只来自 `resolved.rollout_num_workers`。
 - 非重叠 split 下，trainer reservation actor 占住 trainer bundle，避免 rollout worker 被 Ray 调度到 trainer GPU。
@@ -432,13 +443,9 @@ vrl/distributed/ray/rollout/types.py
 修改：
 
 ```text
-vrl/rollouts/runtime/backend.py
-vrl/scripts/sd3_5/train.py
-vrl/scripts/wan_2_1/train.py
-vrl/scripts/cosmos/train.py
-vrl/scripts/janus_pro/train.py
-vrl/scripts/nextstep_1/train.py
-vrl/scripts/wan_2_1/train_dpo.py
+vrl/generation/ray/config.py
+vrl/scripts/common/online.py
+vrl/scripts/diffusion/wan_2_1/train_dpo.py
 ```
 
 目标：
@@ -510,10 +517,10 @@ python -m vrl.scripts.train \
 
 ### 4.1.1 Core Resolver
 
-新增：
+实现：
 
 ```text
-vrl/distributed/resources.py
+vrl/ray/resources.py
 ```
 
 预期内容：
@@ -590,53 +597,52 @@ distributed:
 修改：
 
 ```text
-vrl/rollouts/runtime/config.py
+vrl/generation/ray/config.py
 ```
 
 预期改动：
 
-- `RolloutBackendConfig` 删除 resource ownership 字段：
+- `RayGenerationConfig.from_cfg(...)` 不从 `distributed.rollout` 解析 resource ownership 字段：
   - `num_workers`
   - `gpus_per_worker`
   - `allow_driver_gpu_overlap`
-- `RolloutBackendConfig` 只保留 rollout execution 字段：
+- `distributed.rollout` / `RayGenerationConfig` 只保留 rollout execution 字段：
   - `backend`
   - `cpus_per_worker`
   - `placement_strategy`
   - `max_inflight_chunks_per_worker`
   - `sync_trainable_state`
   - `release_after_collect`
-- `from_cfg()` 不再从 `distributed.rollout` 解析 worker/GPU 数。
-- `to_dict()` 不再输出 worker/GPU ownership 字段。
+- worker/GPU 数来自 `vrl.ray.resources.ResolvedDistributedResources`。
 
 ### 4.1.4 Ray Placement and Launcher
 
 修改：
 
 ```text
-vrl/distributed/ray/placement/group.py
-vrl/distributed/ray/rollout/launcher.py
-vrl/distributed/ray/rollout/types.py
+vrl/generation/ray/placement.py
+vrl/generation/ray/launcher.py
+vrl/generation/execution/types.py
 ```
 
-`placement/group.py` 预期改动：
+`placement.py` 预期改动：
 
-- `create_rollout_placement_group()` 接收 `RolloutBackendConfig` 和 `ResolvedDistributedResources`。
+- `create_generation_placement_group()` 接收带 `ResolvedDistributedResources` 的 `RayGenerationConfig`。
 - placement group bundle 在非重叠 split 下分为 trainer reservation bundles 和 rollout worker bundles。
 - 非重叠 split 的 trainer reservation bundle 数来自 `len(resolved.trainer_devices)`。
 - colocate 的 trainer reservation bundle 数是 `0`。
 - rollout bundle 数来自 `resolved.rollout_num_workers`。
 - rollout bundle GPU 数来自 `resolved.rollout_gpus_per_worker`。
-- CPU 数继续来自 `RolloutBackendConfig.cpus_per_worker`。
+- CPU 数继续来自 `RayGenerationConfig.cpus_per_worker`。
 - 新增轻量 `InfoActor`，先 probe 每个 placement bundle 的 actual `node_ip` / `gpu_ids`，按 node/GPU id 稳定排序，建立 actual GPU id 到 bundle 的映射。
 - auto split 使用排序后的前 `trainer_slots` 个 bundle 做 trainer reservation，后面的 bundle 做 rollout；manual pinning 使用 `resolved.trainer_devices` / `resolved.rollout_devices` 精确选择 bundle。
 - colocate 不创建 trainer reservation actor；只校验 `allow_overlap=true` 和 `release_after_collect=true`。
 - 新增轻量 `TrainerReservationActor`，用于占住 trainer GPU 并返回 actual `node_ip` / `gpu_ids`。
 - placement metadata 必须保留 logical bundle index、actual bundle index、node ip、gpu ids。
 
-`rollout/launcher.py` 预期改动：
+`launcher.py` 预期改动：
 
-- `RayRolloutLauncher.launch()` 接收 `resolved_resources`，或接收完整 cfg 并内部调用 resolver。推荐显式传入 `ResolvedDistributedResources`，避免隐式重复解析。
+- `RayGenerationLauncher.launch()` 接收 `RayGenerationConfig`，或接收完整 cfg 并内部调用 resolver。
 - Ray actor `num_gpus` 来自 `resolved.rollout_gpus_per_worker`。
 - worker 数来自 placement 的 rollout bundle 数，而不是 rollout config。
 - 非重叠 split 下，driver trainer device 使用 trainer reservation metadata；不能在 Ray placement 完成前初始化 policy/model 到 CUDA。
@@ -661,16 +667,14 @@ device = trainer_torch_device(resolved, actual_trainer_devices=placement.trainer
 
 # Initialize trainer policy/model on device here.
 
-runtime = RayRolloutLauncher().launch(
-    backend_cfg,
-    runtime_spec,
+runtime = RayGenerationLauncher().launch(
+    ray_config,
+    launch_contract,
     gatherer,
-    resolved_resources=resolved,
-    placement=placement,
 )
 ```
 
-`rollout/types.py` 预期改动：
+`vrl/generation/execution/types.py` 预期改动：
 
 - `RayWorkerHandle` 保留 `node_id` / `gpu_ids`。
 - 如有必要，增加 resolved/actual metadata 字段，方便诊断实际 placement。
@@ -680,7 +684,7 @@ runtime = RayRolloutLauncher().launch(
 修改：
 
 ```text
-vrl/rollouts/runtime/backend.py
+vrl/generation/ray/config.py
 ```
 
 预期改动：
@@ -698,31 +702,27 @@ vrl/rollouts/runtime/backend.py
 修改：
 
 ```text
-vrl/rollouts/runtime/launch_inputs.py
+vrl/generation/ray/launcher.py
 ```
 
 预期改动：
 
-- 不再用旧 `RolloutBackendConfig.gpus_per_worker` 判断 rollout worker device。
+- 不再用旧 `distributed.rollout.gpus_per_worker` 判断 rollout worker device。
 - 改用 `resolved.rollout_gpus_per_worker`：
 
 ```python
 rollout_device = "cuda" if resolved.rollout_gpus_per_worker > 0 else "cpu"
 ```
 
-- `build_rollout_runtime_inputs()` 接收 `ResolvedDistributedResources`，或在上层传入 `rollout_device`，避免自己解析资源。
+- `RayGenerationLauncher.build_inputs()` 从 `RayGenerationConfig.from_cfg(cfg)` 获取 worker device，避免自己解析资源。
 
 ### 4.1.7 Training Scripts
 
 修改：
 
 ```text
-vrl/scripts/sd3_5/train.py
-vrl/scripts/wan_2_1/train.py
-vrl/scripts/cosmos/train.py
-vrl/scripts/janus_pro/train.py
-vrl/scripts/nextstep_1/train.py
-vrl/scripts/wan_2_1/train_dpo.py
+vrl/scripts/common/online.py
+vrl/scripts/diffusion/wan_2_1/train_dpo.py
 ```
 
 预期改动：
@@ -743,19 +743,20 @@ device = trainer_torch_device(resolved_resources, actual_trainer_devices=placeme
 - 对非重叠 Ray split backend，必须先 resolve resources、创建 placement/reservation、确认 actual trainer GPU，再把 model/policy 初始化到 CUDA。
 - 对 Ray colocate backend，没有 trainer reservation actor，但仍必须先 validate overlap policy，再把 model/policy 初始化到 CUDA。
 - 对 direct/no-Ray backend，可以没有 `placement`，此时 `trainer_torch_device(resolved_resources)` 直接使用 resolved trainer device。
-- GRPO train scripts 把 `resolved_resources` 传给：
-  - `build_rollout_runtime_inputs()`
-  - `build_rollout_backend_from_cfg()`
-  - Ray launcher path
+- online recipes 通过 `vrl/scripts/common/online.py` resolve resource plan，并把 cfg 交给 `RayGenerationLauncher`。
 - DPO train script 虽然没有 rollout，也必须用同一个 `trainer_torch_device()` 选择 trainer device。
 - 每个 train script 启动时记录 resolved plan。
 
 ### 4.1.8 Tests
 
-新增：
+实现 / 更新：
 
 ```text
-tests/distributed/test_resources.py
+tests/ray/test_resources.py
+tests/generation/ray/test_rollout_launcher.py
+tests/generation/ray/test_ray_resident_session.py
+tests/config/test_load_all_experiments.py
+tests/scripts
 ```
 
 覆盖：
@@ -772,11 +773,9 @@ tests/distributed/test_resources.py
 更新：
 
 ```text
-tests/distributed/ray/test_placement_group.py
-tests/distributed/ray/test_rollout_launcher.py
-tests/distributed/ray/test_real_ray_rollout_validation.py
-tests/rollouts/test_runtime_inputs.py
-tests/engine/generation/test_runtime_factory.py
+tests/generation/ray/test_rollout_launcher.py
+tests/generation/ray/test_ray_resident_session.py
+tests/ray/test_resources.py
 tests/config/test_load_all_experiments.py
 ```
 
@@ -826,9 +825,9 @@ CUDA_VISIBLE_DEVICES=0 python -m vrl.scripts.train \
 
 推荐按这个顺序做：
 
-1. 新增 `vrl/distributed/resources.py` 和 `tests/distributed/test_resources.py`。
+1. 新增 `vrl/ray/resources.py` 和 `tests/ray/test_resources.py`。
 2. 修改两个 distributed base config。
-3. 收窄 `RolloutBackendConfig`。
+3. 收窄 `RayGenerationConfig` 的 resource ownership 来源。
 4. 修改 Ray placement / launcher，先实现 trainer reservation + rollout bundle offset。
 5. 修改 train scripts 的启动顺序：resolve resources -> validate overlap -> create Ray placement/reservation when split -> choose trainer device -> 初始化 model 到 CUDA。
 6. 修改 backend validation / runtime inputs。
@@ -854,7 +853,7 @@ CUDA_VISIBLE_DEVICES=0 python -m vrl.scripts.train \
 代码层：
 
 - 所有训练脚本都通过同一个 `resolve_distributed_resources()` 选择 trainer device。
-- `RolloutBackendConfig` 不再解析 `num_workers`、`gpus_per_worker`、`allow_driver_gpu_overlap`。
+- `RayGenerationConfig` 不再从 `distributed.rollout` 解析 `num_workers`、`gpus_per_worker`、`allow_driver_gpu_overlap`，而是从 resolved resources 派生。
 - Ray launcher 不再从 rollout config 猜 worker 数，而是使用 resolved resources。
 - 非重叠 split 下，Ray placement group reserve trainer GPU，即使 trainer 仍是 driver process。
 - 非重叠 split 下，Ray rollout worker actual GPU 不和 trainer reservation actual GPU overlap。
@@ -867,8 +866,8 @@ CUDA_VISIBLE_DEVICES=0 python -m vrl.scripts.train \
 测试层：
 
 ```bash
-python -m pytest -q tests/distributed/test_resources.py
-python -m pytest -q tests/distributed/ray
+python -m pytest -q tests/ray/test_resources.py
+python -m pytest -q tests/generation/ray
 python -m pytest -q tests/config/test_load_all_experiments.py
 python -m pytest -q tests/scripts
 ```
@@ -881,7 +880,9 @@ python -m pytest -q tests/scripts
 
 真实 checkpoint DoD：
 
-- 在至少一个 diffusion family 上用真实 checkpoint 跑一次 single-GPU colocate validation run。
+- 在至少一个 diffusion family 上用真实 checkpoint 跑一次 single-GPU colocate validation run。已完成：
+  `CUDA_VISIBLE_DEVICES=0 WM_RUN_REAL_MODEL_TESTS=1 WM_REAL_MODEL_RL_CASES=sd3_5 python -m pytest -q tests/e2e/test_real_checkpoint_rl.py::test_real_checkpoint_online_rl_updates_trainable_weights --tb=short`
+  -> `1 passed, 7 skipped` on 2026-05-23。
 - 在至少一个 family 上用 4 visible GPUs 跑一次 resolved plan validation run，确认日志显示 trainer `cuda:0`，rollout workers 分配到 `1,2,3`。
 - 4 GPU validation run 必须确认 Ray actual placement 里 trainer reservation actor 在 trainer GPU，rollout workers 不在 trainer GPU。
 - 如果没有 4 GPU 环境，必须保留 skip 标记和清晰的手动命令，不把 fake Ray test 当成真实 DoD。
@@ -957,12 +958,17 @@ Trainer devices [0] overlap rollout devices [0], but resources.allow_overlap=fal
 
 Local references:
 
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/rollouts/runtime/config.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/rollouts/runtime/backend.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/distributed/ray/placement/group.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/distributed/ray/rollout/launcher.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/ray/resources.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/generation/ray/config.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/generation/ray/placement.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/generation/ray/launcher.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/scripts/common/online.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/scripts/diffusion/wan_2_1/train_dpo.py`
 - `/home/mingfeiguo/Desktop/wm-infra/configs/base/distributed/ray_rollout.yaml`
 - `/home/mingfeiguo/Desktop/wm-infra/configs/base/distributed/ray_rollout_single_gpu.yaml`
+- `/home/mingfeiguo/Desktop/wm-infra/configs/recipe/offline/diffusion_dpo.yaml`
+- `/home/mingfeiguo/Desktop/wm-infra/tests/ray/test_resources.py`
+- `/home/mingfeiguo/Desktop/wm-infra/tests/generation/ray/test_rollout_launcher.py`
 
 Architecture references:
 

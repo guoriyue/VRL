@@ -97,6 +97,13 @@ def test_diffusion_replay_builders_return_minimal_bundles(
         module,
         "load_flow_match_scheduler_component",
         lambda *_args, **_kwargs: _TinyScheduler(),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        module,
+        "load_diffusers_scheduler_component",
+        lambda *_args, **_kwargs: _TinyScheduler(),
+        raising=False,
     )
 
     bundle = getattr(module, builder_name)(_spec())
@@ -109,6 +116,30 @@ def test_diffusion_replay_builders_return_minimal_bundles(
     assert "pipeline" not in vars(bundle.model)
     with pytest.raises(RuntimeError, match="pipeline"):
         _ = bundle.model.pipeline
+
+
+def test_wan_replay_builder_uses_wan_pipeline_scheduler_class(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vrl.models.diffusion.wan_2_1 import runtime
+
+    scheduler_classes: list[str] = []
+
+    def fake_scheduler_loader(_spec: Any, class_name: str, **_kwargs: Any) -> _TinyScheduler:
+        scheduler_classes.append(class_name)
+        return _TinyScheduler()
+
+    monkeypatch.setattr(
+        runtime,
+        "load_diffusers_transformer_component",
+        lambda *_args, **_kwargs: _TinyTransformer(),
+    )
+    monkeypatch.setattr(runtime, "load_diffusers_scheduler_component", fake_scheduler_loader)
+
+    bundle = runtime.build_wan_2_1_replay_runtime_bundle(_spec())
+
+    assert scheduler_classes == ["UniPCMultistepScheduler"]
+    assert bundle.scheduler.timesteps.tolist() == [1.0]
 
 
 def test_cosmos_predict25_replay_builder_keeps_diffusion_nft_surface(
@@ -192,6 +223,46 @@ def test_anima_empty_prompts_are_replaced_before_tokenization() -> None:
     from vrl.models.diffusion.cosmos.anima.model import _non_empty_prompts
 
     assert _non_empty_prompts(["", "  ", "anime"]) == [".", ".", "anime"]
+
+
+def test_anima_hf_runtime_spec_defers_artifact_downloads() -> None:
+    from omegaconf import OmegaConf
+
+    from vrl.config.loading import load_config
+    from vrl.models.diffusion.cosmos.anima.runtime import (
+        extract_anima_replay_runtime_spec,
+        extract_anima_runtime_spec,
+    )
+
+    cfg = load_config(
+        "experiment/diffusion/anima_preview3/online_grpo_aesthetic",
+        overrides=[
+            "sampling.num_steps=1",
+            "model.use_lora=false",
+        ],
+    )
+
+    full = extract_anima_runtime_spec(cfg, "cpu", torch.float32)
+    replay = extract_anima_replay_runtime_spec(cfg, "cpu", torch.float32)
+
+    full_paths = full.extra["resolved_paths"]
+    replay_paths = replay.extra["resolved_paths"]
+    assert full_paths["transformer"] == (
+        "hf://circlestone-labs/Anima/diffusion_models/anima-preview3-base.safetensors"
+    )
+    assert full_paths["text_encoder"] == (
+        "hf://circlestone-labs/Anima/text_encoders/qwen_3_06b_base.safetensors"
+    )
+    assert full_paths["vae"] == "hf://circlestone-labs/Anima/vae/qwen_image_vae.safetensors"
+    assert full_paths["qwen_tokenizer"] == "Qwen/Qwen2.5-0.5B"
+    assert full_paths["t5_tokenizer"] == "google-t5/t5-base"
+    assert replay_paths == {
+        "transformer": (
+            "hf://circlestone-labs/Anima/diffusion_models/"
+            "anima-preview3-base.safetensors"
+        ),
+    }
+    assert "tokenizer_root" not in OmegaConf.to_container(cfg.model)
 
 
 @pytest.mark.parametrize(
