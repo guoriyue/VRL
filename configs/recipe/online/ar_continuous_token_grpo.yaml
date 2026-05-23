@@ -3,6 +3,6 @@ defaults:
   - /base/algorithm/token_grpo
   - /base/actor
   - /base/rollout/ar_continuous
-  - /base/distributed/ray_rollout_single_gpu
+  - /base/distributed/ray_rollout_colocated_single_gpu
   - /base/trainer
 

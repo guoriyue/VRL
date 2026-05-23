@@ -58,7 +58,7 @@ The recipe composes these reusable config layers:
 - `configs/dataset/ocr.yaml`: OCR prompt dataset manifest.
 - `configs/base/rollout/flow_matching_sde.yaml`: diffusion rollout and SDE
   trajectory settings.
-- `configs/base/distributed/ray_rollout_single_gpu.yaml`: one Ray rollout
+- `configs/base/distributed/ray_rollout_colocated_single_gpu.yaml`: one Ray rollout
   worker on one visible GPU.
 
 Important defaults in `configs/experiment/diffusion/sd3_5/online_grpo_ocr.yaml`:
@@ -112,7 +112,7 @@ python -m vrl.scripts.train \
 ```
 
 Ray rollout resource presets use role-level allocation. Multi-GPU split should
-declare trainer and rollout budgets, while single-GPU local validation must use
+declare trainer and rollout budgets, while single-GPU colocated Ray validation must use
 the colocated preset so rollout actors are released before replay/backward:
 
 ```bash
@@ -124,7 +124,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python -m vrl.scripts.train \
 
 CUDA_VISIBLE_DEVICES=0 python -m vrl.scripts.train \
   --config experiment/diffusion/sd3_5/online_grpo_ocr \
-  /base/distributed=ray_rollout_single_gpu
+  /base/distributed=ray_rollout_colocated_single_gpu
 ```
 
 Manual physical device pinning is an advanced override for debugging or mixed

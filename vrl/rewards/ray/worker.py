@@ -45,7 +45,7 @@ class RewardScoringWorker:
             node_ip = current_node_ip()
             gpu_ids = current_gpu_ids()
         except Exception:
-            node_ip = "local"
+            node_ip = "unknown"
             gpu_ids = []
         return {
             "worker_id": self.worker_id,
@@ -130,7 +130,7 @@ class RewardScoringWorker:
 
 
 def tensor_mean_scorer(*, artifact_path: str, **_: Any) -> float:
-    """Small scorer used by smoke tests and local tensor fixtures."""
+    """Small scorer used by smoke tests and in-process tensor fixtures."""
 
     return float(torch.load(Path(artifact_path), map_location="cpu").float().mean().item())
 

@@ -30,4 +30,4 @@ reward:
         import_path: ${oc.env:VIDEO_REWARD_SCORER,""}
         model_path: ${oc.env:VIDEO_REWARD_MODEL_PATH,""}
         dtype: ${oc.env:VIDEO_REWARD_DTYPE,"bfloat16"}
-        reward_model_version: ${oc.env:VIDEO_REWARD_MODEL_VERSION,"cosmos-reward-local"}
+        reward_model_version: ${oc.env:VIDEO_REWARD_MODEL_VERSION,"cosmos-reward-default"}

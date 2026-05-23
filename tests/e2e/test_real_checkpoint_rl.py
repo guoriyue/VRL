@@ -388,8 +388,12 @@ class _IndexReward:
         return [float(i) for i, _ in enumerate(rollouts)]
 
 
-class _InProcessGenerationRuntime:
-    """Generation runtime that executes the real family executor in-process."""
+class _DirectExecutorGenerationRuntime:
+    """Test-only runtime that drives the real family executor without Ray actors.
+
+    Real-checkpoint e2e tests use this to validate replay/trainer integration
+    without making Ray scheduling part of the assertion surface.
+    """
 
     def __init__(self, executor: Any) -> None:
         self.executor = executor
@@ -520,7 +524,7 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
                 reward_fn=reward_fn,
                 family=entry,
                 collector_config=collector_config,
-                runtime=_InProcessGenerationRuntime(executor),
+                runtime=_DirectExecutorGenerationRuntime(executor),
             )
         pair = build_algorithm_and_evaluator_from_cfg(
             cfg,
@@ -848,7 +852,7 @@ def _resolve_checkpoint_path(case: RealCheckpointCase, field: CheckpointField) -
         )
         pytest.skip(
             f"{skip_prefix}: {field.repo_id}. "
-            f"Set {env_name} to a local checkpoint path to override.",
+            f"Set {env_name} to a filesystem checkpoint path to override.",
         )
     return snapshot
 

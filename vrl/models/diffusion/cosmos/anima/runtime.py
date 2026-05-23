@@ -341,7 +341,7 @@ def _resolve_anima_artifact_ref(
 ) -> str:
     explicit = _optional_path(model_cfg, field_name)
     if explicit is not None:
-        return _local_file_ref(explicit, field_name=field_name)
+        return _filesystem_file_ref(explicit, field_name=field_name)
 
     root_text = str(getattr(model_cfg, "path", "") or "").strip()
     if not root_text:
@@ -352,16 +352,19 @@ def _resolve_anima_artifact_ref(
         if root.is_file():
             if relative_path != "diffusion_models/anima-preview3-base.safetensors":
                 raise FileNotFoundError(
-                    "Anima local file model.path can only supply the transformer; "
+                    "Anima filesystem file model.path can only supply the transformer; "
                     f"set {field_name} explicitly for {relative_path}",
                 )
             return str(root)
-        return _local_file_ref(root / relative_path, field_name=f"model.path/{relative_path}")
+        return _filesystem_file_ref(
+            root / relative_path,
+            field_name=f"model.path/{relative_path}",
+        )
 
     return f"hf://{root_text}/{relative_path}"
 
 
-def _local_file_ref(path: Path, *, field_name: str) -> str:
+def _filesystem_file_ref(path: Path, *, field_name: str) -> str:
     if not path.exists():
         raise FileNotFoundError(f"Anima {field_name} points to a missing file: {path}")
     if not path.is_file():

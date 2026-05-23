@@ -46,7 +46,7 @@ class GenerationWorkerCore:
         )
         self._profiler_step = 0
         self.capability = self._capability_from_contract(self.launch_contract)
-        self._metadata_provider = metadata_provider or self._local_metadata
+        self._metadata_provider = metadata_provider or self._fallback_metadata
 
     def load_policy(self) -> None:
         """Build the family executor from the serialized launch contract."""
@@ -86,9 +86,9 @@ class GenerationWorkerCore:
         try:
             metadata = dict(self._metadata_provider())
         except Exception:
-            metadata = self._local_metadata()
+            metadata = self._fallback_metadata()
         metadata.setdefault("worker_id", self.worker_id)
-        metadata.setdefault("node_ip", "local")
+        metadata.setdefault("node_ip", "unknown")
         metadata.setdefault("gpu_ids", [])
         metadata["policy_version"] = self._policy_version
         if runtime_debug:
@@ -403,8 +403,8 @@ class GenerationWorkerCore:
     def _is_tensor(value: Any) -> bool:
         return hasattr(value, "detach") and hasattr(value, "cpu")
 
-    def _local_metadata(self) -> dict[str, Any]:
-        return {"worker_id": self.worker_id, "node_ip": "local", "gpu_ids": []}
+    def _fallback_metadata(self) -> dict[str, Any]:
+        return {"worker_id": self.worker_id, "node_ip": "unknown", "gpu_ids": []}
 
 
 def _require_chunked_executor(executor: Any) -> PipelineExecutor:

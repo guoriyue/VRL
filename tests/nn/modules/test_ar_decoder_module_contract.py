@@ -5,9 +5,11 @@ from __future__ import annotations
 import pytest
 import torch
 
-from vrl.nn.layers.attention.paged import ARPagedAttentionConfig
-from vrl.nn.layers.attention.paged import ARPagedAttentionPrefillInput
-from vrl.nn.layers.attention.paged import ARPagedAttentionBackend
+from vrl.nn.layers.attention.paged import (
+    ARPagedAttentionBackend,
+    ARPagedAttentionConfig,
+    ARPagedAttentionPrefillInput,
+)
 from vrl.nn.modules.ar_decoder import VllmDecoderPagedAttentionBackend
 
 

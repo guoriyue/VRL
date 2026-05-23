@@ -3,6 +3,6 @@ defaults:
   - /base/algorithm/diffusion_nft
   - /base/actor
   - /base/rollout/diffusion
-  - /base/distributed/ray_rollout_single_gpu
+  - /base/distributed/ray_rollout_colocated_single_gpu
   - /base/trainer
 

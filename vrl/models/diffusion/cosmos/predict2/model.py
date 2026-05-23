@@ -47,7 +47,7 @@ class CosmosPredict2SamplingState:
     Cosmos Predict2 Video2World needs the full conditioning bundle
     (``init_latents`` + cond/uncond masks + indicators + padding mask + fps)
     in the per-step transformer forward and in the SDE step. Keeping the
-    bundle local to the model avoids leaking these knobs into the engine
+    bundle inside the model avoids leaking these knobs into the engine
     contract.
     """
 

@@ -138,7 +138,7 @@ vrl/models/ar/nextstep_1/runtime.py
 目标：
 
 - 标准化 `GenerationMetrics.engine_counters` key 命名和值类型。
-- local batching、Ray worker、family gather 不丢 counters。
+- in-process batching、Ray worker、family gather 不丢 counters。
 - error output 也保留已知 counters。
 - counters 必须 JSON-serializable。
 - counters 不写入 `TrajectoryBatch.context`。
@@ -181,7 +181,7 @@ vrl/rollouts/evaluators/diffusion/sde_logprob.py
 完成标准：
 
 - `GenerationMetrics.engine_counters` key schema 明确。
-- local / Ray / family gatherer 不丢 counters。
+- in-process / Ray / family gatherer 不丢 counters。
 - counters 可 JSON 序列化。
 - counters 不进入 trajectory context。
 

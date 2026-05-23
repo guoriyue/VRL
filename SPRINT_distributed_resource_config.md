@@ -28,7 +28,7 @@ trainer GPU(s):
   sync versioned trainable weights back to rollout workers
 ```
 
-也就是说，本 sprint 要产品化的是我们讨论的 split mode：rollout 可以放到另一组 GPU 上，训练数据通过 CPU/Ray object boundary 回到训练 GPU。单 GPU colocate 只保留为 local debug 路径。
+也就是说，本 sprint 要产品化的是我们讨论的 split mode：rollout 可以放到另一组 GPU 上，训练数据通过 CPU/Ray object boundary 回到训练 GPU。单 GPU colocate 只保留为 colocated Ray validation 路径。
 
 本 sprint 只支持一套 canonical schema：role-level resource allocation。
 
@@ -78,7 +78,7 @@ distributed:
     allow_overlap: false
 ```
 
-单 GPU colocate local debug：
+单 GPU colocated Ray 验证：
 
 ```yaml
 distributed:
@@ -112,7 +112,7 @@ distributed:
 
 `slime` / `MILES` 的主语义是 `actor_num_gpus_per_node`、`rollout_num_gpus`、`rollout_num_gpus_per_engine`、`colocate`。它们不是让普通用户手写 `trainer=[0]`、`rollout=[1,2,3]`；物理卡选择通常交给 Ray placement group 或外层 `CUDA_VISIBLE_DEVICES`。本 repo 不直接复制它们的 CLI 形状，但保留同一个资源边界：trainer 和 rollout 是两个 role，Ray placement 负责切资源。
 
-`slime` 的 local implementation 验证了这个方向。非 colocate 时，它把 actor/trainer GPU slot 放在前面，把 rollout GPU slot 放在 offset 后面：
+`slime` 的 in-process implementation 验证了这个方向。非 colocate 时，它把 actor/trainer GPU slot 放在前面，把 rollout GPU slot 放在 offset 后面：
 
 ```python
 elif args.colocate:
@@ -171,7 +171,7 @@ rollout 数据回流方向是对的：Ray worker 返回 CPU payload，trainer �
 - single-process trainer 选择自己的 driver device。
 - Ray rollout workers 按 role-level GPU budget 启动。
 - trainer / rollout 是否 overlap 的 fail-fast 校验。
-- single-GPU colocate local debug 和 multi-GPU split rollout。
+- single-GPU colocated Ray validation 和 multi-GPU split rollout。
 
 本 sprint 不覆盖的是：
 
@@ -249,7 +249,7 @@ distributed:
 
 - 如果 `trainer.devices ∩ rollout.devices != ∅` 且 `allow_overlap=false`，启动时报错。
 - 如果 overlap 被允许，必须同时满足 `distributed.rollout.release_after_collect=true`，否则单 GPU/混部路径会保留两份模型，OOM 风险不可控。
-- overlap 只用于 local debug，不作为 throughput path。
+- overlap 只用于 colocated Ray validation，不作为 throughput path。
 
 ### 2.5 Ray Reservation Policy
 
@@ -353,7 +353,7 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
 
 ```text
 configs/base/distributed/ray_rollout.yaml
-configs/base/distributed/ray_rollout_single_gpu.yaml
+configs/base/distributed/ray_rollout_colocated_single_gpu.yaml
 configs/recipe/offline/diffusion_dpo.yaml
 vrl/generation/ray/config.py
 ```
@@ -361,8 +361,8 @@ vrl/generation/ray/config.py
 目标：
 
 - `ray_rollout.yaml` 使用 `distributed.resources`，默认多 GPU split。
-- `ray_rollout_single_gpu.yaml` 使用 explicit overlap，并设置 `release_after_collect=true`。
-- 两个 preset 都不应该显式写 `devices`。多 GPU split 由 `trainer.num_gpus` / `rollout.num_gpus` 自动 resolve；单 GPU local debug 由 `allow_overlap=true` + `release_after_collect=true` 表达。
+- `ray_rollout_colocated_single_gpu.yaml` 使用 explicit overlap，并设置 `release_after_collect=true`。
+- 两个 preset 都不应该显式写 `devices`。多 GPU split 由 `trainer.num_gpus` / `rollout.num_gpus` 自动 resolve；单 GPU colocated Ray 验证 由 `allow_overlap=true` + `release_after_collect=true` 表达。
 - `RayGenerationConfig` 继续保留 rollout execution 参数，但不再负责 trainer/rollout device allocation。
 
 `RayGenerationConfig` / `distributed.rollout` 应保留：
@@ -461,7 +461,7 @@ vrl/scripts/diffusion/wan_2_1/train_dpo.py
 
 ```text
 Trainer device cuda:0 overlaps rollout devices [0], but resources.allow_overlap=false.
-Use CUDA_VISIBLE_DEVICES=0,1,2,3 with auto split for throughput, or set allow_overlap=true with rollout.release_after_collect=true for single-GPU local debug.
+Use CUDA_VISIBLE_DEVICES=0,1,2,3 with auto split for throughput, or set allow_overlap=true with rollout.release_after_collect=true for single-GPU colocated Ray validation.
 ```
 
 ### Phase 5: README and Examples
@@ -471,7 +471,7 @@ Use CUDA_VISIBLE_DEVICES=0,1,2,3 with auto split for throughput, or set allow_ov
 ```text
 README.md
 configs/base/distributed/ray_rollout.yaml
-configs/base/distributed/ray_rollout_single_gpu.yaml
+configs/base/distributed/ray_rollout_colocated_single_gpu.yaml
 ```
 
 README 需要新增两个例子：
@@ -485,12 +485,12 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python -m vrl.scripts.train \
   distributed.resources.rollout.num_gpus=auto
 ```
 
-单 GPU colocate local debug：
+单 GPU colocated Ray 验证：
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python -m vrl.scripts.train \
   --config experiment/diffusion/sd3_5/online_grpo_ocr \
-  /base/distributed=ray_rollout_single_gpu
+  /base/distributed=ray_rollout_colocated_single_gpu
 ```
 
 显式 pinning，高级调试才用：
@@ -508,7 +508,7 @@ python -m vrl.scripts.train \
 - 默认推荐 auto split。
 - manual pinning 是高级选项。
 - 单 GPU 推荐用 `CUDA_VISIBLE_DEVICES=...` 限制外层可见卡，而不是在 recipe 里写物理 GPU 编号。
-- 单 GPU colocate 只用于 local debug。
+- 单 GPU colocate 只用于 colocated Ray validation。
 - throughput path 是 trainer GPU(s) 和 rollout GPU(s) 分离。
 
 ## 4.1 File-by-File Implementation Map
@@ -543,7 +543,7 @@ vrl/ray/resources.py
 
 ```text
 configs/base/distributed/ray_rollout.yaml
-configs/base/distributed/ray_rollout_single_gpu.yaml
+configs/base/distributed/ray_rollout_colocated_single_gpu.yaml
 ```
 
 `ray_rollout.yaml` 预期改成多 GPU split 的主路径：
@@ -568,7 +568,7 @@ distributed:
     release_after_collect: false
 ```
 
-`ray_rollout_single_gpu.yaml` 预期改成 colocate local debug：
+`ray_rollout_colocated_single_gpu.yaml` 预期改成 colocate colocated Ray validation：
 
 ```yaml
 distributed:
@@ -807,18 +807,18 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python -m vrl.scripts.train \
   distributed.resources.rollout.num_gpus=auto
 ```
 
-- single-GPU colocate local debug 例子：
+- single-GPU colocated Ray validation 例子：
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python -m vrl.scripts.train \
   --config experiment/diffusion/sd3_5/online_grpo_ocr \
-  /base/distributed=ray_rollout_single_gpu
+  /base/distributed=ray_rollout_colocated_single_gpu
 ```
 
 - 文档说明：
   - 默认推荐 auto split。
   - manual `devices` pinning 是高级调试选项。
-  - 单 GPU colocate 只用于 local debug。
+  - 单 GPU colocate 只用于 colocated Ray validation。
   - throughput path 是 trainer GPU 和 rollout GPU 分离。
 
 ### 4.1.10 Implementation Order
@@ -861,7 +861,7 @@ CUDA_VISIBLE_DEVICES=0 python -m vrl.scripts.train \
 - rollout worker 返回 CPU payload；trainer 侧负责 move 到 trainer device。
 - rollout weight sync 只发送 versioned trainable state。
 - driver / rollout device overlap 有明确 fail-fast。
-- 单 GPU local debug 必须显式 `allow_overlap=true` 和 `release_after_collect=true`。
+- 单 GPU colocated Ray 验证 必须显式 `allow_overlap=true` 和 `release_after_collect=true`。
 
 测试层：
 
@@ -876,7 +876,7 @@ python -m pytest -q tests/scripts
 
 - README 有 auto split 和 manual pinning 示例。
 - `configs/base/distributed/ray_rollout.yaml` 表达多 GPU split。
-- `configs/base/distributed/ray_rollout_single_gpu.yaml` 表达 colocate local debug。
+- `configs/base/distributed/ray_rollout_colocated_single_gpu.yaml` 表达 colocate colocated Ray validation。
 
 真实 checkpoint DoD：
 
@@ -911,7 +911,7 @@ ray placement:
   return rollout payload through CPU/Ray object store
 ```
 
-单 GPU local debug：
+单 GPU colocated Ray 验证：
 
 ```text
 visible_devices = [0]
@@ -965,7 +965,7 @@ Local references:
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/scripts/common/online.py`
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/scripts/diffusion/wan_2_1/train_dpo.py`
 - `/home/mingfeiguo/Desktop/wm-infra/configs/base/distributed/ray_rollout.yaml`
-- `/home/mingfeiguo/Desktop/wm-infra/configs/base/distributed/ray_rollout_single_gpu.yaml`
+- `/home/mingfeiguo/Desktop/wm-infra/configs/base/distributed/ray_rollout_colocated_single_gpu.yaml`
 - `/home/mingfeiguo/Desktop/wm-infra/configs/recipe/offline/diffusion_dpo.yaml`
 - `/home/mingfeiguo/Desktop/wm-infra/tests/ray/test_resources.py`
 - `/home/mingfeiguo/Desktop/wm-infra/tests/generation/ray/test_rollout_launcher.py`

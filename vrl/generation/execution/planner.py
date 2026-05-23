@@ -1,4 +1,4 @@
-"""Engine planning contract shared by local and distributed runtimes."""
+"""Engine planning contract shared by Ray workers and direct executor tests."""
 
 from __future__ import annotations
 

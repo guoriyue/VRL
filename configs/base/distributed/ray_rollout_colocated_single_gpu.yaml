@@ -1,4 +1,4 @@
-# Compatibility preset. Prefer /base/distributed=ray_rollout_colocated_single_gpu.
+# Single-GPU colocated Ray rollout preset for workstation validation runs.
 distributed:
   backend: ray
   resources:

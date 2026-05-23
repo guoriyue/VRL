@@ -19,7 +19,7 @@ class _EchoWorker:
         self.started = True
 
     def worker_metadata(self) -> dict:
-        return {"worker_id": self.worker_id, "node_ip": "local", "gpu_ids": []}
+        return {"worker_id": self.worker_id, "node_ip": "test-node", "gpu_ids": []}
 
     def echo(self, payload: int) -> tuple[str, int]:
         return self.worker_id, payload + int(self.config["offset"])

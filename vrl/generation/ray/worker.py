@@ -59,7 +59,7 @@ class RayGenerationWorker:
             node_ip = current_node_ip()
             gpu_ids = current_gpu_ids()
         except Exception:
-            node_ip = "local"
+            node_ip = "unknown"
             gpu_ids = []
         return {"worker_id": self.worker_id, "node_ip": node_ip, "gpu_ids": gpu_ids}
 

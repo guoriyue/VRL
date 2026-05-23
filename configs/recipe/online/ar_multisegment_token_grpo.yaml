@@ -3,6 +3,6 @@ defaults:
   - /base/algorithm/token_grpo_multisegment
   - /base/actor
   - /base/rollout/ar_r1
-  - /base/distributed/ray_rollout_single_gpu
+  - /base/distributed/ray_rollout_colocated_single_gpu
   - /base/trainer
 

@@ -1,6 +1,6 @@
 # Anima Preview3 single-file Cosmos Predict2 Text2Image checkpoint.
 # `model.path` is the Anima artifact source. It may be a Hugging Face repo id
-# or a local directory with diffusion_models/, text_encoders/, and vae/.
+# or a filesystem directory with diffusion_models/, text_encoders/, and vae/.
 # Replay/trainer loading needs only the transformer checkpoint. Full generation
 # additionally loads the Qwen text encoder, Qwen Image VAE, and the two explicit
 # tokenizer sources below; it must not depend on a ComfyUI checkout.
