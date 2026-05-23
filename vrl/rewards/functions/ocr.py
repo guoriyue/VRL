@@ -91,17 +91,9 @@ class OCRReward(RewardFunction):
     def _ensure_loaded(self) -> None:
         if self._engine is not None:
             return
-        from paddleocr import PaddleOCR
-
-        self._engine = PaddleOCR(
-            use_angle_cls=False,
-            lang="en",
-            use_gpu=False,
-            show_log=False,
-        )
+        self._engine = _build_paddle_ocr()
 
     async def score(self, rollout: RewardRollout) -> float:
-        self._ensure_loaded()
         import numpy as np
         import torch
 
@@ -113,6 +105,7 @@ class OCRReward(RewardFunction):
         if not target_text:
             return 0.0
 
+        self._ensure_loaded()
         output = rollout.trajectory.output
 
         # ---- extract frames as list of numpy uint8 [H, W, C] ----
@@ -157,13 +150,7 @@ class OCRReward(RewardFunction):
         best_ocr_text: str = ""
 
         for frame in frames:
-            result = self._engine.ocr(frame, cls=False)
-            if result and result[0]:
-                text_raw = "".join(
-                    res[1][0] if res[1][1] > 0 else "" for res in result[0]
-                )
-            else:
-                text_raw = ""
+            text_raw = _extract_ocr_text(_run_paddle_ocr(self._engine, frame))
             text = _normalize_ocr_text(text_raw)
             dist = 0 if single_image and target_text in text else distance(text, target_text)
             dist = min(dist, target_len)
@@ -176,14 +163,10 @@ class OCRReward(RewardFunction):
                 best_frame = frame
                 best_ocr_text = text_raw
 
-        score_value = (
-            sum(frame_rewards) / len(frame_rewards) if frame_rewards else 0.0
-        )
+        score_value = sum(frame_rewards) / len(frame_rewards) if frame_rewards else 0.0
 
         if self._debug_dir is not None and best_frame is not None:
-            self._dump_debug_frame(
-                best_frame, target_text_raw, best_ocr_text, score_value
-            )
+            self._dump_debug_frame(best_frame, target_text_raw, best_ocr_text, score_value)
 
         return score_value
 
@@ -214,3 +197,77 @@ class OCRReward(RewardFunction):
 
     async def score_batch(self, rollouts: list[RewardRollout]) -> list[float]:
         return [await self.score(r) for r in rollouts]
+
+
+def _build_paddle_ocr() -> Any:
+    """Build PaddleOCR across both legacy 2.x and current 3.x constructor APIs."""
+
+    import inspect
+
+    from paddleocr import PaddleOCR
+
+    params = inspect.signature(PaddleOCR).parameters
+    if "use_textline_orientation" in params:
+        return PaddleOCR(
+            lang="en",
+            device="cpu",
+            enable_mkldnn=False,
+            use_doc_orientation_classify=False,
+            use_doc_unwarping=False,
+            use_textline_orientation=False,
+        )
+    return PaddleOCR(
+        use_angle_cls=False,
+        lang="en",
+        use_gpu=False,
+        show_log=False,
+    )
+
+
+def _run_paddle_ocr(engine: Any, frame: Any) -> Any:
+    if hasattr(engine, "predict"):
+        return engine.predict(frame)
+    try:
+        return engine.ocr(frame, cls=False)
+    except (TypeError, ValueError) as exc:
+        if "cls" not in str(exc) and "Unknown argument" not in str(exc):
+            raise
+        return engine.ocr(frame)
+
+
+def _extract_ocr_text(result: Any) -> str:
+    if not result:
+        return ""
+    if isinstance(result, dict):
+        return _join_ocr_texts(result.get("rec_texts"), result.get("rec_scores"))
+    if isinstance(result, list):
+        if result and all(isinstance(item, dict) for item in result):
+            return "".join(_extract_ocr_text(item) for item in result)
+
+        rows = result[0] if len(result) == 1 and isinstance(result[0], list) else result
+        texts: list[str] = []
+        for row in rows:
+            if isinstance(row, dict):
+                texts.append(_extract_ocr_text(row))
+                continue
+            if not isinstance(row, (list, tuple)) or len(row) < 2:
+                continue
+            text_score = row[1]
+            if not isinstance(text_score, (list, tuple)) or not text_score:
+                continue
+            text = text_score[0]
+            score = text_score[1] if len(text_score) > 1 else 1.0
+            if isinstance(text, str) and float(score) > 0.0:
+                texts.append(text)
+        return "".join(texts)
+    return ""
+
+
+def _join_ocr_texts(texts: Any, scores: Any) -> str:
+    if not texts:
+        return ""
+    if scores is None:
+        scores = [1.0] * len(texts)
+    return "".join(
+        str(text) for text, score in zip(texts, scores, strict=False) if float(score) > 0.0
+    )

@@ -29,11 +29,14 @@ dev = [
 ]
 cosmos = [
     "diffusers>=0.31.0",
-    "transformers>=4.40.0",
+    "transformers>=4.40.0,<5",
     "accelerate>=0.30.0",
     "sentencepiece>=0.2.0",
 ]
 ocr = [
+    "paddleocr>=3.5.0",
+    "paddlepaddle>=3.3.0",
+    "python-Levenshtein>=0.27.0",
     "rapidocr-onnxruntime>=1.3.0",
 ]
 ar-vllm = [
