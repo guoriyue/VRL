@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.builders import build_configs
 from vrl.generation.ray.launcher import RayGenerationLauncher
@@ -222,6 +222,14 @@ async def run_online_recipe(
             rng,
             num_examples=len(examples),
             rollout_batch_size=trainer_config.rollout_batch_size,
+            strategy=str(
+                OmegaConf.select(
+                    cfg,
+                    "data.sampler.type",
+                    default="random_without_replacement",
+                ),
+            ),
+            epoch=epoch,
         )
         example_batch = [examples[i] for i in idx]
         if definition.before_step is not None:

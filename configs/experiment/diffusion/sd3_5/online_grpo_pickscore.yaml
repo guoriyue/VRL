@@ -4,7 +4,8 @@ defaults:
   - /model/diffusion/sd3_5/medium
   - /sampling/image/512
   - /sampling/denoise/10_step_cfg_4_5
-  - /task/pickscore_sfw
+  - /dataset/pickscore_sfw
+  - /reward/pickscore
 
 sampling:
   max_sequence_length: 128

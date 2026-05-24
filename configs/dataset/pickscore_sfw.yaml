@@ -1,0 +1,10 @@
+# PickScore SFW prompt manifest imported from Flow-GRPO.
+data:
+  loader: prompt_manifest
+  manifest: datasets/pickscore_sfw/train.txt
+  eval_manifest: datasets/pickscore_sfw/test.txt
+  preprocessing:
+    format: text
+    target_text: none
+  sampler:
+    type: random_without_replacement

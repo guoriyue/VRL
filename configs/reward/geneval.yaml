@@ -1,8 +1,4 @@
-# GenEval prompt metadata plus external GenEval scorer.
-data:
-  manifest: datasets/geneval/train.jsonl
-  eval_manifest: datasets/geneval/test.jsonl
-
+# GenEval reward adapter. The actual evaluator must be provided by import path.
 reward:
   components:
     geneval: 1.0

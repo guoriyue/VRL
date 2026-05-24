@@ -1,3 +1,9 @@
 # DrawBench prompt subset used by image/video alignment experiments.
 data:
+  loader: prompt_manifest
   manifest: datasets/drawbench/train_192.txt
+  preprocessing:
+    format: text
+    target_text: none
+  sampler:
+    type: random_without_replacement

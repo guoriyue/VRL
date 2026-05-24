@@ -53,8 +53,10 @@ def test_config_groups_are_not_flattened() -> None:
         for group in ("experiment", "model", "sampling")
         for path in (CONFIGS_ROOT / group).glob("*.yaml")
     ]
+    task_configs = list((CONFIGS_ROOT / "task").glob("*.yaml"))
 
     assert flattened == []
+    assert task_configs == []
     assert not (CONFIGS_ROOT / "profiling").exists()
 
 
@@ -78,10 +80,7 @@ def test_experiments_are_grouped_by_model_family() -> None:
     }
 
     assert set(_experiment_names()) == expected
-    assert {
-        Path(name).parts[0]
-        for name in _experiment_names()
-    } == {"ar", "diffusion"}
+    assert {Path(name).parts[0] for name in _experiment_names()} == {"ar", "diffusion"}
 
 
 def test_experiments_use_dataset_groups_and_only_override_reward_weights() -> None:

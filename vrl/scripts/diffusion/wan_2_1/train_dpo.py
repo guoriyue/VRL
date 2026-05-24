@@ -156,9 +156,9 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     )
 
     # 3. Data — Pick-a-Pic v2 preference pairs
-    # `data.resolution: 0` is YAML's signal "fall back to sampling.height";
+    # `data.preprocessing.resolution: 0` means "fall back to sampling.height";
     # `require` ensures the key is declared, the `or` keeps that semantic.
-    resolution = int(require(cfg, "data.resolution")) or int(sampling.height)
+    resolution = int(require(cfg, "data.preprocessing.resolution")) or int(sampling.height)
     logger.info(
         "Loading Pick-a-Pic from %s split=%s",
         data_cfg.dataset_name, data_cfg.split,
@@ -168,8 +168,8 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         cache_dir=str(data_cfg.cache_dir) or None,
         max_samples=optional_none(cfg, "data.max_train_samples"),
         resolution=resolution,
-        random_crop=bool(require(cfg, "data.random_crop")),
-        no_hflip=bool(require(cfg, "data.no_hflip")),
+        random_crop=bool(require(cfg, "data.preprocessing.random_crop")),
+        no_hflip=not bool(require(cfg, "data.preprocessing.horizontal_flip")),
         dataset_name=str(data_cfg.dataset_name),
     )
     train_batch_size = int(require(cfg, "actor.train_batch_size"))
@@ -177,10 +177,10 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     dataloader = DataLoader(
         ds,
         batch_size=train_batch_size,
-        shuffle=True,
-        num_workers=int(require(cfg, "data.dataloader_num_workers")),
+        shuffle=bool(require(cfg, "data.sampler.shuffle")),
+        num_workers=int(require(cfg, "data.sampler.dataloader_num_workers")),
         collate_fn=collate_preference,
-        drop_last=True,
+        drop_last=bool(require(cfg, "data.sampler.drop_last")),
     )
     logger.info("Loaded %d preference pairs", len(ds))
 

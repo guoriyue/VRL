@@ -356,6 +356,8 @@ def sample_prompt_indices(
     *,
     num_examples: int,
     rollout_batch_size: int,
+    strategy: str = "random_without_replacement",
+    epoch: int = 0,
 ) -> list[int]:
     """Sample prompt indices with the training prompt generator."""
 
@@ -363,7 +365,15 @@ def sample_prompt_indices(
         raise ValueError("prompt manifest must contain at least one example")
     if rollout_batch_size < 1:
         raise ValueError("rollout_batch_size must be >= 1")
-    return torch.randperm(num_examples, generator=rng)[:rollout_batch_size].tolist()
+    if strategy == "random_without_replacement":
+        return torch.randperm(num_examples, generator=rng)[:rollout_batch_size].tolist()
+    if strategy == "sequential_window":
+        start = (max(0, int(epoch)) * rollout_batch_size) % num_examples
+        return [(start + offset) % num_examples for offset in range(rollout_batch_size)]
+    raise ValueError(
+        "data.sampler.type must be random_without_replacement or sequential_window; "
+        f"got {strategy!r}",
+    )
 
 
 def read_checkpoint_meta(checkpoint_dir: str | Path) -> dict[str, Any]:

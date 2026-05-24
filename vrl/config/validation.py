@@ -17,6 +17,16 @@ _ALGORITHM_KINDS = {
     "diffusion_nft",
 }
 
+_DATA_LOADERS = {
+    "pickapic_preference",
+    "prompt_manifest",
+}
+
+_PROMPT_SAMPLERS = {
+    "random_without_replacement",
+    "sequential_window",
+}
+
 _REWARD_REQUIRED_KWARGS: dict[str, tuple[str, ...]] = {
     "aesthetic": ("model_name",),
     "clipscore": ("model_name",),
@@ -28,6 +38,7 @@ _REWARD_REQUIRED_KWARGS: dict[str, tuple[str, ...]] = {
     "ocr": ("debug_dir",),
     "video_reward": ("inference_runtime", "reward_name", "score_key"),
 }
+
 
 def require(cfg: DictConfig, path: str) -> Any:
     """Fetch a required dotted path from a config.
@@ -114,11 +125,14 @@ def validate_reward_config(cfg: DictConfig) -> None:
     if "components" not in reward:
         raise ValueError("config missing required field: reward.components")
 
-    components_raw = OmegaConf.to_container(
-        reward.components,
-        resolve=True,
-        throw_on_missing=True,
-    ) or {}
+    components_raw = (
+        OmegaConf.to_container(
+            reward.components,
+            resolve=True,
+            throw_on_missing=True,
+        )
+        or {}
+    )
     if not isinstance(components_raw, dict):
         raise ValueError("reward.components must be a mapping of name -> weight")
 
@@ -197,6 +211,42 @@ def validate_reward_config(cfg: DictConfig) -> None:
                 )
 
 
+def validate_data_config(cfg: DictConfig) -> None:
+    """Validate dataset loader, preprocessing, and sampler contracts."""
+
+    if "data" not in cfg:
+        raise ValueError("config missing required field: data")
+
+    loader = str(require(cfg, "data.loader"))
+    if loader not in _DATA_LOADERS:
+        expected = " / ".join(sorted(_DATA_LOADERS))
+        raise ValueError(f"unknown data.loader={loader!r}; expected {expected}")
+
+    if loader == "prompt_manifest":
+        require(cfg, "data.manifest")
+        require(cfg, "data.preprocessing")
+        sampler_type = str(require(cfg, "data.sampler.type"))
+        if sampler_type not in _PROMPT_SAMPLERS:
+            expected = " / ".join(sorted(_PROMPT_SAMPLERS))
+            raise ValueError(f"unknown data.sampler.type={sampler_type!r}; expected {expected}")
+        return
+
+    if loader == "pickapic_preference":
+        require(cfg, "data.dataset_name")
+        require(cfg, "data.split")
+        require(cfg, "data.cache_dir")
+        optional_none(cfg, "data.max_train_samples")
+        require(cfg, "data.preprocessing.resolution")
+        require(cfg, "data.preprocessing.random_crop")
+        require(cfg, "data.preprocessing.horizontal_flip")
+        require(cfg, "data.sampler.shuffle")
+        require(cfg, "data.sampler.drop_last")
+        require(cfg, "data.sampler.dataloader_num_workers")
+        return
+
+    raise AssertionError(f"unreachable: loader={loader}")  # pragma: no cover
+
+
 def validate_training_config(cfg: DictConfig) -> None:
     """Validate only unresolved mandatory values and cross-field contracts."""
 
@@ -204,6 +254,8 @@ def validate_training_config(cfg: DictConfig) -> None:
     if "algorithm" not in cfg:
         raise ValueError("config missing required field: algorithm")
     kind = resolve_algorithm_kind(cfg.algorithm)
+
+    validate_data_config(cfg)
 
     if "reward" in cfg:
         validate_reward_config(cfg)
@@ -243,6 +295,7 @@ __all__ = [
     "path_exists",
     "require",
     "resolve_algorithm_kind",
+    "validate_data_config",
     "validate_reward_config",
     "validate_training_config",
 ]

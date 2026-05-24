@@ -1,4 +1,10 @@
 # Anime anatomy prompts for Anima online RL.
 data:
+  loader: prompt_manifest
   manifest: datasets/danbooru/anatomy/train_prompts.jsonl
   eval_manifest: datasets/danbooru/anatomy/eval_prompts.jsonl
+  preprocessing:
+    format: jsonl
+    metadata_schema: danbooru_anatomy
+  sampler:
+    type: random_without_replacement

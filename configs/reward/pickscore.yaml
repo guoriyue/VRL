@@ -1,8 +1,4 @@
-# PickScore SFW prompts plus PickScore image-text preference reward.
-data:
-  manifest: datasets/pickscore_sfw/train.txt
-  eval_manifest: datasets/pickscore_sfw/test.txt
-
+# PickScore image-text preference reward.
 reward:
   components:
     pickscore: 1.0

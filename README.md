@@ -55,7 +55,7 @@ The recipe composes these reusable config layers:
 - `configs/sampling/denoise/10_step_cfg_4_5.yaml`: 10 training denoise
   steps, CFG 4.5.
 - `configs/reward/ocr.yaml`: OCR reward target and scorer kwargs.
-- `configs/dataset/ocr.yaml`: OCR prompt dataset manifest.
+- `configs/dataset/ocr.yaml`: OCR prompt loader, preprocessing, and sampler contract.
 - `configs/base/rollout/flow_matching_sde.yaml`: diffusion rollout and SDE
   trajectory settings.
 - `configs/base/distributed/ray_rollout_colocated_single_gpu.yaml`: one Ray rollout

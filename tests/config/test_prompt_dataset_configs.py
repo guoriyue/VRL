@@ -11,36 +11,61 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIGS_ROOT = REPO_ROOT / "configs"
 
 
-def test_prompt_dataset_configs_are_named_by_schema_not_source() -> None:
+def test_prompt_dataset_configs_declare_loader_preprocessing_and_sampler() -> None:
     expected = {
         "ocr": (
             "datasets/ocr/train.txt",
             "datasets/ocr/test.txt",
+            "text",
+            "quoted_substring",
         ),
-    }
-    for name, (manifest, eval_manifest) in expected.items():
-        cfg = OmegaConf.load(CONFIGS_ROOT / "dataset" / f"{name}.yaml")
-        assert cfg.data.manifest == manifest
-        assert cfg.data.eval_manifest == eval_manifest
-
-
-def test_prompt_task_configs_keep_data_and_reward_together() -> None:
-    expected = {
         "geneval": (
             "datasets/geneval/train.jsonl",
             "datasets/geneval/test.jsonl",
+            "jsonl",
             "geneval",
         ),
         "pickscore_sfw": (
             "datasets/pickscore_sfw/train.txt",
             "datasets/pickscore_sfw/test.txt",
-            "pickscore",
+            "text",
+            "none",
         ),
     }
-    for name, (manifest, eval_manifest, reward_name) in expected.items():
-        cfg = OmegaConf.load(CONFIGS_ROOT / "task" / f"{name}.yaml")
+    for name, (manifest, eval_manifest, data_format, preprocessing_value) in expected.items():
+        cfg = OmegaConf.load(CONFIGS_ROOT / "dataset" / f"{name}.yaml")
+        assert cfg.data.loader == "prompt_manifest"
         assert cfg.data.manifest == manifest
         assert cfg.data.eval_manifest == eval_manifest
+        assert cfg.data.preprocessing.format == data_format
+        if data_format == "jsonl":
+            assert cfg.data.preprocessing.metadata_schema == preprocessing_value
+        else:
+            assert cfg.data.preprocessing.target_text == preprocessing_value
+        assert cfg.data.sampler.type == "random_without_replacement"
+
+
+def test_pickapic_dataset_config_declares_preprocessing_and_sampler() -> None:
+    cfg = OmegaConf.load(CONFIGS_ROOT / "dataset" / "pickapic_v2.yaml")
+
+    assert cfg.data.loader == "pickapic_preference"
+    assert cfg.data.source == "huggingface"
+    assert cfg.data.dataset_name == "yuvalkirstain/pickapic_v2"
+    assert cfg.data.preprocessing.resolution == 0
+    assert cfg.data.preprocessing.random_crop is False
+    assert cfg.data.preprocessing.horizontal_flip is True
+    assert cfg.data.sampler.shuffle is True
+    assert cfg.data.sampler.drop_last is True
+    assert cfg.data.sampler.dataloader_num_workers == 4
+
+
+def test_prompt_rewards_stay_in_reward_configs() -> None:
+    expected = {
+        "geneval": "geneval",
+        "pickscore": "pickscore",
+    }
+    for config_name, reward_name in expected.items():
+        cfg = OmegaConf.load(CONFIGS_ROOT / "reward" / f"{config_name}.yaml")
         assert list(cfg.reward.components.keys()) == [reward_name]
 
 

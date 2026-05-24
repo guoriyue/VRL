@@ -13,6 +13,7 @@ from vrl.trainers.checkpointing import (
     load_trainable_state,
     load_training_checkpoint,
     restore_training_checkpoint,
+    sample_prompt_indices,
     save_training_checkpoint,
 )
 
@@ -155,6 +156,26 @@ def test_infer_next_epoch_falls_back_to_numeric_checkpoint_suffix(tmp_path) -> N
     ckpt.mkdir()
 
     assert infer_next_epoch(ckpt, {}, {}) == 42
+
+
+def test_sample_prompt_indices_uses_configured_sampler_strategy() -> None:
+    sequential = sample_prompt_indices(
+        torch.Generator().manual_seed(0),
+        num_examples=5,
+        rollout_batch_size=3,
+        strategy="sequential_window",
+        epoch=1,
+    )
+    random_batch = sample_prompt_indices(
+        torch.Generator().manual_seed(0),
+        num_examples=5,
+        rollout_batch_size=3,
+        strategy="random_without_replacement",
+    )
+
+    assert sequential == [3, 4, 0]
+    assert len(random_batch) == 3
+    assert len(set(random_batch)) == 3
 
 
 def test_load_training_checkpoint_rejects_non_object_meta(tmp_path) -> None:
