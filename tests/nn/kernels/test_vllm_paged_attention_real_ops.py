@@ -1,4 +1,4 @@
-"""Real vLLM paged-attention smoke test."""
+"""Real vLLM paged-attention integration test."""
 
 from __future__ import annotations
 

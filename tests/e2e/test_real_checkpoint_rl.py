@@ -1,4 +1,4 @@
-"""Opt-in RL smoke tests against locally cached real model checkpoints."""
+"""Opt-in RL integration tests against locally cached real model checkpoints."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""GPU smoke coverage for Ray-backed reward inference."""
+"""GPU-aware contract coverage for Ray-backed reward inference."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ def build_tensor_mean_model(worker_config):
 
 def _request(path: Path, *, score_key: str = "overall_reward") -> RewardInferenceRequest:
     return RewardInferenceRequest(
-        request_id="gpu-smoke",
+        request_id="gpu-runtime",
         artifacts=(
             RewardInferenceArtifact(
                 artifact_id="a0",
@@ -38,13 +38,13 @@ def _request(path: Path, *, score_key: str = "overall_reward") -> RewardInferenc
                 policy_version=17,
             ),
         ),
-        reward_name="cosmos_reason1",
+        reward_name="KlingTeam/VideoReward@main",
         score_key=score_key,
         policy_version=17,
     )
 
 
-def test_repo_owned_reward_model_runtime_contract(tmp_path: Path) -> None:
+def test_ray_reward_runtime_uses_repo_owned_model_factory(tmp_path: Path) -> None:
     ray = pytest.importorskip("ray")
     artifact = tmp_path / "artifact.pt"
     torch.save(torch.tensor([1.0, 3.0]), artifact)
@@ -56,10 +56,10 @@ def test_repo_owned_reward_model_runtime_contract(tmp_path: Path) -> None:
                 "inference_runtime": "ray",
                 "worker_config": {
                     "model_factory": (
-                        "tests.rewards.test_ray_reward_gpu_smoke:build_tensor_mean_model"
+                        "tests.rewards.test_ray_reward_gpu_runtime:build_tensor_mean_model"
                     ),
                     "score_key": "overall_reward",
-                    "reward_model_version": "import-path-v1",
+                    "reward_model_version": "tensor-mean-v1",
                 },
                 "num_workers": 1,
                 "cpus_per_worker": 0.5,
@@ -76,17 +76,18 @@ def test_repo_owned_reward_model_runtime_contract(tmp_path: Path) -> None:
         results = asyncio.run(score_reward_request(actor_runtime, _request(artifact)))
 
         assert results[0].selected_score == pytest.approx(2.0)
-        assert results[0].reward_model_version == "import-path-v1"
+        assert results[0].reward_model_version == "tensor-mean-v1"
         assert results[0].metadata["worker"]["worker_id"] == "reward-0"
     finally:
         if actor_runtime is not None:
             asyncio.run(actor_runtime.shutdown())
         ray.shutdown()
 
+
 def test_ray_reward_runtime_assigns_gpu_ids_for_tensor_model(tmp_path: Path) -> None:
     ray = pytest.importorskip("ray")
     if not torch.cuda.is_available():
-        pytest.skip("requires a CUDA GPU for Ray reward GPU placement smoke")
+        pytest.skip("requires a CUDA GPU for Ray reward GPU placement contract")
 
     artifact = tmp_path / "artifact.pt"
     torch.save(torch.ones(2, 2), artifact)
@@ -98,10 +99,10 @@ def test_ray_reward_runtime_assigns_gpu_ids_for_tensor_model(tmp_path: Path) -> 
                 "inference_runtime": "ray",
                 "worker_config": {
                     "model_factory": (
-                        "tests.rewards.test_ray_reward_gpu_smoke:build_tensor_mean_model"
+                        "tests.rewards.test_ray_reward_gpu_runtime:build_tensor_mean_model"
                     ),
                     "score_key": "overall_reward",
-                    "reward_model_version": "gpu-smoke-v1",
+                    "reward_model_version": "gpu-runtime-v1",
                 },
                 "num_workers": 1,
                 "cpus_per_worker": 0.5,

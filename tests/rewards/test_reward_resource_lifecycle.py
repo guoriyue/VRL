@@ -112,7 +112,7 @@ def test_reward_config_receives_resolved_resource_plan() -> None:
                 "kwargs": {
                     "video_reward": {
                         "inference_runtime": "ray",
-                        "reward_name": "cosmos_reason1",
+                        "reward_name": "KlingTeam/VideoReward@main",
                         "score_key": "overall_reward",
                         "worker_config": {
                             "model_factory": _CONSTANT_MODEL_FACTORY,
@@ -133,7 +133,7 @@ def test_reward_config_receives_resolved_resource_plan() -> None:
                 {
                     "video_reward": {
                         "inference_runtime": "ray",
-                        "reward_name": "cosmos_reason1",
+                        "reward_name": "KlingTeam/VideoReward@main",
                         "score_key": "overall_reward",
                         "worker_config": {
                             "model_factory": _CONSTANT_MODEL_FACTORY,

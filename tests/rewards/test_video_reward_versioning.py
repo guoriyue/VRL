@@ -59,7 +59,7 @@ def _rollout() -> RewardRollout:
 async def test_video_reward_debug_records_versions_and_latency(tmp_path: Path) -> None:
     reward = VideoReward(
         inference_runtime="ray",
-        reward_name="cosmos_reason1",
+        reward_name="KlingTeam/VideoReward@main",
         score_key="overall_reward",
         artifact_dir=str(tmp_path / "reward_artifacts"),
         debug_dir=str(tmp_path / "reward_debug"),
@@ -101,7 +101,7 @@ def test_video_reward_rejects_async_scheduling_until_supported(tmp_path: Path) -
     with pytest.raises(ValueError, match="scheduling"):
         VideoReward(
             inference_runtime="ray",
-            reward_name="cosmos_reason1",
+            reward_name="KlingTeam/VideoReward@main",
             score_key="overall_reward",
             artifact_dir=str(tmp_path / "reward_artifacts"),
             scheduling="async",

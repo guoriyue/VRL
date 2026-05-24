@@ -138,11 +138,7 @@ def _discrete_batch() -> RolloutBatch:
 
 
 def test_janus_collector_has_no_forward_step() -> None:
-    """Sprint Task 7: the deprecated ``forward_step`` shim is gone.
-
-    Train-time replay ownership lives on ``model.replay_forward`` and the
-    evaluator calls the model directly. Collectors expose only ``collect()``.
-    """
+    """Collectors expose collect(); train-time replay lives on the model."""
     collector = build_rollout_collector(
         "janus_pro",
         model=_build_stub_model(),

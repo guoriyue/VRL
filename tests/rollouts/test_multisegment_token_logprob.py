@@ -174,7 +174,7 @@ def test_evaluator_can_replay_text_segment_without_using_image_path() -> None:
     assert signals.segments["selfcheck_text"].log_prob.shape == (2, 2)
 
 
-def test_evaluator_reads_r1_segments_from_trajectory_without_legacy_extras() -> None:
+def test_evaluator_reads_r1_segments_from_canonical_trajectory_fields() -> None:
     batch = _trajectory_batch()
     model = _SegmentReplayModel()
     evaluator = MultiSegmentTokenLogProbEvaluator(

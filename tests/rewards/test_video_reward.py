@@ -129,10 +129,10 @@ async def test_video_reward_rejects_missing_runtime_results(tmp_path: Path) -> N
         await reward.score_batch([_rollout(torch.ones(1, 2, 2, 2))])
 
 
-def test_video_reward_rejects_legacy_backend(tmp_path: Path) -> None:
+def test_video_reward_rejects_removed_backend_field(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="backend is no longer supported"):
         VideoReward(
-            backend="stub",
+            backend="removed",
             inference_runtime="ray",
             reward_name="dance_grpo",
             score_key="overall_reward",
@@ -152,8 +152,8 @@ def test_video_reward_rejects_non_ray_runtime(tmp_path: Path) -> None:
         )
 
 
-def test_video_reward_config_rejects_legacy_backend() -> None:
-    cfg = _video_reward_config(backend="stub")
+def test_video_reward_config_rejects_removed_backend_field() -> None:
+    cfg = _video_reward_config(backend="removed")
 
     with pytest.raises(ValueError, match=r"video_reward\.backend is no longer supported"):
         validate_reward_config(cfg)

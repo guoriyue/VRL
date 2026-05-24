@@ -195,8 +195,9 @@ def test_new_runtime_code_does_not_import_engine_compat_paths() -> None:
     assert not violations, _format_violations(violations)
 
 
-def test_legacy_engine_package_is_removed() -> None:
+def test_removed_engine_packages_stay_removed() -> None:
     assert not (VRL_ROOT / "engine").exists()
+    assert not (ROOT / "tests" / "engine").exists()
 
 
 def _forbidden_imports(

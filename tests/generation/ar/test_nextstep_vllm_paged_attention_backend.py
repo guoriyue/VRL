@@ -1,4 +1,4 @@
-"""CUDA smoke tests for NextStep's vLLM paged-attention backend."""
+"""CUDA integration tests for NextStep's vLLM paged-attention backend."""
 
 from __future__ import annotations
 

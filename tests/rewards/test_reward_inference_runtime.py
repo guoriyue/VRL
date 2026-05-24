@@ -48,18 +48,18 @@ def test_runtime_factory_rejects_missing_worker_config() -> None:
         build_reward_actor_runtime({"inference_runtime": "ray"})
 
 
-def test_model_name_without_worker_config_is_not_a_loader() -> None:
+def test_reward_name_without_worker_config_is_not_a_worker_loader() -> None:
     with pytest.raises(ValueError, match="worker_config"):
         build_reward_actor_runtime(
             {
                 "inference_runtime": "ray",
-                "model_name": "cosmos_reason1",
+                "reward_name": "KlingTeam/VideoReward@main",
                 "score_key": "overall_reward",
             },
         )
 
 
-def test_video_reward_normalizes_model_name_before_ray(tmp_path) -> None:
+def test_video_reward_derives_internal_model_factory_from_reward_name(tmp_path) -> None:
     reward = VideoReward(
         reward_name="KlingTeam/VideoReward@main",
         score_key="overall_reward",
@@ -70,13 +70,13 @@ def test_video_reward_normalizes_model_name_before_ray(tmp_path) -> None:
     assert reward._actor_runtime.worker_config == {
         "model_path": "",
         "dtype": "bfloat16",
-        "reward_model_name": "KlingTeam/VideoReward@main",
         "model_factory": "vrl.rewards.models.kling_video_reward:KlingVideoRewardModel",
+        "reward_model_name": "KlingTeam/VideoReward@main",
         "reward_model_version": "KlingTeam/VideoReward@main",
     }
 
 
-def test_worker_loads_model_via_factory(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_worker_loads_reward_model_via_factory(monkeypatch: pytest.MonkeyPatch) -> None:
     class _FakeRewardModel:
         def __init__(self, worker_config):
             self.worker_config = worker_config
@@ -122,7 +122,7 @@ def test_worker_loads_model_via_factory(monkeypatch: pytest.MonkeyPatch) -> None
     assert results[0].reward_model_version == "KlingTeam/VideoReward@main"
 
 
-def test_worker_does_not_treat_model_name_as_loader() -> None:
+def test_worker_requires_explicit_model_factory_even_with_reward_model_name() -> None:
     with pytest.raises(ValueError, match="model_factory"):
         RewardModelWorker("reward-0", {})
     with pytest.raises(ValueError, match="model_factory"):
