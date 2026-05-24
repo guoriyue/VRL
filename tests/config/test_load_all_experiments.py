@@ -185,18 +185,14 @@ def test_anima_anatomy_reward_config_uses_anime_components() -> None:
 
     reward_weights, reward_kwargs = built["reward"]
     assert reward_weights == {
-        "anime_anatomy_plausibility": pytest.approx(1.0),
-        "anime_hand_quality": pytest.approx(0.4),
+        "anime_anatomy_structure": pytest.approx(1.0),
     }
     assert cfg.data.manifest == "datasets/danbooru/anatomy/train_prompts.jsonl"
     assert cfg.data.eval_manifest == "datasets/danbooru/anatomy/eval_prompts.jsonl"
-    assert reward_kwargs["anime_anatomy_plausibility"]["model_name"] == ""
-    assert reward_kwargs["anime_hand_quality"]["model_name"] == ""
+    assert reward_kwargs["anime_anatomy_structure"]["backend"] == "dwpose"
+    assert "model_repo" not in reward_kwargs["anime_anatomy_structure"]
     reward_fn = build_reward_from_cfg(cfg, built=built, device="cpu")
-    assert [name for name, _, _ in reward_fn.rewards] == [
-        "anime_anatomy_plausibility",
-        "anime_hand_quality",
-    ]
+    assert [name for name, _, _ in reward_fn.rewards] == ["anime_anatomy_structure"]
 
 
 def test_anima_config_keeps_artifact_names_without_local_paths() -> None:

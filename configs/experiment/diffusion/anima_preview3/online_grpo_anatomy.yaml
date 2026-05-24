@@ -4,13 +4,8 @@ defaults:
   - /model/diffusion/cosmos/anima_preview3
   - /sampling/image/512
   - /sampling/denoise/10_step_cfg_4_5
-  - /reward/anime_anatomy_plausibility
-  - /reward/anime_hand_quality
+  - /reward/anime_anatomy_structure
   - /dataset/anime_anatomy
-
-reward:
-  components:
-    anime_hand_quality: 0.4
 
 actor:
   optim:

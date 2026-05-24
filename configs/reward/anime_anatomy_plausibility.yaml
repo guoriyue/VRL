@@ -1,8 +1,0 @@
-# Anime anatomy plausibility classifier reward.
-reward:
-  components:
-    anime_anatomy_plausibility: 1.0
-  kwargs:
-    anime_anatomy_plausibility:
-      model_name: ${oc.env:ANIME_ANATOMY_REWARD_MODEL,""}
-      aggregation: mean

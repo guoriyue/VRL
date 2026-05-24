@@ -15,7 +15,8 @@
 
 - 主要瓶颈不是写 reward class，而是构建可追溯的 anime anatomy 数据闭环。
 - prompt 不能靠手写 20k，也不能靠 LLM 凭空编；prompt 要从 Danbooru metadata 的 tag 分布和受控模板派生。
-- 训练 reward 第一阶段只保留两个信号：`anime_anatomy_plausibility` 和 `anime_hand_quality`。
+- 训练 reward 第一阶段只保留一个可解释信号：`anime_anatomy_structure`。
+- 第一阶段不训练 anatomy/hand classifier；用 DWPose/OpenPose-style whole-body keypoints 做几何 reward。
 - real human anatomy 数据不能和 anime anatomy 直接混成同一个训练分布；第一阶段 reward、校准集和 hard negative 都应该 anime-specific。
 
 ## 1. Current Code Reality
@@ -65,18 +66,18 @@ melted_fingers
 implausible_action_pose
 ```
 
-不能直接共用的是 reward model 和 calibration data。原因：
+不能直接共用的是 reward calibration 和最终判断标准。原因：
 
 - anime 人体比例、线条、遮挡方式、衣服结构和真实照片不同。
-- real pose/hand detector 在 anime 图上经常漏检或误检，直接做训练 reward 容易 reward hacking。
-- real hand 的纹理和 anime hand 的线稿/上色差异很大，直接混正样本会让 hand reward 学偏。
+- pose/hand detector 在 anime 图上仍会漏检或误检，所以 reward 只做保守几何约束，不把 detector miss 当成完整人工判断。
+- 第一阶段不训练 hand classifier，也不把 real hand crops 混进 anime reward。
 - 动作合理性可以借用现实世界常识，但最终判断要在 anime 图上校准。
 
 第一阶段策略：
 
-- `AnimeAnatomyPlausibilityReward` 用 anime positives 和 Anima hard negatives 训练。
-- `AnimeHandQualityReward` 用 anime hand crops 和 Anima bad hand crops 训练。
-- real human anatomy 数据最多作为预训练参考或离线诊断，不进入第一阶段 reward calibration。
+- `AnimeAnatomyStructureReward` 使用 DWPose/OpenPose-style keypoints 检查 body、hands、feet 和 limb geometry。
+- Danbooru prompt bucket 决定哪些 prompt 需要 hands/feet/full-body 约束。
+- Codex/VLM/human 标注最多用于离线审计 high-reward bad samples，不进入第一阶段 online reward。
 - 如果后续引入 real data，manifest 必须显式写 `domain: real`，并和 `domain: anime` 分开报告。
 
 ## 4. Dataset Strategy
@@ -89,8 +90,8 @@ implausible_action_pose
 
 - 构建 anime anatomy prompt 分布。
 - 构建 anime positive image manifest。
-- 为 anatomy plausibility classifier 提供正样本。
-- 为 hand quality classifier 提供 hand-visible 正样本来源。
+- 为 pose reward calibration 和 baseline eval 提供 anime full-body distribution。
+- 为后续离线审计提供 hand-visible / feet-visible 样本来源。
 
 第一阶段过滤规则只围绕肢体和手部可见性：
 
@@ -244,23 +245,23 @@ prompt manifest 生成必须使用 bucket quota，而不是顺着 Danbooru 自�
 
 用途：
 
-- 训练或校准 hand quality classifier。
-- 给 `AnimeHandQualityReward` 提供正样本和 hard negative。
+- 离线审计 hand detector 和 pose reward 的误判。
+- 维护 hand-visible / bad-hand 样本池，用于人工或 VLM 复核。
 
 来源：
 
 - Gwern/Danbooru hand-visible crops 作为 positive hand crops。
 - base Anima 生成图裁出的 bad hand crops 作为 negative hand crops。
 
-hand crop 不直接作为 GRPO prompt dataset，而是作为 reward model/classifier 的训练数据和验证数据。
+hand crop 不直接作为 GRPO prompt dataset，也不作为第一阶段 classifier 训练数据。
 
 ### 4.4 Base Anima Hard Negatives
 
 用途：
 
 - 用当前 base Anima 在固定 prompt suite 上生成大量候选图。
-- 把失败样本挖出来作为 anatomy classifier 的负样本。
-- 挖出 reward hacking 样本，反复更新 reward。
+- 把失败样本挖出来作为 pose reward 审计样本。
+- 挖出 high-reward bad-anatomy 样本，反复调整几何规则和 prompt bucket。
 
 第一阶段 failure labels：
 
@@ -291,7 +292,7 @@ wrong_person_count
 
 - 对 hard negative 做小规模高质量标注。
 - 校准自动 reward 和真实视觉质量之间的相关性。
-- 评估 RL 训练是否只是在骗 classifier。
+- 评估 RL 训练是否只是在骗 pose detector。
 
 标注问题只问 anatomy：
 
@@ -349,7 +350,7 @@ datasets/danbooru/anatomy/preference_pairs.jsonl
 `preference_pairs.jsonl` 示例：
 
 ```json
-{"prompt": "anime man, full body, walking, both hands visible, city street", "chosen": "/data/danbooru/anatomy/pairs/0001_chosen.png", "rejected": "/data/danbooru/anatomy/pairs/0001_rejected.png", "labels": ["anatomy_plausibility", "hand_quality"], "domain": "anime"}
+{"prompt": "anime man, full body, walking, both hands visible, city street", "chosen": "/data/danbooru/anatomy/pairs/0001_chosen.png", "rejected": "/data/danbooru/anatomy/pairs/0001_rejected.png", "labels": ["pose_structure", "hand_visibility"], "domain": "anime"}
 ```
 
 第一阶段规模目标：
@@ -399,7 +400,7 @@ python -m vrl.scripts.data.danbooru <subcommand>
 
 - 输入固定 eval prompt suite。
 - 调用当前 Anima checkpoint 生成候选图。
-- 跑 anatomy classifier 和诊断脚本。
+- 跑 pose reward 和诊断脚本。
 - 输出待标注 hard negative manifest。
 
 `export-label-queue`：
@@ -410,60 +411,54 @@ python -m vrl.scripts.data.danbooru <subcommand>
 `calibrate-rewards`：
 
 - 输入 anime positive manifest 和 hard negative manifest。
-- 跑 `AnimeAnatomyPlausibilityReward` 和 `AnimeHandQualityReward`。
-- 输出 reward 均值和 pairwise AUC calibration report。
+- 跑 `anime_anatomy_structure`，输出 positive/hard-negative 的 score distribution。
+- 只作为 pose reward audit，不依赖 classifier checkpoint。
 
 ## 7. Reward Design
 
-第一阶段训练 reward 只有两个：
+第一阶段训练 reward 只有一个：
+
+```text
+anime_anatomy_structure
+```
+
+### 7.1 AnimeAnatomyStructureReward
+
+用途：
+
+- 作为第一阶段主 reward。
+- 用 DWPose/OpenPose-style whole-body keypoints 判断身体完整性、肢体连接、关节角度和动作姿态。
+- 根据 prompt 决定是否要求 hands/feet：`both hands visible`、`feet visible`、`full body` 等约束会触发对应 penalty。
+- 惩罚 missing wrist/ankle/hand keypoints、collapsed hand keypoints、过度不对称 limb length、退化 elbow/knee angle 和明显多人误检。
+- 不训练 classifier，不需要 `model_name` checkpoint；默认 DWPose ONNX 文件通过 Hugging Face cache 下载。
+
+runtime reward contract：
+
+```text
+input:
+  generated image or sampled video frame
+
+detector:
+  DWPose/OpenPose-style body + hand + foot keypoints
+
+output:
+  scalar score in [0, 1]
+```
+
+### 7.2 Removed Classifier Rewards
+
+以下两个旧 reward 已从主代码路径移除：
 
 ```text
 anime_anatomy_plausibility
 anime_hand_quality
 ```
 
-### 7.1 AnimeAnatomyPlausibilityReward
+原因：
 
-用途：
-
-- 作为第一阶段主 reward。
-- 判断身体完整性、肢体连接、关节方向和动作姿态是否合理。
-- 惩罚 missing feet、extra limbs、disconnected arms、impossible leg bend、cropped full body。
-- 对 action pose prompt 特别关注动作是否能站得住、重心是否合理、手臂和腿是否和动作一致。
-
-训练方式：
-
-- 用 anime positive images 作为正样本。
-- 用 base Anima hard negatives 作为负样本。
-- v0 优先训练一个输出 `[0, 1]` 的 scalar classifier，直接表示 anatomy plausibility。
-- hard negative 的 failure labels 先作为分析 metadata，不进入 reward runtime 的硬编码标签集合。
-
-runtime reward contract：
-
-```text
-preferred:
-  classifier returns a numeric score in [0, 1]
-
-optional:
-  if the classifier returns named labels, configure positive_labels and
-  negative_labels in the reward YAML for that specific checkpoint
-```
-
-### 7.2 AnimeHandQualityReward
-
-用途：
-
-- 作为手和手指的专项 reward。
-- 检查 hand visibility、finger count stability、melted fingers、extra fingers、missing fingers。
-- 单独存在是因为手部是小区域问题，直接混进全身 classifier 容易被身体完整性分数淹没。
-
-训练方式：
-
-- 用 anime hand-positive crops 作为正样本。
-- 用 base Anima 生成图裁出的 bad hand crops 作为负样本。
-- v0 使用 binary hand quality score。需要诊断时再额外保存 bad_hands、extra_fingers、
-  missing_fingers 等 failure metadata。
-- 先做 crop-level classifier，再把每张图的 hand crop scores 聚合成 image-level reward。
+- 需要训练/发布 classifier checkpoint 才能稳定使用。
+- 用户当前明确不采用 classifier 训练路线。
+- 在线 GRPO 主配置不应该依赖空的 `model_name`。
 
 ### 7.3 Diagnostics
 
@@ -486,16 +481,15 @@ tag_bucket_coverage:
 ```yaml
 reward:
   components:
-    anime_anatomy_plausibility: 1.0
-    anime_hand_quality: 0.4
+    anime_anatomy_structure: 1.0
 ```
 
 解释：
 
-- `anime_anatomy_plausibility` 是主优化目标。
-- `anime_hand_quality` 是专项补偿，避免模型肢体变好但手仍然坏。
+- `anime_anatomy_structure` 是主优化目标，同时覆盖 body、hands、feet 和 limb geometry。
+- hand/feet 是否强约束由 prompt 文本触发，避免对没有要求露出手脚的图过度惩罚。
 
-权重不是最终值。必须先用 baseline generated candidates 做 reward calibration，再开始 RL。校准时重点看两个主 reward 是否能把 anime positive images 和 Anima hard negatives 分开；如果分不开，不进入训练。
+权重不是最终值。必须先用 baseline generated candidates 做 reward audit，再开始 RL。审计重点看 high-reward bad anatomy 样本是否集中在 detector miss、遮挡、多人误检或手部 collapse。
 
 ## 8. Training Experiment
 
@@ -513,6 +507,7 @@ defaults:
   - /model/diffusion/cosmos/anima_preview3
   - /sampling/image/512
   - /sampling/denoise/10_step_cfg_4_5
+  - /reward/anime_anatomy_structure
   - /dataset/anime_anatomy
 ```
 
@@ -522,7 +517,7 @@ defaults:
 - LoRA rank 从 16 或 32 开始。
 - learning rate 保守设置，避免 reward 过拟合到少数 failure mode。
 - `rollout.n` 从 4 开始，保证同一 prompt 下能比较多个候选。
-- 保持 KL/ref regularization，避免模型只迎合 anatomy classifier。
+- 保持 KL/ref regularization，避免模型只迎合 pose detector 的检测偏好。
 - 训练集以 anatomy prompt 为主，但保留少量 neutral prompt，防止模型只会 full-body 模板。
 
 ## 9. Experiment Phases
@@ -562,27 +557,26 @@ defaults:
 交付：
 
 - anime positives、hard negatives、baseline generations 的 reward 分布报告。
-- 两个 reward component 的 histogram 和 AUC。
+- pose reward histogram 和 high/low score 样本清单。
 - 高 reward 失败样本清单。
 
 验收：
 
-- anime positive images 的 anatomy reward 分布明显高于 hard negatives。
+- base Anima bad-anatomy 样本在 pose reward 上能暴露出主要 failure family。
 - high reward but bad anatomy 的样本被加入 hard negative queue。
-- 如果 reward 不能区分正负样本，本阶段不进入 RL 训练。
+- 如果 reward 主要奖励 detector artifact，本阶段不进入 RL 训练。
 
-### Phase 4: Train Anatomy Classifiers
+### Phase 4: Audit Pose Reward
 
 交付：
 
-- anatomy plausibility classifier checkpoint。
-- hand quality classifier checkpoint。
-- reward wrapper。
-- reward registry entry。
+- pose reward audit report。
+- high-reward bad-anatomy queue。
+- reward rule adjustment notes。
 
 验收：
 
-- classifier 在留出 hard negative set 上稳定区分主要 failure modes。
+- `anime_anatomy_structure` 在留出 hard negative set 上能暴露主要 failure modes。
 - inference batch path 和 VRL reward API 兼容。
 - reward 输出记录 component scores，便于观察 reward hacking。
 
@@ -596,8 +590,7 @@ defaults:
 
 验收：
 
-- `anatomy_plausibility_score` 上升。
-- `hand_quality_score` 上升。
+- `anime_anatomy_structure_score` 上升。
 - `finger_defect_rate` 下降。
 - `implausible_action_pose_rate` 下降。
 - `missing_hand_rate` 下降。
@@ -608,8 +601,8 @@ defaults:
 交付：
 
 - 训练后模型生成的新 hard negatives。
-- 更新后的 classifier training set。
-- 第二轮 reward calibration。
+- 更新后的 high-reward bad-anatomy audit set。
+- 第二轮 pose reward audit。
 
 验收：
 
@@ -621,8 +614,7 @@ defaults:
 自动指标：
 
 ```text
-anatomy_plausibility_score
-hand_quality_score
+anime_anatomy_structure_score
 both_hands_visible_rate
 feet_visible_rate
 finger_defect_rate
@@ -655,7 +647,7 @@ base_vs_rl_action_pose_preference_rate
 - 有固定的 anime anatomy prompt eval suite。
 - 每条 prompt 都能追溯到 source tags、template_id、bucket、constraints 和 domain。
 - 有 anime positive images、anime hand crops 和 Anima hard negatives 的 manifest。
-- reward calibration 证明 anatomy reward 能区分正负样本。
+- pose reward audit 证明主要 high-reward failure modes 可追踪、可调整。
 - 有可运行的 Anima anatomy GRPO config。
 - 首轮训练相对 base Anima 在 anatomy metrics 上改善。
 - 所有数据来源和本地路径都可追溯。
@@ -668,7 +660,8 @@ base_vs_rl_action_pose_preference_rate
 - 构建通用真实人体姿态数据集。
 - 把 real human anatomy 数据直接混进 anime reward calibration。
 - 训练多人互动、复杂遮挡或连续动作。
-- 把 pose detector 或 anime tagger 做成第一阶段主训练 reward。
+- 训练 anatomy/hand classifier 作为第一阶段主 reward。
+- 用 anime tagger 代替 pose/keypoint geometry reward。
 - 把 Danbooru 图片重新发布到 repo。
 - 用单一 VLM prompt 代替可校准 reward。
 
@@ -677,13 +670,13 @@ base_vs_rl_action_pose_preference_rate
 reward hacking 风险：
 
 - 每轮收集 high reward bad samples。
-- anatomy classifier 必须持续吸收新 hard negatives。
+- pose reward 规则必须持续根据 high-reward bad samples 调整。
 - 自动指标之外保留人工 A/B。
 
 domain mismatch 风险：
 
 - 不把 real human anatomy data 当主训练数据。
-- real detector 第一阶段只作为诊断参考，主 reward 来自 anime positives 和 Anima hard negatives。
+- pose detector 是第一阶段的几何先验，但必须用 anime generated samples 做审计。
 - manifest 必须保留 `domain` 字段，防止 anime 和 real 数据被无意混在一起。
 
 prompt overfitting 风险：
@@ -706,8 +699,9 @@ prompt overfitting 风险：
 - [x] 实现 anime hand crop manifest 构建脚本。
 - [x] 实现 base Anima hard negative mining 脚本。
 - [x] 实现 label queue export。
-- [x] 实现 `AnimeAnatomyPlausibilityReward`。
-- [x] 实现 `AnimeHandQualityReward`。
+- [x] 实现 `AnimeAnatomyStructureReward`。
+- [x] 主训练配置切到 `anime_anatomy_structure`，不依赖空 classifier checkpoint。
+- [x] 移除 `AnimeAnatomyPlausibilityReward` 和 `AnimeHandQualityReward` classifier 路线。
 - [ ] 实现 anatomy diagnostic report，不进入第一阶段 reward composition。
 - [x] 注册 reward 到 `vrl/rewards/functions/registry.py`。
 - [x] 新增 `configs/experiment/diffusion/anima_preview3/online_grpo_anatomy.yaml`。

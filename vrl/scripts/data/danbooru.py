@@ -1425,13 +1425,11 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     calibrate = subparsers.add_parser(
         "calibrate-rewards",
-        help="Run offline calibration for anime anatomy reward classifiers.",
+        help="Run offline audit for the anime anatomy pose reward.",
     )
     calibrate.add_argument("--positive-manifest", required=True)
     calibrate.add_argument("--hard-negative-manifest", required=True)
     calibrate.add_argument("--output", required=True)
-    calibrate.add_argument("--anatomy-model", required=True)
-    calibrate.add_argument("--hand-model", required=True)
     calibrate.add_argument("--device", default="cuda")
     calibrate.add_argument("--max-samples", type=int, default=512)
     calibrate.set_defaults(func=_cmd_calibrate_rewards)
@@ -1603,8 +1601,6 @@ def _cmd_calibrate_rewards(args: argparse.Namespace) -> None:
         _run_reward_calibration(
             positive_manifest=args.positive_manifest,
             hard_negative_manifest=args.hard_negative_manifest,
-            anatomy_model=args.anatomy_model,
-            hand_model=args.hand_model,
             device=args.device,
             max_samples=args.max_samples,
         ),
@@ -1618,32 +1614,22 @@ async def _run_reward_calibration(
     *,
     positive_manifest: str,
     hard_negative_manifest: str,
-    anatomy_model: str,
-    hand_model: str,
     device: str,
     max_samples: int,
 ) -> dict[str, Any]:
-    from vrl.rewards.functions.anime_anatomy import (
-        AnimeAnatomyPlausibilityReward,
-        AnimeHandQualityReward,
-    )
+    from vrl.rewards.functions.anime_anatomy import AnimeAnatomyStructureReward
 
     positives = _load_reward_rollouts(positive_manifest, max_samples=max_samples)
     negatives = _load_reward_rollouts(hard_negative_manifest, max_samples=max_samples)
 
-    anatomy_reward = AnimeAnatomyPlausibilityReward(device=device, model_name=anatomy_model)
-    hand_reward = AnimeHandQualityReward(device=device, model_name=hand_model)
-
-    anatomy_pos = await anatomy_reward.score_batch(positives)
-    anatomy_neg = await anatomy_reward.score_batch(negatives)
-    hand_pos = await hand_reward.score_batch(positives)
-    hand_neg = await hand_reward.score_batch(negatives)
+    anatomy_reward = AnimeAnatomyStructureReward(device=device)
+    pose_pos = await anatomy_reward.score_batch(positives)
+    pose_neg = await anatomy_reward.score_batch(negatives)
 
     return {
         "positive_count": len(positives),
         "hard_negative_count": len(negatives),
-        "anatomy_plausibility": _metric_report(anatomy_pos, anatomy_neg),
-        "hand_quality": _metric_report(hand_pos, hand_neg),
+        "anime_anatomy_structure": _metric_report(pose_pos, pose_neg),
     }
 
 

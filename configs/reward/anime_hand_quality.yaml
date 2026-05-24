@@ -1,8 +1,0 @@
-# Anime hand quality classifier reward.
-reward:
-  components:
-    anime_hand_quality: 1.0
-  kwargs:
-    anime_hand_quality:
-      model_name: ${oc.env:ANIME_HAND_QUALITY_REWARD_MODEL,""}
-      aggregation: mean

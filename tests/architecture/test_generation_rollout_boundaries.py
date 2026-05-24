@@ -109,6 +109,7 @@ def test_reward_function_implementations_live_under_functions() -> None:
     assert _module_filenames(rewards_root / "functions") == {
         "__init__.py",
         "aesthetic.py",
+        "anime_anatomy.py",
         "clip.py",
         "codex_image_qa.py",
         "nsfw_safety.py",
