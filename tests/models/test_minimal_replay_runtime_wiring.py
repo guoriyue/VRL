@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -257,7 +258,10 @@ def test_anima_runtime_spec_uses_explicit_local_paths() -> None:
     assert replay.extra["transformer_path"] == "/models/anima/transformer.safetensors"
 
 
-def test_anima_runtime_spec_rejects_hf_repo_id_without_local_artifact_paths() -> None:
+def test_anima_runtime_spec_rejects_hf_repo_id_without_cached_artifacts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     from vrl.config.loading import load_config
     from vrl.models.diffusion.cosmos.anima.runtime import extract_anima_replay_runtime_spec
 
@@ -269,6 +273,8 @@ def test_anima_runtime_spec_rejects_hf_repo_id_without_local_artifact_paths() ->
         ],
     )
     spec = extract_anima_replay_runtime_spec(cfg, "cpu", torch.float32)
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "empty_hf_cache"))
+    monkeypatch.delenv("HF_HOME", raising=False)
 
     with pytest.raises(ValueError, match=r"model\.path='circlestone-labs/Anima'"):
         spec.extra["transformer_path"] = ""
