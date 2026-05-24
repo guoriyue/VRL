@@ -10,19 +10,35 @@ from vrl.rewards.inference import (
     RewardInferenceArtifact,
     RewardInferenceRequest,
 )
-from vrl.rewards.ray.launcher import build_reward_ray_runtime
+from vrl.rewards.ray import (
+    build_reward_actor_runtime,
+    score_reward_request,
+)
+
+
+def build_constant_reward_model(worker_config):
+    """Test RewardModel factory: return fixed scores from worker_config."""
+
+    scores = {str(k): float(v) for k, v in dict(worker_config["scores"]).items()}
+
+    def _model(*, artifact, request):
+        return dict(scores)
+
+    return _model
 
 
 def test_ray_reward_runtime_scores_artifacts_with_fake_worker() -> None:
     ray = pytest.importorskip("ray")
     ray.shutdown()
-    runtime = None
+    actor_runtime = None
     try:
-        runtime = build_reward_ray_runtime(
+        actor_runtime = build_reward_actor_runtime(
             {
                 "inference_runtime": "ray",
                 "worker_config": {
-                    "scorer": "constant",
+                    "model_factory": (
+                        "tests.rewards.test_ray_reward_inference_runtime:build_constant_reward_model"
+                    ),
                     "scores": {"overall_reward": 2.0},
                     "reward_model_version": "fake-v1",
                 },
@@ -53,7 +69,7 @@ def test_ray_reward_runtime_scores_artifacts_with_fake_worker() -> None:
             policy_version=7,
         )
 
-        results = asyncio.run(runtime.score_batch(request))
+        results = asyncio.run(score_reward_request(actor_runtime, request))
 
         assert [result.artifact_id for result in results] == ["a0", "a1", "a2"]
         assert [result.selected_score for result in results] == pytest.approx([2.0, 2.0, 2.0])
@@ -64,6 +80,6 @@ def test_ray_reward_runtime_scores_artifacts_with_fake_worker() -> None:
         assert all(result.inference_ms is not None for result in results)
         assert all(result.metadata["worker"]["worker_id"].startswith("reward-") for result in results)
     finally:
-        if runtime is not None:
-            asyncio.run(runtime.shutdown())
+        if actor_runtime is not None:
+            asyncio.run(actor_runtime.shutdown())
         ray.shutdown()

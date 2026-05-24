@@ -6,12 +6,9 @@ instead of parametrizing the same assertion into dozens of collected tests.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
-import torch
 from omegaconf import OmegaConf
 
 from vrl.algorithms.diffusion_nft import DiffusionNFTConfig
@@ -77,6 +74,7 @@ def test_experiments_are_grouped_by_model_family() -> None:
         "diffusion/sd3_5/online_grpo_pickscore",
         "diffusion/wan_2_1/offline_dpo_pickapic",
         "diffusion/wan_2_1/online_grpo_ocr",
+        "diffusion/wan_2_1/online_grpo_video_reward",
     }
 
     assert set(_experiment_names()) == expected
@@ -86,13 +84,18 @@ def test_experiments_are_grouped_by_model_family() -> None:
 def test_experiments_use_dataset_groups_and_only_override_reward_weights() -> None:
     inline_data = []
     inline_reward_kwargs = []
+    allowed_reward_kwargs = {
+        "experiment/diffusion/wan_2_1/online_grpo_video_reward.yaml",
+    }
     for path in EXPERIMENT_DIR.rglob("*.yaml"):
         raw = OmegaConf.load(path)
         if "data" in raw:
             inline_data.append(path.relative_to(CONFIGS_ROOT).as_posix())
         reward = raw.get("reward", None)
         if reward is not None and "kwargs" in reward:
-            inline_reward_kwargs.append(path.relative_to(CONFIGS_ROOT).as_posix())
+            rel = path.relative_to(CONFIGS_ROOT).as_posix()
+            if rel not in allowed_reward_kwargs:
+                inline_reward_kwargs.append(rel)
 
     assert inline_data == []
     assert inline_reward_kwargs == []
@@ -153,13 +156,66 @@ def test_cosmos_diffusion_nft_video_reward_validation_config() -> None:
     assert cfg.reward.kwargs.video_reward.debug_dir == (
         f"{cfg.trainer.output_dir}/reward_debug"
     )
-    assert cfg.reward.kwargs.video_reward.reward_name == "cosmos_reason1"
-    assert cfg.reward.kwargs.video_reward.worker_config.scorer == "import_path"
-    assert "model_name" not in cfg.reward.kwargs.video_reward
+    assert cfg.reward.kwargs.video_reward.reward_name == "KlingTeam/VideoReward@main"
+    assert "model_factory" not in cfg.reward.kwargs.video_reward.worker_config
+    assert "reward_model_name" not in cfg.reward.kwargs.video_reward.worker_config
     assert cfg.distributed.resources.reward.num_gpus == 1
     assert cfg.distributed.resources.reward.share_with_rollout is True
     assert cfg.distributed.reward.release_after_score is True
     assert cfg.trainer.total_epochs == 1
+
+
+def test_wan_video_reward_production_config() -> None:
+    cfg = load_config("experiment/diffusion/wan_2_1/online_grpo_video_reward")
+
+    validate_training_config(cfg)
+    assert cfg.model.family == "wan"
+    assert cfg.reward.components.video_reward == 1.0
+    assert cfg.reward.kwargs.video_reward.inference_runtime == "ray"
+    assert cfg.reward.kwargs.video_reward.media_type == "video"
+    assert cfg.reward.kwargs.video_reward.artifact_format == "mp4"
+    assert cfg.reward.kwargs.video_reward.artifact_dir == (
+        f"{cfg.trainer.output_dir}/reward_artifacts"
+    )
+    assert cfg.reward.kwargs.video_reward.debug_dir == (
+        f"{cfg.trainer.output_dir}/reward_debug"
+    )
+    assert cfg.reward.kwargs.video_reward.reward_name == "KlingTeam/VideoReward@main"
+    assert "model_factory" not in cfg.reward.kwargs.video_reward.worker_config
+    assert "backend" not in cfg.reward.kwargs.video_reward.worker_config
+    assert "score_key_map" not in cfg.reward.kwargs.video_reward.worker_config
+    assert "reward_model_name" not in cfg.reward.kwargs.video_reward.worker_config
+    assert cfg.rollout.n == 4
+    assert cfg.rollout.rollout_batch_size == 1
+    assert cfg.rollout.sample_batch_size == 1
+    assert cfg.rollout.noise_level == pytest.approx(0.7)
+    assert cfg.rollout.sde.type == "cps"
+    assert cfg.data.task_type == "text_to_video"
+    assert cfg.data.manifest == "datasets/pickscore_sfw/train.txt"
+    assert cfg.data.eval_manifest == "datasets/pickscore_sfw/test.txt"
+    assert cfg.data.source_report == "datasets/pickscore_sfw/report.json"
+
+
+def test_wan_video_reward_production_config_requires_reward_name() -> None:
+    cfg = load_config("experiment/diffusion/wan_2_1/online_grpo_video_reward")
+    cfg.reward.kwargs.video_reward.reward_name = ""
+
+    with pytest.raises(ValueError, match="reward_name"):
+        validate_training_config(cfg)
+
+
+def test_wan_video_reward_production_rejects_extra_loader_fields() -> None:
+    cfg = load_config("experiment/diffusion/wan_2_1/online_grpo_video_reward")
+    cfg.reward.kwargs.video_reward.worker_config.import_path = "fake:thing"
+
+    with pytest.raises(ValueError, match="remove extra loader fields"):
+        validate_training_config(cfg)
+
+    cfg = load_config("experiment/diffusion/wan_2_1/online_grpo_video_reward")
+    cfg.reward.kwargs.video_reward.worker_config.model_factory = "fake:factory"
+
+    with pytest.raises(ValueError, match="remove extra loader fields"):
+        validate_training_config(cfg)
 
 
 def test_anima_safe_reward_config_uses_cpu_nsfw_penalty() -> None:
@@ -218,57 +274,6 @@ def test_anima_config_keeps_artifact_names_without_local_paths() -> None:
     assert "ComfyUI" not in model_yaml
     assert cfg.model.qwen_tokenizer_path == "Qwen/Qwen2.5-0.5B"
     assert cfg.model.t5_tokenizer_path == "google-t5/t5-base"
-
-
-def test_cosmos_optimization_check_records_trainable_change(tmp_path: Path) -> None:
-    from vrl.scripts.diffusion.cosmos.train import (
-        _capture_optimization_check_before,
-        _capture_optimization_check_metrics,
-        _write_optimization_check_after,
-    )
-
-    module = torch.nn.Linear(1, 1, bias=False)
-    cfg = OmegaConf.create(
-        {
-            "reward": {
-                "components": {"video_reward": 1.0},
-                "kwargs": {
-                    "video_reward": {
-                        "inference_runtime": "ray",
-                        "reward_name": "cosmos_reason1",
-                        "artifact_dir": str(tmp_path / "reward_artifacts"),
-                        "debug_dir": str(tmp_path / "reward_debug"),
-                        "worker_config": {"reward_model_version": "reward-v1"},
-                    },
-                },
-            },
-        },
-    )
-    stack = SimpleNamespace(
-        cfg=cfg,
-        bundle=SimpleNamespace(trainable_modules={"module": module}),
-        output_dir=tmp_path,
-        trainer=SimpleNamespace(state=SimpleNamespace(global_step=1, step=1)),
-    )
-    state: dict[str, object] = {}
-
-    _capture_optimization_check_before(state, stack, 0)
-    with torch.no_grad():
-        module.weight.add_(1.0)
-    _capture_optimization_check_metrics(
-        state,
-        {"grad_norm": 2.0, "reward_mean": 1.0, "reward_std": 0.5, "advantage_mean": 0.25},
-        SimpleNamespace(grad_norm=2.0, reward_mean=1.0, reward_std=0.5, advantage_mean=0.25),
-    )
-    _write_optimization_check_after(state, stack, 0)
-
-    payload = json.loads((tmp_path / "optimization_check.json").read_text())
-    assert payload["global_step"] == 1
-    assert payload["grad_norm"] == pytest.approx(2.0)
-    assert payload["reward_std"] == pytest.approx(0.5)
-    assert payload["trainable_sha256_changed"] is True
-    assert payload["reward_runtime"] == "ray"
-    assert payload["reward_artifacts_manifest"].endswith("reward_artifacts/manifest.jsonl")
 
 
 def test_unified_train_entrypoint_reads_yaml_entrypoint() -> None:

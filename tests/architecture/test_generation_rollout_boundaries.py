@@ -64,7 +64,7 @@ def test_reward_ray_adapter_stays_lean() -> None:
     ray_root = VRL_ROOT / "rewards" / "ray"
     assert _module_filenames(ray_root) == {
         "__init__.py",
-        "launcher.py",
+        "model.py",
         "runtime.py",
         "worker.py",
     }
@@ -74,14 +74,28 @@ def test_reward_ray_adapter_stays_lean() -> None:
         "class RewardInferenceResult",
         "class VideoRewardArtifactStore",
     )
+    model_specific = ("KlingTeam", "VideoVLMRewardInference", "huggingface_hub")
     for path in _python_files(ray_root):
         text = path.read_text(encoding="utf-8")
         for snippet in forbidden_text:
             assert snippet not in text
+        for snippet in model_specific:
+            assert snippet not in text, f"{path} leaks a specific model into generic ray/"
     assert not (VRL_ROOT / "rewards" / "ray.py").exists()
     assert not (VRL_ROOT / "rewards" / "inference").exists()
     assert not (VRL_ROOT / "rewards" / "video_inference").exists()
     assert not list((VRL_ROOT / "rewards").rglob("spec.py"))
+
+
+def test_reward_models_live_under_models() -> None:
+    models_root = VRL_ROOT / "rewards" / "models"
+    assert _module_filenames(models_root) == {
+        "__init__.py",
+        "kling_video_reward.py",
+    }
+    assert not (VRL_ROOT / "rewards" / "kling_video_reward.py").exists()
+    assert not (VRL_ROOT / "rewards" / "ray" / "kling_video_reward.py").exists()
+    assert not (VRL_ROOT / "rewards" / "scorers").exists()
 
 
 def test_reward_inference_is_a_single_domain_module() -> None:

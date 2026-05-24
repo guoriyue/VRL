@@ -33,6 +33,20 @@ def test_video_artifact_store_writes_tensor_and_manifest(tmp_path: Path) -> None
     assert torch.load(artifact.path).shape == (1, 2, 2, 2)
     rows = [json.loads(line) for line in (tmp_path / "manifest.jsonl").read_text().splitlines()]
     assert rows[0]["artifact_id"] == artifact.artifact_id
+    assert rows[0]["metadata"]["artifact_format"] == "tensor"
+
+
+def test_video_artifact_store_writes_mp4_for_reward_models(tmp_path: Path) -> None:
+    store = VideoRewardArtifactStore(tmp_path, media_type="video", artifact_format="mp4")
+
+    artifacts = store.materialize([_rollout(torch.ones(3, 2, 4, 4))])
+
+    artifact = artifacts[0]
+    assert artifact.path.endswith(".mp4")
+    assert Path(artifact.path).exists()
+    rows = [json.loads(line) for line in (tmp_path / "manifest.jsonl").read_text().splitlines()]
+    assert rows[0]["path"].endswith(".mp4")
+    assert rows[0]["metadata"]["artifact_format"] == "mp4"
 
 
 def test_video_artifact_store_rejects_bad_shape(tmp_path: Path) -> None:

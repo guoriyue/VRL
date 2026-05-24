@@ -25,6 +25,12 @@ from vrl.rollouts.families import (
         ("diffusion/sd3_5/online_grpo_ocr", "sd3_5", "t2i", DiffusionChunkGatherer),
         ("diffusion/wan_2_1/online_grpo_ocr", "wan_2_1", "t2v", DiffusionChunkGatherer),
         (
+            "diffusion/wan_2_1/online_grpo_video_reward",
+            "wan_2_1",
+            "t2v",
+            DiffusionChunkGatherer,
+        ),
+        (
             "diffusion/cosmos_predict2/online_grpo_video_reward",
             "cosmos-predict2",
             "v2w",

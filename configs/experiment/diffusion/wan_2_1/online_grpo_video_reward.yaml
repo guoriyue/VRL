@@ -1,0 +1,42 @@
+# Wan 2.1 1.3B T2V + production video reward GRPO.
+# reward.kwargs.video_reward.reward_name is the Hugging Face model id.
+# Set worker_config.model_path to use a local checkpoint instead of downloading.
+defaults:
+  - /recipe/online/diffusion_grpo
+  - /model/diffusion/wan_2_1/1_3b
+  - /sampling/video/240p_33f
+  - /sampling/denoise/20_step_cfg_4_5
+  - /reward/video_reward
+  - /dataset/video_t2v_pickscore_sfw
+
+actor:
+  optim:
+    lr: 1.0e-5
+  ppo_epochs: 1
+
+algorithm:
+  init_kl_coef: 0.004
+
+rollout:
+  n: 4
+  rollout_batch_size: 1
+  sample_batch_size: 1
+  noise_level: 0.7
+  sde:
+    type: cps
+
+trainer:
+  entrypoint: vrl.scripts.diffusion.wan_2_1.train:train_wan_2_1_grpo
+  output_dir: outputs/wan_1_3b_video_reward
+  save_freq: 20
+  log_freq: 1
+
+reward:
+  kwargs:
+    video_reward:
+      artifact_format: mp4
+
+production:
+  video_reward:
+    enabled: true
+    report_path: outputs/wan_video_production_report.md

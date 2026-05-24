@@ -57,6 +57,7 @@ async def run_online_recipe(
 ) -> None:
     """Run a family online training job through shared recipe glue."""
 
+    _preflight_production_video_reward(cfg)
     built = build_configs(cfg)
     trainer_config = built["trainer"]
     if definition.configure_trainer is not None:
@@ -272,6 +273,22 @@ async def run_online_recipe(
         capture_rng_state=capture_rng_state,
     )
     logger.info("Training complete. Final checkpoint: %s", output_dir / "checkpoint-final")
+
+
+def _preflight_production_video_reward(cfg: DictConfig) -> None:
+    """Fail fast on the driver if the production reward backend is unimportable."""
+
+    if not bool(OmegaConf.select(cfg, "production.video_reward.enabled", default=False)):
+        return
+    from vrl.rewards.models.kling_video_reward import preflight_kling_video_reward_backend
+
+    try:
+        preflight_kling_video_reward_backend()
+    except Exception as exc:
+        raise RuntimeError(
+            "production.video_reward requires the VideoAlign inference code. "
+            "Put a local VideoAlign checkout on PYTHONPATH or install its package.",
+        ) from exc
 
 
 def _build_stat_tracker(cfg: DictConfig, algorithm: Any) -> Any | None:

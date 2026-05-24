@@ -4,18 +4,27 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any
 
 import pytest
 import torch
 
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
-from vrl.rewards.ray.launcher import build_reward_ray_runtime
+from vrl.rewards.ray import (
+    build_reward_actor_runtime,
+    score_reward_request,
+)
 
 
-def imported_score_fn(*, artifact_path: str, worker_config: dict[str, Any], **_: Any) -> dict[str, float]:
-    tensor = torch.load(Path(artifact_path), map_location="cpu").float()
-    return {str(worker_config["score_key"]): float(tensor.mean().item())}
+def build_tensor_mean_model(worker_config):
+    """Test RewardModel factory: score = mean of the artifact tensor."""
+
+    score_key = str(worker_config["score_key"])
+
+    def _model(*, artifact, request):
+        tensor = torch.load(Path(artifact.path), map_location="cpu").float()
+        return {score_key: float(tensor.mean().item())}
+
+    return _model
 
 
 def _request(path: Path, *, score_key: str = "overall_reward") -> RewardInferenceRequest:
@@ -35,20 +44,19 @@ def _request(path: Path, *, score_key: str = "overall_reward") -> RewardInferenc
     )
 
 
-def test_import_path_reward_scorer_is_repo_owned_runtime_contract(tmp_path: Path) -> None:
+def test_repo_owned_reward_model_runtime_contract(tmp_path: Path) -> None:
     ray = pytest.importorskip("ray")
     artifact = tmp_path / "artifact.pt"
     torch.save(torch.tensor([1.0, 3.0]), artifact)
     ray.shutdown()
-    runtime = None
+    actor_runtime = None
     try:
-        runtime = build_reward_ray_runtime(
+        actor_runtime = build_reward_actor_runtime(
             {
                 "inference_runtime": "ray",
                 "worker_config": {
-                    "scorer": "import_path",
-                    "import_path": (
-                        "tests.rewards.test_ray_reward_gpu_smoke:imported_score_fn"
+                    "model_factory": (
+                        "tests.rewards.test_ray_reward_gpu_smoke:build_tensor_mean_model"
                     ),
                     "score_key": "overall_reward",
                     "reward_model_version": "import-path-v1",
@@ -65,17 +73,17 @@ def test_import_path_reward_scorer_is_repo_owned_runtime_contract(tmp_path: Path
             },
         )
 
-        results = asyncio.run(runtime.score_batch(_request(artifact)))
+        results = asyncio.run(score_reward_request(actor_runtime, _request(artifact)))
 
         assert results[0].selected_score == pytest.approx(2.0)
         assert results[0].reward_model_version == "import-path-v1"
         assert results[0].metadata["worker"]["worker_id"] == "reward-0"
     finally:
-        if runtime is not None:
-            asyncio.run(runtime.shutdown())
+        if actor_runtime is not None:
+            asyncio.run(actor_runtime.shutdown())
         ray.shutdown()
 
-def test_ray_reward_runtime_assigns_gpu_ids_for_tensor_scorer(tmp_path: Path) -> None:
+def test_ray_reward_runtime_assigns_gpu_ids_for_tensor_model(tmp_path: Path) -> None:
     ray = pytest.importorskip("ray")
     if not torch.cuda.is_available():
         pytest.skip("requires a CUDA GPU for Ray reward GPU placement smoke")
@@ -83,13 +91,16 @@ def test_ray_reward_runtime_assigns_gpu_ids_for_tensor_scorer(tmp_path: Path) ->
     artifact = tmp_path / "artifact.pt"
     torch.save(torch.ones(2, 2), artifact)
     ray.shutdown()
-    runtime = None
+    actor_runtime = None
     try:
-        runtime = build_reward_ray_runtime(
+        actor_runtime = build_reward_actor_runtime(
             {
                 "inference_runtime": "ray",
                 "worker_config": {
-                    "scorer": "tensor_mean",
+                    "model_factory": (
+                        "tests.rewards.test_ray_reward_gpu_smoke:build_tensor_mean_model"
+                    ),
+                    "score_key": "overall_reward",
                     "reward_model_version": "gpu-smoke-v1",
                 },
                 "num_workers": 1,
@@ -107,13 +118,13 @@ def test_ray_reward_runtime_assigns_gpu_ids_for_tensor_scorer(tmp_path: Path) ->
             },
         )
 
-        results = asyncio.run(runtime.score_batch(_request(artifact)))
+        results = asyncio.run(score_reward_request(actor_runtime, _request(artifact)))
 
         assert results[0].selected_score == pytest.approx(1.0)
         assert results[0].metadata["gpu_ids"] == [0]
         assert results[0].worker_id == "reward-0"
         assert results[0].policy_version == 17
     finally:
-        if runtime is not None:
-            asyncio.run(runtime.shutdown())
+        if actor_runtime is not None:
+            asyncio.run(actor_runtime.shutdown())
         ray.shutdown()

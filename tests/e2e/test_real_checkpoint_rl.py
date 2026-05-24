@@ -590,9 +590,21 @@ def _common_training_overrides(tmp_path: Path) -> tuple[str, ...]:
     )
 
 
+def build_tensor_mean_model(worker_config):
+    """Test RewardModel factory: score = mean of the artifact tensor."""
+
+    def _model(*, artifact, request):
+        tensor = torch.load(Path(artifact.path), map_location="cpu").float()
+        key = request.score_key.split("+", 1)[0].strip()
+        return {key: float(tensor.mean().item())}
+
+    return _model
+
+
 def _ray_reward_overrides(tmp_path: Path) -> tuple[str, ...]:
     artifact_dir = tmp_path / "reward_artifacts"
     debug_dir = tmp_path / "reward_debug"
+    model_factory = "tests.e2e.test_real_checkpoint_rl:build_tensor_mean_model"
     return (
         f"reward.kwargs.video_reward.artifact_dir={artifact_dir.as_posix()}",
         f"reward.kwargs.video_reward.debug_dir={debug_dir.as_posix()}",
@@ -600,7 +612,7 @@ def _ray_reward_overrides(tmp_path: Path) -> tuple[str, ...]:
         "reward.kwargs.video_reward.num_workers=1",
         "reward.kwargs.video_reward.cpus_per_worker=0.5",
         "reward.kwargs.video_reward.gpus_per_worker=0.0",
-        "reward.kwargs.video_reward.worker_config.scorer=tensor_mean",
+        f"reward.kwargs.video_reward.worker_config.model_factory={model_factory}",
         "reward.kwargs.video_reward.worker_config.reward_model_version=e2e-tensor-mean",
     )
 

@@ -18,16 +18,14 @@ reward:
   kwargs:
     video_reward:
       inference_runtime: ray
-      reward_name: cosmos_reason1
+      reward_name: KlingTeam/VideoReward@main
       score_key: overall_reward
       scheduling: sync
       media_type: video
+      artifact_format: tensor
       artifact_dir: ${trainer.output_dir}/reward_artifacts
       timeout_s: 60.0
       debug_dir: ${trainer.output_dir}/reward_debug
       worker_config:
-        scorer: import_path
-        import_path: ""
         model_path: ""
         dtype: bfloat16
-        reward_model_version: cosmos-reward-default

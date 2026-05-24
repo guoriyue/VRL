@@ -7,6 +7,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import torch
 
 from vrl.rewards.inference import RewardInferenceArtifact
@@ -21,12 +22,18 @@ class VideoRewardArtifactStore:
         root: str | Path,
         *,
         media_type: str = "video",
+        artifact_format: str = "tensor",
         manifest_name: str = "manifest.jsonl",
     ) -> None:
         if media_type not in {"image", "video", "tensor"}:
             raise ValueError("media_type must be image, video, or tensor")
+        if artifact_format not in {"tensor", "mp4"}:
+            raise ValueError("artifact_format must be tensor or mp4")
+        if artifact_format == "mp4" and media_type != "video":
+            raise ValueError("artifact_format=mp4 requires media_type=video")
         self.root = Path(root)
         self.media_type = media_type
+        self.artifact_format = artifact_format
         self.manifest_path = self.root / manifest_name
         self.root.mkdir(parents=True, exist_ok=True)
 
@@ -50,8 +57,13 @@ class VideoRewardArtifactStore:
         sample_id = _sample_id(metadata, index)
         policy_version = _policy_version(metadata)
         artifact_id = f"{sample_id}-{index}"
-        path = self.root / f"{artifact_id}.pt"
-        torch.save(tensor, path)
+        if self.artifact_format == "mp4":
+            path = self.root / f"{artifact_id}.mp4"
+            fps = _fps(metadata)
+            _write_video_mp4(tensor, path, fps=fps)
+        else:
+            path = self.root / f"{artifact_id}.pt"
+            torch.save(tensor, path)
         artifact = RewardInferenceArtifact(
             artifact_id=artifact_id,
             path=str(path),
@@ -62,7 +74,8 @@ class VideoRewardArtifactStore:
             metadata={
                 "shape": list(tensor.shape),
                 "dtype": str(tensor.dtype),
-                "fps": metadata.get("video_fps", metadata.get("fps")),
+                "artifact_format": self.artifact_format,
+                "fps": _fps(metadata),
             },
         )
         self._append_manifest(artifact)
@@ -87,6 +100,53 @@ def _validate_media_shape(tensor: torch.Tensor, media_type: str) -> None:
             "video reward artifact expects [C,T,H,W] or [B,C,T,H,W] tensor, "
             f"got shape={tuple(tensor.shape)}",
         )
+
+
+def _write_video_mp4(tensor: torch.Tensor, path: Path, *, fps: float) -> None:
+    """Write a channel-first video tensor to an mp4 file for external reward models."""
+
+    frames = _video_tensor_to_uint8_frames(tensor)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    import imageio.v2 as imageio
+
+    with imageio.get_writer(path, fps=fps, codec="libx264", macro_block_size=1) as writer:
+        for frame in frames:
+            writer.append_data(frame)
+
+
+def _video_tensor_to_uint8_frames(tensor: torch.Tensor) -> np.ndarray:
+    if tensor.ndim == 5:
+        if tensor.shape[0] != 1:
+            raise ValueError(
+                "artifact_format=mp4 expects one video per rollout tensor; "
+                f"got batch={tensor.shape[0]}",
+            )
+        tensor = tensor[0]
+    if tensor.ndim != 4:
+        raise ValueError(
+            "artifact_format=mp4 expects [C,T,H,W] or [1,C,T,H,W] tensor, "
+            f"got shape={tuple(tensor.shape)}",
+        )
+    if tensor.shape[0] not in {1, 3, 4}:
+        raise ValueError(
+            "artifact_format=mp4 expects channel-first video with 1, 3, or 4 channels, "
+            f"got shape={tuple(tensor.shape)}",
+        )
+    video = tensor.float()
+    if float(video.min().item()) < -0.01:
+        video = (video + 1.0) / 2.0
+    video = video.clamp(0.0, 1.0)
+    if video.shape[0] == 1:
+        video = video.repeat(3, 1, 1, 1)
+    if video.shape[0] == 4:
+        video = video[:3]
+    video = video.permute(1, 2, 3, 0).contiguous()
+    return (video.numpy() * 255.0).round().astype(np.uint8)
+
+
+def _fps(metadata: dict[str, Any]) -> float:
+    value = metadata.get("video_fps", metadata.get("fps", 8.0))
+    return float(value) if value is not None else 8.0
 
 
 def _sample_id(metadata: dict[str, Any], index: int) -> str:

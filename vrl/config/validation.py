@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from omegaconf import DictConfig, ListConfig, OmegaConf
@@ -173,42 +174,84 @@ def validate_reward_config(cfg: DictConfig) -> None:
         for subkey in required_subkeys:
             if subkey not in sub:
                 raise ValueError(f"config missing required field: reward.kwargs.{name}.{subkey}")
-        if name == "video_reward":
-            if "backend" in sub:
-                raise ValueError(
-                    "reward.kwargs.video_reward.backend is no longer supported; "
-                    "use reward.kwargs.video_reward.inference_runtime=ray",
-                )
-            inference_runtime = str(sub.get("inference_runtime"))
-            if inference_runtime != "ray":
-                raise ValueError("reward.kwargs.video_reward.inference_runtime must be 'ray'")
-            worker_config = sub.get("worker_config")
-            if not isinstance(worker_config, dict):
-                raise ValueError("reward.kwargs.video_reward.worker_config must be a mapping")
-            scheduling = str(sub.get("scheduling", "sync"))
-            if scheduling != "sync":
-                raise ValueError(
-                    "reward.kwargs.video_reward.scheduling currently supports only 'sync'",
-                )
-            removed_endpoint_fields = [
-                key
-                for key in (
-                    "enqueue_url",
-                    "fetch_url",
-                    "token",
-                    "poll_interval_s",
-                    "max_wait_s",
-                    "stub_scale",
-                    "device",
-                )
-                if key in sub
-            ]
-            if removed_endpoint_fields:
-                fields = ", ".join(sorted(removed_endpoint_fields))
-                raise ValueError(
-                    "reward.kwargs.video_reward no longer supports external reward "
-                    f"endpoint fields: {fields}",
-                )
+        extra_validator = _REWARD_KWARGS_VALIDATORS.get(name)
+        if extra_validator is not None:
+            extra_validator(sub)
+
+
+def _validate_video_reward_kwargs(sub: dict) -> None:
+    if "backend" in sub:
+        raise ValueError(
+            "reward.kwargs.video_reward.backend is no longer supported; "
+            "use reward.kwargs.video_reward.inference_runtime=ray",
+        )
+    if str(sub.get("inference_runtime")) != "ray":
+        raise ValueError("reward.kwargs.video_reward.inference_runtime must be 'ray'")
+    if not isinstance(sub.get("worker_config"), dict):
+        raise ValueError("reward.kwargs.video_reward.worker_config must be a mapping")
+    if str(sub.get("scheduling", "sync")) != "sync":
+        raise ValueError("reward.kwargs.video_reward.scheduling currently supports only 'sync'")
+    removed_fields = [
+        k for k in ("enqueue_url", "fetch_url", "token", "poll_interval_s", "max_wait_s", "stub_scale", "device")
+        if k in sub
+    ]
+    if removed_fields:
+        raise ValueError(
+            "reward.kwargs.video_reward no longer supports external reward endpoint fields: "
+            + ", ".join(sorted(removed_fields)),
+        )
+
+
+_REWARD_KWARGS_VALIDATORS: dict[str, Any] = {
+    "video_reward": _validate_video_reward_kwargs,
+}
+
+
+def validate_production_video_reward_config(cfg: DictConfig) -> None:
+    """Validate production-only video reward gates.
+
+    validate_reward_config() must run first — it asserts weight > 0, video_kwargs
+    is a dict, and worker_config is a mapping.
+    """
+
+    video_kwargs = require(cfg, "reward.kwargs.video_reward")
+    if str(video_kwargs.get("media_type", "")) != "video":
+        raise ValueError("production.video_reward requires reward.kwargs.video_reward.media_type=video")
+    if str(video_kwargs.get("artifact_format", "")) != "mp4":
+        raise ValueError("production.video_reward requires artifact_format=mp4")
+    if not str(video_kwargs.get("reward_name", "")).strip():
+        raise ValueError("production.video_reward requires reward.kwargs.video_reward.reward_name")
+
+    worker_config = video_kwargs.get("worker_config")
+    forbidden_worker_keys = [
+        key
+        for key in (
+            "backend",
+            "backend_import_path",
+            "backend_code_dir",
+            "import_path",
+            "model_subdir",
+            "score_key_map",
+            "model_factory",
+        )
+        if key in worker_config
+    ]
+    if forbidden_worker_keys:
+        fields = ", ".join(sorted(forbidden_worker_keys))
+        raise ValueError(
+            "production.video_reward worker_config should name the reward model directly; "
+            f"remove extra loader fields: {fields}",
+        )
+
+    task_type = str(require(cfg, "data.task_type"))
+    if task_type != "text_to_video":
+        raise ValueError("production.video_reward requires data.task_type=text_to_video")
+    for path_name in ("data.manifest", "data.eval_manifest", "data.source_report"):
+        value = str(require(cfg, path_name)).strip()
+        if not value:
+            raise ValueError(f"config missing required field: {path_name}")
+        if not Path(value).exists():
+            raise ValueError(f"{path_name} does not exist: {value}")
 
 
 def validate_data_config(cfg: DictConfig) -> None:
@@ -259,6 +302,8 @@ def validate_training_config(cfg: DictConfig) -> None:
 
     if "reward" in cfg:
         validate_reward_config(cfg)
+    if bool(OmegaConf.select(cfg, "production.video_reward.enabled", default=False)):
+        validate_production_video_reward_config(cfg)
 
     if kind in {"grpo", "diffusion_nft"}:
         sde_type = str(require(cfg, "rollout.sde.type"))
@@ -296,6 +341,7 @@ __all__ = [
     "require",
     "resolve_algorithm_kind",
     "validate_data_config",
+    "validate_production_video_reward_config",
     "validate_reward_config",
     "validate_training_config",
 ]

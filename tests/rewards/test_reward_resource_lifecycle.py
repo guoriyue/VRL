@@ -8,8 +8,26 @@ import pytest
 from omegaconf import OmegaConf
 
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
-from vrl.rewards.ray.launcher import build_reward_ray_runtime
+from vrl.rewards.ray import (
+    build_reward_actor_runtime,
+    score_reward_request,
+)
 from vrl.scripts.common.factory import build_reward_from_cfg
+
+_CONSTANT_MODEL_FACTORY = (
+    "tests.rewards.test_reward_resource_lifecycle:build_constant_reward_model"
+)
+
+
+def build_constant_reward_model(worker_config):
+    """Test RewardModel factory: return fixed scores from worker_config."""
+
+    scores = {str(k): float(v) for k, v in dict(worker_config["scores"]).items()}
+
+    def _model(*, artifact, request):
+        return dict(scores)
+
+    return _model
 
 
 def _request() -> RewardInferenceRequest:
@@ -32,13 +50,13 @@ def _request() -> RewardInferenceRequest:
 def test_reward_runtime_releases_actors_after_score_when_configured() -> None:
     ray = pytest.importorskip("ray")
     ray.shutdown()
-    runtime = None
+    actor_runtime = None
     try:
-        runtime = build_reward_ray_runtime(
+        actor_runtime = build_reward_actor_runtime(
             {
                 "inference_runtime": "ray",
                 "worker_config": {
-                    "scorer": "constant",
+                    "model_factory": _CONSTANT_MODEL_FACTORY,
                     "scores": {"overall_reward": 3.0},
                     "reward_model_version": "lifecycle-v1",
                 },
@@ -55,18 +73,18 @@ def test_reward_runtime_releases_actors_after_score_when_configured() -> None:
             },
         )
 
-        results = asyncio.run(runtime.score_batch(_request()))
+        results = asyncio.run(score_reward_request(actor_runtime, _request()))
 
         assert results[0].selected_score == pytest.approx(3.0)
-        assert runtime.actor_runtime._actor_group is None
+        assert actor_runtime._actor_group is None
 
-        results = asyncio.run(runtime.score_batch(_request()))
+        results = asyncio.run(score_reward_request(actor_runtime, _request()))
 
         assert results[0].selected_score == pytest.approx(3.0)
-        assert runtime.actor_runtime._actor_group is None
+        assert actor_runtime._actor_group is None
     finally:
-        if runtime is not None:
-            asyncio.run(runtime.shutdown())
+        if actor_runtime is not None:
+            asyncio.run(actor_runtime.shutdown())
         ray.shutdown()
 
 
@@ -97,7 +115,7 @@ def test_reward_config_receives_resolved_resource_plan() -> None:
                         "reward_name": "cosmos_reason1",
                         "score_key": "overall_reward",
                         "worker_config": {
-                            "scorer": "constant",
+                            "model_factory": _CONSTANT_MODEL_FACTORY,
                             "scores": {"overall_reward": 1.0},
                             "reward_model_version": "resource-v1",
                         },
@@ -118,7 +136,7 @@ def test_reward_config_receives_resolved_resource_plan() -> None:
                         "reward_name": "cosmos_reason1",
                         "score_key": "overall_reward",
                         "worker_config": {
-                            "scorer": "constant",
+                            "model_factory": _CONSTANT_MODEL_FACTORY,
                             "scores": {"overall_reward": 1.0},
                             "reward_model_version": "resource-v1",
                         },
@@ -130,7 +148,7 @@ def test_reward_config_receives_resolved_resource_plan() -> None:
     )
 
     video_reward = reward_fn.rewards[0][2]
-    actor_runtime = video_reward.runtime.actor_runtime
+    actor_runtime = video_reward._actor_runtime
     assert actor_runtime.num_workers == 1
     assert actor_runtime.gpus_per_worker == 1.0
     assert actor_runtime.expected_gpu_ids == (0,)
