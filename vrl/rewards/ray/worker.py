@@ -155,8 +155,7 @@ def _call_import_path_scorer(
     except (TypeError, ValueError):
         return scorer(artifact.path)
     accepts_kwargs = any(
-        parameter.kind == Parameter.VAR_KEYWORD
-        for parameter in sig.parameters.values()
+        parameter.kind == Parameter.VAR_KEYWORD for parameter in sig.parameters.values()
     )
     kwargs = {
         "artifact": artifact,
@@ -166,11 +165,7 @@ def _call_import_path_scorer(
     }
     if accepts_kwargs:
         return scorer(**kwargs)
-    filtered = {
-        key: value
-        for key, value in kwargs.items()
-        if key in sig.parameters
-    }
+    filtered = {key: value for key, value in kwargs.items() if key in sig.parameters}
     if filtered:
         return scorer(**filtered)
     return scorer(artifact.path)
