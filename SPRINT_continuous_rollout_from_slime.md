@@ -6,6 +6,35 @@
 
 在 `one_batch_overlap` 之后，增加一个真正 continuous 的 rollout producer：producer 常驻后台持续生成、reward、写入 bounded queue；trainer 不再每 step 主动发起整批 rollout，而是从 ready queue 里取可训练 batch。
 
+## 能解决什么，不能解决什么
+
+这个 sprint 真正解决的是 rollout/trainer 阶段同步造成的 GPU 空档：
+
+```text
+rollout GPU 在 trainer step 期间没活干
+trainer GPU 在 rollout collect/reward 期间没活干
+trainer 每 step 都等整批 rollout 完成
+rollout/reward 抖动导致 trainer 间歇性饿数据
+```
+
+它成立的前提是 rollout 和 trainer 有可并行资源：
+
+```text
+separate trainer/rollout GPUs
+or at least partially independent CPU/reward/artifact work that can overlap training
+```
+
+它不能单独解决：
+
+```text
+single GPU 上 rollout 和 trainer 都需要独占同一份显存
+rollout runtime 必须完全释放后 trainer 才能恢复
+weight sync 或 actor startup/shutdown 是主耗时
+reward model 本身是唯一瓶颈且没有独立资源
+```
+
+如果是 single-GPU handoff，continuous queue 只能暴露 `queue_wait_s`、`release_runtime_s`、`weight_sync_s` 等瓶颈，不能让两个 full-GPU 阶段真实并发。
+
 边界锚点：
 
 ```text
