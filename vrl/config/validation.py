@@ -19,7 +19,6 @@ _ALGORITHM_KINDS = {
 
 _REWARD_REQUIRED_KWARGS: dict[str, tuple[str, ...]] = {
     "aesthetic": ("model_name",),
-    "anime_anatomy_structure": ("backend",),
     "clipscore": ("model_name",),
     "codex_image_qa": ("command",),
     "image_qa_cli": ("command",),

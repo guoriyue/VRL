@@ -4,17 +4,8 @@ reward:
     anime_anatomy_structure: 1.0
   kwargs:
     anime_anatomy_structure:
-      backend: dwpose
-      detector_device: ${oc.env:ANIME_ANATOMY_REWARD_DEVICE,""}
       detect_resolution: 512
       min_keypoint_confidence: 0.25
       require_hands: prompt
       require_feet: prompt
       min_body_keypoints: 8
-      min_hand_keypoints: 6
-      missing_required_keypoint_penalty: 0.35
-      impossible_angle_penalty: 0.25
-      asymmetric_limb_penalty: 0.15
-      hand_missing_penalty: 0.30
-      collapsed_hand_penalty: 0.15
-      multi_person_penalty: 0.10
