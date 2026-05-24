@@ -58,7 +58,12 @@ def build_rollout_iteration(
     prompt_count: int,
     phase_times: dict[str, float] | None = None,
 ) -> RolloutIteration:
-    """Attach schedule metadata to collected batches and return an iteration."""
+    """Build a rollout iteration from collected batches.
+
+    Pure: does not mutate the input batches. Callers that need the schedule
+    metadata copied onto each batch's ``context`` should call
+    ``annotate_batch_context`` explicitly.
+    """
 
     sample_count = sum(int(batch.rewards.shape[0]) for batch in batches)
     metadata: dict[str, Any] = {
@@ -70,8 +75,6 @@ def build_rollout_iteration(
         "prompt_count": int(prompt_count),
         "sample_count": int(sample_count),
     }
-    for batch in batches:
-        batch.context = {**dict(batch.context), **metadata}
     return RolloutIteration(
         rollout_id=int(rollout_id),
         policy_version=None if policy_version is None else int(policy_version),
@@ -84,9 +87,18 @@ def build_rollout_iteration(
     )
 
 
+def annotate_batch_context(iteration: RolloutIteration) -> RolloutIteration:
+    """Copy the iteration's schedule metadata onto each batch's ``context``."""
+
+    for batch in iteration.batches:
+        batch.context = {**dict(batch.context), **iteration.metadata}
+    return iteration
+
+
 __all__ = [
     "RolloutIteration",
     "RolloutScheduleMode",
     "RolloutScheduleState",
+    "annotate_batch_context",
     "build_rollout_iteration",
 ]

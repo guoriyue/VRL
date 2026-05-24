@@ -11,6 +11,7 @@ from vrl.rollouts.orchestration.types import (
     RolloutIteration,
     RolloutScheduleMode,
     RolloutScheduleState,
+    annotate_batch_context,
     build_rollout_iteration,
 )
 
@@ -140,13 +141,15 @@ class OneBatchOverlapRolloutSchedule:
                 runtime_debug=runtime_debug,
                 policy_version=policy_version,
             )
-        return build_rollout_iteration(
-            rollout_id=rollout_id,
-            policy_version=policy_version,
-            mode=self.mode,
-            batches=batches,
-            prompt_count=len(prompts),
-            phase_times=phase_times,
+        return annotate_batch_context(
+            build_rollout_iteration(
+                rollout_id=rollout_id,
+                policy_version=policy_version,
+                mode=self.mode,
+                batches=batches,
+                prompt_count=len(prompts),
+                phase_times=phase_times,
+            )
         )
 
     async def _require_pending(self) -> RolloutIteration:

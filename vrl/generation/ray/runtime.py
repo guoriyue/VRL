@@ -146,12 +146,15 @@ class ReleasableRayGenerationRuntime(GenerationRuntime):
 
 
 def _launch_contract_policy_version(launch_contract: Any) -> int | None:
-    try:
-        from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
+    from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 
-        contract = GenerationRuntimeLaunchContract.from_value(launch_contract)
-    except Exception:
-        return None
+    if isinstance(launch_contract, GenerationRuntimeLaunchContract):
+        contract = launch_contract
+    else:
+        try:
+            contract = GenerationRuntimeLaunchContract.from_value(launch_contract)
+        except (TypeError, ValueError):
+            return None
     if contract.policy_version is None:
         return None
     return int(contract.policy_version)
