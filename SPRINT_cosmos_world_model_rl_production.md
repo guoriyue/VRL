@@ -49,6 +49,45 @@ manifest row examples
 minimum dataset sizes
 ```
 
+### 1.1 Open: video_world importer does not yet decode real LeRobot data
+
+抓手：`vrl/scripts/data/video_world.py` 的 `video-world-bridge`
+(`_iter_lerobot_first_frames`)。
+
+现状（不要包装成"已完成"）：importer 目前**跑不通真实数据**。它假设
+`datasets.load_dataset(streaming=True)` 的每行带 inline PIL image + caption
+string，但真实 LeRobot v2.1 不是这样：
+
+```text
+帧：     videos/observation.images.<cam>/chunk-*/file-*.mp4   (mp4 视频，非 inline)
+caption：meta/tasks.parquet                                   (task_index -> 文本)
+逐帧：   data/chunk-*/file-*.parquet                          (episode_index/frame_index/task_index)
+```
+
+所以现在 column 检测拿不到 image/language，importer 直接报
+`No usable episodes`（loud fail，不产假数据），等于真实 video_world dataset 仍未就绪。
+
+已核对的真实 repo（shipped 默认 `lerobot/bridge_orig` 是 404，要改）：
+
+```text
+IPEC-COMMUNITY/bridge_orig_lerobot   # Bridge
+lerobot/droid_100                    # DROID，小（10 files），适合验证
+```
+
+修复方案（不引新依赖，`pyarrow` / `av` / `imageio_ffmpeg` 已装）：
+
+```text
+1. 读 meta/tasks.parquet            -> task_index -> caption(prompt)
+2. 读 data/*.parquet               -> 每个 episode 的 frame_index==0 行 + task_index
+3. 用 meta/info.json 把 episode 映射到 mp4 chunk/file/timestamp，解码第一帧
+4. 落 references/*.png + 带 caption 的 manifest（沿用现有 build_video_world_rows）
+5. 修正默认 --repo-id
+```
+
+完成标准：`populate video-world-bridge --repo-id lerobot/droid_100` 写出真实
+first-frame PNG + 带 caption 的 manifest，并对 `droid_100` 验证通过；transform
+已有离线测试，fetch 路径补一条真实 droid_100 的解码冒烟验证。
+
 ## 2. Current Repo Reality
 
 已有 Cosmos 训练入口：

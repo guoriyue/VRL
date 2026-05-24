@@ -89,7 +89,7 @@ Production defaults after source-backed dataset import:
 /sampling/video/240p_33f
 /sampling/denoise/20_step_cfg_4_5
 /reward/video_reward
-future /dataset/<source_backed_video_t2v>
+/dataset/video_t2v_pickscore_sfw
 ```
 
 Required config decisions:
@@ -99,10 +99,9 @@ reward:
   kwargs:
     video_reward:
       inference_runtime: ray
+      reward_name: KlingTeam/VideoReward@main
       worker_config:
-        scorer: import_path
-        import_path: ???
-        reward_model_version: ???
+        model_path: ""
 
 rollout:
   n: 4
@@ -138,9 +137,9 @@ Required smoke checks:
 - Wan smoke config loads.
 - Wan production config uses `/reward/video_reward`.
 - Wan config uses a source-backed video dataset config.
-- Wan production config uses `worker_config.scorer=import_path`.
-- Wan production config requires `VIDEO_REWARD_SCORER`.
-- Wan production config requires `VIDEO_REWARD_MODEL_VERSION`.
+- Wan production config names the Hugging Face reward model through `reward.kwargs.video_reward.reward_name`.
+- Wan production config does not expose internal loader fields such as `scorer`, `scorer_factory`, `backend`, `backend_import_path`, `backend_code_dir`, `model_subdir`, or `score_key_map`.
+- Wan production config writes real video artifacts with `artifact_format=mp4`.
 
 Production acceptance must record the dataset source/report in `outputs/wan_video_production_report.md`.
 
@@ -163,7 +162,7 @@ Required checks:
 - reward debug rows record selected `score_key`.
 - reward artifact manifest is written.
 - actor runtime can be released after score when configured.
-- Wan production config only accepts the production import-path scorer contract.
+- Wan production config only accepts the direct reward model-name contract.
 
 ### Phase 3: Wan Fixed Eval and Report
 
@@ -179,7 +178,7 @@ Report must include:
 config path
 dataset manifest path
 checkpoint path
-reward scorer import path
+reward model name
 reward model version
 number of train/eval rows
 reward mean/std before training
@@ -202,11 +201,11 @@ resolved_config.yaml
 
 ## 5. Production Run Requirements
 
-Environment:
+Reward model:
 
 ```text
-VIDEO_REWARD_SCORER=<real import path>
-VIDEO_REWARD_MODEL_VERSION=<real reward model version>
+reward.kwargs.video_reward.reward_name=<Hugging Face model repo@revision>
+reward.kwargs.video_reward.worker_config.model_path=<optional local downloaded model path>
 ```
 
 Required run artifacts:
@@ -227,7 +226,7 @@ reward_mean is finite
 reward_std is finite
 at least one reward component is non-flat
 global_step > 0
-trainable weights changed
+checkpoint or exported LoRA weights differ from the base weights
 ```
 
 Run acceptance:
@@ -246,7 +245,7 @@ This sprint is complete only when:
 - Wan production run writes `reward_artifacts/manifest.jsonl`.
 - Wan production run writes `reward_debug/video_reward_results.jsonl`.
 - Wan production run records non-flat reward.
-- Wan production run proves trainable weights changed.
+- Wan production run proves checkpoint or exported LoRA weights differ from the base weights.
 - Unit tests pass for config loading and production reward config.
 - `outputs/wan_video_production_report.md` records base-vs-trained results.
 
