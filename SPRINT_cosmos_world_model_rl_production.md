@@ -14,7 +14,8 @@ Cosmos Predict2.5 DiffusionNFT Text2World + real video_reward
 不在本 sprint 里重新设计 dataset。Prompt-only manifests 的 source of truth 是 committed `datasets/**` manifests, their `report.json` provenance files, and task/dataset configs. Reference-image / external artifact contract 的 source of truth 是：
 
 ```text
-SPRINT_image_artifact_dataset_setup.md
+vrl/scripts/data/video_world.py        # video-world-bridge first-frame importer
+vrl/scripts/diffusion/cosmos/train.py  # reference_image resolution rules
 ```
 
 核心判断：
@@ -360,7 +361,7 @@ This sprint is complete only when:
 
 Do not include in this sprint:
 
-- Dataset source selection and coverage design. That belongs in committed dataset manifests, dataset reports, dataset configs, and `SPRINT_image_artifact_dataset_setup.md`.
+- Dataset source selection and coverage design. That belongs in committed dataset manifests, dataset reports, dataset configs, and the `vrl/scripts/data/` population scripts.
 - Wan T2V production training.
 - OCR reward acceptance for Cosmos world model.
 - Action-conditioned robot world model.
@@ -439,7 +440,7 @@ test -d outputs/<cosmos-run>/checkpoint-final
 Local files:
 
 ```text
-/home/mingfeiguo/Desktop/wm-infra/SPRINT_image_artifact_dataset_setup.md
+/home/mingfeiguo/Desktop/wm-infra/vrl/scripts/data/video_world.py
 /home/mingfeiguo/Desktop/wm-infra/docs/papers/cosmos_predict2_5_world_simulation_with_video_foundation_models_for_physical_ai_2511.00062v2.pdf
 /home/mingfeiguo/Desktop/wm-infra/vrl/trainers/data/prompts.py
 /home/mingfeiguo/Desktop/wm-infra/vrl/rewards/functions/video_reward.py

@@ -15,10 +15,12 @@ import random
 import re
 import tarfile
 from collections import Counter, defaultdict
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from vrl.scripts.data.common import default_data_root, emit
 
 TEMPLATE_ID = "anime_anatomy_v1"
 DOMAIN = "anime"
@@ -1690,18 +1692,287 @@ def _pairwise_auc(positive_scores: list[float], negative_scores: list[float]) ->
     return wins / total
 
 
+# --------------------------------------------------------------------------- #
+# populate-facing commands (wired into `python -m vrl.scripts.data.populate`)  #
+# --------------------------------------------------------------------------- #
+
+
+def register(subparsers: Any) -> None:
+    prompts = subparsers.add_parser("anime-prompts")
+    prompts.add_argument("--metadata", type=Path, default=None)
+    prompts.add_argument(
+        "--train-output",
+        type=Path,
+        default=Path("datasets/danbooru/anatomy/train_prompts.jsonl"),
+    )
+    prompts.add_argument(
+        "--eval-output",
+        type=Path,
+        default=Path("datasets/danbooru/anatomy/eval_prompts.jsonl"),
+    )
+    prompts.add_argument(
+        "--report-output",
+        type=Path,
+        default=Path("datasets/danbooru/anatomy/prompt_report.json"),
+    )
+    prompts.add_argument("--train-limit", type=int, default=20_000)
+    prompts.add_argument("--eval-limit", type=int, default=1_000)
+    prompts.add_argument("--min-score", type=int, default=5)
+    prompts.add_argument("--preferred-min-score", type=int, default=20)
+    prompts.add_argument("--prompt-style", default="mixed")
+    prompts.set_defaults(func=_cmd_anime_prompts)
+
+    positives = subparsers.add_parser("anime-positives")
+    positives.add_argument("--metadata", type=Path, required=True)
+    positives.add_argument("--image-root", type=Path, default=None)
+    positives.add_argument(
+        "--output",
+        type=Path,
+        default=Path("datasets/danbooru/anatomy/positive_images.jsonl"),
+    )
+    positives.add_argument("--hand-crops-output", type=Path, default=None)
+    positives.add_argument("--source", default="danbooru2023")
+    positives.add_argument("--min-score", type=int, default=20)
+    positives.add_argument("--limit", type=int, default=10_000)
+    positives.add_argument("--fetch-images", action="store_true")
+    positives.add_argument("--overwrite", action="store_true")
+    positives.set_defaults(func=_cmd_anime_positives)
+
+    fetch = subparsers.add_parser("anime-fetch-images")
+    fetch.add_argument("--metadata", type=Path, required=True)
+    fetch.add_argument("--image-root", type=Path, default=None)
+    fetch.add_argument("--min-score", type=int, default=20)
+    fetch.add_argument("--limit", type=int, default=10_000)
+    fetch.add_argument("--source", default="danbooru2023")
+    fetch.add_argument("--overwrite", action="store_true")
+    fetch.set_defaults(func=_cmd_anime_fetch_images)
+
+
+def _cmd_anime_prompts(args: argparse.Namespace) -> None:
+    command = [
+        "build-prompts",
+        "--train-output",
+        str(args.train_output),
+        "--eval-output",
+        str(args.eval_output),
+        "--report-output",
+        str(args.report_output),
+        "--train-limit",
+        str(args.train_limit),
+        "--eval-limit",
+        str(args.eval_limit),
+        "--min-score",
+        str(args.min_score),
+        "--preferred-min-score",
+        str(args.preferred_min_score),
+        "--bucket-balance",
+        "quota",
+        "--prompt-style",
+        args.prompt_style,
+    ]
+    if args.metadata:
+        command.extend(["--metadata", str(args.metadata)])
+    else:
+        command.append("--download-danbooru-metadata")
+    main(command)
+
+
+def _cmd_anime_positives(args: argparse.Namespace) -> None:
+    image_root = Path(args.image_root or (default_data_root() / "danbooru" / "images")).expanduser()
+    fetched: dict[str, int] = {"selected": 0, "downloaded": 0, "skipped_existing": 0, "failed": 0}
+    if args.fetch_images:
+        image_root.mkdir(parents=True, exist_ok=True)
+        targets = _select_positive_targets(
+            args.metadata,
+            image_root,
+            min_score=args.min_score,
+            limit=args.limit,
+            source=args.source,
+        )
+        downloaded, skipped, failed = download_danbooru_images(
+            args.metadata,
+            targets,
+            fetch=_http_download,
+            overwrite=args.overwrite,
+        )
+        fetched = {
+            "selected": len(targets),
+            "downloaded": downloaded,
+            "skipped_existing": skipped,
+            "failed": failed,
+        }
+
+    main(
+        [
+            "build-positives",
+            "--metadata",
+            str(args.metadata),
+            "--image-root",
+            str(image_root),
+            "--output",
+            str(args.output),
+            "--source",
+            args.source,
+            "--min-score",
+            str(args.min_score),
+            "--limit",
+            str(args.limit),
+        ],
+    )
+    hand_crops_written = 0
+    if args.hand_crops_output:
+        main(
+            [
+                "build-hand-crops",
+                "--positive-manifest",
+                str(args.output),
+                "--output",
+                str(args.hand_crops_output),
+                "--fallback-whole-image",
+            ],
+        )
+        hand_crops_written = _count_lines(Path(args.hand_crops_output))
+
+    emit(
+        {
+            "dataset": "danbooru_positives",
+            "image_root": str(image_root.resolve()),
+            "positive_manifest": str(args.output),
+            "positives_written": _count_lines(Path(args.output)),
+            "hand_crops_output": str(args.hand_crops_output) if args.hand_crops_output else "",
+            "hand_crops_written": hand_crops_written,
+            "fetched": fetched,
+        },
+    )
+
+
+def _cmd_anime_fetch_images(args: argparse.Namespace) -> None:
+    image_root = Path(args.image_root or (default_data_root() / "danbooru" / "images")).expanduser()
+    image_root.mkdir(parents=True, exist_ok=True)
+    targets = _select_positive_targets(
+        args.metadata,
+        image_root,
+        min_score=args.min_score,
+        limit=args.limit,
+        source=args.source,
+    )
+    downloaded, skipped, failed = download_danbooru_images(
+        args.metadata,
+        targets,
+        fetch=_http_download,
+        overwrite=args.overwrite,
+    )
+    emit(
+        {
+            "dataset": "danbooru_images",
+            "image_root": str(image_root.resolve()),
+            "selected": len(targets),
+            "downloaded": downloaded,
+            "skipped_existing": skipped,
+            "failed": failed,
+        },
+    )
+
+
+def download_danbooru_images(
+    metadata_path: str | Path,
+    targets: Mapping[str, Path],
+    *,
+    fetch: Callable[[str, Path], None],
+    overwrite: bool = False,
+) -> tuple[int, int, int]:
+    """Download selected Danbooru images into their build-positives target paths.
+
+    ``targets`` maps post id -> local image path (as produced by
+    ``positive_image_rows``). ``fetch`` is injectable so the selection/IO wiring
+    can be tested without network access. Returns (downloaded, skipped, failed).
+    """
+
+    remaining: dict[str, Path] = {str(pid): Path(path) for pid, path in targets.items()}
+    downloaded = skipped = failed = 0
+    for row in iter_metadata(metadata_path):
+        post_id = str(record_id(row))
+        target = remaining.pop(post_id, None)
+        if target is None:
+            continue
+        if target.exists() and not overwrite:
+            skipped += 1
+        else:
+            url = _danbooru_file_url(row)
+            if not url:
+                failed += 1
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    fetch(url, target)
+                    downloaded += 1
+                except Exception:
+                    failed += 1
+        if not remaining:
+            break
+    return downloaded, skipped, failed
+
+
+def _select_positive_targets(
+    metadata_path: str | Path,
+    image_root: Path,
+    *,
+    min_score: int,
+    limit: int,
+    source: str,
+) -> dict[str, Path]:
+    selected = positive_image_rows(
+        metadata_path,
+        image_root=image_root,
+        min_score=min_score,
+        limit=limit,
+        source=source,
+    )
+    return {
+        str(row["post_id"]): Path(row["image_path"])
+        for row in selected
+        if row.get("post_id") is not None and row.get("image_path")
+    }
+
+
+def _danbooru_file_url(row: Mapping[str, Any]) -> str:
+    for key in ("file_url", "large_file_url", "preview_file_url"):
+        value = row.get(key)
+        if isinstance(value, str) and value.startswith(("http://", "https://")):
+            return value
+    return ""
+
+
+def _http_download(url: str, target: Path) -> None:
+    import requests
+
+    with requests.get(url, stream=True, timeout=30) as response:
+        response.raise_for_status()
+        with target.open("wb") as handle:
+            for chunk in response.iter_content(chunk_size=1 << 16):
+                handle.write(chunk)
+
+
+def _count_lines(path: Path) -> int:
+    if not path.exists():
+        return 0
+    return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+
+
 __all__ = [
     "DEFAULT_BUCKET_WEIGHTS",
     "FAILURE_LABELS",
     "SAFETY_TARGET_RATINGS",
     "build_danbooru_safety_prompt_rows",
     "build_prompt_rows",
+    "download_danbooru_images",
     "hand_crop_rows",
     "hard_negative_rows",
     "iter_metadata",
     "label_queue_rows",
     "main",
     "positive_image_rows",
+    "register",
     "split_prompt_rows",
     "split_safety_prompt_rows",
     "write_jsonl",
