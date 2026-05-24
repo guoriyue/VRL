@@ -345,13 +345,11 @@ class AnimaModel(DiffusionModelBase):
         state: AnimaSamplingState,
         step_idx: int,
     ) -> dict[str, Any]:
+        # Anima follows ComfyUI's ModelSamplingDiscreteFlow + CONST path:
+        # the transformer sees raw latents and sigma, and returns the Euler derivative.
         current_sigma = state.scheduler.sigmas[step_idx]
-        current_t = current_sigma / (current_sigma + 1)
-        c_in = 1 - current_t
-        c_skip = 1 - current_t
-        c_out = -current_t
-        timestep = current_t.expand(state.latents.shape[0]).to(self._dtype)
-        latent_model_input = (state.latents * c_in).to(self._dtype)
+        timestep = current_sigma.expand(state.latents.shape[0]).to(self._dtype)
+        latent_model_input = state.latents.to(self._dtype)
 
         cond = self.transformer(
             hidden_states=latent_model_input,
@@ -359,10 +357,9 @@ class AnimaModel(DiffusionModelBase):
             encoder_hidden_states=state.prompt_embeds,
             padding_mask=state.padding_mask,
             return_dict=False,
-        )[0]
-        noise_pred_cond = (c_skip * state.latents + c_out * cond.float()).to(self._dtype)
-        noise_pred_uncond = torch.zeros_like(noise_pred_cond)
-        combined = noise_pred_cond
+        )[0].to(self._dtype)
+        noise_pred_uncond = torch.zeros_like(cond)
+        combined = cond
 
         if state.do_cfg:
             if state.negative_prompt_embeds is None:
@@ -373,23 +370,14 @@ class AnimaModel(DiffusionModelBase):
                 encoder_hidden_states=state.negative_prompt_embeds,
                 padding_mask=state.padding_mask,
                 return_dict=False,
-            )[0]
-            noise_pred_uncond = (
-                c_skip * state.latents + c_out * uncond.float()
-            ).to(self._dtype)
-            combined = noise_pred_cond + state.guidance_scale * (
-                noise_pred_cond - noise_pred_uncond
-            )
+            )[0].to(self._dtype)
+            noise_pred_uncond = uncond
+            combined = cond + state.guidance_scale * (cond - uncond)
 
-        noise_pred = ((state.latents - combined.float()) / current_sigma).to(self._dtype)
         return {
-            "noise_pred": noise_pred,
-            "noise_pred_cond": (
-                (state.latents - noise_pred_cond.float()) / current_sigma
-            ).to(self._dtype),
-            "noise_pred_uncond": (
-                (state.latents - noise_pred_uncond.float()) / current_sigma
-            ).to(self._dtype),
+            "noise_pred": combined.to(self._dtype),
+            "noise_pred_cond": cond,
+            "noise_pred_uncond": noise_pred_uncond,
         }
 
     def export_batch_context(self, state: AnimaSamplingState) -> dict[str, Any]:

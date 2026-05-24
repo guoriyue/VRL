@@ -205,9 +205,11 @@ def test_anima_config_keeps_artifact_names_without_local_paths() -> None:
     model_yaml = OmegaConf.to_yaml(cfg.model)
 
     assert cfg.model.path == "circlestone-labs/Anima"
-    assert cfg.model.transformer_file == "diffusion_models/anima-preview3-base.safetensors"
-    assert cfg.model.text_encoder_file == "text_encoders/qwen_3_06b_base.safetensors"
-    assert cfg.model.vae_file == "vae/qwen_image_vae.safetensors"
+    assert cfg.model.transformer_file == (
+        "split_files/diffusion_models/anima-preview3-base.safetensors"
+    )
+    assert cfg.model.text_encoder_file == "split_files/text_encoders/qwen_3_06b_base.safetensors"
+    assert cfg.model.vae_file == "split_files/vae/qwen_image_vae.safetensors"
     assert cfg.model.transformer_path == ""
     assert cfg.model.text_encoder_path == ""
     assert cfg.model.vae_path == ""
