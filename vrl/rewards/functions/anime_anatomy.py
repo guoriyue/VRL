@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import suppress
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from vrl.rewards.base import RewardFunction
 from vrl.rewards.types import RewardRollout
+
+_LOGGER = logging.getLogger(__name__)
 
 _REQUIRED_BODY_POINTS = tuple(range(1, 14))
 _FOOT_ANCHOR_POINTS = (10, 13)
@@ -72,6 +77,7 @@ class AnimeAnatomyStructureReward(RewardFunction):
         min_body_keypoints: int = 8,
         require_hands: str | bool = "prompt",
         require_feet: str | bool = "prompt",
+        debug_dir: str | None = None,
     ) -> None:
         self._model_repo = str(model_repo)
         self._detector_file = str(detector_file)
@@ -97,6 +103,10 @@ class AnimeAnatomyStructureReward(RewardFunction):
                 raise ValueError(f"{name} must be one of: always, never, prompt")
         self._require_hands = "always" if require_hands is True else "never" if require_hands is False else str(require_hands).strip().lower()
         self._require_feet = "always" if require_feet is True else "never" if require_feet is False else str(require_feet).strip().lower()
+        self._debug_dir = Path(debug_dir) if debug_dir else None
+        if self._debug_dir is not None:
+            self._debug_dir.mkdir(parents=True, exist_ok=True)
+        self.last_diagnostics: list[dict[str, Any]] = []
 
     async def score(self, rollout: RewardRollout) -> float:
         return (await self.score_batch([rollout]))[0]
@@ -128,10 +138,15 @@ class AnimeAnatomyStructureReward(RewardFunction):
                 )
             flat_results = [self._detector(image) for image in flat_images]
 
-        flat_scores = [
-            self._score_pose_result(result, requirements)
-            for result, requirements in zip(flat_results, flat_requirements, strict=True)
-        ]
+        flat_scores: list[float] = []
+        diagnostics: list[dict[str, Any]] = []
+        for result, requirements in zip(flat_results, flat_requirements, strict=True):
+            score, diagnostic = self._score_pose_result(result, requirements)
+            flat_scores.append(score)
+            diagnostics.append(diagnostic)
+        self.last_diagnostics = diagnostics
+        if self._debug_dir is not None:
+            self._write_debug_diagnostics(diagnostics)
 
         out: list[float] = []
         cursor = 0
@@ -142,12 +157,26 @@ class AnimeAnatomyStructureReward(RewardFunction):
             out.append(sum(scores) / len(scores) if scores else 0.0)
         return out
 
-    def _score_pose_result(self, result: Any, requirements: tuple[int, bool]) -> float:
-        people = _people_from_result(result, min_score=self._min_keypoint_confidence)
-        if not people:
-            return 0.0
-
+    def _score_pose_result(self, result: Any, requirements: tuple[int, bool]) -> tuple[float, dict[str, Any]]:
         hand_count, require_feet = requirements
+        diagnostic: dict[str, Any] = {
+            "required_hands": hand_count,
+            "required_feet": require_feet,
+        }
+        people = _people_from_result(result, min_score=self._min_keypoint_confidence)
+        diagnostic["num_people"] = len(people)
+        if isinstance(result, Mapping):
+            provider = result.get("provider")
+            if provider:
+                diagnostic["provider"] = provider
+            detector_boxes = result.get("detector_boxes")
+            if detector_boxes is not None:
+                with suppress(TypeError):
+                    diagnostic["detector_box_count"] = len(detector_boxes)
+        if not people:
+            diagnostic["score"] = 0.0
+            return 0.0, diagnostic
+
         person = max(people, key=_person_confidence)
         score = 1.0
         body_coverage = _coverage(person.body, _REQUIRED_BODY_POINTS)
@@ -155,10 +184,18 @@ class AnimeAnatomyStructureReward(RewardFunction):
             body_coverage = min(
                 body_coverage, _present_count(person.body) / self._min_body_keypoints
             )
-        score -= _MISSING_KEYPOINT_PENALTY * (1.0 - body_coverage)
+        missing_body_penalty = _MISSING_KEYPOINT_PENALTY * (1.0 - body_coverage)
+        score -= missing_body_penalty
+        diagnostic["body_coverage"] = body_coverage
+        diagnostic["body_present_count"] = _present_count(person.body)
+        diagnostic["missing_body_penalty"] = missing_body_penalty
 
         if require_feet:
-            score -= _MISSING_KEYPOINT_PENALTY * _feet_missing_fraction(person)
+            feet_missing_fraction = _feet_missing_fraction(person)
+            feet_penalty = _MISSING_KEYPOINT_PENALTY * feet_missing_fraction
+            score -= feet_penalty
+            diagnostic["feet_missing_fraction"] = feet_missing_fraction
+            diagnostic["feet_penalty"] = feet_penalty
 
         if hand_count > 0:
             min_hand_spread = _MIN_HAND_SPREAD_RATIO * max(_body_scale(person), 1e-6)
@@ -167,25 +204,51 @@ class AnimeAnatomyStructureReward(RewardFunction):
                 min_points=_MIN_HAND_KEYPOINTS,
                 min_spread=min_hand_spread,
             )
-            score -= _HAND_MISSING_PENALTY * max(0.0, hand_count - visible_hands) / hand_count
-            score -= _COLLAPSED_HAND_PENALTY * _collapsed_hand_fraction(
+            missing_hand_penalty = (
+                _HAND_MISSING_PENALTY * max(0.0, hand_count - visible_hands) / hand_count
+            )
+            collapsed_hand_fraction = _collapsed_hand_fraction(
                 person,
                 min_points=_MIN_HAND_KEYPOINTS,
                 min_spread=min_hand_spread,
             )
+            collapsed_hand_penalty = _COLLAPSED_HAND_PENALTY * collapsed_hand_fraction
+            score -= missing_hand_penalty
+            score -= collapsed_hand_penalty
+            diagnostic["visible_hands"] = visible_hands
+            diagnostic["missing_hand_penalty"] = missing_hand_penalty
+            diagnostic["collapsed_hand_fraction"] = collapsed_hand_fraction
+            diagnostic["collapsed_hand_penalty"] = collapsed_hand_penalty
 
-        score -= _IMPOSSIBLE_ANGLE_PENALTY * _joint_geometry_penalty(
+        joint_geometry_penalty = _IMPOSSIBLE_ANGLE_PENALTY * _joint_geometry_penalty(
             person,
             min_angle_degrees=_MIN_JOINT_ANGLE_DEGREES,
             max_segment_ratio=_MAX_SEGMENT_RATIO,
         )
-        score -= _ASYMMETRIC_LIMB_PENALTY * _limb_asymmetry_penalty(
+        limb_asymmetry_penalty = _ASYMMETRIC_LIMB_PENALTY * _limb_asymmetry_penalty(
             person,
             max_ratio=_MAX_LIMB_ASYMMETRY_RATIO,
         )
+        score -= joint_geometry_penalty
+        score -= limb_asymmetry_penalty
+        diagnostic["joint_geometry_penalty"] = joint_geometry_penalty
+        diagnostic["limb_asymmetry_penalty"] = limb_asymmetry_penalty
         if len(people) > 1:
             score -= _MULTI_PERSON_PENALTY
-        return max(0.0, min(1.0, score))
+            diagnostic["multi_person_penalty"] = _MULTI_PERSON_PENALTY
+        final_score = max(0.0, min(1.0, score))
+        diagnostic["score"] = final_score
+        return final_score, diagnostic
+
+    def _write_debug_diagnostics(self, diagnostics: list[dict[str, Any]]) -> None:
+        if self._debug_dir is None:
+            return
+        import json
+
+        path = self._debug_dir / "anime_anatomy_diagnostics.jsonl"
+        with path.open("a", encoding="utf-8") as f:
+            for diagnostic in diagnostics:
+                f.write(json.dumps(diagnostic, sort_keys=True) + "\n")
 
     def _requirements_from_rollout(self, rollout: RewardRollout) -> tuple[int, bool]:
         prompt = str(getattr(rollout.trajectory, "prompt", "") or "")
@@ -312,7 +375,7 @@ def _person_confidence(person: _PersonPose) -> float:
 def _constraint_texts(metadata: Any) -> tuple[str, ...]:
     if not isinstance(metadata, Mapping):
         return ()
-    value = metadata.get("constraints")
+    value = _first_constraint_value(metadata)
     if not value:
         return ()
     if isinstance(value, str):
@@ -322,6 +385,22 @@ def _constraint_texts(metadata: Any) -> tuple[str, ...]:
             item.strip().lower() for item in value if isinstance(item, str) and item.strip()
         )
     )
+
+
+def _first_constraint_value(metadata: Mapping[str, Any]) -> Any:
+    if metadata.get("constraints"):
+        return metadata["constraints"]
+    manifest_row = metadata.get("manifest_row")
+    if isinstance(manifest_row, Mapping):
+        if manifest_row.get("constraints"):
+            return manifest_row["constraints"]
+        nested = manifest_row.get("metadata")
+        if isinstance(nested, Mapping) and nested.get("constraints"):
+            return nested["constraints"]
+    nested_metadata = metadata.get("metadata")
+    if isinstance(nested_metadata, Mapping) and nested_metadata.get("constraints"):
+        return nested_metadata["constraints"]
+    return None
 
 
 def _contains_hint(texts: Sequence[str], hints: Sequence[str]) -> bool:
@@ -490,9 +569,9 @@ def _extract_images(output: Any) -> list[Any]:
 
 
 # ---------------------------------------------------------------------------
-# DWPose ONNX whole-body keypoint detector (private — only used above)
-# Mirrors the Apache-2.0 easy-dwpose implementation; weights fetched via
-# hf_hub_download's normal cache rather than a bespoke downloader.
+# DWPose ONNX whole-body keypoint detector (private — only used above).
+# We intentionally do not run pose on the full image when YOLOX finds no person:
+# for reward training, a detector miss must stay distinguishable from a weak pose.
 # ---------------------------------------------------------------------------
 
 class _DWPoseONNXDetector:
@@ -542,6 +621,12 @@ class _DWPoseONNXDetector:
             providers=providers,
             provider_options=provider_options,
         )
+        self._provider = _active_onnx_provider(self._pose_session)
+        _warn_if_cuda_fallback(
+            device=device,
+            detector_session=self._det_session,
+            pose_session=self._pose_session,
+        )
 
     def __call__(self, image: Any) -> Mapping[str, Any]:
         from PIL import Image
@@ -558,12 +643,24 @@ class _DWPoseONNXDetector:
         arr = self._cv2.resize(arr, (target_width, target_height), interpolation=interpolation)
         height, width = arr.shape[:2]
         boxes = _onnx_inference_detector(self._det_session, self._cv2, arr)
+        if len(boxes) == 0:
+            return {
+                "keypoints": np.empty((0, 134, 2), dtype=float),
+                "scores": np.empty((0, 134), dtype=float),
+                "detector_boxes": boxes,
+                "provider": self._provider,
+            }
         keypoints, scores = _onnx_inference_pose(self._pose_session, self._cv2, boxes, arr)
         keypoints, scores = _onnx_openpose_order(keypoints, scores)
         keypoints = keypoints.astype(float)
         keypoints[..., 0] /= float(width)
         keypoints[..., 1] /= float(height)
-        return {"keypoints": keypoints, "scores": scores}
+        return {
+            "keypoints": keypoints,
+            "scores": scores,
+            "detector_boxes": boxes,
+            "provider": self._provider,
+        }
 
 
 def _onnx_providers(
@@ -573,6 +670,7 @@ def _onnx_providers(
     device = str(device)
     if device == "cpu":
         return ["CPUExecutionProvider"], None
+    _preload_onnx_cuda_libraries(ort)
     available = set(ort.get_available_providers())
     if "CUDAExecutionProvider" not in available:
         return ["CPUExecutionProvider"], None
@@ -583,6 +681,37 @@ def _onnx_providers(
         except ValueError:
             gpu_id = 0
     return ["CUDAExecutionProvider", "CPUExecutionProvider"], [{"device_id": gpu_id}, {}]
+
+
+def _preload_onnx_cuda_libraries(ort: Any) -> None:
+    preload_dlls = getattr(ort, "preload_dlls", None)
+    if not callable(preload_dlls):
+        return
+    try:
+        preload_dlls(cuda=True, cudnn=True, msvc=False)
+    except Exception as exc:
+        _LOGGER.warning("Failed to preload ONNX Runtime CUDA libraries: %s", exc)
+
+
+def _active_onnx_provider(session: Any) -> str:
+    providers = list(session.get_providers())
+    return providers[0] if providers else "unknown"
+
+
+def _warn_if_cuda_fallback(*, device: str, detector_session: Any, pose_session: Any) -> None:
+    if str(device) == "cpu":
+        return
+    detector_providers = list(detector_session.get_providers())
+    pose_providers = list(pose_session.get_providers())
+    if "CUDAExecutionProvider" in detector_providers and "CUDAExecutionProvider" in pose_providers:
+        return
+    _LOGGER.warning(
+        "DWPose requested device=%s but ONNX Runtime fell back to CPU "
+        "(detector_providers=%s, pose_providers=%s).",
+        device,
+        detector_providers,
+        pose_providers,
+    )
 
 
 def _onnx_inference_detector(session: Any, cv2: Any, image: np.ndarray) -> np.ndarray:

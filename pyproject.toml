@@ -44,6 +44,12 @@ pose = [
     "onnxruntime>=1.16.0",
     "opencv-python>=4.8.0",
 ]
+pose-gpu = [
+    "huggingface-hub>=0.24.0",
+    "onnxruntime-gpu>=1.24.0",
+    "nvidia-cudnn-cu12>=9.0.0",
+    "opencv-python>=4.8.0",
+]
 ar-vllm = [
     "torch==2.11.0",
     "vllm>=0.21.0,<0.22",

@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from vrl.rewards.functions.anime_anatomy import AnimeAnatomyStructureReward
+from vrl.rewards.functions.anime_anatomy import AnimeAnatomyStructureReward, _onnx_providers
 from vrl.rewards.functions.registry import MultiReward
 from vrl.rewards.types import RewardRollout, RewardTrajectory
 
@@ -99,6 +99,27 @@ async def test_anime_anatomy_reward_penalizes_prompt_required_missing_hands() ->
 
 
 @pytest.mark.asyncio
+async def test_anime_anatomy_reward_uses_manifest_row_constraints() -> None:
+    reward = AnimeAnatomyStructureReward(
+        device="cpu",
+        detector=lambda images: [_pose_result(hands=False) for _ in images],
+    )
+
+    score = await reward.score(
+        _rollout(
+            "single anime girl, portrait",
+            metadata={
+                "manifest_row": {
+                    "metadata": {"constraints": ["both hands visible", "feet visible"]}
+                }
+            },
+        ),
+    )
+
+    assert score == pytest.approx(0.70)
+
+
+@pytest.mark.asyncio
 async def test_anime_anatomy_reward_prefers_manifest_constraints_over_prompt_guessing() -> None:
     reward = AnimeAnatomyStructureReward(
         device="cpu",
@@ -113,6 +134,25 @@ async def test_anime_anatomy_reward_prefers_manifest_constraints_over_prompt_gue
     )
 
     assert score == pytest.approx(0.70)
+
+
+@pytest.mark.asyncio
+async def test_anime_anatomy_reward_does_not_score_missing_people_as_partial_pose() -> None:
+    empty_result = {
+        "keypoints": np.empty((0, 134, 2), dtype=float),
+        "scores": np.empty((0, 134), dtype=float),
+        "detector_boxes": np.empty((0, 4), dtype=float),
+    }
+    reward = AnimeAnatomyStructureReward(
+        device="cpu",
+        detector=lambda images: [empty_result for _ in images],
+    )
+
+    score = await reward.score(_rollout("single anime girl, portrait"))
+
+    assert score == pytest.approx(0.0)
+    assert reward.last_diagnostics[0]["num_people"] == 0
+    assert reward.last_diagnostics[0]["score"] == pytest.approx(0.0)
 
 
 @pytest.mark.asyncio
@@ -137,3 +177,22 @@ def test_anime_anatomy_reward_is_registered() -> None:
     )
 
     assert [name for name, _, _ in reward.rewards] == ["anime_anatomy_structure"]
+
+
+def test_onnx_cuda_provider_resolution_preloads_runtime_libraries() -> None:
+    calls = []
+
+    class FakeOrt:
+        @staticmethod
+        def preload_dlls(**kwargs):
+            calls.append(kwargs)
+
+        @staticmethod
+        def get_available_providers():
+            return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+    providers, provider_options = _onnx_providers(FakeOrt, "cuda:2")
+
+    assert calls == [{"cuda": True, "cudnn": True, "msvc": False}]
+    assert providers == ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    assert provider_options == [{"device_id": 2}, {}]
