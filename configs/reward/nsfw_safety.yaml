@@ -4,8 +4,8 @@ reward:
     nsfw_safety: 1.0
   kwargs:
     nsfw_safety:
-      model_name: ${oc.env:NSFW_SAFETY_MODEL_NAME,"Falconsai/nsfw_image_detection"}
-      classifier_device: ${oc.env:NSFW_SAFETY_DEVICE,"cpu"}
+      model_name: Falconsai/nsfw_image_detection
+      classifier_device: cpu
       threshold: 0.35
       penalty_scale: 1.0
       max_penalty: 1.0
