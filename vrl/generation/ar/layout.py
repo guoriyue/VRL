@@ -64,11 +64,9 @@ class ARRequestLayout:
                 "max_text_length",
                 self.default_max_text_length,
             ),
-            seed=self._optional_int(sampling.get("seed")),
+            seed=None if sampling.get("seed") is None else int(sampling.get("seed")),
             use_ar_scheduler=bool(sampling.get("use_ar_scheduler", False)),
-            ar_scheduler_batch_size=self._optional_int(
-                sampling.get("ar_scheduler_batch_size"),
-            ),
+            ar_scheduler_batch_size=None if sampling.get("ar_scheduler_batch_size") is None else int(sampling.get("ar_scheduler_batch_size")),
         )
 
     def expand_prompts(self, request: GenerationRequest) -> list[str]:
@@ -177,7 +175,7 @@ class ARRequestLayout:
                     f"{request.request_id}:trajectory:"
                     f"{chunk.prompt_index}:{sample_index}"
                 ),
-                seed=self._optional_int(request.sampling.get("seed")),
+                seed=None if request.sampling.get("seed") is None else int(request.sampling.get("seed")),
                 metadata={},
             )
             for sample_index in range(chunk.sample_start, chunk.sample_end)
@@ -255,12 +253,6 @@ class ARRequestLayout:
         if default is None:
             raise ValueError(f"request.sampling.{key} is required")
         return int(default)
-
-    @staticmethod
-    def _optional_int(value: Any) -> int | None:
-        if value is None:
-            return None
-        return int(value)
 
     @staticmethod
     def _validate_chunk_range(

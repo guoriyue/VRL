@@ -34,7 +34,7 @@ class StrictOnPolicyRolloutSchedule:
         await self.lifecycle.ensure_initial_weights(phase_times)
         rollout_id = self.state.rollout_id
         self.state.rollout_id += 1
-        policy_version = self.lifecycle.collect_policy_version()
+        policy_version = self.lifecycle.current_policy_version()
 
         offloaded = self.lifecycle.offload_driver_model_for_rollout(phase_times)
         try:

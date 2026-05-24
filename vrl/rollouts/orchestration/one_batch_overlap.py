@@ -131,7 +131,7 @@ class OneBatchOverlapRolloutSchedule:
     ) -> RolloutIteration:
         phase_times: dict[str, float] = {}
         await self.lifecycle.ensure_initial_weights(phase_times)
-        policy_version = self.lifecycle.collect_policy_version()
+        policy_version = self.lifecycle.current_policy_version()
         with record_phase(phase_times, "rollout.collect_s"):
             batches = await collect_prompt_batches(
                 collector=self.lifecycle.collector,

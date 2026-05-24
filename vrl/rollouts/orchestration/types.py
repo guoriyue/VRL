@@ -15,15 +15,6 @@ class RolloutScheduleMode(str, Enum):
     STRICT_ON_POLICY = "strict_on_policy"
     ONE_BATCH_OVERLAP = "one_batch_overlap"
 
-    @classmethod
-    def from_value(cls, value: Any) -> RolloutScheduleMode:
-        try:
-            return cls(str(value))
-        except ValueError as exc:
-            allowed = ", ".join(item.value for item in cls)
-            raise ValueError(
-                f"rollout_orchestration.mode must be one of: {allowed}",
-            ) from exc
 
 
 @dataclass(slots=True)

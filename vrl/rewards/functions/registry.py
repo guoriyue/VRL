@@ -29,7 +29,6 @@ def get_reward(name: str) -> type[RewardFunction]:
 
 
 def _register_builtins() -> None:
-    """Register the built-in reward functions (lazy to avoid import errors)."""
     from vrl.rewards.functions.aesthetic import AestheticReward
     from vrl.rewards.functions.anime_anatomy import AnimeAnatomyStructureReward
     from vrl.rewards.functions.clip import CLIPScoreReward
@@ -40,16 +39,18 @@ def _register_builtins() -> None:
     from vrl.rewards.functions.pickscore import PickScoreReward
     from vrl.rewards.functions.video_reward import VideoReward
 
-    register_reward("aesthetic", AestheticReward)
-    register_reward("anime_anatomy_structure", AnimeAnatomyStructureReward)
-    register_reward("clipscore", CLIPScoreReward)
-    register_reward("codex_image_qa", CodexImageQAReward)
-    register_reward("geneval", GenEvalReward)
-    register_reward("image_qa_cli", CodexImageQAReward)
-    register_reward("nsfw_safety", NSFWSafetyReward)
-    register_reward("ocr", OCRReward)
-    register_reward("pickscore", PickScoreReward)
-    register_reward("video_reward", VideoReward)
+    _REWARD_REGISTRY.update({
+        "aesthetic": AestheticReward,
+        "anime_anatomy_structure": AnimeAnatomyStructureReward,
+        "clipscore": CLIPScoreReward,
+        "codex_image_qa": CodexImageQAReward,
+        "geneval": GenEvalReward,
+        "image_qa_cli": CodexImageQAReward,
+        "nsfw_safety": NSFWSafetyReward,
+        "ocr": OCRReward,
+        "pickscore": PickScoreReward,
+        "video_reward": VideoReward,
+    })
 
 
 class MultiReward(RewardFunction):

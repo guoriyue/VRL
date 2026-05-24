@@ -72,10 +72,6 @@ class RolloutLifecycle:
     def current_policy_version(self) -> int | None:
         return self._runtime_policy_version(default=self._last_policy_version)
 
-    def collect_policy_version(self) -> int | None:
-        current = self.current_policy_version()
-        return None if current is None else int(current)
-
     def requires_driver_model_offload(self) -> bool:
         runtime = self._collector_runtime()
         return bool(getattr(runtime, "requires_driver_model_offload", False))

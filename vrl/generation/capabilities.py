@@ -101,11 +101,11 @@ class ExecutionStageCapability:
             return value
         return cls(
             name=str(value["name"]),
-            segment=_optional_str(value.get("segment")),
-            axis=_optional_str(value.get("axis")),
+            segment=None if value.get("segment") is None else str(value.get("segment")),
+            axis=None if value.get("axis") is None else str(value.get("axis")),
             cache_read=bool(value.get("cache_read", False)),
             cache_write=bool(value.get("cache_write", False)),
-            profiler_name=_optional_str(value.get("profiler_name")),
+            profiler_name=None if value.get("profiler_name") is None else str(value.get("profiler_name")),
             metadata=dict(value.get("metadata") or {}),
         )
 
@@ -300,9 +300,7 @@ class FamilyCapability:
             supports_torch_compile=bool(value.get("supports_torch_compile", False)),
             supports_cuda_graph=bool(value.get("supports_cuda_graph", False)),
             cache_kinds=tuple(str(item) for item in value.get("cache_kinds", ())),
-            default_max_samples_per_chunk=_optional_int(
-                value.get("default_max_samples_per_chunk")
-            ),
+            default_max_samples_per_chunk=None if value.get("default_max_samples_per_chunk") is None else int(value.get("default_max_samples_per_chunk")),
             metadata=dict(value.get("metadata") or {}),
         )
 
@@ -320,18 +318,6 @@ def family_capability_from_value(value: Any) -> FamilyCapability | None:
         "family capability must be a FamilyCapability, mapping, or None; "
         f"got {type(value).__name__}"
     )
-
-
-def _optional_int(value: Any) -> int | None:
-    if value is None:
-        return None
-    return int(value)
-
-
-def _optional_str(value: Any) -> str | None:
-    if value is None:
-        return None
-    return str(value)
 
 
 def _require_string_tuple(name: str, values: tuple[str, ...]) -> None:

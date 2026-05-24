@@ -43,7 +43,7 @@ def build_rollout_schedule(
 ) -> RolloutSchedule:
     """Build the RL rollout schedule selected by trainer config."""
 
-    mode = RolloutScheduleMode.from_value(
+    mode = RolloutScheduleMode(
         getattr(config, "mode", RolloutScheduleMode.STRICT_ON_POLICY.value),
     )
     max_pending = int(getattr(config, "max_pending_rollouts", 1))

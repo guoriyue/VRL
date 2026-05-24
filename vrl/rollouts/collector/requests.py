@@ -4,18 +4,14 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Mapping
-from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NamedTuple
 
 from vrl.generation import GenerationRequest
 
 
-@dataclass(frozen=True, slots=True)
-class CollectorRequest:
-    """Engine request plus collector-local metadata."""
-
+class CollectorRequest(NamedTuple):
     request: GenerationRequest
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any]
 
 
 class GenerationRequestBuilder:
