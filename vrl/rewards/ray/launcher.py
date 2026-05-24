@@ -37,13 +37,16 @@ def build_reward_ray_runtime(
 ) -> RewardInferenceRuntime:
     """Build a Ray-backed reward inference runtime from reward config."""
 
-    worker_config = cfg.get("worker_config")
-    if worker_config is None:
+    worker_config_raw = cfg.get("worker_config")
+    if worker_config_raw is None:
         raise ValueError(
-            "reward inference_runtime='ray' requires reward.kwargs.video_reward.worker_config",
+            "reward inference_runtime='ray' requires explicit reward.kwargs.video_reward.worker_config. "
+            "Use worker_config.scorer='import_path' for model-backed rewards, or "
+            "worker_config.scorer='tensor_mean' for tensor smoke tests.",
         )
-    if not isinstance(worker_config, Mapping):
+    if not isinstance(worker_config_raw, Mapping):
         raise TypeError("reward worker_config must be a mapping")
+    worker_config = dict(worker_config_raw)
 
     return RewardInferenceActorRuntime(
         RayActorMethodRuntime(
@@ -67,4 +70,7 @@ def build_reward_ray_runtime(
     )
 
 
-__all__ = ["build_reward_inference_runtime", "build_reward_ray_runtime"]
+__all__ = [
+    "build_reward_inference_runtime",
+    "build_reward_ray_runtime",
+]

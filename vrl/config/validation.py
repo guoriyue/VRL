@@ -168,6 +168,9 @@ def validate_reward_config(cfg: DictConfig) -> None:
             inference_runtime = str(sub.get("inference_runtime"))
             if inference_runtime != "ray":
                 raise ValueError("reward.kwargs.video_reward.inference_runtime must be 'ray'")
+            worker_config = sub.get("worker_config")
+            if not isinstance(worker_config, dict):
+                raise ValueError("reward.kwargs.video_reward.worker_config must be a mapping")
             scheduling = str(sub.get("scheduling", "sync"))
             if scheduling != "sync":
                 raise ValueError(

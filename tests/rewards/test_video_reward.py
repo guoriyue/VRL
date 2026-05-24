@@ -65,6 +65,11 @@ def _video_reward_config(**video_kwargs: object):
         "inference_runtime": "ray",
         "reward_name": "dance_grpo",
         "score_key": "overall_reward",
+        "worker_config": {
+            "scorer": "constant",
+            "scores": {"overall_reward": 1.0},
+            "reward_model_version": "unit-test",
+        },
     }
     kwargs.update(video_kwargs)
     return OmegaConf.create(
@@ -148,3 +153,11 @@ def test_video_reward_config_rejects_removed_endpoint_fields() -> None:
 
 def test_video_reward_config_accepts_ray_runtime() -> None:
     validate_reward_config(_video_reward_config())
+
+
+def test_video_reward_config_rejects_missing_worker_config() -> None:
+    cfg = _video_reward_config()
+    del cfg.reward.kwargs.video_reward["worker_config"]
+
+    with pytest.raises(ValueError, match="worker_config must be a mapping"):
+        validate_reward_config(cfg)

@@ -202,6 +202,7 @@ def _write_optimization_check_after(
     video_kwargs = _video_reward_kwargs(stack.cfg)
     artifact_dir = Path(str(video_kwargs.get("artifact_dir", "")))
     debug_dir = Path(str(video_kwargs.get("debug_dir", "")))
+    worker_config = video_kwargs.get("worker_config") or {}
     output_dir = Path(stack.output_dir)
     payload = {
         "global_step": int(getattr(stack.trainer.state, "global_step", 0)),
@@ -217,9 +218,11 @@ def _write_optimization_check_after(
         "trainable_sha256_after": str(after),
         "trainable_sha256_changed": str(before) != str(after),
         "reward_runtime": str(video_kwargs.get("inference_runtime", "")),
-        "reward_name": str(video_kwargs.get("reward_name", "")),
+        "reward_name": str(video_kwargs.get("reward_name") or video_kwargs.get("model_name", "")),
         "reward_model_version": str(
-            (video_kwargs.get("worker_config") or {}).get("reward_model_version", ""),
+            worker_config.get("reward_model_version")
+            or video_kwargs.get("reward_model_version")
+            or video_kwargs.get("model_name", ""),
         ),
         "reward_artifacts_manifest": str(artifact_dir / "manifest.jsonl"),
         "reward_debug_requests": str(debug_dir / "video_reward_requests.jsonl"),

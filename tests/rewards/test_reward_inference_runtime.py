@@ -45,3 +45,13 @@ def test_runtime_factory_rejects_missing_worker_config() -> None:
     with pytest.raises(ValueError, match="worker_config"):
         build_reward_inference_runtime({"inference_runtime": "ray"})
 
+
+def test_model_name_without_worker_config_is_not_a_loader() -> None:
+    with pytest.raises(ValueError, match="worker_config"):
+        build_reward_inference_runtime(
+            {
+                "inference_runtime": "ray",
+                "model_name": "cosmos_reason1",
+                "score_key": "overall_reward",
+            },
+        )

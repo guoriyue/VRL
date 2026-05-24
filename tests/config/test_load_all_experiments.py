@@ -151,6 +151,9 @@ def test_cosmos_diffusion_nft_video_reward_validation_config() -> None:
     assert cfg.reward.kwargs.video_reward.debug_dir == (
         f"{cfg.trainer.output_dir}/reward_debug"
     )
+    assert cfg.reward.kwargs.video_reward.reward_name == "cosmos_reason1"
+    assert cfg.reward.kwargs.video_reward.worker_config.scorer == "import_path"
+    assert "model_name" not in cfg.reward.kwargs.video_reward
     assert cfg.distributed.resources.reward.num_gpus == 1
     assert cfg.distributed.resources.reward.share_with_rollout is True
     assert cfg.distributed.reward.release_after_score is True
