@@ -69,7 +69,10 @@ def test_experiments_are_grouped_by_model_family() -> None:
         "diffusion/anima_preview3/online_grpo_aesthetic_nsfw_safety",
         "diffusion/cosmos_predict2/online_grpo_video_reward",
         "diffusion/cosmos_predict2_5/online_nft_video_reward",
+        "diffusion/sd3_5/online_grpo_geneval",
         "diffusion/sd3_5/online_grpo_ocr",
+        "diffusion/sd3_5/online_grpo_ocr_prompt_alignment",
+        "diffusion/sd3_5/online_grpo_pickscore",
         "diffusion/wan_2_1/offline_dpo_pickapic",
         "diffusion/wan_2_1/online_grpo_ocr",
     }

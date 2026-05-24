@@ -1,0 +1,26 @@
+{
+  "dataset": "ocr",
+  "files": {
+    "test": {
+      "duplicate_prompt_count": 0,
+      "path": "datasets/ocr/test.txt",
+      "row_count": 1018,
+      "unique_prompt_count": 1018
+    },
+    "train": {
+      "duplicate_prompt_count": 4,
+      "path": "datasets/ocr/train.txt",
+      "row_count": 19653,
+      "unique_prompt_count": 19649
+    }
+  },
+  "prompt_overlap": {
+    "train_test": 1
+  },
+  "source_commit": "879042cf5707f8b90daa98d147d7deac2317c5da",
+  "source_url": "https://github.com/yifan123/flow_grpo.git",
+  "target_text_rows": {
+    "test": 1018,
+    "train": 19653
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "dataset": "geneval",
+  "files": {
+    "official_eval": {
+      "duplicate_prompt_count": 0,
+      "path": "datasets/geneval/official_eval_553.jsonl",
+      "row_count": 553,
+      "tag_counts": {
+        "color_attr": 100,
+        "colors": 94,
+        "counting": 80,
+        "position": 100,
+        "single_object": 80,
+        "two_object": 99
+      },
+      "unique_prompt_count": 553
+    },
+    "test": {
+      "duplicate_prompt_count": 1659,
+      "path": "datasets/geneval/test.jsonl",
+      "row_count": 2212,
+      "tag_counts": {
+        "color_attr": 400,
+        "colors": 376,
+        "counting": 320,
+        "position": 400,
+        "single_object": 320,
+        "two_object": 396
+      },
+      "unique_prompt_count": 553
+    },
+    "train": {
+      "duplicate_prompt_count": 16801,
+      "path": "datasets/geneval/train.jsonl",
+      "row_count": 50000,
+      "tag_counts": {
+        "color_attr": 8824,
+        "colors": 2941,
+        "counting": 14706,
+        "position": 20588,
+        "two_object": 2941
+      },
+      "unique_prompt_count": 33199
+    }
+  },
+  "official_eval_source_commit": "af4902f24d3ca90ebbb446dd9891a59e0f82725f",
+  "official_eval_source_url": "https://github.com/djghosh13/geneval.git",
+  "prompt_overlap": {
+    "train_test": 0
+  },
+  "source_commit": "879042cf5707f8b90daa98d147d7deac2317c5da",
+  "source_url": "https://github.com/yifan123/flow_grpo.git"
+}

@@ -34,6 +34,7 @@ def _register_builtins() -> None:
     from vrl.rewards.functions.anime_anatomy import AnimeAnatomyStructureReward
     from vrl.rewards.functions.clip import CLIPScoreReward
     from vrl.rewards.functions.codex_image_qa import CodexImageQAReward
+    from vrl.rewards.functions.geneval import GenEvalReward
     from vrl.rewards.functions.nsfw_safety import NSFWSafetyReward
     from vrl.rewards.functions.ocr import OCRReward
     from vrl.rewards.functions.pickscore import PickScoreReward
@@ -43,6 +44,7 @@ def _register_builtins() -> None:
     register_reward("anime_anatomy_structure", AnimeAnatomyStructureReward)
     register_reward("clipscore", CLIPScoreReward)
     register_reward("codex_image_qa", CodexImageQAReward)
+    register_reward("geneval", GenEvalReward)
     register_reward("image_qa_cli", CodexImageQAReward)
     register_reward("nsfw_safety", NSFWSafetyReward)
     register_reward("ocr", OCRReward)

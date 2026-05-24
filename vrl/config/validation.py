@@ -21,6 +21,7 @@ _REWARD_REQUIRED_KWARGS: dict[str, tuple[str, ...]] = {
     "aesthetic": ("model_name",),
     "clipscore": ("model_name",),
     "codex_image_qa": ("command",),
+    "geneval": ("evaluator", "import_path"),
     "image_qa_cli": ("command",),
     "nsfw_safety": ("model_name", "threshold"),
     "pickscore": ("processor_name", "model_name"),

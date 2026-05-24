@@ -1,4 +1,4 @@
 # OCR prompt dataset.
 data:
   manifest: datasets/ocr/train.txt
-  eval_manifest: ""
+  eval_manifest: datasets/ocr/test.txt

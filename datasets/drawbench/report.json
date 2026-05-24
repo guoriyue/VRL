@@ -1,0 +1,14 @@
+{
+  "dataset": "drawbench",
+  "files": {
+    "test": {
+      "duplicate_prompt_count": 800,
+      "path": "datasets/drawbench/test.txt",
+      "row_count": 1000,
+      "unique_prompt_count": 200
+    }
+  },
+  "source_commit": "879042cf5707f8b90daa98d147d7deac2317c5da",
+  "source_url": "https://github.com/yifan123/flow_grpo.git",
+  "usage": "fixed_eval_and_reward_hacking_audit"
+}

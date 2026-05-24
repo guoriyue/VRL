@@ -1,0 +1,13 @@
+# PickScore SFW prompts plus PickScore image-text preference reward.
+data:
+  manifest: datasets/pickscore_sfw/train.txt
+  eval_manifest: datasets/pickscore_sfw/test.txt
+
+reward:
+  components:
+    pickscore: 1.0
+  kwargs:
+    pickscore:
+      processor_name: laion/CLIP-ViT-H-14-laion2B-s32B-b79K
+      model_name: yuvalkirstain/PickScore_v1
+      dtype: float32
