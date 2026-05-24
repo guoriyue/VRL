@@ -225,34 +225,22 @@ def test_anima_empty_prompts_are_replaced_before_tokenization() -> None:
     assert _non_empty_prompts(["", "  ", "anime"]) == [".", ".", "anime"]
 
 
-def test_anima_runtime_spec_uses_explicit_local_paths(tmp_path: Any) -> None:
+def test_anima_runtime_spec_uses_explicit_local_paths() -> None:
     from vrl.config.loading import load_config
     from vrl.models.diffusion.cosmos.anima.runtime import (
         extract_anima_replay_runtime_spec,
         extract_anima_runtime_spec,
     )
 
-    model_root = tmp_path / "models"
-    transformer = model_root / "diffusion_models" / "anima-preview3-base.safetensors"
-    text_encoder = model_root / "text_encoders" / "qwen_3_06b_base.safetensors"
-    vae = model_root / "vae" / "qwen_image_vae.safetensors"
-    for path in (transformer, text_encoder, vae):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"placeholder")
-    qwen_tokenizer = tmp_path / "tokenizers" / "qwen25_tokenizer"
-    t5_tokenizer = tmp_path / "tokenizers" / "t5_tokenizer"
-    qwen_tokenizer.mkdir(parents=True)
-    t5_tokenizer.mkdir(parents=True)
-
     cfg = load_config(
         "experiment/diffusion/anima_preview3/online_grpo_aesthetic",
         overrides=[
-            f"model.path={model_root.as_posix()}",
-            f"model.transformer_path={transformer.as_posix()}",
-            f"model.text_encoder_path={text_encoder.as_posix()}",
-            f"model.vae_path={vae.as_posix()}",
-            f"model.qwen_tokenizer_path={qwen_tokenizer.as_posix()}",
-            f"model.t5_tokenizer_path={t5_tokenizer.as_posix()}",
+            "model.path=/models/anima",
+            "model.transformer_path=/models/anima/transformer.safetensors",
+            "model.text_encoder_path=/models/anima/text_encoder.safetensors",
+            "model.vae_path=/models/anima/vae.safetensors",
+            "model.qwen_tokenizer_path=/tokenizers/qwen",
+            "model.t5_tokenizer_path=/tokenizers/t5",
             "sampling.num_steps=1",
             "model.use_lora=false",
         ],
@@ -261,103 +249,18 @@ def test_anima_runtime_spec_uses_explicit_local_paths(tmp_path: Any) -> None:
     full = extract_anima_runtime_spec(cfg, "cpu", torch.float32)
     replay = extract_anima_replay_runtime_spec(cfg, "cpu", torch.float32)
 
-    assert full.extra["transformer_path"] == str(transformer)
-    assert full.extra["text_encoder_path"] == str(text_encoder)
-    assert full.extra["vae_path"] == str(vae)
-    assert full.extra["qwen_tokenizer_path"] == str(qwen_tokenizer)
-    assert full.extra["t5_tokenizer_path"] == str(t5_tokenizer)
-    assert "resolved_paths" not in full.extra
-    assert replay.extra["transformer_path"] == str(transformer)
-    assert "resolved_paths" not in replay.extra
+    assert full.extra["transformer_path"] == "/models/anima/transformer.safetensors"
+    assert full.extra["text_encoder_path"] == "/models/anima/text_encoder.safetensors"
+    assert full.extra["vae_path"] == "/models/anima/vae.safetensors"
+    assert full.extra["qwen_tokenizer_path"] == "/tokenizers/qwen"
+    assert full.extra["t5_tokenizer_path"] == "/tokenizers/t5"
+    assert replay.extra["transformer_path"] == "/models/anima/transformer.safetensors"
 
 
-def test_anima_runtime_spec_derives_component_paths_from_model_root(tmp_path: Any) -> None:
-    from vrl.config.loading import load_config
-    from vrl.models.diffusion.cosmos.anima.runtime import (
-        extract_anima_replay_runtime_spec,
-        extract_anima_runtime_spec,
-    )
-
-    model_root = tmp_path / "models"
-    qwen_tokenizer = tmp_path / "tokenizers" / "qwen"
-    t5_tokenizer = tmp_path / "tokenizers" / "t5"
-    cfg = load_config(
-        "experiment/diffusion/anima_preview3/online_grpo_aesthetic",
-        overrides=[
-            f"model.path={model_root.as_posix()}",
-            f"model.qwen_tokenizer_path={qwen_tokenizer.as_posix()}",
-            f"model.t5_tokenizer_path={t5_tokenizer.as_posix()}",
-            "sampling.num_steps=1",
-            "model.use_lora=false",
-        ],
-    )
-
-    full = extract_anima_runtime_spec(cfg, "cpu", torch.float32)
-    replay = extract_anima_replay_runtime_spec(cfg, "cpu", torch.float32)
-
-    assert full.extra["transformer_path"] == str(
-        model_root / "diffusion_models" / "anima-preview3-base.safetensors",
-    )
-    assert full.extra["text_encoder_path"] == str(
-        model_root / "text_encoders" / "qwen_3_06b_base.safetensors",
-    )
-    assert full.extra["vae_path"] == str(model_root / "vae" / "qwen_image_vae.safetensors")
-    assert replay.extra["transformer_path"] == full.extra["transformer_path"]
-
-
-def test_anima_runtime_spec_uses_cached_hf_snapshot(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Any,
-) -> None:
-    from vrl.config.loading import load_config
-    from vrl.models.diffusion.cosmos.anima.runtime import (
-        extract_anima_replay_runtime_spec,
-        extract_anima_runtime_spec,
-    )
-
-    monkeypatch.delenv("HF_HUB_CACHE", raising=False)
-    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
-    snapshot = (
-        tmp_path
-        / "hf"
-        / "hub"
-        / "models--circlestone-labs--Anima"
-        / "snapshots"
-        / "abc123"
-    )
-    transformer = snapshot / "diffusion_models" / "anima-preview3-base.safetensors"
-    text_encoder = snapshot / "text_encoders" / "qwen_3_06b_base.safetensors"
-    vae = snapshot / "vae" / "qwen_image_vae.safetensors"
-    for path in (transformer, text_encoder, vae):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"placeholder")
-
-    cfg = load_config(
-        "experiment/diffusion/anima_preview3/online_grpo_aesthetic",
-        overrides=[
-            "sampling.num_steps=1",
-            "model.use_lora=false",
-        ],
-    )
-
-    full = extract_anima_runtime_spec(cfg, "cpu", torch.float32)
-    replay = extract_anima_replay_runtime_spec(cfg, "cpu", torch.float32)
-
-    assert full.extra["transformer_path"] == str(transformer)
-    assert full.extra["text_encoder_path"] == str(text_encoder)
-    assert full.extra["vae_path"] == str(vae)
-    assert replay.extra["transformer_path"] == str(transformer)
-
-
-def test_anima_runtime_spec_requires_root_or_explicit_artifact_path(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Any,
-) -> None:
+def test_anima_runtime_spec_rejects_hf_repo_id_without_local_artifact_paths() -> None:
     from vrl.config.loading import load_config
     from vrl.models.diffusion.cosmos.anima.runtime import extract_anima_replay_runtime_spec
 
-    monkeypatch.delenv("HF_HUB_CACHE", raising=False)
-    monkeypatch.setenv("HF_HOME", str(tmp_path / "empty-hf"))
     cfg = load_config(
         "experiment/diffusion/anima_preview3/online_grpo_aesthetic",
         overrides=[
@@ -365,12 +268,18 @@ def test_anima_runtime_spec_requires_root_or_explicit_artifact_path(
             "model.use_lora=false",
         ],
     )
+    spec = extract_anima_replay_runtime_spec(cfg, "cpu", torch.float32)
 
-    with pytest.raises(
-        ValueError,
-        match=r"model\.path='circlestone-labs/Anima' is not a local artifact root",
-    ):
-        extract_anima_replay_runtime_spec(cfg, "cpu", torch.float32)
+    with pytest.raises(ValueError, match=r"model\.path='circlestone-labs/Anima'"):
+        spec.extra["transformer_path"] = ""
+        from vrl.models.diffusion.cosmos.anima.runtime import _resolve_artifact
+
+        _resolve_artifact(
+            spec.model_name_or_path,
+            explicit_path="",
+            relative_file=spec.extra["transformer_file"],
+            field_name="transformer_path",
+        )
 
 
 @pytest.mark.parametrize(
