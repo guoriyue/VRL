@@ -11,24 +11,6 @@ from vrl.rewards.ray.runtime import RewardInferenceActorRuntime
 from vrl.rewards.ray.worker import RewardScoringWorker
 
 
-def build_reward_inference_runtime(
-    cfg: Mapping[str, Any],
-    *,
-    init_ray: bool = True,
-    ray_init_kwargs: dict[str, Any] | None = None,
-) -> RewardInferenceRuntime:
-    """Build the Ray reward inference runtime selected by config."""
-
-    runtime = str(cfg.get("inference_runtime", ""))
-    if runtime != "ray":
-        raise ValueError("reward inference_runtime must be 'ray'")
-    return build_reward_ray_runtime(
-        cfg,
-        init_ray=init_ray,
-        ray_init_kwargs=ray_init_kwargs,
-    )
-
-
 def build_reward_ray_runtime(
     cfg: Mapping[str, Any],
     *,
@@ -40,7 +22,7 @@ def build_reward_ray_runtime(
     worker_config_raw = cfg.get("worker_config")
     if worker_config_raw is None:
         raise ValueError(
-            "reward inference_runtime='ray' requires explicit reward.kwargs.video_reward.worker_config. "
+            "reward inference_runtime='ray' requires explicit worker_config. "
             "Use worker_config.scorer='import_path' for model-backed rewards, or "
             "worker_config.scorer='tensor_mean' for tensor smoke tests.",
         )
@@ -71,6 +53,5 @@ def build_reward_ray_runtime(
 
 
 __all__ = [
-    "build_reward_inference_runtime",
     "build_reward_ray_runtime",
 ]

@@ -137,6 +137,17 @@ def test_video_reward_rejects_legacy_backend(tmp_path: Path) -> None:
         )
 
 
+def test_video_reward_rejects_non_ray_runtime(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="inference_runtime must be 'ray'"):
+        VideoReward(
+            inference_runtime="local",
+            reward_name="dance_grpo",
+            score_key="overall_reward",
+            artifact_dir=str(tmp_path),
+            runtime=_FakeRuntime(),
+        )
+
+
 def test_video_reward_config_rejects_legacy_backend() -> None:
     cfg = _video_reward_config(backend="stub")
 

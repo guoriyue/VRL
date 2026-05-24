@@ -9,7 +9,7 @@ from vrl.rewards.inference import (
     RewardInferenceRequest,
     shard_reward_request,
 )
-from vrl.rewards.ray.launcher import build_reward_inference_runtime
+from vrl.rewards.ray.launcher import build_reward_ray_runtime
 
 
 def _request(count: int = 3) -> RewardInferenceRequest:
@@ -43,12 +43,12 @@ def test_shard_reward_request_balances_artifacts() -> None:
 
 def test_runtime_factory_rejects_missing_worker_config() -> None:
     with pytest.raises(ValueError, match="worker_config"):
-        build_reward_inference_runtime({"inference_runtime": "ray"})
+        build_reward_ray_runtime({"inference_runtime": "ray"})
 
 
 def test_model_name_without_worker_config_is_not_a_loader() -> None:
     with pytest.raises(ValueError, match="worker_config"):
-        build_reward_inference_runtime(
+        build_reward_ray_runtime(
             {
                 "inference_runtime": "ray",
                 "model_name": "cosmos_reason1",

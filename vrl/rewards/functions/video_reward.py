@@ -16,7 +16,7 @@ from vrl.rewards.inference import (
     RewardInferenceRuntime,
     validate_reward_results,
 )
-from vrl.rewards.ray.launcher import build_reward_inference_runtime
+from vrl.rewards.ray.launcher import build_reward_ray_runtime
 from vrl.rewards.types import RewardRollout
 
 
@@ -50,6 +50,8 @@ class VideoReward(RewardFunction):
                 "reward.kwargs.video_reward.scheduling currently supports only 'sync'",
             )
         self.inference_runtime = str(inference_runtime)
+        if self.inference_runtime != "ray":
+            raise ValueError("reward.kwargs.video_reward.inference_runtime must be 'ray'")
         self.reward_name = str(reward_name)
         self.score_key = str(score_key)
         self.media_type = str(media_type)
@@ -67,7 +69,7 @@ class VideoReward(RewardFunction):
                 "inference_runtime": self.inference_runtime,
                 "max_inflight_batches": max_inflight_batches,
             }
-            self.runtime = build_reward_inference_runtime(runtime_cfg)
+            self.runtime = build_reward_ray_runtime(runtime_cfg)
 
     async def score(self, rollout: RewardRollout) -> float:
         return (await self.score_batch([rollout]))[0]
