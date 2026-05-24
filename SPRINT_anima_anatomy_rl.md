@@ -590,11 +590,28 @@ defaults:
 
 验收：
 
+- 导出的 `lora_weights/adapter_model.safetensors` 必须不是 no-op；`lora_B` 不能全 0。
+- `checkpoint.pt` 的 raw trainable LoRA state 和导出的 LoRA artifact 必须能解释清楚：如果 EMA 从未更新，导出 raw trainable 权重；如果使用 EMA，导出已更新过的 EMA 权重。
+- before/after eval 必须加载同一个预期 artifact；如果 16 张图像像素级一致，先检查 LoRA artifact 是否实际改变模型，再讨论 reward 是否有效。
 - `anime_anatomy_structure_score` 上升。
 - `finger_defect_rate` 下降。
 - `implausible_action_pose_rate` 下降。
 - `missing_hand_rate` 下降。
 - `missing_feet_rate` 下降。
+
+已发现并修复的短跑问题：
+
+- 4 epoch anatomy GRPO 的 raw `checkpoint.pt` 中 `lora_B` 已有非零更新，但 `lora_weights/adapter_model.safetensors` 仍全 0。
+- 根因是默认 `actor.ema.enable=true` 且 `update_interval=8`，短跑少于 8 个 optimizer step 时 EMA shadow 仍是初始 LoRA；checkpoint 导出用未更新 EMA 覆盖了 raw adapter。
+- 修复策略：checkpoint 导出在 EMA 从未更新时回退到 raw trainable weights；Anima anatomy 配置默认关闭 EMA，首轮实验直接评估实际训练到的 LoRA。
+
+2026-05-24 修复后验证：
+
+- 先用 base Anima 对候选 prompt 做 reward variance mining，64/70 个候选通过，accepted prompt 平均 `reward_std=0.3546`，平均 detector nonzero count `5.59/8`。
+- 修复后 30 epoch GRPO 使用 mined manifest、`rollout.n=8`、KL 0、EMA off。`metrics.csv` 共 30 行，平均 `reward_std=0.3134`、平均 `grad_norm=0.0009108`、平均 `adv_zero_rate=0.4094`，训练链路不是 no-op。
+- 导出的 final LoRA `lora_B` 为 224/224 个 tensor 非零，`sum_abs=2938.2400`，`max_abs=0.0020636`。
+- fixed-seed 16 image eval：base mean `0.592269058976781`，RL mean `0.6287283744303428`，delta `+0.03645931545356185`，`pixel_equal_count=0`。
+- 结论：当前 root cause 已修复，首轮 RL 相对 base 在 anatomy reward 上有正向改善；后续优化重点是进一步降低后半段训练的 `adv_zero_rate`，而不是继续修 LoRA 导出。
 
 ### Phase 6: Hard-Negative Loop
 
@@ -706,9 +723,10 @@ prompt overfitting 风险：
 - [x] 注册 reward 到 `vrl/rewards/functions/registry.py`。
 - [x] 新增 `configs/experiment/diffusion/anima_preview3/online_grpo_anatomy.yaml`。
 - [x] 新增 reward calibration report 命令。
-- [ ] 跑 base Anima eval baseline。
-- [ ] 跑首轮 GRPO。
-- [ ] 生成 baseline vs RL report。
+- [x] 修复短跑 LoRA 导出 no-op：未更新 EMA 不再覆盖 raw adapter，Anima anatomy 配置默认关闭 EMA。
+- [x] 跑 base Anima eval baseline。
+- [x] 用修复后的导出链路重跑首轮 GRPO。
+- [x] 生成 baseline vs RL report。
 
 ## 15. References
 
@@ -722,5 +740,15 @@ External:
 
 Local:
 
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/rewards/functions/registry.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/scripts/diffusion/cosmos/train.py`
+- `/home/mingfeiguo/Desktop/VRL/vrl/rewards/functions/registry.py`
+- `/home/mingfeiguo/Desktop/VRL/vrl/scripts/diffusion/cosmos/train.py`
+- `/home/mingfeiguo/Desktop/VRL/vrl/scripts/diffusion/cosmos/anima/mine_anatomy_prompts.py`
+- `/home/mingfeiguo/Desktop/VRL/vrl/trainers/checkpointing.py`
+- `/home/mingfeiguo/Desktop/VRL/vrl/trainers/online/ema.py`
+- `/home/mingfeiguo/Desktop/VRL/configs/experiment/diffusion/anima_preview3/online_grpo_anatomy.yaml`
+- `/home/mingfeiguo/Desktop/VRL/outputs/anima_anatomy_prompt_mining_20260524/mining_report.json`
+- `/home/mingfeiguo/Desktop/VRL/outputs/anima_preview3_anatomy_grpo_mined_n8_30ep/metrics.csv`
+- `/home/mingfeiguo/Desktop/VRL/outputs/anima_preview3_anatomy_grpo_mined_n8_30ep/checkpoint-final/lora_weights/adapter_model.safetensors`
+- `/home/mingfeiguo/Desktop/VRL/outputs/anima_anatomy_eval16_compare_fixed30_mined_n8_30ep/summary.json`
+- `/home/mingfeiguo/Desktop/VRL/outputs/anima_anatomy_eval16_compare_fixed30_mined_n8_30ep/scores.csv`
+- `/home/mingfeiguo/Desktop/VRL/outputs/anima_anatomy_eval16_compare_fixed30_mined_n8_30ep/before_after_contact_sheet.jpg`

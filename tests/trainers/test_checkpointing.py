@@ -122,6 +122,55 @@ def test_training_checkpoint_exports_lora_with_ema_without_mutating_resume_state
     assert bundle.module.weight.item() == pytest.approx(3.0)
 
 
+def test_training_checkpoint_skips_lora_ema_export_before_first_ema_update(
+    tmp_path,
+) -> None:
+    class _ExportModule:
+        def __init__(self, module) -> None:
+            self.module = module
+            self.saved_weight = None
+
+        def save_pretrained(self, path):
+            path.mkdir(parents=True)
+            self.saved_weight = float(self.module.weight.item())
+            (path / "adapter_model.safetensors").write_text(str(self.saved_weight))
+
+    class _UnupdatedEMA:
+        has_updates = False
+
+        def __init__(self) -> None:
+            self.copy_called = False
+
+        def copy_ema_to(self, parameters, *, store_temp=True):
+            del parameters, store_temp
+            self.copy_called = True
+
+        def copy_temp_to(self, parameters):
+            del parameters
+            raise AssertionError("raw export must not restore an unused EMA swap")
+
+    bundle = _Bundle()
+    with torch.no_grad():
+        bundle.module.weight.fill_(3.0)
+    export_module = _ExportModule(bundle.module)
+    ema = _UnupdatedEMA()
+
+    save_training_checkpoint(
+        tmp_path / "checkpoint-raw-export",
+        trainer=_Trainer(),
+        bundle=bundle,
+        family="unit",
+        progress={"next_epoch": 1},
+        rng_state={},
+        export_modules={LORA_WEIGHTS_NAME: export_module},
+        export_ema=ema,
+    )
+
+    assert export_module.saved_weight == pytest.approx(3.0)
+    assert ema.copy_called is False
+    assert bundle.module.weight.item() == pytest.approx(3.0)
+
+
 def test_load_training_checkpoint_requires_checkpoint_pt(tmp_path) -> None:
     ckpt = tmp_path / "checkpoint-1"
     ckpt.mkdir()

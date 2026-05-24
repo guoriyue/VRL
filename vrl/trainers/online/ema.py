@@ -39,6 +39,11 @@ class EMAModuleWrapper:
         self.decay = decay
         self.update_step_interval = update_step_interval
         self.device = device
+        self.num_updates = 0
+
+    @property
+    def has_updates(self) -> bool:
+        return self.num_updates > 0
 
     def get_current_decay(self, optimization_step: int) -> float:
         """Warmup decay: ramps from ~0.1 to ``self.decay``."""
@@ -64,6 +69,7 @@ class EMAModuleWrapper:
                         param_copy.mul_(one_minus_decay)
                         ema_param.add_(param_copy)
                         del param_copy
+            self.num_updates += 1
 
     def to(self, device: torch.device | None = None, dtype: torch.dtype | None = None) -> None:
         """Move EMA parameters to a device/dtype."""
@@ -93,9 +99,11 @@ class EMAModuleWrapper:
         return {
             "decay": self.decay,
             "ema_parameters": self.ema_parameters,
+            "num_updates": self.num_updates,
         }
 
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         self.decay = state_dict.get("decay", self.decay)
         self.ema_parameters = state_dict.get("ema_parameters", self.ema_parameters)
+        self.num_updates = int(state_dict.get("num_updates", self.num_updates))
         self.to(self.device)

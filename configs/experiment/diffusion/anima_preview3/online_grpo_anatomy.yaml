@@ -7,19 +7,24 @@ defaults:
   - /reward/anime_anatomy_structure
   - /dataset/anime_anatomy
 
+sampling:
+  max_sequence_length: 128
+
 actor:
   optim:
-    lr: 1.0e-5
+    lr: 5.0e-5
+  ema:
+    enable: false
   ppo_epochs: 1
   gradient_accumulation_steps: 4
 
 algorithm:
-  init_kl_coef: 0.004
+  init_kl_coef: 0.0
 
 rollout:
-  n: 4
-  rollout_batch_size: 1
-  sample_batch_size: 4
+  n: 8
+  rollout_batch_size: 8
+  sample_batch_size: 8
   sde:
     type: sde
 
