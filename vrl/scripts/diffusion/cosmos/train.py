@@ -12,6 +12,7 @@ from omegaconf import DictConfig, OmegaConf
 from vrl.scripts.common.online import run_online_recipe
 from vrl.scripts.common.types import OnlineRecipeDefinition
 from vrl.trainers.checkpointing import LORA_WEIGHTS_NAME
+from vrl.trainers.data.artifacts import ArtifactManifestError, resolve_artifact_path
 
 
 async def train_cosmos_predict2_grpo(cfg: DictConfig) -> None:
@@ -347,16 +348,18 @@ def _normalize_per_sample_reference_images(
             "cosmos.reference_mode=per_sample currently requires "
             "trainer.rollout_batch_size=1",
         )
-    base_dir = manifest_path.parent
     for idx, example in enumerate(examples):
         raw_path = str(getattr(example, "reference_image", "") or "").strip()
         if not raw_path:
             raise ValueError(
                 f"{manifest_path}: row {idx} is missing required field reference_image",
             )
-        ref_path = Path(raw_path).expanduser()
-        if not ref_path.is_absolute():
-            ref_path = (base_dir / ref_path).resolve()
+        try:
+            ref_path = resolve_artifact_path(raw_path)
+        except ArtifactManifestError as exc:
+            raise ValueError(
+                f"{manifest_path}: row {idx} invalid reference_image",
+            ) from exc
         if not ref_path.exists():
             raise FileNotFoundError(
                 f"{manifest_path}: row {idx} reference_image does not exist: {ref_path}",

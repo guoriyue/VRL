@@ -38,6 +38,12 @@ vrl/runtime/env/__pycache__/
 *.npz
 *.h5
 *.hdf5
+data/external/
+data/cache/
+datasets/**/images/
+datasets/**/videos/
+datasets/video_world/references/
+!tests/fixtures/**
 
 # Logs
 *.log
