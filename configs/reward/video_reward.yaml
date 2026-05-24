@@ -27,7 +27,7 @@ reward:
       debug_dir: ${trainer.output_dir}/reward_debug
       worker_config:
         scorer: import_path
-        import_path: ${oc.env:VIDEO_REWARD_SCORER,""}
-        model_path: ${oc.env:VIDEO_REWARD_MODEL_PATH,""}
-        dtype: ${oc.env:VIDEO_REWARD_DTYPE,"bfloat16"}
-        reward_model_version: ${oc.env:VIDEO_REWARD_MODEL_VERSION,"cosmos-reward-default"}
+        import_path: ""
+        model_path: ""
+        dtype: bfloat16
+        reward_model_version: cosmos-reward-default
