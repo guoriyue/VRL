@@ -187,7 +187,7 @@ def test_anima_replay_builder_uses_only_transformer_checkpoint(
 
     monkeypatch.setattr(
         runtime,
-        "_load_anima_transformer_component",
+        "load_anima_transformer_component",
         lambda _spec: _TinyTransformer(),
     )
 

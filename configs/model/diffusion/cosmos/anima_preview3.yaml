@@ -4,9 +4,9 @@
 model:
   family: cosmos-predict2-anima
   path: circlestone-labs/Anima
-  transformer_file: diffusion_models/anima-preview3-base.safetensors
-  text_encoder_file: text_encoders/qwen_3_06b_base.safetensors
-  vae_file: vae/qwen_image_vae.safetensors
+  transformer_file: split_files/diffusion_models/anima-preview3-base.safetensors
+  text_encoder_file: split_files/text_encoders/qwen_3_06b_base.safetensors
+  vae_file: split_files/vae/qwen_image_vae.safetensors
   transformer_path: ""
   text_encoder_path: ""
   vae_path: ""

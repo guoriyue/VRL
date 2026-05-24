@@ -264,7 +264,7 @@ CASES: tuple[RealCheckpointCase, ...] = (
                 cfg_path="model.path",
                 repo_id="circlestone-labs/Anima",
                 required_files=(
-                    "diffusion_models/anima-preview3-base.safetensors",
+                    "split_files/diffusion_models/anima-preview3-base.safetensors",
                 ),
                 allow_file=True,
             ),
@@ -309,7 +309,7 @@ CASES: tuple[RealCheckpointCase, ...] = (
                 cfg_path="model.path",
                 repo_id="circlestone-labs/Anima",
                 required_files=(
-                    "diffusion_models/anima-preview3-base.safetensors",
+                    "split_files/diffusion_models/anima-preview3-base.safetensors",
                 ),
                 allow_file=True,
             ),
