@@ -19,6 +19,9 @@ def _repo_root() -> Path:
 
 
 def _default_data_root() -> Path:
+    value = os.environ.get("VRL_DATA_ROOT", "").strip()
+    if value:
+        return Path(value).expanduser().resolve()
     return (_repo_root() / "data" / "external").resolve()
 
 
@@ -142,7 +145,7 @@ def _cmd_video_world_tiny(args: argparse.Namespace) -> None:
             _video_world_row(
                 prompt="The robot arm moves toward the cup and closes its gripper.",
                 reference=train_ref,
-                manifest_dir=manifest_dir,
+                data_root=data_root,
                 source_episode=f"{args.name}_train_episode",
             ),
         ],
@@ -153,7 +156,7 @@ def _cmd_video_world_tiny(args: argparse.Namespace) -> None:
             _video_world_row(
                 prompt="The camera follows a tabletop object as it slides forward.",
                 reference=eval_ref,
-                manifest_dir=manifest_dir,
+                data_root=data_root,
                 source_episode=f"{args.name}_eval_episode",
             ),
         ],
@@ -173,12 +176,12 @@ def _video_world_row(
     *,
     prompt: str,
     reference: Path,
-    manifest_dir: Path,
+    data_root: Path,
     source_episode: str,
 ) -> dict[str, Any]:
     return {
         "prompt": prompt,
-        "reference_image": os.path.relpath(reference, manifest_dir),
+        "reference_image": os.path.relpath(reference, data_root),
         "task_type": "video2world",
         "metadata": {
             "source": "tiny_local",

@@ -9,9 +9,14 @@ Current files:
 - `prompt_report.json`: machine-readable bucket/style count report for the
   generated prompt manifests.
 
-Build the real prompt manifests from Danbooru metadata only. The default
-renderer mixes Danbooru tag-style prompts with controlled language-style
-prompts so RL does not overfit to one prompt distribution:
+Build the real prompt manifests from Danbooru metadata only. Prefer the
+dataset population wrapper:
+
+```bash
+python -m vrl.scripts.data.populate anime-prompts
+```
+
+The underlying command is:
 
 ```bash
 python -m vrl.scripts.data.danbooru build-prompts \

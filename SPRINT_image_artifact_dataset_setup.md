@@ -9,9 +9,36 @@
 - 文本 prompt 数据可以直接 commit 到 `datasets/**`。
 - 图片、视频、reference frame、preference image pair 不直接 commit 到 repo。
 - 大文件放在 `data/external/**` 或 HuggingFace cache。
-- 训练配置只指向普通 manifest，不依赖 `ArtifactManifest` / `VRL_DATA_ROOT` 这类额外框架。
+- 训练配置优先指向普通 manifest。本 sprint 不要求新增或扩展 `ArtifactManifest` / `VRL_DATA_ROOT` 这类通用框架。
 
-已经移除的基础设施：
+## 当前 repo 状态
+
+`populate.py` 已经存在，不是待新增项。现在应该把它当成主入口继续收敛，而不是再设计一套新的 setup/infrastructure。
+
+当前已有入口：
+
+```text
+python -m vrl.scripts.data.populate pickapic
+python -m vrl.scripts.data.populate anime-prompts
+python -m vrl.scripts.data.populate anime-positives
+python -m vrl.scripts.data.populate video-world-tiny
+```
+
+当前已有但不应继续扩展为主入口的代码：
+
+```text
+vrl/scripts/data/setup.py
+```
+
+`setup.py` 现在主要是旧的目录创建和 anime metadata wrapper。它可以保留给已有测试和兼容路径，但新的用户数据填充不要继续往这里加；新能力放进 `populate.py`。
+
+当前仍缺的是真实 source-backed population：
+
+- `video-world-bridge` 或 `video-world-droid`：从真实视频/episode 抽 reference frame 并写 manifest。
+- Danbooru positive image / hand crop 的真实本地图片准备流程：`anime-positives` wrapper 有了，但 repo 里还没有真实 `positive_images.jsonl` / `hand_crops.jsonl`。
+- Pick-a-Pic 只需要 cache/prefetch，不应该把 image pair 放进 repo。
+
+已有代码可以保留，但不要把它变成本 sprint 的主线：
 
 ```text
 vrl/trainers/data/artifacts.py
@@ -19,6 +46,12 @@ vrl/scripts/data/setup.py
 tests/data/test_artifact_manifest_validation.py
 tests/data/test_video_world_manifests.py
 ```
+
+判断标准：
+
+- 如果现有训练路径或测试已经用它，先保留。
+- 如果只是为了这个 sprint 的计划文本服务，不继续扩展。
+- 新的数据填充能力放在 dataset-specific `populate.py`，不要再加一层通用 manifest framework。
 
 保留的代码边界：
 
@@ -42,7 +75,7 @@ vrl/scripts/diffusion/cosmos/train.py
 python -m vrl.scripts.data.populate <dataset>
 ```
 
-这个脚本只做 dataset-specific population，不提供通用 artifact validator。
+这个脚本只做 dataset-specific population，不要求调用通用 artifact validator。
 
 ### 1. Pick-a-Pic
 
@@ -148,11 +181,18 @@ python -m vrl.scripts.train \
   cosmos.reference_mode=per_sample
 ```
 
-`reference_image` 解析规则很简单：
+如果用自定义数据根目录，训练时同时设置：
 
-- absolute path: 直接用。
-- relative path: 优先按 manifest 所在目录解析。
-- 如果 manifest-relative 不存在，再按当前工作目录解析。
+```bash
+export VRL_DATA_ROOT=/path/to/external/data
+```
+
+`reference_image` 解析规则按现有代码走：
+
+- absolute path 默认不允许用于 production manifest。
+- relative path 解析到 `VRL_DATA_ROOT`。
+- 如果没有设置 `VRL_DATA_ROOT`，默认解析到 repo 下的 `data/external`。
+- 所以 `populate video-world-tiny` 写出的路径是 `video_world/references/...`，不是 `../references/...`。
 
 相关代码：
 
@@ -167,7 +207,7 @@ tests/rollouts/test_video_world_reference_metadata.py
 
 ## 不做的事情
 
-不要重新引入这些东西：
+本 sprint 不新增这些东西，也不把它们设为完成条件：
 
 ```text
 ArtifactManifestError
@@ -176,27 +216,29 @@ ResolvedArtifact
 resolve_artifact_path()
 validate_artifact_manifest()
 validate_artifact_manifest_pair()
-VRL_DATA_ROOT-only path contract
 ```
 
 原因：
 
-- 这些是 framework，不是 data population。
+- 这些是 framework，不是 data population 的核心。
 - 用户真正需要的是“下载/生成数据到哪里、训练命令怎么指向它”。
 - 具体 dataset 的 importer 更容易 debug，也更容易删除。
+- 现有 helper 如果已经被训练路径使用，可以保留；不要为了清理 sprint 文档去删代码。
 
 ---
 
 ## 最小完成标准
 
-这个 sprint 完成时应该满足：
+当前完成状态：
 
-- `python -m vrl.scripts.data.populate video-world-tiny` 可以生成本地 tiny video-world manifest 和 reference frame。
-- `tests/data/test_populate.py` 覆盖 tiny population。
-- `tests/rollouts/test_video_world_reference_metadata.py` 覆盖 Cosmos per-sample reference 进入 rollout metadata。
-- Pick-a-Pic 可以通过 `populate pickapic` 预下载 cache。
-- Danbooru prompt 和 positive image manifest 通过 `populate anime-*` 包装已有 `danbooru.py` 命令。
-- repo 仍然 ignore `data/external/`、`data/cache/`、`outputs/`。
+- Done: `python -m vrl.scripts.data.populate video-world-tiny` 可以生成本地 tiny video-world manifest 和 reference frame。
+- Done: `tests/data/test_populate.py` 覆盖 tiny population。
+- Done: `tests/rollouts/test_video_world_reference_metadata.py` 覆盖 Cosmos per-sample reference 进入 rollout metadata。
+- Done: Pick-a-Pic 可以通过 `populate pickapic` 预下载 cache。
+- Done: Danbooru prompt 和 positive image manifest 通过 `populate anime-*` 包装已有 `danbooru.py` 命令。
+- Done: repo ignore `data/external/`、`data/cache/`、`outputs/`。
+- Not done: 真实 Bridge/DROID/Cosmos Video2World importer。
+- Not done: 真实 Danbooru positive image / hand crop manifest 生成并审计。
 
 验证命令：
 
