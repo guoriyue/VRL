@@ -16,6 +16,7 @@ def _cfg(
     resources: dict,
     *,
     rollout_release_after_collect: bool = False,
+    rollout_release_before_reward_model: bool = False,
     reward_release_after_score: bool = False,
     video_reward: bool = False,
 ) -> object:
@@ -23,7 +24,10 @@ def _cfg(
         "distributed": {
             "backend": "ray",
             "resources": resources,
-            "rollout": {"release_after_collect": rollout_release_after_collect},
+            "rollout": {
+                "release_after_collect": rollout_release_after_collect,
+                "release_before_reward_model": rollout_release_before_reward_model,
+            },
             "reward": {"release_after_score": reward_release_after_score},
         },
     }
@@ -258,7 +262,7 @@ def test_ray_video_reward_requires_reward_gpu_budget() -> None:
 
 
 def test_reward_rollout_overlap_requires_shared_release_lifecycle() -> None:
-    with pytest.raises(ValueError, match="release_after_collect"):
+    with pytest.raises(ValueError, match="release_before_reward_model"):
         resolve_distributed_resources(
             _cfg(
                 {
@@ -291,12 +295,14 @@ def test_reward_can_share_rollout_pool_when_phases_release() -> None:
                 "allow_overlap": False,
             },
             rollout_release_after_collect=True,
+            rollout_release_before_reward_model=True,
             reward_release_after_score=True,
         ),
     )
 
     assert resolved.reward_devices == (1,)
     assert resolved.reward_shared_with_rollout is True
+    assert resolved.rollout_release_before_reward_model is True
     assert resolved.reward_release_after_score is True
 
 
@@ -316,6 +322,7 @@ def test_reward_shared_pool_cannot_request_more_gpus_than_rollout_pool() -> None
                     "allow_overlap": False,
                 },
                 rollout_release_after_collect=True,
+                rollout_release_before_reward_model=True,
                 reward_release_after_score=True,
             ),
         )

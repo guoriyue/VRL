@@ -161,6 +161,7 @@ def test_cosmos_diffusion_nft_video_reward_validation_config() -> None:
     assert "reward_model_name" not in cfg.reward.kwargs.video_reward.worker_config
     assert cfg.distributed.resources.reward.num_gpus == 1
     assert cfg.distributed.resources.reward.share_with_rollout is True
+    assert cfg.distributed.rollout.release_before_reward_model is True
     assert cfg.distributed.reward.release_after_score is True
     assert cfg.trainer.total_epochs == 1
 
@@ -194,6 +195,7 @@ def test_wan_video_reward_production_config() -> None:
     assert cfg.data.manifest == "datasets/pickscore_sfw/train.txt"
     assert cfg.data.eval_manifest == "datasets/pickscore_sfw/test.txt"
     assert cfg.data.source_report == "datasets/pickscore_sfw/report.json"
+    assert cfg.distributed.rollout.release_before_reward_model is True
 
 
 def test_wan_video_reward_production_config_requires_reward_name() -> None:

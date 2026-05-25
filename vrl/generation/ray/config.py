@@ -29,6 +29,7 @@ class RayGenerationConfig:
     max_inflight_chunks_per_worker: int = 1
     sync_trainable_state: str = "disabled"
     release_after_collect: bool = False
+    release_before_reward_model: bool = False
     resources: ResolvedDistributedResources | None = None
 
     def __post_init__(self) -> None:
@@ -88,6 +89,9 @@ class RayGenerationConfig:
             release_after_collect=bool(
                 _config_get(rollout, "release_after_collect", False),
             ),
+            release_before_reward_model=bool(
+                _config_get(rollout, "release_before_reward_model", False),
+            ),
             resources=resources,
         )
 
@@ -126,6 +130,7 @@ class RayGenerationConfig:
             "max_inflight_chunks_per_worker": self.max_inflight_chunks_per_worker,
             "sync_trainable_state": self.sync_trainable_state,
             "release_after_collect": self.release_after_collect,
+            "release_before_reward_model": self.release_before_reward_model,
         }
 
 

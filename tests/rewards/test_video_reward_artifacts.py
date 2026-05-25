@@ -29,6 +29,7 @@ def test_video_artifact_store_writes_tensor_and_manifest(tmp_path: Path) -> None
     artifact = artifacts[0]
     assert artifact.artifact_id == "sample-x-0"
     assert artifact.policy_version == 4
+    assert Path(artifact.path).is_absolute()
     assert Path(artifact.path).exists()
     assert torch.load(artifact.path).shape == (1, 2, 2, 2)
     rows = [json.loads(line) for line in (tmp_path / "manifest.jsonl").read_text().splitlines()]
@@ -43,6 +44,7 @@ def test_video_artifact_store_writes_mp4_for_reward_models(tmp_path: Path) -> No
 
     artifact = artifacts[0]
     assert artifact.path.endswith(".mp4")
+    assert Path(artifact.path).is_absolute()
     assert Path(artifact.path).exists()
     rows = [json.loads(line) for line in (tmp_path / "manifest.jsonl").read_text().splitlines()]
     assert rows[0]["path"].endswith(".mp4")

@@ -6,6 +6,11 @@ distributed:
       gpus_per_worker: 1.0
       num_workers: 1
       share_with_rollout: true
+  rollout:
+    # Runtime default is false. Shared single-GPU video reward runs opt in
+    # because the reward model actor cannot reserve the rollout GPU until
+    # rollout actors are explicitly torn down.
+    release_before_reward_model: true
   reward:
     cpus_per_worker: 4.0
     placement_strategy: STRICT_PACK

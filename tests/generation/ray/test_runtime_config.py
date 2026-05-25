@@ -74,6 +74,7 @@ def _cfg(
     num_workers: int = 1,
     overlap: bool = False,
     release_after_collect: bool = False,
+    release_before_reward_model: bool = False,
 ):
     rollout_devices = [0] if overlap else [1]
     visible_devices = [0] if overlap else [0, 1]
@@ -90,6 +91,7 @@ def _cfg(
         },
         "rollout": {
             "release_after_collect": release_after_collect,
+            "release_before_reward_model": release_before_reward_model,
         },
     }
     if backend is not None:
@@ -107,6 +109,7 @@ def _resource_cfg(
     rollout_devices: list[int],
     allow_overlap: bool = False,
     release_after_collect: bool = False,
+    release_before_reward_model: bool = False,
 ):
     return OmegaConf.create(
         {
@@ -125,6 +128,7 @@ def _resource_cfg(
                 "rollout": {
                     "cpus_per_worker": 1,
                     "release_after_collect": release_after_collect,
+                    "release_before_reward_model": release_before_reward_model,
                 },
             },
         },

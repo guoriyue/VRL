@@ -44,6 +44,7 @@ class DistributedResourceConfig:
     )
     allow_overlap: bool = False
     rollout_release_after_collect: bool = False
+    rollout_release_before_reward_model: bool = False
     reward_release_after_score: bool = False
     reward_placement_strategy: str = "SPREAD"
     reward_cpus_per_worker: float = 0.5
@@ -65,6 +66,7 @@ class ResolvedDistributedResources:
     reward_num_workers: int
     reward_gpus_per_worker: float
     reward_shared_with_rollout: bool
+    rollout_release_before_reward_model: bool
     reward_release_after_score: bool
     reward_placement_strategy: str
     reward_cpus_per_worker: float
@@ -152,6 +154,7 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
         reward_config=config.reward,
         allow_overlap=config.allow_overlap,
         rollout_release_after_collect=config.rollout_release_after_collect,
+        rollout_release_before_reward_model=config.rollout_release_before_reward_model,
         reward_release_after_score=config.reward_release_after_score,
     )
     reward_num_gpus = len(reward_devices)
@@ -209,6 +212,7 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
         reward_num_workers=reward_num_workers,
         reward_gpus_per_worker=reward_gpus_per_worker,
         reward_shared_with_rollout=reward_shared_with_rollout,
+        rollout_release_before_reward_model=config.rollout_release_before_reward_model,
         reward_release_after_score=config.reward_release_after_score,
         reward_placement_strategy=config.reward_placement_strategy,
         reward_cpus_per_worker=config.reward_cpus_per_worker,
@@ -251,6 +255,8 @@ def format_distributed_resource_plan(
         f"reward_workers={resolved.reward_num_workers}",
         f"reward_gpus_per_worker={resolved.reward_gpus_per_worker:g}",
         f"reward_shared_with_rollout={resolved.reward_shared_with_rollout}",
+        "rollout_release_before_reward_model="
+        f"{resolved.rollout_release_before_reward_model}",
         f"reward_release_after_score={resolved.reward_release_after_score}",
         f"colocated={resolved.colocated}",
         f"trainer_reservation={resolved.requires_trainer_reservation}",
@@ -298,6 +304,9 @@ def _distributed_resource_config_from_cfg(cfg: Any) -> DistributedResourceConfig
         allow_overlap=bool(_cfg_get(resources, "allow_overlap", False)),
         rollout_release_after_collect=bool(
             _cfg_get(rollout_runtime, "release_after_collect", False),
+        ),
+        rollout_release_before_reward_model=bool(
+            _cfg_get(rollout_runtime, "release_before_reward_model", False),
         ),
         reward_release_after_score=bool(
             _cfg_get(reward_runtime, "release_after_score", False),
@@ -479,6 +488,7 @@ def _resolve_reward_devices(
     reward_config: RewardResourceConfig,
     allow_overlap: bool,
     rollout_release_after_collect: bool,
+    rollout_release_before_reward_model: bool,
     reward_release_after_score: bool,
 ) -> tuple[int, ...]:
     explicit_devices = _parse_devices(reward_config.devices)
@@ -508,6 +518,7 @@ def _resolve_reward_devices(
             reward_config=reward_config,
             allow_overlap=allow_overlap,
             rollout_release_after_collect=rollout_release_after_collect,
+            rollout_release_before_reward_model=rollout_release_before_reward_model,
             reward_release_after_score=reward_release_after_score,
         )
         return devices
@@ -533,6 +544,7 @@ def _resolve_reward_devices(
             reward_config=reward_config,
             allow_overlap=allow_overlap,
             rollout_release_after_collect=rollout_release_after_collect,
+            rollout_release_before_reward_model=rollout_release_before_reward_model,
             reward_release_after_score=reward_release_after_score,
         )
         return devices
@@ -576,6 +588,7 @@ def _resolve_reward_devices(
         reward_config=reward_config,
         allow_overlap=allow_overlap,
         rollout_release_after_collect=rollout_release_after_collect,
+        rollout_release_before_reward_model=rollout_release_before_reward_model,
         reward_release_after_score=reward_release_after_score,
     )
     return devices
@@ -589,6 +602,7 @@ def _validate_reward_overlap(
     reward_config: RewardResourceConfig,
     allow_overlap: bool,
     rollout_release_after_collect: bool,
+    rollout_release_before_reward_model: bool,
     reward_release_after_score: bool,
 ) -> None:
     rollout_overlap = sorted(set(devices) & set(rollout_devices))
@@ -599,10 +613,15 @@ def _validate_reward_overlap(
                 "distributed.resources.reward.share_with_rollout=false: "
                 f"reward={list(devices)} rollout={list(rollout_devices)}",
             )
-        if not rollout_release_after_collect or not reward_release_after_score:
+        if (
+            not rollout_release_after_collect
+            or not rollout_release_before_reward_model
+            or not reward_release_after_score
+        ):
             raise ValueError(
                 "Reward/rollout shared inference pool requires "
-                "distributed.rollout.release_after_collect=true and "
+                "distributed.rollout.release_after_collect=true, "
+                "distributed.rollout.release_before_reward_model=true, and "
                 "distributed.reward.release_after_score=true",
             )
 

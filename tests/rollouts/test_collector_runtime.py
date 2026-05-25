@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -43,11 +44,24 @@ class _RequestBuilder:
 
 
 class _Runtime:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        reward_shared_with_rollout: bool = False,
+        release_before_reward_model: bool = False,
+    ) -> None:
         self.requests: list[GenerationRequest] = []
+        self.events: list[str] = []
+        self.config = SimpleNamespace(
+            release_before_reward_model=release_before_reward_model,
+            resources=SimpleNamespace(
+                reward_shared_with_rollout=reward_shared_with_rollout,
+            ),
+        )
 
     async def generate(self, request: GenerationRequest) -> GenerationOutput:
         self.requests.append(request)
+        self.events.append("generate")
         batch_size = len(request.prompts) * request.samples_per_prompt
         sample_rows = _sample_rows(request)
         output = torch.ones(batch_size, 3, 2, 2)
@@ -73,15 +87,21 @@ class _Runtime:
             trajectory=trajectory,
         )
 
+    async def release_memory(self) -> None:
+        self.events.append("release_memory")
+
 
 class _RewardScorer:
-    def __init__(self) -> None:
+    def __init__(self, runtime: _Runtime | None = None) -> None:
         self.calls: list[dict[str, Any]] = []
+        self.runtime = runtime
 
     async def score(
         self,
         request: RewardScoringInput,
     ) -> torch.Tensor:
+        if self.runtime is not None:
+            self.runtime.events.append("score")
         self.calls.append(
             {
                 "outputs": request.outputs,
@@ -139,10 +159,44 @@ def test_collector_routes_request_through_runtime_reward_and_trajectory_batch() 
     assert request.sampling == {"seed": 5}
     assert request.policy_version == 7
     assert reward_scorer.calls[0]["metadata"] == {"collector": "metadata"}
+    assert runtime.events == ["generate"]
     assert batch.rewards.tolist() == [0.0, 1.0, 2.0, 3.0]
     assert batch.context == {"collector": "test"}
     assert batch.trajectory is not None
     assert batch.training_view is not None
+
+
+def test_collector_releases_runtime_memory_before_reward_scoring() -> None:
+    import asyncio
+
+    runtime = _Runtime(
+        reward_shared_with_rollout=True,
+        release_before_reward_model=True,
+    )
+    reward_scorer = _RewardScorer(runtime)
+    collector = _collector(
+        runtime=runtime,
+        reward_scorer=reward_scorer,
+    )
+
+    asyncio.run(collector.collect(["p0"], group_size=1))
+
+    assert runtime.events == ["generate", "release_memory", "score"]
+
+
+def test_collector_does_not_release_runtime_memory_before_independent_reward() -> None:
+    import asyncio
+
+    runtime = _Runtime(reward_shared_with_rollout=False)
+    reward_scorer = _RewardScorer(runtime)
+    collector = _collector(
+        runtime=runtime,
+        reward_scorer=reward_scorer,
+    )
+
+    asyncio.run(collector.collect(["p0"], group_size=1))
+
+    assert runtime.events == ["generate", "score"]
 
 
 def test_reward_scoring_input_rejects_prompt_output_mismatch() -> None:

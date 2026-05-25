@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,7 @@ import torch
 
 from vrl.ray.dependencies import import_from_path
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
+from vrl.rewards.models.videoalign_compat import prepare_videoalign_runtime
 from vrl.rewards.ray.model import RewardModel
 
 _DEFAULT_REWARD_MODEL = "KlingTeam/VideoReward"
@@ -22,6 +24,7 @@ _SCORE_KEY_MAP = {
     "motion_quality": "MQ",
     "text_alignment": "TA",
 }
+logger = logging.getLogger(__name__)
 
 
 class KlingVideoRewardModel(RewardModel):
@@ -38,6 +41,13 @@ class KlingVideoRewardModel(RewardModel):
         self.dtype = _torch_dtype(str(self.worker_config.get("dtype", "bfloat16")))
         self.device = str(self.worker_config.get("device", "cuda:0"))
         self.use_norm = bool(self.worker_config.get("use_norm", True))
+        logger.info(
+            "Loading Kling VideoReward model root=%s device=%s dtype=%s use_norm=%s",
+            self.model_root,
+            self.device,
+            self.dtype,
+            self.use_norm,
+        )
         self._inferencer = self._build_inferencer()
 
     def __call__(
@@ -52,8 +62,9 @@ class KlingVideoRewardModel(RewardModel):
                 f"Kling VideoReward requires a prompt for artifact {artifact.artifact_id!r}; "
                 "found none on artifact.prompt or artifact.metadata['prompt']",
             )
+        artifact_path = str(Path(artifact.path).expanduser().resolve())
         rewards = self._inferencer.reward(
-            [artifact.path],
+            [artifact_path],
             [prompt],
             use_norm=self.use_norm,
         )
@@ -73,6 +84,13 @@ class KlingVideoRewardModel(RewardModel):
                 "Install https://github.com/KlingAIResearch/VideoAlign on PYTHONPATH "
                 "before launching the production reward worker.",
             ) from exc
+        disable_flash_attn2 = self.worker_config.get("disable_flash_attn2", None)
+        prepare_videoalign_runtime(
+            cls,
+            disable_flash_attn2=None
+            if disable_flash_attn2 is None
+            else bool(disable_flash_attn2),
+        )
         return cls(
             load_from_pretrained=str(self.model_root),
             device=self.device,
@@ -108,11 +126,22 @@ def _resolve_model_root(worker_config: Mapping[str, Any]) -> Path:
 
         root = Path(snapshot_download(repo_id=repo_id, revision=revision)).resolve()
 
-    checkpoint_root = root / _DEFAULT_MODEL_SUBDIR
-    if checkpoint_root.exists():
-        root = checkpoint_root
+    if not (root / "model_config.json").exists():
+        parent = root.parent
+        if root.name.startswith("checkpoint-") and (parent / "model_config.json").exists():
+            root = parent
     if not root.exists():
         raise FileNotFoundError(f"Kling VideoReward model path does not exist: {root}")
+    if not (root / "model_config.json").exists():
+        raise FileNotFoundError(
+            "Kling VideoReward model root must contain model_config.json: "
+            f"{root}",
+        )
+    if not (root / _DEFAULT_MODEL_SUBDIR).exists():
+        raise FileNotFoundError(
+            "Kling VideoReward model root must contain "
+            f"{_DEFAULT_MODEL_SUBDIR}: {root}",
+        )
     return root
 
 

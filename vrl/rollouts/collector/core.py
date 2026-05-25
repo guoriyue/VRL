@@ -101,6 +101,11 @@ class RolloutCollector:
                 f"(request_id={collector_request.request.request_id}): {output.error}",
             )
 
+        if self._should_release_runtime_before_reward_model():
+            # Shared single-GPU reward runs must drop rollout actors before reward
+            # model actors can reserve the same GPU.
+            await self.release_runtime_memory()
+
         if profile and phase_t is not None:
             now = _sync_time()
             phases["collect.engine_generate"] = now - phase_t
@@ -154,6 +159,14 @@ class RolloutCollector:
         release_reward_artifact_if_needed(batch, context.reward_artifact_policy)
         release_reward_artifact_if_needed(output, context.reward_artifact_policy)
         return batch
+
+    def _should_release_runtime_before_reward_model(self) -> bool:
+        runtime = self._runtime
+        config = getattr(runtime, "config", None)
+        if not bool(getattr(config, "release_before_reward_model", False)):
+            return False
+        resources = getattr(config, "resources", None)
+        return bool(getattr(resources, "reward_shared_with_rollout", False))
 
 
 def build_rollout_collector(

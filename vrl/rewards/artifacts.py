@@ -66,7 +66,7 @@ class VideoRewardArtifactStore:
             torch.save(tensor, path)
         artifact = RewardInferenceArtifact(
             artifact_id=artifact_id,
-            path=str(path),
+            path=str(path.resolve()),
             media_type=self.media_type,
             prompt=str(rollout.trajectory.prompt),
             sample_id=sample_id,
