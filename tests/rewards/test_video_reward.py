@@ -11,7 +11,7 @@ from omegaconf import OmegaConf
 
 from vrl.config.validation import validate_reward_config
 from vrl.rewards.functions.video_reward import VideoReward
-from vrl.rewards.inference import RewardInferenceResult, select_score
+from vrl.rewards.inference import RewardInferenceResult
 from vrl.rewards.types import RewardRollout, RewardTrajectory
 
 
@@ -32,7 +32,7 @@ class _FakeActorRuntime:
                     RewardInferenceResult(
                         artifact_id=artifact.artifact_id,
                         scores=scores,
-                        selected_score=select_score(scores, shard.score_key),
+                        selected_score=shard.select_score(scores),
                         reward_name=shard.reward_name,
                         score_key=shard.score_key,
                         policy_version=artifact.policy_version,

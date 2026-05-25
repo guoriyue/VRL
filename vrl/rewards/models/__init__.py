@@ -1,1 +1,1 @@
-"""Concrete RewardModel implementations hosted by the reward Ray actor."""
+"""Concrete RewardModel implementations for reward runtimes."""

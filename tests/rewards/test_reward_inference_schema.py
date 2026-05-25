@@ -8,7 +8,6 @@ from vrl.rewards.inference import (
     RewardInferenceArtifact,
     RewardInferenceRequest,
     RewardInferenceResult,
-    select_score,
     validate_reward_results,
 )
 
@@ -23,12 +22,24 @@ def _artifact(artifact_id: str) -> RewardInferenceArtifact:
 
 
 def test_select_score_sums_composite_key() -> None:
-    assert select_score({"a": 1.0, "b": 2.5}, "a+b") == pytest.approx(3.5)
+    request = RewardInferenceRequest(
+        request_id="req",
+        artifacts=(),
+        reward_name="reward",
+        score_key="a+b",
+    )
+    assert request.select_score({"a": 1.0, "b": 2.5}) == pytest.approx(3.5)
 
 
 def test_select_score_fails_on_missing_key() -> None:
+    request = RewardInferenceRequest(
+        request_id="req",
+        artifacts=(),
+        reward_name="reward",
+        score_key="a+b",
+    )
     with pytest.raises(KeyError, match="missing score keys"):
-        select_score({"a": 1.0}, "a+b")
+        request.select_score({"a": 1.0})
 
 
 def test_request_rejects_duplicate_artifact_ids() -> None:

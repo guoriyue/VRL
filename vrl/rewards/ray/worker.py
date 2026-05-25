@@ -10,7 +10,7 @@ from vrl.ray.dependencies import current_gpu_ids, current_node_ip, import_from_p
 from vrl.rewards.inference import (
     RewardInferenceRequest,
     RewardInferenceResult,
-    select_score,
+    score_artifacts_with_model,
 )
 
 
@@ -58,46 +58,18 @@ class RewardModelWorker:
             else 0.0
         )
         worker_metadata = self.worker_metadata()
-        results: list[RewardInferenceResult] = []
-        for artifact in request.artifacts:
-            artifact_started = time.perf_counter()
-            raw_scores = self._model(artifact=artifact, request=request)
-            if not isinstance(raw_scores, Mapping):
-                raise TypeError("reward model must return a mapping of scores")
-            scores = {str(key): float(value) for key, value in raw_scores.items()}
-            inference_ms = (time.perf_counter() - artifact_started) * 1000.0
-            selected = select_score(
-                scores,
-                request.score_key,
-                score_aggregation=request.score_aggregation,
-            )
-            results.append(
-                RewardInferenceResult(
-                    artifact_id=artifact.artifact_id,
-                    scores=scores,
-                    selected_score=selected,
-                    reward_name=request.reward_name,
-                    score_key=request.score_key,
-                    score_aggregation=request.score_aggregation,
-                    policy_version=artifact.policy_version
-                    if artifact.policy_version is not None
-                    else request.policy_version,
-                    reward_model_version=str(
-                        self.worker_config.get("reward_model_version", ""),
-                    ),
-                    latency_ms=queue_wait_ms + inference_ms,
-                    queue_wait_ms=queue_wait_ms,
-                    inference_ms=inference_ms,
-                    worker_id=self.worker_id,
-                    metadata={
-                        "artifact_path": artifact.path,
-                        "worker": worker_metadata,
-                        "gpu_ids": worker_metadata.get("gpu_ids", []),
-                        "node_ip": worker_metadata.get("node_ip", ""),
-                    },
-                ),
-            )
-        return results
+        return score_artifacts_with_model(
+            self._model,
+            request,
+            worker_id=self.worker_id,
+            reward_model_version=str(self.worker_config.get("reward_model_version", "")),
+            queue_wait_ms=queue_wait_ms,
+            extra_metadata={
+                "worker": worker_metadata,
+                "gpu_ids": worker_metadata.get("gpu_ids", []),
+                "node_ip": worker_metadata.get("node_ip", ""),
+            },
+        )
 
 
 def _validate_worker_config(worker_config: Mapping[str, Any]) -> dict[str, Any]:

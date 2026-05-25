@@ -13,7 +13,7 @@ pipeline. The real problem is that reward inference today has **two divergent co
 and ad-hoc per-reward glue ("patches"):
 
 1. **In-process** `RewardFunction` (`vrl/rewards/base.py`): `async score(rollout)->float`,
-   takes an in-memory `RewardRollout`. Each subclass hand-rolls its own model loading
+   takes an in-memory `RewardRolloutExample`. Each subclass hand-rolls its own model loading
    (`from_pretrained().eval().to(device,dtype)`, `torch.load`, ONNX session, subprocess, …).
 2. **Ray** `RewardModel` (`vrl/rewards/ray/model.py`): `__call__(*, artifact, request)
    -> Mapping[str,float]`, takes a *materialized* `RewardInferenceArtifact` (disk path),

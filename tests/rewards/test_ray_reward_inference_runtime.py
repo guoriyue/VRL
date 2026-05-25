@@ -10,10 +10,7 @@ from vrl.rewards.inference import (
     RewardInferenceArtifact,
     RewardInferenceRequest,
 )
-from vrl.rewards.ray import (
-    build_reward_actor_runtime,
-    score_reward_request,
-)
+from vrl.rewards.ray import RayRewardRuntime
 
 
 def build_constant_reward_model(worker_config):
@@ -30,9 +27,9 @@ def build_constant_reward_model(worker_config):
 def test_ray_reward_runtime_scores_artifacts_with_fake_worker() -> None:
     ray = pytest.importorskip("ray")
     ray.shutdown()
-    actor_runtime = None
+    runtime = None
     try:
-        actor_runtime = build_reward_actor_runtime(
+        runtime = RayRewardRuntime(
             {
                 "inference_runtime": "ray",
                 "worker_config": {
@@ -69,7 +66,7 @@ def test_ray_reward_runtime_scores_artifacts_with_fake_worker() -> None:
             policy_version=7,
         )
 
-        results = asyncio.run(score_reward_request(actor_runtime, request))
+        results = asyncio.run(runtime.score_batch(request))
 
         assert [result.artifact_id for result in results] == ["a0", "a1", "a2"]
         assert [result.selected_score for result in results] == pytest.approx([2.0, 2.0, 2.0])
@@ -80,6 +77,6 @@ def test_ray_reward_runtime_scores_artifacts_with_fake_worker() -> None:
         assert all(result.inference_ms is not None for result in results)
         assert all(result.metadata["worker"]["worker_id"].startswith("reward-") for result in results)
     finally:
-        if actor_runtime is not None:
-            asyncio.run(actor_runtime.shutdown())
+        if runtime is not None:
+            asyncio.run(runtime.shutdown())
         ray.shutdown()

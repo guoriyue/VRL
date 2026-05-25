@@ -13,7 +13,7 @@ class RewardModel(Protocol):
 
     Given one already-materialized artifact (a file path) plus the request, it
     returns named scores. The actor is model-agnostic: any model that implements
-    this protocol and is named by worker_config.model_factory can be hosted.
+    this protocol and is named by worker_config.model_factory can be loaded.
     Concrete models live under vrl.rewards.models and inherit this protocol. It
     is the worker-side counterpart of an in-process RewardFunction.
     """

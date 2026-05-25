@@ -9,10 +9,7 @@ import pytest
 import torch
 
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
-from vrl.rewards.ray import (
-    build_reward_actor_runtime,
-    score_reward_request,
-)
+from vrl.rewards.ray import RayRewardRuntime
 
 
 def build_tensor_mean_model(worker_config):
@@ -49,9 +46,9 @@ def test_ray_reward_runtime_uses_repo_owned_model_factory(tmp_path: Path) -> Non
     artifact = tmp_path / "artifact.pt"
     torch.save(torch.tensor([1.0, 3.0]), artifact)
     ray.shutdown()
-    actor_runtime = None
+    runtime = None
     try:
-        actor_runtime = build_reward_actor_runtime(
+        runtime = RayRewardRuntime(
             {
                 "inference_runtime": "ray",
                 "worker_config": {
@@ -73,14 +70,14 @@ def test_ray_reward_runtime_uses_repo_owned_model_factory(tmp_path: Path) -> Non
             },
         )
 
-        results = asyncio.run(score_reward_request(actor_runtime, _request(artifact)))
+        results = asyncio.run(runtime.score_batch(_request(artifact)))
 
         assert results[0].selected_score == pytest.approx(2.0)
         assert results[0].reward_model_version == "tensor-mean-v1"
         assert results[0].metadata["worker"]["worker_id"] == "reward-0"
     finally:
-        if actor_runtime is not None:
-            asyncio.run(actor_runtime.shutdown())
+        if runtime is not None:
+            asyncio.run(runtime.shutdown())
         ray.shutdown()
 
 
@@ -92,9 +89,9 @@ def test_ray_reward_runtime_assigns_gpu_ids_for_tensor_model(tmp_path: Path) -> 
     artifact = tmp_path / "artifact.pt"
     torch.save(torch.ones(2, 2), artifact)
     ray.shutdown()
-    actor_runtime = None
+    runtime = None
     try:
-        actor_runtime = build_reward_actor_runtime(
+        runtime = RayRewardRuntime(
             {
                 "inference_runtime": "ray",
                 "worker_config": {
@@ -119,13 +116,13 @@ def test_ray_reward_runtime_assigns_gpu_ids_for_tensor_model(tmp_path: Path) -> 
             },
         )
 
-        results = asyncio.run(score_reward_request(actor_runtime, _request(artifact)))
+        results = asyncio.run(runtime.score_batch(_request(artifact)))
 
         assert results[0].selected_score == pytest.approx(1.0)
         assert results[0].metadata["gpu_ids"] == [0]
         assert results[0].worker_id == "reward-0"
         assert results[0].policy_version == 17
     finally:
-        if actor_runtime is not None:
-            asyncio.run(actor_runtime.shutdown())
+        if runtime is not None:
+            asyncio.run(runtime.shutdown())
         ray.shutdown()

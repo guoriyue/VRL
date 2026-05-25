@@ -8,10 +8,7 @@ import pytest
 from omegaconf import OmegaConf
 
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
-from vrl.rewards.ray import (
-    build_reward_actor_runtime,
-    score_reward_request,
-)
+from vrl.rewards.ray import RayRewardRuntime
 from vrl.scripts.common.factory import build_reward_from_cfg
 
 _CONSTANT_MODEL_FACTORY = (
@@ -50,9 +47,9 @@ def _request() -> RewardInferenceRequest:
 def test_reward_runtime_releases_actors_after_score_when_configured() -> None:
     ray = pytest.importorskip("ray")
     ray.shutdown()
-    actor_runtime = None
+    runtime = None
     try:
-        actor_runtime = build_reward_actor_runtime(
+        runtime = RayRewardRuntime(
             {
                 "inference_runtime": "ray",
                 "worker_config": {
@@ -73,18 +70,18 @@ def test_reward_runtime_releases_actors_after_score_when_configured() -> None:
             },
         )
 
-        results = asyncio.run(score_reward_request(actor_runtime, _request()))
+        results = asyncio.run(runtime.score_batch(_request()))
 
         assert results[0].selected_score == pytest.approx(3.0)
-        assert actor_runtime._actor_group is None
+        assert runtime._actor._actor_group is None
 
-        results = asyncio.run(score_reward_request(actor_runtime, _request()))
+        results = asyncio.run(runtime.score_batch(_request()))
 
         assert results[0].selected_score == pytest.approx(3.0)
-        assert actor_runtime._actor_group is None
+        assert runtime._actor._actor_group is None
     finally:
-        if actor_runtime is not None:
-            asyncio.run(actor_runtime.shutdown())
+        if runtime is not None:
+            asyncio.run(runtime.shutdown())
         ray.shutdown()
 
 

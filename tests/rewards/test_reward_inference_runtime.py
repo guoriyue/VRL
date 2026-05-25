@@ -15,7 +15,7 @@ from vrl.rewards.inference import (
     RewardInferenceRequest,
     shard_reward_request,
 )
-from vrl.rewards.ray import build_reward_actor_runtime
+from vrl.rewards.ray import RayRewardRuntime
 from vrl.rewards.ray.worker import RewardModelWorker
 
 
@@ -50,12 +50,12 @@ def test_shard_reward_request_balances_artifacts() -> None:
 
 def test_runtime_factory_rejects_missing_worker_config() -> None:
     with pytest.raises(ValueError, match="worker_config"):
-        build_reward_actor_runtime({"inference_runtime": "ray"})
+        RayRewardRuntime({"inference_runtime": "ray"})
 
 
 def test_reward_name_without_worker_config_is_not_a_worker_loader() -> None:
     with pytest.raises(ValueError, match="worker_config"):
-        build_reward_actor_runtime(
+        RayRewardRuntime(
             {
                 "inference_runtime": "ray",
                 "reward_name": "KlingTeam/VideoReward@main",

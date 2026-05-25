@@ -1,16 +1,20 @@
-"""GenEval reward wrapper for prompt metadata driven scoring."""
+"""GenEval reward (model-backed over the local transport).
+
+Scores rollouts against structured GenEval prompt metadata. The actual
+image/object scoring is delegated to an import-path callable (or an injected
+``scorer``), keeping the training stack independent from the GenEval repo
+layout while preserving the exact prompt metadata the evaluator needs.
+"""
 
 from __future__ import annotations
 
-import importlib
-import inspect
-import json
-import time
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
 from vrl.rewards.base import RewardFunction
+from vrl.rewards.inference import RewardInferenceArtifact
+from vrl.rewards.models.geneval_model import GenEvalRewardModel, _OutputBox
+from vrl.rewards.runtime import LocalRewardRuntime
 from vrl.rewards.types import RewardRollout
 
 
@@ -36,61 +40,55 @@ class GenEvalReward(RewardFunction):
         self.evaluator = evaluator
         self.import_path = import_path
         self.timeout_s = float(timeout_s)
-        self.debug_dir = debug_dir
         self.artifact_dir = artifact_dir
-        self._scorer = scorer
-
-    async def score(self, rollout: RewardRollout) -> float:
-        return (await self.score_batch([rollout]))[0]
-
-    async def score_batch(self, rollouts: list[RewardRollout]) -> list[float]:
-        scores: list[float] = []
-        for rollout in rollouts:
-            start = time.monotonic()
-            score = await self._score_one(rollout)
-            elapsed = time.monotonic() - start
-            if elapsed > self.timeout_s:
-                raise TimeoutError(
-                    f"GenEval scorer exceeded timeout_s={self.timeout_s}: {elapsed:.2f}s",
-                )
-            scores.append(float(score))
-            self._write_debug_record(rollout, float(score), elapsed)
-        return scores
-
-    async def _score_one(self, rollout: RewardRollout) -> float:
-        if self.evaluator != "import_path":
-            raise ValueError(f"unsupported GenEval evaluator: {self.evaluator!r}")
-
-        scorer = self._scorer or self._load_import_path()
-        result = scorer(
-            prompt=rollout.trajectory.prompt,
-            output=rollout.trajectory.output,
-            geneval=self._extract_geneval_metadata(rollout),
-            metadata=dict(rollout.metadata),
-            device=self.device,
-            artifact_dir=self.artifact_dir,
-            debug_dir=self.debug_dir,
+        # Build eagerly so an injected scorer and construction-time validation
+        # (evaluator/import_path) are wired before the first score call.
+        model = GenEvalRewardModel(
+            {
+                "device": device,
+                "evaluator": evaluator,
+                "import_path": import_path,
+                "debug_dir": debug_dir,
+                "artifact_dir": artifact_dir,
+                "scorer": scorer,
+            },
         )
-        if inspect.isawaitable(result):
-            result = await result
-        return self._normalize_result(result)
+        self._model = model
+        super().__init__(
+            reward_name="geneval",
+            score_key="geneval",
+            runtime=LocalRewardRuntime(model=model),
+            artifact_builder=self._build_artifacts,
+            debug_dir=debug_dir,
+            request_prefix="geneval",
+            debug_basename="geneval",
+        )
 
-    def _load_import_path(self) -> Callable[..., Any]:
-        if not self.import_path:
-            raise RuntimeError(
-                "GenEvalReward evaluator='import_path' requires reward.kwargs.geneval.import_path",
+    def _build_artifacts(
+        self,
+        rollouts: list[RewardRollout],
+    ) -> list[RewardInferenceArtifact]:
+        artifacts: list[RewardInferenceArtifact] = []
+        for index, rollout in enumerate(rollouts):
+            rollout_metadata = dict(rollout.metadata or {})
+            policy_version = rollout_metadata.get("policy_version")
+            geneval = self._extract_geneval_metadata(rollout)
+            artifacts.append(
+                RewardInferenceArtifact(
+                    artifact_id=f"geneval-{index}",
+                    path="",
+                    media_type="image",
+                    media=_OutputBox(rollout.trajectory.output),
+                    prompt=str(rollout.trajectory.prompt),
+                    sample_id=f"sample-{index}",
+                    policy_version=None if policy_version is None else int(policy_version),
+                    metadata={
+                        "geneval": geneval,
+                        "rollout_metadata": rollout_metadata,
+                    },
+                ),
             )
-        module_name, sep, attr_name = self.import_path.partition(":")
-        if not sep or not module_name or not attr_name:
-            raise ValueError(
-                "GenEval import_path must have the form 'module.submodule:function'",
-            )
-        module = importlib.import_module(module_name)
-        scorer = getattr(module, attr_name)
-        if not callable(scorer):
-            raise TypeError(f"GenEval import_path target is not callable: {self.import_path}")
-        self._scorer = scorer
-        return scorer
+        return artifacts
 
     @staticmethod
     def _extract_geneval_metadata(rollout: RewardRollout) -> dict[str, Any]:
@@ -114,28 +112,6 @@ class GenEvalReward(RewardFunction):
                 }
 
         raise ValueError("GenEvalReward requires metadata.geneval on each rollout")
-
-    @staticmethod
-    def _normalize_result(result: Any) -> float:
-        if isinstance(result, dict):
-            if "score" not in result:
-                raise ValueError("GenEval scorer dict result must contain a 'score' key")
-            result = result["score"]
-        return float(result)
-
-    def _write_debug_record(self, rollout: RewardRollout, score: float, elapsed_s: float) -> None:
-        if not self.debug_dir:
-            return
-        debug_path = Path(self.debug_dir)
-        debug_path.mkdir(parents=True, exist_ok=True)
-        record = {
-            "prompt": rollout.trajectory.prompt,
-            "score": score,
-            "elapsed_s": elapsed_s,
-            "geneval": self._extract_geneval_metadata(rollout),
-        }
-        with (debug_path / "geneval_scores.jsonl").open("a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
 
 
 __all__ = ["GenEvalReward"]

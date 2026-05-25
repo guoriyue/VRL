@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
@@ -19,52 +20,81 @@ class RewardInferenceArtifact:
     sample_id: str | None = None
     policy_version: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Optional in-memory payload (e.g. an image/video tensor). The Ray transport
+    # ships file paths; the local transport can pass media in-memory to avoid disk.
+    media: Any = None
 
     def __post_init__(self) -> None:
         if not self.artifact_id:
             raise ValueError("RewardInferenceArtifact.artifact_id is required")
-        if not self.path:
-            raise ValueError("RewardInferenceArtifact.path is required")
+        if not self.path and self.media is None:
+            raise ValueError(
+                "RewardInferenceArtifact requires a materialized path or in-memory media",
+            )
         if self.media_type not in {"image", "video", "tensor"}:
             raise ValueError(
                 "RewardInferenceArtifact.media_type must be image, video, or tensor",
             )
 
+    def as_media(self) -> Any:
+        """Return in-memory media, loading a ``.pt`` tensor from ``path`` if needed."""
 
-def split_score_key(score_key: str) -> tuple[str, ...]:
-    """Split a scalar or composite score key."""
+        if self.media is not None:
+            return self.media
+        if self.path.endswith(".pt"):
+            import torch
 
-    keys = tuple(part.strip() for part in str(score_key).split("+") if part.strip())
-    if not keys:
-        raise ValueError(f"invalid reward score_key: {score_key!r}")
-    return keys
-
-
-def select_score(
-    scores: dict[str, float],
-    score_key: str,
-    *,
-    score_aggregation: str = "sum",
-) -> float:
-    """Select and aggregate the training score from a score dictionary."""
-
-    keys = split_score_key(score_key)
-    missing = [key for key in keys if key not in scores]
-    if missing:
-        raise KeyError(
-            "reward inference result missing score keys: "
-            f"missing={missing}, requested={score_key!r}, available={sorted(scores)}",
+            return torch.load(self.path, map_location="cpu", weights_only=True)
+        raise ValueError(
+            f"reward artifact {self.artifact_id!r} has no in-memory media and "
+            f"path is not a loadable tensor: {self.path!r}",
         )
-    if score_aggregation != "sum":
-        raise ValueError(f"unsupported score_aggregation={score_aggregation!r}")
-    value = float(sum(float(scores[key]) for key in keys))
-    if not math.isfinite(value):
-        raise ValueError(f"reward score_key={score_key!r} selected non-finite score: {value}")
-    return value
+
+    def as_path(self) -> str:
+        """Return the materialized file path (required by file-based models)."""
+
+        if self.path:
+            return self.path
+        raise ValueError(
+            f"reward artifact {self.artifact_id!r} has no materialized path; "
+            "use inference_runtime='ray' or materialize the artifact first",
+        )
+
+
+class _ScoreSelection:
+    score_key: str
+    score_aggregation: str
+
+    def score_keys(self) -> tuple[str, ...]:
+        """Return the scalar score names requested by this inference object."""
+
+        keys = tuple(part.strip() for part in str(self.score_key).split("+") if part.strip())
+        if not keys:
+            raise ValueError(f"invalid reward score_key: {self.score_key!r}")
+        return keys
+
+    def select_score(self, scores: Mapping[str, Any]) -> float:
+        """Select and aggregate the training score from a score dictionary."""
+
+        keys = self.score_keys()
+        missing = [key for key in keys if key not in scores]
+        if missing:
+            raise KeyError(
+                "reward inference result missing score keys: "
+                f"missing={missing}, requested={self.score_key!r}, available={sorted(scores)}",
+            )
+        if self.score_aggregation != "sum":
+            raise ValueError(f"unsupported score_aggregation={self.score_aggregation!r}")
+        value = float(sum(float(scores[key]) for key in keys))
+        if not math.isfinite(value):
+            raise ValueError(
+                f"reward score_key={self.score_key!r} selected non-finite score: {value}",
+            )
+        return value
 
 
 @dataclass(frozen=True, slots=True)
-class RewardInferenceRequest:
+class RewardInferenceRequest(_ScoreSelection):
     """A batch of stable artifacts to score."""
 
     request_id: str
@@ -80,7 +110,7 @@ class RewardInferenceRequest:
             raise ValueError("RewardInferenceRequest.request_id is required")
         if not self.reward_name:
             raise ValueError("RewardInferenceRequest.reward_name is required")
-        split_score_key(self.score_key)
+        self.score_keys()
         if self.score_aggregation != "sum":
             raise ValueError("RewardInferenceRequest.score_aggregation only supports 'sum'")
         artifact_ids = [artifact.artifact_id for artifact in self.artifacts]
@@ -107,7 +137,7 @@ class RewardInferenceRequest:
 
 
 @dataclass(frozen=True, slots=True)
-class RewardInferenceResult:
+class RewardInferenceResult(_ScoreSelection):
     """One artifact's scored reward result."""
 
     artifact_id: str
@@ -131,11 +161,7 @@ class RewardInferenceResult:
             raise ValueError("RewardInferenceResult.artifact_id is required")
         if self.error:
             return
-        expected = select_score(
-            self.scores,
-            self.score_key,
-            score_aggregation=self.score_aggregation,
-        )
+        expected = self.select_score(self.scores)
         if not math.isfinite(float(self.selected_score)):
             raise ValueError(
                 f"reward result {self.artifact_id!r} selected_score is non-finite",
@@ -212,13 +238,83 @@ def validate_reward_results(
     return [by_id[artifact_id] for artifact_id in expected_ids]
 
 
+def score_artifacts_with_model(
+    model: Any,
+    request: RewardInferenceRequest,
+    *,
+    worker_id: str,
+    reward_model_version: str = "",
+    queue_wait_ms: float = 0.0,
+    extra_metadata: Mapping[str, Any] | None = None,
+) -> list[RewardInferenceResult]:
+    """Run a ``RewardModel`` over a request's artifacts and build result rows.
+
+    Shared by the in-process (local) runtime and the Ray worker so both
+    transports score artifacts through identical logic. A model may expose a
+    ``score_request(request) -> list[Mapping]`` batch hook (aligned to
+    ``request.artifacts``); otherwise its per-artifact ``__call__`` is looped.
+    """
+
+    def build_result(
+        artifact: RewardInferenceArtifact,
+        raw_scores: Mapping[str, Any],
+        inference_ms: float,
+    ) -> RewardInferenceResult:
+        if not isinstance(raw_scores, Mapping):
+            raise TypeError("reward model must return a mapping of scores")
+        scores = {str(key): float(value) for key, value in raw_scores.items()}
+        selected = request.select_score(scores)
+        metadata: dict[str, Any] = {"artifact_path": artifact.path}
+        if extra_metadata:
+            metadata.update(dict(extra_metadata))
+        return RewardInferenceResult(
+            artifact_id=artifact.artifact_id,
+            scores=scores,
+            selected_score=selected,
+            reward_name=request.reward_name,
+            score_key=request.score_key,
+            score_aggregation=request.score_aggregation,
+            policy_version=artifact.policy_version
+            if artifact.policy_version is not None
+            else request.policy_version,
+            reward_model_version=str(reward_model_version),
+            latency_ms=queue_wait_ms + inference_ms,
+            queue_wait_ms=queue_wait_ms,
+            inference_ms=inference_ms,
+            worker_id=worker_id,
+            metadata=metadata,
+        )
+
+    batch_score = getattr(model, "score_request", None)
+    if callable(batch_score):
+        started = time.perf_counter()
+        score_maps = list(batch_score(request))
+        if len(score_maps) != len(request.artifacts):
+            raise ValueError(
+                "RewardModel.score_request returned wrong number of score maps: "
+                f"got {len(score_maps)}, expected {len(request.artifacts)}",
+            )
+        per_artifact_ms = (time.perf_counter() - started) * 1000.0 / max(1, len(score_maps))
+        return [
+            build_result(artifact, raw_scores, inference_ms=per_artifact_ms)
+            for artifact, raw_scores in zip(request.artifacts, score_maps, strict=True)
+        ]
+
+    results: list[RewardInferenceResult] = []
+    for artifact in request.artifacts:
+        started = time.perf_counter()
+        raw_scores = model(artifact=artifact, request=request)
+        inference_ms = (time.perf_counter() - started) * 1000.0
+        results.append(build_result(artifact, raw_scores, inference_ms))
+    return results
+
+
 __all__ = [
     "RewardInferenceArtifact",
     "RewardInferenceRequest",
     "RewardInferenceResult",
     "RewardInferenceRuntime",
-    "select_score",
+    "score_artifacts_with_model",
     "shard_reward_request",
-    "split_score_key",
     "validate_reward_results",
 ]
