@@ -42,6 +42,15 @@
 - NEVER add time estimates to plans (e.g. "Phase 1 (3 days)", "Phase 2 (1 week)") — just write the code
 - NEVER read secret files (.env, private keys), print secret values, or hardcode secrets in code
 
+### Architecture Hygiene
+
+- ALWAYS question module-level ALL_CAPS hardcoded data and thin separated functions/files when reviewing or editing code.
+- Keep ALL_CAPS constants only when they represent a real boundary: schema keys, environment variable names, checkpoint/file names, model architecture dimensions, protocol names, test fixture constants, or a deliberately isolated taxonomy/config table.
+- If ALL_CAPS data is a large business vocabulary, prompt template, backend table, or domain taxonomy mixed into workflow code, prefer moving it to a clearly named module or config asset.
+- Keep thin functions/files only when they provide a protocol/interface boundary, public API facade, lazy import boundary, framework adapter, test fake/fixture, cross-family consistency, or a shared abstraction that removes real complexity.
+- Do not flatten or data-ize thin functions merely to save a few lines. Preserve uniform cross-family shapes when that consistency improves grepability, debugging, and readability.
+- When proposing cleanup, explicitly list what should change, what should stay unchanged, why each thin function or ALL_CAPS constant is necessary or not, and non-goals where consistency is more valuable than LOC reduction.
+
 ### Code Comments
 
 - Comment WHY not WHAT. Prefer JSDoc over line comments.
