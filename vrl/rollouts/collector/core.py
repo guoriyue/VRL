@@ -133,7 +133,6 @@ class RolloutCollector:
             metadata=dict(collector_request.metadata),
             device=_device_from_model(self.model),
             kl_reward=float(_config_get(self.config, "kl_reward", 0.0)),
-            rescale_to_unit=bool(_config_get(self.config, "rescale_to_unit", False)),
             reward_view_name=_reward_view_name(self.config),
             trajectory_storage_policy=trajectory_storage_policy_from_cfg(
                 _config_get(self.config, "trajectory_storage", None),

@@ -123,6 +123,7 @@ def build_diffusion_trajectory(
             reward_modality: RewardView(
                 name=reward_modality,
                 modality=reward_modality,
+                value_range="unit",
                 metadata={"output_ref": "GenerationOutput.output"},
             )
         },
@@ -233,6 +234,7 @@ def build_ar_discrete_trajectory(
             "image": RewardView(
                 name="image",
                 modality="image",
+                value_range="tanh",
                 metadata={"output_ref": "GenerationOutput.output"},
             )
         },
@@ -372,6 +374,7 @@ def build_ar_continuous_trajectory(
                 name="image",
                 modality="image",
                 tensor_refs=reward_refs,
+                value_range="tanh",
                 metadata={"output_ref": "GenerationOutput.output"},
             )
         },
@@ -523,6 +526,7 @@ def build_ar_multisegment_trajectory(
                 name="image",
                 modality="image",
                 tensor_refs=reward_refs,
+                value_range="tanh",
                 metadata={"output_ref": "GenerationOutput.output"},
             )
         },

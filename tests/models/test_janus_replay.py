@@ -151,7 +151,6 @@ def test_janus_collector_has_no_forward_step() -> None:
                 "temperature": 1.0,
                 "image_token_num": 4,
                 "image_size": 64,
-                "rescale_to_unit": True,
                 "max_text_length": 256,
             },
         ),

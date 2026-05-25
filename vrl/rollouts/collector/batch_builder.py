@@ -34,7 +34,6 @@ class RolloutBatchBuildContext:
     metadata: dict[str, Any]
     device: Any | None = None
     kl_reward: float = 0.0
-    rescale_to_unit: bool = False
     reward_view_name: str | None = None
     trajectory_storage_policy: TrajectoryStoragePolicy = field(
         default_factory=TrajectoryStoragePolicy,
@@ -74,13 +73,12 @@ class TrajectoryRolloutBatchBuilder:
         )
 
     def reward_outputs(self) -> Any:
-        """Return the explicitly selected generated artifact for reward scoring."""
+        """Return the selected artifact normalized to [0, 1] per the reward view's range."""
 
-        segment = self._primary_trainable_segment(preferred=self._primary_segment_name())
-        reward_output = self._reward_output()
-        if segment.distribution == "categorical" and self.context.rescale_to_unit:
-            reward_output = (reward_output + 1.0) * 0.5
-            reward_output = reward_output.clamp(0.0, 1.0)
+        view = self._reward_view()
+        reward_output = self._reward_output(view)
+        if view.value_range == "tanh":
+            reward_output = ((reward_output + 1.0) * 0.5).clamp(0.0, 1.0)
         return reward_output
 
     def build(self, rewards_raw: torch.Tensor) -> RolloutBatch:
@@ -261,8 +259,7 @@ class TrajectoryRolloutBatchBuilder:
             ),
         )
 
-    def _reward_output(self) -> Any:
-        view = self._reward_view()
+    def _reward_output(self, view: RewardView) -> Any:
         if view.tensor_refs:
             if len(view.tensor_refs) != 1:
                 raise RuntimeError(

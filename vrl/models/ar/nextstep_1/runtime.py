@@ -313,7 +313,6 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
     - ``image_token_num``: int (L_img — number of continuous image tokens)
     - ``image_size``: int (passed to ``decode_image_tokens``)
     - ``max_text_length``: int
-    - ``rescale_to_unit``: bool (post-decode pixel rescale [-1,1] → [0,1])
     - ``seed``: int | None
 
     And whose ``metadata`` may carry ``rollout_metadata`` (target_text,
@@ -359,7 +358,6 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
         cfg_scale = float(sampling["cfg_scale"])
         num_flow_steps = int(sampling["num_flow_steps"])
         noise_level = float(sampling["noise_level"])
-        rescale_to_unit = bool(sampling.get("rescale_to_unit", True))
 
         # Repeat each prompt ``samples_per_prompt`` times so the AR loop
         # sees a flat ``[B, ...]`` batch where ``B = num_prompts x G``.
@@ -424,11 +422,7 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
 
         images = self.model.decode_image_tokens(tokens, image_size=params.image_size)
 
-        if rescale_to_unit:
-            images_for_reward = (images + 1.0) * 0.5
-            images_for_reward = images_for_reward.clamp(0.0, 1.0)
-        else:
-            images_for_reward = images
+        images_for_reward = images
 
         peak_mem_mb = self.peak_memory_mb()
         engine_counters = {
@@ -458,7 +452,6 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
             "noise_level": noise_level,
             "image_token_num": params.image_token_num,
             "image_size": params.image_size,
-            "rescale_to_unit": rescale_to_unit,
             "ar_decode_loop_enabled": True,
         }
         trajectory = build_ar_continuous_trajectory(
@@ -507,7 +500,6 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
         cfg_scale = float(sampling["cfg_scale"])
         num_flow_steps = int(sampling["num_flow_steps"])
         noise_level = float(sampling["noise_level"])
-        rescale_to_unit = bool(sampling.get("rescale_to_unit", True))
 
         repeated_prompts = [chunk.prompt] * chunk.sample_count
         prompt_ids, prompt_mask = self._tokenize_prompts(
@@ -559,11 +551,7 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
         tokens, saved_noise, old_logprobs = decode_result.finalized
 
         images = self.model.decode_image_tokens(tokens, image_size=params.image_size)
-        if rescale_to_unit:
-            images_for_reward = (images + 1.0) * 0.5
-            images_for_reward = images_for_reward.clamp(0.0, 1.0)
-        else:
-            images_for_reward = images
+        images_for_reward = images
         peak_mem_mb = self.peak_memory_mb()
 
         return NextStep1ARChunkResult(
@@ -585,7 +573,6 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
                 "noise_level": noise_level,
                 "image_token_num": params.image_token_num,
                 "image_size": params.image_size,
-                "rescale_to_unit": rescale_to_unit,
                 "ar_decode_loop_enabled": True,
             },
             peak_memory_mb=peak_mem_mb,

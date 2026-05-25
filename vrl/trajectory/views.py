@@ -13,6 +13,7 @@ from vrl.trajectory.types import (
 )
 
 RewardModality = Literal["image", "video", "text", "mixed"]
+RewardValueRange = Literal["unit", "tanh"]
 AlgorithmFamily = Literal["policy_gradient", "supervised", "preference", "custom"]
 
 
@@ -25,11 +26,19 @@ class RewardView:
     tensor_refs: tuple[str, ...] = ()
     prompt_refs: tuple[str, ...] = ()
     target_refs: tuple[str, ...] = ()
+    # Declared pixel value range of the reward media. The collector normalizes
+    # to "unit" [0, 1] for scoring; "tanh" [-1, 1] sources (VQ decode) get
+    # rescaled. This is a model fact owned by the producer, not an operator knob.
+    value_range: RewardValueRange = "unit"
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("RewardView.name must be non-empty")
+        if self.value_range not in {"unit", "tanh"}:
+            raise ValueError(
+                f"RewardView.value_range must be 'unit' or 'tanh', got {self.value_range!r}",
+            )
         _require_string_tuple("RewardView.tensor_refs", self.tensor_refs)
         _require_string_tuple("RewardView.prompt_refs", self.prompt_refs)
         _require_string_tuple("RewardView.target_refs", self.target_refs)
@@ -151,6 +160,7 @@ __all__ = [
     "AlgorithmFamily",
     "LossUnit",
     "RewardModality",
+    "RewardValueRange",
     "RewardView",
     "TrainingView",
     "build_training_view",

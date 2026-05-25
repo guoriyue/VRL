@@ -62,7 +62,6 @@ def test_r1_collector_uses_r1_task_request_and_trajectory_batch() -> None:
             "temperature": 0.9,
             "image_token_num": 576,
             "image_size": 384,
-            "rescale_to_unit": True,
             "max_text_length": 256,
             "max_reflect_len": 32,
             "final_image_policy": "always_generate",
@@ -132,7 +131,7 @@ def test_r1_trajectory_batch_keeps_segments_separate() -> None:
 
     packed = TrajectoryRolloutBatchBuilder(
         output,
-        RolloutBatchBuildContext(metadata={}, device="cpu", rescale_to_unit=True),
+        RolloutBatchBuildContext(metadata={}, device="cpu"),
     ).build(torch.tensor([1.0, 2.0]))
 
     assert "r1_segments" not in packed.extras
