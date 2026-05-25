@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from vrl.rewards.models.base import TorchRewardModel
+from vrl.utils.media import to_uint8
 
 
 class PickScoreRewardModel(TorchRewardModel):
@@ -43,7 +44,7 @@ class PickScoreRewardModel(TorchRewardModel):
         from PIL import Image
 
         if isinstance(media, torch.Tensor):
-            arr = (media * 255).round().clamp(0, 255).to(torch.uint8).cpu().numpy()
+            arr = to_uint8(media).cpu().numpy()
             if arr.ndim == 3:
                 arr = arr[None]
             if arr.ndim == 4:

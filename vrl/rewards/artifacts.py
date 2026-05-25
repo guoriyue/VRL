@@ -7,11 +7,11 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import torch
 
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.types import RewardRollout
+from vrl.utils.media import write_mp4
 
 
 class VideoRewardArtifactStore:
@@ -55,12 +55,13 @@ class VideoRewardArtifactStore:
 
         metadata = dict(rollout.metadata or {})
         sample_id = _sample_id(metadata, index)
-        policy_version = _policy_version(metadata)
         artifact_id = f"{sample_id}-{index}"
+        fps = _fps(metadata)
+        policy_version = metadata.get("policy_version")
+        policy_version = int(policy_version) if policy_version is not None else None
         if self.artifact_format == "mp4":
             path = self.root / f"{artifact_id}.mp4"
-            fps = _fps(metadata)
-            _write_video_mp4(tensor, path, fps=fps)
+            write_mp4(tensor, path, fps=fps)
         else:
             path = self.root / f"{artifact_id}.pt"
             torch.save(tensor, path)
@@ -75,7 +76,7 @@ class VideoRewardArtifactStore:
                 "shape": list(tensor.shape),
                 "dtype": str(tensor.dtype),
                 "artifact_format": self.artifact_format,
-                "fps": _fps(metadata),
+                "fps": fps,
                 **_artifact_provenance(metadata),
             },
         )
@@ -103,48 +104,6 @@ def _validate_media_shape(tensor: torch.Tensor, media_type: str) -> None:
         )
 
 
-def _write_video_mp4(tensor: torch.Tensor, path: Path, *, fps: float) -> None:
-    """Write a channel-first video tensor to an mp4 file for external reward models."""
-
-    frames = _video_tensor_to_uint8_frames(tensor)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    import imageio.v2 as imageio
-
-    with imageio.get_writer(path, fps=fps, codec="libx264", macro_block_size=1) as writer:
-        for frame in frames:
-            writer.append_data(frame)
-
-
-def _video_tensor_to_uint8_frames(tensor: torch.Tensor) -> np.ndarray:
-    if tensor.ndim == 5:
-        if tensor.shape[0] != 1:
-            raise ValueError(
-                "artifact_format=mp4 expects one video per rollout tensor; "
-                f"got batch={tensor.shape[0]}",
-            )
-        tensor = tensor[0]
-    if tensor.ndim != 4:
-        raise ValueError(
-            "artifact_format=mp4 expects [C,T,H,W] or [1,C,T,H,W] tensor, "
-            f"got shape={tuple(tensor.shape)}",
-        )
-    if tensor.shape[0] not in {1, 3, 4}:
-        raise ValueError(
-            "artifact_format=mp4 expects channel-first video with 1, 3, or 4 channels, "
-            f"got shape={tuple(tensor.shape)}",
-        )
-    video = tensor.float()
-    if float(video.min().item()) < -0.01:
-        video = (video + 1.0) / 2.0
-    video = video.clamp(0.0, 1.0)
-    if video.shape[0] == 1:
-        video = video.repeat(3, 1, 1, 1)
-    if video.shape[0] == 4:
-        video = video[:3]
-    video = video.permute(1, 2, 3, 0).contiguous()
-    return (video.numpy() * 255.0).round().astype(np.uint8)
-
-
 def _fps(metadata: dict[str, Any]) -> float:
     value = metadata.get("video_fps", metadata.get("fps", 8.0))
     return float(value) if value is not None else 8.0
@@ -157,13 +116,6 @@ def _sample_id(metadata: dict[str, Any], index: int) -> str:
     if "sample_id" in metadata:
         return str(metadata["sample_id"])
     return f"sample-{index}"
-
-
-def _policy_version(metadata: dict[str, Any]) -> int | None:
-    value = metadata.get("policy_version")
-    if value is None:
-        return None
-    return int(value)
 
 
 def _artifact_provenance(metadata: dict[str, Any]) -> dict[str, Any]:

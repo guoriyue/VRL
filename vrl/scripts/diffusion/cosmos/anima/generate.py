@@ -10,7 +10,6 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 from omegaconf import DictConfig, OmegaConf
 from PIL import Image
 
@@ -23,6 +22,7 @@ from vrl.models.diffusion.cosmos.anima.runtime import (
 )
 from vrl.trainers.data import load_prompt_manifest
 from vrl.trainers.precision import torch_dtype_for_trainer_precision
+from vrl.utils.media import to_pil_image
 
 logger = logging.getLogger(__name__)
 
@@ -345,50 +345,7 @@ def _generate_images(
                 return_dict=False,
             )[0]
     decoded = model.decode_latents(state.latents)
-    return [_to_pil_image(image) for image in decoded]
-
-
-def _to_pil_image(image: Any) -> Image.Image:
-    array = _image_to_uint8_hwc(image)
-    return Image.fromarray(array, mode="RGB")
-
-
-def _image_to_uint8_hwc(image: Any) -> np.ndarray:
-    try:
-        import torch
-    except ImportError:  # pragma: no cover - torch is a project dependency.
-        torch = None  # type: ignore[assignment]
-
-    if torch is not None and isinstance(image, torch.Tensor):
-        array = image.detach().float().cpu()
-        if array.ndim == 4:
-            if array.shape[0] != 1:
-                raise ValueError(f"expected one image, got batch shape {tuple(array.shape)}")
-            array = array[0]
-        if array.ndim == 3 and array.shape[0] in {1, 3, 4}:
-            array = array[:3].permute(1, 2, 0)
-        array_np = array.numpy()
-    else:
-        array_np = np.asarray(image)
-
-    if array_np.ndim != 3:
-        raise ValueError(f"expected an image with 3 dimensions, got shape {array_np.shape}")
-    if array_np.shape[0] in {1, 3, 4} and array_np.shape[-1] not in {1, 3, 4}:
-        array_np = array_np[:3].transpose(1, 2, 0)
-    if array_np.shape[-1] == 1:
-        array_np = np.repeat(array_np, 3, axis=-1)
-    if array_np.shape[-1] == 4:
-        array_np = array_np[..., :3]
-    if array_np.shape[-1] != 3:
-        raise ValueError(f"expected an RGB image, got shape {array_np.shape}")
-
-    if np.issubdtype(array_np.dtype, np.floating):
-        if float(np.nanmin(array_np)) < 0.0:
-            array_np = (array_np + 1.0) * 0.5
-        array_np = np.nan_to_num(array_np, nan=0.0, posinf=1.0, neginf=0.0)
-        array_np = np.clip(array_np, 0.0, 1.0)
-        return (array_np * 255.0).round().astype(np.uint8)
-    return np.clip(array_np, 0, 255).astype(np.uint8)
+    return [to_pil_image(image) for image in decoded]
 
 
 def _write_metadata(rows: list[dict[str, Any]], out_dir: Path) -> None:

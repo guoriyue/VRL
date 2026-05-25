@@ -18,7 +18,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-import numpy as np
+from vrl.utils.media import write_png
 
 DEFAULT_PROMPT_TEMPLATE = """You are a strict image-text alignment judge.
 Evaluate whether the attached image matches the text prompt.
@@ -68,7 +68,7 @@ class CodexImageQARewardModel:
             tmp_path = Path(tmp)
             image_path = tmp_path / "image.png"
             output_path = tmp_path / "judge_output.txt"
-            _write_image_png(artifact.as_media(), image_path)
+            write_png(artifact.as_media(), image_path)
             command = _render_command(
                 self.command,
                 image_path=image_path,
@@ -231,58 +231,10 @@ def _clamp_score(value: float) -> float:
     return min(max(value, 0.0), 1.0)
 
 
-def _write_image_png(image: Any, path: Path) -> None:
-    from PIL import Image
-
-    if isinstance(image, Image.Image):
-        pil_image = image.convert("RGB")
-    else:
-        pil_image = Image.fromarray(_image_to_uint8_hwc(image), mode="RGB")
-    pil_image.save(path, format="PNG")
-
-
-def _image_to_uint8_hwc(image: Any) -> np.ndarray:
-    try:
-        import torch
-    except ImportError:  # pragma: no cover - torch is a project dependency.
-        torch = None  # type: ignore[assignment]
-
-    if torch is not None and isinstance(image, torch.Tensor):
-        array = image.detach().float().cpu()
-        if array.ndim == 4:
-            if array.shape[0] != 1:
-                raise ValueError(
-                    "CodexImageQAReward expects a single image per rollout, got a 4D batch",
-                )
-            array = array[0]
-        if array.ndim == 3 and array.shape[0] in {1, 3, 4}:
-            array = array[:3].permute(1, 2, 0)
-        array_np = array.numpy()
-    else:
-        array_np = np.asarray(image)
-
-    if array_np.ndim != 3:
-        raise ValueError(f"CodexImageQAReward expected image with 3 dims, got shape {array_np.shape}")
-    if array_np.shape[-1] == 1:
-        array_np = np.repeat(array_np, 3, axis=-1)
-    if array_np.shape[-1] == 4:
-        array_np = array_np[..., :3]
-    if array_np.shape[-1] != 3:
-        raise ValueError(f"CodexImageQAReward expected RGB image, got shape {array_np.shape}")
-
-    if np.issubdtype(array_np.dtype, np.floating):
-        if array_np.min() < 0.0:
-            array_np = (array_np + 1.0) * 0.5
-        array_np = np.clip(array_np, 0.0, 1.0)
-        return (array_np * 255).round().astype(np.uint8)
-    return np.clip(array_np, 0, 255).astype(np.uint8)
-
-
 __all__ = [
     "DEFAULT_PROMPT_TEMPLATE",
     "CodexImageQARewardModel",
     "_extract_score_from_text",
     "_render_prompt_template",
-    "_write_image_png",
     "codex_image_qa_reward_model",
 ]

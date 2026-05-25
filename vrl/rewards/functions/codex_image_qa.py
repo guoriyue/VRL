@@ -8,7 +8,6 @@ from vrl.rewards.models.codex_image_qa import (
     CodexImageQARewardModel,
     _extract_score_from_text,
     _render_prompt_template,
-    _write_image_png,
 )
 from vrl.rewards.runtime import LocalRewardRuntime
 
@@ -57,5 +56,4 @@ __all__ = [
     "CodexImageQAReward",
     "_extract_score_from_text",
     "_render_prompt_template",
-    "_write_image_png",
 ]

@@ -28,10 +28,12 @@ def test_generate_accepts_checkpoint_dir_as_lora_path(tmp_path) -> None:
 
 
 def test_generate_image_conversion_accepts_chw_float() -> None:
+    from vrl.utils.media import image_to_uint8_hwc
+
     image = np.zeros((3, 2, 2), dtype=np.float32)
     image[0] = 1.0
 
-    out = generate._image_to_uint8_hwc(image)
+    out = image_to_uint8_hwc(image)
 
     assert out.shape == (2, 2, 3)
     assert out.dtype == np.uint8

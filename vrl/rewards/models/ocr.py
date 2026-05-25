@@ -18,6 +18,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from vrl.utils.media import to_uint8
+
 
 def _safe_filename_fragment(text: str, max_len: int = 24) -> str:
     """Sanitize arbitrary text for use inside a filename."""
@@ -79,7 +81,7 @@ class OCRRewardModel:
         single_image = False
 
         if isinstance(output, torch.Tensor):
-            raw = (output * 255).round().clamp(0, 255).to(torch.uint8)
+            raw = to_uint8(output)
 
             if raw.ndim == 4 and raw.shape[0] <= 4:
                 # [C, T, H, W] video → [T, H, W, C]

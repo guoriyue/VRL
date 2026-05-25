@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from vrl.rewards.models.base import TorchRewardModel
+from vrl.utils.media import to_uint8
 
 
 class AestheticRewardModel(TorchRewardModel):
@@ -75,7 +76,7 @@ class AestheticRewardModel(TorchRewardModel):
 
         output = media
         if isinstance(output, torch.Tensor):
-            images_raw = (output * 255).round().clamp(0, 255).to(torch.uint8)
+            images_raw = to_uint8(output)
             if images_raw.ndim == 4 and images_raw.shape[0] > 4:
                 b = images_raw.shape[0]
                 indices = [b // 4, b // 2, 3 * b // 4]
