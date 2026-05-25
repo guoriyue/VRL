@@ -98,8 +98,7 @@ def _cmd_for_experiment(args: argparse.Namespace) -> None:
     cfg = load_config(f"experiment/{args.experiment}", overrides=list(args.override))
     data = cfg.get("data", {})
     data_map = {
-        key: data.get(key)
-        for key in ("loader", "manifest", "eval_manifest", "source_report")
+        key: data.get(key) for key in ("loader", "manifest", "eval_manifest", "source_report")
     }
     plan = resolve_experiment_dataset_plan(data_map, repo_root=_repo_root())
     plan["experiment"] = args.experiment

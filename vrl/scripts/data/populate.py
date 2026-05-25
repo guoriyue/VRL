@@ -6,8 +6,8 @@ together. No generic artifact-manifest framework lives here.
 
     python -m vrl.scripts.data.populate <command>
 
-Commands: pickapic, anime-prompts, anime-positives, anime-fetch-images,
-video-world-bridge, for-experiment.
+Commands: pickapic, anime-prompts, anime-safety-prompts, anime-positives,
+anime-fetch-images, video-world-bridge, for-experiment.
 """
 
 from __future__ import annotations

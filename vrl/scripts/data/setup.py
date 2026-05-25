@@ -10,31 +10,20 @@ from pathlib import Path
 def _cmd_anime(args: argparse.Namespace) -> None:
     if not args.metadata_only:
         raise ValueError("anime setup currently supports only --metadata-only")
-    from vrl.scripts.data.danbooru import main as danbooru_main
 
-    danbooru_main(
-        [
-            "build-prompts",
-            "--download-danbooru-metadata",
-            "--train-output",
-            str(args.train_output),
-            "--eval-output",
-            str(args.eval_output),
-            "--report-output",
-            str(args.report_output),
-            "--train-limit",
-            str(args.train_limit),
-            "--eval-limit",
-            str(args.eval_limit),
-            "--min-score",
-            str(args.min_score),
-            "--preferred-min-score",
-            str(args.preferred_min_score),
-            "--bucket-balance",
-            "quota",
-            "--prompt-style",
-            "mixed",
-        ],
+    from vrl.scripts.data.danbooru import build_anatomy_prompts
+
+    build_anatomy_prompts(
+        download_metadata=True,
+        train_output=args.train_output,
+        eval_output=args.eval_output,
+        report_output=args.report_output,
+        train_limit=args.train_limit,
+        eval_limit=args.eval_limit,
+        min_score=args.min_score,
+        preferred_min_score=args.preferred_min_score,
+        bucket_balance="quota",
+        prompt_style="mixed",
     )
 
 

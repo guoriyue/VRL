@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -32,12 +34,31 @@ def emit(payload: dict[str, Any]) -> None:
     print(json.dumps(payload, indent=2, sort_keys=True))
 
 
-def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows),
-        encoding="utf-8",
-    )
+def write_jsonl(
+    path: str | Path,
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    sort_keys: bool = True,
+) -> int:
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    count = 0
+    with p.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(dict(row), sort_keys=sort_keys) + "\n")
+            count += 1
+    return count
+
+
+def dedupe_text(parts: Iterable[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        text = re.sub(r"\s+", " ", str(part).strip())
+        if text and text not in seen:
+            seen.add(text)
+            out.append(text)
+    return out
 
 
 def write_report(path: Path, payload: dict[str, Any]) -> None:
@@ -46,6 +67,7 @@ def write_report(path: Path, payload: dict[str, Any]) -> None:
 
 
 __all__ = [
+    "dedupe_text",
     "default_cache_dir",
     "default_data_root",
     "emit",

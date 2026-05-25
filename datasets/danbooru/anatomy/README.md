@@ -9,27 +9,10 @@ Current files:
 - `prompt_report.json`: machine-readable bucket/style count report for the
   generated prompt manifests.
 
-Build the real prompt manifests from Danbooru metadata only. Prefer the
-dataset population wrapper:
+Build the real prompt manifests from Danbooru metadata only:
 
 ```bash
 python -m vrl.scripts.data.populate anime-prompts
-```
-
-The underlying command is:
-
-```bash
-python -m vrl.scripts.data.danbooru build-prompts \
-  --download-danbooru-metadata \
-  --train-output datasets/danbooru/anatomy/train_prompts.jsonl \
-  --eval-output datasets/danbooru/anatomy/eval_prompts.jsonl \
-  --report-output datasets/danbooru/anatomy/prompt_report.json \
-  --train-limit 20000 \
-  --eval-limit 1000 \
-  --min-score 5 \
-  --preferred-min-score 20 \
-  --bucket-balance quota \
-  --prompt-style mixed
 ```
 
 This downloads `metadata/posts.tar.gz` from `nyanko7/danbooru2023`, not the

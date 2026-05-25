@@ -1,9 +1,4 @@
-"""Utilities for building anime experiment manifests.
-
-The helpers in this module intentionally operate on local JSON/JSONL metadata
-or deterministic prompt banks. Anatomy helpers keep prompt provenance explicit
-so reward failures can be traced back to tag buckets and source posts.
-"""
+"""Build Danbooru-derived anime datasets in place."""
 
 from __future__ import annotations
 
@@ -12,15 +7,63 @@ import gzip
 import io
 import json
 import random
-import re
 import tarfile
 from collections import Counter, defaultdict
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from vrl.scripts.data.common import default_data_root, emit
+from vrl.scripts.data.common import (
+    dedupe_text as _dedupe_text,
+)
+from vrl.scripts.data.common import (
+    default_data_root,
+    emit,
+    write_jsonl,
+)
+from vrl.scripts.data.common import (
+    repo_root as _repo_root,
+)
+
+OUTPUT_DIR = _repo_root() / "datasets" / "danbooru"
+ANATOMY_DIR = OUTPUT_DIR / "anatomy"
+SAFETY_DIR = OUTPUT_DIR / "safety"
+
+DANBOORU_REPO_ID = "nyanko7/danbooru2023"
+DANBOORU_METADATA_FILE = "metadata/posts.tar.gz"
+METADATA_PATH = ""
+DOWNLOAD_DANBOORU_METADATA = True
+HF_CACHE_DIR = ""
+
+ANATOMY_TRAIN_OUTPUT = ANATOMY_DIR / "train_prompts.jsonl"
+ANATOMY_EVAL_OUTPUT = ANATOMY_DIR / "eval_prompts.jsonl"
+ANATOMY_REPORT_OUTPUT = ANATOMY_DIR / "prompt_report.json"
+ANATOMY_TRAIN_LIMIT = 20_000
+ANATOMY_EVAL_LIMIT = 1_000
+ANATOMY_MIN_SCORE = 5.0
+ANATOMY_PREFERRED_MIN_SCORE = 20.0
+ANATOMY_PROMPT_STYLE = "mixed"
+ANATOMY_BUCKET_BALANCE = "quota"
+ANATOMY_CANDIDATE_POOL_FACTOR = 2
+ANATOMY_SEED = 0
+
+SAFETY_TRAIN_OUTPUT = SAFETY_DIR / "train.jsonl"
+SAFETY_EVAL_OUTPUT = SAFETY_DIR / "eval_baseline.jsonl"
+SAFETY_REPORT_OUTPUT = SAFETY_DIR / "report.json"
+SAFETY_TRAIN_LIMIT = 2_000
+SAFETY_EVAL_LIMIT = 200
+SAFETY_MIN_SCORE = 0.0
+SAFETY_CANDIDATE_POOL_FACTOR = 3
+SAFETY_PROMPT_TAG_LIMIT = 24
+SAFETY_MIN_RISK_TAGS = 1
+SAFETY_SEED = 0
+
+POSITIVE_IMAGES_OUTPUT = ANATOMY_DIR / "positive_images.jsonl"
+HAND_CROPS_OUTPUT = ANATOMY_DIR / "hand_crops.jsonl"
+POSITIVE_IMAGE_SOURCE = "danbooru2023"
+POSITIVE_IMAGE_MIN_SCORE = 20.0
+POSITIVE_IMAGE_LIMIT = 10_000
 
 TEMPLATE_ID = "anime_anatomy_v1"
 DOMAIN = "anime"
@@ -237,6 +280,7 @@ FAILURE_LABELS = {
     "cropped_full_body",
     "wrong_person_count",
 }
+
 SAFETY_TEMPLATE_ID = "anime_safety_danbooru_v1"
 SAFETY_RATING_ALIASES = {
     "g": "general",
@@ -321,15 +365,256 @@ SAFETY_RISK_TAGS = {
     "vaginal_sex",
 }
 
+
 @dataclass(frozen=True, slots=True)
 class PromptRow:
     prompt: str
     metadata: dict[str, Any]
 
 
-def iter_metadata(path: str | Path) -> Iterator[dict[str, Any]]:
-    """Yield metadata rows from JSONL, JSON, gzip, or tarred JSON containers."""
+def build_default_manifests() -> None:
+    metadata = _metadata_path_or_download(
+        metadata=METADATA_PATH,
+        download_metadata=DOWNLOAD_DANBOORU_METADATA,
+        hf_repo=DANBOORU_REPO_ID,
+        hf_file=DANBOORU_METADATA_FILE,
+        hf_cache_dir=HF_CACHE_DIR or None,
+    )
+    build_anatomy_prompts(metadata=metadata)
+    build_safety_prompts(metadata=metadata)
 
+
+def build_anatomy_prompts(
+    *,
+    metadata: str | Path | None = None,
+    download_metadata: bool = False,
+    hf_repo: str = DANBOORU_REPO_ID,
+    hf_file: str = DANBOORU_METADATA_FILE,
+    hf_cache_dir: str | Path | None = None,
+    train_output: str | Path = ANATOMY_TRAIN_OUTPUT,
+    eval_output: str | Path = ANATOMY_EVAL_OUTPUT,
+    report_output: str | Path = ANATOMY_REPORT_OUTPUT,
+    train_limit: int = ANATOMY_TRAIN_LIMIT,
+    eval_limit: int = ANATOMY_EVAL_LIMIT,
+    min_score: float = ANATOMY_MIN_SCORE,
+    preferred_min_score: float | None = ANATOMY_PREFERRED_MIN_SCORE,
+    seed: int = ANATOMY_SEED,
+    prompt_style: str = ANATOMY_PROMPT_STYLE,
+    bucket_balance: str = ANATOMY_BUCKET_BALANCE,
+    candidate_pool_factor: int = ANATOMY_CANDIDATE_POOL_FACTOR,
+    max_metadata_rows: int | None = None,
+    allow_partial: bool = False,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    metadata_path = _metadata_path_or_download(
+        metadata=metadata,
+        download_metadata=download_metadata,
+        hf_repo=hf_repo,
+        hf_file=hf_file,
+        hf_cache_dir=hf_cache_dir,
+    )
+    target_count = train_limit + eval_limit
+    bucket_weights = DEFAULT_BUCKET_WEIGHTS if bucket_balance == "quota" else None
+    if bucket_balance not in {"quota", "natural"}:
+        raise ValueError("bucket_balance must be 'quota' or 'natural'")
+    candidate_limit = (
+        None if bucket_weights else max(target_count, target_count * candidate_pool_factor)
+    )
+    rows = build_prompt_rows(
+        metadata_path,
+        min_score=min_score,
+        preferred_min_score=preferred_min_score if bucket_weights else None,
+        limit=target_count,
+        seed=seed,
+        candidate_limit=candidate_limit,
+        max_metadata_rows=max_metadata_rows,
+        prompt_style=prompt_style,
+        bucket_weights=bucket_weights,
+    )
+    train_rows, eval_rows = split_prompt_rows(
+        rows,
+        train_limit=train_limit,
+        eval_limit=eval_limit,
+    )
+    if not allow_partial and (len(train_rows) < train_limit or len(eval_rows) < eval_limit):
+        raise RuntimeError(
+            "Not enough prompt rows generated: "
+            f"train={len(train_rows)}/{train_limit}, "
+            f"eval={len(eval_rows)}/{eval_limit}. "
+            "Increase max_metadata_rows, lower filters, or set allow_partial=True.",
+        )
+    write_jsonl(train_output, train_rows)
+    write_jsonl(eval_output, eval_rows)
+    write_prompt_report(report_output, train_rows, eval_rows)
+    return train_rows, eval_rows
+
+
+def build_safety_prompts(
+    *,
+    metadata: str | Path | None = None,
+    download_metadata: bool = False,
+    hf_repo: str = DANBOORU_REPO_ID,
+    hf_file: str = DANBOORU_METADATA_FILE,
+    hf_cache_dir: str | Path | None = None,
+    train_output: str | Path = SAFETY_TRAIN_OUTPUT,
+    eval_output: str | Path = SAFETY_EVAL_OUTPUT,
+    report_output: str | Path = SAFETY_REPORT_OUTPUT,
+    train_limit: int = SAFETY_TRAIN_LIMIT,
+    eval_limit: int = SAFETY_EVAL_LIMIT,
+    ratings: Sequence[str] = SAFETY_TARGET_RATINGS,
+    min_score: float = SAFETY_MIN_SCORE,
+    seed: int = SAFETY_SEED,
+    candidate_pool_factor: int = SAFETY_CANDIDATE_POOL_FACTOR,
+    max_metadata_rows: int | None = None,
+    prompt_tag_limit: int = SAFETY_PROMPT_TAG_LIMIT,
+    min_risk_tags: int = SAFETY_MIN_RISK_TAGS,
+    allow_partial: bool = False,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    metadata_path = _metadata_path_or_download(
+        metadata=metadata,
+        download_metadata=download_metadata,
+        hf_repo=hf_repo,
+        hf_file=hf_file,
+        hf_cache_dir=hf_cache_dir,
+    )
+    target_count = train_limit + eval_limit
+    rows = build_danbooru_safety_prompt_rows(
+        metadata_path,
+        ratings=ratings,
+        min_score=min_score,
+        limit=target_count,
+        seed=seed,
+        candidate_limit=max(target_count, target_count * candidate_pool_factor),
+        max_metadata_rows=max_metadata_rows,
+        prompt_tag_limit=prompt_tag_limit,
+        min_risk_tags=min_risk_tags,
+    )
+    train_rows, eval_rows = split_safety_prompt_rows(
+        rows,
+        train_limit=train_limit,
+        eval_limit=eval_limit,
+    )
+    if not allow_partial and (len(train_rows) < train_limit or len(eval_rows) < eval_limit):
+        raise RuntimeError(
+            "Not enough safety prompt rows generated: "
+            f"train={len(train_rows)}/{train_limit}, "
+            f"eval={len(eval_rows)}/{eval_limit}. "
+            "Increase max_metadata_rows, lower filters, or set allow_partial=True.",
+        )
+    write_jsonl(train_output, train_rows, sort_keys=False)
+    write_jsonl(eval_output, eval_rows, sort_keys=False)
+    if report_output:
+        write_safety_report(report_output, train_rows, eval_rows)
+    return train_rows, eval_rows
+
+
+def build_positive_images(
+    *,
+    metadata: str | Path,
+    output: str | Path = POSITIVE_IMAGES_OUTPUT,
+    image_root: str | Path | None = None,
+    hand_crops_output: str | Path | None = None,
+    source: str = "danbooru2023",
+    min_score: float = 20.0,
+    limit: int | None = 10_000,
+    fetch_images: bool = False,
+    overwrite: bool = False,
+    fetch: Callable[[str, Path], None] | None = None,
+) -> dict[str, Any]:
+    resolved_image_root = Path(
+        image_root or (default_data_root() / "danbooru" / "images"),
+    ).expanduser()
+    fetched = {"selected": 0, "downloaded": 0, "skipped_existing": 0, "failed": 0}
+    if fetch_images:
+        resolved_image_root.mkdir(parents=True, exist_ok=True)
+        targets = select_positive_targets(
+            metadata,
+            resolved_image_root,
+            min_score=int(min_score),
+            limit=None if limit is None else int(limit),
+            source=source,
+        )
+        downloaded, skipped, failed = download_danbooru_images(
+            metadata,
+            targets,
+            fetch=fetch or http_download,
+            overwrite=overwrite,
+        )
+        fetched = {
+            "selected": len(targets),
+            "downloaded": downloaded,
+            "skipped_existing": skipped,
+            "failed": failed,
+        }
+
+    positive_rows = positive_image_rows(
+        metadata,
+        image_root=resolved_image_root,
+        min_score=min_score,
+        limit=limit,
+        source=source,
+    )
+    write_jsonl(output, positive_rows)
+
+    hand_crops_written = 0
+    if hand_crops_output:
+        crop_rows = hand_crop_rows(
+            [output],
+            label="hand_ok",
+            source="anime_positive",
+            fallback_whole_image=True,
+        )
+        hand_crops_written = write_jsonl(hand_crops_output, crop_rows)
+
+    return {
+        "dataset": "danbooru_positives",
+        "image_root": str(resolved_image_root.resolve()),
+        "positive_manifest": str(output),
+        "positives_written": len(positive_rows),
+        "hand_crops_output": str(hand_crops_output) if hand_crops_output else "",
+        "hand_crops_written": hand_crops_written,
+        "fetched": fetched,
+    }
+
+
+def _metadata_path_or_download(
+    *,
+    metadata: str | Path | None,
+    download_metadata: bool,
+    hf_repo: str,
+    hf_file: str,
+    hf_cache_dir: str | Path | None,
+) -> str:
+    if metadata:
+        return str(metadata)
+    if download_metadata:
+        return download_metadata_file(
+            repo_id=hf_repo,
+            filename=hf_file,
+            cache_dir=hf_cache_dir,
+        )
+    raise ValueError("Provide metadata or set download_metadata=True")
+
+
+def download_metadata_file(
+    *,
+    repo_id: str = DANBOORU_REPO_ID,
+    filename: str = DANBOORU_METADATA_FILE,
+    cache_dir: str | Path | None = None,
+) -> str:
+    try:
+        from huggingface_hub import hf_hub_download
+    except ImportError as exc:
+        raise RuntimeError("huggingface_hub is required to download Danbooru metadata") from exc
+
+    return hf_hub_download(
+        repo_id=repo_id,
+        filename=filename,
+        repo_type="dataset",
+        cache_dir=str(Path(cache_dir).expanduser()) if cache_dir else None,
+    )
+
+
+def iter_metadata(path: str | Path) -> Iterator[dict[str, Any]]:
     p = Path(path)
     suffixes = p.suffixes
     if suffixes[-2:] == [".tar", ".gz"] or p.suffix == ".tgz":
@@ -419,28 +704,6 @@ def _iter_json_payload(payload: Any, *, source: str) -> Iterator[dict[str, Any]]
         yield payload
         return
     raise ValueError(f"{source}: expected JSON object, JSON array, or JSONL")
-
-
-def write_jsonl(path: str | Path, rows: Iterable[Mapping[str, Any]]) -> int:
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    count = 0
-    with p.open("w", encoding="utf-8") as handle:
-        for row in rows:
-            handle.write(json.dumps(dict(row), sort_keys=True) + "\n")
-            count += 1
-    return count
-
-
-def write_jsonl_preserve_order(path: str | Path, rows: Iterable[Mapping[str, Any]]) -> int:
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    count = 0
-    with p.open("w", encoding="utf-8") as handle:
-        for row in rows:
-            handle.write(json.dumps(dict(row)) + "\n")
-            count += 1
-    return count
 
 
 def normalize_tags(row: Mapping[str, Any]) -> list[str]:
@@ -693,114 +956,6 @@ def build_prompt_rows(
     return [{"prompt": row.prompt, "metadata": row.metadata} for row in balanced]
 
 
-def _select_quota_rows(
-    buckets: Mapping[str, list[PromptRow]],
-    *,
-    limit: int | None,
-    bucket_weights: Mapping[str, float],
-    preferred_min_score: float | None,
-) -> list[PromptRow]:
-    if limit is None:
-        limit = sum(len(rows) for rows in buckets.values())
-    quotas = _bucket_quotas(limit, bucket_weights)
-    selected_by_bucket: dict[str, list[PromptRow]] = {}
-    leftovers: dict[str, list[PromptRow]] = {}
-
-    for bucket, rows in buckets.items():
-        quota = quotas.get(bucket, 0)
-        if quota <= 0:
-            leftovers[bucket] = list(rows)
-            continue
-        preferred, fallback = _split_preferred_rows(rows, preferred_min_score)
-        selected = preferred[:quota]
-        if len(selected) < quota:
-            needed = quota - len(selected)
-            selected.extend(fallback[:needed])
-            fallback = fallback[needed:]
-            preferred = []
-        else:
-            preferred = preferred[quota:]
-        selected_by_bucket[bucket] = selected
-        leftovers[bucket] = preferred + fallback
-
-    selected = _interleave_bucket_rows(
-        selected_by_bucket,
-        limit=limit,
-        bucket_order=list(bucket_weights),
-    )
-    if len(selected) < limit:
-        selected.extend(
-            _interleave_bucket_rows(
-                leftovers,
-                limit=limit - len(selected),
-                bucket_order=list(bucket_weights),
-            ),
-        )
-    return selected[:limit]
-
-
-def _split_preferred_rows(
-    rows: Sequence[PromptRow],
-    preferred_min_score: float | None,
-) -> tuple[list[PromptRow], list[PromptRow]]:
-    if preferred_min_score is None:
-        return list(rows), []
-    preferred: list[PromptRow] = []
-    fallback: list[PromptRow] = []
-    for row in rows:
-        score = float(row.metadata.get("source_score", 0.0) or 0.0)
-        if score >= preferred_min_score:
-            preferred.append(row)
-        else:
-            fallback.append(row)
-    return preferred, fallback
-
-
-def _bucket_quotas(limit: int, bucket_weights: Mapping[str, float]) -> dict[str, int]:
-    total_weight = sum(max(0.0, float(weight)) for weight in bucket_weights.values())
-    if total_weight <= 0:
-        raise ValueError("bucket weights must sum to a positive value")
-    raw = {
-        bucket: limit * max(0.0, float(weight)) / total_weight
-        for bucket, weight in bucket_weights.items()
-    }
-    quotas = {bucket: int(value) for bucket, value in raw.items()}
-    remainder = limit - sum(quotas.values())
-    for bucket, _ in sorted(
-        raw.items(),
-        key=lambda item: (item[1] - int(item[1]), item[0]),
-        reverse=True,
-    )[:remainder]:
-        quotas[bucket] += 1
-    return quotas
-
-
-def _interleave_bucket_rows(
-    buckets: Mapping[str, list[PromptRow]],
-    *,
-    limit: int | None,
-    bucket_order: Sequence[str] | None = None,
-) -> list[PromptRow]:
-    queues = {bucket: list(rows) for bucket, rows in buckets.items() if rows}
-    order = list(bucket_order or sorted(queues))
-    order.extend(sorted(bucket for bucket in queues if bucket not in set(order)))
-    out: list[PromptRow] = []
-    while queues and (limit is None or len(out) < limit):
-        progressed = False
-        for bucket in list(order):
-            rows = queues.get(bucket)
-            if not rows:
-                queues.pop(bucket, None)
-                continue
-            out.append(rows.pop())
-            progressed = True
-            if limit is not None and len(out) >= limit:
-                break
-        if not progressed:
-            break
-    return out
-
-
 def split_prompt_rows(
     rows: Sequence[Mapping[str, Any]],
     *,
@@ -833,86 +988,11 @@ def split_prompt_rows(
     return train_rows, eval_rows
 
 
-def _proportional_group_counts(
-    group_sizes: Mapping[tuple[str, str], int],
-    *,
-    limit: int,
-) -> dict[tuple[str, str], int]:
-    total = sum(group_sizes.values())
-    if total <= 0 or limit <= 0:
-        return {key: 0 for key in group_sizes}
-    raw = {
-        key: min(size, limit * size / total)
-        for key, size in group_sizes.items()
-    }
-    counts = {key: int(value) for key, value in raw.items()}
-    remainder = min(limit, total) - sum(counts.values())
-    for key, _ in sorted(
-        raw.items(),
-        key=lambda item: (item[1] - int(item[1]), item[0]),
-        reverse=True,
-    ):
-        if remainder <= 0:
-            break
-        if counts[key] >= group_sizes[key]:
-            continue
-        counts[key] += 1
-        remainder -= 1
-    return counts
-
-
-def _proportional_text_group_counts(
-    group_sizes: Mapping[str, int],
-    *,
-    limit: int,
-) -> dict[str, int]:
-    total = sum(group_sizes.values())
-    if total <= 0 or limit <= 0:
-        return {key: 0 for key in group_sizes}
-    raw = {
-        key: min(size, limit * size / total)
-        for key, size in group_sizes.items()
-    }
-    counts = {key: int(value) for key, value in raw.items()}
-    remainder = min(limit, total) - sum(counts.values())
-    for key, _ in sorted(
-        raw.items(),
-        key=lambda item: (item[1] - int(item[1]), item[0]),
-        reverse=True,
-    ):
-        if remainder <= 0:
-            break
-        if counts[key] >= group_sizes[key]:
-            continue
-        counts[key] += 1
-        remainder -= 1
-    return counts
-
-
-def _interleave_manifest_rows(
-    groups: Mapping[str, list[dict[str, Any]]],
-    *,
-    limit: int,
-) -> list[dict[str, Any]]:
-    queues = {bucket: list(rows) for bucket, rows in groups.items() if rows}
-    out: list[dict[str, Any]] = []
-    while queues and len(out) < limit:
-        progressed = False
-        for bucket in sorted(list(queues)):
-            rows = queues[bucket]
-            if not rows:
-                del queues[bucket]
-                continue
-            out.append(rows.pop(0))
-            progressed = True
-            if len(out) >= limit:
-                break
-        if not progressed:
-            break
-    return out
-
-
-def write_prompt_report(path: str | Path, train_rows: Sequence[Mapping[str, Any]], eval_rows: Sequence[Mapping[str, Any]]) -> None:
+def write_prompt_report(
+    path: str | Path,
+    train_rows: Sequence[Mapping[str, Any]],
+    eval_rows: Sequence[Mapping[str, Any]],
+) -> None:
     report = {
         "train_count": len(train_rows),
         "eval_count": len(eval_rows),
@@ -921,8 +1001,50 @@ def write_prompt_report(path: str | Path, train_rows: Sequence[Mapping[str, Any]
         "train_prompt_styles": _prompt_style_counts(train_rows),
         "eval_prompt_styles": _prompt_style_counts(eval_rows),
     }
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    Path(path).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _bucket_counts(rows: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+    counter = Counter(str((row.get("metadata") or {}).get("bucket", "unknown")) for row in rows)
+    return dict(sorted(counter.items()))
+
+
+def _prompt_style_counts(rows: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+    counter = Counter(
+        (str((row.get("metadata") or {}).get("prompt_style", "unknown")) for row in rows),
+    )
+    return dict(sorted(counter.items()))
+
+
+def _resolve_prompt_style(prompt_style: str, index: int) -> str:
+    if prompt_style == "mixed":
+        return "tag" if index % 2 == 0 else "language"
+    if prompt_style in {"tag", "language"}:
+        return prompt_style
+    raise ValueError("prompt_style must be 'tag', 'language', or 'mixed'")
+
+
+def _first_subject(tags: set[str]) -> str | None:
+    for tag, text in SUBJECT_TAGS.items():
+        if tag in tags:
+            return text
+    return None
+
+
+def _first_mapped(tags: set[str], mapping: Mapping[str, str]) -> str | None:
+    for tag, text in mapping.items():
+        if tag in tags:
+            return text
+    return None
+
+
+def _first_tag_text(tags: set[str], candidates: Sequence[str]) -> str | None:
+    for tag in candidates:
+        if tag in tags:
+            return tag.replace("_", " ")
+    return None
 
 
 def build_danbooru_safety_prompt_rows(
@@ -1046,6 +1168,136 @@ def write_safety_report(
     output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _category_counts(rows: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+    counter = Counter(str((row.get("metadata") or {}).get("category", "unknown")) for row in rows)
+    return dict(sorted(counter.items()))
+
+
+def _rating_counts(rows: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+    counter = Counter(str((row.get("metadata") or {}).get("rating", "unrated")) for row in rows)
+    return dict(sorted(counter.items()))
+
+
+def _nsfw_tag_counts(rows: Sequence[Mapping[str, Any]], *, limit: int) -> dict[str, int]:
+    counter: Counter[str] = Counter()
+    for row in rows:
+        metadata = row.get("metadata") or {}
+        for tag in metadata.get("nsfw_tags", []) or []:
+            counter[str(tag)] += 1
+    return dict(counter.most_common(limit))
+
+
+def _is_active_post(row: Mapping[str, Any]) -> bool:
+    return not any(bool(row.get(key)) for key in ("is_deleted", "is_flagged", "is_banned"))
+
+
+def _normalize_rating(value: Any) -> str | None:
+    text = str(value or "").strip().lower()
+    return SAFETY_RATING_ALIASES.get(text)
+
+
+def _record_rating(row: Mapping[str, Any], tags: set[str]) -> str | None:
+    rating = _normalize_rating(row.get("rating"))
+    if rating is not None:
+        return rating
+    for tag in tags:
+        if not tag.startswith("rating:"):
+            continue
+        rating = _normalize_rating(tag.split(":", 1)[1])
+        if rating is not None:
+            return rating
+    return None
+
+
+def _safety_nsfw_tags(tags: Sequence[str], *, rating: str) -> list[str]:
+    out = [f"rating:{rating}"]
+    out.extend(tag for tag in tags if tag in SAFETY_RISK_TAGS)
+    return _dedupe_text(out)
+
+
+def _safety_prompt_from_tags(
+    tags: Sequence[str],
+    *,
+    rating: str,
+    nsfw_tags: Sequence[str],
+    prompt_tag_limit: int,
+) -> str:
+    tag_set = set(tags)
+    parts: list[str] = [f"rating:{rating}", "adult"]
+    for tag in SUBJECT_PROMPT_TAGS:
+        if tag in tag_set:
+            parts.append(tag)
+            break
+    if "solo" in tag_set:
+        parts.append("solo")
+    parts.extend(nsfw_tags)
+
+    context_tags = tuple(POSE_TAGS) + PROMPT_ANCHOR_TAGS + CLOTHING_TAGS + SCENE_TAGS
+    for tag in context_tags:
+        if tag in tag_set:
+            parts.append(tag)
+    cleaned = _dedupe_text(parts)
+    return ", ".join(cleaned[: max(1, prompt_tag_limit)])
+
+
+def download_danbooru_images(
+    metadata_path: str | Path,
+    targets: Mapping[str, Path],
+    *,
+    fetch: Callable[[str, Path], None],
+    overwrite: bool = False,
+) -> tuple[int, int, int]:
+    """Download selected Danbooru images into their build-positive target paths."""
+
+    remaining: dict[str, Path] = {str(pid): Path(path) for pid, path in targets.items()}
+    downloaded = skipped = failed = 0
+    for row in iter_metadata(metadata_path):
+        post_id = str(record_id(row))
+        target = remaining.pop(post_id, None)
+        if target is None:
+            continue
+        if target.exists() and not overwrite:
+            skipped += 1
+        else:
+            url = _danbooru_file_url(row)
+            if not url:
+                failed += 1
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    fetch(url, target)
+                    downloaded += 1
+                except Exception:
+                    failed += 1
+        if not remaining:
+            break
+    return downloaded, skipped, failed
+
+
+def _danbooru_file_url(row: Mapping[str, Any]) -> str:
+    for key in ("file_url", "large_file_url", "preview_file_url"):
+        value = row.get(key)
+        if isinstance(value, str) and value.startswith(("http://", "https://")):
+            return value
+    return ""
+
+
+def http_download(url: str, target: Path) -> None:
+    import requests
+
+    with requests.get(url, stream=True, timeout=30) as response:
+        response.raise_for_status()
+        with target.open("wb") as handle:
+            for chunk in response.iter_content(chunk_size=1 << 16):
+                handle.write(chunk)
+
+
+def count_jsonl_rows(path: Path) -> int:
+    if not path.exists():
+        return 0
+    return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+
+
 def positive_image_rows(
     metadata_path: str | Path,
     *,
@@ -1158,150 +1410,6 @@ def label_queue_rows(hard_negative_path: str | Path) -> list[dict[str, Any]]:
     return rows
 
 
-def add_common_limit_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--limit", type=int, default=None)
-    parser.add_argument("--min-score", type=float, default=0.0)
-
-
-def _bucket_counts(rows: Sequence[Mapping[str, Any]]) -> dict[str, int]:
-    counter = Counter(
-        str((row.get("metadata") or {}).get("bucket", "unknown"))
-        for row in rows
-    )
-    return dict(sorted(counter.items()))
-
-
-def _prompt_style_counts(rows: Sequence[Mapping[str, Any]]) -> dict[str, int]:
-    counter = Counter(
-        str((row.get("metadata") or {}).get("prompt_style", "unknown"))
-        for row in rows
-    )
-    return dict(sorted(counter.items()))
-
-
-def _category_counts(rows: Sequence[Mapping[str, Any]]) -> dict[str, int]:
-    counter = Counter(
-        str((row.get("metadata") or {}).get("category", "unknown"))
-        for row in rows
-    )
-    return dict(sorted(counter.items()))
-
-
-def _rating_counts(rows: Sequence[Mapping[str, Any]]) -> dict[str, int]:
-    counter = Counter(
-        str((row.get("metadata") or {}).get("rating", "unrated"))
-        for row in rows
-    )
-    return dict(sorted(counter.items()))
-
-
-def _nsfw_tag_counts(rows: Sequence[Mapping[str, Any]], *, limit: int) -> dict[str, int]:
-    counter: Counter[str] = Counter()
-    for row in rows:
-        metadata = row.get("metadata") or {}
-        for tag in metadata.get("nsfw_tags", []) or []:
-            counter[str(tag)] += 1
-    return dict(counter.most_common(limit))
-
-
-def _is_active_post(row: Mapping[str, Any]) -> bool:
-    return not any(bool(row.get(key)) for key in ("is_deleted", "is_flagged", "is_banned"))
-
-
-def _normalize_rating(value: Any) -> str | None:
-    text = str(value or "").strip().lower()
-    return SAFETY_RATING_ALIASES.get(text)
-
-
-def _record_rating(row: Mapping[str, Any], tags: set[str]) -> str | None:
-    rating = _normalize_rating(row.get("rating"))
-    if rating is not None:
-        return rating
-    for tag in tags:
-        if not tag.startswith("rating:"):
-            continue
-        rating = _normalize_rating(tag.split(":", 1)[1])
-        if rating is not None:
-            return rating
-    return None
-
-
-def _safety_nsfw_tags(tags: Sequence[str], *, rating: str) -> list[str]:
-    out = [f"rating:{rating}"]
-    out.extend(tag for tag in tags if tag in SAFETY_RISK_TAGS)
-    return _dedupe_text(out)
-
-
-def _safety_prompt_from_tags(
-    tags: Sequence[str],
-    *,
-    rating: str,
-    nsfw_tags: Sequence[str],
-    prompt_tag_limit: int,
-) -> str:
-    tag_set = set(tags)
-    parts: list[str] = [f"rating:{rating}", "adult"]
-    for tag in SUBJECT_PROMPT_TAGS:
-        if tag in tag_set:
-            parts.append(tag)
-            break
-    if "solo" in tag_set:
-        parts.append("solo")
-    parts.extend(nsfw_tags)
-
-    context_tags = (
-        tuple(POSE_TAGS)
-        + PROMPT_ANCHOR_TAGS
-        + CLOTHING_TAGS
-        + SCENE_TAGS
-    )
-    for tag in context_tags:
-        if tag in tag_set:
-            parts.append(tag)
-    cleaned = _dedupe_text(parts)
-    return ", ".join(cleaned[: max(1, prompt_tag_limit)])
-
-
-def _resolve_prompt_style(prompt_style: str, index: int) -> str:
-    if prompt_style == "mixed":
-        return "tag" if index % 2 == 0 else "language"
-    if prompt_style in {"tag", "language"}:
-        return prompt_style
-    raise ValueError("prompt_style must be 'tag', 'language', or 'mixed'")
-
-
-def _first_subject(tags: set[str]) -> str | None:
-    for tag, text in SUBJECT_TAGS.items():
-        if tag in tags:
-            return text
-    return None
-
-
-def _first_mapped(tags: set[str], mapping: Mapping[str, str]) -> str | None:
-    for tag, text in mapping.items():
-        if tag in tags:
-            return text
-    return None
-
-
-def _first_tag_text(tags: set[str], candidates: Sequence[str]) -> str | None:
-    for tag in candidates:
-        if tag in tags:
-            return tag.replace("_", " ")
-    return None
-
-
-def _dedupe_text(parts: Iterable[str]) -> list[str]:
-    out: list[str] = []
-    seen: set[str] = set()
-    for part in parts:
-        text = re.sub(r"\s+", " ", str(part).strip())
-        if text and text not in seen:
-            seen.add(text)
-            out.append(text)
-    return out
-
-
 def _image_path(row: Mapping[str, Any], *, image_root: str | Path | None) -> str | None:
     for key in ("image_path", "file_path", "path"):
         value = row.get(key)
@@ -1325,294 +1433,29 @@ def _hand_boxes(row: Mapping[str, Any]) -> list[Any]:
     return [bbox] if bbox is not None else []
 
 
-def main(argv: Sequence[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    build_prompts = subparsers.add_parser(
-        "build-prompts",
-        help="Build quota-balanced train/eval prompt manifests from metadata.",
+def select_positive_targets(
+    metadata_path: str | Path,
+    image_root: Path,
+    *,
+    min_score: int,
+    limit: int | None,
+    source: str,
+) -> dict[str, Path]:
+    selected = positive_image_rows(
+        metadata_path,
+        image_root=image_root,
+        min_score=min_score,
+        limit=limit,
+        source=source,
     )
-    build_prompts.add_argument("--metadata", default="")
-    build_prompts.add_argument("--download-danbooru-metadata", action="store_true")
-    build_prompts.add_argument("--hf-repo", default="nyanko7/danbooru2023")
-    build_prompts.add_argument("--hf-file", default="metadata/posts.tar.gz")
-    build_prompts.add_argument("--hf-cache-dir", default="")
-    build_prompts.add_argument("--train-output", required=True)
-    build_prompts.add_argument("--eval-output", required=True)
-    build_prompts.add_argument("--report-output", required=True)
-    build_prompts.add_argument("--train-limit", type=int, default=20_000)
-    build_prompts.add_argument("--eval-limit", type=int, default=1_000)
-    build_prompts.add_argument("--min-score", type=float, default=5.0)
-    build_prompts.add_argument("--preferred-min-score", type=float, default=20.0)
-    build_prompts.add_argument("--seed", type=int, default=0)
-    build_prompts.add_argument(
-        "--prompt-style",
-        choices=("tag", "language", "mixed"),
-        default="mixed",
-    )
-    build_prompts.add_argument(
-        "--bucket-balance",
-        choices=("quota", "natural"),
-        default="quota",
-    )
-    build_prompts.add_argument("--candidate-pool-factor", type=int, default=2)
-    build_prompts.add_argument("--max-metadata-rows", type=int, default=None)
-    build_prompts.add_argument("--allow-partial", action="store_true")
-    build_prompts.set_defaults(func=_cmd_build_prompts)
-
-    safety = subparsers.add_parser(
-        "build-safety-prompts",
-        help="Build deterministic anime safety train/eval prompt manifests.",
-    )
-    safety.add_argument("--train-output", required=True)
-    safety.add_argument("--eval-output", required=True)
-    safety.add_argument("--report-output", default="")
-    safety.add_argument("--metadata", default="")
-    safety.add_argument("--download-danbooru-metadata", action="store_true")
-    safety.add_argument("--hf-repo", default="nyanko7/danbooru2023")
-    safety.add_argument("--hf-file", default="metadata/posts.tar.gz")
-    safety.add_argument("--hf-cache-dir", default="")
-    safety.add_argument("--train-limit", type=int, default=None)
-    safety.add_argument("--eval-limit", type=int, default=None)
-    safety.add_argument("--rating", action="append", default=[])
-    safety.add_argument("--min-score", type=float, default=0.0)
-    safety.add_argument("--seed", type=int, default=0)
-    safety.add_argument("--candidate-pool-factor", type=int, default=3)
-    safety.add_argument("--max-metadata-rows", type=int, default=None)
-    safety.add_argument("--prompt-tag-limit", type=int, default=24)
-    safety.add_argument("--min-risk-tags", type=int, default=1)
-    safety.add_argument("--allow-partial", action="store_true")
-    safety.set_defaults(func=_cmd_build_safety_prompts)
-
-    positives = subparsers.add_parser(
-        "build-positives",
-        help="Build anime positive image manifest for reward calibration.",
-    )
-    positives.add_argument("--metadata", required=True)
-    positives.add_argument("--output", required=True)
-    positives.add_argument("--image-root", default=None)
-    positives.add_argument("--source", default="danbooru")
-    positives.add_argument("--min-score", type=float, default=0.0)
-    positives.add_argument("--limit", type=int, default=10_000)
-    positives.set_defaults(func=_cmd_build_positives)
-
-    crops = subparsers.add_parser(
-        "build-hand-crops",
-        help="Build anime hand crop manifest from positive/generated manifests.",
-    )
-    crops.add_argument("--positive-manifest", action="append", default=[])
-    crops.add_argument("--generated-manifest", action="append", default=[])
-    crops.add_argument("--output", required=True)
-    crops.add_argument("--fallback-whole-image", action="store_true")
-    crops.set_defaults(func=_cmd_build_hand_crops)
-
-    hard_negatives = subparsers.add_parser(
-        "mine-hard-negatives",
-        help="Filter generated candidates into an anatomy hard-negative manifest.",
-    )
-    hard_negatives.add_argument("--candidates", required=True)
-    hard_negatives.add_argument("--output", required=True)
-    hard_negatives.add_argument("--min-severity", type=int, default=1)
-    hard_negatives.add_argument("--label", action="append", default=[])
-    hard_negatives.set_defaults(func=_cmd_mine_hard_negatives)
-
-    label_queue = subparsers.add_parser(
-        "export-label-queue",
-        help="Export anatomy hard negatives into a focused label queue JSONL.",
-    )
-    label_queue.add_argument("--hard-negatives", required=True)
-    label_queue.add_argument("--output", required=True)
-    label_queue.set_defaults(func=_cmd_export_label_queue)
-
-    calibrate = subparsers.add_parser(
-        "calibrate-rewards",
-        help="Run offline audit for the anime anatomy pose reward.",
-    )
-    calibrate.add_argument("--positive-manifest", required=True)
-    calibrate.add_argument("--hard-negative-manifest", required=True)
-    calibrate.add_argument("--output", required=True)
-    calibrate.add_argument("--device", default="cuda")
-    calibrate.add_argument("--max-samples", type=int, default=512)
-    calibrate.set_defaults(func=_cmd_calibrate_rewards)
-
-    args = parser.parse_args(argv)
-    args.func(args)
+    return {
+        str(row["post_id"]): Path(row["image_path"])
+        for row in selected
+        if row.get("post_id") is not None and row.get("image_path")
+    }
 
 
-def _cmd_build_prompts(args: argparse.Namespace) -> None:
-    metadata = args.metadata or ""
-    if args.download_danbooru_metadata:
-        metadata = _download_metadata(
-            repo_id=args.hf_repo,
-            filename=args.hf_file,
-            cache_dir=args.hf_cache_dir or None,
-        )
-    if not metadata:
-        raise ValueError("Provide --metadata or pass --download-danbooru-metadata")
-
-    target_count = args.train_limit + args.eval_limit
-    bucket_weights = DEFAULT_BUCKET_WEIGHTS if args.bucket_balance == "quota" else None
-    candidate_limit = (
-        None
-        if bucket_weights
-        else max(target_count, target_count * args.candidate_pool_factor)
-    )
-    rows = build_prompt_rows(
-        metadata,
-        min_score=args.min_score,
-        preferred_min_score=args.preferred_min_score if bucket_weights else None,
-        limit=target_count,
-        seed=args.seed,
-        candidate_limit=candidate_limit,
-        max_metadata_rows=args.max_metadata_rows,
-        prompt_style=args.prompt_style,
-        bucket_weights=bucket_weights,
-    )
-    train_rows, eval_rows = split_prompt_rows(
-        rows,
-        train_limit=args.train_limit,
-        eval_limit=args.eval_limit,
-    )
-    if not args.allow_partial and (
-        len(train_rows) < args.train_limit or len(eval_rows) < args.eval_limit
-    ):
-        raise RuntimeError(
-            "Not enough prompt rows generated: "
-            f"train={len(train_rows)}/{args.train_limit}, "
-            f"eval={len(eval_rows)}/{args.eval_limit}. "
-            "Increase --max-metadata-rows, lower filters, or pass --allow-partial.",
-        )
-    write_jsonl(args.train_output, train_rows)
-    write_jsonl(args.eval_output, eval_rows)
-    write_prompt_report(args.report_output, train_rows, eval_rows)
-
-
-def _cmd_build_safety_prompts(args: argparse.Namespace) -> None:
-    metadata = args.metadata or ""
-    if args.download_danbooru_metadata:
-        metadata = _download_metadata(
-            repo_id=args.hf_repo,
-            filename=args.hf_file,
-            cache_dir=args.hf_cache_dir or None,
-        )
-
-    if not metadata:
-        raise ValueError("Provide --metadata or pass --download-danbooru-metadata")
-
-    train_limit = args.train_limit if args.train_limit is not None else 2_000
-    eval_limit = args.eval_limit if args.eval_limit is not None else 200
-    target_count = train_limit + eval_limit
-    rows = build_danbooru_safety_prompt_rows(
-        metadata,
-        ratings=args.rating or SAFETY_TARGET_RATINGS,
-        min_score=args.min_score,
-        limit=target_count,
-        seed=args.seed,
-        candidate_limit=max(target_count, target_count * args.candidate_pool_factor),
-        max_metadata_rows=args.max_metadata_rows,
-        prompt_tag_limit=args.prompt_tag_limit,
-        min_risk_tags=args.min_risk_tags,
-    )
-    train_rows, eval_rows = split_safety_prompt_rows(
-        rows,
-        train_limit=train_limit,
-        eval_limit=eval_limit,
-    )
-    if not args.allow_partial and (
-        len(train_rows) < train_limit or len(eval_rows) < eval_limit
-    ):
-        raise RuntimeError(
-            "Not enough safety prompt rows generated: "
-            f"train={len(train_rows)}/{train_limit}, "
-            f"eval={len(eval_rows)}/{eval_limit}. "
-            "Increase --max-metadata-rows, lower filters, or pass --allow-partial.",
-        )
-    write_jsonl_preserve_order(args.train_output, train_rows)
-    write_jsonl_preserve_order(args.eval_output, eval_rows)
-    if args.report_output:
-        write_safety_report(args.report_output, train_rows, eval_rows)
-
-
-def _download_metadata(*, repo_id: str, filename: str, cache_dir: str | None) -> str:
-    try:
-        from huggingface_hub import hf_hub_download
-    except ImportError as exc:
-        raise RuntimeError(
-            "huggingface_hub is required for --download-danbooru-metadata",
-        ) from exc
-
-    return hf_hub_download(
-        repo_id=repo_id,
-        filename=filename,
-        repo_type="dataset",
-        cache_dir=str(Path(cache_dir).expanduser()) if cache_dir else None,
-    )
-
-
-def _cmd_build_positives(args: argparse.Namespace) -> None:
-    rows = positive_image_rows(
-        args.metadata,
-        image_root=args.image_root,
-        min_score=args.min_score,
-        limit=args.limit,
-        source=args.source,
-    )
-    write_jsonl(args.output, rows)
-
-
-def _cmd_build_hand_crops(args: argparse.Namespace) -> None:
-    rows = []
-    rows.extend(
-        hand_crop_rows(
-            args.positive_manifest,
-            label="hand_ok",
-            source="anime_positive",
-            fallback_whole_image=args.fallback_whole_image,
-        ),
-    )
-    rows.extend(
-        hand_crop_rows(
-            args.generated_manifest,
-            label="bad_hand",
-            source="anima_generated",
-            fallback_whole_image=args.fallback_whole_image,
-        ),
-    )
-    write_jsonl(args.output, rows)
-
-
-def _cmd_mine_hard_negatives(args: argparse.Namespace) -> None:
-    labels = set(args.label) if args.label else FAILURE_LABELS
-    rows = hard_negative_rows(
-        args.candidates,
-        min_severity=args.min_severity,
-        labels=labels,
-    )
-    write_jsonl(args.output, rows)
-
-
-def _cmd_export_label_queue(args: argparse.Namespace) -> None:
-    write_jsonl(args.output, label_queue_rows(args.hard_negatives))
-
-
-def _cmd_calibrate_rewards(args: argparse.Namespace) -> None:
-    import asyncio
-
-    report = asyncio.run(
-        _run_reward_calibration(
-            positive_manifest=args.positive_manifest,
-            hard_negative_manifest=args.hard_negative_manifest,
-            device=args.device,
-            max_samples=args.max_samples,
-        ),
-    )
-    output = Path(args.output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-async def _run_reward_calibration(
+async def run_reward_calibration(
     *,
     positive_manifest: str,
     hard_negative_manifest: str,
@@ -1692,48 +1535,229 @@ def _pairwise_auc(positive_scores: list[float], negative_scores: list[float]) ->
     return wins / total
 
 
-# --------------------------------------------------------------------------- #
-# populate-facing commands (wired into `python -m vrl.scripts.data.populate`)  #
-# --------------------------------------------------------------------------- #
+def _select_quota_rows(
+    buckets: Mapping[str, list[Any]],
+    *,
+    limit: int | None,
+    bucket_weights: Mapping[str, float],
+    preferred_min_score: float | None,
+) -> list[Any]:
+    if limit is None:
+        limit = sum(len(rows) for rows in buckets.values())
+    quotas = _bucket_quotas(limit, bucket_weights)
+    selected_by_bucket: dict[str, list[Any]] = {}
+    leftovers: dict[str, list[Any]] = {}
+
+    for bucket, rows in buckets.items():
+        quota = quotas.get(bucket, 0)
+        if quota <= 0:
+            leftovers[bucket] = list(rows)
+            continue
+        preferred, fallback = _split_preferred_rows(rows, preferred_min_score)
+        selected = preferred[:quota]
+        if len(selected) < quota:
+            needed = quota - len(selected)
+            selected.extend(fallback[:needed])
+            fallback = fallback[needed:]
+            preferred = []
+        else:
+            preferred = preferred[quota:]
+        selected_by_bucket[bucket] = selected
+        leftovers[bucket] = preferred + fallback
+
+    selected = _interleave_bucket_rows(
+        selected_by_bucket,
+        limit=limit,
+        bucket_order=list(bucket_weights),
+    )
+    if len(selected) < limit:
+        selected.extend(
+            _interleave_bucket_rows(
+                leftovers,
+                limit=limit - len(selected),
+                bucket_order=list(bucket_weights),
+            ),
+        )
+    return selected[:limit]
+
+
+def _split_preferred_rows(
+    rows: Sequence[Any],
+    preferred_min_score: float | None,
+) -> tuple[list[Any], list[Any]]:
+    if preferred_min_score is None:
+        return list(rows), []
+    preferred: list[Any] = []
+    fallback: list[Any] = []
+    for row in rows:
+        score = float(row.metadata.get("source_score", 0.0) or 0.0)
+        if score >= preferred_min_score:
+            preferred.append(row)
+        else:
+            fallback.append(row)
+    return preferred, fallback
+
+
+def _bucket_quotas(limit: int, bucket_weights: Mapping[str, float]) -> dict[str, int]:
+    total_weight = sum(max(0.0, float(weight)) for weight in bucket_weights.values())
+    if total_weight <= 0:
+        raise ValueError("bucket weights must sum to a positive value")
+    raw = {
+        bucket: limit * max(0.0, float(weight)) / total_weight
+        for bucket, weight in bucket_weights.items()
+    }
+    quotas = {bucket: int(value) for bucket, value in raw.items()}
+    remainder = limit - sum(quotas.values())
+    for bucket, _ in sorted(
+        raw.items(),
+        key=lambda item: (item[1] - int(item[1]), item[0]),
+        reverse=True,
+    )[:remainder]:
+        quotas[bucket] += 1
+    return quotas
+
+
+def _interleave_bucket_rows(
+    buckets: Mapping[str, list[Any]],
+    *,
+    limit: int | None,
+    bucket_order: Sequence[str] | None = None,
+) -> list[Any]:
+    queues = {bucket: list(rows) for bucket, rows in buckets.items() if rows}
+    order = list(bucket_order or sorted(queues))
+    order.extend(sorted(bucket for bucket in queues if bucket not in set(order)))
+    out: list[Any] = []
+    while queues and (limit is None or len(out) < limit):
+        progressed = False
+        for bucket in list(order):
+            rows = queues.get(bucket)
+            if not rows:
+                queues.pop(bucket, None)
+                continue
+            out.append(rows.pop())
+            progressed = True
+            if limit is not None and len(out) >= limit:
+                break
+        if not progressed:
+            break
+    return out
+
+
+def _proportional_group_counts(
+    group_sizes: Mapping[tuple[str, str], int],
+    *,
+    limit: int,
+) -> dict[tuple[str, str], int]:
+    total = sum(group_sizes.values())
+    if total <= 0 or limit <= 0:
+        return {key: 0 for key in group_sizes}
+    raw = {key: min(size, limit * size / total) for key, size in group_sizes.items()}
+    counts = {key: int(value) for key, value in raw.items()}
+    remainder = min(limit, total) - sum(counts.values())
+    for key, _ in sorted(
+        raw.items(),
+        key=lambda item: (item[1] - int(item[1]), item[0]),
+        reverse=True,
+    ):
+        if remainder <= 0:
+            break
+        if counts[key] >= group_sizes[key]:
+            continue
+        counts[key] += 1
+        remainder -= 1
+    return counts
+
+
+def _proportional_text_group_counts(
+    group_sizes: Mapping[str, int],
+    *,
+    limit: int,
+) -> dict[str, int]:
+    total = sum(group_sizes.values())
+    if total <= 0 or limit <= 0:
+        return {key: 0 for key in group_sizes}
+    raw = {key: min(size, limit * size / total) for key, size in group_sizes.items()}
+    counts = {key: int(value) for key, value in raw.items()}
+    remainder = min(limit, total) - sum(counts.values())
+    for key, _ in sorted(
+        raw.items(),
+        key=lambda item: (item[1] - int(item[1]), item[0]),
+        reverse=True,
+    ):
+        if remainder <= 0:
+            break
+        if counts[key] >= group_sizes[key]:
+            continue
+        counts[key] += 1
+        remainder -= 1
+    return counts
+
+
+def _interleave_manifest_rows(
+    groups: Mapping[str, list[dict[str, Any]]],
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    queues = {bucket: list(rows) for bucket, rows in groups.items() if rows}
+    out: list[dict[str, Any]] = []
+    while queues and len(out) < limit:
+        progressed = False
+        for bucket in sorted(list(queues)):
+            rows = queues[bucket]
+            if not rows:
+                del queues[bucket]
+                continue
+            out.append(rows.pop(0))
+            progressed = True
+            if len(out) >= limit:
+                break
+        if not progressed:
+            break
+    return out
+
+
+select_quota_rows = _select_quota_rows
+interleave_bucket_rows = _interleave_bucket_rows
+proportional_group_counts = _proportional_group_counts
+proportional_text_group_counts = _proportional_text_group_counts
+interleave_manifest_rows = _interleave_manifest_rows
+_http_download = http_download
+_count_lines = count_jsonl_rows
+
+
+def _current_http_download() -> Callable[[str, Path], None]:
+    return globals().get("_http_download", http_download)
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    if argv is None:
+        import sys
+
+        argv = sys.argv[1:]
+    if not argv:
+        build_default_manifests()
+        return
+    parser = argparse.ArgumentParser(description=__doc__)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    register(subparsers)
+    args = parser.parse_args(argv)
+    args.func(args)
 
 
 def register(subparsers: Any) -> None:
     prompts = subparsers.add_parser("anime-prompts")
     prompts.add_argument("--metadata", type=Path, default=None)
-    prompts.add_argument(
-        "--train-output",
-        type=Path,
-        default=Path("datasets/danbooru/anatomy/train_prompts.jsonl"),
-    )
-    prompts.add_argument(
-        "--eval-output",
-        type=Path,
-        default=Path("datasets/danbooru/anatomy/eval_prompts.jsonl"),
-    )
-    prompts.add_argument(
-        "--report-output",
-        type=Path,
-        default=Path("datasets/danbooru/anatomy/prompt_report.json"),
-    )
-    prompts.add_argument("--train-limit", type=int, default=20_000)
-    prompts.add_argument("--eval-limit", type=int, default=1_000)
-    prompts.add_argument("--min-score", type=int, default=5)
-    prompts.add_argument("--preferred-min-score", type=int, default=20)
-    prompts.add_argument("--prompt-style", default="mixed")
     prompts.set_defaults(func=_cmd_anime_prompts)
+
+    safety = subparsers.add_parser("anime-safety-prompts")
+    safety.add_argument("--metadata", type=Path, default=None)
+    safety.set_defaults(func=_cmd_anime_safety_prompts)
 
     positives = subparsers.add_parser("anime-positives")
     positives.add_argument("--metadata", type=Path, required=True)
     positives.add_argument("--image-root", type=Path, default=None)
-    positives.add_argument(
-        "--output",
-        type=Path,
-        default=Path("datasets/danbooru/anatomy/positive_images.jsonl"),
-    )
+    positives.add_argument("--output", type=Path, default=POSITIVE_IMAGES_OUTPUT)
     positives.add_argument("--hand-crops-output", type=Path, default=None)
-    positives.add_argument("--source", default="danbooru2023")
-    positives.add_argument("--min-score", type=int, default=20)
-    positives.add_argument("--limit", type=int, default=10_000)
     positives.add_argument("--fetch-images", action="store_true")
     positives.add_argument("--overwrite", action="store_true")
     positives.set_defaults(func=_cmd_anime_positives)
@@ -1741,125 +1765,56 @@ def register(subparsers: Any) -> None:
     fetch = subparsers.add_parser("anime-fetch-images")
     fetch.add_argument("--metadata", type=Path, required=True)
     fetch.add_argument("--image-root", type=Path, default=None)
-    fetch.add_argument("--min-score", type=int, default=20)
-    fetch.add_argument("--limit", type=int, default=10_000)
-    fetch.add_argument("--source", default="danbooru2023")
     fetch.add_argument("--overwrite", action="store_true")
     fetch.set_defaults(func=_cmd_anime_fetch_images)
 
 
 def _cmd_anime_prompts(args: argparse.Namespace) -> None:
-    command = [
-        "build-prompts",
-        "--train-output",
-        str(args.train_output),
-        "--eval-output",
-        str(args.eval_output),
-        "--report-output",
-        str(args.report_output),
-        "--train-limit",
-        str(args.train_limit),
-        "--eval-limit",
-        str(args.eval_limit),
-        "--min-score",
-        str(args.min_score),
-        "--preferred-min-score",
-        str(args.preferred_min_score),
-        "--bucket-balance",
-        "quota",
-        "--prompt-style",
-        args.prompt_style,
-    ]
-    if args.metadata:
-        command.extend(["--metadata", str(args.metadata)])
-    else:
-        command.append("--download-danbooru-metadata")
-    main(command)
+    build_anatomy_prompts(
+        metadata=args.metadata,
+        download_metadata=args.metadata is None,
+    )
+
+
+def _cmd_anime_safety_prompts(args: argparse.Namespace) -> None:
+    build_safety_prompts(
+        metadata=args.metadata,
+        download_metadata=args.metadata is None,
+    )
 
 
 def _cmd_anime_positives(args: argparse.Namespace) -> None:
-    image_root = Path(args.image_root or (default_data_root() / "danbooru" / "images")).expanduser()
-    fetched: dict[str, int] = {"selected": 0, "downloaded": 0, "skipped_existing": 0, "failed": 0}
-    if args.fetch_images:
-        image_root.mkdir(parents=True, exist_ok=True)
-        targets = _select_positive_targets(
-            args.metadata,
-            image_root,
-            min_score=args.min_score,
-            limit=args.limit,
-            source=args.source,
-        )
-        downloaded, skipped, failed = download_danbooru_images(
-            args.metadata,
-            targets,
-            fetch=_http_download,
-            overwrite=args.overwrite,
-        )
-        fetched = {
-            "selected": len(targets),
-            "downloaded": downloaded,
-            "skipped_existing": skipped,
-            "failed": failed,
-        }
-
-    main(
-        [
-            "build-positives",
-            "--metadata",
-            str(args.metadata),
-            "--image-root",
-            str(image_root),
-            "--output",
-            str(args.output),
-            "--source",
-            args.source,
-            "--min-score",
-            str(args.min_score),
-            "--limit",
-            str(args.limit),
-        ],
+    report = build_positive_images(
+        metadata=args.metadata,
+        output=args.output,
+        image_root=args.image_root,
+        hand_crops_output=args.hand_crops_output,
+        source=POSITIVE_IMAGE_SOURCE,
+        min_score=POSITIVE_IMAGE_MIN_SCORE,
+        limit=POSITIVE_IMAGE_LIMIT,
+        fetch_images=args.fetch_images,
+        overwrite=args.overwrite,
+        fetch=_current_http_download(),
     )
-    hand_crops_written = 0
-    if args.hand_crops_output:
-        main(
-            [
-                "build-hand-crops",
-                "--positive-manifest",
-                str(args.output),
-                "--output",
-                str(args.hand_crops_output),
-                "--fallback-whole-image",
-            ],
-        )
-        hand_crops_written = _count_lines(Path(args.hand_crops_output))
-
-    emit(
-        {
-            "dataset": "danbooru_positives",
-            "image_root": str(image_root.resolve()),
-            "positive_manifest": str(args.output),
-            "positives_written": _count_lines(Path(args.output)),
-            "hand_crops_output": str(args.hand_crops_output) if args.hand_crops_output else "",
-            "hand_crops_written": hand_crops_written,
-            "fetched": fetched,
-        },
-    )
+    emit(report)
 
 
 def _cmd_anime_fetch_images(args: argparse.Namespace) -> None:
-    image_root = Path(args.image_root or (default_data_root() / "danbooru" / "images")).expanduser()
+    image_root = Path(
+        args.image_root or (default_data_root() / "danbooru" / "images"),
+    ).expanduser()
     image_root.mkdir(parents=True, exist_ok=True)
-    targets = _select_positive_targets(
+    targets = select_positive_targets(
         args.metadata,
         image_root,
-        min_score=args.min_score,
-        limit=args.limit,
-        source=args.source,
+        min_score=int(POSITIVE_IMAGE_MIN_SCORE),
+        limit=POSITIVE_IMAGE_LIMIT,
+        source=POSITIVE_IMAGE_SOURCE,
     )
     downloaded, skipped, failed = download_danbooru_images(
         args.metadata,
         targets,
-        fetch=_http_download,
+        fetch=_current_http_download(),
         overwrite=args.overwrite,
     )
     emit(
@@ -1874,109 +1829,47 @@ def _cmd_anime_fetch_images(args: argparse.Namespace) -> None:
     )
 
 
-def download_danbooru_images(
-    metadata_path: str | Path,
-    targets: Mapping[str, Path],
-    *,
-    fetch: Callable[[str, Path], None],
-    overwrite: bool = False,
-) -> tuple[int, int, int]:
-    """Download selected Danbooru images into their build-positives target paths.
-
-    ``targets`` maps post id -> local image path (as produced by
-    ``positive_image_rows``). ``fetch`` is injectable so the selection/IO wiring
-    can be tested without network access. Returns (downloaded, skipped, failed).
-    """
-
-    remaining: dict[str, Path] = {str(pid): Path(path) for pid, path in targets.items()}
-    downloaded = skipped = failed = 0
-    for row in iter_metadata(metadata_path):
-        post_id = str(record_id(row))
-        target = remaining.pop(post_id, None)
-        if target is None:
-            continue
-        if target.exists() and not overwrite:
-            skipped += 1
-        else:
-            url = _danbooru_file_url(row)
-            if not url:
-                failed += 1
-            else:
-                target.parent.mkdir(parents=True, exist_ok=True)
-                try:
-                    fetch(url, target)
-                    downloaded += 1
-                except Exception:
-                    failed += 1
-        if not remaining:
-            break
-    return downloaded, skipped, failed
-
-
-def _select_positive_targets(
-    metadata_path: str | Path,
-    image_root: Path,
-    *,
-    min_score: int,
-    limit: int,
-    source: str,
-) -> dict[str, Path]:
-    selected = positive_image_rows(
-        metadata_path,
-        image_root=image_root,
-        min_score=min_score,
-        limit=limit,
-        source=source,
-    )
-    return {
-        str(row["post_id"]): Path(row["image_path"])
-        for row in selected
-        if row.get("post_id") is not None and row.get("image_path")
-    }
-
-
-def _danbooru_file_url(row: Mapping[str, Any]) -> str:
-    for key in ("file_url", "large_file_url", "preview_file_url"):
-        value = row.get(key)
-        if isinstance(value, str) and value.startswith(("http://", "https://")):
-            return value
-    return ""
-
-
-def _http_download(url: str, target: Path) -> None:
-    import requests
-
-    with requests.get(url, stream=True, timeout=30) as response:
-        response.raise_for_status()
-        with target.open("wb") as handle:
-            for chunk in response.iter_content(chunk_size=1 << 16):
-                handle.write(chunk)
-
-
-def _count_lines(path: Path) -> int:
-    if not path.exists():
-        return 0
-    return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
-
-
 __all__ = [
     "DEFAULT_BUCKET_WEIGHTS",
     "FAILURE_LABELS",
     "SAFETY_TARGET_RATINGS",
+    "SAFETY_TEMPLATE_ID",
+    "PromptRow",
+    "anatomy_constraints",
+    "bucket_from_tags",
+    "build_anatomy_prompts",
     "build_danbooru_safety_prompt_rows",
+    "build_default_manifests",
+    "build_positive_images",
     "build_prompt_rows",
+    "build_safety_prompts",
+    "count_jsonl_rows",
     "download_danbooru_images",
+    "download_metadata_file",
     "hand_crop_rows",
     "hard_negative_rows",
+    "http_download",
+    "interleave_bucket_rows",
+    "interleave_manifest_rows",
+    "is_anatomy_positive",
     "iter_metadata",
     "label_queue_rows",
     "main",
+    "normalize_tags",
     "positive_image_rows",
+    "prompt_anchor_texts",
+    "prompt_from_tags",
+    "proportional_group_counts",
+    "proportional_text_group_counts",
+    "record_id",
+    "record_score",
     "register",
+    "run_reward_calibration",
+    "select_positive_targets",
+    "select_quota_rows",
     "split_prompt_rows",
     "split_safety_prompt_rows",
     "write_jsonl",
-    "write_jsonl_preserve_order",
     "write_prompt_report",
     "write_safety_report",
 ]

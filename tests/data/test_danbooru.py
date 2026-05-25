@@ -6,11 +6,13 @@ from pathlib import Path
 
 from vrl.scripts.data.danbooru import (
     build_danbooru_safety_prompt_rows,
+    build_positive_images,
     build_prompt_rows,
+    build_safety_prompts,
+    download_danbooru_images,
     hand_crop_rows,
     hard_negative_rows,
     label_queue_rows,
-    main,
     positive_image_rows,
     split_prompt_rows,
     split_safety_prompt_rows,
@@ -160,6 +162,104 @@ def test_build_prompt_rows_allows_hand_focus_without_full_body(tmp_path: Path) -
     assert rows[0]["metadata"]["framing"] == "upper body"
 
 
+def test_download_danbooru_images_downloads_only_positive_selection(tmp_path: Path) -> None:
+    metadata = tmp_path / "posts.jsonl"
+    rows = [
+        {
+            "id": 1,
+            "score": 50,
+            "tag_string": "1girl solo full_body standing",
+            "file_ext": "jpg",
+            "file_url": "https://example.test/1.jpg",
+        },
+        {
+            "id": 2,
+            "score": 1,
+            "tag_string": "1girl solo upper_body",
+            "file_ext": "jpg",
+            "file_url": "https://example.test/2.jpg",
+        },
+    ]
+    _write_jsonl(metadata, rows)
+    image_root = tmp_path / "images"
+
+    selected = positive_image_rows(
+        metadata,
+        image_root=image_root,
+        min_score=10,
+        limit=None,
+        source="danbooru",
+    )
+    targets = {str(row["post_id"]): Path(row["image_path"]) for row in selected}
+
+    calls: list[tuple[str, Path]] = []
+
+    def fake_fetch(url: str, target: Path) -> None:
+        calls.append((url, target))
+        target.write_bytes(b"fake-image-bytes")
+
+    downloaded, skipped, failed = download_danbooru_images(
+        metadata,
+        targets,
+        fetch=fake_fetch,
+    )
+
+    assert downloaded == 1
+    assert skipped == 0
+    assert failed == 0
+    assert calls == [("https://example.test/1.jpg", image_root / "1.jpg")]
+    assert (image_root / "1.jpg").exists()
+    assert not (image_root / "2.jpg").exists()
+
+
+def test_build_positive_images_prepares_manifests_end_to_end(tmp_path: Path) -> None:
+    metadata = tmp_path / "posts.jsonl"
+    rows = [
+        {
+            "id": 1,
+            "score": 50,
+            "tag_string": "1girl solo full_body standing",
+            "file_ext": "jpg",
+            "file_url": "https://example.test/1.jpg",
+        },
+        {
+            "id": 2,
+            "score": 1,
+            "tag_string": "1girl solo upper_body",
+            "file_ext": "jpg",
+            "file_url": "https://example.test/2.jpg",
+        },
+    ]
+    _write_jsonl(metadata, rows)
+    image_root = tmp_path / "images"
+    positives = tmp_path / "positive_images.jsonl"
+    hand_crops = tmp_path / "hand_crops.jsonl"
+
+    def fake_fetch(url: str, target: Path) -> None:
+        target.write_bytes(b"fake-image-bytes")
+
+    report = build_positive_images(
+        metadata=metadata,
+        image_root=image_root,
+        output=positives,
+        hand_crops_output=hand_crops,
+        fetch_images=True,
+        fetch=fake_fetch,
+    )
+
+    pos_rows = [json.loads(line) for line in positives.read_text().splitlines() if line.strip()]
+    assert len(pos_rows) == 1
+    assert pos_rows[0]["post_id"] == 1
+    assert (image_root / "1.jpg").exists()
+    assert not (image_root / "2.jpg").exists()
+
+    crop_rows = [json.loads(line) for line in hand_crops.read_text().splitlines() if line.strip()]
+    assert len(crop_rows) == 1
+    assert crop_rows[0]["labels"] == ["hand_ok"]
+    assert report["positives_written"] == 1
+    assert report["hand_crops_written"] == 1
+
+
 def test_positive_hand_hard_negative_and_label_queue_rows(tmp_path: Path) -> None:
     metadata = tmp_path / "posts.jsonl"
     image = tmp_path / "image.png"
@@ -225,22 +325,17 @@ def test_positive_hand_hard_negative_and_label_queue_rows(tmp_path: Path) -> Non
     assert "Are fingers plausible enough for the image scale?" in queue[0]["questions"]
 
 
-def test_build_safety_prompts_cli_requires_danbooru_metadata(tmp_path: Path) -> None:
+def test_build_safety_prompts_requires_danbooru_metadata(tmp_path: Path) -> None:
     train_output = tmp_path / "train.jsonl"
     eval_output = tmp_path / "eval_baseline.jsonl"
 
     try:
-        main(
-            [
-                "build-safety-prompts",
-                "--train-output",
-                str(train_output),
-                "--eval-output",
-                str(eval_output),
-            ],
+        build_safety_prompts(
+            train_output=train_output,
+            eval_output=eval_output,
         )
     except ValueError as exc:
-        assert "Provide --metadata" in str(exc)
+        assert "Provide metadata" in str(exc)
     else:
         raise AssertionError("expected metadata requirement error")
 
@@ -298,7 +393,7 @@ def test_build_danbooru_safety_prompt_rows_uses_ratings_and_nsfw_tags(
     assert all("rating:" in row["prompt"] for row in rows)
 
 
-def test_build_safety_prompts_cli_from_danbooru_metadata(tmp_path: Path) -> None:
+def test_build_safety_prompts_from_danbooru_metadata(tmp_path: Path) -> None:
     metadata = tmp_path / "posts.jsonl"
     hair_tags = [
         "black_hair",
@@ -326,22 +421,13 @@ def test_build_safety_prompts_cli_from_danbooru_metadata(tmp_path: Path) -> None
     eval_output = tmp_path / "eval.jsonl"
     report_output = tmp_path / "report.json"
 
-    main(
-        [
-            "build-safety-prompts",
-            "--metadata",
-            str(metadata),
-            "--train-output",
-            str(train_output),
-            "--eval-output",
-            str(eval_output),
-            "--report-output",
-            str(report_output),
-            "--train-limit",
-            "4",
-            "--eval-limit",
-            "2",
-        ],
+    build_safety_prompts(
+        metadata=metadata,
+        train_output=train_output,
+        eval_output=eval_output,
+        report_output=report_output,
+        train_limit=4,
+        eval_limit=2,
     )
 
     train_rows = [json.loads(line) for line in train_output.read_text().splitlines()]

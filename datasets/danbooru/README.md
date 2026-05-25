@@ -19,3 +19,11 @@ The anatomy prompt build uses `metadata/posts.tar.gz` from
 `nyanko7/danbooru2023`. It does not require downloading the image tarballs.
 Image files are only needed for later positive-image manifests, crops,
 hard-negative mining, or reward calibration.
+
+Rebuild committed prompt manifests with:
+
+```bash
+python -m vrl.scripts.data.populate anime-prompts
+```
+
+The flat builder script lives at `vrl/scripts/data/danbooru.py`.

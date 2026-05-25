@@ -25,11 +25,5 @@ is used only for reporting.
 Rebuild the Danbooru-derived manifests with:
 
 ```bash
-python -m vrl.scripts.data.danbooru build-safety-prompts \
-  --download-danbooru-metadata \
-  --train-output datasets/danbooru/safety/train.jsonl \
-  --eval-output datasets/danbooru/safety/eval_baseline.jsonl \
-  --report-output datasets/danbooru/safety/report.json \
-  --train-limit 2000 \
-  --eval-limit 200
+python -m vrl.scripts.data.populate anime-safety-prompts
 ```
