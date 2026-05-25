@@ -155,7 +155,7 @@ def _predict2_collector_kwargs(cfg: DictConfig, examples: Any) -> dict[str, Any]
     _normalize_per_sample_reference_images(
         examples,
         manifest_path=Path(str(cfg.data.manifest)),
-        rollout_batch_size=int(cfg.trainer.rollout_batch_size),
+        rollout_batch_size=int(cfg.rollout.rollout_batch_size),
     )
     return {}
 

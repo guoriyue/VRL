@@ -33,6 +33,9 @@ class _NoOpCosmosSafetyChecker:
     def check_text_safety(self, _prompt: str) -> bool:
         return True
 
+    def check_video_safety(self, video: Any) -> Any:
+        return video
+
 
 def _load_pipeline_without_text_encoder(
     pipeline_cls: Any,
@@ -138,6 +141,7 @@ class CosmosPredict25Model(DiffusionModelBase):
 
     @classmethod
     def from_spec(cls, spec: Any) -> CosmosPredict25Model:
+        import diffusers.pipelines.cosmos.pipeline_cosmos2_5_predict as _predict_mod
         from diffusers import Cosmos2_5_PredictBasePipeline
 
         kwargs: dict[str, Any] = {"torch_dtype": spec.dtype}
@@ -152,10 +156,15 @@ class CosmosPredict25Model(DiffusionModelBase):
                 revision=revision,
             )
         else:
-            pipeline = Cosmos2_5_PredictBasePipeline.from_pretrained(
-                spec.model_name_or_path,
-                **kwargs,
-            )
+            orig_safety_checker = _predict_mod.CosmosSafetyChecker
+            _predict_mod.CosmosSafetyChecker = _NoOpCosmosSafetyChecker
+            try:
+                pipeline = Cosmos2_5_PredictBasePipeline.from_pretrained(
+                    spec.model_name_or_path,
+                    **kwargs,
+                )
+            finally:
+                _predict_mod.CosmosSafetyChecker = orig_safety_checker
         torch.set_grad_enabled(True)
         pipeline.set_progress_bar_config(disable=True)
         if hasattr(pipeline, "vae"):

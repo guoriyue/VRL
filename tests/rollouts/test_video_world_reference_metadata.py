@@ -2,9 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from omegaconf import OmegaConf
+
 from vrl.rollouts.collector.config import RolloutConfig
 from vrl.rollouts.collector.requests import RolloutEngineRequestBuilder
-from vrl.scripts.diffusion.cosmos.train import _normalize_per_sample_reference_images
+from vrl.scripts.diffusion.cosmos.train import (
+    _normalize_per_sample_reference_images,
+    _predict2_collector_kwargs,
+)
 from vrl.trainers.data import load_prompt_manifest
 from vrl.trainers.data.artifacts import resolve_prompt_example_artifacts
 
@@ -72,3 +77,24 @@ def test_cosmos_per_sample_reference_uses_vrl_data_root(monkeypatch, tmp_path: P
         (tmp_path / "video_world" / "references" / "ref.ppm").resolve(),
     )
     assert examples[0].metadata["reference_image"] == examples[0].reference_image
+
+
+def test_cosmos_predict2_collector_uses_rollout_batch_size_config(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    manifest = _write_reference_manifest(tmp_path)
+    monkeypatch.setenv("VRL_DATA_ROOT", str(tmp_path))
+    examples = load_prompt_manifest(manifest)
+    cfg = OmegaConf.create(
+        {
+            "cosmos": {"reference_mode": "per_sample"},
+            "data": {"manifest": manifest.as_posix()},
+            "rollout": {"rollout_batch_size": 1},
+        },
+    )
+
+    kwargs = _predict2_collector_kwargs(cfg, examples)
+
+    assert kwargs == {}
+    assert examples[0].metadata["reference_image"].endswith("ref.ppm")

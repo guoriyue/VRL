@@ -76,6 +76,7 @@ class VideoRewardArtifactStore:
                 "dtype": str(tensor.dtype),
                 "artifact_format": self.artifact_format,
                 "fps": _fps(metadata),
+                **_artifact_provenance(metadata),
             },
         )
         self._append_manifest(artifact)
@@ -163,6 +164,27 @@ def _policy_version(metadata: dict[str, Any]) -> int | None:
     if value is None:
         return None
     return int(value)
+
+
+def _artifact_provenance(metadata: dict[str, Any]) -> dict[str, Any]:
+    keys = (
+        "task_type",
+        "reference_image",
+        "reference_video",
+        "source",
+        "source_repo",
+        "source_split",
+        "source_episode",
+        "source_video",
+        "source_frame_index",
+        "decode_method",
+        "conditioning",
+    )
+    return {
+        key: metadata[key]
+        for key in keys
+        if key in metadata and metadata[key] is not None and str(metadata[key]).strip()
+    }
 
 
 __all__ = ["VideoRewardArtifactStore"]

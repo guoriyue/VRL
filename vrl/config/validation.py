@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -244,14 +245,58 @@ def validate_production_video_reward_config(cfg: DictConfig) -> None:
         )
 
     task_type = str(require(cfg, "data.task_type"))
-    if task_type != "text_to_video":
-        raise ValueError("production.video_reward requires data.task_type=text_to_video")
+    if task_type not in {"text_to_video", "video2world"}:
+        raise ValueError(
+            "production.video_reward requires data.task_type=text_to_video or video2world",
+        )
     for path_name in ("data.manifest", "data.eval_manifest", "data.source_report"):
         value = str(require(cfg, path_name)).strip()
         if not value:
             raise ValueError(f"config missing required field: {path_name}")
         if not Path(value).exists():
             raise ValueError(f"{path_name} does not exist: {value}")
+    if task_type == "video2world":
+        _validate_video_world_production_data(cfg)
+
+
+def _validate_video_world_production_data(cfg: DictConfig) -> None:
+    from vrl.trainers.data.artifacts import validate_source_backed_video_world_manifest_pair
+
+    data_root = str(OmegaConf.select(cfg, "data.artifact_data_root", default="") or "").strip()
+    kwargs = {"data_root": data_root} if data_root else {}
+    validate_source_backed_video_world_manifest_pair(
+        str(require(cfg, "data.manifest")),
+        str(require(cfg, "data.eval_manifest")),
+        **kwargs,
+    )
+    _validate_video_world_source_report(Path(str(require(cfg, "data.source_report"))))
+
+
+def _validate_video_world_source_report(path: Path) -> None:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    required_keys = {
+        "dataset",
+        "source",
+        "repo_id",
+        "source_split",
+        "decode_method",
+        "train_rows",
+        "eval_rows",
+        "train_manifest",
+        "eval_manifest",
+        "reference_dir",
+        "validation_summary",
+    }
+    missing = sorted(key for key in required_keys if key not in payload)
+    if missing:
+        raise ValueError(
+            f"data.source_report is missing Video2World provenance fields: {missing}",
+        )
+    if int(payload.get("train_rows") or 0) <= 0 or int(payload.get("eval_rows") or 0) <= 0:
+        raise ValueError("data.source_report must record non-empty train and eval rows")
+    validation_summary = payload.get("validation_summary")
+    if not isinstance(validation_summary, dict) or not validation_summary:
+        raise ValueError("data.source_report must include a non-empty validation_summary")
 
 
 def validate_data_config(cfg: DictConfig) -> None:

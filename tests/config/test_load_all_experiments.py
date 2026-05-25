@@ -6,6 +6,7 @@ instead of parametrizing the same assertion into dozens of collected tests.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -66,6 +67,7 @@ def test_experiments_are_grouped_by_model_family() -> None:
         "diffusion/anima_preview3/online_grpo_aesthetic",
         "diffusion/anima_preview3/online_grpo_anatomy",
         "diffusion/anima_preview3/online_grpo_aesthetic_nsfw_safety",
+        "diffusion/cosmos_predict2/online_grpo_v2w_reference",
         "diffusion/cosmos_predict2/online_grpo_video_reward",
         "diffusion/cosmos_predict2_5/online_nft_video_reward",
         "diffusion/sd3_5/online_grpo_geneval",
@@ -85,6 +87,8 @@ def test_experiments_use_dataset_groups_and_only_override_reward_weights() -> No
     inline_data = []
     inline_reward_kwargs = []
     allowed_reward_kwargs = {
+        "experiment/diffusion/cosmos_predict2/online_grpo_v2w_reference.yaml",
+        "experiment/diffusion/cosmos_predict2_5/online_nft_video_reward.yaml",
         "experiment/diffusion/wan_2_1/online_grpo_video_reward.yaml",
     }
     for path in EXPERIMENT_DIR.rglob("*.yaml"):
@@ -149,7 +153,14 @@ def test_algorithm_config_dispatches_representative_kinds() -> None:
 def test_cosmos_diffusion_nft_video_reward_validation_config() -> None:
     cfg = load_config("experiment/diffusion/cosmos_predict2_5/online_nft_video_reward")
 
+    validate_training_config(cfg)
+    assert cfg.data.task_type == "text_to_video"
+    assert cfg.data.manifest == "datasets/pickscore_sfw/train.txt"
+    assert cfg.data.eval_manifest == "datasets/pickscore_sfw/test.txt"
+    assert cfg.data.source_report == "datasets/pickscore_sfw/report.json"
+    assert cfg.model.use_lora is True
     assert cfg.reward.kwargs.video_reward.inference_runtime == "ray"
+    assert cfg.reward.kwargs.video_reward.artifact_format == "mp4"
     assert cfg.reward.kwargs.video_reward.artifact_dir == (
         f"{cfg.trainer.output_dir}/reward_artifacts"
     )
@@ -164,6 +175,99 @@ def test_cosmos_diffusion_nft_video_reward_validation_config() -> None:
     assert cfg.distributed.rollout.release_before_reward_model is True
     assert cfg.distributed.reward.release_after_score is True
     assert cfg.trainer.total_epochs == 1
+    assert cfg.production.video_reward.enabled is True
+
+
+def test_cosmos_v2w_reference_route_config() -> None:
+    cfg = load_config("experiment/diffusion/cosmos_predict2/online_grpo_v2w_reference")
+
+    validate_training_config(cfg)
+    assert cfg.data.task_type == "video2world"
+    assert cfg.data.manifest == "data/external/video_world/manifests/robot_train.jsonl"
+    assert cfg.data.eval_manifest == "data/external/video_world/manifests/robot_eval.jsonl"
+    assert cfg.data.source_report == "data/external/video_world/robot_report.json"
+    assert cfg.cosmos.reference_mode == "per_sample"
+    assert cfg.model.reference_image == ""
+    assert cfg.reward.kwargs.video_reward.inference_runtime == "ray"
+    assert cfg.reward.kwargs.video_reward.artifact_format == "mp4"
+    assert cfg.reward.kwargs.video_reward.reward_name == "KlingTeam/VideoReward@main"
+    assert "model_factory" not in cfg.reward.kwargs.video_reward.worker_config
+    assert cfg.distributed.rollout.release_before_reward_model is True
+
+
+def test_cosmos_v2w_production_validation_accepts_source_backed_data(
+    tmp_path: Path,
+) -> None:
+    data_root = tmp_path / "external"
+    reference = data_root / "video_world" / "references" / "ref.ppm"
+    reference.parent.mkdir(parents=True, exist_ok=True)
+    reference.write_text("P3\n1 1\n255\n0 0 0\n", encoding="utf-8")
+    metadata = {
+        "source": "droid",
+        "source_repo": "lerobot/droid_100",
+        "source_split": "main",
+        "source_episode": "episode_train",
+        "source_video": "videos/camera/chunk-000/file-000.mp4",
+        "source_frame_index": 0,
+        "decode_method": "pyav_http_first_frame",
+        "conditioning": "first_frame",
+    }
+    train = tmp_path / "robot_train.jsonl"
+    eval_manifest = tmp_path / "robot_eval.jsonl"
+    train.write_text(
+        json.dumps(
+            {
+                "prompt": "The robot arm moves toward the cup.",
+                "reference_image": "video_world/references/ref.ppm",
+                "metadata": metadata,
+            },
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    eval_metadata = dict(metadata, source_episode="episode_eval")
+    eval_manifest.write_text(
+        json.dumps(
+            {
+                "prompt": "The robot arm moves away from the cup.",
+                "reference_image": "video_world/references/ref.ppm",
+                "metadata": eval_metadata,
+            },
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    report = tmp_path / "robot_report.json"
+    report.write_text(
+        json.dumps(
+            {
+                "dataset": "video_world_bridge",
+                "source": "droid",
+                "repo_id": "lerobot/droid_100",
+                "source_split": "main",
+                "decode_method": "pyav_http_first_frame",
+                "train_rows": 1,
+                "eval_rows": 1,
+                "train_manifest": train.as_posix(),
+                "eval_manifest": eval_manifest.as_posix(),
+                "reference_dir": reference.parent.as_posix(),
+                "validation_summary": {"row_count": 1},
+            },
+        ),
+        encoding="utf-8",
+    )
+    cfg = load_config(
+        "experiment/diffusion/cosmos_predict2/online_grpo_v2w_reference",
+        overrides=[
+            "production.video_reward.enabled=true",
+            f"data.manifest={train.as_posix()}",
+            f"data.eval_manifest={eval_manifest.as_posix()}",
+            f"data.source_report={report.as_posix()}",
+            f"data.artifact_data_root={data_root.as_posix()}",
+        ],
+    )
+
+    validate_training_config(cfg)
 
 
 def test_wan_video_reward_production_config() -> None:

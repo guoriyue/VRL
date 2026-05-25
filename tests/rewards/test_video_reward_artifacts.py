@@ -16,7 +16,15 @@ def _rollout(output: torch.Tensor) -> RewardRollout:
     return RewardRollout(
         request=None,
         trajectory=RewardTrajectory(prompt="prompt", seed=0, steps=[], output=output),
-        metadata={"policy_version": 4, "sample_ids": ["sample-x"], "fps": 8},
+        metadata={
+            "policy_version": 4,
+            "sample_ids": ["sample-x"],
+            "fps": 8,
+            "task_type": "video2world",
+            "reference_image": "/tmp/reference.png",
+            "source_repo": "lerobot/droid_100",
+            "source_episode": "000001",
+        },
     )
 
 
@@ -35,6 +43,8 @@ def test_video_artifact_store_writes_tensor_and_manifest(tmp_path: Path) -> None
     rows = [json.loads(line) for line in (tmp_path / "manifest.jsonl").read_text().splitlines()]
     assert rows[0]["artifact_id"] == artifact.artifact_id
     assert rows[0]["metadata"]["artifact_format"] == "tensor"
+    assert rows[0]["metadata"]["reference_image"] == "/tmp/reference.png"
+    assert rows[0]["metadata"]["source_repo"] == "lerobot/droid_100"
 
 
 def test_video_artifact_store_writes_mp4_for_reward_models(tmp_path: Path) -> None:

@@ -27,6 +27,7 @@ from vrl.scripts.data.common import (
     write_jsonl,
     write_report,
 )
+from vrl.trainers.data.artifacts import validate_source_backed_video_world_manifest_pair
 
 
 def register(subparsers: Any) -> None:
@@ -71,16 +72,23 @@ def build_video_world_rows(
             continue
         ref_path = reference_dir / f"{source}_{episode_id}_first.png"
         _write_png(ref_path, image)
+        source_metadata = {
+            key: value
+            for key, value in dict(episode.get("metadata") or {}).items()
+            if value is not None and str(value).strip()
+        }
+        metadata = {
+            "source": source,
+            "source_episode": episode_id,
+            "conditioning": conditioning,
+            **source_metadata,
+        }
         rows.append(
             {
                 "prompt": prompt,
                 "reference_image": os.path.relpath(ref_path, data_root),
                 "task_type": "video2world",
-                "metadata": {
-                    "source": source,
-                    "source_episode": episode_id,
-                    "conditioning": conditioning,
-                },
+                "metadata": metadata,
             },
         )
     return rows
@@ -165,6 +173,10 @@ def _iter_lerobot_v21(
         return
 
     base = firsts[0][1]
+    firsts_by_episode = {
+        episode: {"global_index": idx, "task_index": task_index}
+        for (episode, idx, task_index) in firsts
+    }
     targets = {idx - base: (episode, task_index) for (episode, idx, task_index) in firsts}
     rel = video_tmpl.format(video_key=video_key, chunk_index=0, file_index=0)
     url = f"https://huggingface.co/datasets/{repo_id}/resolve/main/{rel}"
@@ -177,6 +189,17 @@ def _iter_lerobot_v21(
                     "image": Image.fromarray(frame),
                     "prompt": prompt,
                     "episode_id": f"{episode:06d}",
+                    "metadata": {
+                        "source_repo": repo_id,
+                        "source_split": "main",
+                        "source_video": rel,
+                        "source_frame_index": 0,
+                        "source_global_index": firsts_by_episode[episode]["global_index"],
+                        "source_task_index": task_index,
+                        "source_camera": video_key,
+                        "decode_method": "pyav_http_first_frame",
+                        "codebase_version": str(info.get("codebase_version", "v2.1")),
+                    },
                 }
 
 
@@ -221,6 +244,15 @@ def _iter_lerobot_v20(
                 "image": Image.fromarray(frame),
                 "prompt": prompt,
                 "episode_id": f"{episode:06d}",
+                "metadata": {
+                    "source_repo": repo_id,
+                    "source_split": "main",
+                    "source_video": rel,
+                    "source_frame_index": 0,
+                    "source_camera": video_key,
+                    "decode_method": "pyav_http_first_frame",
+                    "codebase_version": str(info.get("codebase_version", "v2.0")),
+                },
             }
 
 
@@ -290,11 +322,22 @@ def _cmd_video_world_bridge(args: argparse.Namespace) -> None:
     if eval_rows:
         write_jsonl(eval_manifest, eval_rows)
 
+    validation_summary: dict[str, Any] = {}
+    if eval_rows:
+        validation = validate_source_backed_video_world_manifest_pair(
+            train_manifest,
+            eval_manifest,
+            data_root=data_root,
+        )
+        validation_summary = validation.to_dict()
+
     report = {
         "dataset": "video_world_bridge",
         "source": args.source,
         "repo_id": args.repo_id,
         "camera": args.camera,
+        "source_split": "main",
+        "decode_method": "pyav_http_first_frame",
         "episode_count": len(rows),
         "train_rows": len(train_rows),
         "eval_rows": len(eval_rows),
@@ -302,6 +345,7 @@ def _cmd_video_world_bridge(args: argparse.Namespace) -> None:
         "train_manifest": train_manifest.as_posix(),
         "eval_manifest": eval_manifest.as_posix() if eval_rows else "",
         "reference_dir": reference_dir.as_posix(),
+        "validation_summary": validation_summary,
         "license_note": (
             "Respect the source dataset license (BridgeData V2 / DROID). "
             "Reference frames live under data/external and are not committed to git."

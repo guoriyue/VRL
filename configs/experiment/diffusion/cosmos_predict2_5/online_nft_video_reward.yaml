@@ -7,7 +7,7 @@ defaults:
   - /sampling/video/512p_93f
   - /sampling/denoise/10_step_no_cfg
   - /reward/video_reward
-  - /dataset/ocr
+  - /dataset/video_t2v_pickscore_sfw
 
 actor:
   optim:
@@ -35,6 +35,16 @@ trainer:
   total_epochs: 1
   save_freq: 20
   log_freq: 1
+
+reward:
+  kwargs:
+    video_reward:
+      artifact_format: mp4
+
+production:
+  video_reward:
+    enabled: true
+    report_path: outputs/cosmos_world_model_production_report.md
 
 eval:
   prompts_file: datasets/drawbench/eval_64.txt

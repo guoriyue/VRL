@@ -9,6 +9,7 @@ from vrl.trainers.data.artifacts import (
     ArtifactManifestError,
     validate_artifact_manifest,
     validate_artifact_manifest_pair,
+    validate_source_backed_video_world_manifest_pair,
 )
 
 
@@ -20,6 +21,19 @@ def _write_ppm(path: Path) -> None:
 def _write_jsonl(path: Path, row: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+
+def _source_backed_metadata(episode: str) -> dict:
+    return {
+        "source": "droid",
+        "source_repo": "lerobot/droid_100",
+        "source_split": "main",
+        "source_episode": episode,
+        "source_video": "videos/camera/chunk-000/file-000.mp4",
+        "source_frame_index": 0,
+        "decode_method": "pyav_http_first_frame",
+        "conditioning": "first_frame",
+    }
 
 
 def test_video_world_manifests_validate_reference_artifacts(tmp_path: Path) -> None:
@@ -56,6 +70,59 @@ def test_video_world_manifests_validate_reference_artifacts(tmp_path: Path) -> N
     assert report.eval_manifest_path is not None
     assert report.source_episode_overlap == ()
     assert report.warnings == ()
+
+
+def test_source_backed_video_world_manifest_requires_provenance(tmp_path: Path) -> None:
+    data_root = tmp_path / "external"
+    _write_ppm(data_root / "video_world" / "references" / "ref.ppm")
+    train_manifest = tmp_path / "v2w_train.jsonl"
+    eval_manifest = tmp_path / "v2w_eval.jsonl"
+    _write_jsonl(
+        train_manifest,
+        {
+            "prompt": "The robot arm moves toward the cup.",
+            "reference_image": "video_world/references/ref.ppm",
+            "metadata": _source_backed_metadata("episode_train"),
+        },
+    )
+    _write_jsonl(
+        eval_manifest,
+        {
+            "prompt": "The robot arm moves away from the cup.",
+            "reference_image": "video_world/references/ref.ppm",
+            "metadata": _source_backed_metadata("episode_eval"),
+        },
+    )
+
+    report = validate_source_backed_video_world_manifest_pair(
+        train_manifest,
+        eval_manifest,
+        data_root=data_root,
+    )
+
+    assert report.row_count == 1
+    assert report.source_episode_overlap == ()
+
+
+def test_source_backed_video_world_manifest_rejects_placeholder_rows(tmp_path: Path) -> None:
+    data_root = tmp_path / "external"
+    _write_ppm(data_root / "video_world" / "references" / "ref.ppm")
+    train_manifest = tmp_path / "v2w_train.jsonl"
+    eval_manifest = tmp_path / "v2w_eval.jsonl"
+    row = {
+        "prompt": "The robot arm moves toward the cup.",
+        "reference_image": "video_world/references/ref.ppm",
+        "metadata": {"source": "droid", "source_episode": "episode_train"},
+    }
+    _write_jsonl(train_manifest, row)
+    _write_jsonl(eval_manifest, row)
+
+    with pytest.raises(ArtifactManifestError, match=r"metadata\.source_repo is required"):
+        validate_source_backed_video_world_manifest_pair(
+            train_manifest,
+            eval_manifest,
+            data_root=data_root,
+        )
 
 
 def test_video_world_source_episode_overlap_is_reported(tmp_path: Path) -> None:

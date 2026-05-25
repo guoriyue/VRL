@@ -44,7 +44,7 @@ python -m vrl.scripts.data.populate video-world-bridge --repo-id lerobot/droid_1
 Example produced row:
 
 ```json
-{"prompt":"Put the marker in the pot","reference_image":"video_world/references/droid_000000_first.png","task_type":"video2world","metadata":{"source":"droid","source_episode":"000000","conditioning":"first_frame"}}
+{"prompt":"Put the marker in the pot","reference_image":"video_world/references/droid_000000_first.png","task_type":"video2world","metadata":{"source":"droid","source_repo":"lerobot/droid_100","source_split":"main","source_episode":"000000","source_video":"videos/observation.images.exterior_image_1_left/chunk-000/file-000.mp4","source_frame_index":0,"decode_method":"pyav_http_first_frame","conditioning":"first_frame"}}
 ```
 
 Needs `pyarrow`, `av`, `huggingface_hub`, `pillow` (no `lerobot` dependency). v1

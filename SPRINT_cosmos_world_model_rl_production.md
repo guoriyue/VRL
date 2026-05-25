@@ -534,16 +534,16 @@ test -d outputs/<cosmos-run>/checkpoint-final
 Local files:
 
 ```text
-/home/mingfeiguo/Desktop/VRL/vrl/scripts/data/video_world.py
-/home/mingfeiguo/Desktop/VRL/docs/papers/cosmos_predict2_5_world_simulation_with_video_foundation_models_for_physical_ai_2511.00062v2.pdf
-/home/mingfeiguo/Desktop/VRL/vrl/trainers/data/prompts.py
-/home/mingfeiguo/Desktop/VRL/vrl/rewards/functions/video_reward.py
-/home/mingfeiguo/Desktop/VRL/vrl/rewards/models/kling_video_reward.py
-/home/mingfeiguo/Desktop/VRL/vrl/rewards/models/KLING_VIDEO_REWARD_NOTICE.md
-/home/mingfeiguo/Desktop/VRL/vrl/rewards/ray/runtime.py
-/home/mingfeiguo/Desktop/VRL/configs/reward/video_reward.yaml
-/home/mingfeiguo/Desktop/VRL/configs/experiment/diffusion/cosmos_predict2/online_grpo_video_reward.yaml
-/home/mingfeiguo/Desktop/VRL/configs/experiment/diffusion/cosmos_predict2_5/online_nft_video_reward.yaml
+/home/mingfeiguo/Desktop/vrl2/VRL/vrl/scripts/data/video_world.py
+/home/mingfeiguo/Desktop/vrl2/VRL/docs/papers/cosmos_predict2_5_world_simulation_with_video_foundation_models_for_physical_ai_2511.00062v2.pdf
+/home/mingfeiguo/Desktop/vrl2/VRL/vrl/trainers/data/prompts.py
+/home/mingfeiguo/Desktop/vrl2/VRL/vrl/rewards/functions/video_reward.py
+/home/mingfeiguo/Desktop/vrl2/VRL/vrl/rewards/models/kling_video_reward.py
+/home/mingfeiguo/Desktop/vrl2/VRL/vrl/rewards/models/KLING_VIDEO_REWARD_NOTICE.md
+/home/mingfeiguo/Desktop/vrl2/VRL/vrl/rewards/ray/runtime.py
+/home/mingfeiguo/Desktop/vrl2/VRL/configs/reward/video_reward.yaml
+/home/mingfeiguo/Desktop/vrl2/VRL/configs/experiment/diffusion/cosmos_predict2/online_grpo_video_reward.yaml
+/home/mingfeiguo/Desktop/vrl2/VRL/configs/experiment/diffusion/cosmos_predict2_5/online_nft_video_reward.yaml
 ```
 
 External references:

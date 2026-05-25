@@ -14,6 +14,16 @@ from vrl.trainers.data.prompts import PromptExample, load_prompt_manifest
 DATA_ROOT_ENV = "VRL_DATA_ROOT"
 DEFAULT_ARTIFACT_FIELDS = ("reference_image", "reference_video", "references")
 IMAGE_SUFFIXES = {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".ppm", ".webp"}
+SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS = (
+    "source",
+    "source_repo",
+    "source_split",
+    "source_episode",
+    "source_video",
+    "source_frame_index",
+    "decode_method",
+    "conditioning",
+)
 
 
 class ArtifactManifestError(ValueError):
@@ -175,6 +185,7 @@ def validate_artifact_manifest(
     data_root: str | Path | None = None,
     artifact_fields: Sequence[str] = DEFAULT_ARTIFACT_FIELDS,
     required_artifact_fields: Sequence[str] = (),
+    required_metadata_fields: Sequence[str] = (),
     allow_absolute_paths: bool = False,
     require_readable: bool = True,
     reject_metadata_domain: bool = True,
@@ -193,6 +204,12 @@ def validate_artifact_manifest(
                 f"{path}: row {row_index} metadata.domain is reserved; "
                 "use metadata.source or metadata.dataset instead",
             )
+        for field_name in required_metadata_fields:
+            value = metadata.get(field_name)
+            if value is None or str(value).strip() == "":
+                raise ArtifactManifestError(
+                    f"{path}: row {row_index} metadata.{field_name} is required",
+                )
         for field_name in required_artifact_fields:
             if not _artifact_values(example, field_name):
                 raise ArtifactManifestError(
@@ -265,6 +282,24 @@ def validate_artifact_manifest_pair(
     )
 
 
+def validate_source_backed_video_world_manifest_pair(
+    train_manifest: str | Path,
+    eval_manifest: str | Path,
+    *,
+    data_root: str | Path | None = None,
+) -> ArtifactManifestReport:
+    """Validate real Video2World manifests and first-frame reference provenance."""
+
+    return validate_artifact_manifest_pair(
+        train_manifest,
+        eval_manifest,
+        data_root=data_root,
+        artifact_fields=("reference_image",),
+        required_artifact_fields=("reference_image",),
+        required_metadata_fields=SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS,
+    )
+
+
 def write_manifest_report(report: ArtifactManifestReport, path: str | Path) -> None:
     """Write a validation report as stable JSON."""
 
@@ -322,6 +357,7 @@ def _assert_readable(path: Path, *, manifest_path: Path, row_index: int) -> None
 
 __all__ = [
     "DATA_ROOT_ENV",
+    "SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS",
     "ArtifactManifestError",
     "ArtifactManifestReport",
     "ResolvedArtifact",
@@ -331,5 +367,6 @@ __all__ = [
     "resolve_prompt_example_artifacts",
     "validate_artifact_manifest",
     "validate_artifact_manifest_pair",
+    "validate_source_backed_video_world_manifest_pair",
     "write_manifest_report",
 ]
