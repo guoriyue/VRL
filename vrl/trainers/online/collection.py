@@ -20,8 +20,8 @@ async def _release_collector_runtime_memory(collector: Any) -> None:
 def _collector_runtime_requires_driver_model_offload(collector: Any) -> bool:
     try:
         runtime = collector.runtime
-    except Exception:
-        runtime = getattr(collector, "_runtime", None)
+    except AttributeError:
+        runtime = None
     return bool(getattr(runtime, "requires_driver_model_offload", False))
 
 

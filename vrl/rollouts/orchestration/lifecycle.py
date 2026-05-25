@@ -115,8 +115,8 @@ class RolloutLifecycle:
     def _collector_runtime(self) -> Any | None:
         try:
             return self.collector.runtime
-        except Exception:
-            return getattr(self.collector, "_runtime", None)
+        except AttributeError:
+            return None
 
     def _runtime_policy_version(self, *, default: int | None) -> int | None:
         runtime = self._collector_runtime()
