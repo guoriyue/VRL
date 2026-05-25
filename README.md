@@ -146,14 +146,48 @@ keep raw checkpoints and full generated artifacts under `outputs/`.
 
 - `docs/training_examples/sd3_5_ocr_grpo/`: SD3.5 OCR GRPO qualitative result.
 
+## How training works (CEA loop)
 
+The online trainer runs a Collector → Evaluator → Algorithm pipeline:
+`collect → evaluate → advantage → loss → backward → step`.
 
-  1. Executor 调用 family model 的 generation 能力，生成图片/视频/token
-  2. TrajectoryBatch 记录 rollout 过程
-  3. Reward 给分
-  4. Evaluator 调用 family model 的 replay_forward，重看旧 trajectory
-  5. ReplayResult 给出当前模型 replay 的 raw output
-  6. Evaluator 用 ReplayResult + old_log_prob/mask/ref 得到 SegmentSignal
-  7. TrajectorySignalBatch 交给 Algorithm
-  8. Algorithm 算 loss
-  9. Trainer 更新模型
+1. The generation **Executor** drives a family model to produce images / video / tokens.
+2. A **TrajectoryBatch** records the rollout.
+3. The **Reward** scores it (see Reward layers below).
+4. The **Evaluator** replays the old trajectory through the current model (`replay_forward`).
+5. **ReplayResult** holds the current model's raw replay output.
+6. The Evaluator combines ReplayResult + old log-probs / mask / ref into a **SegmentSignal**.
+7. The **TrajectorySignalBatch** goes to the **Algorithm**.
+8. The Algorithm computes the loss.
+9. The **Trainer** updates the model; weights then sync back to the rollout worker.
+
+## Reward layers
+
+Reward scoring is a decoupled pipeline so inference can run in-process or on a Ray pool:
+
+- **RewardRollout** (`vrl/rewards/types.py`) — the data being scored.
+- **RewardScorer** (`vrl/rollouts/collector/rewards.py`) — collector-side adapter: engine
+  output → `RewardRollout` → device tensor.
+- **RewardFunction** (`vrl/rewards/base.py`) — the reward objective (name, `score_key`,
+  artifact build); aesthetic / CLIP / PickScore / OCR / … subclass it.
+- **RewardInferenceRuntime** (`vrl/rewards/inference.py`) — local vs Ray transport that runs
+  the scoring **RewardModel**.
+
+## Repository layout
+
+```text
+vrl/
+  models/      diffusion (sd3_5, wan_2_1, cosmos) + ar (janus_pro, nextstep_1) families
+  generation/  pipeline executors + Ray generation runtime
+  rollouts/    collector, orchestration (schedule modes), family registry
+  rewards/     reward objectives, models, local/ray transport
+  algorithms/  GRPO, flow-matching, DPO, DiffusionNFT
+  trainers/    online (CEA) + offline trainers, weight sync, checkpointing
+  trajectory/  trajectory build / resolve / storage
+  config/      OmegaConf loading + Pydantic typed schema (schema.py, validation.py)
+  nn/ ray/ math/ utils/    shared kernels, Ray plumbing, helpers
+  scripts/     train.py (vrl-train) + data/populate.py (dataset prep)
+configs/    layered YAML: base / model / reward / dataset / experiment
+datasets/   committed prompt datasets + per-dataset build scripts
+docs/       architecture notes + training_examples/
+```
