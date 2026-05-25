@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from vrl.rewards.base import RewardFunction
-from vrl.rewards.models.nsfw_safety_model import NSFWSafetyRewardModel
+from vrl.rewards.models.nsfw_safety import NSFWSafetyRewardModel
 from vrl.rewards.runtime import LocalRewardRuntime
 
 

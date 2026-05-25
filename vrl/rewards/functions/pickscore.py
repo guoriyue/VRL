@@ -7,7 +7,7 @@ from typing import Any
 from vrl.rewards.base import RewardFunction
 from vrl.rewards.runtime import make_reward_runtime
 
-_MODEL_FACTORY = "vrl.rewards.models.pickscore_model:pickscore_reward_model"
+_MODEL_FACTORY = "vrl.rewards.models.pickscore:pickscore_reward_model"
 
 
 class PickScoreReward(RewardFunction):

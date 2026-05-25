@@ -7,7 +7,7 @@ from typing import Any
 from vrl.rewards.base import RewardFunction
 from vrl.rewards.runtime import make_reward_runtime
 
-_MODEL_FACTORY = "vrl.rewards.models.aesthetic_model:aesthetic_reward_model"
+_MODEL_FACTORY = "vrl.rewards.models.aesthetic:aesthetic_reward_model"
 
 
 class AestheticReward(RewardFunction):

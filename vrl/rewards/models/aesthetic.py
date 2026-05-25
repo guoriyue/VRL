@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from vrl.rewards.models.torch_reward_model import TorchRewardModel
+from vrl.rewards.models.base import TorchRewardModel
 
 
 class AestheticRewardModel(TorchRewardModel):

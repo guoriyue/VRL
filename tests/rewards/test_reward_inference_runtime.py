@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import sys
-import types
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -161,46 +158,108 @@ def test_kling_video_reward_checkpoint_path_resolves_to_repo_root(tmp_path: Path
     assert resolved == root
 
 
-def test_kling_video_reward_can_force_videoalign_sdpa(monkeypatch: pytest.MonkeyPatch) -> None:
-    from vrl.rewards.models.videoalign_compat import patch_videoalign_disable_flash_attn2
+def test_kling_video_reward_requires_materialized_artifact_path() -> None:
+    from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
 
-    module_name = "unit_videoalign_inference"
-    module = types.ModuleType(module_name)
+    def _reward(*args, **kwargs):
+        raise AssertionError("file-path validation should run before model scoring")
 
-    def _create_model_and_processor(*, training_args, **kwargs):
-        del kwargs
-        return training_args.disable_flash_attn2
+    model = KlingVideoRewardModel.__new__(KlingVideoRewardModel)
+    model._reward = _reward
+    model.use_norm = True
+    artifact = RewardInferenceArtifact(
+        artifact_id="a0",
+        path="",
+        media_type="video",
+        media=object(),
+        prompt="prompt",
+    )
+    request = RewardInferenceRequest(
+        request_id="req",
+        artifacts=(artifact,),
+        reward_name="video_reward",
+        score_key="overall_reward",
+    )
 
-    class _Inference:
-        pass
-
-    _Inference.__module__ = module_name
-    module.create_model_and_processor = _create_model_and_processor
-    monkeypatch.setitem(sys.modules, module_name, module)
-
-    patch_videoalign_disable_flash_attn2(_Inference)
-
-    training_args = SimpleNamespace(disable_flash_attn2=False)
-    assert module.create_model_and_processor(training_args=training_args) is True
-    assert training_args.disable_flash_attn2 is True
+    with pytest.raises(ValueError, match="no materialized path"):
+        model(artifact=artifact, request=request)
 
 
-def test_kling_video_reward_remaps_videoalign_qwen2vl_checkpoint_keys() -> None:
-    from vrl.rewards.models.videoalign_compat import remap_videoalign_qwen2vl_key
+def test_kling_video_reward_builds_repo_owned_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vrl.rewards.models import kling_video_reward as kling_reward
+    from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
 
-    assert remap_videoalign_qwen2vl_key(
+    captured = {}
+
+    class _FakeModel:
+        def eval(self):
+            captured["model_eval"] = True
+
+        def to(self, device):
+            captured["model_device"] = device
+            return self
+
+    def _fake_create_model_and_processor(model_config, peft_config, *, dtype, disable_flash_attn2):
+        del model_config, peft_config
+        captured.update(
+            {
+                "dtype": dtype,
+                "disable_flash_attn2": disable_flash_attn2,
+            },
+        )
+        return _FakeModel(), object()
+
+    def _fake_load_checkpoint(model, checkpoint_dir, checkpoint_step):
+        captured.update(
+            {
+                "checkpoint_dir": checkpoint_dir,
+                "checkpoint_step": checkpoint_step,
+            },
+        )
+        return model, "final"
+
+    root = _video_reward_root(tmp_path)
+    monkeypatch.setattr(kling_reward, "_create_model_and_processor", _fake_create_model_and_processor)
+    monkeypatch.setattr(kling_reward, "load_kling_video_reward_checkpoint", _fake_load_checkpoint)
+
+    KlingVideoRewardModel(
+        {
+            "model_path": str(root),
+            "device": "cpu",
+            "dtype": "bfloat16",
+            "disable_flash_attn2": True,
+        },
+    )
+
+    assert captured == {
+        "dtype": kling_reward.torch.bfloat16,
+        "disable_flash_attn2": True,
+        "checkpoint_dir": root,
+        "checkpoint_step": -1,
+        "model_eval": True,
+        "model_device": "cpu",
+    }
+
+
+def test_kling_video_reward_remaps_qwen2vl_checkpoint_keys() -> None:
+    from vrl.rewards.models.kling_video_reward import _remap_qwen2vl_key
+
+    assert _remap_qwen2vl_key(
         "base_model.model.visual.patch_embed.proj.weight",
     ) == "base_model.model.model.visual.patch_embed.proj.weight"
-    assert remap_videoalign_qwen2vl_key(
+    assert _remap_qwen2vl_key(
         "base_model.model.model.layers.0.self_attn.q_proj.base_layer.weight",
     ) == (
         "base_model.model.model.language_model.layers.0.self_attn.q_proj."
         "base_layer.weight"
     )
-    assert remap_videoalign_qwen2vl_key(
+    assert _remap_qwen2vl_key(
         "base_model.model.model.embed_tokens.weight",
     ) == "base_model.model.model.language_model.embed_tokens.weight"
-    assert remap_videoalign_qwen2vl_key(
+    assert _remap_qwen2vl_key(
         "base_model.model.lm_head.weight",
     ) == "base_model.model.lm_head.weight"
 

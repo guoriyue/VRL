@@ -6,7 +6,7 @@ from vrl.rewards.functions.pickscore import PickScoreReward
 from vrl.rewards.ray.runtime import RayRewardRuntime
 from vrl.rewards.runtime import LocalRewardRuntime, make_reward_runtime
 
-_FACTORY = "vrl.rewards.models.pickscore_model:pickscore_reward_model"
+_FACTORY = "vrl.rewards.models.pickscore:pickscore_reward_model"
 
 
 def test_make_reward_runtime_local() -> None:

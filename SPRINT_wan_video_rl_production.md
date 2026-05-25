@@ -60,9 +60,15 @@ vrl/trainers/data/prompts.py
 ```text
 configs/reward/video_reward.yaml
 vrl/rewards/functions/video_reward.py
+vrl/rewards/models/kling_video_reward.py
 vrl/rewards/ray/runtime.py
 vrl/rewards/ray/worker.py
 ```
+
+Kling VideoReward inference is repo-owned in `vrl/rewards/models/kling_video_reward.py`;
+production runs must not require an external VideoAlign checkout on `PYTHONPATH`
+or a git submodule. The narrowed implementation keeps only the inference path
+required for `KlingTeam/VideoReward`.
 
 ## 3. Production Route
 
@@ -312,11 +318,13 @@ test -d outputs/<wan-run>/checkpoint-final
 Local files:
 
 ```text
-/home/mingfeiguo/Desktop/wm-infra/vrl/trainers/data/prompts.py
-/home/mingfeiguo/Desktop/wm-infra/vrl/rewards/functions/video_reward.py
-/home/mingfeiguo/Desktop/wm-infra/vrl/rewards/ray/runtime.py
-/home/mingfeiguo/Desktop/wm-infra/configs/reward/video_reward.yaml
-/home/mingfeiguo/Desktop/wm-infra/configs/experiment/diffusion/wan_2_1/online_grpo_ocr.yaml
+/home/mingfeiguo/Desktop/VRL/vrl/trainers/data/prompts.py
+/home/mingfeiguo/Desktop/VRL/vrl/rewards/functions/video_reward.py
+/home/mingfeiguo/Desktop/VRL/vrl/rewards/models/kling_video_reward.py
+/home/mingfeiguo/Desktop/VRL/vrl/rewards/models/KLING_VIDEO_REWARD_NOTICE.md
+/home/mingfeiguo/Desktop/VRL/vrl/rewards/ray/runtime.py
+/home/mingfeiguo/Desktop/VRL/configs/reward/video_reward.yaml
+/home/mingfeiguo/Desktop/VRL/configs/experiment/diffusion/wan_2_1/online_grpo_video_reward.yaml
 ```
 
 External references:

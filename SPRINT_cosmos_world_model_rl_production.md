@@ -24,6 +24,9 @@ vrl/scripts/diffusion/cosmos/train.py  # reference_image resolution rules
 - Cosmos Predict2.5 DiffusionNFT 是 Text2World world-generation route，必须保持 `model.use_lora=true`。
 - Cosmos 验收重点是 reference consistency、motion quality、visual quality、physical plausibility。
 - 完成标准是 production run artifact、非平 reward、权重变化、base-vs-trained eval，不是单纯 config load。
+- "Production" means source-backed data, real reward scoring, auditable artifacts, and
+  acceptance evidence. Do not add `_production` to config filenames just to signal intent.
+  Stable route names are preferred; production readiness is proven by the run report.
 
 ## 1. Upstream Dataset Dependency
 
@@ -36,7 +39,14 @@ datasets/video_world/references/
 source-backed text-conditioned world/video train/eval manifests
 ```
 
-`v2w_train.jsonl` / `v2w_eval.jsonl` are not present in the repo yet. Add the production dataset config only after a source-backed importer creates and validates those manifests.
+`v2w_train.jsonl` / `v2w_eval.jsonl` are not present in the repo yet. Add the dataset
+config only after a source-backed importer creates and validates those manifests.
+
+V2W dataset acceptance is intentionally strict. The manifest is not "real" merely because
+it has prompts and image paths. It counts only if every committed row is traceable to an
+approved upstream source, the referenced first-frame image is decoded from that source
+rather than generated or hand-authored, and the dataset report records the upstream repo,
+split, episode/video id, frame index, decoding method, row count, and validation summary.
 
 本 sprint 不重新定义：
 
@@ -83,8 +93,9 @@ episodes，跨 file 全量是后续）；v2.0 每 episode 独立 mp4，`--limit`
 路径依赖网络，无 unit test（transform 有离线 test，fetch 靠真实 run 验证）。
 
 注意：本项只解决 **dataset** 侧。真实 Cosmos training run 仍另外依赖 reward
-backend —— `VideoVLMRewardInference` 当前 import 不到（见 §3 reward contract），
-那是独立 open 项。
+backend；Kling VideoReward inference is repo-owned under `vrl/rewards/models`,
+so this route must not depend on an external VideoAlign checkout on `PYTHONPATH`
+or a git submodule.
 
 ## 2. Current Repo Reality
 
@@ -134,7 +145,7 @@ vrl/rewards/ray/worker.py
 driver: VideoReward 负责把 rollout video materialize 成 artifact，并发给 Ray reward actors。
 worker: RewardModelWorker 加载 KlingVideoRewardModel；内部 model_factory 由 reward_name 派生。
 public YAML: 只暴露 reward_name、score_key、media_type、artifact/debug dirs 和简短 worker_config。
-legacy fields: backend / endpoint URLs / scorer / import_path / model_factory 都不是 public production config。
+legacy fields: backend / endpoint URLs / scorer / import_path / model_factory 都不是 public route config。
 ```
 
 `reward_name=KlingTeam/VideoReward@main` 是 public model selector。Kling loader
@@ -149,7 +160,7 @@ text_alignment
 
 ## 3. Production Routes
 
-### 3.1 Cosmos Predict2 Video2World Production RL
+### 3.1 Cosmos Predict2 Video2World Route
 
 Goal:
 
@@ -200,11 +211,13 @@ reward:
 
 Production guard:
 
+- The V2W manifest must be source-backed; placeholder, synthetic, generated, or
+  hand-authored reference images do not satisfy this sprint.
 - Training must fail if all rows lack `reference_image`.
 - Training must fail if referenced image files are missing.
 - Debug report must record active reference paths.
 
-### 3.2 Cosmos Predict2.5 DiffusionNFT Production RL
+### 3.2 Cosmos Predict2.5 DiffusionNFT Route
 
 Goal:
 
@@ -216,7 +229,7 @@ Goal:
 Required experiment:
 
 ```text
-configs/experiment/diffusion/cosmos_predict2_5/online_nft_video_reward_production.yaml
+configs/experiment/diffusion/cosmos_predict2_5/online_nft_video_reward.yaml
 ```
 
 Production defaults after source-backed dataset import:
@@ -265,13 +278,17 @@ DiffusionNFT requires default + previous adapters.
 
 ## 4. Implementation Tasks
 
-### Phase 1: Cosmos Production Configs
+### Phase 1: Cosmos Route Configs
 
-Add:
+Add only when the route does not already have a clear config. Do not create duplicate
+`*_production.yaml` files when an existing route config can carry the production-ready
+settings.
+
+Add or verify:
 
 ```text
 configs/experiment/diffusion/cosmos_predict2/online_grpo_v2w_reference.yaml
-configs/experiment/diffusion/cosmos_predict2_5/online_nft_video_reward_production.yaml
+configs/experiment/diffusion/cosmos_predict2_5/online_nft_video_reward.yaml
 ```
 
 Edit:
@@ -283,16 +300,16 @@ vrl/config/validation.py
 
 Required checks:
 
-- Cosmos Predict2 V2W production config loads.
-- Cosmos Predict2.5 DiffusionNFT production config loads.
-- Production configs use `/reward/video_reward`.
-- Production configs use `reward_name=KlingTeam/VideoReward@main`.
-- Production configs use `score_key=overall_reward` unless explicitly testing a component score.
-- Production configs do not expose legacy loader fields in `worker_config`
+- Cosmos Predict2 V2W route config loads.
+- Cosmos Predict2.5 DiffusionNFT route config loads.
+- Route configs use `/reward/video_reward`.
+- Route configs use `reward_name=KlingTeam/VideoReward@main`.
+- Route configs use `score_key=overall_reward` unless explicitly testing a component score.
+- Route configs do not expose legacy loader fields in `worker_config`
   (`import_path`, `model_factory`, `score_key_map`, `backend`, `backend_code_dir`).
 - Runtime derives internal `worker_config.model_factory` from `reward_name`.
 - Cosmos V2W config uses `cosmos.reference_mode=per_sample`.
-- Cosmos Predict2.5 production config keeps `model.use_lora=true`.
+- Cosmos Predict2.5 route config keeps `model.use_lora=true`.
 
 ### Phase 2: Reference Metadata Wiring
 
@@ -332,7 +349,7 @@ Required checks:
 - reward debug rows record selected `score_key`.
 - reward artifact manifest is written.
 - actor runtime can be released after score when configured.
-- Cosmos production configs reject legacy endpoint/scorer/loader fields and use the
+- Cosmos route configs reject legacy endpoint/scorer/loader fields and use the
   Kling VideoReward production contract.
 
 ### Phase 4: Cosmos Fixed Eval and Report
@@ -378,7 +395,9 @@ resolved_config.yaml
 Environment:
 
 ```text
-PYTHONPATH=<path-to-KlingAIResearch/VideoAlign>:$PYTHONPATH
+No external VideoAlign PYTHONPATH or git submodule is required. The production
+reward loader uses the repo-owned Kling VideoReward inference backend under
+vrl/rewards/models/kling_video_reward.py.
 # optional: set reward.kwargs.video_reward.worker_config.model_path to a local
 # KlingTeam/VideoReward checkpoint root; otherwise the loader resolves
 # KlingTeam/VideoReward@main through Hugging Face.
@@ -408,6 +427,8 @@ trainable weights changed
 Run acceptance:
 
 - A Cosmos run without real video reward does not count as production completion.
+- A Cosmos V2W run whose manifest cannot prove source-backed first-frame references does
+  not count as production completion.
 - A Cosmos run with flat real reward does not count as success.
 - A Cosmos run with generated videos but no reward debug artifacts does not count as success.
 - Cosmos V2W without active `reference_image` does not count as success.
@@ -417,9 +438,10 @@ Run acceptance:
 
 This sprint is complete only when:
 
-- Cosmos Predict2 V2W reference production experiment loads.
+- Cosmos Predict2 V2W reference route config loads.
+- Cosmos Predict2 V2W train/eval manifests are source-backed and provenance-checked.
 - Cosmos Predict2 V2W production run completes with real reward and per-sample reference image.
-- Cosmos Predict2.5 DiffusionNFT production experiment loads.
+- Cosmos Predict2.5 DiffusionNFT route config loads.
 - Cosmos Predict2.5 DiffusionNFT production run reaches optimizer step with real reward.
 - Unit tests pass for config loading, reference image wiring, and production reward config.
 - At least one Cosmos run writes `reward_artifacts/manifest.jsonl`.
@@ -473,12 +495,13 @@ Risk: dataset quality causes reward hacking.
 Guard:
 
 - Consume only validated upstream manifests.
+- Reject manifests whose rows cannot be traced back to upstream dataset artifacts.
 - Keep train/eval split.
 - Keep KL enabled for GRPO.
 - Track reference consistency, text alignment, visual quality, physical plausibility, and motion quality separately.
 - Add manual inspection notes to the production report.
 
-Risk: production config is too expensive.
+Risk: production route is too expensive.
 
 Guard:
 
@@ -511,15 +534,16 @@ test -d outputs/<cosmos-run>/checkpoint-final
 Local files:
 
 ```text
-/home/mingfeiguo/Desktop/wm-infra/vrl/scripts/data/video_world.py
-/home/mingfeiguo/Desktop/wm-infra/docs/papers/cosmos_predict2_5_world_simulation_with_video_foundation_models_for_physical_ai_2511.00062v2.pdf
-/home/mingfeiguo/Desktop/wm-infra/vrl/trainers/data/prompts.py
-/home/mingfeiguo/Desktop/wm-infra/vrl/rewards/functions/video_reward.py
-/home/mingfeiguo/Desktop/wm-infra/vrl/rewards/models/kling_video_reward.py
-/home/mingfeiguo/Desktop/wm-infra/vrl/rewards/ray/runtime.py
-/home/mingfeiguo/Desktop/wm-infra/configs/reward/video_reward.yaml
-/home/mingfeiguo/Desktop/wm-infra/configs/experiment/diffusion/cosmos_predict2/online_grpo_video_reward.yaml
-/home/mingfeiguo/Desktop/wm-infra/configs/experiment/diffusion/cosmos_predict2_5/online_nft_video_reward.yaml
+/home/mingfeiguo/Desktop/VRL/vrl/scripts/data/video_world.py
+/home/mingfeiguo/Desktop/VRL/docs/papers/cosmos_predict2_5_world_simulation_with_video_foundation_models_for_physical_ai_2511.00062v2.pdf
+/home/mingfeiguo/Desktop/VRL/vrl/trainers/data/prompts.py
+/home/mingfeiguo/Desktop/VRL/vrl/rewards/functions/video_reward.py
+/home/mingfeiguo/Desktop/VRL/vrl/rewards/models/kling_video_reward.py
+/home/mingfeiguo/Desktop/VRL/vrl/rewards/models/KLING_VIDEO_REWARD_NOTICE.md
+/home/mingfeiguo/Desktop/VRL/vrl/rewards/ray/runtime.py
+/home/mingfeiguo/Desktop/VRL/configs/reward/video_reward.yaml
+/home/mingfeiguo/Desktop/VRL/configs/experiment/diffusion/cosmos_predict2/online_grpo_video_reward.yaml
+/home/mingfeiguo/Desktop/VRL/configs/experiment/diffusion/cosmos_predict2_5/online_nft_video_reward.yaml
 ```
 
 External references:
@@ -528,5 +552,5 @@ External references:
 https://arxiv.org/abs/2511.00062
 https://github.com/nvidia-cosmos/cosmos-predict2.5
 https://huggingface.co/KlingTeam/VideoReward
-https://github.com/KlingAIResearch/VideoAlign
+https://github.com/KwaiVGI/VideoAlign
 ```

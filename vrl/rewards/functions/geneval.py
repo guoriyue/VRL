@@ -13,7 +13,7 @@ from typing import Any
 
 from vrl.rewards.base import RewardFunction
 from vrl.rewards.inference import RewardInferenceArtifact
-from vrl.rewards.models.geneval_model import GenEvalRewardModel, _OutputBox
+from vrl.rewards.models.geneval import GenEvalRewardModel, _OutputBox
 from vrl.rewards.runtime import LocalRewardRuntime
 from vrl.rewards.types import RewardRollout
 

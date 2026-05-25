@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from vrl.rewards.base import RewardFunction
-from vrl.rewards.models.codex_image_qa_model import (
+from vrl.rewards.models.codex_image_qa import (
     DEFAULT_PROMPT_TEMPLATE,
     CodexImageQARewardModel,
     _extract_score_from_text,

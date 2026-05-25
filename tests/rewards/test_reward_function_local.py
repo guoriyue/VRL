@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from vrl.rewards.base import RewardFunction
-from vrl.rewards.models.torch_reward_model import TorchRewardModel
+from vrl.rewards.models.base import TorchRewardModel
 from vrl.rewards.runtime import LocalRewardRuntime
 from vrl.rewards.types import RewardRollout, RewardTrajectory
 
@@ -63,7 +63,7 @@ async def test_reward_function_local_single_score() -> None:
 
 
 def test_pickscore_reward_model_constructs_lazily() -> None:
-    from vrl.rewards.models.pickscore_model import pickscore_reward_model
+    from vrl.rewards.models.pickscore import pickscore_reward_model
 
     model = pickscore_reward_model(
         {"device": "cpu", "model_name": "x", "processor_name": "y"},

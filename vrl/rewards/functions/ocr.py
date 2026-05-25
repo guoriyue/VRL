@@ -6,7 +6,7 @@ target string provided in rollout metadata. Single-image SD3 rewards mirror
 
 This is a thin ``RewardFunction`` wrapper over ``OCRRewardModel`` driven by the
 local (in-process) transport. The substantive scoring logic lives in
-``vrl.rewards.models.ocr_model``.
+``vrl.rewards.models.ocr``.
 
 flow_grpo references:
 - ``flow_grpo/ocr.py::OcrScorer``
@@ -19,7 +19,7 @@ import re
 from typing import Any
 
 from vrl.rewards.base import RewardFunction
-from vrl.rewards.models.ocr_model import OCRRewardModel
+from vrl.rewards.models.ocr import OCRRewardModel
 from vrl.rewards.runtime import LocalRewardRuntime
 
 

@@ -76,8 +76,8 @@ Keep `RewardFunction` (`rollout -> float`) as the **stable public API** (so `Mul
    returns `selected_score`. `inference_runtime: direct|ray` picks the transport. `VideoReward`
    becomes `HostedReward` + the Kling factory (back-compat).
 
-5. **`TorchRewardModel` / `load_hf_model(name, device, dtype)`** — shared host for the 4 nn
-   rewards (lazy `from_pretrained().eval().to(device,dtype)`), replacing per-reward loading.
+5. **`TorchRewardModel`** — shared base for the torch-backed nn rewards, replacing
+   per-reward device/dtype/lazy-load boilerplate.
 
 Net: a reward = one `RewardModel` + a `model_factory`; it runs direct or ray by config; nn
 rewards share one loader. Heterogeneous rewards (CLI/ONNX/import-path) still implement
@@ -110,8 +110,8 @@ rewards share one loader. Heterogeneous rewards (CLI/ONNX/import-path) still imp
   Parity test: same fake `RewardModel` returns identical scores direct vs ray.
 - **P3 — Generalize the bridge + prove nn path.** Extract `HostedReward` (new
   `vrl/rewards/hosted.py`) from `VideoReward`; rebuild `VideoReward` as `HostedReward` + Kling
-  factory (config back-compat). Add `TorchRewardModel`/`load_hf_model`
-  (`vrl/rewards/models/torch_host.py`) and migrate **`pickscore`** as the representative nn
+  factory (config back-compat). Add `TorchRewardModel`
+  (`vrl/rewards/models/base.py`) and migrate **`pickscore`** as the representative nn
   reward (→ `RewardModel` + factory, run via `HostedReward(direct)`). Proves both transports +
   the host helper end-to-end.
 - **P4 — Migrate remaining nn rewards:** `aesthetic`, `clip`, `nsfw_safety` (same pattern as P3).
@@ -154,7 +154,7 @@ rewards share one loader. Heterogeneous rewards (CLI/ONNX/import-path) still imp
 - `vrl/rewards/ray/{runtime,worker,model}.py` — `RewardRuntime` protocol; `RayRewardRuntime` conforms.
 - `vrl/rewards/runtime/direct.py` *(new)* — `DirectRewardRuntime`.
 - `vrl/rewards/hosted.py` *(new)* — `HostedReward`; `vrl/rewards/functions/video_reward.py` rebuilt on it.
-- `vrl/rewards/models/torch_host.py` *(new)* — `TorchRewardModel` / `load_hf_model`.
+- `vrl/rewards/models/base.py` — `TorchRewardModel`.
 - `vrl/rewards/functions/{pickscore,aesthetic,clip,nsfw_safety}.py` — migrate to `RewardModel`.
 - `vrl/scripts/common/factory.py`, `vrl/rewards/functions/registry.py` — transport wiring.
 - `configs/reward/*.yaml` — `inference_runtime` field.

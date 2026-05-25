@@ -6,7 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from vrl.rewards.base import RewardFunction
-from vrl.rewards.models.anime_anatomy_model import (
+from vrl.rewards.models.anime_anatomy import (
     AnimeAnatomyStructureRewardModel,
     _onnx_providers,
 )

@@ -10,7 +10,7 @@ def test_production_preflight_fails_when_inference_code_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def _raise() -> None:
-        raise ImportError("missing VideoAlign")
+        raise ImportError("missing Kling inference backend")
 
     monkeypatch.setattr(
         "vrl.rewards.models.kling_video_reward.preflight_kling_video_reward_backend",
@@ -22,7 +22,7 @@ def test_production_preflight_fails_when_inference_code_missing(
         },
     )
 
-    with pytest.raises(RuntimeError, match="VideoAlign inference code"):
+    with pytest.raises(RuntimeError, match="repo-owned Kling VideoReward inference backend"):
         _preflight_production_video_reward(cfg)
 
 
@@ -30,7 +30,7 @@ def test_production_preflight_skipped_when_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def _raise() -> None:
-        raise ImportError("missing VideoAlign")
+        raise ImportError("missing Kling inference backend")
 
     monkeypatch.setattr(
         "vrl.rewards.models.kling_video_reward.preflight_kling_video_reward_backend",

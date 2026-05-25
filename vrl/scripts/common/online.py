@@ -286,8 +286,8 @@ def _preflight_production_video_reward(cfg: DictConfig) -> None:
         preflight_kling_video_reward_backend()
     except Exception as exc:
         raise RuntimeError(
-            "production.video_reward requires the VideoAlign inference code. "
-            "Put a local VideoAlign checkout on PYTHONPATH or install its package.",
+            "production.video_reward requires the repo-owned Kling VideoReward "
+            "inference backend under vrl/rewards/models/kling_video_reward.py.",
         ) from exc
 
 
