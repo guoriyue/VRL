@@ -100,6 +100,35 @@ class RewardFunction:
             and getattr(self, "_artifact_builder", None) is not None
         )
 
+    def _init_reward_model(
+        self,
+        *,
+        reward_name: str,
+        score_key: str,
+        model_factory: str,
+        worker_config: Mapping[str, Any],
+        inference_runtime: str,
+        media_type: str = "image",
+    ) -> None:
+        """Initialize a RewardFunction backed by a RewardModel factory."""
+
+        from vrl.rewards.runtime import make_reward_runtime
+
+        RewardFunction.__init__(
+            self,
+            reward_name=reward_name,
+            score_key=score_key,
+            runtime=make_reward_runtime(
+                inference_runtime,
+                model_factory=model_factory,
+                worker_config=worker_config,
+            ),
+            artifact_builder=lambda rollouts: RewardFunction.build_inmemory_artifacts(
+                rollouts,
+                media_type=media_type,
+            ),
+        )
+
     async def _score_with_inference_runtime(
         self,
         rollouts: list[RewardRollout],

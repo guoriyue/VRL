@@ -26,8 +26,6 @@ from vrl.rollouts.collector.rewards import RewardScorer
 from vrl.rollouts.families import get_rollout_family_entry
 from vrl.trajectory import trajectory_storage_policy_from_cfg
 
-LAST_COLLECT_PHASES: dict[str, float] = {}
-
 
 class RolloutCollector:
     """Generic collector: request -> generation runtime -> reward -> trainer batch."""
@@ -43,7 +41,6 @@ class RolloutCollector:
         reward_scorer: RewardScorer,
         default_group_size: int = 1,
         runtime: GenerationRuntime | None = None,
-        phase_sink: dict[str, float] | None = None,
     ) -> None:
         self.model = model
         self.config = config
@@ -53,7 +50,7 @@ class RolloutCollector:
         self.reward_scorer = reward_scorer
         self.default_group_size = max(1, int(default_group_size))
         self._runtime = runtime
-        self.phase_sink = phase_sink
+        self.last_collect_phases: dict[str, float] = {}
 
     def set_runtime(self, runtime: GenerationRuntime) -> None:
         if not callable(getattr(runtime, "generate", None)):
@@ -118,9 +115,9 @@ class RolloutCollector:
             phase_t=phase_t,
         )
 
-        if profile and self.phase_sink is not None:
-            self.phase_sink.clear()
-            self.phase_sink.update(phases)
+        if profile:
+            self.last_collect_phases.clear()
+            self.last_collect_phases.update(phases)
 
         return batch
 
@@ -205,12 +202,9 @@ def build_rollout_collector(
         ),
         reward_scorer=RewardScorer(reward_fn),
         default_group_size=(
-            1
-            if collector.kind == "diffusion"
-            else int(config.require("n_samples_per_prompt"))
+            1 if collector.kind == "diffusion" else int(config.require("n_samples_per_prompt"))
         ),
         runtime=runtime,
-        phase_sink=LAST_COLLECT_PHASES,
     )
 
 
@@ -250,7 +244,6 @@ def _sync_time() -> float:
 
 
 __all__ = [
-    "LAST_COLLECT_PHASES",
     "RolloutCollector",
     "build_rollout_collector",
 ]

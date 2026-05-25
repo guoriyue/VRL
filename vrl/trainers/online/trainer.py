@@ -532,8 +532,8 @@ class OnlineTrainer(Trainer):
             # optimizer update. Flow-GRPO sets this to num_batches_per_epoch//2,
             # so an epoch can intentionally contain multiple optimizer updates.
             for batch_start in range(0, len(filtered_batches), grad_accum_batches):
-                chunk_batches = filtered_batches[batch_start:batch_start + grad_accum_batches]
-                chunk_advs = filtered_advs[batch_start:batch_start + grad_accum_batches]
+                chunk_batches = filtered_batches[batch_start : batch_start + grad_accum_batches]
+                chunk_advs = filtered_advs[batch_start : batch_start + grad_accum_batches]
                 # Flow-GRPO uses Accelerate accumulation over both rollout
                 # microbatches and denoising timesteps:
                 # gradient_accumulation_steps = microbatches * timesteps.
@@ -717,12 +717,7 @@ class OnlineTrainer(Trainer):
         for key, value in timer.times.items():
             phase_times[key] = phase_times.get(key, 0.0) + value
         if cfg.profile:
-            try:
-                from vrl.rollouts.collector import LAST_COLLECT_PHASES
-
-                phase_times.update(LAST_COLLECT_PHASES)
-            except Exception:
-                pass
+            phase_times.update(getattr(self.collector, "last_collect_phases", {}))
         if cfg.profile and phase_times:
             total = sum(v for k, v in phase_times.items() if not k.startswith("collect."))
             parts = " | ".join(
@@ -779,11 +774,11 @@ class OnlineTrainer(Trainer):
             phase_times[key] = phase_times.get(key, 0.0) + value
 
         if first_step_debug_record is not None:
-            first_step_debug_record["driver_trainable_after_step"] = (
-                trainable_state_digest(self.model)
+            first_step_debug_record["driver_trainable_after_step"] = trainable_state_digest(
+                self.model
             )
-            first_step_debug_record["driver_parameter_state_after_step"] = (
-                parameter_state_summary(self.model)
+            first_step_debug_record["driver_parameter_state_after_step"] = parameter_state_summary(
+                self.model
             )
             first_step_debug_record["post_step_global_step"] = int(self.state.global_step)
             write_jsonl(

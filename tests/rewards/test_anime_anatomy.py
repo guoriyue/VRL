@@ -74,6 +74,15 @@ def _pose_result(*, hands: bool = True, collapsed_elbow: bool = False) -> dict[s
     return {"keypoints": keypoints, "scores": scores}
 
 
+class _FakePoseModel:
+    def __init__(self) -> None:
+        self.batch_sizes: list[int] = []
+
+    def predict_batch(self, images: list[object]) -> list[dict[str, np.ndarray]]:
+        self.batch_sizes.append(len(images))
+        return [_pose_result() for _ in images]
+
+
 @pytest.mark.asyncio
 async def test_anime_anatomy_reward_scores_openpose_style_keypoints() -> None:
     reward = AnimeAnatomyStructureReward(
@@ -84,6 +93,17 @@ async def test_anime_anatomy_reward_scores_openpose_style_keypoints() -> None:
     scores = await reward.score_batch([_rollout()])
 
     assert scores[0] > 0.9
+
+
+@pytest.mark.asyncio
+async def test_anime_anatomy_reward_accepts_pose_model_directly() -> None:
+    pose_model = _FakePoseModel()
+    reward = AnimeAnatomyStructureReward(device="cpu", pose_model=pose_model)
+
+    scores = await reward.score_batch([_rollout(), _rollout()])
+
+    assert scores == pytest.approx([1.0, 1.0])
+    assert pose_model.batch_sizes == [2]
 
 
 @pytest.mark.asyncio
@@ -172,7 +192,9 @@ def test_anime_anatomy_reward_is_registered() -> None:
         {"anime_anatomy_structure": 1.0},
         device="cpu",
         reward_kwargs={
-            "anime_anatomy_structure": {"detector": lambda images: [_pose_result() for _ in images]},
+            "anime_anatomy_structure": {
+                "detector": lambda images: [_pose_result() for _ in images]
+            },
         },
     )
 

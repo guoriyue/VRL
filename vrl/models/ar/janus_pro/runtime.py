@@ -24,6 +24,7 @@ from vrl.generation.types import (
 )
 from vrl.models.ar.capabilities import ar_discrete_family_capability
 from vrl.models.ar.janus_pro.model import (
+    JANUS_R1_SEGMENTS,
     JanusProConfig,
     JanusProModel,
     JanusProReplayModel,
@@ -324,6 +325,7 @@ only randomness is ``torch.multinomial``. The collector must apply
 reproducible.
 """
 
+
 @dataclass(slots=True)
 class JanusProARChunkResult:
     """Output of one prompt/sample Janus-Pro AR chunk."""
@@ -538,18 +540,21 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
             context=trajectory_context,
         )
 
-        return attach_engine_plan(GenerationOutput(
-            request_id=request.request_id,
-            family=request.family,
-            task=request.task,
-            prompts=prompts,
-            sample_rows=sample_rows,
-            output=images,
-            trajectory=trajectory,
-            extra={},
-            metrics=metrics,
-            peak_memory_mb=peak_mem_mb or 0.0,
-        ), engine_plan)
+        return attach_engine_plan(
+            GenerationOutput(
+                request_id=request.request_id,
+                family=request.family,
+                task=request.task,
+                prompts=prompts,
+                sample_rows=sample_rows,
+                output=images,
+                trajectory=trajectory,
+                extra={},
+                metrics=metrics,
+                peak_memory_mb=peak_mem_mb or 0.0,
+            ),
+            engine_plan,
+        )
 
     def forward_chunk_plan(
         self,
@@ -794,9 +799,7 @@ class JanusProChunkGatherer:
                 "ar_decode_forwards": max(image_token_num - 1, 0),
                 "ar_decode_tokens": len(sample_rows) * image_token_num,
                 "ar_scheduler_enabled": False,
-                "ar_scheduler_batch_size": request.sampling.get(
-                    "ar_scheduler_batch_size"
-                ),
+                "ar_scheduler_batch_size": request.sampling.get("ar_scheduler_batch_size"),
                 "ar_scheduler_batches": None,
             },
         )
@@ -850,8 +853,6 @@ class JanusProChunkGatherer:
 This executor owns generation only. Reward computation, advantage
 normalization, and rollout packing stay outside the model family layer.
 """
-
-R1_SEGMENT_NAMES = ("initial_image", "selfcheck_text", "final_image")
 
 
 @dataclass(slots=True)
@@ -954,18 +955,21 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
             ),
         )
 
-        return attach_engine_plan(GenerationOutput(
-            request_id=request.request_id,
-            family=request.family,
-            task=request.task,
-            prompts=prompts,
-            sample_rows=sample_rows,
-            output=result["final_image"],
-            trajectory=trajectory,
-            extra={},
-            metrics=metrics,
-            peak_memory_mb=peak_mem_mb or 0.0,
-        ), engine_plan)
+        return attach_engine_plan(
+            GenerationOutput(
+                request_id=request.request_id,
+                family=request.family,
+                task=request.task,
+                prompts=prompts,
+                sample_rows=sample_rows,
+                output=result["final_image"],
+                trajectory=trajectory,
+                extra={},
+                metrics=metrics,
+                peak_memory_mb=peak_mem_mb or 0.0,
+            ),
+            engine_plan,
+        )
 
     def forward_chunk_plan(
         self,
@@ -1159,9 +1163,7 @@ class JanusProR1ChunkGatherer:
                 "ar_decode_forwards": max(num_steps - 1, 0),
                 "ar_decode_tokens": len(sample_rows) * num_steps,
                 "ar_scheduler_enabled": False,
-                "ar_scheduler_batch_size": request.sampling.get(
-                    "ar_scheduler_batch_size"
-                ),
+                "ar_scheduler_batch_size": request.sampling.get("ar_scheduler_batch_size"),
                 "ar_scheduler_batches": None,
             },
         )
@@ -1178,9 +1180,11 @@ class JanusProR1ChunkGatherer:
             metrics=metrics,
             peak_memory_mb=peak_mem_mb or 0.0,
         )
+
+
 def _parse_task_stages(value: Any) -> tuple[str, ...]:
     if value is None:
-        return R1_SEGMENT_NAMES
+        return JANUS_R1_SEGMENTS
     if isinstance(value, str):
         return tuple(part.strip() for part in value.split(",") if part.strip())
     return tuple(str(part) for part in value)
@@ -1204,7 +1208,7 @@ def _cat_segment_extra(
     chunks: Sequence[JanusProR1ChunkResult],
 ) -> dict[str, dict[str, Any]]:
     names = tuple(chunks[0].segments)
-    if set(names) != set(R1_SEGMENT_NAMES):
+    if set(names) != set(JANUS_R1_SEGMENTS):
         logger.warning("Unexpected Janus-Pro-R1 segment names: %s", names)
 
     out: dict[str, dict[str, Any]] = {}

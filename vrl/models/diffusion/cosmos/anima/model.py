@@ -25,23 +25,6 @@ from vrl.models.diffusion.common import (
 )
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 
-_COSMOS_T2I_TRANSFORMER_CONFIG: dict[str, Any] = {
-    "_class_name": "CosmosTransformer3DModel",
-    "adaln_lora_dim": 256,
-    "attention_head_dim": 128,
-    "concat_padding_mask": True,
-    "extra_pos_embed_type": None,
-    "in_channels": 16,
-    "max_size": [128, 240, 240],
-    "mlp_ratio": 4.0,
-    "num_attention_heads": 16,
-    "num_layers": 28,
-    "out_channels": 16,
-    "patch_size": [1, 2, 2],
-    "rope_scale": [1.0, 4.0, 4.0],
-    "text_embed_dim": 1024,
-}
-
 
 @dataclass
 class AnimaSamplingState:
@@ -110,10 +93,7 @@ class AnimaModel(DiffusionModelBase):
         text_encoder_state = load_file(paths["text_encoder_path"], device="cpu")
         text_encoder = Qwen3Model(_qwen3_06b_config())
         text_encoder.load_state_dict(
-            {
-                key.removeprefix("model."): value
-                for key, value in text_encoder_state.items()
-            },
+            {key.removeprefix("model."): value for key, value in text_encoder_state.items()},
             strict=True,
         )
         del text_encoder_state
@@ -298,11 +278,7 @@ class AnimaModel(DiffusionModelBase):
         self.scheduler.set_timesteps(request.num_steps, device=device)
         timesteps = self.scheduler.timesteps
 
-        seed = (
-            request.seed
-            if request.seed is not None
-            else random.randint(0, sys.maxsize)
-        )
+        seed = request.seed if request.seed is not None else random.randint(0, sys.maxsize)
         generator = torch.Generator(device=device)
         generator.manual_seed(seed)
 
@@ -453,11 +429,9 @@ class AnimaModel(DiffusionModelBase):
                 .view(1, self.vae.config.z_dim, 1, 1, 1)
                 .to(x.device, x.dtype)
             )
-            latents_std = (
-                1.0 / torch.tensor(self.vae.config.latents_std)
-                .view(1, self.vae.config.z_dim, 1, 1, 1)
-                .to(x.device, x.dtype)
-            )
+            latents_std = 1.0 / torch.tensor(self.vae.config.latents_std).view(
+                1, self.vae.config.z_dim, 1, 1, 1
+            ).to(x.device, x.dtype)
             return x / latents_std + latents_mean
 
         decoder = ChunkedLatentDecoder(
@@ -532,6 +506,27 @@ class AnimaReplayModel(AnimaModel):
         raise RuntimeError("AnimaReplayModel cannot decode latents")
 
 
+def _cosmos_t2i_transformer_config() -> dict[str, Any]:
+    """Default Cosmos Predict2 Text2Image transformer architecture for Anima."""
+
+    return {
+        "_class_name": "CosmosTransformer3DModel",
+        "adaln_lora_dim": 256,
+        "attention_head_dim": 128,
+        "concat_padding_mask": True,
+        "extra_pos_embed_type": None,
+        "in_channels": 16,
+        "max_size": [128, 240, 240],
+        "mlp_ratio": 4.0,
+        "num_attention_heads": 16,
+        "num_layers": 28,
+        "out_channels": 16,
+        "patch_size": [1, 2, 2],
+        "rope_scale": [1.0, 4.0, 4.0],
+        "text_embed_dim": 1024,
+    }
+
+
 def _load_anima_transformer(
     checkpoint: dict[str, torch.Tensor],
     *,
@@ -543,14 +538,10 @@ def _load_anima_transformer(
     )
 
     converted = convert_cosmos_transformer_checkpoint_to_diffusers(dict(checkpoint))
-    transformer = CosmosTransformer3DModel.from_config(_COSMOS_T2I_TRANSFORMER_CONFIG)
+    transformer = CosmosTransformer3DModel.from_config(_cosmos_t2i_transformer_config())
     transformer.to(dtype=dtype)
     expected = set(transformer.state_dict())
-    transformer_state = {
-        key: value
-        for key, value in converted.items()
-        if key in expected
-    }
+    transformer_state = {key: value for key, value in converted.items() if key in expected}
     missing, unexpected = transformer.load_state_dict(transformer_state, strict=False)
     if missing or unexpected:
         raise ValueError(
@@ -744,10 +735,7 @@ class RotaryEmbedding(nn.Module):
         super().__init__()
         inv_freq = 1.0 / (
             10000
-            ** (
-                torch.arange(0, head_dim, 2, dtype=torch.int64).to(dtype=torch.float)
-                / head_dim
-            )
+            ** (torch.arange(0, head_dim, 2, dtype=torch.int64).to(dtype=torch.float) / head_dim)
         )
         self.register_buffer("inv_freq", inv_freq, persistent=False)
 
@@ -758,8 +746,7 @@ class RotaryEmbedding(nn.Module):
         position_ids: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         inv_freq_expanded = (
-            self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1)
-            .to(x.device)
+            self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1).to(x.device)
         )
         position_ids_expanded = position_ids[:, None, :].float()
         with torch.autocast(device_type=x.device.type, enabled=False):

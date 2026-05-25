@@ -92,7 +92,6 @@ def test_reward_models_live_under_models() -> None:
     assert _module_filenames(models_root) == {
         "__init__.py",
         "aesthetic.py",
-        "anime_anatomy.py",
         "base.py",
         "clip.py",
         "codex_image_qa.py",
@@ -101,6 +100,13 @@ def test_reward_models_live_under_models() -> None:
         "nsfw_safety.py",
         "ocr.py",
         "pickscore.py",
+    }
+    assert _module_filenames(models_root / "pose") == {
+        "__init__.py",
+        "dwpose.py",
+        "geometry.py",
+        "hints.py",
+        "structure.py",
     }
     assert not (VRL_ROOT / "rewards" / "kling_video_reward.py").exists()
     assert not (VRL_ROOT / "rewards" / "ray" / "kling_video_reward.py").exists()
@@ -238,19 +244,11 @@ def _imports(path: Path) -> Iterable[str]:
 
 
 def _python_files(root: Path) -> Iterable[Path]:
-    return sorted(
-        path
-        for path in root.rglob("*.py")
-        if "__pycache__" not in path.parts
-    )
+    return sorted(path for path in root.rglob("*.py") if "__pycache__" not in path.parts)
 
 
 def _module_filenames(root: Path) -> set[str]:
-    return {
-        path.name
-        for path in root.glob("*.py")
-        if "__pycache__" not in path.parts
-    }
+    return {path.name for path in root.glob("*.py") if "__pycache__" not in path.parts}
 
 
 def _is_relative_to(path: Path, prefix: Path) -> bool:

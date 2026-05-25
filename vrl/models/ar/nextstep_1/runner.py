@@ -14,6 +14,11 @@ from vrl.generation.ar.decode_loop import (
     ARTokenLoopInit,
 )
 from vrl.math.ar.flow_matching import flow_sample_with_logprob
+from vrl.models.ar.paged_attention_helpers import (
+    append_attention_token,
+    scatter_paged_states,
+    select_paged_states,
+)
 from vrl.nn.layers.attention.paged import (
     ARPagedAttentionBackend,
     ARPagedAttentionConfig,
@@ -72,13 +77,9 @@ class NextStep1ARModelRunner:
     ) -> ARTokenLoopInit:
         cfg = self.model.config
         cfg_scale = cfg_scale if cfg_scale is not None else cfg.cfg_scale
-        num_flow_steps = (
-            num_flow_steps if num_flow_steps is not None else cfg.num_flow_steps
-        )
+        num_flow_steps = num_flow_steps if num_flow_steps is not None else cfg.num_flow_steps
         noise_level = noise_level if noise_level is not None else cfg.noise_level
-        image_token_num = (
-            image_token_num if image_token_num is not None else cfg.image_token_num
-        )
+        image_token_num = image_token_num if image_token_num is not None else cfg.image_token_num
 
         batch_size = prompt_embeds.shape[0]
         token_dim = cfg.token_dim
@@ -90,15 +91,14 @@ class NextStep1ARModelRunner:
         saved_noise = torch.zeros(
             batch_size, image_token_num, token_dim, device=device, dtype=self.model.dtype
         )
-        logprobs = torch.zeros(
-            batch_size, image_token_num, device=device, dtype=torch.float32
-        )
+        logprobs = torch.zeros(batch_size, image_token_num, device=device, dtype=torch.float32)
 
         if self.paged_attention_backend is None:
             kv_cond = self.model._init_kv(prompt_embeds, prompt_mask)
             kv_uncond = (
                 self.model._init_kv(uncond_embeds, uncond_mask)
-                if uncond_embeds is not None else None
+                if uncond_embeds is not None
+                else None
             )
             c_cond = self.model._last_hidden(kv_cond)
             c_uncond = self.model._last_hidden(kv_uncond) if kv_uncond is not None else None
@@ -306,18 +306,18 @@ class NextStep1ARModelRunner:
         token: torch.Tensor,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         batch_size = len(batch.row_indices)
-        cond_states = self._select_paged_states(state.paged_cond_states, batch.row_indices)
+        cond_states = select_paged_states(state.paged_cond_states, batch.row_indices)
         cond_embed = self.model._image_in_projector(token).unsqueeze(1)
         input_embeds = [cond_embed]
         sequence_states = list(cond_states)
         branch_names = ["cond"] * batch_size
-        cond_next_attn = self._append_attention_token(batch.row_lanes["cond_attn"])
+        cond_next_attn = append_attention_token(batch.row_lanes["cond_attn"])
         row_updates: dict[str, Any] = {"cond_attn": cond_next_attn}
         uncond_next_attn: torch.Tensor | None = None
 
         has_uncond = state.paged_uncond_states is not None and "uncond_attn" in batch.row_lanes
         if has_uncond:
-            uncond_states = self._select_paged_states(
+            uncond_states = select_paged_states(
                 state.paged_uncond_states,
                 batch.row_indices,
             )
@@ -325,15 +325,14 @@ class NextStep1ARModelRunner:
             input_embeds.append(uncond_embed)
             sequence_states.extend(uncond_states)
             branch_names.extend(["uncond"] * batch_size)
-            uncond_next_attn = self._append_attention_token(batch.row_lanes["uncond_attn"])
+            uncond_next_attn = append_attention_token(batch.row_lanes["uncond_attn"])
             row_updates["uncond_attn"] = uncond_next_attn
 
         output = self._require_paged_attention_backend().step(
             ARPagedAttentionStepInput(
                 input_embeds=torch.cat(input_embeds, dim=0),
                 attention_mask=torch.cat(
-                    [cond_next_attn]
-                    + ([] if uncond_next_attn is None else [uncond_next_attn]),
+                    [cond_next_attn] + ([] if uncond_next_attn is None else [uncond_next_attn]),
                     dim=0,
                 ),
                 sequence_states=tuple(sequence_states),
@@ -344,7 +343,7 @@ class NextStep1ARModelRunner:
             )
         )
         updated_states = list(output.sequence_states)
-        self._scatter_paged_states(
+        scatter_paged_states(
             state.paged_cond_states,
             batch.row_indices,
             updated_states[:batch_size],
@@ -352,7 +351,7 @@ class NextStep1ARModelRunner:
         hidden = self._normalize_paged_last_hidden(output.last_hidden)
         row_updates["c_cond"] = hidden[:batch_size]
         if has_uncond:
-            self._scatter_paged_states(
+            scatter_paged_states(
                 state.paged_uncond_states,
                 batch.row_indices,
                 updated_states[batch_size:],
@@ -367,40 +366,6 @@ class NextStep1ARModelRunner:
         if self.paged_attention_backend is None:
             raise RuntimeError("NextStep paged-attention path requires a backend")
         return self.paged_attention_backend
-
-    @staticmethod
-    def _append_attention_token(attention_mask: torch.Tensor) -> torch.Tensor:
-        return torch.cat(
-            [
-                attention_mask,
-                torch.ones(
-                    attention_mask.shape[0],
-                    1,
-                    dtype=attention_mask.dtype,
-                    device=attention_mask.device,
-                ),
-            ],
-            dim=1,
-        )
-
-    @staticmethod
-    def _select_paged_states(states: list[Any] | None, row_indices: list[int]) -> list[Any]:
-        if states is None:
-            raise RuntimeError("paged attention state is not initialized")
-        return [states[index] for index in row_indices]
-
-    @staticmethod
-    def _scatter_paged_states(
-        states: list[Any] | None,
-        row_indices: list[int],
-        values: list[Any],
-    ) -> None:
-        if states is None:
-            raise RuntimeError("paged attention state is not initialized")
-        if len(row_indices) != len(values):
-            raise ValueError("paged attention state updates must match row indices")
-        for row_index, value in zip(row_indices, values, strict=True):
-            states[row_index] = value
 
     @staticmethod
     def _normalize_paged_last_hidden(last_hidden: torch.Tensor) -> torch.Tensor:
@@ -436,6 +401,7 @@ def build_nextstep_vllm_paged_attention_backend(
         trunk=model._lm_trunk(),
         config=config,
     )
+
 
 __all__ = [
     "NextStep1ARModelRunner",

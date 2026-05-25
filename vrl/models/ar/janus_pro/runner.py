@@ -17,6 +17,11 @@ from vrl.generation.ar.decode_loop import (
     ar_split_rows,
 )
 from vrl.models.ar.janus_pro.model import image_token_logits_from_hidden
+from vrl.models.ar.paged_attention_helpers import (
+    append_attention_token,
+    scatter_paged_states,
+    select_paged_states,
+)
 from vrl.nn.layers.attention.paged import (
     ARPagedAttentionBackend,
     ARPagedAttentionConfig,
@@ -42,7 +47,6 @@ class JanusProARState:
     prefill_forwards: int = 0
     decode_forwards: int = 0
     decode_tokens: int = 0
-
 
 
 def build_janus_vllm_paged_attention_backend(
@@ -346,9 +350,7 @@ class JanusProARModelRunner:
             dim=1,
         )
 
-        past = ar_concat_rows(
-            [batch.cache_lanes["cond_past"], batch.cache_lanes["uncond_past"]]
-        )
+        past = ar_concat_rows([batch.cache_lanes["cond_past"], batch.cache_lanes["uncond_past"]])
         outputs = self.model._lm_trunk()(
             inputs_embeds=inputs_embeds,
             attention_mask=torch.cat([cond_next_attn, uncond_next_attn], dim=0),
@@ -386,16 +388,16 @@ class JanusProARModelRunner:
         sampled: torch.Tensor,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         batch_size = len(batch.row_indices)
-        cond_states = self._select_paged_states(state.paged_cond_states, batch.row_indices)
-        uncond_states = self._select_paged_states(
+        cond_states = select_paged_states(state.paged_cond_states, batch.row_indices)
+        uncond_states = select_paged_states(
             state.paged_uncond_states,
             batch.row_indices,
         )
         token_embed = self.model._base().prepare_gen_img_embeds(sampled.unsqueeze(-1))
         inputs_embeds = torch.cat([token_embed, token_embed], dim=0)
 
-        cond_next_attn = self._append_attention_token(batch.row_lanes["cond_attn"])
-        uncond_next_attn = self._append_attention_token(batch.row_lanes["uncond_attn"])
+        cond_next_attn = append_attention_token(batch.row_lanes["cond_attn"])
+        uncond_next_attn = append_attention_token(batch.row_lanes["uncond_attn"])
         output = self._require_paged_attention_backend().step(
             ARPagedAttentionStepInput(
                 input_embeds=inputs_embeds,
@@ -414,12 +416,12 @@ class JanusProARModelRunner:
                 "paged attention step returned "
                 f"{len(updated_states)} states for batch={batch_size}",
             )
-        self._scatter_paged_states(
+        scatter_paged_states(
             state.paged_cond_states,
             batch.row_indices,
             updated_states[:batch_size],
         )
-        self._scatter_paged_states(
+        scatter_paged_states(
             state.paged_uncond_states,
             batch.row_indices,
             updated_states[batch_size:],
@@ -442,43 +444,6 @@ class JanusProARModelRunner:
         return self.paged_attention_backend
 
     @staticmethod
-    def _append_attention_token(attention_mask: torch.Tensor) -> torch.Tensor:
-        return torch.cat(
-            [
-                attention_mask,
-                torch.ones(
-                    attention_mask.shape[0],
-                    1,
-                    dtype=attention_mask.dtype,
-                    device=attention_mask.device,
-                ),
-            ],
-            dim=1,
-        )
-
-    @staticmethod
-    def _select_paged_states(
-        states: list[Any] | None,
-        row_indices: list[int],
-    ) -> list[Any]:
-        if states is None:
-            raise RuntimeError("paged attention state is not initialized")
-        return [states[index] for index in row_indices]
-
-    @staticmethod
-    def _scatter_paged_states(
-        states: list[Any] | None,
-        row_indices: list[int],
-        values: list[Any],
-    ) -> None:
-        if states is None:
-            raise RuntimeError("paged attention state is not initialized")
-        if len(row_indices) != len(values):
-            raise ValueError("paged attention state updates must match row indices")
-        for row_index, value in zip(row_indices, values, strict=True):
-            states[row_index] = value
-
-    @staticmethod
     def _normalize_paged_last_hidden(last_hidden: torch.Tensor) -> torch.Tensor:
         if last_hidden.ndim == 3:
             if last_hidden.shape[1] != 1:
@@ -487,6 +452,7 @@ class JanusProARModelRunner:
         if last_hidden.ndim != 2:
             raise ValueError("paged attention last_hidden must be [B, H] or [B, 1, H]")
         return last_hidden
+
 
 __all__ = [
     "JanusProARModelRunner",

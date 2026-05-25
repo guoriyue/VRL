@@ -6,8 +6,8 @@ from collections.abc import Callable
 from typing import Any
 
 from vrl.rewards.base import RewardFunction
-from vrl.rewards.models.anime_anatomy import (
-    AnimeAnatomyStructureRewardModel,
+from vrl.rewards.models.pose.structure import (
+    PoseStructureRewardModel,
     _onnx_providers,
 )
 from vrl.rewards.runtime import LocalRewardRuntime
@@ -29,6 +29,7 @@ class AnimeAnatomyStructureReward(RewardFunction):
         cache_dir: str = "",
         local_files_only: bool = False,
         detector: Callable[[list[Any]], list[Any]] | None = None,
+        pose_model: Any | None = None,
         detect_resolution: int = 512,
         min_keypoint_confidence: float = 0.25,
         min_body_keypoints: int = 8,
@@ -39,13 +40,13 @@ class AnimeAnatomyStructureReward(RewardFunction):
     ) -> None:
         if str(inference_runtime) != "local":
             raise ValueError(
-                "anime_anatomy_structure reward currently supports "
-                "inference_runtime='local' only",
+                "anime_anatomy_structure reward currently supports inference_runtime='local' only",
             )
-        # Build eagerly so config validation fires now and the injected detector
-        # is wired into the in-process model.
-        model = AnimeAnatomyStructureRewardModel(
+        # Build eagerly so config validation fires now and the injected pose
+        # model/detector is wired into the in-process model.
+        model = PoseStructureRewardModel(
             {
+                "score_name": "anime_anatomy_structure",
                 "device": device,
                 "model_repo": model_repo,
                 "detector_file": detector_file,
@@ -53,6 +54,7 @@ class AnimeAnatomyStructureReward(RewardFunction):
                 "cache_dir": cache_dir,
                 "local_files_only": local_files_only,
                 "detector": detector,
+                "pose_model": pose_model,
                 "detect_resolution": detect_resolution,
                 "min_keypoint_confidence": min_keypoint_confidence,
                 "min_body_keypoints": min_body_keypoints,
@@ -67,7 +69,8 @@ class AnimeAnatomyStructureReward(RewardFunction):
             score_key="anime_anatomy_structure",
             runtime=LocalRewardRuntime(model=model),
             artifact_builder=lambda rollouts: RewardFunction.build_inmemory_artifacts(
-                rollouts, media_type="image",
+                rollouts,
+                media_type="image",
             ),
         )
 
