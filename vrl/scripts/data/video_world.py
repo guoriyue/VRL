@@ -1,9 +1,15 @@
 """Cosmos Video2World dataset population.
 
-``video-world-bridge`` is a real first-frame importer over a LeRobot/HF robotics
-dataset (BridgeData V2 / DROID style). Network access lives in the fetch adapter
-(``_iter_lerobot_first_frames``); the ``build_video_world_rows`` transform is pure
-so it stays offline-testable. No synthetic smoke data is shipped.
+``video-world-bridge`` imports first frames from a real LeRobot v2.1 robotics
+dataset (DROID / BridgeData V2 style on the HF Hub):
+
+- captions  <- ``meta/tasks.parquet`` (keyed by ``task_index``)
+- episodes  <- ``data/*.parquet`` (per-episode ``frame_index==0`` row + global index)
+- pixels    <- per-camera ``videos/.../*.mp4`` decoded with PyAV (streamed over HTTP)
+
+``build_video_world_rows`` is a pure transform so it stays offline-testable; the
+fetch/decode lives in ``_iter_lerobot_first_frames``. No synthetic smoke data is
+shipped. Bounded to the first data/video file (use ``--limit`` to cap episodes).
 """
 
 from __future__ import annotations
@@ -22,34 +28,22 @@ from vrl.scripts.data.common import (
     write_report,
 )
 
-_BRIDGE_IMAGE_COLUMNS = (
-    "observation.images.image",
-    "observation.images.image_0",
-    "observation.image",
-    "image",
-)
-_BRIDGE_LANGUAGE_COLUMNS = (
-    "task",
-    "language_instruction",
-    "prompt",
-    "language",
-    "instruction",
-)
-
 
 def register(subparsers: Any) -> None:
     bridge = subparsers.add_parser("video-world-bridge")
-    bridge.add_argument("--repo-id", default="lerobot/bridge_orig")
-    bridge.add_argument("--split", default="train")
-    bridge.add_argument("--limit", type=int, default=200)
-    bridge.add_argument("--eval-limit", type=int, default=16)
+    bridge.add_argument("--repo-id", default="lerobot/droid_100")
+    bridge.add_argument("--limit", type=int, default=50)
+    bridge.add_argument("--eval-limit", type=int, default=8)
     bridge.add_argument("--data-root", type=Path, default=None)
     bridge.add_argument("--manifest-dir", type=Path, default=None)
-    bridge.add_argument("--name", default="bridge")
-    bridge.add_argument("--source", default="bridge")
+    bridge.add_argument("--name", default="robot")
+    bridge.add_argument("--source", default="droid")
     bridge.add_argument("--cache-dir", type=Path, default=default_cache_dir())
-    bridge.add_argument("--image-column", default="")
-    bridge.add_argument("--language-column", default="")
+    bridge.add_argument(
+        "--camera",
+        default="",
+        help="observation.images.<name> video key; default = first camera",
+    )
     bridge.set_defaults(func=_cmd_video_world_bridge)
 
 
@@ -95,67 +89,149 @@ def build_video_world_rows(
 def _iter_lerobot_first_frames(
     repo_id: str,
     *,
-    split: str,
     limit: int,
     cache_dir: Path,
-    image_column: str = "",
-    language_column: str = "",
+    camera: str = "",
 ) -> Iterator[dict[str, Any]]:
-    """Stream a LeRobot/HF robotics dataset and yield the first frame per episode."""
+    """Yield {image, prompt, episode_id} per episode from a real LeRobot dataset.
 
-    from datasets import load_dataset
+    Auto-detects the on-disk layout:
+    - v2.1: aggregated ``meta/tasks.parquet`` + per-chunk data/video files.
+    - v2.0: ``meta/tasks.jsonl`` + ``meta/episodes.jsonl`` + one parquet/mp4 per
+      episode.
 
-    dataset = load_dataset(repo_id, split=split, streaming=True, cache_dir=str(cache_dir))
-    image_key = image_column
-    language_key = language_column
-    seen: set[str] = set()
-    for index, record in enumerate(dataset):
-        if not image_key:
-            image_key = _detect_column(record, _BRIDGE_IMAGE_COLUMNS, _is_image_value)
-        if not language_key:
-            language_key = _detect_column(record, _BRIDGE_LANGUAGE_COLUMNS, _is_text_value)
-        episode_index = record.get("episode_index", record.get("episode_id", index))
-        episode_id = (
-            f"{int(episode_index):06d}" if isinstance(episode_index, int) else str(episode_index)
-        )
-        if episode_id in seen:
+    Captions come from the dataset's task metadata; pixels are decoded from the
+    per-camera mp4 with PyAV streamed over HTTP.
+    """
+
+    import json
+
+    from huggingface_hub import hf_hub_download
+
+    def _dl(rel: str) -> str:
+        return hf_hub_download(repo_id, rel, repo_type="dataset", cache_dir=str(cache_dir))
+
+    info = json.loads(Path(_dl("meta/info.json")).read_text(encoding="utf-8"))
+    features = list(info.get("features", {}).keys())
+    video_key = camera or next(
+        (f for f in features if f.startswith("observation.images.")),
+        "",
+    )
+    if not video_key:
+        return
+
+    version = str(info.get("codebase_version", "v2.1")).lower()
+    if version.startswith("v2.0"):
+        yield from _iter_lerobot_v20(repo_id, info, video_key=video_key, limit=limit, dl=_dl)
+    else:
+        yield from _iter_lerobot_v21(repo_id, info, video_key=video_key, limit=limit, dl=_dl)
+
+
+def _iter_lerobot_v21(
+    repo_id: str,
+    info: Mapping[str, Any],
+    *,
+    video_key: str,
+    limit: int,
+    dl: Callable[[str], str],
+) -> Iterator[dict[str, Any]]:
+    import pyarrow.parquet as pq
+    from PIL import Image
+
+    video_tmpl = str(info["video_path"])
+    data_tmpl = str(info["data_path"])
+
+    task_rows = pq.read_table(dl("meta/tasks.parquet")).to_pylist()
+    if not task_rows:
+        return
+    caption_col = next(col for col in task_rows[0] if col != "task_index")
+    captions = {int(r["task_index"]): str(r[caption_col]).strip() for r in task_rows}
+
+    data_rows = pq.read_table(
+        dl(data_tmpl.format(chunk_index=0, file_index=0)),
+        columns=["episode_index", "frame_index", "task_index", "index"],
+    ).to_pylist()
+
+    firsts: list[tuple[int, int, int]] = []
+    seen: set[int] = set()
+    for row in data_rows:
+        episode = int(row["episode_index"])
+        if int(row["frame_index"]) == 0 and episode not in seen:
+            seen.add(episode)
+            firsts.append((episode, int(row["index"]), int(row["task_index"])))
+            if len(firsts) >= limit:
+                break
+    if not firsts:
+        return
+
+    base = firsts[0][1]
+    targets = {idx - base: (episode, task_index) for (episode, idx, task_index) in firsts}
+    rel = video_tmpl.format(video_key=video_key, chunk_index=0, file_index=0)
+    url = f"https://huggingface.co/datasets/{repo_id}/resolve/main/{rel}"
+    for position, frame in _decode_frames(url, stop_after=max(targets)):
+        if position in targets:
+            episode, task_index = targets[position]
+            prompt = captions.get(task_index, "")
+            if prompt:
+                yield {
+                    "image": Image.fromarray(frame),
+                    "prompt": prompt,
+                    "episode_id": f"{episode:06d}",
+                }
+
+
+def _iter_lerobot_v20(
+    repo_id: str,
+    info: Mapping[str, Any],
+    *,
+    video_key: str,
+    limit: int,
+    dl: Callable[[str], str],
+) -> Iterator[dict[str, Any]]:
+    import json
+
+    from PIL import Image
+
+    video_tmpl = str(info["video_path"])
+    chunks_size = int(info.get("chunks_size", 1000))
+
+    episodes: list[dict[str, Any]] = []
+    for line in Path(dl("meta/episodes.jsonl")).read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
             continue
-        image = record.get(image_key) if image_key else None
-        prompt = record.get(language_key) if language_key else ""
-        if image is None or not str(prompt).strip():
-            continue
-        seen.add(episode_id)
-        yield {"image": image, "prompt": str(prompt).strip(), "episode_id": episode_id}
-        if len(seen) >= limit:
+        episodes.append(json.loads(line))
+        if len(episodes) >= limit:
             break
 
-
-def _detect_column(
-    record: Mapping[str, Any],
-    candidates: tuple[str, ...],
-    predicate: Callable[[Any], bool],
-) -> str:
-    for name in candidates:
-        if name in record and predicate(record[name]):
-            return name
-    for name, value in record.items():
-        if predicate(value):
-            return name
-    return ""
-
-
-def _is_image_value(value: Any) -> bool:
-    try:
-        from PIL.Image import Image as PILImage
-    except ImportError:  # pragma: no cover - pillow is a hard dependency here
-        PILImage = ()  # type: ignore[assignment]
-    if PILImage and isinstance(value, PILImage):
-        return True
-    return hasattr(value, "shape") and getattr(value, "ndim", 0) >= 2
+    for ep in episodes:
+        episode = int(ep["episode_index"])
+        tasks = ep.get("tasks") or []
+        prompt = str(tasks[0]).strip() if tasks else ""
+        if not prompt:
+            continue
+        rel = video_tmpl.format(
+            episode_chunk=episode // chunks_size,
+            video_key=video_key,
+            episode_index=episode,
+        )
+        url = f"https://huggingface.co/datasets/{repo_id}/resolve/main/{rel}"
+        for _, frame in _decode_frames(url, stop_after=0):
+            yield {
+                "image": Image.fromarray(frame),
+                "prompt": prompt,
+                "episode_id": f"{episode:06d}",
+            }
 
 
-def _is_text_value(value: Any) -> bool:
-    return isinstance(value, str) and value.strip() != ""
+def _decode_frames(url: str, *, stop_after: int) -> Iterator[tuple[int, Any]]:
+    import av
+
+    with av.open(url) as container:
+        for position, frame in enumerate(container.decode(video=0)):
+            yield position, frame.to_ndarray(format="rgb24")
+            if position >= stop_after:
+                break
 
 
 def _write_png(path: Path, image: Any) -> None:
@@ -182,11 +258,9 @@ def _cmd_video_world_bridge(args: argparse.Namespace) -> None:
     try:
         episodes = _iter_lerobot_first_frames(
             args.repo_id,
-            split=args.split,
             limit=args.limit,
             cache_dir=args.cache_dir.expanduser(),
-            image_column=args.image_column,
-            language_column=args.language_column,
+            camera=args.camera,
         )
         rows = build_video_world_rows(
             episodes,
@@ -196,14 +270,14 @@ def _cmd_video_world_bridge(args: argparse.Namespace) -> None:
         )
     except ImportError as exc:  # pragma: no cover - environment dependent
         raise RuntimeError(
-            "video-world-bridge needs `datasets`, `pillow`, and `numpy` installed",
+            "video-world-bridge needs `pyarrow`, `av`, `pillow`, and `huggingface_hub`",
         ) from exc
 
     if not rows:
         raise RuntimeError(
-            f"No usable episodes from {args.repo_id!r} split={args.split!r}. "
-            "Override --repo-id/--split, or set --image-column/--language-column "
-            "if the dataset schema is non-standard.",
+            f"No usable episodes from {args.repo_id!r}. Check it is a LeRobot v2.1 "
+            "dataset (meta/tasks.parquet + data/*.parquet + videos/*.mp4), or set "
+            "--camera to a valid observation.images.<name> key.",
         )
 
     eval_count = min(args.eval_limit, len(rows) - 1) if len(rows) > 1 else 0
@@ -220,7 +294,7 @@ def _cmd_video_world_bridge(args: argparse.Namespace) -> None:
         "dataset": "video_world_bridge",
         "source": args.source,
         "repo_id": args.repo_id,
-        "split": args.split,
+        "camera": args.camera,
         "episode_count": len(rows),
         "train_rows": len(train_rows),
         "eval_rows": len(eval_rows),

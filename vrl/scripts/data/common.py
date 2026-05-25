@@ -1,8 +1,8 @@
 """Shared helpers for the per-dataset population scripts.
 
 Concrete, dependency-free utilities only. Each dataset lives in its own script
-(pickapic.py, anime.py, video_world.py, danbooru.py); this module just holds the
-path/IO helpers they all need so no logic is duplicated.
+(pickapic.py, danbooru.py, video_world.py, bootstrap.py); this module just holds
+the path/IO helpers they all need so no logic is duplicated.
 """
 
 from __future__ import annotations

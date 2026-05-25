@@ -49,44 +49,42 @@ manifest row examples
 minimum dataset sizes
 ```
 
-### 1.1 Open: video_world importer does not yet decode real LeRobot data
+### 1.1 Resolved: video_world importer decodes real LeRobot v2.0 + v2.1 data
 
 抓手：`vrl/scripts/data/video_world.py` 的 `video-world-bridge`
 (`_iter_lerobot_first_frames`)。
 
-现状（不要包装成"已完成"）：importer 目前**跑不通真实数据**。它假设
-`datasets.load_dataset(streaming=True)` 的每行带 inline PIL image + caption
-string，但真实 LeRobot v2.1 不是这样：
+之前 importer 假设 `datasets.load_dataset(streaming=True)` 每行带 inline image +
+caption，真实 LeRobot 不是这样，所以跑不通。现已按真实格式重写，按
+`codebase_version` 自动分流两种 layout：
 
 ```text
-帧：     videos/observation.images.<cam>/chunk-*/file-*.mp4   (mp4 视频，非 inline)
-caption：meta/tasks.parquet                                   (task_index -> 文本)
-逐帧：   data/chunk-*/file-*.parquet                          (episode_index/frame_index/task_index)
+v2.1 (DROID):  meta/tasks.parquet + data/chunk-*/file-*.parquet（多 episode 聚合）
+               + videos/<cam>/chunk-*/file-*.mp4，按全局 index 解码第一帧
+v2.0 (Bridge): meta/tasks.jsonl + meta/episodes.jsonl（caption 直接在 episodes）
+               + data/.../episode_N.parquet + videos/.../episode_N.mp4（每 episode 一个
+               mp4，第一帧=frame 0）
 ```
 
-所以现在 column 检测拿不到 image/language，importer 直接报
-`No usable episodes`（loud fail，不产假数据），等于真实 video_world dataset 仍未就绪。
+依赖：`pyarrow` + `av` + `huggingface_hub` + `pillow`（均已装，无新增重依赖；不需要
+`lerobot` 库）。默认 `--repo-id lerobot/droid_100`；Bridge 用
+`IPEC-COMMUNITY/bridge_orig_lerobot`。frame 经 PyAV HTTP 流式解码。
 
-已核对的真实 repo（shipped 默认 `lerobot/bridge_orig` 是 404，要改）：
+验证（真实数据，2026-05-25）：
 
 ```text
-IPEC-COMMUNITY/bridge_orig_lerobot   # Bridge
-lerobot/droid_100                    # DROID，小（10 files），适合验证
+droid_100  (v2.1): --limit 4 => 真实 320x180 RGB PNG + caption "Put the marker in the pot"
+bridge_orig(v2.0): --limit 3 => 真实 256x256 RGB PNG + caption "put small spoon from basket to tray"
+两者 manifest 均通过 cosmos _normalize_per_sample_reference_images。
 ```
 
-修复方案（不引新依赖，`pyarrow` / `av` / `imageio_ffmpeg` 已装）：
+已知边界（非阻塞）：v2.1 v1 只读第一个 data/video file（`--limit` 上限即该 file 内的
+episodes，跨 file 全量是后续）；v2.0 每 episode 独立 mp4，`--limit` 直接生效。fetch
+路径依赖网络，无 unit test（transform 有离线 test，fetch 靠真实 run 验证）。
 
-```text
-1. 读 meta/tasks.parquet            -> task_index -> caption(prompt)
-2. 读 data/*.parquet               -> 每个 episode 的 frame_index==0 行 + task_index
-3. 用 meta/info.json 把 episode 映射到 mp4 chunk/file/timestamp，解码第一帧
-4. 落 references/*.png + 带 caption 的 manifest（沿用现有 build_video_world_rows）
-5. 修正默认 --repo-id
-```
-
-完成标准：`populate video-world-bridge --repo-id lerobot/droid_100` 写出真实
-first-frame PNG + 带 caption 的 manifest，并对 `droid_100` 验证通过；transform
-已有离线测试，fetch 路径补一条真实 droid_100 的解码冒烟验证。
+注意：本项只解决 **dataset** 侧。真实 Cosmos training run 仍另外依赖 reward
+backend —— `VideoVLMRewardInference` 当前 import 不到（见 §3 reward contract），
+那是独立 open 项。
 
 ## 2. Current Repo Reality
 
@@ -125,8 +123,28 @@ metadata
 ```text
 configs/reward/video_reward.yaml
 vrl/rewards/functions/video_reward.py
+vrl/rewards/models/kling_video_reward.py
 vrl/rewards/ray/runtime.py
 vrl/rewards/ray/worker.py
+```
+
+当前 production reward contract：
+
+```text
+driver: VideoReward 负责把 rollout video materialize 成 artifact，并发给 Ray reward actors。
+worker: RewardModelWorker 加载 KlingVideoRewardModel；内部 model_factory 由 reward_name 派生。
+public YAML: 只暴露 reward_name、score_key、media_type、artifact/debug dirs 和简短 worker_config。
+legacy fields: backend / endpoint URLs / scorer / import_path / model_factory 都不是 public production config。
+```
+
+`reward_name=KlingTeam/VideoReward@main` 是 public model selector。Kling loader
+把 VideoReward 原始输出映射成这些 public score keys：
+
+```text
+overall_reward
+visual_quality
+motion_quality
+text_alignment
 ```
 
 ## 3. Production Routes
@@ -171,10 +189,13 @@ reward:
   kwargs:
     video_reward:
       inference_runtime: ray
+      reward_name: KlingTeam/VideoReward@main
+      score_key: overall_reward
+      media_type: video
+      artifact_format: mp4
       worker_config:
-        scorer: import_path
-        import_path: ???
-        reward_model_version: ???
+        model_path: ""      # optional local Kling VideoReward checkpoint root
+        dtype: bfloat16
 ```
 
 Production guard:
@@ -221,10 +242,13 @@ reward:
   kwargs:
     video_reward:
       inference_runtime: ray
+      reward_name: KlingTeam/VideoReward@main
+      score_key: overall_reward
+      media_type: video
+      artifact_format: mp4
       worker_config:
-        scorer: import_path
-        import_path: ???
-        reward_model_version: ???
+        model_path: ""      # optional local Kling VideoReward checkpoint root
+        dtype: bfloat16
 ```
 
 Do not set:
@@ -262,9 +286,11 @@ Required checks:
 - Cosmos Predict2 V2W production config loads.
 - Cosmos Predict2.5 DiffusionNFT production config loads.
 - Production configs use `/reward/video_reward`.
-- Production configs use `worker_config.scorer=import_path`.
-- Production configs require `VIDEO_REWARD_SCORER`.
-- Production configs require `VIDEO_REWARD_MODEL_VERSION`.
+- Production configs use `reward_name=KlingTeam/VideoReward@main`.
+- Production configs use `score_key=overall_reward` unless explicitly testing a component score.
+- Production configs do not expose legacy loader fields in `worker_config`
+  (`import_path`, `model_factory`, `score_key_map`, `backend`, `backend_code_dir`).
+- Runtime derives internal `worker_config.model_factory` from `reward_name`.
 - Cosmos V2W config uses `cosmos.reference_mode=per_sample`.
 - Cosmos Predict2.5 production config keeps `model.use_lora=true`.
 
@@ -293,6 +319,7 @@ Edit or verify:
 ```text
 configs/reward/video_reward.yaml
 vrl/rewards/functions/video_reward.py
+vrl/rewards/models/kling_video_reward.py
 vrl/rewards/ray/runtime.py
 tests/rewards/test_video_reward.py
 tests/rewards/test_video_reward_versioning.py
@@ -305,7 +332,8 @@ Required checks:
 - reward debug rows record selected `score_key`.
 - reward artifact manifest is written.
 - actor runtime can be released after score when configured.
-- Cosmos production configs only accept the production import-path scorer contract.
+- Cosmos production configs reject legacy endpoint/scorer/loader fields and use the
+  Kling VideoReward production contract.
 
 ### Phase 4: Cosmos Fixed Eval and Report
 
@@ -321,8 +349,10 @@ Report must include:
 config path
 dataset manifest path
 checkpoint path
-reward scorer import path
+reward name
+reward score key
 reward model version
+reward backend code availability
 number of train/eval rows
 reward mean/std before training
 reward mean/std after training
@@ -348,8 +378,10 @@ resolved_config.yaml
 Environment:
 
 ```text
-VIDEO_REWARD_SCORER=<real import path>
-VIDEO_REWARD_MODEL_VERSION=<real reward model version>
+PYTHONPATH=<path-to-KlingAIResearch/VideoAlign>:$PYTHONPATH
+# optional: set reward.kwargs.video_reward.worker_config.model_path to a local
+# KlingTeam/VideoReward checkpoint root; otherwise the loader resolves
+# KlingTeam/VideoReward@main through Hugging Face.
 ```
 
 Required run artifacts:
@@ -483,6 +515,7 @@ Local files:
 /home/mingfeiguo/Desktop/wm-infra/docs/papers/cosmos_predict2_5_world_simulation_with_video_foundation_models_for_physical_ai_2511.00062v2.pdf
 /home/mingfeiguo/Desktop/wm-infra/vrl/trainers/data/prompts.py
 /home/mingfeiguo/Desktop/wm-infra/vrl/rewards/functions/video_reward.py
+/home/mingfeiguo/Desktop/wm-infra/vrl/rewards/models/kling_video_reward.py
 /home/mingfeiguo/Desktop/wm-infra/vrl/rewards/ray/runtime.py
 /home/mingfeiguo/Desktop/wm-infra/configs/reward/video_reward.yaml
 /home/mingfeiguo/Desktop/wm-infra/configs/experiment/diffusion/cosmos_predict2/online_grpo_video_reward.yaml
@@ -494,6 +527,6 @@ External references:
 ```text
 https://arxiv.org/abs/2511.00062
 https://github.com/nvidia-cosmos/cosmos-predict2.5
-https://github.com/Vchitect/VBench
-https://github.com/KwaiVGI/VideoAlign
+https://huggingface.co/KlingTeam/VideoReward
+https://github.com/KlingAIResearch/VideoAlign
 ```

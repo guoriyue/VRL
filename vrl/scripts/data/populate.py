@@ -1,10 +1,13 @@
 """Dataset population CLI dispatcher.
 
-Each dataset has its own concrete script (``pickapic.py``, ``anime.py``,
-``video_world.py``) mirroring ``danbooru.py``; this module only wires their
-subcommands together. No generic artifact-manifest framework lives here.
+Each dataset has its own concrete script (``pickapic.py``, ``danbooru.py``,
+``video_world.py``, ``bootstrap.py``); this module only wires their subcommands
+together. No generic artifact-manifest framework lives here.
 
     python -m vrl.scripts.data.populate <command>
+
+Commands: pickapic, anime-prompts, anime-positives, anime-fetch-images,
+video-world-bridge, for-experiment.
 """
 
 from __future__ import annotations
