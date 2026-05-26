@@ -56,3 +56,54 @@ def test_validate_actor_gpu_ids_rejects_unexpected_assignment() -> None:
             expected_gpu_ids=(1,),
             role="reward",
         )
+
+
+def test_validate_actor_gpu_ids_cross_node_accepts_remote_local_zero() -> None:
+    result = validate_actor_gpu_ids(
+        [
+            {"worker_id": "generation-0", "node_ip": "10.0.0.2", "gpu_ids": [0]},
+            {"worker_id": "generation-1", "node_ip": "10.0.0.3", "gpu_ids": [0]},
+        ],
+        expected_gpu_ids=(1, 2),
+        role="generation",
+        cross_node=True,
+        driver_node_ip="10.0.0.1",
+    )
+
+    assert result == (0, 0)
+
+
+def test_validate_actor_gpu_ids_cross_node_rejects_driver_node() -> None:
+    with pytest.raises(RuntimeError, match="driver/head node"):
+        validate_actor_gpu_ids(
+            [{"worker_id": "generation-0", "node_ip": "10.0.0.1", "gpu_ids": [0]}],
+            expected_gpu_ids=(1,),
+            role="generation",
+            cross_node=True,
+            driver_node_ip="10.0.0.1",
+        )
+
+
+def test_validate_actor_gpu_ids_cross_node_rejects_shared_gpu() -> None:
+    with pytest.raises(RuntimeError, match="share GPU"):
+        validate_actor_gpu_ids(
+            [
+                {"worker_id": "generation-0", "node_ip": "10.0.0.2", "gpu_ids": [0]},
+                {"worker_id": "generation-1", "node_ip": "10.0.0.2", "gpu_ids": [0]},
+            ],
+            expected_gpu_ids=(1, 2),
+            role="generation",
+            cross_node=True,
+            driver_node_ip="10.0.0.1",
+        )
+
+
+def test_validate_actor_gpu_ids_cross_node_requires_gpu() -> None:
+    with pytest.raises(RuntimeError, match="no assigned GPU ids"):
+        validate_actor_gpu_ids(
+            [{"worker_id": "generation-0", "node_ip": "10.0.0.2", "gpu_ids": []}],
+            expected_gpu_ids=(1,),
+            role="generation",
+            cross_node=True,
+            driver_node_ip="10.0.0.1",
+        )

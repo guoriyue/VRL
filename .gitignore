@@ -48,6 +48,7 @@ datasets/video_world/references/
 # Logs
 *.log
 logs/
+/*_profile/
 
 # OS
 .DS_Store

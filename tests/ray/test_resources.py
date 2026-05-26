@@ -227,6 +227,97 @@ def test_resource_plan_formatter_includes_key_fields() -> None:
     assert "trainer_reservation=True" in text
 
 
+def test_cross_node_rollout_satisfies_budget_from_explicit_counts() -> None:
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": "auto",
+                "cross_node": True,
+                "trainer": {"num_gpus": 1},
+                "rollout": {"num_gpus": 1, "gpus_per_worker": 1, "num_workers": 1},
+                "allow_overlap": False,
+            },
+        ),
+    )
+
+    assert resolved.cross_node is True
+    assert resolved.trainer_devices == (0,)
+    assert resolved.rollout_devices == (1,)
+    assert resolved.rollout_num_workers == 1
+    assert resolved.colocated is False
+    assert resolved.requires_trainer_reservation is False
+    assert resolved.ray_total_bundles == 1
+    assert trainer_torch_device(resolved) == "cuda:0"
+
+
+def test_cross_node_scales_to_multiple_rollout_workers() -> None:
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": "auto",
+                "cross_node": True,
+                "trainer": {"num_gpus": 1},
+                "rollout": {"num_gpus": 3, "gpus_per_worker": 1, "num_workers": 3},
+            },
+        ),
+    )
+
+    assert resolved.trainer_devices == (0,)
+    assert resolved.rollout_devices == (1, 2, 3)
+    assert resolved.rollout_num_workers == 3
+    assert resolved.requires_trainer_reservation is False
+
+
+def test_cross_node_requires_explicit_rollout_count() -> None:
+    with pytest.raises(ValueError, match="cross_node"):
+        resolve_distributed_resources(
+            _cfg(
+                {
+                    "visible_devices": "auto",
+                    "cross_node": True,
+                    "trainer": {"num_gpus": 1},
+                    "rollout": {"num_gpus": "auto", "gpus_per_worker": 1},
+                },
+            ),
+        )
+
+
+def test_cross_node_plan_formatter_reports_flag() -> None:
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": "auto",
+                "cross_node": True,
+                "trainer": {"num_gpus": 1},
+                "rollout": {"num_gpus": 1, "gpus_per_worker": 1, "num_workers": 1},
+            },
+        ),
+    )
+
+    assert "cross_node=True" in format_distributed_resource_plan(resolved)
+
+
+def test_cross_node_preset_resolves() -> None:
+    from pathlib import Path
+
+    from omegaconf import OmegaConf
+
+    preset = (
+        Path(__file__).resolve().parents[2]
+        / "configs"
+        / "base"
+        / "distributed"
+        / "ray_rollout_cross_node.yaml"
+    )
+    resolved = resolve_distributed_resources(OmegaConf.load(preset))
+
+    assert resolved.cross_node is True
+    assert resolved.trainer_devices == (0,)
+    assert resolved.rollout_devices == (1,)
+    assert resolved.rollout_num_workers == 1
+    assert resolved.requires_trainer_reservation is False
+
+
 def test_reward_role_resolves_after_trainer_and_rollout_devices() -> None:
     resolved = resolve_distributed_resources(
         _cfg(

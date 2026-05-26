@@ -142,6 +142,12 @@ def _validate_driver_cuda_ownership(
         return
 
     resources = config.resources
+    if resources is not None and resources.cross_node:
+        # Cross-node: the driver's head-local cuda ordinal and a remote rollout
+        # GPU live in different ordinal spaces, so a set-intersection overlap
+        # check is meaningless. Node-level isolation is enforced by the launcher
+        # preflight (head --num-gpus=0) and validate_actor_gpu_ids node check.
+        return
     if resources is None:
         raise ValueError(
             "Driver loaded rollout policy on CUDA, but no distributed.resources "

@@ -2,6 +2,14 @@
 
 状态：proposed。
 
+Repo reality update:
+
+- Current config path is `trainer.rollout_orchestration`, not top-level `rollout_orchestration`.
+- Current valid modes are `strict_on_policy` and `one_batch_overlap`.
+- Current factory lives in `vrl/rollouts/orchestration/schedule.py`.
+- Current orchestration config lives in `vrl/trainers/core/types.py::RolloutOrchestrationConfig`.
+- Cross-node rollout is the primary hardware path that makes continuous useful: trainer GPU on the driver/head node, rollout GPUs on remote Ray worker nodes, Ray cluster provided externally through `RAY_ADDRESS`.
+
 ## 一句话目标
 
 在 `one_batch_overlap` 之后，增加一个真正 continuous 的 rollout producer：producer 常驻后台持续生成、reward、写入 bounded queue；trainer 不再每 step 主动发起整批 rollout，而是从 ready queue 里取可训练 batch。
@@ -21,6 +29,7 @@ rollout/reward 抖动导致 trainer 间歇性饿数据
 
 ```text
 separate trainer/rollout GPUs
+cross-node Ray rollout with trainer on head and rollout workers on remote GPUs
 or at least partially independent CPU/reward/artifact work that can overlap training
 ```
 
@@ -279,29 +288,67 @@ one RolloutIteration consumes exactly one rollout_policy_version
 
 ## Config 形状
 
+当前 repo 的配置入口是：
+
 ```yaml
-rollout_orchestration:
-  mode: continuous
+trainer:
+  rollout_orchestration:
+    mode: strict_on_policy
+    max_pending_rollouts: 1
+    require_separate_gpus: true
+    weight_sync_barrier: before_sync
+```
 
-  continuous:
-    enabled: true
-    max_inflight_groups: 8
-    prefill_target_groups: 16
-    min_ready_groups: 4
-    max_ready_groups: 32
-    max_ready_bytes_mb: 8192
+continuous 必须挂在同一个路径下，不新增 top-level `rollout_orchestration`。
 
-    max_stale_policy_versions: 1
-    allow_mixed_policy_in_iteration: false
-    drop_policy: drop_oldest_stale
+建议新增 preset：
 
-    producer_runtime: in_process      # in_process | ray_actor
-    queue_storage: cpu                # cpu | path
+```text
+configs/base/rollout_orchestration/continuous.yaml
+```
+
+安全第一版：
+
+```yaml
+trainer:
+  rollout_orchestration:
+    mode: continuous
+    max_pending_rollouts: 2
+    require_separate_gpus: true
     weight_sync_barrier: pause_admission_and_drain_inflight
 
-    wait_timeout_s: 300
-    queue_poll_interval_s: 0.05
+    continuous:
+      max_inflight_groups: 1
+      prefill_target_groups: 1
+      min_ready_groups: 1
+      max_ready_groups: 2
+      max_ready_bytes_mb: 8192
+
+      # Phase A default: behavior-equivalent to strict on-policy.
+      max_stale_policy_versions: 0
+      allow_mixed_policy_in_iteration: false
+      drop_policy: drop_oldest_stale
+
+      producer_runtime: in_process      # in_process | ray_actor
+      queue_storage: cpu                # cpu | path
+
+      wait_timeout_s: 300
+      queue_poll_interval_s: 0.05
 ```
+
+真实 cross-node throughput run 可以用 override 打开 bounded stale：
+
+```bash
+RAY_ADDRESS=<head-ip>:6379 CUDA_VISIBLE_DEVICES=0 python -m vrl.scripts.train \
+  --config experiment/diffusion/sd3_5/online_grpo_ocr \
+  /base/distributed=ray_rollout_cross_node \
+  /base/rollout_orchestration=continuous \
+  trainer.rollout_orchestration.continuous.max_stale_policy_versions=1 \
+  trainer.rollout_orchestration.continuous.max_inflight_groups=4 \
+  trainer.rollout_orchestration.continuous.max_ready_groups=8
+```
+
+注意：`RAY_ADDRESS` 是部署环境输入，不写进 YAML；机器清单、SSH、Ray cluster lifecycle 仍由 Ray / infra 层管理。
 
 含义：
 
@@ -322,7 +369,8 @@ max_stale_policy_versions
   trainer 当前版本和 rollout batch 版本的最大差距。
 
 weight_sync_barrier
-  sync weights 前暂停提交新任务，并处理 in-flight。
+  sync weights 前暂停提交新任务，并处理 in-flight。continuous 下唯一允许值是
+  `pause_admission_and_drain_inflight`。
 ```
 
 ## Producer 协议
@@ -451,9 +499,11 @@ if item missing old_log_prob / trajectory signal needed by algorithm:
 第一版建议：
 
 ```text
-max_stale_policy_versions: 1
+max_stale_policy_versions: 0
 allow_mixed_policy_in_iteration: false
 ```
+
+`max_stale_policy_versions: 1` 是 cross-node throughput mode，不是 Phase A 默认值。
 
 ## Artifact 和内存策略
 
@@ -547,6 +597,45 @@ RolloutIteration
 phase metrics
 ```
 
+## 和 cross-node rollout 的关系
+
+continuous queue 不负责创建 Ray 集群，也不管理机器清单。它只复用已经存在的 rollout runtime。
+
+推荐组合：
+
+```bash
+RAY_ADDRESS=<head-ip>:6379 CUDA_VISIBLE_DEVICES=0 python -m vrl.scripts.train \
+  --config experiment/diffusion/sd3_5/online_grpo_ocr \
+  /base/distributed=ray_rollout_cross_node \
+  /base/rollout_orchestration=continuous
+```
+
+资源边界：
+
+```text
+cross-node rollout:
+  owns trainer/rollout GPU separation and Ray placement validation
+
+continuous rollout:
+  owns producer cadence, ready queue, staleness, and sync barrier
+
+training config:
+  declares resource budgets and rollout orchestration mode
+
+environment:
+  provides RAY_ADDRESS, CUDA_VISIBLE_DEVICES, VRL_DATA_ROOT, HF cache, etc.
+```
+
+不要在 continuous sprint 里新增：
+
+```text
+distributed.ray.address
+distributed.cluster.hosts
+distributed.cluster.ssh_key
+```
+
+这些属于 cross-node deployment/runbook，不属于 orchestration logic。
+
 ## Phase 1：类型和 queue
 
 新增：
@@ -563,6 +652,14 @@ vrl/rollouts/orchestration/continuous/staleness.py
 - Queue item 必须带 `rollout_policy_version`。
 - `drain_for_iteration(...)` 不会混 policy version。
 - stale item 会被 drop 并计数。
+
+Phase A 的 queue depth / stale 配置必须能退化成 strict-equivalent：
+
+```text
+max_stale_policy_versions=0
+max_inflight_groups=1
+max_ready_groups=1 or 2
+```
 
 ## Phase 2：in-process continuous producer
 
@@ -592,7 +689,10 @@ vrl/rollouts/orchestration/continuous/consumer.py
 
 完成标准：
 
-- `OnlineTrainer` 在 `mode: continuous` 下从 queue drain。
+- `RolloutScheduleMode` 增加 `CONTINUOUS = "continuous"`。
+- `RolloutOrchestrationConfig` 允许 `mode="continuous"`。
+- `build_rollout_schedule()` 在 continuous 下返回 `ContinuousRolloutSchedule`。
+- `OnlineTrainer` 不应该长出 continuous 专用分支；它继续只调用 schedule protocol。
 - trainer train path 仍然复用已有 advantage/evaluator/algorithm 逻辑。
 - 如果 queue 空，trainer 等待并记录 wait time。
 - 如果 timeout，fail fast。
@@ -607,6 +707,9 @@ vrl/rollouts/orchestration/continuous/consumer.py
 - in-flight collect task 会 finish 或按配置 cancel。
 - sync 后 producer 用新 `current_policy_version` 提交新任务。
 - ready queue 中旧 item 只有在 `max_stale_policy_versions` 允许时才能被消费。
+- `RolloutOrchestrationConfig.__post_init__` 对 continuous 允许
+  `weight_sync_barrier="pause_admission_and_drain_inflight"`，对其它 mode 继续要求
+  `before_sync`。
 
 ## Phase 5：artifact storage
 
@@ -649,7 +752,10 @@ continuous.rollout_policy_version
 
 ## Phase 7：Ray actor / external buffer
 
-这不是第一版必须，但 full Slime-style 生产形态最终需要。
+这不是第一版必须。cross-node rollout 已经通过 Ray generation actors 把真正的 generation
+重活放到远端 worker；Phase A 的 in-process producer 只是调度远端 collect，足够验证
+continuous queue 的语义和收益。Ray actor producer 是隔离/生产化增强，不是 cross-node
+continuous 的前提。
 
 目标：
 
@@ -705,11 +811,20 @@ OnlineTrainer -> ContinuousRolloutSchedule
 2. Add in-process producer with bounded inflight and ready queue.
 3. Add consumer that drains same-policy ready groups.
 4. Add weight sync barrier: pause admission, drain/cancel inflight, sync, resume.
-5. Add config mode: rollout_orchestration.mode=continuous.
-6. Add stale policy: max_stale_policy_versions=1, no mixed-policy iteration.
+5. Add config mode: trainer.rollout_orchestration.mode=continuous.
+6. Add stale policy: max_stale_policy_versions=0 by default, no mixed-policy iteration.
 7. Add queue metrics and debug JSONL fields.
 8. Prove fake runtime benchmark:
    strict_on_policy time > one_batch_overlap time > continuous time after warmup.
+```
+
+Phase A acceptance bar:
+
+```text
+mode=continuous + max_stale_policy_versions=0 must be behavior-equivalent to strict_on_policy.
+Default config must remain strict_on_policy.
+Continuous preset must be opt-in.
+Cross-node continuous usage must require only RAY_ADDRESS plus YAML/dotlist resource budgets.
 ```
 
 ## 明确非目标

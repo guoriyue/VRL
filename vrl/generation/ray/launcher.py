@@ -26,7 +26,7 @@ from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.weight_sync import RayGenerationWeightSync
 from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.ray.actor_group import RayActorGroup
-from vrl.ray.dependencies import require_ray
+from vrl.ray.dependencies import current_node_ip, require_ray
 from vrl.ray.lifecycle import kill_actors, remove_placement_group
 from vrl.ray.placement import validate_actor_gpu_ids
 from vrl.ray.resources import format_distributed_resource_plan
@@ -66,6 +66,9 @@ class RayGenerationLauncher:
         ray = require_ray()
         if self.init_ray and not ray.is_initialized():
             ray.init(**self.ray_init_kwargs)
+
+        if rollout_config.resources is not None and rollout_config.resources.cross_node:
+            _cross_node_preflight(ray, rollout_config.resources)
 
         placement = create_generation_placement_group(rollout_config)
         if rollout_config.resources is not None:
@@ -241,11 +244,63 @@ def _validate_worker_gpu_ids(
     if resources is None or resources.rollout_gpus_per_worker <= 0:
         return
 
+    driver_node_ip: str | None = None
+    if resources.cross_node:
+        try:
+            driver_node_ip = current_node_ip()
+        except Exception:
+            driver_node_ip = None
+
     validate_actor_gpu_ids(
         metadata,
         expected_gpu_ids=resources.rollout_devices,
         role="generation",
+        cross_node=resources.cross_node,
+        driver_node_ip=driver_node_ip,
     )
+
+
+def _cross_node_preflight(ray: Any, resources: Any) -> None:
+    """Fail fast when the live Ray cluster cannot host cross-node rollout.
+
+    Runs after ``ray.init()`` (resolution earlier in the pipeline cannot see the
+    cluster). Verifies that non-driver nodes expose enough GPUs for rollout, and
+    that the driver/head node does not expose Ray GPUs — otherwise rollout actors
+    could be scheduled onto the trainer GPU, since cross-node mode intentionally
+    drops the placement-group trainer reservation.
+    """
+
+    try:
+        driver_node_ip = current_node_ip()
+    except Exception:
+        driver_node_ip = None
+
+    driver_gpus = 0.0
+    non_driver_gpus = 0.0
+    for node in ray.nodes():
+        if not node.get("Alive"):
+            continue
+        node_gpus = float(node.get("Resources", {}).get("GPU", 0.0))
+        node_ip = node.get("NodeManagerAddress")
+        if driver_node_ip is not None and node_ip == driver_node_ip:
+            driver_gpus += node_gpus
+        else:
+            non_driver_gpus += node_gpus
+
+    needed = resources.rollout_num_gpus
+    if non_driver_gpus < needed:
+        raise RuntimeError(
+            f"cross_node rollout needs {needed} GPU(s) on non-driver Ray nodes, but "
+            f"only {non_driver_gpus:g} are available. Join more rollout workers, e.g. "
+            "`ray start --address=<head>:6379 --num-gpus=<n>`.",
+        )
+    if driver_gpus > 0:
+        raise RuntimeError(
+            f"cross_node rollout: the driver/head node exposes {driver_gpus:g} Ray "
+            "GPU(s), so rollout could be scheduled onto the trainer GPU. Start the "
+            "head with `ray start --head --num-gpus=0` so the trainer GPU stays out "
+            "of Ray's scheduling pool.",
+        )
 
 
 def _call_runtime_build_extractor(

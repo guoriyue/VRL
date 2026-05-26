@@ -49,6 +49,7 @@ class DistributedResourceConfig:
     reward_placement_strategy: str = "SPREAD"
     reward_cpus_per_worker: float = 0.5
     reward_max_inflight_batches: int = 1
+    cross_node: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +77,7 @@ class ResolvedDistributedResources:
     ray_total_bundles: int
     requires_trainer_reservation: bool
     colocated: bool
+    cross_node: bool
 
 
 _MISSING = object()
@@ -90,7 +92,10 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
     """
 
     config = _distributed_resource_config_from_cfg(cfg)
-    visible_devices = _resolve_visible_devices(config.visible_devices)
+    if config.cross_node:
+        visible_devices = _resolve_cross_node_visible_devices(config)
+    else:
+        visible_devices = _resolve_visible_devices(config.visible_devices)
 
     trainer_devices = _resolve_role_devices(
         role="trainer",
@@ -189,6 +194,7 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
         and rollout_gpus_per_worker > 0
         and not colocated
         and rollout_num_workers > 0
+        and not config.cross_node
     )
     reward_gpu_reservation_count = _reward_gpu_reservation_count(
         visible_devices=visible_devices,
@@ -222,6 +228,7 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
         ray_total_bundles=ray_total_bundles,
         requires_trainer_reservation=requires_trainer_reservation,
         colocated=colocated,
+        cross_node=config.cross_node,
     )
 
 
@@ -259,6 +266,7 @@ def format_distributed_resource_plan(
         f"{resolved.rollout_release_before_reward_model}",
         f"reward_release_after_score={resolved.reward_release_after_score}",
         f"colocated={resolved.colocated}",
+        f"cross_node={resolved.cross_node}",
         f"trainer_reservation={resolved.requires_trainer_reservation}",
         f"ray_bundles={resolved.ray_total_bundles}",
     ]
@@ -320,6 +328,7 @@ def _distributed_resource_config_from_cfg(cfg: Any) -> DistributedResourceConfig
         reward_max_inflight_batches=int(
             _cfg_get(reward_runtime, "max_inflight_batches", 1),
         ),
+        cross_node=bool(_cfg_get(resources, "cross_node", False)),
     )
 
 
@@ -328,6 +337,53 @@ def _resolve_visible_devices(value: list[int] | str) -> tuple[int, ...]:
     if devices == "auto":
         return _auto_visible_cuda_devices()
     return tuple(_dedupe_ints(devices, field_name="distributed.resources.visible_devices"))
+
+
+def _resolve_cross_node_visible_devices(
+    config: DistributedResourceConfig,
+) -> tuple[int, ...]:
+    """Synthesise a visible-device budget for cross-node runs.
+
+    Resolution runs before ``ray.init()`` (see ``vrl/scripts/common/online.py``),
+    so the live Ray cluster cannot be queried here. Under ``cross_node`` we instead
+    size the visible pool from explicit per-role GPU counts. The resulting ordinals
+    are budget tokens only: trainer keeps the head-local ordinal, rollout ordinals
+    are never used as real remote device ids (placement is by Ray + node, and
+    ``validate_actor_gpu_ids`` switches to a node-aware check).
+    """
+
+    explicit = _parse_devices(config.visible_devices)
+    if explicit != "auto":
+        return tuple(
+            _dedupe_ints(explicit, field_name="distributed.resources.visible_devices"),
+        )
+
+    total = (
+        _explicit_role_gpu_count("trainer", config.trainer)
+        + _explicit_role_gpu_count("rollout", config.rollout)
+        + _explicit_role_gpu_count("reward", config.reward)
+    )
+    return tuple(range(total))
+
+
+def _explicit_role_gpu_count(role: str, role_config: RoleResourceConfig) -> int:
+    """Return an explicit integer GPU count for a role under ``cross_node``."""
+
+    devices = _parse_devices(role_config.devices)
+    if devices != "auto":
+        return len(_dedupe_ints(devices, field_name=f"distributed.resources.{role}.devices"))
+
+    num_gpus = _parse_num_gpus(role_config.num_gpus, field_name=f"{role}.num_gpus")
+    if num_gpus == "auto" or num_gpus is None:
+        raise ValueError(
+            "distributed.resources.cross_node=true requires an explicit integer "
+            f"distributed.resources.{role}.num_gpus (got 'auto'/null): the Ray "
+            "cluster is not queryable at resolution time, so the GPU budget must be "
+            "declared up front.",
+        )
+    if int(num_gpus) < 0:
+        raise ValueError(f"distributed.resources.{role}.num_gpus must be >= 0")
+    return int(num_gpus)
 
 
 def _resolve_role_devices(
