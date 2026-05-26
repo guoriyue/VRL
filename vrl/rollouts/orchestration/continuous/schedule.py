@@ -82,8 +82,9 @@ class ContinuousRolloutSchedule:
                 await self._start(prompts, group_size=group_size, runtime_debug=runtime_debug),
             )
             self._prompt_key = prompt_key
-        else:
-            self._require_same_prompts(prompt_key)
+        elif prompt_key != self._prompt_key:
+            self.producer.update_prompts(prompts)
+            self._prompt_key = prompt_key
 
         assert self.consumer is not None
         rollout_id = self.state.rollout_id
@@ -196,12 +197,6 @@ class ContinuousRolloutSchedule:
             raise RuntimeError(
                 "continuous rollout requires separate trainer and rollout GPU "
                 "ownership",
-            )
-
-    def _require_same_prompts(self, prompt_key: tuple[str, ...]) -> None:
-        if self._prompt_key is not None and prompt_key != self._prompt_key:
-            raise ValueError(
-                "continuous rollout requires a stable prompt set across steps",
             )
 
 

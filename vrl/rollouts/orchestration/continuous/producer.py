@@ -75,6 +75,17 @@ class ContinuousRolloutProducer:
         self._loop_task = asyncio.create_task(self._run())
         return phase_times
 
+    def update_prompts(self, prompts: list[Any]) -> None:
+        # Producer swaps its prompt source for future submissions. In-flight
+        # tasks and already-queued items keep their original prompts and are
+        # still drained FIFO by the consumer.
+        if not prompts:
+            raise ValueError(
+                "ContinuousRolloutProducer requires a non-empty prompt list",
+            )
+        self.prompts = list(prompts)
+        self._prompt_cursor = 0
+
     async def stop(self) -> None:
         self.cancel()
         if self._loop_task is not None and not self._loop_task.done():

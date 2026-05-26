@@ -197,13 +197,13 @@ async def test_rejects_colocated_runtime() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stable_prompts_required() -> None:
+async def test_prompt_set_update_swaps_producer_source() -> None:
     runtime = _Runtime()
     schedule = _build(_continuous_config(), _Collector(runtime), _Syncer(runtime))
 
     try:
         await schedule.next_iteration(["p0", "p1"], group_size=2)
-        with pytest.raises(ValueError, match="stable prompt set"):
-            await schedule.next_iteration(["p0", "p2"], group_size=2)
+        await schedule.next_iteration(["p0", "p2"], group_size=2)
+        assert schedule.producer.prompts == ["p0", "p2"]
     finally:
         await schedule.producer.stop()
