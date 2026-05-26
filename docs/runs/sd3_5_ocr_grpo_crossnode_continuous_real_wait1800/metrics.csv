@@ -1,0 +1,2 @@
+epoch,loss,policy_loss,kl_penalty,reward_mean,reward_std,clip_fraction,approx_kl,advantage_mean,grad_norm,adv_saturation,adv_zero_rate,group_size,trained_prompt_num,r_ocr
+0,0.000257,0.000247,0.000236,0.4543,0.3691,0.3385,0.000006,-0.000000,0.006312,0.0000,0.0156,8.00,8,0.4473
