@@ -4,5 +4,6 @@ defaults:
   - /base/actor
   - /base/rollout/diffusion
   - /base/distributed/ray_rollout_colocated_single_gpu
+  - /base/rollout/orchestration/strict
   - /base/trainer
 

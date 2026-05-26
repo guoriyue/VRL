@@ -133,6 +133,17 @@ def test_all_experiments_load_and_validate() -> None:
         validate_training_config(cfg)
 
 
+def test_rollout_orchestration_group_override_uses_rollout_namespace() -> None:
+    cfg = load_config(
+        "experiment/diffusion/sd3_5/online_grpo_ocr",
+        overrides=["/base/rollout/orchestration=continuous"],
+    )
+
+    orchestration = cfg.trainer.rollout_orchestration
+    assert orchestration.mode == "continuous"
+    assert orchestration.weight_sync_barrier == "pause_admission_and_drain_inflight"
+
+
 def test_algorithm_config_dispatches_representative_kinds() -> None:
     examples = {
         "diffusion/sd3_5/online_grpo_ocr": GRPOConfig,

@@ -5,14 +5,14 @@
 Repo reality update:
 
 - Current config path is `trainer.rollout_orchestration`, not top-level `rollout_orchestration`.
-- Current valid modes are `strict_on_policy` and `one_batch_overlap`.
+- Current valid modes are `strict_on_policy` and `continuous`.
 - Current factory lives in `vrl/rollouts/orchestration/schedule.py`.
 - Current orchestration config lives in `vrl/trainers/core/types.py::RolloutOrchestrationConfig`.
 - Cross-node rollout is the primary hardware path that makes continuous useful: trainer GPU on the driver/head node, rollout GPUs on remote Ray worker nodes, Ray cluster provided externally through `RAY_ADDRESS`.
 
 ## 一句话目标
 
-在 `one_batch_overlap` 之后，增加一个真正 continuous 的 rollout producer：producer 常驻后台持续生成、reward、写入 bounded queue；trainer 不再每 step 主动发起整批 rollout，而是从 ready queue 里取可训练 batch。
+增加一个 continuous rollout producer：producer 常驻后台持续生成、reward、写入 bounded queue；trainer 不再每 step 主动发起整批 rollout，而是从 ready queue 里取可训练 batch。
 
 ## 能解决什么，不能解决什么
 
@@ -59,7 +59,6 @@ target != vLLM/SGLang low-level engine scheduler
 rollout_id
 policy_version
 weight sync lifecycle
-one_batch_overlap
 RolloutIteration metadata
 ```
 
@@ -274,8 +273,6 @@ last_error
 
 ```text
 max_stale_policy_versions
-allow_mixed_policy_in_iteration: false
-drop_too_stale: true
 ```
 
 第一版必须要求：
@@ -304,7 +301,7 @@ continuous 必须挂在同一个路径下，不新增 top-level `rollout_orchest
 建议新增 preset：
 
 ```text
-configs/base/rollout_orchestration/continuous.yaml
+configs/base/rollout/orchestration/continuous.yaml
 ```
 
 安全第一版：
@@ -319,18 +316,12 @@ trainer:
 
     continuous:
       max_inflight_groups: 1
-      prefill_target_groups: 1
-      min_ready_groups: 1
       max_ready_groups: 2
       max_ready_bytes_mb: 8192
 
       # Phase A default: behavior-equivalent to strict on-policy.
       max_stale_policy_versions: 0
-      allow_mixed_policy_in_iteration: false
       drop_policy: drop_oldest_stale
-
-      producer_runtime: in_process      # in_process | ray_actor
-      queue_storage: cpu                # cpu | path
 
       wait_timeout_s: 300
       queue_poll_interval_s: 0.05
@@ -342,7 +333,7 @@ trainer:
 RAY_ADDRESS=<head-ip>:6379 CUDA_VISIBLE_DEVICES=0 python -m vrl.scripts.train \
   --config experiment/diffusion/sd3_5/online_grpo_ocr \
   /base/distributed=ray_rollout_cross_node \
-  /base/rollout_orchestration=continuous \
+  /base/rollout/orchestration=continuous \
   trainer.rollout_orchestration.continuous.max_stale_policy_versions=1 \
   trainer.rollout_orchestration.continuous.max_inflight_groups=4 \
   trainer.rollout_orchestration.continuous.max_ready_groups=8
@@ -355,12 +346,6 @@ RAY_ADDRESS=<head-ip>:6379 CUDA_VISIBLE_DEVICES=0 python -m vrl.scripts.train \
 ```text
 max_inflight_groups
   producer 同时发起多少 group collect。
-
-prefill_target_groups
-  启动训练前 queue 至少预填多少 group。
-
-min_ready_groups
-  trainer 一次 drain 至少需要多少 prompt groups。
 
 max_ready_groups / max_ready_bytes_mb
   backpressure 上限。
@@ -391,7 +376,7 @@ loop()
     drop stale ready items
 
     while inflight < max_inflight and queue below high watermark:
-      prompts = prompt_source.next_group()
+      prompt = next stable prompt slot
       submit collect task with current_policy_version
 
     harvest completed tasks
@@ -500,7 +485,6 @@ if item missing old_log_prob / trajectory signal needed by algorithm:
 
 ```text
 max_stale_policy_versions: 0
-allow_mixed_policy_in_iteration: false
 ```
 
 `max_stale_policy_versions: 1` 是 cross-node throughput mode，不是 Phase A 默认值。
@@ -529,42 +513,16 @@ reward scalar / reward breakdown
 old log probs
 ```
 
-如果 `videos` 很大，第一版应支持：
+如果 `videos` 很大，path-backed queue storage 应作为后续 phase 单独落地；
+第一版不要在正式 config 暴露未实现的 `queue_storage: path`。
 
-```text
-queue_storage: path
-```
+## Prompt cadence
 
-也就是 queue 里只存 artifact path / manifest，trainer consume 时再 materialize training tensors。
+第一版 producer 直接持有当前 `OnlineTrainer.prompts` 的稳定快照，按 slot
+round-robin 提交单个 prompt group。`slot` 是 queue 的 `group_key`，因此重复
+prompt 字符串也能形成不同 group。
 
-## Prompt Source
-
-不要把 continuous producer 和 prompt dataset 写死。
-
-抽象：
-
-```text
-PromptSource
-  next_group()
-  mark_consumed(...)
-  mark_failed(...)
-  state_dict()
-  load_state_dict(...)
-```
-
-第一版可以包装当前 `OnlineTrainer.prompts`：
-
-```text
-RoundRobinPromptSource
-```
-
-后续可以支持：
-
-```text
-manifest prompt source
-replay prompt source
-external task generator
-```
+后续如果要支持 manifest/replay/dynamic prompt source，再引入独立接口。
 
 ## 和前一个 sprint 的关系
 
@@ -575,14 +533,12 @@ RolloutSchedule interface
 RolloutIteration
 policy_version metadata
 post-train weight sync lifecycle
-one_batch_overlap guards
 ```
 
 不要重复实现：
 
 ```text
 strict_on_policy
-one_batch_overlap
 generation runtime
 Ray worker chunk scheduler
 ```
@@ -607,7 +563,7 @@ continuous queue 不负责创建 Ray 集群，也不管理机器清单。它只�
 RAY_ADDRESS=<head-ip>:6379 CUDA_VISIBLE_DEVICES=0 python -m vrl.scripts.train \
   --config experiment/diffusion/sd3_5/online_grpo_ocr \
   /base/distributed=ray_rollout_cross_node \
-  /base/rollout_orchestration=continuous
+  /base/rollout/orchestration=continuous
 ```
 
 资源边界：
@@ -718,11 +674,10 @@ vrl/rollouts/orchestration/continuous/consumer.py
 完成标准：
 
 - Queue stats 能估算 ready bytes。
-- 支持 `queue_storage: cpu`。
-- 支持 `queue_storage: path` 的接口设计。
-- path-backed item 有 manifest，可定位 image/video/replay tensors。
-
-第一版 path storage 可以只实现 manifest contract，不强制所有 collector 立即迁移。
+- 默认把 queued training tensors 移到 CPU。
+- 不在 config 中暴露 path-backed storage，直到 manifest/materialization contract
+  真正实现。
+- 后续 path-backed item 必须有 manifest，可定位 image/video/replay tensors。
 
 ## Phase 6：metrics
 
@@ -815,7 +770,7 @@ OnlineTrainer -> ContinuousRolloutSchedule
 6. Add stale policy: max_stale_policy_versions=0 by default, no mixed-policy iteration.
 7. Add queue metrics and debug JSONL fields.
 8. Prove fake runtime benchmark:
-   strict_on_policy time > one_batch_overlap time > continuous time after warmup.
+   strict_on_policy time > continuous throughput profile after warmup.
 ```
 
 Phase A acceptance bar:

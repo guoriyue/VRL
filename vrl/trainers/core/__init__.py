@@ -2,6 +2,7 @@
 
 from vrl.trainers.core.base import Trainer
 from vrl.trainers.core.types import (
+    ContinuousRolloutConfig,
     DebugConfig,
     EMAConfig,
     OptimConfig,
@@ -12,6 +13,7 @@ from vrl.trainers.core.types import (
 )
 
 __all__ = [
+    "ContinuousRolloutConfig",
     "DebugConfig",
     "EMAConfig",
     "OptimConfig",

@@ -32,13 +32,10 @@ contract rewrite.
 ## 2. 底层逻辑 / Honest caveat — where the payoff actually is
 
 On a **single GPU**, rollout and reward **time-share** the device
-(`_should_release_runtime_before_reward_model` in `vrl/rollouts/collector/core.py`), and the
-existing `one_batch_overlap` schedule **refuses to run when GPUs are colocated**
-(`_validate_overlap_allowed` in `vrl/rollouts/orchestration/one_batch_overlap.py`). So a
+(`_should_release_runtime_before_reward_model` in `vrl/rollouts/collector/core.py`), so a
 queue's concurrency win is a **multi-GPU** payoff (producer generates while reward scores
-while trainer trains). On one GPU it buys only cadence decoupling + a small N+1 prefetch
-behind backward/optim. We land it now only because the goal is "abstraction in place before
-the hardware."
+while trainer trains). On one GPU it buys only cadence decoupling; the target path is
+separate trainer and rollout GPU ownership before the hardware.
 
 ## 3. Reuse (do not rewrite) — with paths
 
@@ -53,7 +50,6 @@ the hardware."
 - `RolloutCollector.collect` + `_should_release_runtime_before_reward_model()`
   (gives correct single-GPU time-share for free) — `vrl/rollouts/collector/core.py`
 - Reward transport `make_reward_runtime` (`local`/`ray`) — `vrl/rewards/runtime.py`
-- Structural template to mirror: `vrl/rollouts/orchestration/one_batch_overlap.py`
 
 ## 4. 目标结构 / New files — `vrl/rollouts/orchestration/continuous/`
 

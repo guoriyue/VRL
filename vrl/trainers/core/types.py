@@ -40,6 +40,37 @@ class DebugConfig:
 
 
 @dataclass(slots=True)
+class ContinuousRolloutConfig:
+    """Tuning for ``mode='continuous'`` (producer/ready-queue/consumer).
+
+    Defaults are the safe, strict-equivalent Phase A profile: a single in-flight
+    group, no staleness, and no off-policy training. Raising
+    ``max_stale_policy_versions``/``max_ready_groups``/``max_inflight_groups``
+    turns on bounded off-policy prefetch (the cross-node throughput mode).
+    """
+
+    max_inflight_groups: int = 1
+    max_ready_groups: int = 2
+    max_ready_bytes_mb: int = 8192
+    max_stale_policy_versions: int = 0
+    drop_policy: str = "drop_oldest_stale"
+    wait_timeout_s: float = 300.0
+    queue_poll_interval_s: float = 0.05
+
+    def __post_init__(self) -> None:
+        if int(self.max_inflight_groups) < 1:
+            raise ValueError("continuous.max_inflight_groups must be >= 1")
+        if int(self.max_ready_groups) < 1:
+            raise ValueError("continuous.max_ready_groups must be >= 1")
+        if int(self.max_stale_policy_versions) < 0:
+            raise ValueError("continuous.max_stale_policy_versions must be >= 0")
+        if self.drop_policy not in {"drop_oldest_stale", "drop_oldest"}:
+            raise ValueError(
+                "continuous.drop_policy must be 'drop_oldest_stale' or 'drop_oldest'",
+            )
+
+
+@dataclass(slots=True)
 class RolloutOrchestrationConfig:
     """RL rollout schedule configuration."""
 
@@ -47,13 +78,21 @@ class RolloutOrchestrationConfig:
     max_pending_rollouts: int = 1
     require_separate_gpus: bool = True
     weight_sync_barrier: str = "before_sync"
+    continuous: ContinuousRolloutConfig = field(default_factory=ContinuousRolloutConfig)
 
     def __post_init__(self) -> None:
-        if self.mode not in {"strict_on_policy", "one_batch_overlap"}:
+        if self.mode not in {"strict_on_policy", "continuous"}:
             raise ValueError(
-                "rollout_orchestration.mode must be 'strict_on_policy' "
-                "or 'one_batch_overlap'",
+                "rollout_orchestration.mode must be 'strict_on_policy' or 'continuous'",
             )
+        if isinstance(self.continuous, dict):
+            self.continuous = ContinuousRolloutConfig(**self.continuous)
+        if self.mode == "continuous":
+            self._validate_continuous()
+        else:
+            self._validate_synchronous()
+
+    def _validate_synchronous(self) -> None:
         if int(self.max_pending_rollouts) != 1:
             raise ValueError(
                 "rollout_orchestration.max_pending_rollouts must be 1",
@@ -61,6 +100,17 @@ class RolloutOrchestrationConfig:
         if self.weight_sync_barrier != "before_sync":
             raise ValueError(
                 "rollout_orchestration.weight_sync_barrier must be 'before_sync'",
+            )
+
+    def _validate_continuous(self) -> None:
+        if int(self.max_pending_rollouts) < 1:
+            raise ValueError(
+                "rollout_orchestration.max_pending_rollouts must be >= 1",
+            )
+        if self.weight_sync_barrier != "pause_admission_and_drain_inflight":
+            raise ValueError(
+                "rollout_orchestration.weight_sync_barrier must be "
+                "'pause_admission_and_drain_inflight' for mode='continuous'",
             )
 
 

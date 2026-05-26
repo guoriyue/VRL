@@ -26,8 +26,6 @@ trainer:
     first_step: false
     grad_split: false
 
-  rollout_orchestration:
-    mode: strict_on_policy
-    max_pending_rollouts: 1
-    require_separate_gpus: true
-    weight_sync_barrier: before_sync
+# trainer.rollout_orchestration is supplied by the /base/rollout/orchestration
+# defaults group (strict by default; override with
+# /base/rollout/orchestration=continuous).

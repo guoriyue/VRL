@@ -1,0 +1,41 @@
+# Continuous rollout queue: a background producer generates + rewards groups
+# into a bounded ready queue; the trainer drains one homogeneous-policy
+# iteration per step.
+#
+# Safe Phase A profile (this file): max_stale_policy_versions=0 and a small
+# queue make this behavior-equivalent to strict_on_policy. The real payoff is
+# cross-node (trainer GPU on the head node, rollout GPU on a remote Ray worker):
+#
+#   RAY_ADDRESS=<head-ip>:6379 CUDA_VISIBLE_DEVICES=0 python -m vrl.scripts.train \
+#     --config experiment/diffusion/sd3_5/online_grpo_ocr \
+#     /base/distributed=ray_rollout_cross_node \
+#     /base/rollout/orchestration=continuous \
+#     trainer.rollout_orchestration.continuous.max_stale_policy_versions=1 \
+#     trainer.rollout_orchestration.continuous.max_inflight_groups=4 \
+#     trainer.rollout_orchestration.continuous.max_ready_groups=16
+#
+# This throughput profile replaces the removed one_batch_overlap mode. Unlike a
+# single pending iteration, continuous keeps per-prompt groups in flight and
+# drains only homogeneous-policy ready groups, so it is the overlap path for
+# remote rollout workers.
+#
+# Note: max_ready_groups must be >= rollout_batch_size (one iteration's worth of
+# prompt groups); the schedule raises the effective queue cap to fit if smaller.
+trainer:
+  rollout_orchestration:
+    mode: continuous
+    max_pending_rollouts: 2
+    require_separate_gpus: true
+    weight_sync_barrier: pause_admission_and_drain_inflight
+
+    continuous:
+      max_inflight_groups: 1
+      max_ready_groups: 2
+      max_ready_bytes_mb: 8192
+
+      # Phase A default: behavior-equivalent to strict on-policy.
+      max_stale_policy_versions: 0
+      drop_policy: drop_oldest_stale
+
+      wait_timeout_s: 300.0
+      queue_poll_interval_s: 0.05

@@ -1,0 +1,7 @@
+# Default rollout orchestration: collect one rollout, train it, then sync.
+trainer:
+  rollout_orchestration:
+    mode: strict_on_policy
+    max_pending_rollouts: 1
+    require_separate_gpus: true
+    weight_sync_barrier: before_sync

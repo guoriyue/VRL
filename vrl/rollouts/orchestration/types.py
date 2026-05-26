@@ -13,7 +13,7 @@ class RolloutScheduleMode(str, Enum):
     """Supported RL rollout schedule modes."""
 
     STRICT_ON_POLICY = "strict_on_policy"
-    ONE_BATCH_OVERLAP = "one_batch_overlap"
+    CONTINUOUS = "continuous"
 
 
 

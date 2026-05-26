@@ -8,8 +8,8 @@ from typing import Any, Protocol
 import torch
 import torch.nn as nn
 
+from vrl.rollouts.orchestration.continuous import ContinuousRolloutSchedule
 from vrl.rollouts.orchestration.lifecycle import RolloutLifecycle
-from vrl.rollouts.orchestration.one_batch_overlap import OneBatchOverlapRolloutSchedule
 from vrl.rollouts.orchestration.strict_on_policy import StrictOnPolicyRolloutSchedule
 from vrl.rollouts.orchestration.types import RolloutIteration, RolloutScheduleMode
 
@@ -47,9 +47,10 @@ def build_rollout_schedule(
         getattr(config, "mode", RolloutScheduleMode.STRICT_ON_POLICY.value),
     )
     max_pending = int(getattr(config, "max_pending_rollouts", 1))
-    if max_pending != 1:
+    if mode is not RolloutScheduleMode.CONTINUOUS and max_pending != 1:
         raise ValueError(
-            "rollout_orchestration.max_pending_rollouts must be 1 in this sprint",
+            "rollout_orchestration.max_pending_rollouts must be 1 unless "
+            "mode='continuous'",
         )
 
     lifecycle = RolloutLifecycle(
@@ -64,12 +65,38 @@ def build_rollout_schedule(
 
     if mode is RolloutScheduleMode.STRICT_ON_POLICY:
         return StrictOnPolicyRolloutSchedule(lifecycle=lifecycle)
-    if mode is RolloutScheduleMode.ONE_BATCH_OVERLAP:
-        return OneBatchOverlapRolloutSchedule(
-            lifecycle=lifecycle,
-            require_separate_gpus=bool(getattr(config, "require_separate_gpus", True)),
-        )
+    if mode is RolloutScheduleMode.CONTINUOUS:
+        return _build_continuous_schedule(config, lifecycle=lifecycle)
     raise AssertionError(f"unreachable rollout schedule mode: {mode}")
+
+
+def _build_continuous_schedule(
+    config: Any,
+    *,
+    lifecycle: RolloutLifecycle,
+) -> ContinuousRolloutSchedule:
+    """Translate ``rollout_orchestration.continuous`` config into the schedule.
+
+    Reads fields via ``getattr`` to keep the rollout layer free of any
+    ``vrl.trainers`` import (architecture boundary).
+    """
+
+    cont = getattr(config, "continuous", None)
+
+    def field(name: str, default: Any) -> Any:
+        return getattr(cont, name, default) if cont is not None else default
+
+    return ContinuousRolloutSchedule(
+        lifecycle=lifecycle,
+        require_separate_gpus=bool(getattr(config, "require_separate_gpus", True)),
+        max_inflight_groups=int(field("max_inflight_groups", 1)),
+        max_ready_groups=int(field("max_ready_groups", 2)),
+        max_ready_bytes_mb=int(field("max_ready_bytes_mb", 8192)),
+        max_stale_policy_versions=int(field("max_stale_policy_versions", 0)),
+        drop_policy=str(field("drop_policy", "drop_oldest_stale")),
+        wait_timeout_s=float(field("wait_timeout_s", 300.0)),
+        queue_poll_interval_s=float(field("queue_poll_interval_s", 0.05)),
+    )
 
 
 __all__ = ["RolloutSchedule", "build_rollout_schedule"]
