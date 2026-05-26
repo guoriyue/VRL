@@ -241,14 +241,12 @@ class AnimaModel(DiffusionModelBase):
             add_special_tokens=False,
             return_tensors="pt",
         ).to(self.device)
-        t5_inputs = self.t5_tokenizer(
+        t5_input_ids = _tokenize_anima_t5_targets(
+            self.t5_tokenizer,
             prompts,
-            padding=True,
-            truncation=True,
             max_length=max_len,
-            add_special_tokens=False,
-            return_tensors="pt",
-        ).to(self.device)
+            device=self.device,
+        )
 
         with torch.no_grad():
             qwen_hidden = self.text_encoder(
@@ -256,7 +254,7 @@ class AnimaModel(DiffusionModelBase):
                 attention_mask=qwen_inputs.get("attention_mask"),
                 use_cache=False,
             ).last_hidden_state.to(self._dtype)
-            embeds = self.llm_adapter(qwen_hidden, t5_inputs["input_ids"])
+            embeds = self.llm_adapter(qwen_hidden, t5_input_ids)
             if embeds.shape[1] < 512:
                 embeds = F.pad(embeds, (0, 0, 0, 512 - embeds.shape[1]))
         return embeds.detach()
@@ -279,7 +277,7 @@ class AnimaModel(DiffusionModelBase):
         timesteps = self.scheduler.timesteps
 
         seed = request.seed if request.seed is not None else random.randint(0, sys.maxsize)
-        generator = torch.Generator(device=device)
+        generator = torch.Generator(device="cpu")
         generator.manual_seed(seed)
 
         scale = int(getattr(self.vae, "spatial_compression_ratio", 8))
@@ -293,9 +291,9 @@ class AnimaModel(DiffusionModelBase):
         latents = torch.randn(
             latent_shape,
             generator=generator,
-            device=device,
+            device="cpu",
             dtype=torch.float32,
-        )
+        ).to(device=device)
         latents = latents * float(self.scheduler.config.sigma_max)
         padding_mask = latents.new_zeros(
             1,
@@ -348,7 +346,7 @@ class AnimaModel(DiffusionModelBase):
                 return_dict=False,
             )[0].to(self._dtype)
             noise_pred_uncond = uncond
-            combined = cond + state.guidance_scale * (cond - uncond)
+            combined = uncond + state.guidance_scale * (cond - uncond)
 
         return {
             "noise_pred": combined.to(self._dtype),
@@ -456,6 +454,42 @@ def _non_empty_prompts(prompts: list[str]) -> list[str]:
     # Anima uses add_special_tokens=False; empty strings produce zero-length
     # Qwen/T5 token tensors and crash Qwen attention during CFG negative prompts.
     return [prompt if str(prompt).strip() else "." for prompt in prompts]
+
+
+def _tokenize_anima_t5_targets(
+    tokenizer: Any,
+    prompts: list[str],
+    *,
+    max_length: int,
+    device: Any,
+) -> torch.Tensor:
+    """Match ComfyUI's Anima T5XXLTokenizer target ids."""
+
+    eos_id = tokenizer.eos_token_id
+    if eos_id is None:
+        raise ValueError("Anima T5 tokenizer must define eos_token_id")
+    pad_id = tokenizer.pad_token_id
+    if pad_id is None:
+        pad_id = 0
+    raw_max_length = max(1, int(max_length) - 1)
+    encoded = tokenizer(
+        prompts,
+        padding=False,
+        truncation=True,
+        max_length=raw_max_length,
+        add_special_tokens=False,
+    )["input_ids"]
+    rows = [[*list(ids), int(eos_id)] for ids in encoded]
+    target_length = max(len(row) for row in rows)
+    result = torch.full(
+        (len(rows), target_length),
+        int(pad_id),
+        dtype=torch.long,
+        device=device,
+    )
+    for row_idx, ids in enumerate(rows):
+        result[row_idx, : len(ids)] = torch.tensor(ids, dtype=torch.long, device=device)
+    return result
 
 
 class AnimaReplayModel(AnimaModel):
@@ -587,6 +621,7 @@ def _qwen3_06b_config() -> Any:
         use_cache=False,
         pad_token_id=151643,
         eos_token_id=151645,
+        rope_theta=1000000.0,
     )
 
 
