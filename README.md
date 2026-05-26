@@ -138,6 +138,34 @@ python -m vrl.scripts.train \
   distributed.resources.rollout.devices='[1,2,3]'
 ```
 
+Runtime environment inputs stay outside experiment YAML. Use them for deployment
+facts that change by machine, cluster, shell, or launcher:
+
+| Input | How to set | Purpose |
+| --- | --- | --- |
+| `RAY_ADDRESS` | Environment variable | Connect VRL to an already-running Ray head for cross-node rollout. |
+| `CUDA_VISIBLE_DEVICES` | Environment variable | Limit the trainer process to local CUDA devices before Python starts. |
+| `VRL_DATA_ROOT` | Environment variable | Root for artifact-backed datasets stored outside git, defaulting to `data/external`. |
+| `HF_HOME` / `HF_HUB_CACHE` | Environment variables | Hugging Face model/cache location shared by model loaders. |
+| `RANK` / `WORLD_SIZE` / `LOCAL_RANK` | Launcher environment | Torch distributed rank metadata for distributed training launchers. |
+| `data.manifest`, `data.eval_manifest` | YAML or dotlist override | Prompt manifest selection; this is experiment data, not deployment state. |
+| `trainer.output_dir` | YAML or dotlist override | Run output location for metrics, checkpoints, evals, and reward artifacts. |
+
+For cross-node Ray rollout, create the Ray cluster outside VRL and pass only the
+head address at launch time:
+
+```bash
+RAY_ADDRESS=172.31.27.241:6379 CUDA_VISIBLE_DEVICES=0 python -m vrl.scripts.train \
+  --config experiment/diffusion/sd3_5/online_grpo_ocr \
+  /base/distributed=ray_rollout_cross_node \
+  distributed.resources.rollout.num_gpus=1 \
+  distributed.resources.rollout.num_workers=1
+```
+
+VRL does not manage SSH hosts, Ray worker startup, cloud security groups, or
+cluster lifecycle. Use manual `ray start`, Ray VM cluster launcher, KubeRay, or a
+managed Ray platform for that layer.
+
 ## Training Examples
 
 Specific run notes and curated qualitative results live under
