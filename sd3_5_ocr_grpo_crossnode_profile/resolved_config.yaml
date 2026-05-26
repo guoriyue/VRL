@@ -1,0 +1,145 @@
+algorithm:
+  kind: grpo
+  eps_clip: 0.0001
+  init_kl_coef: 0.04
+  eps: 1.0e-08
+  adv_clip_max: 5.0
+  global_std: true
+  flow_kl_use_dt: false
+  per_prompt_stat_tracking: true
+  kl_reward: 0.0
+actor:
+  optim:
+    lr: 0.0003
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    weight_decay: 0.0001
+    eps: 1.0e-08
+    use_8bit_adam: false
+    allow_tf32: true
+  max_norm: 1.0
+  ppo_epochs: 1
+  gradient_accumulation_steps: 4
+  mixed_precision: 'no'
+  bf16: false
+  gradient_checkpointing: true
+  timestep_fraction: 0.99
+  ema:
+    enable: true
+    decay: 0.9
+    update_interval: 8
+rollout:
+  'n': 8
+  rollout_batch_size: 8
+  noise_level: 0.7
+  sample_batch_size: 1
+  sde:
+    type: sde
+    window_size: 0
+    window_range:
+    - 0
+    - 10
+  same_latent: false
+  trajectory_storage:
+    device: preserve
+    dtype: preserve
+distributed:
+  backend: ray
+  resources:
+    visible_devices: auto
+    cross_node: true
+    trainer:
+      num_gpus: 1
+    rollout:
+      num_gpus: 1
+      gpus_per_worker: 1.0
+      num_workers: 1
+    allow_overlap: false
+  rollout:
+    cpus_per_worker: 4.0
+    placement_strategy: SPREAD
+    max_inflight_chunks_per_worker: 1
+    sync_trainable_state: lora_only
+    release_after_collect: false
+trainer:
+  entrypoint: vrl.scripts.diffusion.sd3_5.train:train_sd3_5_grpo
+  total_epochs: 10000
+  save_freq: 60
+  log_freq: 1
+  output_dir: outputs/sd3_5_ocr_grpo_crossnode_profile
+  seed: 0
+  profile: true
+  torch_profiler:
+    enabled: true
+    output_dir: ''
+    activities:
+    - cpu
+    - cuda
+    record_shapes: true
+    profile_memory: true
+    with_stack: false
+    with_flops: false
+    skip_first: 0
+    max_steps: 2
+  resume_from: ''
+  resume_strict: true
+  debug:
+    first_step: true
+    grad_split: false
+  rollout_orchestration:
+    mode: strict_on_policy
+    max_pending_rollouts: 1
+    require_separate_gpus: true
+    weight_sync_barrier: before_sync
+model:
+  family: sd3_5
+  path: stabilityai/stable-diffusion-3.5-medium
+  use_lora: true
+  lora:
+    rank: 32
+    alpha: 64
+    path: ''
+    target_modules:
+    - to_k
+    - to_q
+    - to_v
+    - to_out.0
+    - add_k_proj
+    - add_q_proj
+    - add_v_proj
+    - to_add_out
+  torch_compile:
+    enable: false
+    mode: default
+sampling:
+  width: 512
+  height: 512
+  max_sequence_length: 128
+  num_steps: 10
+  guidance_scale: 4.5
+  cfg: true
+reward:
+  components:
+    ocr: 1.0
+  kwargs:
+    ocr:
+      debug_dir: ''
+data:
+  loader: prompt_manifest
+  manifest: datasets/ocr/train.txt
+  eval_manifest: datasets/ocr/test.txt
+  preprocessing:
+    format: text
+    target_text: quoted_substring
+  sampler:
+    type: random_without_replacement
+eval:
+  enable: false
+  freq: 60
+  manifest: datasets/ocr/test.txt
+  max_prompts: 16
+  num_steps: 40
+  sample_batch_size: 8
+  noise_level: 0.0
+  seed: 20260504
+  use_ema: true
