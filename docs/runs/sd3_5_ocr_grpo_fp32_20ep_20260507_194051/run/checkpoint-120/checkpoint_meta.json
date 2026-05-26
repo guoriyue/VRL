@@ -1,0 +1,10 @@
+{
+  "checkpoint_file": "checkpoint.pt",
+  "completed_epoch": 120,
+  "family": "sd3_5",
+  "global_step": 240,
+  "next_epoch": 120,
+  "schema_version": 1,
+  "trainer_step": 120,
+  "uses_lora": true
+}
