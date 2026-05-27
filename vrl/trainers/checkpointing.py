@@ -150,7 +150,7 @@ def save_training_checkpoint(
         trainer_state=trainer_state,
         completed_epoch=int(progress.get("completed_epoch", progress.get("next_epoch", 0))),
         next_epoch=int(progress.get("next_epoch", progress.get("next_step", 0))),
-        uses_lora=bool(export_modules.get(LORA_WEIGHTS_NAME)),
+        uses_lora=export_modules.get(LORA_WEIGHTS_NAME) is not None,
     )
     meta["checkpoint_file"] = TRAINING_CHECKPOINT_NAME
     (path / CHECKPOINT_META_NAME).write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n")
