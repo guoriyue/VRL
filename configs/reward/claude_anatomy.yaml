@@ -27,3 +27,10 @@ reward:
         - --no-session-persistence
       timeout_s: 300.0
       max_concurrency: 16
+      # When the judge refuses or returns unparseable output, log the case
+      # for manual review and assign this score. Default 0.0 → GRPO sees a
+      # strong negative advantage on refused images so the policy learns
+      # to avoid them. Override only if you've audited the log and confirmed
+      # the refusals are false positives.
+      refusal_score: 0.0
+      refusal_log_dir: outputs/claude_anatomy_refusals

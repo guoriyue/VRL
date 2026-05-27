@@ -29,13 +29,18 @@ class ClaudeImageQAReward(RewardFunction):
         prompt_template: str | None = None,
         prompt_template_file: str | None = None,
         max_concurrency: int = 1,
+        refusal_score: float = 0.0,
+        refusal_log_dir: str | None = None,
     ) -> None:
         del device
         worker_config: dict[str, object] = {
             "command": command if command is not None else DEFAULT_COMMAND,
             "timeout_s": timeout_s,
             "max_concurrency": max_concurrency,
+            "refusal_score": refusal_score,
         }
+        if refusal_log_dir:
+            worker_config["refusal_log_dir"] = refusal_log_dir
         # Only pass whichever template source was actually configured so the
         # model layer can apply the documented precedence (file > string > default).
         if prompt_template_file:

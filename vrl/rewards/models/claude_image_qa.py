@@ -58,6 +58,16 @@ class ClaudeImageQARewardModel:
         command = cfg.get("command", DEFAULT_COMMAND)
         self.command = _normalize_command(command)
         self.timeout_s = float(cfg.get("timeout_s", 300.0))
+        # When the judge refuses or returns unparseable output, return this
+        # score and log the case to refusal_log_dir for review. Default 0.0
+        # gives GRPO a strong negative advantage on refused images so the
+        # policy learns to avoid them. Setting this near the mean (e.g. 0.5)
+        # is a deliberate choice to silence the signal — only set it that
+        # way if you've manually audited the refusal log and confirmed the
+        # refusals are false positives.
+        self.refusal_score = float(cfg.get("refusal_score", 0.0))
+        log_dir = cfg.get("refusal_log_dir")
+        self.refusal_log_dir = Path(log_dir).expanduser() if log_dir else None
         # Prompt template precedence: explicit string > file path > default.
         # The file form lets a markdown rubric live separately on disk.
         prompt_template = cfg.get("prompt_template")
@@ -88,6 +98,11 @@ class ClaudeImageQARewardModel:
         (subprocess.run releases the GIL), so threading yields real wall-
         clock parallelism. The runtime auto-detects this method and uses
         it in place of the per-artifact ``__call__`` loop.
+
+        Per-artifact failures (judge refusal, parse error, timeout) are
+        caught: the artifact is logged to ``refusal_log_dir`` and the
+        score becomes ``refusal_score`` so the training step continues
+        instead of crashing on one bad sample.
         """
 
         from concurrent.futures import ThreadPoolExecutor
@@ -96,13 +111,63 @@ class ClaudeImageQARewardModel:
         if not artifacts:
             return []
         workers = max(1, min(self.max_concurrency, len(artifacts)))
+
+        def safe_call(artifact: Any) -> dict[str, float]:
+            try:
+                return self.__call__(artifact=artifact, request=request)
+            except Exception as exc:  # noqa: BLE001
+                self._log_refusal(artifact, exc)
+                return {"claude_image_qa": float(self.refusal_score)}
+
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            return list(
-                pool.map(
-                    lambda a: self.__call__(artifact=a, request=request),
-                    artifacts,
-                ),
-            )
+            return list(pool.map(safe_call, artifacts))
+
+    def _log_refusal(self, artifact: Any, exc: BaseException) -> None:
+        """Persist a refused/failed scoring case so it can be reviewed.
+
+        Writes a JSONL line with artifact id + prompt + raw exception,
+        plus saves the artifact's image alongside for visual audit. No-op
+        when ``refusal_log_dir`` is not configured.
+        """
+
+        if self.refusal_log_dir is None:
+            return
+        import json
+        import time
+        import traceback
+        try:
+            self.refusal_log_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return
+        artifact_id = str(getattr(artifact, "artifact_id", "unknown"))
+        ts = time.strftime("%Y%m%dT%H%M%S")
+        stem = f"{ts}_{artifact_id}"
+        image_relpath: str | None = None
+        try:
+            media = artifact.as_media()
+            if media is not None:
+                image_path = self.refusal_log_dir / f"{stem}.png"
+                write_png(media, image_path)
+                image_relpath = str(image_path.name)
+        except Exception:  # noqa: BLE001
+            image_relpath = None
+        entry = {
+            "ts": ts,
+            "artifact_id": artifact_id,
+            "prompt": str(getattr(artifact, "prompt", "") or ""),
+            "image_file": image_relpath,
+            "error_type": type(exc).__name__,
+            "error_message": str(exc)[:2000],
+            "traceback_tail": "".join(traceback.format_exception_only(type(exc), exc))[
+                :2000
+            ],
+        }
+        path = self.refusal_log_dir / "refusals.jsonl"
+        try:
+            with path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
 
     def __call__(self, *, artifact: Any, request: Any) -> dict[str, float]:
         del request
