@@ -156,12 +156,6 @@ def test_non_numeric_reward_weight_raises() -> None:
         )
 
 
-def test_unknown_reward_component_passes_without_kwargs() -> None:
-    cfg = RewardConfig.model_validate(
-        {"components": {"anime_anatomy_structure": 1.0}, "kwargs": {}}
-    )
-    assert "anime_anatomy_structure" in cfg.components
-
 
 # ── VideoRewardKwargs: removed field rejection ────────────────────────────────
 
@@ -410,10 +404,10 @@ def test_unknown_reward_component_with_unknown_kwargs_is_accepted() -> None:
             },
             "rollout": {"sde": {"type": "sde"}},
             "reward": {
-                "components": {"anime_anatomy_structure": 1.0},
-                "kwargs": {"anime_anatomy_structure": {"model_repo": "org/model"}},
+                "components": {"custom_reward": 1.0},
+                "kwargs": {"custom_reward": {"model_repo": "org/model"}},
             },
         }
     )
     parsed = parse_config(cfg)
-    assert parsed.reward.components["anime_anatomy_structure"] == 1.0
+    assert parsed.reward.components["custom_reward"] == 1.0

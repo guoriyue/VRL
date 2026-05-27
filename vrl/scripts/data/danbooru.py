@@ -1455,28 +1455,6 @@ def select_positive_targets(
     }
 
 
-async def run_reward_calibration(
-    *,
-    positive_manifest: str,
-    hard_negative_manifest: str,
-    device: str,
-    max_samples: int,
-) -> dict[str, Any]:
-    from vrl.rewards.functions.anime_anatomy import AnimeAnatomyStructureReward
-
-    positives = _load_reward_rollouts(positive_manifest, max_samples=max_samples)
-    negatives = _load_reward_rollouts(hard_negative_manifest, max_samples=max_samples)
-
-    anatomy_reward = AnimeAnatomyStructureReward(device=device)
-    pose_pos = await anatomy_reward.score_batch(positives)
-    pose_neg = await anatomy_reward.score_batch(negatives)
-
-    return {
-        "positive_count": len(positives),
-        "hard_negative_count": len(negatives),
-        "anime_anatomy_structure": _metric_report(pose_pos, pose_neg),
-    }
-
 
 def _load_reward_rollouts(path: str, *, max_samples: int) -> list[Any]:
     from PIL import Image
@@ -1864,7 +1842,7 @@ __all__ = [
     "record_id",
     "record_score",
     "register",
-    "run_reward_calibration",
+
     "select_positive_targets",
     "select_quota_rows",
     "split_prompt_rows",
