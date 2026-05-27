@@ -1,0 +1,5 @@
+# Shared diffusion denoise preset: 30 steps, CFG 4.5 — Anima recommended floor.
+sampling:
+  num_steps: 30
+  guidance_scale: 4.5
+  cfg: true

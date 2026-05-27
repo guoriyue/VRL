@@ -1,0 +1,5 @@
+# 896x1152 portrait image sampling shape — Anima recommended ~1 MP for full-body.
+sampling:
+  width: 896
+  height: 1152
+  max_sequence_length: 128

@@ -1,0 +1,13 @@
+# Rubric-driven Claude anatomy judge reward.
+#
+# Reuses claude_image_qa with the rubric markdown injected as the
+# prompt template. To change scoring criteria, edit
+# configs/reward/rubrics/anatomy_v1.md — no code change needed.
+reward:
+  components:
+    claude_image_qa: 1.0
+  kwargs:
+    claude_image_qa:
+      prompt_template_file: configs/reward/rubrics/anatomy_v1.md
+      timeout_s: 300.0
+      max_concurrency: 16

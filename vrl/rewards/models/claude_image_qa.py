@@ -20,7 +20,7 @@ from typing import Any
 from vrl.utils.media import write_png
 
 DEFAULT_COMMAND = (
-    "claude -p --input-format stream-json --output-format text"
+    "claude -p --input-format stream-json --output-format stream-json --verbose"
     ' --tools "" --no-session-persistence'
 )
 
@@ -58,7 +58,26 @@ class ClaudeImageQARewardModel:
         command = cfg.get("command", DEFAULT_COMMAND)
         self.command = _normalize_command(command)
         self.timeout_s = float(cfg.get("timeout_s", 300.0))
-        self.prompt_template = cfg.get("prompt_template", DEFAULT_PROMPT_TEMPLATE)
+        # Prompt template precedence: explicit string > file path > default.
+        # The file form lets a markdown rubric live separately on disk.
+        prompt_template = cfg.get("prompt_template")
+        prompt_template_file = cfg.get("prompt_template_file")
+        if prompt_template_file:
+            path = Path(str(prompt_template_file)).expanduser()
+            if not path.is_file():
+                raise FileNotFoundError(
+                    f"claude_image_qa: prompt_template_file not found: {path!s}",
+                )
+            file_text = path.read_text(encoding="utf-8")
+            if not file_text.strip():
+                raise ValueError(
+                    f"claude_image_qa: prompt_template_file is empty: {path!s}",
+                )
+            self.prompt_template = file_text
+        elif prompt_template is not None:
+            self.prompt_template = prompt_template
+        else:
+            self.prompt_template = DEFAULT_PROMPT_TEMPLATE
         self.max_concurrency = max(1, int(cfg.get("max_concurrency", 1)))
 
     def __call__(self, *, artifact: Any, request: Any) -> dict[str, float]:
@@ -173,10 +192,22 @@ def _render_prompt_template(template: str, *, prompt: str) -> str:
 
 
 def _extract_score_from_text(text: str) -> float:
-    """Parse judge response into a clamped [0, 1] score."""
+    """Parse judge response into a clamped [0, 1] score.
+
+    Accepts three output shapes:
+      * Plain text: the assistant's response IS the JSON object.
+      * stream-json JSONL (claude CLI 2.1+ with ``--output-format
+        stream-json --verbose``): we pull the ``result`` field from the
+        success ``type:"result"`` event, then parse it as JSON.
+      * Free-form: regex fallback for ``"score": <num>``.
+    """
     stripped = text.strip()
     if not stripped:
         raise ValueError("Claude image-QA returned empty output")
+
+    assistant_text = _extract_assistant_text(stripped)
+    if assistant_text is not None and assistant_text != stripped:
+        stripped = assistant_text.strip()
 
     json_value = _find_first_json_value(stripped)
     if json_value is not None:
@@ -198,6 +229,51 @@ def _extract_score_from_text(text: str) -> float:
         raise ValueError(
             f"Cannot parse Claude image-QA score from output: {text!r}",
         ) from exc
+
+
+def _extract_assistant_text(stream_output: str) -> str | None:
+    """Pull the assistant's final text from a stream-json JSONL transcript.
+
+    Looks for the success ``type:"result"`` event and returns its
+    ``result`` field. Falls back to concatenating ``type:"assistant"``
+    text blocks when no result event is present. Returns ``None`` when
+    the input does not look like stream-json at all (no parseable
+    event objects), so the caller can keep treating it as plain text.
+    """
+
+    final_result: str | None = None
+    assistant_chunks: list[str] = []
+    parsed_any = False
+    for line in stream_output.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        parsed_any = True
+        etype = event.get("type")
+        if etype == "result" and event.get("subtype") == "success":
+            result_text = event.get("result")
+            if isinstance(result_text, str) and result_text.strip():
+                final_result = result_text
+        elif etype == "assistant":
+            content = event.get("message", {}).get("content", [])
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    txt = block.get("text", "")
+                    if txt:
+                        assistant_chunks.append(txt)
+    if not parsed_any:
+        return None
+    if final_result is not None:
+        return final_result
+    if assistant_chunks:
+        return "".join(assistant_chunks)
+    return None
 
 
 def _find_first_json_value(text: str) -> Any | None:

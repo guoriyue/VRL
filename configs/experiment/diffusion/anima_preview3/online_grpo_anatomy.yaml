@@ -1,10 +1,16 @@
-# Anima Preview3 + anatomy GRPO.
+# Anima Preview3 + claude-anatomy GRPO.
+#
+# Reward is the rubric-driven Claude judge — scoring criteria live in
+# configs/reward/rubrics/anatomy_v1.md (per-axis hands+body, aggregated
+# (geom_mean+min)/2 → [0,1]). Resolution / step count match the Anima
+# README recommended floor (~1 MP, 30 steps) — anything smaller and
+# the judge can't reliably evaluate hand structure.
 defaults:
   - /recipe/online/flow_matching_grpo
   - /model/diffusion/cosmos/anima_preview3
-  - /sampling/image/512
-  - /sampling/denoise/10_step_cfg_4_5
-  - /reward/anime_anatomy_structure
+  - /sampling/image/896x1152
+  - /sampling/denoise/30_step_cfg_4_5
+  - /reward/claude_anatomy
   - /dataset/anime_anatomy
 
 sampling:
@@ -30,6 +36,6 @@ rollout:
 
 trainer:
   entrypoint: vrl.scripts.diffusion.cosmos.train:train_anima_grpo
-  output_dir: outputs/anima_preview3_anatomy_grpo
+  output_dir: outputs/anima_preview3_claude_anatomy_grpo
   save_freq: 100
   log_freq: 1

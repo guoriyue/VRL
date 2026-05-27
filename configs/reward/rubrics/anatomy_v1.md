@@ -165,9 +165,30 @@ hunt for an issue and find at most a tiny one.
   4 (severe defect). But if you can clearly see 6 fingertips or a
   mitten shape at any scale, that's a defect.
 
+## Aggregating the two axes into a single score
+
+After you assign `hands` and `body` integers, compute the final
+`score` value as a float in `[0, 1]`:
+
+```
+visible = [v for v in (hands, body) if v is not None]
+geom    = exp(sum(log(v) for v in visible) / len(visible))   # geometric mean
+worst   = min(visible)
+score   = ((geom + worst) / 2) / 10                          # average of geom_mean and min, normalised
+```
+
+This formula has the property that **either** axis being low pulls
+the score down, and the lower (weaker) axis pulls harder. If one
+axis is `null` (e.g. both hands occluded), use the visible axis
+alone: `score = visible_axis / 10`. If `hands` = 0 or `body` = 0
+(catastrophic on one axis), `score` = 0.
+
+Compute `score` numerically with 4 decimals — do not round it to an
+integer.
+
 ## Output format (strict)
 
-Output ONLY this JSON, no markdown fences, no prose around it:
+Output ONLY this JSON object, no markdown fences, no prose around it:
 
 ```json
 {
@@ -175,7 +196,8 @@ Output ONLY this JSON, no markdown fences, no prose around it:
     "hands": <int 0..10 or null>,
     "body": <int 0..10>
   },
-  "defects": ["<short string>", ...]
+  "defects": ["<short string>", ...],
+  "score": <float 0..1>
 }
 ```
 
@@ -188,33 +210,39 @@ Output ONLY this JSON, no markdown fences, no prose around it:
   fingertips visible", "body: right shoulder dislocated"). When you
   give `hands` a score ≥ 8, include a "fingertip count: N,
   gesture-consistent" note as evidence you ran the checklist.
+- `score`: float in `[0, 1]`, computed by the aggregation formula
+  above. This is what the RL trainer uses as the per-image reward.
 
 Examples:
 
 ```json
 {
   "axes": {"hands": 4, "body": 7},
-  "defects": ["right hand: 6+ fingertips, irregular knuckle alignment", "body: shoulder/hip rotation mismatched in squat"]
+  "defects": ["right hand: 6+ fingertips, irregular knuckle alignment", "body: shoulder/hip rotation mismatched in squat"],
+  "score": 0.4646
 }
 ```
 
 ```json
 {
   "axes": {"hands": null, "body": 9},
-  "defects": ["both hands occluded (gauntlets)", "body: dynamic running pose clean"]
+  "defects": ["both hands occluded (gauntlets)", "body: dynamic running pose clean"],
+  "score": 0.9
 }
 ```
 
 ```json
 {
   "axes": {"hands": 9, "body": 9},
-  "defects": ["fingertip count: 5+5, gesture-consistent", "body: clean standing pose"]
+  "defects": ["fingertip count: 5+5, gesture-consistent", "body: clean standing pose"],
+  "score": 0.9
 }
 ```
 
 ```json
 {
   "axes": {"hands": 6, "body": 8},
-  "defects": ["left hand: middle finger fused with ring finger", "fingertip count: right=5 left=4-fused, gesture-inconsistent"]
+  "defects": ["left hand: middle finger fused with ring finger", "fingertip count: right=5 left=4-fused, gesture-inconsistent"],
+  "score": 0.6464
 }
 ```
