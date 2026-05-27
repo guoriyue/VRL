@@ -32,6 +32,7 @@ def _register_builtins() -> None:
     from vrl.rewards.functions.aesthetic import AestheticReward
     from vrl.rewards.functions.anime_anatomy import AnimeAnatomyStructureReward
     from vrl.rewards.functions.clip import CLIPScoreReward
+    from vrl.rewards.functions.claude_image_qa import ClaudeImageQAReward
     from vrl.rewards.functions.codex_image_qa import CodexImageQAReward
     from vrl.rewards.functions.geneval import GenEvalReward
     from vrl.rewards.functions.nsfw_safety import NSFWSafetyReward
@@ -43,6 +44,7 @@ def _register_builtins() -> None:
         "aesthetic": AestheticReward,
         "anime_anatomy_structure": AnimeAnatomyStructureReward,
         "clipscore": CLIPScoreReward,
+        "claude_image_qa": ClaudeImageQAReward,
         "codex_image_qa": CodexImageQAReward,
         "geneval": GenEvalReward,
         "image_qa_cli": CodexImageQAReward,
