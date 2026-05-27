@@ -3,11 +3,27 @@
 # Reuses claude_image_qa with the rubric markdown injected as the
 # prompt template. To change scoring criteria, edit
 # configs/reward/rubrics/anatomy_v1.md — no code change needed.
+#
+# Uses Haiku (cheaper) by default — Sonnet was overkill for the
+# constrained rubric task and burned tokens 4x faster.
 reward:
   components:
     claude_image_qa: 1.0
   kwargs:
     claude_image_qa:
       prompt_template_file: configs/reward/rubrics/anatomy_v1.md
+      command:
+        - claude
+        - -p
+        - --input-format
+        - stream-json
+        - --output-format
+        - stream-json
+        - --verbose
+        - --model
+        - haiku
+        - --tools
+        - ""
+        - --no-session-persistence
       timeout_s: 300.0
       max_concurrency: 16
