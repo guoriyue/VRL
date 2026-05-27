@@ -67,3 +67,8 @@ htmlcov/
 outputs/
 # Claude Code
 .claude/
+
+# Third-party submodules: track gitlinks via .gitmodules, ignore any
+# stray content placed under third_party/ that isn't a tracked submodule.
+third_party/*
+!third_party/videophy
