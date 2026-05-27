@@ -1,0 +1,3 @@
+[submodule "third_party/videophy"]
+	path = third_party/videophy
+	url = https://github.com/Hritikbansal/videophy

@@ -1,0 +1,53 @@
+# Wan 2.1 1.3B GRPO targeting motion quality AND physical commonsense.
+# Reward = 0.7 · Kling MQ z-score + 0.3 · VideoCon-Physics P(Yes).
+# Prompts curated from VideoPhy's public benchmark (344 unique physics
+# interaction captions; see configs/dataset/videophy.yaml).
+defaults:
+  - /recipe/online/diffusion_grpo
+  - /model/diffusion/wan_2_1/1_3b
+  - /sampling/video/240p_33f
+  - /sampling/denoise/20_step_cfg_4_5
+  - /reward/video_reward
+  - /reward/videocon_physics
+  - /dataset/videophy
+
+actor:
+  optim:
+    lr: 1.0e-5
+  ppo_epochs: 1
+
+algorithm:
+  init_kl_coef: 0.004
+
+rollout:
+  n: 4
+  rollout_batch_size: 1
+  sample_batch_size: 1
+  noise_level: 0.7
+  sde:
+    type: cps
+
+trainer:
+  entrypoint: vrl.scripts.diffusion.wan_2_1.train:train_wan_2_1_grpo
+  output_dir: outputs/wan_1_3b_physics
+  save_freq: 20
+  log_freq: 1
+
+# Final weighted combination — overrides the per-reward defaults each
+# `/reward/...` import declared. Kling MQ at 0.7, VideoCon-Physics at 0.3.
+reward:
+  components:
+    video_reward: 0.7
+    videocon_physics: 0.3
+  kwargs:
+    video_reward:
+      artifact_format: mp4
+      score_key: motion_quality
+    videocon_physics:
+      artifact_format: mp4
+      score_key: physical_commonsense
+
+production:
+  video_reward:
+    enabled: true
+    report_path: outputs/wan_1_3b_physics/production_report.md

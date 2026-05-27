@@ -38,6 +38,7 @@ def _register_builtins() -> None:
     from vrl.rewards.functions.ocr import OCRReward
     from vrl.rewards.functions.pickscore import PickScoreReward
     from vrl.rewards.functions.video_reward import VideoReward
+    from vrl.rewards.functions.videocon_physics import VideoConPhysicsReward
 
     _REWARD_REGISTRY.update({
         "aesthetic": AestheticReward,
@@ -50,6 +51,7 @@ def _register_builtins() -> None:
         "ocr": OCRReward,
         "pickscore": PickScoreReward,
         "video_reward": VideoReward,
+        "videocon_physics": VideoConPhysicsReward,
     })
 
 

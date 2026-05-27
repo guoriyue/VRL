@@ -1,0 +1,5 @@
+Source: HuggingFace dataset videophysics/videophy_test_public
+File:   videophy_test_public.csv
+Caption column: caption
+Total unique prompts: 344
+Train: 309, Eval: 35 (90/10 random_seed=42)

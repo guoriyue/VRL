@@ -1,0 +1,18 @@
+# VideoPhy physics-grounded prompt manifest.
+# Built from the public HF dataset `videophysics/videophy_test_public`
+# (file: videophy_test_public.csv). 344 unique captions covering solid-solid,
+# solid-fluid, and fluid-fluid physical interactions; split 90/10
+# (random_seed=42) into 309 train + 35 eval. Provenance in
+# datasets/videophy/source.txt.
+data:
+  loader: prompt_manifest
+  manifest: datasets/videophy/train.txt
+  eval_manifest: datasets/videophy/eval.txt
+  source_report: datasets/videophy/report.json
+  task_type: text_to_video
+  preprocessing:
+    format: text
+    target_text: none
+    media_type: video
+  sampler:
+    type: random_without_replacement

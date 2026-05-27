@@ -1,0 +1,33 @@
+{
+  "dataset": "videophy",
+  "files": {
+    "train": {
+      "path": "datasets/videophy/train.txt",
+      "row_count": 309,
+      "unique_prompt_count": 309,
+      "duplicate_prompt_count": 0
+    },
+    "eval": {
+      "path": "datasets/videophy/eval.txt",
+      "row_count": 35,
+      "unique_prompt_count": 35,
+      "duplicate_prompt_count": 0
+    }
+  },
+  "prompt_overlap": {
+    "train_eval": 0
+  },
+  "source": {
+    "type": "huggingface_dataset",
+    "repo_id": "videophysics/videophy_test_public",
+    "file": "videophy_test_public.csv",
+    "caption_column": "caption",
+    "raw_row_count": 3360,
+    "unique_caption_count": 344
+  },
+  "split": {
+    "strategy": "random_seed=42, 90/10",
+    "train_count": 309,
+    "eval_count": 35
+  }
+}
