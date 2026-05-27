@@ -105,6 +105,13 @@ class ClaudeImageQARewardModel:
         stdout_text = completed.stdout.decode("utf-8", errors="replace")
         stderr_text = completed.stderr.decode("utf-8", errors="replace")
         if completed.returncode != 0:
+            if _is_auth_error(stderr_text, stdout_text):
+                raise PermissionError(
+                    "Claude CLI is not authenticated.\n"
+                    "  • OAuth login : run `claude` and complete the login flow\n"
+                    "  • API key auth: set the ANTHROPIC_API_KEY environment variable\n"
+                    f"Raw error: {(stderr_text or stdout_text).strip()!r}",
+                )
             raise RuntimeError(
                 "Claude image-QA failed "
                 f"(exit={completed.returncode}): {command!r}\n"
@@ -239,6 +246,23 @@ def _score_answer(answer: Any) -> float:
 
 def _clamp_score(value: float) -> float:
     return min(max(value, 0.0), 1.0)
+
+
+# Substrings (lowercased) that indicate the CLI exited due to missing auth.
+_AUTH_PATTERNS = (
+    "invalid api key",
+    "authentication",
+    "not authenticated",
+    "log in",
+    "login",
+    "unauthorized",
+    "401",
+)
+
+
+def _is_auth_error(stderr: str, stdout: str) -> bool:
+    combined = (stderr + stdout).lower()
+    return any(pat in combined for pat in _AUTH_PATTERNS)
 
 
 __all__ = [

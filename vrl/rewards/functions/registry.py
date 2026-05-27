@@ -31,6 +31,7 @@ def get_reward(name: str) -> type[RewardFunction]:
 def _register_builtins() -> None:
     from vrl.rewards.functions.aesthetic import AestheticReward
     from vrl.rewards.functions.anime_anatomy import AnimeAnatomyStructureReward
+    from vrl.rewards.functions.anthropic_image_qa import AnthropicImageQAReward
     from vrl.rewards.functions.clip import CLIPScoreReward
     from vrl.rewards.functions.claude_image_qa import ClaudeImageQAReward
     from vrl.rewards.functions.codex_image_qa import CodexImageQAReward
@@ -43,6 +44,7 @@ def _register_builtins() -> None:
     _REWARD_REGISTRY.update({
         "aesthetic": AestheticReward,
         "anime_anatomy_structure": AnimeAnatomyStructureReward,
+        "anthropic_image_qa": AnthropicImageQAReward,
         "clipscore": CLIPScoreReward,
         "claude_image_qa": ClaudeImageQAReward,
         "codex_image_qa": CodexImageQAReward,
