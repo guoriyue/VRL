@@ -323,6 +323,10 @@ def _score_from_value(value: Any) -> float:
             return _score_from_value(value["scores"])
         if "resultMap" in value:
             return _score_from_value(value["resultMap"])
+        if "axes" in value and isinstance(value["axes"], dict):
+            # Multi-axis rubric output (e.g. anatomy hands+body). Compute the
+            # aggregate ourselves so the judge does not need to emit `score`.
+            return _aggregate_axes_score(value["axes"])
     if isinstance(value, list):
         if not value:
             raise ValueError("Claude image-QA returned an empty score list")
@@ -333,6 +337,33 @@ def _score_from_value(value: Any) -> float:
             return _score_answer(value)
         return _clamp_score(float(value))
     return _clamp_score(float(value))
+
+
+def _aggregate_axes_score(axes: Mapping[str, Any]) -> float:
+    """Aggregate per-axis integer scores into ``[0, 1]``.
+
+    Mirrors the formula documented in the anatomy rubric:
+        score = ((geom_mean(visible) + min(visible)) / 2) / 10
+    Null axes are skipped; any axis at 0 collapses the score to 0.
+    """
+
+    import math
+
+    visible: list[float] = []
+    for value in axes.values():
+        if value is None:
+            continue
+        try:
+            visible.append(float(value))
+        except (TypeError, ValueError):
+            continue
+    if not visible:
+        return 0.0
+    if any(v <= 0.0 for v in visible):
+        return 0.0
+    geom = math.exp(sum(math.log(v) for v in visible) / len(visible))
+    worst = min(visible)
+    return _clamp_score(((geom + worst) / 2.0) / 10.0)
 
 
 def _score_answer(answer: Any) -> float:
