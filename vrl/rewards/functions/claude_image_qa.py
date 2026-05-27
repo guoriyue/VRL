@@ -26,18 +26,23 @@ class ClaudeImageQAReward(RewardFunction):
         device: str = "cuda",
         command: str | list[str] | tuple[str, ...] | None = None,
         timeout_s: float = 300.0,
-        prompt_template: str = DEFAULT_PROMPT_TEMPLATE,
+        prompt_template: str | None = None,
+        prompt_template_file: str | None = None,
         max_concurrency: int = 1,
     ) -> None:
         del device
-        model = ClaudeImageQARewardModel(
-            {
-                "command": command if command is not None else DEFAULT_COMMAND,
-                "timeout_s": timeout_s,
-                "prompt_template": prompt_template,
-                "max_concurrency": max_concurrency,
-            },
-        )
+        worker_config: dict[str, object] = {
+            "command": command if command is not None else DEFAULT_COMMAND,
+            "timeout_s": timeout_s,
+            "max_concurrency": max_concurrency,
+        }
+        # Only pass whichever template source was actually configured so the
+        # model layer can apply the documented precedence (file > string > default).
+        if prompt_template_file:
+            worker_config["prompt_template_file"] = prompt_template_file
+        elif prompt_template is not None:
+            worker_config["prompt_template"] = prompt_template
+        model = ClaudeImageQARewardModel(worker_config)
         self._model = model
         super().__init__(
             reward_name="claude_image_qa",
