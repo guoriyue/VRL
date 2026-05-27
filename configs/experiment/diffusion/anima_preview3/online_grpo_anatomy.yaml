@@ -2,14 +2,18 @@
 #
 # Reward is the rubric-driven Claude judge — scoring criteria live in
 # configs/reward/rubrics/anatomy_v1.md (per-axis hands+body, aggregated
-# (geom_mean+min)/2 → [0,1]). Resolution / step count match the Anima
-# README recommended floor (~1 MP, 30 steps) — anything smaller and
-# the judge can't reliably evaluate hand structure.
+# (geom_mean+min)/2 → [0,1]).
+#
+# Resolution stays at 896x1152 (Anima recommended ~1 MP for full-body)
+# so the judge can resolve finger detail. Denoise dropped from the
+# README-recommended 30 to 10 for faster RL iteration — early-step
+# rollouts only need enough quality to differentiate "broken hand" from
+# "clean hand", not poster quality.
 defaults:
   - /recipe/online/flow_matching_grpo
   - /model/diffusion/cosmos/anima_preview3
   - /sampling/image/896x1152
-  - /sampling/denoise/30_step_cfg_4_5
+  - /sampling/denoise/10_step_cfg_4_5
   - /reward/claude_anatomy
   - /dataset/anime_anatomy
 
@@ -30,6 +34,8 @@ algorithm:
 rollout:
   n: 8
   rollout_batch_size: 8
+  # VAE tiling+slicing is enabled in vrl/models/diffusion/cosmos/anima/model.py,
+  # so VAE peak is ~5.6 GB regardless of batch — K=8 fits in one chunk.
   sample_batch_size: 8
   sde:
     type: sde

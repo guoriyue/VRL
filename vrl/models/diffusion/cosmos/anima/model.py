@@ -103,6 +103,12 @@ class AnimaModel(DiffusionModelBase):
         )
         vae = AutoencoderKLQwenImage()
         vae.load_state_dict(vae_state, strict=True)
+        # Tile spatial dims and slice batch dim during decode/encode so the
+        # VAE peak is bounded by a single tile rather than the full image.
+        # Measured on RTX 5090 @ 896x1152: drops peak from ~25 GB (batch=8,
+        # OOMs) to ~5.6 GB (any batch) at ~5% latency cost.
+        vae.enable_tiling()
+        vae.enable_slicing()
         del vae_state
 
         scheduler = FlowMatchEulerDiscreteScheduler(

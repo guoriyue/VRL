@@ -80,6 +80,30 @@ class ClaudeImageQARewardModel:
             self.prompt_template = DEFAULT_PROMPT_TEMPLATE
         self.max_concurrency = max(1, int(cfg.get("max_concurrency", 1)))
 
+    def score_request(self, request: Any) -> list[dict[str, float]]:
+        """Batched scoring with bounded concurrency.
+
+        Runs up to ``max_concurrency`` Claude CLI subprocesses in parallel
+        via a thread pool. Each subprocess blocks on an external IO wait
+        (subprocess.run releases the GIL), so threading yields real wall-
+        clock parallelism. The runtime auto-detects this method and uses
+        it in place of the per-artifact ``__call__`` loop.
+        """
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        artifacts = list(request.artifacts)
+        if not artifacts:
+            return []
+        workers = max(1, min(self.max_concurrency, len(artifacts)))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            return list(
+                pool.map(
+                    lambda a: self.__call__(artifact=a, request=request),
+                    artifacts,
+                ),
+            )
+
     def __call__(self, *, artifact: Any, request: Any) -> dict[str, float]:
         del request
         prompt = artifact.prompt
