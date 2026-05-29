@@ -217,4 +217,4 @@ def test_for_experiment_resolves_real_wan_experiment(capsys) -> None:
     assert out["experiment"] == "diffusion/wan_2_1/online_grpo_video_reward"
     assert out["loader"] == "prompt_manifest"
     assert out["ready"] is True
-    assert any(step["path"] == "datasets/pickscore_sfw/train.txt" for step in out["steps"])
+    assert any(step["path"] == "datasets/videophy/train.txt" for step in out["steps"])

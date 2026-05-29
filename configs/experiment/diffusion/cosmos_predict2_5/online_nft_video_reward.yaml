@@ -1,4 +1,4 @@
-# Cosmos Predict2.5 2B + DiffusionNFT + video reward.
+# Cosmos Predict2.5 2B + DiffusionNFT + video reward on motion-grounded prompts.
 # Keep this out of README as a recommended recipe until real training proves
 # non-flat reward, global_step > 0, generated artifacts, and changed LoRA weights.
 defaults:
@@ -7,7 +7,7 @@ defaults:
   - /sampling/video/512p_93f
   - /sampling/denoise/10_step_no_cfg
   - /reward/video_reward
-  - /dataset/video_t2v_pickscore_sfw
+  - /dataset/videophy
 
 actor:
   optim:
@@ -47,5 +47,5 @@ production:
     report_path: outputs/cosmos_world_model_production_report.md
 
 eval:
-  prompts_file: datasets/drawbench/eval_64.txt
+  prompts_file: datasets/videophy/eval.txt
   seeds: 1

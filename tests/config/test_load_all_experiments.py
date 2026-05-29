@@ -168,9 +168,9 @@ def test_cosmos_diffusion_nft_video_reward_validation_config() -> None:
 
     validate_training_config(cfg)
     assert cfg.data.task_type == "text_to_video"
-    assert cfg.data.manifest == "datasets/pickscore_sfw/train.txt"
-    assert cfg.data.eval_manifest == "datasets/pickscore_sfw/test.txt"
-    assert cfg.data.source_report == "datasets/pickscore_sfw/report.json"
+    assert cfg.data.manifest == "datasets/videophy/train.txt"
+    assert cfg.data.eval_manifest == "datasets/videophy/eval.txt"
+    assert cfg.data.source_report == "datasets/videophy/report.json"
     assert cfg.model.use_lora is True
     assert cfg.reward.kwargs.video_reward.inference_runtime == "ray"
     assert cfg.reward.kwargs.video_reward.artifact_format == "mp4"
@@ -309,9 +309,9 @@ def test_wan_video_reward_production_config() -> None:
     assert cfg.rollout.noise_level == pytest.approx(0.7)
     assert cfg.rollout.sde.type == "cps"
     assert cfg.data.task_type == "text_to_video"
-    assert cfg.data.manifest == "datasets/pickscore_sfw/train.txt"
-    assert cfg.data.eval_manifest == "datasets/pickscore_sfw/test.txt"
-    assert cfg.data.source_report == "datasets/pickscore_sfw/report.json"
+    assert cfg.data.manifest == "datasets/videophy/train.txt"
+    assert cfg.data.eval_manifest == "datasets/videophy/eval.txt"
+    assert cfg.data.source_report == "datasets/videophy/report.json"
     assert cfg.distributed.rollout.release_before_reward_model is True
 
 
