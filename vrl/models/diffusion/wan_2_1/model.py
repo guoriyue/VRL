@@ -125,7 +125,8 @@ class WanT2VDiffusersModel(DiffusionModelBase):
             cfg = LoraConfig(
                 r=spec.lora_config["rank"],
                 lora_alpha=spec.lora_config["alpha"],
-                init_lora_weights="gaussian",
+                # Empty training adapters must initially preserve base Wan output.
+                init_lora_weights=spec.lora_config.get("init_lora_weights", True),
                 target_modules=spec.lora_config["target_modules"],
             )
             self._set_transformer(

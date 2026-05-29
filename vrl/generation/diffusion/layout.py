@@ -78,6 +78,7 @@ class DiffusionSamplingParams:
 
     base: DiffusionBaseParams
     sde: DiffusionSDEParams | None
+    denoise_mode: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +128,7 @@ class DiffusionRequestLayout:
             seed=None if seed is None else int(seed),
             negative_prompt=sampling.get("negative_prompt"),
         )
+        denoise_mode = self._parse_denoise_mode(sampling.get("denoise_mode", "sde"))
         sde_window_range = self._parse_sde_window_range(
             sampling.get("sde_window_range", (0, num_steps)),
             num_steps=num_steps,
@@ -141,7 +143,7 @@ class DiffusionRequestLayout:
             same_latent=bool(sampling.get("same_latent", False)),
             return_kl=bool(sampling.get("return_kl", False)),
         )
-        return DiffusionSamplingParams(base=base, sde=sde)
+        return DiffusionSamplingParams(base=base, sde=sde, denoise_mode=denoise_mode)
 
     def repeat_encoded_batch(self, encoded: dict[str, Any], count: int) -> dict[str, Any]:
         """Repeat singleton-batch encoded tensors for a chunk sample count."""
@@ -270,6 +272,17 @@ class DiffusionRequestLayout:
         if sde_type not in {"sde", "cps"}:
             raise ValueError("sampling.sde_type must be 'sde' or 'cps'")
         return sde_type
+
+    @staticmethod
+    def _parse_denoise_mode(value: Any) -> str:
+        denoise_mode = str(value).strip().lower()
+        if denoise_mode in {"native", "official", "scheduler"}:
+            return "native"
+        if denoise_mode != "sde":
+            raise ValueError(
+                "sampling.denoise_mode must be 'native' or 'sde'",
+            )
+        return denoise_mode
 
     @staticmethod
     def _validate_chunk_range(

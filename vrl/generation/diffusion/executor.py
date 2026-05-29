@@ -49,6 +49,7 @@ class DiffusionDenoiseConfig:
     return_kl: bool
     noise_level: float = 1.0
     sde_type: str = "sde"
+    denoise_mode: str = "sde"
 
 
 @dataclass(slots=True)
@@ -292,6 +293,7 @@ class DiffusionPipelineExecutorBase(
             return_kl=params.sde.return_kl,
             noise_level=params.sde.noise_level,
             sde_type=params.sde.sde_type,
+            denoise_mode=params.denoise_mode,
         )
 
     def forward_plan(
@@ -475,22 +477,41 @@ class DiffusionPipelineExecutorBase(
                         step_output = model.forward_step(state, step_idx)
                     noise_pred = step_output["noise_pred"]
 
-                    in_sde_window = config.sde_window is None or (
-                        config.sde_window[0] <= step_idx < config.sde_window[1]
-                    )
-                    with record_function("generation.scheduler_step"):
+                    if config.denoise_mode == "native":
+                        with record_function("generation.scheduler_step"):
+                            prev_latents = state.scheduler.step(
+                                noise_pred,
+                                timestep,
+                                state.latents,
+                                return_dict=False,
+                            )[0]
                         sde_result = sde_step_with_logprob(
                             state.scheduler,
                             noise_pred.float(),
                             timestep.unsqueeze(0),
                             state.latents.float(),
-                            generator=generator if in_sde_window else None,
-                            deterministic=not in_sde_window,
+                            prev_sample=prev_latents.float(),
                             return_dt=config.return_kl,
                             noise_level=config.noise_level,
                             sde_type=config.sde_type,
                         )
-                    prev_latents = sde_result.prev_sample
+                    else:
+                        in_sde_window = config.sde_window is None or (
+                            config.sde_window[0] <= step_idx < config.sde_window[1]
+                        )
+                        with record_function("generation.scheduler_step"):
+                            sde_result = sde_step_with_logprob(
+                                state.scheduler,
+                                noise_pred.float(),
+                                timestep.unsqueeze(0),
+                                state.latents.float(),
+                                generator=generator if in_sde_window else None,
+                                deterministic=not in_sde_window,
+                                return_dt=config.return_kl,
+                                noise_level=config.noise_level,
+                                sde_type=config.sde_type,
+                            )
+                        prev_latents = sde_result.prev_sample
                     with record_function("generation.latent_write"):
                         state.latents = prev_latents
 
@@ -545,6 +566,7 @@ class DiffusionPipelineExecutorBase(
                 ),
                 "diffusion_timestep_bytes": trajectory_tensor_bytes(buffers.timesteps),
                 "diffusion_kl_bytes": trajectory_tensor_bytes(buffers.kl),
+                "diffusion_denoise_mode": config.denoise_mode,
             },
         )
 
@@ -565,6 +587,8 @@ class DiffusionPipelineExecutorBase(
         with record_function("generation.decode_latents"):
             video = model.decode_latents(state.latents)
         replay_tensors = model.export_replay_tensors(state)
+        context = dict(model.export_batch_context(state))
+        context.setdefault("denoise_mode", config.denoise_mode)
 
         return DiffusionChunkResult(
             prompt_index=config.prompt_index,
@@ -577,7 +601,7 @@ class DiffusionPipelineExecutorBase(
             kl=denoise_result.kl,
             video=video,
             replay_tensors=replay_tensors,
-            context=model.export_batch_context(state),
+            context=context,
             peak_memory_mb=denoise_result.peak_memory_mb,
             stage_durations=dict(stage_durations or {}),
             engine_counters={

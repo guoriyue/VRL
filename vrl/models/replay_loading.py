@@ -244,7 +244,7 @@ def apply_lora_to_transformer(model: Any, spec: Any) -> None:
     cfg = LoraConfig(
         r=spec.lora_config["rank"],
         lora_alpha=spec.lora_config["alpha"],
-        init_lora_weights="gaussian",
+        init_lora_weights=spec.lora_config.get("init_lora_weights", "gaussian"),
         target_modules=spec.lora_config["target_modules"],
     )
     model._set_transformer(get_peft_model(transformer, cfg))

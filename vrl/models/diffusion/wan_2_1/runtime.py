@@ -60,6 +60,7 @@ def extract_wan_2_1_runtime_spec(cfg: Any, device: Any, weight_dtype: Any) -> Ru
             "rank": int(cfg.model.lora.rank),
             "alpha": int(cfg.model.lora.alpha),
             "target_modules": list(cfg.model.lora.target_modules),
+            "init_lora_weights": True,
         }
 
     extra: dict[str, Any] = {}

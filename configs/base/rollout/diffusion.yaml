@@ -4,6 +4,7 @@
 rollout:
   n: 4
   rollout_batch_size: 4
+  denoise_mode: sde             # 'sde' keeps Flow-GRPO stochastic sampling.
   noise_level: 1.0
   sample_batch_size: 1
 

@@ -11,6 +11,9 @@ actor:
   optim:
     lr: 1.0e-4
 
+rollout:
+  denoise_mode: native
+
 trainer:
   entrypoint: vrl.scripts.diffusion.wan_2_1.train:train_wan_2_1_grpo
   output_dir: outputs/wan_1_3b_ocr_grpo

@@ -23,6 +23,9 @@ rollout:
   n: 4
   rollout_batch_size: 1
   sample_batch_size: 1
+  # Wan rollout artifacts should use Wan's native diffusers scheduler.
+  # SDE knobs below are still used to score GRPO transition logprobs.
+  denoise_mode: native
   noise_level: 0.7
   sde:
     type: cps

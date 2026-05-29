@@ -81,6 +81,13 @@ class DiffusionChunkGatherer:
                 "video": video,
             },
         )
+        denoise_modes = {
+            str(chunk.context.get("denoise_mode"))
+            for chunk in ordered_chunks
+            if chunk.context.get("denoise_mode") is not None
+        }
+        if len(denoise_modes) == 1:
+            engine_counters["diffusion_denoise_mode"] = denoise_modes.pop()
         metrics = GenerationMetrics(
             num_prompts=len(prompts),
             num_samples=len(rows),
