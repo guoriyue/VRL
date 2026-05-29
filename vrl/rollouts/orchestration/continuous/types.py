@@ -66,6 +66,11 @@ class ContinuousRolloutProducerState:
     running: bool = False
     paused_for_weight_sync: bool = False
     inflight_count: int = 0
+    tick_count: int = 0
+    submitted_count: int = 0
+    completed_count: int = 0
+    last_tick_gap_s: float = 0.0
+    max_tick_gap_s: float = 0.0
     error_count: int = 0
     last_error: str | None = None
 

@@ -5,6 +5,7 @@ collect -> evaluate -> advantage -> loss -> backward -> step.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 import time
@@ -688,6 +689,12 @@ class OnlineTrainer(Trainer):
                         agg_metrics["kl_penalty"].append(metrics.kl_penalty)
                         agg_metrics["clip_fraction"].append(metrics.clip_fraction)
                         agg_metrics["approx_kl"].append(metrics.approx_kl)
+
+                        # Continuous rollout production runs on the same asyncio
+                        # loop as training orchestration. Yield once per
+                        # timestep so producer admit/harvest can progress while
+                        # this synchronous CUDA-heavy loop is still computing.
+                        await asyncio.sleep(0)
 
                 with timer.time("optim_step"):
                     _gn = self._clip_and_step(optimizer)

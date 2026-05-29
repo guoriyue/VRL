@@ -170,6 +170,11 @@ class ContinuousRolloutSchedule:
         iteration.phase_times.update(
             {
                 "continuous.producer_inflight": float(state.inflight_count),
+                "continuous.producer_tick_count": float(state.tick_count),
+                "continuous.producer_last_tick_gap_s": float(state.last_tick_gap_s),
+                "continuous.producer_max_tick_gap_s": float(state.max_tick_gap_s),
+                "continuous.producer_submitted": float(state.submitted_count),
+                "continuous.producer_completed": float(state.completed_count),
                 "continuous.queue_ready_items": stats["ready_items"],
                 "continuous.queue_ready_groups": stats["ready_groups"],
                 "continuous.queue_ready_bytes": stats["ready_bytes"],

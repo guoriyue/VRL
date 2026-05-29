@@ -14,6 +14,7 @@ touches the optimizer; it owns rollout *production cadence* only.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from typing import Any
 
@@ -30,6 +31,10 @@ from vrl.rollouts.orchestration.lifecycle import RolloutLifecycle
 from vrl.rollouts.orchestration.prompt_collection import collect_prompt_batches
 
 _CPU = torch.device("cpu")
+_OBSERVABILITY_LOG_INTERVAL_S = 30.0
+_STARVATION_LOG_GAP_S = 10.0
+
+logger = logging.getLogger(__name__)
 
 
 class ContinuousRolloutProducer:
@@ -65,6 +70,8 @@ class ContinuousRolloutProducer:
         self._inflight: set[asyncio.Task[Any]] = set()
         self._item_counter = 0
         self._prompt_cursor = 0
+        self._last_tick_at: float | None = None
+        self._last_observability_log_at = 0.0
 
     # -- lifecycle ------------------------------------------------------
 
@@ -131,6 +138,7 @@ class ContinuousRolloutProducer:
     async def _run(self) -> None:
         try:
             while self.state.running:
+                self._record_tick()
                 if self.state.paused_for_weight_sync:
                     await asyncio.sleep(self.poll_interval_s)
                     continue
@@ -167,6 +175,7 @@ class ContinuousRolloutProducer:
         )
         self._inflight.add(task)
         self.state.inflight_count = len(self._inflight)
+        self.state.submitted_count += 1
 
     async def _collect_group(
         self,
@@ -205,6 +214,7 @@ class ContinuousRolloutProducer:
                 self.state.error_count += 1
                 continue
             self._enqueue_result(result)
+            self.state.completed_count += 1
         self.state.inflight_count = len(self._inflight)
 
     def _enqueue_result(self, result: dict[str, Any]) -> None:
@@ -225,6 +235,40 @@ class ContinuousRolloutProducer:
 
     def _store_batch(self, batch: Any) -> Any:
         return move_training_batch_to_device(batch, _CPU)
+
+    def _record_tick(self) -> None:
+        now = time.monotonic()
+        last_tick_at = self._last_tick_at
+        self._last_tick_at = now
+        self.state.tick_count += 1
+        if last_tick_at is None:
+            return
+
+        gap_s = now - last_tick_at
+        self.state.last_tick_gap_s = gap_s
+        self.state.max_tick_gap_s = max(self.state.max_tick_gap_s, gap_s)
+        should_log_debug = (
+            self.runtime_debug
+            and now - self._last_observability_log_at >= _OBSERVABILITY_LOG_INTERVAL_S
+        )
+        should_log_starvation = gap_s >= _STARVATION_LOG_GAP_S
+        if not should_log_debug and not should_log_starvation:
+            return
+
+        self._last_observability_log_at = now
+        log_fn = logger.warning if should_log_starvation else logger.info
+        log_fn(
+            "continuous rollout producer tick: gap_s=%.3f max_gap_s=%.3f "
+            "inflight=%d queue_size=%d submitted=%d completed=%d paused=%s errors=%d",
+            gap_s,
+            self.state.max_tick_gap_s,
+            len(self._inflight),
+            self.queue.size(),
+            self.state.submitted_count,
+            self.state.completed_count,
+            self.state.paused_for_weight_sync,
+            self.state.error_count,
+        )
 
 
 __all__ = ["ContinuousRolloutProducer"]
