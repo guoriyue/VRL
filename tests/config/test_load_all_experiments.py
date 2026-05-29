@@ -76,6 +76,7 @@ def test_experiments_are_grouped_by_model_family() -> None:
         "diffusion/sd3_5/online_grpo_pickscore",
         "diffusion/wan_2_1/offline_dpo_pickapic",
         "diffusion/wan_2_1/online_grpo_ocr",
+        "diffusion/wan_2_1/online_grpo_physics",
         "diffusion/wan_2_1/online_grpo_video_reward",
     }
 
@@ -89,6 +90,7 @@ def test_experiments_use_dataset_groups_and_only_override_reward_weights() -> No
     allowed_reward_kwargs = {
         "experiment/diffusion/cosmos_predict2/online_grpo_v2w_reference.yaml",
         "experiment/diffusion/cosmos_predict2_5/online_nft_video_reward.yaml",
+        "experiment/diffusion/wan_2_1/online_grpo_physics.yaml",
         "experiment/diffusion/wan_2_1/online_grpo_video_reward.yaml",
     }
     for path in EXPERIMENT_DIR.rglob("*.yaml"):

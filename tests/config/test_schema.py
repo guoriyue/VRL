@@ -9,11 +9,9 @@ from vrl.config.schema import (
     AlgorithmConfig,
     DataConfig,
     RewardConfig,
-    RootConfig,
     VideoRewardKwargs,
     parse_config,
 )
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

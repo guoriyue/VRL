@@ -8,7 +8,7 @@ not yet represented here are silently accepted rather than rejected.
 
 from __future__ import annotations
 
-from typing import Any, Literal, get_args
+from typing import Any, Literal
 
 from omegaconf import DictConfig, OmegaConf
 from omegaconf.errors import MissingMandatoryValue
@@ -35,7 +35,7 @@ class VideoRewardKwargs(BaseModel):
     reward_name: str
     score_key: str
     scheduling: str = "sync"
-    worker_config: dict[str, Any] = Field(default_factory=dict)
+    worker_config: dict[str, Any]
     # captured for production cross-field check in RootConfig
     media_type: str | None = None
     artifact_format: str | None = None
@@ -51,6 +51,8 @@ class VideoRewardKwargs(BaseModel):
                 "reward.kwargs.video_reward.backend is no longer supported; "
                 "use reward.kwargs.video_reward.inference_runtime=ray",
             )
+        if not isinstance(data.get("worker_config"), dict):
+            raise ValueError("reward.kwargs.video_reward.worker_config must be a mapping")
         removed = sorted(
             k for k in ("enqueue_url", "fetch_url", "token", "poll_interval_s",
                         "max_wait_s", "stub_scale", "device")
@@ -64,7 +66,7 @@ class VideoRewardKwargs(BaseModel):
         return data
 
     @model_validator(mode="after")
-    def _validate_runtime_constraints(self) -> "VideoRewardKwargs":
+    def _validate_runtime_constraints(self) -> VideoRewardKwargs:
         if self.inference_runtime != "ray":
             raise ValueError(
                 "reward.kwargs.video_reward.inference_runtime must be 'ray'"
@@ -86,7 +88,7 @@ class RewardConfig(BaseModel):
     kwargs: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def _validate_reward(self) -> "RewardConfig":
+    def _validate_reward(self) -> RewardConfig:
         # All kwargs entries must be mappings (or null)
         for name, sub in self.kwargs.items():
             if sub is not None and not isinstance(sub, dict):
@@ -146,7 +148,7 @@ class AlgorithmConfig(BaseModel):
     adv_estimator: str | None = None
 
     @model_validator(mode="after")
-    def _reject_adv_estimator(self) -> "AlgorithmConfig":
+    def _reject_adv_estimator(self) -> AlgorithmConfig:
         if self.adv_estimator is not None:
             raise ValueError(
                 "algorithm.adv_estimator is no longer supported; use algorithm.kind"
@@ -172,7 +174,7 @@ class DataConfig(BaseModel):
     task_type: str | None = None
 
     @model_validator(mode="after")
-    def _validate_data(self) -> "DataConfig":
+    def _validate_data(self) -> DataConfig:
         # loader validity already enforced by the Literal field type
         if self.loader == "prompt_manifest":
             if not self.manifest:
@@ -274,7 +276,7 @@ class RootConfig(BaseModel):
     production: ProductionConfig | None = None
 
     @model_validator(mode="after")
-    def _cross_field_validate(self) -> "RootConfig":
+    def _cross_field_validate(self) -> RootConfig:
         algo = self.algorithm
         if algo is None:
             return self
@@ -292,9 +294,10 @@ class RootConfig(BaseModel):
         # token_grpo: nextstep_1 family requires rollout.noise_level
         if kind == "token_grpo":
             model_family = self.model.family if self.model else None
-            if model_family == "nextstep_1":
-                if rollout is None or rollout.noise_level is None:
-                    raise ValueError("config missing required field: rollout.noise_level")
+            if model_family == "nextstep_1" and (
+                rollout is None or rollout.noise_level is None
+            ):
+                raise ValueError("config missing required field: rollout.noise_level")
 
         # token_grpo_multisegment: janus_pro only, final_image_policy must match sampling
         if kind == "token_grpo_multisegment":

@@ -98,6 +98,12 @@ class WanT2VDiffusersModel(DiffusionModelBase):
         pipeline.vae.requires_grad_(False)
         pipeline.text_encoder.requires_grad_(False)
         pipeline.vae.to(spec.device, dtype=torch.float32)
+        # Tile spatial dims and slice batch dim during VAE decode/encode so
+        # peak memory is bounded by a single tile/sample rather than the full
+        # batch. K=8 sample_batch_size=8 at 240p x 33fr OOMs without this on a
+        # 32 GB GPU; with tiling, peak stays well under 10 GB.
+        pipeline.vae.enable_tiling()
+        pipeline.vae.enable_slicing()
         pipeline.text_encoder.to(spec.device, dtype=spec.dtype)
         return cls(pipeline=pipeline, device=spec.device)
 

@@ -30,8 +30,8 @@ def get_reward(name: str) -> type[RewardFunction]:
 
 def _register_builtins() -> None:
     from vrl.rewards.functions.aesthetic import AestheticReward
-    from vrl.rewards.functions.clip import CLIPScoreReward
     from vrl.rewards.functions.claude_image_qa import ClaudeImageQAReward
+    from vrl.rewards.functions.clip import CLIPScoreReward
     from vrl.rewards.functions.codex_image_qa import CodexImageQAReward
     from vrl.rewards.functions.geneval import GenEvalReward
     from vrl.rewards.functions.nsfw_safety import NSFWSafetyReward

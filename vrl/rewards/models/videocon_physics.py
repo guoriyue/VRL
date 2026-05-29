@@ -45,16 +45,6 @@ _DEFAULT_SEMANTIC_TEMPLATE = (
     "\nHuman: {video}\nDoes the video entail the caption: \"{caption}\"?\nAI: "
 )
 
-_SCORE_KEY_ALIASES = {
-    "physical_commonsense": "physical_commonsense",
-    "physics": "physical_commonsense",
-    "semantic_adherence": "semantic_adherence",
-    "semantic": "semantic_adherence",
-    "overall": "overall",
-    "overall_reward": "overall",
-}
-
-
 class VideoConPhysicsModel(RewardModel):
     """Load VideoCon-Physics and score one (prompt, video) pair per call."""
 
@@ -160,10 +150,28 @@ class VideoConPhysicsModel(RewardModel):
             num_frames=self.num_frames,
             return_tensors="pt",
         )
-        batch = {
-            k: v.to(self.device) if isinstance(v, torch.Tensor) else v
-            for k, v in batch.items()
-        }
+        # Floating tensors from the processor are FP32; the model is bf16.
+        # Cast floating tensors (pixel / video_pixel) to the model's dtype.
+        # Leave integer tensors (input_ids, attention_mask) alone.
+        model_dtype = next(self.model.parameters()).dtype
+        casted_batch: dict[str, Any] = {}
+        for k, v in batch.items():
+            if isinstance(v, torch.Tensor):
+                v = v.to(self.device)
+                if v.is_floating_point():
+                    v = v.to(model_dtype)
+                casted_batch[k] = v
+            else:
+                casted_batch[k] = v
+        batch = casted_batch
+        # Match upstream batchify() for the video-only path: no image tensor,
+        # zero images, and one video feature block per sample.
+        batch_size = int(batch["input_ids"].shape[0])
+        batch.setdefault("pixel_values", None)
+        if "num_images" not in batch:
+            batch["num_images"] = torch.zeros(batch_size, dtype=torch.long, device=self.device)
+        if "num_videos" not in batch:
+            batch["num_videos"] = torch.ones(batch_size, dtype=torch.long, device=self.device)
         input_ids = batch["input_ids"]
         with torch.no_grad():
             output = self.model(**batch)

@@ -115,7 +115,7 @@ class ClaudeImageQARewardModel:
         def safe_call(artifact: Any) -> dict[str, float]:
             try:
                 return self.__call__(artifact=artifact, request=request)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 self._log_refusal(artifact, exc)
                 return {"claude_image_qa": float(self.refusal_score)}
 
@@ -149,7 +149,7 @@ class ClaudeImageQARewardModel:
                 image_path = self.refusal_log_dir / f"{stem}.png"
                 write_png(media, image_path)
                 image_relpath = str(image_path.name)
-        except Exception:  # noqa: BLE001
+        except Exception:
             image_relpath = None
         entry = {
             "ts": ts,
