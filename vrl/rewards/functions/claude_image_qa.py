@@ -1,4 +1,9 @@
-"""Claude CLI-backed image QA reward (model-backed over the local transport)."""
+"""Claude CLI-backed image QA reward.
+
+This is the generic Claude image-QA RewardFunction entry. Specialized configs
+such as ``configs/reward/claude_anatomy.yaml`` narrow its behavior with an
+external rubric file instead of registering a second thin reward alias.
+"""
 
 from __future__ import annotations
 

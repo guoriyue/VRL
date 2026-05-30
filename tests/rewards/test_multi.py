@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import pytest
 
+from vrl.config.builders import build_reward_config
+from vrl.config.loading import load_config
 from vrl.rewards.base import RewardFunction
-from vrl.rewards.functions.registry import MultiReward
+from vrl.rewards.functions.codex_image_qa import CodexImageQAReward
+from vrl.rewards.functions.registry import MultiReward, get_reward
 from vrl.rewards.types import RewardRollout, RewardTrajectory
 
 
@@ -50,3 +53,25 @@ async def test_multi_reward_accumulates_components_until_reset() -> None:
     reward.reset_components()
 
     assert reward.last_components == {}
+
+
+def test_codex_image_qa_reward_config_builds_primary_entry_without_legacy_alias() -> None:
+    cfg = load_config("reward/codex_image_qa")
+    weights, kwargs = build_reward_config(cfg)
+
+    reward = MultiReward.from_dict(weights, device="cpu", reward_kwargs=kwargs)
+
+    assert [name for name, _, _ in reward.rewards] == ["codex_image_qa"]
+    assert get_reward("codex_image_qa") is CodexImageQAReward
+
+    with pytest.raises(KeyError, match="image_qa_cli"):
+        get_reward("image_qa_cli")
+
+
+def test_claude_anatomy_config_builds_claude_image_qa_backend() -> None:
+    cfg = load_config("reward/claude_anatomy")
+    weights, kwargs = build_reward_config(cfg)
+
+    reward = MultiReward.from_dict(weights, device="cpu", reward_kwargs=kwargs)
+
+    assert [name for name, _, _ in reward.rewards] == ["claude_image_qa"]
