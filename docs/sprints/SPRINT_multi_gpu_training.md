@@ -37,11 +37,15 @@ trainable = [p for p in self.model.parameters() if p.requires_grad]
 self._optimizer = _create_optimizer(trainable, self.config)
 ```
 
-rollout weight sync 直接推 `self.model.state_dict()`：
+rollout weight sync **不是**直接推 `self.model.state_dict()`——`OnlineTrainer` 已经走一个显式的 trainable-state getter，并在缺失它时 fail-fast（`vrl/trainers/online/trainer.py:171-175`，注释明确："syncing model.state_dict() would send frozen modules"）：
 
 ```python
-await self.weight_syncer.push(self.model.state_dict())
+# TrainableStateGetter = Callable[[], dict[str, Any]]  (vrl/trainers/weight_sync.py:11)
+sync_state_getter=build_trainable_state_sync_getter(bundle)  # online.py:155
+# rollout schedule 内部用 weight_syncer + sync_state_getter 推 flatten 后的 trainable state
 ```
+
+所以多 GPU 的诉求**不是**"干掉 `self.model.state_dict()`"（那行不存在），而是：让 `sync_state_getter` 返回的 state 在 DDP/FSDP wrap 之后仍然是 unwrapped、policy-facing 的 key space。
 
 checkpoint 依赖 `RuntimeBundle.trainable_modules`：
 
@@ -129,13 +133,15 @@ distributed:
 新增：
 
 ```text
-vrl/distributed/training/context.py
-vrl/distributed/training/strategy.py
-vrl/distributed/training/ddp.py
-vrl/distributed/training/fsdp.py
-tests/distributed/training/test_context.py
-tests/distributed/training/test_strategy.py
+vrl/ray/training/context.py        # 注：放进现有 vrl/ray/ 下，不另开 vrl/distributed/ 顶层包
+vrl/ray/training/strategy.py
+vrl/ray/training/ddp.py
+vrl/ray/training/fsdp.py
+tests/ray/training/test_context.py
+tests/ray/training/test_strategy.py
 ```
+
+> 已有地基：`vrl/trainers/fsdp.py`（183 行，`FSDPConfig` + `fsdp_wrapper`）已经存在但**没有测试**。`FSDPStrategy` 应复用它而不是重写，并在本 sprint 补上它的 config→wrap-policy 单测。布局上不新开 `vrl/distributed/` 顶层包——分布式相关已经在 `vrl/ray/` 和 `vrl/generation/ray/`，新代码并入 `vrl/ray/training/` 保持一致。
 
 目标接口：
 
@@ -264,6 +270,17 @@ DDP/FSDP 训练 shard 规则：
 - 分片单位是 rollout sample 或 microbatch，但不能破坏 prompt group。
 - 如果 batch 不能被 world size 整除，先支持 padding + mask，不 silent drop。
 
+## 6.5 torchrun training world ↔ Ray rollout cluster 协同（最深的未知）
+
+这是本 sprint 唯一"未知中的未知"，必须在 Phase 4 之前定清楚：现有 rollout 是 Ray-based（`RayGenerationRuntime`，`vrl/generation/ray/runtime.py`），而 DDP/FSDP 训练侧是 `torchrun` 起的 N 个进程。两套并发模型要拉通：
+
+- **谁持有 Ray client**：约定只有 rank0 连 Ray、提交 generate / 收 reward；非 rank0 在 collection 阶段进入 `strategy.barrier()` 等待 rank0 broadcast training payload。避免 N 个 rank 各自连 Ray 重复采样。
+- **资源不打架**：`vrl/ray/resources.py` 现在按 role 分卡，但它不知道 `torchrun` 又 fork 了 `gpus_per_node` 个训练进程。必须明确：训练 ranks 占用的物理卡（`LOCAL_RANK` → device）与 Ray rollout worker 的 placement **不重叠**，或在 colocated 模式下显式 release。新增校验：`training.num_nodes * training.gpus_per_node` 的训练卡集合 ∩ rollout worker 卡集合 = ∅（除非 colocated 且声明 overlap）。
+- **weight sync 时序**：rank0 train 完导出 state → push 给 Ray rollout worker → 其余 rank 在 `barrier()` 处等 rank0 完成 sync 再进入下一轮 collect，保证 policy version 单调且全 rank 看到同一版本。
+- **退化保证**：`strategy=single_process` 时这一层完全短路，行为与当前 repo 一致。
+
+DoD：新增一个 torchrun + Ray 的集成约定测试（mock Ray runtime），断言 (1) 只有 rank0 调 `runtime.generate` (2) 非 rank0 在 collect 阶段不触发采样 (3) 训练卡与 rollout 卡集合不重叠时启动通过、重叠且未声明 overlap 时 fail-fast。
+
 ## 7. Offline DPO Loop Changes
 
 Wan DPO 是 offline trainer，应该单独接 distributed dataloader：
@@ -281,8 +298,8 @@ Wan DPO 是 offline trainer，应该单独接 distributed dataloader：
 
 ```text
 vrl/trainers/checkpointing.py
-vrl/trainers/online.py
-vrl/trainers/offline_dpo.py
+vrl/trainers/online/trainer.py
+vrl/trainers/offline/dpo.py
 ```
 
 要求：
@@ -294,18 +311,16 @@ vrl/trainers/offline_dpo.py
 - optimizer state 第一版可以要求 full optimizer state rank0 保存 / broadcast；如果实现复杂，FSDP optimizer resume 可以先 fail-fast，但必须明确写入 DoD。
 - EMA 第一版默认只支持 DDP；FSDP + EMA 先 fail-fast，除非实现完整参数 gather/update。
 
-rollout sync 要改成：
+rollout sync 的现状是 `build_trainable_state_sync_getter(bundle)`（`vrl/trainers/weight_sync.py:86`）返回一个 `Callable[[], dict]`，由 rollout schedule 内部推送。多 GPU 下要把这个 getter 换成 strategy-aware 版本：
 
 ```python
-state = strategy.export_trainable_state(bundle)
-await weight_syncer.push(flatten_for_policy_load(state))
+# 现状（single-process）：
+sync_state_getter = build_trainable_state_sync_getter(bundle)
+# 目标：getter 内部走 strategy，导出 unwrapped/full state（去掉 DDP/FSDP wrapper key）
+sync_state_getter = lambda: strategy.export_trainable_state(bundle)
 ```
 
-不能继续直接使用：
-
-```python
-self.model.state_dict()
-```
+关键不变量：getter 返回的 key space 必须是 rollout policy 能直接 `load_trainable_state()` 的（diffusion 要求 `transformer.*` prefix），**不能**泄漏 DDP 的 `module.` 或 FSDP 的 shard key。
 
 ## 9. Rollout Weight Sync Contract
 
@@ -437,7 +452,7 @@ torchrun --nproc-per-node=2 -m vrl.scripts.train \
 代码层：
 
 - 所有 train scripts 不再直接决定 distributed rank/device。
-- `OnlineTrainer` 不再直接把 `self.model.state_dict()` 推给 rollout workers。
+- `sync_state_getter` 升级为 strategy-aware：DDP/FSDP wrap 后导出的仍是 unwrapped、policy-facing state（保持 `OnlineTrainer` 现有的"必须显式 getter、不推全量 state_dict"不变量）。
 - checkpoint export/load 走 strategy。
 - DDP/FSDP 不污染 rollout-facing state dict keys。
 - unsupported family + unsupported strategy 有明确错误。
@@ -445,10 +460,10 @@ torchrun --nproc-per-node=2 -m vrl.scripts.train \
 测试层：
 
 ```bash
-python -m pytest -q tests/distributed/training
+python -m pytest -q tests/ray/training
 python -m pytest -q tests/trainers/test_online.py
 python -m pytest -q tests/trainers/test_checkpointing.py
-python -m pytest -q tests/distributed/ray
+python -m pytest -q tests/ray
 python -m pytest -q tests/config/test_load_all_experiments.py
 ```
 
@@ -463,28 +478,31 @@ python -m pytest -q tests/config/test_load_all_experiments.py
 当前代码切点：
 
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/scripts/train.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/scripts/sd3_5/train.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/scripts/wan_2_1/train.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/scripts/cosmos/train.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/scripts/janus_pro/train.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/scripts/nextstep_1/train.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/scripts/wan_2_1/train_dpo.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/trainers/online.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/trainers/offline_dpo.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/scripts/common/online.py`（各家族共享的 `run_online_recipe`，rank split 的真实落点）
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/scripts/common/factory.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/scripts/diffusion/sd3_5/train.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/scripts/diffusion/wan_2_1/train.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/scripts/diffusion/cosmos/train.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/scripts/ar/janus_pro/train.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/scripts/ar/nextstep_1/train.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/scripts/diffusion/wan_2_1/train_dpo.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/trainers/online/trainer.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/trainers/offline/dpo.py`
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/trainers/checkpointing.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/trainers/weight_sync.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/trainers/fsdp.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/trainers/data.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/trainers/weight_sync.py`（`TrainableStateGetter` + `build_trainable_state_sync_getter`）
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/trainers/fsdp.py`（已有 `FSDPConfig`/`fsdp_wrapper`，待接入+补测）
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/trainers/data/prompts.py`（prompt loader / sampler，原 `vrl/trainers/data.py` 已拆成包）
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/models/interfaces/runtime.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/models/diffusion/model_base.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/models/diffusion/base.py`
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/models/diffusion/sd3_5/model.py`
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/models/diffusion/wan_2_1/model.py`
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/models/diffusion/cosmos/predict2/model.py`
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/models/ar/janus_pro/model.py`
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/models/ar/nextstep_1/model.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/distributed/ray/train/group.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/distributed/ray/rollout/worker.py`
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/distributed/ray/rollout/weight_sync.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/generation/ray/runtime.py`（`RayGenerationRuntime`，rollout 侧）
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/generation/ray/worker.py`
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/generation/ray/weight_sync.py`
+- 注：`vrl/distributed/ray/train/group.py`（RayTrainGroup）在第 2 节是 non-goal，当前不存在，本 sprint 不创建。
 
 相关设计：
 
