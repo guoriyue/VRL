@@ -18,6 +18,11 @@ import torch
 from diffusers import WanPipeline
 from diffusers.utils import export_to_video
 
+from vrl.models.diffusion.common.vae_decode_memory import (
+    VaeDecodeMemory,
+    configure_vae_decode,
+)
+
 PROMPTS = [
     "A whisk spins in the egg mixture, mixing it thoroughly.",
     "A spoon scoops creamy soup from a pot.",
@@ -42,6 +47,11 @@ def main() -> None:
     parser.add_argument("--width", type=int, default=416)
     parser.add_argument("--height", type=int, default=240)
     parser.add_argument("--num-frames", type=int, default=33)
+    parser.add_argument(
+        "--cpu-offload",
+        action="store_true",
+        help="Enable diffusers model_cpu_offload (needed for 14B models on 32GB GPU).",
+    )
     args = parser.parse_args()
 
     out = Path(args.out_dir) / args.pass_name
@@ -49,9 +59,18 @@ def main() -> None:
 
     print(f"[{args.pass_name}] loading {args.model_id}", flush=True)
     pipe = WanPipeline.from_pretrained(args.model_id, torch_dtype=torch.bfloat16)
-    pipe.to("cuda")
-    pipe.vae.enable_tiling()
-    pipe.vae.enable_slicing()
+    if args.cpu_offload:
+        # Sequential offload keeps text_encoder/VAE on CPU until called; on a
+        # 32 GB card this is the difference between OOM and a successful 14B
+        # transformer forward.
+        pipe.enable_model_cpu_offload()
+    else:
+        pipe.to("cuda")
+    configure_vae_decode(
+        pipe.vae,
+        VaeDecodeMemory(tiling=True, slicing=True),
+        owner="wan eval VAE",
+    )
 
     if args.lora_path:
         # The training pipeline saves via PEFT (adapter_config.json +

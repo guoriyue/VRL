@@ -40,5 +40,8 @@ def test_wan_empty_lora_preserves_base_policy_initially() -> None:
     spec = extract_wan_2_1_runtime_spec(cfg, torch.device("cpu"), torch.bfloat16)
 
     assert spec.use_lora is True
-    assert spec.lora_config is not None
-    assert spec.lora_config["init_lora_weights"] is True
+    lora_config = spec.lora
+    assert lora_config is not None
+    # Wan's apply_lora reads ``init_lora_weights`` with a True default, so an
+    # empty training adapter still initially preserves base Wan output.
+    assert lora_config.get("init_lora_weights", True) is True

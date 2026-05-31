@@ -1,8 +1,14 @@
-# SD 3.5 Medium MMDiT — checkpoint + LoRA + compile only.
+# SD 3.5 Medium MMDiT — checkpoint, LoRA, compile, and memory policy.
 # Sampling shape and denoise defaults live under configs/sampling/.
 model:
   family: sd3_5
   path: stabilityai/stable-diffusion-3.5-medium
+
+  memory:
+    frozen_offload:
+      enable: true
+      modules: [text_encoder, text_encoder_2, text_encoder_3, vae]
+      empty_cache: true
 
   use_lora: true
   lora:

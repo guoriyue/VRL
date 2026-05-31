@@ -108,8 +108,10 @@ class SD3_5Model(DiffusionModelBase):
         from diffusers import StableDiffusion3Pipeline
 
         model_dtype = _resolve_torch_dtype(spec.dtype)
-        extra = getattr(spec, "extra", {}) or {}
-        frozen_dtype = _resolve_torch_dtype(extra.get("frozen_dtype", model_dtype))
+        # Match Flow-GRPO's SD3 LoRA memory contract: when the trainable
+        # denoiser runs in fp32, keep frozen text encoders in fp16; otherwise
+        # frozen modules share the model dtype.
+        frozen_dtype = torch.float16 if model_dtype == torch.float32 else model_dtype
         load_kwargs: dict[str, Any] = {}
         if model_dtype == torch.float32 and frozen_dtype != torch.float32:
             load_kwargs["torch_dtype"] = {
@@ -142,19 +144,21 @@ class SD3_5Model(DiffusionModelBase):
         self.pipeline.transformer.requires_grad_(False)
         self.pipeline.transformer.to(self.device, dtype=_resolve_torch_dtype(spec.dtype))
 
-        if spec.lora_path:
+        lora_path = spec.lora_path
+        if lora_path:
             transformer = PeftModel.from_pretrained(
-                self.pipeline.transformer, spec.lora_path, is_trainable=True,
+                self.pipeline.transformer, lora_path, is_trainable=True,
             )
             transformer.set_adapter("default")
             self._set_transformer(transformer)
         else:
-            assert spec.lora_config is not None
+            lora_config = spec.lora
+            assert lora_config is not None
             cfg = LoraConfig(
-                r=spec.lora_config["rank"],
-                lora_alpha=spec.lora_config["alpha"],
+                r=lora_config["rank"],
+                lora_alpha=lora_config["alpha"],
                 init_lora_weights="gaussian",
-                target_modules=spec.lora_config["target_modules"],
+                target_modules=lora_config["target_modules"],
             )
             self._set_transformer(
                 get_peft_model(self.pipeline.transformer, cfg),

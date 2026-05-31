@@ -93,6 +93,12 @@ class RolloutLifecycle:
         if not self.should_offload_driver_model_for_rollout():
             return False
         with record_phase(phase_times, "rollout.offload_driver_s"):
+            # Park the driver model on CPU. WHERE is intentionally fixed: "cpu"
+            # is the only meaningful off-GPU target, so this is not a config knob.
+            # WHETHER we offload is decided upstream by GPU topology
+            # (should_offload_driver_model_for_rollout -> colocation), never by a
+            # model.memory setting. A future non-CPU offload target would belong
+            # to distributed/topology config, not to a model backend policy.
             self.model.to("cpu")
             empty_cuda_cache()
         return True

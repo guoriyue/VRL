@@ -28,6 +28,9 @@ from vrl.models.replay_loading import (
     load_flow_match_scheduler_component,
     minimal_replay_bundle_metadata,
 )
+from vrl.models.runtime_config import (
+    extract_runtime_spec,
+)
 
 logger = logging.getLogger(__name__)
 COSMOS_PREDICT2_FAMILY_CAPABILITY = diffusion_family_capability(
@@ -58,38 +61,19 @@ def extract_cosmos_predict2_runtime_spec(
     cfg: Any, device: Any, weight_dtype: Any,
 ) -> RuntimeBuildSpec:
     """Slice the runtime-relevant subset out of a whole RL cfg."""
-    lora_cfg: dict[str, Any] | None = None
-    lora_path: str | None = None
-    if cfg.model.use_lora:
-        lora_path = cfg.model.lora.path or None
-        lora_cfg = {
-            "rank": int(cfg.model.lora.rank),
-            "alpha": int(cfg.model.lora.alpha),
-            "target_modules": list(cfg.model.lora.target_modules),
-        }
-
-    extra: dict[str, Any] = {}
-    if getattr(cfg.model, "torch_compile", None) is not None and cfg.model.torch_compile.enable:
-        extra["torch_compile"] = {
-            "enable": True,
-            "mode": cfg.model.torch_compile.mode,
-        }
-    ref_image = getattr(cfg.model, "reference_image", None)
-    if ref_image:
-        extra["reference_image"] = str(ref_image)
-
-    return RuntimeBuildSpec(
-        model_name_or_path=cfg.model.path,
-        device=device,
-        dtype=weight_dtype,
-        backend_preference=("diffusers",),
+    return extract_runtime_spec(
+        cfg,
+        device,
+        weight_dtype,
         task_variant="video2world",
-        use_lora=bool(cfg.model.use_lora),
-        lora_path=lora_path,
-        lora_config=lora_cfg,
-        scheduler_config={"num_steps": int(cfg.sampling.num_steps)},
-        extra=extra,
+        backend_preference=("diffusers",),
     )
+
+
+def _reference_image_from_spec(spec: RuntimeBuildSpec) -> str | None:
+    """Bundle-metadata reference image; empty cfg value reads as ``None``."""
+
+    return (spec.model_config or {}).get("reference_image") or None
 
 
 def build_cosmos_predict2_runtime_bundle(
@@ -103,24 +87,26 @@ def build_cosmos_predict2_runtime_bundle(
         "Building cosmos-predict2 runtime bundle (backend=%s) from %s",
         backend, spec.model_name_or_path,
     )
+    use_lora = spec.use_lora
     model = model_cls.from_spec(spec)
 
-    if spec.use_lora:
+    if use_lora:
         model.apply_lora(spec)
-        if spec.lora_config:
+        lora_config = spec.lora
+        if lora_config:
             logger.info(
                 "Applied LoRA (rank=%d, alpha=%d)",
-                spec.lora_config["rank"], spec.lora_config["alpha"],
+                lora_config["rank"], lora_config["alpha"],
             )
     else:
         model.enable_full_finetune()
 
-    compile_cfg = (spec.extra or {}).get("torch_compile") or {}
+    compile_cfg = spec.torch_compile or {}
     if compile_cfg.get("enable"):
         logger.info("Compiling transformer with mode=%s", compile_cfg["mode"])
         model.torch_compile_transformer(compile_cfg["mode"])
 
-    num_steps = (spec.scheduler_config or {}).get("num_steps")
+    num_steps = spec.num_steps
     if num_steps is not None:
         model.set_num_steps(num_steps)
     # If None, caller (e.g. DPO trainer) will set scheduler timesteps itself.
@@ -141,8 +127,8 @@ def build_cosmos_predict2_runtime_bundle(
             "model_path": spec.model_name_or_path,
             "task_variant": spec.task_variant,
             "dtype": str(spec.dtype),
-            "use_lora": spec.use_lora,
-            "reference_image": (spec.extra or {}).get("reference_image"),
+            "use_lora": use_lora,
+            "reference_image": _reference_image_from_spec(spec),
             **full_generation_bundle_metadata(),
         },
     )
@@ -175,12 +161,13 @@ def build_cosmos_predict2_replay_runtime_bundle(
         device=spec.device,
     )
 
-    if spec.use_lora:
+    use_lora = spec.use_lora
+    if use_lora:
         apply_lora_to_transformer(model, spec)
     else:
         enable_transformer_full_finetune(model)
 
-    compile_cfg = (spec.extra or {}).get("torch_compile") or {}
+    compile_cfg = spec.torch_compile or {}
     if compile_cfg.get("enable"):
         compile_transformer(model, compile_cfg["mode"])
 
@@ -200,8 +187,8 @@ def build_cosmos_predict2_replay_runtime_bundle(
             "model_path": spec.model_name_or_path,
             "task_variant": spec.task_variant,
             "dtype": str(spec.dtype),
-            "use_lora": spec.use_lora,
-            "reference_image": (spec.extra or {}).get("reference_image"),
+            "use_lora": use_lora,
+            "reference_image": _reference_image_from_spec(spec),
             **minimal_replay_bundle_metadata(
                 replay_modules=("transformer", "scheduler"),
                 generation_only_modules=(

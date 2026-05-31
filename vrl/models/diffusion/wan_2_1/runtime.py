@@ -18,7 +18,10 @@ from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
 from vrl.models.diffusion.capabilities import diffusion_family_capability
-from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
+from vrl.models.interfaces.runtime import (
+    RuntimeBuildSpec,
+    RuntimeBundle,
+)
 from vrl.models.replay_loading import (
     apply_lora_to_transformer,
     compile_transformer,
@@ -27,6 +30,9 @@ from vrl.models.replay_loading import (
     load_diffusers_scheduler_component,
     load_diffusers_transformer_component,
     minimal_replay_bundle_metadata,
+)
+from vrl.models.runtime_config import (
+    extract_runtime_spec,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,41 +66,15 @@ def _resolve_model_cls(backend: str, task_variant: str | None) -> type:
 
 def extract_wan_2_1_runtime_spec(cfg: Any, device: Any, weight_dtype: Any) -> RuntimeBuildSpec:
     """Slice the runtime-relevant subset out of a whole RL cfg."""
-    lora_cfg: dict[str, Any] | None = None
-    lora_path: str | None = None
-    if cfg.model.use_lora:
-        lora_path = cfg.model.lora.path or None
-        lora_cfg = {
-            "rank": int(cfg.model.lora.rank),
-            "alpha": int(cfg.model.lora.alpha),
-            "target_modules": list(cfg.model.lora.target_modules),
-            "init_lora_weights": True,
-        }
-
-    task_variant = _task_variant_from_cfg(cfg)
-    extra: dict[str, Any] = {}
-    if cfg.model.torch_compile.enable:
-        extra["torch_compile"] = {
-            "enable": True,
-            "mode": cfg.model.torch_compile.mode,
-        }
-    if bool(_cfg_get(cfg.model, "enable_model_cpu_offload", False)):
-        extra["enable_model_cpu_offload"] = True
-    reference_image = _cfg_get(cfg.model, "reference_image", "")
-    if reference_image:
-        extra["reference_image"] = str(reference_image)
-
-    return RuntimeBuildSpec(
-        model_name_or_path=cfg.model.path,
-        device=device,
-        dtype=weight_dtype,
+    # task_variant (t2v vs i2v) is the one runtime field that varies per cfg;
+    # enable_model_cpu_offload / reference_image now ride in model_config and are
+    # read by the consumer, so no per-field extra building here.
+    return extract_runtime_spec(
+        cfg,
+        device,
+        weight_dtype,
+        task_variant=_task_variant_from_cfg(cfg),
         backend_preference=("diffusers",),
-        task_variant=task_variant,
-        use_lora=bool(cfg.model.use_lora),
-        lora_path=lora_path,
-        lora_config=lora_cfg,
-        scheduler_config={"num_steps": int(cfg.sampling.num_steps)},
-        extra=extra,
     )
 
 
@@ -109,28 +89,39 @@ def build_wan_2_1_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         task_variant,
         backend,
     )
+    use_lora = spec.use_lora
     model = model_cls.from_spec(spec)
 
-    if spec.use_lora:
+    if use_lora:
         model.apply_lora(spec)
-        if spec.lora_config:
+        lora_config = spec.lora
+        if lora_config:
             logger.info(
                 "Applied LoRA (rank=%d, alpha=%d)",
-                spec.lora_config["rank"], spec.lora_config["alpha"],
+                lora_config["rank"], lora_config["alpha"],
             )
     else:
         model.enable_full_finetune()
 
-    compile_cfg = (spec.extra or {}).get("torch_compile") or {}
+    compile_cfg = spec.torch_compile or {}
     if compile_cfg.get("enable"):
         logger.info("Compiling transformer with mode=%s", compile_cfg["mode"])
         model.torch_compile_transformer(compile_cfg["mode"])
 
-    num_steps = (spec.scheduler_config or {}).get("num_steps")
+    num_steps = spec.num_steps
     if num_steps is not None:
         model.set_num_steps(num_steps)
     # If None, caller (e.g. DPO trainer) will set scheduler timesteps itself.
 
+    metadata = {
+        "model_path": spec.model_name_or_path,
+        "task_variant": task_variant,
+        "dtype": str(spec.dtype),
+        "use_lora": use_lora,
+        "reference_image": (spec.model_config or {}).get("reference_image"),
+        **full_generation_bundle_metadata(),
+    }
+    metadata.update(getattr(model, "memory_metadata", None) or {})
     return RuntimeBundle(
         model=model,
         trainable_modules=model.trainable_modules,
@@ -143,14 +134,7 @@ def build_wan_2_1_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
             "supports_batched_decode": True,
             "supports_reference_conditioning": task_variant == "i2v",
         },
-        metadata={
-            "model_path": spec.model_name_or_path,
-            "task_variant": task_variant,
-            "dtype": str(spec.dtype),
-            "use_lora": spec.use_lora,
-            "reference_image": (spec.extra or {}).get("reference_image"),
-            **full_generation_bundle_metadata(),
-        },
+        metadata=metadata,
     )
 
 
@@ -186,12 +170,13 @@ def build_wan_2_1_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle
         device=spec.device,
     )
 
-    if spec.use_lora:
+    use_lora = spec.use_lora
+    if use_lora:
         apply_lora_to_transformer(model, spec)
     else:
         enable_transformer_full_finetune(model)
 
-    compile_cfg = (spec.extra or {}).get("torch_compile") or {}
+    compile_cfg = spec.torch_compile or {}
     if compile_cfg.get("enable"):
         compile_transformer(model, compile_cfg["mode"])
 
@@ -211,8 +196,8 @@ def build_wan_2_1_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle
             "model_path": spec.model_name_or_path,
             "task_variant": task_variant,
             "dtype": str(spec.dtype),
-            "use_lora": spec.use_lora,
-            "reference_image": (spec.extra or {}).get("reference_image"),
+            "use_lora": use_lora,
+            "reference_image": (spec.model_config or {}).get("reference_image"),
             **minimal_replay_bundle_metadata(
                 replay_modules=("transformer", "scheduler"),
                 generation_only_modules=(

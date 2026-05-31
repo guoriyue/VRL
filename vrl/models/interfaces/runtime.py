@@ -12,6 +12,8 @@ from typing import Any
 
 from vrl.models.interfaces.replay import RuntimeModel
 
+MEMORY_POLICY_METADATA_KEY = "memory_policy"
+
 
 @dataclass
 class RuntimeBuildSpec:
@@ -19,6 +21,16 @@ class RuntimeBuildSpec:
 
     Builders take this, not the whole RL cfg. Reward / algorithm / trainer /
     dataset / logging cadence are explicitly out of scope.
+
+    ``model_config`` / ``sampling_config`` carry the runtime-relevant config
+    blocks (``cfg.model`` / ``cfg.sampling``) wholesale as deep-converted plain
+    dicts. The read properties below expose the common curated views so
+    consumers read ``spec.memory`` / ``spec.lora`` / ``spec.num_steps`` directly
+    instead of re-deriving from the raw block. They centralize the lora /
+    scheduler / memory / compile transforms in one place, so no read-time logic
+    is duplicated per family. Family-specific fields (e.g. anima checkpoint
+    paths) are read straight from ``model_config``. The universal typed fields
+    are runtime-injected or needed by every family, so they stay typed.
     """
 
     model_name_or_path: str
@@ -26,15 +38,64 @@ class RuntimeBuildSpec:
     dtype: Any
     backend_preference: tuple[str, ...] = ("diffusers",)
     task_variant: str | None = None
-    mixed_precision: str | None = None
-    use_lora: bool = False
-    lora_path: str | None = None
-    lora_config: dict[str, Any] | None = None
-    offload_config: dict[str, Any] | None = None
-    scheduler_config: dict[str, Any] | None = None
-    native_backend_config: dict[str, Any] | None = None
-    diffusers_backend_config: dict[str, Any] | None = None
-    extra: dict[str, Any] = field(default_factory=dict)
+    model_config: dict[str, Any] | None = None
+    sampling_config: dict[str, Any] | None = None
+
+    @property
+    def use_lora(self) -> bool:
+        """Whether the family should attach a LoRA adapter.
+
+        ``False`` fallback when the block is absent (safe for fake test specs);
+        every real experiment config sets ``model.use_lora`` explicitly.
+        """
+        return bool((self.model_config or {}).get("use_lora", False))
+
+    @property
+    def lora_path(self) -> str | None:
+        """Resolved LoRA checkpoint path, or ``None`` when not loading one."""
+        lora = (self.model_config or {}).get("lora") or {}
+        return lora.get("path") or None
+
+    @property
+    def lora(self) -> dict[str, Any] | None:
+        """Curated LoRA config (``rank``/``alpha``/``target_modules`` + extras).
+
+        ``None`` when ``use_lora`` is off. Casts and the ``init_lora_weights`` /
+        ``dropout`` / ``init`` extras are carried from the raw ``model.lora``
+        block only when present, preserving per-family presence semantics. AR
+        families layer their own defaults via ``_resolve_lora_block``.
+        """
+        if not self.use_lora:
+            return None
+        lora = (self.model_config or {}).get("lora") or {}
+        config: dict[str, Any] = {
+            "rank": int(lora["rank"]),
+            "alpha": int(lora["alpha"]),
+            "target_modules": list(lora["target_modules"]),
+        }
+        for key in ("init_lora_weights", "dropout", "init"):
+            if key in lora:
+                config[key] = lora[key]
+        return config
+
+    @property
+    def num_steps(self) -> int | None:
+        """Diffusion scheduler step count from ``sampling.num_steps``."""
+        num_steps = (self.sampling_config or {}).get("num_steps")
+        return None if num_steps is None else int(num_steps)
+
+    @property
+    def torch_compile(self) -> dict[str, Any] | None:
+        """``model.torch_compile`` block only when ``enable`` is truthy."""
+        block = (self.model_config or {}).get("torch_compile") or {}
+        if not block.get("enable"):
+            return None
+        return {"enable": True, "mode": block.get("mode", "default")}
+
+    @property
+    def memory(self) -> dict[str, Any] | None:
+        """The whole ``model.memory`` block (consumer extracts its sub-block)."""
+        return (self.model_config or {}).get("memory")
 
 
 @dataclass

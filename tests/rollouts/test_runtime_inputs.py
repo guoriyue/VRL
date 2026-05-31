@@ -160,7 +160,8 @@ def test_cosmos_runtime_inputs_include_reference_image_from_cfg() -> None:
     assert inputs.launch_contract.family == "cosmos-predict2"
     assert inputs.launch_contract.executor_kwargs["reference_image"] == "/tmp/reference.png"
     assert inputs.launch_contract.model_build is not None
-    assert inputs.launch_contract.model_build["extra"]["reference_image"] == "/tmp/reference.png"
+    model_config = inputs.launch_contract.model_build["model_config"]
+    assert model_config["reference_image"] == "/tmp/reference.png"
 
 
 def test_wan_i2v_runtime_inputs_include_reference_image_from_cfg() -> None:
@@ -191,7 +192,11 @@ def test_wan_i2v_runtime_inputs_include_reference_image_from_cfg() -> None:
     assert inputs.launch_contract.executor_kwargs["reference_image"] == "/tmp/reference.png"
     assert inputs.launch_contract.model_build is not None
     assert inputs.launch_contract.model_build["task_variant"] == "i2v"
-    assert inputs.launch_contract.model_build["extra"]["reference_image"] == "/tmp/reference.png"
+    # reference_image rides in the wholesale model_config block now, not a curated extra.
+    assert (
+        inputs.launch_contract.model_build["model_config"]["reference_image"]
+        == "/tmp/reference.png"
+    )
 
 
 def test_explicit_executor_kwargs_override_registry_defaults() -> None:

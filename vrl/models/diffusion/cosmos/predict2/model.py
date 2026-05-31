@@ -141,19 +141,21 @@ class CosmosPredict2Model(DiffusionModelBase):
         self.pipeline.transformer.requires_grad_(False)
         self.pipeline.transformer.to(self.device)
 
-        if spec.lora_path:
+        lora_path = spec.lora_path
+        if lora_path:
             transformer = PeftModel.from_pretrained(
-                self.pipeline.transformer, spec.lora_path, is_trainable=True,
+                self.pipeline.transformer, lora_path, is_trainable=True,
             )
             transformer.set_adapter("default")
             self._set_transformer(transformer)
         else:
-            assert spec.lora_config is not None
+            lora_config = spec.lora
+            assert lora_config is not None
             cfg = LoraConfig(
-                r=spec.lora_config["rank"],
-                lora_alpha=spec.lora_config["alpha"],
+                r=lora_config["rank"],
+                lora_alpha=lora_config["alpha"],
                 init_lora_weights="gaussian",
-                target_modules=spec.lora_config["target_modules"],
+                target_modules=lora_config["target_modules"],
             )
             self._set_transformer(
                 get_peft_model(self.pipeline.transformer, cfg),

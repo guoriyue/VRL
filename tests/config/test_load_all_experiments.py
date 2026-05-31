@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from omegaconf import OmegaConf
@@ -136,6 +137,37 @@ def test_all_experiments_load_and_validate() -> None:
         assert "kind" in cfg.algorithm, f"{name} missing algorithm.kind"
         assert "adv_estimator" not in cfg.algorithm, f"{name} still uses adv_estimator"
         validate_training_config(cfg)
+
+
+def test_model_memory_policy_defaults_are_yaml_backed() -> None:
+    import torch
+
+    from vrl.models.diffusion.common.vae_decode_memory import (
+        VaeDecodeMemory,
+        vae_decode_memory_from_config,
+    )
+    from vrl.models.diffusion.cosmos.anima.runtime import extract_anima_runtime_spec
+    from vrl.models.diffusion.sd3_5.runtime import extract_sd3_5_runtime_spec
+    from vrl.models.diffusion.wan_2_1.runtime import extract_wan_2_1_runtime_spec
+
+    def vae_decode_policy(spec: Any) -> VaeDecodeMemory:
+        memory = spec.memory or {}
+        return vae_decode_memory_from_config(memory.get("vae_decode"))
+
+    # SD3.5 carries only a frozen_offload memory block — no VAE decode knobs,
+    # so the decode policy must fall back to the all-off default.
+    sd3 = load_config("experiment/diffusion/sd3_5/online_grpo_ocr")
+    sd3_spec = extract_sd3_5_runtime_spec(sd3, "cpu", torch.float32)
+    assert vae_decode_policy(sd3_spec) == VaeDecodeMemory()
+
+    # Wan and Anima enable VAE tiling+slicing purely from their YAML blocks.
+    wan = load_config("experiment/diffusion/wan_2_1/online_grpo_ocr")
+    wan_spec = extract_wan_2_1_runtime_spec(wan, "cpu", torch.bfloat16)
+    assert vae_decode_policy(wan_spec) == VaeDecodeMemory(tiling=True, slicing=True)
+
+    anima = load_config("experiment/diffusion/anima_preview3/online_grpo_aesthetic")
+    anima_spec = extract_anima_runtime_spec(anima, "cpu", torch.bfloat16)
+    assert vae_decode_policy(anima_spec) == VaeDecodeMemory(tiling=True, slicing=True)
 
 
 def test_rollout_orchestration_group_override_uses_rollout_namespace() -> None:

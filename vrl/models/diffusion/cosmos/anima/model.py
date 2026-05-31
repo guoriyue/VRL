@@ -23,6 +23,7 @@ from vrl.models.diffusion.common import (
     LatentDecodeSpec,
     LatentDecodeTransform,
 )
+from vrl.models.diffusion.common.vae_decode_memory import apply_vae_decode_memory
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 
 
@@ -59,6 +60,7 @@ class AnimaModel(DiffusionModelBase):
         t5_tokenizer: Any,
         device: Any,
         dtype: torch.dtype,
+        memory_metadata: dict[str, Any] | None = None,
     ) -> None:
         super().__init__()
         self.transformer = transformer
@@ -71,6 +73,7 @@ class AnimaModel(DiffusionModelBase):
         self.t5_tokenizer = t5_tokenizer
         self._device = device
         self._dtype = dtype
+        self.memory_metadata = dict(memory_metadata or {})
 
     @classmethod
     def from_spec(cls, spec: Any) -> AnimaModel:
@@ -82,7 +85,7 @@ class AnimaModel(DiffusionModelBase):
         from safetensors.torch import load_file
         from transformers import Qwen2Tokenizer, Qwen3Model, T5TokenizerFast
 
-        paths = spec.extra
+        paths = spec.model_config or {}
         dtype = _resolve_torch_dtype(spec.dtype)
 
         transformer_checkpoint = load_file(paths["transformer_path"], device="cpu")
@@ -103,16 +106,15 @@ class AnimaModel(DiffusionModelBase):
         )
         vae = AutoencoderKLQwenImage()
         vae.load_state_dict(vae_state, strict=True)
-        # Tile spatial dims and slice batch dim during decode/encode so the
-        # VAE peak is bounded by a single tile rather than the full image.
-        # Measured on RTX 5090 @ 896x1152: drops peak from ~25 GB (batch=8,
-        # OOMs) to ~5.6 GB (any batch) at ~5% latency cost.
-        vae.enable_tiling()
-        vae.enable_slicing()
+        memory_metadata = apply_vae_decode_memory(
+            vae,
+            memory_config=spec.memory,
+            owner="Anima VAE",
+        )
         del vae_state
 
         scheduler = FlowMatchEulerDiscreteScheduler(
-            shift=float(spec.extra.get("scheduler_shift", 3.0)),
+            shift=float(paths.get("scheduler_shift", 3.0)),
         )
         scheduler.register_to_config(sigma_data=1.0, sigma_max=1.0)
 
@@ -148,6 +150,7 @@ class AnimaModel(DiffusionModelBase):
             t5_tokenizer=t5_tokenizer,
             device=spec.device,
             dtype=dtype,
+            memory_metadata=memory_metadata,
         )
 
     def apply_lora(self, spec: Any) -> None:
@@ -156,22 +159,24 @@ class AnimaModel(DiffusionModelBase):
         self.transformer.requires_grad_(False)
         self.transformer.to(self.device, dtype=self._dtype)
 
-        if spec.lora_path:
+        lora_path = spec.lora_path
+        if lora_path:
             transformer = PeftModel.from_pretrained(
                 self.transformer,
-                spec.lora_path,
+                lora_path,
                 is_trainable=True,
             )
             transformer.set_adapter("default")
             self._set_transformer(transformer)
             return
 
-        assert spec.lora_config is not None
+        lora_config = spec.lora
+        assert lora_config is not None
         cfg = LoraConfig(
-            r=spec.lora_config["rank"],
-            lora_alpha=spec.lora_config["alpha"],
+            r=lora_config["rank"],
+            lora_alpha=lora_config["alpha"],
             init_lora_weights="gaussian",
-            target_modules=spec.lora_config["target_modules"],
+            target_modules=lora_config["target_modules"],
         )
         self._set_transformer(get_peft_model(self.transformer, cfg))
 

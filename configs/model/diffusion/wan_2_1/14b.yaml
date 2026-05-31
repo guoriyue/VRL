@@ -3,6 +3,11 @@ model:
   family: wan
   path: Wan-AI/Wan2.1-T2V-14B-Diffusers
 
+  memory:
+    vae_decode:
+      tiling: true
+      slicing: true
+
   use_lora: true
   lora:
     rank: 128

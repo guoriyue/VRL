@@ -18,7 +18,10 @@ from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
 from vrl.models.diffusion.capabilities import diffusion_family_capability
-from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
+from vrl.models.interfaces.runtime import (
+    RuntimeBuildSpec,
+    RuntimeBundle,
+)
 from vrl.models.replay_loading import (
     apply_lora_to_transformer,
     compile_transformer,
@@ -27,6 +30,9 @@ from vrl.models.replay_loading import (
     load_diffusers_transformer_component,
     load_flow_match_scheduler_component,
     minimal_replay_bundle_metadata,
+)
+from vrl.models.runtime_config import (
+    extract_runtime_spec,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,38 +58,12 @@ def _resolve_model_cls(backend: str) -> type:
 
 def extract_sd3_5_runtime_spec(cfg: Any, device: Any, weight_dtype: Any) -> RuntimeBuildSpec:
     """Slice the runtime-relevant subset out of a whole RL cfg."""
-    lora_cfg: dict[str, Any] | None = None
-    lora_path: str | None = None
-    if cfg.model.use_lora:
-        lora_path = cfg.model.lora.path or None
-        lora_cfg = {
-            "rank": int(cfg.model.lora.rank),
-            "alpha": int(cfg.model.lora.alpha),
-            "target_modules": list(cfg.model.lora.target_modules),
-        }
-
-    extra: dict[str, Any] = {}
-    if _dtype_name(weight_dtype) == "float32":
-        # Match Flow-GRPO's SD3 LoRA memory contract: keep the trainable
-        # denoiser in fp32, but keep frozen text encoders in fp16.
-        extra["frozen_dtype"] = "float16"
-    if cfg.model.torch_compile.enable:
-        extra["torch_compile"] = {
-            "enable": True,
-            "mode": cfg.model.torch_compile.mode,
-        }
-
-    return RuntimeBuildSpec(
-        model_name_or_path=cfg.model.path,
-        device=device,
-        dtype=weight_dtype,
-        backend_preference=("diffusers",),
+    return extract_runtime_spec(
+        cfg,
+        device,
+        weight_dtype,
         task_variant="t2i",
-        use_lora=bool(cfg.model.use_lora),
-        lora_path=lora_path,
-        lora_config=lora_cfg,
-        scheduler_config={"num_steps": int(cfg.sampling.num_steps)},
-        extra=extra,
+        backend_preference=("diffusers",),
     )
 
 
@@ -93,24 +73,26 @@ def build_sd3_5_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
     model_cls = _resolve_model_cls(backend)
 
     logger.info("Building sd3_5 runtime bundle (backend=%s)", backend)
+    use_lora = spec.use_lora
     model = model_cls.from_spec(spec)
 
-    if spec.use_lora:
+    if use_lora:
         model.apply_lora(spec)
-        if spec.lora_config:
+        lora_config = spec.lora
+        if lora_config:
             logger.info(
                 "Applied LoRA (rank=%d, alpha=%d)",
-                spec.lora_config["rank"], spec.lora_config["alpha"],
+                lora_config["rank"], lora_config["alpha"],
             )
     else:
         model.enable_full_finetune()
 
-    compile_cfg = (spec.extra or {}).get("torch_compile") or {}
+    compile_cfg = spec.torch_compile or {}
     if compile_cfg.get("enable"):
         logger.info("Compiling transformer with mode=%s", compile_cfg["mode"])
         model.torch_compile_transformer(compile_cfg["mode"])
 
-    num_steps = (spec.scheduler_config or {}).get("num_steps")
+    num_steps = spec.num_steps
     if num_steps is not None:
         model.set_num_steps(num_steps)
     # If None, caller (e.g. DPO trainer) will set scheduler timesteps itself.
@@ -132,7 +114,7 @@ def build_sd3_5_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
             "model_path": spec.model_name_or_path,
             "task_variant": spec.task_variant,
             "dtype": str(spec.dtype),
-            "use_lora": spec.use_lora,
+            "use_lora": use_lora,
             **full_generation_bundle_metadata(),
         },
     )
@@ -161,12 +143,13 @@ def build_sd3_5_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         device=spec.device,
     )
 
-    if spec.use_lora:
+    use_lora = spec.use_lora
+    if use_lora:
         apply_lora_to_transformer(model, spec)
     else:
         enable_transformer_full_finetune(model)
 
-    compile_cfg = (spec.extra or {}).get("torch_compile") or {}
+    compile_cfg = spec.torch_compile or {}
     if compile_cfg.get("enable"):
         compile_transformer(model, compile_cfg["mode"])
 
@@ -187,7 +170,7 @@ def build_sd3_5_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
             "model_path": spec.model_name_or_path,
             "task_variant": spec.task_variant,
             "dtype": str(spec.dtype),
-            "use_lora": spec.use_lora,
+            "use_lora": use_lora,
             **minimal_replay_bundle_metadata(
                 replay_modules=("transformer", "scheduler"),
                 generation_only_modules=(
@@ -219,9 +202,6 @@ def build_sd3_5_replay_runtime_bundle_from_cfg(
     spec = extract_sd3_5_runtime_spec(cfg, device, weight_dtype)
     return build_sd3_5_replay_runtime_bundle(spec)
 
-
-def _dtype_name(value: Any) -> str:
-    return str(value).removeprefix("torch.").lower()
 
 class SD3_5PipelineExecutor(DiffusionPipelineExecutorBase):
     """Diffusion executor for SD3.5-M text-to-image rollouts."""

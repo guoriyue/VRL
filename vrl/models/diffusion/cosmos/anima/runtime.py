@@ -9,10 +9,16 @@ from typing import Any
 
 from vrl.generation.diffusion import DiffusionPipelineExecutorBase
 from vrl.models.diffusion.capabilities import diffusion_family_capability
-from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
+from vrl.models.interfaces.runtime import (
+    RuntimeBuildSpec,
+    RuntimeBundle,
+)
 from vrl.models.replay_loading import (
     full_generation_bundle_metadata,
     minimal_replay_bundle_metadata,
+)
+from vrl.models.runtime_config import (
+    extract_runtime_spec,
 )
 
 logger = logging.getLogger(__name__)
@@ -27,42 +33,12 @@ def extract_anima_runtime_spec(
 ) -> RuntimeBuildSpec:
     """Slice the Anima-specific runtime fields out of a whole RL config."""
 
-    lora_cfg: dict[str, Any] | None = None
-    lora_path: str | None = None
-    if cfg.model.use_lora:
-        lora_path = cfg.model.lora.path or None
-        lora_cfg = {
-            "rank": int(cfg.model.lora.rank),
-            "alpha": int(cfg.model.lora.alpha),
-            "target_modules": list(cfg.model.lora.target_modules),
-        }
-
-    extra: dict[str, Any] = {
-        "transformer_path": str(getattr(cfg.model, "transformer_path", "") or ""),
-        "transformer_file": str(getattr(cfg.model, "transformer_file", "") or ""),
-        "text_encoder_path": str(getattr(cfg.model, "text_encoder_path", "") or ""),
-        "text_encoder_file": str(getattr(cfg.model, "text_encoder_file", "") or ""),
-        "vae_path": str(getattr(cfg.model, "vae_path", "") or ""),
-        "vae_file": str(getattr(cfg.model, "vae_file", "") or ""),
-        "qwen_tokenizer_path": str(getattr(cfg.model, "qwen_tokenizer_path", "") or ""),
-        "t5_tokenizer_path": str(getattr(cfg.model, "t5_tokenizer_path", "") or ""),
-        "scheduler_shift": float(getattr(cfg.model, "scheduler_shift", 3.0)),
-    }
-    torch_compile_cfg = getattr(cfg.model, "torch_compile", None)
-    if torch_compile_cfg is not None and torch_compile_cfg.enable:
-        extra["torch_compile"] = {"enable": True, "mode": torch_compile_cfg.mode}
-
-    return RuntimeBuildSpec(
-        model_name_or_path=str(cfg.model.path),
-        device=device,
-        dtype=weight_dtype,
-        backend_preference=("diffusers",),
+    return extract_runtime_spec(
+        cfg,
+        device,
+        weight_dtype,
         task_variant="text_to_image",
-        use_lora=bool(cfg.model.use_lora),
-        lora_path=lora_path,
-        lora_config=lora_cfg,
-        scheduler_config={"num_steps": int(cfg.sampling.num_steps)},
-        extra=extra,
+        backend_preference=("diffusers",),
     )
 
 
@@ -71,19 +47,21 @@ def extract_anima_replay_runtime_spec(
     device: Any,
     weight_dtype: Any,
 ) -> RuntimeBuildSpec:
-    """Slice the trainer replay-only Anima runtime fields out of whole cfg."""
+    """Trainer replay-only Anima runtime spec.
 
-    spec = extract_anima_runtime_spec(cfg, device, weight_dtype)
-    replay_keys = {"transformer_path", "transformer_file", "scheduler_shift", "torch_compile"}
-    spec.extra = {k: v for k, v in (spec.extra or {}).items() if k in replay_keys}
-    return spec
+    With the whole ``cfg.model`` block carried wholesale, the replay model only
+    reads the artifact paths / scheduler_shift / torch_compile it needs; the
+    remaining fields ride along inertly, so no trimming is required.
+    """
+
+    return extract_anima_runtime_spec(cfg, device, weight_dtype)
 
 
 def build_anima_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
     from vrl.models.diffusion.cosmos.anima.model import AnimaModel
 
     logger.info("Building Anima runtime bundle from %s", spec.model_name_or_path)
-    extra = spec.extra or {}
+    model_config = spec.model_config or {}
     root = str(spec.model_name_or_path or "").strip()
     for path_field, file_field in (
         ("transformer_path", "transformer_file"),
@@ -92,28 +70,42 @@ def build_anima_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
     ):
         resolved = _resolve_artifact(
             root,
-            explicit_path=extra.get(path_field, ""),
-            relative_file=extra.get(file_field, ""),
+            explicit_path=model_config.get(path_field, ""),
+            relative_file=model_config.get(file_field, ""),
             field_name=path_field,
         )
         if resolved:
-            extra[path_field] = resolved
+            model_config[path_field] = resolved
 
+    use_lora = spec.use_lora
     model = AnimaModel.from_spec(spec)
-    if spec.use_lora:
+    if use_lora:
         model.apply_lora(spec)
     else:
         model.enable_full_finetune()
 
-    compile_cfg = (spec.extra or {}).get("torch_compile") or {}
+    compile_cfg = spec.torch_compile or {}
     if compile_cfg.get("enable"):
         model.torch_compile_transformer(compile_cfg["mode"])
 
-    num_steps = (spec.scheduler_config or {}).get("num_steps")
+    num_steps = spec.num_steps
     if num_steps is not None:
         model.set_num_steps(int(num_steps))
 
-    extra = spec.extra or {}
+    metadata = {
+        "model_path": spec.model_name_or_path,
+        "task_variant": spec.task_variant,
+        "dtype": str(spec.dtype),
+        "use_lora": use_lora,
+        "transformer_path": model_config.get("transformer_path"),
+        "text_encoder_path": model_config.get("text_encoder_path"),
+        "vae_path": model_config.get("vae_path"),
+        **full_generation_bundle_metadata(
+            replay_modules=("transformer", "scheduler"),
+            generation_only_modules=("text_encoder", "llm_adapter", "vae"),
+        ),
+    }
+    metadata.update(getattr(model, "memory_metadata", None) or {})
     return RuntimeBundle(
         model=model,
         trainable_modules=model.trainable_modules,
@@ -126,19 +118,7 @@ def build_anima_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
             "supports_batched_decode": True,
             "supports_reference_conditioning": False,
         },
-        metadata={
-            "model_path": spec.model_name_or_path,
-            "task_variant": spec.task_variant,
-            "dtype": str(spec.dtype),
-            "use_lora": spec.use_lora,
-            "transformer_path": extra.get("transformer_path"),
-            "text_encoder_path": extra.get("text_encoder_path"),
-            "vae_path": extra.get("vae_path"),
-            **full_generation_bundle_metadata(
-                replay_modules=("transformer", "scheduler"),
-                generation_only_modules=("text_encoder", "llm_adapter", "vae"),
-            ),
-        },
+        metadata=metadata,
     )
 
 
@@ -151,11 +131,12 @@ def build_anima_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
 
     logger.info("Building Anima replay runtime bundle from %s", spec.model_name_or_path)
 
+    model_config = spec.model_config or {}
     scheduler = FlowMatchEulerDiscreteScheduler(
-        shift=float((spec.extra or {}).get("scheduler_shift", 3.0)),
+        shift=float(model_config.get("scheduler_shift", 3.0)),
     )
     scheduler.register_to_config(sigma_data=1.0, sigma_max=1.0)
-    num_steps = (spec.scheduler_config or {}).get("num_steps")
+    num_steps = spec.num_steps
     if num_steps is not None:
         scheduler.set_timesteps(int(num_steps), device=spec.device)
 
@@ -166,19 +147,19 @@ def build_anima_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         dtype=_resolve_torch_dtype(spec.dtype),
     )
 
-    if spec.use_lora:
+    use_lora = spec.use_lora
+    if use_lora:
         model.apply_lora(spec)
     else:
         model.enable_full_finetune()
 
-    compile_cfg = (spec.extra or {}).get("torch_compile") or {}
+    compile_cfg = spec.torch_compile or {}
     if compile_cfg.get("enable"):
         model.torch_compile_transformer(compile_cfg["mode"])
 
     if num_steps is not None:
         model.set_num_steps(int(num_steps))
 
-    extra = spec.extra or {}
     return RuntimeBundle(
         model=model,
         trainable_modules=model.trainable_modules,
@@ -195,8 +176,8 @@ def build_anima_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
             "model_path": spec.model_name_or_path,
             "task_variant": spec.task_variant,
             "dtype": str(spec.dtype),
-            "use_lora": spec.use_lora,
-            "transformer_path": extra.get("transformer_path"),
+            "use_lora": use_lora,
+            "transformer_path": model_config.get("transformer_path"),
             **minimal_replay_bundle_metadata(
                 replay_modules=("transformer", "scheduler"),
                 generation_only_modules=(
@@ -270,11 +251,11 @@ def load_anima_transformer_component(spec: RuntimeBuildSpec) -> Any:
         _resolve_torch_dtype,
     )
 
-    extra = spec.extra or {}
-    path = extra.get("transformer_path") or _resolve_artifact(
+    model_config = spec.model_config or {}
+    path = model_config.get("transformer_path") or _resolve_artifact(
         str(spec.model_name_or_path or ""),
         explicit_path="",
-        relative_file=extra.get("transformer_file", ""),
+        relative_file=model_config.get("transformer_file", ""),
         field_name="transformer_path",
     )
     if not path:

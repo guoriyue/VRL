@@ -42,6 +42,7 @@ from vrl.models.diffusion.common import (
     expand_batch_timestep,
     pack_eval_timestep,
 )
+from vrl.models.diffusion.common.vae_decode_memory import apply_vae_decode_memory
 from vrl.models.diffusion.wan_2_1.runner import (
     WanDiffusionBackboneRunner,
     WanI2VDiffusionBackboneRunner,
@@ -83,11 +84,18 @@ class WanT2VDiffusersModel(DiffusionModelBase):
 
     family = "wan-diffusers-t2v"
 
-    def __init__(self, *, pipeline: Any, device: Any = None) -> None:
+    def __init__(
+        self,
+        *,
+        pipeline: Any,
+        device: Any = None,
+        memory_metadata: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__()
         object.__setattr__(self, "_pipeline", pipeline)
         self.transformer = pipeline.transformer
         self._device = device
+        self.memory_metadata = dict(memory_metadata or {})
 
     @property
     def pipeline(self) -> Any:
@@ -117,14 +125,17 @@ class WanT2VDiffusersModel(DiffusionModelBase):
         pipeline.vae.requires_grad_(False)
         pipeline.text_encoder.requires_grad_(False)
         pipeline.vae.to(spec.device, dtype=torch.float32)
-        # Tile spatial dims and slice batch dim during VAE decode/encode so
-        # peak memory is bounded by a single tile/sample rather than the full
-        # batch. K=8 sample_batch_size=8 at 240p x 33fr OOMs without this on a
-        # 32 GB GPU; with tiling, peak stays well under 10 GB.
-        pipeline.vae.enable_tiling()
-        pipeline.vae.enable_slicing()
+        memory_metadata = apply_vae_decode_memory(
+            pipeline.vae,
+            memory_config=spec.memory,
+            owner="Wan VAE",
+        )
         pipeline.text_encoder.to(spec.device, dtype=spec.dtype)
-        return cls(pipeline=pipeline, device=spec.device)
+        return cls(
+            pipeline=pipeline,
+            device=spec.device,
+            memory_metadata=memory_metadata,
+        )
 
     def apply_lora(self, spec: Any) -> None:
         """Wrap the Wan transformer with PEFT LoRA per spec.lora_*."""
@@ -133,20 +144,22 @@ class WanT2VDiffusersModel(DiffusionModelBase):
         self.pipeline.transformer.requires_grad_(False)
         self.pipeline.transformer.to(self.device)
 
-        if spec.lora_path:
+        lora_path = spec.lora_path
+        if lora_path:
             transformer = PeftModel.from_pretrained(
-                self.pipeline.transformer, spec.lora_path, is_trainable=True,
+                self.pipeline.transformer, lora_path, is_trainable=True,
             )
             transformer.set_adapter("default")
             self._set_transformer(transformer)
         else:
-            assert spec.lora_config is not None
+            lora_config = spec.lora
+            assert lora_config is not None
             cfg = LoraConfig(
-                r=spec.lora_config["rank"],
-                lora_alpha=spec.lora_config["alpha"],
+                r=lora_config["rank"],
+                lora_alpha=lora_config["alpha"],
                 # Empty training adapters must initially preserve base Wan output.
-                init_lora_weights=spec.lora_config.get("init_lora_weights", True),
-                target_modules=spec.lora_config["target_modules"],
+                init_lora_weights=lora_config.get("init_lora_weights", True),
+                target_modules=lora_config["target_modules"],
             )
             self._set_transformer(
                 get_peft_model(self.pipeline.transformer, cfg),
@@ -457,10 +470,15 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
             if module is not None:
                 module.requires_grad_(False)
 
-        pipeline.vae.enable_tiling()
-        pipeline.vae.enable_slicing()
+        memory_metadata = apply_vae_decode_memory(
+            pipeline.vae,
+            memory_config=spec.memory,
+            owner="Wan I2V VAE",
+        )
 
-        extra = getattr(spec, "extra", {}) or {}
+        # Offload flags ride in model_config (the whole cfg.model block) now,
+        # not a curated spec.extra.
+        extra = spec.model_config or {}
         # Two offload modes for single-GPU inference (Stage 1):
         #   * enable_sequential_cpu_offload — per-layer streaming,
         #     required when the transformer alone (~28 GB bf16) exceeds
@@ -482,7 +500,7 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
             pipeline.text_encoder.to(spec.device, dtype=spec.dtype)
             if getattr(pipeline, "image_encoder", None) is not None:
                 pipeline.image_encoder.to(spec.device, dtype=spec.dtype)
-        return cls(pipeline=pipeline, device=spec.device)
+        return cls(pipeline=pipeline, device=spec.device, memory_metadata=memory_metadata)
 
     def encode_prompt(
         self,

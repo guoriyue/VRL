@@ -29,8 +29,9 @@ def test_janus_runtime_spec_does_not_expose_decode_strategy() -> None:
 
     spec = extract_janus_pro_runtime_spec(cfg, device="cpu", weight_dtype="float32")
 
-    assert "ar_decode_strategy" not in spec.scheduler_config
-    assert spec.scheduler_config["ar_scheduler_batch_size"] == 2
+    assert spec.sampling_config is not None
+    assert "ar_decode_strategy" not in spec.sampling_config
+    assert spec.sampling_config["ar_scheduler_batch_size"] == 2
 
 
 def test_janus_executor_parse_sampling_params_reads_scheduler_batch_size() -> None:

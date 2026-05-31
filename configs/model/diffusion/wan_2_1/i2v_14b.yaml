@@ -6,6 +6,11 @@ model:
   reference_image: ""
   enable_model_cpu_offload: false
 
+  memory:
+    vae_decode:
+      tiling: true
+      slicing: true
+
   use_lora: true
   lora:
     rank: 32

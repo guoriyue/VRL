@@ -166,7 +166,7 @@ def load_diffusers_transformer_component(
     import diffusers
 
     load_kwargs: dict[str, Any] = {}
-    revision = (getattr(spec, "extra", {}) or {}).get("model_revision")
+    revision = (getattr(spec, "model_config", None) or {}).get("revision")
     if revision:
         load_kwargs["revision"] = revision
     transformer_cls = getattr(diffusers, class_name)
@@ -189,7 +189,7 @@ def load_diffusers_scheduler_component(
     import diffusers
 
     load_kwargs: dict[str, Any] = {}
-    revision = (getattr(spec, "extra", {}) or {}).get("model_revision")
+    revision = (getattr(spec, "model_config", None) or {}).get("revision")
     if revision:
         load_kwargs["revision"] = revision
     scheduler_cls = getattr(diffusers, class_name)
@@ -198,7 +198,7 @@ def load_diffusers_scheduler_component(
         subfolder=subfolder,
         **load_kwargs,
     )
-    num_steps = (getattr(spec, "scheduler_config", None) or {}).get("num_steps")
+    num_steps = spec.num_steps
     if num_steps is not None:
         scheduler.set_timesteps(int(num_steps), device=getattr(spec, "device", None))
     return scheduler
@@ -229,23 +229,25 @@ def apply_lora_to_transformer(model: Any, spec: Any) -> None:
     if callable(to):
         to(model.device, dtype=resolve_torch_dtype(spec.dtype))
 
-    if spec.lora_path:
+    lora_path = spec.lora_path
+    if lora_path:
         wrapped = PeftModel.from_pretrained(
             transformer,
-            spec.lora_path,
+            lora_path,
             is_trainable=True,
         )
         wrapped.set_adapter("default")
         model._set_transformer(wrapped)
         return
 
-    if spec.lora_config is None:
+    lora_config = spec.lora
+    if lora_config is None:
         raise ValueError("LoRA runtime spec requires lora_config when lora_path is empty")
     cfg = LoraConfig(
-        r=spec.lora_config["rank"],
-        lora_alpha=spec.lora_config["alpha"],
-        init_lora_weights=spec.lora_config.get("init_lora_weights", "gaussian"),
-        target_modules=spec.lora_config["target_modules"],
+        r=lora_config["rank"],
+        lora_alpha=lora_config["alpha"],
+        init_lora_weights=lora_config.get("init_lora_weights", "gaussian"),
+        target_modules=lora_config["target_modules"],
     )
     model._set_transformer(get_peft_model(transformer, cfg))
 

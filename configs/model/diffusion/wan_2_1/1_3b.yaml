@@ -1,8 +1,13 @@
-# Wan 2.1 1.3B T2V transformer — checkpoint + LoRA + compile only.
+# Wan 2.1 1.3B T2V transformer — checkpoint, LoRA, compile, and memory policy.
 # Sampling shape and denoise defaults live under configs/sampling/.
 model:
   family: wan
   path: Wan-AI/Wan2.1-T2V-1.3B-Diffusers
+
+  memory:
+    vae_decode:
+      tiling: true
+      slicing: true
 
   use_lora: true
   lora:

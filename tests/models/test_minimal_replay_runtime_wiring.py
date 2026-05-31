@@ -53,14 +53,34 @@ class _TinyRuntimeModel(nn.Module):
 
 
 def _spec(**overrides: Any) -> RuntimeBuildSpec:
-    values = {
+    """Build a RuntimeBuildSpec from friendly overrides.
+
+    Translates the legacy ``use_lora`` / ``lora_config`` / ``scheduler_config``
+    test kwargs into the carried ``model_config`` / ``sampling_config`` blocks
+    so tests exercise the same read helpers the families use.
+    """
+
+    use_lora = bool(overrides.pop("use_lora", False))
+    lora_config = overrides.pop("lora_config", None)
+    scheduler_config = overrides.pop("scheduler_config", {"num_steps": 2})
+    extra = overrides.pop("extra", None)
+
+    model_config: dict[str, Any] = {"path": "fake/repo", "use_lora": use_lora}
+    if lora_config is not None:
+        model_config["lora"] = dict(lora_config)
+    if extra is not None:
+        # Legacy ``extra`` test fields (anima artifact paths, scheduler_shift)
+        # now ride directly in the carried model block.
+        model_config.update(dict(extra))
+
+    values: dict[str, Any] = {
         "model_name_or_path": "fake/repo",
         "device": "cpu",
         "dtype": torch.float32,
         "backend_preference": ("diffusers",),
         "task_variant": "t2i",
-        "use_lora": False,
-        "scheduler_config": {"num_steps": 2},
+        "model_config": model_config,
+        "sampling_config": dict(scheduler_config),
     }
     values.update(overrides)
     return RuntimeBuildSpec(**values)
@@ -277,12 +297,12 @@ def test_anima_runtime_spec_uses_explicit_local_paths() -> None:
     full = extract_anima_runtime_spec(cfg, "cpu", torch.float32)
     replay = extract_anima_replay_runtime_spec(cfg, "cpu", torch.float32)
 
-    assert full.extra["transformer_path"] == "/models/anima/transformer.safetensors"
-    assert full.extra["text_encoder_path"] == "/models/anima/text_encoder.safetensors"
-    assert full.extra["vae_path"] == "/models/anima/vae.safetensors"
-    assert full.extra["qwen_tokenizer_path"] == "/tokenizers/qwen"
-    assert full.extra["t5_tokenizer_path"] == "/tokenizers/t5"
-    assert replay.extra["transformer_path"] == "/models/anima/transformer.safetensors"
+    assert full.model_config["transformer_path"] == "/models/anima/transformer.safetensors"
+    assert full.model_config["text_encoder_path"] == "/models/anima/text_encoder.safetensors"
+    assert full.model_config["vae_path"] == "/models/anima/vae.safetensors"
+    assert full.model_config["qwen_tokenizer_path"] == "/tokenizers/qwen"
+    assert full.model_config["t5_tokenizer_path"] == "/tokenizers/t5"
+    assert replay.model_config["transformer_path"] == "/models/anima/transformer.safetensors"
 
 
 def test_anima_runtime_spec_rejects_hf_repo_id_without_cached_artifacts(
@@ -304,13 +324,13 @@ def test_anima_runtime_spec_rejects_hf_repo_id_without_cached_artifacts(
     monkeypatch.delenv("HF_HOME", raising=False)
 
     with pytest.raises(ValueError, match=r"model\.path='circlestone-labs/Anima'"):
-        spec.extra["transformer_path"] = ""
+        spec.model_config["transformer_path"] = ""
         from vrl.models.diffusion.cosmos.anima.runtime import _resolve_artifact
 
         _resolve_artifact(
             spec.model_name_or_path,
             explicit_path="",
-            relative_file=spec.extra["transformer_file"],
+            relative_file=spec.model_config["transformer_file"],
             field_name="transformer_path",
         )
 

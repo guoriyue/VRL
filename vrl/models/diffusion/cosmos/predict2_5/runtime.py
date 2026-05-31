@@ -20,6 +20,9 @@ from vrl.models.replay_loading import (
     load_diffusers_transformer_component,
     minimal_replay_bundle_metadata,
 )
+from vrl.models.runtime_config import (
+    extract_runtime_spec,
+)
 
 logger = logging.getLogger(__name__)
 COSMOS_PREDICT25_FAMILY_CAPABILITY = diffusion_family_capability(
@@ -33,40 +36,23 @@ def extract_cosmos_predict25_runtime_spec(
     device: Any,
     weight_dtype: Any,
 ) -> RuntimeBuildSpec:
-    lora_cfg: dict[str, Any] | None = None
-    lora_path: str | None = None
-    if cfg.model.use_lora:
-        lora_path = cfg.model.lora.path or None
-        lora_cfg = {
-            "rank": int(cfg.model.lora.rank),
-            "alpha": int(cfg.model.lora.alpha),
-            "target_modules": list(cfg.model.lora.target_modules),
-        }
-
-    extra: dict[str, Any] = {}
-    revision = getattr(cfg.model, "revision", None)
-    if revision:
-        extra["model_revision"] = str(revision)
-    if bool(getattr(cfg.model, "skip_text_encoder", False)):
-        extra["skip_text_encoder"] = True
-    if getattr(cfg.model, "torch_compile", None) is not None and cfg.model.torch_compile.enable:
-        extra["torch_compile"] = {
-            "enable": True,
-            "mode": cfg.model.torch_compile.mode,
-        }
-
-    return RuntimeBuildSpec(
-        model_name_or_path=cfg.model.path,
-        device=device,
-        dtype=weight_dtype,
-        backend_preference=("diffusers",),
+    return extract_runtime_spec(
+        cfg,
+        device,
+        weight_dtype,
         task_variant="text2world",
-        use_lora=bool(cfg.model.use_lora),
-        lora_path=lora_path,
-        lora_config=lora_cfg,
-        scheduler_config={"num_steps": int(cfg.sampling.num_steps)},
-        extra=extra,
+        backend_preference=("diffusers",),
     )
+
+
+def _model_revision_from_spec(spec: RuntimeBuildSpec) -> str | None:
+    """Bundle-metadata model revision; empty cfg value reads as ``None``."""
+
+    return (spec.model_config or {}).get("revision") or None
+
+
+def _skip_text_encoder_from_spec(spec: RuntimeBuildSpec) -> bool:
+    return bool((spec.model_config or {}).get("skip_text_encoder", False))
 
 
 def build_cosmos_predict25_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
@@ -76,17 +62,18 @@ def build_cosmos_predict25_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBund
         "Building cosmos-predict2.5 runtime bundle (backend=diffusers) from %s",
         spec.model_name_or_path,
     )
+    use_lora = spec.use_lora
     model = CosmosPredict25Model.from_spec(spec)
-    if spec.use_lora:
+    if use_lora:
         model.apply_lora(spec)
     else:
         model.enable_full_finetune()
 
-    compile_cfg = (spec.extra or {}).get("torch_compile") or {}
+    compile_cfg = spec.torch_compile or {}
     if compile_cfg.get("enable"):
         model.torch_compile_transformer(compile_cfg["mode"])
 
-    num_steps = (spec.scheduler_config or {}).get("num_steps")
+    num_steps = spec.num_steps
     if num_steps is not None:
         model.set_num_steps(num_steps)
 
@@ -106,9 +93,9 @@ def build_cosmos_predict25_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBund
             "model_path": spec.model_name_or_path,
             "task_variant": spec.task_variant,
             "dtype": str(spec.dtype),
-            "use_lora": spec.use_lora,
-            "model_revision": (spec.extra or {}).get("model_revision"),
-            "skip_text_encoder": bool((spec.extra or {}).get("skip_text_encoder", False)),
+            "use_lora": use_lora,
+            "model_revision": _model_revision_from_spec(spec),
+            "skip_text_encoder": _skip_text_encoder_from_spec(spec),
             **full_generation_bundle_metadata(),
         },
     )
@@ -134,12 +121,13 @@ def build_cosmos_predict25_replay_runtime_bundle(spec: RuntimeBuildSpec) -> Runt
         ),
         device=spec.device,
     )
-    if spec.use_lora:
+    use_lora = spec.use_lora
+    if use_lora:
         model.apply_lora(spec)
     else:
         model.enable_full_finetune()
 
-    compile_cfg = (spec.extra or {}).get("torch_compile") or {}
+    compile_cfg = spec.torch_compile or {}
     if compile_cfg.get("enable"):
         model.torch_compile_transformer(compile_cfg["mode"])
 
@@ -159,9 +147,9 @@ def build_cosmos_predict25_replay_runtime_bundle(spec: RuntimeBuildSpec) -> Runt
             "model_path": spec.model_name_or_path,
             "task_variant": spec.task_variant,
             "dtype": str(spec.dtype),
-            "use_lora": spec.use_lora,
-            "model_revision": (spec.extra or {}).get("model_revision"),
-            "skip_text_encoder": bool((spec.extra or {}).get("skip_text_encoder", False)),
+            "use_lora": use_lora,
+            "model_revision": _model_revision_from_spec(spec),
+            "skip_text_encoder": _skip_text_encoder_from_spec(spec),
             **minimal_replay_bundle_metadata(
                 replay_modules=("transformer", "scheduler"),
                 generation_only_modules=("text_encoder", "vae", "pipeline"),

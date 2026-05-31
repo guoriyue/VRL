@@ -145,10 +145,10 @@ class CosmosPredict25Model(DiffusionModelBase):
         from diffusers import Cosmos2_5_PredictBasePipeline
 
         kwargs: dict[str, Any] = {"torch_dtype": spec.dtype}
-        revision = (spec.extra or {}).get("model_revision")
+        revision = (spec.model_config or {}).get("revision") or None
         if revision:
             kwargs["revision"] = revision
-        skip_text_encoder = bool((spec.extra or {}).get("skip_text_encoder", False))
+        skip_text_encoder = bool((spec.model_config or {}).get("skip_text_encoder", False))
         if skip_text_encoder:
             pipeline = _load_pipeline_without_text_encoder(
                 Cosmos2_5_PredictBasePipeline,
@@ -184,30 +184,32 @@ class CosmosPredict25Model(DiffusionModelBase):
 
         self.pipeline.transformer.requires_grad_(False)
         self.pipeline.transformer.to(self.device)
-        if spec.lora_path:
+        lora_path = spec.lora_path
+        lora_config = spec.lora
+        if lora_path:
             transformer = PeftModel.from_pretrained(
                 self.pipeline.transformer,
-                spec.lora_path,
+                lora_path,
                 is_trainable=True,
                 adapter_name="default",
             )
         else:
-            assert spec.lora_config is not None
+            assert lora_config is not None
             cfg = LoraConfig(
-                r=spec.lora_config["rank"],
-                lora_alpha=spec.lora_config["alpha"],
+                r=lora_config["rank"],
+                lora_alpha=lora_config["alpha"],
                 init_lora_weights="gaussian",
-                target_modules=spec.lora_config["target_modules"],
+                target_modules=lora_config["target_modules"],
             )
             transformer = get_peft_model(self.pipeline.transformer, cfg, adapter_name="default")
 
         if "previous" not in getattr(transformer, "peft_config", {}):
-            assert spec.lora_config is not None
+            assert lora_config is not None
             previous_cfg = LoraConfig(
-                r=spec.lora_config["rank"],
-                lora_alpha=spec.lora_config["alpha"],
+                r=lora_config["rank"],
+                lora_alpha=lora_config["alpha"],
                 init_lora_weights="gaussian",
-                target_modules=spec.lora_config["target_modules"],
+                target_modules=lora_config["target_modules"],
             )
             transformer.add_adapter("previous", previous_cfg)
         _copy_adapter_weights(transformer, src="default", dst="previous")
@@ -581,32 +583,34 @@ class CosmosPredict25ReplayModel(CosmosPredict25Model):
 
         self.transformer.requires_grad_(False)
         self.transformer.to(self.device)
-        if spec.lora_path:
+        lora_path = spec.lora_path
+        lora_config = spec.lora
+        if lora_path:
             transformer = PeftModel.from_pretrained(
                 self.transformer,
-                spec.lora_path,
+                lora_path,
                 is_trainable=True,
                 adapter_name="default",
             )
         else:
-            if spec.lora_config is None:
+            if lora_config is None:
                 raise ValueError("Cosmos Predict2.5 replay requires lora_config")
             cfg = LoraConfig(
-                r=spec.lora_config["rank"],
-                lora_alpha=spec.lora_config["alpha"],
+                r=lora_config["rank"],
+                lora_alpha=lora_config["alpha"],
                 init_lora_weights="gaussian",
-                target_modules=spec.lora_config["target_modules"],
+                target_modules=lora_config["target_modules"],
             )
             transformer = get_peft_model(self.transformer, cfg, adapter_name="default")
 
         if "previous" not in getattr(transformer, "peft_config", {}):
-            if spec.lora_config is None:
+            if lora_config is None:
                 raise ValueError("Cosmos Predict2.5 replay requires lora_config")
             previous_cfg = LoraConfig(
-                r=spec.lora_config["rank"],
-                lora_alpha=spec.lora_config["alpha"],
+                r=lora_config["rank"],
+                lora_alpha=lora_config["alpha"],
                 init_lora_weights="gaussian",
-                target_modules=spec.lora_config["target_modules"],
+                target_modules=lora_config["target_modules"],
             )
             transformer.add_adapter("previous", previous_cfg)
         _copy_adapter_weights(transformer, src="default", dst="previous")
