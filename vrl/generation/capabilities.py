@@ -84,7 +84,7 @@ class ExecutionStageCapability:
             "axis": self.axis,
             "cache_read": self.cache_read,
             "cache_write": self.cache_write,
-            "profiler_name": self.profiler_label,
+            "profiler_name": self.profiler_name,
             "metadata": dict(self.metadata),
         }
 
