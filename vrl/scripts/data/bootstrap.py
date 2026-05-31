@@ -19,6 +19,7 @@ from vrl.scripts.data.common import repo_root as _repo_root
 
 _MANIFEST_POPULATE_HINTS = (
     ("datasets/danbooru/anatomy/", "python -m vrl.scripts.data.populate anime-prompts"),
+    ("data/external/videophy_i2v/", "python -m vrl.scripts.data.populate videophy-i2v"),
     ("data/external/video_world/", "python -m vrl.scripts.data.populate video-world-bridge"),
 )
 
@@ -46,21 +47,26 @@ def resolve_experiment_dataset_plan(
     loader = str(data.get("loader", "") or "")
     steps: list[dict[str, Any]] = []
     ready = True
-    for role in ("manifest", "eval_manifest"):
+    for role in ("manifest", "eval_manifest", "source_report"):
         path = str(data.get(role, "") or "").strip()
         if not path:
             continue
         resolved = Path(path) if os.path.isabs(path) else (repo_root / path)
         present = resolved.exists()
-        if not present:
+        rows = _count_rows(resolved) if present and role != "source_report" else 0
+        expected_rows = _expected_rows_for_path(path, repo_root) if role != "source_report" else 0
+        complete = present and (expected_rows <= 0 or rows >= expected_rows)
+        if not complete:
             ready = False
         steps.append(
             {
                 "role": role,
                 "path": path,
                 "present": present,
-                "rows": _count_rows(resolved) if present else 0,
-                "get": "" if present else _populate_hint_for_path(path),
+                "rows": rows,
+                "expected_rows": expected_rows,
+                "complete": complete,
+                "get": "" if complete else _populate_hint_for_path(path),
             },
         )
     if loader == "pickapic_preference":
@@ -90,6 +96,16 @@ def _populate_hint_for_path(path: str) -> str:
         if path.startswith(prefix):
             return hint
     return f"{path} is not present and no populate command maps to it; see datasets/ docs"
+
+
+def _expected_rows_for_path(path: str, repo_root: Path) -> int:
+    expected_source = {
+        "data/external/videophy_i2v/manifests/train.jsonl": "datasets/videophy/train.txt",
+        "data/external/videophy_i2v/manifests/eval.jsonl": "datasets/videophy/eval.txt",
+    }.get(path)
+    if not expected_source:
+        return 0
+    return _count_rows(repo_root / expected_source)
 
 
 def _cmd_for_experiment(args: argparse.Namespace) -> None:

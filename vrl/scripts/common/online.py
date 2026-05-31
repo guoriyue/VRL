@@ -39,7 +39,7 @@ from vrl.trainers.checkpointing import (
     save_resolved_config,
     save_training_checkpoint,
 )
-from vrl.trainers.data import load_prompt_manifest
+from vrl.trainers.data import load_prompt_examples_from_config
 from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.precision import torch_dtype_for_trainer_precision
 from vrl.trainers.weight_sync import (
@@ -85,7 +85,7 @@ async def run_online_recipe(
         weight_dtype=weight_dtype,
         distributed_resources=resources,
     )
-    examples = load_prompt_manifest(Path(str(cfg.data.manifest)))
+    examples = load_prompt_examples_from_config(cfg.data)
 
     bundle_builder = definition.build_replay_bundle or definition.build_bundle
     log_host_memory("before_trainer_bundle_build", log=logger)

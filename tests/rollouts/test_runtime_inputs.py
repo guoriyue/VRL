@@ -31,6 +31,12 @@ from vrl.rollouts.families import (
             DiffusionChunkGatherer,
         ),
         (
+            "diffusion/wan_2_1/online_grpo_physics_i2v",
+            "wan_2_1_i2v",
+            "i2v",
+            DiffusionChunkGatherer,
+        ),
+        (
             "diffusion/cosmos_predict2/online_grpo_video_reward",
             "cosmos-predict2",
             "v2w",
@@ -154,6 +160,37 @@ def test_cosmos_runtime_inputs_include_reference_image_from_cfg() -> None:
     assert inputs.launch_contract.family == "cosmos-predict2"
     assert inputs.launch_contract.executor_kwargs["reference_image"] == "/tmp/reference.png"
     assert inputs.launch_contract.model_build is not None
+    assert inputs.launch_contract.model_build["extra"]["reference_image"] == "/tmp/reference.png"
+
+
+def test_wan_i2v_runtime_inputs_include_reference_image_from_cfg() -> None:
+    cfg = load_config(
+        "experiment/diffusion/wan_2_1/online_grpo_physics_i2v",
+        overrides=[
+            "distributed.backend=ray",
+            "distributed.resources.visible_devices=[]",
+            "distributed.resources.trainer.num_gpus=0",
+            "distributed.resources.rollout.num_gpus=0",
+            "distributed.resources.rollout.gpus_per_worker=0",
+            "distributed.resources.rollout.num_workers=1",
+            "distributed.resources.reward.num_gpus=0",
+            "distributed.resources.reward.gpus_per_worker=0",
+            "model.reference_image=/tmp/reference.png",
+        ],
+    )
+
+    inputs = build_ray_generation_inputs_for_family(
+        cfg,
+        "wan_2_1_i2v",
+        weight_dtype=torch.bfloat16,
+    )
+
+    assert isinstance(inputs, RayGenerationLaunchInputs)
+    assert inputs.launch_contract.family == "wan_2_1_i2v"
+    assert inputs.launch_contract.task == "i2v"
+    assert inputs.launch_contract.executor_kwargs["reference_image"] == "/tmp/reference.png"
+    assert inputs.launch_contract.model_build is not None
+    assert inputs.launch_contract.model_build["task_variant"] == "i2v"
     assert inputs.launch_contract.model_build["extra"]["reference_image"] == "/tmp/reference.png"
 
 

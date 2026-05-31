@@ -14,19 +14,23 @@ def fake_transformer_output(
     hidden_states: torch.Tensor,
     timestep: torch.Tensor,
     encoder_hidden_states: torch.Tensor,
+    encoder_hidden_states_image: torch.Tensor | None = None,
     pooled_projections: torch.Tensor | None = None,
     fps: int | None = None,
     condition_mask: torch.Tensor | None = None,
     padding_mask: torch.Tensor | None = None,
+    attention_kwargs: dict[str, Any] | None = None,
     return_dict: bool = False,
 ) -> torch.Tensor:
-    del padding_mask, return_dict
+    del attention_kwargs, padding_mask, return_dict
     output = hidden_states.float()
     step = timestep.float()
     while step.ndim < output.ndim:
         step = step.unsqueeze(-1)
     output = output + step
     output = output + _batch_scalar(encoder_hidden_states, output.ndim)
+    if encoder_hidden_states_image is not None:
+        output = output + _batch_scalar(encoder_hidden_states_image, output.ndim)
     if pooled_projections is not None:
         output = output + _batch_scalar(pooled_projections, output.ndim)
     if condition_mask is not None:

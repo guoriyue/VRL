@@ -156,6 +156,20 @@ register_rollout_family(
 
 register_rollout_family(
     _diffusion_entry(
+        family="wan_2_1_i2v",
+        task="i2v",
+        aliases=("wan_i2v", "wan_2_1_i2v_14b", "wan-i2v"),
+        executor_cls="vrl.models.diffusion.wan_2_1.runtime:Wan_2_1I2VPipelineExecutor",
+        runtime_builder="vrl.models.diffusion.wan_2_1.runtime:build_wan_2_1_runtime_bundle",
+        runtime_spec_extractor="vrl.models.diffusion.wan_2_1.runtime:extract_wan_2_1_runtime_spec",
+        request_prefix="wan_2_1_i2v",
+        default_task_type="image_to_video",
+        supports_reference_conditioning=True,
+    ),
+)
+
+register_rollout_family(
+    _diffusion_entry(
         family="cosmos-predict2",
         task="v2w",
         aliases=("cosmos", "cosmos_predict2", "cosmos_predict2_2b"),

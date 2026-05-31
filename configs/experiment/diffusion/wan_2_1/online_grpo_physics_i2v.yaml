@@ -1,0 +1,51 @@
+# Wan 2.1 14B I2V GRPO targeting motion quality and physical commonsense.
+# Uses the same video_reward + videocon_physics reward stack as the T2V route.
+defaults:
+  - /recipe/online/diffusion_grpo
+  - /model/diffusion/wan_2_1/i2v_14b
+  - /sampling/video/480x832_81f
+  - /sampling/denoise/20_step_cfg_5_0
+  - /reward/video_reward
+  - /reward/videocon_physics
+  - /dataset/videophy_i2v
+
+actor:
+  optim:
+    lr: 5.0e-5
+  ppo_epochs: 1
+
+algorithm:
+  init_kl_coef: 0.004
+
+rollout:
+  n: 2
+  rollout_batch_size: 1
+  sample_batch_size: 1
+  denoise_mode: native
+  noise_level: 0.7
+  sde:
+    type: cps
+
+trainer:
+  entrypoint: vrl.scripts.diffusion.wan_2_1.train:train_wan_2_1_i2v_grpo
+  total_epochs: 5
+  output_dir: outputs/wan_i2v_14b_physics_smoke
+  save_freq: 5
+  log_freq: 1
+
+reward:
+  components:
+    video_reward: 0.3
+    videocon_physics: 0.7
+  kwargs:
+    video_reward:
+      artifact_format: mp4
+      score_key: motion_quality
+    videocon_physics:
+      artifact_format: mp4
+      score_key: physical_commonsense
+
+production:
+  video_reward:
+    enabled: false
+    report_path: outputs/wan_i2v_14b_physics_smoke/production_report.md

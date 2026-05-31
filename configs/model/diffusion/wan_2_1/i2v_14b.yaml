@@ -1,0 +1,26 @@
+# Wan 2.1 14B I2V transformer.
+model:
+  family: wan_2_1_i2v
+  task_variant: i2v
+  path: Wan-AI/Wan2.1-I2V-14B-480P-Diffusers
+  reference_image: ""
+  enable_model_cpu_offload: false
+
+  use_lora: true
+  lora:
+    rank: 32
+    alpha: 64
+    path: ""
+    target_modules:
+      - add_k_proj
+      - add_q_proj
+      - add_v_proj
+      - to_add_out
+      - to_k
+      - to_out.0
+      - to_q
+      - to_v
+
+  torch_compile:
+    enable: false
+    mode: default

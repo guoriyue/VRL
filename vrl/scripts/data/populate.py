@@ -7,14 +7,14 @@ together. No generic artifact-manifest framework lives here.
     python -m vrl.scripts.data.populate <command>
 
 Commands: pickapic, anime-prompts, anime-safety-prompts, anime-positives,
-anime-fetch-images, video-world-bridge, for-experiment.
+anime-fetch-images, videophy-i2v, video-world-bridge, for-experiment.
 """
 
 from __future__ import annotations
 
 import argparse
 
-from vrl.scripts.data import bootstrap, danbooru, pickapic, video_world
+from vrl.scripts.data import bootstrap, danbooru, pickapic, video_world, videophy_i2v
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -22,6 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     pickapic.register(subparsers)
     danbooru.register(subparsers)
+    videophy_i2v.register(subparsers)
     video_world.register(subparsers)
     bootstrap.register(subparsers)
     return parser

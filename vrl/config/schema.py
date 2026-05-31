@@ -162,7 +162,7 @@ class AlgorithmConfig(BaseModel):
 class DataConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    loader: Literal["pickapic_preference", "prompt_manifest"]
+    loader: Literal["pickapic_preference", "prompt_manifest", "prompt_image_manifest"]
     manifest: str | None = None
     eval_manifest: str | None = None
     preprocessing: dict[str, Any] | None = None
@@ -181,6 +181,29 @@ class DataConfig(BaseModel):
                 raise ValueError("config missing required field: data.manifest")
             if self.preprocessing is None:
                 raise ValueError("config missing required field: data.preprocessing")
+            sampler = self.sampler or {}
+            sampler_type = str(sampler.get("type", "")) if "type" in sampler else ""
+            if not sampler_type:
+                raise ValueError("config missing required field: data.sampler.type")
+            valid_samplers = {"random_without_replacement", "sequential_window"}
+            if sampler_type not in valid_samplers:
+                expected = " / ".join(sorted(valid_samplers))
+                raise ValueError(
+                    f"unknown data.sampler.type={sampler_type!r}; expected {expected}"
+                )
+
+        if self.loader == "prompt_image_manifest":
+            if not self.manifest:
+                raise ValueError("config missing required field: data.manifest")
+            if not self.eval_manifest:
+                raise ValueError("config missing required field: data.eval_manifest")
+            if self.preprocessing is None:
+                raise ValueError("config missing required field: data.preprocessing")
+            for field in ("format", "image_field", "caption_field", "media_type", "conditioning"):
+                if field not in self.preprocessing:
+                    raise ValueError(
+                        f"config missing required field: data.preprocessing.{field}"
+                    )
             sampler = self.sampler or {}
             sampler_type = str(sampler.get("type", "")) if "type" in sampler else ""
             if not sampler_type:
@@ -357,9 +380,10 @@ class RootConfig(BaseModel):
             )
 
         task_type = str((self.data.task_type or "") if self.data else "")
-        if task_type not in {"text_to_video", "video2world"}:
+        if task_type not in {"text_to_video", "image_to_video", "video2world"}:
             raise ValueError(
-                "production.video_reward requires data.task_type=text_to_video or video2world"
+                "production.video_reward requires data.task_type=text_to_video, "
+                "image_to_video, or video2world"
             )
 
 

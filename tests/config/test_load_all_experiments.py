@@ -78,6 +78,7 @@ def test_experiments_are_grouped_by_model_family() -> None:
         "diffusion/wan_2_1/offline_dpo_pickapic",
         "diffusion/wan_2_1/online_grpo_ocr",
         "diffusion/wan_2_1/online_grpo_physics",
+        "diffusion/wan_2_1/online_grpo_physics_i2v",
         "diffusion/wan_2_1/online_grpo_video_reward",
     }
 
@@ -92,6 +93,7 @@ def test_experiments_use_dataset_groups_and_only_override_reward_weights() -> No
         "experiment/diffusion/cosmos_predict2/online_grpo_v2w_reference.yaml",
         "experiment/diffusion/cosmos_predict2_5/online_nft_video_reward.yaml",
         "experiment/diffusion/wan_2_1/online_grpo_physics.yaml",
+        "experiment/diffusion/wan_2_1/online_grpo_physics_i2v.yaml",
         "experiment/diffusion/wan_2_1/online_grpo_video_reward.yaml",
     }
     for path in EXPERIMENT_DIR.rglob("*.yaml"):
@@ -314,6 +316,109 @@ def test_wan_video_reward_production_config() -> None:
     assert cfg.data.eval_manifest == "datasets/videophy/eval.txt"
     assert cfg.data.source_report == "datasets/videophy/report.json"
     assert cfg.distributed.rollout.release_before_reward_model is True
+
+
+def test_wan_i2v_physics_config() -> None:
+    cfg = load_config("experiment/diffusion/wan_2_1/online_grpo_physics_i2v")
+
+    validate_training_config(cfg)
+    assert cfg.model.family == "wan_2_1_i2v"
+    assert cfg.model.task_variant == "i2v"
+    assert cfg.data.loader == "prompt_image_manifest"
+    assert cfg.data.task_type == "image_to_video"
+    assert cfg.data.manifest == "data/external/videophy_i2v/manifests/train.jsonl"
+    assert cfg.data.eval_manifest == "data/external/videophy_i2v/manifests/eval.jsonl"
+    assert cfg.data.artifact_data_root == "data/external/videophy_i2v"
+    assert cfg.data.source_report == "data/external/videophy_i2v/report.json"
+    assert cfg.sampling.height == 480
+    assert cfg.sampling.width == 832
+    assert cfg.sampling.num_frames == 81
+    assert cfg.sampling.guidance_scale == pytest.approx(5.0)
+    assert cfg.rollout.n == 2
+    assert cfg.rollout.rollout_batch_size == 1
+    assert cfg.trainer.entrypoint == (
+        "vrl.scripts.diffusion.wan_2_1.train:train_wan_2_1_i2v_grpo"
+    )
+    assert cfg.production.video_reward.enabled is False
+
+
+def test_wan_i2v_production_validation_accepts_source_backed_data(tmp_path: Path) -> None:
+    data_root = tmp_path / "videophy_i2v"
+    train_image = data_root / "images" / "train" / "000.ppm"
+    eval_image = data_root / "images" / "eval" / "000.ppm"
+    train_image.parent.mkdir(parents=True)
+    eval_image.parent.mkdir(parents=True)
+    train_image.write_text("P3\n1 1\n255\n0 0 0\n", encoding="utf-8")
+    eval_image.write_text("P3\n1 1\n255\n0 0 0\n", encoding="utf-8")
+    metadata = {
+        "source": "videophy",
+        "source_repo": "videophysics/videophy_test_public",
+        "source_split": "test",
+        "source_csv_row": 0,
+        "source_video_url": "https://videophysics.example/train.mp4",
+        "source_frame_index": 0,
+        "decode_method": "imageio_ffmpeg_first_frame",
+        "conditioning": "first_frame",
+    }
+    train_manifest = data_root / "manifests" / "train.jsonl"
+    eval_manifest = data_root / "manifests" / "eval.jsonl"
+    train_manifest.parent.mkdir(parents=True)
+    train_manifest.write_text(
+        json.dumps(
+            {
+                "image": "images/train/000.ppm",
+                "caption": "A wheel rolls.",
+                "task_type": "image_to_video",
+                "metadata": metadata,
+            },
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    eval_metadata = dict(metadata, source_video_url="https://videophysics.example/eval.mp4")
+    eval_manifest.write_text(
+        json.dumps(
+            {
+                "image": "images/eval/000.ppm",
+                "caption": "Honey diffuses.",
+                "task_type": "image_to_video",
+                "metadata": eval_metadata,
+            },
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    report = data_root / "report.json"
+    report.write_text(
+        json.dumps(
+            {
+                "dataset": "videophy_i2v",
+                "source_repo": "videophysics/videophy_test_public",
+                "source_csv": "videophy_test_public.csv",
+                "source_split": "test",
+                "decode_method": "imageio_ffmpeg_first_frame",
+                "train_rows": 1,
+                "eval_rows": 1,
+                "train_manifest": train_manifest.as_posix(),
+                "eval_manifest": eval_manifest.as_posix(),
+                "reference_dir": (data_root / "images").as_posix(),
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = load_config(
+        "experiment/diffusion/wan_2_1/online_grpo_physics_i2v",
+        overrides=[
+            "production.video_reward.enabled=true",
+            f"data.manifest={train_manifest.as_posix()}",
+            f"data.eval_manifest={eval_manifest.as_posix()}",
+            f"data.source_report={report.as_posix()}",
+            f"data.artifact_data_root={data_root.as_posix()}",
+        ],
+    )
+
+    validate_training_config(cfg)
 
 
 def test_wan_video_reward_production_config_requires_reward_name() -> None:

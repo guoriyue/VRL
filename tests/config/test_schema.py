@@ -75,13 +75,30 @@ def test_extra_algorithm_fields_are_ignored() -> None:
 # ── Data loader discriminator ─────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("loader", ["prompt_manifest", "pickapic_preference"])
+@pytest.mark.parametrize(
+    "loader",
+    ["prompt_manifest", "prompt_image_manifest", "pickapic_preference"],
+)
 def test_valid_data_loaders_are_accepted(loader: str) -> None:
     if loader == "prompt_manifest":
         data = DataConfig(
             loader=loader,
             manifest="datasets/ocr/train.txt",
             preprocessing={"format": "text"},
+            sampler={"type": "random_without_replacement"},
+        )
+    elif loader == "prompt_image_manifest":
+        data = DataConfig(
+            loader=loader,
+            manifest="data/external/videophy_i2v/manifests/train.jsonl",
+            eval_manifest="data/external/videophy_i2v/manifests/eval.jsonl",
+            preprocessing={
+                "format": "image_caption_jsonl",
+                "image_field": "image",
+                "caption_field": "caption",
+                "media_type": "video",
+                "conditioning": "reference_image",
+            },
             sampler={"type": "random_without_replacement"},
         )
     else:
@@ -101,6 +118,22 @@ def test_unknown_data_loader_raises() -> None:
     cfg.data.loader = "s3_loader"
     with pytest.raises(ValueError, match=r"unknown data\.loader"):
         parse_config(cfg)
+
+
+def test_prompt_image_manifest_requires_image_caption_fields() -> None:
+    with pytest.raises(ValueError, match=r"data\.preprocessing\.caption_field"):
+        DataConfig(
+            loader="prompt_image_manifest",
+            manifest="x",
+            eval_manifest="y",
+            preprocessing={
+                "format": "image_caption_jsonl",
+                "image_field": "image",
+                "media_type": "video",
+                "conditioning": "reference_image",
+            },
+            sampler={"type": "random_without_replacement"},
+        )
 
 
 # ── Sampler type literal ──────────────────────────────────────────────────────
@@ -301,6 +334,47 @@ def test_production_video_reward_structural_rules() -> None:
     )
     parsed = parse_config(cfg)
     assert parsed.production.video_reward.enabled is True
+
+
+def test_production_video_reward_accepts_image_to_video_task_type() -> None:
+    cfg = OmegaConf.create(
+        {
+            "algorithm": {"kind": "grpo"},
+            "data": {
+                "loader": "prompt_image_manifest",
+                "manifest": "x",
+                "eval_manifest": "y",
+                "preprocessing": {
+                    "format": "image_caption_jsonl",
+                    "image_field": "image",
+                    "caption_field": "caption",
+                    "media_type": "video",
+                    "conditioning": "reference_image",
+                },
+                "sampler": {"type": "random_without_replacement"},
+                "task_type": "image_to_video",
+            },
+            "rollout": {"sde": {"type": "cps"}},
+            "reward": {
+                "components": {"video_reward": 1.0},
+                "kwargs": {
+                    "video_reward": {
+                        "inference_runtime": "ray",
+                        "reward_name": "org/model@main",
+                        "score_key": "overall",
+                        "media_type": "video",
+                        "artifact_format": "mp4",
+                        "worker_config": {},
+                    }
+                },
+            },
+            "production": {"video_reward": {"enabled": True}},
+        },
+    )
+
+    parsed = parse_config(cfg)
+
+    assert parsed.data.task_type == "image_to_video"
 
 
 def test_production_video_reward_missing_reward_name_raises() -> None:

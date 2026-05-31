@@ -19,9 +19,12 @@ from vrl.trainers.data.preferences import (
     load_pickapic,
 )
 from vrl.trainers.data.prompts import (
+    ImageCaptionPromptDataset,
     JsonlPromptDataset,
     PromptExample,
     TextPromptDataset,
+    load_prompt_examples_from_config,
+    load_prompt_image_manifest,
     load_prompt_manifest,
 )
 from vrl.trainers.data.samplers import DistributedKRepeatSampler
@@ -31,6 +34,7 @@ __all__ = [
     "ArtifactManifestError",
     "ArtifactManifestReport",
     "DistributedKRepeatSampler",
+    "ImageCaptionPromptDataset",
     "JsonlPromptDataset",
     "PickAPicPreferenceDataset",
     "PreferenceBatch",
@@ -40,6 +44,8 @@ __all__ = [
     "collate_preference",
     "default_data_root",
     "load_pickapic",
+    "load_prompt_examples_from_config",
+    "load_prompt_image_manifest",
     "load_prompt_manifest",
     "resolve_artifact_path",
     "resolve_prompt_example_artifacts",

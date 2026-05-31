@@ -1,0 +1,6 @@
+# Wan I2V 480P native video sampling shape with 81 frames.
+sampling:
+  width: 832
+  height: 480
+  num_frames: 81
+  max_sequence_length: 512

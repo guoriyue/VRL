@@ -143,6 +143,33 @@ def test_wan_replay_builder_uses_wan_pipeline_scheduler_class(
     assert bundle.scheduler.timesteps.tolist() == [1.0]
 
 
+def test_wan_i2v_replay_builder_uses_i2v_replay_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vrl.models.diffusion.wan_2_1 import runtime
+    from vrl.models.diffusion.wan_2_1.model import WanI2VReplayModel
+
+    monkeypatch.setattr(
+        runtime,
+        "load_diffusers_transformer_component",
+        lambda *_args, **_kwargs: _TinyTransformer(),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "load_diffusers_scheduler_component",
+        lambda *_args, **_kwargs: _TinyScheduler(),
+    )
+
+    bundle = runtime.build_wan_2_1_replay_runtime_bundle(
+        _spec(task_variant="i2v"),
+    )
+
+    require_minimal_replay_bundle(bundle)
+    assert isinstance(bundle.model, WanI2VReplayModel)
+    assert bundle.runtime_caps["supports_reference_conditioning"] is True
+    assert "image_encoder" in bundle.metadata["generation_only_modules"]
+
+
 def test_cosmos_predict25_replay_builder_keeps_diffusion_nft_surface(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

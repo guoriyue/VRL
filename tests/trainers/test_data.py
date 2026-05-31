@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import pytest
+from omegaconf import OmegaConf
+
 
 class TestDistributedKRepeatSampler:
     def test_k_repeat_distribution(self) -> None:
@@ -35,3 +38,60 @@ class TestDistributedKRepeatSampler:
         assert len(all_indices) == 8
         unique = set(all_indices)
         assert len(unique) == 4
+
+
+def test_image_caption_prompt_manifest_maps_to_reference_image(tmp_path) -> None:
+    from vrl.trainers.data import load_prompt_image_manifest
+
+    manifest = tmp_path / "train.jsonl"
+    manifest.write_text(
+        (
+            '{"image":"images/000.png","caption":"A ball rolls down a ramp.",'
+            '"seed":7,"metadata":{"source":"sd3_5"}}\n'
+        ),
+        encoding="utf-8",
+    )
+
+    examples = load_prompt_image_manifest(manifest)
+
+    assert len(examples) == 1
+    assert examples[0].prompt == "A ball rolls down a ramp."
+    assert examples[0].reference_image == "images/000.png"
+    assert examples[0].task_type == "image_to_video"
+    assert examples[0].metadata == {"source": "sd3_5", "seed": 7}
+
+
+def test_image_caption_prompt_manifest_reports_missing_fields(tmp_path) -> None:
+    from vrl.trainers.data import load_prompt_image_manifest
+
+    manifest = tmp_path / "train.jsonl"
+    manifest.write_text('{"image":"images/000.png"}\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"row 0 missing required field 'caption'"):
+        load_prompt_image_manifest(manifest)
+
+
+def test_prompt_examples_from_config_dispatches_image_caption_loader(tmp_path) -> None:
+    from vrl.trainers.data import load_prompt_examples_from_config
+
+    manifest = tmp_path / "train.jsonl"
+    manifest.write_text(
+        '{"image":"images/000.png","caption":"Water splashes into a bowl."}\n',
+        encoding="utf-8",
+    )
+    cfg = OmegaConf.create(
+        {
+            "loader": "prompt_image_manifest",
+            "manifest": manifest.as_posix(),
+            "task_type": "image_to_video",
+            "preprocessing": {
+                "image_field": "image",
+                "caption_field": "caption",
+            },
+        },
+    )
+
+    examples = load_prompt_examples_from_config(cfg)
+
+    assert examples[0].prompt == "Water splashes into a bowl."
+    assert examples[0].reference_image == "images/000.png"

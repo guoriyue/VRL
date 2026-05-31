@@ -45,6 +45,22 @@ def test_prompt_dataset_configs_declare_loader_preprocessing_and_sampler() -> No
         assert cfg.data.sampler.type == "random_without_replacement"
 
 
+def test_videophy_i2v_dataset_config_declares_image_caption_loader() -> None:
+    cfg = OmegaConf.load(CONFIGS_ROOT / "dataset" / "videophy_i2v.yaml")
+
+    assert cfg.data.loader == "prompt_image_manifest"
+    assert cfg.data.manifest == "data/external/videophy_i2v/manifests/train.jsonl"
+    assert cfg.data.eval_manifest == "data/external/videophy_i2v/manifests/eval.jsonl"
+    assert cfg.data.artifact_data_root == "data/external/videophy_i2v"
+    assert cfg.data.source_report == "data/external/videophy_i2v/report.json"
+    assert cfg.data.task_type == "image_to_video"
+    assert cfg.data.preprocessing.format == "image_caption_jsonl"
+    assert cfg.data.preprocessing.image_field == "image"
+    assert cfg.data.preprocessing.caption_field == "caption"
+    assert cfg.data.preprocessing.conditioning == "reference_image"
+    assert cfg.data.sampler.type == "random_without_replacement"
+
+
 def test_pickapic_dataset_config_declares_preprocessing_and_sampler() -> None:
     cfg = OmegaConf.load(CONFIGS_ROOT / "dataset" / "pickapic_v2.yaml")
 

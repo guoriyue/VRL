@@ -133,6 +133,21 @@ def validate_data_config(cfg: DictConfig) -> None:
             raise ValueError(f"unknown data.sampler.type={sampler_type!r}; expected {expected}")
         return
 
+    if loader == "prompt_image_manifest":
+        require(cfg, "data.manifest")
+        require(cfg, "data.eval_manifest")
+        require(cfg, "data.preprocessing.format")
+        require(cfg, "data.preprocessing.image_field")
+        require(cfg, "data.preprocessing.caption_field")
+        require(cfg, "data.preprocessing.media_type")
+        require(cfg, "data.preprocessing.conditioning")
+        sampler_type = str(require(cfg, "data.sampler.type"))
+        valid_samplers = {"random_without_replacement", "sequential_window"}
+        if sampler_type not in valid_samplers:
+            expected = " / ".join(sorted(valid_samplers))
+            raise ValueError(f"unknown data.sampler.type={sampler_type!r}; expected {expected}")
+        return
+
     if loader == "pickapic_preference":
         require(cfg, "data.dataset_name")
         require(cfg, "data.split")
@@ -166,6 +181,8 @@ def validate_production_video_reward_config(cfg: DictConfig) -> None:
     task_type = str(OmegaConf.select(cfg, "data.task_type", default="") or "")
     if task_type == "video2world":
         _validate_video_world_production_data(cfg)
+    if task_type == "image_to_video":
+        _validate_image_to_video_production_data(cfg)
 
 
 def _validate_video_world_production_data(cfg: DictConfig) -> None:
@@ -206,6 +223,121 @@ def _validate_video_world_source_report(path: Path) -> None:
     validation_summary = payload.get("validation_summary")
     if not isinstance(validation_summary, dict) or not validation_summary:
         raise ValueError("data.source_report must include a non-empty validation_summary")
+
+
+def _validate_image_to_video_production_data(cfg: DictConfig) -> None:
+    data_root = str(OmegaConf.select(cfg, "data.artifact_data_root", default="") or "").strip()
+    if not data_root:
+        raise ValueError("config missing required field: data.artifact_data_root")
+    preprocessing = OmegaConf.select(cfg, "data.preprocessing", default={}) or {}
+    image_field = str(preprocessing.get("image_field", "image"))
+    caption_field = str(preprocessing.get("caption_field", "caption"))
+    train_count = _validate_image_to_video_manifest(
+        Path(str(require(cfg, "data.manifest"))),
+        data_root=Path(data_root),
+        image_field=image_field,
+        caption_field=caption_field,
+    )
+    eval_count = _validate_image_to_video_manifest(
+        Path(str(require(cfg, "data.eval_manifest"))),
+        data_root=Path(data_root),
+        image_field=image_field,
+        caption_field=caption_field,
+    )
+    _validate_image_to_video_source_report(
+        Path(str(require(cfg, "data.source_report"))),
+        train_count=train_count,
+        eval_count=eval_count,
+    )
+
+
+def _validate_image_to_video_manifest(
+    manifest_path: Path,
+    *,
+    data_root: Path,
+    image_field: str,
+    caption_field: str,
+) -> int:
+    from vrl.trainers.data.artifacts import resolve_artifact_path
+
+    required_metadata = {
+        "source_repo",
+        "source_video_url",
+        "source_frame_index",
+        "decode_method",
+        "conditioning",
+    }
+    row_count = 0
+    with manifest_path.open("r", encoding="utf-8") as handle:
+        for row_index, line in enumerate(handle):
+            line = line.strip()
+            if not line:
+                continue
+            row_count += 1
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"{manifest_path}: row {row_index} is not valid JSON") from exc
+            if not isinstance(row, dict):
+                raise ValueError(f"{manifest_path}: row {row_index} must be an object")
+            image = str(row.get(image_field, "")).strip()
+            caption = str(row.get(caption_field, "")).strip()
+            if not image:
+                raise ValueError(f"{manifest_path}: row {row_index} missing {image_field}")
+            if not caption:
+                raise ValueError(f"{manifest_path}: row {row_index} missing {caption_field}")
+            resolved_image = resolve_artifact_path(image, data_root=data_root)
+            if not resolved_image.exists():
+                raise ValueError(
+                    f"{manifest_path}: row {row_index} image does not exist: {resolved_image}",
+                )
+            metadata = row.get("metadata")
+            if not isinstance(metadata, dict):
+                raise ValueError(f"{manifest_path}: row {row_index} metadata is required")
+            missing = sorted(
+                field
+                for field in required_metadata
+                if metadata.get(field) is None or str(metadata.get(field)).strip() == ""
+            )
+            if missing:
+                raise ValueError(
+                    f"{manifest_path}: row {row_index} missing source metadata: {missing}",
+                )
+    if row_count == 0:
+        raise ValueError(f"{manifest_path} must contain at least one image-to-video row")
+    return row_count
+
+
+def _validate_image_to_video_source_report(
+    path: Path,
+    *,
+    train_count: int,
+    eval_count: int,
+) -> None:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    required_keys = {
+        "dataset",
+        "source_repo",
+        "source_csv",
+        "source_split",
+        "decode_method",
+        "train_rows",
+        "eval_rows",
+        "train_manifest",
+        "eval_manifest",
+        "reference_dir",
+    }
+    missing = sorted(key for key in required_keys if key not in payload)
+    if missing:
+        raise ValueError(
+            f"data.source_report is missing Image2Video provenance fields: {missing}",
+        )
+    if payload.get("dataset") != "videophy_i2v":
+        raise ValueError("data.source_report dataset must be videophy_i2v")
+    if int(payload.get("train_rows") or 0) != train_count:
+        raise ValueError("data.source_report train_rows does not match data.manifest")
+    if int(payload.get("eval_rows") or 0) != eval_count:
+        raise ValueError("data.source_report eval_rows does not match data.eval_manifest")
 
 
 def validate_training_config(cfg: DictConfig) -> None:

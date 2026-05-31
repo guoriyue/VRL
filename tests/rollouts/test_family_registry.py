@@ -19,6 +19,7 @@ def test_family_registry_covers_current_rollout_families() -> None:
     assert registered_rollout_families() == (
         "sd3_5",
         "wan_2_1",
+        "wan_2_1_i2v",
         "cosmos-predict2",
         "cosmos-predict2.5",
         "cosmos-predict2-anima",
@@ -46,6 +47,7 @@ def test_family_registry_covers_current_rollout_families() -> None:
 def test_family_aliases_resolve_to_canonical_entries() -> None:
     expected_aliases = {
         "wan": "wan_2_1",
+        "wan_i2v": "wan_2_1_i2v",
         "cosmos": "cosmos-predict2",
         "cosmos_predict2": "cosmos-predict2",
         "cosmos_predict2_5": "cosmos-predict2.5",

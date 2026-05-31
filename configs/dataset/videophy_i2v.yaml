@@ -1,0 +1,20 @@
+# VideoPhy I2V image-caption prompt manifest.
+# Populated from the official public VideoPhy CSV/videos:
+#   python -m vrl.scripts.data.populate videophy-i2v
+# Reference images are first frames decoded from source videos and live outside
+# git under data/external or VRL_DATA_ROOT.
+data:
+  loader: prompt_image_manifest
+  manifest: data/external/videophy_i2v/manifests/train.jsonl
+  eval_manifest: data/external/videophy_i2v/manifests/eval.jsonl
+  artifact_data_root: data/external/videophy_i2v
+  source_report: data/external/videophy_i2v/report.json
+  task_type: image_to_video
+  preprocessing:
+    format: image_caption_jsonl
+    image_field: image
+    caption_field: caption
+    media_type: video
+    conditioning: reference_image
+  sampler:
+    type: random_without_replacement
