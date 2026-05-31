@@ -93,20 +93,14 @@ def test_reward_models_live_under_models() -> None:
         "__init__.py",
         "aesthetic.py",
         "base.py",
-        "clip.py",
+        "claude_image_qa.py",
         "codex_image_qa.py",
         "geneval.py",
         "kling_video_reward.py",
         "nsfw_safety.py",
         "ocr.py",
         "pickscore.py",
-    }
-    assert _module_filenames(models_root / "pose") == {
-        "__init__.py",
-        "dwpose.py",
-        "geometry.py",
-        "hints.py",
-        "structure.py",
+        "videocon_physics.py",
     }
     assert not (VRL_ROOT / "rewards" / "kling_video_reward.py").exists()
     assert not (VRL_ROOT / "rewards" / "ray" / "kling_video_reward.py").exists()
@@ -139,8 +133,7 @@ def test_reward_function_implementations_live_under_functions() -> None:
     assert _module_filenames(rewards_root / "functions") == {
         "__init__.py",
         "aesthetic.py",
-
-        "clip.py",
+        "claude_image_qa.py",
         "codex_image_qa.py",
         "geneval.py",
         "nsfw_safety.py",
@@ -148,6 +141,7 @@ def test_reward_function_implementations_live_under_functions() -> None:
         "pickscore.py",
         "registry.py",
         "video_reward.py",
+        "videocon_physics.py",
     }
 
 

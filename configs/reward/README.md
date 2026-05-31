@@ -19,7 +19,6 @@ Use these conventions for compound video recipes:
 | Motion or physics compound | `video_reward` | `motion_quality` | Keeps Kling focused on motion and avoids duplicating prompt-alignment rewards. |
 | Visual-quality compound | `video_reward` | `visual_quality` | Keeps Kling focused on visual quality. |
 | Physical commonsense | `videocon_physics` | `physical_commonsense` | Avoids mixing VideoCon semantic adherence into prompt-alignment rewards. |
-| Online HMR motion | `online_hmr_motion` | `motion_quality_overall` | Use the structured motion signal as one axis. |
 | Claude video judge | `claude_video` | rubric overall | Keep rubric axis weights inside the rubric rather than duplicating them in `MultiReward`. |
 
 Keep `configs/reward/video_reward.yaml` on `overall_reward` for single-reward

@@ -164,7 +164,7 @@
 - **不**加 SDPose-WholeBody（SD backbone 推理 120–300ms，不适合 RL inner loop；作为离线验证模型可考虑，但不进 reward 主链路）。
 - **不**加 SAM 3D Body / Hand4Whole++ / SMPLest-X（太重，适合离线 hard-case 发现，不进每步 reward 计算）。
 - **不**替换 aesthetic reward（几何 reward 和美学 reward 是互补，不是替换关系）。
-- **不**处理视频帧间一致性（那是 OnlineHMR sprint 的范围）。
+- **不**处理视频帧间一致性（本 sprint 是 anima 图像 reward 范围，不入视频）。
 
 ## 9. References
 
