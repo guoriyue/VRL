@@ -11,10 +11,11 @@ Setup (RTMW + HaMeR, first run downloads ~5.8 GB):
 
 Usage:
     # Point at a directory of anime images:
-    python scripts/eval/probe_anime_anatomy_report.py --images /path/to/anime/*.png
+    python -m vrl.scripts.eval.probe_anime_anatomy_report \
+        --images /path/to/anime/*.png
 
     # Optionally enable HaMeR:
-    python scripts/eval/probe_anime_anatomy_report.py --images *.png --hamer
+    python -m vrl.scripts.eval.probe_anime_anatomy_report --images *.png --hamer
 
 Output:
     outputs/probes/anime_anatomy/report/report.html   <- open this in browser
@@ -46,7 +47,7 @@ import argparse
 import base64
 from pathlib import Path
 
-from anime_probe_common import (
+from .anime_probe_common import (
     DEFAULT_HAMER_CACHE_DIR,
     DEFAULT_REPORT_DIR,
     hamer_probe_image,

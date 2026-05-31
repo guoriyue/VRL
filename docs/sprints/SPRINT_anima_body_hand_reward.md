@@ -134,7 +134,7 @@
 - `vrl/rewards/models/anime_hand_mesh.py`
 - `vrl/rewards/functions/anime_hand_mesh.py`
 - `configs/experiment/diffusion/anima_preview3/online_grpo_body_hand.yaml`
-- `scripts/eval/validate_body_hand_reward.py`（离线验证脚本，Stage A/B smoke test 用）
+- `vrl/scripts/eval/validate_body_hand_reward.py`（离线验证脚本，Stage A/B smoke test 用）
 
 **修改**：
 - `vrl/rewards/functions/registry.py`（加两个 import + entry）

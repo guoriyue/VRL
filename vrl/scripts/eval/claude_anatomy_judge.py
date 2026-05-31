@@ -10,12 +10,12 @@ rubric file via --rubric-file to A/B different scoring criteria.
 
 Usage:
     export ANTHROPIC_API_KEY=sk-ant-...
-    python scripts/eval/claude_anatomy_judge.py \
+    python -m vrl.scripts.eval.claude_anatomy_judge \
         --dir outputs/anima_anatomy_eval16_896x1152_30step \
         --model claude-sonnet-4-6 --concurrency 8
 
     # Use a different rubric:
-    python scripts/eval/claude_anatomy_judge.py \
+    python -m vrl.scripts.eval.claude_anatomy_judge \
         --dir outputs/... \
         --rubric-file configs/reward/rubrics/anatomy_v2.md
 """
@@ -32,8 +32,7 @@ from pathlib import Path
 
 import anthropic
 
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_RUBRIC_PATH = REPO_ROOT / "configs" / "reward" / "rubrics" / "anatomy_v1.md"
 
 # Fallback prompt used only when --rubric-file is missing or empty.
@@ -145,7 +144,7 @@ async def score_one(
                 "raw": text,
                 "error": None,
             }
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return {
                 "prompt_index": row.get("prompt_index"),
                 "image_path": str(image_path),
@@ -285,18 +284,20 @@ async def run(args: argparse.Namespace) -> None:
             idx = r.get("prompt_index", "?")
             score = r["score"] if r["score"] is not None else "ERR"
             axes = r.get("axes") or {}
-            def cell(key: str) -> str:
+
+            def cell(key: str, axes: dict[str, object] = axes) -> str:
                 v = axes.get(key)
-                return "–" if v is None else str(v)
+                return "-" if v is None else str(v)
+
             defects = "; ".join(r["reasons"][:2]).replace("|", "/") or (r["error"] or "")
             if len(defects) > 80:
-                defects = defects[:80] + "…"
+                defects = defects[:80] + "..."
             print(
                 f"| {idx} | {score} | {cell('torso')} | {cell('arms')} | "
                 f"{cell('legs')} | {cell('hands')} | {cell('feet')} | {defects} |",
             )
     else:
-        print("| idx | score | prompt (≤60ch) | reasons |")
+        print("| idx | score | prompt (<=60ch) | reasons |")
         print("|---|---|---|---|")
         for r in results:
             idx = r.get("prompt_index", "?")
