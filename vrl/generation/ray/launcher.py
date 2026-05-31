@@ -18,10 +18,7 @@ from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import ChunkGatherer, GenerationRuntime
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.executor import RayGenerationExecutor
-from vrl.generation.ray.placement import (
-    RayPlacement,
-    create_generation_placement_group,
-)
+from vrl.generation.ray.placement import create_generation_placement_group
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.weight_sync import RayGenerationWeightSync
 from vrl.generation.ray.worker import RayGenerationWorker
@@ -404,6 +401,4 @@ def _cfg_get(node: Any, key: str, default: Any) -> Any:
 __all__ = [
     "RayGenerationLaunchInputs",
     "RayGenerationLauncher",
-    "RayPlacement",
-    "create_generation_placement_group",
 ]

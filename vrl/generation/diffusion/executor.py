@@ -380,33 +380,6 @@ class DiffusionPipelineExecutorBase(
         chunk_result.stage_durations["decode"] = time.perf_counter() - started
         return chunk_result
 
-    def run_denoise_chunk(
-        self,
-        *,
-        request: VideoGenerationRequest,
-        encoded: dict[str, Any],
-        config: DiffusionDenoiseConfig,
-        prepare_kwargs: dict[str, Any] | None = None,
-    ) -> DiffusionChunkResult:
-        """Run one fused diffusion sample chunk: prepare -> denoise -> decode."""
-
-        state = self.prepare_denoise_state(
-            request=request,
-            encoded=encoded,
-            config=config,
-            prepare_kwargs=prepare_kwargs,
-        )
-        denoise_result = self.run_denoise_steps(
-            state=state,
-            encoded=encoded,
-            config=config,
-        )
-        return self.decode_denoise_result(
-            request=request,
-            config=config,
-            denoise_result=denoise_result,
-        )
-
     def prepare_denoise_state(
         self,
         *,

@@ -1,6 +1,5 @@
 """Reusable attention layer contracts."""
 
-from vrl.nn.layers.attention.base import AttentionCacheView
 from vrl.nn.layers.attention.joint import SD3JointAttentionProcessor
 from vrl.nn.layers.attention.paged import (
     ARPagedAttentionBackend,
@@ -24,6 +23,5 @@ __all__ = [
     "ARPagedAttentionUnavailable",
     "ARPrefixCacheKey",
     "ARPrefixCachePolicy",
-    "AttentionCacheView",
     "SD3JointAttentionProcessor",
 ]
