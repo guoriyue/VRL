@@ -166,7 +166,7 @@ CASES: tuple[RealCheckpointCase, ...] = (
     ),
     RealCheckpointCase(
         case_id="cosmos_predict2",
-        config="experiment/diffusion/cosmos_predict2/online_grpo_video_reward",
+        config="experiment/diffusion/cosmos_predict2/online_grpo_kling_video_reward",
         family="cosmos-predict2",
         prompt="A quiet street with a clear RL sign",
         checkpoints=(
@@ -213,7 +213,7 @@ CASES: tuple[RealCheckpointCase, ...] = (
     ),
     RealCheckpointCase(
         case_id="cosmos_predict2_5",
-        config="experiment/diffusion/cosmos_predict2_5/online_nft_video_reward",
+        config="experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward",
         family="cosmos-predict2.5",
         prompt="A clear white sign that says RL",
         checkpoints=(
@@ -606,23 +606,23 @@ def _ray_reward_overrides(tmp_path: Path) -> tuple[str, ...]:
     debug_dir = tmp_path / "reward_debug"
     model_factory = "tests.e2e.test_real_checkpoint_rl:build_tensor_mean_model"
     return (
-        f"reward.kwargs.video_reward.artifact_dir={artifact_dir.as_posix()}",
-        f"reward.kwargs.video_reward.debug_dir={debug_dir.as_posix()}",
-        "reward.kwargs.video_reward.release_after_score=true",
-        "reward.kwargs.video_reward.num_workers=1",
-        "reward.kwargs.video_reward.cpus_per_worker=0.5",
-        "reward.kwargs.video_reward.gpus_per_worker=0.0",
-        f"reward.kwargs.video_reward.worker_config.model_factory={model_factory}",
-        "reward.kwargs.video_reward.worker_config.reward_model_version=e2e-tensor-mean",
+        f"reward.kwargs.kling_video_reward.artifact_dir={artifact_dir.as_posix()}",
+        f"reward.kwargs.kling_video_reward.debug_dir={debug_dir.as_posix()}",
+        "reward.kwargs.kling_video_reward.release_after_score=true",
+        "reward.kwargs.kling_video_reward.num_workers=1",
+        "reward.kwargs.kling_video_reward.cpus_per_worker=0.5",
+        "reward.kwargs.kling_video_reward.gpus_per_worker=0.0",
+        f"reward.kwargs.kling_video_reward.worker_config.model_factory={model_factory}",
+        "reward.kwargs.kling_video_reward.worker_config.reward_model_version=e2e-tensor-mean",
     )
 
 
 def _assert_ray_reward_artifacts(tmp_path: Path, reward_fn: Any) -> None:
     components = getattr(reward_fn, "last_components", {})
-    assert "video_reward" in components
-    assert len(components["video_reward"]) >= 2
+    assert "kling_video_reward" in components
+    assert len(components["kling_video_reward"]) >= 2
     assert (tmp_path / "reward_artifacts" / "manifest.jsonl").exists()
-    assert (tmp_path / "reward_debug" / "video_reward_results.jsonl").exists()
+    assert (tmp_path / "reward_debug" / "kling_video_reward_results.jsonl").exists()
 
 
 async def _shutdown_if_present(value: Any) -> None:

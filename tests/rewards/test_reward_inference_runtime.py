@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from vrl.rewards.functions.video_reward import VideoReward
+from vrl.rewards.functions.kling_video_reward import KlingVideoReward
 from vrl.rewards.inference import (
     RewardInferenceArtifact,
     RewardInferenceRequest,
@@ -62,7 +62,7 @@ def test_reward_name_without_worker_config_is_not_a_worker_loader() -> None:
 
 
 def test_video_reward_derives_internal_model_factory_from_reward_name(tmp_path) -> None:
-    reward = VideoReward(
+    reward = KlingVideoReward(
         reward_name="KlingTeam/VideoReward@main",
         score_key="overall_reward",
         artifact_dir=str(tmp_path),
@@ -114,7 +114,7 @@ def test_worker_loads_reward_model_via_factory(monkeypatch: pytest.MonkeyPatch) 
                 prompt="prompt",
             ),
         ),
-        reward_name="video_reward",
+        reward_name="kling_video_reward",
         score_key="overall_reward",
     )
 
@@ -177,7 +177,7 @@ def test_kling_video_reward_requires_materialized_artifact_path() -> None:
     request = RewardInferenceRequest(
         request_id="req",
         artifacts=(artifact,),
-        reward_name="video_reward",
+        reward_name="kling_video_reward",
         score_key="overall_reward",
     )
 

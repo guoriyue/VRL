@@ -7,7 +7,7 @@ defaults:
   - /model/diffusion/wan_2_1/1_3b
   - /sampling/video/240p_33f
   - /sampling/denoise/20_step_cfg_4_5
-  - /reward/video_reward
+  - /reward/kling_video_reward
   - /reward/videocon_physics
   - /dataset/videophy
 
@@ -40,10 +40,10 @@ trainer:
 # `/reward/...` import declared. Kling MQ at 0.7, VideoCon-Physics at 0.3.
 reward:
   components:
-    video_reward: 0.7
+    kling_video_reward: 0.7
     videocon_physics: 0.3
   kwargs:
-    video_reward:
+    kling_video_reward:
       artifact_format: mp4
       score_key: motion_quality
     videocon_physics:
@@ -51,6 +51,6 @@ reward:
       score_key: physical_commonsense
 
 production:
-  video_reward:
+  kling_video_reward:
     enabled: true
     report_path: outputs/wan_1_3b_physics/production_report.md

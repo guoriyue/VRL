@@ -129,6 +129,124 @@ class RewardFunction:
             ),
         )
 
+    def _init_disk_artifact_reward(
+        self,
+        *,
+        model_factory: str,
+        config_key: str,
+        request_prefix: str,
+        debug_basename: str,
+        inference_runtime: str = "ray",
+        reward_name: str | None = None,
+        score_key: str | None = None,
+        media_type: str = "video",
+        artifact_dir: str = "outputs/reward_artifacts",
+        artifact_format: str | None = None,
+        default_reward_name: str = "",
+        default_score_key: str = "",
+        default_artifact_format: str = "tensor",
+        debug_dir: str = "",
+        timeout_s: float = 60.0,
+        max_inflight_batches: int = 1,
+        scheduling: str = "sync",
+        backend: str | None = None,
+        actor_runtime: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize a reward whose media is materialized to disk, scored by a Ray pool.
+
+        Sibling to :meth:`_init_reward_model`: same idea (configure ``self`` as a
+        ``RewardFunction``), but the heavyweight path — media is written to disk
+        via ``VideoRewardArtifactStore`` and scored by a Ray actor pool on its own
+        GPU, instead of passed in-memory to a local model. ``model_factory`` /
+        ``config_key`` / ``request_prefix`` / ``debug_basename`` and the
+        ``default_*`` values are the only per-reward differences; everything else
+        is shared wiring, so no concrete reward copies this body.
+        """
+
+        from vrl.rewards.artifacts import VideoRewardArtifactStore
+        from vrl.rewards.ray.runtime import RayRewardRuntime
+
+        del timeout_s
+        if backend is not None:
+            raise ValueError(
+                f"reward.kwargs.{config_key}.backend is no longer supported; "
+                "use inference_runtime='ray'",
+            )
+        if str(scheduling) != "sync":
+            raise ValueError(
+                f"reward.kwargs.{config_key}.scheduling currently supports only 'sync'",
+            )
+        self.inference_runtime = str(inference_runtime)
+        if self.inference_runtime != "ray":
+            raise ValueError(f"reward.kwargs.{config_key}.inference_runtime must be 'ray'")
+
+        resolved_reward_name = str(
+            reward_name if reward_name is not None else default_reward_name,
+        )
+        resolved_score_key = str(score_key if score_key is not None else default_score_key)
+        resolved_format = str(
+            artifact_format if artifact_format is not None else default_artifact_format,
+        )
+
+        self.media_type = str(media_type)
+        self.artifact_store = VideoRewardArtifactStore(
+            artifact_dir,
+            media_type=self.media_type,
+            artifact_format=resolved_format,
+        )
+
+        if actor_runtime is not None:
+            runtime: Any = RayRewardRuntime(actor_runtime=actor_runtime)
+        else:
+            runtime_cfg = {**dict(kwargs), "max_inflight_batches": max_inflight_batches}
+            worker_config = runtime_cfg.get("worker_config")
+            if isinstance(worker_config, dict):
+                worker_config = dict(worker_config)
+                has_model_factory = bool(
+                    str(worker_config.get("model_factory", "")).strip(),
+                )
+                reward_model_name = str(
+                    worker_config.get("reward_model_name")
+                    or worker_config.get("model_name")
+                    or resolved_reward_name
+                    or "",
+                ).strip()
+                model_path = str(worker_config.get("model_path", "")).strip()
+                # YAML names the public model; workers need the private loader.
+                if not has_model_factory and (reward_model_name or model_path):
+                    if reward_model_name:
+                        worker_config["reward_model_name"] = reward_model_name
+                    worker_config["model_factory"] = model_factory
+                    if not str(worker_config.get("reward_model_version", "")).strip():
+                        worker_config["reward_model_version"] = (
+                            reward_model_name or model_path
+                        )
+                runtime_cfg["worker_config"] = worker_config
+            runtime = RayRewardRuntime(runtime_cfg)
+
+        RewardFunction.__init__(
+            self,
+            reward_name=resolved_reward_name,
+            score_key=resolved_score_key,
+            runtime=runtime,
+            artifact_builder=self.artifact_store.materialize,
+            request_metadata={"media_type": self.media_type},
+            debug_dir=debug_dir,
+            request_prefix=request_prefix,
+            debug_basename=debug_basename,
+        )
+
+    @property
+    def _actor_runtime(self) -> Any:
+        """The Ray actor pool backing this reward, or ``None`` for local runtimes.
+
+        Generic over any Ray-backed reward (the trainer's resource layer uses it
+        to release the reward GPUs after scoring); not specific to one reward type.
+        """
+
+        return getattr(self.runtime, "_actor", None)
+
     async def _score_with_inference_runtime(
         self,
         rollouts: list[RewardRollout],
@@ -201,6 +319,5 @@ class RewardFunction:
         with results_file.open("a", encoding="utf-8") as handle:
             for result in results:
                 handle.write(json.dumps(asdict(result), sort_keys=True) + "\n")
-
 
 __all__ = ["ArtifactBuilder", "RewardFunction"]

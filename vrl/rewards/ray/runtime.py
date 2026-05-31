@@ -77,7 +77,7 @@ class RayRewardRuntime:
         if worker_config_raw is None:
             raise ValueError(
                 "reward inference_runtime='ray' requires explicit worker_config. "
-                "VideoReward production derives the model from reward_name; tests pass "
+                "KlingVideoReward derives the model from reward_name; tests pass "
                 "worker_config.model_factory pointing at a RewardModel factory.",
             )
         if not isinstance(worker_config_raw, Mapping):

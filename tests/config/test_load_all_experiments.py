@@ -69,8 +69,8 @@ def test_experiments_are_grouped_by_model_family() -> None:
         "diffusion/anima_preview3/online_grpo_anatomy",
         "diffusion/anima_preview3/online_grpo_aesthetic_nsfw_safety",
         "diffusion/cosmos_predict2/online_grpo_v2w_reference",
-        "diffusion/cosmos_predict2/online_grpo_video_reward",
-        "diffusion/cosmos_predict2_5/online_nft_video_reward",
+        "diffusion/cosmos_predict2/online_grpo_kling_video_reward",
+        "diffusion/cosmos_predict2_5/online_nft_kling_video_reward",
         "diffusion/sd3_5/online_grpo_geneval",
         "diffusion/sd3_5/online_grpo_ocr",
         "diffusion/sd3_5/online_grpo_ocr_crossnode_debug",
@@ -80,7 +80,7 @@ def test_experiments_are_grouped_by_model_family() -> None:
         "diffusion/wan_2_1/online_grpo_ocr",
         "diffusion/wan_2_1/online_grpo_physics",
         "diffusion/wan_2_1/online_grpo_physics_i2v",
-        "diffusion/wan_2_1/online_grpo_video_reward",
+        "diffusion/wan_2_1/online_grpo_kling_video_reward",
     }
 
     assert set(_experiment_names()) == expected
@@ -92,10 +92,10 @@ def test_experiments_use_dataset_groups_and_only_override_reward_weights() -> No
     inline_reward_kwargs = []
     allowed_reward_kwargs = {
         "experiment/diffusion/cosmos_predict2/online_grpo_v2w_reference.yaml",
-        "experiment/diffusion/cosmos_predict2_5/online_nft_video_reward.yaml",
+        "experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward.yaml",
         "experiment/diffusion/wan_2_1/online_grpo_physics.yaml",
         "experiment/diffusion/wan_2_1/online_grpo_physics_i2v.yaml",
-        "experiment/diffusion/wan_2_1/online_grpo_video_reward.yaml",
+        "experiment/diffusion/wan_2_1/online_grpo_kling_video_reward.yaml",
     }
     for path in EXPERIMENT_DIR.rglob("*.yaml"):
         raw = OmegaConf.load(path)
@@ -187,7 +187,7 @@ def test_algorithm_config_dispatches_representative_kinds() -> None:
         "ar/janus_pro/online_grpo_ocr": TokenGRPOConfig,
         "ar/janus_pro/online_r1_grpo_ocr": MultiSegmentTokenGRPOConfig,
         "diffusion/wan_2_1/offline_dpo_pickapic": DiffusionDPOConfig,
-        "diffusion/cosmos_predict2_5/online_nft_video_reward": DiffusionNFTConfig,
+        "diffusion/cosmos_predict2_5/online_nft_kling_video_reward": DiffusionNFTConfig,
     }
     for name, expected_type in examples.items():
         cfg = load_config(f"experiment/{name}")
@@ -199,7 +199,7 @@ def test_algorithm_config_dispatches_representative_kinds() -> None:
 
 
 def test_cosmos_diffusion_nft_video_reward_validation_config() -> None:
-    cfg = load_config("experiment/diffusion/cosmos_predict2_5/online_nft_video_reward")
+    cfg = load_config("experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward")
 
     validate_training_config(cfg)
     assert cfg.data.task_type == "text_to_video"
@@ -207,23 +207,23 @@ def test_cosmos_diffusion_nft_video_reward_validation_config() -> None:
     assert cfg.data.eval_manifest == "datasets/videophy/eval.txt"
     assert cfg.data.source_report == "datasets/videophy/report.json"
     assert cfg.model.use_lora is True
-    assert cfg.reward.kwargs.video_reward.inference_runtime == "ray"
-    assert cfg.reward.kwargs.video_reward.artifact_format == "mp4"
-    assert cfg.reward.kwargs.video_reward.artifact_dir == (
+    assert cfg.reward.kwargs.kling_video_reward.inference_runtime == "ray"
+    assert cfg.reward.kwargs.kling_video_reward.artifact_format == "mp4"
+    assert cfg.reward.kwargs.kling_video_reward.artifact_dir == (
         f"{cfg.trainer.output_dir}/reward_artifacts"
     )
-    assert cfg.reward.kwargs.video_reward.debug_dir == (
+    assert cfg.reward.kwargs.kling_video_reward.debug_dir == (
         f"{cfg.trainer.output_dir}/reward_debug"
     )
-    assert cfg.reward.kwargs.video_reward.reward_name == "KlingTeam/VideoReward@main"
-    assert "model_factory" not in cfg.reward.kwargs.video_reward.worker_config
-    assert "reward_model_name" not in cfg.reward.kwargs.video_reward.worker_config
+    assert cfg.reward.kwargs.kling_video_reward.reward_name == "KlingTeam/VideoReward@main"
+    assert "model_factory" not in cfg.reward.kwargs.kling_video_reward.worker_config
+    assert "reward_model_name" not in cfg.reward.kwargs.kling_video_reward.worker_config
     assert cfg.distributed.resources.reward.num_gpus == 1
     assert cfg.distributed.resources.reward.share_with_rollout is True
     assert cfg.distributed.rollout.release_before_reward_model is True
     assert cfg.distributed.reward.release_after_score is True
     assert cfg.trainer.total_epochs == 1
-    assert cfg.production.video_reward.enabled is True
+    assert cfg.production.kling_video_reward.enabled is True
 
 
 def test_cosmos_v2w_reference_route_config() -> None:
@@ -236,10 +236,10 @@ def test_cosmos_v2w_reference_route_config() -> None:
     assert cfg.data.source_report == "data/external/video_world/robot_report.json"
     assert cfg.cosmos.reference_mode == "per_sample"
     assert cfg.model.reference_image == ""
-    assert cfg.reward.kwargs.video_reward.inference_runtime == "ray"
-    assert cfg.reward.kwargs.video_reward.artifact_format == "mp4"
-    assert cfg.reward.kwargs.video_reward.reward_name == "KlingTeam/VideoReward@main"
-    assert "model_factory" not in cfg.reward.kwargs.video_reward.worker_config
+    assert cfg.reward.kwargs.kling_video_reward.inference_runtime == "ray"
+    assert cfg.reward.kwargs.kling_video_reward.artifact_format == "mp4"
+    assert cfg.reward.kwargs.kling_video_reward.reward_name == "KlingTeam/VideoReward@main"
+    assert "model_factory" not in cfg.reward.kwargs.kling_video_reward.worker_config
     assert cfg.distributed.rollout.release_before_reward_model is True
 
 
@@ -307,7 +307,7 @@ def test_cosmos_v2w_production_validation_accepts_source_backed_data(
     cfg = load_config(
         "experiment/diffusion/cosmos_predict2/online_grpo_v2w_reference",
         overrides=[
-            "production.video_reward.enabled=true",
+            "production.kling_video_reward.enabled=true",
             f"data.manifest={train.as_posix()}",
             f"data.eval_manifest={eval_manifest.as_posix()}",
             f"data.source_report={report.as_posix()}",
@@ -319,25 +319,25 @@ def test_cosmos_v2w_production_validation_accepts_source_backed_data(
 
 
 def test_wan_video_reward_production_config() -> None:
-    cfg = load_config("experiment/diffusion/wan_2_1/online_grpo_video_reward")
+    cfg = load_config("experiment/diffusion/wan_2_1/online_grpo_kling_video_reward")
 
     validate_training_config(cfg)
     assert cfg.model.family == "wan"
-    assert cfg.reward.components.video_reward == 1.0
-    assert cfg.reward.kwargs.video_reward.inference_runtime == "ray"
-    assert cfg.reward.kwargs.video_reward.media_type == "video"
-    assert cfg.reward.kwargs.video_reward.artifact_format == "mp4"
-    assert cfg.reward.kwargs.video_reward.artifact_dir == (
+    assert cfg.reward.components.kling_video_reward == 1.0
+    assert cfg.reward.kwargs.kling_video_reward.inference_runtime == "ray"
+    assert cfg.reward.kwargs.kling_video_reward.media_type == "video"
+    assert cfg.reward.kwargs.kling_video_reward.artifact_format == "mp4"
+    assert cfg.reward.kwargs.kling_video_reward.artifact_dir == (
         f"{cfg.trainer.output_dir}/reward_artifacts"
     )
-    assert cfg.reward.kwargs.video_reward.debug_dir == (
+    assert cfg.reward.kwargs.kling_video_reward.debug_dir == (
         f"{cfg.trainer.output_dir}/reward_debug"
     )
-    assert cfg.reward.kwargs.video_reward.reward_name == "KlingTeam/VideoReward@main"
-    assert "model_factory" not in cfg.reward.kwargs.video_reward.worker_config
-    assert "backend" not in cfg.reward.kwargs.video_reward.worker_config
-    assert "score_key_map" not in cfg.reward.kwargs.video_reward.worker_config
-    assert "reward_model_name" not in cfg.reward.kwargs.video_reward.worker_config
+    assert cfg.reward.kwargs.kling_video_reward.reward_name == "KlingTeam/VideoReward@main"
+    assert "model_factory" not in cfg.reward.kwargs.kling_video_reward.worker_config
+    assert "backend" not in cfg.reward.kwargs.kling_video_reward.worker_config
+    assert "score_key_map" not in cfg.reward.kwargs.kling_video_reward.worker_config
+    assert "reward_model_name" not in cfg.reward.kwargs.kling_video_reward.worker_config
     assert cfg.rollout.n == 4
     assert cfg.rollout.rollout_batch_size == 1
     assert cfg.rollout.sample_batch_size == 1
@@ -371,7 +371,7 @@ def test_wan_i2v_physics_config() -> None:
     assert cfg.trainer.entrypoint == (
         "vrl.scripts.diffusion.wan_2_1.train:train_wan_2_1_i2v_grpo"
     )
-    assert cfg.production.video_reward.enabled is False
+    assert cfg.production.kling_video_reward.enabled is False
 
 
 def test_wan_i2v_production_validation_accepts_source_backed_data(tmp_path: Path) -> None:
@@ -442,7 +442,7 @@ def test_wan_i2v_production_validation_accepts_source_backed_data(tmp_path: Path
     cfg = load_config(
         "experiment/diffusion/wan_2_1/online_grpo_physics_i2v",
         overrides=[
-            "production.video_reward.enabled=true",
+            "production.kling_video_reward.enabled=true",
             f"data.manifest={train_manifest.as_posix()}",
             f"data.eval_manifest={eval_manifest.as_posix()}",
             f"data.source_report={report.as_posix()}",
@@ -454,22 +454,22 @@ def test_wan_i2v_production_validation_accepts_source_backed_data(tmp_path: Path
 
 
 def test_wan_video_reward_production_config_requires_reward_name() -> None:
-    cfg = load_config("experiment/diffusion/wan_2_1/online_grpo_video_reward")
-    cfg.reward.kwargs.video_reward.reward_name = ""
+    cfg = load_config("experiment/diffusion/wan_2_1/online_grpo_kling_video_reward")
+    cfg.reward.kwargs.kling_video_reward.reward_name = ""
 
     with pytest.raises(ValueError, match="reward_name"):
         validate_training_config(cfg)
 
 
 def test_wan_video_reward_production_rejects_extra_loader_fields() -> None:
-    cfg = load_config("experiment/diffusion/wan_2_1/online_grpo_video_reward")
-    cfg.reward.kwargs.video_reward.worker_config.import_path = "fake:thing"
+    cfg = load_config("experiment/diffusion/wan_2_1/online_grpo_kling_video_reward")
+    cfg.reward.kwargs.kling_video_reward.worker_config.import_path = "fake:thing"
 
     with pytest.raises(ValueError, match="remove extra loader fields"):
         validate_training_config(cfg)
 
-    cfg = load_config("experiment/diffusion/wan_2_1/online_grpo_video_reward")
-    cfg.reward.kwargs.video_reward.worker_config.model_factory = "fake:factory"
+    cfg = load_config("experiment/diffusion/wan_2_1/online_grpo_kling_video_reward")
+    cfg.reward.kwargs.kling_video_reward.worker_config.model_factory = "fake:factory"
 
     with pytest.raises(ValueError, match="remove extra loader fields"):
         validate_training_config(cfg)
@@ -553,10 +553,10 @@ def test_invalid_algorithm_kind_fails_fast() -> None:
 
 
 def test_reward_backbone_kwargs_are_required() -> None:
-    cfg = load_config("experiment/diffusion/cosmos_predict2/online_grpo_video_reward")
-    del cfg.reward.kwargs.video_reward["score_key"]
+    cfg = load_config("experiment/diffusion/cosmos_predict2/online_grpo_kling_video_reward")
+    del cfg.reward.kwargs.kling_video_reward["score_key"]
 
-    with pytest.raises(ValueError, match="video_reward"):
+    with pytest.raises(ValueError, match="kling_video_reward"):
         validate_reward_config(cfg)
 
 

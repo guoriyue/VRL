@@ -8,8 +8,12 @@ from vrl.rewards.types import RewardRollout, RewardTrajectory, RewardTrajectoryS
 
 
 def __getattr__(name: str) -> Any:
+    if name == "KlingVideoReward":
+        from vrl.rewards.functions.kling_video_reward import KlingVideoReward
+
+        return KlingVideoReward
     if name == "VideoReward":
-        from vrl.rewards.functions.video_reward import VideoReward
+        from vrl.rewards.functions.kling_video_reward import VideoReward
 
         return VideoReward
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
@@ -20,6 +24,7 @@ __all__ = [
     "RewardRollout",
     "RewardTrajectory",
     "RewardTrajectoryStep",
+    "KlingVideoReward",
     "VideoReward",
     "get_reward",
     "register_reward",

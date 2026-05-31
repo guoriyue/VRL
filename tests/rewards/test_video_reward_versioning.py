@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 import torch
 
-from vrl.rewards.functions.video_reward import VideoReward
+from vrl.rewards.functions.kling_video_reward import KlingVideoReward
 from vrl.rewards.inference import RewardInferenceResult
 from vrl.rewards.types import RewardRollout, RewardTrajectory
 
@@ -57,7 +57,7 @@ def _rollout() -> RewardRollout:
 
 @pytest.mark.asyncio
 async def test_video_reward_debug_records_versions_and_latency(tmp_path: Path) -> None:
-    reward = VideoReward(
+    reward = KlingVideoReward(
         inference_runtime="ray",
         reward_name="KlingTeam/VideoReward@main",
         score_key="overall_reward",
@@ -73,13 +73,13 @@ async def test_video_reward_debug_records_versions_and_latency(tmp_path: Path) -
     assert reward.last_results[0].reward_model_version == "reward-v2"
     request_rows = [
         json.loads(line)
-        for line in (tmp_path / "reward_debug" / "video_reward_requests.jsonl")
+        for line in (tmp_path / "reward_debug" / "kling_video_reward_requests.jsonl")
         .read_text()
         .splitlines()
     ]
     result_rows = [
         json.loads(line)
-        for line in (tmp_path / "reward_debug" / "video_reward_results.jsonl")
+        for line in (tmp_path / "reward_debug" / "kling_video_reward_results.jsonl")
         .read_text()
         .splitlines()
     ]
@@ -99,7 +99,7 @@ async def test_video_reward_debug_records_versions_and_latency(tmp_path: Path) -
 
 def test_video_reward_rejects_async_scheduling_until_supported(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="scheduling"):
-        VideoReward(
+        KlingVideoReward(
             inference_runtime="ray",
             reward_name="KlingTeam/VideoReward@main",
             score_key="overall_reward",

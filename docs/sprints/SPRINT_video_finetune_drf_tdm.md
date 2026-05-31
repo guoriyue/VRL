@@ -27,8 +27,8 @@ vrl 已经有 60% 基础设施(Cosmos V2W model + DiffusionNFT @ 10 step + Kling
 | 资源 | 路径 | 备注 |
 |---|---|---|
 | Cosmos Predict2/2.5 V2W model | `vrl/models/diffusion/cosmos/predict2{,_5}/model.py` | reference_image + init_latents + cond/uncond masks 全有 |
-| V2W recipes | `configs/experiment/diffusion/cosmos_predict2{,_5}/online_{grpo,nft}_*.yaml` | 3 个:reference / video_reward / NFT |
-| Video reward | `vrl/rewards/functions/video_reward.py` + `models/kling_video_reward.py` | Ray actor pool,score_keys: `overall_reward` / `visual_quality` / `motion_quality` / `text_alignment` |
+| V2W recipes | `configs/experiment/diffusion/cosmos_predict2{,_5}/online_{grpo,nft}_*.yaml` | 3 个:reference / Kling VideoReward / NFT |
+| Kling VideoReward | `vrl/rewards/functions/kling_video_reward.py` + `models/kling_video_reward.py` | Ray actor pool,score_keys: `overall_reward` / `visual_quality` / `motion_quality` / `text_alignment` |
 | Algorithms | `vrl/algorithms/diffusion_nft.py` + `algorithms/grpo/continuous.py` | DiffusionNFT 支持 video-only objective(无需 evaluator log-prob) |
 | Video batch | `RolloutBatch.videos: [B, C, T, H, W]` (`vrl/rollouts/batch/`) | tensor stacking + 清理已通 |
 | Dataset | `datasets/video_world/` + `vrl/scripts/data/video_world.py` | LeRobot v2.1 已跑通 |
@@ -52,7 +52,7 @@ vrl 已经有 60% 基础设施(Cosmos V2W model + DiffusionNFT @ 10 step + Kling
 
 ### Stage A — TDM-R1 lite(~3-5 天,先做这个)
 - 加 `configs/sampling/denoise/4_step_cfg_4_5.yaml`(few-step preset)。
-- 复制 `online_nft_video_reward.yaml` → `online_nft_video_reward_4step.yaml`,改 `denoise=4_step_cfg_4_5`。
+- 复制 `online_nft_kling_video_reward.yaml` → `online_nft_kling_video_reward_4step.yaml`,改 `denoise=4_step_cfg_4_5`。
 - 跑 short run,看 video quality + reward。崩了再加 LCM distillation 阶段。
 - **不写新 algorithm**:DiffusionNFT 已经接 non-diff reward,只是 step 数变。
 
@@ -76,13 +76,13 @@ vrl 已经有 60% 基础设施(Cosmos V2W model + DiffusionNFT @ 10 step + Kling
 **复用(不重写)**:
 - `vrl/models/diffusion/cosmos/predict2{,_5}/{model,runtime,runner}.py`
 - `vrl/algorithms/diffusion_nft.py` + `algorithms/grpo/continuous.py`
-- `vrl/rewards/functions/video_reward.py` + `models/kling_video_reward.py`
+- `vrl/rewards/functions/kling_video_reward.py` + `models/kling_video_reward.py`
 - `vrl/rollouts/collector/{core,batch_builder,artifacts}.py`
-- `configs/experiment/diffusion/cosmos_predict2_5/online_nft_video_reward.yaml`
+- `configs/experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward.yaml`
 
 **新增 / 改**:
 - `configs/sampling/denoise/4_step_cfg_4_5.yaml`(Stage A)
-- `configs/experiment/.../online_nft_video_reward_4step.yaml`(Stage A)
+- `configs/experiment/.../online_nft_kling_video_reward_4step.yaml`(Stage A)
 - `vrl/rewards/functions/claude_video_judge.py`(Stage B)
 - `vrl/rewards/models/vlm_judge.py`(Stage C)
 - `vrl/algorithms/diffusion_drf.py`(Stage C)

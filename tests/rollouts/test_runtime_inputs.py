@@ -25,7 +25,7 @@ from vrl.rollouts.families import (
         ("diffusion/sd3_5/online_grpo_ocr", "sd3_5", "t2i", DiffusionChunkGatherer),
         ("diffusion/wan_2_1/online_grpo_ocr", "wan_2_1", "t2v", DiffusionChunkGatherer),
         (
-            "diffusion/wan_2_1/online_grpo_video_reward",
+            "diffusion/wan_2_1/online_grpo_kling_video_reward",
             "wan_2_1",
             "t2v",
             DiffusionChunkGatherer,
@@ -37,7 +37,7 @@ from vrl.rollouts.families import (
             DiffusionChunkGatherer,
         ),
         (
-            "diffusion/cosmos_predict2/online_grpo_video_reward",
+            "diffusion/cosmos_predict2/online_grpo_kling_video_reward",
             "cosmos-predict2",
             "v2w",
             DiffusionChunkGatherer,
@@ -136,7 +136,7 @@ def test_diffusion_launch_contract_uses_worker_primitive_device_and_dtype() -> N
 
 def test_cosmos_runtime_inputs_include_reference_image_from_cfg() -> None:
     cfg = load_config(
-        "experiment/diffusion/cosmos_predict2/online_grpo_video_reward",
+        "experiment/diffusion/cosmos_predict2/online_grpo_kling_video_reward",
         overrides=[
             "distributed.backend=ray",
             "distributed.resources.visible_devices=[]",

@@ -1,4 +1,4 @@
-# Video-level reward for world-model RL.
+# Kling VideoReward for world-model RL.
 distributed:
   resources:
     reward:
@@ -19,9 +19,9 @@ distributed:
 
 reward:
   components:
-    video_reward: 1.0
+    kling_video_reward: 1.0
   kwargs:
-    video_reward:
+    kling_video_reward:
       inference_runtime: ray
       reward_name: KlingTeam/VideoReward@main
       score_key: overall_reward

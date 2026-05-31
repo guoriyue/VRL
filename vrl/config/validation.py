@@ -164,8 +164,8 @@ def validate_data_config(cfg: DictConfig) -> None:
     raise AssertionError(f"unreachable: loader={loader}")  # pragma: no cover
 
 
-def validate_production_video_reward_config(cfg: DictConfig) -> None:
-    """Check file existence for production video reward paths.
+def validate_production_kling_video_reward_config(cfg: DictConfig) -> None:
+    """Check file existence for production Kling VideoReward paths.
 
     Structural rules (media_type, artifact_format, reward_name, worker_config
     forbidden fields, data.task_type) are handled by the typed schema inside
@@ -343,8 +343,14 @@ def _validate_image_to_video_source_report(
 def validate_training_config(cfg: DictConfig) -> None:
     """Validate unresolved mandatory values and cross-field contracts."""
     parse_config(cfg)
-    if bool(OmegaConf.select(cfg, "production.video_reward.enabled", default=False)):
-        validate_production_video_reward_config(cfg)
+    if bool(
+        OmegaConf.select(cfg, "production.kling_video_reward.enabled", default=False)
+        or OmegaConf.select(cfg, "production.video_reward.enabled", default=False)
+    ):
+        validate_production_kling_video_reward_config(cfg)
+
+
+validate_production_video_reward_config = validate_production_kling_video_reward_config
 
 
 __all__ = [
@@ -354,6 +360,7 @@ __all__ = [
     "require",
     "resolve_algorithm_kind",
     "validate_data_config",
+    "validate_production_kling_video_reward_config",
     "validate_production_video_reward_config",
     "validate_reward_config",
     "validate_training_config",

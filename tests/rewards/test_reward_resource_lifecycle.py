@@ -105,9 +105,9 @@ def test_reward_config_receives_resolved_resource_plan() -> None:
                 },
             },
             "reward": {
-                "components": {"video_reward": 1.0},
+                "components": {"kling_video_reward": 1.0},
                 "kwargs": {
-                    "video_reward": {
+                    "kling_video_reward": {
                         "inference_runtime": "ray",
                         "reward_name": "KlingTeam/VideoReward@main",
                         "score_key": "overall_reward",
@@ -126,9 +126,9 @@ def test_reward_config_receives_resolved_resource_plan() -> None:
         cfg,
         built={
             "reward": (
-                {"video_reward": 1.0},
+                {"kling_video_reward": 1.0},
                 {
-                    "video_reward": {
+                    "kling_video_reward": {
                         "inference_runtime": "ray",
                         "reward_name": "KlingTeam/VideoReward@main",
                         "score_key": "overall_reward",
@@ -144,8 +144,8 @@ def test_reward_config_receives_resolved_resource_plan() -> None:
         device="cpu",
     )
 
-    video_reward = reward_fn.rewards[0][2]
-    actor_runtime = video_reward._actor_runtime
+    kling_reward = reward_fn.rewards[0][2]
+    actor_runtime = kling_reward._actor_runtime
     assert actor_runtime.num_workers == 1
     assert actor_runtime.gpus_per_worker == 1.0
     assert actor_runtime.expected_gpu_ids == (0,)

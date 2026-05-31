@@ -211,10 +211,10 @@ def test_for_experiment_plan_flags_missing_manifest_with_command(tmp_path: Path)
 
 
 def test_for_experiment_resolves_real_wan_experiment(capsys) -> None:
-    populate.main(["for-experiment", "diffusion/wan_2_1/online_grpo_video_reward"])
+    populate.main(["for-experiment", "diffusion/wan_2_1/online_grpo_kling_video_reward"])
     out = json.loads(capsys.readouterr().out)
 
-    assert out["experiment"] == "diffusion/wan_2_1/online_grpo_video_reward"
+    assert out["experiment"] == "diffusion/wan_2_1/online_grpo_kling_video_reward"
     assert out["loader"] == "prompt_manifest"
     assert out["ready"] is True
     assert any(step["path"] == "datasets/videophy/train.txt" for step in out["steps"])

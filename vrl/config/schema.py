@@ -14,19 +14,18 @@ from omegaconf import DictConfig, OmegaConf
 from omegaconf.errors import MissingMandatoryValue
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-# ── Video reward kwargs model ─────────────────────────────────────────────────
+# ── Kling VideoReward kwargs model ────────────────────────────────────────────
 
 
-class VideoRewardKwargs(BaseModel):
-    """Validates non-production video reward kwargs.
+class KlingVideoRewardKwargs(BaseModel):
+    """Validates non-production Kling VideoReward kwargs.
 
-    Two scopes handled here (scope a from _validate_video_reward_kwargs):
+    Two scopes handled here:
       - removed top-level fields raise immediately with clear migration messages
       - inference_runtime and scheduling are checked unconditionally
 
-    Production-only checks (scope b from validate_production_video_reward_config)
-    live in RootConfig._validate_production_video_reward, gated on
-    production.video_reward.enabled.
+    Production-only checks live in RootConfig._validate_production_kling_video_reward,
+    gated on production.kling_video_reward.enabled.
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -48,11 +47,13 @@ class VideoRewardKwargs(BaseModel):
         # backend has a specific migration message pointing to inference_runtime
         if "backend" in data:
             raise ValueError(
-                "reward.kwargs.video_reward.backend is no longer supported; "
-                "use reward.kwargs.video_reward.inference_runtime=ray",
+                "reward.kwargs.kling_video_reward.backend is no longer supported; "
+                "use reward.kwargs.kling_video_reward.inference_runtime=ray",
             )
         if not isinstance(data.get("worker_config"), dict):
-            raise ValueError("reward.kwargs.video_reward.worker_config must be a mapping")
+            raise ValueError(
+                "reward.kwargs.kling_video_reward.worker_config must be a mapping"
+            )
         removed = sorted(
             k for k in ("enqueue_url", "fetch_url", "token", "poll_interval_s",
                         "max_wait_s", "stub_scale", "device")
@@ -60,22 +61,26 @@ class VideoRewardKwargs(BaseModel):
         )
         if removed:
             raise ValueError(
-                "reward.kwargs.video_reward no longer supports external reward endpoint fields: "
+                "reward.kwargs.kling_video_reward no longer supports external "
+                "reward endpoint fields: "
                 + ", ".join(removed),
             )
         return data
 
     @model_validator(mode="after")
-    def _validate_runtime_constraints(self) -> VideoRewardKwargs:
+    def _validate_runtime_constraints(self) -> KlingVideoRewardKwargs:
         if self.inference_runtime != "ray":
             raise ValueError(
-                "reward.kwargs.video_reward.inference_runtime must be 'ray'"
+                "reward.kwargs.kling_video_reward.inference_runtime must be 'ray'"
             )
         if self.scheduling != "sync":
             raise ValueError(
-                "reward.kwargs.video_reward.scheduling currently supports only 'sync'"
+                "reward.kwargs.kling_video_reward.scheduling currently supports only 'sync'"
             )
         return self
+
+
+VideoRewardKwargs = KlingVideoRewardKwargs
 
 
 # ── Reward section ────────────────────────────────────────────────────────────
@@ -108,16 +113,16 @@ class RewardConfig(BaseModel):
                 raise ValueError(f"reward.components.{name} must be >= 0, got {weight}")
             if weight == 0:
                 continue
-            # video_reward has non-trivial config constraints that scripts can't self-heal
-            if name == "video_reward":
-                sub = self.kwargs.get("video_reward")
+            # Kling VideoReward has constraints that scripts cannot self-heal.
+            if name in {"kling_video_reward", "video_reward"}:
+                sub = self.kwargs.get(name)
                 if not isinstance(sub, dict):
                     raise ValueError(
-                        "config missing required field: reward.kwargs.video_reward "
-                        "(component 'video_reward' has non-zero weight)",
+                        f"config missing required field: reward.kwargs.{name} "
+                        f"(component {name!r} has non-zero weight)",
                     )
                 try:
-                    VideoRewardKwargs.model_validate(sub)
+                    KlingVideoRewardKwargs.model_validate(sub)
                 except ValidationError as exc:
                     first = exc.errors(include_url=False)[0]
                     error_type = first["type"]
@@ -125,7 +130,7 @@ class RewardConfig(BaseModel):
                     loc = ".".join(str(p) for p in first["loc"])
                     if error_type == "missing":
                         raise ValueError(
-                            f"config missing required field: reward.kwargs.video_reward.{loc}"
+                            f"config missing required field: reward.kwargs.{name}.{loc}"
                         ) from exc
                     if msg.startswith("Value error, "):
                         msg = msg[len("Value error, "):]
@@ -264,17 +269,21 @@ class ModelConfig(BaseModel):
     family: str | None = None
 
 
-class ProductionVideoRewardConfig(BaseModel):
+class ProductionKlingVideoRewardConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     enabled: bool = False
     report_path: str | None = None
 
 
+ProductionVideoRewardConfig = ProductionKlingVideoRewardConfig
+
+
 class ProductionConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    video_reward: ProductionVideoRewardConfig | None = None
+    kling_video_reward: ProductionKlingVideoRewardConfig | None = None
+    video_reward: ProductionKlingVideoRewardConfig | None = None
 
 
 # ── Root config ───────────────────────────────────────────────────────────────
@@ -341,30 +350,43 @@ class RootConfig(BaseModel):
                     "sampling.r1.final_image_policy must match rollout.final_image_policy"
                 )
 
-        # production video reward structural rules (path existence stays separate, see D4)
+        # production Kling VideoReward structural rules (path existence stays separate)
         prod = self.production
-        if prod and prod.video_reward and prod.video_reward.enabled:
-            self._validate_production_video_reward()
+        production_enabled = bool(
+            prod
+            and (
+                (prod.kling_video_reward and prod.kling_video_reward.enabled)
+                or (prod.video_reward and prod.video_reward.enabled)
+            )
+        )
+        if production_enabled:
+            self._validate_production_kling_video_reward()
 
         return self
 
-    def _validate_production_video_reward(self) -> None:
+    def _validate_production_kling_video_reward(self) -> None:
         vr_kwargs: dict[str, Any] = {}
         if self.reward and self.reward.kwargs:
-            vr_kwargs = self.reward.kwargs.get("video_reward") or {}
+            vr_kwargs = (
+                self.reward.kwargs.get("kling_video_reward")
+                or self.reward.kwargs.get("video_reward")
+                or {}
+            )
 
         media_type = str(vr_kwargs.get("media_type", ""))
         if media_type != "video":
             raise ValueError(
-                "production.video_reward requires reward.kwargs.video_reward.media_type=video"
+                "production.kling_video_reward requires "
+                "reward.kwargs.kling_video_reward.media_type=video"
             )
         artifact_format = str(vr_kwargs.get("artifact_format", ""))
         if artifact_format != "mp4":
-            raise ValueError("production.video_reward requires artifact_format=mp4")
+            raise ValueError("production.kling_video_reward requires artifact_format=mp4")
         reward_name = str(vr_kwargs.get("reward_name", "")).strip()
         if not reward_name:
             raise ValueError(
-                "production.video_reward requires reward.kwargs.video_reward.reward_name"
+                "production.kling_video_reward requires "
+                "reward.kwargs.kling_video_reward.reward_name"
             )
 
         worker_config = vr_kwargs.get("worker_config") or {}
@@ -375,15 +397,16 @@ class RootConfig(BaseModel):
         )
         if forbidden:
             raise ValueError(
-                "production.video_reward worker_config should name the reward model directly; "
+                "production.kling_video_reward worker_config should name the reward "
+                "model directly; "
                 f"remove extra loader fields: {', '.join(forbidden)}",
             )
 
         task_type = str((self.data.task_type or "") if self.data else "")
         if task_type not in {"text_to_video", "image_to_video", "video2world"}:
             raise ValueError(
-                "production.video_reward requires data.task_type=text_to_video, "
-                "image_to_video, or video2world"
+                "production.kling_video_reward requires "
+                "data.task_type=text_to_video, image_to_video, or video2world"
             )
 
 
@@ -434,8 +457,10 @@ def parse_config(cfg: DictConfig) -> RootConfig:
 __all__ = [
     "AlgorithmConfig",
     "DataConfig",
+    "KlingVideoRewardKwargs",
     "ModelConfig",
     "ProductionConfig",
+    "ProductionKlingVideoRewardConfig",
     "ProductionVideoRewardConfig",
     "RewardConfig",
     "RolloutConfig",

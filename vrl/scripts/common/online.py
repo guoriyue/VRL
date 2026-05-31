@@ -278,7 +278,10 @@ async def run_online_recipe(
 def _preflight_production_video_reward(cfg: DictConfig) -> None:
     """Fail fast on the driver if the production reward backend is unimportable."""
 
-    if not bool(OmegaConf.select(cfg, "production.video_reward.enabled", default=False)):
+    if not bool(
+        OmegaConf.select(cfg, "production.kling_video_reward.enabled", default=False)
+        or OmegaConf.select(cfg, "production.video_reward.enabled", default=False)
+    ):
         return
     from vrl.rewards.models.kling_video_reward import preflight_kling_video_reward_backend
 
@@ -286,7 +289,7 @@ def _preflight_production_video_reward(cfg: DictConfig) -> None:
         preflight_kling_video_reward_backend()
     except Exception as exc:
         raise RuntimeError(
-            "production.video_reward requires the repo-owned Kling VideoReward "
+            "production.kling_video_reward requires the repo-owned Kling VideoReward "
             "inference backend under vrl/rewards/models/kling_video_reward.py.",
         ) from exc
 

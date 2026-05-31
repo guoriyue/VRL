@@ -106,10 +106,18 @@ def _with_resolved_reward_runtime_kwargs(
     reward_weights: dict[str, float],
     reward_kwargs: dict[str, dict],
 ) -> dict[str, dict]:
-    if float(reward_weights.get("video_reward", 0.0)) <= 0:
+    reward_key = next(
+        (
+            key
+            for key in ("kling_video_reward", "video_reward")
+            if float(reward_weights.get(key, 0.0)) > 0
+        ),
+        "",
+    )
+    if not reward_key:
         return reward_kwargs
 
-    video_kwargs = dict(reward_kwargs.get("video_reward", {}))
+    video_kwargs = dict(reward_kwargs.get(reward_key, {}))
     if str(video_kwargs.get("inference_runtime", "")) != "ray":
         return reward_kwargs
 
@@ -119,7 +127,7 @@ def _with_resolved_reward_runtime_kwargs(
     merged.update(resolved_runtime)
 
     out = dict(reward_kwargs)
-    out["video_reward"] = merged
+    out[reward_key] = merged
     return out
 
 

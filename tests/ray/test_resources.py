@@ -18,7 +18,7 @@ def _cfg(
     rollout_release_after_collect: bool = False,
     rollout_release_before_reward_model: bool = False,
     reward_release_after_score: bool = False,
-    video_reward: bool = False,
+    kling_video_reward: bool = False,
 ) -> object:
     data = {
         "distributed": {
@@ -31,10 +31,10 @@ def _cfg(
             "reward": {"release_after_score": reward_release_after_score},
         },
     }
-    if video_reward:
+    if kling_video_reward:
         data["reward"] = {
-            "components": {"video_reward": 1.0},
-            "kwargs": {"video_reward": {"inference_runtime": "ray"}},
+            "components": {"kling_video_reward": 1.0},
+            "kwargs": {"kling_video_reward": {"inference_runtime": "ray"}},
         }
     return OmegaConf.create(
         data,
@@ -347,7 +347,7 @@ def test_ray_video_reward_requires_reward_gpu_budget() -> None:
                     "trainer": {"devices": [0]},
                     "rollout": {"devices": [1], "gpus_per_worker": 1},
                 },
-                video_reward=True,
+                kling_video_reward=True,
             ),
         )
 

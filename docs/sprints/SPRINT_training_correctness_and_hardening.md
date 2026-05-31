@@ -35,7 +35,7 @@ std = np.std(self.stats[prompt], axis=0, keepdims=True) + 1e-4
 `vrl/algorithms/diffusion_nft.py`（305 行）的 `compute_loss` 走 `uses_evaluator=False` 分支（`vrl/trainers/online/trainer.py:549`），与所有已测的 GRPO 是**完全不同的代码路径**。loss 涉及 previous-policy adapter forward 和 reference forward，符号错或归一化错会**反向训练且无人发现**。三个生产配置在用它：
 
 ```text
-configs/experiment/diffusion/cosmos_predict2_5/online_nft_video_reward.yaml
+configs/experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward.yaml
 outputs/wan_1_3b_nft_4step/...
 configs/.../recipe 中的 diffusion_nft.yaml
 ```

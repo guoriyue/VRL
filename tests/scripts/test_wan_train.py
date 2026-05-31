@@ -18,7 +18,7 @@ def test_production_preflight_fails_when_inference_code_missing(
     )
     cfg = OmegaConf.create(
         {
-            "production": {"video_reward": {"enabled": True}},
+            "production": {"kling_video_reward": {"enabled": True}},
         },
     )
 
@@ -36,6 +36,6 @@ def test_production_preflight_skipped_when_disabled(
         "vrl.rewards.models.kling_video_reward.preflight_kling_video_reward_backend",
         _raise,
     )
-    cfg = OmegaConf.create({"production": {"video_reward": {"enabled": False}}})
+    cfg = OmegaConf.create({"production": {"kling_video_reward": {"enabled": False}}})
 
     _preflight_production_video_reward(cfg)

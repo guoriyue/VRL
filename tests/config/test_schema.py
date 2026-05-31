@@ -9,7 +9,7 @@ from vrl.config.schema import (
     AlgorithmConfig,
     DataConfig,
     RewardConfig,
-    VideoRewardKwargs,
+    KlingVideoRewardKwargs,
     parse_config,
 )
 
@@ -31,7 +31,7 @@ def _minimal_grpo_cfg(**overrides):
     return OmegaConf.create(base)
 
 
-def _video_reward_kwargs(**overrides) -> dict:
+def _kling_video_reward_kwargs(**overrides) -> dict:
     base = {
         "inference_runtime": "ray",
         "reward_name": "org/model@main",
@@ -168,9 +168,9 @@ def test_unknown_sampler_type_raises() -> None:
 
 def test_zero_weight_component_skips_video_reward_check() -> None:
     cfg = RewardConfig.model_validate(
-        {"components": {"video_reward": 0.0}, "kwargs": {}}
+        {"components": {"kling_video_reward": 0.0}, "kwargs": {}}
     )
-    assert cfg.components["video_reward"] == 0.0
+    assert cfg.components["kling_video_reward"] == 0.0
 
 
 def test_negative_reward_weight_raises() -> None:
@@ -188,12 +188,12 @@ def test_non_numeric_reward_weight_raises() -> None:
 
 
 
-# ── VideoRewardKwargs: removed field rejection ────────────────────────────────
+# ── KlingVideoRewardKwargs: removed field rejection ────────────────────────────────
 
 
 def test_video_reward_backend_field_raises_specific_message() -> None:
     with pytest.raises(ValueError, match="backend is no longer supported"):
-        VideoRewardKwargs.model_validate({**_video_reward_kwargs(), "backend": "http"})
+        KlingVideoRewardKwargs.model_validate({**_kling_video_reward_kwargs(), "backend": "http"})
 
 
 @pytest.mark.parametrize(
@@ -202,32 +202,32 @@ def test_video_reward_backend_field_raises_specific_message() -> None:
 )
 def test_video_reward_removed_endpoint_fields_raise(removed_field: str) -> None:
     with pytest.raises(ValueError, match="no longer supports external reward endpoint fields"):
-        VideoRewardKwargs.model_validate({**_video_reward_kwargs(), removed_field: "value"})
+        KlingVideoRewardKwargs.model_validate({**_kling_video_reward_kwargs(), removed_field: "value"})
 
 
 def test_video_reward_non_ray_inference_runtime_raises() -> None:
     with pytest.raises(ValueError, match="inference_runtime must be 'ray'"):
-        VideoRewardKwargs.model_validate(
-            {**_video_reward_kwargs(), "inference_runtime": "local"}
+        KlingVideoRewardKwargs.model_validate(
+            {**_kling_video_reward_kwargs(), "inference_runtime": "local"}
         )
 
 
 def test_video_reward_non_sync_scheduling_raises() -> None:
     with pytest.raises(ValueError, match="scheduling currently supports only 'sync'"):
-        VideoRewardKwargs.model_validate(
-            {**_video_reward_kwargs(), "scheduling": "async"}
+        KlingVideoRewardKwargs.model_validate(
+            {**_kling_video_reward_kwargs(), "scheduling": "async"}
         )
 
 
 def test_video_reward_valid_kwargs_accepted() -> None:
-    vr = VideoRewardKwargs.model_validate(_video_reward_kwargs())
+    vr = KlingVideoRewardKwargs.model_validate(_kling_video_reward_kwargs())
     assert vr.inference_runtime == "ray"
     assert vr.scheduling == "sync"
 
 
 def test_video_reward_extra_fields_are_ignored() -> None:
-    vr = VideoRewardKwargs.model_validate(
-        {**_video_reward_kwargs(), "artifact_dir": "/tmp/out", "timeout_s": 60.0}
+    vr = KlingVideoRewardKwargs.model_validate(
+        {**_kling_video_reward_kwargs(), "artifact_dir": "/tmp/out", "timeout_s": 60.0}
     )
     assert vr.reward_name == "org/model@main"
 
@@ -317,9 +317,9 @@ def test_production_video_reward_structural_rules() -> None:
             },
             "rollout": {"sde": {"type": "cps"}},
             "reward": {
-                "components": {"video_reward": 1.0},
+                "components": {"kling_video_reward": 1.0},
                 "kwargs": {
-                    "video_reward": {
+                    "kling_video_reward": {
                         "inference_runtime": "ray",
                         "reward_name": "org/model@main",
                         "score_key": "overall",
@@ -329,11 +329,11 @@ def test_production_video_reward_structural_rules() -> None:
                     }
                 },
             },
-            "production": {"video_reward": {"enabled": True}},
+            "production": {"kling_video_reward": {"enabled": True}},
         }
     )
     parsed = parse_config(cfg)
-    assert parsed.production.video_reward.enabled is True
+    assert parsed.production.kling_video_reward.enabled is True
 
 
 def test_production_video_reward_accepts_image_to_video_task_type() -> None:
@@ -356,9 +356,9 @@ def test_production_video_reward_accepts_image_to_video_task_type() -> None:
             },
             "rollout": {"sde": {"type": "cps"}},
             "reward": {
-                "components": {"video_reward": 1.0},
+                "components": {"kling_video_reward": 1.0},
                 "kwargs": {
-                    "video_reward": {
+                    "kling_video_reward": {
                         "inference_runtime": "ray",
                         "reward_name": "org/model@main",
                         "score_key": "overall",
@@ -368,7 +368,7 @@ def test_production_video_reward_accepts_image_to_video_task_type() -> None:
                     }
                 },
             },
-            "production": {"video_reward": {"enabled": True}},
+            "production": {"kling_video_reward": {"enabled": True}},
         },
     )
 
@@ -390,9 +390,9 @@ def test_production_video_reward_missing_reward_name_raises() -> None:
             },
             "rollout": {"sde": {"type": "cps"}},
             "reward": {
-                "components": {"video_reward": 1.0},
+                "components": {"kling_video_reward": 1.0},
                 "kwargs": {
-                    "video_reward": {
+                    "kling_video_reward": {
                         "inference_runtime": "ray",
                         "reward_name": "",  # empty
                         "score_key": "overall",
@@ -402,7 +402,7 @@ def test_production_video_reward_missing_reward_name_raises() -> None:
                     }
                 },
             },
-            "production": {"video_reward": {"enabled": True}},
+            "production": {"kling_video_reward": {"enabled": True}},
         }
     )
     with pytest.raises(ValueError, match="reward_name"):
@@ -422,9 +422,9 @@ def test_production_video_reward_forbidden_worker_key_raises() -> None:
             },
             "rollout": {"sde": {"type": "cps"}},
             "reward": {
-                "components": {"video_reward": 1.0},
+                "components": {"kling_video_reward": 1.0},
                 "kwargs": {
-                    "video_reward": {
+                    "kling_video_reward": {
                         "inference_runtime": "ray",
                         "reward_name": "org/model@main",
                         "score_key": "overall",
@@ -434,7 +434,7 @@ def test_production_video_reward_forbidden_worker_key_raises() -> None:
                     }
                 },
             },
-            "production": {"video_reward": {"enabled": True}},
+            "production": {"kling_video_reward": {"enabled": True}},
         }
     )
     with pytest.raises(ValueError, match="remove extra loader fields"):

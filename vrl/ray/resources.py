@@ -165,7 +165,7 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
     reward_num_gpus = len(reward_devices)
     if _uses_ray_video_reward(cfg) and reward_gpus_per_worker > 0 and reward_num_gpus == 0:
         raise ValueError(
-            "reward.kwargs.video_reward.inference_runtime=ray requires "
+            "reward.kwargs.kling_video_reward.inference_runtime=ray requires "
             "distributed.resources.reward.num_gpus > 0",
         )
     reward_num_workers = _resolve_role_num_workers(
@@ -841,15 +841,17 @@ def _parse_num_workers(
 def _uses_ray_video_reward(cfg: Any) -> bool:
     reward = _cfg_get(cfg, "reward", {})
     components = _cfg_get(reward, "components", {})
-    try:
-        video_weight = float(_cfg_get(components, "video_reward", 0.0))
-    except (TypeError, ValueError):
-        video_weight = 0.0
-    if video_weight <= 0:
-        return False
     kwargs = _cfg_get(reward, "kwargs", {})
-    video_kwargs = _cfg_get(kwargs, "video_reward", {})
-    return str(_cfg_get(video_kwargs, "inference_runtime", "")) == "ray"
+    for reward_key in ("kling_video_reward", "video_reward"):
+        try:
+            video_weight = float(_cfg_get(components, reward_key, 0.0))
+        except (TypeError, ValueError):
+            video_weight = 0.0
+        if video_weight <= 0:
+            continue
+        video_kwargs = _cfg_get(kwargs, reward_key, {})
+        return str(_cfg_get(video_kwargs, "inference_runtime", "")) == "ray"
+    return False
 
 
 def _dedupe_ints(values: list[int], *, field_name: str) -> list[int]:

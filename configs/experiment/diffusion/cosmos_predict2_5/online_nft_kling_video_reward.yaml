@@ -6,7 +6,7 @@ defaults:
   - /model/diffusion/cosmos/predict2_5_2b
   - /sampling/video/512p_93f
   - /sampling/denoise/10_step_no_cfg
-  - /reward/video_reward
+  - /reward/kling_video_reward
   - /dataset/videophy
 
 actor:
@@ -38,11 +38,11 @@ trainer:
 
 reward:
   kwargs:
-    video_reward:
+    kling_video_reward:
       artifact_format: mp4
 
 production:
-  video_reward:
+  kling_video_reward:
     enabled: true
     report_path: outputs/cosmos_world_model_production_report.md
 

@@ -10,7 +10,7 @@ import torch
 from omegaconf import OmegaConf
 
 from vrl.config.validation import validate_reward_config
-from vrl.rewards.functions.video_reward import VideoReward
+from vrl.rewards.functions.kling_video_reward import KlingVideoReward
 from vrl.rewards.inference import RewardInferenceResult
 from vrl.rewards.types import RewardRollout, RewardTrajectory
 
@@ -79,8 +79,8 @@ def _video_reward_config(**video_kwargs: object):
     return OmegaConf.create(
         {
             "reward": {
-                "components": {"video_reward": 1.0},
-                "kwargs": {"video_reward": kwargs},
+                "components": {"kling_video_reward": 1.0},
+                "kwargs": {"kling_video_reward": kwargs},
             },
         },
     )
@@ -91,7 +91,7 @@ async def test_video_reward_materializes_artifacts_and_returns_runtime_scores(
     tmp_path: Path,
 ) -> None:
     actor_runtime = _FakeActorRuntime()
-    reward = VideoReward(
+    reward = KlingVideoReward(
         inference_runtime="ray",
         reward_name="dance_grpo",
         score_key="overall_reward",
@@ -110,14 +110,14 @@ async def test_video_reward_materializes_artifacts_and_returns_runtime_scores(
     assert request.artifacts[0].policy_version == 3
     assert Path(request.artifacts[0].path).exists()
     assert (tmp_path / "artifacts" / "manifest.jsonl").exists()
-    assert (tmp_path / "debug" / "video_reward_requests.jsonl").exists()
-    assert (tmp_path / "debug" / "video_reward_results.jsonl").exists()
+    assert (tmp_path / "debug" / "kling_video_reward_requests.jsonl").exists()
+    assert (tmp_path / "debug" / "kling_video_reward_results.jsonl").exists()
     assert asdict(reward.last_results[0])["reward_model_version"] == "fake-test"
 
 
 @pytest.mark.asyncio
 async def test_video_reward_rejects_missing_runtime_results(tmp_path: Path) -> None:
-    reward = VideoReward(
+    reward = KlingVideoReward(
         inference_runtime="ray",
         reward_name="dance_grpo",
         score_key="overall_reward",
@@ -131,7 +131,7 @@ async def test_video_reward_rejects_missing_runtime_results(tmp_path: Path) -> N
 
 def test_video_reward_rejects_removed_backend_field(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="backend is no longer supported"):
-        VideoReward(
+        KlingVideoReward(
             backend="removed",
             inference_runtime="ray",
             reward_name="dance_grpo",
@@ -143,7 +143,7 @@ def test_video_reward_rejects_removed_backend_field(tmp_path: Path) -> None:
 
 def test_video_reward_rejects_non_ray_runtime(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="inference_runtime must be 'ray'"):
-        VideoReward(
+        KlingVideoReward(
             inference_runtime="local",
             reward_name="dance_grpo",
             score_key="overall_reward",
@@ -155,7 +155,7 @@ def test_video_reward_rejects_non_ray_runtime(tmp_path: Path) -> None:
 def test_video_reward_config_rejects_removed_backend_field() -> None:
     cfg = _video_reward_config(backend="removed")
 
-    with pytest.raises(ValueError, match=r"video_reward\.backend is no longer supported"):
+    with pytest.raises(ValueError, match=r"kling_video_reward\.backend is no longer supported"):
         validate_reward_config(cfg)
 
 
@@ -172,7 +172,7 @@ def test_video_reward_config_accepts_ray_runtime() -> None:
 
 def test_video_reward_config_rejects_missing_worker_config() -> None:
     cfg = _video_reward_config()
-    del cfg.reward.kwargs.video_reward["worker_config"]
+    del cfg.reward.kwargs.kling_video_reward["worker_config"]
 
     with pytest.raises(ValueError, match="worker_config must be a mapping"):
         validate_reward_config(cfg)

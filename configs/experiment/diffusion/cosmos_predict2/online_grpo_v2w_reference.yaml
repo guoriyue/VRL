@@ -5,7 +5,7 @@ defaults:
   - /model/diffusion/cosmos/predict2_2b
   - /sampling/video/704p_93f
   - /sampling/denoise/35_step_cfg_7
-  - /reward/video_reward
+  - /reward/kling_video_reward
   - /dataset/video_world_v2w
 
 actor:
@@ -30,13 +30,13 @@ cosmos:
 
 trainer:
   entrypoint: vrl.scripts.diffusion.cosmos.train:train_cosmos_predict2_grpo
-  output_dir: outputs/cosmos_predict2_v2w_video_reward
+  output_dir: outputs/cosmos_predict2_v2w_kling_video_reward
   save_freq: 20
   log_freq: 1
 
 reward:
   kwargs:
-    video_reward:
+    kling_video_reward:
       artifact_format: mp4
 
 eval:

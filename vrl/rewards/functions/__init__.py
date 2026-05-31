@@ -8,8 +8,12 @@ from vrl.rewards.functions.registry import MultiReward, get_reward, register_rew
 
 
 def __getattr__(name: str) -> Any:
+    if name == "KlingVideoReward":
+        from vrl.rewards.functions.kling_video_reward import KlingVideoReward
+
+        return KlingVideoReward
     if name == "VideoReward":
-        from vrl.rewards.functions.video_reward import VideoReward
+        from vrl.rewards.functions.kling_video_reward import VideoReward
 
         return VideoReward
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
@@ -17,6 +21,7 @@ def __getattr__(name: str) -> Any:
 
 __all__ = [
     "MultiReward",
+    "KlingVideoReward",
     "VideoReward",
     "get_reward",
     "register_reward",
