@@ -47,14 +47,30 @@
 - ALWAYS question module-level ALL_CAPS hardcoded data and thin separated functions/files when reviewing or editing code.
 - Keep ALL_CAPS constants only when they represent a real boundary: schema keys, environment variable names, checkpoint/file names, model architecture dimensions, protocol names, test fixture constants, or a deliberately isolated taxonomy/config table.
 - If ALL_CAPS data is a large business vocabulary, prompt template, backend table, or domain taxonomy mixed into workflow code, prefer moving it to a clearly named module or config asset.
+- Do NOT hand-maintain a hardcoded ALL_CAPS constant that merely duplicates a typed structure. Derive validation sets (allowed keys, valid values, field-name lists) from their source of truth — e.g. `frozenset(f.name for f in fields(Policy))` instead of a hand-written `_ALLOWED_KEYS = {...}`. A duplicated constant silently rots the moment the source type gains a field, rejecting valid input as "unknown". The typed structure is the single source of truth; the constant should disappear into a derivation.
 - Keep thin functions/files only when they provide a protocol/interface boundary, public API facade, lazy import boundary, framework adapter, test fake/fixture, cross-family consistency, or a shared abstraction that removes real complexity.
 - Do not flatten or data-ize thin functions merely to save a few lines. Preserve uniform cross-family shapes when that consistency improves grepability, debugging, and readability.
 - When proposing cleanup, explicitly list what should change, what should stay unchanged, why each thin function or ALL_CAPS constant is necessary or not, and non-goals where consistency is more valuable than LOC reduction.
+
+### Long-term Assets vs One-shot Validation
+
+- Distinguish **one-shot validation artifacts** (KILL-RISK gates, feasibility spikes, smoke probes, scratch datasets, intermediate manifests, throwaway logs) from **long-term assets** (production tools, configs, dataset generators, tests, model wrappers, sprint docs, entrypoints). Both deliver value, but follow different lifecycles.
+- One-shot artifacts: name them clearly so they are recognizable (`*_smoke`, `*_spike`, `*_probe`, `_scratch_*`), keep them outside the import graph of long-term code, and delete them once the question they answered is recorded elsewhere (sprint doc, decision note, commit message). Their value is the answer they produced, not their continued existence.
+- Long-term assets: live in canonical paths (`vrl/scripts/eval/`, `configs/`, `tests/`, `docs/sprints/`), are referenced by other code or documentation, and survive routine cleanup passes. If a script is reusable for future verification or onboarding, it is a long-term asset — keep it.
+- Cleanup scope rule: when deleting one-shot artifacts, extend cleanup to **same source + same lifecycle** (the script *and* the outputs/datasets it produced), to prevent orphans. Do NOT extend cleanup to unrelated historical artifacts from other sprints or contributors — those belong to their own owners and lifecycles.
+- Before deleting non-trivial artifacts: enumerate **what will be removed vs what will be kept**, grep the import graph to confirm no long-term asset references the targets, then act. After acting, rerun the verification suite (pytest, build, config-resolve) to confirm zero regression.
+- When deletion removes a path referenced by a long-term config/test, repoint the reference to the canonical intended location (and document the regeneration path in a comment), instead of either leaving a dangling pointer or deleting the long-term asset to "match" the missing data.
 
 ### Code Comments
 
 - Comment WHY not WHAT. Prefer JSDoc over line comments.
 - MUST comment: complex business logic, module limitations, design trade-offs.
+
+### Naming
+
+- Prefer concrete, plain names over abstract, generic, or decorative ones. A parameter holding a `BuildSpec` should say what it plainly is (`build`), not borrow a vague, engine-sounding word (`runtime`, `blueprint`, `context`, `manager`, `handler`). When in doubt, pick the simpler, more literal name.
+- Never reuse a word that already denotes a different type or concept nearby. Naming a build-time spec `runtime` when `RuntimeBundle` / `RuntimeModel` exist creates a collision that misleads readers — a name must not fight the surrounding vocabulary.
+- Keep names short and greppable; avoid clever or ornamental naming. When renaming for taste, apply the same new name uniformly across all sibling call sites so cross-family shapes stay consistent (do not rename in one place only).
 
 ## Subagents
 

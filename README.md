@@ -166,6 +166,35 @@ VRL does not manage SSH hosts, Ray worker startup, cloud security groups, or
 cluster lifecycle. Use manual `ray start`, Ray VM cluster launcher, KubeRay, or a
 managed Ray platform for that layer.
 
+## Memory Policy
+
+VRL keeps memory behavior at the layer that owns it. `model.memory` carries two
+structural sub-blocks: `vae_decode` (model-build VAE tiling/slicing, applied by
+`vrl.models.diffusion.common.vae_decode_memory`) and `frozen_offload` (parking
+frozen driver-only modules on CPU before Ray rollout, applied by
+`vrl.trainers.frozen_module`). Training memory stays under `actor` or
+distributed training config, including gradient checkpointing and FSDP CPU
+offload. Rollout actor release stays in the Ray generation runtime, and replay
+tensor storage stays in trajectory/replay helpers because it affects correctness
+as well as memory.
+
+Family model configs declare their defaults:
+
+```yaml
+model:
+  memory:
+    vae_decode:
+      tiling: true
+      slicing: true
+    frozen_offload:
+      enable: true
+      modules: [text_encoder, vae]
+```
+
+Each sub-block is parsed and validated by its owner; unknown keys fail fast
+against the typed dataclass fields. Execution lives with the owners, never in a
+shared "memory" module.
+
 ## Training Examples
 
 Specific run notes and curated qualitative results live under
