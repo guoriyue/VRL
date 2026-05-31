@@ -62,11 +62,9 @@ def test_config_groups_are_not_flattened() -> None:
 def test_experiments_are_grouped_by_model_family() -> None:
     expected = {
         "ar/janus_pro/online_grpo_ocr",
-        "ar/janus_pro/online_r1_grpo_codex_qa",
         "ar/janus_pro/online_r1_grpo_ocr",
         "ar/nextstep_1/online_grpo_ocr",
         "diffusion/anima_preview3/online_grpo_aesthetic",
-        "diffusion/anima_preview3/online_grpo_anatomy",
         "diffusion/anima_preview3/online_grpo_aesthetic_nsfw_safety",
         "diffusion/cosmos_predict2/online_grpo_v2w_reference",
         "diffusion/cosmos_predict2/online_grpo_kling_video_reward",

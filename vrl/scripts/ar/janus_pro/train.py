@@ -29,12 +29,6 @@ async def train_janus_pro_r1_ocr_grpo(cfg: DictConfig) -> None:
     await _run_janus_recipe(cfg, family="janus_pro_r1")
 
 
-async def train_janus_pro_r1_codex_qa_grpo(cfg: DictConfig) -> None:
-    """Run Janus-Pro-R1 multi-segment Codex-QA GRPO."""
-
-    await _run_janus_recipe(cfg, family="janus_pro_r1")
-
-
 async def _run_janus_recipe(cfg: DictConfig, *, family: str) -> None:
     await run_online_recipe(
         cfg,
@@ -102,6 +96,5 @@ def _export_modules(bundle: Any, cfg: DictConfig) -> dict[str, Any] | None:
 __all__ = [
     "train_janus_pro_grpo",
     "train_janus_pro_ocr_grpo",
-    "train_janus_pro_r1_codex_qa_grpo",
     "train_janus_pro_r1_ocr_grpo",
 ]
