@@ -4,7 +4,6 @@ algorithm:
   eps: 1.0e-8
   adv_clip_max: 5.0
   global_std: false
-  per_prompt_stat_tracking: true
 
   # Cosmos-RL DiffusionNFT parity knobs.
   nft_beta: 1.0

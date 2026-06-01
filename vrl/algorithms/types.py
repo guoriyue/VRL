@@ -21,8 +21,7 @@ class TrainStepMetrics:
     adv_saturation: float = 0.0
     adv_zero_rate: float = 0.0
     lr: float = 0.0
-    # Per-prompt stat tracker diagnostics (flow_grpo train_wan2_1.py:817
-    # parity). Populated when OnlineTrainer.stat_tracker is set.
+    # Per-prompt grouping diagnostics, derived from the batch group_ids.
     group_size: float = 0.0          # avg samples per unique prompt in batch
-    trained_prompt_num: int = 0      # unique prompts ever seen by tracker
+    trained_prompt_num: int = 0      # unique prompts in this batch
     phase_times: dict[str, float] = field(default_factory=dict)

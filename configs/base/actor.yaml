@@ -14,6 +14,7 @@ actor:
   # 0 = one optimizer update per OnlineTrainer.step, preserving legacy VRL
   # behavior. SD3 Flow-GRPO parity overrides this to 4.
   gradient_accumulation_steps: 0
+  drop_zero_advantage: true
   mixed_precision: bf16
   bf16: true
   gradient_checkpointing: true

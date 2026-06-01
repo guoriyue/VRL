@@ -27,6 +27,11 @@ def _dataclass_payload(cls: type[Any], node: DictConfig) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise ValueError(f"{cls.__name__} config must be a mapping")
     allowed = _dataclass_field_names(cls)
+    ignored_keys = {"kind", "kl_reward"}
+    unknown = sorted(set(raw) - allowed - ignored_keys)
+    if unknown:
+        fields_text = ", ".join(f"algorithm.{key}" for key in unknown)
+        raise ValueError(f"unknown {cls.__name__} config field(s): {fields_text}")
     return {key: value for key, value in raw.items() if key in allowed}
 
 
@@ -73,6 +78,7 @@ def build_trainer_config(cfg: DictConfig):
         max_norm=require(cfg, "actor.max_norm"),
         ppo_epochs=require(cfg, "actor.ppo_epochs"),
         gradient_accumulation_steps=require(cfg, "actor.gradient_accumulation_steps"),
+        drop_zero_advantage=require(cfg, "actor.drop_zero_advantage"),
         mixed_precision=require(cfg, "actor.mixed_precision"),
         bf16=require(cfg, "actor.bf16"),
         gradient_checkpointing=require(cfg, "actor.gradient_checkpointing"),

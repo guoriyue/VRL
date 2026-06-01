@@ -155,7 +155,6 @@ async def run_online_recipe(
         sync_state_getter=build_trainable_state_sync_getter(bundle),
         config=trainer_config,
         device=device,
-        stat_tracker=_build_stat_tracker(cfg, components.algorithm),
     )
 
     if resume_checkpoint is not None:
@@ -292,18 +291,6 @@ def _preflight_production_video_reward(cfg: DictConfig) -> None:
             "production.kling_video_reward requires the repo-owned Kling VideoReward "
             "inference backend under vrl/rewards/models/kling_video_reward.py.",
         ) from exc
-
-
-def _build_stat_tracker(cfg: DictConfig, algorithm: Any) -> Any | None:
-    if not bool(cfg.algorithm.get("per_prompt_stat_tracking", True)):
-        return None
-    from vrl.trainers.online.stat_tracking import PerPromptStatTracker
-
-    config = getattr(algorithm, "config", None)
-    return PerPromptStatTracker(
-        global_std=bool(getattr(config, "global_std", False)),
-        eps=float(getattr(config, "eps", 1e-4)),
-    )
 
 
 def _prepare_metrics_csv(

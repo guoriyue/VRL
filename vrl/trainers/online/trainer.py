@@ -160,7 +160,6 @@ class OnlineTrainer(Trainer):
         prompts: list[str] | None = None,
         device: torch.device | str = "cuda",
         accelerator: Any | None = None,
-        stat_tracker: Any | None = None,
     ) -> None:
         self.algorithm = algorithm
         self.collector = collector
@@ -179,10 +178,6 @@ class OnlineTrainer(Trainer):
         self.device = torch.device(device) if isinstance(device, str) else device
         self.state = TrainState()
         self.accelerator = accelerator
-        # Optional per-prompt history stat tracker (e.g. PerPromptStatTracker).
-        # When set, trainer uses tracker-derived advantages (long-horizon
-        # normalization) and applies zero-advantage sample filtering.
-        self.stat_tracker = stat_tracker
 
         self._optimizer: torch.optim.Optimizer | None = None
         self._ema: EMAModuleWrapper | None = None
@@ -300,37 +295,22 @@ class OnlineTrainer(Trainer):
         all_batches: list[RolloutBatch] = iteration.batches
 
         # 2. Compute advantages (per-prompt normalization).
-        # Rewards + prompts are concatenated across all collected batches so
-        # the tracker sees every prompt together and groups properly. The
-        # resulting advantages are then split back per-batch for the
-        # per-batch training loop.
-        tracker_group_size: float = 0.0
-        tracker_trained_prompt_num: int = 0
+        # Rewards are concatenated across all collected batches, normalized
+        # per prompt-group by the algorithm (the single source of truth for
+        # advantage math), then split back per-batch for the training loop.
         with timer.time("advantage"):
             all_rewards = torch.cat([b.rewards for b in all_batches])
-            all_prompts_flat: list[str] = []
-            for b in all_batches:
-                assert b.prompts is not None, "batch.prompts must be populated"
-                all_prompts_flat.extend(b.prompts)
             all_group_ids = torch.cat([b.group_ids for b in all_batches])
-
-            if self.stat_tracker is not None:
-                adv_np = self.stat_tracker.update(all_prompts_flat, all_rewards)
-                tracker_group_size, tracker_trained_prompt_num = self.stat_tracker.get_stats()
-                self.stat_tracker.clear()
-                advantages_all = torch.as_tensor(
-                    adv_np,
-                    dtype=torch.float32,
-                    device=all_rewards.device,
-                )
-                adv_clip_max = getattr(self.algorithm.config, "adv_clip_max", None)
-                if adv_clip_max is not None:
-                    advantages_all = torch.clamp(advantages_all, -adv_clip_max, adv_clip_max)
-            else:
-                advantages_all = self.algorithm.compute_advantages_from_tensors(
-                    all_rewards,
-                    all_group_ids,
-                )
+            advantages_all = self.algorithm.compute_advantages_from_tensors(
+                all_rewards,
+                all_group_ids,
+            )
+            # Per-prompt grouping stats for logging (mean group size + unique prompts).
+            _unique_groups, _group_counts = torch.unique(all_group_ids, return_counts=True)
+            group_size = (
+                float(_group_counts.float().mean().item()) if _group_counts.numel() else 0.0
+            )
+            trained_prompt_num = int(_unique_groups.numel())
 
         # Advantage diagnostics on the full (pre-filter) advantages.
         _adv_abs = advantages_all.detach().abs()
@@ -357,7 +337,7 @@ class OnlineTrainer(Trainer):
         # num_batches_per_epoch training microbatches.
         filtered_batches: list[RolloutBatch] = []
         filtered_advs: list[torch.Tensor] = []
-        if self.stat_tracker is not None:
+        if cfg.drop_zero_advantage:
             if cfg.gradient_accumulation_steps > 0:
                 combined = stack_batches(all_batches)
                 mask = pad_zero_advantage_mask(
@@ -427,8 +407,8 @@ class OnlineTrainer(Trainer):
                 grad_norm=0.0,
                 adv_saturation=adv_saturation,
                 adv_zero_rate=adv_zero_rate,
-                group_size=tracker_group_size,
-                trained_prompt_num=tracker_trained_prompt_num,
+                group_size=group_size,
+                trained_prompt_num=trained_prompt_num,
                 phase_times={**iteration.phase_times, **dict(timer.times)},
             )
 
@@ -766,8 +746,8 @@ class OnlineTrainer(Trainer):
             grad_norm=avg("grad_norm"),
             adv_saturation=adv_saturation,
             adv_zero_rate=adv_zero_rate,
-            group_size=tracker_group_size,
-            trained_prompt_num=tracker_trained_prompt_num,
+            group_size=group_size,
+            trained_prompt_num=trained_prompt_num,
             phase_times=phase_times,
         )
 

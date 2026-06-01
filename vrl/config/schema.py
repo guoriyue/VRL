@@ -148,17 +148,22 @@ class AlgorithmConfig(BaseModel):
     kind: Literal[
         "grpo", "token_grpo", "token_grpo_multisegment", "diffusion_dpo", "diffusion_nft"
     ]
-    # Deprecated field; captured explicitly so the validator can emit a clear message
-    # rather than silently ignoring it under extra="ignore".
-    adv_estimator: str | None = None
 
-    @model_validator(mode="after")
-    def _reject_adv_estimator(self) -> AlgorithmConfig:
-        if self.adv_estimator is not None:
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_removed_algorithm_fields(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        if "adv_estimator" in data:
             raise ValueError(
                 "algorithm.adv_estimator is no longer supported; use algorithm.kind"
             )
-        return self
+        if "per_prompt_stat_tracking" in data:
+            raise ValueError(
+                "algorithm.per_prompt_stat_tracking is no longer supported; "
+                "use actor.drop_zero_advantage",
+            )
+        return data
 
 
 # ── Data section ──────────────────────────────────────────────────────────────

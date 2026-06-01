@@ -88,6 +88,11 @@ def resolve_algorithm_kind(algo: DictConfig) -> str:
     """Resolve and validate the algorithm dispatch key."""
     if "adv_estimator" in algo:
         raise ValueError("algorithm.adv_estimator is no longer supported; use algorithm.kind")
+    if "per_prompt_stat_tracking" in algo:
+        raise ValueError(
+            "algorithm.per_prompt_stat_tracking is no longer supported; "
+            "use actor.drop_zero_advantage",
+        )
     kind = algo.get("kind", None)
     if kind is None:
         raise ValueError("algorithm.kind required")

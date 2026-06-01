@@ -8,7 +8,6 @@ import torch
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
-from vrl.trainers.online.stat_tracking import PerPromptStatTracker
 
 # ---------------------------------------------------------------------------
 # Regression: single-sample GRPO advantage must NOT be NaN
@@ -50,21 +49,6 @@ class TestGRPOSingleSampleNaN:
         # Mean=4, should be negative for 1,3 and positive for 5,7
         assert advantages[0] < 0
         assert advantages[3] > 0
-
-    def test_tracker_and_tensor_paths_match(self) -> None:
-        grpo = GRPO(GRPOConfig(eps=1e-4, global_std=False))
-        rewards = torch.tensor([1.0, 2.0, 3.0, 4.0], dtype=torch.float64)
-        group_ids = torch.zeros(4, dtype=torch.long)
-
-        tensor_advantages = grpo.compute_advantages_from_tensors(rewards, group_ids)
-        tracker = PerPromptStatTracker(global_std=False, eps=grpo.config.eps)
-        tracker_advantages = tracker.update(["prompt"] * 4, rewards)
-
-        assert torch.allclose(
-            tensor_advantages,
-            torch.as_tensor(tracker_advantages, dtype=tensor_advantages.dtype),
-        )
-
 
 class TestGRPOFlowMatchingKL:
     def test_flow_kl_ignores_dt_by_default_to_match_flow_grpo(self) -> None:

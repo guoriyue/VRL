@@ -858,10 +858,9 @@ class TestOnlineTrainerCeaRegressions:
         assert trainer.state.global_step == 2
 
     def test_flow_grpo_zero_advantage_padding_rebatches_evenly(self) -> None:
-        """Flow-style stat-tracker filtering pads zero-adv rows before rebatching."""
+        """Flow-style zero-advantage filtering pads rows before rebatching."""
         import asyncio
 
-        import numpy as np
         import torch
         import torch.nn as nn
 
@@ -885,8 +884,10 @@ class TestOnlineTrainerCeaRegressions:
                 self.advantages_seen: list[float] = []
 
             def compute_advantages_from_tensors(self, rewards, group_ids):
-                del rewards, group_ids
-                raise AssertionError("stat_tracker should own advantages")
+                del group_ids
+                out = torch.zeros_like(rewards)
+                out[0] = 1.0
+                return out
 
             def compute_loss(self, inputs):
                 signals, advantages, old_log_probs = _algorithm_inputs(inputs)
@@ -896,19 +897,6 @@ class TestOnlineTrainerCeaRegressions:
                 )
                 loss = signals.log_prob.mean() + advantages.mean() * 0.0
                 return loss, TrainStepMetrics(loss=loss.item(), policy_loss=loss.item())
-
-        class _SparseTracker:
-            def update(self, prompts, rewards):
-                del prompts
-                out = np.zeros_like(rewards.detach().cpu().numpy())
-                out[0] = 1.0
-                return out
-
-            def get_stats(self):
-                return 2.0, 3
-
-            def clear(self):
-                pass
 
         class _Collector:
             async def collect(self, prompts, **kwargs):
@@ -951,9 +939,9 @@ class TestOnlineTrainerCeaRegressions:
                 n=2,
                 bf16=False,
                 gradient_accumulation_steps=2,
+                drop_zero_advantage=True,
             ),
             device="cpu",
-            stat_tracker=_SparseTracker(),
         )
 
         asyncio.run(trainer.step(["prompt-a", "prompt-b", "prompt-c"]))
@@ -964,11 +952,10 @@ class TestOnlineTrainerCeaRegressions:
         assert algorithm.advantages_seen.count(0.0) == 2
         assert trainer.state.global_step == 2
 
-    def test_zero_advantage_stat_tracker_samples_do_not_get_epsilon_gradient(self) -> None:
-        """All-zero stat-tracker advantages should skip backward instead of inventing gradients."""
+    def test_zero_advantage_samples_do_not_get_epsilon_gradient(self) -> None:
+        """All-zero advantages should skip backward instead of inventing gradients."""
         import asyncio
 
-        import numpy as np
         import torch
         import torch.nn as nn
 
@@ -992,25 +979,14 @@ class TestOnlineTrainerCeaRegressions:
                 self.loss_calls = 0
 
             def compute_advantages_from_tensors(self, rewards, group_ids):
-                del rewards, group_ids
-                raise AssertionError("stat_tracker should own advantages")
+                del group_ids
+                return torch.zeros_like(rewards)
 
             def compute_loss(self, inputs):
                 signals, advantages, old_log_probs = _algorithm_inputs(inputs)
                 del signals, advantages, old_log_probs
                 self.loss_calls += 1
                 return torch.tensor(0.0, requires_grad=True), TrainStepMetrics()
-
-        class _ZeroTracker:
-            def update(self, prompts, rewards):
-                del prompts
-                return np.zeros_like(rewards.detach().cpu().numpy())
-
-            def get_stats(self):
-                return 2.0, 1
-
-            def clear(self):
-                pass
 
         class _Collector:
             async def collect(self, prompts, **kwargs):
@@ -1079,9 +1055,9 @@ class TestOnlineTrainerCeaRegressions:
                 debug=DebugConfig(),
                 n=2,
                 bf16=False,
+                drop_zero_advantage=True,
             ),
             device="cpu",
-            stat_tracker=_ZeroTracker(),
         )
 
         metrics = asyncio.run(trainer.step(["prompt-a"]))

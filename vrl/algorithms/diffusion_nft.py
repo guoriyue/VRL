@@ -18,7 +18,6 @@ class DiffusionNFTConfig:
     eps: float = 1e-8
     adv_clip_max: float = 5.0
     global_std: bool = False
-    per_prompt_stat_tracking: bool = True
     nft_beta: float = 1.0
     kl_beta: float = 1.0
     advantage_high: float = 5.0

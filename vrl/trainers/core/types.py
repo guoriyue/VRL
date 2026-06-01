@@ -136,6 +136,7 @@ class TrainerConfig:
     # batch in one optimizer update. Positive values match Flow-GRPO's
     # microbatch accumulation cadence.
     gradient_accumulation_steps: int = 0
+    drop_zero_advantage: bool = False
 
     # --- precision ---
     # Empty means "derive from bf16" for direct test construction/backward

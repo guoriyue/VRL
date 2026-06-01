@@ -531,6 +531,7 @@ def test_cli_overrides_reach_typed_trainer_config() -> None:
             "trainer.resume_from=/tmp/checkpoint-10",
             "trainer.torch_profiler.enabled=true",
             "trainer.torch_profiler.activities=[cpu]",
+            "actor.drop_zero_advantage=false",
         ],
     )
     trainer = build_configs(cfg)["trainer"]
@@ -538,6 +539,7 @@ def test_cli_overrides_reach_typed_trainer_config() -> None:
     assert trainer.resume_from == "/tmp/checkpoint-10"
     assert trainer.torch_profiler.enabled is True
     assert trainer.torch_profiler.activities == ("cpu",)
+    assert trainer.drop_zero_advantage is False
 
 
 def test_invalid_algorithm_kind_fails_fast() -> None:
@@ -548,6 +550,29 @@ def test_invalid_algorithm_kind_fails_fast() -> None:
     cfg = OmegaConf.create({"algorithm": {"kind": "qpo"}})
     with pytest.raises(ValueError, match=r"unknown algorithm\.kind"):
         build_algorithm_config(cfg)
+
+
+def test_unknown_algorithm_config_fields_fail_fast() -> None:
+    cfg = OmegaConf.create({"algorithm": {"kind": "grpo", "unknown_knob": 1}})
+
+    with pytest.raises(ValueError, match=r"algorithm\.unknown_knob"):
+        build_algorithm_config(cfg)
+
+
+def test_removed_algorithm_zero_advantage_fields_fail_fast() -> None:
+    cfg = OmegaConf.create({"algorithm": {"kind": "grpo", "per_prompt_stat_tracking": False}})
+    with pytest.raises(ValueError, match=r"actor\.drop_zero_advantage"):
+        build_algorithm_config(cfg)
+
+    cfg = load_config("experiment/diffusion/sd3_5/online_grpo_ocr")
+    del cfg.actor["drop_zero_advantage"]
+    with pytest.raises(ValueError, match=r"actor\.drop_zero_advantage"):
+        build_configs(cfg)
+
+    cfg = load_config("experiment/diffusion/sd3_5/online_grpo_ocr")
+    cfg.algorithm.per_prompt_stat_tracking = False
+    with pytest.raises(ValueError, match=r"actor\.drop_zero_advantage"):
+        validate_training_config(cfg)
 
 
 def test_reward_backbone_kwargs_are_required() -> None:
