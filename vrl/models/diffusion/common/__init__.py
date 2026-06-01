@@ -18,6 +18,11 @@ from vrl.models.diffusion.common.latent_decode import (
     LatentDecodeSpec,
     LatentDecodeTransform,
 )
+from vrl.models.diffusion.common.replay_tensors import (
+    align_replay_tensor,
+    replay_tensor,
+    shared_replay_tensor,
+)
 from vrl.models.diffusion.common.timestep import (
     broadcast_spatial_timestep,
     expand_batch_timestep,
@@ -34,10 +39,13 @@ __all__ = [
     "DiffusionBranchBatch",
     "LatentDecodeSpec",
     "LatentDecodeTransform",
+    "align_replay_tensor",
     "broadcast_spatial_timestep",
     "combine_cfg",
     "expand_batch_timestep",
     "pack_batched_cfg",
     "pack_eval_timestep",
+    "replay_tensor",
+    "shared_replay_tensor",
     "split_batched_cfg_output",
 ]

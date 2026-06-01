@@ -32,7 +32,10 @@ from vrl.models.diffusion.common import (
     DiffusionBackboneInput,
     LatentDecodeSpec,
     LatentDecodeTransform,
+    align_replay_tensor,
     broadcast_spatial_timestep,
+    replay_tensor,
+    shared_replay_tensor,
 )
 from vrl.models.diffusion.cosmos.predict2.runner import (
     CosmosPredict2DiffusionBackboneRunner,
@@ -432,20 +435,20 @@ class CosmosPredict2Model(DiffusionModelBase):
             "prompt_embeds": state.prompt_embeds,
             "negative_prompt_embeds": state.negative_prompt_embeds,
             "init_latents": state.init_latents,
-            "cond_mask": _align_replay_tensor(state.cond_mask, state.latents.shape[0]),
-            "uncond_mask": _align_replay_tensor(
+            "cond_mask": align_replay_tensor(state.cond_mask, state.latents.shape[0]),
+            "uncond_mask": align_replay_tensor(
                 state.uncond_mask,
                 state.latents.shape[0],
             ),
-            "padding_mask": _align_replay_tensor(
+            "padding_mask": align_replay_tensor(
                 state.padding_mask,
                 state.latents.shape[0],
             ),
-            "cond_indicator": _align_replay_tensor(
+            "cond_indicator": align_replay_tensor(
                 state.cond_indicator,
                 state.latents.shape[0],
             ),
-            "uncond_indicator": _align_replay_tensor(
+            "uncond_indicator": align_replay_tensor(
                 state.uncond_indicator,
                 state.latents.shape[0],
             ),
@@ -473,22 +476,22 @@ class CosmosPredict2Model(DiffusionModelBase):
         del step_idx
         return CosmosPredict2SamplingState(
             latents=latents,
-            timesteps=self.pipeline.scheduler.timesteps,
-            scheduler=self.pipeline.scheduler,
+            timesteps=self.scheduler.timesteps,
+            scheduler=self.scheduler,
             prompt_embeds=replay_tensors["prompt_embeds"],
             negative_prompt_embeds=replay_tensors.get("negative_prompt_embeds"),
             guidance_scale=batch_context["guidance_scale"],
             do_cfg=batch_context["cfg"] and batch_context["guidance_scale"] > 1.0,
             init_latents=replay_tensors["init_latents"],
-            cond_mask=_replay_tensor(replay_tensors, batch_context, "cond_mask"),
-            uncond_mask=_replay_tensor(replay_tensors, batch_context, "uncond_mask"),
-            padding_mask=_shared_replay_tensor(
+            cond_mask=replay_tensor(replay_tensors, batch_context, "cond_mask"),
+            uncond_mask=replay_tensor(replay_tensors, batch_context, "uncond_mask"),
+            padding_mask=shared_replay_tensor(
                 replay_tensors,
                 batch_context,
                 "padding_mask",
             ),
-            cond_indicator=_replay_tensor(replay_tensors, batch_context, "cond_indicator"),
-            uncond_indicator=_replay_tensor(
+            cond_indicator=replay_tensor(replay_tensors, batch_context, "cond_indicator"),
+            uncond_indicator=replay_tensor(
                 replay_tensors,
                 batch_context,
                 "uncond_indicator",
@@ -621,71 +624,13 @@ class CosmosPredict2ReplayModel(CosmosPredict2Model):
         del request, encoded, kwargs
         raise RuntimeError("CosmosPredict2ReplayModel cannot run rollout sampling")
 
-    def restore_eval_state(
-        self,
-        replay_tensors: dict[str, Any],
-        batch_context: dict[str, Any],
-        latents: Any,
-        step_idx: int,
-    ) -> CosmosPredict2SamplingState:
-        del step_idx
-        return CosmosPredict2SamplingState(
-            latents=latents,
-            timesteps=self.scheduler.timesteps,
-            scheduler=self.scheduler,
-            prompt_embeds=replay_tensors["prompt_embeds"],
-            negative_prompt_embeds=replay_tensors.get("negative_prompt_embeds"),
-            guidance_scale=batch_context["guidance_scale"],
-            do_cfg=batch_context["cfg"] and batch_context["guidance_scale"] > 1.0,
-            init_latents=replay_tensors["init_latents"],
-            cond_mask=_replay_tensor(replay_tensors, batch_context, "cond_mask"),
-            uncond_mask=_replay_tensor(replay_tensors, batch_context, "uncond_mask"),
-            padding_mask=_shared_replay_tensor(
-                replay_tensors,
-                batch_context,
-                "padding_mask",
-            ),
-            cond_indicator=_replay_tensor(replay_tensors, batch_context, "cond_indicator"),
-            uncond_indicator=_replay_tensor(
-                replay_tensors,
-                batch_context,
-                "uncond_indicator",
-            ),
-            fps=batch_context["fps"],
-            seed=0,
-            sigma_conditioning=batch_context.get("sigma_conditioning", 0.0001),
-        )
+    # restore_eval_state is inherited from CosmosPredict2Model: it reads
+    # ``self.scheduler``, which this replay model overrides to return its own
+    # ``self._scheduler`` (the parent's property resolves to pipeline.scheduler).
 
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
         del latents
         raise RuntimeError("CosmosPredict2ReplayModel cannot decode latents")
-
-
-def _align_replay_tensor(value: Any, batch_size: int) -> Any:
-    if not isinstance(value, torch.Tensor) or value.shape[:1] != (1,) or batch_size == 1:
-        return value
-    return value.expand(batch_size, *value.shape[1:]).contiguous()
-
-
-def _replay_tensor(
-    replay_tensors: dict[str, Any],
-    batch_context: dict[str, Any],
-    name: str,
-) -> Any:
-    if name in replay_tensors:
-        return replay_tensors[name]
-    return batch_context[name]
-
-
-def _shared_replay_tensor(
-    replay_tensors: dict[str, Any],
-    batch_context: dict[str, Any],
-    name: str,
-) -> Any:
-    value = _replay_tensor(replay_tensors, batch_context, name)
-    if isinstance(value, torch.Tensor) and value.ndim > 0:
-        return value[:1]
-    return value
 
 
 __all__ = [
