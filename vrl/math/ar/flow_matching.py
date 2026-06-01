@@ -80,9 +80,12 @@ def flow_sample_with_logprob(
 
     NOTE
     ----
-    The exact velocity-call signature depends on NextStep-1's upstream
-    implementation. Until we have ``stepfun-ai/NextStep-1`` installed we
-    cannot bind this — see the ``# TODO(nextstep-binding)`` markers.
+    Velocity contract (verified against ``stepfun-ai/NextStep-1``'s
+    ``modeling_nextstep.FlowMatchingHead``): the head exposes its velocity
+    predictor as ``image_head.net(x, t, c)`` (a ``SimpleMLPAdaLN``) and the
+    token latent dim as ``image_head.input_dim``. The head's own ``forward``
+    is the training-loss path, not the velocity field, so we never call the
+    head directly — always ``.net``. Pass ``velocity_fn`` to override.
     """
     B, D = cond.shape[0], None  # D inferred from x_0 below
     device = cond.device
@@ -218,13 +221,14 @@ def flow_logprob_at(
     dt = 1.0 / num_flow_steps
 
     def _velocity(xk: torch.Tensor, tk: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
+        # Same velocity contract as the sample path: NextStep-1's
+        # FlowMatchingHead exposes its velocity predictor as ``.net(x, t, c)``
+        # (a SimpleMLPAdaLN). Do NOT fall back to ``image_head(...)`` — the
+        # head's ``forward(z, target, mask)`` is the training-loss forward, not
+        # the velocity field, so calling it here would silently score garbage.
         if velocity_fn is not None:
             return velocity_fn(xk, tk, c)
-        if hasattr(image_head, "net"):
-            return image_head.net(xk, tk, c)
-        if hasattr(image_head, "velocity"):
-            return image_head.velocity(xk, tk, c)  # type: ignore[no-any-return]
-        return image_head(xk, tk, c)
+        return image_head.net(xk, tk, c)
 
     for k in range(num_flow_steps - 1):
         tk = t_grid[k].expand(B)
