@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 from omegaconf import DictConfig, ListConfig, OmegaConf
 
@@ -13,8 +13,11 @@ from vrl.trajectory.types import TrajectoryBatch
 TrajectoryStorageDevice = Literal["preserve", "cpu"]
 TrajectoryStorageDType = Literal["preserve", "float32", "float16", "bfloat16"]
 
-_VALID_DEVICES = frozenset({"preserve", "cpu"})
-_VALID_DTYPES = frozenset({"preserve", "float32", "float16", "bfloat16"})
+# Derived from the Literals above so validation tracks the single source of
+# truth: adding a member to the Literal updates these (and the error messages
+# that print ``sorted(...)`` of them) automatically.
+_VALID_DEVICES = frozenset(get_args(TrajectoryStorageDevice))
+_VALID_DTYPES = frozenset(get_args(TrajectoryStorageDType))
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +136,9 @@ def _torch_dtype(name: TrajectoryStorageDType) -> Any | None:
         return None
     import torch
 
+    # name->torch object lookup (torch is a lazy import, so it can't live in the
+    # Literal). Keys must cover ``_VALID_DTYPES - {"preserve"}``; a missing key
+    # raises KeyError loudly here rather than failing silently.
     return {
         "float32": torch.float32,
         "float16": torch.float16,

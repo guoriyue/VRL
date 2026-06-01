@@ -8,6 +8,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
+# Protocol-level set of valid artifact media kinds. Single source of truth —
+# the disk artifact store (vrl.rewards.artifacts) imports this rather than
+# re-listing the literals.
+MEDIA_TYPES = frozenset({"image", "video", "tensor"})
+
 
 @dataclass(frozen=True, slots=True)
 class RewardInferenceArtifact:
@@ -31,7 +36,7 @@ class RewardInferenceArtifact:
             raise ValueError(
                 "RewardInferenceArtifact requires a materialized path or in-memory media",
             )
-        if self.media_type not in {"image", "video", "tensor"}:
+        if self.media_type not in MEDIA_TYPES:
             raise ValueError(
                 "RewardInferenceArtifact.media_type must be image, video, or tensor",
             )
@@ -310,6 +315,7 @@ def score_artifacts_with_model(
 
 
 __all__ = [
+    "MEDIA_TYPES",
     "RewardInferenceArtifact",
     "RewardInferenceRequest",
     "RewardInferenceResult",

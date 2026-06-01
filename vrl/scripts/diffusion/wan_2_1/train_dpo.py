@@ -236,10 +236,16 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     save_resolved_config(cfg, out_dir, resumed=resume_checkpoint is not None)
 
     csv_path = out_dir / "metrics.csv"
+    # Derive the metrics columns from DPOStepMetrics so adding a metric updates
+    # both the header and each row instead of silently mis-columning the CSV.
+    from dataclasses import fields as _dc_fields
+
+    from vrl.trainers.offline.dpo import DPOStepMetrics
+
+    metric_fields = tuple(f.name for f in _dc_fields(DPOStepMetrics))
     prepare_metrics_csv(
         csv_path,
-        "step,loss,raw_model_loss,raw_ref_loss,model_diff,ref_diff,"
-        "implicit_acc,sft_loss,grad_norm\n",
+        "step," + ",".join(metric_fields) + "\n",
         resume=resume_checkpoint is not None,
     )
 
@@ -277,11 +283,8 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
                 m.raw_model_loss, m.raw_ref_loss, m.grad_norm,
             )
             with open(csv_path, "a") as f:
-                f.write(
-                    f"{step},{m.loss:.6f},{m.raw_model_loss:.6f},{m.raw_ref_loss:.6f},"
-                    f"{m.model_diff:.6f},{m.ref_diff:.6f},{m.implicit_acc:.4f},"
-                    f"{m.sft_loss:.6f},{m.grad_norm:.4f}\n"
-                )
+                row = ",".join(f"{getattr(m, name):.6f}" for name in metric_fields)
+                f.write(f"{step},{row}\n")
 
         if checkpointing_steps > 0 and (step + 1) % checkpointing_steps == 0:
             ckpt = out_dir / f"checkpoint-{step+1}"

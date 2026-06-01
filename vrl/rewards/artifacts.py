@@ -9,7 +9,7 @@ from typing import Any
 
 import torch
 
-from vrl.rewards.inference import RewardInferenceArtifact
+from vrl.rewards.inference import MEDIA_TYPES, RewardInferenceArtifact
 from vrl.rewards.types import RewardRollout
 from vrl.utils.media import write_mp4
 
@@ -25,7 +25,7 @@ class VideoRewardArtifactStore:
         artifact_format: str = "tensor",
         manifest_name: str = "manifest.jsonl",
     ) -> None:
-        if media_type not in {"image", "video", "tensor"}:
+        if media_type not in MEDIA_TYPES:
             raise ValueError("media_type must be image, video, or tensor")
         if artifact_format not in {"tensor", "mp4"}:
             raise ValueError("artifact_format must be tensor or mp4")

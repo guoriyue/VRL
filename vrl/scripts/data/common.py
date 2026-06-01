@@ -8,22 +8,15 @@ the path/IO helpers they all need so no logic is duplicated.
 from __future__ import annotations
 
 import json
-import os
 import re
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-
-def repo_root() -> Path:
-    return Path(__file__).resolve().parents[3]
-
-
-def default_data_root() -> Path:
-    value = os.environ.get("VRL_DATA_ROOT", "").strip()
-    if value:
-        return Path(value).expanduser().resolve()
-    return (repo_root() / "data" / "external").resolve()
+# Single source of truth for repo/data-root resolution lives in the trainers
+# data layer (it owns DATA_ROOT_ENV and is also used off the script path);
+# re-export here so the dataset scripts keep importing from common.
+from vrl.trainers.data.artifacts import default_data_root, repo_root
 
 
 def default_cache_dir() -> Path:

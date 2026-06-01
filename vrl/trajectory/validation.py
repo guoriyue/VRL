@@ -23,7 +23,11 @@ FORBIDDEN_TRAJECTORY_METRICS = frozenset(
         "chunks",
     }
 )
-SINGLETON_TENSOR_ROLES = frozenset({"action", "old_log_prob", "mask"})
+# The core role triple a trainable segment must have exactly one of each.
+# Single ordered source of truth: the uniqueness check (below) and the
+# completeness check (TrajectoryValidator) both derive from it.
+REQUIRED_TRAINABLE_ROLES = ("action", "old_log_prob", "mask")
+SINGLETON_TENSOR_ROLES = frozenset(REQUIRED_TRAINABLE_ROLES)
 
 
 class TrajectoryValidationError(ValueError):
@@ -230,7 +234,7 @@ class TrajectoryValidator:
             roles.setdefault(tensor.role, tensor)
 
         if segment.trainable:
-            missing = [role for role in ("action", "old_log_prob", "mask") if role not in roles]
+            missing = [role for role in REQUIRED_TRAINABLE_ROLES if role not in roles]
             if missing:
                 self._fail(
                     f"trainable segment {segment.name!r} is missing required roles: "
@@ -381,10 +385,8 @@ class TrajectoryValidator:
         )
         if has_model_api:
             return True
-        type_module = type(value).__module__
-        type_name = type(value).__name__.lower()
-        if type_module.startswith("ray.") or "actor" in type_name:
-            return True
+        # Anything that reached here is neither a serializable scalar/container
+        # nor tensor-like, so it's treated as runtime-only.
         return True
 
     @staticmethod
