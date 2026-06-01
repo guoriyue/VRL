@@ -107,11 +107,10 @@ def test_setup_cli_creates_ignored_external_dirs(
 
     assert setup_cli.main(
         [
-            "video-world-artifacts",
+            "init-dirs",
+            "video-world",
             "--data-root",
             str(data_root),
-            "--profile",
-            "tiny",
         ],
     ) is None
 

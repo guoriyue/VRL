@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from vrl.scripts.data import bootstrap, common, danbooru, populate, video_world
+from vrl.scripts.data import bootstrap, common, danbooru, setup, video_world
 from vrl.scripts.data.danbooru import positive_image_rows
 from vrl.scripts.diffusion.cosmos.train import _normalize_per_sample_reference_images
 from vrl.trainers.data import load_prompt_manifest
@@ -145,7 +145,7 @@ def test_anime_positives_prepares_both_manifests_end_to_end(monkeypatch, tmp_pat
 
     monkeypatch.setattr(danbooru, "_http_download", fake_fetch)
 
-    populate.main(
+    setup.main(
         [
             "anime-positives",
             "--metadata",
@@ -211,7 +211,7 @@ def test_for_experiment_plan_flags_missing_manifest_with_command(tmp_path: Path)
 
 
 def test_for_experiment_resolves_real_wan_experiment(capsys) -> None:
-    populate.main(["for-experiment", "diffusion/wan_2_1/online_grpo_kling_video_reward"])
+    setup.main(["for-experiment", "diffusion/wan_2_1/online_grpo_kling_video_reward"])
     out = json.loads(capsys.readouterr().out)
 
     assert out["experiment"] == "diffusion/wan_2_1/online_grpo_kling_video_reward"

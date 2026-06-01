@@ -243,7 +243,7 @@ vrl/
   trajectory/  trajectory build / resolve / storage
   config/      OmegaConf loading + Pydantic typed schema (schema.py, validation.py)
   nn/ ray/ math/ utils/    shared kernels, Ray plumbing, helpers
-  scripts/     train.py (vrl-train) + data/populate.py (dataset prep)
+  scripts/     train.py (vrl-train) + data/setup.py (dataset prep)
 configs/    layered YAML: base / model / reward / dataset / experiment
 datasets/   committed prompt datasets + per-dataset build scripts
 docs/       architecture notes + training_examples/

@@ -18,9 +18,9 @@ from vrl.scripts.data.common import emit
 from vrl.scripts.data.common import repo_root as _repo_root
 
 _MANIFEST_POPULATE_HINTS = (
-    ("datasets/danbooru/anatomy/", "python -m vrl.scripts.data.populate anime-prompts"),
-    ("data/external/videophy_i2v/", "python -m vrl.scripts.data.populate videophy-i2v"),
-    ("data/external/video_world/", "python -m vrl.scripts.data.populate video-world-bridge"),
+    ("datasets/danbooru/anatomy/", "python -m vrl.scripts.data.setup anime-prompts"),
+    ("data/external/videophy_i2v/", "python -m vrl.scripts.data.setup videophy-i2v"),
+    ("data/external/video_world/", "python -m vrl.scripts.data.setup video-world-bridge"),
 )
 
 
@@ -77,7 +77,7 @@ def resolve_experiment_dataset_plan(
                 "path": "(huggingface cache)",
                 "present": False,
                 "rows": 0,
-                "get": "python -m vrl.scripts.data.populate pickapic --with-images",
+                "get": "python -m vrl.scripts.data.setup pickapic --with-images",
             },
         )
     return {"loader": loader, "ready": ready, "steps": steps}
@@ -121,10 +121,10 @@ def _cmd_for_experiment(args: argparse.Namespace) -> None:
     emit(plan)
     if args.run and not plan["ready"]:
         for step in plan["steps"]:
-            if step["get"].startswith("python -m vrl.scripts.data.populate pickapic"):
-                from vrl.scripts.data.populate import main as populate_main
+            if step["get"].startswith("python -m vrl.scripts.data.setup pickapic"):
+                from vrl.scripts.data.setup import main as setup_main
 
-                populate_main(["pickapic", "--with-images"])
+                setup_main(["pickapic", "--with-images"])
 
 
 __all__ = ["register", "resolve_experiment_dataset_plan"]
