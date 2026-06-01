@@ -112,6 +112,91 @@ class TestGRPOFlowMatchingKL:
         assert metrics.kl_penalty == pytest.approx(50.0)
 
 
+class TestGRPOClippedSurrogate:
+    """Numeric checks on the PPO-clipped surrogate (continuous.py:102-141).
+
+    These guard the classic sign trap in ``torch.maximum(unclipped, clipped)``
+    on the negative-advantage side, plus the clip_fraction / approx_kl metrics.
+    """
+
+    def test_ratio_one_gives_negative_mean_advantage(self) -> None:
+        """log_prob == old_log_prob → ratio 1 → loss == -mean(advantage)."""
+        grpo = GRPO(GRPOConfig(init_kl_coef=0.0))
+        signals = _flow_signals(
+            log_prob=torch.zeros(2),
+            old_log_prob=torch.zeros(2),
+        )
+        advantages = torch.tensor([2.0, -4.0])
+        loss, metrics = grpo.compute_loss(
+            AlgorithmInput(signals=signals, advantages=advantages),
+        )
+        assert loss.item() == pytest.approx(-advantages.mean().item())
+        assert metrics.policy_loss == pytest.approx(-advantages.mean().item())
+        # No drift from old policy → no clipping, zero approx-KL.
+        assert metrics.clip_fraction == pytest.approx(0.0)
+        assert metrics.approx_kl == pytest.approx(0.0)
+
+    def test_positive_advantage_uses_clipped_ratio_when_ratio_high(self) -> None:
+        """Positive advantage + ratio above 1+eps_clip → loss uses clipped ratio.
+
+        ``maximum(-adv*ratio, -adv*clipped)`` with adv>0 picks the larger
+        (less negative) term, i.e. the clipped one. So the surrogate is
+        ``-adv*(1+eps_clip)``, not ``-adv*ratio``.
+        """
+        eps_clip = 0.2
+        grpo = GRPO(GRPOConfig(init_kl_coef=0.0, eps_clip=eps_clip))
+        log_ratio = 1.0  # ratio = e ≈ 2.718, well above 1+eps_clip
+        signals = _flow_signals(
+            log_prob=torch.full((1,), log_ratio),
+            old_log_prob=torch.zeros(1),
+        )
+        adv = torch.tensor([3.0])
+        loss, metrics = grpo.compute_loss(
+            AlgorithmInput(signals=signals, advantages=adv),
+        )
+        assert loss.item() == pytest.approx(-adv.item() * (1.0 + eps_clip))
+        assert metrics.clip_fraction == pytest.approx(1.0)
+
+    def test_negative_advantage_uses_unclipped_ratio_when_ratio_high(self) -> None:
+        """Negative advantage + ratio above 1+eps_clip → unclipped term wins.
+
+        With adv<0, ``-adv*ratio`` is positive and larger than
+        ``-adv*clipped``; ``maximum`` selects the unclipped surrogate. This is
+        the side where a naive ``min``/``max`` mix-up silently flips training.
+        """
+        eps_clip = 0.2
+        grpo = GRPO(GRPOConfig(init_kl_coef=0.0, eps_clip=eps_clip))
+        log_ratio = 1.0
+        signals = _flow_signals(
+            log_prob=torch.full((1,), log_ratio),
+            old_log_prob=torch.zeros(1),
+        )
+        adv = torch.tensor([-3.0])
+        loss, _ = grpo.compute_loss(
+            AlgorithmInput(signals=signals, advantages=adv),
+        )
+        ratio = torch.exp(torch.tensor(log_ratio)).item()
+        assert loss.item() == pytest.approx(-adv.item() * ratio)
+
+    def test_clip_fraction_and_approx_kl_match_formula(self) -> None:
+        """clip_fraction = mean(|ratio-1|>eps_clip); approx_kl = 0.5*mean(d^2)."""
+        eps_clip = 0.2
+        grpo = GRPO(GRPOConfig(init_kl_coef=0.0, eps_clip=eps_clip))
+        # One sample drifts hard (clipped), one stays put (not clipped).
+        log_prob = torch.tensor([1.0, 0.0])
+        old_log_prob = torch.zeros(2)
+        signals = _flow_signals(log_prob=log_prob, old_log_prob=old_log_prob)
+        _, metrics = grpo.compute_loss(
+            AlgorithmInput(signals=signals, advantages=torch.ones(2)),
+        )
+        ratio = torch.exp(log_prob - old_log_prob)
+        expected_clip = torch.mean((torch.abs(ratio - 1.0) > eps_clip).float()).item()
+        expected_kl = 0.5 * torch.mean((log_prob - old_log_prob) ** 2).item()
+        assert metrics.clip_fraction == pytest.approx(expected_clip)
+        assert metrics.clip_fraction == pytest.approx(0.5)
+        assert metrics.approx_kl == pytest.approx(expected_kl)
+
+
 def _flow_signals(
     *,
     log_prob: torch.Tensor,
