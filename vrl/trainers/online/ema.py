@@ -82,7 +82,14 @@ class EMAModuleWrapper:
     def copy_ema_to(self, parameters: Iterable[torch.nn.Parameter], store_temp: bool = True) -> None:
         """Replace model parameters with EMA values; optionally save originals."""
         if store_temp:
-            self.temp_stored_parameters = [p.detach().cpu() for p in parameters]
+            # copy=True is required: plain .cpu() is a no-op when params already
+            # live on CPU, so detach() would share storage and the in-place copy_
+            # below would clobber the saved originals — copy_temp_to would then
+            # restore EMA values instead of the pre-swap weights. copy=True keeps
+            # the CPU-offload intent while guaranteeing an independent buffer.
+            self.temp_stored_parameters = [
+                p.detach().to("cpu", copy=True) for p in parameters
+            ]
 
         parameters = list(parameters)
         for ema_param, param in zip(self.ema_parameters, parameters, strict=True):
