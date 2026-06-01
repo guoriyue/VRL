@@ -446,55 +446,64 @@ def _resolve_rollout_devices(
             )
         return devices
 
-    pool = tuple(device for device in visible_devices if device not in set(trainer_devices))
-    requested = _requested_rollout_gpu_count(
-        rollout_config=rollout_config,
+    excluded = set(trainer_devices)
+    pool = tuple(device for device in visible_devices if device not in excluded)
+    requested = _requested_role_gpu_count(
+        role="rollout",
+        num_gpus=rollout_config.num_gpus,
+        num_workers=rollout_config.num_workers,
+        gpus_per_worker=rollout_config.gpus_per_worker,
         available_count=len(pool),
     )
+    return _slice_pool_with_overlap_fallback(
+        requested=requested,
+        pool=pool,
+        excluded=excluded,
+        visible_devices=visible_devices,
+        allow_overlap=allow_overlap,
+        not_enough_pool_error=(
+            "Not enough non-overlapping rollout GPUs: "
+            f"requested={requested}, available={len(pool)}, "
+            f"trainer={list(trainer_devices)}, visible={list(visible_devices)}. "
+            "Expose more GPUs or set distributed.resources.allow_overlap=true with "
+            "distributed.rollout.release_after_collect=true for single-GPU debug."
+        ),
+        not_enough_visible_error=(
+            "Not enough visible GPUs for rollout even with overlap allowed: "
+            f"requested={requested}, visible={list(visible_devices)}"
+        ),
+    )
+
+
+def _slice_pool_with_overlap_fallback(
+    *,
+    requested: int,
+    pool: tuple[int, ...],
+    excluded: set[int],
+    visible_devices: tuple[int, ...],
+    allow_overlap: bool,
+    not_enough_pool_error: str,
+    not_enough_visible_error: str,
+) -> tuple[int, ...]:
+    """Take ``requested`` devices from the non-overlapping ``pool``.
+
+    Shared by the rollout and reward auto-allocation paths. When the pool is
+    too small, fall back to the ``excluded`` devices (overlapping the trainer /
+    rollout) only if ``allow_overlap`` is set; otherwise raise. Callers pass the
+    role-specific error strings so each message keeps pointing at the right knob.
+    """
+
     if requested == 0:
         return ()
     if requested <= len(pool):
         return tuple(pool[:requested])
     if not allow_overlap:
-        raise ValueError(
-            "Not enough non-overlapping rollout GPUs: "
-            f"requested={requested}, available={len(pool)}, "
-            f"trainer={list(trainer_devices)}, visible={list(visible_devices)}. "
-            "Expose more GPUs or set distributed.resources.allow_overlap=true with "
-            "distributed.rollout.release_after_collect=true for single-GPU debug.",
-        )
-
-    fallback = tuple(device for device in visible_devices if device in set(trainer_devices))
+        raise ValueError(not_enough_pool_error)
+    fallback = tuple(device for device in visible_devices if device in excluded)
     combined = pool + fallback
     if requested > len(combined):
-        raise ValueError(
-            "Not enough visible GPUs for rollout even with overlap allowed: "
-            f"requested={requested}, visible={list(visible_devices)}",
-        )
+        raise ValueError(not_enough_visible_error)
     return tuple(combined[:requested])
-
-
-def _requested_rollout_gpu_count(
-    *,
-    rollout_config: RolloutResourceConfig,
-    available_count: int,
-) -> int:
-    num_gpus = _parse_num_gpus(
-        rollout_config.num_gpus,
-        field_name="rollout.num_gpus",
-    )
-    if num_gpus != "auto" and num_gpus is not None:
-        count = int(num_gpus)
-        if count < 0:
-            raise ValueError("distributed.resources.rollout.num_gpus must be >= 0")
-        return count
-    if float(rollout_config.gpus_per_worker) == 0.0:
-        return 0
-
-    num_workers = _parse_num_workers(rollout_config.num_workers)
-    if num_workers != "auto" and rollout_config.gpus_per_worker > 0:
-        return int(num_workers * float(rollout_config.gpus_per_worker))
-    return int(available_count)
 
 
 def _resolve_rollout_num_workers(
@@ -614,29 +623,28 @@ def _resolve_reward_devices(
         gpus_per_worker=reward_config.gpus_per_worker,
         available_count=len(pool),
     )
-    if requested == 0:
-        return ()
-    if requested <= len(pool):
-        return tuple(pool[:requested])
-    if not allow_overlap:
-        raise ValueError(
+    devices = _slice_pool_with_overlap_fallback(
+        requested=requested,
+        pool=pool,
+        excluded=excluded,
+        visible_devices=visible_devices,
+        allow_overlap=allow_overlap,
+        not_enough_pool_error=(
             "Not enough non-overlapping reward GPUs: "
             f"requested={requested}, available={len(pool)}, "
             f"trainer={list(trainer_devices)}, rollout={list(rollout_devices)}, "
             f"visible={list(visible_devices)}. Use "
             "distributed.resources.reward.share_with_rollout=true with "
             "release_after_collect/release_after_score for a shared inference pool, "
-            "or expose a separate reward GPU.",
-        )
-
-    fallback = tuple(device for device in visible_devices if device in excluded)
-    combined = pool + fallback
-    if requested > len(combined):
-        raise ValueError(
+            "or expose a separate reward GPU."
+        ),
+        not_enough_visible_error=(
             "Not enough visible GPUs for reward even with overlap allowed: "
-            f"requested={requested}, visible={list(visible_devices)}",
-        )
-    devices = tuple(combined[:requested])
+            f"requested={requested}, visible={list(visible_devices)}"
+        ),
+    )
+    if not devices:
+        return ()
     _validate_reward_overlap(
         devices=devices,
         trainer_devices=trainer_devices,
