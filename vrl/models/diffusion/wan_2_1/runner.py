@@ -82,8 +82,7 @@ class WanI2VDiffusionBackboneRunner:
     supports Wan 2.1 (boundary_ratio is None, expand_timesteps is False).
     Wan 2.2 5B with expand_timesteps blends ``(1 - first_frame_mask) *
     condition + first_frame_mask * latents`` into hidden_states; that
-    branch is intentionally left out — see ``SPRINT_wan_i2v_grpo_physical_rl.md``
-    Stage 5 for the 2.2 upgrade path.
+    branch is intentionally left out as a future 2.2 upgrade path.
     """
 
     cfg_mode = "batched_cfg"
