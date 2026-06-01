@@ -19,6 +19,7 @@ P2  局部重复（有测试兜底，不紧急）
 已落地的第一批范围按“少测例、先守门”执行：
 
 - 新增 `.github/workflows/ci.yml`：PR / main push 跑 `ruff check .`、`pytest -m "not e2e" -q`；main push 和手动触发额外构建 wheel/sdist artifact，但不发布 PyPI。
+- CI 依赖补齐：`dev` extra 包含 OCR fake-engine 测试需要的 `python-Levenshtein`，避免 CI 的干净环境只装 `[dev,cosmos]` 时在 `pytest` 阶段缺运行时依赖；workflow action 版本升级到当前 Node 24 版本。
 - 已修 P0-1：`GRPOConfig.eps` 默认改为 `1e-4`；张量路径和 tracker 路径都使用 `max(std, eps)`；张量路径 std 改为 population std，与 `numpy.std` 对齐。
 - 已修 P0-3：DPO 梯度累积边界改为独立 micro-step，不再从 `global_step` 推导；resume 时重新开始累积窗口，因为 checkpoint 不保存参数 `.grad` buffer。
 - 已修 P0-4：`RayRuntimeWeightSyncer.push()` 加 `asyncio.Lock`，保证 policy version 分配不会在并发 push 下重复。
