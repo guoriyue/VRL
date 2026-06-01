@@ -24,19 +24,6 @@ class WeightSyncer(ABC):
         """Fetch the latest weights."""
 
 
-class InMemoryWeightSyncer(WeightSyncer):
-    """Simple in-process syncer for single-GPU development."""
-
-    def __init__(self) -> None:
-        self._state: dict[str, Any] = {}
-
-    async def push(self, state_dict: dict[str, Any]) -> None:
-        self._state = dict(state_dict)
-
-    async def pull(self) -> dict[str, Any]:
-        return dict(self._state)
-
-
 class RayRuntimeWeightSyncer(WeightSyncer):
     """Bridge ``OnlineTrainer`` weight pushes to a Ray rollout runtime."""
 

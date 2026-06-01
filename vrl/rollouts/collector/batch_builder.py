@@ -39,7 +39,6 @@ class RolloutBatchBuildContext:
         default_factory=TrajectoryStoragePolicy,
     )
     reward_artifact_policy: RewardArtifactPolicy = field(default_factory=RewardArtifactPolicy)
-    extra: dict[str, Any] = field(default_factory=dict)
 
 
 class TrajectoryRolloutBatchBuilder:

@@ -1,33 +1,11 @@
 """Shared online training recipe helpers."""
 
-from vrl.scripts.common.factory import (
-    OnlineRecipeFactoryOutput,
-    UnsupportedOnlineRecipeError,
-    build_algorithm_and_evaluator_from_cfg,
-    build_collector_from_cfg,
-    build_online_recipe_components,
-    build_reward_from_cfg,
-    build_rollout_config_from_cfg,
-    resolve_online_family,
-)
+# Public recipe entrypoint only. Internal factory helpers live in
+# vrl.scripts.common.factory and are imported directly from there by online.py.
 from vrl.scripts.common.online import run_online_recipe
-from vrl.scripts.common.types import (
-    OnlineRecipeDefinition,
-    OnlineRecipeStack,
-    RecipeDeviceContext,
-)
+from vrl.scripts.common.types import OnlineRecipeDefinition
 
 __all__ = [
     "OnlineRecipeDefinition",
-    "OnlineRecipeFactoryOutput",
-    "OnlineRecipeStack",
-    "RecipeDeviceContext",
-    "UnsupportedOnlineRecipeError",
-    "build_algorithm_and_evaluator_from_cfg",
-    "build_collector_from_cfg",
-    "build_online_recipe_components",
-    "build_reward_from_cfg",
-    "build_rollout_config_from_cfg",
-    "resolve_online_family",
     "run_online_recipe",
 ]

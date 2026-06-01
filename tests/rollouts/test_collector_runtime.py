@@ -243,9 +243,9 @@ def test_reward_view_selection_fails_fast_when_ambiguous() -> None:
 
 def test_collector_forwards_reference_metadata_to_request() -> None:
     from vrl.rollouts.collector.config import RolloutConfig
-    from vrl.rollouts.collector.requests import RolloutEngineRequestBuilder
+    from vrl.rollouts.collector.requests import GenerationRequestBuilder
 
-    builder = RolloutEngineRequestBuilder(
+    builder = GenerationRequestBuilder(
         family="cosmos",
         task="v2w",
         request_prefix="cosmos",

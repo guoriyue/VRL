@@ -27,20 +27,10 @@ class VideoGenerationRequest:
     frame_count: int = 16
     num_steps: int = 35
     guidance_scale: float = 5.0
-    high_noise_guidance_scale: float | None = None
     seed: int | None = None
     model_name: str = ""
-    model_size: str = "A14B"
-    ckpt_dir: str | None = None
     fps: int = 16
-    sample_solver: str = "dpmpp"
     shift: float = 1.0
-    t5_cpu: bool = True
-    convert_model_dtype: bool = True
-    offload_model: bool = False
-    action_sequence: list[list[float]] | None = None
-    action_dim: int | None = None
-    action_conditioning_mode: str = "none"
     extra: dict[str, Any] = field(default_factory=dict)
 
 

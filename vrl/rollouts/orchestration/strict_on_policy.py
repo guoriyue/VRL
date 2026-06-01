@@ -70,7 +70,6 @@ class StrictOnPolicyRolloutSchedule:
 
     def reset(self) -> None:
         self.state.initialized = False
-        self.state.pending_rollout = None
 
 
 __all__ = ["StrictOnPolicyRolloutSchedule"]

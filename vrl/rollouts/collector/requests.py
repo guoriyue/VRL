@@ -114,11 +114,7 @@ class GenerationRequestBuilder:
         return metadata
 
 
-RolloutEngineRequestBuilder = GenerationRequestBuilder
-
-
 __all__ = [
     "CollectorRequest",
     "GenerationRequestBuilder",
-    "RolloutEngineRequestBuilder",
 ]

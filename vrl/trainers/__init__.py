@@ -10,7 +10,6 @@ from vrl.trainers.data import DistributedKRepeatSampler, TextPromptDataset
 from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.online.ema import EMAModuleWrapper
 from vrl.trainers.weight_sync import (
-    InMemoryWeightSyncer,
     RayRuntimeWeightSyncer,
     WeightSyncer,
     build_runtime_weight_syncer,
@@ -21,7 +20,6 @@ from vrl.trainers.weight_sync import (
 __all__ = [
     "DistributedKRepeatSampler",
     "EMAModuleWrapper",
-    "InMemoryWeightSyncer",
     "OnlineTrainer",
     "RayRuntimeWeightSyncer",
     "RolloutOrchestrationConfig",

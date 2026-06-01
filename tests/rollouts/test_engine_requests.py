@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from vrl.rollouts.collector.config import RolloutConfig
-from vrl.rollouts.collector.requests import RolloutEngineRequestBuilder
+from vrl.rollouts.collector.requests import GenerationRequestBuilder
 
 
 def test_engine_request_builder_reads_resolved_request_sampling() -> None:
-    builder = RolloutEngineRequestBuilder(
+    builder = GenerationRequestBuilder(
         family="sd3_5",
         task="t2i",
         request_prefix="sd3_5",
@@ -53,7 +53,7 @@ def test_engine_request_builder_reads_resolved_request_sampling() -> None:
 
 
 def test_engine_request_builder_applies_request_overrides_last() -> None:
-    builder = RolloutEngineRequestBuilder(
+    builder = GenerationRequestBuilder(
         family="sd3_5",
         task="t2i",
         request_prefix="sd3_5",

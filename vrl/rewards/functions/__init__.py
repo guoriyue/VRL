@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.rewards.functions.registry import MultiReward, get_reward, register_reward
+from vrl.rewards.functions.registry import MultiReward, get_reward
 
 
 def __getattr__(name: str) -> Any:
@@ -24,5 +24,4 @@ __all__ = [
     "MultiReward",
     "VideoReward",
     "get_reward",
-    "register_reward",
 ]

@@ -22,9 +22,7 @@ class RolloutScheduleState:
     """Mutable state owned by one rollout schedule."""
 
     rollout_id: int = 0
-    current_policy_version: int | None = None
     initialized: bool = False
-    pending_rollout: Any | None = None
 
 
 @dataclass(slots=True)

@@ -5,7 +5,7 @@ from pathlib import Path
 from omegaconf import OmegaConf
 
 from vrl.rollouts.collector.config import RolloutConfig
-from vrl.rollouts.collector.requests import RolloutEngineRequestBuilder
+from vrl.rollouts.collector.requests import GenerationRequestBuilder
 from vrl.scripts.diffusion.cosmos.train import (
     _normalize_per_sample_reference_images,
     _predict2_collector_kwargs,
@@ -37,7 +37,7 @@ def test_resolved_reference_image_flows_to_collector_metadata(tmp_path: Path) ->
         load_prompt_manifest(manifest)[0],
         data_root=tmp_path,
     )
-    builder = RolloutEngineRequestBuilder(
+    builder = GenerationRequestBuilder(
         family="cosmos-predict2",
         task="v2w",
         request_prefix="cosmos",

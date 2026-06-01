@@ -16,11 +16,6 @@ from vrl.rewards.types import RewardRollout
 _REWARD_REGISTRY: dict[str, type[RewardFunction]] = {}
 
 
-def register_reward(name: str, cls: type[RewardFunction]) -> None:
-    """Register a reward function class under a name."""
-    _REWARD_REGISTRY[name] = cls
-
-
 def get_reward(name: str) -> type[RewardFunction]:
     """Look up a registered reward function class by name."""
     if name not in _REWARD_REGISTRY:
