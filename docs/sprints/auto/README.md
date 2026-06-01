@@ -2,7 +2,7 @@
 
 状态: auto-generated (per-file audit). 已解决的条目随实现一并删除。
 
-剩余待处理: 32 个文件。审查基准 = AGENTS.md Architecture Hygiene。
+剩余待处理: 28 个文件。审查基准 = AGENTS.md Architecture Hygiene。
 
 ## 汇总
 
@@ -11,7 +11,7 @@
 | delete | 1 |
 | consolidate | 1 |
 | question | 3 |
-| improve | 27 |
+| improve | 23 |
 
 ## 🔴 DELETE（1）
 
@@ -32,7 +32,7 @@
 - **`vrl/trainers/online/diagnostics.py`** (16L, thin-wrapper) — vrl/trainers/online/diagnostics.py — 纯转发 compat shim，worker.py 直连 canonical 源造成两条 import 路径，疑似可删  
   → [SPRINT_vrl_trainers_online_diagnostics.md](SPRINT_vrl_trainers_online_diagnostics.md)
 
-## 🔵 IMPROVE（27）
+## 🔵 IMPROVE（23）
 
 - **`vrl/algorithms/diffusion_nft.py`** (305L, core) — vrl/algorithms/diffusion_nft.py — 真核心算法，但 advantage 归一化与 GRPO 逐行重复应抽共享 helper，loss 方法偏 god-method 可拆  
   → [SPRINT_vrl_algorithms_diffusion_nft.md](SPRINT_vrl_algorithms_diffusion_nft.md)
@@ -62,8 +62,6 @@
   → [SPRINT_vrl_models_diffusion_wan_2_1___init__.md](SPRINT_vrl_models_diffusion_wan_2_1___init__.md)
 - **`vrl/models/replay_loading.py`** (361L, helper) — vrl/models/replay_loading.py — 职责过载且文件名误导：应把通用后端加载动作从 replay 元数据中拆出，并对仅测试触达的 parser 路径表态  
   → [SPRINT_vrl_models_replay_loading.md](SPRINT_vrl_models_replay_loading.md)
-- **`vrl/rewards/inference.py`** (321L, interface-boundary) — vrl/rewards/inference.py — reward 推理契约边界，整体合理；media_type 合法值集合在 inference/artifacts 两处手抄，应抽单一来源  
-  → [SPRINT_vrl_rewards_inference.md](SPRINT_vrl_rewards_inference.md)
 - **`vrl/rewards/models/kling_video_reward.py`** (776L, core) — vrl/rewards/models/kling_video_reward.py — cohesive self-owned VideoAlign-derived model adapter; ALL_CAPS are real boundaries, but _torch_dtype duplicates base.resolve_dtype and prompt-template table could be externalized  
   → [SPRINT_vrl_rewards_models_kling_video_reward.md](SPRINT_vrl_rewards_models_kling_video_reward.md)
 - **`vrl/rewards/types.py`** (40L, core) — vrl/rewards/types.py — RewardTrajectoryStep 从未实例化、steps/seed 全调用点恒为[]/0 的死字段，应删收敛  
@@ -80,11 +78,5 @@
   → [SPRINT_vrl_scripts_data_danbooru.md](SPRINT_vrl_scripts_data_danbooru.md)
 - **`vrl/scripts/diffusion/wan_2_1/train_dpo.py`** (325L, script) — vrl/scripts/diffusion/wan_2_1/train_dpo.py — 真实在用的离线 DPO 驱动，但 CSV header 手抄 DPOStepMetrics 字段(会漂移)、export 块重复两遍、单函数职责过载  
   → [SPRINT_vrl_scripts_diffusion_wan_2_1_train_dpo.md](SPRINT_vrl_scripts_diffusion_wan_2_1_train_dpo.md)
-- **`vrl/trainers/data/artifacts.py`** (373L, core) — vrl/trainers/data/artifacts.py — 核心 manifest 校验，但 repo_root/default_data_root 与 scripts/data/common.py 逐字重复，应收敛单一来源  
-  → [SPRINT_vrl_trainers_data_artifacts.md](SPRINT_vrl_trainers_data_artifacts.md)
 - **`vrl/trainers/online/trainer.py`** (899L, core) — vrl/trainers/online/trainer.py — 核心训练循环，但 _step_impl 内嵌一次性 grad-split/first-step 调试脚手架(写/tmp、三处重复样板)，应抽离隔离  
   → [SPRINT_vrl_trainers_online_trainer.md](SPRINT_vrl_trainers_online_trainer.md)
-- **`vrl/trajectory/storage.py`** (179L, core) — vrl/trajectory/storage.py — 核心 storage policy，但 _VALID_DEVICES/_VALID_DTYPES frozenset 手抄了 Literal 成员，应 get_args derive  
-  → [SPRINT_vrl_trajectory_storage.md](SPRINT_vrl_trajectory_storage.md)
-- **`vrl/trajectory/validation.py`** (417L, interface-boundary) — vrl/trajectory/validation.py — 核心契约校验器(真边界,保留);必需角色三元组 (action/old_log_prob/mask) 在同文件写两遍(L26 frozenset + L233 字面 tuple)应统一,且 _looks_runtime_only 末尾 ray/actor 判断是恒为真的死分支  
-  → [SPRINT_vrl_trajectory_validation.md](SPRINT_vrl_trajectory_validation.md)
