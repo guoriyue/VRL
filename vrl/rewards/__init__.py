@@ -19,12 +19,12 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
+    "KlingVideoReward",
     "MultiReward",
     "RewardFunction",
     "RewardRollout",
     "RewardTrajectory",
     "RewardTrajectoryStep",
-    "KlingVideoReward",
     "VideoReward",
     "get_reward",
     "register_reward",

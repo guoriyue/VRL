@@ -14,6 +14,18 @@ P2  局部重复（有测试兜底，不紧急）
 
 明确边界：本 sprint **不重构** Cosmos 三变体主体、家族注册表、配置分层、scripts 入口模板——经审查这些是刻意的跨家族一致性，按 AGENTS.md "consistency over cleanup" 原则保留。
 
+## 0.1 Implementation Status（2026-06-01）
+
+已落地的第一批范围按“少测例、先守门”执行：
+
+- 新增 `.github/workflows/ci.yml`：PR / main push 跑 `ruff check .`、`pytest -m "not e2e" -q`；main push 和手动触发额外构建 wheel/sdist artifact，但不发布 PyPI。
+- 已修 P0-1：`GRPOConfig.eps` 默认改为 `1e-4`；张量路径和 tracker 路径都使用 `max(std, eps)`；张量路径 std 改为 population std，与 `numpy.std` 对齐。
+- 已修 P0-3：DPO 梯度累积边界改为独立 micro-step，不再从 `global_step` 推导；resume 时重新开始累积窗口，因为 checkpoint 不保存参数 `.grad` buffer。
+- 已修 P0-4：`RayRuntimeWeightSyncer.push()` 加 `asyncio.Lock`，保证 policy version 分配不会在并发 push 下重复。
+- 只补了 3 个窄回归测试：GRPO 两条 advantage 路径一致、DPO 累积边界不受 `global_step` offset 影响、weight sync 并发版本单调。
+
+暂不启用 `ruff format --check .`：当前全仓仍有大量既有文件会被 `ruff format` 重排。直接打开 format gate 会把本 sprint 变成全仓格式化提交，优先级低于 CI 守门和训练正确性。
+
 ## 1. 为什么做（每条都已核实）
 
 ### P0-1：GRPO 优势归一化两条路径不一致 + `eps` 过小 🔴
@@ -63,9 +75,11 @@ self._next_policy_version = policy_version + 1   # 自增在 await 之后
 
 当前 OnlineTrainer 的 `after_train_step` 是单协程顺序 await，不会触发。但读取+自增没有锁保护：一旦未来出现并发 push（两个训练步重叠），两次读到同一 version 再各自 +1 → 版本号重复/丢失。属于脆弱模式，应在引入并发前加固。
 
-### P1-1：没有 CI 🔴（流程层最大风险）
+### P1-1：没有 CI 🔴（流程层最大风险，已部分落地）
 
-无 `.github/workflows`、无 `conftest.py`、无 Makefile/tox/nox。`pytest --collect-only` 健康（526 tests，0 错误，2.26s），测试质量高（真 `backward()`、断言精确数值），但**完全不在提交时强制执行**。回归可以随便落地。
+原始状态：无 `.github/workflows`、无 `conftest.py`、无 Makefile/tox/nox。`pytest --collect-only` 健康（当前为 556 tests，0 错误），测试质量高（真 `backward()`、断言精确数值），但**完全不在提交时强制执行**。
+
+当前状态：已新增 CI workflow，先强制 lint + 非 e2e 测试 + package artifact build。format gate 暂缓，原因见 `0.1 Implementation Status`。
 
 ### P1-2：四块训练数学零覆盖
 
@@ -89,11 +103,12 @@ self._next_policy_version = policy_version + 1   # 自增在 await 之后
 新增 `.github/workflows/ci.yml`，CPU runner，跑：
 
 ```yaml
-- ruff check . && ruff format --check .
-- pytest -m "not e2e"     # e2e 已被 WM_RUN_REAL_MODEL_TESTS 门控，CI 不跑
+- ruff check .
+- pytest -m "not e2e" -q     # e2e 已被 WM_RUN_REAL_MODEL_TESTS 门控，CI 不跑
+- python -m build            # push/main 手动触发时构建 artifact，不发布
 ```
 
-完成标准：PR 触发，红线能挡住 lint/test 回归。这一步先落地，后面每个 Phase 的测试都自动进 CI。
+完成标准：PR 触发，红线能挡住 lint/test 回归；main push 能产出 package artifact。这一步先落地，后面每个 Phase 的测试都自动进 CI。`ruff format --check .` 等全仓格式化单独做，不混入本 sprint。
 
 ### Phase 2 — P0 正确性修复
 

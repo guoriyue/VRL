@@ -8,8 +8,8 @@ from omegaconf import OmegaConf
 from vrl.config.schema import (
     AlgorithmConfig,
     DataConfig,
-    RewardConfig,
     KlingVideoRewardKwargs,
+    RewardConfig,
     parse_config,
 )
 

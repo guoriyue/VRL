@@ -27,14 +27,15 @@ class PerPromptStatTracker:
     invokes clear every outer epoch — see train_wan2_1.py:829).
 
     Advantage types:
-      * ``grpo``  — ``(r - group_mean) / (group_std + 1e-4)``
+      * ``grpo``  — ``(r - group_mean) / max(group_std, eps)``
       * ``rwr``   — identity (reward-weighted regression)
       * ``sft``   — one-hot on batch max
       * ``dpo``   — ±1 on batch max/min (fallback to idx 0/1 if tied)
     """
 
-    def __init__(self, global_std: bool = False) -> None:
+    def __init__(self, global_std: bool = False, eps: float = 1e-4) -> None:
         self.global_std = global_std
+        self.eps = float(eps)
         self.stats: dict[str, np.ndarray] = {}
         self.history_prompts: set[int] = set()
 
@@ -80,9 +81,9 @@ class PerPromptStatTracker:
             prompt_rewards = rewards[prompts == prompt]
             mean = np.mean(self.stats[prompt], axis=0, keepdims=True)
             if self.global_std:
-                std = np.std(rewards, axis=0, keepdims=True) + 1e-4
+                std = np.maximum(np.std(rewards, axis=0, keepdims=True), self.eps)
             else:
-                std = np.std(self.stats[prompt], axis=0, keepdims=True) + 1e-4
+                std = np.maximum(np.std(self.stats[prompt], axis=0, keepdims=True), self.eps)
 
             if type == "grpo":
                 advantages[prompts == prompt] = (prompt_rewards - mean) / std

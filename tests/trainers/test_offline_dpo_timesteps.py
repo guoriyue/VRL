@@ -174,6 +174,16 @@ def test_offline_dpo_state_dict_restores_optimizer_and_global_step() -> None:
     )
 
 
+def test_offline_dpo_accumulation_boundary_ignores_global_step_offset() -> None:
+    trainer = _make_trainer(torch.arange(20))
+    trainer.config.gradient_accumulation_steps = 3
+    trainer.global_step = 7
+
+    assert trainer._mark_gradient_accumulation_step() is False
+    assert trainer._mark_gradient_accumulation_step() is False
+    assert trainer._mark_gradient_accumulation_step() is True
+
+
 def _adam_exp_avg_values(optimizer) -> list[float]:
     values: list[float] = []
     for slot in optimizer.state.values():

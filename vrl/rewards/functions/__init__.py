@@ -20,8 +20,8 @@ def __getattr__(name: str) -> Any:
 
 
 __all__ = [
-    "MultiReward",
     "KlingVideoReward",
+    "MultiReward",
     "VideoReward",
     "get_reward",
     "register_reward",

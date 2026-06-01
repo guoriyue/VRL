@@ -51,6 +51,27 @@ def test_ray_runtime_weight_syncer_pushes_cpu_state_with_monotonic_versions() ->
     assert torch.equal(asyncio.run(syncer.pull())["weight"], torch.full((2,), 2.0))
 
 
+def test_ray_runtime_weight_syncer_serializes_concurrent_push_versions() -> None:
+    class _SlowRuntime(_RuntimeWithSync):
+        async def update_weights(self, state_ref: dict[str, Any], policy_version: int) -> None:
+            await asyncio.sleep(0)
+            await super().update_weights(state_ref, policy_version)
+
+    async def _push_concurrently() -> _SlowRuntime:
+        runtime = _SlowRuntime()
+        syncer = RayRuntimeWeightSyncer(runtime)
+        await asyncio.gather(
+            syncer.push({"weight": torch.ones(1)}),
+            syncer.push({"weight": torch.full((1,), 2.0)}),
+        )
+        return runtime
+
+    runtime = asyncio.run(_push_concurrently())
+
+    assert [version for _, version in runtime.calls] == [1, 2]
+    assert runtime.current_policy_version == 2
+
+
 def test_build_runtime_weight_syncer_requires_runtime_weight_sync_handle() -> None:
     assert build_runtime_weight_syncer(_RuntimeWithSync()) is not None
     assert build_runtime_weight_syncer(_RuntimeWithoutSync()) is None

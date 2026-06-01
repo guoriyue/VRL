@@ -31,10 +31,10 @@ def get_reward(name: str) -> type[RewardFunction]:
 def _register_builtins() -> None:
     from vrl.rewards.functions.aesthetic import AestheticReward
     from vrl.rewards.functions.geneval import GenEvalReward
+    from vrl.rewards.functions.kling_video_reward import KlingVideoReward
     from vrl.rewards.functions.nsfw_safety import NSFWSafetyReward
     from vrl.rewards.functions.ocr import OCRReward
     from vrl.rewards.functions.pickscore import PickScoreReward
-    from vrl.rewards.functions.kling_video_reward import KlingVideoReward
     from vrl.rewards.functions.videocon_physics import VideoConPhysicsReward
 
     _REWARD_REGISTRY.update({

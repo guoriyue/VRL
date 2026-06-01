@@ -209,6 +209,7 @@ class OfflineDPOTrainer:
         self.config = config or OfflineDPOTrainerConfig()
         self.device = torch.device(device) if isinstance(device, str) else device
         self.global_step = 0
+        self._gradient_accumulation_micro_step = 0
 
         if self.ref_model is not None:
             self.ref_model.eval()
@@ -350,7 +351,7 @@ class OfflineDPOTrainer:
         loss_scaled.backward()
 
         grad_norm = 0.0
-        if (self.global_step + 1) % cfg.gradient_accumulation_steps == 0:
+        if self._mark_gradient_accumulation_step():
             if cfg.max_grad_norm > 0:
                 gn = nn.utils.clip_grad_norm_(self.model.parameters(), cfg.max_grad_norm)
                 grad_norm = float(gn) if isinstance(gn, torch.Tensor) else gn
@@ -396,6 +397,14 @@ class OfflineDPOTrainer:
             "cannot compute reference prediction"
         )
 
+    def _mark_gradient_accumulation_step(self) -> bool:
+        accumulation_steps = max(1, int(self.config.gradient_accumulation_steps))
+        self._gradient_accumulation_micro_step += 1
+        if self._gradient_accumulation_micro_step < accumulation_steps:
+            return False
+        self._gradient_accumulation_micro_step = 0
+        return True
+
     def state_dict(self) -> dict[str, Any]:
         """Return resumable trainer state."""
 
@@ -410,6 +419,10 @@ class OfflineDPOTrainer:
         if not isinstance(state, dict):
             raise TypeError("OfflineDPOTrainer.load_state_dict expects a dict")
         self.global_step = int(state.get("global_step", state.get("step", 0)))
+        # Parameter .grad buffers are not checkpointed, so resume must start a
+        # fresh accumulation window instead of deriving the boundary from
+        # global_step.
+        self._gradient_accumulation_micro_step = 0
         if "optimizer" in state:
             try:
                 self._optimizer.load_state_dict(state["optimizer"])

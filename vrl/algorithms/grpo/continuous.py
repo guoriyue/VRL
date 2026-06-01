@@ -16,7 +16,7 @@ class GRPOConfig:
 
     eps_clip: float = 0.2
     init_kl_coef: float = 0.0
-    eps: float = 1e-8
+    eps: float = 1e-4
     adv_clip_max: float = 5.0
     global_std: bool = False
     flow_kl_use_dt: bool = False
@@ -67,9 +67,9 @@ class GRPO(Algorithm):
             mean = group_rewards.mean()
 
             if cfg.global_std:
-                std = rewards.std() if rewards.numel() > 1 else torch.tensor(0.0)
+                std = rewards.std(unbiased=False) if rewards.numel() > 1 else torch.tensor(0.0)
             else:
-                std = group_rewards.std()
+                std = group_rewards.std(unbiased=False)
 
             denom = torch.clamp(std, min=cfg.eps)
             group_adv = (group_rewards - mean) / denom

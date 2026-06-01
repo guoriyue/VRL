@@ -300,7 +300,10 @@ def _build_stat_tracker(cfg: DictConfig, algorithm: Any) -> Any | None:
     from vrl.trainers.online.stat_tracking import PerPromptStatTracker
 
     config = getattr(algorithm, "config", None)
-    return PerPromptStatTracker(global_std=bool(getattr(config, "global_std", False)))
+    return PerPromptStatTracker(
+        global_std=bool(getattr(config, "global_std", False)),
+        eps=float(getattr(config, "eps", 1e-4)),
+    )
 
 
 def _prepare_metrics_csv(

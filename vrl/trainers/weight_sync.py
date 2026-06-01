@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -54,13 +55,15 @@ class RayRuntimeWeightSyncer(WeightSyncer):
             initial_policy_version,
         )
         self._last_state: dict[str, Any] = {}
+        self._push_lock = asyncio.Lock()
 
     async def push(self, state_dict: dict[str, Any]) -> None:
         state = _cpu_state_dict(state_dict)
-        policy_version = self._next_policy_version
-        await self.runtime.update_weights(state, policy_version)
-        self._next_policy_version = policy_version + 1
-        self._last_state = state
+        async with self._push_lock:
+            policy_version = self._next_policy_version
+            await self.runtime.update_weights(state, policy_version)
+            self._next_policy_version = policy_version + 1
+            self._last_state = state
 
     async def pull(self) -> dict[str, Any]:
         return dict(self._last_state)
