@@ -24,6 +24,17 @@ def build_tensor_mean_model(worker_config):
     return _model
 
 
+def build_constant_reward_model(worker_config):
+    """Test RewardModel factory: return fixed scores independent of the artifact."""
+
+    scores = {str(k): float(v) for k, v in dict(worker_config["scores"]).items()}
+
+    def _model(*, artifact, request):
+        return dict(scores)
+
+    return _model
+
+
 def _request(path: Path, *, score_key: str = "overall_reward") -> RewardInferenceRequest:
     return RewardInferenceRequest(
         request_id="gpu-runtime",
@@ -75,6 +86,67 @@ def test_ray_reward_runtime_uses_repo_owned_model_factory(tmp_path: Path) -> Non
         assert results[0].selected_score == pytest.approx(2.0)
         assert results[0].reward_model_version == "tensor-mean-v1"
         assert results[0].metadata["worker"]["worker_id"] == "reward-0"
+    finally:
+        if runtime is not None:
+            asyncio.run(runtime.shutdown())
+        ray.shutdown()
+
+
+def test_ray_reward_runtime_fans_out_across_workers_with_timing() -> None:
+    # Multi-worker fan-out: three artifacts scored across two workers must come
+    # back in request order, with populated, non-negative timing breakdowns.
+    ray = pytest.importorskip("ray")
+    ray.shutdown()
+    runtime = None
+    try:
+        runtime = RayRewardRuntime(
+            {
+                "inference_runtime": "ray",
+                "worker_config": {
+                    "model_factory": (
+                        "tests.rewards.test_ray_reward_gpu_runtime:build_constant_reward_model"
+                    ),
+                    "scores": {"overall_reward": 2.0},
+                    "reward_model_version": "fake-v1",
+                },
+                "num_workers": 2,
+                "cpus_per_worker": 0.5,
+                "gpus_per_worker": 0.0,
+            },
+            ray_init_kwargs={
+                "ignore_reinit_error": True,
+                "include_dashboard": False,
+                "num_cpus": 2,
+                "log_to_driver": False,
+            },
+        )
+        request = RewardInferenceRequest(
+            request_id="req",
+            artifacts=tuple(
+                RewardInferenceArtifact(
+                    artifact_id=f"a{i}",
+                    path=f"/tmp/a{i}.pt",
+                    media_type="video",
+                    policy_version=7,
+                )
+                for i in range(3)
+            ),
+            reward_name="reward",
+            score_key="overall_reward",
+            policy_version=7,
+        )
+
+        results = asyncio.run(runtime.score_batch(request))
+
+        assert [result.artifact_id for result in results] == ["a0", "a1", "a2"]
+        assert [result.selected_score for result in results] == pytest.approx([2.0, 2.0, 2.0])
+        assert {result.reward_model_version for result in results} == {"fake-v1"}
+        assert {result.policy_version for result in results} == {7}
+        for result in results:
+            assert result.latency_ms is not None and result.latency_ms >= 0.0
+            assert result.queue_wait_ms is not None and result.queue_wait_ms >= 0.0
+            assert result.inference_ms is not None and result.inference_ms >= 0.0
+            assert result.metadata["worker"]["worker_id"].startswith("reward-")
     finally:
         if runtime is not None:
             asyncio.run(runtime.shutdown())

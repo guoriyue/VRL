@@ -90,10 +90,10 @@ base 上确实有真实逻辑的方法只有两个：
 - 不动 `forward_batch_plan`（executor.py:67-100）：含 plan 反射 + RequestBatch 编排，是真实复杂度；与 diffusion base 的 `forward_batch_plan`（diffusion/executor.py:626-653）形成跨家族一致形状，属于 AGENTS.md "consistency over cleanup" 应保留的对称结构。
 - 不动 `require_native_ar_engine`（executor.py:50-62）：AR 专有的引擎 selector 拒绝逻辑，不属于 layout 的请求布局职责。
 - 不动 `layout` property 本身：它把 base 的 `default_*` 配置注入 `ARRequestLayout`，是合理的配置组装点。
-- 不要把 `ARRequestLayout` 拍平进 base：layout 被 runtime 和 test（test_nextstep_1_kv_decode.py:28/61 直接 `ARRequestLayout().parse_sampling_params`）独立复用，是真正的共享抽象，必须留在 layout.py。
+- 不要把 `ARRequestLayout` 拍平进 base：layout 被 runtime 和 test（test_nextstep_1_request_parsing.py:28/61 直接 `ARRequestLayout().parse_sampling_params`）独立复用，是真正的共享抽象，必须留在 layout.py。
 
 ## 5. 验证
-- 改完跑 `pytest tests/generation/ar/test_ar_engine_selection.py tests/models/test_nextstep_1_kv_decode.py tests/models/test_janus_kv_decode.py -q`。
+- 改完跑 `pytest tests/generation/ar/test_ar_engine_selection.py tests/models/test_nextstep_1_request_parsing.py tests/models/test_janus_kv_decode.py -q`。
 - `grep -rn "self\.parse_sampling_params\|self\.layout\.parse_sampling_params" vrl/models/ar/` 确认只剩一种调用风格。
 - `grep -rn "ARPipelineExecutorBase" vrl tests` 确认两个 runtime + 测试 fake 仍正常继承。
 - `ruff check vrl/generation/ar/executor.py`。

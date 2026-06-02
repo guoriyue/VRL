@@ -7,7 +7,6 @@ from pathlib import Path
 from PIL import Image
 
 from vrl.scripts.data import bootstrap, common, danbooru, setup, video_world
-from vrl.scripts.data.danbooru import positive_image_rows
 from vrl.scripts.diffusion.cosmos.train import _normalize_per_sample_reference_images
 from vrl.trainers.data import load_prompt_manifest
 
@@ -61,59 +60,9 @@ def test_video_world_bridge_rows_match_cosmos_consumer(
     assert Path(examples[0].reference_image).exists()
 
 
-def test_anime_fetch_images_downloads_only_positive_selection(tmp_path: Path) -> None:
-    metadata = tmp_path / "posts.jsonl"
-    rows = [
-        {
-            "id": 1,
-            "score": 50,
-            "tag_string": "1girl solo full_body standing",
-            "file_ext": "jpg",
-            "file_url": "https://example.test/1.jpg",
-        },
-        {
-            "id": 2,
-            "score": 1,
-            "tag_string": "1girl solo upper_body",
-            "file_ext": "jpg",
-            "file_url": "https://example.test/2.jpg",
-        },
-    ]
-    metadata.write_text(
-        "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows),
-        encoding="utf-8",
-    )
-    image_root = tmp_path / "images"
-
-    selected = positive_image_rows(
-        metadata,
-        image_root=image_root,
-        min_score=10,
-        limit=None,
-        source="danbooru",
-    )
-    targets = {str(row["post_id"]): Path(row["image_path"]) for row in selected}
-
-    calls: list[tuple[str, Path]] = []
-
-    def fake_fetch(url: str, target: Path) -> None:
-        calls.append((url, target))
-        target.write_bytes(b"fake-image-bytes")
-
-    downloaded, skipped, failed = danbooru.download_danbooru_images(
-        metadata,
-        targets,
-        fetch=fake_fetch,
-    )
-
-    assert downloaded == 1
-    assert skipped == 0
-    assert failed == 0
-    assert calls == [("https://example.test/1.jpg", image_root / "1.jpg")]
-    assert (image_root / "1.jpg").exists()
-    assert not (image_root / "2.jpg").exists()
-
-
+# NOTE: the bare ``download_danbooru_images`` selection path is owned by
+# ``test_danbooru.py::test_download_danbooru_images_downloads_only_positive_selection``.
+# This module only covers the ``setup.main`` CLI wiring that sits on top of it.
 def test_anime_positives_prepares_both_manifests_end_to_end(monkeypatch, tmp_path: Path) -> None:
     metadata = tmp_path / "posts.jsonl"
     rows = [

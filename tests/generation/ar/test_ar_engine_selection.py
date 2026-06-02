@@ -13,20 +13,25 @@ class _Executor(ARPipelineExecutorBase):
     task = "ar_t2i"
 
 
-def test_native_ar_engine_is_default() -> None:
-    assert _Executor().require_native_ar_engine(_request()) == "native"
+@pytest.mark.parametrize("ar_engine", [None, "native"])
+def test_native_ar_engine_is_accepted(ar_engine: str | None) -> None:
+    # Both an unset selector and an explicit "native" must resolve to native parity.
+    assert _Executor().require_native_ar_engine(_request(ar_engine=ar_engine)) == "native"
 
 
-def test_unknown_ar_engine_is_rejected() -> None:
-    request = _request(ar_engine="hf")
+def test_unknown_ar_engine_is_rejected_via_native_requirement_branch() -> None:
+    # An arbitrary unknown selector must hit the generic "must be 'native'" branch,
+    # not the vllm-specific one — a loose "ar_engine" match would pass for either.
+    with pytest.raises(ValueError, match="must be 'native'"):
+        _Executor().require_native_ar_engine(_request(ar_engine="hf"))
 
-    with pytest.raises(ValueError, match="ar_engine"):
-        _Executor().require_native_ar_engine(request)
 
-
-def test_vllm_full_engine_selector_is_rejected_without_import_gate() -> None:
-    with pytest.raises(ValueError, match="not a supported full-engine"):
+def test_vllm_full_engine_selector_is_rejected_with_actionable_message() -> None:
+    with pytest.raises(ValueError, match="not a supported full-engine") as excinfo:
         _Executor().require_native_ar_engine(_request(ar_engine="vllm"))
+
+    # The message must name the offending selector so the caller knows what to drop.
+    assert "vllm" in str(excinfo.value)
 
 
 def _request(ar_engine: str | None = None) -> GenerationRequest:
