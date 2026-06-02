@@ -96,6 +96,7 @@ def _build_continuous_schedule(
         drop_policy=str(field("drop_policy", "drop_oldest_stale")),
         wait_timeout_s=float(field("wait_timeout_s", 300.0)),
         queue_poll_interval_s=float(field("queue_poll_interval_s", 0.05)),
+        fail_fast_errors=int(field("fail_fast_errors", 3)),
     )
 
 

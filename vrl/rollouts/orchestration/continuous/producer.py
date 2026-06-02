@@ -212,6 +212,16 @@ class ContinuousRolloutProducer:
             except Exception as exc:
                 self.state.last_error = repr(exc)
                 self.state.error_count += 1
+                # Surface immediately: a persistent generation/reward failure
+                # would otherwise stay invisible until a periodic tick, and the
+                # consumer would only see an opaque wait timeout downstream.
+                logger.warning(
+                    "continuous rollout collect failed (error_count=%d, "
+                    "completed=%d): %s",
+                    self.state.error_count,
+                    self.state.completed_count,
+                    exc,
+                )
                 continue
             self._enqueue_result(result)
             self.state.completed_count += 1

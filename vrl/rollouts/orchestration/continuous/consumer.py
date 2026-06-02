@@ -16,7 +16,10 @@ import torch
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
 from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
-from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutItem
+from vrl.rollouts.orchestration.continuous.types import (
+    ContinuousRolloutItem,
+    ContinuousRolloutProducerState,
+)
 from vrl.rollouts.orchestration.types import (
     RolloutIteration,
     RolloutScheduleMode,
@@ -33,9 +36,13 @@ class ContinuousRolloutConsumer:
         *,
         queue: ContinuousRolloutQueue,
         staleness: StalenessPolicy,
+        fail_fast_errors: int = 3,
     ) -> None:
         self.queue = queue
         self.staleness = staleness
+        # Fresh-error count (with zero fresh completions) that ends the wait
+        # early with the producer's root cause. 0 disables fail-fast.
+        self.fail_fast_errors = max(0, int(fail_fast_errors))
 
     async def drain_for_iteration(
         self,
@@ -46,11 +53,20 @@ class ContinuousRolloutConsumer:
         mode: RolloutScheduleMode,
         wait_timeout_s: float,
         poll_interval_s: float,
+        producer_state: ContinuousRolloutProducerState | None = None,
     ) -> RolloutIteration:
-        """Block until a homogeneous-version iteration is ready, then build it."""
+        """Block until a homogeneous-version iteration is ready, then build it.
+
+        ``producer_state`` lets the wait surface the background producer's
+        health: a persistent generation/reward failure ends the wait early with
+        the producer's root cause instead of an opaque timeout, and the timeout
+        message (when reached) includes the producer's last error and counters.
+        """
 
         deadline = time.monotonic() + float(wait_timeout_s)
         wait_start = time.perf_counter()
+        start_completed = producer_state.completed_count if producer_state else 0
+        start_errors = producer_state.error_count if producer_state else 0
         while True:
             selected = self.queue.select_iteration(
                 min_groups=min_groups,
@@ -68,14 +84,68 @@ class ContinuousRolloutConsumer:
                     current_version=current_version,
                     queue_wait_s=wait_s,
                 )
+            self._fail_fast_if_producer_stalled(
+                producer_state,
+                start_completed=start_completed,
+                start_errors=start_errors,
+            )
             if time.monotonic() >= deadline:
-                stats = self.queue.stats()
                 raise TimeoutError(
-                    "continuous rollout consumer timed out waiting for "
-                    f"{min_groups} same-policy groups after {wait_timeout_s}s "
-                    f"(queue={stats})",
+                    self._timeout_message(min_groups, wait_timeout_s, producer_state),
                 )
             await asyncio.sleep(poll_interval_s)
+
+    def _fail_fast_if_producer_stalled(
+        self,
+        producer_state: ContinuousRolloutProducerState | None,
+        *,
+        start_completed: int,
+        start_errors: int,
+    ) -> None:
+        """Raise the producer's root cause if every attempt is failing.
+
+        Triggers only when, since this wait started, the producer has logged
+        ``fail_fast_errors`` failures and produced *zero* completions — a
+        systemic generation/reward failure rather than a transient blip. Slow
+        failures that never reach the threshold are still covered by the
+        enriched timeout message.
+        """
+
+        if producer_state is None or self.fail_fast_errors == 0:
+            return
+        fresh_errors = producer_state.error_count - start_errors
+        fresh_completions = producer_state.completed_count - start_completed
+        if fresh_completions == 0 and fresh_errors >= self.fail_fast_errors:
+            raise RuntimeError(
+                "continuous rollout producer is failing every generation while "
+                f"the consumer waits: {fresh_errors} errors and 0 completions "
+                f"since wait start (submitted={producer_state.submitted_count}, "
+                f"completed={producer_state.completed_count}, "
+                f"errors={producer_state.error_count}); "
+                f"last_error={producer_state.last_error}",
+            )
+
+    def _timeout_message(
+        self,
+        min_groups: int,
+        wait_timeout_s: float,
+        producer_state: ContinuousRolloutProducerState | None,
+    ) -> str:
+        stats = self.queue.stats()
+        message = (
+            "continuous rollout consumer timed out waiting for "
+            f"{min_groups} same-policy groups after {wait_timeout_s}s "
+            f"(queue={stats})"
+        )
+        if producer_state is not None:
+            message += (
+                f" (producer: submitted={producer_state.submitted_count}, "
+                f"completed={producer_state.completed_count}, "
+                f"errors={producer_state.error_count}, "
+                f"inflight={producer_state.inflight_count}, "
+                f"last_error={producer_state.last_error})"
+            )
+        return message
 
     def _build_iteration(
         self,

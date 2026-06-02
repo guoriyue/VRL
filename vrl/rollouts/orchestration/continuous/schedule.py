@@ -47,6 +47,7 @@ class ContinuousRolloutSchedule:
         drop_policy: str = "drop_oldest_stale",
         wait_timeout_s: float = 300.0,
         queue_poll_interval_s: float = 0.05,
+        fail_fast_errors: int = 3,
     ) -> None:
         self.lifecycle = lifecycle
         self.require_separate_gpus = bool(require_separate_gpus)
@@ -56,6 +57,7 @@ class ContinuousRolloutSchedule:
         self.drop_policy = drop_policy
         self.wait_timeout_s = float(wait_timeout_s)
         self.queue_poll_interval_s = float(queue_poll_interval_s)
+        self.fail_fast_errors = int(fail_fast_errors)
 
         self.staleness = StalenessPolicy(
             max_stale_policy_versions=int(max_stale_policy_versions),
@@ -87,6 +89,7 @@ class ContinuousRolloutSchedule:
             self._prompt_key = prompt_key
 
         assert self.consumer is not None
+        assert self.producer is not None
         rollout_id = self.state.rollout_id
         self.state.rollout_id += 1
         current_version = self.lifecycle.current_policy_version()
@@ -98,6 +101,7 @@ class ContinuousRolloutSchedule:
             mode=self.mode,
             wait_timeout_s=self.wait_timeout_s,
             poll_interval_s=self.queue_poll_interval_s,
+            producer_state=self.producer.state,
         )
         iteration.phase_times.update(phase_times)
         self._attach_producer_metrics(iteration)
@@ -146,6 +150,7 @@ class ContinuousRolloutSchedule:
         self.consumer = ContinuousRolloutConsumer(
             queue=self.queue,
             staleness=self.staleness,
+            fail_fast_errors=self.fail_fast_errors,
         )
         self.producer = ContinuousRolloutProducer(
             lifecycle=self.lifecycle,

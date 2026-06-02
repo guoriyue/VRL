@@ -196,6 +196,36 @@ async def test_rejects_colocated_runtime() -> None:
         await schedule.next_iteration(["p0"], group_size=1)
 
 
+class _FailingCollector(_Collector):
+    def __init__(self, runtime: _Runtime, message: str = "boom") -> None:
+        super().__init__(runtime)
+        self.message = message
+
+    async def collect(self, prompts: Any, **kwargs: Any) -> RolloutBatch:
+        raise RuntimeError(self.message)
+
+
+@pytest.mark.asyncio
+async def test_persistent_producer_failure_fails_fast_with_root_cause() -> None:
+    # Every generation fails. The consumer must surface the producer's root
+    # cause well before the (long) wait timeout, not an opaque timeout.
+    runtime = _Runtime()
+    collector = _FailingCollector(runtime, message="reward model OOM")
+    syncer = _Syncer(runtime)
+    schedule = _build(
+        _continuous_config(wait_timeout_s=30.0, fail_fast_errors=2),
+        collector,
+        syncer,
+    )
+
+    try:
+        with pytest.raises(RuntimeError, match="reward model OOM") as excinfo:
+            await schedule.next_iteration(["p0", "p1"], group_size=2)
+        assert "failing every generation" in str(excinfo.value)
+    finally:
+        await schedule.producer.stop()
+
+
 @pytest.mark.asyncio
 async def test_prompt_set_update_swaps_producer_source() -> None:
     runtime = _Runtime()
