@@ -142,17 +142,6 @@ def precision_to_torch_dtype(name: str, torch: Any) -> Any:
     }[name]
 
 
-def resolve_axis_dtype(cfg: Any, axis: str) -> Any:
-    """Resolve one precision axis ("compute"/"rollout"/"math"/"frozen") from a
-    config to its ``torch.dtype``. The single seam consumers use instead of
-    re-deriving ``precision_to_torch_dtype(resolve_precision_policy(cfg).<axis>)``.
-    """
-
-    import torch
-
-    return precision_to_torch_dtype(getattr(resolve_precision_policy(cfg), axis), torch)
-
-
 def _select(obj: Any, path: str, default: Any = None) -> Any:
     """Read a dotted path from a Mapping/DictConfig/namespace, else ``default``."""
 
@@ -176,6 +165,5 @@ __all__ = [
     "PrecisionPolicy",
     "normalize_precision",
     "precision_to_torch_dtype",
-    "resolve_axis_dtype",
     "resolve_precision_policy",
 ]
