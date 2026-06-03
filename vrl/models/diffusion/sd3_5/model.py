@@ -108,10 +108,13 @@ class SD3_5Model(DiffusionModelBase):
         from diffusers import StableDiffusion3Pipeline
 
         model_dtype = _resolve_torch_dtype(spec.dtype)
-        # Match Flow-GRPO's SD3 LoRA memory contract: when the trainable
-        # denoiser runs in fp32, keep frozen text encoders in fp16; otherwise
-        # frozen modules share the model dtype.
-        frozen_dtype = torch.float16 if model_dtype == torch.float32 else model_dtype
+        # Frozen text encoders / VAE follow the ``frozen`` precision axis. Its
+        # default already encodes the Flow-GRPO SD3 contract (fp16 when the
+        # denoiser runs fp32, else the model dtype), so ``spec.frozen_dtype`` is
+        # authoritative when present; fall back for bare/test specs.
+        frozen_dtype = getattr(spec, "frozen_dtype", None)
+        if frozen_dtype is None:
+            frozen_dtype = torch.float16 if model_dtype == torch.float32 else model_dtype
         load_kwargs: dict[str, Any] = {}
         if model_dtype == torch.float32 and frozen_dtype != torch.float32:
             load_kwargs["torch_dtype"] = {

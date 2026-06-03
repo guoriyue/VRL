@@ -333,6 +333,8 @@ def _runtime_build_payload(runtime_build: Any) -> dict[str, Any]:
     payload = asdict(runtime_build)
     payload["device"] = _device_to_string(payload["device"])
     payload["dtype"] = _dtype_to_string(payload["dtype"])
+    if payload.get("frozen_dtype") is not None:
+        payload["frozen_dtype"] = _dtype_to_string(payload["frozen_dtype"])
     return payload
 
 

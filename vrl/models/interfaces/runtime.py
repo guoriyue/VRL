@@ -40,6 +40,11 @@ class RuntimeBuildSpec:
     task_variant: str | None = None
     model_config: dict[str, Any] | None = None
     sampling_config: dict[str, Any] | None = None
+    # ``frozen`` precision axis as a ``torch.dtype`` (encoders / VAE). Like
+    # ``dtype``, it is a real dtype in memory and serialized to a name-string
+    # across the Ray launch contract. None -> the family's historical derivation
+    # (fp16 when the model runs fp32).
+    frozen_dtype: Any = None
 
     @property
     def use_lora(self) -> bool:

@@ -11,6 +11,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.builders import build_configs
+from vrl.config.precision import resolve_axis_dtype, resolve_precision_policy
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.models.interfaces import require_runtime_model
 from vrl.ray.resources import (
@@ -51,6 +52,22 @@ from vrl.utils.memory import log_host_memory
 logger = logging.getLogger(__name__)
 
 
+def _apply_precision_policy(cfg: DictConfig, trainer_config: Any) -> None:
+    """Bridge the unified ``precision:`` policy onto the trainer fields that the
+    autocast + weight_dtype + frozen derivation already read.
+
+    P1 wires the single ``compute`` axis through the existing one-dtype path so a
+    top-level ``precision: bf16`` drives the whole run. Decoupled rollout, a
+    non-fp32 logprob, or an explicit frozen override need a second model dtype /
+    deeper wiring (later phases) — refuse them with a clear message rather than
+    silently ignore.
+    """
+
+    policy = resolve_precision_policy(cfg)
+    trainer_config.mixed_precision = policy.compute
+    trainer_config.bf16 = policy.compute != "fp32"
+
+
 async def run_online_recipe(
     cfg: DictConfig,
     definition: OnlineRecipeDefinition,
@@ -62,6 +79,7 @@ async def run_online_recipe(
     trainer_config = built["trainer"]
     if definition.configure_trainer is not None:
         definition.configure_trainer(cfg, trainer_config)
+    _apply_precision_policy(cfg, trainer_config)
     if trainer_config.profile:
         os.environ["VRL_PROFILE_COLLECT"] = "1"
 
@@ -75,11 +93,14 @@ async def run_online_recipe(
     resources = resolve_distributed_resources(cfg)
     logger.info(format_distributed_resource_plan(resources))
     device = torch.device(trainer_torch_device(resources))
+    # Replay/training model storage follows ``compute`` (via trainer_config);
+    # the generation (rollout) model can use a different ``rollout`` dtype.
     weight_dtype = (
         definition.weight_dtype_getter(cfg, trainer_config, torch)
         if definition.weight_dtype_getter is not None
         else torch_dtype_for_trainer_precision(trainer_config, torch)
     )
+    rollout_weight_dtype = resolve_axis_dtype(cfg, "rollout")
     context = RecipeDeviceContext(
         device=device,
         weight_dtype=weight_dtype,
@@ -121,7 +142,7 @@ async def run_online_recipe(
     runtime_inputs = build_ray_generation_inputs_for_family(
         cfg,
         components.family,
-        weight_dtype=weight_dtype,
+        weight_dtype=rollout_weight_dtype,
         executor_kwargs=dict(rollout_executor_kwargs),
     )
     log_host_memory("before_rollout_backend_build", log=logger)

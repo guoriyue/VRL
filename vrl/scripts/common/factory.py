@@ -8,6 +8,7 @@ from typing import Any
 from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.builders import build_configs
+from vrl.config.precision import resolve_axis_dtype
 from vrl.ray.resources import (
     resolve_distributed_resources,
     reward_runtime_resource_kwargs,
@@ -172,6 +173,7 @@ def build_algorithm_and_evaluator_from_cfg(
                 sde_type=str(
                     _collector_config_value(collector_config, "sde_type", "sde"),
                 ),
+                math_dtype=resolve_axis_dtype(cfg, "math"),
             ),
         )
 

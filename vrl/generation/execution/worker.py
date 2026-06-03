@@ -357,6 +357,9 @@ class GenerationWorkerCore:
         dtype = normalized.get("dtype")
         if isinstance(dtype, str):
             normalized["dtype"] = cls._torch_dtype_from_string(dtype)
+        frozen_dtype = normalized.get("frozen_dtype")
+        if isinstance(frozen_dtype, str):
+            normalized["frozen_dtype"] = cls._torch_dtype_from_string(frozen_dtype)
         return normalized
 
     @staticmethod

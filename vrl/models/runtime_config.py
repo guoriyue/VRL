@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from vrl.config.precision import resolve_axis_dtype
 from vrl.models.interfaces.runtime import RuntimeBuildSpec
 from vrl.utils.config import plain_mapping
 
@@ -50,6 +51,7 @@ def extract_runtime_spec(
         backend_preference=backend_preference,
         model_config=model_config,
         sampling_config=sampling_config,
+        frozen_dtype=resolve_axis_dtype(cfg, "frozen"),
     )
 
 

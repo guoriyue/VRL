@@ -27,10 +27,14 @@ class DiffusionSDELogProbEvaluator(Evaluator):
         scheduler: object,
         noise_level: float = 1.0,
         sde_type: str = "sde",
+        math_dtype: object = None,
     ) -> None:
         self.scheduler = scheduler
         self.noise_level = noise_level
         self.sde_type = sde_type
+        # dtype for the replay log-prob math (``math`` precision axis);
+        # None -> fp32 (the protected default).
+        self.math_dtype = math_dtype
 
     def evaluate(
         self,
@@ -88,6 +92,7 @@ class DiffusionSDELogProbEvaluator(Evaluator):
             return_dt=signal_request.need_kl_intermediates,
             noise_level=self.noise_level,
             sde_type=self.sde_type,
+            math_dtype=self.math_dtype,
         )
 
         ref_log_prob = None
@@ -118,6 +123,7 @@ class DiffusionSDELogProbEvaluator(Evaluator):
                         return_dt=signal_request.need_kl_intermediates,
                         noise_level=self.noise_level,
                         sde_type=self.sde_type,
+                        math_dtype=self.math_dtype,
                     )
                     ref_log_prob = ref_result.log_prob
                     ref_prev_sample_mean = ref_result.prev_sample_mean

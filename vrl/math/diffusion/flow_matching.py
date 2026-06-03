@@ -29,15 +29,22 @@ def sde_step_with_logprob(
     return_dt: bool = False,
     noise_level: float = 1.0,
     sde_type: str = "sde",
+    math_dtype: Any = None,
 ) -> SDEStepResult:
-    """Compute one flow-matching SDE step and its per-sample log-probability."""
+    """Compute one flow-matching SDE step and its per-sample log-probability.
+
+    ``math_dtype`` is the dtype the SDE/log-prob math runs in (the ``logprob``
+    precision axis). Defaults to fp32 — the numerically-protected default — so a
+    bf16 ``model_output`` is upcast before the Gaussian log-density.
+    """
     import torch
     from diffusers.utils.torch_utils import randn_tensor
 
-    model_output = model_output.float()
-    sample = sample.float()
+    md = torch.float32 if math_dtype is None else math_dtype
+    model_output = model_output.to(md)
+    sample = sample.to(md)
     if prev_sample is not None:
-        prev_sample = prev_sample.float()
+        prev_sample = prev_sample.to(md)
 
     step_index = [scheduler.index_for_timestep(t) for t in timestep]
     prev_step_index = [s + 1 for s in step_index]

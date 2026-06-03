@@ -195,6 +195,7 @@ class OnlineTrainer(Trainer):
 
         if self.config.optim.allow_tf32:
             torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
 
     # ------------------------------------------------------------------
     # Lazy init
