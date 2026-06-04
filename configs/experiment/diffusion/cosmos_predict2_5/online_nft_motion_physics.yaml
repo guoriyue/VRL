@@ -1,0 +1,71 @@
+# Cosmos Predict2.5 2B + DiffusionNFT, DanceGRPO-style video reward + physics.
+# Aligned to the cosmos-rl DiffusionNFT regime: 10-step no-CFG denoising.
+# DanceGRPO optimizes video generators against the Kling VideoReward axes
+# (Visual / Motion / Text), and Motion Quality is its closest thing to a
+# physical-plausibility signal. This recipe keeps that DanceGRPO motion-quality
+# core and adds an explicit physics term — VideoCon-Physics P("follows physical
+# commonsense"):
+#   reward = 0.7 · Kling Motion-Quality z-score + 0.3 · VideoCon-Physics P(Yes)
+# Same skeleton as online_nft_kling_video_reward.yaml; only the reward differs.
+# Experimental: keep out of README until a real run proves non-flat reward,
+# acceptable video quality, generated artifacts, and changed LoRA weights.
+defaults:
+  - /recipe/online/diffusion_nft
+  - /model/diffusion/cosmos/predict2_5_2b
+  - /sampling/video/512p_93f
+  - /sampling/denoise/10_step_no_cfg
+  - /reward/kling_video_reward
+  - /reward/videocon_physics
+  - /dataset/videophy
+
+actor:
+  optim:
+    lr: 3.0e-4
+  ppo_epochs: 1
+  gradient_accumulation_steps: 1
+  timestep_fraction: 0.99
+  ema:
+    enable: true
+    decay: 0.9
+    update_interval: 1
+
+rollout:
+  n: 2
+  rollout_batch_size: 1
+  sample_batch_size: 1
+  noise_level: 0.7
+  sde:
+    type: cps
+  same_latent: false
+
+trainer:
+  entrypoint: vrl.scripts.diffusion.cosmos.train:train_cosmos_predict25_diffusion_nft
+  output_dir: outputs/cosmos_predict2_5_2b_motion_physics
+  total_epochs: 1
+  save_freq: 20
+  log_freq: 1
+
+# Final weighted combination — overrides the per-reward defaults each
+# `/reward/...` import declared. Kling Motion Quality at 0.7, VideoCon-Physics
+# physical commonsense at 0.3. Both materialize mp4: VideoCon requires it, and
+# the production report needs Kling on mp4.
+reward:
+  components:
+    kling_video_reward: 0.7
+    videocon_physics: 0.3
+  kwargs:
+    kling_video_reward:
+      artifact_format: mp4
+      score_key: motion_quality
+    videocon_physics:
+      artifact_format: mp4
+      score_key: physical_commonsense
+
+production:
+  kling_video_reward:
+    enabled: true
+    report_path: outputs/cosmos_predict2_5_2b_motion_physics/production_report.md
+
+eval:
+  prompts_file: datasets/videophy/eval.txt
+  seeds: 1

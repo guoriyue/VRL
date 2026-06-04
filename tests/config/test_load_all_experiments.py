@@ -69,6 +69,7 @@ def test_experiments_are_grouped_by_model_family() -> None:
         "diffusion/cosmos_predict2/online_grpo_v2w_reference",
         "diffusion/cosmos_predict2/online_grpo_kling_video_reward",
         "diffusion/cosmos_predict2_5/online_nft_kling_video_reward",
+        "diffusion/cosmos_predict2_5/online_nft_motion_physics",
         "diffusion/sd3_5/online_grpo_geneval",
         "diffusion/sd3_5/online_grpo_ocr",
         "diffusion/sd3_5/online_grpo_ocr_crossnode_debug",
@@ -91,6 +92,7 @@ def test_experiments_use_dataset_groups_and_only_override_reward_weights() -> No
     allowed_reward_kwargs = {
         "experiment/diffusion/cosmos_predict2/online_grpo_v2w_reference.yaml",
         "experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward.yaml",
+        "experiment/diffusion/cosmos_predict2_5/online_nft_motion_physics.yaml",
         "experiment/diffusion/wan_2_1/online_grpo_physics.yaml",
         "experiment/diffusion/wan_2_1/online_grpo_physics_i2v.yaml",
         "experiment/diffusion/wan_2_1/online_grpo_kling_video_reward.yaml",
@@ -221,6 +223,26 @@ def test_cosmos_diffusion_nft_video_reward_validation_config() -> None:
     assert cfg.distributed.rollout.release_before_reward_model is True
     assert cfg.distributed.reward.release_after_score is True
     assert cfg.trainer.total_epochs == 1
+    assert cfg.production.kling_video_reward.enabled is True
+
+
+def test_cosmos_motion_physics_config() -> None:
+    # DanceGRPO-style motion-quality core + explicit physics commonsense term,
+    # on the cosmos-rl NFT regime (10-step no-CFG, not the 4-step variant).
+    cfg = load_config("experiment/diffusion/cosmos_predict2_5/online_nft_motion_physics")
+
+    validate_training_config(cfg)
+    assert cfg.algorithm.kind == "diffusion_nft"
+    assert cfg.sampling.num_steps == 10
+    assert cfg.sampling.cfg is False
+    assert cfg.actor.timestep_fraction == 0.99
+    # Weighted compound: Kling Motion-Quality (0.7) + VideoCon-Physics (0.3).
+    assert cfg.reward.components.kling_video_reward == 0.7
+    assert cfg.reward.components.videocon_physics == 0.3
+    assert cfg.reward.kwargs.kling_video_reward.score_key == "motion_quality"
+    assert cfg.reward.kwargs.kling_video_reward.artifact_format == "mp4"
+    assert cfg.reward.kwargs.videocon_physics.score_key == "physical_commonsense"
+    assert cfg.reward.kwargs.videocon_physics.artifact_format == "mp4"
     assert cfg.production.kling_video_reward.enabled is True
 
 

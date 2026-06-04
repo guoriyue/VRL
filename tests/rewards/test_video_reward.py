@@ -69,7 +69,7 @@ def _rollout(output: torch.Tensor, *, policy_version: int = 3) -> RewardRollout:
 def _video_reward_config(**video_kwargs: object):
     kwargs = {
         "inference_runtime": "ray",
-        "reward_name": "dance_grpo",
+        "reward_name": "kling_video_reward",
         "score_key": "overall_reward",
         "worker_config": {
             "reward_model_version": "unit-test",
@@ -93,7 +93,7 @@ async def test_video_reward_materializes_artifacts_and_returns_runtime_scores(
     actor_runtime = _FakeActorRuntime()
     reward = KlingVideoReward(
         inference_runtime="ray",
-        reward_name="dance_grpo",
+        reward_name="kling_video_reward",
         score_key="overall_reward",
         media_type="video",
         artifact_dir=str(tmp_path / "artifacts"),
@@ -106,7 +106,7 @@ async def test_video_reward_materializes_artifacts_and_returns_runtime_scores(
     assert scores == pytest.approx([1.5])
     assert len(actor_runtime.requests) == 1
     request = actor_runtime.requests[0]
-    assert request.reward_name == "dance_grpo"
+    assert request.reward_name == "kling_video_reward"
     assert request.artifacts[0].policy_version == 3
     assert Path(request.artifacts[0].path).exists()
     assert (tmp_path / "artifacts" / "manifest.jsonl").exists()
@@ -119,7 +119,7 @@ async def test_video_reward_materializes_artifacts_and_returns_runtime_scores(
 async def test_video_reward_rejects_missing_runtime_results(tmp_path: Path) -> None:
     reward = KlingVideoReward(
         inference_runtime="ray",
-        reward_name="dance_grpo",
+        reward_name="kling_video_reward",
         score_key="overall_reward",
         artifact_dir=str(tmp_path / "artifacts"),
         actor_runtime=_EmptyActorRuntime(),
@@ -134,7 +134,7 @@ def test_video_reward_rejects_removed_backend_field(tmp_path: Path) -> None:
         KlingVideoReward(
             backend="removed",
             inference_runtime="ray",
-            reward_name="dance_grpo",
+            reward_name="kling_video_reward",
             score_key="overall_reward",
             artifact_dir=str(tmp_path),
             actor_runtime=_FakeActorRuntime(),
@@ -145,7 +145,7 @@ def test_video_reward_rejects_non_ray_runtime(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="inference_runtime must be 'ray'"):
         KlingVideoReward(
             inference_runtime="local",
-            reward_name="dance_grpo",
+            reward_name="kling_video_reward",
             score_key="overall_reward",
             artifact_dir=str(tmp_path),
             actor_runtime=_FakeActorRuntime(),
