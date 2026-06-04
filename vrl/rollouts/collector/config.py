@@ -8,6 +8,8 @@ from typing import Any
 
 from omegaconf import DictConfig, ListConfig, OmegaConf
 
+from vrl.utils.config import cfg_get
+
 
 @dataclass(frozen=True, slots=True)
 class RolloutConfig:
@@ -151,26 +153,10 @@ def _cfg_select(cfg: Any, path: str, default: Any) -> Any:
         return OmegaConf.select(cfg, path, default=default)
     node = cfg
     for key in path.split("."):
-        node = _cfg_get(node, key, _MISSING)
+        node = cfg_get(node, key, _MISSING)
         if node is _MISSING:
             return default
     return node
-
-
-def _cfg_get(node: Any, key: str, default: Any) -> Any:
-    if node is None:
-        return default
-    getter = getattr(node, "get", None)
-    if callable(getter):
-        try:
-            return getter(key, default)
-        except TypeError:
-            pass
-    try:
-        return node[key]
-    except (KeyError, IndexError, TypeError):
-        pass
-    return getattr(node, key, default)
 
 
 def _to_builtin(value: Any) -> Any:

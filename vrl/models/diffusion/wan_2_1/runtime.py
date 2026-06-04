@@ -18,6 +18,7 @@ from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
 from vrl.models.diffusion.capabilities import diffusion_family_capability
+from vrl.models.diffusion.reference_image import load_reference_image
 from vrl.models.interfaces.runtime import (
     RuntimeBuildSpec,
     RuntimeBundle,
@@ -34,6 +35,7 @@ from vrl.models.replay_loading import (
 from vrl.models.runtime_config import (
     extract_runtime_spec,
 )
+from vrl.utils.config import cfg_get
 
 logger = logging.getLogger(__name__)
 WAN_2_1_FAMILY_CAPABILITY = diffusion_family_capability("wan_2_1", "t2v")
@@ -375,27 +377,19 @@ class Wan_2_1I2VPipelineExecutor(DiffusionPipelineExecutorBase):
         }
 
     def _reference_image_for_request(self, request: GenerationRequest) -> Any:
-        return _load_reference_image(
+        return load_reference_image(
             request.metadata.get("reference_image", self.reference_image),
         )
 
 
-def _load_reference_image(reference_image: Any) -> Any:
-    if not isinstance(reference_image, str) or not reference_image:
-        return reference_image
-    from PIL import Image
-
-    return Image.open(reference_image).convert("RGB")
-
-
 def _task_variant_from_cfg(cfg: Any) -> str:
-    explicit = _cfg_get(cfg.model, "task_variant", None)
+    explicit = cfg_get(cfg.model, "task_variant", None)
     if explicit:
         return _normalize_task_variant(str(explicit))
-    task = _cfg_get(cfg.model, "task", None)
+    task = cfg_get(cfg.model, "task", None)
     if task:
         return _normalize_task_variant(str(task))
-    family = str(_cfg_get(cfg.model, "family", ""))
+    family = str(cfg_get(cfg.model, "family", ""))
     if "i2v" in family or "image" in family:
         return "i2v"
     return "t2v"
@@ -410,22 +404,6 @@ def _normalize_task_variant(task_variant: str | None) -> str:
     if text in {"image_to_video", "image-to-video", "i2v"}:
         return "i2v"
     return "t2v"
-
-
-def _cfg_get(node: Any, key: str, default: Any) -> Any:
-    if node is None:
-        return default
-    getter = getattr(node, "get", None)
-    if callable(getter):
-        try:
-            return getter(key, default)
-        except TypeError:
-            pass
-    try:
-        return node[key]
-    except (KeyError, IndexError, TypeError):
-        pass
-    return getattr(node, key, default)
 
 
 __all__ = [

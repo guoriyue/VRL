@@ -6,9 +6,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, get_args
 
-from omegaconf import DictConfig, ListConfig, OmegaConf
-
 from vrl.trajectory.types import TrajectoryBatch
+from vrl.utils.config import cfg_get, to_builtin
 
 TrajectoryStorageDevice = Literal["preserve", "cpu"]
 TrajectoryStorageDType = Literal["preserve", "float32", "float16", "bfloat16"]
@@ -45,7 +44,7 @@ def trajectory_storage_policy_from_cfg(value: object) -> TrajectoryStoragePolicy
 
     if value is None:
         return TrajectoryStoragePolicy()
-    value = _to_builtin(value)
+    value = to_builtin(value)
     if isinstance(value, TrajectoryStoragePolicy):
         return value
     if isinstance(value, Mapping):
@@ -53,8 +52,8 @@ def trajectory_storage_policy_from_cfg(value: object) -> TrajectoryStoragePolicy
             device=str(value.get("device", "preserve")),
             dtype=str(value.get("dtype", "preserve")),
         )
-    device = _cfg_get(value, "device", "preserve")
-    dtype = _cfg_get(value, "dtype", "preserve")
+    device = cfg_get(value, "device", "preserve")
+    dtype = cfg_get(value, "dtype", "preserve")
     return TrajectoryStoragePolicy(device=str(device), dtype=str(dtype))
 
 
@@ -152,28 +151,6 @@ def _is_torch_tensor(value: object) -> bool:
     except ImportError:  # pragma: no cover - torch is a project dependency.
         return False
     return isinstance(value, torch.Tensor)
-
-
-def _cfg_get(node: Any, key: str, default: Any) -> Any:
-    if node is None:
-        return default
-    getter = getattr(node, "get", None)
-    if callable(getter):
-        try:
-            return getter(key, default)
-        except TypeError:
-            pass
-    try:
-        return node[key]
-    except (KeyError, IndexError, TypeError):
-        pass
-    return getattr(node, key, default)
-
-
-def _to_builtin(value: object) -> object:
-    if isinstance(value, (DictConfig, ListConfig)):
-        return OmegaConf.to_container(value, resolve=True)
-    return value
 
 
 __all__ = [

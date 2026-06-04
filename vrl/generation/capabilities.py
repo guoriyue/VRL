@@ -13,6 +13,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
+from vrl.utils.validation import require_string_tuple
+
 TrajectoryKind = Literal[
     "diffusion",
     "ar_discrete",
@@ -147,9 +149,9 @@ class FamilyCapability:
             raise ValueError("FamilyCapability.expected_axes must be non-empty")
         if not self.execution_stages:
             raise ValueError("FamilyCapability.execution_stages must be non-empty")
-        _require_string_tuple("FamilyCapability.trainable_segments", self.trainable_segments)
-        _require_string_tuple("FamilyCapability.reward_views", self.reward_views)
-        _require_string_tuple("FamilyCapability.cache_kinds", self.cache_kinds)
+        require_string_tuple("FamilyCapability.trainable_segments", self.trainable_segments)
+        require_string_tuple("FamilyCapability.reward_views", self.reward_views)
+        require_string_tuple("FamilyCapability.cache_kinds", self.cache_kinds)
         if (
             self.default_max_samples_per_chunk is not None
             and self.default_max_samples_per_chunk < 1
@@ -318,12 +320,6 @@ def family_capability_from_value(value: Any) -> FamilyCapability | None:
         "family capability must be a FamilyCapability, mapping, or None; "
         f"got {type(value).__name__}"
     )
-
-
-def _require_string_tuple(name: str, values: tuple[str, ...]) -> None:
-    for value in values:
-        if not isinstance(value, str) or not value:
-            raise ValueError(f"{name} must contain non-empty strings")
 
 
 def _trajectory_kind(value: Any) -> TrajectoryKind:

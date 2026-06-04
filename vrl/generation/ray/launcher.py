@@ -28,9 +28,9 @@ from vrl.ray.dependencies import current_node_ip, require_ray
 from vrl.ray.lifecycle import kill_actors, remove_placement_group
 from vrl.ray.placement import validate_actor_gpu_ids
 from vrl.ray.resources import format_distributed_resource_plan
+from vrl.utils.config import cfg_path
 
 logger = logging.getLogger(__name__)
-_MISSING = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,7 +166,7 @@ class RayGenerationLauncher:
         resolved_contract = (
             launch_contract
             if launch_contract is not None
-            else _cfg_path(
+            else cfg_path(
                 cfg,
                 "distributed.rollout.launch_contract",
                 None,
@@ -320,11 +320,11 @@ def _build_executor_kwargs(entry: Any, cfg: Any) -> dict[str, Any]:
     kwargs: dict[str, Any] = {}
     metadata = entry.executor_kwargs
     if metadata.include_sample_batch_size:
-        sample_batch_size = _cfg_path(cfg, "rollout.sample_batch_size", None)
+        sample_batch_size = cfg_path(cfg, "rollout.sample_batch_size", None)
         if sample_batch_size is not None:
             kwargs["sample_batch_size"] = int(sample_batch_size)
     if metadata.include_reference_image:
-        reference_image = _cfg_path(cfg, "model.reference_image", None)
+        reference_image = cfg_path(cfg, "model.reference_image", None)
         if reference_image:
             kwargs["reference_image"] = str(reference_image)
     return kwargs
@@ -340,7 +340,7 @@ def _runtime_build_payload(runtime_build: Any) -> dict[str, Any]:
 
 
 def _runtime_extra(cfg: Any) -> dict[str, Any]:
-    profiler_cfg = _cfg_path(cfg, "rollout.torch_profiler", None)
+    profiler_cfg = cfg_path(cfg, "rollout.torch_profiler", None)
     if profiler_cfg is None:
         return {}
     profiler = _to_builtin(profiler_cfg)
@@ -348,7 +348,7 @@ def _runtime_extra(cfg: Any) -> dict[str, Any]:
         return {}
     return {
         "torch_profiler": profiler,
-        "profiler_output_dir": str(_cfg_path(cfg, "trainer.output_dir", "outputs/")),
+        "profiler_output_dir": str(cfg_path(cfg, "trainer.output_dir", "outputs/")),
     }
 
 
@@ -371,30 +371,6 @@ def _to_builtin(value: Any) -> Any:
         return [_to_builtin(inner) for inner in value]
     return value
 
-
-def _cfg_path(cfg: Any, path: str, default: Any) -> Any:
-    node = cfg
-    for key in path.split("."):
-        node = _cfg_get(node, key, _MISSING)
-        if node is _MISSING:
-            return default
-    return node
-
-
-def _cfg_get(node: Any, key: str, default: Any) -> Any:
-    if node is None:
-        return default
-    getter = getattr(node, "get", None)
-    if callable(getter):
-        try:
-            return getter(key, default)
-        except TypeError:
-            pass
-    try:
-        return node[key]
-    except (KeyError, IndexError, TypeError):
-        pass
-    return getattr(node, key, default)
 
 __all__ = [
     "RayGenerationLaunchInputs",

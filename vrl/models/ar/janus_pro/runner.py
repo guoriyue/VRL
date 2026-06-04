@@ -325,30 +325,8 @@ class JanusProARModelRunner:
 
         cond_attn = batch.row_lanes["cond_attn"]
         uncond_attn = batch.row_lanes["uncond_attn"]
-        cond_next_attn = torch.cat(
-            [
-                cond_attn,
-                torch.ones(
-                    batch_size,
-                    1,
-                    dtype=cond_attn.dtype,
-                    device=cond_attn.device,
-                ),
-            ],
-            dim=1,
-        )
-        uncond_next_attn = torch.cat(
-            [
-                uncond_attn,
-                torch.ones(
-                    batch_size,
-                    1,
-                    dtype=uncond_attn.dtype,
-                    device=uncond_attn.device,
-                ),
-            ],
-            dim=1,
-        )
+        cond_next_attn = append_attention_token(cond_attn)
+        uncond_next_attn = append_attention_token(uncond_attn)
 
         past = ar_concat_rows([batch.cache_lanes["cond_past"], batch.cache_lanes["uncond_past"]])
         outputs = self.model._lm_trunk()(

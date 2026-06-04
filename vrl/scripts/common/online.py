@@ -69,6 +69,15 @@ def _apply_precision_policy(cfg: DictConfig, trainer_config: Any) -> None:
     trainer_config.bf16 = policy.compute != "fp32"
 
 
+def default_reference_model(bundle: Any, cfg: Any) -> Any | None:
+    """Reference model for KL: the (LoRA) policy itself when use_lora and init_kl_coef>0, else None."""
+
+    init_kl_coef = float(getattr(cfg.algorithm, "init_kl_coef", 0.0))
+    if bool(cfg.model.use_lora) and init_kl_coef > 0:
+        return bundle.model
+    return None
+
+
 async def run_online_recipe(
     cfg: DictConfig,
     definition: OnlineRecipeDefinition,
@@ -423,4 +432,4 @@ def _save_checkpoint(
     )
 
 
-__all__ = ["run_online_recipe"]
+__all__ = ["default_reference_model", "run_online_recipe"]

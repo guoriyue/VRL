@@ -9,6 +9,8 @@ from typing import Any
 
 from torch.utils.data import Dataset
 
+from vrl.utils.config import cfg_get
+
 
 @dataclass
 class PromptExample:
@@ -72,8 +74,8 @@ def load_prompt_image_manifest(
 def load_prompt_examples_from_config(data_cfg: Any) -> list[PromptExample]:
     """Dispatch prompt example loading from a resolved ``data`` config section."""
 
-    loader = str(_cfg_get(data_cfg, "loader", "prompt_manifest"))
-    manifest = _cfg_get(data_cfg, "manifest", None)
+    loader = str(cfg_get(data_cfg, "loader", "prompt_manifest"))
+    manifest = cfg_get(data_cfg, "manifest", None)
     if not manifest:
         raise ValueError("config missing required field: data.manifest")
 
@@ -81,10 +83,10 @@ def load_prompt_examples_from_config(data_cfg: Any) -> list[PromptExample]:
         return load_prompt_manifest(manifest)
 
     if loader == "prompt_image_manifest":
-        preprocessing = _cfg_get(data_cfg, "preprocessing", {}) or {}
-        image_field = str(_cfg_get(preprocessing, "image_field", "image"))
-        caption_field = str(_cfg_get(preprocessing, "caption_field", "caption"))
-        task_type = str(_cfg_get(data_cfg, "task_type", "image_to_video"))
+        preprocessing = cfg_get(data_cfg, "preprocessing", {}) or {}
+        image_field = str(cfg_get(preprocessing, "image_field", "image"))
+        caption_field = str(cfg_get(preprocessing, "caption_field", "caption"))
+        task_type = str(cfg_get(data_cfg, "task_type", "image_to_video"))
         return load_prompt_image_manifest(
             manifest,
             image_field=image_field,
@@ -254,22 +256,6 @@ def _required_string_field(
             f"{manifest_path}: row {row_index} missing required field {field_name!r}",
         )
     return str(value)
-
-
-def _cfg_get(node: Any, key: str, default: Any) -> Any:
-    if node is None:
-        return default
-    getter = getattr(node, "get", None)
-    if callable(getter):
-        try:
-            return getter(key, default)
-        except TypeError:
-            pass
-    try:
-        return node[key]
-    except (KeyError, IndexError, TypeError):
-        pass
-    return getattr(node, key, default)
 
 
 __all__ = [

@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from vrl.generation.types import GenerationSampleRow
+from vrl.utils.validation import require_string_tuple
 
 if TYPE_CHECKING:
     from vrl.trajectory.views import RewardView
@@ -91,8 +92,8 @@ class ReplayInput:
     def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("ReplayInput.name must be non-empty")
-        _require_string_tuple("ReplayInput.tensor_refs", self.tensor_refs)
-        _require_string_tuple("ReplayInput.context_refs", self.context_refs)
+        require_string_tuple("ReplayInput.tensor_refs", self.tensor_refs)
+        require_string_tuple("ReplayInput.context_refs", self.context_refs)
 
 
 @dataclass(slots=True)
@@ -156,12 +157,6 @@ class TrajectoryBatch:
             raise ValueError("TrajectoryBatch.family must be non-empty")
         if not self.task:
             raise ValueError("TrajectoryBatch.task must be non-empty")
-
-
-def _require_string_tuple(name: str, values: tuple[str, ...]) -> None:
-    for value in values:
-        if not isinstance(value, str) or not value:
-            raise ValueError(f"{name} must contain non-empty strings")
 
 
 __all__ = [

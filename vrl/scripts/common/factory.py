@@ -23,6 +23,7 @@ from vrl.rollouts.families import (
     get_rollout_family_entry,
     normalize_rollout_family,
 )
+from vrl.utils.config import cfg_get
 
 
 class UnsupportedOnlineRecipeError(ValueError):
@@ -170,10 +171,10 @@ def build_algorithm_and_evaluator_from_cfg(
             evaluator=DiffusionSDELogProbEvaluator(
                 scheduler,
                 noise_level=float(
-                    _collector_config_value(collector_config, "noise_level", 1.0),
+                    cfg_get(collector_config, "noise_level", 1.0),
                 ),
                 sde_type=str(
-                    _collector_config_value(collector_config, "sde_type", "sde"),
+                    cfg_get(collector_config, "sde_type", "sde"),
                 ),
                 math_dtype=math_dtype,
             ),
@@ -321,13 +322,6 @@ def _cfg_select(cfg: DictConfig, path: str, default: Any) -> Any:
     if hasattr(value, "_metadata"):
         container = OmegaConf.to_container(value, resolve=True)
     return container
-
-
-def _collector_config_value(config: Any, name: str, default: Any) -> Any:
-    getter = getattr(config, "get", None)
-    if callable(getter):
-        return getter(name, default)
-    return getattr(config, name, default)
 
 
 __all__ = [

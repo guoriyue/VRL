@@ -6,6 +6,8 @@ import ast
 from dataclasses import dataclass, field
 from typing import Any
 
+from vrl.utils.config import cfg_get
+
 
 @dataclass(frozen=True, slots=True)
 class RoleResourceConfig:
@@ -276,59 +278,59 @@ def format_distributed_resource_plan(
 
 
 def _distributed_resource_config_from_cfg(cfg: Any) -> DistributedResourceConfig:
-    distributed = _cfg_get(cfg, "distributed", {})
-    resources = _cfg_get(distributed, "resources", {})
-    trainer_node = _cfg_get(resources, "trainer", {})
-    rollout_node = _cfg_get(resources, "rollout", {})
-    reward_node = _cfg_get(resources, "reward", _MISSING)
-    rollout_runtime = _cfg_get(distributed, "rollout", {})
-    reward_runtime = _cfg_get(distributed, "reward", {})
+    distributed = cfg_get(cfg, "distributed", {})
+    resources = cfg_get(distributed, "resources", {})
+    trainer_node = cfg_get(resources, "trainer", {})
+    rollout_node = cfg_get(resources, "rollout", {})
+    reward_node = cfg_get(resources, "reward", _MISSING)
+    rollout_runtime = cfg_get(distributed, "rollout", {})
+    reward_runtime = cfg_get(distributed, "reward", {})
 
     trainer = RoleResourceConfig(
-        num_gpus=_cfg_get(trainer_node, "num_gpus", "auto"),
-        devices=_parse_devices(_cfg_get(trainer_node, "devices", "auto")),
+        num_gpus=cfg_get(trainer_node, "num_gpus", "auto"),
+        devices=_parse_devices(cfg_get(trainer_node, "devices", "auto")),
     )
     rollout = RolloutResourceConfig(
-        num_gpus=_cfg_get(rollout_node, "num_gpus", "auto"),
-        devices=_parse_devices(_cfg_get(rollout_node, "devices", "auto")),
-        gpus_per_worker=float(_cfg_get(rollout_node, "gpus_per_worker", 1.0)),
-        num_workers=_cfg_get(rollout_node, "num_workers", "auto"),
+        num_gpus=cfg_get(rollout_node, "num_gpus", "auto"),
+        devices=_parse_devices(cfg_get(rollout_node, "devices", "auto")),
+        gpus_per_worker=float(cfg_get(rollout_node, "gpus_per_worker", 1.0)),
+        num_workers=cfg_get(rollout_node, "num_workers", "auto"),
     )
     if reward_node is _MISSING:
         reward = RewardResourceConfig(num_gpus=0, devices=[])
     else:
         reward = RewardResourceConfig(
-            num_gpus=_cfg_get(reward_node, "num_gpus", "auto"),
-            devices=_parse_devices(_cfg_get(reward_node, "devices", "auto")),
-            gpus_per_worker=float(_cfg_get(reward_node, "gpus_per_worker", 1.0)),
-            num_workers=_cfg_get(reward_node, "num_workers", "auto"),
-            share_with_rollout=bool(_cfg_get(reward_node, "share_with_rollout", False)),
+            num_gpus=cfg_get(reward_node, "num_gpus", "auto"),
+            devices=_parse_devices(cfg_get(reward_node, "devices", "auto")),
+            gpus_per_worker=float(cfg_get(reward_node, "gpus_per_worker", 1.0)),
+            num_workers=cfg_get(reward_node, "num_workers", "auto"),
+            share_with_rollout=bool(cfg_get(reward_node, "share_with_rollout", False)),
         )
     return DistributedResourceConfig(
-        visible_devices=_parse_devices(_cfg_get(resources, "visible_devices", "auto")),
+        visible_devices=_parse_devices(cfg_get(resources, "visible_devices", "auto")),
         trainer=trainer,
         rollout=rollout,
         reward=reward,
-        allow_overlap=bool(_cfg_get(resources, "allow_overlap", False)),
+        allow_overlap=bool(cfg_get(resources, "allow_overlap", False)),
         rollout_release_after_collect=bool(
-            _cfg_get(rollout_runtime, "release_after_collect", False),
+            cfg_get(rollout_runtime, "release_after_collect", False),
         ),
         rollout_release_before_reward_model=bool(
-            _cfg_get(rollout_runtime, "release_before_reward_model", False),
+            cfg_get(rollout_runtime, "release_before_reward_model", False),
         ),
         reward_release_after_score=bool(
-            _cfg_get(reward_runtime, "release_after_score", False),
+            cfg_get(reward_runtime, "release_after_score", False),
         ),
         reward_placement_strategy=str(
-            _cfg_get(reward_runtime, "placement_strategy", "SPREAD"),
+            cfg_get(reward_runtime, "placement_strategy", "SPREAD"),
         ),
         reward_cpus_per_worker=float(
-            _cfg_get(reward_runtime, "cpus_per_worker", 0.5),
+            cfg_get(reward_runtime, "cpus_per_worker", 0.5),
         ),
         reward_max_inflight_batches=int(
-            _cfg_get(reward_runtime, "max_inflight_batches", 1),
+            cfg_get(reward_runtime, "max_inflight_batches", 1),
         ),
-        cross_node=bool(_cfg_get(resources, "cross_node", False)),
+        cross_node=bool(cfg_get(resources, "cross_node", False)),
     )
 
 
@@ -847,18 +849,18 @@ def _parse_num_workers(
 
 
 def _uses_ray_video_reward(cfg: Any) -> bool:
-    reward = _cfg_get(cfg, "reward", {})
-    components = _cfg_get(reward, "components", {})
-    kwargs = _cfg_get(reward, "kwargs", {})
+    reward = cfg_get(cfg, "reward", {})
+    components = cfg_get(reward, "components", {})
+    kwargs = cfg_get(reward, "kwargs", {})
     for reward_key in ("kling_video_reward", "video_reward"):
         try:
-            video_weight = float(_cfg_get(components, reward_key, 0.0))
+            video_weight = float(cfg_get(components, reward_key, 0.0))
         except (TypeError, ValueError):
             video_weight = 0.0
         if video_weight <= 0:
             continue
-        video_kwargs = _cfg_get(kwargs, reward_key, {})
-        return str(_cfg_get(video_kwargs, "inference_runtime", "")) == "ray"
+        video_kwargs = cfg_get(kwargs, reward_key, {})
+        return str(cfg_get(video_kwargs, "inference_runtime", "")) == "ray"
     return False
 
 
@@ -905,22 +907,6 @@ def _auto_visible_cuda_devices() -> tuple[int, ...]:
 
 def _is_auto(value: Any) -> bool:
     return isinstance(value, str) and value.strip().lower() == "auto"
-
-
-def _cfg_get(node: Any, key: str, default: Any) -> Any:
-    if node is None:
-        return default
-    getter = getattr(node, "get", None)
-    if callable(getter):
-        try:
-            return getter(key, default)
-        except TypeError:
-            pass
-    try:
-        return node[key]
-    except (KeyError, IndexError, TypeError):
-        pass
-    return getattr(node, key, default)
 
 
 def _to_plain(value: Any) -> Any:

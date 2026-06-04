@@ -18,6 +18,7 @@ from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
 from vrl.models.diffusion.capabilities import diffusion_family_capability
+from vrl.models.diffusion.reference_image import load_reference_image
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.replay_loading import (
     apply_lora_to_transformer,
@@ -242,7 +243,7 @@ class CosmosPipelineExecutor(DiffusionPipelineExecutorBase):
         sample_batch_size: int = 8,
     ) -> None:
         self.model = model
-        self.reference_image = _load_reference_image(reference_image)
+        self.reference_image = load_reference_image(reference_image)
         self.default_sample_batch_size = max(1, int(sample_batch_size))
 
     def encode_prompt_for_chunk(
@@ -314,17 +315,9 @@ class CosmosPipelineExecutor(DiffusionPipelineExecutorBase):
         }
 
     def _reference_image_for_request(self, request: GenerationRequest) -> Any:
-        return _load_reference_image(
+        return load_reference_image(
             request.metadata.get("reference_image", self.reference_image),
         )
-
-
-def _load_reference_image(reference_image: Any) -> Any:
-    if not isinstance(reference_image, str) or not reference_image:
-        return reference_image
-    from PIL import Image
-
-    return Image.open(reference_image).convert("RGB")
 
 
 __all__ = [

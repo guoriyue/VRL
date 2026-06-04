@@ -4,11 +4,37 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from vrl.utils.cuda_memory import empty_cuda_cache, is_cuda_out_of_memory
 
+if TYPE_CHECKING:
+    from vrl.generation.types import GenerationRequest
+
 T = TypeVar("T")
+
+
+def validate_chunk_range(
+    request: GenerationRequest,
+    *,
+    prompt_index: int,
+    sample_start: int,
+    sample_count: int,
+) -> None:
+    """Validate a chunk's prompt/sample range against its source request."""
+
+    if prompt_index < 0 or prompt_index >= len(request.prompts):
+        raise ValueError(f"chunk.prompt_index={prompt_index} is out of range")
+    sample_end = sample_start + sample_count
+    if sample_start < 0 or sample_count < 1:
+        raise ValueError(
+            "chunk sample range must have non-negative start and positive count",
+        )
+    if sample_end > request.samples_per_prompt:
+        raise ValueError(
+            "chunk sample range exceeds request.samples_per_prompt: "
+            f"{sample_start}:{sample_end} > {request.samples_per_prompt}",
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,4 +185,5 @@ __all__ = [
     "SampleChunkSchedule",
     "build_prompt_chunk_schedule",
     "run_sample_chunks_with_oom_retry",
+    "validate_chunk_range",
 ]

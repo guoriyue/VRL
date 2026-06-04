@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from vrl.generation.ray.config import RayGenerationConfig
-from vrl.ray.dependencies import require_ray
+from vrl.ray.dependencies import current_gpu_ids, current_node_ip, require_ray
 from vrl.ray.placement import actor_scheduling_strategy, create_placement_group
 from vrl.ray.resources import (
     ResolvedDistributedResources,
@@ -35,14 +35,7 @@ class RayPlacement:
 
 class _InfoActor:
     def get_ip_and_gpu_ids(self) -> tuple[str, tuple[int, ...]]:
-        ray = require_ray()
-        gpu_ids: list[int] = []
-        for gpu_id in ray.get_gpu_ids():
-            try:
-                gpu_ids.append(int(gpu_id))
-            except (TypeError, ValueError):
-                continue
-        return str(ray.util.get_node_ip_address()), tuple(gpu_ids)
+        return current_node_ip(), tuple(current_gpu_ids())
 
 
 def create_generation_placement_group(config: RayGenerationConfig) -> RayPlacement:

@@ -11,6 +11,7 @@ from vrl.trajectory.types import (
     TrajectorySegment,
     TrajectoryTensor,
 )
+from vrl.utils.validation import require_string_tuple
 
 RewardModality = Literal["image", "video", "text", "mixed"]
 RewardValueRange = Literal["unit", "tanh"]
@@ -39,9 +40,9 @@ class RewardView:
             raise ValueError(
                 f"RewardView.value_range must be 'unit' or 'tanh', got {self.value_range!r}",
             )
-        _require_string_tuple("RewardView.tensor_refs", self.tensor_refs)
-        _require_string_tuple("RewardView.prompt_refs", self.prompt_refs)
-        _require_string_tuple("RewardView.target_refs", self.target_refs)
+        require_string_tuple("RewardView.tensor_refs", self.tensor_refs)
+        require_string_tuple("RewardView.prompt_refs", self.prompt_refs)
+        require_string_tuple("RewardView.target_refs", self.target_refs)
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,8 +72,8 @@ class LossUnit:
                 raise ValueError(f"{name} must be a non-empty string")
         if self.axis_index is not None and self.axis_index < 0:
             raise ValueError("LossUnit.axis_index must be >= 0 when set")
-        _require_string_tuple("LossUnit.signal_requirements", self.signal_requirements)
-        _require_string_tuple("LossUnit.replay_input_refs", self.replay_input_refs)
+        require_string_tuple("LossUnit.signal_requirements", self.signal_requirements)
+        require_string_tuple("LossUnit.replay_input_refs", self.replay_input_refs)
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,12 +132,6 @@ def build_training_view(
         primary_segment=primary_segment or (loss_units[0].segment if loss_units else None),
     )
     return TrajectoryValidator(trajectory).validate_training_view(view)
-
-
-def _require_string_tuple(name: str, values: tuple[str, ...]) -> None:
-    for value in values:
-        if not isinstance(value, str) or not value:
-            raise ValueError(f"{name} must contain non-empty strings")
 
 
 def _role_tensor(segment: TrajectorySegment, role: str) -> TrajectoryTensor:

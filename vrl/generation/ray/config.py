@@ -10,6 +10,7 @@ from vrl.ray.resources import (
     ResolvedDistributedResources,
     resolve_distributed_resources,
 )
+from vrl.utils.config import cfg_get
 
 DRIVER_CUDA_OWNERSHIP_ERROR = (
     "Driver CUDA device overlaps rollout devices without an explicit colocate "
@@ -52,45 +53,45 @@ class RayGenerationConfig:
         if isinstance(cfg, cls):
             return cfg
 
-        distributed = _config_get(cfg, "distributed", _MISSING)
+        distributed = cfg_get(cfg, "distributed", _MISSING)
         if distributed is _MISSING:
             raise ValueError("distributed.resources is required")
 
-        backend = _config_get(distributed, "backend", "ray")
+        backend = cfg_get(distributed, "backend", "ray")
         if str(backend) != "ray":
             raise ValueError("distributed.backend only supports 'ray' when set")
 
-        resources_node = _config_get(distributed, "resources", _MISSING)
+        resources_node = cfg_get(distributed, "resources", _MISSING)
         if resources_node is _MISSING:
             raise ValueError("distributed.resources is required")
         resources = resolve_distributed_resources(cfg)
-        rollout = _config_get(distributed, "rollout", {})
+        rollout = cfg_get(distributed, "rollout", {})
 
         return cls(
             num_workers=resources.rollout_num_workers,
             gpus_per_worker=resources.rollout_gpus_per_worker,
             cpus_per_worker=float(
-                _config_get(rollout, "cpus_per_worker", 1.0),
+                cfg_get(rollout, "cpus_per_worker", 1.0),
             ),
             placement_strategy=str(
-                _config_get(rollout, "placement_strategy", "SPREAD"),
+                cfg_get(rollout, "placement_strategy", "SPREAD"),
             ),
             allow_driver_gpu_overlap=bool(resources.colocated),
             max_inflight_chunks_per_worker=int(
-                _config_get(
+                cfg_get(
                     rollout,
                     "max_inflight_chunks_per_worker",
                     1,
                 ),
             ),
             sync_trainable_state=str(
-                _config_get(rollout, "sync_trainable_state", "disabled"),
+                cfg_get(rollout, "sync_trainable_state", "disabled"),
             ),
             release_after_collect=bool(
-                _config_get(rollout, "release_after_collect", False),
+                cfg_get(rollout, "release_after_collect", False),
             ),
             release_before_reward_model=bool(
-                _config_get(rollout, "release_before_reward_model", False),
+                cfg_get(rollout, "release_before_reward_model", False),
             ),
             resources=resources,
         )
@@ -272,22 +273,6 @@ def _cuda_device_index(device: Any) -> int | None:
 
 
 _MISSING = object()
-
-
-def _config_get(node: Any, key: str, default: Any) -> Any:
-    if node is None:
-        return default
-    getter = getattr(node, "get", None)
-    if callable(getter):
-        try:
-            return getter(key, default)
-        except TypeError:
-            pass
-    try:
-        return node[key]
-    except (KeyError, IndexError, TypeError):
-        pass
-    return getattr(node, key, default)
 
 
 __all__ = ["DRIVER_CUDA_OWNERSHIP_ERROR", "RayGenerationConfig"]

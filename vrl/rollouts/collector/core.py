@@ -25,6 +25,7 @@ from vrl.rollouts.collector.requests import (
 from vrl.rollouts.collector.rewards import RewardScorer
 from vrl.rollouts.families import get_rollout_family_entry
 from vrl.trajectory import trajectory_storage_policy_from_cfg
+from vrl.utils.config import cfg_get
 
 
 class RolloutCollector:
@@ -132,13 +133,13 @@ class RolloutCollector:
         context = RolloutBatchBuildContext(
             metadata=dict(collector_request.metadata),
             device=_device_from_model(self.model),
-            kl_reward=float(_config_get(self.config, "kl_reward", 0.0)),
+            kl_reward=float(cfg_get(self.config, "kl_reward", 0.0)),
             reward_view_name=_reward_view_name(self.config),
             trajectory_storage_policy=trajectory_storage_policy_from_cfg(
-                _config_get(self.config, "trajectory_storage", None),
+                cfg_get(self.config, "trajectory_storage", None),
             ),
             reward_artifact_policy=reward_artifact_policy_from_cfg(
-                _config_get(self.config, "reward_artifact", None),
+                cfg_get(self.config, "reward_artifact", None),
             ),
         )
         batch_builder = TrajectoryRolloutBatchBuilder(output, context)
@@ -211,16 +212,9 @@ def _device_from_model(model: Any | None) -> Any | None:
     return getattr(model, "device", None)
 
 
-def _config_get(config: Any, name: str, default: Any) -> Any:
-    getter = getattr(config, "get", None)
-    if callable(getter):
-        return getter(name, default)
-    return getattr(config, name, default)
-
-
 def _reward_view_name(config: Any) -> str | None:
     for name in ("reward_view", "reward_view_name"):
-        value = _config_get(config, name, None)
+        value = cfg_get(config, name, None)
         if value:
             return str(value)
     return None

@@ -6,7 +6,7 @@ from typing import Any
 
 from omegaconf import DictConfig
 
-from vrl.scripts.common.online import run_online_recipe
+from vrl.scripts.common.online import default_reference_model, run_online_recipe
 from vrl.scripts.common.types import OnlineRecipeDefinition
 from vrl.trainers.checkpointing import LORA_WEIGHTS_NAME
 from vrl.trainers.frozen_module import (
@@ -29,7 +29,7 @@ async def train_sd3_5_grpo(cfg: DictConfig) -> None:
             build_bundle=_build_bundle,
             build_replay_bundle=_build_replay_bundle,
             after_bundle_built=_after_bundle_built,
-            reference_model_getter=_reference_model,
+            reference_model_getter=default_reference_model,
             export_modules_getter=_export_modules,
             weight_dtype_getter=_resolve_weight_dtype,
         ),
@@ -55,13 +55,6 @@ def _after_bundle_built(bundle: Any, cfg: DictConfig) -> None:
     if bool(cfg.actor.gradient_checkpointing):
         transformer.enable_gradient_checkpointing()
     bundle.metadata.update(_offload_driver_frozen_modules(bundle.model, cfg))
-
-
-def _reference_model(bundle: Any, cfg: DictConfig) -> Any | None:
-    init_kl_coef = float(getattr(cfg.algorithm, "init_kl_coef", 0.0))
-    if bool(cfg.model.use_lora) and init_kl_coef > 0:
-        return bundle.model
-    return None
 
 
 def _export_modules(bundle: Any, cfg: DictConfig) -> dict[str, Any] | None:

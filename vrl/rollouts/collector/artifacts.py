@@ -7,11 +7,10 @@ from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
 
-from omegaconf import DictConfig, ListConfig, OmegaConf
-
 from vrl.generation import GenerationOutput
 from vrl.rollouts.batch import RolloutBatch
 from vrl.trajectory.storage import trajectory_tensor_bytes
+from vrl.utils.config import cfg_get, to_builtin
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,7 +25,7 @@ def reward_artifact_policy_from_cfg(value: object) -> RewardArtifactPolicy:
 
     if value is None:
         return RewardArtifactPolicy()
-    value = _to_builtin(value)
+    value = to_builtin(value)
     if isinstance(value, RewardArtifactPolicy):
         return value
     if isinstance(value, Mapping):
@@ -34,7 +33,7 @@ def reward_artifact_policy_from_cfg(value: object) -> RewardArtifactPolicy:
             keep_after_reward=bool(value.get("keep_after_reward", True)),
         )
     return RewardArtifactPolicy(
-        keep_after_reward=bool(_cfg_get(value, "keep_after_reward", True)),
+        keep_after_reward=bool(cfg_get(value, "keep_after_reward", True)),
     )
 
 
@@ -102,28 +101,6 @@ def _release_reward_view_tensors(trajectory: Any) -> None:
             **dict(getattr(tensor, "metadata", {})),
             "released_after_reward": True,
         }
-
-
-def _cfg_get(node: Any, key: str, default: Any) -> Any:
-    if node is None:
-        return default
-    getter = getattr(node, "get", None)
-    if callable(getter):
-        try:
-            return getter(key, default)
-        except TypeError:
-            pass
-    try:
-        return node[key]
-    except (KeyError, IndexError, TypeError):
-        pass
-    return getattr(node, key, default)
-
-
-def _to_builtin(value: object) -> object:
-    if isinstance(value, (DictConfig, ListConfig)):
-        return OmegaConf.to_container(value, resolve=True)
-    return value
 
 
 __all__ = [

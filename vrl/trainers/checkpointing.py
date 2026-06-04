@@ -12,6 +12,8 @@ from typing import Any
 
 import torch
 
+from vrl.utils.config import cfg_get, cfg_path
+
 logger = logging.getLogger(__name__)
 
 CHECKPOINT_SCHEMA_VERSION = 1
@@ -185,7 +187,7 @@ def load_training_checkpoint(path: str | Path) -> TrainingCheckpoint:
 def load_training_checkpoint_from_config(cfg: Any) -> TrainingCheckpoint | None:
     """Return configured resume checkpoint, or ``None`` for a fresh run."""
 
-    resume_from = str(_cfg_path(cfg, "trainer.resume_from", "") or "").strip()
+    resume_from = str(cfg_path(cfg, "trainer.resume_from", "") or "").strip()
     if not resume_from:
         return None
     return load_training_checkpoint(resume_from)
@@ -206,7 +208,7 @@ def prepare_model_config_for_training_resume(
 
     if checkpoint is None:
         return
-    lora_path = _cfg_path(cfg, "model.lora.path", None)
+    lora_path = cfg_path(cfg, "model.lora.path", None)
     if lora_path is None:
         return
     text = str(lora_path or "").strip()
@@ -487,42 +489,17 @@ def _to_cpu(value: Any) -> Any:
 _MISSING = object()
 
 
-def _cfg_path(cfg: Any, path: str, default: Any) -> Any:
-    node = cfg
-    for key in path.split("."):
-        node = _cfg_get(node, key, _MISSING)
-        if node is _MISSING:
-            return default
-    return node
-
-
 def _set_cfg_path(cfg: Any, path: str, value: Any) -> None:
     node = cfg
     keys = path.split(".")
     for key in keys[:-1]:
-        node = _cfg_get(node, key, _MISSING)
+        node = cfg_get(node, key, _MISSING)
         if node is _MISSING:
             return
     try:
         node[keys[-1]] = value
     except TypeError:
         setattr(node, keys[-1], value)
-
-
-def _cfg_get(node: Any, key: str, default: Any) -> Any:
-    if node is None:
-        return default
-    getter = getattr(node, "get", None)
-    if callable(getter):
-        try:
-            return getter(key, default)
-        except TypeError:
-            pass
-    try:
-        return node[key]
-    except (KeyError, IndexError, TypeError):
-        pass
-    return getattr(node, key, default)
 
 
 __all__ = [

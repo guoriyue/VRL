@@ -8,7 +8,7 @@ from typing import Any, Protocol, TypeVar
 
 import torch
 
-from vrl.generation.execution.chunks import SampleChunk
+from vrl.generation.execution.chunks import SampleChunk, validate_chunk_range
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
 
 
@@ -119,7 +119,7 @@ class ARRequestLayout:
             prompt_index = int(chunk.prompt_index)
             sample_start = int(chunk.sample_start)
             sample_count = int(chunk.sample_count)
-            self._validate_chunk_range(
+            validate_chunk_range(
                 request,
                 prompt_index=prompt_index,
                 sample_start=sample_start,
@@ -253,27 +253,6 @@ class ARRequestLayout:
         if default is None:
             raise ValueError(f"request.sampling.{key} is required")
         return int(default)
-
-    @staticmethod
-    def _validate_chunk_range(
-        request: GenerationRequest,
-        *,
-        prompt_index: int,
-        sample_start: int,
-        sample_count: int,
-    ) -> None:
-        if prompt_index < 0 or prompt_index >= len(request.prompts):
-            raise ValueError(f"chunk.prompt_index={prompt_index} is out of range")
-        sample_end = sample_start + sample_count
-        if sample_start < 0 or sample_count < 1:
-            raise ValueError(
-                "chunk sample range must have non-negative start and positive count",
-            )
-        if sample_end > request.samples_per_prompt:
-            raise ValueError(
-                "chunk sample range exceeds request.samples_per_prompt: "
-                f"{sample_start}:{sample_end} > {request.samples_per_prompt}",
-            )
 
 
 __all__ = ["ARChunkResult", "ARRequestLayout", "ARSamplingParams"]
