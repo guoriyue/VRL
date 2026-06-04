@@ -52,18 +52,7 @@ def _create_optimizer(
 ) -> torch.optim.Optimizer:
     """Create an AdamW optimizer."""
     optim = config.optim
-    if optim.use_8bit_adam:
-        try:
-            import bitsandbytes as bnb
-        except ImportError as err:
-            raise ImportError(
-                "Install bitsandbytes for 8-bit Adam: pip install bitsandbytes"
-            ) from err
-        optimizer_cls = bnb.optim.AdamW8bit
-    else:
-        optimizer_cls = torch.optim.AdamW
-
-    return optimizer_cls(
+    return torch.optim.AdamW(
         parameters,
         lr=optim.lr,
         betas=(optim.adam_beta1, optim.adam_beta2),

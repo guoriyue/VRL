@@ -585,7 +585,6 @@ def _common_training_overrides(tmp_path: Path) -> tuple[str, ...]:
         "actor.gradient_checkpointing=false",
         "actor.timestep_fraction=1.0",
         "actor.ema.enable=false",
-        "actor.optim.use_8bit_adam=false",
     )
 
 

@@ -16,7 +16,6 @@ class OptimConfig:
     adam_beta2: float = 0.999
     weight_decay: float = 1e-4
     eps: float = 1e-8
-    use_8bit_adam: bool = False
     allow_tf32: bool = True
 
 

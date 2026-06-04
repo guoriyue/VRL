@@ -6,7 +6,6 @@ actor:
     adam_beta2: 0.999
     weight_decay: 1.0e-4
     eps: 1.0e-8
-    use_8bit_adam: false
     allow_tf32: true
 
   max_norm: 1.0
