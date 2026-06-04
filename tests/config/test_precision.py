@@ -11,9 +11,9 @@ from vrl.config.loading import load_config
 from vrl.config.precision import (
     PrecisionPolicy,
     normalize_precision,
-    precision_to_torch_dtype,
     resolve_precision_policy,
 )
+from vrl.models.dtypes import resolve_torch_dtype
 from vrl.trainers.precision import (
     torch_dtype_for_trainer_precision,
     trainer_mixed_precision,
@@ -60,10 +60,10 @@ def test_normalize_rejects_unknown():
         normalize_precision("bfloat16")  # no longer an accepted alias
 
 
-def test_precision_to_torch_dtype():
-    assert precision_to_torch_dtype("fp32", torch) is torch.float32
-    assert precision_to_torch_dtype("bf16", torch) is torch.bfloat16
-    assert precision_to_torch_dtype("fp16", torch) is torch.float16
+def test_resolve_torch_dtype():
+    assert resolve_torch_dtype("fp32") is torch.float32
+    assert resolve_torch_dtype("bf16") is torch.bfloat16
+    assert resolve_torch_dtype("fp16") is torch.float16
 
 
 # -- scalar / dict block ----------------------------------------------
@@ -121,8 +121,8 @@ def test_compute_matches_legacy_weight_dtype(mp, bf16):
     policy = resolve_precision_policy(cfg)
     legacy = torch_dtype_for_trainer_precision(cfg.actor, torch)
     # compute and rollout both map to the single legacy weight/compute dtype today.
-    assert precision_to_torch_dtype(policy.compute, torch) is legacy
-    assert precision_to_torch_dtype(policy.rollout, torch) is legacy
+    assert resolve_torch_dtype(policy.compute) is legacy
+    assert resolve_torch_dtype(policy.rollout) is legacy
 
 
 # Every online GRPO recipe — the resolver (back-compat path) must reproduce the
@@ -158,11 +158,11 @@ def test_online_recipe_equivalence(experiment):
     frozen = torch.float16 if weight_dtype is torch.float32 else weight_dtype
 
     # compute/rollout both map to the single legacy weight/compute dtype today.
-    assert precision_to_torch_dtype(policy.compute, torch) is weight_dtype
-    assert precision_to_torch_dtype(policy.rollout, torch) is weight_dtype
+    assert resolve_torch_dtype(policy.compute) is weight_dtype
+    assert resolve_torch_dtype(policy.rollout) is weight_dtype
     # autocast on/off boundary is preserved (fp32 <-> "no").
     assert (policy.compute == "fp32") == (autocast == "no")
     # frozen reproduces the sd3 "fp32 -> fp16, else follow" derivation.
-    assert precision_to_torch_dtype(policy.frozen, torch) is frozen
+    assert resolve_torch_dtype(policy.frozen) is frozen
     # math is always protected at fp32.
     assert policy.math == "fp32"

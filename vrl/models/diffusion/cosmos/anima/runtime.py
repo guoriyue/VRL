@@ -127,7 +127,8 @@ def build_anima_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
 
     from diffusers import FlowMatchEulerDiscreteScheduler
 
-    from vrl.models.diffusion.cosmos.anima.model import AnimaReplayModel, _resolve_torch_dtype
+    from vrl.models.diffusion.cosmos.anima.model import AnimaReplayModel
+    from vrl.models.dtypes import resolve_torch_dtype
 
     logger.info("Building Anima replay runtime bundle from %s", spec.model_name_or_path)
 
@@ -144,7 +145,7 @@ def build_anima_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         transformer=load_anima_transformer_component(spec),
         scheduler=scheduler,
         device=spec.device,
-        dtype=_resolve_torch_dtype(spec.dtype),
+        dtype=resolve_torch_dtype(spec.dtype),
     )
 
     use_lora = spec.use_lora
@@ -248,8 +249,8 @@ def load_anima_transformer_component(spec: RuntimeBuildSpec) -> Any:
 
     from vrl.models.diffusion.cosmos.anima.model import (
         _load_anima_transformer,
-        _resolve_torch_dtype,
     )
+    from vrl.models.dtypes import resolve_torch_dtype
 
     model_config = spec.model_config or {}
     path = model_config.get("transformer_path") or _resolve_artifact(
@@ -260,7 +261,7 @@ def load_anima_transformer_component(spec: RuntimeBuildSpec) -> Any:
     )
     if not path:
         raise ValueError("Anima replay runtime spec is missing transformer_path")
-    dtype = _resolve_torch_dtype(spec.dtype)
+    dtype = resolve_torch_dtype(spec.dtype)
     return _load_anima_transformer(load_file(path, device="cpu"), dtype=dtype).to(spec.device, dtype=dtype)
 
 

@@ -12,6 +12,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from vrl.models.dtypes import resolve_torch_dtype
+
 RuntimeRole = Literal["full_generation_model", "minimal_replay_model"]
 
 FULL_GENERATION_RUNTIME_ROLE: RuntimeRole = "full_generation_model"
@@ -269,30 +271,6 @@ def compile_transformer(model: Any, mode: str) -> None:
     model._set_transformer(
         torch.compile(model.transformer, mode=mode, fullgraph=False),
     )
-
-
-def resolve_torch_dtype(value: Any) -> Any:
-    """Resolve common dtype spellings into ``torch.dtype`` values."""
-
-    import torch
-
-    if isinstance(value, torch.dtype):
-        return value
-    key = str(value).removeprefix("torch.").lower()
-    aliases = {
-        "bf16": torch.bfloat16,
-        "bfloat16": torch.bfloat16,
-        "fp16": torch.float16,
-        "float16": torch.float16,
-        "half": torch.float16,
-        "fp32": torch.float32,
-        "float32": torch.float32,
-        "float": torch.float32,
-    }
-    try:
-        return aliases[key]
-    except KeyError as exc:
-        raise ValueError(f"unsupported torch dtype: {value!r}") from exc
 
 
 def _runtime_role_from_metadata(metadata: Mapping[str, Any]) -> RuntimeRole:

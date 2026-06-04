@@ -98,12 +98,9 @@ class WorkloadSignature:
         sampling = request.sampling
         height = sampling.get("height")
         width = sampling.get("width")
-        num_frames = sampling.get("num_frames", sampling.get("frame_count"))
-        num_steps = sampling.get("num_steps", sampling.get("num_inference_steps"))
-        max_new_tokens = sampling.get(
-            "max_new_tokens",
-            sampling.get("max_new_image_tokens"),
-        )
+        num_frames = sampling.get("num_frames")
+        num_steps = sampling.get("num_steps")
+        max_new_tokens = sampling.get("image_token_num")
         return cls(
             family=request.family,
             task=request.task,

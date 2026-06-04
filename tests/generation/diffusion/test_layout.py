@@ -29,14 +29,6 @@ def test_diffusion_layout_normalizes_native_denoise_mode() -> None:
     assert params.denoise_mode == "native"
 
 
-def test_diffusion_layout_keeps_official_denoise_alias_compatible() -> None:
-    request = _request({"denoise_mode": "official"})
-
-    params = DiffusionRequestLayout().parse_sampling_params(request)
-
-    assert params.denoise_mode == "native"
-
-
 def test_diffusion_layout_rejects_unknown_denoise_mode() -> None:
     request = _request({"denoise_mode": "custom"})
 

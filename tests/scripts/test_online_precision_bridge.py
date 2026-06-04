@@ -62,10 +62,11 @@ def test_decoupled_rollout_compute():
 @pytest.mark.parametrize("math,expected", [("fp32", torch.float32), ("bf16", torch.bfloat16)])
 def test_math_axis_resolves_to_dtype(math, expected):
     # P2: the `math` axis resolves to the evaluator's log-prob math dtype.
-    from vrl.config.precision import precision_to_torch_dtype, resolve_precision_policy
+    from vrl.config.precision import resolve_precision_policy
+    from vrl.models.dtypes import resolve_torch_dtype
 
     cfg = _with_precision("diffusion/sd3_5/online_grpo_ocr", {"compute": "fp32", "math": math})
-    assert precision_to_torch_dtype(resolve_precision_policy(cfg).math, torch) is expected
+    assert resolve_torch_dtype(resolve_precision_policy(cfg).math) is expected
 
 
 @pytest.mark.parametrize(

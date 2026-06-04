@@ -11,7 +11,8 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.builders import build_configs
-from vrl.config.precision import precision_to_torch_dtype, resolve_precision_policy
+from vrl.config.precision import resolve_precision_policy
+from vrl.models.dtypes import resolve_torch_dtype
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.models.interfaces import require_runtime_model
 from vrl.ray.resources import (
@@ -100,9 +101,7 @@ async def run_online_recipe(
         if definition.weight_dtype_getter is not None
         else torch_dtype_for_trainer_precision(trainer_config, torch)
     )
-    rollout_weight_dtype = precision_to_torch_dtype(
-        resolve_precision_policy(cfg).rollout, torch,
-    )
+    rollout_weight_dtype = resolve_torch_dtype(resolve_precision_policy(cfg).rollout)
     context = RecipeDeviceContext(
         device=device,
         weight_dtype=weight_dtype,

@@ -24,6 +24,7 @@ from vrl.models.diffusion.common import (
     LatentDecodeTransform,
 )
 from vrl.models.diffusion.common.vae_decode_memory import apply_vae_decode_memory
+from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 
 
@@ -86,7 +87,7 @@ class AnimaModel(DiffusionModelBase):
         from transformers import Qwen2Tokenizer, Qwen3Model, T5TokenizerFast
 
         paths = spec.model_config or {}
-        dtype = _resolve_torch_dtype(spec.dtype)
+        dtype = resolve_torch_dtype(spec.dtype)
 
         transformer_checkpoint = load_file(paths["transformer_path"], device="cpu")
         transformer = _load_anima_transformer(transformer_checkpoint, dtype=dtype)
@@ -836,20 +837,6 @@ def _shared_replay_tensor(
     if isinstance(value, torch.Tensor) and value.shape[0] > 1:
         return value[:1]
     return value
-
-
-def _resolve_torch_dtype(value: Any) -> torch.dtype:
-    if isinstance(value, torch.dtype):
-        return value
-    text = str(value).replace("torch.", "")
-    return {
-        "float32": torch.float32,
-        "fp32": torch.float32,
-        "float16": torch.float16,
-        "fp16": torch.float16,
-        "bfloat16": torch.bfloat16,
-        "bf16": torch.bfloat16,
-    }.get(text, torch.bfloat16)
 
 
 __all__ = [

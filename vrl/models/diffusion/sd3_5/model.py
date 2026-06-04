@@ -50,6 +50,7 @@ from vrl.models.diffusion.sd3_5.runner import (
     SD3DiffusionBackboneRunner,
     install_sd3_joint_attention_processor,
 )
+from vrl.models.dtypes import resolve_torch_dtype
 
 
 @dataclass
@@ -107,7 +108,7 @@ class SD3_5Model(DiffusionModelBase):
         """Load the diffusers SD3.5 pipeline + freeze non-trainable modules."""
         from diffusers import StableDiffusion3Pipeline
 
-        model_dtype = _resolve_torch_dtype(spec.dtype)
+        model_dtype = resolve_torch_dtype(spec.dtype)
         # Frozen text encoders / VAE follow the ``frozen`` precision axis. Its
         # default already encodes the Flow-GRPO SD3 contract (fp16 when the
         # denoiser runs fp32, else the model dtype), so ``spec.frozen_dtype`` is
@@ -145,7 +146,7 @@ class SD3_5Model(DiffusionModelBase):
         from peft import LoraConfig, PeftModel, get_peft_model
 
         self.pipeline.transformer.requires_grad_(False)
-        self.pipeline.transformer.to(self.device, dtype=_resolve_torch_dtype(spec.dtype))
+        self.pipeline.transformer.to(self.device, dtype=resolve_torch_dtype(spec.dtype))
 
         lora_path = spec.lora_path
         if lora_path:
@@ -469,26 +470,6 @@ class SD3_5ReplayModel(SD3_5Model):
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
         del latents
         raise RuntimeError("SD3_5ReplayModel cannot decode latents")
-
-
-def _resolve_torch_dtype(value: Any) -> torch.dtype:
-    if isinstance(value, torch.dtype):
-        return value
-    key = str(value).removeprefix("torch.").lower()
-    aliases = {
-        "bf16": torch.bfloat16,
-        "bfloat16": torch.bfloat16,
-        "fp16": torch.float16,
-        "float16": torch.float16,
-        "half": torch.float16,
-        "fp32": torch.float32,
-        "float32": torch.float32,
-        "float": torch.float32,
-    }
-    try:
-        return aliases[key]
-    except KeyError as exc:
-        raise ValueError(f"unsupported torch dtype: {value!r}") from exc
 
 
 __all__ = ["SD3SamplingState", "SD3_5Model", "SD3_5ReplayModel"]

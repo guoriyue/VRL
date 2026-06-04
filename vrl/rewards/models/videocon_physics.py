@@ -266,14 +266,9 @@ def _resolve_model_root(worker_config: Mapping[str, Any]) -> Path:
 
 
 def _torch_dtype(name: str) -> torch.dtype:
-    normalized = name.lower()
-    if normalized in {"bf16", "bfloat16"}:
-        return torch.bfloat16
-    if normalized in {"fp16", "float16", "half"}:
-        return torch.float16
-    if normalized in {"fp32", "float32"}:
-        return torch.float32
-    raise ValueError(f"unsupported VideoCon-Physics torch_dtype: {name!r}")
+    from vrl.models.dtypes import resolve_torch_dtype
+
+    return resolve_torch_dtype(name)
 
 
 __all__ = [

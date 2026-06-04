@@ -266,9 +266,7 @@ class DiffusionRequestLayout:
     @staticmethod
     def _parse_denoise_mode(value: Any) -> str:
         denoise_mode = str(value).strip().lower()
-        if denoise_mode in {"native", "official", "scheduler"}:
-            return "native"
-        if denoise_mode != "sde":
+        if denoise_mode not in {"native", "sde"}:
             raise ValueError(
                 "sampling.denoise_mode must be 'native' or 'sde'",
             )

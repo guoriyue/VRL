@@ -21,6 +21,7 @@ from vrl.generation.types import (
     WorkloadSignature,
 )
 from vrl.models.ar.capabilities import ar_continuous_family_capability
+from vrl.models.dtypes import dtype_to_config_string
 from vrl.models.ar.nextstep_1.model import (
     NextStep1Config,
     NextStep1Model,
@@ -119,7 +120,7 @@ def extract_nextstep_1_runtime_spec(
     spec = extract_runtime_spec(
         cfg,
         device,
-        _dtype_to_config_string(dtype if dtype is not None else (weight_dtype or "bfloat16")),
+        dtype_to_config_string(dtype if dtype is not None else (weight_dtype or "bfloat16")),
         task_variant="ar_t2i",
         backend_preference=("native",),
         model_name_or_path=model_path or "stepfun-ai/NextStep-1.1",
@@ -152,7 +153,7 @@ def _nextstep_1_config_from_runtime_spec(spec: RuntimeBuildSpec) -> dict[str, An
     use_lora = spec.use_lora
     config: dict[str, Any] = {
         "model_path": spec.model_name_or_path,
-        "dtype": _dtype_to_config_string(spec.dtype),
+        "dtype": dtype_to_config_string(spec.dtype),
         "device": str(spec.device),
         "use_lora": use_lora,
     }
@@ -187,21 +188,6 @@ def _nextstep_1_config_from_runtime_spec(spec: RuntimeBuildSpec) -> dict[str, An
             config[key] = value
 
     return config
-
-
-def _dtype_to_config_string(value: Any) -> str:
-    text = str(value).removeprefix("torch.")
-    aliases = {
-        "bf16": "bfloat16",
-        "bfloat16": "bfloat16",
-        "fp16": "float16",
-        "float16": "float16",
-        "half": "float16",
-        "fp32": "float32",
-        "float32": "float32",
-        "float": "float32",
-    }
-    return aliases.get(text.lower(), text)
 
 
 """NextStep-1 pipeline executor.

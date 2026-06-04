@@ -18,6 +18,7 @@ from vrl.generation.execution.types import (
 )
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import PipelineExecutor
+from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces import require_runtime_model
 from vrl.utils.cuda_memory import release_cuda_memory
 from vrl.utils.profiling import TorchProfilerConfig
@@ -356,33 +357,11 @@ class GenerationWorkerCore:
             normalized["device"] = torch.device(device)
         dtype = normalized.get("dtype")
         if isinstance(dtype, str):
-            normalized["dtype"] = cls._torch_dtype_from_string(dtype)
+            normalized["dtype"] = resolve_torch_dtype(dtype)
         frozen_dtype = normalized.get("frozen_dtype")
         if isinstance(frozen_dtype, str):
-            normalized["frozen_dtype"] = cls._torch_dtype_from_string(frozen_dtype)
+            normalized["frozen_dtype"] = resolve_torch_dtype(frozen_dtype)
         return normalized
-
-    @staticmethod
-    def _torch_dtype_from_string(value: str) -> Any:
-        import torch
-
-        key = value.removeprefix("torch.").lower()
-        aliases = {
-            "bf16": torch.bfloat16,
-            "bfloat16": torch.bfloat16,
-            "fp16": torch.float16,
-            "float16": torch.float16,
-            "half": torch.float16,
-            "fp32": torch.float32,
-            "float32": torch.float32,
-            "float": torch.float32,
-        }
-        try:
-            return aliases[key]
-        except KeyError as exc:
-            raise ValueError(
-                f"unsupported torch dtype string in launch_contract: {value!r}",
-            ) from exc
 
     @classmethod
     def _to_cpu(cls, value: Any) -> Any:

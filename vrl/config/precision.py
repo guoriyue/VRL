@@ -17,8 +17,9 @@ Users set a scalar (``precision: bf16`` → that dtype for compute/rollout/froze
 ``actor.mixed_precision`` / ``actor.bf16`` fields so existing configs keep their
 exact behavior.
 
-This module is torch-free (config layer). Consumers convert a string axis to a
-``torch.dtype`` via :func:`precision_to_torch_dtype`, passing ``torch`` in.
+This module is torch-free (config layer): it resolves precision *policy* only.
+Consumers materialize a canonical axis name into a ``torch.dtype`` via
+:func:`vrl.models.dtypes.resolve_torch_dtype`.
 """
 
 from __future__ import annotations
@@ -132,16 +133,6 @@ def _from_legacy(cfg: Any) -> PrecisionPolicy:
     return _policy_from_compute(compute)
 
 
-def precision_to_torch_dtype(name: str, torch: Any) -> Any:
-    """Convert a canonical precision name (from a ``PrecisionPolicy``) to a dtype."""
-
-    return {
-        "fp32": torch.float32,
-        "bf16": torch.bfloat16,
-        "fp16": torch.float16,
-    }[name]
-
-
 def _select(obj: Any, path: str, default: Any = None) -> Any:
     """Read a dotted path from a Mapping/DictConfig/namespace, else ``default``."""
 
@@ -164,6 +155,5 @@ def _select(obj: Any, path: str, default: Any = None) -> Any:
 __all__ = [
     "PrecisionPolicy",
     "normalize_precision",
-    "precision_to_torch_dtype",
     "resolve_precision_policy",
 ]

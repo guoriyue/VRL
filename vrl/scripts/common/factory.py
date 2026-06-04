@@ -8,7 +8,8 @@ from typing import Any
 from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.builders import build_configs
-from vrl.config.precision import precision_to_torch_dtype, resolve_precision_policy
+from vrl.config.precision import resolve_precision_policy
+from vrl.models.dtypes import resolve_torch_dtype
 from vrl.ray.resources import (
     resolve_distributed_resources,
     reward_runtime_resource_kwargs,
@@ -148,8 +149,6 @@ def build_algorithm_and_evaluator_from_cfg(
     kind = str(OmegaConf.select(cfg, "algorithm.kind", default=""))
 
     if kind == "grpo":
-        import torch
-
         from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
         from vrl.algorithms.grpo.token import TokenGRPOConfig
         from vrl.rollouts.evaluators.diffusion.sde_logprob import (
@@ -165,7 +164,7 @@ def build_algorithm_and_evaluator_from_cfg(
                 f"{type(algorithm_config).__name__}",
             )
         collector_config = collector_config or build_rollout_config_from_cfg(cfg, entry)
-        math_dtype = precision_to_torch_dtype(resolve_precision_policy(cfg).math, torch)
+        math_dtype = resolve_torch_dtype(resolve_precision_policy(cfg).math)
         return AlgorithmEvaluatorPair(
             algorithm=GRPO(algorithm_config),
             evaluator=DiffusionSDELogProbEvaluator(

@@ -275,13 +275,10 @@ class EnginePlanner:
                 else len(self.request.prompts) * self.request.samples_per_prompt
             )
         if axis_name == "timestep":
-            value = sampling.get("num_steps", sampling.get("num_inference_steps"))
+            value = sampling.get("num_steps")
             return None if value is None else int(value)
         if axis_name == "token":
-            value = sampling.get(
-                "image_token_num",
-                sampling.get("max_new_image_tokens", sampling.get("max_new_tokens")),
-            )
+            value = sampling.get("image_token_num")
             return None if value is None else int(value)
         if axis_name == "segment":
             return None

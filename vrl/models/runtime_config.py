@@ -15,7 +15,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.config.precision import precision_to_torch_dtype, resolve_precision_policy
+from vrl.config.precision import resolve_precision_policy
+from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces.runtime import RuntimeBuildSpec
 from vrl.utils.config import plain_mapping
 
@@ -40,12 +41,10 @@ def extract_runtime_spec(
     fallback model id pass an explicit default.
     """
 
-    import torch
-
     model_config = plain_mapping(cfg.model, field_name="model")
     path = model_name_or_path if model_name_or_path is not None else model_config.get("path")
     sampling_config = _optional_block(cfg, "sampling")
-    frozen_dtype = precision_to_torch_dtype(resolve_precision_policy(cfg).frozen, torch)
+    frozen_dtype = resolve_torch_dtype(resolve_precision_policy(cfg).frozen)
     return RuntimeBuildSpec(
         model_name_or_path=str(path),
         device=device,

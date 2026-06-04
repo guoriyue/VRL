@@ -731,16 +731,11 @@ def _torch_dtype(name: str | None, *, fallback: torch.dtype | None = None) -> to
         if fallback is None:
             raise ValueError("Kling VideoReward torch dtype is required")
         return fallback
-    normalized = name.lower()
-    if normalized == "auto":
+    if name.lower() == "auto":
         return "auto"
-    if normalized in {"bf16", "bfloat16"}:
-        return torch.bfloat16
-    if normalized in {"fp16", "float16", "half"}:
-        return torch.float16
-    if normalized in {"fp32", "float32"}:
-        return torch.float32
-    raise ValueError(f"unsupported Kling VideoReward torch_dtype: {name!r}")
+    from vrl.models.dtypes import resolve_torch_dtype
+
+    return resolve_torch_dtype(name)
 
 
 def _remap_qwen2vl_state_dict(

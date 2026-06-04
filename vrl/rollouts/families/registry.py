@@ -132,7 +132,7 @@ register_rollout_family(
     _diffusion_entry(
         family="sd3_5",
         task="t2i",
-        aliases=("sd3.5", "sd35"),
+        aliases=(),
         executor_cls="vrl.models.diffusion.sd3_5.runtime:SD3_5PipelineExecutor",
         runtime_builder="vrl.models.diffusion.sd3_5.runtime:build_sd3_5_runtime_bundle",
         runtime_spec_extractor="vrl.models.diffusion.sd3_5.runtime:extract_sd3_5_runtime_spec",
@@ -145,7 +145,7 @@ register_rollout_family(
     _diffusion_entry(
         family="wan_2_1",
         task="t2v",
-        aliases=("wan", "wan_2_1_1_3b", "wan_2_1_14b"),
+        aliases=("wan",),
         executor_cls="vrl.models.diffusion.wan_2_1.runtime:Wan_2_1PipelineExecutor",
         runtime_builder="vrl.models.diffusion.wan_2_1.runtime:build_wan_2_1_runtime_bundle",
         runtime_spec_extractor="vrl.models.diffusion.wan_2_1.runtime:extract_wan_2_1_runtime_spec",
@@ -158,7 +158,7 @@ register_rollout_family(
     _diffusion_entry(
         family="wan_2_1_i2v",
         task="i2v",
-        aliases=("wan_i2v", "wan_2_1_i2v_14b", "wan-i2v"),
+        aliases=("wan_i2v",),
         executor_cls="vrl.models.diffusion.wan_2_1.runtime:Wan_2_1I2VPipelineExecutor",
         runtime_builder="vrl.models.diffusion.wan_2_1.runtime:build_wan_2_1_runtime_bundle",
         runtime_spec_extractor="vrl.models.diffusion.wan_2_1.runtime:extract_wan_2_1_runtime_spec",
@@ -172,7 +172,7 @@ register_rollout_family(
     _diffusion_entry(
         family="cosmos-predict2",
         task="v2w",
-        aliases=("cosmos", "cosmos_predict2", "cosmos_predict2_2b"),
+        aliases=("cosmos", "cosmos_predict2"),
         executor_cls="vrl.models.diffusion.cosmos.predict2.runtime:CosmosPipelineExecutor",
         runtime_builder=(
             "vrl.models.diffusion.cosmos.predict2.runtime:"
@@ -192,7 +192,7 @@ register_rollout_family(
     _diffusion_entry(
         family="cosmos-predict2.5",
         task="t2w",
-        aliases=("cosmos_predict25", "cosmos_predict2_5", "cosmos_predict2_5_2b"),
+        aliases=("cosmos_predict2_5",),
         executor_cls=(
             "vrl.models.diffusion.cosmos.predict2_5.runtime:"
             "CosmosPredict25PipelineExecutor"
@@ -214,7 +214,7 @@ register_rollout_family(
     _diffusion_entry(
         family="cosmos-predict2-anima",
         task="t2i",
-        aliases=("anima", "cosmos_anima", "anima_preview3"),
+        aliases=("anima", "cosmos_anima"),
         executor_cls="vrl.models.diffusion.cosmos.anima.runtime:AnimaPipelineExecutor",
         runtime_builder=(
             "vrl.models.diffusion.cosmos.anima.runtime:"
@@ -233,7 +233,7 @@ register_rollout_family(
     RolloutFamilyEntry(
         family="janus_pro",
         task="ar_t2i",
-        aliases=("janus", "janus_pro_1b"),
+        aliases=("janus",),
         collector=CollectorMetadata(
             kind="ar_discrete",
             request_prefix="janus_pro",
@@ -255,7 +255,7 @@ register_rollout_family(
     RolloutFamilyEntry(
         family="janus_pro_r1",
         task="ar_t2i_r1",
-        aliases=("janus_r1", "janus_pro_1b_r1"),
+        aliases=("janus_r1",),
         collector=CollectorMetadata(
             kind="ar_r1",
             request_prefix="janus_pro_r1",
@@ -282,7 +282,7 @@ register_rollout_family(
     RolloutFamilyEntry(
         family="nextstep_1",
         task="ar_t2i",
-        aliases=("nextstep", "nextstep_1_1"),
+        aliases=("nextstep",),
         collector=CollectorMetadata(
             kind="ar_continuous",
             request_prefix="nextstep_1",

@@ -39,7 +39,6 @@ def _register_builtins() -> None:
         "ocr": OCRReward,
         "pickscore": PickScoreReward,
         "kling_video_reward": KlingVideoReward,
-        "video_reward": KlingVideoReward,
         "videocon_physics": VideoConPhysicsReward,
     })
 

@@ -43,6 +43,7 @@ import torch.nn as nn
 from vrl.math.ar.flow_matching import (
     flow_logprob_at,
 )
+from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 
 logger = logging.getLogger(__name__)
@@ -485,7 +486,7 @@ class NextStep1ReplayModel(NextStep1Model):
     ) -> None:
         nn.Module.__init__(self)
         self.config = config
-        self.dtype = _dtype_from_config(config.dtype)
+        self.dtype = resolve_torch_dtype(config.dtype)
         self._device = torch.device(config.device)
 
         self.language_model = (
@@ -525,14 +526,6 @@ class NextStep1ReplayModel(NextStep1Model):
         raise RuntimeError("NextStep1ReplayModel cannot decode image tokens")
 
 
-def _dtype_from_config(value: str) -> torch.dtype:
-    return {
-        "bfloat16": torch.bfloat16,
-        "float16": torch.float16,
-        "float32": torch.float32,
-    }[value]
-
-
 def _load_nextstep_replay_model(config: NextStep1Config) -> Any:
     """Load the upstream NextStep model without the inference pipeline or VAE."""
 
@@ -557,10 +550,10 @@ def _load_nextstep_replay_model(config: NextStep1Config) -> Any:
 
     model = NextStep.from_pretrained(
         config.model_path,
-        torch_dtype=_dtype_from_config(config.dtype),
+        torch_dtype=resolve_torch_dtype(config.dtype),
         enable_gradient_checkpointing=config.gradient_checkpointing,
     )
-    return model.to(device=config.device, dtype=_dtype_from_config(config.dtype)).eval()
+    return model.to(device=config.device, dtype=resolve_torch_dtype(config.dtype)).eval()
 
 
 __all__ = [

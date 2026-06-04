@@ -32,6 +32,4 @@ class KlingVideoReward(RewardFunction):
         )
 
 
-VideoReward = KlingVideoReward
-
-__all__ = ["KlingVideoReward", "VideoReward"]
+__all__ = ["KlingVideoReward"]
