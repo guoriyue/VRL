@@ -1,26 +1,28 @@
-# Sprint: Video → Video Fine-Tune (Diffusion-DRF + TDM-R1)
+# Sprint: Video RL Fine-Tune (TDM-R1 few-step)
 
 状态:proposed(future-work roadmap,不是当前执行)
 
 ## 0. TL;DR / 一句话
 
-把 video diffusion 的 RL/可微 fine-tune 这条路补上。**两篇 2026 论文各管一半**:
+把 video diffusion 的 **RL** fine-tune 这条路补上 —— **只做 RL,不做可微 reward fine-tune**。
 
 - **TDM-R1** —— non-differentiable RL on **few-step**(1-4 step)video diffusion。低成本,几乎是把现有 DiffusionNFT recipe push 到 4 step。
-- **Diffusion-DRF** —— **VLM-as-differentiable-judge**,gradient backprop through denoise chain。高成本,需要扩 evaluator/reward 协议支持 grad-enabled path。
+- **(可选)本地 VLM video judge** —— 作为**非可微** reward 喂给同一条 RL,丰富 reward 信号,与 Kling reward 复合。不是可微 finetune,只是多一个 score function。
 
-vrl 已经有 60% 基础设施(Cosmos V2W model + DiffusionNFT @ 10 step + Kling video reward + LeRobot dataset)。**抓手:Stage A(TDM-R1)几天就能跑,直接看 video 4-step RL 能不能立得住;Stage C(DRF)2-3 周 research-grade,真有差距再上。**
+vrl 已经有 ~60% 基础设施(Cosmos V2W model + DiffusionNFT @ 10 step + Kling video reward + LeRobot dataset)。**抓手:Stage A(TDM-R1)几天就能跑,直接看 video 4-step RL 能不能立得住;Stage B(本地 VLM judge)可与 A 并行,纯 reward 增强。**
+
+> 范围说明:可微 reward fine-tune(Diffusion-DRF:VLM critic 梯度反传 through denoise chain)**不在本 sprint**。本 sprint 全程走标准 RL(group-relative advantage / DiffusionNFT),所有 reward 保持 `@torch.no_grad()`。真要做可微 critic 是独立的 research sprint。
 
 ## 1. Context / 为什么做
 
 旧的 image RL + Claude/Codex judge 路线已下线。视频侧有两个 image 没有的痛点,逼着要专门设计:
 
 1. **每个 sample 巨贵**:1 个 video rollout = N 帧,GPU + reward 推理时间都贵 N 倍。**few-step**(1-4 step)distillation / RL 是让 video RL 跑得动的前提。
-2. **VLM 评 video 比评 image 难**:多帧才能判断 motion,但每帧都过 VLM = 翻倍 cost。还涉及 differentiability 选择。
+2. **VLM 评 video 比评 image 难**:多帧才能判断 motion,但每帧都过 VLM = 翻倍 cost。需要在 reward 设计上控制帧采样和耗时。
 
-**两篇论文各解一面**:
+**对应两个抓手**:
 - TDM-R1:**cost**(few-step)+ **通用 non-diff reward**(任何 score function 都能上)。
-- Diffusion-DRF:**sample efficiency**(differentiable VLM grad 直进 denoise,比 RL group-relative advantage 信号强一个量级)。
+- 本地 VLM judge:更强的 **reward 信号质量**(motion / per-frame issue 结构化打分),仍然走 non-diff RL。
 
 ## 2. 已就绪 / What's already wired(高复用,不重建)
 
@@ -42,11 +44,9 @@ vrl 已经有 60% 基础设施(Cosmos V2W model + DiffusionNFT @ 10 step + Kling
   - **a)** 直接 push 到 4 step,看实际崩多少(先跑实验)
   - **b)** 加 LCM / consistency distillation 阶段,先 10 → 4 step 蒸馏再做 RL
 
-### Diffusion-DRF gap(多,~2-3 周)
-- **所有 reward 都 `@torch.no_grad()`** —— VLM 梯度进不来,首先要 lifting。
-- **Evaluator protocol 只支持 log-prob** —— 要扩 `vrl/rollouts/evaluators/base.py:Evaluator` 支持 `grad_enabled=True` 路径。
-- **Reward artifact 评分后被释放** —— `vrl/rollouts/collector/artifacts.py` 会 `release_reward_artifact_if_needed`。DRF 要把 video tensor 留在 graph 里给 VLM 反传。
-- **VLM 选择**:Claude(远端 API)**不可微**,跑不了 DRF。需要**本地可微 VLM**(Qwen2.5-VL 7B / LLaVA-Next 13B / InternVL3 8B),才能跑梯度。
+### 本地 VLM judge gap(可选,~3-5 天)
+- 现在只有远端不可用的 Claude/Codex judge(已下线)和 Kling reward;**没有本地 VLM video judge**。
+- 需要新增一个 **non-diff** local judge reward(结构化打分),注册进 reward registry,与 Kling 复合即可。无需改 RL 算法。
 
 ## 4. 分阶段方案 / Recommended approach
 
@@ -56,20 +56,13 @@ vrl 已经有 60% 基础设施(Cosmos V2W model + DiffusionNFT @ 10 step + Kling
 - 跑 short run,看 video quality + reward。崩了再加 LCM distillation 阶段。
 - **不写新 algorithm**:DiffusionNFT 已经接 non-diff reward,只是 step 数变。
 
-### Stage B — Local VLM video judge(~3-5 天,可与 Stage A 并行)
-- 加本地 VLM judge,不要重新引入 Claude/Codex 远端 judge:
+### Stage B —(可选)本地 VLM video judge as RL reward(~3-5 天,可与 Stage A 并行)
+- 加本地 VLM judge,**作为 RL 的非可微 reward**,不要重新引入 Claude/Codex 远端 judge:
   - 输入:N 帧(均匀采样,N=4-8 帧)+ prompt
-  - 本地 Qwen2.5-VL / LLaVA-Next / InternVL 输出结构化 `{score, reasons, per_frame_issues}`
+  - 本地 Qwen2.5-VL / LLaVA-Next / InternVL 输出结构化 `{score, reasons, per_frame_issues}`(`@torch.no_grad()`)
   - 注册为 `local_video_judge` 在 `vrl/rewards/functions/registry.py`
 - 复合:`reward.components.kling_video_reward=0.3 + local_video_judge=0.7`
-- **不依赖 Stage A**:也可用在 10-step recipe 上。
-
-### Stage C — Diffusion-DRF(~2-3 周,research-grade)
-1. **扩 Evaluator protocol**:`vrl/rollouts/evaluators/base.py` 加 `score_with_grad(rollout, model, vlm) -> Tensor`,启用 `torch.enable_grad()`。
-2. **本地可微 VLM wrapper**:加 `vrl/rewards/models/vlm_judge.py`,wrap Qwen2.5-VL 7B / LLaVA-Next。`score_request` 返回带 grad 的 tensor。
-3. **Reward artifact lifecycle 扩展**:`collector/artifacts.py` 加 `RewardArtifactPolicy(keep_for_grad=True)`,video tensor 留在 training_view。
-4. **新 algorithm**:`vrl/algorithms/diffusion_drf.py`,VLM critic gradient 反传 through denoise chain。
-5. **VRAM 概算先算账**:7B VLM + Cosmos transformer + activation cache → 单 H100/A100 能不能 fit。**先算 vram 再写代码**。
+- **不依赖 Stage A**:也可用在 10-step recipe 上。纯 reward 增强,RL 路径不变。
 
 ## 5. 关键文件 / Critical files
 
@@ -83,11 +76,7 @@ vrl 已经有 60% 基础设施(Cosmos V2W model + DiffusionNFT @ 10 step + Kling
 **新增 / 改**:
 - `configs/sampling/denoise/4_step_cfg_4_5.yaml`(Stage A)
 - `configs/experiment/.../online_nft_kling_video_reward_4step.yaml`(Stage A)
-- `vrl/rewards/functions/local_video_judge.py`(Stage B)
-- `vrl/rewards/models/vlm_judge.py`(Stage C)
-- `vrl/algorithms/diffusion_drf.py`(Stage C)
-- `vrl/rollouts/evaluators/base.py`(Stage C — 扩 grad path)
-- `vrl/rollouts/collector/artifacts.py`(Stage C — keep_for_grad policy)
+- `vrl/rewards/functions/local_video_judge.py`(Stage B,可选)
 
 ## 6. 验证矩阵 / Verification
 
@@ -95,26 +84,25 @@ vrl 已经有 60% 基础设施(Cosmos V2W model + DiffusionNFT @ 10 step + Kling
 |---|---|
 | A | 4-step run vs 10-step baseline:video quality / motion 不能崩超 X%;`overall_reward` 趋势上升;`metrics.csv` `reward.mean` 非 flat |
 | B | Local VLM video judge 在 16 个 V2W sample 上与 Kling reward 排序一致性 ≥ 0.7(Spearman);耗时 < 30s / 16-sample batch |
-| C | Diffusion-DRF on toy task 收敛比同 step budget 的 GRPO 快 ≥ 2x(sample-efficiency benchmark);VLM 梯度 norm 健康(不 NaN / 不饱和) |
 | 全仓 lint + tests | `ruff check vrl tests` + `pytest tests/rewards/test_video_reward*.py` |
 
 ## 7. Open design decisions(等执行时再拍)
 
 - **TDM-R1 step 数**:4 / 2 / 1?paper 在 1 step 上也跑,但需要 consistency 蒸馏。
-- **DRF VLM 模型**:Qwen2.5-VL 7B(快,中等能力)vs LLaVA-Next 13B(慢,强)vs InternVL3 8B(平衡)。
-- **Local VLM memory ceiling**:先用 7B/8B 级别 judge,并用 Ray reward pool 控制显存占用。
-- **KL 锚定**:DRF 在 video 上特别容易让 cond 漂(模型忽略 reference_image),要不要加 reference reward(SSIM with `init_latents`)?
+- **(Stage B)Local VLM 模型**:Qwen2.5-VL 7B(快,中等能力)vs LLaVA-Next 13B(慢,强)vs InternVL3 8B(平衡)。
+- **(Stage B)Local VLM memory ceiling**:先用 7B/8B 级别 judge,并用 Ray reward pool 控制显存占用。
+- **KL 锚定**:few-step video RL 也容易让 cond 漂(模型忽略 reference_image),要不要加 reference reward(SSIM with `init_latents`)?
 
 ## 8. 非目标 / Non-goals
 
+- **不**做可微 reward fine-tune(Diffusion-DRF:VLM critic 梯度反传 through denoise chain)——本 sprint 纯 RL,所有 reward 保持 non-diff。真要可微 critic 是独立 research sprint。
 - **不**在本 sprint 实做 LCM / consistency distillation(Stage A 先 naive few-step 试;崩了再独立 sprint 蒸馏)。
-- **不**建远端 judge/API 路线;Stage B/Stage C 都走本地 `transformers.AutoModelForVision2Seq` 或同级本地 VLM 加载。
+- **不**建远端 judge/API 路线;Stage B 走本地 `transformers.AutoModelForVision2Seq` 或同级本地 VLM 加载。
 - **不**支持 video → video editing(input video + output edited video)——本 sprint 范围是 I2V(reference image → video)+ T2V fine-tune 的提升。真要 V2V editing 是独立 sprint。
 - **不**重写 Cosmos backbone(`predict2{,_5}` model/runtime/runner 已稳定)。
 
 ## 9. References
 
-- **Diffusion-DRF**(Jan 2026):"Diffusion-DRF: Differentiable Reward Flow for Video Diffusion Fine-Tuning" — arxiv 2601.04153
 - **TDM-R1**:"Reinforcing Few-Step Diffusion Models with Non-Differentiable Reward" — huggingface.co/papers/2603.07700
 - **Awesome-RL-for-Video-Generation**(curated list):github.com/wendell0218/Awesome-RL-for-Video-Generation
 - **Cosmos-Predict2.5** RL post-training reference: arxiv 2511.00062
