@@ -18,7 +18,6 @@ from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
 from vrl.models.diffusion.capabilities import diffusion_family_capability
-from vrl.models.diffusion.reference_image import load_reference_image
 from vrl.models.interfaces.runtime import (
     RuntimeBuildSpec,
     RuntimeBundle,
@@ -36,6 +35,7 @@ from vrl.models.runtime_config import (
     extract_runtime_spec,
 )
 from vrl.utils.config import cfg_get
+from vrl.utils.media import load_reference_image
 
 logger = logging.getLogger(__name__)
 WAN_2_1_FAMILY_CAPABILITY = diffusion_family_capability("wan_2_1", "t2v")
