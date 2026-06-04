@@ -22,6 +22,7 @@ from vrl.generation.ray.placement import create_generation_placement_group
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.weight_sync import RayGenerationWeightSync
 from vrl.generation.ray.worker import RayGenerationWorker
+from vrl.models.dtypes import dtype_to_config_string
 from vrl.ray.actor_group import RayActorGroup
 from vrl.ray.dependencies import current_node_ip, require_ray
 from vrl.ray.lifecycle import kill_actors, remove_placement_group
@@ -202,7 +203,7 @@ class RayGenerationLauncher:
             entry,
             cfg,
             runtime_device,
-            _dtype_to_string(weight_dtype),
+            dtype_to_config_string(weight_dtype),
         )
         resolved_executor_kwargs = _build_executor_kwargs(entry, cfg)
         resolved_executor_kwargs.update(dict(executor_kwargs or {}))
@@ -332,9 +333,9 @@ def _build_executor_kwargs(entry: Any, cfg: Any) -> dict[str, Any]:
 def _runtime_build_payload(runtime_build: Any) -> dict[str, Any]:
     payload = asdict(runtime_build)
     payload["device"] = _device_to_string(payload["device"])
-    payload["dtype"] = _dtype_to_string(payload["dtype"])
+    payload["dtype"] = dtype_to_config_string(payload["dtype"])
     if payload.get("frozen_dtype") is not None:
-        payload["frozen_dtype"] = _dtype_to_string(payload["frozen_dtype"])
+        payload["frozen_dtype"] = dtype_to_config_string(payload["frozen_dtype"])
     return payload
 
 
@@ -359,11 +360,6 @@ def _import_from_path(path: str) -> Any:
 
 def _device_to_string(value: Any) -> str:
     return str(value)
-
-
-def _dtype_to_string(value: Any) -> str:
-    text = str(value)
-    return text.removeprefix("torch.")
 
 
 def _to_builtin(value: Any) -> Any:

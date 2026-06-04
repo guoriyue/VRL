@@ -14,11 +14,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-
-def resolve_dtype(name: str) -> Any:
-    import torch
-
-    return getattr(torch, str(name), torch.float32)
+from vrl.models.dtypes import resolve_torch_dtype
 
 
 class TorchRewardModel:
@@ -33,7 +29,7 @@ class TorchRewardModel:
 
     @property
     def dtype(self) -> Any:
-        return resolve_dtype(self.dtype_str)
+        return resolve_torch_dtype(self.dtype_str)
 
     def _load(self) -> None:
         """Build the underlying model. Called once, lazily."""
@@ -59,4 +55,4 @@ class TorchRewardModel:
         )
 
 
-__all__ = ["TorchRewardModel", "resolve_dtype"]
+__all__ = ["TorchRewardModel"]
