@@ -196,6 +196,17 @@ def test_algorithm_config_dispatches_representative_kinds() -> None:
         assert isinstance(algo_cfg, EXPECTED_ALGO_TYPE[str(cfg.algorithm.kind)])
         if name == "ar/janus_pro/online_grpo_ocr":
             assert algo_cfg.kl_estimator == "k2"
+        if name == "ar/janus_pro/online_r1_grpo_ocr":
+            assert cfg.trainer.entrypoint == (
+                "vrl.scripts.ar.janus_pro.train:train_janus_pro_r1_ocr_grpo"
+            )
+            assert algo_cfg.train_segments == {
+                "initial_image": True,
+                "selfcheck_text": False,
+                "final_image": True,
+            }
+            assert cfg.eval.fixed.enabled is True
+            assert len(cfg.eval.fixed.prompts) == 8
 
 
 def test_cosmos_diffusion_nft_video_reward_validation_config() -> None:
