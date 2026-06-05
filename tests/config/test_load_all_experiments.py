@@ -233,7 +233,14 @@ def test_cosmos_diffusion_nft_video_reward_validation_config() -> None:
     assert cfg.distributed.resources.reward.share_with_rollout is True
     assert cfg.distributed.rollout.release_before_reward_model is True
     assert cfg.distributed.reward.release_after_score is True
-    assert cfg.trainer.total_epochs == 1
+    # cosmos-rl parity (cosmos-predict2-5-2b-720-nft.toml): n_generation=12,
+    # mini_batch=6 prompts/step, 10 epochs, bf16 params. The 72/step effective
+    # batch runs single-GPU via sequential gen + gradient accumulation.
+    assert cfg.rollout.n == 12
+    assert cfg.rollout.rollout_batch_size == 6
+    assert cfg.rollout.sample_batch_size == 1
+    assert cfg.trainer.total_epochs == 10
+    assert cfg.precision == "bf16"
     assert cfg.production.kling_video_reward.enabled is True
 
 

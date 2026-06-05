@@ -22,7 +22,6 @@ class DiffusionNFTConfig:
     kl_beta: float = 1.0
     advantage_high: float = 5.0
     advantage_low: float = -5.0
-    mini_batch: int = 1
     uncentralized_training: bool = True
     weight_copy_decay: float = 0.0
 

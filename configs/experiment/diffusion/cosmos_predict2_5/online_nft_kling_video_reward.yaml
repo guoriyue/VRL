@@ -1,6 +1,6 @@
-# Cosmos Predict2.5 2B + DiffusionNFT + video reward on motion-grounded prompts.
-# Keep this out of README as a recommended recipe until real training proves
-# non-flat reward, global_step > 0, generated artifacts, and changed LoRA weights.
+# Cosmos Predict2.5 2B + DiffusionNFT + Kling video reward.
+# Hyperparameters track cosmos-rl's cosmos-predict2-5-2b-720-nft.toml; vrl's
+# DiffusionNFT/actor defaults already match it except for the fields set below.
 defaults:
   - /recipe/online/diffusion_nft
   - /model/diffusion/cosmos/predict2_5_2b
@@ -8,6 +8,8 @@ defaults:
   - /sampling/denoise/10_step_no_cfg
   - /reward/kling_video_reward
   - /dataset/videophy
+
+precision: bf16
 
 actor:
   optim:
@@ -21,8 +23,9 @@ actor:
     update_interval: 1
 
 rollout:
-  n: 2
-  rollout_batch_size: 1
+  n: 12                     # advantage group size; the n samples are forwarded
+                            # together, so this is the main single-GPU memory knob
+  rollout_batch_size: 6     # prompts/step (cosmos-rl mini_batch)
   sample_batch_size: 1
   noise_level: 0.7
   sde:
@@ -32,8 +35,8 @@ rollout:
 trainer:
   entrypoint: vrl.scripts.diffusion.cosmos.train:train_cosmos_predict25_diffusion_nft
   output_dir: outputs/cosmos_predict2_5_2b_diffusionnft
-  total_epochs: 1
-  save_freq: 20
+  total_epochs: 10
+  save_freq: 5
   log_freq: 1
 
 reward:
