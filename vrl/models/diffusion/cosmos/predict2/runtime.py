@@ -1,6 +1,5 @@
 """Cosmos Predict2 family runtime.
 
-The runtime picks the backend model class by ``spec.backend_preference``.
 Backend imports live inside the model's ``from_spec`` so the shared runtime
 does not import diffusers or cosmos-library backends eagerly.
 """
@@ -40,23 +39,6 @@ COSMOS_PREDICT2_FAMILY_CAPABILITY = diffusion_family_capability(
     supports_reference_conditioning=True,
 )
 
-_MODEL_BY_BACKEND: dict[str, str] = {
-    "diffusers": "vrl.models.diffusion.cosmos.predict2.model:CosmosPredict2Model",
-}
-
-
-def _resolve_model_cls(backend: str) -> type:
-    import importlib
-
-    if backend not in _MODEL_BY_BACKEND:
-        raise NotImplementedError(
-            f"cosmos-predict2 has no model for backend={backend!r}; "
-            f"registered: {sorted(_MODEL_BY_BACKEND)}",
-        )
-    spec = _MODEL_BY_BACKEND[backend]
-    mod_path, cls_name = spec.rsplit(":", 1)
-    return getattr(importlib.import_module(mod_path), cls_name)
-
 
 def extract_cosmos_predict2_runtime_spec(
     cfg: Any, device: Any, weight_dtype: Any,
@@ -67,7 +49,6 @@ def extract_cosmos_predict2_runtime_spec(
         device,
         weight_dtype,
         task_variant="video2world",
-        backend_preference=("diffusers",),
     )
 
 
@@ -81,15 +62,14 @@ def build_cosmos_predict2_runtime_bundle(
     spec: RuntimeBuildSpec,
 ) -> RuntimeBundle:
     """Generic build: dispatch the backend model by runtime spec."""
-    backend = spec.backend_preference[0]
-    model_cls = _resolve_model_cls(backend)
+    from vrl.models.diffusion.cosmos.predict2.model import CosmosPredict2Model
 
     logger.info(
-        "Building cosmos-predict2 runtime bundle (backend=%s) from %s",
-        backend, spec.model_name_or_path,
+        "Building cosmos-predict2 runtime bundle from %s",
+        spec.model_name_or_path,
     )
     use_lora = spec.use_lora
-    model = model_cls.from_spec(spec)
+    model = CosmosPredict2Model.from_spec(spec)
 
     if use_lora:
         model.apply_lora(spec)
@@ -116,7 +96,6 @@ def build_cosmos_predict2_runtime_bundle(
         model=model,
         trainable_modules=model.trainable_modules,
         scheduler=model.scheduler,
-        backend_kind=backend,
         backend_handle=model.backend_handle,
         runtime_caps={
             "supports_stepwise": True,
@@ -142,15 +121,8 @@ def build_cosmos_predict2_replay_runtime_bundle(
 
     from vrl.models.diffusion.cosmos.predict2.model import CosmosPredict2ReplayModel
 
-    backend = spec.backend_preference[0]
-    if backend != "diffusers":
-        raise NotImplementedError(
-            "cosmos-predict2 replay runtime currently supports diffusers only",
-        )
-
     logger.info(
-        "Building cosmos-predict2 replay runtime bundle (backend=%s) from %s",
-        backend,
+        "Building cosmos-predict2 replay runtime bundle from %s",
         spec.model_name_or_path,
     )
     model = CosmosPredict2ReplayModel(
@@ -176,7 +148,6 @@ def build_cosmos_predict2_replay_runtime_bundle(
         model=model,
         trainable_modules=model.trainable_modules,
         scheduler=model.scheduler,
-        backend_kind=backend,
         backend_handle=None,
         runtime_caps={
             "supports_stepwise": True,

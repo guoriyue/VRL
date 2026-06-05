@@ -64,7 +64,6 @@ def build_janus_pro_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         model=model,
         trainable_modules={"model": model},
         scheduler=None,
-        backend_kind="janus_pro",
         backend_handle=model,
         runtime_caps={
             "family_capability": JANUS_PRO_FAMILY_CAPABILITY.to_dict(),
@@ -97,7 +96,6 @@ def build_janus_pro_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBund
         model=model,
         trainable_modules={"model": model},
         scheduler=None,
-        backend_kind="janus_pro",
         backend_handle=None,
         runtime_caps={
             "family_capability": family_capability.to_dict(),
@@ -139,7 +137,6 @@ def extract_janus_pro_runtime_spec(
         device,
         dtype_to_config_string(dtype if dtype is not None else (weight_dtype or "bfloat16")),
         task_variant="ar_t2i",
-        backend_preference=("native",),
         model_name_or_path=model_path or "deepseek-ai/Janus-Pro-1B",
     )
 

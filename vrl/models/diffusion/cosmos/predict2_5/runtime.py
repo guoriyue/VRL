@@ -41,7 +41,6 @@ def extract_cosmos_predict25_runtime_spec(
         device,
         weight_dtype,
         task_variant="text2world",
-        backend_preference=("diffusers",),
     )
 
 
@@ -59,7 +58,7 @@ def build_cosmos_predict25_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBund
     from vrl.models.diffusion.cosmos.predict2_5.model import CosmosPredict25Model
 
     logger.info(
-        "Building cosmos-predict2.5 runtime bundle (backend=diffusers) from %s",
+        "Building cosmos-predict2.5 runtime bundle from %s",
         spec.model_name_or_path,
     )
     use_lora = spec.use_lora
@@ -81,7 +80,6 @@ def build_cosmos_predict25_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBund
         model=model,
         trainable_modules=model.trainable_modules,
         scheduler=model.scheduler,
-        backend_kind="diffusers",
         backend_handle=model.backend_handle,
         runtime_caps={
             "supports_stepwise": True,
@@ -107,7 +105,7 @@ def build_cosmos_predict25_replay_runtime_bundle(spec: RuntimeBuildSpec) -> Runt
     from vrl.models.diffusion.cosmos.predict2_5.model import CosmosPredict25ReplayModel
 
     logger.info(
-        "Building cosmos-predict2.5 replay runtime bundle (backend=diffusers) from %s",
+        "Building cosmos-predict2.5 replay runtime bundle from %s",
         spec.model_name_or_path,
     )
     model = CosmosPredict25ReplayModel(
@@ -135,7 +133,6 @@ def build_cosmos_predict25_replay_runtime_bundle(spec: RuntimeBuildSpec) -> Runt
         model=model,
         trainable_modules=model.trainable_modules,
         scheduler=model.scheduler,
-        backend_kind="diffusers",
         backend_handle=None,
         runtime_caps={
             "supports_stepwise": True,

@@ -55,7 +55,6 @@ def build_nextstep_1_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         model=model,
         trainable_modules={"model": model},
         scheduler=None,
-        backend_kind="nextstep_1",
         backend_handle=model,
         runtime_caps={
             "family_capability": NEXTSTEP_1_FAMILY_CAPABILITY.to_dict(),
@@ -82,7 +81,6 @@ def build_nextstep_1_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBun
         model=model,
         trainable_modules={"model": model},
         scheduler=None,
-        backend_kind="nextstep_1",
         backend_handle=None,
         runtime_caps={
             "family_capability": NEXTSTEP_1_FAMILY_CAPABILITY.to_dict(),
@@ -122,7 +120,6 @@ def extract_nextstep_1_runtime_spec(
         device,
         dtype_to_config_string(dtype if dtype is not None else (weight_dtype or "bfloat16")),
         task_variant="ar_t2i",
-        backend_preference=("native",),
         model_name_or_path=model_path or "stepfun-ai/NextStep-1.1",
     )
     # gradient_checkpointing lives under cfg.actor (outside the model block the

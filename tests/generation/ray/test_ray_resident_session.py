@@ -65,7 +65,6 @@ def build_tiny_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         model=_TinyRuntimeModel(),
         trainable_modules={},
         scheduler=None,
-        backend_kind="test",
         backend_handle=None,
     )
 

@@ -36,7 +36,6 @@ class RuntimeBuildSpec:
     model_name_or_path: str
     device: Any
     dtype: Any
-    backend_preference: tuple[str, ...] = ("diffusers",)
     task_variant: str | None = None
     model_config: dict[str, Any] | None = None
     sampling_config: dict[str, Any] | None = None
@@ -139,7 +138,6 @@ class RuntimeBundle:
     model: RuntimeModel
     trainable_modules: dict[str, Any]
     scheduler: Any
-    backend_kind: str
     backend_handle: Any
     ref_modules: dict[str, Any] | None = None
     runtime_caps: dict[str, Any] = field(default_factory=dict)

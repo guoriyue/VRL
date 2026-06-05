@@ -138,7 +138,6 @@ def test_runtime_bundle_exposes_model_contract() -> None:
         model=model,
         trainable_modules={},
         scheduler=None,
-        backend_kind="test",
         backend_handle=None,
     )
 

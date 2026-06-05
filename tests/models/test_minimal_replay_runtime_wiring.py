@@ -77,7 +77,6 @@ def _spec(**overrides: Any) -> RuntimeBuildSpec:
         "model_name_or_path": "fake/repo",
         "device": "cpu",
         "dtype": torch.float32,
-        "backend_preference": ("diffusers",),
         "task_variant": "t2i",
         "model_config": model_config,
         "sampling_config": dict(scheduler_config),
@@ -342,13 +341,13 @@ def test_anima_runtime_spec_rejects_hf_repo_id_without_cached_artifacts(
             "vrl.models.ar.janus_pro.runtime",
             "build_janus_pro_replay_runtime_bundle",
             "JanusProReplayModel",
-            {"backend_preference": ("native",), "task_variant": "ar_t2i"},
+            {"task_variant": "ar_t2i"},
         ),
         (
             "vrl.models.ar.nextstep_1.runtime",
             "build_nextstep_1_replay_runtime_bundle",
             "NextStep1ReplayModel",
-            {"backend_preference": ("native",), "task_variant": "ar_t2i"},
+            {"task_variant": "ar_t2i"},
         ),
     ],
 )

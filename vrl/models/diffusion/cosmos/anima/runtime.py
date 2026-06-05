@@ -38,7 +38,6 @@ def extract_anima_runtime_spec(
         device,
         weight_dtype,
         task_variant="text_to_image",
-        backend_preference=("diffusers",),
     )
 
 
@@ -110,7 +109,6 @@ def build_anima_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         model=model,
         trainable_modules=model.trainable_modules,
         scheduler=model.scheduler,
-        backend_kind="diffusers",
         backend_handle=model.backend_handle,
         runtime_caps={
             "supports_stepwise": True,
@@ -165,7 +163,6 @@ def build_anima_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         model=model,
         trainable_modules=model.trainable_modules,
         scheduler=model.scheduler,
-        backend_kind="diffusers",
         backend_handle=None,
         runtime_caps={
             "supports_stepwise": True,

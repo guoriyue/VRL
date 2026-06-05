@@ -133,7 +133,7 @@ def test_wan_runtime_bundle_records_model_build_memory_metadata(
         def set_num_steps(self, _num_steps: int) -> None:
             return None
 
-    monkeypatch.setattr(runtime, "_resolve_model_cls", lambda _backend, _task: _FakeModel)
+    monkeypatch.setattr(runtime, "_resolve_model_cls", lambda _task: _FakeModel)
 
     bundle = runtime.build_wan_2_1_runtime_bundle(
         RuntimeBuildSpec(

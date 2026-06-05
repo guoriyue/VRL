@@ -1,6 +1,6 @@
 """Wan 2.1 family runtime.
 
-The runtime picks the backend model class by ``spec.backend_preference``.
+The runtime picks the backend model class by task variant (t2v vs i2v).
 Backend imports live inside the model's ``from_spec`` so the shared runtime
 does not import diffusers or wan-library backends eagerly.
 """
@@ -45,23 +45,22 @@ WAN_2_1_I2V_FAMILY_CAPABILITY = diffusion_family_capability(
     supports_reference_conditioning=True,
 )
 
-_MODEL_BY_TASK_AND_BACKEND: dict[tuple[str, str], str] = {
-    ("t2v", "diffusers"): "vrl.models.diffusion.wan_2_1.model:WanT2VDiffusersModel",
-    ("i2v", "diffusers"): "vrl.models.diffusion.wan_2_1.model:WanI2VDiffusersModel",
+_MODEL_BY_TASK: dict[str, str] = {
+    "t2v": "vrl.models.diffusion.wan_2_1.model:WanT2VDiffusersModel",
+    "i2v": "vrl.models.diffusion.wan_2_1.model:WanI2VDiffusersModel",
 }
 
 
-def _resolve_model_cls(backend: str, task_variant: str | None) -> type:
+def _resolve_model_cls(task_variant: str | None) -> type:
     import importlib
 
     task = _normalize_task_variant(task_variant)
-    key = (task, backend)
-    if key not in _MODEL_BY_TASK_AND_BACKEND:
+    if task not in _MODEL_BY_TASK:
         raise NotImplementedError(
-            f"wan_2_1 has no model for task={task!r}, backend={backend!r}; "
-            f"registered: {sorted(_MODEL_BY_TASK_AND_BACKEND)}",
+            f"wan_2_1 has no model for task={task!r}; "
+            f"registered: {sorted(_MODEL_BY_TASK)}",
         )
-    spec = _MODEL_BY_TASK_AND_BACKEND[key]
+    spec = _MODEL_BY_TASK[task]
     mod_path, cls_name = spec.rsplit(":", 1)
     return getattr(importlib.import_module(mod_path), cls_name)
 
@@ -76,20 +75,17 @@ def extract_wan_2_1_runtime_spec(cfg: Any, device: Any, weight_dtype: Any) -> Ru
         device,
         weight_dtype,
         task_variant=_task_variant_from_cfg(cfg),
-        backend_preference=("diffusers",),
     )
 
 
 def build_wan_2_1_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
     """Generic build: dispatch the backend model by runtime spec."""
-    backend = spec.backend_preference[0]
     task_variant = _normalize_task_variant(spec.task_variant)
-    model_cls = _resolve_model_cls(backend, task_variant)
+    model_cls = _resolve_model_cls(task_variant)
 
     logger.info(
-        "Building wan_2_1 runtime bundle (task=%s, backend=%s)",
+        "Building wan_2_1 runtime bundle (task=%s)",
         task_variant,
-        backend,
     )
     use_lora = spec.use_lora
     model = model_cls.from_spec(spec)
@@ -128,7 +124,6 @@ def build_wan_2_1_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         model=model,
         trainable_modules=model.trainable_modules,
         scheduler=model.scheduler,
-        backend_kind=backend,
         backend_handle=model.backend_handle,
         runtime_caps={
             "supports_stepwise": True,
@@ -148,16 +143,12 @@ def build_wan_2_1_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle
         WanT2VReplayModel,
     )
 
-    backend = spec.backend_preference[0]
-    if backend != "diffusers":
-        raise NotImplementedError("wan_2_1 replay runtime currently supports diffusers only")
     task_variant = _normalize_task_variant(spec.task_variant)
     replay_cls = WanI2VReplayModel if task_variant == "i2v" else WanT2VReplayModel
 
     logger.info(
-        "Building wan_2_1 replay runtime bundle (task=%s, backend=%s) from %s",
+        "Building wan_2_1 replay runtime bundle (task=%s) from %s",
         task_variant,
-        backend,
         spec.model_name_or_path,
     )
     model = replay_cls(
@@ -186,7 +177,6 @@ def build_wan_2_1_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle
         model=model,
         trainable_modules=model.trainable_modules,
         scheduler=model.scheduler,
-        backend_kind=backend,
         backend_handle=None,
         runtime_caps={
             "supports_stepwise": True,
