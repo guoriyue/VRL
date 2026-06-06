@@ -15,7 +15,7 @@ from vrl.scripts.common.factory import build_reward_from_cfg
 pytestmark = pytest.mark.slow_test
 
 _CONSTANT_MODEL_FACTORY = (
-    "tests.rewards.test_reward_resource_lifecycle:build_constant_reward_model"
+    "tests.rewards.ray.test_resource_lifecycle:build_constant_reward_model"
 )
 
 

@@ -67,7 +67,7 @@ def test_ray_reward_runtime_uses_repo_owned_model_factory(tmp_path: Path) -> Non
                 "inference_runtime": "ray",
                 "worker_config": {
                     "model_factory": (
-                        "tests.rewards.test_ray_reward_gpu_runtime:build_tensor_mean_model"
+                        "tests.rewards.ray.test_runtime:build_tensor_mean_model"
                     ),
                     "score_key": "overall_reward",
                     "reward_model_version": "tensor-mean-v1",
@@ -107,7 +107,7 @@ def test_ray_reward_runtime_fans_out_across_workers_with_timing() -> None:
                 "inference_runtime": "ray",
                 "worker_config": {
                     "model_factory": (
-                        "tests.rewards.test_ray_reward_gpu_runtime:build_constant_reward_model"
+                        "tests.rewards.ray.test_runtime:build_constant_reward_model"
                     ),
                     "scores": {"overall_reward": 2.0},
                     "reward_model_version": "fake-v1",
@@ -170,7 +170,7 @@ def test_ray_reward_runtime_assigns_gpu_ids_for_tensor_model(tmp_path: Path) -> 
                 "inference_runtime": "ray",
                 "worker_config": {
                     "model_factory": (
-                        "tests.rewards.test_ray_reward_gpu_runtime:build_tensor_mean_model"
+                        "tests.rewards.ray.test_runtime:build_tensor_mean_model"
                     ),
                     "score_key": "overall_reward",
                     "reward_model_version": "gpu-runtime-v1",
