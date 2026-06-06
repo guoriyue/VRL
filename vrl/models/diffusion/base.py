@@ -17,6 +17,7 @@ import torch.nn as nn
 
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
+from vrl.models.utils import load_weights_into
 from vrl.trajectory.device import move_value_to_device
 
 
@@ -163,45 +164,15 @@ class DiffusionModelBase(nn.Module, ABC):
         return disable()
 
     def load_trainable_state(self, state_dict: Mapping[str, Any]) -> Any:
-        """Load trainable transformer weights from module-prefixed keys."""
+        """Load trainable transformer weights from ``transformer.*`` sync keys."""
 
         transformer = self._require_transformer()
-        state = dict(state_dict)
-        if not state:
-            raise ValueError("load_trainable_state received an empty state dict")
-        prefix = "transformer."
-        bad_keys = [key for key in state if not key.startswith(prefix)]
-        if bad_keys:
-            raise ValueError(
-                "load_trainable_state only accepts trainable keys prefixed with "
-                f"{prefix!r}; got {bad_keys}",
-            )
-        state = {
-            key[len(prefix):]: value
-            for key, value in state.items()
-        }
-        if not state:
-            raise ValueError("load_trainable_state requires transformer.* keys")
-        named_parameters = getattr(transformer, "named_parameters", None)
-        if not callable(named_parameters):
-            raise TypeError(
-                f"{type(transformer).__name__} must expose named_parameters()",
-            )
-        trainable_keys = {
-            name
-            for name, parameter in named_parameters()
-            if bool(getattr(parameter, "requires_grad", False))
-        }
-        if not trainable_keys:
-            raise ValueError(f"{type(transformer).__name__} has no trainable parameters")
-        extra = sorted(set(state) - trainable_keys)
-        missing = sorted(trainable_keys - set(state))
-        if extra or missing:
-            raise ValueError(
-                "load_trainable_state must receive exactly trainable "
-                f"transformer keys; missing={missing[:5]}, extra={extra[:5]}",
-            )
-        return transformer.load_state_dict(state, strict=False)
+        return load_weights_into(
+            transformer,
+            state_dict,
+            prefix="transformer",
+            label=type(transformer).__name__,
+        )
 
     @classmethod
     def from_spec(cls, spec: Any) -> DiffusionModelBase:  # pragma: no cover (abstract)

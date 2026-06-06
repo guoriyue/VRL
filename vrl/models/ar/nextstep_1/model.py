@@ -43,9 +43,9 @@ import torch.nn as nn
 from vrl.math.ar.flow_matching import (
     flow_logprob_at,
 )
-from vrl.models.ar.trainable_state import load_trainable_state_into
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
+from vrl.models.utils import load_weights_into
 
 logger = logging.getLogger(__name__)
 
@@ -221,7 +221,7 @@ class NextStep1Model(nn.Module):
 
     def load_trainable_state(self, state_dict: Mapping[str, Any]) -> Any:
         """Load only trainable NextStep parameters from a rollout sync state."""
-        return load_trainable_state_into(self, state_dict, model_label="NextStep1Model")
+        return load_weights_into(self, state_dict, prefix="model", label="NextStep1Model")
 
     @property
     def device(self) -> torch.device:

@@ -46,8 +46,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from vrl.models.ar.trainable_state import load_trainable_state_into
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
+from vrl.models.utils import load_weights_into
 
 logger = logging.getLogger(__name__)
 
@@ -282,7 +282,7 @@ class JanusProModel(nn.Module):
 
     def load_trainable_state(self, state_dict: Mapping[str, Any]) -> Any:
         """Load only the trainable Janus parameters from a rollout sync state."""
-        return load_trainable_state_into(self, state_dict, model_label="JanusProModel")
+        return load_weights_into(self, state_dict, prefix="model", label="JanusProModel")
 
     # ------------------------------------------------------------------
     # LoRA / reference-policy helpers
