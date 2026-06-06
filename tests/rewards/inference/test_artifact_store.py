@@ -15,7 +15,7 @@ from vrl.rewards.types import RewardRollout, RewardTrajectory
 def _rollout(output: torch.Tensor) -> RewardRollout:
     return RewardRollout(
         request=None,
-        trajectory=RewardTrajectory(prompt="prompt", seed=0, steps=[], output=output),
+        trajectory=RewardTrajectory(prompt="prompt", output=output),
         metadata={
             "policy_version": 4,
             "sample_ids": ["sample-x"],

@@ -18,7 +18,6 @@ from pydantic import ValidationError
 
 from vrl.config.schema import (
     AlgorithmConfig,
-    DataConfig,
     RewardConfig,
     _extract_error_message,
     parse_config,
@@ -75,15 +74,6 @@ def path_exists(cfg: DictConfig, path: str) -> bool:
     return True
 
 
-def assert_no_missing(cfg: DictConfig) -> None:
-    """Fail if a merged config still contains OmegaConf mandatory values."""
-    try:
-        OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
-    except MissingMandatoryValue as exc:
-        missing_path = getattr(exc, "full_key", None) or str(exc)
-        raise ValueError(f"config missing required field: {missing_path}") from exc
-
-
 def resolve_algorithm_kind(algo: DictConfig) -> str:
     """Resolve and validate the algorithm dispatch key."""
     if "adv_estimator" in algo:
@@ -115,58 +105,6 @@ def validate_reward_config(cfg: DictConfig) -> None:
         RewardConfig.model_validate(reward_raw)
     except ValidationError as exc:
         raise ValueError(_extract_error_message(exc)) from exc
-
-
-def validate_data_config(cfg: DictConfig) -> None:
-    """Validate dataset loader, preprocessing, and sampler contracts."""
-    if "data" not in cfg:
-        raise ValueError("config missing required field: data")
-
-    loader = str(require(cfg, "data.loader"))
-    valid_loaders = frozenset(get_args(DataConfig.model_fields["loader"].annotation))
-    if loader not in valid_loaders:
-        expected = " / ".join(sorted(valid_loaders))
-        raise ValueError(f"unknown data.loader={loader!r}; expected {expected}")
-
-    if loader == "prompt_manifest":
-        require(cfg, "data.manifest")
-        require(cfg, "data.preprocessing")
-        sampler_type = str(require(cfg, "data.sampler.type"))
-        valid_samplers = {"random_without_replacement", "sequential_window"}
-        if sampler_type not in valid_samplers:
-            expected = " / ".join(sorted(valid_samplers))
-            raise ValueError(f"unknown data.sampler.type={sampler_type!r}; expected {expected}")
-        return
-
-    if loader == "prompt_image_manifest":
-        require(cfg, "data.manifest")
-        require(cfg, "data.eval_manifest")
-        require(cfg, "data.preprocessing.format")
-        require(cfg, "data.preprocessing.image_field")
-        require(cfg, "data.preprocessing.caption_field")
-        require(cfg, "data.preprocessing.media_type")
-        require(cfg, "data.preprocessing.conditioning")
-        sampler_type = str(require(cfg, "data.sampler.type"))
-        valid_samplers = {"random_without_replacement", "sequential_window"}
-        if sampler_type not in valid_samplers:
-            expected = " / ".join(sorted(valid_samplers))
-            raise ValueError(f"unknown data.sampler.type={sampler_type!r}; expected {expected}")
-        return
-
-    if loader == "pickapic_preference":
-        require(cfg, "data.dataset_name")
-        require(cfg, "data.split")
-        require(cfg, "data.cache_dir")
-        optional_none(cfg, "data.max_train_samples")
-        require(cfg, "data.preprocessing.resolution")
-        require(cfg, "data.preprocessing.random_crop")
-        require(cfg, "data.preprocessing.horizontal_flip")
-        require(cfg, "data.sampler.shuffle")
-        require(cfg, "data.sampler.drop_last")
-        require(cfg, "data.sampler.dataloader_num_workers")
-        return
-
-    raise AssertionError(f"unreachable: loader={loader}")  # pragma: no cover
 
 
 def validate_production_kling_video_reward_config(cfg: DictConfig) -> None:
@@ -359,12 +297,10 @@ validate_production_video_reward_config = validate_production_kling_video_reward
 
 
 __all__ = [
-    "assert_no_missing",
     "optional_none",
     "path_exists",
     "require",
     "resolve_algorithm_kind",
-    "validate_data_config",
     "validate_production_kling_video_reward_config",
     "validate_production_video_reward_config",
     "validate_reward_config",

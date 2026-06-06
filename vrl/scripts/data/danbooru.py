@@ -1474,8 +1474,6 @@ def _load_reward_rollouts(path: str, *, max_samples: int) -> list[Any]:
                 request=None,
                 trajectory=RewardTrajectory(
                     prompt=str(row.get("prompt", "")),
-                    seed=0,
-                    steps=[],
                     output=Image.open(p).convert("RGB"),
                 ),
                 metadata={"manifest_row": row},

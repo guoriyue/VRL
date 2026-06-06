@@ -14,7 +14,6 @@ from vrl.generation.execution.planner import (
     ResolvedAxis,
     attach_engine_plan,
     build_engine_plan,
-    resolve_executor_capability,
 )
 from vrl.generation.execution.request_batch import RequestBatch
 from vrl.generation.execution.scheduler import (
@@ -48,6 +47,5 @@ __all__ = [
     "build_engine_plan",
     "build_prompt_chunk_schedule",
     "build_sample_rows",
-    "resolve_executor_capability",
     "run_sample_chunks_with_oom_retry",
 ]

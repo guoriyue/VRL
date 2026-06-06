@@ -70,8 +70,6 @@ class RewardScorer:
                 request=None,
                 trajectory=RewardTrajectory(
                     prompt=request.prompts[i],
-                    seed=0,
-                    steps=[],
                     output=request.outputs[i],
                 ),
                 metadata=dict(request.metadata),

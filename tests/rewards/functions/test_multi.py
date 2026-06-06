@@ -12,7 +12,7 @@ from vrl.rewards.types import RewardRollout, RewardTrajectory
 def _make_rollout(prompt: str) -> RewardRollout:
     return RewardRollout(
         request=None,
-        trajectory=RewardTrajectory(prompt=prompt, seed=0, steps=[], output=None),
+        trajectory=RewardTrajectory(prompt=prompt, output=None),
     )
 
 

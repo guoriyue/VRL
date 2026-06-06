@@ -412,25 +412,6 @@ def build_engine_plan(
     ).build()
 
 
-def resolve_executor_capability(
-    executor: Any,
-    request: GenerationRequest,
-) -> FamilyCapability:
-    """Resolve the explicit planning capability declared by an executor."""
-
-    method = getattr(executor, "capability", None)
-    if callable(method):
-        return _merge_runtime_caps(method(), executor, request)
-    for attr_name in ("family_capability", "capability_metadata"):
-        value = getattr(executor, attr_name, None)
-        if value is not None:
-            return _merge_runtime_caps(value, executor, request)
-    raise ValueError(
-        f"{type(executor).__name__} must declare FamilyCapability for "
-        f"{request.family}/{request.task}",
-    )
-
-
 def attach_engine_plan(output: GenerationOutput, plan: EnginePlan) -> GenerationOutput:
     """Attach a plan to a GenerationOutput without changing decoded artifacts."""
 
@@ -448,23 +429,6 @@ def attach_engine_plan(output: GenerationOutput, plan: EnginePlan) -> Generation
     return output
 
 
-def _merge_runtime_caps(
-    value: Any,
-    executor: Any,
-    request: GenerationRequest,
-) -> FamilyCapability:
-    capability = family_capability_from_value(value)
-    if capability is None:
-        raise ValueError(
-            f"{type(executor).__name__} declared an empty FamilyCapability for "
-            f"{request.family}/{request.task}",
-        )
-    runtime_caps = getattr(executor, "runtime_caps", None)
-    if isinstance(runtime_caps, Mapping):
-        return capability.with_runtime_caps(runtime_caps)
-    return capability
-
-
 __all__ = [
     "EnginePlan",
     "EnginePlanner",
@@ -472,5 +436,4 @@ __all__ = [
     "ResolvedAxis",
     "attach_engine_plan",
     "build_engine_plan",
-    "resolve_executor_capability",
 ]

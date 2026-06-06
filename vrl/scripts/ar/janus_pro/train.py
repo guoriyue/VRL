@@ -11,12 +11,6 @@ from vrl.scripts.common.types import OnlineRecipeDefinition
 from vrl.trainers.checkpointing import LORA_WEIGHTS_NAME
 
 
-async def train_janus_pro_grpo(cfg: DictConfig) -> None:
-    """Run Janus-Pro token GRPO."""
-
-    await _run_janus_recipe(cfg, family="janus_pro")
-
-
 async def train_janus_pro_ocr_grpo(cfg: DictConfig) -> None:
     """Run Janus-Pro OCR token GRPO."""
 
@@ -94,7 +88,6 @@ def _export_modules(bundle: Any, cfg: DictConfig) -> dict[str, Any] | None:
 
 
 __all__ = [
-    "train_janus_pro_grpo",
     "train_janus_pro_ocr_grpo",
     "train_janus_pro_r1_ocr_grpo",
 ]

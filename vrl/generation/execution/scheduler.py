@@ -26,10 +26,6 @@ class DeviceAssignment:
     execution_stage: ExecutionStage | None = None
     envelope: ChunkExecutionEnvelope | None = None
 
-    @property
-    def execution_unit(self) -> ExecutionStage | None:
-        return self.execution_stage
-
 
 @dataclass(frozen=True, slots=True)
 class DistributedGenerationPlan:
@@ -44,13 +40,6 @@ class DistributedExecutionPlanner:
 
     def __init__(self, capability: Any | None = None) -> None:
         self.capability = family_capability_from_value(capability)
-
-    def plan(
-        self,
-        request: GenerationRequest,
-        workers: list[DistributedWorkerHandle],
-    ) -> list[DeviceAssignment]:
-        return list(self.plan_with_engine(request, workers).assignments)
 
     def plan_with_engine(
         self,

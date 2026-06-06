@@ -11,7 +11,7 @@ def _rollout(metadata: dict) -> RewardRollout:
     return RewardRollout(
         request=None,
         trajectory=RewardTrajectory(
-            prompt="a photo of a yellow bus", seed=0, steps=[], output=None
+            prompt="a photo of a yellow bus", output=None
         ),
         metadata=metadata,
     )

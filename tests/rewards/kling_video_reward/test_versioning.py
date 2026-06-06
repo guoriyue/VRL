@@ -47,8 +47,6 @@ def _rollout() -> RewardRollout:
         request=None,
         trajectory=RewardTrajectory(
             prompt="prompt",
-            seed=0,
-            steps=[],
             output=torch.ones(1, 2, 2, 2),
         ),
         metadata={"policy_version": 23, "sample_ids": ["sample-v"]},

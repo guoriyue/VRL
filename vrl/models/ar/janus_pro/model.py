@@ -39,7 +39,7 @@ from __future__ import annotations
 import contextlib
 import logging
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -114,9 +114,6 @@ class JanusProConfig:
     # Janus-Pro-1B uses 8 latent channels; Janus-Pro-7B may differ.
     # Override only if auto-detect fails.
     vq_latent_channels: int | None = None
-
-    # Cached references — populated at __post_init__ time by the wrapper
-    _frame_constants: dict[str, int] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------

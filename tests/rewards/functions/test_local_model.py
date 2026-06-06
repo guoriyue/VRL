@@ -24,7 +24,7 @@ class _FakeTorchReward(TorchRewardModel):
 def _rollout(output: torch.Tensor, *, policy_version: int = 2) -> RewardRollout:
     return RewardRollout(
         request=None,
-        trajectory=RewardTrajectory(prompt="p", seed=0, steps=[], output=output),
+        trajectory=RewardTrajectory(prompt="p", output=output),
         metadata={"policy_version": policy_version},
     )
 

@@ -61,7 +61,7 @@ class _EmptyActorRuntime:
 def _rollout(output: torch.Tensor, *, policy_version: int = 3) -> RewardRollout:
     return RewardRollout(
         request=None,
-        trajectory=RewardTrajectory(prompt="prompt", seed=0, steps=[], output=output),
+        trajectory=RewardTrajectory(prompt="prompt", output=output),
         metadata={"policy_version": policy_version, "sample_ids": ["sample-a"]},
     )
 

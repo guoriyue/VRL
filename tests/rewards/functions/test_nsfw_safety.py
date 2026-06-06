@@ -15,8 +15,6 @@ def _rollout(output: object) -> RewardRollout:
         request=None,
         trajectory=RewardTrajectory(
             prompt="anime portrait",
-            seed=0,
-            steps=[],
             output=output,
         ),
     )

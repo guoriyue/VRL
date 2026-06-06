@@ -64,7 +64,7 @@ def _make_ocr_rollout(target_text: str, video_tensor=None):
         # Black frames — no OCR text expected
         video_tensor = torch.zeros(3, 8, 64, 64)
 
-    traj = RewardTrajectory(prompt="test", seed=0, steps=[], output=video_tensor)
+    traj = RewardTrajectory(prompt="test", output=video_tensor)
     return RewardRollout(request=None, trajectory=traj, metadata={"target_text": target_text})
 
 

@@ -28,15 +28,15 @@ from vrl.rollouts.batch.ops import (
 from vrl.rollouts.orchestration import build_rollout_schedule
 from vrl.trainers.core.base import Trainer
 from vrl.trainers.core.types import TrainerConfig, TrainState
-from vrl.trainers.online.diagnostics import (
+from vrl.trainers.online.ema import EMAModuleWrapper
+from vrl.trainers.precision import trainer_mixed_precision
+from vrl.trainers.weight_sync import TrainableStateGetter, WeightSyncer
+from vrl.utils.model_diagnostics import (
     parameter_state_summary,
     tensor_stats,
     trainable_state_digest,
     write_jsonl,
 )
-from vrl.trainers.online.ema import EMAModuleWrapper
-from vrl.trainers.precision import trainer_mixed_precision
-from vrl.trainers.weight_sync import TrainableStateGetter, WeightSyncer
 
 logger = logging.getLogger(__name__)
 
