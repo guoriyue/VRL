@@ -87,7 +87,6 @@ def test_prompt_rewards_stay_in_reward_configs() -> None:
 
 def test_sd35_prompt_dataset_experiments_load_and_validate() -> None:
     for name in (
-        "diffusion/sd3_5/online_grpo_ocr_prompt_alignment",
         "diffusion/sd3_5/online_grpo_geneval",
         "diffusion/sd3_5/online_grpo_pickscore",
     ):

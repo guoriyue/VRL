@@ -73,7 +73,6 @@ def test_experiments_are_grouped_by_model_family() -> None:
         "diffusion/sd3_5/online_grpo_geneval",
         "diffusion/sd3_5/online_grpo_ocr",
         "diffusion/sd3_5/online_grpo_ocr_crossnode_debug",
-        "diffusion/sd3_5/online_grpo_ocr_prompt_alignment",
         "diffusion/sd3_5/online_grpo_pickscore",
         "diffusion/wan_2_1/offline_dpo_pickapic",
         "diffusion/wan_2_1/online_grpo_ocr",
