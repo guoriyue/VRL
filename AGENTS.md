@@ -30,6 +30,15 @@
 
 ## Development Guidelines
 
+### Evidence-First Work
+
+- Before modifying code or suggesting a concrete implementation, read the relevant source files, adjacent modules, call sites, configs, and tests that define the behavior.
+- Do not make claims from filenames, memory, naming conventions, or architectural intuition when the repository can answer the question.
+- If the relevant code has not been read yet, say what needs to be inspected, then inspect it before making the claim. Mark unavoidable assumptions explicitly instead of presenting them as facts.
+- Deletion, refactor, cleanup, and architecture recommendations must cite the specific snippet/path that supports the conclusion.
+- Before touching a file, identify the local pattern it belongs to: source of truth, public API or protocol boundary, consumers, tests, and neighboring implementations. Make the change fit that pattern unless the evidence shows the pattern itself is the root cause.
+- Prefer "read narrow, then widen as needed": start from the target file, then follow imports, callers, configs, tests, and docs until the behavior is explained. Stop only when the conclusion is backed by repository evidence.
+
 ### Core Coding Principles
 
 - ALWAYS search documentation and existing solutions first
