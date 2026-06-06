@@ -19,13 +19,13 @@ from typing import Any
 
 import torch
 
-from vrl.models.ar.backends import build_torch_native_backend
 from vrl.nn.layers.attention.paged import (
     ARAttentionConfig,
     ARAttentionPrefillInput,
     ARAttentionStepInput,
 )
-from vrl.nn.modules.ar_torch_native import TorchNativeDecoderAttentionBackend
+from vrl.nn.modules.ar_attention_backends import build_torch_native_backend
+from vrl.nn.modules.torch_attention import TorchNativeDecoderAttentionBackend
 
 
 def _config() -> ARAttentionConfig:

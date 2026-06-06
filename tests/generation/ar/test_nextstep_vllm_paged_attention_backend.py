@@ -9,7 +9,6 @@ import torch
 from transformers import Qwen2Config, Qwen2Model
 
 from vrl.generation.types import GenerationRequest
-from vrl.models.ar.backends import build_vllm_attention_backend
 from vrl.models.ar.nextstep_1.runner import (
     NextStep1ARModelRunner,
 )
@@ -19,6 +18,7 @@ from vrl.nn.layers.attention.paged import (
     ARAttentionStepInput,
     ARAttentionUnavailable,
 )
+from vrl.nn.modules.ar_attention_backends import build_vllm_attention_backend
 
 
 @pytest.mark.gpu
@@ -96,7 +96,7 @@ def test_nextstep_runtime_uses_vllm_paged_attention_by_default(monkeypatch) -> N
         return backend
 
     monkeypatch.setattr(
-        "vrl.models.ar.backends.build_vllm_attention_backend",
+        "vrl.nn.modules.ar_attention_backends.build_vllm_attention_backend",
         build_backend,
     )
     request = GenerationRequest(

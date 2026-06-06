@@ -10,13 +10,13 @@ import torch.nn as nn
 
 from vrl.generation.ar.decode_loop import ARDecodeLoop
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
-from vrl.models.ar.backends import build_torch_native_backend
 from vrl.models.ar.janus_pro.model import (
     JANUS_IMAGE_VOCAB_SIZE,
     JanusProConfig,
     JanusProModel,
 )
 from vrl.models.ar.janus_pro.runner import JanusProARModelRunner
+from vrl.nn.modules.ar_attention_backends import build_torch_native_backend
 
 HIDDEN = 8
 TEXT_VOCAB = 32

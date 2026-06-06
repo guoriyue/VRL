@@ -22,10 +22,6 @@ from vrl.generation.types import (
     GenerationSampleRow,
     WorkloadSignature,
 )
-from vrl.models.ar.backends import (
-    attention_backend_name,
-    resolve_attention_backend,
-)
 from vrl.models.ar.capabilities import ar_discrete_family_capability
 from vrl.models.ar.janus_pro.model import (
     JANUS_R1_SEGMENTS,
@@ -42,6 +38,10 @@ from vrl.models.replay_loading import (
 )
 from vrl.models.runtime_config import (
     extract_runtime_spec,
+)
+from vrl.nn.modules.ar_attention_backends import (
+    attention_backend_name,
+    resolve_attention_backend,
 )
 from vrl.trajectory import build_ar_discrete_trajectory, build_ar_multisegment_trajectory
 

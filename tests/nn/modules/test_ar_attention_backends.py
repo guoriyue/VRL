@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.models.ar import backends
+from vrl.nn.modules import ar_attention_backends as backends
 
 
 class _StubBackend:

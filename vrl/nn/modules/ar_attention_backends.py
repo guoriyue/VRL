@@ -15,7 +15,7 @@ import torch
 
 from vrl.nn.layers.attention.paged import ARAttentionConfig
 from vrl.nn.modules.ar_decoder import VllmDecoderPagedAttentionBackend
-from vrl.nn.modules.ar_torch_native import (
+from vrl.nn.modules.torch_attention import (
     PrefillFn,
     StepFn,
     TorchNativeDecoderAttentionBackend,

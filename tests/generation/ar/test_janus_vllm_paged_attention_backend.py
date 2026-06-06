@@ -8,12 +8,12 @@ import pytest
 import torch
 from transformers import LlamaConfig, LlamaModel
 
-from vrl.models.ar.backends import build_vllm_attention_backend
 from vrl.nn.layers.attention.paged import (
     ARAttentionPrefillInput,
     ARAttentionStepInput,
     ARAttentionUnavailable,
 )
+from vrl.nn.modules.ar_attention_backends import build_vllm_attention_backend
 
 
 @pytest.mark.gpu

@@ -199,7 +199,7 @@ def test_janus_runtime_uses_vllm_paged_attention_by_default(monkeypatch) -> None
         return backend
 
     monkeypatch.setattr(
-        "vrl.models.ar.backends.build_vllm_attention_backend",
+        "vrl.nn.modules.ar_attention_backends.build_vllm_attention_backend",
         build_backend,
     )
     request = _request()

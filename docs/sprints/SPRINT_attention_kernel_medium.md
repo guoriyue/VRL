@@ -51,7 +51,7 @@ Janus-Pro 和 NextStep-1 目前都能暴露成这个 view, 但 adapter 必须显
 
 - `attention_backend` 对外名字保持: `vllm_paged` / `torch_native`.
 - Runtime selection 继续使用 `resolve_attention_backend(family, name, model, **kwargs)`.
-- Backend selector 已经在 `vrl.models.ar.backends`; `family` 由 runtime 传给 builder.
+- Backend selector 已经在 `vrl.nn.modules.ar_attention_backends`; `family` 由 runtime 传给 builder.
 - HF/PEFT submodules 仍是权重容器; medium sprint 不写自有 decoder `nn.Module`.
 - Janus/NextStep 非 decoder 组件仍保留在 family model 中:
   - Janus: VQ decoder, image-token embedding, `gen_head`, multimodal wrapper.
@@ -176,7 +176,7 @@ Do **not** confuse backend selection with a kernel registry.
 Current shape:
 
 ```python
-vrl.models.ar.backends.resolve_attention_backend(family, name, model, **kwargs)
+vrl.nn.modules.ar_attention_backends.resolve_attention_backend(family, name, model, **kwargs)
 ```
 
 Keep backend names global. It is a real runtime selector boundary because adding a model family
@@ -186,7 +186,7 @@ should not require new register lines:
 - `torch_native` maps to `build_torch_native_backend`.
 - `resolve_attention_backend(family, name, model, **kwargs)` still passes `family` into the builder.
 - Shared builders read the model's `_lm_trunk()` and keep backend-specific wiring out of family runners.
-- This selector belongs in `vrl/models/ar/backends.py`, not `vrl/nn/layers/attention`.
+- This selector belongs in `vrl/nn/modules/ar_attention_backends.py`, not `vrl/nn/layers/attention`.
 
 This is still **not** `name -> kernel`. A backend builder creates an `ARAttentionBackend`.
 A future lower-level kernel registry is separate and only worth adding if it removes real duplication:
@@ -265,14 +265,14 @@ vrl/nn/kernels/attention/vllm_paged.py
 vrl/nn/layers/attention/paged.py
   current ARAttentionBackend protocol and input/output data classes
 
-vrl/models/ar/backends.py
+vrl/nn/modules/ar_attention_backends.py
   shared AR backend selector plus vLLM and torch_native builders
 
-vrl/nn/modules/ar_torch_native.py
+vrl/nn/modules/torch_attention.py
   current HF-forward torch_native backend
 
 vrl/models/ar/{janus_pro,nextstep_1}/runner.py
-  current family runner and backend builders
+  current family runners that consume ARAttentionBackend
 ```
 
 vLLM / SGLang references:

@@ -69,9 +69,9 @@ def debug_info(self) -> Mapping[str, Any]
 - runner 变成 backend-agnostic,不再有 naive-vs-paged 的特判。
 
 ### T3 [接 T2] 按名字选择 backend
-选择逻辑放在 `vrl/models/ar/backends.py`,不要再单独建 `vrl/nn/layers/attention/registry.py`:
+选择逻辑放在 `vrl/nn/modules/ar_attention_backends.py`,不要再单独建 `vrl/nn/layers/attention/registry.py`:
 ```python
-# vrl/models/ar/backends.py
+# vrl/nn/modules/ar_attention_backends.py
 def resolve_attention_backend(family, name, model, **kw) -> ARAttentionBackend: ...
 ```
 - `"vllm_paged"` → shared `build_vllm_attention_backend`。
@@ -86,7 +86,7 @@ def resolve_attention_backend(family, name, model, **kw) -> ARAttentionBackend: 
 
 ### 可选(等真有第 3 个 backend 再做)
 - **T5 能力校验**:照 vLLM `AttentionBackend.validate_configuration()`——每个 backend 声明支持的 dtype/head_size,选择时校验报错。
-- **T6 base/impl 文件拆分**:`ARAttentionBackend` 协议从 `paged.py` 挪到 `base.py`(对应 SGLang `base_attn_backend.py`);每个 impl 独立文件(`vllm_paged.py` 已有,`torch_native` 已在 `vrl/nn/modules/ar_torch_native.py`)。
+- **T6 base/impl 文件拆分**:`ARAttentionBackend` 协议从 `paged.py` 挪到 `base.py`(对应 SGLang `base_attn_backend.py`);每个 impl 独立文件(`vllm_paged.py` 已有,`torch_native` 已在 `vrl/nn/modules/torch_attention.py`)。
 
 ## 4. 数值不变性 / 测试策略
 
@@ -124,10 +124,11 @@ def resolve_attention_backend(family, name, model, **kw) -> ARAttentionBackend: 
 vrl(实现时查):
 - 协议 + 数据类型:`vrl/nn/layers/attention/paged.py`(`ARAttentionBackend` / `ARAttentionConfig` / `ARAttention{Prefill,Step}{Input,Output}`)
 - 现有 impl + kernel:`vrl/nn/modules/ar_decoder.py`(`VllmDecoderPagedAttentionBackend`)、`vrl/nn/kernels/attention/vllm_paged.py`(`VllmPagedAttentionKernels`)
-- runner(naive 分支在这):`vrl/models/ar/janus_pro/runner.py`、`vrl/models/ar/nextstep_1/runner.py`(`_prefill_ar_prompt` / `_advance_kv_cache_after_sample` / `_prefill_ar_prompt_paged`)
-- 选择点 + 工厂:`vrl/models/ar/<family>/runtime.py`(`_ar_runner`、`build_<family>_vllm_attention_backend`)
-- 共享 helper:`vrl/models/ar/paged_attention_helpers.py`(`require_attention_backend` / `append_attention_token`)
-- selector 不单独建 `vrl/nn/layers/attention/registry.py`;放在 `vrl/models/ar/backends.py`
+- runner(消费 backend):`vrl/models/ar/janus_pro/runner.py`、`vrl/models/ar/nextstep_1/runner.py`
+- 选择点:`vrl/models/ar/<family>/runtime.py`(`_ar_runner`)
+- 共享工厂:`vrl/nn/modules/ar_attention_backends.py`(`resolve_attention_backend` / `build_*_attention_backend`)
+- 共享 helper:`vrl/models/ar/paged_attention_helpers.py`(`append_attention_token`)
+- selector 不单独建 `vrl/nn/layers/attention/registry.py`;放在 `vrl/nn/modules/ar_attention_backends.py`
 
 SGLang / vLLM(对齐参照):
 - vLLM `AttentionBackend` 注册表:https://github.com/vllm-project/vllm/blob/main/vllm/v1/attention/backends/registry.py
