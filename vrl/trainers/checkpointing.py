@@ -12,6 +12,7 @@ from typing import Any
 
 import torch
 
+from vrl.trainers.weight_sync import to_cpu
 from vrl.utils.config import cfg_get, cfg_path
 
 logger = logging.getLogger(__name__)
@@ -251,7 +252,7 @@ def export_trainable_state(bundle: Any) -> dict[str, dict[str, Any]]:
         state_dict = getattr(module, "state_dict", None)
         if not callable(state_dict):
             raise TypeError(f"trainable module {name!r} does not expose state_dict()")
-        out[name] = _to_cpu(state_dict())
+        out[name] = to_cpu(state_dict())
     return out
 
 
@@ -472,18 +473,6 @@ def _require_trainable_modules(bundle: Any) -> dict[str, Any]:
     if not isinstance(modules, dict) or not modules:
         raise ValueError("RuntimeBundle.trainable_modules must be a non-empty dict")
     return modules
-
-
-def _to_cpu(value: Any) -> Any:
-    if isinstance(value, torch.Tensor):
-        return value.detach().cpu()
-    if isinstance(value, dict):
-        return {key: _to_cpu(inner) for key, inner in value.items()}
-    if isinstance(value, list):
-        return [_to_cpu(inner) for inner in value]
-    if isinstance(value, tuple):
-        return tuple(_to_cpu(inner) for inner in value)
-    return value
 
 
 _MISSING = object()

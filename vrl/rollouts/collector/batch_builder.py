@@ -89,10 +89,8 @@ class TrajectoryRolloutBatchBuilder:
         segment = self._primary_trainable_segment(preferred=self._primary_segment_name())
         if segment.distribution == "flow_matching":
             return self._pack_diffusion(segment, rewards_raw)
-        if segment.distribution == "categorical":
-            return self._pack_ar_discrete(segment, rewards_raw)
-        if segment.distribution == "gaussian":
-            return self._pack_ar_continuous(segment, rewards_raw)
+        if segment.distribution in ("categorical", "gaussian"):
+            return self._pack_ar_tokens(segment, rewards_raw)
         raise NotImplementedError(
             "trajectory rollout collection does not support distribution="
             f"{segment.distribution!r}",
@@ -140,50 +138,19 @@ class TrajectoryRolloutBatchBuilder:
             ),
         )
 
-    def _pack_ar_discrete(
+    def _pack_ar_tokens(
         self,
         segment: TrajectorySegment,
         rewards_raw: torch.Tensor,
     ) -> RolloutBatch:
-        token_ids = self._role_tensor(segment, "action").value
+        actions = self._role_tensor(segment, "action").value
         prompt_ids = self._named_tensor(segment, "prompt_input_ids").value
         device = self.context.device or prompt_ids.device
         images = self.output.output
 
         return RolloutBatch(
             observations=prompt_ids.unsqueeze(1),
-            actions=token_ids,
-            rewards=rewards_raw.to(device),
-            dones=torch.ones(
-                len(self.output.sample_rows),
-                dtype=torch.bool,
-                device=device,
-            ),
-            group_ids=self._group_ids(device=device),
-            extras={},
-            context=dict(self.trajectory.context),
-            videos=images.unsqueeze(2),
-            prompts=[row.prompt for row in self.output.sample_rows],
-            trajectory=self.trajectory,
-            training_view=build_training_view(
-                self.trajectory,
-                primary_segment=segment.name,
-            ),
-        )
-
-    def _pack_ar_continuous(
-        self,
-        segment: TrajectorySegment,
-        rewards_raw: torch.Tensor,
-    ) -> RolloutBatch:
-        tokens = self._role_tensor(segment, "action").value
-        prompt_ids = self._named_tensor(segment, "prompt_input_ids").value
-        device = self.context.device or prompt_ids.device
-        images = self.output.output
-
-        return RolloutBatch(
-            observations=prompt_ids.unsqueeze(1),
-            actions=tokens,
+            actions=actions,
             rewards=rewards_raw.to(device),
             dones=torch.ones(
                 len(self.output.sample_rows),

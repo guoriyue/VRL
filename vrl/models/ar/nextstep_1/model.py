@@ -43,6 +43,7 @@ import torch.nn as nn
 from vrl.math.ar.flow_matching import (
     flow_logprob_at,
 )
+from vrl.models.ar.trainable_state import load_trainable_state_into
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 
@@ -220,35 +221,7 @@ class NextStep1Model(nn.Module):
 
     def load_trainable_state(self, state_dict: Mapping[str, Any]) -> Any:
         """Load only trainable NextStep parameters from a rollout sync state."""
-
-        state = dict(state_dict)
-        if not state:
-            raise ValueError("load_trainable_state received an empty state dict")
-
-        trainable_keys = {
-            name
-            for name, parameter in self.named_parameters()
-            if parameter.requires_grad
-        }
-        if not trainable_keys:
-            raise ValueError("NextStep1Model has no trainable parameters to sync")
-
-        filtered: dict[str, Any] = {}
-        for key, value in state.items():
-            normalized_key = key.removeprefix("model.").removeprefix("policy.")
-            if normalized_key in trainable_keys:
-                filtered[normalized_key] = value
-
-        missing = sorted(trainable_keys - set(filtered))
-        if missing:
-            preview = ", ".join(missing[:5])
-            suffix = " ..." if len(missing) > 5 else ""
-            raise ValueError(
-                "load_trainable_state missing trainable NextStep keys: "
-                f"{preview}{suffix}",
-            )
-
-        return self.load_state_dict(filtered, strict=False)
+        return load_trainable_state_into(self, state_dict, model_label="NextStep1Model")
 
     @property
     def device(self) -> torch.device:

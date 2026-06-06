@@ -46,6 +46,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from vrl.models.ar.trainable_state import load_trainable_state_into
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 
 logger = logging.getLogger(__name__)
@@ -281,35 +282,7 @@ class JanusProModel(nn.Module):
 
     def load_trainable_state(self, state_dict: Mapping[str, Any]) -> Any:
         """Load only the trainable Janus parameters from a rollout sync state."""
-
-        state = dict(state_dict)
-        if not state:
-            raise ValueError("load_trainable_state received an empty state dict")
-
-        trainable_keys = {
-            name
-            for name, parameter in self.named_parameters()
-            if parameter.requires_grad
-        }
-        if not trainable_keys:
-            raise ValueError("JanusProModel has no trainable parameters to sync")
-
-        filtered: dict[str, Any] = {}
-        for key, value in state.items():
-            normalized_key = key.removeprefix("model.").removeprefix("policy.")
-            if normalized_key in trainable_keys:
-                filtered[normalized_key] = value
-
-        missing = sorted(trainable_keys - set(filtered))
-        if missing:
-            preview = ", ".join(missing[:5])
-            suffix = " ..." if len(missing) > 5 else ""
-            raise ValueError(
-                "load_trainable_state missing trainable Janus keys: "
-                f"{preview}{suffix}",
-            )
-
-        return self.load_state_dict(filtered, strict=False)
+        return load_trainable_state_into(self, state_dict, model_label="JanusProModel")
 
     # ------------------------------------------------------------------
     # LoRA / reference-policy helpers

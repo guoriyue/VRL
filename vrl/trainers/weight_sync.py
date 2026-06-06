@@ -159,16 +159,16 @@ def _trainable_parameter_names(module: Any, module_name: str) -> set[str]:
 
 
 def _cpu_state_dict(state_dict: dict[str, Any]) -> dict[str, Any]:
-    return {key: _to_cpu(value) for key, value in state_dict.items()}
+    return {key: to_cpu(value) for key, value in state_dict.items()}
 
 
-def _to_cpu(value: Any) -> Any:
+def to_cpu(value: Any) -> Any:
     if isinstance(value, torch.Tensor):
         return value.detach().cpu()
     if isinstance(value, dict):
-        return {key: _to_cpu(inner) for key, inner in value.items()}
+        return {key: to_cpu(inner) for key, inner in value.items()}
     if isinstance(value, list):
-        return [_to_cpu(inner) for inner in value]
+        return [to_cpu(inner) for inner in value]
     if isinstance(value, tuple):
-        return tuple(_to_cpu(inner) for inner in value)
+        return tuple(to_cpu(inner) for inner in value)
     return value
