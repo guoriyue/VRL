@@ -12,8 +12,8 @@ from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.builders import build_configs
 from vrl.config.precision import resolve_precision_policy
-from vrl.models.dtypes import resolve_torch_dtype
 from vrl.generation.ray.launcher import RayGenerationLauncher
+from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces import require_runtime_model
 from vrl.ray.resources import (
     format_distributed_resource_plan,
