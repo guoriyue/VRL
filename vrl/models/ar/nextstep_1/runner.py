@@ -17,18 +17,13 @@ from vrl.math.ar.flow_matching import flow_sample_with_logprob
 from vrl.models.ar.paged_attention_helpers import (
     append_attention_token,
     normalize_paged_last_hidden,
-    require_attention_backend,
     scatter_paged_states,
     select_paged_states,
 )
 from vrl.nn.layers.attention.paged import (
     ARAttentionBackend,
-    ARAttentionConfig,
     ARAttentionPrefillInput,
     ARAttentionStepInput,
-)
-from vrl.nn.modules.ar_decoder import (
-    VllmDecoderPagedAttentionBackend,
 )
 
 
@@ -58,7 +53,7 @@ class NextStep1ARModelRunner:
         self,
         model: Any,
         *,
-        attention_backend: ARAttentionBackend | None = None,
+        attention_backend: ARAttentionBackend,
     ) -> None:
         self.model = model
         self.attention_backend = attention_backend
@@ -95,57 +90,34 @@ class NextStep1ARModelRunner:
         )
         logprobs = torch.zeros(batch_size, image_token_num, device=device, dtype=torch.float32)
 
-        if self.attention_backend is None:
-            kv_cond = self.model._init_kv(prompt_embeds, prompt_mask)
-            kv_uncond = (
-                self.model._init_kv(uncond_embeds, uncond_mask)
-                if uncond_embeds is not None
-                else None
-            )
-            c_cond = self.model._last_hidden(kv_cond)
-            c_uncond = self.model._last_hidden(kv_uncond) if kv_uncond is not None else None
-
-            cache_lanes = {"kv_cond": kv_cond}
-            row_lanes = {"c_cond": c_cond}
-            cache_lane_owners = {"kv_cond": "nextstep.cond_kv"}
-            row_lane_owners = {"c_cond": "nextstep.c_cond"}
-            paged_cond_states = None
-            paged_uncond_states = None
-            if kv_uncond is not None:
-                cache_lanes["kv_uncond"] = kv_uncond
-                cache_lane_owners["kv_uncond"] = "nextstep.uncond_kv"
-            if c_uncond is not None:
-                row_lanes["c_uncond"] = c_uncond
-                row_lane_owners["c_uncond"] = "nextstep.c_uncond"
-        else:
-            cond_prefill = self._prefill_paged(
-                prompt_embeds,
-                prompt_mask,
-                branch="cond",
+        cond_prefill = self._prefill_paged(
+            prompt_embeds,
+            prompt_mask,
+            branch="cond",
+            image_token_num=int(image_token_num),
+        )
+        c_cond = cond_prefill.last_hidden
+        cache_lanes: dict[str, Any] = {}
+        row_lanes = {"c_cond": c_cond, "cond_attn": prompt_mask}
+        cache_lane_owners: dict[str, str] = {}
+        row_lane_owners = {
+            "c_cond": "nextstep.c_cond",
+            "cond_attn": "nextstep.cond_attn",
+        }
+        paged_cond_states = list(cond_prefill.sequence_states)
+        paged_uncond_states = None
+        if uncond_embeds is not None and uncond_mask is not None:
+            uncond_prefill = self._prefill_paged(
+                uncond_embeds,
+                uncond_mask,
+                branch="uncond",
                 image_token_num=int(image_token_num),
             )
-            c_cond = cond_prefill.last_hidden
-            cache_lanes = {}
-            row_lanes = {"c_cond": c_cond, "cond_attn": prompt_mask}
-            cache_lane_owners = {}
-            row_lane_owners = {
-                "c_cond": "nextstep.c_cond",
-                "cond_attn": "nextstep.cond_attn",
-            }
-            paged_cond_states = list(cond_prefill.sequence_states)
-            paged_uncond_states = None
-            if uncond_embeds is not None and uncond_mask is not None:
-                uncond_prefill = self._prefill_paged(
-                    uncond_embeds,
-                    uncond_mask,
-                    branch="uncond",
-                    image_token_num=int(image_token_num),
-                )
-                row_lanes["c_uncond"] = uncond_prefill.last_hidden
-                row_lanes["uncond_attn"] = uncond_mask
-                row_lane_owners["c_uncond"] = "nextstep.c_uncond"
-                row_lane_owners["uncond_attn"] = "nextstep.uncond_attn"
-                paged_uncond_states = list(uncond_prefill.sequence_states)
+            row_lanes["c_uncond"] = uncond_prefill.last_hidden
+            row_lanes["uncond_attn"] = uncond_mask
+            row_lane_owners["c_uncond"] = "nextstep.c_uncond"
+            row_lane_owners["uncond_attn"] = "nextstep.uncond_attn"
+            paged_uncond_states = list(uncond_prefill.sequence_states)
 
         return ARTokenLoopInit(
             state=NextStep1ARState(
@@ -256,30 +228,11 @@ class NextStep1ARModelRunner:
         state.saved_noise[rows, position] = replay_noise
         state.logprobs[rows, position] = log_prob.float()
 
-        if self.attention_backend is not None:
-            cache_updates, row_updates = self._advance_paged_attention(
-                state,
-                batch=batch,
-                token=token,
-            )
-            state.decode_tokens += batch_size
-            return token, log_prob, replay_noise, cache_updates, row_updates
-
-        proj = self.model._image_in_projector(token)
-        kv_cond = batch.cache_lanes["kv_cond"]
-        kv_cond, c_cond_next = self.model._step_llm(kv_cond, proj)
-        state.decode_forwards += 1
-        cache_updates = {"kv_cond": kv_cond}
-        row_updates = {"c_cond": c_cond_next}
-
-        if "kv_uncond" in batch.cache_lanes:
-            proj_u = self.model._image_in_projector(token)
-            kv_uncond = batch.cache_lanes["kv_uncond"]
-            kv_uncond, c_uncond_next = self.model._step_llm(kv_uncond, proj_u)
-            state.decode_forwards += 1
-            cache_updates["kv_uncond"] = kv_uncond
-            row_updates["c_uncond"] = c_uncond_next
-
+        cache_updates, row_updates = self._advance_paged_attention(
+            state,
+            batch=batch,
+            token=token,
+        )
         state.decode_tokens += batch_size
         return token, log_prob, replay_noise, cache_updates, row_updates
 
@@ -291,9 +244,7 @@ class NextStep1ARModelRunner:
         branch: str,
         image_token_num: int,
     ) -> Any:
-        return require_attention_backend(
-            self.attention_backend, family="NextStep"
-        ).prefill(
+        return self.attention_backend.prefill(
             ARAttentionPrefillInput(
                 inputs_embeds=inputs_embeds,
                 attention_mask=attention_mask,
@@ -332,9 +283,7 @@ class NextStep1ARModelRunner:
             uncond_next_attn = append_attention_token(batch.row_lanes["uncond_attn"])
             row_updates["uncond_attn"] = uncond_next_attn
 
-        output = require_attention_backend(
-            self.attention_backend, family="NextStep"
-        ).step(
+        output = self.attention_backend.step(
             ARAttentionStepInput(
                 input_embeds=torch.cat(input_embeds, dim=0),
                 attention_mask=torch.cat(
@@ -368,33 +317,7 @@ class NextStep1ARModelRunner:
             state.decode_forwards += 1
         return {}, row_updates
 
-def build_nextstep_vllm_attention_backend(
-    model: Any,
-    *,
-    block_size: int = 16,
-    cache_dtype: str = "auto",
-) -> VllmDecoderPagedAttentionBackend:
-    """Construct the explicit NextStep backend that borrows vLLM paged attention."""
-
-    config = ARAttentionConfig(
-        family="nextstep_1",
-        model_key=str(getattr(model.config, "model_path", "nextstep_1")),
-        block_size=block_size,
-        dtype=str(getattr(model, "dtype", "")) or None,
-        device=str(getattr(model, "device", "")) or None,
-        extra={
-            "cache_dtype": cache_dtype,
-            "backend_label": "nextstep_vllm_paged_attention",
-        },
-    )
-    return VllmDecoderPagedAttentionBackend(
-        trunk=model._lm_trunk(),
-        config=config,
-    )
-
-
 __all__ = [
     "NextStep1ARModelRunner",
     "NextStep1ARState",
-    "build_nextstep_vllm_attention_backend",
 ]

@@ -6,12 +6,9 @@ from typing import Any
 
 import torch
 
-from vrl.nn.layers.attention.paged import ARAttentionBackend
-
 __all__ = [
     "append_attention_token",
     "normalize_paged_last_hidden",
-    "require_attention_backend",
     "scatter_paged_states",
     "select_paged_states",
 ]
@@ -30,18 +27,6 @@ def append_attention_token(attention_mask: torch.Tensor) -> torch.Tensor:
         ],
         dim=1,
     )
-
-
-def require_attention_backend(backend: ARAttentionBackend | None, *, family: str) -> ARAttentionBackend:
-    """Return the attention backend, or raise if the runner has none.
-
-    ``family`` names the model family (e.g. ``"Janus"``) for a clear error when the
-    naive (no-backend) runner reaches a backend-only operation.
-    """
-
-    if backend is None:
-        raise RuntimeError(f"{family} paged-attention path requires an attention backend")
-    return backend
 
 
 def normalize_paged_last_hidden(last_hidden: torch.Tensor) -> torch.Tensor:

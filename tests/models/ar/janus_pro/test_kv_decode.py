@@ -10,6 +10,7 @@ import torch.nn as nn
 
 from vrl.generation.ar.decode_loop import ARDecodeLoop
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
+from vrl.models.ar.backends import build_torch_native_backend
 from vrl.models.ar.janus_pro.model import (
     JANUS_IMAGE_VOCAB_SIZE,
     JanusProConfig,
@@ -143,7 +144,10 @@ def _run_ar_decode(model: JanusProModel) -> None:
     ARDecodeLoop(
         request=request,
         sample_rows=rows,
-        runner=JanusProARModelRunner(model),
+        runner=JanusProARModelRunner(
+            model,
+            attention_backend=build_torch_native_backend(model, family="janus_pro"),
+        ),
         max_new_tokens=2,
         tokenizer_key="janus_pro",
         dtype="float32",

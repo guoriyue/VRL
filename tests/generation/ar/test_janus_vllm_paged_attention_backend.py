@@ -8,7 +8,7 @@ import pytest
 import torch
 from transformers import LlamaConfig, LlamaModel
 
-from vrl.models.ar.janus_pro.runner import build_janus_vllm_attention_backend
+from vrl.models.ar.backends import build_vllm_attention_backend
 from vrl.nn.layers.attention.paged import (
     ARAttentionPrefillInput,
     ARAttentionStepInput,
@@ -22,7 +22,7 @@ def test_janus_vllm_paged_attention_matches_hf_llama_one_step() -> None:
     torch.manual_seed(0)
     trunk = _tiny_llama_trunk()
     try:
-        backend = build_janus_vllm_attention_backend(_TinyJanusLike(trunk))
+        backend = build_vllm_attention_backend(_TinyJanusLike(trunk), family="janus_pro")
     except ARAttentionUnavailable as exc:
         pytest.skip(f"vLLM paged-attention internals are unavailable: {exc}")
 
@@ -57,7 +57,7 @@ def test_janus_vllm_paged_attention_matches_hf_llama_one_step() -> None:
             )
         )
 
-    assert paged_prefill.metrics["backend"] == "janus_vllm_paged_attention"
+    assert paged_prefill.metrics["backend"] == "janus_pro_vllm_paged_attention"
     assert paged_prefill.last_hidden.shape == (1, 512)
     assert paged_step.last_hidden.shape == (1, 512)
     assert (

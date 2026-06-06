@@ -13,25 +13,18 @@ from vrl.generation.ar.decode_loop import (
     ARStepOutput,
     ARStepResult,
     ARTokenLoopInit,
-    ar_concat_rows,
-    ar_split_rows,
 )
 from vrl.models.ar.janus_pro.model import image_token_logits_from_hidden
 from vrl.models.ar.paged_attention_helpers import (
     append_attention_token,
     normalize_paged_last_hidden,
-    require_attention_backend,
     scatter_paged_states,
     select_paged_states,
 )
 from vrl.nn.layers.attention.paged import (
     ARAttentionBackend,
-    ARAttentionConfig,
     ARAttentionPrefillInput,
     ARAttentionStepInput,
-)
-from vrl.nn.modules.ar_decoder import (
-    VllmDecoderPagedAttentionBackend,
 )
 
 
@@ -51,31 +44,6 @@ class JanusProARState:
     decode_tokens: int = 0
 
 
-def build_janus_vllm_attention_backend(
-    model: Any,
-    *,
-    block_size: int = 16,
-    cache_dtype: str = "auto",
-) -> VllmDecoderPagedAttentionBackend:
-    """Construct the explicit Janus backend that borrows vLLM paged attention."""
-
-    config = ARAttentionConfig(
-        family="janus_pro",
-        model_key=str(getattr(model.config, "model_path", "janus_pro")),
-        block_size=block_size,
-        dtype=str(getattr(model, "dtype", "")) or None,
-        device=str(getattr(model, "device", "")) or None,
-        extra={
-            "cache_dtype": cache_dtype,
-            "backend_label": "janus_vllm_paged_attention",
-        },
-    )
-    return VllmDecoderPagedAttentionBackend(
-        trunk=model._lm_trunk(),
-        config=config,
-    )
-
-
 class JanusProARModelRunner:
     """Family model runner that lets the AR engine schedule Janus token steps."""
 
@@ -83,7 +51,7 @@ class JanusProARModelRunner:
         self,
         model: Any,
         *,
-        attention_backend: ARAttentionBackend | None = None,
+        attention_backend: ARAttentionBackend,
     ) -> None:
         self.model = model
         self.attention_backend = attention_backend
@@ -105,44 +73,24 @@ class JanusProARModelRunner:
         image_token_num = image_token_num or self.model.config.image_token_num
         batch_size = cond_inputs_embeds.shape[0]
         device = cond_inputs_embeds.device
-        if self.attention_backend is None:
-            cond_past, cond_last_hidden = self._prefill_ar_prompt(
-                cond_inputs_embeds,
-                cond_attention_mask,
-            )
-            uncond_past, uncond_last_hidden = self._prefill_ar_prompt(
-                uncond_inputs_embeds,
-                uncond_attention_mask,
-            )
-            cache_lanes = {
-                "cond_past": cond_past,
-                "uncond_past": uncond_past,
-            }
-            cache_lane_owners = {
-                "cond_past": "janus.cond_past",
-                "uncond_past": "janus.uncond_past",
-            }
-            paged_cond_states = None
-            paged_uncond_states = None
-        else:
-            cond_prefill = self._prefill_ar_prompt_paged(
-                cond_inputs_embeds,
-                cond_attention_mask,
-                branch="cond",
-                image_token_num=int(image_token_num),
-            )
-            uncond_prefill = self._prefill_ar_prompt_paged(
-                uncond_inputs_embeds,
-                uncond_attention_mask,
-                branch="uncond",
-                image_token_num=int(image_token_num),
-            )
-            cond_last_hidden = cond_prefill.last_hidden
-            uncond_last_hidden = uncond_prefill.last_hidden
-            cache_lanes = {}
-            cache_lane_owners = {}
-            paged_cond_states = list(cond_prefill.sequence_states)
-            paged_uncond_states = list(uncond_prefill.sequence_states)
+        cond_prefill = self._prefill_ar_prompt_paged(
+            cond_inputs_embeds,
+            cond_attention_mask,
+            branch="cond",
+            image_token_num=int(image_token_num),
+        )
+        uncond_prefill = self._prefill_ar_prompt_paged(
+            uncond_inputs_embeds,
+            uncond_attention_mask,
+            branch="uncond",
+            image_token_num=int(image_token_num),
+        )
+        cond_last_hidden = cond_prefill.last_hidden
+        uncond_last_hidden = uncond_prefill.last_hidden
+        cache_lanes: dict[str, Any] = {}
+        cache_lane_owners: dict[str, str] = {}
+        paged_cond_states = list(cond_prefill.sequence_states)
+        paged_uncond_states = list(uncond_prefill.sequence_states)
 
         return ARTokenLoopInit(
             state=JanusProARState(
@@ -207,20 +155,6 @@ class JanusProARModelRunner:
     def finalize_ar(self, state: JanusProARState) -> tuple[torch.Tensor, torch.Tensor]:
         return state.token_ids, state.logprobs
 
-    def _prefill_ar_prompt(
-        self,
-        inputs_embeds: torch.Tensor,
-        attention_mask: torch.Tensor,
-    ) -> tuple[Any, torch.Tensor]:
-        outputs = self.model._lm_trunk()(
-            inputs_embeds=inputs_embeds,
-            attention_mask=attention_mask,
-            use_cache=True,
-        )
-        past = getattr(outputs, "past_key_values", None)
-        last_hidden = self.model._last_token_hidden(outputs)
-        return past, last_hidden
-
     def _prefill_ar_prompt_paged(
         self,
         inputs_embeds: torch.Tensor,
@@ -229,9 +163,7 @@ class JanusProARModelRunner:
         branch: str,
         image_token_num: int,
     ) -> Any:
-        return require_attention_backend(
-            self.attention_backend, family="Janus"
-        ).prefill(
+        return self.attention_backend.prefill(
             ARAttentionPrefillInput(
                 inputs_embeds=inputs_embeds,
                 attention_mask=attention_mask,
@@ -282,7 +214,7 @@ class JanusProARModelRunner:
         cache_updates: dict[str, Any] = {}
         row_updates: dict[str, Any] = {}
         if position + 1 < state.image_token_num:
-            cache_updates, row_updates = self._advance_kv_cache_after_sample(
+            cache_updates, row_updates = self._advance_after_sample(
                 state,
                 batch=batch,
                 sampled=sampled,
@@ -309,60 +241,7 @@ class JanusProARModelRunner:
         lp = log_probs.gather(-1, sampled.unsqueeze(-1)).squeeze(-1)
         return sampled, lp
 
-    def _advance_kv_cache_after_sample(
-        self,
-        state: JanusProARState,
-        *,
-        batch: ARStepBatch,
-        sampled: torch.Tensor,
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        if self.attention_backend is not None:
-            return self._advance_paged_attention_after_sample(
-                state,
-                batch=batch,
-                sampled=sampled,
-            )
-
-        batch_size = len(batch.row_indices)
-        token_embed = self.model._base().prepare_gen_img_embeds(sampled.unsqueeze(-1))
-        inputs_embeds = torch.cat([token_embed, token_embed], dim=0)
-
-        cond_attn = batch.row_lanes["cond_attn"]
-        uncond_attn = batch.row_lanes["uncond_attn"]
-        cond_next_attn = append_attention_token(cond_attn)
-        uncond_next_attn = append_attention_token(uncond_attn)
-
-        past = ar_concat_rows([batch.cache_lanes["cond_past"], batch.cache_lanes["uncond_past"]])
-        outputs = self.model._lm_trunk()(
-            inputs_embeds=inputs_embeds,
-            attention_mask=torch.cat([cond_next_attn, uncond_next_attn], dim=0),
-            past_key_values=past,
-            use_cache=True,
-        )
-
-        updated_past_rows = ar_split_rows(
-            getattr(outputs, "past_key_values", None),
-            2 * batch_size,
-        )
-        updated_hidden_rows = ar_split_rows(
-            self.model._last_token_hidden(outputs),
-            2 * batch_size,
-        )
-        state.decode_forwards += 1
-        return (
-            {
-                "cond_past": ar_concat_rows(updated_past_rows[:batch_size]),
-                "uncond_past": ar_concat_rows(updated_past_rows[batch_size:]),
-            },
-            {
-                "cond_last_hidden": ar_concat_rows(updated_hidden_rows[:batch_size]),
-                "uncond_last_hidden": ar_concat_rows(updated_hidden_rows[batch_size:]),
-                "cond_attn": cond_next_attn,
-                "uncond_attn": uncond_next_attn,
-            },
-        )
-
-    def _advance_paged_attention_after_sample(
+    def _advance_after_sample(
         self,
         state: JanusProARState,
         *,
@@ -380,9 +259,7 @@ class JanusProARModelRunner:
 
         cond_next_attn = append_attention_token(batch.row_lanes["cond_attn"])
         uncond_next_attn = append_attention_token(batch.row_lanes["uncond_attn"])
-        output = require_attention_backend(
-            self.attention_backend, family="Janus"
-        ).step(
+        output = self.attention_backend.step(
             ARAttentionStepInput(
                 input_embeds=inputs_embeds,
                 attention_mask=torch.cat([cond_next_attn, uncond_next_attn], dim=0),
@@ -425,5 +302,4 @@ class JanusProARModelRunner:
 __all__ = [
     "JanusProARModelRunner",
     "JanusProARState",
-    "build_janus_vllm_attention_backend",
 ]

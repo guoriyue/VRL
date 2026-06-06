@@ -11,7 +11,6 @@ import torch.nn as nn
 
 from vrl.generation.ar.decode_loop import ARDecodeLoop
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
-from vrl.models.ar.janus_pro import runtime as janus_runtime
 from vrl.models.ar.janus_pro.model import (
     JANUS_IMAGE_VOCAB_SIZE,
     JanusProConfig,
@@ -189,17 +188,18 @@ def test_janus_runtime_uses_vllm_paged_attention_by_default(monkeypatch) -> None
     def build_backend(
         passed_model: JanusProModel,
         *,
+        family: str,
         block_size: int,
         cache_dtype: str,
     ) -> _RecordingPagedBackend:
         assert passed_model is model
+        assert family == "janus_pro"
         assert block_size == 32
         assert cache_dtype == "auto"
         return backend
 
     monkeypatch.setattr(
-        janus_runtime,
-        "build_janus_vllm_attention_backend",
+        "vrl.models.ar.backends.build_vllm_attention_backend",
         build_backend,
     )
     request = _request()

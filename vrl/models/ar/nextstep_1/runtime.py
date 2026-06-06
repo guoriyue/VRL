@@ -20,16 +20,17 @@ from vrl.generation.types import (
     GenerationSampleRow,
     WorkloadSignature,
 )
+from vrl.models.ar.backends import (
+    attention_backend_name,
+    resolve_attention_backend,
+)
 from vrl.models.ar.capabilities import ar_continuous_family_capability
 from vrl.models.ar.nextstep_1.model import (
     NextStep1Config,
     NextStep1Model,
     NextStep1ReplayModel,
 )
-from vrl.models.ar.nextstep_1.runner import (
-    NextStep1ARModelRunner,
-    build_nextstep_vllm_attention_backend,
-)
+from vrl.models.ar.nextstep_1.runner import NextStep1ARModelRunner
 from vrl.models.dtypes import dtype_to_config_string
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.replay_loading import (
@@ -529,16 +530,14 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
 
     def _ar_runner(self, request: GenerationRequest) -> NextStep1ARModelRunner:
         sampling = request.sampling
-        if not bool(sampling.get("use_vllm_paged_attention", True)):
-            return NextStep1ARModelRunner(self.model)
-        block_size = int(sampling.get("ar_paged_block_size", 16))
-        cache_dtype = str(sampling.get("ar_paged_cache_dtype", "auto"))
         return NextStep1ARModelRunner(
             self.model,
-            attention_backend=build_nextstep_vllm_attention_backend(
+            attention_backend=resolve_attention_backend(
+                "nextstep_1",
+                attention_backend_name(sampling),
                 self.model,
-                block_size=block_size,
-                cache_dtype=cache_dtype,
+                block_size=int(sampling.get("ar_paged_block_size", 16)),
+                cache_dtype=str(sampling.get("ar_paged_cache_dtype", "auto")),
             ),
         )
 

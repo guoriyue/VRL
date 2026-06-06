@@ -22,6 +22,10 @@ from vrl.generation.types import (
     GenerationSampleRow,
     WorkloadSignature,
 )
+from vrl.models.ar.backends import (
+    attention_backend_name,
+    resolve_attention_backend,
+)
 from vrl.models.ar.capabilities import ar_discrete_family_capability
 from vrl.models.ar.janus_pro.model import (
     JANUS_R1_SEGMENTS,
@@ -29,10 +33,7 @@ from vrl.models.ar.janus_pro.model import (
     JanusProModel,
     JanusProReplayModel,
 )
-from vrl.models.ar.janus_pro.runner import (
-    JanusProARModelRunner,
-    build_janus_vllm_attention_backend,
-)
+from vrl.models.ar.janus_pro.runner import JanusProARModelRunner
 from vrl.models.dtypes import dtype_to_config_string
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.replay_loading import (
@@ -606,16 +607,14 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
 
     def _ar_runner(self, request: GenerationRequest) -> JanusProARModelRunner:
         sampling = request.sampling
-        if not bool(sampling.get("use_vllm_paged_attention", True)):
-            return JanusProARModelRunner(self.model)
-        block_size = int(sampling.get("ar_paged_block_size", 16))
-        cache_dtype = str(sampling.get("ar_paged_cache_dtype", "auto"))
         return JanusProARModelRunner(
             self.model,
-            attention_backend=build_janus_vllm_attention_backend(
+            attention_backend=resolve_attention_backend(
+                "janus_pro",
+                attention_backend_name(sampling),
                 self.model,
-                block_size=block_size,
-                cache_dtype=cache_dtype,
+                block_size=int(sampling.get("ar_paged_block_size", 16)),
+                cache_dtype=str(sampling.get("ar_paged_cache_dtype", "auto")),
             ),
         )
 

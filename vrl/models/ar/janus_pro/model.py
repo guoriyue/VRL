@@ -1009,22 +1009,6 @@ class JanusProModel(nn.Module):
         selfcheck = token_ids[:, 0] == int(yes_token_id)
         return token_ids, log_probs, mask, selfcheck
 
-    @staticmethod
-    def _last_token_hidden(outputs: Any) -> torch.Tensor:
-        hidden = getattr(outputs, "last_hidden_state", None)
-        if hidden is None:
-            hidden_states = getattr(outputs, "hidden_states", None)
-            if not hidden_states:
-                raise RuntimeError(
-                    "language model output must expose last_hidden_state or hidden_states",
-                )
-            hidden = hidden_states[-1]
-        if hidden.ndim == 3:
-            return hidden[:, -1, :]
-        if hidden.ndim == 2:
-            return hidden
-        raise RuntimeError(f"unexpected hidden state rank: {hidden.ndim}")
-
     # ------------------------------------------------------------------
     # VQ decode — image tokens → pixels
     # ------------------------------------------------------------------
