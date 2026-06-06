@@ -15,12 +15,12 @@ from typing import Any
 import torch
 
 
-class ARPagedAttentionUnavailable(RuntimeError):
+class ARAttentionUnavailable(RuntimeError):
     """Raised when the vLLM paged-attention pieces cannot be initialized."""
 
 
 @dataclass(frozen=True, slots=True)
-class ARPagedAttentionConfig:
+class ARAttentionConfig:
     """Runtime identity for a paged-attention backend instance."""
 
     family: str
@@ -33,15 +33,15 @@ class ARPagedAttentionConfig:
 
     def __post_init__(self) -> None:
         if not self.family:
-            raise ValueError("ARPagedAttentionConfig.family must be non-empty")
+            raise ValueError("ARAttentionConfig.family must be non-empty")
         if not self.model_key:
-            raise ValueError("ARPagedAttentionConfig.model_key must be non-empty")
+            raise ValueError("ARAttentionConfig.model_key must be non-empty")
         if self.block_size < 1:
-            raise ValueError("ARPagedAttentionConfig.block_size must be >= 1")
+            raise ValueError("ARAttentionConfig.block_size must be >= 1")
 
 
 @dataclass(frozen=True, slots=True)
-class ARPagedAttentionPrefillInput:
+class ARAttentionPrefillInput:
     """One branch prefill payload for a model-family runner."""
 
     inputs_embeds: torch.Tensor
@@ -53,15 +53,15 @@ class ARPagedAttentionPrefillInput:
     def __post_init__(self) -> None:
         _require_embed_mask_batch(self.inputs_embeds, self.attention_mask)
         if not self.branch:
-            raise ValueError("ARPagedAttentionPrefillInput.branch must be non-empty")
+            raise ValueError("ARAttentionPrefillInput.branch must be non-empty")
         if self.sequence_ids and len(self.sequence_ids) != self.inputs_embeds.shape[0]:
             raise ValueError(
-                "ARPagedAttentionPrefillInput.sequence_ids must match batch size",
+                "ARAttentionPrefillInput.sequence_ids must match batch size",
             )
 
 
 @dataclass(frozen=True, slots=True)
-class ARPagedAttentionPrefillOutput:
+class ARAttentionPrefillOutput:
     """Prefill output consumed by a model-family runner."""
 
     last_hidden: torch.Tensor
@@ -73,7 +73,7 @@ class ARPagedAttentionPrefillOutput:
 
 
 @dataclass(frozen=True, slots=True)
-class ARPagedAttentionStepInput:
+class ARAttentionStepInput:
     """One image-token decode step payload."""
 
     input_embeds: torch.Tensor
@@ -88,15 +88,15 @@ class ARPagedAttentionStepInput:
         _require_embed_mask_batch(self.input_embeds, self.attention_mask)
         batch = self.input_embeds.shape[0]
         if len(self.sequence_states) != batch:
-            raise ValueError("ARPagedAttentionStepInput.sequence_states must match batch")
+            raise ValueError("ARAttentionStepInput.sequence_states must match batch")
         if len(self.branch_names) != batch:
-            raise ValueError("ARPagedAttentionStepInput.branch_names must match batch")
+            raise ValueError("ARAttentionStepInput.branch_names must match batch")
         if self.position < 0:
-            raise ValueError("ARPagedAttentionStepInput.position must be >= 0")
+            raise ValueError("ARAttentionStepInput.position must be >= 0")
 
 
 @dataclass(frozen=True, slots=True)
-class ARPagedAttentionStepOutput:
+class ARAttentionStepOutput:
     """One image-token decode step result."""
 
     last_hidden: torch.Tensor
@@ -184,19 +184,19 @@ class ARPrefixCachePolicy:
         return cached_key == requested_key
 
 
-class ARPagedAttentionBackend:
+class ARAttentionBackend:
     """Minimal backend contract needed by AR model-family runners."""
 
-    def __init__(self, config: ARPagedAttentionConfig) -> None:
+    def __init__(self, config: ARAttentionConfig) -> None:
         self.config = config
 
     def prefill(
         self,
-        request: ARPagedAttentionPrefillInput,
-    ) -> ARPagedAttentionPrefillOutput:
+        request: ARAttentionPrefillInput,
+    ) -> ARAttentionPrefillOutput:
         raise NotImplementedError
 
-    def step(self, request: ARPagedAttentionStepInput) -> ARPagedAttentionStepOutput:
+    def step(self, request: ARAttentionStepInput) -> ARAttentionStepOutput:
         raise NotImplementedError
 
     def free(self, sequence_states: Sequence[Any]) -> None:
@@ -234,13 +234,13 @@ def _stable_hash(value: Any) -> str:
 
 
 __all__ = [
-    "ARPagedAttentionBackend",
-    "ARPagedAttentionConfig",
-    "ARPagedAttentionPrefillInput",
-    "ARPagedAttentionPrefillOutput",
-    "ARPagedAttentionStepInput",
-    "ARPagedAttentionStepOutput",
-    "ARPagedAttentionUnavailable",
+    "ARAttentionBackend",
+    "ARAttentionConfig",
+    "ARAttentionPrefillInput",
+    "ARAttentionPrefillOutput",
+    "ARAttentionStepInput",
+    "ARAttentionStepOutput",
+    "ARAttentionUnavailable",
     "ARPrefixCacheKey",
     "ARPrefixCachePolicy",
 ]

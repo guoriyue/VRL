@@ -6,11 +6,11 @@ import pytest
 import torch
 
 from vrl.nn.layers.attention.paged import (
-    ARPagedAttentionConfig,
-    ARPagedAttentionPrefillInput,
-    ARPagedAttentionPrefillOutput,
-    ARPagedAttentionStepInput,
-    ARPagedAttentionStepOutput,
+    ARAttentionConfig,
+    ARAttentionPrefillInput,
+    ARAttentionPrefillOutput,
+    ARAttentionStepInput,
+    ARAttentionStepOutput,
     ARPrefixCacheKey,
     ARPrefixCachePolicy,
 )
@@ -18,14 +18,14 @@ from vrl.nn.layers.attention.paged import (
 
 def test_paged_attention_config_requires_identity() -> None:
     with pytest.raises(ValueError, match="family"):
-        ARPagedAttentionConfig(family="", model_key="janus")
+        ARAttentionConfig(family="", model_key="janus")
     with pytest.raises(ValueError, match="block_size"):
-        ARPagedAttentionConfig(family="janus_pro", model_key="janus", block_size=0)
+        ARAttentionConfig(family="janus_pro", model_key="janus", block_size=0)
 
 
 def test_paged_attention_prefill_validates_batch_shape() -> None:
     with pytest.raises(ValueError, match="batch sizes"):
-        ARPagedAttentionPrefillInput(
+        ARAttentionPrefillInput(
             inputs_embeds=torch.zeros(2, 3, 4),
             attention_mask=torch.ones(1, 3),
             branch="cond",
@@ -34,7 +34,7 @@ def test_paged_attention_prefill_validates_batch_shape() -> None:
 
 def test_paged_attention_step_validates_state_shape() -> None:
     with pytest.raises(ValueError, match="sequence_states"):
-        ARPagedAttentionStepInput(
+        ARAttentionStepInput(
             input_embeds=torch.zeros(2, 1, 4),
             attention_mask=torch.ones(2, 4),
             sequence_states=("row-0",),
@@ -44,11 +44,11 @@ def test_paged_attention_step_validates_state_shape() -> None:
 
 
 def test_paged_attention_outputs_accept_last_hidden_rank_two_or_three() -> None:
-    ARPagedAttentionPrefillOutput(
+    ARAttentionPrefillOutput(
         last_hidden=torch.zeros(2, 4),
         sequence_states=("a", "b"),
     )
-    ARPagedAttentionStepOutput(
+    ARAttentionStepOutput(
         last_hidden=torch.zeros(2, 1, 4),
         sequence_states=("a", "b"),
     )

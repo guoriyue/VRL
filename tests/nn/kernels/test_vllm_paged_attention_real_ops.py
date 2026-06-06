@@ -7,8 +7,8 @@ import torch
 
 from vrl.nn.kernels.attention.vllm_paged import VllmPagedAttentionKernels
 from vrl.nn.layers.attention.paged import (
-    ARPagedAttentionConfig,
-    ARPagedAttentionUnavailable,
+    ARAttentionConfig,
+    ARAttentionUnavailable,
 )
 
 
@@ -18,9 +18,9 @@ def test_vllm_paged_attention_writes_real_cuda_kv_cache() -> None:
 
     try:
         kernels = VllmPagedAttentionKernels(
-            ARPagedAttentionConfig(family="janus_pro", model_key="probe")
+            ARAttentionConfig(family="janus_pro", model_key="probe")
         )
-    except ARPagedAttentionUnavailable as exc:
+    except ARAttentionUnavailable as exc:
         pytest.skip(f"vLLM paged-attention internals are unavailable: {exc}")
 
     assert kernels.get_kv_cache_shape(

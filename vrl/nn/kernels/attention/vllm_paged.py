@@ -9,15 +9,15 @@ from typing import Any
 import torch
 
 from vrl.nn.layers.attention.paged import (
-    ARPagedAttentionConfig,
-    ARPagedAttentionUnavailable,
+    ARAttentionConfig,
+    ARAttentionUnavailable,
 )
 
 
 class VllmPagedAttentionKernels:
     """Thin, real-call wrapper around vLLM's internal paged-attention APIs.
 
-    This class deliberately is not an ``ARPagedAttentionBackend``. It does not
+    This class deliberately is not an ``ARAttentionBackend``. It does not
     pretend to run a Janus/NextStep transformer by itself; family runners still
     need to patch their attention layers so Q/K/V projection, output projection,
     residuals, and MLP stay model-specific. The boundary here is only the part
@@ -35,7 +35,7 @@ class VllmPagedAttentionKernels:
 
     def __init__(
         self,
-        config: ARPagedAttentionConfig,
+        config: ARAttentionConfig,
         *,
         import_module: Callable[[str], Any] | None = None,
     ) -> None:
@@ -46,7 +46,7 @@ class VllmPagedAttentionKernels:
             try:
                 self.modules[module_name] = loader(module_name)
             except Exception as exc:
-                raise ARPagedAttentionUnavailable(
+                raise ARAttentionUnavailable(
                     "vLLM paged-attention initialization failed while importing "
                     f"{module_name!r}. This is a real internal API import, so a "
                     "failure usually means the installed vLLM wheel does not match "

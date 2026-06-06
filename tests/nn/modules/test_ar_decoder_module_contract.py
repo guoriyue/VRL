@@ -6,15 +6,15 @@ import pytest
 import torch
 
 from vrl.nn.layers.attention.paged import (
-    ARPagedAttentionBackend,
-    ARPagedAttentionConfig,
-    ARPagedAttentionPrefillInput,
+    ARAttentionBackend,
+    ARAttentionConfig,
+    ARAttentionPrefillInput,
 )
 from vrl.nn.modules.ar_decoder import VllmDecoderPagedAttentionBackend
 
 
 def test_vllm_decoder_backend_uses_paged_attention_contract() -> None:
-    assert issubclass(VllmDecoderPagedAttentionBackend, ARPagedAttentionBackend)
+    assert issubclass(VllmDecoderPagedAttentionBackend, ARAttentionBackend)
 
 
 def test_vllm_decoder_pack_prefill_compacts_left_padded_prompts() -> None:
@@ -37,7 +37,7 @@ def test_vllm_decoder_pack_prefill_compacts_left_padded_prompts() -> None:
         last_token_offsets,
         states,
     ) = backend._pack_prefill(
-        ARPagedAttentionPrefillInput(
+        ARAttentionPrefillInput(
             inputs_embeds=embeds,
             attention_mask=mask,
             branch="cond",
@@ -62,7 +62,7 @@ def test_vllm_decoder_pack_prefill_rejects_non_contiguous_prompt_mask() -> None:
 
     with pytest.raises(ValueError, match="one contiguous valid-token span"):
         backend._pack_prefill(
-            ARPagedAttentionPrefillInput(
+            ARAttentionPrefillInput(
                 inputs_embeds=embeds,
                 attention_mask=mask,
                 branch="cond",
@@ -73,6 +73,6 @@ def test_vllm_decoder_pack_prefill_rejects_non_contiguous_prompt_mask() -> None:
 def _backend() -> VllmDecoderPagedAttentionBackend:
     return VllmDecoderPagedAttentionBackend(
         trunk=object(),
-        config=ARPagedAttentionConfig(family="test", model_key="test"),
+        config=ARAttentionConfig(family="test", model_key="test"),
         kernels=object(),  # type: ignore[arg-type]
     )

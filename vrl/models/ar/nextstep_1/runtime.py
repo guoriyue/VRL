@@ -21,7 +21,6 @@ from vrl.generation.types import (
     WorkloadSignature,
 )
 from vrl.models.ar.capabilities import ar_continuous_family_capability
-from vrl.models.dtypes import dtype_to_config_string
 from vrl.models.ar.nextstep_1.model import (
     NextStep1Config,
     NextStep1Model,
@@ -29,8 +28,9 @@ from vrl.models.ar.nextstep_1.model import (
 )
 from vrl.models.ar.nextstep_1.runner import (
     NextStep1ARModelRunner,
-    build_nextstep_vllm_paged_attention_backend,
+    build_nextstep_vllm_attention_backend,
 )
+from vrl.models.dtypes import dtype_to_config_string
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.replay_loading import (
     full_generation_bundle_metadata,
@@ -535,7 +535,7 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
         cache_dtype = str(sampling.get("ar_paged_cache_dtype", "auto"))
         return NextStep1ARModelRunner(
             self.model,
-            paged_attention_backend=build_nextstep_vllm_paged_attention_backend(
+            attention_backend=build_nextstep_vllm_attention_backend(
                 self.model,
                 block_size=block_size,
                 cache_dtype=cache_dtype,

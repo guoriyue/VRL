@@ -20,12 +20,12 @@ from vrl.models.ar.janus_pro.model import (
 from vrl.models.ar.janus_pro.runner import JanusProARModelRunner
 from vrl.models.ar.janus_pro.runtime import JanusProPipelineExecutor
 from vrl.nn.layers.attention.paged import (
-    ARPagedAttentionBackend,
-    ARPagedAttentionConfig,
-    ARPagedAttentionPrefillInput,
-    ARPagedAttentionPrefillOutput,
-    ARPagedAttentionStepInput,
-    ARPagedAttentionStepOutput,
+    ARAttentionBackend,
+    ARAttentionConfig,
+    ARAttentionPrefillInput,
+    ARAttentionPrefillOutput,
+    ARAttentionStepInput,
+    ARAttentionStepOutput,
 )
 
 HIDDEN = 8
@@ -39,18 +39,18 @@ class _PagedState:
     tokens: int
 
 
-class _RecordingPagedBackend(ARPagedAttentionBackend):
+class _RecordingPagedBackend(ARAttentionBackend):
     def __init__(self) -> None:
         super().__init__(
-            ARPagedAttentionConfig(family="janus_pro", model_key="test-janus")
+            ARAttentionConfig(family="janus_pro", model_key="test-janus")
         )
-        self.prefill_requests: list[ARPagedAttentionPrefillInput] = []
-        self.step_requests: list[ARPagedAttentionStepInput] = []
+        self.prefill_requests: list[ARAttentionPrefillInput] = []
+        self.step_requests: list[ARAttentionStepInput] = []
 
     def prefill(
         self,
-        request: ARPagedAttentionPrefillInput,
-    ) -> ARPagedAttentionPrefillOutput:
+        request: ARAttentionPrefillInput,
+    ) -> ARAttentionPrefillOutput:
         self.prefill_requests.append(request)
         batch = request.inputs_embeds.shape[0]
         hidden = torch.zeros(batch, HIDDEN, device=request.inputs_embeds.device)
@@ -63,12 +63,12 @@ class _RecordingPagedBackend(ARPagedAttentionBackend):
             )
             for row in range(batch)
         )
-        return ARPagedAttentionPrefillOutput(
+        return ARAttentionPrefillOutput(
             last_hidden=hidden,
             sequence_states=states,
         )
 
-    def step(self, request: ARPagedAttentionStepInput) -> ARPagedAttentionStepOutput:
+    def step(self, request: ARAttentionStepInput) -> ARAttentionStepOutput:
         self.step_requests.append(request)
         batch = request.input_embeds.shape[0]
         hidden = torch.zeros(batch, HIDDEN, device=request.input_embeds.device)
@@ -81,7 +81,7 @@ class _RecordingPagedBackend(ARPagedAttentionBackend):
             )
             for state in request.sequence_states
         )
-        return ARPagedAttentionStepOutput(
+        return ARAttentionStepOutput(
             last_hidden=hidden,
             sequence_states=states,
         )
@@ -151,7 +151,7 @@ def test_janus_runner_can_drive_one_paged_attention_image_step() -> None:
     ARDecodeLoop(
         request=_request(),
         sample_rows=_rows(batch_size=2),
-        runner=JanusProARModelRunner(model, paged_attention_backend=backend),
+        runner=JanusProARModelRunner(model, attention_backend=backend),
         max_new_tokens=2,
         tokenizer_key="janus_pro",
         dtype="float32",
@@ -197,7 +197,7 @@ def test_janus_runtime_uses_vllm_paged_attention_by_default(monkeypatch) -> None
 
     monkeypatch.setattr(
         janus_runtime,
-        "build_janus_vllm_paged_attention_backend",
+        "build_janus_vllm_attention_backend",
         build_backend,
     )
     request = _request()
@@ -210,7 +210,7 @@ def test_janus_runtime_uses_vllm_paged_attention_by_default(monkeypatch) -> None
     runner = JanusProPipelineExecutor(model)._ar_runner(request)
 
     assert isinstance(runner, JanusProARModelRunner)
-    assert runner.paged_attention_backend is backend
+    assert runner.attention_backend is backend
 
 
 def _model() -> JanusProModel:

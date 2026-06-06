@@ -12,13 +12,13 @@ from vrl.generation.types import GenerationRequest
 from vrl.models.ar.nextstep_1 import runtime as nextstep_runtime
 from vrl.models.ar.nextstep_1.runner import (
     NextStep1ARModelRunner,
-    build_nextstep_vllm_paged_attention_backend,
+    build_nextstep_vllm_attention_backend,
 )
 from vrl.models.ar.nextstep_1.runtime import NextStep1PipelineExecutor
 from vrl.nn.layers.attention.paged import (
-    ARPagedAttentionPrefillInput,
-    ARPagedAttentionStepInput,
-    ARPagedAttentionUnavailable,
+    ARAttentionPrefillInput,
+    ARAttentionStepInput,
+    ARAttentionUnavailable,
 )
 
 
@@ -29,8 +29,8 @@ def test_nextstep_vllm_paged_attention_matches_hf_qwen_one_step() -> None:
     torch.manual_seed(0)
     trunk = _tiny_qwen_trunk()
     try:
-        backend = build_nextstep_vllm_paged_attention_backend(_TinyNextStepLike(trunk))
-    except ARPagedAttentionUnavailable as exc:
+        backend = build_nextstep_vllm_attention_backend(_TinyNextStepLike(trunk))
+    except ARAttentionUnavailable as exc:
         pytest.skip(f"vLLM paged-attention internals are unavailable: {exc}")
 
     embeds = torch.randn(1, 4, 512, device="cuda", dtype=torch.float16)
@@ -41,7 +41,7 @@ def test_nextstep_vllm_paged_attention_matches_hf_qwen_one_step() -> None:
     with torch.no_grad():
         hf_prefill = trunk(inputs_embeds=embeds, attention_mask=mask, use_cache=True)
         paged_prefill = backend.prefill(
-            ARPagedAttentionPrefillInput(
+            ARAttentionPrefillInput(
                 inputs_embeds=embeds,
                 attention_mask=mask,
                 branch="cond",
@@ -55,7 +55,7 @@ def test_nextstep_vllm_paged_attention_matches_hf_qwen_one_step() -> None:
             use_cache=True,
         )
         paged_step = backend.step(
-            ARPagedAttentionStepInput(
+            ARAttentionStepInput(
                 input_embeds=step_embeds,
                 attention_mask=step_mask,
                 sequence_states=paged_prefill.sequence_states,
@@ -96,7 +96,7 @@ def test_nextstep_runtime_uses_vllm_paged_attention_by_default(monkeypatch) -> N
 
     monkeypatch.setattr(
         nextstep_runtime,
-        "build_nextstep_vllm_paged_attention_backend",
+        "build_nextstep_vllm_attention_backend",
         build_backend,
     )
     request = GenerationRequest(
@@ -113,7 +113,7 @@ def test_nextstep_runtime_uses_vllm_paged_attention_by_default(monkeypatch) -> N
     runner = NextStep1PipelineExecutor(model)._ar_runner(request)
 
     assert isinstance(runner, NextStep1ARModelRunner)
-    assert runner.paged_attention_backend is backend
+    assert runner.attention_backend is backend
 
 
 def _tiny_qwen_trunk() -> Qwen2Model:

@@ -23,7 +23,6 @@ from vrl.generation.types import (
     WorkloadSignature,
 )
 from vrl.models.ar.capabilities import ar_discrete_family_capability
-from vrl.models.dtypes import dtype_to_config_string
 from vrl.models.ar.janus_pro.model import (
     JANUS_R1_SEGMENTS,
     JanusProConfig,
@@ -32,8 +31,9 @@ from vrl.models.ar.janus_pro.model import (
 )
 from vrl.models.ar.janus_pro.runner import (
     JanusProARModelRunner,
-    build_janus_vllm_paged_attention_backend,
+    build_janus_vllm_attention_backend,
 )
+from vrl.models.dtypes import dtype_to_config_string
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.replay_loading import (
     full_generation_bundle_metadata,
@@ -612,7 +612,7 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
         cache_dtype = str(sampling.get("ar_paged_cache_dtype", "auto"))
         return JanusProARModelRunner(
             self.model,
-            paged_attention_backend=build_janus_vllm_paged_attention_backend(
+            attention_backend=build_janus_vllm_attention_backend(
                 self.model,
                 block_size=block_size,
                 cache_dtype=cache_dtype,

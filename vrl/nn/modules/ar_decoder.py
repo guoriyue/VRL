@@ -11,13 +11,13 @@ import torch
 
 from vrl.nn.kernels.attention.vllm_paged import VllmPagedAttentionKernels
 from vrl.nn.layers.attention.paged import (
-    ARPagedAttentionBackend,
-    ARPagedAttentionConfig,
-    ARPagedAttentionPrefillInput,
-    ARPagedAttentionPrefillOutput,
-    ARPagedAttentionStepInput,
-    ARPagedAttentionStepOutput,
-    ARPagedAttentionUnavailable,
+    ARAttentionBackend,
+    ARAttentionConfig,
+    ARAttentionPrefillInput,
+    ARAttentionPrefillOutput,
+    ARAttentionStepInput,
+    ARAttentionStepOutput,
+    ARAttentionUnavailable,
 )
 
 
@@ -44,14 +44,14 @@ class _VllmAttentionScaleShim(torch.nn.Module):
         self.register_buffer("_v_scale", scale.clone(), persistent=False)
 
 
-class VllmDecoderPagedAttentionBackend(ARPagedAttentionBackend):
+class VllmDecoderPagedAttentionBackend(ARAttentionBackend):
     """Run a HF-style decoder trunk with vLLM block tables and paged KV cache."""
 
     def __init__(
         self,
         *,
         trunk: Any,
-        config: ARPagedAttentionConfig,
+        config: ARAttentionConfig,
         kernels: VllmPagedAttentionKernels | None = None,
     ) -> None:
         super().__init__(config)
@@ -71,8 +71,8 @@ class VllmDecoderPagedAttentionBackend(ARPagedAttentionBackend):
     @torch.no_grad()
     def prefill(
         self,
-        request: ARPagedAttentionPrefillInput,
-    ) -> ARPagedAttentionPrefillOutput:
+        request: ARAttentionPrefillInput,
+    ) -> ARAttentionPrefillOutput:
         (
             inputs_embeds,
             cache_positions,
@@ -90,7 +90,7 @@ class VllmDecoderPagedAttentionBackend(ARPagedAttentionBackend):
             seq_lens=seq_lens,
             states=states,
         )
-        return ARPagedAttentionPrefillOutput(
+        return ARAttentionPrefillOutput(
             last_hidden=last_hidden_states.index_select(0, last_token_offsets),
             sequence_states=states,
             metrics={
@@ -101,7 +101,7 @@ class VllmDecoderPagedAttentionBackend(ARPagedAttentionBackend):
         )
 
     @torch.no_grad()
-    def step(self, request: ARPagedAttentionStepInput) -> ARPagedAttentionStepOutput:
+    def step(self, request: ARAttentionStepInput) -> ARAttentionStepOutput:
         (
             inputs_embeds,
             cache_positions,
@@ -118,7 +118,7 @@ class VllmDecoderPagedAttentionBackend(ARPagedAttentionBackend):
             seq_lens=seq_lens,
             states=states,
         )
-        return ARPagedAttentionStepOutput(
+        return ARAttentionStepOutput(
             last_hidden=last_hidden_states,
             sequence_states=states,
             metrics={
@@ -139,7 +139,7 @@ class VllmDecoderPagedAttentionBackend(ARPagedAttentionBackend):
 
     def _pack_prefill(
         self,
-        request: ARPagedAttentionPrefillInput,
+        request: ARAttentionPrefillInput,
     ) -> tuple[
         torch.Tensor,
         torch.Tensor,
@@ -210,7 +210,7 @@ class VllmDecoderPagedAttentionBackend(ARPagedAttentionBackend):
 
     def _pack_step(
         self,
-        request: ARPagedAttentionStepInput,
+        request: ARAttentionStepInput,
     ) -> tuple[
         torch.Tensor,
         torch.Tensor,
@@ -426,12 +426,12 @@ class VllmDecoderPagedAttentionBackend(ARPagedAttentionBackend):
 
     def _ensure_runtime_objects(self, *, device: torch.device, dtype: torch.dtype) -> None:
         if device.type != "cuda":
-            raise ARPagedAttentionUnavailable(
+            raise ARAttentionUnavailable(
                 f"{self.backend_label} requires CUDA tensors because vLLM "
                 "BlockTable slot mapping and FlashAttention are CUDA kernels.",
             )
         if dtype not in (torch.float16, torch.bfloat16):
-            raise ARPagedAttentionUnavailable(
+            raise ARAttentionUnavailable(
                 f"{self.backend_label} requires float16 or bfloat16 model embeddings, "
                 f"got {dtype}.",
             )

@@ -19,14 +19,16 @@ from vrl.generation.ar.decode_loop import (
 from vrl.models.ar.janus_pro.model import image_token_logits_from_hidden
 from vrl.models.ar.paged_attention_helpers import (
     append_attention_token,
+    normalize_paged_last_hidden,
+    require_attention_backend,
     scatter_paged_states,
     select_paged_states,
 )
 from vrl.nn.layers.attention.paged import (
-    ARPagedAttentionBackend,
-    ARPagedAttentionConfig,
-    ARPagedAttentionPrefillInput,
-    ARPagedAttentionStepInput,
+    ARAttentionBackend,
+    ARAttentionConfig,
+    ARAttentionPrefillInput,
+    ARAttentionStepInput,
 )
 from vrl.nn.modules.ar_decoder import (
     VllmDecoderPagedAttentionBackend,
@@ -49,7 +51,7 @@ class JanusProARState:
     decode_tokens: int = 0
 
 
-def build_janus_vllm_paged_attention_backend(
+def build_janus_vllm_attention_backend(
     model: Any,
     *,
     block_size: int = 16,
@@ -57,7 +59,7 @@ def build_janus_vllm_paged_attention_backend(
 ) -> VllmDecoderPagedAttentionBackend:
     """Construct the explicit Janus backend that borrows vLLM paged attention."""
 
-    config = ARPagedAttentionConfig(
+    config = ARAttentionConfig(
         family="janus_pro",
         model_key=str(getattr(model.config, "model_path", "janus_pro")),
         block_size=block_size,
@@ -81,10 +83,10 @@ class JanusProARModelRunner:
         self,
         model: Any,
         *,
-        paged_attention_backend: ARPagedAttentionBackend | None = None,
+        attention_backend: ARAttentionBackend | None = None,
     ) -> None:
         self.model = model
-        self.paged_attention_backend = paged_attention_backend
+        self.attention_backend = attention_backend
 
     @torch.no_grad()
     def init_ar(
@@ -103,7 +105,7 @@ class JanusProARModelRunner:
         image_token_num = image_token_num or self.model.config.image_token_num
         batch_size = cond_inputs_embeds.shape[0]
         device = cond_inputs_embeds.device
-        if self.paged_attention_backend is None:
+        if self.attention_backend is None:
             cond_past, cond_last_hidden = self._prefill_ar_prompt(
                 cond_inputs_embeds,
                 cond_attention_mask,
@@ -227,8 +229,10 @@ class JanusProARModelRunner:
         branch: str,
         image_token_num: int,
     ) -> Any:
-        return self._require_paged_attention_backend().prefill(
-            ARPagedAttentionPrefillInput(
+        return require_attention_backend(
+            self.attention_backend, family="Janus"
+        ).prefill(
+            ARAttentionPrefillInput(
                 inputs_embeds=inputs_embeds,
                 attention_mask=attention_mask,
                 branch=branch,
@@ -312,7 +316,7 @@ class JanusProARModelRunner:
         batch: ARStepBatch,
         sampled: torch.Tensor,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        if self.paged_attention_backend is not None:
+        if self.attention_backend is not None:
             return self._advance_paged_attention_after_sample(
                 state,
                 batch=batch,
@@ -376,8 +380,10 @@ class JanusProARModelRunner:
 
         cond_next_attn = append_attention_token(batch.row_lanes["cond_attn"])
         uncond_next_attn = append_attention_token(batch.row_lanes["uncond_attn"])
-        output = self._require_paged_attention_backend().step(
-            ARPagedAttentionStepInput(
+        output = require_attention_backend(
+            self.attention_backend, family="Janus"
+        ).step(
+            ARAttentionStepInput(
                 input_embeds=inputs_embeds,
                 attention_mask=torch.cat([cond_next_attn, uncond_next_attn], dim=0),
                 sequence_states=tuple(cond_states + uncond_states),
@@ -404,7 +410,7 @@ class JanusProARModelRunner:
             batch.row_indices,
             updated_states[batch_size:],
         )
-        hidden = self._normalize_paged_last_hidden(output.last_hidden)
+        hidden = normalize_paged_last_hidden(output.last_hidden)
         state.decode_forwards += 1
         return (
             {},
@@ -416,24 +422,8 @@ class JanusProARModelRunner:
             },
         )
 
-    def _require_paged_attention_backend(self) -> ARPagedAttentionBackend:
-        if self.paged_attention_backend is None:
-            raise RuntimeError("Janus paged-attention path requires a backend")
-        return self.paged_attention_backend
-
-    @staticmethod
-    def _normalize_paged_last_hidden(last_hidden: torch.Tensor) -> torch.Tensor:
-        if last_hidden.ndim == 3:
-            if last_hidden.shape[1] != 1:
-                raise ValueError("paged attention last_hidden must be [B, H] or [B, 1, H]")
-            return last_hidden[:, 0, :]
-        if last_hidden.ndim != 2:
-            raise ValueError("paged attention last_hidden must be [B, H] or [B, 1, H]")
-        return last_hidden
-
-
 __all__ = [
     "JanusProARModelRunner",
     "JanusProARState",
-    "build_janus_vllm_paged_attention_backend",
+    "build_janus_vllm_attention_backend",
 ]

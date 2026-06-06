@@ -11,8 +11,8 @@ import torch
 
 from vrl.nn.kernels.attention.vllm_paged import VllmPagedAttentionKernels
 from vrl.nn.layers.attention.paged import (
-    ARPagedAttentionConfig,
-    ARPagedAttentionUnavailable,
+    ARAttentionConfig,
+    ARAttentionUnavailable,
 )
 
 
@@ -22,9 +22,9 @@ def test_vllm_paged_attention_kernels_report_abi_failure() -> None:
             raise ImportError("bad abi")
         return SimpleNamespace(__version__="test")
 
-    with pytest.raises(ARPagedAttentionUnavailable, match="block_table"):
+    with pytest.raises(ARAttentionUnavailable, match="block_table"):
         VllmPagedAttentionKernels(
-            ARPagedAttentionConfig(family="janus_pro", model_key="janus"),
+            ARAttentionConfig(family="janus_pro", model_key="janus"),
             import_module=import_module,
         )
 
@@ -48,7 +48,7 @@ def test_vllm_paged_attention_kernels_call_real_internal_api_boundary() -> None:
         return SimpleNamespace(__name__=name, __version__="test")
 
     kernels = VllmPagedAttentionKernels(
-        ARPagedAttentionConfig(family="janus_pro", model_key="janus"),
+        ARAttentionConfig(family="janus_pro", model_key="janus"),
         import_module=import_module,
     )
 

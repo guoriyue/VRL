@@ -8,11 +8,11 @@ import pytest
 import torch
 from transformers import LlamaConfig, LlamaModel
 
-from vrl.models.ar.janus_pro.runner import build_janus_vllm_paged_attention_backend
+from vrl.models.ar.janus_pro.runner import build_janus_vllm_attention_backend
 from vrl.nn.layers.attention.paged import (
-    ARPagedAttentionPrefillInput,
-    ARPagedAttentionStepInput,
-    ARPagedAttentionUnavailable,
+    ARAttentionPrefillInput,
+    ARAttentionStepInput,
+    ARAttentionUnavailable,
 )
 
 
@@ -23,8 +23,8 @@ def test_janus_vllm_paged_attention_matches_hf_llama_one_step() -> None:
     torch.manual_seed(0)
     trunk = _tiny_llama_trunk()
     try:
-        backend = build_janus_vllm_paged_attention_backend(_TinyJanusLike(trunk))
-    except ARPagedAttentionUnavailable as exc:
+        backend = build_janus_vllm_attention_backend(_TinyJanusLike(trunk))
+    except ARAttentionUnavailable as exc:
         pytest.skip(f"vLLM paged-attention internals are unavailable: {exc}")
 
     embeds = torch.randn(1, 4, 512, device="cuda", dtype=torch.float16)
@@ -35,7 +35,7 @@ def test_janus_vllm_paged_attention_matches_hf_llama_one_step() -> None:
     with torch.no_grad():
         hf_prefill = trunk(inputs_embeds=embeds, attention_mask=mask, use_cache=True)
         paged_prefill = backend.prefill(
-            ARPagedAttentionPrefillInput(
+            ARAttentionPrefillInput(
                 inputs_embeds=embeds,
                 attention_mask=mask,
                 branch="cond",
@@ -49,7 +49,7 @@ def test_janus_vllm_paged_attention_matches_hf_llama_one_step() -> None:
             use_cache=True,
         )
         paged_step = backend.step(
-            ARPagedAttentionStepInput(
+            ARAttentionStepInput(
                 input_embeds=step_embeds,
                 attention_mask=step_mask,
                 sequence_states=paged_prefill.sequence_states,

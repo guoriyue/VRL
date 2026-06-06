@@ -16,14 +16,16 @@ from vrl.generation.ar.decode_loop import (
 from vrl.math.ar.flow_matching import flow_sample_with_logprob
 from vrl.models.ar.paged_attention_helpers import (
     append_attention_token,
+    normalize_paged_last_hidden,
+    require_attention_backend,
     scatter_paged_states,
     select_paged_states,
 )
 from vrl.nn.layers.attention.paged import (
-    ARPagedAttentionBackend,
-    ARPagedAttentionConfig,
-    ARPagedAttentionPrefillInput,
-    ARPagedAttentionStepInput,
+    ARAttentionBackend,
+    ARAttentionConfig,
+    ARAttentionPrefillInput,
+    ARAttentionStepInput,
 )
 from vrl.nn.modules.ar_decoder import (
     VllmDecoderPagedAttentionBackend,
@@ -56,10 +58,10 @@ class NextStep1ARModelRunner:
         self,
         model: Any,
         *,
-        paged_attention_backend: ARPagedAttentionBackend | None = None,
+        attention_backend: ARAttentionBackend | None = None,
     ) -> None:
         self.model = model
-        self.paged_attention_backend = paged_attention_backend
+        self.attention_backend = attention_backend
 
     @torch.no_grad()
     def init_ar(
@@ -93,7 +95,7 @@ class NextStep1ARModelRunner:
         )
         logprobs = torch.zeros(batch_size, image_token_num, device=device, dtype=torch.float32)
 
-        if self.paged_attention_backend is None:
+        if self.attention_backend is None:
             kv_cond = self.model._init_kv(prompt_embeds, prompt_mask)
             kv_uncond = (
                 self.model._init_kv(uncond_embeds, uncond_mask)
@@ -254,7 +256,7 @@ class NextStep1ARModelRunner:
         state.saved_noise[rows, position] = replay_noise
         state.logprobs[rows, position] = log_prob.float()
 
-        if self.paged_attention_backend is not None:
+        if self.attention_backend is not None:
             cache_updates, row_updates = self._advance_paged_attention(
                 state,
                 batch=batch,
@@ -289,8 +291,10 @@ class NextStep1ARModelRunner:
         branch: str,
         image_token_num: int,
     ) -> Any:
-        return self._require_paged_attention_backend().prefill(
-            ARPagedAttentionPrefillInput(
+        return require_attention_backend(
+            self.attention_backend, family="NextStep"
+        ).prefill(
+            ARAttentionPrefillInput(
                 inputs_embeds=inputs_embeds,
                 attention_mask=attention_mask,
                 branch=branch,
@@ -328,8 +332,10 @@ class NextStep1ARModelRunner:
             uncond_next_attn = append_attention_token(batch.row_lanes["uncond_attn"])
             row_updates["uncond_attn"] = uncond_next_attn
 
-        output = self._require_paged_attention_backend().step(
-            ARPagedAttentionStepInput(
+        output = require_attention_backend(
+            self.attention_backend, family="NextStep"
+        ).step(
+            ARAttentionStepInput(
                 input_embeds=torch.cat(input_embeds, dim=0),
                 attention_mask=torch.cat(
                     [cond_next_attn] + ([] if uncond_next_attn is None else [uncond_next_attn]),
@@ -348,7 +354,7 @@ class NextStep1ARModelRunner:
             batch.row_indices,
             updated_states[:batch_size],
         )
-        hidden = self._normalize_paged_last_hidden(output.last_hidden)
+        hidden = normalize_paged_last_hidden(output.last_hidden)
         row_updates["c_cond"] = hidden[:batch_size]
         if has_uncond:
             scatter_paged_states(
@@ -362,23 +368,7 @@ class NextStep1ARModelRunner:
             state.decode_forwards += 1
         return {}, row_updates
 
-    def _require_paged_attention_backend(self) -> ARPagedAttentionBackend:
-        if self.paged_attention_backend is None:
-            raise RuntimeError("NextStep paged-attention path requires a backend")
-        return self.paged_attention_backend
-
-    @staticmethod
-    def _normalize_paged_last_hidden(last_hidden: torch.Tensor) -> torch.Tensor:
-        if last_hidden.ndim == 3:
-            if last_hidden.shape[1] != 1:
-                raise ValueError("paged attention last_hidden must be [B, H] or [B, 1, H]")
-            return last_hidden[:, 0, :]
-        if last_hidden.ndim != 2:
-            raise ValueError("paged attention last_hidden must be [B, H] or [B, 1, H]")
-        return last_hidden
-
-
-def build_nextstep_vllm_paged_attention_backend(
+def build_nextstep_vllm_attention_backend(
     model: Any,
     *,
     block_size: int = 16,
@@ -386,7 +376,7 @@ def build_nextstep_vllm_paged_attention_backend(
 ) -> VllmDecoderPagedAttentionBackend:
     """Construct the explicit NextStep backend that borrows vLLM paged attention."""
 
-    config = ARPagedAttentionConfig(
+    config = ARAttentionConfig(
         family="nextstep_1",
         model_key=str(getattr(model.config, "model_path", "nextstep_1")),
         block_size=block_size,
@@ -406,5 +396,5 @@ def build_nextstep_vllm_paged_attention_backend(
 __all__ = [
     "NextStep1ARModelRunner",
     "NextStep1ARState",
-    "build_nextstep_vllm_paged_attention_backend",
+    "build_nextstep_vllm_attention_backend",
 ]
