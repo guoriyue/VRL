@@ -1,0 +1,95 @@
+"""Real-inference tests for the SD3.5 CFG backbone wrapper.
+
+No fake transformer: a real (tiny, cache-free) ``SD3Transformer2DModel`` runs
+through ``forward_step``; the wrapper's classifier-free-guidance behavior is
+verified against the model's OWN real outputs, never a re-derived formula.
+"""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+from typing import Any
+
+import torch
+
+from tests.models.diffusion.fixtures import (
+    TINY_SD3_JOINT_DIM,
+    TINY_SD3_LATENT_SHAPE,
+    TINY_SD3_POOLED_DIM,
+    build_tiny_sd3_transformer,
+)
+from vrl.models.diffusion.sd3_5.model import SD3_5Model, SD3SamplingState
+
+_TEXT_LEN = 3
+
+
+def _record_forward(transformer: torch.nn.Module) -> list[dict[str, Any]]:
+    calls: list[dict[str, Any]] = []
+    transformer.register_forward_pre_hook(
+        lambda _m, _args, kwargs: calls.append(dict(kwargs)),
+        with_kwargs=True,
+    )
+    return calls
+
+
+def _model(transformer: torch.nn.Module) -> SD3_5Model:
+    return SD3_5Model(
+        pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
+        device=torch.device("cpu"),
+    )
+
+
+def test_sd3_forward_step_runs_real_batched_cfg() -> None:
+    transformer = build_tiny_sd3_transformer()
+    calls = _record_forward(transformer)
+    model = _model(transformer)
+    state = SD3SamplingState(
+        latents=torch.randn(TINY_SD3_LATENT_SHAPE),
+        timesteps=torch.tensor([5.0]),
+        scheduler=None,
+        prompt_embeds=torch.randn(2, _TEXT_LEN, TINY_SD3_JOINT_DIM),
+        pooled_prompt_embeds=torch.randn(2, TINY_SD3_POOLED_DIM),
+        negative_prompt_embeds=torch.randn(2, _TEXT_LEN, TINY_SD3_JOINT_DIM),
+        negative_pooled_prompt_embeds=torch.randn(2, TINY_SD3_POOLED_DIM),
+        guidance_scale=3.0,
+        do_cfg=True,
+        seed=0,
+    )
+
+    out = model.forward_step(state, 0)
+
+    assert len(calls) == 1
+    assert calls[0]["hidden_states"].shape[0] == 2 * TINY_SD3_LATENT_SHAPE[0]
+    uncond, cond = out["noise_pred_uncond"], out["noise_pred_cond"]
+    torch.testing.assert_close(out["noise_pred"], uncond + 3.0 * (cond - uncond))
+    assert out["noise_pred"].shape == TINY_SD3_LATENT_SHAPE
+    assert not torch.allclose(cond, uncond)
+
+
+def test_sd3_forward_step_single_branch_skips_cfg() -> None:
+    transformer = build_tiny_sd3_transformer()
+    calls = _record_forward(transformer)
+    model = _model(transformer)
+    state = SD3SamplingState(
+        latents=torch.randn(TINY_SD3_LATENT_SHAPE),
+        timesteps=torch.tensor([[5.0, 6.0]]),
+        scheduler=None,
+        prompt_embeds=torch.randn(2, _TEXT_LEN, TINY_SD3_JOINT_DIM),
+        pooled_prompt_embeds=torch.randn(2, TINY_SD3_POOLED_DIM),
+        negative_prompt_embeds=None,
+        negative_pooled_prompt_embeds=None,
+        guidance_scale=1.0,
+        do_cfg=False,
+        seed=0,
+    )
+
+    out = model.forward_step(state, 0)
+
+    # No CFG: a single conditional forward (batch not doubled), noise == cond,
+    # and the uncond branch is a zero placeholder.
+    assert len(calls) == 1
+    assert calls[0]["hidden_states"].shape[0] == TINY_SD3_LATENT_SHAPE[0]
+    torch.testing.assert_close(out["noise_pred"], out["noise_pred_cond"])
+    torch.testing.assert_close(
+        out["noise_pred_uncond"], torch.zeros_like(out["noise_pred_uncond"])
+    )
