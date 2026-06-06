@@ -37,6 +37,8 @@ cosmos = [
     "transformers>=4.40.0,<5",
     "accelerate>=0.30.0",
     "sentencepiece>=0.2.0",
+    "peft>=0.11.0",          # LoRA adapters for diffusion/AR model families
+    "torchvision>=0.17.0",   # diffusers cosmos transformer + preference data transforms
 ]
 ocr = [
     "paddleocr>=3.5.0",
