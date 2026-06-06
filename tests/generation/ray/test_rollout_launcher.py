@@ -17,6 +17,9 @@ from vrl.generation.types import GenerationOutput, GenerationRequest, Generation
 from vrl.models.ar.capabilities import ar_discrete_family_capability
 from vrl.models.interfaces import ReplayResult, RuntimeBuildSpec, RuntimeBundle
 
+# Every test here spins up Ray (~seconds each) — slow by nature, run nightly not per-PR.
+pytestmark = pytest.mark.slow_test
+
 
 class _TinyRuntimeModel:
     device = "cpu"

@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 import torch
 
-from tests.gates import requires_cuda
 from vrl.nn.kernels.attention.vllm_paged import VllmPagedAttentionKernels
 from vrl.nn.layers.attention.paged import (
     ARAttentionConfig,
@@ -13,7 +12,7 @@ from vrl.nn.layers.attention.paged import (
 )
 
 
-@requires_cuda
+@pytest.mark.gpu
 def test_vllm_paged_attention_writes_real_cuda_kv_cache() -> None:
     try:
         kernels = VllmPagedAttentionKernels(

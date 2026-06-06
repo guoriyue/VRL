@@ -9,6 +9,9 @@ import pytest
 from vrl.ray.actor_group import RayActorGroup
 from vrl.ray.placement import validate_actor_gpu_ids
 
+# Every test here spins up Ray (~seconds each) — slow by nature, run nightly not per-PR.
+pytestmark = pytest.mark.slow_test
+
 
 class _EchoWorker:
     def __init__(self, worker_id: str, config: dict) -> None:

@@ -11,6 +11,9 @@ from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceReques
 from vrl.rewards.ray import RayRewardRuntime
 from vrl.scripts.common.factory import build_reward_from_cfg
 
+# Every test here spins up Ray (~seconds each) — slow by nature, run nightly not per-PR.
+pytestmark = pytest.mark.slow_test
+
 _CONSTANT_MODEL_FACTORY = (
     "tests.rewards.test_reward_resource_lifecycle:build_constant_reward_model"
 )

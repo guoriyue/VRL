@@ -102,4 +102,8 @@ testpaths = ["tests"]
 asyncio_mode = "strict"
 markers = [
     "e2e: end-to-end tests requiring GPU and real model weights (opt-in via WM_RUN_REAL_MODEL_TESTS=1)",
+    "slow_test: heavy/slow tests (e.g. Ray spin-up); excluded from the fast PR subset, run nightly",
+    "gpu: requires a CUDA device (skips on CPU via tests/conftest.py; selectable for a GPU CI lane)",
+    "distributed: tests requiring an explicit distributed lane (run with --distributed or VRL_RUN_DISTRIBUTED_TESTS=1)",
+    "optional: optional tests that are automatically skipped, include --optional to run them",
 ]

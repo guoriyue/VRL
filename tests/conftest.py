@@ -1,0 +1,65 @@
+"""Shared pytest configuration.
+
+Two collection-time gates live here:
+
+- ``gpu``: tests marked ``@pytest.mark.gpu`` auto-skip when no CUDA device is
+  present, and run for real when one is. The marker is the single source of truth
+  — it both selects (``-m gpu``) and skips, so GPU tests carry one decorator, not
+  a separate skip gate. (This deviates from vLLM, which keeps selection and skip
+  separate and routes via a CI fleet; a single-machine setup is better served by
+  graceful auto-skip.)
+- ``distributed``: skipped unless ``--distributed`` is passed or
+  ``VRL_RUN_DISTRIBUTED_TESTS=1`` is set. Distributed tests need an explicit lane
+  because local Ray smoke tests and multi-node/GPU distributed tests have very
+  different resource profiles.
+- ``optional``: skipped unless ``--optional`` is passed (verbatim vLLM behavior).
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from tests import ci_envs
+
+try:  # torch may be importable without a usable CUDA device
+    import torch
+
+    _HAS_CUDA = bool(torch.cuda.is_available())
+except Exception:  # pragma: no cover - torch import/driver failure
+    _HAS_CUDA = False
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--optional", action="store_true", default=False, help="run optional test"
+    )
+    parser.addoption(
+        "--distributed",
+        action="store_true",
+        default=False,
+        help="run distributed test",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    # GPU tests skip on machines without CUDA.
+    if not _HAS_CUDA:
+        skip_gpu = pytest.mark.skip(reason="requires a CUDA GPU")
+        for item in items:
+            if "gpu" in item.keywords:
+                item.add_marker(skip_gpu)
+    # Distributed tests need an explicit lane; slow local Ray tests should use
+    # slow_test instead of distributed.
+    if not (config.getoption("--distributed") or ci_envs.VRL_RUN_DISTRIBUTED_TESTS):
+        skip_distributed = pytest.mark.skip(
+            reason="needs --distributed or VRL_RUN_DISTRIBUTED_TESTS=1",
+        )
+        for item in items:
+            if "distributed" in item.keywords:
+                item.add_marker(skip_distributed)
+    # optional tests are skipped unless --optional is given on the cli.
+    if not config.getoption("--optional"):
+        skip_optional = pytest.mark.skip(reason="need --optional option to run")
+        for item in items:
+            if "optional" in item.keywords:
+                item.add_marker(skip_optional)

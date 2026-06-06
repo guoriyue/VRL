@@ -8,9 +8,11 @@ from pathlib import Path
 import pytest
 import torch
 
-from tests.gates import requires_cuda
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
 from vrl.rewards.ray import RayRewardRuntime
+
+# Every test here spins up Ray (~seconds each) — slow by nature, run nightly not per-PR.
+pytestmark = pytest.mark.slow_test
 
 
 def build_tensor_mean_model(worker_config):
@@ -154,7 +156,7 @@ def test_ray_reward_runtime_fans_out_across_workers_with_timing() -> None:
         ray.shutdown()
 
 
-@requires_cuda
+@pytest.mark.gpu
 def test_ray_reward_runtime_assigns_gpu_ids_for_tensor_model(tmp_path: Path) -> None:
     ray = pytest.importorskip("ray")
 

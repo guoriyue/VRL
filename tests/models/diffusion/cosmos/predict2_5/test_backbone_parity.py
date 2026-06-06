@@ -9,7 +9,6 @@ CFG combination is verified against the model's OWN real branch outputs.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
 
 import torch
 
@@ -17,6 +16,7 @@ from tests.models.diffusion.fixtures import (
     TINY_COSMOS_LATENT_SHAPE,
     TINY_COSMOS_TEXT_DIM,
     build_tiny_cosmos_transformer,
+    record_forward_calls,
 )
 from vrl.models.diffusion.cosmos.predict2_5.model import (
     CosmosPredict25Model,
@@ -56,10 +56,7 @@ def _state() -> CosmosPredict25SamplingState:
 
 def test_cosmos_predict25_forward_step_runs_real_unbatched_cfg() -> None:
     transformer = build_tiny_cosmos_transformer()
-    calls: list[Any] = []
-    transformer.register_forward_pre_hook(
-        lambda _m, _a, _k: calls.append(1), with_kwargs=True
-    )
+    calls = record_forward_calls(transformer)
     model = CosmosPredict25Model(
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
         device=torch.device("cpu"),

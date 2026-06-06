@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 import torch
 
+from tests import ci_envs
 from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
 from vrl.generation import GenerationOutput, GenerationRequest, build_sample_rows
@@ -812,7 +813,7 @@ def _model_tensor_dtype(model: Any) -> torch.dtype:
 
 
 def _skip_unless_case_enabled(case: RealCheckpointCase) -> None:
-    if os.environ.get(RUN_REAL_ENV) != "1":
+    if not ci_envs.WM_RUN_REAL_MODEL_TESTS:
         pytest.skip(f"set {RUN_REAL_ENV}=1 to run real checkpoint RL e2e tests")
     requested = _requested_case_ids()
     if requested != {"cached"} and case.case_id not in requested and "all" not in requested:
@@ -820,7 +821,7 @@ def _skip_unless_case_enabled(case: RealCheckpointCase) -> None:
 
 
 def _requested_case_ids() -> set[str]:
-    raw = os.environ.get(CASE_FILTER_ENV, "cached")
+    raw = ci_envs.WM_REAL_MODEL_RL_CASES
     return {item.strip() for item in raw.split(",") if item.strip()}
 
 
