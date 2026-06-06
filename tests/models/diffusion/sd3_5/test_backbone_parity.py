@@ -8,7 +8,6 @@ verified against the model's OWN real outputs, never a re-derived formula.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
 
 import torch
 
@@ -17,19 +16,11 @@ from tests.models.diffusion.fixtures import (
     TINY_SD3_LATENT_SHAPE,
     TINY_SD3_POOLED_DIM,
     build_tiny_sd3_transformer,
+    record_forward_calls,
 )
 from vrl.models.diffusion.sd3_5.model import SD3_5Model, SD3SamplingState
 
 _TEXT_LEN = 3
-
-
-def _record_forward(transformer: torch.nn.Module) -> list[dict[str, Any]]:
-    calls: list[dict[str, Any]] = []
-    transformer.register_forward_pre_hook(
-        lambda _m, _args, kwargs: calls.append(dict(kwargs)),
-        with_kwargs=True,
-    )
-    return calls
 
 
 def _model(transformer: torch.nn.Module) -> SD3_5Model:
@@ -41,7 +32,7 @@ def _model(transformer: torch.nn.Module) -> SD3_5Model:
 
 def test_sd3_forward_step_runs_real_batched_cfg() -> None:
     transformer = build_tiny_sd3_transformer()
-    calls = _record_forward(transformer)
+    calls = record_forward_calls(transformer)
     model = _model(transformer)
     state = SD3SamplingState(
         latents=torch.randn(TINY_SD3_LATENT_SHAPE),
@@ -68,7 +59,7 @@ def test_sd3_forward_step_runs_real_batched_cfg() -> None:
 
 def test_sd3_forward_step_single_branch_skips_cfg() -> None:
     transformer = build_tiny_sd3_transformer()
-    calls = _record_forward(transformer)
+    calls = record_forward_calls(transformer)
     model = _model(transformer)
     state = SD3SamplingState(
         latents=torch.randn(TINY_SD3_LATENT_SHAPE),

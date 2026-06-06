@@ -8,6 +8,7 @@ import pytest
 import torch
 from transformers import LlamaConfig, LlamaModel
 
+from tests.gates import requires_cuda
 from vrl.models.ar.janus_pro.runner import build_janus_vllm_attention_backend
 from vrl.nn.layers.attention.paged import (
     ARAttentionPrefillInput,
@@ -16,10 +17,8 @@ from vrl.nn.layers.attention.paged import (
 )
 
 
+@requires_cuda
 def test_janus_vllm_paged_attention_matches_hf_llama_one_step() -> None:
-    if not torch.cuda.is_available():
-        pytest.skip("Janus vLLM paged attention requires CUDA")
-
     torch.manual_seed(0)
     trunk = _tiny_llama_trunk()
     try:

@@ -24,6 +24,7 @@ import torch
 from tests.models.diffusion.fixtures import (
     build_tiny_wan_i2v_transformer,
     build_tiny_wan_transformer,
+    record_forward_calls,
 )
 from vrl.models.diffusion.wan_2_1.model import (
     WanI2VDiffusersModel,
@@ -44,20 +45,9 @@ def _model(cls: type, transformer: torch.nn.Module) -> Any:
     )
 
 
-def _record_forward(transformer: torch.nn.Module) -> list[dict[str, Any]]:
-    """Capture the kwargs of every real transformer forward (to assert batching)."""
-
-    calls: list[dict[str, Any]] = []
-    transformer.register_forward_pre_hook(
-        lambda _m, _args, kwargs: calls.append(dict(kwargs)),
-        with_kwargs=True,
-    )
-    return calls
-
-
 def test_wan_t2v_forward_step_runs_real_batched_cfg() -> None:
     transformer = build_tiny_wan_transformer()
-    calls = _record_forward(transformer)
+    calls = record_forward_calls(transformer)
     model = _model(WanT2VDiffusersModel, transformer)
     state = WanT2VSamplingState(
         latents=torch.randn(_LATENT_SHAPE),
@@ -85,7 +75,7 @@ def test_wan_t2v_forward_step_runs_real_batched_cfg() -> None:
 
 def test_wan_i2v_forward_step_threads_condition_and_image_embeds() -> None:
     transformer = build_tiny_wan_i2v_transformer()
-    calls = _record_forward(transformer)
+    calls = record_forward_calls(transformer)
     model = _model(WanI2VDiffusersModel, transformer)
     state = WanI2VSamplingState(
         latents=torch.randn(_LATENT_SHAPE),

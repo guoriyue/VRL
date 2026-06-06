@@ -12,6 +12,13 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from tests.models.diffusion.fixtures import (
+    TINY_WAN_LATENT_SHAPE,
+    TINY_WAN_TEXT_DIM,
+    TINY_WAN_TEXT_LEN,
+    build_tiny_wan_transformer,
+    record_forward_calls,
+)
 from vrl.trainers.offline import (
     OfflineDPOTrainer,
     OfflineDPOTrainerConfig,
@@ -91,33 +98,15 @@ class TestSampleTimesteps:
             trainer._sample_timesteps(4)
 
 
-class _WanTransformerStub(torch.nn.Module):
-    def __init__(self) -> None:
-        super().__init__()
-        self.weight = torch.nn.Parameter(torch.tensor(2.0))
-        self.calls: list[dict[str, torch.Tensor]] = []
+class _PolicyWrapperGuard(torch.nn.Module):
+    """A policy wrapper owning ``.transformer``; its own forward is a red line.
 
-    def forward(
-        self,
-        *,
-        hidden_states: torch.Tensor,
-        timestep: torch.Tensor,
-        encoder_hidden_states: torch.Tensor,
-        return_dict: bool,
-    ) -> tuple[torch.Tensor]:
-        self.calls.append(
-            {
-                "hidden_states": hidden_states,
-                "timestep": timestep,
-                "encoder_hidden_states": encoder_hidden_states,
-            },
-        )
-        assert return_dict is False
-        return (hidden_states * self.weight + encoder_hidden_states,)
+    ``wan_forward`` must unwrap to the backbone, never call the wrapper itself —
+    this is a test instrument (a guard), NOT a stand-in for the model: the real
+    backbone is the shared tiny ``WanTransformer3DModel`` it wraps.
+    """
 
-
-class _DiffusionModelWrapperStub(torch.nn.Module):
-    def __init__(self, transformer: _WanTransformerStub) -> None:
+    def __init__(self, transformer: torch.nn.Module) -> None:
         super().__init__()
         self.transformer = transformer
 
@@ -125,35 +114,58 @@ class _DiffusionModelWrapperStub(torch.nn.Module):
         raise AssertionError("wan_forward must call the registered transformer")
 
 
+def _wan_backbone_inputs(batch: int = 2):
+    """Realistic Wan backbone inputs (5D latents + text embeds) for ``wan_forward``."""
+
+    channels, frames, height, width = TINY_WAN_LATENT_SHAPE[1:]
+    noisy = torch.randn(batch, channels, frames, height, width)
+    timesteps = torch.full((batch,), 5.0)
+    encoder_hidden_states = torch.randn(batch, TINY_WAN_TEXT_LEN, TINY_WAN_TEXT_DIM)
+    return noisy, timesteps, encoder_hidden_states
+
+
+def _real_backbone_output(transformer, noisy, timesteps, encoder_hidden_states):
+    """The genuine transformer's own output for the exact call ``wan_forward`` makes."""
+
+    with torch.no_grad():
+        return transformer(
+            hidden_states=noisy,
+            timestep=timesteps,
+            encoder_hidden_states=encoder_hidden_states,
+            return_dict=False,
+        )[0]
+
+
 def test_wan_forward_unwraps_model_transformer() -> None:
-    transformer = _WanTransformerStub()
-    model = _DiffusionModelWrapperStub(transformer)
-    noisy = torch.ones(2, 3)
-    timesteps = torch.tensor([1, 2])
-    encoder_hidden_states = torch.full((2, 3), 0.5)
+    transformer = build_tiny_wan_transformer().eval()
+    noisy, timesteps, encoder = _wan_backbone_inputs()
+    # Pin against the real backbone's own output, computed BEFORE the recorder is
+    # attached so the recorded count reflects only wan_forward's own invocation.
+    expected = _real_backbone_output(transformer, noisy, timesteps, encoder)
+    calls = record_forward_calls(transformer)
 
-    out = wan_forward(model, noisy, timesteps, encoder_hidden_states)
+    out = wan_forward(_PolicyWrapperGuard(transformer), noisy, timesteps, encoder)
 
-    assert torch.equal(out, noisy * transformer.weight + encoder_hidden_states)
-    assert transformer.calls == [
-        {
-            "hidden_states": noisy,
-            "timestep": timesteps,
-            "encoder_hidden_states": encoder_hidden_states,
-        },
-    ]
+    # Unwrapped to the real backbone and returned ITS output (tuple[0]).
+    torch.testing.assert_close(out, expected)
+    # Exactly one backbone forward, carrying the kwargs the REAL Wan signature
+    # consumes. A rename/addition in that signature breaks this here — which the
+    # old hand-written stub would have silently absorbed.
+    assert len(calls) == 1
+    assert {"hidden_states", "timestep", "encoder_hidden_states"} <= calls[0].keys()
+    assert calls[0]["return_dict"] is False
 
 
 def test_wan_forward_still_accepts_raw_transformer() -> None:
-    transformer = _WanTransformerStub()
-    noisy = torch.ones(1, 2)
-    timesteps = torch.tensor([4])
-    encoder_hidden_states = torch.full((1, 2), 0.25)
+    transformer = build_tiny_wan_transformer().eval()
+    noisy, timesteps, encoder = _wan_backbone_inputs(batch=1)
+    expected = _real_backbone_output(transformer, noisy, timesteps, encoder)
+    calls = record_forward_calls(transformer)
 
-    out = wan_forward(transformer, noisy, timesteps, encoder_hidden_states)
+    out = wan_forward(transformer, noisy, timesteps, encoder)
 
-    assert torch.equal(out, noisy * transformer.weight + encoder_hidden_states)
-    assert len(transformer.calls) == 1
+    torch.testing.assert_close(out, expected)
+    assert len(calls) == 1
 
 
 def test_offline_dpo_state_dict_restores_optimizer_and_global_step() -> None:

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 import torch
 
+from tests.gates import requires_cuda
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
 from vrl.rewards.ray import RayRewardRuntime
 
@@ -153,10 +154,9 @@ def test_ray_reward_runtime_fans_out_across_workers_with_timing() -> None:
         ray.shutdown()
 
 
+@requires_cuda
 def test_ray_reward_runtime_assigns_gpu_ids_for_tensor_model(tmp_path: Path) -> None:
     ray = pytest.importorskip("ray")
-    if not torch.cuda.is_available():
-        pytest.skip("requires a CUDA GPU for Ray reward GPU placement contract")
 
     artifact = tmp_path / "artifact.pt"
     torch.save(torch.ones(2, 2), artifact)

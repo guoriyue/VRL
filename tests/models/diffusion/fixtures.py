@@ -162,3 +162,20 @@ def add_lora_adapters(
     if names:
         transformer.set_adapter(names[0])
     return transformer
+
+
+def record_forward_calls(module: torch.nn.Module) -> list[dict[str, Any]]:
+    """Capture the kwargs of every forward call on ``module``.
+
+    Registers a forward pre-hook and returns the list it appends to, so a test can
+    assert exactly how a wrapper invoked a real transformer (call count + kwargs)
+    against the genuine signature — instead of a hand-written fake that re-declares
+    that signature and silently rots when the real model changes it.
+    """
+
+    calls: list[dict[str, Any]] = []
+    module.register_forward_pre_hook(
+        lambda _m, _args, kwargs: calls.append(dict(kwargs)),
+        with_kwargs=True,
+    )
+    return calls

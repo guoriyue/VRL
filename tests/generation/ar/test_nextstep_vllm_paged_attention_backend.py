@@ -9,6 +9,7 @@ import torch
 from transformers import Qwen2Config, Qwen2Model
 
 from vrl.generation.types import GenerationRequest
+from tests.gates import requires_cuda
 from vrl.models.ar.nextstep_1 import runtime as nextstep_runtime
 from vrl.models.ar.nextstep_1.runner import (
     NextStep1ARModelRunner,
@@ -22,10 +23,8 @@ from vrl.nn.layers.attention.paged import (
 )
 
 
+@requires_cuda
 def test_nextstep_vllm_paged_attention_matches_hf_qwen_one_step() -> None:
-    if not torch.cuda.is_available():
-        pytest.skip("NextStep vLLM paged attention requires CUDA")
-
     torch.manual_seed(0)
     trunk = _tiny_qwen_trunk()
     try:
