@@ -89,6 +89,7 @@ def _launch_contract() -> GenerationRuntimeLaunchContract:
 
 
 def test_ray_generation_worker_load_policy_is_idempotent() -> None:
+    """Checks Ray generation worker load policy is idempotent."""
     _TinyChunkExecutor.build_count = 0
     worker = RayGenerationWorker("rollout-0", _launch_contract())
 
@@ -103,6 +104,7 @@ def test_ray_generation_worker_load_policy_is_idempotent() -> None:
 def test_ray_generation_worker_rebuilds_executor_after_release() -> None:
     # The resident-session contract: a released worker tears down its executor and
     # rebuilds a fresh one on the next load_policy (not the cached idempotent path).
+    """Checks Ray generation worker rebuilds executor after release."""
     _TinyChunkExecutor.build_count = 0
     worker = RayGenerationWorker("rollout-0", _launch_contract())
 

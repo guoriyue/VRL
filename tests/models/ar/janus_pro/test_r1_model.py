@@ -212,6 +212,7 @@ def _r1_rollout_batch() -> RolloutBatch:
 
 
 def test_generate_with_refine_returns_three_segments_and_selects_final_image() -> None:
+    """Checks generate with refine returns three segments and selects final image."""
     model = _model()
     sample_calls: list[int] = []
 
@@ -305,6 +306,7 @@ def test_generate_with_refine_returns_three_segments_and_selects_final_image() -
 
 
 def test_r1_model_replay_forward_returns_requested_replay_segments() -> None:
+    """Checks R1 model replay forward returns requested replay segments."""
     model = _model()
     batch = _r1_rollout_batch()
 
@@ -390,6 +392,7 @@ class _ExecutorModel:
 
 
 def test_r1_executor_forward_emits_canonical_family_and_segment_schema() -> None:
+    """Checks R1 executor forward emits canonical family and segment schema."""
     executor = JanusProR1PipelineExecutor(_ExecutorModel())
     request = GenerationRequest(
         request_id="r1",

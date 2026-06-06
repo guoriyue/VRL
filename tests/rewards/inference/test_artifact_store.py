@@ -29,6 +29,7 @@ def _rollout(output: torch.Tensor) -> RewardRollout:
 
 
 def test_video_artifact_store_writes_tensor_and_manifest(tmp_path: Path) -> None:
+    """Checks video artifact store writes tensor and manifest."""
     store = VideoRewardArtifactStore(tmp_path, media_type="video")
 
     artifacts = store.materialize([_rollout(torch.ones(1, 2, 2, 2))])
@@ -48,6 +49,7 @@ def test_video_artifact_store_writes_tensor_and_manifest(tmp_path: Path) -> None
 
 
 def test_video_artifact_store_writes_mp4_for_reward_models(tmp_path: Path) -> None:
+    """Checks video artifact store writes mp4 for reward models."""
     store = VideoRewardArtifactStore(tmp_path, media_type="video", artifact_format="mp4")
 
     artifacts = store.materialize([_rollout(torch.ones(3, 2, 4, 4))])
@@ -62,6 +64,7 @@ def test_video_artifact_store_writes_mp4_for_reward_models(tmp_path: Path) -> No
 
 
 def test_video_artifact_store_rejects_bad_shape(tmp_path: Path) -> None:
+    """Checks video artifact store rejects bad shape."""
     store = VideoRewardArtifactStore(tmp_path, media_type="video")
 
     with pytest.raises(ValueError, match="video reward artifact expects"):

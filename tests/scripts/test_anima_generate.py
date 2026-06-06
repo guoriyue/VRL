@@ -8,6 +8,7 @@ from vrl.scripts.diffusion.cosmos.anima import generate
 
 
 def test_generate_disables_empty_training_lora_for_inference() -> None:
+    """Checks generate disables empty training LoRA for inference."""
     cfg = OmegaConf.create({"model": {"use_lora": True, "lora": {"path": ""}}})
 
     generate._configure_lora_for_inference(
@@ -20,6 +21,7 @@ def test_generate_disables_empty_training_lora_for_inference() -> None:
 
 
 def test_generate_accepts_checkpoint_dir_as_lora_path(tmp_path) -> None:
+    """Checks generate accepts checkpoint dir as LoRA path."""
     checkpoint = tmp_path / "checkpoint-final"
     exported = checkpoint / "lora_weights"
     exported.mkdir(parents=True)
@@ -28,6 +30,7 @@ def test_generate_accepts_checkpoint_dir_as_lora_path(tmp_path) -> None:
 
 
 def test_generate_image_conversion_accepts_chw_float() -> None:
+    """Checks generate image conversion accepts chw float."""
     from vrl.utils.media import image_to_uint8_hwc
 
     image = np.zeros((3, 2, 2), dtype=np.float32)
@@ -41,6 +44,7 @@ def test_generate_image_conversion_accepts_chw_float() -> None:
 
 
 def test_generate_sampling_defaults_follow_config() -> None:
+    """Checks generate sampling defaults follow config."""
     cfg = OmegaConf.create(
         {
             "sampling": {
@@ -64,6 +68,7 @@ def test_generate_sampling_defaults_follow_config() -> None:
 
 
 def test_generate_cuda_device_fails_fast_when_unavailable() -> None:
+    """Checks generate cuda device fails fast when unavailable."""
     class _Cuda:
         @staticmethod
         def is_available() -> bool:

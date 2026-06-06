@@ -31,6 +31,7 @@ class _QueuedBatchReward(RewardFunction):
 
 @pytest.mark.asyncio
 async def test_multi_reward_accumulates_components_until_reset() -> None:
+    """Checks multi reward accumulates components until reset."""
     reward = MultiReward(
         [
             ("ocr", 1.0, _QueuedBatchReward([[0.1, 0.2], [0.3]])),

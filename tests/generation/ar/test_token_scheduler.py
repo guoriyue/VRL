@@ -28,6 +28,7 @@ def _seq(
 
 
 def test_active_sequence_advance_marks_finished_at_token_limit() -> None:
+    """Checks active sequence advance marks finished at token limit."""
     sequence = _seq("s0", max_new_tokens=3)
 
     sequence.advance()
@@ -42,6 +43,7 @@ def test_active_sequence_advance_marks_finished_at_token_limit() -> None:
 
 
 def test_token_scheduler_batches_same_family_task_token_shape_and_position() -> None:
+    """Checks token scheduler batches same family task token shape and position."""
     scheduler = TokenScheduler(max_batch_size=2)
     scheduler.add_many(
         [
@@ -70,6 +72,7 @@ def test_token_scheduler_batches_same_family_task_token_shape_and_position() -> 
 
 
 def test_token_scheduler_does_not_mix_tokenizers_or_dtypes() -> None:
+    """Checks token scheduler does not mix tokenizers or dtypes."""
     scheduler = TokenScheduler(max_batch_size=4)
     scheduler.add_many(
         [
@@ -93,6 +96,7 @@ def test_token_scheduler_does_not_mix_tokenizers_or_dtypes() -> None:
 
 
 def test_token_scheduler_can_push_back_unfinished_sequences() -> None:
+    """Checks token scheduler can push back unfinished sequences."""
     scheduler = TokenScheduler(max_batch_size=2)
     scheduler.add_many([_seq("a", max_new_tokens=2), _seq("b", max_new_tokens=2)])
 

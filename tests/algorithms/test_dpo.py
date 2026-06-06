@@ -48,6 +48,7 @@ def _reference_dpo_loss(
 
 
 class TestParityWithReference:
+    """Groups tests for parity with reference."""
     def test_matches_reference_4d_image(self) -> None:
         """SD-style image latents [2B, 4, 64, 64]."""
         torch.manual_seed(0)
@@ -85,6 +86,7 @@ class TestParityWithReference:
 
 
 class TestBehavior:
+    """Groups tests for behavior."""
     def test_zero_when_policy_equals_reference(self) -> None:
         """Identical policy & reference → inside_term = 0 → loss = log(2)."""
         torch.manual_seed(2)
@@ -140,12 +142,15 @@ class TestBehavior:
 
 
 class TestValidation:
+    """Groups tests for validation."""
     def test_rejects_odd_batch(self) -> None:
+        """Checks that rejects odd batch."""
         x = torch.randn(3, 4, 4, 4)
         with pytest.raises(ValueError, match="2\\*B"):
             diffusion_dpo_loss(x, x, x, beta=1.0)
 
     def test_rejects_shape_mismatch(self) -> None:
+        """Checks that rejects shape mismatch."""
         a = torch.randn(4, 4, 4, 4)
         b = torch.randn(4, 4, 4, 5)
         with pytest.raises(ValueError, match="shape mismatch"):
@@ -158,6 +163,7 @@ class TestValidation:
 
 
 def test_sft_loss_is_winner_mse() -> None:
+    """Checks sft loss is winner mse."""
     torch.manual_seed(5)
     pred_w = torch.randn(3, 4, 8, 8)
     target_w = torch.randn(3, 4, 8, 8)
@@ -167,12 +173,14 @@ def test_sft_loss_is_winner_mse() -> None:
 
 
 def test_dpo_config_defaults() -> None:
+    """Checks DPO config defaults."""
     cfg = DiffusionDPOConfig()
     assert cfg.beta == 5000.0
     assert cfg.sft_weight == 0.0
 
 
 def test_dpo_algorithm_wrapper_matches_functional_loss() -> None:
+    """Checks DPO algorithm wrapper matches functional loss."""
     torch.manual_seed(6)
     model_pred = torch.randn(4, 4, 8, 8)
     ref_pred = torch.randn(4, 4, 8, 8)

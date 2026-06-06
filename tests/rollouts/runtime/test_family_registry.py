@@ -16,6 +16,7 @@ from vrl.rollouts.families import (
 
 
 def test_family_registry_covers_current_rollout_families() -> None:
+    """Checks family registry covers current rollout families."""
     assert registered_rollout_families() == (
         "sd3_5",
         "wan_2_1",
@@ -45,6 +46,7 @@ def test_family_registry_covers_current_rollout_families() -> None:
 
 
 def test_family_aliases_resolve_to_canonical_entries() -> None:
+    """Checks family aliases resolve to canonical entries."""
     expected_aliases = {
         "wan": "wan_2_1",
         "wan_i2v": "wan_2_1_i2v",
@@ -63,6 +65,7 @@ def test_family_aliases_resolve_to_canonical_entries() -> None:
 
 
 def test_rollout_config_is_projected_from_yaml() -> None:
+    """Checks rollout config is projected from YAML."""
     cfg = OmegaConf.create(
         {
             "sampling": {
@@ -99,6 +102,7 @@ def test_rollout_config_is_projected_from_yaml() -> None:
 
 
 def test_request_sampling_is_projected_from_resolved_yaml_config() -> None:
+    """Checks request sampling is projected from resolved YAML config."""
     cfg = OmegaConf.create(
         {
             "sampling": {
@@ -146,6 +150,7 @@ def test_request_sampling_is_projected_from_resolved_yaml_config() -> None:
 
 
 def test_registry_keeps_return_artifacts_as_wiring_metadata() -> None:
+    """Checks registry keeps return artifacts as wiring metadata."""
     for family in FAMILY_REGISTRY:
         assert FAMILY_REGISTRY[family].collector.return_artifacts == (
             "output",
@@ -154,6 +159,7 @@ def test_registry_keeps_return_artifacts_as_wiring_metadata() -> None:
 
 
 def test_migrated_collectors_build_direct_trajectory_collectors() -> None:
+    """Checks migrated collectors build direct trajectory collectors."""
     for family in FAMILY_REGISTRY:
         collector = build_rollout_collector(
             family,
@@ -172,5 +178,6 @@ def test_migrated_collectors_build_direct_trajectory_collectors() -> None:
 
 
 def test_unknown_family_raises_clear_error() -> None:
+    """Checks unknown family raises clear error."""
     with pytest.raises(ValueError, match="unsupported rollout family"):
         get_rollout_family_entry("not_a_family")

@@ -10,6 +10,7 @@ from vrl.generation.ar.decode_loop import ActiveSequence
 
 
 def test_nextstep_ar_sampling_params_carry_scheduler_batch_size() -> None:
+    """Checks NextStep AR sampling params carry scheduler batch size."""
     request = GenerationRequest(
         request_id="req",
         family="nextstep_1",
@@ -41,6 +42,7 @@ def test_nextstep_ar_sampling_params_carry_scheduler_batch_size() -> None:
 
 
 def test_ar_layout_requires_shape_sampling_fields() -> None:
+    """Checks AR layout requires shape sampling fields."""
     for missing_key in ("image_token_num", "image_size", "max_text_length"):
         sampling = {
             "image_token_num": 8,

@@ -39,6 +39,7 @@ class _Bundle:
 
 
 def test_ray_runtime_weight_syncer_pushes_cpu_state_with_monotonic_versions() -> None:
+    """Checks Ray runtime weight syncer pushes CPU state with monotonic versions."""
     runtime = _RuntimeWithSync()
     syncer = RayRuntimeWeightSyncer(runtime)
 
@@ -52,6 +53,7 @@ def test_ray_runtime_weight_syncer_pushes_cpu_state_with_monotonic_versions() ->
 
 
 def test_ray_runtime_weight_syncer_serializes_concurrent_push_versions() -> None:
+    """Checks Ray runtime weight syncer serializes concurrent push versions."""
     class _SlowRuntime(_RuntimeWithSync):
         async def update_weights(self, state_ref: dict[str, Any], policy_version: int) -> None:
             await asyncio.sleep(0)
@@ -73,11 +75,13 @@ def test_ray_runtime_weight_syncer_serializes_concurrent_push_versions() -> None
 
 
 def test_build_runtime_weight_syncer_requires_runtime_weight_sync_handle() -> None:
+    """Checks build runtime weight syncer requires runtime weight sync handle."""
     assert build_runtime_weight_syncer(_RuntimeWithSync()) is not None
     assert build_runtime_weight_syncer(_RuntimeWithoutSync()) is None
 
 
 def test_flatten_trainable_module_state_prefixes_module_names() -> None:
+    """Checks flatten trainable module state prefixes module names."""
     module = torch.nn.Linear(2, 1, bias=False)
     state = flatten_trainable_module_state({"adapter": module})
 
@@ -86,6 +90,7 @@ def test_flatten_trainable_module_state_prefixes_module_names() -> None:
 
 
 def test_flatten_trainable_module_state_skips_frozen_parameters() -> None:
+    """Checks flatten trainable module state skips frozen parameters."""
     module = torch.nn.Linear(2, 1, bias=True)
     module.bias.requires_grad_(False)
     state = flatten_trainable_module_state({"adapter": module})
@@ -94,6 +99,7 @@ def test_flatten_trainable_module_state_skips_frozen_parameters() -> None:
 
 
 def test_build_trainable_state_sync_getter_reads_bundle_trainable_modules() -> None:
+    """Checks build trainable state sync getter reads bundle trainable modules."""
     bundle = _Bundle()
     getter = build_trainable_state_sync_getter(bundle)
     state = getter()

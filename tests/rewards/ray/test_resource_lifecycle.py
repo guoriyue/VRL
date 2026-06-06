@@ -48,6 +48,7 @@ def _request() -> RewardInferenceRequest:
 
 
 def test_reward_runtime_releases_actors_after_score_when_configured() -> None:
+    """Checks reward runtime releases actors after score when configured."""
     ray = pytest.importorskip("ray")
     ray.shutdown()
     runtime = None
@@ -89,6 +90,7 @@ def test_reward_runtime_releases_actors_after_score_when_configured() -> None:
 
 
 def test_reward_config_receives_resolved_resource_plan() -> None:
+    """Checks reward config receives resolved resource plan."""
     cfg = OmegaConf.create(
         {
             "distributed": {

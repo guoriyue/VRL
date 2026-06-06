@@ -111,6 +111,7 @@ def _launch_contract() -> GenerationRuntimeLaunchContract:
 
 
 def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray() -> None:
+    """Checks Ray generation launcher builds worker runtime with embedded Ray."""
     ray = pytest.importorskip("ray")
     import vrl.generation.ray.launcher as launcher_mod
 

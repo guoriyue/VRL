@@ -9,6 +9,7 @@ from vrl.rollouts.evaluators.base import Evaluator
 
 
 class TestAdvantageAndMetrics:
+    """Groups tests for advantage and metrics."""
     def _make_cea_trainer(self, rewards: list[float]):
         import torch
         import torch.nn as nn

@@ -466,6 +466,7 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Checks real checkpoint online RL updates trainable weights."""
     _skip_unless_case_enabled(case)
     _skip_unless_cuda_has_memory(case.min_cuda_memory_gib)
 

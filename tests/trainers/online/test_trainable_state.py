@@ -7,7 +7,9 @@ from vrl.rollouts.evaluators.base import Evaluator
 
 
 class TestTrainableState:
+    """Groups tests for trainable state."""
     def test_initial_rollout_weight_sync_happens_before_collect(self) -> None:
+        """Checks initial rollout weight sync happens before collect."""
         import asyncio
 
         import torch
@@ -99,6 +101,7 @@ class TestTrainableState:
         assert len(syncer.calls) == 2
 
     def test_weight_sync_requires_explicit_trainable_state_getter(self) -> None:
+        """Checks weight sync requires explicit trainable state getter."""
         import pytest
         import torch.nn as nn
 

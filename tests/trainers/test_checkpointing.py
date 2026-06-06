@@ -20,6 +20,7 @@ from vrl.trainers.checkpointing import (
 
 def test_training_checkpoint_round_trips_trainer_and_trainable_modules(tmp_path) -> None:
 
+    """Checks training checkpoint round trips trainer and trainable modules."""
     trainer = _Trainer()
     source = _Bundle()
     with torch.no_grad():
@@ -51,6 +52,7 @@ def test_training_checkpoint_round_trips_trainer_and_trainable_modules(tmp_path)
 
 
 def test_training_checkpoint_writes_optional_lora_export(tmp_path) -> None:
+    """Checks training checkpoint writes optional LoRA export."""
     class _ExportModule:
         def save_pretrained(self, path):
             path.mkdir(parents=True)
@@ -74,6 +76,7 @@ def test_training_checkpoint_writes_optional_lora_export(tmp_path) -> None:
 def test_training_checkpoint_exports_lora_with_ema_without_mutating_resume_state(
     tmp_path,
 ) -> None:
+    """Checks training checkpoint exports LoRA with EMA without mutating resume state."""
     class _ExportModule:
         def __init__(self, module) -> None:
             self.module = module
@@ -125,6 +128,7 @@ def test_training_checkpoint_exports_lora_with_ema_without_mutating_resume_state
 def test_training_checkpoint_skips_lora_ema_export_before_first_ema_update(
     tmp_path,
 ) -> None:
+    """Checks training checkpoint skips LoRA EMA export before first EMA update."""
     class _ExportModule:
         def __init__(self, module) -> None:
             self.module = module
@@ -172,6 +176,7 @@ def test_training_checkpoint_skips_lora_ema_export_before_first_ema_update(
 
 
 def test_load_training_checkpoint_requires_checkpoint_pt(tmp_path) -> None:
+    """Checks load training checkpoint requires checkpoint pt."""
     ckpt = tmp_path / "checkpoint-1"
     ckpt.mkdir()
 
@@ -180,6 +185,7 @@ def test_load_training_checkpoint_requires_checkpoint_pt(tmp_path) -> None:
 
 
 def test_load_training_checkpoint_rejects_bad_schema(tmp_path) -> None:
+    """Checks load training checkpoint rejects bad schema."""
     ckpt = tmp_path / "checkpoint-1"
     ckpt.mkdir()
     torch.save({"schema_version": 999}, ckpt / TRAINING_CHECKPOINT_NAME)
@@ -189,11 +195,13 @@ def test_load_training_checkpoint_rejects_bad_schema(tmp_path) -> None:
 
 
 def test_load_trainable_state_strict_rejects_key_mismatch() -> None:
+    """Checks load trainable state strict rejects key mismatch."""
     with pytest.raises(ValueError, match="missing"):
         load_trainable_state(_Bundle(), {}, strict=True)
 
 
 def test_infer_next_epoch_falls_back_to_trainer_step_for_checkpoint_final(tmp_path) -> None:
+    """Checks infer next epoch falls back to trainer step for checkpoint final."""
     ckpt = tmp_path / "checkpoint-final"
     ckpt.mkdir()
 
@@ -201,6 +209,7 @@ def test_infer_next_epoch_falls_back_to_trainer_step_for_checkpoint_final(tmp_pa
 
 
 def test_infer_next_epoch_falls_back_to_numeric_checkpoint_suffix(tmp_path) -> None:
+    """Checks infer next epoch falls back to numeric checkpoint suffix."""
     ckpt = tmp_path / "checkpoint-42"
     ckpt.mkdir()
 
@@ -208,6 +217,7 @@ def test_infer_next_epoch_falls_back_to_numeric_checkpoint_suffix(tmp_path) -> N
 
 
 def test_sample_prompt_indices_uses_configured_sampler_strategy() -> None:
+    """Checks sample prompt indices uses configured sampler strategy."""
     sequential = sample_prompt_indices(
         torch.Generator().manual_seed(0),
         num_examples=5,
@@ -228,6 +238,7 @@ def test_sample_prompt_indices_uses_configured_sampler_strategy() -> None:
 
 
 def test_load_training_checkpoint_rejects_non_object_meta(tmp_path) -> None:
+    """Checks load training checkpoint rejects non object meta."""
     ckpt = tmp_path / "checkpoint-1"
     ckpt.mkdir()
     torch.save(

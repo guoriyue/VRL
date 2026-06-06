@@ -159,6 +159,7 @@ def test_janus_collector_has_no_forward_step() -> None:
 
 
 def test_janus_model_exposes_trainer_replay_methods() -> None:
+    """Checks Janus model exposes trainer replay methods."""
     model = _build_stub_model()
     assert callable(model.replay_forward)
     assert callable(model.disable_adapter)
@@ -166,6 +167,7 @@ def test_janus_model_exposes_trainer_replay_methods() -> None:
 
 
 def test_janus_model_replay_forward_returns_typed_replay_result() -> None:
+    """Checks Janus model replay forward returns typed replay result."""
     model = _build_stub_model()
     batch = _discrete_batch()
 
@@ -180,6 +182,7 @@ def test_janus_model_replay_forward_returns_typed_replay_result() -> None:
 
 
 def test_janus_disable_adapter_without_lora_is_noop() -> None:
+    """Checks Janus disable adapter without LoRA is no-op."""
     model = _build_stub_model()
 
     assert model.has_lora_adapter is False

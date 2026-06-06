@@ -61,7 +61,9 @@ def _make_trainer(scheduler_timesteps, *, timestep_subset=None) -> OfflineDPOTra
 
 
 class TestSampleTimesteps:
+    """Groups tests for sample timesteps."""
     def test_uses_scheduler_timesteps_when_set(self) -> None:
+        """Checks that uses scheduler timesteps when set."""
         trainer = _make_trainer(torch.arange(20))
         ts = trainer._sample_timesteps(8)
         assert ts.shape == (8,)
@@ -69,6 +71,7 @@ class TestSampleTimesteps:
 
     def test_explicit_subset_takes_precedence(self) -> None:
         # Subset wins even if scheduler has its own timesteps.
+        """Checks explicit subset takes precedence."""
         trainer = _make_trainer(torch.arange(50), timestep_subset=(5, 10))
         ts = trainer._sample_timesteps(20)
         assert (ts >= 5).all() and (ts < 10).all()
@@ -137,6 +140,7 @@ def _real_backbone_output(transformer, noisy, timesteps, encoder_hidden_states):
 
 
 def test_wan_forward_unwraps_model_transformer() -> None:
+    """Checks Wan forward unwraps model transformer."""
     transformer = build_tiny_wan_transformer().eval()
     noisy, timesteps, encoder = _wan_backbone_inputs()
     # Pin against the real backbone's own output, computed BEFORE the recorder is
@@ -157,6 +161,7 @@ def test_wan_forward_unwraps_model_transformer() -> None:
 
 
 def test_wan_forward_still_accepts_raw_transformer() -> None:
+    """Checks Wan forward still accepts raw transformer."""
     transformer = build_tiny_wan_transformer().eval()
     noisy, timesteps, encoder = _wan_backbone_inputs(batch=1)
     expected = _real_backbone_output(transformer, noisy, timesteps, encoder)
@@ -169,6 +174,7 @@ def test_wan_forward_still_accepts_raw_transformer() -> None:
 
 
 def test_offline_dpo_state_dict_restores_optimizer_and_global_step() -> None:
+    """Checks offline DPO state dict restores optimizer and global step."""
     source = _make_trainer(torch.arange(20))
     source.global_step = 7
     loss = source.model(torch.ones(1, 4)).sum()
@@ -187,6 +193,7 @@ def test_offline_dpo_state_dict_restores_optimizer_and_global_step() -> None:
 
 
 def test_offline_dpo_accumulation_boundary_ignores_global_step_offset() -> None:
+    """Checks offline DPO accumulation boundary ignores global step offset."""
     trainer = _make_trainer(torch.arange(20))
     trainer.config.gradient_accumulation_steps = 3
     trainer.global_step = 7

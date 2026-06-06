@@ -25,6 +25,7 @@ def _write_manifest(path: Path, row: dict) -> None:
 
 
 def test_artifact_manifest_resolves_relative_references_via_data_root(tmp_path: Path) -> None:
+    """Checks artifact manifest resolves relative references via data root."""
     data_root = tmp_path / "external"
     reference = data_root / "video_world" / "references" / "ref.ppm"
     manifest = tmp_path / "v2w_train.jsonl"
@@ -51,6 +52,7 @@ def test_artifact_manifest_resolves_relative_references_via_data_root(tmp_path: 
 
 
 def test_missing_reference_image_fails_with_manifest_row(tmp_path: Path) -> None:
+    """Checks missing reference image fails with manifest row."""
     manifest = tmp_path / "missing.jsonl"
     manifest.write_text(
         json.dumps(
@@ -72,6 +74,7 @@ def test_missing_reference_image_fails_with_manifest_row(tmp_path: Path) -> None
 
 
 def test_absolute_artifact_paths_are_rejected_by_default(tmp_path: Path) -> None:
+    """Checks absolute artifact paths are rejected by default."""
     path = tmp_path / "ref.ppm"
     path.write_text("P3\n1 1\n255\n0 0 0\n", encoding="utf-8")
 
@@ -80,6 +83,7 @@ def test_absolute_artifact_paths_are_rejected_by_default(tmp_path: Path) -> None
 
 
 def test_production_metadata_domain_is_rejected(tmp_path: Path) -> None:
+    """Checks production metadata domain is rejected."""
     reference = tmp_path / "video_world" / "references" / "ref.ppm"
     _write_ppm(reference)
     manifest = tmp_path / "manifest.jsonl"
@@ -103,6 +107,7 @@ def test_production_metadata_domain_is_rejected(tmp_path: Path) -> None:
 def test_setup_cli_creates_ignored_external_dirs(
     tmp_path: Path,
 ) -> None:
+    """Checks setup CLI creates ignored external dirs."""
     data_root = tmp_path / "external"
 
     assert setup_cli.main(

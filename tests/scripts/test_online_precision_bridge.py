@@ -22,6 +22,7 @@ _RECIPES = [
 
 @pytest.mark.parametrize("experiment", _RECIPES)
 def test_bridge_preserves_legacy_dtype(experiment):
+    """Checks bridge preserves legacy dtype."""
     cfg = load_config(f"experiment/{experiment}")
     trainer_config = build_configs(cfg)["trainer"]
     legacy = torch_dtype_for_trainer_precision(trainer_config, torch)
@@ -31,6 +32,7 @@ def test_bridge_preserves_legacy_dtype(experiment):
 
 def test_precision_block_drives_trainer():
     # An fp32 recipe + a top-level `precision: bf16` must flip the trainer to bf16.
+    """Checks precision block drives trainer."""
     cfg = load_config("experiment/diffusion/sd3_5/online_grpo_ocr")
     assert torch_dtype_for_trainer_precision(build_configs(cfg)["trainer"], torch) is torch.float32
 
@@ -50,6 +52,7 @@ def _with_precision(experiment, block):
 def test_decoupled_rollout_compute():
     # P3: bf16 replay / fp32 rollout — compute drives the trainer, rollout is
     # a separate generation dtype (no longer refused).
+    """Checks decoupled rollout compute."""
     cfg = _with_precision(
         "diffusion/sd3_5/online_grpo_ocr", {"compute": "bf16", "rollout": "fp32"},
     )
@@ -62,6 +65,7 @@ def test_decoupled_rollout_compute():
 @pytest.mark.parametrize("math,expected", [("fp32", torch.float32), ("bf16", torch.bfloat16)])
 def test_math_axis_resolves_to_dtype(math, expected):
     # P2: the `math` axis resolves to the evaluator's log-prob math dtype.
+    """Checks math axis resolves to dtype."""
     from vrl.config.precision import resolve_precision_policy
     from vrl.models.dtypes import resolve_torch_dtype
 
@@ -74,6 +78,7 @@ def test_math_axis_resolves_to_dtype(math, expected):
 )
 def test_frozen_axis_in_runtime_spec(frozen, expected):
     # P1b: the frozen axis rides the spec as a real torch.dtype (like `dtype`).
+    """Checks frozen axis in runtime spec."""
     from vrl.models.diffusion.sd3_5.runtime import extract_sd3_5_runtime_spec
 
     cfg = _with_precision("diffusion/sd3_5/online_grpo_ocr", {"compute": "fp32", "frozen": frozen})

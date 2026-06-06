@@ -30,6 +30,7 @@ from vrl.models.diffusion.wan_2_1.model import WanT2VDiffusersModel, WanT2VSampl
 
 @pytest.mark.parametrize("arch", archs_with_tiny_pipe())
 def test_tiny_pipeline_assembles_real_components(arch: str) -> None:
+    """Checks tiny pipeline assembles real components."""
     try:
         pipe = load_tiny_pipeline(arch)
     except TinyPipelineUnavailable as exc:
@@ -42,6 +43,7 @@ def test_tiny_pipeline_assembles_real_components(arch: str) -> None:
 
 
 def test_wan_wrapper_runs_on_real_loaded_pipeline() -> None:
+    """Checks Wan wrapper runs on real loaded pipeline."""
     try:
         pipe = load_tiny_pipeline("wan-t2v")
     except TinyPipelineUnavailable as exc:
@@ -73,6 +75,7 @@ def test_wan_wrapper_runs_on_real_loaded_pipeline() -> None:
 
 
 def test_sd3_wrapper_runs_on_real_loaded_pipeline() -> None:
+    """Checks SD3 wrapper runs on real loaded pipeline."""
     try:
         pipe = load_tiny_pipeline("sd3")
     except TinyPipelineUnavailable as exc:

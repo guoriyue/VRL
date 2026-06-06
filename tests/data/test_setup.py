@@ -15,6 +15,7 @@ def test_video_world_bridge_rows_match_cosmos_consumer(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
+    """Checks video world bridge rows match Cosmos consumer."""
     episodes = [
         {
             "image": Image.new("RGB", (4, 4), (10, 20, 30)),
@@ -64,6 +65,7 @@ def test_video_world_bridge_rows_match_cosmos_consumer(
 # ``test_danbooru.py::test_download_danbooru_images_downloads_only_positive_selection``.
 # This module only covers the ``setup.main`` CLI wiring that sits on top of it.
 def test_anime_positives_prepares_both_manifests_end_to_end(monkeypatch, tmp_path: Path) -> None:
+    """Checks anime positives prepares both manifests end-to-end."""
     metadata = tmp_path / "posts.jsonl"
     rows = [
         {
@@ -121,6 +123,7 @@ def test_anime_positives_prepares_both_manifests_end_to_end(monkeypatch, tmp_pat
 
 
 def test_for_experiment_plan_marks_committed_manifest_ready(tmp_path: Path) -> None:
+    """Checks for experiment plan marks committed manifest ready."""
     manifest_dir = tmp_path / "datasets" / "pickscore_sfw"
     manifest_dir.mkdir(parents=True)
     (manifest_dir / "train.txt").write_text("a\nb\nc\n", encoding="utf-8")
@@ -137,6 +140,7 @@ def test_for_experiment_plan_marks_committed_manifest_ready(tmp_path: Path) -> N
 
 
 def test_for_experiment_plan_flags_pickapic_download(tmp_path: Path) -> None:
+    """Checks for experiment plan flags Pick-a-Pic download."""
     plan = bootstrap.resolve_experiment_dataset_plan(
         {"loader": "pickapic_preference"},
         repo_root=tmp_path,
@@ -147,6 +151,7 @@ def test_for_experiment_plan_flags_pickapic_download(tmp_path: Path) -> None:
 
 
 def test_for_experiment_plan_flags_missing_manifest_with_command(tmp_path: Path) -> None:
+    """Checks for experiment plan flags missing manifest with command."""
     plan = bootstrap.resolve_experiment_dataset_plan(
         {
             "loader": "prompt_manifest",
@@ -160,6 +165,7 @@ def test_for_experiment_plan_flags_missing_manifest_with_command(tmp_path: Path)
 
 
 def test_for_experiment_resolves_real_wan_experiment(capsys) -> None:
+    """Checks for experiment resolves real Wan experiment."""
     setup.main(["for-experiment", "diffusion/wan_2_1/online_grpo_kling_video_reward"])
     out = json.loads(capsys.readouterr().out)
 

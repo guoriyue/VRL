@@ -34,6 +34,7 @@ def _make_request(score_key: str = "overall") -> RewardInferenceRequest:
 
 @pytest.mark.asyncio
 async def test_local_runtime_scores_in_process_without_disk_or_ray() -> None:
+    """Checks local runtime scores in process without disk or Ray."""
     runtime = LocalRewardRuntime(model=_SumMediaModel())
     results = await runtime.score_batch(_make_request())
 
@@ -46,6 +47,7 @@ async def test_local_runtime_scores_in_process_without_disk_or_ray() -> None:
 
 @pytest.mark.asyncio
 async def test_local_runtime_composite_score_key_sums_components() -> None:
+    """Checks local runtime composite score key sums components."""
     runtime = LocalRewardRuntime(model=_SumMediaModel())
     results = await runtime.score_batch(_make_request(score_key="overall+extra"))
 
@@ -55,6 +57,7 @@ async def test_local_runtime_composite_score_key_sums_components() -> None:
 
 @pytest.mark.asyncio
 async def test_local_runtime_empty_request_returns_empty() -> None:
+    """Checks local runtime empty request returns empty."""
     runtime = LocalRewardRuntime(model=_SumMediaModel())
     request = RewardInferenceRequest(
         request_id="req-empty",

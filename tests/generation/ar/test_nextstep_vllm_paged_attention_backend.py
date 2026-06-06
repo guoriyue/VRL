@@ -24,6 +24,7 @@ from vrl.nn.layers.attention.paged import (
 
 @pytest.mark.gpu
 def test_nextstep_vllm_paged_attention_matches_hf_qwen_one_step() -> None:
+    """Checks NextStep vLLM paged attention matches HF Qwen one step."""
     torch.manual_seed(0)
     trunk = _tiny_qwen_trunk()
     try:
@@ -74,6 +75,7 @@ def test_nextstep_vllm_paged_attention_matches_hf_qwen_one_step() -> None:
 
 
 def test_nextstep_runtime_uses_vllm_paged_attention_by_default(monkeypatch) -> None:
+    """Checks NextStep runtime uses vLLM paged attention by default."""
     model = SimpleNamespace(
         config=SimpleNamespace(model_path="tiny-nextstep"),
         device=torch.device("cuda"),

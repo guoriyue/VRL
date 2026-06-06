@@ -58,6 +58,7 @@ class _RecordingLifecycle:
 
 @pytest.mark.asyncio
 async def test_cleanup_runs_when_collect_raises() -> None:
+    """Checks cleanup runs when collect raises."""
     lifecycle = _RecordingLifecycle()
     schedule = StrictOnPolicyRolloutSchedule(lifecycle=lifecycle)
 

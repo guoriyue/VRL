@@ -12,6 +12,7 @@ from vrl.scripts.common.factory import (
 
 
 def test_diffusion_grpo_evaluator_uses_resolved_rollout_sde_config() -> None:
+    """Checks diffusion GRPO evaluator uses resolved rollout SDE config."""
     cfg = load_config(
         "experiment/diffusion/wan_2_1/online_grpo_ocr",
         overrides=[
@@ -35,6 +36,7 @@ def test_diffusion_grpo_evaluator_uses_resolved_rollout_sde_config() -> None:
 
 
 def test_wan_empty_lora_preserves_base_policy_initially() -> None:
+    """Checks Wan empty LoRA preserves base policy initially."""
     cfg = load_config("experiment/diffusion/wan_2_1/online_grpo_physics")
 
     spec = extract_wan_2_1_runtime_spec(cfg, torch.device("cpu"), torch.bfloat16)

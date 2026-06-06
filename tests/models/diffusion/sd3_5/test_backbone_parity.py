@@ -31,6 +31,7 @@ def _model(transformer: torch.nn.Module) -> SD3_5Model:
 
 
 def test_sd3_forward_step_runs_real_batched_cfg() -> None:
+    """Checks SD3 forward step runs real batched CFG."""
     transformer = build_tiny_sd3_transformer()
     calls = record_forward_calls(transformer)
     model = _model(transformer)
@@ -58,6 +59,7 @@ def test_sd3_forward_step_runs_real_batched_cfg() -> None:
 
 
 def test_sd3_forward_step_single_branch_skips_cfg() -> None:
+    """Checks SD3 forward step single branch skips CFG."""
     transformer = build_tiny_sd3_transformer()
     calls = record_forward_calls(transformer)
     model = _model(transformer)

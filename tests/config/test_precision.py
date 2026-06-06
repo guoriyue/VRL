@@ -50,10 +50,12 @@ def _cfg(precision=None, mixed_precision=None, bf16=None):
     ],
 )
 def test_normalize_precision(value, expected):
+    """Checks normalize precision."""
     assert normalize_precision(value) == expected
 
 
 def test_normalize_rejects_unknown():
+    """Checks normalize rejects unknown."""
     with pytest.raises(ValueError):
         normalize_precision("int8")
     with pytest.raises(ValueError):
@@ -61,6 +63,7 @@ def test_normalize_rejects_unknown():
 
 
 def test_resolve_torch_dtype():
+    """Checks resolve torch dtype."""
     assert resolve_torch_dtype("fp32") is torch.float32
     assert resolve_torch_dtype("bf16") is torch.bfloat16
     assert resolve_torch_dtype("fp16") is torch.float16
@@ -70,17 +73,20 @@ def test_resolve_torch_dtype():
 
 
 def test_scalar_bf16_expands_all_compute_axes():
+    """Checks scalar bf16 expands all compute axes."""
     p = resolve_precision_policy(_cfg(precision="bf16"))
     assert p == PrecisionPolicy(compute="bf16", rollout="bf16", math="fp32", frozen="bf16")
 
 
 def test_scalar_fp32_keeps_frozen_fp16():
+    """Checks scalar FP32 keeps frozen FP16."""
     p = resolve_precision_policy(_cfg(precision="fp32"))
     assert p == PrecisionPolicy(compute="fp32", rollout="fp32", math="fp32", frozen="fp16")
 
 
 def test_dict_decoupled_rollout():
     # The validated "bf16 replay / fp32 rollout" split.
+    """Checks dict decoupled rollout."""
     p = resolve_precision_policy(_cfg(precision={"compute": "bf16", "rollout": "fp32"}))
     assert p.compute == "bf16"
     assert p.rollout == "fp32"
@@ -89,6 +95,7 @@ def test_dict_decoupled_rollout():
 
 
 def test_math_protected_unless_explicit():
+    """Checks math protected unless explicit."""
     p = resolve_precision_policy(_cfg(precision={"compute": "bf16", "math": "bf16"}))
     assert p.math == "bf16"  # only when explicitly asked
 
@@ -97,17 +104,20 @@ def test_math_protected_unless_explicit():
 
 
 def test_legacy_fp32():
+    """Checks legacy FP32."""
     p = resolve_precision_policy(_cfg(mixed_precision="no", bf16=False))
     assert p == PrecisionPolicy(compute="fp32", rollout="fp32", math="fp32", frozen="fp16")
 
 
 def test_legacy_bf16_explicit():
+    """Checks legacy bf16 explicit."""
     p = resolve_precision_policy(_cfg(mixed_precision="bf16", bf16=True))
     assert p == PrecisionPolicy(compute="bf16", rollout="bf16", math="fp32", frozen="bf16")
 
 
 def test_legacy_empty_defaults_to_bf16_flag():
     # mixed_precision unset -> follow bf16 flag (TrainerConfig default True).
+    """Checks legacy empty defaults to bf16 flag."""
     assert resolve_precision_policy(_cfg(bf16=True)).compute == "bf16"
     assert resolve_precision_policy(_cfg(bf16=False)).compute == "fp32"
 
@@ -117,6 +127,7 @@ def test_legacy_empty_defaults_to_bf16_flag():
 
 @pytest.mark.parametrize("mp,bf16", [("no", False), ("bf16", True), ("fp16", False), ("", True), ("", False)])
 def test_compute_matches_legacy_weight_dtype(mp, bf16):
+    """Checks compute matches legacy weight dtype."""
     cfg = _cfg(mixed_precision=mp, bf16=bf16)
     policy = resolve_precision_policy(cfg)
     legacy = torch_dtype_for_trainer_precision(cfg.actor, torch)
@@ -149,6 +160,7 @@ _ONLINE_RECIPES = [
 
 @pytest.mark.parametrize("experiment", _ONLINE_RECIPES)
 def test_online_recipe_equivalence(experiment):
+    """Checks online recipe equivalence."""
     cfg = load_config(f"experiment/{experiment}")
     policy = resolve_precision_policy(cfg)
 

@@ -31,6 +31,7 @@ def _request(count: int = 3) -> RewardInferenceRequest:
 
 
 def test_shard_reward_request_balances_artifacts() -> None:
+    """Checks shard reward request balances artifacts."""
     shards = shard_reward_request(_request(5), num_shards=2)
 
     assert [len(shard.artifacts) for shard in shards] == [3, 2]
@@ -44,11 +45,13 @@ def test_shard_reward_request_balances_artifacts() -> None:
 
 
 def test_runtime_factory_rejects_missing_worker_config() -> None:
+    """Checks runtime factory rejects missing worker config."""
     with pytest.raises(ValueError, match="worker_config"):
         RayRewardRuntime({"inference_runtime": "ray"})
 
 
 def test_reward_name_without_worker_config_is_not_a_worker_loader() -> None:
+    """Checks reward name without worker config is not a worker loader."""
     with pytest.raises(ValueError, match="worker_config"):
         RayRewardRuntime(
             {
@@ -60,6 +63,7 @@ def test_reward_name_without_worker_config_is_not_a_worker_loader() -> None:
 
 
 def test_video_reward_derives_internal_model_factory_from_reward_name(tmp_path) -> None:
+    """Checks video reward derives internal model factory from reward name."""
     reward = KlingVideoReward(
         reward_name="KlingTeam/VideoReward@main",
         score_key="overall_reward",
@@ -77,6 +81,7 @@ def test_video_reward_derives_internal_model_factory_from_reward_name(tmp_path) 
 
 
 def test_worker_loads_reward_model_via_factory(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Checks worker loads reward model via factory."""
     class _FakeRewardModel:
         def __init__(self, worker_config):
             self.worker_config = worker_config
@@ -123,6 +128,7 @@ def test_worker_loads_reward_model_via_factory(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_worker_requires_explicit_model_factory_even_with_reward_model_name() -> None:
+    """Checks worker requires explicit model factory even with reward model name."""
     with pytest.raises(ValueError, match="model_factory"):
         RewardModelWorker("reward-0", {})
     with pytest.raises(ValueError, match="model_factory"):

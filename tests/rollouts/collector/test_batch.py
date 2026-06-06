@@ -7,6 +7,7 @@ from __future__ import annotations
 # ---------------------------------------------------------------------------
 
 class TestStackBatches:
+    """Groups tests for stack batches."""
     def test_stacks_two_batches(self) -> None:
         """stack_batches concatenates tensor fields along batch dim."""
         import torch

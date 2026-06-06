@@ -10,6 +10,7 @@ from vrl.models.diffusion.common import (
 
 
 def test_chunked_latent_decoder_decodes_in_batch_chunks() -> None:
+    """Checks chunked latent decoder decodes in batch chunks."""
     calls: list[torch.Tensor] = []
 
     def decode(chunk: torch.Tensor) -> torch.Tensor:
@@ -34,6 +35,7 @@ def test_chunked_latent_decoder_decodes_in_batch_chunks() -> None:
 
 
 def test_chunked_latent_decoder_standardizes_video_layout() -> None:
+    """Checks chunked latent decoder standardizes video layout."""
     decoder = ChunkedLatentDecoder(
         LatentDecodeSpec(
             transform=LatentDecodeTransform(lambda x: x),

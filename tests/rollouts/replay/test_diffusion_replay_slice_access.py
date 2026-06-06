@@ -17,6 +17,7 @@ from vrl.trajectory import build_diffusion_trajectory
 
 
 def test_diffusion_replay_slices_timestep_before_device_move() -> None:
+    """Checks diffusion replay slices timestep before device move."""
     batch, sentinels = _batch_with_sentinel_timestep_tensors()
     evaluator = DiffusionSDELogProbEvaluator(_Scheduler())
 

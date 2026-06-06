@@ -15,6 +15,7 @@ from vrl.trajectory import (
 
 
 def test_default_storage_policy_returns_original_batch() -> None:
+    """Checks default storage policy returns original batch."""
     trajectory = _trajectory()
     token_ids = trajectory.segments["image_tokens"].tensors["token_ids"].value
 
@@ -26,6 +27,7 @@ def test_default_storage_policy_returns_original_batch() -> None:
 
 
 def test_dtype_policy_only_casts_floating_tensors() -> None:
+    """Checks dtype policy only casts floating tensors."""
     trajectory = _trajectory()
 
     result = apply_trajectory_storage_policy(
@@ -47,6 +49,7 @@ def test_dtype_policy_only_casts_floating_tensors() -> None:
 
 
 def test_cpu_storage_policy_moves_tensor_leaves_to_cpu() -> None:
+    """Checks CPU storage policy moves tensor leaves to CPU."""
     trajectory = _trajectory()
 
     result = apply_trajectory_storage_policy(
@@ -60,6 +63,7 @@ def test_cpu_storage_policy_moves_tensor_leaves_to_cpu() -> None:
 
 
 def test_storage_policy_parser_rejects_unknown_values() -> None:
+    """Checks storage policy parser rejects unknown values."""
     assert trajectory_storage_policy_from_cfg(None) == TrajectoryStoragePolicy()
     assert trajectory_storage_policy_from_cfg({"device": "cpu"}).device == "cpu"
 

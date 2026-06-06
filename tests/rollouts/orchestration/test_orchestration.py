@@ -76,6 +76,7 @@ class _Collector:
 
 @pytest.mark.asyncio
 async def test_strict_schedule_collects_and_syncs_with_rollout_metadata() -> None:
+    """Checks strict schedule collects and syncs with rollout metadata."""
     import torch.nn as nn
 
     from vrl.rollouts.orchestration import RolloutScheduleMode, build_rollout_schedule

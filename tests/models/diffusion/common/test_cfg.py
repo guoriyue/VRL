@@ -12,6 +12,7 @@ from vrl.models.diffusion.common import (
 
 
 def test_pack_and_split_batched_cfg_preserves_uncond_cond_order() -> None:
+    """Checks pack and split batched CFG preserves uncond cond order."""
     cond = DiffusionBranch(
         name="cond",
         hidden_states=torch.full((2, 1), 2.0),
@@ -43,6 +44,7 @@ def test_pack_and_split_batched_cfg_preserves_uncond_cond_order() -> None:
 
 
 def test_combine_cfg_supports_sd_and_cosmos_bases() -> None:
+    """Checks combine CFG supports SD and Cosmos bases."""
     cond = torch.tensor([3.0])
     uncond = torch.tensor([1.0])
 
@@ -61,5 +63,6 @@ def test_combine_cfg_supports_sd_and_cosmos_bases() -> None:
 
 
 def test_split_batched_cfg_requires_even_batch() -> None:
+    """Checks split batched CFG requires even batch."""
     with pytest.raises(ValueError, match="must be even"):
         split_batched_cfg_output(torch.zeros(3, 1))

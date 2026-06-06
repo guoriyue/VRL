@@ -29,6 +29,7 @@ class _EchoWorker:
 
 
 def test_ray_actor_group_maps_payloads_in_order() -> None:
+    """Checks Ray actor group maps payloads in order."""
     ray = pytest.importorskip("ray")
     ray.shutdown()
     group = None
@@ -53,6 +54,7 @@ def test_ray_actor_group_maps_payloads_in_order() -> None:
 
 
 def test_validate_actor_gpu_ids_rejects_unexpected_assignment() -> None:
+    """Checks validate actor GPU IDs rejects unexpected assignment."""
     with pytest.raises(RuntimeError, match="outside resolved reward devices"):
         validate_actor_gpu_ids(
             [{"worker_id": "reward-0", "gpu_ids": [2]}],
@@ -62,6 +64,7 @@ def test_validate_actor_gpu_ids_rejects_unexpected_assignment() -> None:
 
 
 def test_validate_actor_gpu_ids_cross_node_accepts_remote_local_zero() -> None:
+    """Checks validate actor GPU IDs cross-node accepts remote local zero."""
     result = validate_actor_gpu_ids(
         [
             {"worker_id": "generation-0", "node_ip": "10.0.0.2", "gpu_ids": [0]},
@@ -77,6 +80,7 @@ def test_validate_actor_gpu_ids_cross_node_accepts_remote_local_zero() -> None:
 
 
 def test_validate_actor_gpu_ids_cross_node_rejects_driver_node() -> None:
+    """Checks validate actor GPU IDs cross-node rejects driver node."""
     with pytest.raises(RuntimeError, match="driver/head node"):
         validate_actor_gpu_ids(
             [{"worker_id": "generation-0", "node_ip": "10.0.0.1", "gpu_ids": [0]}],
@@ -88,6 +92,7 @@ def test_validate_actor_gpu_ids_cross_node_rejects_driver_node() -> None:
 
 
 def test_validate_actor_gpu_ids_cross_node_rejects_shared_gpu() -> None:
+    """Checks validate actor GPU IDs cross-node rejects shared GPU."""
     with pytest.raises(RuntimeError, match="share GPU"):
         validate_actor_gpu_ids(
             [
@@ -102,6 +107,7 @@ def test_validate_actor_gpu_ids_cross_node_rejects_shared_gpu() -> None:
 
 
 def test_validate_actor_gpu_ids_cross_node_requires_gpu() -> None:
+    """Checks validate actor GPU IDs cross-node requires GPU."""
     with pytest.raises(RuntimeError, match="no assigned GPU ids"):
         validate_actor_gpu_ids(
             [{"worker_id": "generation-0", "node_ip": "10.0.0.2", "gpu_ids": []}],

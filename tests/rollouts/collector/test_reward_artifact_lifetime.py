@@ -79,6 +79,7 @@ class _RewardScorer:
 
 @pytest.mark.asyncio
 async def test_collector_releases_generation_output_after_reward_scoring() -> None:
+    """Checks collector releases generation output after reward scoring."""
     scorer = _RewardScorer()
     collector = RolloutCollector(
         model=None,
@@ -103,6 +104,7 @@ async def test_collector_releases_generation_output_after_reward_scoring() -> No
 
 
 def test_release_policy_drops_non_trainable_reward_view_tensors_only() -> None:
+    """Checks release policy drops non trainable reward view tensors only."""
     trajectory = _continuous_trajectory()
     decoded = trajectory.segments["decoded"].tensors["images_for_reward"].value
     batch = RolloutBatch(
@@ -129,6 +131,7 @@ def test_release_policy_drops_plain_videos_without_mutating_context() -> None:
     # Covers the no-trajectory path: a batch whose only reward artifact is the
     # decoded ``videos`` tensor. Release must free the tensor while leaving the
     # trainer ``context`` untouched.
+    """Checks release policy drops plain videos without mutating context."""
     artifact = torch.ones(2, 3, 4, 4)
     context = {"reward_metadata": {"source": "unit"}}
     batch = RolloutBatch(
@@ -150,6 +153,7 @@ def test_release_policy_drops_plain_videos_without_mutating_context() -> None:
 
 
 def test_reward_artifact_policy_default_keeps_artifacts() -> None:
+    """Checks reward artifact policy default keeps artifacts."""
     artifact = torch.ones(2, 3, 4, 4)
     batch = RolloutBatch(
         observations=torch.zeros(2, 1),
@@ -167,6 +171,7 @@ def test_reward_artifact_policy_default_keeps_artifacts() -> None:
 
 
 def test_rollout_config_preserves_nested_storage_and_artifact_policy() -> None:
+    """Checks rollout config preserves nested storage and artifact policy."""
     config = build_rollout_config_from_cfg(
         {
             "rollout": {

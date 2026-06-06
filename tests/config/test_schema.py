@@ -50,11 +50,13 @@ def _kling_video_reward_kwargs(**overrides) -> dict:
     ["grpo", "token_grpo", "token_grpo_multisegment", "diffusion_dpo", "diffusion_nft"],
 )
 def test_valid_algorithm_kinds_are_accepted(kind: str) -> None:
+    """Checks valid algorithm kinds are accepted."""
     algo = AlgorithmConfig(kind=kind)
     assert algo.kind == kind
 
 
 def test_unknown_algorithm_kind_raises() -> None:
+    """Checks unknown algorithm kind raises."""
     cfg = _minimal_grpo_cfg()
     cfg.algorithm.kind = "qpo"
     with pytest.raises(ValueError, match=r"unknown algorithm\.kind"):
@@ -62,12 +64,14 @@ def test_unknown_algorithm_kind_raises() -> None:
 
 
 def test_adv_estimator_raises_with_migration_message() -> None:
+    """Checks adv estimator raises with migration message."""
     with pytest.raises(ValueError, match="adv_estimator"):
         AlgorithmConfig(kind="grpo", adv_estimator="dpo")
 
 
 def test_extra_algorithm_fields_are_ignored() -> None:
     # extra="ignore" — unknown keys must not raise
+    """Checks extra algorithm fields are ignored."""
     algo = AlgorithmConfig.model_validate({"kind": "grpo", "init_kl_coef": 0.04, "future_field": True})
     assert algo.kind == "grpo"
 
@@ -80,6 +84,7 @@ def test_extra_algorithm_fields_are_ignored() -> None:
     ["prompt_manifest", "prompt_image_manifest", "pickapic_preference"],
 )
 def test_valid_data_loaders_are_accepted(loader: str) -> None:
+    """Checks valid data loaders are accepted."""
     if loader == "prompt_manifest":
         data = DataConfig(
             loader=loader,
@@ -114,6 +119,7 @@ def test_valid_data_loaders_are_accepted(loader: str) -> None:
 
 
 def test_unknown_data_loader_raises() -> None:
+    """Checks unknown data loader raises."""
     cfg = _minimal_grpo_cfg()
     cfg.data.loader = "s3_loader"
     with pytest.raises(ValueError, match=r"unknown data\.loader"):
@@ -121,6 +127,7 @@ def test_unknown_data_loader_raises() -> None:
 
 
 def test_prompt_image_manifest_requires_image_caption_fields() -> None:
+    """Checks prompt image manifest requires image caption fields."""
     with pytest.raises(ValueError, match=r"data\.preprocessing\.caption_field"):
         DataConfig(
             loader="prompt_image_manifest",
@@ -144,6 +151,7 @@ def test_prompt_image_manifest_requires_image_caption_fields() -> None:
     ["random_without_replacement", "sequential_window"],
 )
 def test_valid_sampler_types_are_accepted(sampler_type: str) -> None:
+    """Checks valid sampler types are accepted."""
     data = DataConfig(
         loader="prompt_manifest",
         manifest="x",
@@ -154,6 +162,7 @@ def test_valid_sampler_types_are_accepted(sampler_type: str) -> None:
 
 
 def test_unknown_sampler_type_raises() -> None:
+    """Checks unknown sampler type raises."""
     with pytest.raises(ValueError, match=r"unknown data\.sampler\.type"):
         DataConfig(
             loader="prompt_manifest",
@@ -167,6 +176,7 @@ def test_unknown_sampler_type_raises() -> None:
 
 
 def test_zero_weight_component_skips_video_reward_check() -> None:
+    """Checks zero weight component skips video reward check."""
     cfg = RewardConfig.model_validate(
         {"components": {"kling_video_reward": 0.0}, "kwargs": {}}
     )
@@ -174,6 +184,7 @@ def test_zero_weight_component_skips_video_reward_check() -> None:
 
 
 def test_negative_reward_weight_raises() -> None:
+    """Checks negative reward weight raises."""
     with pytest.raises(ValueError, match=r"must be >= 0"):
         RewardConfig.model_validate(
             {"components": {"aesthetic": -1.0}, "kwargs": {"aesthetic": {"model_name": "x"}}}
@@ -181,6 +192,7 @@ def test_negative_reward_weight_raises() -> None:
 
 
 def test_non_numeric_reward_weight_raises() -> None:
+    """Checks non numeric reward weight raises."""
     with pytest.raises(ValueError, match="must be numeric"):
         RewardConfig.model_validate(
             {"components": {"aesthetic": "heavy"}, "kwargs": {}}
@@ -192,6 +204,7 @@ def test_non_numeric_reward_weight_raises() -> None:
 
 
 def test_video_reward_backend_field_raises_specific_message() -> None:
+    """Checks video reward backend field raises specific message."""
     with pytest.raises(ValueError, match="backend is no longer supported"):
         KlingVideoRewardKwargs.model_validate({**_kling_video_reward_kwargs(), "backend": "http"})
 
@@ -201,11 +214,13 @@ def test_video_reward_backend_field_raises_specific_message() -> None:
     ["enqueue_url", "fetch_url", "token", "poll_interval_s", "max_wait_s", "stub_scale", "device"],
 )
 def test_video_reward_removed_endpoint_fields_raise(removed_field: str) -> None:
+    """Checks video reward removed endpoint fields raise."""
     with pytest.raises(ValueError, match="no longer supports external reward endpoint fields"):
         KlingVideoRewardKwargs.model_validate({**_kling_video_reward_kwargs(), removed_field: "value"})
 
 
 def test_video_reward_non_ray_inference_runtime_raises() -> None:
+    """Checks video reward non Ray inference runtime raises."""
     with pytest.raises(ValueError, match="inference_runtime must be 'ray'"):
         KlingVideoRewardKwargs.model_validate(
             {**_kling_video_reward_kwargs(), "inference_runtime": "local"}
@@ -213,6 +228,7 @@ def test_video_reward_non_ray_inference_runtime_raises() -> None:
 
 
 def test_video_reward_non_sync_scheduling_raises() -> None:
+    """Checks video reward non sync scheduling raises."""
     with pytest.raises(ValueError, match="scheduling currently supports only 'sync'"):
         KlingVideoRewardKwargs.model_validate(
             {**_kling_video_reward_kwargs(), "scheduling": "async"}
@@ -220,12 +236,14 @@ def test_video_reward_non_sync_scheduling_raises() -> None:
 
 
 def test_video_reward_valid_kwargs_accepted() -> None:
+    """Checks video reward valid kwargs accepted."""
     vr = KlingVideoRewardKwargs.model_validate(_kling_video_reward_kwargs())
     assert vr.inference_runtime == "ray"
     assert vr.scheduling == "sync"
 
 
 def test_video_reward_extra_fields_are_ignored() -> None:
+    """Checks video reward extra fields are ignored."""
     vr = KlingVideoRewardKwargs.model_validate(
         {**_kling_video_reward_kwargs(), "artifact_dir": "/tmp/out", "timeout_s": 60.0}
     )
@@ -236,6 +254,7 @@ def test_video_reward_extra_fields_are_ignored() -> None:
 
 
 def test_grpo_requires_valid_sde_type() -> None:
+    """Checks GRPO requires valid SDE type."""
     cfg = _minimal_grpo_cfg()
     cfg.rollout.sde.type = "euler"
     with pytest.raises(ValueError, match=r"rollout\.sde\.type must be"):
@@ -243,6 +262,7 @@ def test_grpo_requires_valid_sde_type() -> None:
 
 
 def test_grpo_accepts_cps_sde_type() -> None:
+    """Checks GRPO accepts cps SDE type."""
     cfg = _minimal_grpo_cfg()
     cfg.rollout.sde.type = "cps"
     parsed = parse_config(cfg)
@@ -250,6 +270,7 @@ def test_grpo_accepts_cps_sde_type() -> None:
 
 
 def test_diffusion_nft_requires_valid_sde_type() -> None:
+    """Checks diffusion NFT requires valid SDE type."""
     cfg = OmegaConf.create(
         {
             "algorithm": {"kind": "diffusion_nft"},
@@ -267,6 +288,7 @@ def test_diffusion_nft_requires_valid_sde_type() -> None:
 
 
 def test_token_grpo_multisegment_requires_janus_pro_family() -> None:
+    """Checks token GRPO multisegment requires Janus pro family."""
     cfg = OmegaConf.create(
         {
             "algorithm": {"kind": "token_grpo_multisegment"},
@@ -286,6 +308,7 @@ def test_token_grpo_multisegment_requires_janus_pro_family() -> None:
 
 
 def test_token_grpo_multisegment_policy_mismatch_raises() -> None:
+    """Checks token GRPO multisegment policy mismatch raises."""
     cfg = OmegaConf.create(
         {
             "algorithm": {"kind": "token_grpo_multisegment"},
@@ -305,6 +328,7 @@ def test_token_grpo_multisegment_policy_mismatch_raises() -> None:
 
 
 def test_production_video_reward_structural_rules() -> None:
+    """Checks production video reward structural rules."""
     cfg = OmegaConf.create(
         {
             "algorithm": {"kind": "grpo"},
@@ -337,6 +361,7 @@ def test_production_video_reward_structural_rules() -> None:
 
 
 def test_production_video_reward_accepts_image_to_video_task_type() -> None:
+    """Checks production video reward accepts image to video task type."""
     cfg = OmegaConf.create(
         {
             "algorithm": {"kind": "grpo"},
@@ -378,6 +403,7 @@ def test_production_video_reward_accepts_image_to_video_task_type() -> None:
 
 
 def test_production_video_reward_missing_reward_name_raises() -> None:
+    """Checks production video reward missing reward name raises."""
     cfg = OmegaConf.create(
         {
             "algorithm": {"kind": "grpo"},
@@ -410,6 +436,7 @@ def test_production_video_reward_missing_reward_name_raises() -> None:
 
 
 def test_production_video_reward_forbidden_worker_key_raises() -> None:
+    """Checks production video reward forbidden worker key raises."""
     cfg = OmegaConf.create(
         {
             "algorithm": {"kind": "grpo"},
@@ -445,6 +472,7 @@ def test_production_video_reward_forbidden_worker_key_raises() -> None:
 
 
 def test_missing_mandatory_value_produces_repo_standard_message() -> None:
+    """Checks missing mandatory value produces repo standard message."""
     cfg = _minimal_grpo_cfg()
     cfg.rollout.sde.type = "sde"
     # Inject an OmegaConf mandatory-missing marker
@@ -457,6 +485,7 @@ def test_missing_mandatory_value_produces_repo_standard_message() -> None:
 
 
 def test_unknown_top_level_sections_are_silently_ignored() -> None:
+    """Checks unknown top level sections are silently ignored."""
     cfg = _minimal_grpo_cfg()
     OmegaConf.update(cfg, "some_future_section.foo", "bar")
     # Must not raise even though some_future_section is not in RootConfig
@@ -465,6 +494,7 @@ def test_unknown_top_level_sections_are_silently_ignored() -> None:
 
 
 def test_unknown_reward_component_with_unknown_kwargs_is_accepted() -> None:
+    """Checks unknown reward component with unknown kwargs is accepted."""
     cfg = OmegaConf.create(
         {
             "algorithm": {"kind": "grpo"},

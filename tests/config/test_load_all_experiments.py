@@ -47,6 +47,7 @@ def _experiment_names() -> list[str]:
 
 
 def test_config_groups_are_not_flattened() -> None:
+    """Checks config groups are not flattened."""
     flattened = [
         path
         for group in ("experiment", "model", "sampling")
@@ -60,6 +61,7 @@ def test_config_groups_are_not_flattened() -> None:
 
 
 def test_experiments_are_grouped_by_model_family() -> None:
+    """Checks experiments are grouped by model family."""
     expected = {
         "ar/janus_pro/online_grpo_ocr",
         "ar/janus_pro/online_r1_grpo_ocr",
@@ -86,6 +88,7 @@ def test_experiments_are_grouped_by_model_family() -> None:
 
 
 def test_experiments_use_dataset_groups_and_only_override_reward_weights() -> None:
+    """Checks experiments use dataset groups and only override reward weights."""
     inline_data = []
     inline_reward_kwargs = []
     allowed_reward_kwargs = {
@@ -111,6 +114,7 @@ def test_experiments_use_dataset_groups_and_only_override_reward_weights() -> No
 
 
 def test_reward_configs_are_single_reward_building_blocks() -> None:
+    """Checks reward configs are single reward building blocks."""
     offenders = []
     for path in (CONFIGS_ROOT / "reward").rglob("*.yaml"):
         raw = OmegaConf.load(path)
@@ -122,6 +126,7 @@ def test_reward_configs_are_single_reward_building_blocks() -> None:
 
 
 def test_all_experiments_load_and_validate() -> None:
+    """Checks all experiments load and validate."""
     for name in _experiment_names():
         cfg = load_config(f"experiment/{name}")
         assert "model" in cfg, f"{name} missing model.*"
@@ -139,6 +144,7 @@ def test_all_experiments_load_and_validate() -> None:
 
 
 def test_model_memory_policy_defaults_are_yaml_backed() -> None:
+    """Checks model memory policy defaults are YAML backed."""
     import torch
 
     from vrl.models.diffusion.common.vae_decode_memory import (
@@ -170,6 +176,7 @@ def test_model_memory_policy_defaults_are_yaml_backed() -> None:
 
 
 def test_rollout_orchestration_group_override_uses_rollout_namespace() -> None:
+    """Checks rollout orchestration group override uses rollout namespace."""
     cfg = load_config(
         "experiment/diffusion/sd3_5/online_grpo_ocr",
         overrides=["/base/rollout/orchestration=continuous"],
@@ -181,6 +188,7 @@ def test_rollout_orchestration_group_override_uses_rollout_namespace() -> None:
 
 
 def test_algorithm_config_dispatches_representative_kinds() -> None:
+    """Checks algorithm config dispatches representative kinds."""
     examples = {
         "diffusion/sd3_5/online_grpo_ocr": GRPOConfig,
         "ar/janus_pro/online_grpo_ocr": TokenGRPOConfig,
@@ -209,6 +217,7 @@ def test_algorithm_config_dispatches_representative_kinds() -> None:
 
 
 def test_cosmos_diffusion_nft_video_reward_validation_config() -> None:
+    """Checks Cosmos diffusion NFT video reward validation config."""
     cfg = load_config("experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward")
 
     validate_training_config(cfg)
@@ -246,6 +255,7 @@ def test_cosmos_diffusion_nft_video_reward_validation_config() -> None:
 def test_cosmos_motion_physics_config() -> None:
     # DanceGRPO-style motion-quality core + explicit physics commonsense term,
     # on the cosmos-rl NFT regime (10-step no-CFG, not the 4-step variant).
+    """Checks Cosmos motion physics config."""
     cfg = load_config("experiment/diffusion/cosmos_predict2_5/online_nft_motion_physics")
 
     validate_training_config(cfg)
@@ -264,6 +274,7 @@ def test_cosmos_motion_physics_config() -> None:
 
 
 def test_cosmos_v2w_reference_route_config() -> None:
+    """Checks Cosmos V2W reference route config."""
     cfg = load_config("experiment/diffusion/cosmos_predict2/online_grpo_v2w_reference")
 
     validate_training_config(cfg)
@@ -283,6 +294,7 @@ def test_cosmos_v2w_reference_route_config() -> None:
 def test_cosmos_v2w_production_validation_accepts_source_backed_data(
     tmp_path: Path,
 ) -> None:
+    """Checks Cosmos V2W production validation accepts source-backed data."""
     data_root = tmp_path / "external"
     reference = data_root / "video_world" / "references" / "ref.ppm"
     reference.parent.mkdir(parents=True, exist_ok=True)
@@ -356,6 +368,7 @@ def test_cosmos_v2w_production_validation_accepts_source_backed_data(
 
 
 def test_wan_video_reward_production_config() -> None:
+    """Checks Wan video reward production config."""
     cfg = load_config("experiment/diffusion/wan_2_1/online_grpo_kling_video_reward")
 
     validate_training_config(cfg)
@@ -388,6 +401,7 @@ def test_wan_video_reward_production_config() -> None:
 
 
 def test_wan_i2v_physics_config() -> None:
+    """Checks Wan I2V physics config."""
     cfg = load_config("experiment/diffusion/wan_2_1/online_grpo_physics_i2v")
 
     validate_training_config(cfg)
@@ -412,6 +426,7 @@ def test_wan_i2v_physics_config() -> None:
 
 
 def test_wan_i2v_production_validation_accepts_source_backed_data(tmp_path: Path) -> None:
+    """Checks Wan I2V production validation accepts source-backed data."""
     data_root = tmp_path / "videophy_i2v"
     train_image = data_root / "images" / "train" / "000.ppm"
     eval_image = data_root / "images" / "eval" / "000.ppm"
@@ -491,6 +506,7 @@ def test_wan_i2v_production_validation_accepts_source_backed_data(tmp_path: Path
 
 
 def test_wan_video_reward_production_config_requires_reward_name() -> None:
+    """Checks Wan video reward production config requires reward name."""
     cfg = load_config("experiment/diffusion/wan_2_1/online_grpo_kling_video_reward")
     cfg.reward.kwargs.kling_video_reward.reward_name = ""
 
@@ -499,6 +515,7 @@ def test_wan_video_reward_production_config_requires_reward_name() -> None:
 
 
 def test_wan_video_reward_production_rejects_extra_loader_fields() -> None:
+    """Checks Wan video reward production rejects extra loader fields."""
     cfg = load_config("experiment/diffusion/wan_2_1/online_grpo_kling_video_reward")
     cfg.reward.kwargs.kling_video_reward.worker_config.import_path = "fake:thing"
 
@@ -513,6 +530,7 @@ def test_wan_video_reward_production_rejects_extra_loader_fields() -> None:
 
 
 def test_anima_safe_reward_config_uses_cpu_nsfw_penalty() -> None:
+    """Checks Anima safe reward config uses CPU NSFW penalty."""
     from vrl.scripts.common.factory import build_reward_from_cfg
 
     cfg = load_config("experiment/diffusion/anima_preview3/online_grpo_aesthetic_nsfw_safety")
@@ -534,6 +552,7 @@ def test_anima_safe_reward_config_uses_cpu_nsfw_penalty() -> None:
 
 
 def test_anima_config_keeps_artifact_names_without_local_paths() -> None:
+    """Checks Anima config keeps artifact names without local paths."""
     cfg = load_config("experiment/diffusion/anima_preview3/online_grpo_aesthetic")
     model_yaml = OmegaConf.to_yaml(cfg.model)
 
@@ -554,6 +573,7 @@ def test_anima_config_keeps_artifact_names_without_local_paths() -> None:
 
 
 def test_unified_train_entrypoint_reads_yaml_entrypoint() -> None:
+    """Checks unified train entrypoint reads YAML entrypoint."""
     from vrl.scripts.train import _import_callable, resolve_train_target
 
     cfg = load_config("experiment/diffusion/sd3_5/online_grpo_ocr")
@@ -564,6 +584,7 @@ def test_unified_train_entrypoint_reads_yaml_entrypoint() -> None:
 
 
 def test_cli_overrides_reach_typed_trainer_config() -> None:
+    """Checks CLI overrides reach typed trainer config."""
     cfg = load_config(
         "experiment/diffusion/sd3_5/online_grpo_ocr",
         overrides=[
@@ -582,6 +603,7 @@ def test_cli_overrides_reach_typed_trainer_config() -> None:
 
 
 def test_invalid_algorithm_kind_fails_fast() -> None:
+    """Checks invalid algorithm kind fails fast."""
     cfg = OmegaConf.create({"algorithm": {"kind": "grpo", "adv_estimator": "dpo"}})
     with pytest.raises(ValueError, match="adv_estimator"):
         build_algorithm_config(cfg)
@@ -592,6 +614,7 @@ def test_invalid_algorithm_kind_fails_fast() -> None:
 
 
 def test_unknown_algorithm_config_fields_fail_fast() -> None:
+    """Checks unknown algorithm config fields fail fast."""
     cfg = OmegaConf.create({"algorithm": {"kind": "grpo", "unknown_knob": 1}})
 
     with pytest.raises(ValueError, match=r"algorithm\.unknown_knob"):
@@ -599,6 +622,7 @@ def test_unknown_algorithm_config_fields_fail_fast() -> None:
 
 
 def test_removed_algorithm_zero_advantage_fields_fail_fast() -> None:
+    """Checks removed algorithm zero advantage fields fail fast."""
     cfg = OmegaConf.create({"algorithm": {"kind": "grpo", "per_prompt_stat_tracking": False}})
     with pytest.raises(ValueError, match=r"actor\.drop_zero_advantage"):
         build_algorithm_config(cfg)
@@ -615,6 +639,7 @@ def test_removed_algorithm_zero_advantage_fields_fail_fast() -> None:
 
 
 def test_reward_backbone_kwargs_are_required() -> None:
+    """Checks reward backbone kwargs are required."""
     cfg = load_config("experiment/diffusion/cosmos_predict2/online_grpo_kling_video_reward")
     del cfg.reward.kwargs.kling_video_reward["score_key"]
 
@@ -623,6 +648,7 @@ def test_reward_backbone_kwargs_are_required() -> None:
 
 
 def test_negative_reward_component_weights_are_rejected() -> None:
+    """Checks negative reward component weights are rejected."""
     cfg = load_config("experiment/diffusion/anima_preview3/online_grpo_aesthetic_nsfw_safety")
     cfg.reward.components.nsfw_safety = -0.5
 
@@ -631,6 +657,7 @@ def test_negative_reward_component_weights_are_rejected() -> None:
 
 
 def test_required_training_fields_fail_fast() -> None:
+    """Checks required training fields fail fast."""
     cfg = load_config("experiment/diffusion/wan_2_1/online_grpo_ocr")
     cfg.trainer.output_dir = "???"
     with pytest.raises(ValueError, match=r"trainer\.output_dir"):
@@ -638,6 +665,7 @@ def test_required_training_fields_fail_fast() -> None:
 
 
 def test_dpo_allows_explicit_null_max_train_samples() -> None:
+    """Checks DPO allows explicit null max train samples."""
     cfg = load_config("experiment/diffusion/wan_2_1/offline_dpo_pickapic")
     cfg.data.max_train_samples = None
 
@@ -646,6 +674,7 @@ def test_dpo_allows_explicit_null_max_train_samples() -> None:
 
 
 def test_dpo_recipe_declares_trainer_only_resource_plan() -> None:
+    """Checks DPO recipe declares trainer only resource plan."""
     from vrl.ray.resources import resolve_distributed_resources
 
     cfg = load_config(

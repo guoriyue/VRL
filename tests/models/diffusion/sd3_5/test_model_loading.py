@@ -34,6 +34,7 @@ class _FakePipeline:
 
 
 def test_sd3_fp32_runtime_loads_frozen_components_without_fp32_peak(monkeypatch) -> None:
+    """Checks SD3 FP32 runtime loads frozen components without FP32 peak."""
     from diffusers import StableDiffusion3Pipeline
 
     calls: list[dict[str, Any]] = []

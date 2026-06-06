@@ -15,6 +15,7 @@ from vrl.trajectory import TrajectoryStoragePolicy
 
 
 def test_diffusion_rollout_batch_builder_applies_storage_policy() -> None:
+    """Checks diffusion rollout batch builder applies storage policy."""
     request = GenerationRequest(
         request_id="req",
         family="sd3_5",

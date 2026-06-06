@@ -8,7 +8,9 @@ from tests.trainers.online._helpers import _algorithm_inputs, _trajectory_signal
 
 
 class TestOnlineTrainerResumeState:
+    """Groups tests for online trainer resume state."""
     def test_load_state_dict_initializes_and_restores_optimizer_state(self) -> None:
+        """Checks load state dict initializes and restores optimizer state."""
         import torch
 
         source = _make_resume_trainer()
@@ -32,6 +34,7 @@ class TestOnlineTrainerResumeState:
         )
 
     def test_load_state_dict_initializes_and_restores_ema_state(self) -> None:
+        """Checks load state dict initializes and restores EMA state."""
         import torch
 
         source = _make_resume_trainer(ema=True)
@@ -50,6 +53,7 @@ class TestOnlineTrainerResumeState:
         )
 
     def test_load_state_dict_rejects_ema_state_when_ema_is_disabled(self) -> None:
+        """Checks load state dict rejects EMA state when EMA is disabled."""
         source = _make_resume_trainer(ema=True)
         source._ensure_ema()
         state = source.state_dict()
@@ -59,6 +63,7 @@ class TestOnlineTrainerResumeState:
             restored.load_state_dict(state, strict=True)
 
     def test_load_state_dict_resets_rollout_weight_initialization(self) -> None:
+        """Checks load state dict resets rollout weight initialization."""
         trainer = _make_resume_trainer()
         trainer._rollout_weights_initialized = True
 
@@ -67,6 +72,7 @@ class TestOnlineTrainerResumeState:
         assert trainer._rollout_weights_initialized is False
 
     def test_resume_pushes_restored_driver_weights_before_next_collect(self) -> None:
+        """Checks resume pushes restored driver weights before next collect."""
         import asyncio
 
         syncer = _Syncer()

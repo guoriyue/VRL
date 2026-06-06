@@ -69,6 +69,7 @@ class _Adapter:
 
 
 def test_backbone_batched_cfg_calls_transformer_once_and_returns_contract() -> None:
+    """Checks backbone batched CFG calls transformer once and returns contract."""
     transformer = _RecordingTransformer()
     module = DiffusionBackboneCaller(transformer, _Adapter(cfg_mode="batched_cfg"))
 
@@ -94,6 +95,7 @@ def test_backbone_batched_cfg_calls_transformer_once_and_returns_contract() -> N
 
 
 def test_backbone_separate_cfg_calls_transformer_twice() -> None:
+    """Checks backbone separate CFG calls transformer twice."""
     transformer = _RecordingTransformer()
     module = DiffusionBackboneCaller(
         transformer,

@@ -18,6 +18,7 @@ from vrl.nn.layers.attention.paged import (
 
 @pytest.mark.gpu
 def test_janus_vllm_paged_attention_matches_hf_llama_one_step() -> None:
+    """Checks Janus vLLM paged attention matches HF Llama one step."""
     torch.manual_seed(0)
     trunk = _tiny_llama_trunk()
     try:

@@ -33,6 +33,7 @@ class _PureGatherer:
 
 
 def test_chunk_gatherer_accepts_pure_object_without_forward_chunk_plan() -> None:
+    """Checks chunk gatherer accepts pure object without forward chunk plan."""
     request = _request()
     sample_rows = build_sample_rows(request)
     gatherer = _PureGatherer()
@@ -46,6 +47,7 @@ def test_chunk_gatherer_accepts_pure_object_without_forward_chunk_plan() -> None
 
 
 def test_diffusion_chunk_gatherer_gathers_without_model_object() -> None:
+    """Checks diffusion chunk gatherer gathers without model object."""
     request = _request(cfg=False)
     sample_rows = build_sample_rows(request)
     gatherer = DiffusionChunkGatherer()
@@ -75,6 +77,7 @@ def test_diffusion_chunk_gatherer_gathers_without_model_object() -> None:
 
 
 def test_diffusion_chunk_gatherer_orders_prompt_major_chunks() -> None:
+    """Checks diffusion chunk gatherer orders prompt major chunks."""
     request = _request(cfg=False)
     sample_rows = build_sample_rows(request)
     gatherer = DiffusionChunkGatherer()
@@ -94,6 +97,7 @@ def test_diffusion_chunk_gatherer_orders_prompt_major_chunks() -> None:
 
 
 def test_diffusion_chunk_gatherer_keeps_rollout_context() -> None:
+    """Checks diffusion chunk gatherer keeps rollout context."""
     request = _request(family="cosmos", task="v2w", cfg=False)
     sample_rows = build_sample_rows(request)
     gatherer = DiffusionChunkGatherer()
@@ -111,6 +115,7 @@ def test_diffusion_chunk_gatherer_keeps_rollout_context() -> None:
 
 
 def test_diffusion_engine_plan_uses_generation_profiler_labels() -> None:
+    """Checks diffusion engine plan uses generation profiler labels."""
     request = _request(cfg=False)
     sample_rows = build_sample_rows(request)
     plan = build_engine_plan(

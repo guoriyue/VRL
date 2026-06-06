@@ -7,6 +7,7 @@ from vrl.rollouts.evaluators.base import Evaluator
 
 
 class TestRewardUpdateFlow:
+    """Groups tests for reward update flow."""
     def test_cea_step_forwards_prompt_example_kwargs(self) -> None:
         """PromptExample fields should be forwarded as kwargs to collector.collect()."""
         import asyncio
@@ -482,6 +483,7 @@ class TestRewardUpdateFlow:
 
 
 def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:
+    """Checks select move and remap preserve rollout trajectory fields."""
     import torch
 
     from vrl.generation import GenerationRequest, GenerationSampleRow

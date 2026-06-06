@@ -7,7 +7,9 @@ from vrl.rollouts.evaluators.base import Evaluator
 
 
 class TestDiagnostics:
+    """Groups tests for diagnostics."""
     def test_first_step_debug_writes_training_debug_jsonl(self, tmp_path) -> None:
+        """Checks first-step debug writes training debug JSONL."""
         import asyncio
         import json
 
@@ -111,6 +113,7 @@ class TestDiagnostics:
         assert any(grad_enabled[1:])
 
     def test_algorithm_diagnostic_tensors_are_cleared_after_backward(self) -> None:
+        """Checks algorithm diagnostic tensors are cleared after backward."""
         import asyncio
 
         import torch

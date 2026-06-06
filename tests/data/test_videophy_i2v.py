@@ -14,6 +14,7 @@ from vrl.scripts.data.videophy_i2v import (
 
 
 def test_select_videophy_videos_prefers_aligned_physical_candidate() -> None:
+    """Checks select VideoPhy videos prefers aligned physical candidate."""
     candidates = [
         VideoPhyVideoRow(
             caption="A wheel steadily rolls across a cement path.",
@@ -49,6 +50,7 @@ def test_select_videophy_videos_prefers_aligned_physical_candidate() -> None:
 
 
 def test_prepare_videophy_i2v_dataset_writes_source_backed_manifest(tmp_path: Path) -> None:
+    """Checks prepare VideoPhy I2V dataset writes source-backed manifest."""
     csv_path = tmp_path / "videophy_test_public.csv"
     csv_path.write_text(
         "\n".join(
@@ -113,6 +115,7 @@ def test_prepare_videophy_i2v_dataset_writes_source_backed_manifest(tmp_path: Pa
 
 
 def test_for_experiment_flags_videophy_i2v_population_command(tmp_path: Path) -> None:
+    """Checks for experiment flags VideoPhy I2V population command."""
     plan = bootstrap.resolve_experiment_dataset_plan(
         {
             "loader": "prompt_image_manifest",
@@ -127,6 +130,7 @@ def test_for_experiment_flags_videophy_i2v_population_command(tmp_path: Path) ->
 
 
 def test_for_experiment_rejects_partial_videophy_i2v_smoke_data(tmp_path: Path) -> None:
+    """Checks for experiment rejects partial VideoPhy I2V smoke data."""
     split_root = tmp_path / "datasets" / "videophy"
     split_root.mkdir(parents=True)
     (split_root / "train.txt").write_text("prompt a\nprompt b\n", encoding="utf-8")

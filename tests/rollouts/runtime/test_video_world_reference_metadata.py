@@ -32,6 +32,7 @@ def _write_reference_manifest(root: Path) -> Path:
 
 
 def test_resolved_reference_image_flows_to_collector_metadata(tmp_path: Path) -> None:
+    """Checks resolved reference image flows to collector metadata."""
     manifest = _write_reference_manifest(tmp_path)
     example = resolve_prompt_example_artifacts(
         load_prompt_manifest(manifest)[0],
@@ -63,6 +64,7 @@ def test_resolved_reference_image_flows_to_collector_metadata(tmp_path: Path) ->
 
 
 def test_cosmos_per_sample_reference_uses_vrl_data_root(monkeypatch, tmp_path: Path) -> None:
+    """Checks Cosmos per sample reference uses VRL data root."""
     manifest = _write_reference_manifest(tmp_path)
     monkeypatch.setenv("VRL_DATA_ROOT", str(tmp_path))
     examples = load_prompt_manifest(manifest)
@@ -83,6 +85,7 @@ def test_cosmos_predict2_collector_uses_rollout_batch_size_config(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
+    """Checks Cosmos predict2 collector uses rollout batch size config."""
     manifest = _write_reference_manifest(tmp_path)
     monkeypatch.setenv("VRL_DATA_ROOT", str(tmp_path))
     examples = load_prompt_manifest(manifest)

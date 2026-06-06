@@ -4,6 +4,7 @@ from __future__ import annotations
 
 
 def test_build_prompt_chunk_schedule_prompt_major() -> None:
+    """Checks build prompt chunk schedule prompt major."""
     from vrl.generation.execution.chunks import build_prompt_chunk_schedule
 
     schedule = build_prompt_chunk_schedule(
@@ -28,6 +29,7 @@ def test_build_prompt_chunk_schedule_prompt_major() -> None:
 
 
 def test_run_sample_chunks_with_oom_retry_splits_until_success() -> None:
+    """Checks run sample chunks with oom retry splits until success."""
     from vrl.generation.execution.chunks import (
         SampleChunk,
         run_sample_chunks_with_oom_retry,

@@ -144,6 +144,7 @@ class _StubMMGPT(nn.Module):
 
 
 def test_janus_runner_can_drive_one_paged_attention_image_step() -> None:
+    """Checks Janus runner can drive one paged attention image step."""
     torch.manual_seed(0)
     model = _model()
     backend = _RecordingPagedBackend()
@@ -181,6 +182,7 @@ def test_janus_runner_can_drive_one_paged_attention_image_step() -> None:
 
 
 def test_janus_runtime_uses_vllm_paged_attention_by_default(monkeypatch) -> None:
+    """Checks Janus runtime uses vLLM paged attention by default."""
     model = _model()
     backend = _RecordingPagedBackend()
 

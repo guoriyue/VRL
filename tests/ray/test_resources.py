@@ -42,6 +42,7 @@ def _cfg(
 
 
 def test_auto_split_uses_remaining_visible_gpus_for_rollout() -> None:
+    """Checks auto split uses remaining visible gpus for rollout."""
     resolved = resolve_distributed_resources(
         _cfg(
             {
@@ -69,6 +70,7 @@ def test_auto_split_uses_remaining_visible_gpus_for_rollout() -> None:
 
 
 def test_explicit_split_devices_do_not_overlap() -> None:
+    """Checks explicit split devices do not overlap."""
     resolved = resolve_distributed_resources(
         _cfg(
             {
@@ -86,6 +88,7 @@ def test_explicit_split_devices_do_not_overlap() -> None:
 
 
 def test_explicit_overlap_requires_allow_overlap() -> None:
+    """Checks explicit overlap requires allow overlap."""
     with pytest.raises(ValueError, match="overlap"):
         resolve_distributed_resources(
             _cfg(
@@ -100,6 +103,7 @@ def test_explicit_overlap_requires_allow_overlap() -> None:
 
 
 def test_explicit_overlap_marks_colocated_when_allowed() -> None:
+    """Checks explicit overlap marks colocated when allowed."""
     resolved = resolve_distributed_resources(
         _cfg(
             {
@@ -117,6 +121,7 @@ def test_explicit_overlap_marks_colocated_when_allowed() -> None:
 
 
 def test_devices_must_be_subset_of_visible_devices() -> None:
+    """Checks devices must be subset of visible devices."""
     with pytest.raises(ValueError, match=r"outside distributed\.resources\.visible_devices"):
         resolve_distributed_resources(
             _cfg(
@@ -130,6 +135,7 @@ def test_devices_must_be_subset_of_visible_devices() -> None:
 
 
 def test_num_workers_auto_requires_divisible_gpu_budget() -> None:
+    """Checks num workers auto requires divisible GPU budget."""
     with pytest.raises(ValueError, match="gpus_per_worker currently supports 0 or 1"):
         resolve_distributed_resources(
             _cfg(
@@ -147,6 +153,7 @@ def test_num_workers_auto_requires_divisible_gpu_budget() -> None:
 
 
 def test_single_gpu_auto_split_fails_without_overlap() -> None:
+    """Checks single GPU auto split fails without overlap."""
     with pytest.raises(ValueError, match="Not enough non-overlapping rollout GPUs"):
         resolve_distributed_resources(
             _cfg(
@@ -165,6 +172,7 @@ def test_single_gpu_auto_split_fails_without_overlap() -> None:
 
 
 def test_cpu_only_rollout_uses_no_gpu_bundles() -> None:
+    """Checks CPU only rollout uses no GPU bundles."""
     resolved = resolve_distributed_resources(
         _cfg(
             {
@@ -187,6 +195,7 @@ def test_cpu_only_rollout_uses_no_gpu_bundles() -> None:
 
 
 def test_trainer_only_plan_allows_zero_rollout_workers() -> None:
+    """Checks trainer only plan allows zero rollout workers."""
     resolved = resolve_distributed_resources(
         _cfg(
             {
@@ -209,6 +218,7 @@ def test_trainer_only_plan_allows_zero_rollout_workers() -> None:
 
 
 def test_resource_plan_formatter_includes_key_fields() -> None:
+    """Checks resource plan formatter includes key fields."""
     resolved = resolve_distributed_resources(
         _cfg(
             {
@@ -228,6 +238,7 @@ def test_resource_plan_formatter_includes_key_fields() -> None:
 
 
 def test_cross_node_rollout_satisfies_budget_from_explicit_counts() -> None:
+    """Checks cross-node rollout satisfies budget from explicit counts."""
     resolved = resolve_distributed_resources(
         _cfg(
             {
@@ -251,6 +262,7 @@ def test_cross_node_rollout_satisfies_budget_from_explicit_counts() -> None:
 
 
 def test_cross_node_scales_to_multiple_rollout_workers() -> None:
+    """Checks cross-node scales to multiple rollout workers."""
     resolved = resolve_distributed_resources(
         _cfg(
             {
@@ -269,6 +281,7 @@ def test_cross_node_scales_to_multiple_rollout_workers() -> None:
 
 
 def test_cross_node_requires_explicit_rollout_count() -> None:
+    """Checks cross-node requires explicit rollout count."""
     with pytest.raises(ValueError, match="cross_node"):
         resolve_distributed_resources(
             _cfg(
@@ -283,6 +296,7 @@ def test_cross_node_requires_explicit_rollout_count() -> None:
 
 
 def test_cross_node_plan_formatter_reports_flag() -> None:
+    """Checks cross-node plan formatter reports flag."""
     resolved = resolve_distributed_resources(
         _cfg(
             {
@@ -298,6 +312,7 @@ def test_cross_node_plan_formatter_reports_flag() -> None:
 
 
 def test_cross_node_preset_resolves() -> None:
+    """Checks cross-node preset resolves."""
     from pathlib import Path
 
     from omegaconf import OmegaConf
@@ -319,6 +334,7 @@ def test_cross_node_preset_resolves() -> None:
 
 
 def test_reward_role_resolves_after_trainer_and_rollout_devices() -> None:
+    """Checks reward role resolves after trainer and rollout devices."""
     resolved = resolve_distributed_resources(
         _cfg(
             {
@@ -339,6 +355,7 @@ def test_reward_role_resolves_after_trainer_and_rollout_devices() -> None:
 
 
 def test_ray_video_reward_requires_reward_gpu_budget() -> None:
+    """Checks Ray video reward requires reward GPU budget."""
     with pytest.raises(ValueError, match=r"distributed\.resources\.reward\.num_gpus > 0"):
         resolve_distributed_resources(
             _cfg(
@@ -353,6 +370,7 @@ def test_ray_video_reward_requires_reward_gpu_budget() -> None:
 
 
 def test_reward_rollout_overlap_requires_shared_release_lifecycle() -> None:
+    """Checks reward rollout overlap requires shared release lifecycle."""
     with pytest.raises(ValueError, match="release_before_reward_model"):
         resolve_distributed_resources(
             _cfg(
@@ -371,6 +389,7 @@ def test_reward_rollout_overlap_requires_shared_release_lifecycle() -> None:
 
 
 def test_reward_can_share_rollout_pool_when_phases_release() -> None:
+    """Checks reward can share rollout pool when phases release."""
     resolved = resolve_distributed_resources(
         _cfg(
             {
@@ -398,6 +417,7 @@ def test_reward_can_share_rollout_pool_when_phases_release() -> None:
 
 
 def test_reward_shared_pool_cannot_request_more_gpus_than_rollout_pool() -> None:
+    """Checks reward shared pool cannot request more gpus than rollout pool."""
     with pytest.raises(ValueError, match="Not enough rollout GPUs"):
         resolve_distributed_resources(
             _cfg(
@@ -420,6 +440,7 @@ def test_reward_shared_pool_cannot_request_more_gpus_than_rollout_pool() -> None
 
 
 def test_reward_trainer_overlap_requires_explicit_allow_overlap() -> None:
+    """Checks reward trainer overlap requires explicit allow overlap."""
     with pytest.raises(ValueError, match="Trainer and reward devices overlap"):
         resolve_distributed_resources(
             _cfg(

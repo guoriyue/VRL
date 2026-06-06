@@ -22,6 +22,7 @@ def _rollout(output: object) -> RewardRollout:
 
 @pytest.mark.asyncio
 async def test_nsfw_safety_reward_only_penalizes_scores_above_threshold() -> None:
+    """Checks NSFW safety reward only penalizes scores above threshold."""
     reward = NSFWSafetyReward(
         model_name="test",
         threshold=0.25,
@@ -40,6 +41,7 @@ async def test_nsfw_safety_reward_only_penalizes_scores_above_threshold() -> Non
 
 @pytest.mark.asyncio
 async def test_nsfw_safety_reward_uses_max_probability_for_image_batches() -> None:
+    """Checks NSFW safety reward uses max probability for image batches."""
     reward = NSFWSafetyReward(
         model_name="test",
         threshold=0.50,
@@ -55,6 +57,7 @@ async def test_nsfw_safety_reward_uses_max_probability_for_image_batches() -> No
 
 
 def test_nsfw_classifier_result_parsing_prefers_nsfw_labels() -> None:
+    """Checks NSFW classifier result parsing prefers NSFW labels."""
     reward = NSFWSafetyReward(model_name="test", threshold=0.35)
 
     probability = reward._probability_from_classifier_result(
@@ -68,6 +71,7 @@ def test_nsfw_classifier_result_parsing_prefers_nsfw_labels() -> None:
 
 
 def test_nsfw_safety_reward_exposes_raw_probabilities_for_audits() -> None:
+    """Checks NSFW safety reward exposes raw probabilities for audits."""
     reward = NSFWSafetyReward(model_name="test", scorer=lambda images: [0.10, 0.90])
 
     probabilities = reward.probability_batch([object(), object()])
@@ -76,5 +80,6 @@ def test_nsfw_safety_reward_exposes_raw_probabilities_for_audits() -> None:
 
 
 def test_nsfw_safety_reward_rejects_invalid_reverse_like_config() -> None:
+    """Checks NSFW safety reward rejects invalid reverse like config."""
     with pytest.raises(ValueError, match="penalty_scale"):
         NSFWSafetyReward(model_name="test", penalty_scale=-1.0)

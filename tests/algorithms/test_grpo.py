@@ -15,6 +15,7 @@ from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
 
 
 class TestGRPOSingleSampleNaN:
+    """Groups tests for grposingle sample na n."""
     def test_single_sample_returns_zero_not_nan(self) -> None:
         """Single sample per group → advantage = 0.0, NOT NaN."""
         import torch
@@ -51,7 +52,9 @@ class TestGRPOSingleSampleNaN:
         assert advantages[3] > 0
 
 class TestGRPOFlowMatchingKL:
+    """Groups tests for grpoflow matching KL."""
     def test_flow_kl_ignores_dt_by_default_to_match_flow_grpo(self) -> None:
+        """Checks flow KL ignores dt by default to match flow GRPO."""
         grpo = GRPO(GRPOConfig(init_kl_coef=1.0))
         signals = _flow_signals(
             log_prob=torch.zeros(2),
@@ -74,6 +77,7 @@ class TestGRPOFlowMatchingKL:
         assert metrics.kl_penalty == pytest.approx(0.5)
 
     def test_flow_kl_can_use_dt_when_explicitly_configured(self) -> None:
+        """Checks flow KL can use dt when explicitly configured."""
         grpo = GRPO(GRPOConfig(init_kl_coef=1.0, flow_kl_use_dt=True))
         signals = _flow_signals(
             log_prob=torch.zeros(2),

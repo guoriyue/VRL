@@ -42,6 +42,7 @@ def _reward_function_local() -> RewardFunction:
 
 @pytest.mark.asyncio
 async def test_reward_function_local_scores_in_process_no_disk() -> None:
+    """Checks reward function local scores in process no disk."""
     reward = _reward_function_local()
     out = await reward.score_batch(
         [
@@ -58,11 +59,13 @@ async def test_reward_function_local_scores_in_process_no_disk() -> None:
 
 @pytest.mark.asyncio
 async def test_reward_function_local_single_score() -> None:
+    """Checks reward function local single score."""
     reward = _reward_function_local()
     assert await reward.score(_rollout(torch.zeros(1, 3, 2, 2))) == pytest.approx(0.0)
 
 
 def test_pickscore_reward_model_constructs_lazily() -> None:
+    """Checks pickscore reward model constructs lazily."""
     from vrl.rewards.models.pickscore import pickscore_reward_model
 
     model = pickscore_reward_model(

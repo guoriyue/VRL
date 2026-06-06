@@ -22,6 +22,7 @@ def _artifact(artifact_id: str) -> RewardInferenceArtifact:
 
 
 def test_select_score_sums_composite_key() -> None:
+    """Checks select score sums composite key."""
     request = RewardInferenceRequest(
         request_id="req",
         artifacts=(),
@@ -32,6 +33,7 @@ def test_select_score_sums_composite_key() -> None:
 
 
 def test_select_score_fails_on_missing_key() -> None:
+    """Checks select score fails on missing key."""
     request = RewardInferenceRequest(
         request_id="req",
         artifacts=(),
@@ -43,6 +45,7 @@ def test_select_score_fails_on_missing_key() -> None:
 
 
 def test_request_rejects_duplicate_artifact_ids() -> None:
+    """Checks request rejects duplicate artifact IDs."""
     artifact = _artifact("x")
     with pytest.raises(ValueError, match="duplicate"):
         RewardInferenceRequest(
@@ -54,6 +57,7 @@ def test_request_rejects_duplicate_artifact_ids() -> None:
 
 
 def test_validate_reward_results_orders_by_request_artifacts() -> None:
+    """Checks validate reward results orders by request artifacts."""
     request = RewardInferenceRequest(
         request_id="req",
         artifacts=(_artifact("a"), _artifact("b")),
@@ -83,6 +87,7 @@ def test_validate_reward_results_orders_by_request_artifacts() -> None:
 
 
 def test_result_rejects_selected_score_mismatch() -> None:
+    """Checks result rejects selected score mismatch."""
     with pytest.raises(ValueError, match="selected_score mismatch"):
         RewardInferenceResult(
             artifact_id="a",

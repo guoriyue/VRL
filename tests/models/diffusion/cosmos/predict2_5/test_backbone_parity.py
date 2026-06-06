@@ -55,6 +55,7 @@ def _state() -> CosmosPredict25SamplingState:
 
 
 def test_cosmos_predict25_forward_step_runs_real_unbatched_cfg() -> None:
+    """Checks Cosmos predict25 forward step runs real unbatched CFG."""
     transformer = build_tiny_cosmos_transformer()
     calls = record_forward_calls(transformer)
     model = CosmosPredict25Model(

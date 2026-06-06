@@ -14,10 +14,12 @@ from vrl.nn.modules.ar_decoder import VllmDecoderPagedAttentionBackend
 
 
 def test_vllm_decoder_backend_uses_paged_attention_contract() -> None:
+    """Checks vLLM decoder backend uses paged attention contract."""
     assert issubclass(VllmDecoderPagedAttentionBackend, ARAttentionBackend)
 
 
 def test_vllm_decoder_pack_prefill_compacts_left_padded_prompts() -> None:
+    """Checks vLLM decoder pack prefill compacts left padded prompts."""
     backend = _backend()
     embeds = torch.arange(10, dtype=torch.float32).view(2, 5, 1)
     mask = torch.tensor(
@@ -56,6 +58,7 @@ def test_vllm_decoder_pack_prefill_compacts_left_padded_prompts() -> None:
 
 
 def test_vllm_decoder_pack_prefill_rejects_non_contiguous_prompt_mask() -> None:
+    """Checks vLLM decoder pack prefill rejects non contiguous prompt mask."""
     backend = _backend()
     embeds = torch.zeros(1, 5, 1)
     mask = torch.tensor([[1, 0, 1, 1, 0]], dtype=torch.long)

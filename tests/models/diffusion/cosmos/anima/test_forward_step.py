@@ -36,6 +36,7 @@ class _ConstantAnimaTransformer(torch.nn.Module):
 
 
 def test_anima_forward_step_uses_const_flow_derivative_contract() -> None:
+    """Checks Anima forward step uses const flow derivative contract."""
     transformer = _ConstantAnimaTransformer()
     model = AnimaModel(
         transformer=transformer,

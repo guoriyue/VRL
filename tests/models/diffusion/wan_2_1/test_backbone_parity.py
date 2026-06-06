@@ -46,6 +46,7 @@ def _model(cls: type, transformer: torch.nn.Module) -> Any:
 
 
 def test_wan_t2v_forward_step_runs_real_batched_cfg() -> None:
+    """Checks Wan T2V forward step runs real batched CFG."""
     transformer = build_tiny_wan_transformer()
     calls = record_forward_calls(transformer)
     model = _model(WanT2VDiffusersModel, transformer)
@@ -74,6 +75,7 @@ def test_wan_t2v_forward_step_runs_real_batched_cfg() -> None:
 
 
 def test_wan_i2v_forward_step_threads_condition_and_image_embeds() -> None:
+    """Checks Wan I2V forward step threads condition and image embeds."""
     transformer = build_tiny_wan_i2v_transformer()
     calls = record_forward_calls(transformer)
     model = _model(WanI2VDiffusersModel, transformer)
@@ -107,6 +109,7 @@ def test_wan_i2v_forward_step_threads_condition_and_image_embeds() -> None:
 def test_wan_i2v_replay_state_roundtrip_keeps_conditioning_tensors() -> None:
     # Pure state plumbing (no forward): export -> restore must preserve the
     # conditioning tensors and slice the per-step timestep.
+    """Checks Wan I2V replay state roundtrip keeps conditioning tensors."""
     model = _model(WanI2VDiffusersModel, build_tiny_wan_i2v_transformer())
     state = WanI2VSamplingState(
         latents=torch.zeros(_LATENT_SHAPE),

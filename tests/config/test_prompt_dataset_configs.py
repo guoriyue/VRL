@@ -12,6 +12,7 @@ CONFIGS_ROOT = REPO_ROOT / "configs"
 
 
 def test_prompt_dataset_configs_declare_loader_preprocessing_and_sampler() -> None:
+    """Checks prompt dataset configs declare loader preprocessing and sampler."""
     expected = {
         "ocr": (
             "datasets/ocr/train.txt",
@@ -46,6 +47,7 @@ def test_prompt_dataset_configs_declare_loader_preprocessing_and_sampler() -> No
 
 
 def test_videophy_i2v_dataset_config_declares_image_caption_loader() -> None:
+    """Checks VideoPhy I2V dataset config declares image caption loader."""
     cfg = OmegaConf.load(CONFIGS_ROOT / "dataset" / "videophy_i2v.yaml")
 
     assert cfg.data.loader == "prompt_image_manifest"
@@ -62,6 +64,7 @@ def test_videophy_i2v_dataset_config_declares_image_caption_loader() -> None:
 
 
 def test_pickapic_dataset_config_declares_preprocessing_and_sampler() -> None:
+    """Checks Pick-a-Pic dataset config declares preprocessing and sampler."""
     cfg = OmegaConf.load(CONFIGS_ROOT / "dataset" / "pickapic_v2.yaml")
 
     assert cfg.data.loader == "pickapic_preference"
@@ -76,6 +79,7 @@ def test_pickapic_dataset_config_declares_preprocessing_and_sampler() -> None:
 
 
 def test_prompt_rewards_stay_in_reward_configs() -> None:
+    """Checks prompt rewards stay in reward configs."""
     expected = {
         "geneval": "geneval",
         "pickscore": "pickscore",
@@ -86,6 +90,7 @@ def test_prompt_rewards_stay_in_reward_configs() -> None:
 
 
 def test_sd35_prompt_dataset_experiments_load_and_validate() -> None:
+    """Checks sd35 prompt dataset experiments load and validate."""
     for name in (
         "diffusion/sd3_5/online_grpo_geneval",
         "diffusion/sd3_5/online_grpo_pickscore",

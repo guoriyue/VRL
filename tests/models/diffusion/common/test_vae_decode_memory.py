@@ -26,6 +26,7 @@ class _FakeVAE:
 
 
 def test_configure_vae_decode_calls_declared_methods() -> None:
+    """Checks configure VAE decode calls declared methods."""
     vae = _FakeVAE()
     mem = VaeDecodeMemory(tiling=True, slicing=True)
 
@@ -36,17 +37,20 @@ def test_configure_vae_decode_calls_declared_methods() -> None:
 
 
 def test_configure_vae_decode_raises_on_missing_method() -> None:
+    """Checks configure VAE decode raises on missing method."""
     mem = VaeDecodeMemory(tiling=True)
     with pytest.raises(TypeError, match="does not support requested enable_tiling"):
         configure_vae_decode(object(), mem, owner="test VAE")
 
 
 def test_vae_decode_memory_rejects_unknown_keys() -> None:
+    """Checks VAE decode memory rejects unknown keys."""
     with pytest.raises(ValueError, match=r"unknown model\.memory\.vae_decode key"):
         vae_decode_memory_from_config({"mystery": True})
 
 
 def test_vae_decode_memory_uses_yaml_values_only() -> None:
+    """Checks VAE decode memory uses YAML values only."""
     assert vae_decode_memory_from_config(None) == VaeDecodeMemory()
     assert vae_decode_memory_from_config({}) == VaeDecodeMemory()
     assert vae_decode_memory_from_config(
@@ -55,6 +59,7 @@ def test_vae_decode_memory_uses_yaml_values_only() -> None:
 
 
 def test_vae_decode_memory_metadata_shape() -> None:
+    """Checks VAE decode memory metadata shape."""
     mem = VaeDecodeMemory(tiling=True, slicing=False)
     assert vae_decode_memory_metadata(mem, applied=("tiling",)) == {
         MEMORY_POLICY_METADATA_KEY: {
@@ -67,6 +72,7 @@ def test_vae_decode_memory_metadata_shape() -> None:
 
 
 def test_apply_vae_decode_memory_from_config() -> None:
+    """Checks apply VAE decode memory from config."""
     vae = _FakeVAE()
 
     metadata = apply_vae_decode_memory(
@@ -87,6 +93,7 @@ def test_apply_vae_decode_memory_from_config() -> None:
 
 
 def test_apply_vae_decode_memory_has_no_python_defaults() -> None:
+    """Checks apply VAE decode memory has no python defaults."""
     vae = _FakeVAE()
 
     metadata = apply_vae_decode_memory(
@@ -109,6 +116,7 @@ def test_apply_vae_decode_memory_has_no_python_defaults() -> None:
 def test_wan_runtime_bundle_records_model_build_memory_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Checks Wan runtime bundle records model build memory metadata."""
     from vrl.models.diffusion.wan_2_1 import runtime
     from vrl.models.interfaces.runtime import RuntimeBuildSpec
 

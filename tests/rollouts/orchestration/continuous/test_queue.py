@@ -41,6 +41,7 @@ def _staleness(max_stale: int = 0) -> StalenessPolicy:
 
 
 def test_select_drains_distinct_groups_at_one_version() -> None:
+    """Checks select drains distinct groups at one version."""
     queue = ContinuousRolloutQueue(max_items=8)
     queue.put(_item(0, group_key=0, version=1))
     queue.put(_item(1, group_key=1, version=1))
@@ -58,6 +59,7 @@ def test_select_drains_distinct_groups_at_one_version() -> None:
 
 
 def test_select_waits_until_full_set_present() -> None:
+    """Checks select waits until full set present."""
     queue = ContinuousRolloutQueue(max_items=8)
     queue.put(_item(0, group_key=0, version=1))
     # Only one of two required groups present yet.
@@ -68,6 +70,7 @@ def test_select_waits_until_full_set_present() -> None:
 
 
 def test_select_never_mixes_policy_versions() -> None:
+    """Checks select never mixes policy versions."""
     queue = ContinuousRolloutQueue(max_items=8)
     # One group at v1, one at v2; max_stale=1 admits both versions but an
     # iteration must stay homogeneous, so only the newest full-enough version
@@ -93,6 +96,7 @@ def test_select_never_mixes_policy_versions() -> None:
 
 
 def test_drop_too_stale_counts_and_removes() -> None:
+    """Checks drop too stale counts and removes."""
     queue = ContinuousRolloutQueue(max_items=8)
     queue.put(_item(0, group_key=0, version=1))
     queue.put(_item(1, group_key=1, version=3))
@@ -103,6 +107,7 @@ def test_drop_too_stale_counts_and_removes() -> None:
 
 
 def test_future_item_fails_fast() -> None:
+    """Checks future item fails fast."""
     queue = ContinuousRolloutQueue(max_items=8)
     queue.put(_item(0, group_key=0, version=5))
     with pytest.raises(RuntimeError, match="newer than the trainer policy"):
@@ -110,6 +115,7 @@ def test_future_item_fails_fast() -> None:
 
 
 def test_item_count_backpressure_drops_oldest() -> None:
+    """Checks item count backpressure drops oldest."""
     queue = ContinuousRolloutQueue(max_items=2, drop_policy="drop_oldest")
     queue.put(_item(0, group_key=0, version=1))
     queue.put(_item(1, group_key=1, version=1))
@@ -122,6 +128,7 @@ def test_item_count_backpressure_drops_oldest() -> None:
 
 
 def test_byte_cap_backpressure() -> None:
+    """Checks byte cap backpressure."""
     queue = ContinuousRolloutQueue(max_items=100, max_bytes=10, drop_policy="drop_oldest")
     queue.put(_item(0, group_key=0, version=1, nbytes=6))
     queue.put(_item(1, group_key=1, version=1, nbytes=6))  # 12 > 10 -> drop one
@@ -130,6 +137,7 @@ def test_byte_cap_backpressure() -> None:
 
 
 def test_stats_shape() -> None:
+    """Checks stats shape."""
     queue = ContinuousRolloutQueue(max_items=8)
     queue.put(_item(0, group_key=0, version=1, nbytes=4))
     stats = queue.stats()

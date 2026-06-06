@@ -54,6 +54,7 @@ def _segment(batch: int, length: int, *, visual: bool) -> dict[str, torch.Tensor
 
 
 def test_r1_collector_uses_r1_task_request_and_trajectory_batch() -> None:
+    """Checks R1 collector uses R1 task request and trajectory batch."""
     rollout_config = RolloutConfig(
         family="janus_pro_r1",
         values={
@@ -89,6 +90,7 @@ def test_r1_collector_uses_r1_task_request_and_trajectory_batch() -> None:
 
 
 def test_r1_trajectory_batch_keeps_segments_separate() -> None:
+    """Checks R1 trajectory batch keeps segments separate."""
     batch_size = 2
     initial_images = torch.ones(batch_size, 3, 2, 2)
     final_images = torch.zeros(batch_size, 3, 2, 2)

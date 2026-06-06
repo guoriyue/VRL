@@ -56,6 +56,7 @@ def _request(path: Path, *, score_key: str = "overall_reward") -> RewardInferenc
 
 
 def test_ray_reward_runtime_uses_repo_owned_model_factory(tmp_path: Path) -> None:
+    """Checks Ray reward runtime uses repo owned model factory."""
     ray = pytest.importorskip("ray")
     artifact = tmp_path / "artifact.pt"
     torch.save(torch.tensor([1.0, 3.0]), artifact)
@@ -98,6 +99,7 @@ def test_ray_reward_runtime_uses_repo_owned_model_factory(tmp_path: Path) -> Non
 def test_ray_reward_runtime_fans_out_across_workers_with_timing() -> None:
     # Multi-worker fan-out: three artifacts scored across two workers must come
     # back in request order, with populated, non-negative timing breakdowns.
+    """Checks Ray reward runtime fans out across workers with timing."""
     ray = pytest.importorskip("ray")
     ray.shutdown()
     runtime = None
@@ -158,6 +160,7 @@ def test_ray_reward_runtime_fans_out_across_workers_with_timing() -> None:
 
 @pytest.mark.gpu
 def test_ray_reward_runtime_assigns_gpu_ids_for_tensor_model(tmp_path: Path) -> None:
+    """Checks Ray reward runtime assigns GPU IDs for tensor model."""
     ray = pytest.importorskip("ray")
 
     artifact = tmp_path / "artifact.pt"

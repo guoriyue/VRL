@@ -83,6 +83,7 @@ class _DeterministicARContractRunner:
 
 
 def test_ar_decode_loop_schedules_contract_cache_lanes() -> None:
+    """Checks AR decode loop schedules contract cache lanes."""
     runner = _DeterministicARContractRunner()
 
     result = ARDecodeLoop(
@@ -107,6 +108,7 @@ def test_ar_decode_loop_schedules_contract_cache_lanes() -> None:
 
 
 def test_ar_decode_loop_requires_family_hooks() -> None:
+    """Checks AR decode loop requires family hooks."""
     try:
         ARDecodeLoop(
             request=_request(),

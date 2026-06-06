@@ -19,6 +19,7 @@ from vrl.models.replay_loading import (
 
 
 def test_full_generation_metadata_round_trips() -> None:
+    """Checks full generation metadata round trips."""
     metadata = full_generation_bundle_metadata(
         replay_modules=("transformer",),
         generation_only_modules=("text_encoder", "vae"),
@@ -36,6 +37,7 @@ def test_full_generation_metadata_round_trips() -> None:
 
 
 def test_minimal_replay_metadata_round_trips_and_satisfies_guard() -> None:
+    """Checks minimal replay metadata round trips and satisfies guard."""
     bundle = SimpleNamespace(
         metadata=minimal_replay_bundle_metadata(replay_modules=("transformer",)),
     )
@@ -50,6 +52,7 @@ def test_minimal_replay_metadata_round_trips_and_satisfies_guard() -> None:
 
 
 def test_full_generation_bundle_fails_minimal_replay_requirement() -> None:
+    """Checks full generation bundle fails minimal replay requirement."""
     bundle = SimpleNamespace(metadata=full_generation_bundle_metadata())
 
     with pytest.raises(ValueError, match="minimal_replay_model"):
@@ -57,6 +60,7 @@ def test_full_generation_bundle_fails_minimal_replay_requirement() -> None:
 
 
 def test_inconsistent_minimal_replay_metadata_is_rejected() -> None:
+    """Checks inconsistent minimal replay metadata is rejected."""
     with pytest.raises(ValueError, match="cannot declare"):
         ReplayModuleLoadingProfile(
             runtime_role=MINIMAL_REPLAY_RUNTIME_ROLE,
@@ -66,6 +70,7 @@ def test_inconsistent_minimal_replay_metadata_is_rejected() -> None:
 
 
 def test_missing_metadata_key_fails_fast() -> None:
+    """Checks missing metadata key fails fast."""
     with pytest.raises(ValueError, match="requires_minimal_replay_loader"):
         module_loading_profile_from_metadata(
             {

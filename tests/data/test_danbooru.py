@@ -24,6 +24,7 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
 
 
 def test_build_prompt_rows_tracks_provenance_and_buckets(tmp_path: Path) -> None:
+    """Checks build prompt rows tracks provenance and buckets."""
     metadata = tmp_path / "posts.jsonl"
     _write_jsonl(
         metadata,
@@ -65,6 +66,7 @@ def test_build_prompt_rows_tracks_provenance_and_buckets(tmp_path: Path) -> None
 
 
 def test_build_prompt_rows_reads_danbooru_json_and_tar_gz(tmp_path: Path) -> None:
+    """Checks build prompt rows reads Danbooru JSON and tar gz."""
     rows = [
         {
             "id": 1,
@@ -96,6 +98,7 @@ def test_build_prompt_rows_reads_danbooru_json_and_tar_gz(tmp_path: Path) -> Non
 
 
 def test_build_prompt_rows_uses_bucket_quotas_with_score_fallback(tmp_path: Path) -> None:
+    """Checks build prompt rows uses bucket quotas with score fallback."""
     metadata = tmp_path / "posts.jsonl"
     rows: list[dict] = []
     hair_tags = ["black_hair", "brown_hair", "blonde_hair", "red_hair", "blue_hair", "pink_hair"]
@@ -144,6 +147,7 @@ def test_build_prompt_rows_uses_bucket_quotas_with_score_fallback(tmp_path: Path
 
 
 def test_build_prompt_rows_allows_hand_focus_without_full_body(tmp_path: Path) -> None:
+    """Checks build prompt rows allows hand focus without full body."""
     metadata = tmp_path / "posts.jsonl"
     _write_jsonl(
         metadata,
@@ -163,6 +167,7 @@ def test_build_prompt_rows_allows_hand_focus_without_full_body(tmp_path: Path) -
 
 
 def test_download_danbooru_images_downloads_only_positive_selection(tmp_path: Path) -> None:
+    """Checks download Danbooru images downloads only positive selection."""
     metadata = tmp_path / "posts.jsonl"
     rows = [
         {
@@ -213,6 +218,7 @@ def test_download_danbooru_images_downloads_only_positive_selection(tmp_path: Pa
 
 
 def test_build_positive_images_prepares_manifests_end_to_end(tmp_path: Path) -> None:
+    """Checks build positive images prepares manifests end-to-end."""
     metadata = tmp_path / "posts.jsonl"
     rows = [
         {
@@ -261,6 +267,7 @@ def test_build_positive_images_prepares_manifests_end_to_end(tmp_path: Path) -> 
 
 
 def test_positive_hand_hard_negative_and_label_queue_rows(tmp_path: Path) -> None:
+    """Checks positive hand hard negative and label queue rows."""
     metadata = tmp_path / "posts.jsonl"
     image = tmp_path / "image.png"
     image.write_bytes(b"fake")
@@ -326,6 +333,7 @@ def test_positive_hand_hard_negative_and_label_queue_rows(tmp_path: Path) -> Non
 
 
 def test_build_safety_prompts_requires_danbooru_metadata(tmp_path: Path) -> None:
+    """Checks build safety prompts requires Danbooru metadata."""
     train_output = tmp_path / "train.jsonl"
     eval_output = tmp_path / "eval_baseline.jsonl"
 
@@ -343,6 +351,7 @@ def test_build_safety_prompts_requires_danbooru_metadata(tmp_path: Path) -> None
 def test_build_danbooru_safety_prompt_rows_uses_ratings_and_nsfw_tags(
     tmp_path: Path,
 ) -> None:
+    """Checks build Danbooru safety prompt rows uses ratings and NSFW tags."""
     metadata = tmp_path / "posts.jsonl"
     _write_jsonl(
         metadata,
@@ -394,6 +403,7 @@ def test_build_danbooru_safety_prompt_rows_uses_ratings_and_nsfw_tags(
 
 
 def test_build_safety_prompts_from_danbooru_metadata(tmp_path: Path) -> None:
+    """Checks build safety prompts from Danbooru metadata."""
     metadata = tmp_path / "posts.jsonl"
     hair_tags = [
         "black_hair",

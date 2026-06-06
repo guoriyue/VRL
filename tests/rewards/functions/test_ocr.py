@@ -12,6 +12,7 @@ from vrl.rewards.functions.ocr import (
 
 
 def test_text_normalization_core_cases() -> None:
+    """Checks text normalization core cases."""
     assert _normalize_text("  Hello, World!  ") == "hello world"
     assert _normalize_text("a   b\tc") == "a b c"
     assert _normalize_text("EXIT-42.") == "exit42"
@@ -19,6 +20,7 @@ def test_text_normalization_core_cases() -> None:
 
 
 def test_normalized_edit_distance_core_cases() -> None:
+    """Checks normalized edit distance core cases."""
     assert _normalized_edit_distance("hello", "hello") == pytest.approx(0.0)
     assert _normalized_edit_distance("", "") == pytest.approx(0.0)
     assert _normalized_edit_distance("abc", "xyz") > 0.5
@@ -71,6 +73,7 @@ def _make_ocr_rollout(target_text: str, video_tensor=None):
 @_skip_no_rapidocr
 @pytest.mark.asyncio
 async def test_ocr_reward_rapidocr_core_scoring_behaviors() -> None:
+    """Checks OCR reward rapidocr core scoring behaviors."""
     reward = OCRReward(device="cpu")
 
     assert await reward.score(_make_ocr_rollout("")) == pytest.approx(0.0)
@@ -82,6 +85,7 @@ async def test_ocr_reward_rapidocr_core_scoring_behaviors() -> None:
 
 @pytest.mark.asyncio
 async def test_image_ocr_substring_match_gets_full_credit() -> None:
+    """Checks image OCR substring match gets full credit."""
     import torch
 
     reward = OCRReward(device="cpu")
@@ -98,6 +102,7 @@ async def test_image_ocr_substring_match_gets_full_credit() -> None:
 
 @pytest.mark.asyncio
 async def test_video_ocr_keeps_flow_grpo_video_edit_distance_behavior() -> None:
+    """Checks video OCR keeps flow GRPO video edit distance behavior."""
     import torch
 
     reward = OCRReward(device="cpu")

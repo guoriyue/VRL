@@ -14,6 +14,7 @@ from vrl.nn.layers.attention.paged import (
 
 @pytest.mark.gpu
 def test_vllm_paged_attention_writes_real_cuda_kv_cache() -> None:
+    """Checks vLLM paged attention writes real cuda KV cache."""
     try:
         kernels = VllmPagedAttentionKernels(
             ARAttentionConfig(family="janus_pro", model_key="probe")

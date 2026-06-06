@@ -7,6 +7,7 @@ from vrl.rollouts.collector.requests import GenerationRequestBuilder
 
 
 def test_engine_request_builder_reads_resolved_request_sampling() -> None:
+    """Checks engine request builder reads resolved request sampling."""
     builder = GenerationRequestBuilder(
         family="sd3_5",
         task="t2i",
@@ -53,6 +54,7 @@ def test_engine_request_builder_reads_resolved_request_sampling() -> None:
 
 
 def test_engine_request_builder_applies_request_overrides_last() -> None:
+    """Checks engine request builder applies request overrides last."""
     builder = GenerationRequestBuilder(
         family="sd3_5",
         task="t2i",

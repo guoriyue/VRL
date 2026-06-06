@@ -90,6 +90,7 @@ def _video_reward_config(**video_kwargs: object):
 async def test_video_reward_materializes_artifacts_and_returns_runtime_scores(
     tmp_path: Path,
 ) -> None:
+    """Checks video reward materializes artifacts and returns runtime scores."""
     actor_runtime = _FakeActorRuntime()
     reward = KlingVideoReward(
         inference_runtime="ray",
@@ -117,6 +118,7 @@ async def test_video_reward_materializes_artifacts_and_returns_runtime_scores(
 
 @pytest.mark.asyncio
 async def test_video_reward_rejects_missing_runtime_results(tmp_path: Path) -> None:
+    """Checks video reward rejects missing runtime results."""
     reward = KlingVideoReward(
         inference_runtime="ray",
         reward_name="kling_video_reward",
@@ -130,6 +132,7 @@ async def test_video_reward_rejects_missing_runtime_results(tmp_path: Path) -> N
 
 
 def test_video_reward_rejects_removed_backend_field(tmp_path: Path) -> None:
+    """Checks video reward rejects removed backend field."""
     with pytest.raises(ValueError, match="backend is no longer supported"):
         KlingVideoReward(
             backend="removed",
@@ -142,6 +145,7 @@ def test_video_reward_rejects_removed_backend_field(tmp_path: Path) -> None:
 
 
 def test_video_reward_rejects_non_ray_runtime(tmp_path: Path) -> None:
+    """Checks video reward rejects non Ray runtime."""
     with pytest.raises(ValueError, match="inference_runtime must be 'ray'"):
         KlingVideoReward(
             inference_runtime="local",
@@ -153,6 +157,7 @@ def test_video_reward_rejects_non_ray_runtime(tmp_path: Path) -> None:
 
 
 def test_video_reward_config_rejects_removed_backend_field() -> None:
+    """Checks video reward config rejects removed backend field."""
     cfg = _video_reward_config(backend="removed")
 
     with pytest.raises(ValueError, match=r"kling_video_reward\.backend is no longer supported"):
@@ -160,6 +165,7 @@ def test_video_reward_config_rejects_removed_backend_field() -> None:
 
 
 def test_video_reward_config_rejects_removed_endpoint_fields() -> None:
+    """Checks video reward config rejects removed endpoint fields."""
     cfg = _video_reward_config(enqueue_url="/removed")
 
     with pytest.raises(ValueError, match="external reward endpoint fields"):
@@ -167,10 +173,12 @@ def test_video_reward_config_rejects_removed_endpoint_fields() -> None:
 
 
 def test_video_reward_config_accepts_ray_runtime() -> None:
+    """Checks video reward config accepts Ray runtime."""
     validate_reward_config(_video_reward_config())
 
 
 def test_video_reward_config_rejects_missing_worker_config() -> None:
+    """Checks video reward config rejects missing worker config."""
     cfg = _video_reward_config()
     del cfg.reward.kwargs.kling_video_reward["worker_config"]
 

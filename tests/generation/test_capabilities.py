@@ -10,6 +10,7 @@ from vrl.generation.capabilities import (
 
 
 def test_execution_stage_capability_round_trip_preserves_default_profiler_name() -> None:
+    """Checks execution stage capability round trip preserves default profiler name."""
     stage = ExecutionStageCapability(
         name="denoise_step",
         segment="denoise",
@@ -27,6 +28,7 @@ def test_execution_stage_capability_round_trip_preserves_default_profiler_name()
 
 
 def test_family_capability_round_trip_preserves_stage_profiler_names() -> None:
+    """Checks family capability round trip preserves stage profiler names."""
     capability = FamilyCapability(
         family="unit",
         task="t2v",

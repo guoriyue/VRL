@@ -7,7 +7,9 @@ from omegaconf import OmegaConf
 
 
 class TestDistributedKRepeatSampler:
+    """Groups tests for distributed krepeat sampler."""
     def test_k_repeat_distribution(self) -> None:
+        """Checks k repeat distribution."""
         import torch
         from torch.utils.data import TensorDataset
 
@@ -41,6 +43,7 @@ class TestDistributedKRepeatSampler:
 
 
 def test_image_caption_prompt_manifest_maps_to_reference_image(tmp_path) -> None:
+    """Checks image caption prompt manifest maps to reference image."""
     from vrl.trainers.data import load_prompt_image_manifest
 
     manifest = tmp_path / "train.jsonl"
@@ -62,6 +65,7 @@ def test_image_caption_prompt_manifest_maps_to_reference_image(tmp_path) -> None
 
 
 def test_image_caption_prompt_manifest_reports_missing_fields(tmp_path) -> None:
+    """Checks image caption prompt manifest reports missing fields."""
     from vrl.trainers.data import load_prompt_image_manifest
 
     manifest = tmp_path / "train.jsonl"
@@ -72,6 +76,7 @@ def test_image_caption_prompt_manifest_reports_missing_fields(tmp_path) -> None:
 
 
 def test_prompt_examples_from_config_dispatches_image_caption_loader(tmp_path) -> None:
+    """Checks prompt examples from config dispatches image caption loader."""
     from vrl.trainers.data import load_prompt_examples_from_config
 
     manifest = tmp_path / "train.jsonl"

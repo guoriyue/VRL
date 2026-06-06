@@ -57,6 +57,7 @@ class _VideoProcessor:
 
 
 def test_sd3_decode_latents_uses_shared_chunked_decoder_and_keeps_layout() -> None:
+    """Checks SD3 decode latents uses shared chunked decoder and keeps layout."""
     vae = _IdentityDecodeVAE(SimpleNamespace(scaling_factor=2.0, shift_factor=0.5))
     pipeline = SimpleNamespace(
         transformer=build_tiny_sd3_transformer(),
@@ -75,6 +76,7 @@ def test_sd3_decode_latents_uses_shared_chunked_decoder_and_keeps_layout() -> No
 
 
 def test_wan_decode_latents_preserves_bcthw_layout() -> None:
+    """Checks Wan decode latents preserves BCHTW layout."""
     vae = _IdentityDecodeVAE(
         SimpleNamespace(latents_mean=[1.0], latents_std=[2.0], z_dim=1),
     )
@@ -94,6 +96,7 @@ def test_wan_decode_latents_preserves_bcthw_layout() -> None:
 
 
 def test_cosmos_predict2_decode_latents_applies_sigma_data_and_layout() -> None:
+    """Checks Cosmos predict2 decode latents applies sigma data and layout."""
     vae = _IdentityDecodeVAE(
         SimpleNamespace(latents_mean=[1.0], latents_std=[4.0], z_dim=1),
     )
@@ -114,6 +117,7 @@ def test_cosmos_predict2_decode_latents_applies_sigma_data_and_layout() -> None:
 
 
 def test_cosmos_predict25_decode_latents_matches_frames_and_layout() -> None:
+    """Checks Cosmos predict25 decode latents matches frames and layout."""
     vae = _IdentityDecodeVAE(SimpleNamespace())
     matched: list[int] = []
 

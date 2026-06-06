@@ -11,6 +11,7 @@ VRL_ROOT = ROOT / "vrl"
 
 
 def test_generation_layer_does_not_import_rollout_or_training_layers() -> None:
+    """Checks generation layer does not import rollout or training layers."""
     violations = _forbidden_imports(
         VRL_ROOT / "generation",
         forbidden=(
@@ -24,6 +25,7 @@ def test_generation_layer_does_not_import_rollout_or_training_layers() -> None:
 
 
 def test_trajectory_layer_stays_family_neutral() -> None:
+    """Checks trajectory layer stays family neutral."""
     violations = _forbidden_imports(
         VRL_ROOT / "trajectory",
         forbidden=(
@@ -40,12 +42,14 @@ def test_trajectory_layer_stays_family_neutral() -> None:
 
 
 def test_removed_boundary_packages_stay_removed() -> None:
+    """Checks removed boundary packages stay removed."""
     assert not (VRL_ROOT / "distributed").exists()
     assert not (VRL_ROOT / "runtime").exists()
     assert not (VRL_ROOT / "generation" / "runtime").exists()
 
 
 def test_shared_ray_substrate_stays_domain_neutral() -> None:
+    """Checks shared Ray substrate stays domain neutral."""
     assert (VRL_ROOT / "ray" / "resources.py").exists()
     assert not (VRL_ROOT / "generation" / "resources.py").exists()
     violations = _forbidden_imports(
@@ -61,6 +65,7 @@ def test_shared_ray_substrate_stays_domain_neutral() -> None:
 
 
 def test_reward_ray_adapter_stays_lean() -> None:
+    """Checks reward Ray adapter stays lean."""
     ray_root = VRL_ROOT / "rewards" / "ray"
     assert _module_filenames(ray_root) == {
         "__init__.py",
@@ -88,6 +93,7 @@ def test_reward_ray_adapter_stays_lean() -> None:
 
 
 def test_reward_models_live_under_models() -> None:
+    """Checks reward models live under models."""
     models_root = VRL_ROOT / "rewards" / "models"
     assert _module_filenames(models_root) == {
         "__init__.py",
@@ -106,6 +112,7 @@ def test_reward_models_live_under_models() -> None:
 
 
 def test_reward_inference_is_a_single_domain_module() -> None:
+    """Checks reward inference is a single domain module."""
     inference_path = VRL_ROOT / "rewards" / "inference.py"
     assert inference_path.exists()
     inference_text = inference_path.read_text(encoding="utf-8")
@@ -119,6 +126,7 @@ def test_reward_inference_is_a_single_domain_module() -> None:
 
 
 def test_reward_function_implementations_live_under_functions() -> None:
+    """Checks reward function implementations live under functions."""
     rewards_root = VRL_ROOT / "rewards"
     assert _module_filenames(rewards_root) == {
         "__init__.py",
@@ -142,6 +150,7 @@ def test_reward_function_implementations_live_under_functions() -> None:
 
 
 def test_generation_ray_adapter_stays_lean() -> None:
+    """Checks generation Ray adapter stays lean."""
     ray_root = VRL_ROOT / "generation" / "ray"
     assert _module_filenames(ray_root) == {
         "__init__.py",
@@ -169,6 +178,7 @@ def test_generation_ray_adapter_stays_lean() -> None:
 
 
 def test_generation_execution_core_stays_flat_and_ray_neutral() -> None:
+    """Checks generation execution core stays flat and Ray neutral."""
     execution_root = VRL_ROOT / "generation" / "execution"
     for expected in (
         "__init__.py",
@@ -192,6 +202,7 @@ def test_generation_execution_core_stays_flat_and_ray_neutral() -> None:
 
 
 def test_new_runtime_code_does_not_import_engine_compat_paths() -> None:
+    """Checks new runtime code does not import engine compat paths."""
     violations = []
     for path in _python_files(VRL_ROOT):
         rel = path.relative_to(ROOT)
@@ -202,6 +213,7 @@ def test_new_runtime_code_does_not_import_engine_compat_paths() -> None:
 
 
 def test_removed_engine_packages_stay_removed() -> None:
+    """Checks removed engine packages stay removed."""
     assert not (VRL_ROOT / "engine").exists()
     assert not (ROOT / "tests" / "engine").exists()
 

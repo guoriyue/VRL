@@ -15,12 +15,14 @@ from vrl.utils.memory import (
 
 
 def test_format_host_memory_omits_unknown_fields() -> None:
+    """Checks format host memory omits unknown fields."""
     snapshot = HostMemorySnapshot(rss_mb=10.0, available_mb=None, total_mb=None)
 
     assert format_host_memory(snapshot) == "rss=10.0MiB"
 
 
 def test_colocated_full_generation_bundle_can_fail_strict_guard() -> None:
+    """Checks colocated full generation bundle can fail strict guard."""
     bundle = SimpleNamespace(
         metadata={
             "runtime_role": "full_generation_model",
@@ -44,6 +46,7 @@ def test_colocated_full_generation_bundle_can_fail_strict_guard() -> None:
 
 
 def test_non_colocated_full_generation_bundle_passes_memory_guard() -> None:
+    """Checks non colocated full generation bundle passes memory guard."""
     bundle = SimpleNamespace(metadata={"loads_full_generation_modules": True})
     config = RayGenerationConfig(
         num_workers=1,

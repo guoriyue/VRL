@@ -10,6 +10,7 @@ from vrl.math.ar.logprob import gather_categorical_log_probs
 
 
 def test_gather_categorical_log_probs_matches_full_log_softmax() -> None:
+    """Checks gather categorical log-probs matches full log softmax."""
     logits = torch.randn(2, 5, 11, dtype=torch.bfloat16)
     token_ids = torch.tensor(
         [
@@ -29,6 +30,7 @@ def test_gather_categorical_log_probs_matches_full_log_softmax() -> None:
 
 
 def test_gather_categorical_log_probs_rejects_shape_mismatch() -> None:
+    """Checks gather categorical log-probs rejects shape mismatch."""
     with pytest.raises(ValueError, match="leading shape"):
         gather_categorical_log_probs(
             torch.zeros(2, 3, 5),

@@ -164,6 +164,7 @@ class _ContinuousReplayModel:
 
 
 def test_token_logprob_evaluator_uses_replay_model_disable_adapter() -> None:
+    """Checks token logprob evaluator uses replay model disable adapter."""
     batch = _discrete_batch()
     model = _DiscreteReplayModel()
 
@@ -179,6 +180,7 @@ def test_token_logprob_evaluator_uses_replay_model_disable_adapter() -> None:
 
 
 def test_continuous_logprob_evaluator_uses_replay_model_disable_adapter() -> None:
+    """Checks continuous logprob evaluator uses replay model disable adapter."""
     batch = _continuous_batch()
     model = _ContinuousReplayModel()
 

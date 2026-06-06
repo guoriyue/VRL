@@ -107,6 +107,7 @@ def test_diffusion_replay_builders_return_minimal_bundles(
     module_path: str,
     builder_name: str,
 ) -> None:
+    """Checks diffusion replay builders return minimal bundles."""
     module = __import__(module_path, fromlist=[builder_name])
     monkeypatch.setattr(
         module,
@@ -141,6 +142,7 @@ def test_diffusion_replay_builders_return_minimal_bundles(
 def test_wan_replay_builder_uses_wan_pipeline_scheduler_class(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Checks Wan replay builder uses Wan pipeline scheduler class."""
     from vrl.models.diffusion.wan_2_1 import runtime
 
     scheduler_classes: list[str] = []
@@ -165,6 +167,7 @@ def test_wan_replay_builder_uses_wan_pipeline_scheduler_class(
 def test_wan_i2v_replay_builder_uses_i2v_replay_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Checks Wan I2V replay builder uses I2V replay model."""
     from vrl.models.diffusion.wan_2_1 import runtime
     from vrl.models.diffusion.wan_2_1.model import WanI2VReplayModel
 
@@ -192,6 +195,7 @@ def test_wan_i2v_replay_builder_uses_i2v_replay_model(
 def test_cosmos_predict25_replay_builder_keeps_diffusion_nft_surface(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Checks Cosmos predict25 replay builder keeps diffusion NFT surface."""
     from vrl.models.diffusion.cosmos import predict2_5
     from vrl.models.diffusion.cosmos.predict2_5 import runtime
 
@@ -229,6 +233,7 @@ def test_cosmos_predict25_replay_builder_keeps_diffusion_nft_surface(
 def test_anima_replay_builder_uses_only_transformer_checkpoint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Checks Anima replay builder uses only transformer checkpoint."""
     from vrl.models.diffusion.cosmos.anima import runtime
 
     monkeypatch.setattr(
@@ -267,12 +272,14 @@ def test_anima_replay_builder_uses_only_transformer_checkpoint(
 
 
 def test_anima_empty_prompts_are_replaced_before_tokenization() -> None:
+    """Checks Anima empty prompts are replaced before tokenization."""
     from vrl.models.diffusion.cosmos.anima.model import _non_empty_prompts
 
     assert _non_empty_prompts(["", "  ", "anime"]) == [".", ".", "anime"]
 
 
 def test_anima_runtime_spec_uses_explicit_local_paths() -> None:
+    """Checks Anima runtime spec uses explicit local paths."""
     from vrl.config.loading import load_config
     from vrl.models.diffusion.cosmos.anima.runtime import (
         extract_anima_replay_runtime_spec,
@@ -308,6 +315,7 @@ def test_anima_runtime_spec_rejects_hf_repo_id_without_cached_artifacts(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    """Checks Anima runtime spec rejects HF repo ID without cached artifacts."""
     from vrl.config.loading import load_config
     from vrl.models.diffusion.cosmos.anima.runtime import extract_anima_replay_runtime_spec
 
@@ -358,6 +366,7 @@ def test_ar_replay_builders_return_minimal_bundles(
     model_attr: str,
     spec_kwargs: dict[str, Any],
 ) -> None:
+    """Checks AR replay builders return minimal bundles."""
     module = __import__(module_path, fromlist=[builder_name])
     monkeypatch.setattr(module, model_attr, _TinyRuntimeModel)
 
@@ -369,6 +378,7 @@ def test_ar_replay_builders_return_minimal_bundles(
 
 
 def test_sd3_after_bundle_hook_ignores_replay_model_without_pipeline() -> None:
+    """Checks SD3 after bundle hook ignores replay model without pipeline."""
     from vrl.scripts.diffusion.sd3_5.train import _offload_driver_frozen_modules
 
     class _ReplayLike:

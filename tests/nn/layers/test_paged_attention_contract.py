@@ -17,6 +17,7 @@ from vrl.nn.layers.attention.paged import (
 
 
 def test_paged_attention_config_requires_identity() -> None:
+    """Checks paged attention config requires identity."""
     with pytest.raises(ValueError, match="family"):
         ARAttentionConfig(family="", model_key="janus")
     with pytest.raises(ValueError, match="block_size"):
@@ -24,6 +25,7 @@ def test_paged_attention_config_requires_identity() -> None:
 
 
 def test_paged_attention_prefill_validates_batch_shape() -> None:
+    """Checks paged attention prefill validates batch shape."""
     with pytest.raises(ValueError, match="batch sizes"):
         ARAttentionPrefillInput(
             inputs_embeds=torch.zeros(2, 3, 4),
@@ -33,6 +35,7 @@ def test_paged_attention_prefill_validates_batch_shape() -> None:
 
 
 def test_paged_attention_step_validates_state_shape() -> None:
+    """Checks paged attention step validates state shape."""
     with pytest.raises(ValueError, match="sequence_states"):
         ARAttentionStepInput(
             input_embeds=torch.zeros(2, 1, 4),
@@ -44,6 +47,7 @@ def test_paged_attention_step_validates_state_shape() -> None:
 
 
 def test_paged_attention_outputs_accept_last_hidden_rank_two_or_three() -> None:
+    """Checks paged attention outputs accept last hidden rank two or three."""
     ARAttentionPrefillOutput(
         last_hidden=torch.zeros(2, 4),
         sequence_states=("a", "b"),
@@ -55,6 +59,7 @@ def test_paged_attention_outputs_accept_last_hidden_rank_two_or_three() -> None:
 
 
 def test_prefix_cache_policy_requires_policy_version_match() -> None:
+    """Checks prefix cache policy requires policy version match."""
     key = _prefix_key(policy_version=1)
     assert ARPrefixCachePolicy().can_reuse(key, _prefix_key(policy_version=1))
     assert not ARPrefixCachePolicy().can_reuse(key, _prefix_key(policy_version=2))

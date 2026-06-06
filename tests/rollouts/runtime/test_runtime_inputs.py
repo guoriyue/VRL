@@ -80,6 +80,7 @@ def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
     expected_task: str,
     expected_gatherer: type,
 ) -> None:
+    """Checks rollout runtime inputs are serializable and registry-backed."""
     cfg = load_config(
         f"experiment/{experiment}",
         overrides=[
@@ -116,6 +117,7 @@ def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
 
 
 def test_diffusion_launch_contract_uses_worker_primitive_device_and_dtype() -> None:
+    """Checks diffusion launch contract uses worker primitive device and dtype."""
     cfg = load_config(
         "experiment/diffusion/sd3_5/online_grpo_ocr",
         overrides=[
@@ -141,6 +143,7 @@ def test_diffusion_launch_contract_uses_worker_primitive_device_and_dtype() -> N
 
 
 def test_cosmos_runtime_inputs_include_reference_image_from_cfg() -> None:
+    """Checks Cosmos runtime inputs include reference image from CFG."""
     cfg = load_config(
         "experiment/diffusion/cosmos_predict2/online_grpo_kling_video_reward",
         overrides=[
@@ -171,6 +174,7 @@ def test_cosmos_runtime_inputs_include_reference_image_from_cfg() -> None:
 
 
 def test_wan_i2v_runtime_inputs_include_reference_image_from_cfg() -> None:
+    """Checks Wan I2V runtime inputs include reference image from CFG."""
     cfg = load_config(
         "experiment/diffusion/wan_2_1/online_grpo_physics_i2v",
         overrides=[
@@ -206,6 +210,7 @@ def test_wan_i2v_runtime_inputs_include_reference_image_from_cfg() -> None:
 
 
 def test_explicit_executor_kwargs_override_registry_defaults() -> None:
+    """Checks explicit executor kwargs override registry defaults."""
     cfg = load_config(
         "experiment/diffusion/sd3_5/online_grpo_ocr",
         overrides=[

@@ -116,6 +116,7 @@ class _BackendPipelineStub(nn.Module):
 
 
 def test_diffusion_model_base_registers_only_transformer_child() -> None:
+    """Checks diffusion model base registers only transformer child."""
     runtime = _ModelBaseStub()
 
     assert isinstance(runtime, nn.Module)
@@ -132,6 +133,7 @@ def test_diffusion_model_base_registers_only_transformer_child() -> None:
 def test_concrete_diffusion_runtimes_register_only_transformer(
     runtime_cls: type[DiffusionModelBase],
 ) -> None:
+    """Checks concrete diffusion runtimes register only transformer."""
     pipeline = _BackendPipelineStub()
     runtime = runtime_cls(pipeline=pipeline, device=torch.device("cpu"))
 
@@ -151,6 +153,7 @@ def test_concrete_diffusion_runtimes_register_only_transformer(
 def test_concrete_diffusion_runtimes_keep_pipeline_transformer_in_sync(
     runtime_cls: type[DiffusionModelBase],
 ) -> None:
+    """Checks concrete diffusion runtimes keep pipeline transformer in sync."""
     pipeline = _BackendPipelineStub()
     runtime = runtime_cls(pipeline=pipeline, device=torch.device("cpu"))
     replacement = nn.Linear(2, 2)
@@ -163,6 +166,7 @@ def test_concrete_diffusion_runtimes_keep_pipeline_transformer_in_sync(
 
 
 def test_forward_resolves_runtime_self_to_registered_transformer() -> None:
+    """Checks forward resolves runtime self to registered transformer."""
     runtime = _ModelBaseStub()
 
     runtime.forward(object(), 0)
@@ -171,6 +175,7 @@ def test_forward_resolves_runtime_self_to_registered_transformer() -> None:
 
 
 def test_replay_forward_returns_typed_replay_result() -> None:
+    """Checks replay forward returns typed replay result."""
     runtime = _ModelBaseStub()
     observations = torch.zeros(2, 2, 1)
     actions = torch.ones(2, 2, 1)
@@ -222,6 +227,7 @@ def test_replay_forward_returns_typed_replay_result() -> None:
 
 
 def test_disable_adapter_forwards_to_transformer_context() -> None:
+    """Checks disable adapter forwards to transformer context."""
     runtime = _ModelBaseStub()
 
     with runtime.disable_adapter():
@@ -231,6 +237,7 @@ def test_disable_adapter_forwards_to_transformer_context() -> None:
 
 
 def test_disable_adapter_without_transformer_adapter_is_noop() -> None:
+    """Checks disable adapter without transformer adapter is no-op."""
     runtime = _ModelBaseStub()
     runtime._set_transformer(nn.Linear(2, 2))
 
@@ -239,6 +246,7 @@ def test_disable_adapter_without_transformer_adapter_is_noop() -> None:
 
 
 def test_load_trainable_state_accepts_trainable_keys() -> None:
+    """Checks load trainable state accepts trainable keys."""
     runtime = _ModelBaseStub()
     replacement = {
         "weight": torch.full_like(runtime.transformer.weight, 2.0),
@@ -253,6 +261,7 @@ def test_load_trainable_state_accepts_trainable_keys() -> None:
 
 
 def test_load_trainable_state_rejects_all_unmatched_keys() -> None:
+    """Checks load trainable state rejects all unmatched keys."""
     runtime = _ModelBaseStub()
 
     with pytest.raises(ValueError, match="trainable keys prefixed"):

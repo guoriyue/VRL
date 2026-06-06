@@ -23,7 +23,9 @@ from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
 
 
 class TestAdvantageInheritance:
+    """Groups tests for advantage inheritance."""
     def test_matches_diffusion_grpo(self) -> None:
+        """Checks that matches diffusion GRPO."""
         from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
 
         torch.manual_seed(0)
@@ -76,6 +78,7 @@ def _inputs(
 
 
 class TestPerTokenLoss:
+    """Groups tests for per token loss."""
     def test_zero_loss_when_ratio_one_no_kl(self) -> None:
         """new_lp == old_lp → ratio == 1; positive advantage → loss = -adv."""
         old_lp = torch.zeros(2, 4)
@@ -86,6 +89,7 @@ class TestPerTokenLoss:
         assert loss.abs().item() < 1e-6
 
     def test_positive_advantage_decreases_loss_when_logprob_up(self) -> None:
+        """Checks positive advantage decreases loss when logprob up."""
         old_lp = torch.zeros(2, 4)
         new_lp = old_lp + 0.1     # log-prob went up
         adv = torch.ones(2)        # positive advantage
@@ -95,6 +99,7 @@ class TestPerTokenLoss:
         assert loss.item() < -1.0
 
     def test_clip_activates(self) -> None:
+        """Checks CLIp activates."""
         old_lp = torch.zeros(1, 4)
         new_lp = old_lp + 5.0     # huge ratio
         adv = torch.ones(1)
@@ -109,7 +114,9 @@ class TestPerTokenLoss:
 
 
 class TestMask:
+    """Groups tests for mask."""
     def test_zero_mask_zeros_loss(self) -> None:
+        """Checks zero mask zeros loss."""
         old_lp = torch.zeros(2, 4)
         new_lp = old_lp + 1.0
         adv = torch.ones(2)
@@ -120,6 +127,7 @@ class TestMask:
         assert loss.abs().item() < 1e-6
 
     def test_partial_mask_changes_loss(self) -> None:
+        """Checks partial mask changes loss."""
         old_lp = torch.zeros(1, 4)
         new_lp = torch.tensor([[0.0, 0.5, 0.5, 0.0]])
         adv = torch.ones(1)
@@ -138,7 +146,9 @@ class TestMask:
 
 
 class TestKL:
+    """Groups tests for KL."""
     def test_kl_enabled_requires_ref_logprob(self) -> None:
+        """Checks KL enabled requires ref logprob."""
         new_lp = torch.zeros(1, 2)
         algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=1.0))
 
@@ -146,6 +156,7 @@ class TestKL:
             algo.compute_loss(_inputs(new_lp, new_lp, torch.zeros(1), ref_lp=None))
 
     def test_k1_signed(self) -> None:
+        """Checks k1 signed."""
         new_lp = torch.zeros(1, 4) + 0.5
         ref_lp = torch.zeros(1, 4)
         old_lp = torch.zeros(1, 4)
@@ -156,6 +167,7 @@ class TestKL:
         assert m.kl_penalty == pytest.approx(0.5, abs=1e-5)
 
     def test_k3_nonnegative(self) -> None:
+        """Checks k3 nonnegative."""
         torch.manual_seed(1)
         new_lp = torch.randn(2, 4)
         ref_lp = torch.randn(2, 4)
@@ -166,6 +178,7 @@ class TestKL:
         assert m.kl_penalty >= 0.0
 
     def test_k2_half_squared_log_ratio(self) -> None:
+        """Checks k2 half squared log ratio."""
         new_lp = torch.tensor([[1.0, -1.0, 0.0, 2.0]])
         ref_lp = torch.zeros(1, 4)
         old_lp = torch.zeros(1, 4)
@@ -177,6 +190,7 @@ class TestKL:
         assert m.kl_penalty == pytest.approx(float(expected), abs=1e-6)
 
     def test_k2_does_not_exponentiate_large_log_ratio(self) -> None:
+        """Checks k2 does not exponentiate large log ratio."""
         new_lp = torch.full((1, 2), 10.0)
         ref_lp = torch.zeros(1, 2)
         old_lp = torch.zeros(1, 2)
@@ -187,6 +201,7 @@ class TestKL:
         assert m.kl_penalty == pytest.approx(50.0, abs=1e-6)
 
     def test_unknown_estimator_raises(self) -> None:
+        """Checks unknown estimator raises."""
         new_lp = torch.zeros(1, 2)
         ref_lp = torch.zeros(1, 2)
         algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=1.0, kl_estimator="bogus"))
@@ -200,7 +215,9 @@ class TestKL:
 
 
 class TestShapeValidation:
+    """Groups tests for shape validation."""
     def test_mismatched_logprob_shape(self) -> None:
+        """Checks mismatched logprob shape."""
         new_lp = torch.zeros(2, 4)
         old_lp = torch.zeros(2, 5)
         adv = torch.zeros(2)

@@ -130,6 +130,7 @@ def _collector(
 
 
 def test_collector_requires_runtime_before_collect() -> None:
+    """Checks collector requires runtime before collect."""
     import asyncio
 
     collector = _collector()
@@ -139,6 +140,7 @@ def test_collector_requires_runtime_before_collect() -> None:
 
 
 def test_collector_routes_request_through_runtime_reward_and_trajectory_batch() -> None:
+    """Checks collector routes request through runtime reward and trajectory batch."""
     import asyncio
 
     runtime = _Runtime()
@@ -167,6 +169,7 @@ def test_collector_routes_request_through_runtime_reward_and_trajectory_batch() 
 
 
 def test_collector_releases_runtime_memory_before_reward_scoring() -> None:
+    """Checks collector releases runtime memory before reward scoring."""
     import asyncio
 
     runtime = _Runtime(
@@ -185,6 +188,7 @@ def test_collector_releases_runtime_memory_before_reward_scoring() -> None:
 
 
 def test_collector_does_not_release_runtime_memory_before_independent_reward() -> None:
+    """Checks collector does not release runtime memory before independent reward."""
     import asyncio
 
     runtime = _Runtime(reward_shared_with_rollout=False)
@@ -200,6 +204,7 @@ def test_collector_does_not_release_runtime_memory_before_independent_reward() -
 
 
 def test_reward_scoring_input_rejects_prompt_output_mismatch() -> None:
+    """Checks reward scoring input rejects prompt output mismatch."""
     with pytest.raises(ValueError, match="prompt/output batch mismatch"):
         RewardScoringInput(
             outputs=torch.ones(2, 3),
@@ -210,6 +215,7 @@ def test_reward_scoring_input_rejects_prompt_output_mismatch() -> None:
 
 
 def test_reward_view_selection_fails_fast_when_ambiguous() -> None:
+    """Checks reward view selection fails fast when ambiguous."""
     import asyncio
 
     request = GenerationRequest(
@@ -242,6 +248,7 @@ def test_reward_view_selection_fails_fast_when_ambiguous() -> None:
 
 
 def test_collector_forwards_reference_metadata_to_request() -> None:
+    """Checks collector forwards reference metadata to request."""
     from vrl.rollouts.collector.config import RolloutConfig
     from vrl.rollouts.collector.requests import GenerationRequestBuilder
 

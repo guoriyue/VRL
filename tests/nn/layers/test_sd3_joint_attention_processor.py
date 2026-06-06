@@ -6,6 +6,7 @@ from vrl.nn.layers.attention.joint import SD3JointAttentionProcessor
 
 
 def test_sd3_joint_attention_processor_matches_diffusers_reference() -> None:
+    """Checks SD3 joint attention processor matches diffusers reference."""
     from diffusers.models.attention_processor import Attention, JointAttnProcessor2_0
 
     torch.manual_seed(0)

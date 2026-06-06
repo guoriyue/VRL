@@ -136,6 +136,7 @@ def _resource_cfg(
 
 
 def test_rollout_backend_config_from_cfg_uses_ray_by_default() -> None:
+    """Checks rollout backend config from CFG uses Ray by default."""
     config = RayGenerationConfig.from_cfg(_cfg(backend=None))
 
     assert config.resources is not None
@@ -154,6 +155,7 @@ def test_ray_backend_requires_launch_contract_and_gatherer(
     launch_contract: Any,
     gatherer: Any,
 ) -> None:
+    """Checks Ray backend requires launch contract and gatherer."""
     with pytest.raises(ValueError, match="launch_contract plus gatherer"):
         RayGenerationLauncher().launch_from_cfg(
             _cfg(),
@@ -164,6 +166,7 @@ def test_ray_backend_requires_launch_contract_and_gatherer(
 
 
 def test_ray_backend_rejects_driver_cuda_policy_without_overlap() -> None:
+    """Checks Ray backend rejects driver cuda policy without overlap."""
     with pytest.raises(ValueError, match=r"resources\.allow_overlap=false"):
         RayGenerationConfig.from_cfg(
             _resource_cfg(
@@ -177,6 +180,7 @@ def test_ray_backend_rejects_driver_cuda_policy_without_overlap() -> None:
 
 
 def test_ray_backend_detects_cuda_trainable_module_when_policy_has_no_device() -> None:
+    """Checks Ray backend detects cuda trainable module when policy has no device."""
     bundle = _Bundle(
         model=object(),
         trainable_modules={"transformer": _FakeModule("cuda:0")},
@@ -193,6 +197,7 @@ def test_ray_backend_detects_cuda_trainable_module_when_policy_has_no_device() -
 
 
 def test_ray_backend_allows_driver_cuda_policy_with_explicit_overlap() -> None:
+    """Checks Ray backend allows driver cuda policy with explicit overlap."""
     config = RayGenerationConfig.from_cfg(
         _resource_cfg(
             trainer_devices=[0],
@@ -206,6 +211,7 @@ def test_ray_backend_allows_driver_cuda_policy_with_explicit_overlap() -> None:
 
 
 def test_ray_backend_allows_split_driver_cuda_when_devices_do_not_overlap() -> None:
+    """Checks Ray backend allows split driver cuda when devices do not overlap."""
     config = RayGenerationConfig.from_cfg(
         _resource_cfg(trainer_devices=[0], rollout_devices=[1]),
     ).validate_driver_state(driver_policy=_CudaPolicy())
@@ -217,6 +223,7 @@ def test_ray_backend_allows_split_driver_cuda_when_devices_do_not_overlap() -> N
 
 
 def test_ray_backend_overlap_requires_release_after_collect() -> None:
+    """Checks Ray backend overlap requires release after collect."""
     with pytest.raises(ValueError, match="release_after_collect=false"):
         RayGenerationConfig.from_cfg(
             _resource_cfg(

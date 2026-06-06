@@ -58,11 +58,13 @@ class _IncompleteReplayModel:
 
 
 def test_replay_result_requires_non_empty_segments() -> None:
+    """Checks replay result requires non empty segments."""
     with pytest.raises(ValueError, match="segments must be non-empty"):
         ReplayResult(segments={})
 
 
 def test_replay_result_requires_matching_segment_key() -> None:
+    """Checks replay result requires matching segment key."""
     with pytest.raises(ValueError, match="must match"):
         ReplayResult(
             segments={
@@ -75,6 +77,7 @@ def test_replay_result_requires_matching_segment_key() -> None:
 
 
 def test_replay_segment_result_requires_dict_values() -> None:
+    """Checks replay segment result requires dict values."""
     with pytest.raises(TypeError, match="values must be a dict"):
         ReplaySegmentResult(
             segment="image_tokens",
@@ -83,6 +86,7 @@ def test_replay_segment_result_requires_dict_values() -> None:
 
 
 def test_replay_result_has_no_primary_segment_field() -> None:
+    """Checks replay result has no primary segment field."""
     result = ReplayResult(
         segments={
             "image_tokens": ReplaySegmentResult(
@@ -96,14 +100,17 @@ def test_replay_result_has_no_primary_segment_field() -> None:
 
 
 def test_replay_request_requires_non_empty_segment_names() -> None:
+    """Checks replay request requires non empty segment names."""
     with pytest.raises(ValueError, match="segment_names"):
         ReplayRequest(segment_names=("",))
 
 
 def test_replay_model_protocol_accepts_minimal_shape() -> None:
+    """Checks replay model protocol accepts minimal shape."""
     assert isinstance(_MinimalReplayModel(), ReplayModel)
 
 
 def test_require_replay_model_reports_missing_methods() -> None:
+    """Checks require replay model reports missing methods."""
     with pytest.raises(TypeError, match="missing: disable_adapter"):
         require_replay_model(_IncompleteReplayModel(), owner="test.model")

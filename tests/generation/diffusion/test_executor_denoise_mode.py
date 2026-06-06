@@ -13,6 +13,7 @@ from vrl.generation.diffusion.executor import (
 
 
 def test_native_denoise_mode_uses_scheduler_step() -> None:
+    """Checks native denoise mode uses scheduler step."""
     scheduler = _Scheduler()
     state = _State(
         latents=torch.ones(1, 1),

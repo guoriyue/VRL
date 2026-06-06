@@ -38,6 +38,7 @@ def _request(
 
 
 def test_generation_request_validation() -> None:
+    """Checks generation request validation."""
     with pytest.raises(ValueError, match="prompts"):
         GenerationRequest(
             request_id="req",
@@ -68,6 +69,7 @@ def test_generation_request_validation() -> None:
 
 
 def test_build_sample_rows_is_deterministic() -> None:
+    """Checks build sample rows is deterministic."""
     request = _request()
     rows = build_sample_rows(request)
 

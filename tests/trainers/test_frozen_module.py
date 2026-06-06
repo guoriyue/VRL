@@ -23,6 +23,7 @@ class _FakeModule:
 
 
 def test_park_frozen_modules_moves_only_declared_present_modules() -> None:
+    """Checks park frozen modules moves only declared present modules."""
     owner = type(
         "_Owner",
         (),
@@ -47,6 +48,7 @@ def test_park_frozen_modules_moves_only_declared_present_modules() -> None:
 
 
 def test_park_frozen_modules_disabled_is_noop() -> None:
+    """Checks park frozen modules disabled is no-op."""
     owner = SimpleNamespace(vae=_FakeModule())
     moved = park_frozen_modules(
         owner,
@@ -57,11 +59,13 @@ def test_park_frozen_modules_disabled_is_noop() -> None:
 
 
 def test_frozen_offload_rejects_unknown_keys() -> None:
+    """Checks frozen offload rejects unknown keys."""
     with pytest.raises(ValueError, match=r"unknown model\.memory\.frozen_offload key"):
         frozen_module_offload_from_config({"mystery_offload": True})
 
 
 def test_frozen_offload_merges_over_defaults() -> None:
+    """Checks frozen offload merges over defaults."""
     defaults = FrozenModuleOffload(
         enable=True,
         module_names=("text_encoder", "vae"),
@@ -80,6 +84,7 @@ def test_frozen_offload_merges_over_defaults() -> None:
 
 
 def test_frozen_offload_normalizes_modules_to_tuple() -> None:
+    """Checks frozen offload normalizes modules to tuple."""
     offload = frozen_module_offload_from_config(
         OmegaConf.create({"enable": True, "modules": ["text_encoder", "", "vae"]}),
     )
@@ -87,6 +92,7 @@ def test_frozen_offload_normalizes_modules_to_tuple() -> None:
 
 
 def test_frozen_offload_metadata_shape() -> None:
+    """Checks frozen offload metadata shape."""
     offload = FrozenModuleOffload(
         enable=True,
         module_names=("vae",),
@@ -105,6 +111,7 @@ def test_frozen_offload_metadata_shape() -> None:
 
 
 def test_sd3_after_bundle_hook_records_driver_offload_metadata() -> None:
+    """Checks SD3 after bundle hook records driver offload metadata."""
     from vrl.scripts.diffusion.sd3_5.train import _after_bundle_built
 
     transformer = SimpleNamespace(enable_gradient_checkpointing=lambda: None)
@@ -141,6 +148,7 @@ def test_sd3_after_bundle_hook_records_driver_offload_metadata() -> None:
 
 
 def test_sd3_after_bundle_hook_respects_disabled_frozen_offload() -> None:
+    """Checks SD3 after bundle hook respects disabled frozen offload."""
     from vrl.scripts.diffusion.sd3_5.train import _after_bundle_built
 
     transformer = SimpleNamespace(enable_gradient_checkpointing=lambda: None)

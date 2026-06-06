@@ -36,6 +36,7 @@ class _FakeHead:
 
 
 def test_sample_and_replay_go_through_net_and_agree() -> None:
+    """Checks sample and replay go through net and agree."""
     b, token_dim, hidden = 2, 4, 6
     head = _FakeHead(token_dim)
     cond = torch.randn(b, hidden)

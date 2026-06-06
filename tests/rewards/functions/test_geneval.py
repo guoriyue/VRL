@@ -19,6 +19,7 @@ def _rollout(metadata: dict) -> RewardRollout:
 
 @pytest.mark.asyncio
 async def test_geneval_reward_uses_injected_scorer_metadata() -> None:
+    """Checks GenEval reward uses injected scorer metadata."""
     def scorer(**kwargs):
         assert kwargs["geneval"]["tag"] == "colors"
         assert kwargs["geneval"]["include"][0]["class"] == "bus"
@@ -41,6 +42,7 @@ async def test_geneval_reward_uses_injected_scorer_metadata() -> None:
 
 @pytest.mark.asyncio
 async def test_geneval_reward_reads_manifest_row_metadata() -> None:
+    """Checks GenEval reward reads manifest row metadata."""
     def scorer(**kwargs):
         assert kwargs["geneval"]["tag"] == "single_object"
         return 0.5
@@ -66,12 +68,14 @@ async def test_geneval_reward_reads_manifest_row_metadata() -> None:
 
 @pytest.mark.asyncio
 async def test_geneval_reward_requires_metadata() -> None:
+    """Checks GenEval reward requires metadata."""
     with pytest.raises(ValueError, match=r"metadata\.geneval"):
         GenEvalReward._extract_geneval_metadata(_rollout({}))
 
 
 @pytest.mark.asyncio
 async def test_geneval_reward_rejects_unsupported_evaluator() -> None:
+    """Checks GenEval reward rejects unsupported evaluator."""
     reward = GenEvalReward(device="cpu", evaluator="constant", scorer=lambda **_: 0.25)
 
     with pytest.raises(ValueError, match="unsupported GenEval evaluator"):
@@ -89,6 +93,7 @@ async def test_geneval_reward_rejects_unsupported_evaluator() -> None:
 
 @pytest.mark.asyncio
 async def test_geneval_reward_registered_in_multi_reward() -> None:
+    """Checks GenEval reward registered in multi reward."""
     def scorer(**kwargs):
         assert kwargs["geneval"]["tag"] == "colors"
         return 0.25

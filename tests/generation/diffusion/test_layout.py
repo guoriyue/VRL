@@ -10,6 +10,7 @@ from vrl.generation.types import GenerationRequest
 
 
 def test_diffusion_layout_rejects_oversized_sde_window() -> None:
+    """Checks diffusion layout rejects oversized SDE window."""
     request = _request(
         {
             "sde_window_size": 10,
@@ -22,6 +23,7 @@ def test_diffusion_layout_rejects_oversized_sde_window() -> None:
 
 
 def test_diffusion_layout_normalizes_native_denoise_mode() -> None:
+    """Checks diffusion layout normalizes native denoise mode."""
     request = _request({"denoise_mode": "native"})
 
     params = DiffusionRequestLayout().parse_sampling_params(request)
@@ -30,6 +32,7 @@ def test_diffusion_layout_normalizes_native_denoise_mode() -> None:
 
 
 def test_diffusion_layout_rejects_unknown_denoise_mode() -> None:
+    """Checks diffusion layout rejects unknown denoise mode."""
     request = _request({"denoise_mode": "custom"})
 
     with pytest.raises(ValueError, match="denoise_mode"):
@@ -37,6 +40,7 @@ def test_diffusion_layout_rejects_unknown_denoise_mode() -> None:
 
 
 def test_diffusion_layout_repeat_batch_rejects_unexpected_batch_size() -> None:
+    """Checks diffusion layout repeat batch rejects unexpected batch size."""
     layout = DiffusionRequestLayout()
 
     repeated = layout.repeat_batch(torch.ones(1, 2), 3)

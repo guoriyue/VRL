@@ -24,6 +24,7 @@ def test_kling_video_reward_snapshot_root_keeps_model_config_at_repo_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Checks Kling video reward snapshot root keeps model config at repo root."""
     from vrl.rewards.models.kling_video_reward import _resolve_model_root
 
     root = _video_reward_root(tmp_path)
@@ -35,6 +36,7 @@ def test_kling_video_reward_snapshot_root_keeps_model_config_at_repo_root(
 
 
 def test_kling_video_reward_checkpoint_path_resolves_to_repo_root(tmp_path: Path) -> None:
+    """Checks Kling video reward checkpoint path resolves to repo root."""
     from vrl.rewards.models.kling_video_reward import _resolve_model_root
 
     root = _video_reward_root(tmp_path)
@@ -45,6 +47,7 @@ def test_kling_video_reward_checkpoint_path_resolves_to_repo_root(tmp_path: Path
 
 
 def test_kling_video_reward_requires_materialized_artifact_path() -> None:
+    """Checks Kling video reward requires materialized artifact path."""
     from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
 
     def _reward(*args, **kwargs):
@@ -75,6 +78,7 @@ def test_kling_video_reward_builds_repo_owned_model(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Checks Kling video reward builds repo owned model."""
     from vrl.rewards.models import kling_video_reward as kling_reward
     from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
 
@@ -131,6 +135,7 @@ def test_kling_video_reward_builds_repo_owned_model(
 
 
 def test_kling_video_reward_remaps_qwen2vl_checkpoint_keys() -> None:
+    """Checks Kling video reward remaps Qwen2vl checkpoint keys."""
     from vrl.rewards.models.kling_video_reward import _remap_qwen2vl_key
 
     assert _remap_qwen2vl_key(

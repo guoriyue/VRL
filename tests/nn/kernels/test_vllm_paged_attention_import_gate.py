@@ -17,6 +17,7 @@ from vrl.nn.layers.attention.paged import (
 
 
 def test_vllm_paged_attention_kernels_report_abi_failure() -> None:
+    """Checks vLLM paged attention kernels report abi failure."""
     def import_module(name: str) -> object:
         if name == "vllm.v1.worker.block_table":
             raise ImportError("bad abi")
@@ -30,6 +31,7 @@ def test_vllm_paged_attention_kernels_report_abi_failure() -> None:
 
 
 def test_vllm_paged_attention_kernels_call_real_internal_api_boundary() -> None:
+    """Checks vLLM paged attention kernels call real internal API boundary."""
     calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
 
     def import_module(name: str) -> object:

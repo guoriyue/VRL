@@ -12,6 +12,7 @@ from vrl.models.ar.janus_pro.runtime import (
 
 
 def test_janus_runtime_spec_does_not_expose_decode_strategy() -> None:
+    """Checks Janus runtime spec does not expose decode strategy."""
     cfg = OmegaConf.create(
         {
             "model": {
@@ -35,6 +36,7 @@ def test_janus_runtime_spec_does_not_expose_decode_strategy() -> None:
 
 
 def test_janus_executor_parse_sampling_params_reads_scheduler_batch_size() -> None:
+    """Checks Janus executor parse sampling params reads scheduler batch size."""
     request = GenerationRequest(
         request_id="req",
         family="janus_pro",

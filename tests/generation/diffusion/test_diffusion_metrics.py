@@ -13,6 +13,7 @@ from vrl.trajectory import trajectory_tensor_bytes
 
 
 def test_diffusion_chunk_gatherer_aggregates_json_serializable_counters() -> None:
+    """Checks diffusion chunk gatherer aggregates JSON serializable counters."""
     request = GenerationRequest(
         request_id="req",
         family="sd3_5",

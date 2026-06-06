@@ -22,6 +22,7 @@ class _WrappedTransformer:
 
 
 def test_sd3_model_installs_vrl_attention_processor_on_pipeline_transformer() -> None:
+    """Checks SD3 model installs VRL attention processor on pipeline transformer."""
     transformer = _Transformer()
     model = SD3_5Model(
         pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
@@ -33,6 +34,7 @@ def test_sd3_model_installs_vrl_attention_processor_on_pipeline_transformer() ->
 
 
 def test_sd3_replay_model_installs_vrl_attention_processor_through_wrapper() -> None:
+    """Checks SD3 replay model installs VRL attention processor through wrapper."""
     transformer = _WrappedTransformer()
     model = SD3_5ReplayModel(
         transformer=transformer,
@@ -48,6 +50,7 @@ def test_sd3_replay_model_installs_vrl_attention_processor_through_wrapper() -> 
 
 
 def test_sd3_replay_model_reinstalls_processor_after_transformer_replace() -> None:
+    """Checks SD3 replay model reinstalls processor after transformer replace."""
     model = SD3_5ReplayModel(
         transformer=_Transformer(),
         scheduler=None,
