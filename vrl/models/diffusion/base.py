@@ -17,7 +17,7 @@ import torch.nn as nn
 
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
-from vrl.models.utils import load_weights_into
+from vrl.models.utils import disable_adapter_on, load_weights_into
 from vrl.trajectory.device import move_value_to_device
 
 
@@ -157,11 +157,7 @@ class DiffusionModelBase(nn.Module, ABC):
     def disable_adapter(self) -> contextlib.AbstractContextManager[None]:
         """Disable LoRA/adapters, or return a no-op context when absent."""
 
-        transformer = self._require_transformer()
-        disable = getattr(transformer, "disable_adapter", None)
-        if not callable(disable):
-            return contextlib.nullcontext()
-        return disable()
+        return disable_adapter_on(self._require_transformer())
 
     def load_trainable_state(self, state_dict: Mapping[str, Any]) -> Any:
         """Load trainable transformer weights from ``transformer.*`` sync keys."""

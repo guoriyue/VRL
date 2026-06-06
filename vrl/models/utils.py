@@ -8,6 +8,7 @@ a payload back into the module.
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Mapping
 from typing import Any
 
@@ -59,3 +60,22 @@ def load_weights_into(
         )
 
     return module.load_state_dict(stripped, strict=False)
+
+
+def count_trainable_params(module: Any) -> int:
+    """Total number of trainable (``requires_grad``) parameters in ``module``."""
+
+    return sum(p.numel() for p in module.parameters() if p.requires_grad)
+
+
+def disable_adapter_on(module: Any) -> contextlib.AbstractContextManager[None]:
+    """Context manager disabling ``module``'s LoRA/PEFT adapter, or a no-op when absent.
+
+    Used for the reference (adapter-off) forward pass; a module with no attachable
+    adapter still satisfies the contract by returning a null context.
+    """
+
+    disable = getattr(module, "disable_adapter", None)
+    if not callable(disable):
+        return contextlib.nullcontext()
+    return disable()
