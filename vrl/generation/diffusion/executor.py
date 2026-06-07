@@ -440,12 +440,13 @@ class DiffusionPipelineExecutorBase(
             autocast_ctx = torch.amp.autocast("cuda", dtype=transformer_dtype)
         else:
             autocast_ctx = nullcontext()
-
         with autocast_ctx, torch.no_grad():
             for step_idx in range(len(state.timesteps)):
                 with record_function("generation.denoise_step"):
-                    latents_ori = state.latents.clone()
-                    timestep = state.timesteps[step_idx]
+                    with record_function("generation.latent_snapshot"):
+                        latents_ori = state.latents.clone()
+                        timestep = state.timesteps[step_idx]
+
                     with record_function("generation.denoise_forward"):
                         step_output = model.forward_step(state, step_idx)
                     noise_pred = step_output["noise_pred"]

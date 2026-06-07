@@ -193,4 +193,3 @@ class TestDiagnostics:
 
         assert algorithm._last_policy_loss_tensor is None
         assert algorithm._last_kl_term_tensor is None
-
