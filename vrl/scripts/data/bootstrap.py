@@ -10,18 +10,13 @@ from __future__ import annotations
 
 import argparse
 import os
+import shlex
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from vrl.scripts.data.common import emit
 from vrl.scripts.data.common import repo_root as _repo_root
-
-_MANIFEST_POPULATE_HINTS = (
-    ("datasets/danbooru/anatomy/", "python -m vrl.scripts.data.setup anime-prompts"),
-    ("data/external/videophy_i2v/", "python -m vrl.scripts.data.setup videophy-i2v"),
-    ("data/external/video_world/", "python -m vrl.scripts.data.setup video-world-bridge"),
-)
 
 
 def register(subparsers: Any) -> None:
@@ -70,6 +65,8 @@ def resolve_experiment_dataset_plan(
             },
         )
     if loader == "pickapic_preference":
+        from vrl.scripts.data import pickapic
+
         ready = False
         steps.append(
             {
@@ -77,7 +74,7 @@ def resolve_experiment_dataset_plan(
                 "path": "(huggingface cache)",
                 "present": False,
                 "rows": 0,
-                "get": "python -m vrl.scripts.data.setup pickapic --with-images",
+                "get": _setup_command(pickapic.image_setup_argv()),
             },
         )
     return {"loader": loader, "ready": ready, "steps": steps}
@@ -92,17 +89,30 @@ def _count_rows(path: Path) -> int:
 
 
 def _populate_hint_for_path(path: str) -> str:
-    for prefix, hint in _MANIFEST_POPULATE_HINTS:
+    for prefix, argv in _manifest_setup_hints():
         if path.startswith(prefix):
-            return hint
+            return _setup_command(argv)
     return f"{path} is not present and no populate command maps to it; see datasets/ docs"
 
 
+def _manifest_setup_hints() -> tuple[tuple[str, tuple[str, ...]], ...]:
+    from vrl.scripts.data import danbooru, video_world, videophy_i2v
+
+    return (
+        *danbooru.manifest_setup_hints(),
+        *videophy_i2v.manifest_setup_hints(),
+        *video_world.manifest_setup_hints(),
+    )
+
+
+def _setup_command(argv: tuple[str, ...]) -> str:
+    return "python -m vrl.scripts.data.setup " + shlex.join(argv)
+
+
 def _expected_rows_for_path(path: str, repo_root: Path) -> int:
-    expected_source = {
-        "data/external/videophy_i2v/manifests/train.jsonl": "datasets/videophy/train.txt",
-        "data/external/videophy_i2v/manifests/eval.jsonl": "datasets/videophy/eval.txt",
-    }.get(path)
+    from vrl.scripts.data import videophy_i2v
+
+    expected_source = videophy_i2v.expected_manifest_sources().get(path)
     if not expected_source:
         return 0
     return _count_rows(repo_root / expected_source)
@@ -121,10 +131,17 @@ def _cmd_for_experiment(args: argparse.Namespace) -> None:
     emit(plan)
     if args.run and not plan["ready"]:
         for step in plan["steps"]:
-            if step["get"].startswith("python -m vrl.scripts.data.setup pickapic"):
-                from vrl.scripts.data.setup import main as setup_main
+            _run_setup_command(str(step.get("get", "")))
 
-                setup_main(["pickapic", "--with-images"])
+
+def _run_setup_command(command: str) -> None:
+    parts = shlex.split(command)
+    if parts[:4] != ["python", "-m", "vrl.scripts.data.setup"]:
+        return
+
+    from vrl.scripts.data.setup import main as setup_main
+
+    setup_main(parts[4:])
 
 
 __all__ = ["register", "resolve_experiment_dataset_plan"]

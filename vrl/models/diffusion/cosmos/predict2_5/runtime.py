@@ -14,10 +14,12 @@ from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
 from vrl.models.diffusion.capabilities import diffusion_family_capability
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
+from vrl.models.loader import (
+    load_diffusers_scheduler,
+    load_diffusers_transformer,
+)
 from vrl.models.replay_loading import (
     full_generation_bundle_metadata,
-    load_diffusers_scheduler_component,
-    load_diffusers_transformer_component,
     minimal_replay_bundle_metadata,
 )
 from vrl.models.runtime_config import (
@@ -109,11 +111,11 @@ def build_cosmos_predict25_replay_runtime_bundle(spec: RuntimeBuildSpec) -> Runt
         spec.model_name_or_path,
     )
     model = CosmosPredict25ReplayModel(
-        transformer=load_diffusers_transformer_component(
+        transformer=load_diffusers_transformer(
             spec,
             "CosmosTransformer3DModel",
         ),
-        scheduler=load_diffusers_scheduler_component(
+        scheduler=load_diffusers_scheduler(
             spec,
             "UniPCMultistepScheduler",
         ),

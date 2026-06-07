@@ -318,7 +318,7 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
 
         self.require_native_ar_engine(request)
         sampling = request.sampling
-        params: ARSamplingParams = self.parse_sampling_params(request)
+        params: ARSamplingParams = self.layout.parse_sampling_params(request)
         prompts = list(request.prompts)
 
         cfg_weight = float(sampling.get("cfg_weight", 5.0))
@@ -333,7 +333,7 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
         # Repeat prompts samples_per_prompt times so the AR loop runs
         # samples_per_prompt independent sequences per prompt. Order is
         # prompt-major to match build_sample_rows.build_sample_rows.
-        repeated_prompts = self.expand_prompts(request)
+        repeated_prompts = self.layout.expand_prompts(request)
 
         with record_function("engine.prefill"):
             # 1. Tokenise conditional + unconditional prompts.
@@ -346,7 +346,7 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
                 max_text_length=params.max_text_length,
             )
             pad_id = getattr(self.model.processor.tokenizer, "pad_token_id", None) or 0
-            prompt_ids, prompt_mask, uncond_ids, uncond_mask = self.align_pair(
+            prompt_ids, prompt_mask, uncond_ids, uncond_mask = self.layout.align_pair(
                 prompt_ids,
                 prompt_mask,
                 uncond_ids,
@@ -399,7 +399,7 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
         # multiplications don't trigger float upcasts.
         token_mask = torch.ones_like(token_log_probs)
 
-        peak_mem_mb = self.peak_memory_mb()
+        peak_mem_mb = self.layout.peak_memory_mb()
         engine_counters = _ar_engine_counters(
             params=params,
             batch_rows=len(sample_rows),
@@ -465,15 +465,15 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
 
         del execution_stage, plan_summary
         self.require_native_ar_engine(request)
-        self.validate_chunk(request, chunk)
+        self.layout.validate_chunk(request, chunk)
         sampling = request.sampling
-        params: ARSamplingParams = self.parse_sampling_params(request)
+        params: ARSamplingParams = self.layout.parse_sampling_params(request)
 
         cfg_weight = float(sampling.get("cfg_weight", 5.0))
         temperature = float(sampling.get("temperature", 1.0))
 
         if params.seed is not None:
-            torch.manual_seed(params.seed + self.chunk_seed_offset(request, chunk))
+            torch.manual_seed(params.seed + self.layout.chunk_seed_offset(request, chunk))
 
         with record_function("engine.prefill"):
             repeated_prompts = [chunk.prompt] * chunk.sample_count
@@ -486,7 +486,7 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
                 max_text_length=params.max_text_length,
             )
             pad_id = getattr(self.model.processor.tokenizer, "pad_token_id", None) or 0
-            prompt_ids, prompt_mask, uncond_ids, uncond_mask = self.align_pair(
+            prompt_ids, prompt_mask, uncond_ids, uncond_mask = self.layout.align_pair(
                 prompt_ids,
                 prompt_mask,
                 uncond_ids,
@@ -497,7 +497,7 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
             cond_embeds = self._embed(prompt_ids)
             uncond_embeds = self._embed(uncond_ids)
 
-        chunk_specs = self.chunk_sample_rows(request, chunk)
+        chunk_specs = self.layout.chunk_sample_rows(request, chunk)
         with (
             record_function("engine.decode_step"),
             record_function("engine.cache_read"),
@@ -525,7 +525,7 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
                 image_size=params.image_size,
             )
         token_mask = torch.ones_like(token_log_probs)
-        peak_mem_mb = self.peak_memory_mb()
+        peak_mem_mb = self.layout.peak_memory_mb()
 
         return JanusProARChunkResult(
             prompt_index=chunk.prompt_index,
@@ -775,14 +775,14 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
 
         self.require_native_ar_engine(request)
         sampling = request.sampling
-        params: ARSamplingParams = self.parse_sampling_params(request)
+        params: ARSamplingParams = self.layout.parse_sampling_params(request)
         prompts = list(request.prompts)
 
         if params.seed is not None:
             torch.manual_seed(params.seed)
 
         with record_function("engine.prefill"):
-            repeated_prompts = self.expand_prompts(request)
+            repeated_prompts = self.layout.expand_prompts(request)
             prompt_ids, prompt_mask, uncond_ids, uncond_mask = self._tokenize_r1_prompts(
                 repeated_prompts,
                 max_text_length=params.max_text_length,
@@ -815,7 +815,7 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
                 ),
             )
 
-        peak_mem_mb = self.peak_memory_mb()
+        peak_mem_mb = self.layout.peak_memory_mb()
         segment_extra = result["segments"]
         trajectory = build_ar_multisegment_trajectory(
             request=request,
@@ -869,12 +869,12 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
 
         del execution_stage, plan_summary
         self.require_native_ar_engine(request)
-        self.validate_chunk(request, chunk)
+        self.layout.validate_chunk(request, chunk)
         sampling = request.sampling
-        params: ARSamplingParams = self.parse_sampling_params(request)
+        params: ARSamplingParams = self.layout.parse_sampling_params(request)
 
         if params.seed is not None:
-            torch.manual_seed(params.seed + self.chunk_seed_offset(request, chunk))
+            torch.manual_seed(params.seed + self.layout.chunk_seed_offset(request, chunk))
 
         with record_function("engine.prefill"):
             repeated_prompts = [chunk.prompt] * chunk.sample_count
@@ -888,7 +888,7 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
             record_function("engine.cache_read"),
             record_function("engine.cache_write"),
         ):
-            chunk_specs = self.chunk_sample_rows(request, chunk)
+            chunk_specs = self.layout.chunk_sample_rows(request, chunk)
             scheduler_batches: list[int] = []
             result = call_with_supported_kwargs(
                 self.model.generate_with_refine,
@@ -921,7 +921,7 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
             selfcheck=result["selfcheck"],
             segments=result["segments"],
             context={**result["context"], "ar_decode_loop_enabled": True},
-            peak_memory_mb=self.peak_memory_mb(),
+            peak_memory_mb=self.layout.peak_memory_mb(),
         )
 
     def gather_chunks(
@@ -987,7 +987,7 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
             max_text_length=max_text_length,
         )
         pad_id = getattr(self.model.processor.tokenizer, "pad_token_id", None) or 0
-        return self.align_pair(
+        return self.layout.align_pair(
             prompt_ids,
             prompt_mask,
             uncond_ids,

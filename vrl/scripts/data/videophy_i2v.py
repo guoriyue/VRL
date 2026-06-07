@@ -35,6 +35,7 @@ from vrl.scripts.data.common import (
 
 DEFAULT_REPO_ID = "videophysics/videophy_test_public"
 DEFAULT_CSV_FILE = "videophy_test_public.csv"
+COMMAND_NAME = "videophy-i2v"
 DATASET_NAME = "videophy_i2v"
 DECODE_METHOD = "imageio_ffmpeg_first_frame"
 
@@ -64,7 +65,7 @@ class SelectedVideo:
 
 
 def register(subparsers: Any) -> None:
-    parser = subparsers.add_parser("videophy-i2v")
+    parser = subparsers.add_parser(COMMAND_NAME)
     parser.add_argument("--repo-id", default=DEFAULT_REPO_ID)
     parser.add_argument("--csv-file", default=DEFAULT_CSV_FILE)
     parser.add_argument("--train-prompts", type=Path, default=repo_root() / "datasets/videophy/train.txt")
@@ -85,6 +86,17 @@ def register(subparsers: Any) -> None:
         help="Keep downloaded mp4 files under data/external instead of deleting them after frame extraction.",
     )
     parser.set_defaults(func=_cmd_videophy_i2v)
+
+
+def manifest_setup_hints() -> tuple[tuple[str, tuple[str, ...]], ...]:
+    return ((f"data/external/{DATASET_NAME}/", (COMMAND_NAME,)),)
+
+
+def expected_manifest_sources() -> dict[str, str]:
+    return {
+        f"data/external/{DATASET_NAME}/manifests/train.jsonl": "datasets/videophy/train.txt",
+        f"data/external/{DATASET_NAME}/manifests/eval.jsonl": "datasets/videophy/eval.txt",
+    }
 
 
 def prepare_videophy_i2v_dataset(
@@ -390,7 +402,9 @@ def _relative_or_absolute(path: Path, root: Path) -> str:
 __all__ = [
     "SelectedVideo",
     "VideoPhyVideoRow",
+    "expected_manifest_sources",
     "load_videophy_video_rows",
+    "manifest_setup_hints",
     "prepare_videophy_i2v_dataset",
     "register",
     "select_videos_for_prompts",

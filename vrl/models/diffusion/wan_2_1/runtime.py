@@ -22,13 +22,15 @@ from vrl.models.interfaces.runtime import (
     RuntimeBuildSpec,
     RuntimeBundle,
 )
-from vrl.models.replay_loading import (
+from vrl.models.loader import (
     apply_lora_to_transformer,
     compile_transformer,
     enable_transformer_full_finetune,
+    load_diffusers_scheduler,
+    load_diffusers_transformer,
+)
+from vrl.models.replay_loading import (
     full_generation_bundle_metadata,
-    load_diffusers_scheduler_component,
-    load_diffusers_transformer_component,
     minimal_replay_bundle_metadata,
 )
 from vrl.models.runtime_config import (
@@ -152,11 +154,11 @@ def build_wan_2_1_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle
         spec.model_name_or_path,
     )
     model = replay_cls(
-        transformer=load_diffusers_transformer_component(
+        transformer=load_diffusers_transformer(
             spec,
             "WanTransformer3DModel",
         ),
-        scheduler=load_diffusers_scheduler_component(
+        scheduler=load_diffusers_scheduler(
             spec,
             "UniPCMultistepScheduler",
         ),

@@ -13,9 +13,11 @@ from typing import Any
 
 from vrl.scripts.data.common import default_cache_dir, emit
 
+COMMAND_NAME = "pickapic"
+
 
 def register(subparsers: Any) -> None:
-    parser = subparsers.add_parser("pickapic")
+    parser = subparsers.add_parser(COMMAND_NAME)
     parser.add_argument("--dataset-name", default="")
     parser.add_argument("--split", default="train")
     parser.add_argument("--cache-dir", type=Path, default=default_cache_dir())
@@ -49,4 +51,8 @@ def _cmd_pickapic(args: argparse.Namespace) -> None:
     )
 
 
-__all__ = ["register"]
+def image_setup_argv() -> tuple[str, ...]:
+    return (COMMAND_NAME, "--with-images")
+
+
+__all__ = ["image_setup_argv", "register"]

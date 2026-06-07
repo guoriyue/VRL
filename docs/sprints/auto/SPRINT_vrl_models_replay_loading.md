@@ -48,7 +48,7 @@ def resolve_torch_dtype(...):                    # line 272
 3. ALL_CAPS keys 是合法边界但导出过宽。`RUNTIME_ROLE_KEY` 等是写进 `RuntimeBundle.metadata` 的 schema key（AGENTS.md 明确 schema key 是真边界，保留正确）。但它们在 `__all__` 里全量导出却无任何外部 import（实测 0），且 key 字面值与 `RuntimeRole` 的 Literal 值在同文件手维护两份（"runtime_role" 字符串 + Literal 值），无 drift 风险但有冗余导出面。
 
 ## 3. 建议动作
-- 拆分模块（consolidate by responsibility）：把第二组通用后端动作（`load_diffusers_transformer_component`、`load_diffusers_scheduler_component`、`load_flow_match_scheduler_component`、`apply_lora_to_transformer`、`enable_transformer_full_finetune`、`compile_transformer`、`resolve_torch_dtype`）迁到一个名副其实的模块，如 `vrl/models/backend_loading.py`（或 `transformer_loading.py`），让 `replay_loading.py` 只留 replay-role 元数据 taxonomy + 校验。各 family runtime 的 import 随之分成两行，语义更清晰；`interfaces/runtime.py:65` 的指引也只再指向元数据模块。
+- 拆分模块（consolidate by responsibility）：已落地——通用模型装载动作（`load_diffusers_transformer`、`load_diffusers_scheduler`、`load_flow_match_scheduler`、`apply_lora_to_transformer`、`enable_transformer_full_finetune`、`compile_transformer`）迁到 `vrl/models/loader.py`（沿用 vLLM/SGLang 的 `loader` 命名，去掉无意义的 `_component` 后缀；`resolve_torch_dtype` 留在 `vrl/models/dtypes.py`），`replay_loading.py` 只留 replay-role 元数据 taxonomy + 校验。各 family runtime 的 import 随之分成两行，语义更清晰。
 - 对 parser 路径表态：要么尽快把 `require_minimal_replay_bundle` / `module_loading_profile_from_metadata` 接进真正的 minimal-replay 加载流程（trainer 侧），要么在 docstring 明确标注 "contract declared, runtime consumer pending"，避免读者误以为已接线。不建议删——测试在固化契约，且 factory 写入侧已 production 使用，parser 是其对称读取面。
 - `__all__` 不必收紧 key 导出（schema key 作为模块公共词汇可保留），但拆分后应把 key 跟着元数据模块走。
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from vrl.algorithms.advantages import group_relative_advantages
 from vrl.algorithms.base import Algorithm
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.types import TrainStepMetrics
@@ -47,26 +48,14 @@ class DiffusionNFT(Algorithm):
         rewards: Any,
         group_ids: Any,
     ) -> Any:
-        import torch
-
         cfg = self.config
-        advantages = torch.zeros_like(rewards)
-        for gid in torch.unique(group_ids):
-            mask = group_ids == gid
-            group_rewards = rewards[mask]
-            if group_rewards.numel() <= 1:
-                advantages[mask] = 0.0
-                continue
-            mean = group_rewards.mean()
-            std = rewards.std() if cfg.global_std else group_rewards.std()
-            denom = torch.clamp(std, min=cfg.eps)
-            group_adv = (group_rewards - mean) / denom
-            advantages[mask] = torch.clamp(
-                group_adv,
-                -cfg.adv_clip_max,
-                cfg.adv_clip_max,
-            )
-        return advantages
+        return group_relative_advantages(
+            rewards,
+            group_ids,
+            eps=cfg.eps,
+            adv_clip_max=cfg.adv_clip_max,
+            global_std=cfg.global_std,
+        )
 
     def compute_loss(
         self,

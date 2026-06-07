@@ -111,18 +111,18 @@ def test_diffusion_replay_builders_return_minimal_bundles(
     module = __import__(module_path, fromlist=[builder_name])
     monkeypatch.setattr(
         module,
-        "load_diffusers_transformer_component",
+        "load_diffusers_transformer",
         lambda *_args, **_kwargs: _TinyTransformer(),
     )
     monkeypatch.setattr(
         module,
-        "load_flow_match_scheduler_component",
+        "load_flow_match_scheduler",
         lambda *_args, **_kwargs: _TinyScheduler(),
         raising=False,
     )
     monkeypatch.setattr(
         module,
-        "load_diffusers_scheduler_component",
+        "load_diffusers_scheduler",
         lambda *_args, **_kwargs: _TinyScheduler(),
         raising=False,
     )
@@ -153,10 +153,10 @@ def test_wan_replay_builder_uses_wan_pipeline_scheduler_class(
 
     monkeypatch.setattr(
         runtime,
-        "load_diffusers_transformer_component",
+        "load_diffusers_transformer",
         lambda *_args, **_kwargs: _TinyTransformer(),
     )
-    monkeypatch.setattr(runtime, "load_diffusers_scheduler_component", fake_scheduler_loader)
+    monkeypatch.setattr(runtime, "load_diffusers_scheduler", fake_scheduler_loader)
 
     bundle = runtime.build_wan_2_1_replay_runtime_bundle(_spec())
 
@@ -173,12 +173,12 @@ def test_wan_i2v_replay_builder_uses_i2v_replay_model(
 
     monkeypatch.setattr(
         runtime,
-        "load_diffusers_transformer_component",
+        "load_diffusers_transformer",
         lambda *_args, **_kwargs: _TinyTransformer(),
     )
     monkeypatch.setattr(
         runtime,
-        "load_diffusers_scheduler_component",
+        "load_diffusers_scheduler",
         lambda *_args, **_kwargs: _TinyScheduler(),
     )
 
@@ -201,12 +201,12 @@ def test_cosmos_predict25_replay_builder_keeps_diffusion_nft_surface(
 
     monkeypatch.setattr(
         runtime,
-        "load_diffusers_transformer_component",
+        "load_diffusers_transformer",
         lambda *_args, **_kwargs: _TinyTransformer(),
     )
     monkeypatch.setattr(
         runtime,
-        "load_diffusers_scheduler_component",
+        "load_diffusers_scheduler",
         lambda *_args, **_kwargs: _TinyScheduler(),
     )
     monkeypatch.setattr(

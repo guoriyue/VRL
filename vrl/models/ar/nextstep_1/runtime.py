@@ -259,7 +259,7 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
         del engine_plan
         self.require_native_ar_engine(request)
         sampling = request.sampling
-        params: ARSamplingParams = self.parse_sampling_params(request)
+        params: ARSamplingParams = self.layout.parse_sampling_params(request)
         prompts = list(request.prompts)
 
         cfg_scale = float(sampling["cfg_scale"])
@@ -268,7 +268,7 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
 
         # Repeat each prompt ``samples_per_prompt`` times so the AR loop
         # sees a flat ``[B, ...]`` batch where ``B = num_prompts x G``.
-        repeated_prompts = self.expand_prompts(request)
+        repeated_prompts = self.layout.expand_prompts(request)
 
         prompt_ids, prompt_mask = self._tokenize_prompts(
             repeated_prompts,
@@ -279,7 +279,7 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
             max_text_length=params.max_text_length,
         )
         pad_id = getattr(self.model.processor, "pad_token_id", None) or 0
-        prompt_ids, prompt_mask, uncond_ids, uncond_mask = self.align_pair(
+        prompt_ids, prompt_mask, uncond_ids, uncond_mask = self.layout.align_pair(
             prompt_ids,
             prompt_mask,
             uncond_ids,
@@ -331,7 +331,7 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
 
         images_for_reward = images
 
-        peak_mem_mb = self.peak_memory_mb()
+        peak_mem_mb = self.layout.peak_memory_mb()
         engine_counters = {
             "ar_decode_loop_enabled": True,
             "ar_prefill_forwards": 1,
@@ -400,9 +400,9 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
 
         del execution_stage, plan_summary
         self.require_native_ar_engine(request)
-        self.validate_chunk(request, chunk)
+        self.layout.validate_chunk(request, chunk)
         sampling = request.sampling
-        params: ARSamplingParams = self.parse_sampling_params(request)
+        params: ARSamplingParams = self.layout.parse_sampling_params(request)
 
         cfg_scale = float(sampling["cfg_scale"])
         num_flow_steps = int(sampling["num_flow_steps"])
@@ -418,7 +418,7 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
             max_text_length=params.max_text_length,
         )
         pad_id = getattr(self.model.processor, "pad_token_id", None) or 0
-        prompt_ids, prompt_mask, uncond_ids, uncond_mask = self.align_pair(
+        prompt_ids, prompt_mask, uncond_ids, uncond_mask = self.layout.align_pair(
             prompt_ids,
             prompt_mask,
             uncond_ids,
@@ -432,7 +432,7 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
         generator: torch.Generator | None = None
         if params.seed is not None:
             generator = torch.Generator(device=self.model.device)
-            generator.manual_seed(params.seed + self.chunk_seed_offset(request, chunk))
+            generator.manual_seed(params.seed + self.layout.chunk_seed_offset(request, chunk))
 
         sample_kwargs: dict[str, Any] = {
             "cfg_scale": cfg_scale,
@@ -445,7 +445,7 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
 
         decode_result = ARDecodeLoop(
             request=request,
-            sample_rows=self.chunk_sample_rows(request, chunk),
+            sample_rows=self.layout.chunk_sample_rows(request, chunk),
             runner=self._ar_runner(request),
             max_new_tokens=params.image_token_num,
             tokenizer_key="nextstep_1",
@@ -459,7 +459,7 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
 
         images = self.model.decode_image_tokens(tokens, image_size=params.image_size)
         images_for_reward = images
-        peak_mem_mb = self.peak_memory_mb()
+        peak_mem_mb = self.layout.peak_memory_mb()
 
         return NextStep1ARChunkResult(
             prompt_index=chunk.prompt_index,

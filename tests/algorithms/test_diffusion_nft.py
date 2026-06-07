@@ -30,6 +30,7 @@ from tests.models.diffusion.fixtures import (
     build_tiny_wan_transformer,
 )
 from vrl.algorithms.diffusion_nft import DiffusionNFT, DiffusionNFTConfig
+from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
 from vrl.models.diffusion.cosmos.predict2_5.model import _copy_adapter_weights
 from vrl.rollouts.batch import RolloutBatch
@@ -39,6 +40,41 @@ _BATCH = TINY_WAN_LATENT_SHAPE[0]
 _LATENT_SHAPE = TINY_WAN_LATENT_SHAPE
 _TEXT_LEN = TINY_WAN_TEXT_LEN
 _TEXT_DIM = TINY_WAN_TEXT_DIM
+
+
+@pytest.mark.parametrize(
+    ("global_std", "expected"),
+    [
+        (
+            False,
+            torch.tensor(
+                [-1.2247449, 0.0, 1.2247449, -1.2247449, 0.0, 1.2247449],
+            ),
+        ),
+        (
+            True,
+            torch.tensor(
+                [-0.5855400, 0.0, 0.5855400, -0.5855400, 0.0, 0.5855400],
+            ),
+        ),
+    ],
+)
+def test_diffusion_nft_advantages_match_grpo_contract(
+    global_std: bool,
+    expected: torch.Tensor,
+) -> None:
+    """DiffusionNFT and GRPO share one group-relative advantage contract."""
+
+    rewards = torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    group_ids = torch.tensor([0, 0, 0, 1, 1, 1])
+    grpo = GRPO(GRPOConfig(eps=1e-4, global_std=global_std))
+    nft = DiffusionNFT(DiffusionNFTConfig(eps=1e-4, global_std=global_std))
+
+    grpo_advantages = grpo.compute_advantages_from_tensors(rewards, group_ids)
+    nft_advantages = nft.compute_advantages_from_tensors(rewards, group_ids)
+
+    assert torch.allclose(grpo_advantages, expected, atol=1e-6)
+    assert torch.allclose(nft_advantages, grpo_advantages, atol=0.0, rtol=0.0)
 
 
 class _NFTModel:

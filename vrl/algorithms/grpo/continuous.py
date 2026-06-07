@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from vrl.algorithms.advantages import group_relative_advantages
 from vrl.algorithms.base import Algorithm
 from vrl.algorithms.logprob_mismatch import compute_logprob_mismatch_stats
 from vrl.algorithms.trajectory import AlgorithmInput
@@ -51,33 +52,14 @@ class GRPO(Algorithm):
         Groups are identified by ``group_ids``: samples sharing the same
         group_id are normalized together (GRPO per-prompt normalization).
         """
-        import torch
-
         cfg = self.config
-        advantages = torch.zeros_like(rewards)
-        unique_groups = torch.unique(group_ids)
-
-        for gid in unique_groups:
-            mask = group_ids == gid
-            group_rewards = rewards[mask]
-
-            if group_rewards.numel() <= 1:
-                advantages[mask] = 0.0
-                continue
-
-            mean = group_rewards.mean()
-
-            if cfg.global_std:
-                std = rewards.std(unbiased=False) if rewards.numel() > 1 else torch.tensor(0.0)
-            else:
-                std = group_rewards.std(unbiased=False)
-
-            denom = torch.clamp(std, min=cfg.eps)
-            group_adv = (group_rewards - mean) / denom
-            group_adv = torch.clamp(group_adv, -cfg.adv_clip_max, cfg.adv_clip_max)
-            advantages[mask] = group_adv
-
-        return advantages
+        return group_relative_advantages(
+            rewards,
+            group_ids,
+            eps=cfg.eps,
+            adv_clip_max=cfg.adv_clip_max,
+            global_std=cfg.global_std,
+        )
 
     def compute_loss(
         self,

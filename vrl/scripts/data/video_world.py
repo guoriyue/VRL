@@ -29,9 +29,12 @@ from vrl.scripts.data.common import (
 )
 from vrl.trainers.data.artifacts import validate_source_backed_video_world_manifest_pair
 
+COMMAND_NAME = "video-world-bridge"
+DATASET_NAME = "video_world"
+
 
 def register(subparsers: Any) -> None:
-    bridge = subparsers.add_parser("video-world-bridge")
+    bridge = subparsers.add_parser(COMMAND_NAME)
     bridge.add_argument("--repo-id", default="lerobot/droid_100")
     bridge.add_argument("--limit", type=int, default=50)
     bridge.add_argument("--eval-limit", type=int, default=8)
@@ -46,6 +49,10 @@ def register(subparsers: Any) -> None:
         help="observation.images.<name> video key; default = first camera",
     )
     bridge.set_defaults(func=_cmd_video_world_bridge)
+
+
+def manifest_setup_hints() -> tuple[tuple[str, tuple[str, ...]], ...]:
+    return ((f"data/external/{DATASET_NAME}/", (COMMAND_NAME,)),)
 
 
 def build_video_world_rows(
@@ -355,4 +362,4 @@ def _cmd_video_world_bridge(args: argparse.Namespace) -> None:
     emit(report)
 
 
-__all__ = ["build_video_world_rows", "register"]
+__all__ = ["build_video_world_rows", "manifest_setup_hints", "register"]

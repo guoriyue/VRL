@@ -26,6 +26,11 @@ from vrl.scripts.data.common import (
     repo_root as _repo_root,
 )
 
+ANIME_PROMPTS_COMMAND = "anime-prompts"
+ANIME_SAFETY_PROMPTS_COMMAND = "anime-safety-prompts"
+ANIME_POSITIVES_COMMAND = "anime-positives"
+ANIME_FETCH_IMAGES_COMMAND = "anime-fetch-images"
+
 OUTPUT_DIR = _repo_root() / "datasets" / "danbooru"
 ANATOMY_DIR = OUTPUT_DIR / "anatomy"
 SAFETY_DIR = OUTPUT_DIR / "safety"
@@ -1644,6 +1649,10 @@ def _current_http_download() -> Callable[[str, Path], None]:
     return globals().get("_http_download", http_download)
 
 
+def manifest_setup_hints() -> tuple[tuple[str, tuple[str, ...]], ...]:
+    return (("datasets/danbooru/anatomy/", (ANIME_PROMPTS_COMMAND,)),)
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     if argv is None:
         import sys
@@ -1660,15 +1669,15 @@ def main(argv: Sequence[str] | None = None) -> None:
 
 
 def register(subparsers: Any) -> None:
-    prompts = subparsers.add_parser("anime-prompts")
+    prompts = subparsers.add_parser(ANIME_PROMPTS_COMMAND)
     prompts.add_argument("--metadata", type=Path, default=None)
     prompts.set_defaults(func=_cmd_anime_prompts)
 
-    safety = subparsers.add_parser("anime-safety-prompts")
+    safety = subparsers.add_parser(ANIME_SAFETY_PROMPTS_COMMAND)
     safety.add_argument("--metadata", type=Path, default=None)
     safety.set_defaults(func=_cmd_anime_safety_prompts)
 
-    positives = subparsers.add_parser("anime-positives")
+    positives = subparsers.add_parser(ANIME_POSITIVES_COMMAND)
     positives.add_argument("--metadata", type=Path, required=True)
     positives.add_argument("--image-root", type=Path, default=None)
     positives.add_argument("--output", type=Path, default=POSITIVE_IMAGES_OUTPUT)
@@ -1677,7 +1686,7 @@ def register(subparsers: Any) -> None:
     positives.add_argument("--overwrite", action="store_true")
     positives.set_defaults(func=_cmd_anime_positives)
 
-    fetch = subparsers.add_parser("anime-fetch-images")
+    fetch = subparsers.add_parser(ANIME_FETCH_IMAGES_COMMAND)
     fetch.add_argument("--metadata", type=Path, required=True)
     fetch.add_argument("--image-root", type=Path, default=None)
     fetch.add_argument("--overwrite", action="store_true")
@@ -1768,6 +1777,7 @@ __all__ = [
     "iter_metadata",
     "label_queue_rows",
     "main",
+    "manifest_setup_hints",
     "normalize_tags",
     "positive_image_rows",
     "prompt_anchor_texts",
@@ -1775,7 +1785,6 @@ __all__ = [
     "record_id",
     "record_score",
     "register",
-
     "select_positive_targets",
     "split_prompt_rows",
     "split_safety_prompt_rows",
