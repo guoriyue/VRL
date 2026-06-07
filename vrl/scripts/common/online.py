@@ -31,6 +31,7 @@ from vrl.scripts.common.types import (
     RecipeDeviceContext,
 )
 from vrl.trainers.checkpointing import (
+    LORA_WEIGHTS_NAME,
     capture_rng_state,
     load_training_checkpoint_from_config,
     prepare_metrics_csv,
@@ -80,6 +81,52 @@ def default_reference_model(bundle: Any, cfg: Any) -> Any | None:
     if bool(cfg.model.use_lora) and init_kl_coef > 0:
         return bundle.model
     return None
+
+
+def export_transformer_lora(bundle: Any, cfg: DictConfig) -> dict[str, Any] | None:
+    """Export diffusion transformer LoRA weights when configured."""
+
+    transformer = bundle.model.transformer
+    if bool(cfg.model.use_lora) and hasattr(transformer, "save_pretrained"):
+        return {LORA_WEIGHTS_NAME: transformer}
+    return None
+
+
+def export_language_model_lora(bundle: Any, cfg: DictConfig) -> dict[str, Any] | None:
+    """Export AR language-model LoRA weights when configured."""
+
+    if bool(cfg.model.use_lora):
+        return {LORA_WEIGHTS_NAME: bundle.model.language_model}
+    return None
+
+
+def configure_ar_rollout(cfg: DictConfig, trainer_config: Any) -> None:
+    """Bind AR rollout sizing onto the trainer config."""
+
+    trainer_config.n = int(cfg.rollout.n_samples_per_prompt)
+    trainer_config.rollout_batch_size = int(cfg.rollout.rollout_batch_size)
+
+
+def enable_transformer_gradient_checkpointing(
+    bundle: Any,
+    cfg: DictConfig,
+    *,
+    require_method: bool = True,
+) -> None:
+    """Enable transformer gradient checkpointing while preserving family policy."""
+
+    transformer = bundle.model.transformer
+    if not bool(cfg.actor.gradient_checkpointing):
+        return
+
+    enable = getattr(transformer, "enable_gradient_checkpointing", None)
+    if enable is None:
+        if require_method:
+            raise AttributeError(
+                "bundle.model.transformer does not expose enable_gradient_checkpointing",
+            )
+        return
+    enable()
 
 
 async def run_online_recipe(
@@ -450,4 +497,11 @@ def _save_checkpoint(
     )
 
 
-__all__ = ["default_reference_model", "run_online_recipe"]
+__all__ = [
+    "configure_ar_rollout",
+    "default_reference_model",
+    "enable_transformer_gradient_checkpointing",
+    "export_language_model_lora",
+    "export_transformer_lora",
+    "run_online_recipe",
+]

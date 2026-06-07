@@ -6,9 +6,13 @@ from typing import Any
 
 from omegaconf import DictConfig
 
-from vrl.scripts.common.online import default_reference_model, run_online_recipe
+from vrl.scripts.common.online import (
+    default_reference_model,
+    enable_transformer_gradient_checkpointing,
+    export_transformer_lora,
+    run_online_recipe,
+)
 from vrl.scripts.common.types import OnlineRecipeDefinition
-from vrl.trainers.checkpointing import LORA_WEIGHTS_NAME
 from vrl.trainers.frozen_module import (
     FrozenModuleOffload,
     frozen_module_offload_from_config,
@@ -30,7 +34,7 @@ async def train_sd3_5_grpo(cfg: DictConfig) -> None:
             build_replay_bundle=_build_replay_bundle,
             after_bundle_built=_after_bundle_built,
             reference_model_getter=default_reference_model,
-            export_modules_getter=_export_modules,
+            export_modules_getter=export_transformer_lora,
             weight_dtype_getter=_resolve_weight_dtype,
         ),
     )
@@ -51,17 +55,8 @@ def _build_replay_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any
 
 
 def _after_bundle_built(bundle: Any, cfg: DictConfig) -> None:
-    transformer = bundle.model.transformer
-    if bool(cfg.actor.gradient_checkpointing):
-        transformer.enable_gradient_checkpointing()
+    enable_transformer_gradient_checkpointing(bundle, cfg)
     bundle.metadata.update(_offload_driver_frozen_modules(bundle.model, cfg))
-
-
-def _export_modules(bundle: Any, cfg: DictConfig) -> dict[str, Any] | None:
-    transformer = bundle.model.transformer
-    if bool(cfg.model.use_lora) and hasattr(transformer, "save_pretrained"):
-        return {LORA_WEIGHTS_NAME: transformer}
-    return None
 
 
 def _resolve_weight_dtype(cfg: DictConfig, trainer_config: Any, torch: Any) -> Any:

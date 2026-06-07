@@ -7,9 +7,13 @@ from typing import Any
 
 from omegaconf import DictConfig, OmegaConf
 
-from vrl.scripts.common.online import default_reference_model, run_online_recipe
+from vrl.scripts.common.online import (
+    default_reference_model,
+    enable_transformer_gradient_checkpointing,
+    export_transformer_lora,
+    run_online_recipe,
+)
 from vrl.scripts.common.types import OnlineRecipeDefinition
-from vrl.trainers.checkpointing import LORA_WEIGHTS_NAME
 from vrl.trainers.data.artifacts import ArtifactManifestError, resolve_artifact_path
 
 
@@ -24,7 +28,7 @@ async def train_wan_2_1_grpo(cfg: DictConfig) -> None:
             build_replay_bundle=_build_replay_bundle,
             after_bundle_built=_after_bundle_built,
             reference_model_getter=default_reference_model,
-            export_modules_getter=_export_modules,
+            export_modules_getter=export_transformer_lora,
         ),
     )
 
@@ -40,7 +44,7 @@ async def train_wan_2_1_i2v_grpo(cfg: DictConfig) -> None:
             build_replay_bundle=_build_replay_bundle,
             after_bundle_built=_after_bundle_built,
             reference_model_getter=default_reference_model,
-            export_modules_getter=_export_modules,
+            export_modules_getter=export_transformer_lora,
             collector_kwargs_getter=_i2v_collector_kwargs,
         ),
     )
@@ -61,16 +65,7 @@ def _build_replay_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any
 
 
 def _after_bundle_built(bundle: Any, cfg: DictConfig) -> None:
-    transformer = bundle.model.transformer
-    if bool(cfg.actor.gradient_checkpointing):
-        transformer.enable_gradient_checkpointing()
-
-
-def _export_modules(bundle: Any, cfg: DictConfig) -> dict[str, Any] | None:
-    transformer = bundle.model.transformer
-    if bool(cfg.model.use_lora) and hasattr(transformer, "save_pretrained"):
-        return {LORA_WEIGHTS_NAME: transformer}
-    return None
+    enable_transformer_gradient_checkpointing(bundle, cfg)
 
 
 def _i2v_collector_kwargs(cfg: DictConfig, examples: list[Any]) -> dict[str, Any]:

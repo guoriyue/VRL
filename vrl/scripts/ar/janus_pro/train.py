@@ -6,9 +6,12 @@ from typing import Any
 
 from omegaconf import DictConfig
 
-from vrl.scripts.common.online import run_online_recipe
+from vrl.scripts.common.online import (
+    configure_ar_rollout,
+    export_language_model_lora,
+    run_online_recipe,
+)
 from vrl.scripts.common.types import OnlineRecipeDefinition
-from vrl.trainers.checkpointing import LORA_WEIGHTS_NAME
 
 
 async def train_janus_pro_ocr_grpo(cfg: DictConfig) -> None:
@@ -40,8 +43,8 @@ async def _run_janus_recipe(cfg: DictConfig, *, family: str) -> None:
                 dtype,
                 family=family,
             ),
-            configure_trainer=_configure_trainer,
-            export_modules_getter=_export_modules,
+            configure_trainer=configure_ar_rollout,
+            export_modules_getter=export_language_model_lora,
         ),
     )
 
@@ -74,17 +77,6 @@ def _build_replay_bundle(
     if family == "janus_pro_r1":
         spec.task_variant = "ar_t2i_r1"
     return build_janus_pro_replay_runtime_bundle(spec)
-
-
-def _configure_trainer(cfg: DictConfig, trainer_config: Any) -> None:
-    trainer_config.n = int(cfg.rollout.n_samples_per_prompt)
-    trainer_config.rollout_batch_size = int(cfg.rollout.rollout_batch_size)
-
-
-def _export_modules(bundle: Any, cfg: DictConfig) -> dict[str, Any] | None:
-    if bool(cfg.model.use_lora):
-        return {LORA_WEIGHTS_NAME: bundle.model.language_model}
-    return None
 
 
 __all__ = [
