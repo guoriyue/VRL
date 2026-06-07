@@ -16,6 +16,8 @@ from pathlib import Path
 
 from omegaconf import DictConfig
 
+from vrl.config.precision import resolve_precision_policy
+from vrl.models.dtypes import resolve_torch_dtype
 from vrl.ray.resources import (
     format_distributed_resource_plan,
     resolve_distributed_resources,
@@ -32,12 +34,12 @@ from vrl.trainers.checkpointing import (
     save_resolved_config,
     save_training_checkpoint,
 )
-from vrl.trainers.precision import (
-    normalize_mixed_precision,
-    torch_dtype_for_mixed_precision,
-)
 
 logger = logging.getLogger(__name__)
+
+
+def _trainer_precision_label(precision: str) -> str:
+    return "no" if precision == "fp32" else precision
 
 
 def _build_encoders(pipeline, num_frames: int, device, dtype):
@@ -120,10 +122,8 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
             f"{type(dpo_config).__name__}",
         )
 
-    mixed_precision = normalize_mixed_precision(
-        require(cfg, "actor.mixed_precision"),
-        bf16=bool(require(cfg, "actor.bf16")),
-    )
+    precision = resolve_precision_policy(cfg)
+    mixed_precision = _trainer_precision_label(precision.compute)
     resume_checkpoint = load_training_checkpoint_from_config(cfg)
     prepare_model_config_for_training_resume(
         cfg,
@@ -134,11 +134,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     resources = resolve_distributed_resources(cfg)
     logger.info(format_distributed_resource_plan(resources))
     device = torch.device(trainer_torch_device(resources))
-    weight_dtype = torch_dtype_for_mixed_precision(
-        mixed_precision,
-        bf16=bool(require(cfg, "actor.bf16")),
-        torch=torch,
-    )
+    weight_dtype = resolve_torch_dtype(precision.compute)
 
     # 1. Runtime via family runtime (no diffusers import here)
     bundle = build_wan_2_1_runtime_bundle_from_cfg(cfg, device, weight_dtype)

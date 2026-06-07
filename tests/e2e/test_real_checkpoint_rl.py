@@ -110,8 +110,7 @@ CASES: tuple[RealCheckpointCase, ...] = (
         ),
         overrides=(
             "model.torch_compile.enable=false",
-            "actor.mixed_precision=bf16",
-            "actor.bf16=true",
+            "precision=bf16",
             "actor.gradient_accumulation_steps=0",
             "algorithm.init_kl_coef=0.0",
             "algorithm.kl_reward=0.0",

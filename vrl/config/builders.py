@@ -7,6 +7,7 @@ from typing import Any
 
 from omegaconf import DictConfig, OmegaConf
 
+from vrl.config.precision import resolve_precision_policy
 from vrl.config.validation import (
     path_exists,
     require,
@@ -73,6 +74,7 @@ def build_trainer_config(cfg: DictConfig):
             "rollout.n_samples_per_prompt",
         )
 
+    precision = resolve_precision_policy(cfg)
     return TrainerConfig(
         optim=OptimConfig(**optim_dict),
         ema=EMAConfig(**ema_dict),
@@ -86,8 +88,8 @@ def build_trainer_config(cfg: DictConfig):
         ppo_epochs=require(cfg, "actor.ppo_epochs"),
         gradient_accumulation_steps=require(cfg, "actor.gradient_accumulation_steps"),
         drop_zero_advantage=require(cfg, "actor.drop_zero_advantage"),
-        mixed_precision=require(cfg, "actor.mixed_precision"),
-        bf16=require(cfg, "actor.bf16"),
+        mixed_precision=precision.compute,
+        bf16=precision.compute == "bf16",
         gradient_checkpointing=require(cfg, "actor.gradient_checkpointing"),
         n=n_value,
         rollout_batch_size=require(cfg, "rollout.rollout_batch_size"),
@@ -100,6 +102,8 @@ def build_trainer_config(cfg: DictConfig):
         resume_from=require(cfg, "trainer.resume_from"),
         resume_strict=require(cfg, "trainer.resume_strict"),
         profile=require(cfg, "trainer.profile"),
+        rollout_precision=precision.rollout,
+        math_precision=precision.math,
     )
 
 

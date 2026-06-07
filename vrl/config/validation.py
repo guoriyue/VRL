@@ -286,6 +286,9 @@ def _validate_image_to_video_source_report(
 def validate_training_config(cfg: DictConfig) -> None:
     """Validate unresolved mandatory values and cross-field contracts."""
     parse_config(cfg)
+    from vrl.config.precision import resolve_precision_policy
+
+    resolve_precision_policy(cfg)
     if bool(
         OmegaConf.select(cfg, "production.kling_video_reward.enabled", default=False)
         or OmegaConf.select(cfg, "production.video_reward.enabled", default=False)

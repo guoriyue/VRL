@@ -1,9 +1,8 @@
 """Unified precision policy: one config surface for all dtype axes.
 
-A run's precision is four orthogonal dtype axes — each answers "what dtype":
+A run's public precision is one forward dtype plus protected math/frozen defaults:
 
-- ``compute``  : training + replay transformer fwd/bwd (torch autocast / bf16 weights)
-- ``rollout``  : generation/sampling forward (model storage dtype)
+- ``forward``  : generation rollout + trainer replay transformer forward dtype
 - ``math``     : the numerically-sensitive algorithm math *outside* the
                  transformer (the SDE step / log-probability / loss reductions,
                  e.g. ``sde_step_with_logprob``). torch autocast keeps such ops
@@ -11,11 +10,12 @@ A run's precision is four orthogonal dtype axes — each answers "what dtype":
                  region-level, for our custom math autocast doesn't cover.
 - ``frozen``   : frozen text encoders / VAE
 
-Users set a scalar (``precision: bf16`` → that dtype for compute/rollout/frozen,
-``math`` stays fp32) or a dict overriding individual axes. When no
-``precision:`` block is present, the policy is derived from the legacy
-``actor.mixed_precision`` / ``actor.bf16`` fields so existing configs keep their
-exact behavior.
+Users normally set a scalar (``precision: fp16`` → rollout/replay forward both
+use fp16, ``math`` stays fp32). A mapping may override ``math`` or ``frozen``, but
+it must still set one shared ``forward`` dtype. The old public
+``precision.compute``/``precision.rollout`` split is intentionally rejected:
+rollout/replay split precision is an experimental correction problem, not a
+safe default config surface.
 
 This module is torch-free (config layer): it resolves precision *policy* only.
 Consumers materialize a canonical axis name into a ``torch.dtype`` via
@@ -24,16 +24,14 @@ Consumers materialize a canonical axis name into a ``torch.dtype`` via
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-_logger = logging.getLogger(__name__)
-_legacy_warned = False
+_MISSING = object()
 
-# The three canonical precision names. ``no`` is the one legacy spelling we still
-# accept, because existing configs write ``actor.mixed_precision: "no"`` for fp32.
+# The three canonical precision names. ``no`` remains a tolerated spelling for
+# low-level parser boundaries, but live YAML should use top-level ``precision: fp32``.
 _CANONICAL = ("fp32", "bf16", "fp16")
 
 
@@ -45,7 +43,7 @@ def normalize_precision(value: Any, *, default: str = "fp32") -> str:
     token = str(value).lower().strip()
     if not token:
         return default
-    if token == "no":  # legacy actor.mixed_precision spelling for fp32
+    if token == "no":
         return "fp32"
     if token not in _CANONICAL:
         raise ValueError(
@@ -91,46 +89,65 @@ def _policy_from_compute(
 def resolve_precision_policy(cfg: Any) -> PrecisionPolicy:
     """Resolve the precision policy from a run config.
 
-    Precedence: an explicit ``precision:`` block (scalar or dict) wins; otherwise
-    derive from the legacy ``actor.mixed_precision`` / ``actor.bf16`` fields so
-    pre-existing configs are byte-for-byte unchanged.
+    A public config must use the top-level ``precision`` block. The returned
+    policy still exposes ``compute`` and ``rollout`` internally so trainer/debug
+    code can report both sides, but they are deliberately derived from the same
+    forward dtype.
     """
 
-    block = _select(cfg, "precision", None)
-    if block is not None:
-        return _from_precision_block(block)
-    return _from_legacy(cfg)
+    _reject_legacy_precision_keys(cfg)
+    block = _select(cfg, "precision", _MISSING)
+    if block is _MISSING:
+        raise ValueError(
+            "top-level `precision` is required; actor.mixed_precision/actor.bf16 "
+            "were removed. Use `precision: fp16`, `precision: bf16`, or "
+            "`precision: fp32`.",
+        )
+    return _from_precision_block(block)
 
 
 def _from_precision_block(block: Any) -> PrecisionPolicy:
     if isinstance(block, (str, bool)):
         return _policy_from_compute(normalize_precision(block))
-    compute = normalize_precision(_select(block, "compute", "fp32"))
-    rollout_raw = _select(block, "rollout", None)
-    rollout = normalize_precision(rollout_raw) if rollout_raw is not None else compute
+    if _select(block, "compute", _MISSING) is not _MISSING:
+        raise ValueError(
+            "precision.compute is no longer supported; rollout and replay forward "
+            "precision must be configured together via `precision: fp16` or "
+            "`precision.forward: fp16`.",
+        )
+    if _select(block, "rollout", _MISSING) is not _MISSING:
+        raise ValueError(
+            "precision.rollout is no longer supported; rollout and replay forward "
+            "precision must be configured together via `precision: fp16` or "
+            "`precision.forward: fp16`.",
+        )
+    forward = normalize_precision(_select(block, "forward", "fp32"))
     math = normalize_precision(_select(block, "math", "fp32"))
     frozen_raw = _select(block, "frozen", None)
-    frozen = normalize_precision(frozen_raw) if frozen_raw is not None else _frozen_default(rollout)
-    return PrecisionPolicy(compute=compute, rollout=rollout, math=math, frozen=frozen)
+    frozen = normalize_precision(frozen_raw) if frozen_raw is not None else _frozen_default(forward)
+    return PrecisionPolicy(compute=forward, rollout=forward, math=math, frozen=frozen)
 
 
-def _from_legacy(cfg: Any) -> PrecisionPolicy:
-    global _legacy_warned
-    if not _legacy_warned:
-        _legacy_warned = True
-        _logger.warning(
-            "no top-level `precision:` block found; deriving precision from the "
-            "deprecated actor.mixed_precision/actor.bf16 fields. Prefer "
-            "`precision: bf16` (or fp32/fp16). The legacy fields still work.",
+def _reject_legacy_precision_keys(cfg: Any) -> None:
+    legacy = [
+        path
+        for path in (
+            "actor.mixed_precision",
+            "actor.bf16",
+            "+actor.mixed_precision",
+            "+actor.bf16",
+            "+precision.compute",
+            "+precision.rollout",
         )
-    mixed_precision = _select(cfg, "actor.mixed_precision", "")
-    # TrainerConfig defaults bf16=True; mirror that when the field is absent.
-    bf16 = _select(cfg, "actor.bf16", True)
-    token = str(mixed_precision or "").strip()
-    # No explicit mixed_precision -> follow the bf16 flag (TrainerConfig default).
-    compute = normalize_precision(token) if token else ("bf16" if bf16 else "fp32")
-    # Today storage (weight_dtype) and compute (autocast) are the same knob.
-    return _policy_from_compute(compute)
+        if _select(cfg, path, _MISSING) is not _MISSING
+    ]
+    if legacy:
+        raise ValueError(
+            "legacy precision config is no longer supported: "
+            + ", ".join(legacy)
+            + ". Use top-level `precision: fp16`, `precision: bf16`, or "
+            "`precision: fp32`.",
+        )
 
 
 def _select(obj: Any, path: str, default: Any = None) -> Any:

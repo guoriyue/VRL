@@ -7,14 +7,14 @@ defaults:
   - /dataset/geneval
   - /reward/geneval
 
+precision: bf16
+
 sampling:
   max_sequence_length: 128
 
 actor:
   optim:
     lr: 3.0e-4
-  mixed_precision: "no"
-  bf16: false
   gradient_accumulation_steps: 4
 
 algorithm:

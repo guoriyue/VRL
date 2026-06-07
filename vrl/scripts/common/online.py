@@ -55,21 +55,18 @@ logger = logging.getLogger(__name__)
 
 
 def _apply_precision_policy(cfg: DictConfig, trainer_config: Any) -> None:
-    """Bridge the unified ``precision:`` policy onto the trainer fields that the
-    autocast + weight_dtype + frozen derivation already read.
+    """Bridge public ``precision:`` onto trainer fields.
 
-    P1 wires the single ``compute`` axis through the existing one-dtype path so a
-    top-level ``precision: bf16`` drives the whole run. Decoupled rollout, a
-    non-fp32 logprob, or an explicit frozen override need a second model dtype /
-    deeper wiring (later phases) — refuse them with a clear message rather than
-    silently ignore.
+    Public config exposes one forward dtype. Internally we still report compute
+    and rollout separately so the precision guard can prove both sides stayed
+    aligned.
     """
 
     policy = resolve_precision_policy(cfg)
     trainer_config.mixed_precision = policy.compute
-    trainer_config.bf16 = policy.compute != "fp32"
-    # Expose the rollout dtype so the precision drift guard can compare it against
-    # the compute dtype (rollout != compute is the case it watches).
+    trainer_config.bf16 = policy.compute == "bf16"
+    # Expose rollout separately for debug/guard records even though public config
+    # derives it from the same forward precision as replay compute.
     trainer_config.rollout_precision = policy.rollout
     trainer_config.math_precision = policy.math
 

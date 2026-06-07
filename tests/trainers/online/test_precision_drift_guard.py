@@ -52,6 +52,10 @@ def test_auto_enables_fail_for_rollout_compute_mismatch() -> None:
         resolve_guard_mode("auto", compute_precision="fp32", rollout_precision="bf16")
         == "fail"
     )
+    assert (
+        resolve_guard_mode("auto", compute_precision="fp32", rollout_precision="fp16")
+        == "fail"
+    )
 
 
 def test_auto_is_off_for_same_dtype() -> None:
@@ -81,6 +85,28 @@ def test_precision_drift_guard_passes_when_within_threshold() -> None:
     record = _run(cfg, compute="fp32", rollout="bf16", evaluate_fn=_eval_with_drift(0.0))
     assert record is not None
     assert record["violated"] is False
+
+
+def test_precision_drift_guard_checks_fp16_same_forward_precision() -> None:
+    cfg = PrecisionDriftGuardConfig(mode="fail")
+    record = _run(
+        cfg,
+        compute="fp16",
+        rollout="fp16",
+        evaluate_fn=_eval_with_drift(0.0),
+        metadata={
+            "trainer_autocast_enabled": True,
+            "trainer_transformer_dtype": "float16",
+            "rollout_transformer_dtype": "float16",
+        },
+    )
+    assert record is not None
+    assert record["mode"] == "fail"
+    assert record["forward_precision_match"] is True
+    assert record["violated"] is False
+    assert record["trainer_autocast_enabled"] is True
+    assert record["rollout_transformer_dtype"] == "float16"
+    assert record["metadata"]["trainer_transformer_dtype"] == "float16"
 
 
 def test_precision_drift_guard_fails_before_optimizer_when_ratio_drifts() -> None:

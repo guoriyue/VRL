@@ -151,6 +151,12 @@ def _timestep_dtype(timesteps: Any) -> torch.dtype:
     return torch.float32
 
 
+def _dtype_label(dtype: Any) -> str | None:
+    if dtype is None:
+        return None
+    return str(dtype).removeprefix("torch.")
+
+
 def _expand_timestep_for_buffer(
     timestep: Any,
     *,
@@ -438,8 +444,10 @@ class DiffusionPipelineExecutorBase(
             torch.bfloat16,
         ):
             autocast_ctx = torch.amp.autocast("cuda", dtype=transformer_dtype)
+            rollout_autocast_enabled = True
         else:
             autocast_ctx = nullcontext()
+            rollout_autocast_enabled = False
         with autocast_ctx, torch.no_grad():
             for step_idx in range(len(state.timesteps)):
                 with record_function("generation.denoise_step"):
@@ -541,6 +549,8 @@ class DiffusionPipelineExecutorBase(
                 "diffusion_timestep_bytes": trajectory_tensor_bytes(buffers.timesteps),
                 "diffusion_kl_bytes": trajectory_tensor_bytes(buffers.kl),
                 "diffusion_denoise_mode": config.denoise_mode,
+                "diffusion_rollout_transformer_dtype": _dtype_label(transformer_dtype),
+                "diffusion_rollout_autocast_enabled": rollout_autocast_enabled,
             },
         )
 
@@ -563,6 +573,14 @@ class DiffusionPipelineExecutorBase(
         replay_tensors = model.export_replay_tensors(state)
         context = dict(model.export_batch_context(state))
         context.setdefault("denoise_mode", config.denoise_mode)
+        context.setdefault(
+            "rollout_transformer_dtype",
+            denoise_result.engine_counters.get("diffusion_rollout_transformer_dtype"),
+        )
+        context.setdefault(
+            "rollout_autocast_enabled",
+            denoise_result.engine_counters.get("diffusion_rollout_autocast_enabled"),
+        )
 
         return DiffusionChunkResult(
             prompt_index=config.prompt_index,

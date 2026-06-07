@@ -42,14 +42,15 @@ class DebugConfig:
 class PrecisionDriftGuardConfig:
     """Rollout-vs-replay logprob parity guard (precision/backend drift).
 
-    A correctness guard, not a debug probe: when ``precision.rollout`` differs from
-    ``precision.compute`` the collection-time logprob no longer equals the recomputed
-    replay logprob, so the GRPO importance ratio drifts from 1 at the first step.
+    A correctness guard, not a debug probe: when rollout/replay forward precision
+    or backend policy differs, the collection-time logprob may no longer equal the
+    recomputed replay logprob, so the GRPO importance ratio drifts from 1 at the
+    first step.
 
     ``mode``: ``"off"``/``"warn"``/``"fail"`` are explicit; ``"auto"`` enables the guard
-    only when rollout!=compute precision (same-dtype parity is the debug probe's job) and
-    resolves to ``"fail"``. Use explicit ``"warn"`` for P2 calibration runs that need to
-    measure drift without stopping the run.
+    only when rollout!=compute precision and resolves to ``"fail"``. Use explicit
+    ``"warn"``/``"fail"`` for same-forward-precision acceptance runs, such as
+    SD3.5 FP16 rollout/replay parity checks.
     """
 
     mode: str = "auto"  # "auto" | "off" | "warn" | "fail"

@@ -21,6 +21,8 @@ defaults:
   - /base/distributed/ray_rollout_cross_node
   - /base/rollout/orchestration/continuous
 
+precision: bf16
+
 sampling:
   height: 128
   width: 128
@@ -37,8 +39,6 @@ actor:
   optim:
     lr: 3.0e-4
   gradient_accumulation_steps: 1
-  mixed_precision: "no"
-  bf16: false
 
 algorithm:
   init_kl_coef: 0.04

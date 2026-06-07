@@ -143,6 +143,17 @@ def test_all_experiments_load_and_validate() -> None:
         validate_training_config(cfg)
 
 
+def test_experiments_do_not_use_legacy_precision_fields() -> None:
+    """Checks live YAML uses top-level precision only."""
+    offenders = []
+    for name in _experiment_names():
+        cfg = load_config(f"experiment/{name}")
+        actor = cfg.get("actor", {})
+        if "mixed_precision" in actor or "bf16" in actor:
+            offenders.append(name)
+    assert offenders == []
+
+
 def test_model_memory_policy_defaults_are_yaml_backed() -> None:
     """Checks model memory policy defaults are YAML backed."""
     import torch

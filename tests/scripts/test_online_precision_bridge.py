@@ -9,6 +9,7 @@ from omegaconf import OmegaConf
 from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
 from vrl.config.precision import resolve_precision_policy
+from vrl.models.dtypes import resolve_torch_dtype
 from vrl.scripts.common.online import (
     _apply_precision_policy,
     _prepare_metrics_csv,
@@ -17,27 +18,32 @@ from vrl.scripts.common.online import (
 from vrl.trainers.precision import torch_dtype_for_trainer_precision
 
 _RECIPES = [
-    "diffusion/sd3_5/online_grpo_ocr",          # fp32
-    "diffusion/sd3_5/online_grpo_geneval",      # fp32
+    "diffusion/sd3_5/online_grpo_ocr",          # bf16
+    "diffusion/sd3_5/online_grpo_geneval",      # bf16
     "diffusion/wan_2_1/online_grpo_ocr",        # bf16
     "ar/janus_pro/online_grpo_ocr",             # bf16
 ]
 
 
 @pytest.mark.parametrize("experiment", _RECIPES)
-def test_bridge_preserves_legacy_dtype(experiment):
-    """Checks bridge preserves legacy dtype."""
+def test_bridge_uses_aligned_public_precision(experiment):
+    """Checks bridge derives trainer precision from public precision."""
     cfg = load_config(f"experiment/{experiment}")
     trainer_config = build_configs(cfg)["trainer"]
-    legacy = torch_dtype_for_trainer_precision(trainer_config, torch)
     _apply_precision_policy(cfg, trainer_config)
-    assert torch_dtype_for_trainer_precision(trainer_config, torch) is legacy
+    policy = resolve_precision_policy(cfg)
+    assert trainer_config.mixed_precision == policy.compute
+    assert trainer_config.rollout_precision == policy.rollout
+    assert policy.compute == policy.rollout
+    assert torch_dtype_for_trainer_precision(trainer_config, torch) is resolve_torch_dtype(
+        policy.compute,
+    )
 
 
 def test_precision_block_drives_trainer():
-    # An fp32 recipe + a top-level `precision: bf16` must flip the trainer to bf16.
     """Checks precision block drives trainer."""
-    cfg = load_config("experiment/diffusion/sd3_5/online_grpo_ocr")
+    cfg = load_config("experiment/diffusion/sd3_5/online_grpo_geneval")
+    cfg = OmegaConf.merge(cfg, OmegaConf.create({"precision": "fp32"}))
     assert torch_dtype_for_trainer_precision(build_configs(cfg)["trainer"], torch) is torch.float32
 
     cfg = OmegaConf.merge(cfg, OmegaConf.create({"precision": "bf16"}))
@@ -48,25 +54,33 @@ def test_precision_block_drives_trainer():
     assert torch_dtype_for_trainer_precision(trainer_config, torch) is torch.bfloat16
 
 
+def test_fp16_precision_block_drives_trainer_and_rollout():
+    """Checks scalar fp16 drives both replay compute and rollout precision."""
+    cfg = load_config("experiment/diffusion/sd3_5/online_grpo_ocr")
+    cfg = OmegaConf.merge(cfg, OmegaConf.create({"precision": "fp16"}))
+
+    trainer_config = build_configs(cfg)["trainer"]
+    _apply_precision_policy(cfg, trainer_config)
+
+    assert trainer_config.mixed_precision == "fp16"
+    assert trainer_config.bf16 is False
+    assert trainer_config.rollout_precision == "fp16"
+    assert trainer_config.math_precision == "fp32"
+    assert torch_dtype_for_trainer_precision(trainer_config, torch) is torch.float16
+
+
 def _with_precision(experiment, block):
     cfg = load_config(f"experiment/{experiment}")
     return OmegaConf.merge(cfg, OmegaConf.create({"precision": block}))
 
 
-def test_decoupled_rollout_compute():
-    # P3: bf16 replay / fp32 rollout — compute drives the trainer, rollout is
-    # a separate generation dtype (no longer refused).
-    """Checks decoupled rollout compute."""
+def test_decoupled_rollout_compute_is_rejected():
+    """Checks public precision rejects rollout/replay split."""
     cfg = _with_precision(
         "diffusion/sd3_5/online_grpo_ocr", {"compute": "bf16", "rollout": "fp32"},
     )
-    trainer_config = build_configs(cfg)["trainer"]
-    _apply_precision_policy(cfg, trainer_config)  # must not raise
-    assert trainer_config.mixed_precision == "bf16"
-    assert resolve_precision_policy(cfg).rollout == "fp32"
-    # The bridge exposes the rollout dtype so the precision drift guard can compare
-    # it against compute (here bf16 compute / fp32 rollout = a mismatch it watches).
-    assert trainer_config.rollout_precision == "fp32"
+    with pytest.raises(ValueError, match=r"precision\.compute"):
+        build_configs(cfg)
 
 
 @pytest.mark.parametrize("math,expected", [("fp32", torch.float32), ("bf16", torch.bfloat16)])
@@ -76,7 +90,7 @@ def test_math_axis_resolves_to_dtype(math, expected):
     from vrl.config.precision import resolve_precision_policy
     from vrl.models.dtypes import resolve_torch_dtype
 
-    cfg = _with_precision("diffusion/sd3_5/online_grpo_ocr", {"compute": "fp32", "math": math})
+    cfg = _with_precision("diffusion/sd3_5/online_grpo_ocr", {"forward": "fp32", "math": math})
     assert resolve_torch_dtype(resolve_precision_policy(cfg).math) is expected
     trainer_config = build_configs(cfg)["trainer"]
     _apply_precision_policy(cfg, trainer_config)
@@ -155,6 +169,6 @@ def test_frozen_axis_in_runtime_spec(frozen, expected):
     """Checks frozen axis in runtime spec."""
     from vrl.models.diffusion.sd3_5.runtime import extract_sd3_5_runtime_spec
 
-    cfg = _with_precision("diffusion/sd3_5/online_grpo_ocr", {"compute": "fp32", "frozen": frozen})
+    cfg = _with_precision("diffusion/sd3_5/online_grpo_ocr", {"forward": "fp32", "frozen": frozen})
     spec = extract_sd3_5_runtime_spec(cfg, torch.device("cpu"), torch.float32)
     assert spec.frozen_dtype is expected

@@ -14,10 +14,6 @@ from vrl.config.precision import (
     resolve_precision_policy,
 )
 from vrl.models.dtypes import resolve_torch_dtype
-from vrl.trainers.precision import (
-    torch_dtype_for_trainer_precision,
-    trainer_mixed_precision,
-)
 
 
 def _cfg(precision=None, mixed_precision=None, bf16=None):
@@ -84,60 +80,80 @@ def test_scalar_fp32_keeps_frozen_fp16():
     assert p == PrecisionPolicy(compute="fp32", rollout="fp32", math="fp32", frozen="fp16")
 
 
-def test_dict_decoupled_rollout():
-    # The validated "bf16 replay / fp32 rollout" split.
-    """Checks dict decoupled rollout."""
-    p = resolve_precision_policy(_cfg(precision={"compute": "bf16", "rollout": "fp32"}))
-    assert p.compute == "bf16"
-    assert p.rollout == "fp32"
-    assert p.math == "fp32"  # protected default
-    assert p.frozen == "fp16"  # derived from fp32 rollout
+def test_dict_rejects_decoupled_rollout_compute():
+    """Checks public precision config rejects rollout/replay split."""
+    with pytest.raises(ValueError, match=r"precision\.compute"):
+        resolve_precision_policy(_cfg(precision={"compute": "bf16", "rollout": "fp32"}))
+    with pytest.raises(ValueError, match=r"precision\.rollout"):
+        resolve_precision_policy(_cfg(precision={"forward": "bf16", "rollout": "fp32"}))
 
 
 def test_math_protected_unless_explicit():
     """Checks math protected unless explicit."""
-    p = resolve_precision_policy(_cfg(precision={"compute": "bf16", "math": "bf16"}))
+    p = resolve_precision_policy(_cfg(precision={"forward": "bf16", "math": "bf16"}))
     assert p.math == "bf16"  # only when explicitly asked
+    assert p.compute == "bf16"
+    assert p.rollout == "bf16"
 
 
-# -- back-compat (no precision block) ---------------------------------
+# -- removed legacy config --------------------------------------------
 
 
-def test_legacy_fp32():
-    """Checks legacy FP32."""
-    p = resolve_precision_policy(_cfg(mixed_precision="no", bf16=False))
-    assert p == PrecisionPolicy(compute="fp32", rollout="fp32", math="fp32", frozen="fp16")
+def test_top_level_precision_is_required():
+    """Checks missing top-level precision is rejected."""
+    with pytest.raises(ValueError, match="top-level `precision` is required"):
+        resolve_precision_policy(_cfg())
 
 
-def test_legacy_bf16_explicit():
-    """Checks legacy bf16 explicit."""
-    p = resolve_precision_policy(_cfg(mixed_precision="bf16", bf16=True))
-    assert p == PrecisionPolicy(compute="bf16", rollout="bf16", math="fp32", frozen="bf16")
+def test_legacy_actor_precision_fields_are_rejected():
+    """Checks legacy actor precision fields are rejected."""
+    with pytest.raises(ValueError, match="legacy precision config"):
+        resolve_precision_policy(_cfg(precision="fp16", mixed_precision="no"))
+    with pytest.raises(ValueError, match="legacy precision config"):
+        resolve_precision_policy(_cfg(precision="fp16", bf16=False))
 
 
-def test_legacy_empty_defaults_to_bf16_flag():
-    # mixed_precision unset -> follow bf16 flag (TrainerConfig default True).
-    """Checks legacy empty defaults to bf16 flag."""
-    assert resolve_precision_policy(_cfg(bf16=True)).compute == "bf16"
-    assert resolve_precision_policy(_cfg(bf16=False)).compute == "fp32"
+@pytest.mark.parametrize(
+    "override",
+    [
+        "actor.mixed_precision=bf16",
+        "+actor.mixed_precision=bf16",
+    ],
+)
+def test_legacy_precision_cli_override_is_rejected(override):
+    """Checks legacy precision CLI overrides are rejected."""
+    from vrl.config.validation import validate_training_config
+
+    cfg = load_config(
+        "experiment/diffusion/sd3_5/online_grpo_ocr",
+        overrides=[override],
+    )
+    with pytest.raises(ValueError, match="legacy precision config"):
+        validate_training_config(cfg)
 
 
-# -- equivalence vs existing derivation (the zero-behavior-change proof) --
+@pytest.mark.parametrize(
+    "override",
+    [
+        "precision.compute=bf16",
+        "precision.rollout=bf16",
+        "+precision.compute=bf16",
+        "+precision.rollout=bf16",
+    ],
+)
+def test_decoupled_precision_cli_override_is_rejected(override):
+    """Checks CLI overrides cannot split rollout/replay precision."""
+    from vrl.config.validation import validate_training_config
+
+    cfg = load_config(
+        "experiment/diffusion/sd3_5/online_grpo_ocr",
+        overrides=[override],
+    )
+    with pytest.raises(ValueError, match=r"precision\.(compute|rollout)"):
+        validate_training_config(cfg)
 
 
-@pytest.mark.parametrize("mp,bf16", [("no", False), ("bf16", True), ("fp16", False), ("", True), ("", False)])
-def test_compute_matches_legacy_weight_dtype(mp, bf16):
-    """Checks compute matches legacy weight dtype."""
-    cfg = _cfg(mixed_precision=mp, bf16=bf16)
-    policy = resolve_precision_policy(cfg)
-    legacy = torch_dtype_for_trainer_precision(cfg.actor, torch)
-    # compute and rollout both map to the single legacy weight/compute dtype today.
-    assert resolve_torch_dtype(policy.compute) is legacy
-    assert resolve_torch_dtype(policy.rollout) is legacy
-
-
-# Every online GRPO recipe — the resolver (back-compat path) must reproduce the
-# current dtype derivation on every axis, byte-for-byte, before P1 wiring.
+# Every online GRPO recipe must keep rollout/replay forward precision aligned.
 _ONLINE_RECIPES = [
     "ar/janus_pro/online_grpo_ocr",
     "ar/janus_pro/online_r1_grpo_ocr",
@@ -160,20 +176,13 @@ _ONLINE_RECIPES = [
 
 @pytest.mark.parametrize("experiment", _ONLINE_RECIPES)
 def test_online_recipe_equivalence(experiment):
-    """Checks online recipe equivalence."""
+    """Checks online recipes use aligned public precision."""
     cfg = load_config(f"experiment/{experiment}")
     policy = resolve_precision_policy(cfg)
 
-    weight_dtype = torch_dtype_for_trainer_precision(cfg.actor, torch)  # legacy storage
-    autocast = trainer_mixed_precision(cfg.actor)                       # legacy "no/bf16/fp16"
-    frozen = torch.float16 if weight_dtype is torch.float32 else weight_dtype
-
-    # compute/rollout both map to the single legacy weight/compute dtype today.
-    assert resolve_torch_dtype(policy.compute) is weight_dtype
-    assert resolve_torch_dtype(policy.rollout) is weight_dtype
-    # autocast on/off boundary is preserved (fp32 <-> "no").
-    assert (policy.compute == "fp32") == (autocast == "no")
-    # frozen reproduces the sd3 "fp32 -> fp16, else follow" derivation.
-    assert resolve_torch_dtype(policy.frozen) is frozen
+    assert policy.compute == policy.rollout
+    assert resolve_torch_dtype(policy.compute) is resolve_torch_dtype(policy.rollout)
+    assert "mixed_precision" not in cfg.actor
+    assert "bf16" not in cfg.actor
     # math is always protected at fp32.
     assert policy.math == "fp32"

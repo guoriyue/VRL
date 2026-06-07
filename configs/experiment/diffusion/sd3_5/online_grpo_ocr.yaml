@@ -7,15 +7,14 @@ defaults:
   - /reward/ocr
   - /dataset/ocr
 
+precision: bf16
+
 sampling:
   max_sequence_length: 128
 
 actor:
   optim:
     lr: 3.0e-4
-  # SD3.5 OCR replay is fp16-fragile — keep replay + LoRA weights full precision.
-  mixed_precision: "no"
-  bf16: false
   # Flow-GRPO SD3 OCR 1GPU parity: 8 batches/epoch, accum=8//2 → 2 updates/epoch.
   gradient_accumulation_steps: 4
 

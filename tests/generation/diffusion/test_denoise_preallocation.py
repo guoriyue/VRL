@@ -71,6 +71,40 @@ def test_run_denoise_steps_writes_preallocated_buffers(return_kl: bool) -> None:
     )
 
 
+def test_run_denoise_steps_records_rollout_transformer_dtype() -> None:
+    """Checks denoise metadata records the rollout forward dtype."""
+    executor = _Executor()
+
+    result = executor.run_denoise_steps(
+        state=_state(batch=2, steps=1),
+        encoded={"prompt_embeds": torch.zeros(2, 1, dtype=torch.float16)},
+        config=_config(sample_count=2),
+    )
+
+    assert result.engine_counters["diffusion_rollout_transformer_dtype"] == "float16"
+    assert result.engine_counters["diffusion_rollout_autocast_enabled"] is False
+
+
+def test_decode_denoise_result_threads_rollout_dtype_into_context() -> None:
+    """Checks rollout dtype is visible in trajectory context."""
+    executor = _Executor()
+    state = _state(batch=2, steps=1)
+    denoise = executor.run_denoise_steps(
+        state=state,
+        encoded={"prompt_embeds": torch.zeros(2, 1, dtype=torch.float16)},
+        config=_config(sample_count=2),
+    )
+
+    chunk = executor.decode_denoise_result(
+        request=SimpleNamespace(),
+        config=_config(sample_count=2),
+        denoise_result=denoise,
+    )
+
+    assert chunk.context["rollout_transformer_dtype"] == "float16"
+    assert chunk.context["rollout_autocast_enabled"] is False
+
+
 def _config(*, sample_count: int = 2, return_kl: bool = False) -> DiffusionDenoiseConfig:
     return DiffusionDenoiseConfig(
         prompt_index=0,
@@ -112,6 +146,16 @@ class _Model:
     def forward_step(self, state: SimpleNamespace, step_idx: int) -> dict[str, torch.Tensor]:
         del step_idx
         return {"noise_pred": torch.full_like(state.latents, 0.25)}
+
+    def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
+        return latents
+
+    def export_replay_tensors(self, state: SimpleNamespace) -> dict[str, torch.Tensor]:
+        return {"prompt_embeds": torch.zeros_like(state.latents[:, :1])}
+
+    def export_batch_context(self, state: SimpleNamespace) -> dict[str, object]:
+        del state
+        return {"model_family": "test"}
 
 
 class _Executor(DiffusionPipelineExecutorBase):

@@ -1,11 +1,10 @@
 """Precision drift guard: enforce/observe rollout-vs-replay logprob parity.
 
-When ``precision.rollout != precision.compute`` (e.g. a bf16 rollout transformer
-vs an fp32 replay forward), the collection-time logprob no longer equals the
-freshly recomputed replay logprob, so the GRPO importance ratio is != 1 at the
-very first step — a silent bias. This guard recomputes parity on the first
-training step (before any optimizer update) and either warns or fails, using the
-shared :func:`compute_logprob_mismatch_stats`.
+When rollout and replay use different forward precision policies, the collection
+time logprob no longer equals the freshly recomputed replay logprob, so the GRPO
+importance ratio is != 1 at the very first step. This guard recomputes parity on
+the first training step (before any optimizer update) and either warns or fails,
+using the shared :func:`compute_logprob_mismatch_stats`.
 
 It is the enforcement side of the same fact the per-step mismatch metrics (P1)
 report; both read the one shared stats helper so debug, metrics, and gate never
@@ -16,7 +15,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from vrl.algorithms.logprob_mismatch import (
@@ -81,6 +80,7 @@ def run_precision_drift_guard(
     math_precision: str,
     timestep_indices: Sequence[int],
     evaluate_fn: Callable[[int], Any],
+    metadata: Mapping[str, Any] | None = None,
     logger: logging.Logger | None = None,
 ) -> dict[str, Any] | None:
     """Check first-step parity across a few timesteps; warn or fail on drift.
@@ -124,11 +124,23 @@ def run_precision_drift_guard(
         "compute_precision": compute_label,
         "rollout_precision": rollout_label,
         "math_precision": math_label,
+        "forward_precision_match": rollout_label == compute_label,
         "worst_timestep": worst_timestep,
         "max_abs_log_ratio": config.max_abs_log_ratio,
         "max_ratio_abs_dev": config.max_ratio_abs_dev,
         "worst_stats": dataclasses.asdict(worst) if worst is not None else None,
     }
+    if metadata:
+        metadata_dict = dict(metadata)
+        record["metadata"] = metadata_dict
+        # Promote scalar precision fields to top-level jsonl columns. Derive the
+        # set from the payload itself so new precision fields added by the
+        # trainer's metadata producer surface automatically, instead of silently
+        # dropping out of a stale hand-maintained key list. setdefault keeps the
+        # normalized compute/rollout/math labels already set above.
+        for key, value in metadata_dict.items():
+            if isinstance(value, (str, bool, int, float)) or value is None:
+                record.setdefault(key, value)
     if violated:
         message = (
             "precision drift guard: rollout-vs-replay logprob parity exceeded "

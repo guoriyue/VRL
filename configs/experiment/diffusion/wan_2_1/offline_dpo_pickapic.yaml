@@ -6,6 +6,8 @@ defaults:
   - /sampling/denoise/20_step_cfg_4_5
   - /dataset/pickapic_v2
 
+precision: bf16
+
 # DPO is offline preference learning over images replicated to T frames.
 # Default to single-frame "image-style" DPO; bump num_frames for true video pairs.
 sampling:
@@ -31,7 +33,6 @@ actor:
   gradient_accumulation_steps: 1
   train_batch_size: 1
   use_adafactor: false
-  mixed_precision: bf16
   prediction_type: flow_matching   # Wan uses flow-matching velocity target
 
 # Disable torch.compile on the transformer — DPO's twin policy/ref forwards

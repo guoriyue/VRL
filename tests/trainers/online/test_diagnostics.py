@@ -55,6 +55,7 @@ class TestDiagnostics:
                     dones=torch.ones(group_size, dtype=torch.bool),
                     group_ids=torch.zeros(group_size, dtype=torch.long),
                     context={
+                        "rollout_transformer_dtype": "float32",
                         "runtime_debug": {
                             "ray_chunks": [
                                 {
@@ -104,10 +105,17 @@ class TestDiagnostics:
         record = records[0]
         assert record["event"] == "first_step_logprob_parity"
         assert record["mixed_precision"] == "no"
+        assert record["precision_policy"]["compute_precision"] == "fp32"
+        assert record["precision_policy"]["rollout_precision"] == "fp32"
+        assert record["precision_policy"]["math_precision"] == "fp32"
+        assert record["precision_policy"]["trainer_autocast_enabled"] is False
+        assert record["precision_policy"]["trainer_transformer_dtype"] == "float32"
+        assert record["precision_policy"]["rollout_transformer_dtype"] == "float32"
         assert record["abs_diff"]["mean"] == pytest.approx(1.0)
         assert record["ratio"]["mean"] == pytest.approx(torch.exp(torch.tensor(1.0)).item())
         assert record["driver_trainable_before_step"]["tensor_count"] == 1
         assert record["driver_trainable_after_step"]["tensor_count"] == 1
+        assert record["rollout_context"]["rollout_transformer_dtype"] == "float32"
         assert record["runtime_debug"]["ray_chunks"][0]["worker_id"] == "rollout-0"
         assert grad_enabled[0] is False
         assert any(grad_enabled[1:])

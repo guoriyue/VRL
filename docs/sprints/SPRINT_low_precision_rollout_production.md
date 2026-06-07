@@ -1,14 +1,14 @@
-# SPRINT: Production 16-bit Rollout Parity
+# SPRINT: Production FP16 Rollout Parity
 
-状态：proposed。`SPRINT_precision_drift_guard.md` 已删除；P0/P1 的 guard 和 mismatch metrics 已落地。本 sprint 接管剩余目标：让 16-bit rollout 成为安全生产路径。
+状态：proposed。`SPRINT_precision_drift_guard.md` 已删除；P0/P1 的 guard 和 mismatch metrics 已落地。本 sprint 接管剩余目标：让 Stable Diffusion 3.5 的 FP16 rollout 成为可验收的安全生产路径。
 
 ## 0. 一句话
 
-目标不是“低精 rollout 出现 drift 后用 TIS 勉强修正”。目标是 **16-bit rollout 和 16-bit replay 本身不 drift**。TIS / decoupled correction 只作为 fallback，用于不可避免的 backend mismatch；第一优先级是 precision-aligned rollout/replay parity。
+目标不是“低精 rollout 出现 drift 后用 TIS 勉强修正”。验收标准是：**Stable Diffusion 3.5 使用 FP16 rollout 时也能通过 precision check**。这里的 pass path 是 rollout/replay forward precision 对齐，而不是 FP16 rollout + FP32 replay 硬混。TIS / decoupled correction 只作为 fallback，用于不可避免的 backend mismatch；第一优先级是 precision-aligned rollout/replay parity。
 
 ## 1. 已知事实
 
-当前已经确认：
+当前已经确认的历史校准数据：
 
 ```text
 fp32 rollout / fp32 replay / TF32 off:
@@ -20,28 +20,34 @@ bf16 rollout / fp32 replay:
   clip_fraction      ~= 0.5~0.61
 ```
 
+还没有完成验收的是：
+
+```text
+fp16 rollout / fp16 replay / fp32 math on Stable Diffusion 3.5:
+  must pass precision check
+```
+
 这说明：
 
 ```text
 1. replay restore / trajectory slice / SDE logprob path 是对的。
 2. drift 主要来自 rollout forward 和 replay forward 的 precision/backend policy 不一致。
-3. 如果生产目标是 16-bit rollout，就不应该默认拿 fp32 replay 去做 behavior parity。
+3. 如果生产目标是 FP16 rollout，就不应该默认拿 fp32 replay 去做 behavior parity。
 ```
 
-生产目标应改成：
+生产目标应改成一个 public forward precision：
 
 ```text
-precision.rollout = bf16
-precision.compute = bf16
-precision.math    = fp32
+precision: fp16
 ```
 
 也就是：
 
 ```text
-transformer forward: rollout/replay 都走 16-bit
+transformer forward: rollout/replay 都走 FP16
 SDE/logprob math:    仍然 fp32
 optimizer state:     不由本 sprint 强行降精
+internal report:      compute_precision=fp16, rollout_precision=fp16, math_precision=fp32
 ```
 
 ## 2. 为什么不是先上 TIS
@@ -55,13 +61,13 @@ behavior policy != replay/proximal policy
 但这里的第一目标是：
 
 ```text
-behavior policy == replay/proximal policy under same 16-bit precision policy
+behavior policy == replay/proximal policy under same FP16 forward precision policy
 ```
 
 所以实施顺序必须是：
 
 ```text
-1. 先证明 bf16 rollout / bf16 replay / fp32 math 能达到 near-zero parity。
+1. 先证明 SD3.5 的 fp16 rollout / fp16 replay / fp32 math 能通过 precision check。
 2. 如果不能，再定位是 dtype、TF32、autocast、kernel、batch shape、CFG packing、Ray worker policy 哪一项不一致。
 3. 只有确认 backend mismatch 无法消除，才进入 TIS / decoupled correction。
 ```
@@ -178,7 +184,7 @@ rejection sampling 和 veto threshold
 metrics 聚合时用 pre-RS mask
 ```
 
-这些源码只作为 correction fallback 的参考。第一阶段不要照搬 slime TIS；先做 16-bit parity。
+这些源码只作为 correction fallback 的参考。第一阶段不要照搬 slime TIS；先做 SD3.5 FP16 rollout parity。
 
 ## 4. wm-infra 当前关键路径
 
@@ -196,7 +202,7 @@ trainer_config.rollout_precision = policy.rollout
 rollout_weight_dtype = resolve_torch_dtype(resolve_precision_policy(cfg).rollout)
 ```
 
-这里已经有 rollout dtype 和 compute dtype 两条轴，但还没有证明 bf16/bf16 replay 与 rollout 完全同策略。
+这里已经有 rollout dtype 和 compute dtype 两条轴，但还没有证明 fp16/fp16 replay 与 rollout 完全同策略。
 
 ```text
 vrl/trainers/online/trainer.py
@@ -218,7 +224,7 @@ vrl/models/diffusion/sd3_5/model.py
 
 ```text
 forward_step() 用 self._transformer_dtype() 决定 latents / timestep / embeds dtype。
-如果 compute=bf16，replay transformer dtype 应该是 bf16。
+如果 compute=fp16，replay transformer dtype 应该是 fp16。
 ```
 
 ```text
@@ -236,7 +242,7 @@ observations/actions/log_probs 存入 trajectory。
 这条路径正好支持目标策略：
 
 ```text
-forward precision aligned at bf16
+forward precision aligned at fp16
 SDE/logprob math remains fp32
 ```
 
@@ -245,20 +251,20 @@ SDE/logprob math remains fp32
 成功状态：
 
 ```text
-1. bf16 rollout / bf16 replay / fp32 math 在 SD3.5 OCR 上 first-step parity 接近 fp32/fp32 no-TF32 baseline。
-2. guard 支持 precision-aligned low-precision path，不再把 bf16/bf16 误判成 unsafe split。
-3. bf16 rollout / fp32 replay 仍然 fail，除非显式打开 correction fallback。
+1. Stable Diffusion 3.5 使用 fp16 rollout / fp16 replay / fp32 math 时能通过 precision check。
+2. guard 支持 precision-aligned low-precision path，不再把 fp16/fp16 误判成 unsafe split。
+3. fp16 rollout / fp32 replay 仍然 fail，除非显式打开 correction fallback。
 4. metrics 同时报告:
    - raw rollout-vs-replay mismatch
    - same-policy aligned parity
    - dtype/backend policy used by rollout and replay
-5. 真实 run 能证明 bf16 rollout 有 rollout memory/throughput benefit，且不会引入 first-step ratio drift。
+5. 真实 run 能证明 fp16 rollout 有 rollout memory/throughput benefit，且不会引入 first-step ratio drift。
 ```
 
 非目标：
 
 ```text
-不把 SDE/logprob math 降成 bf16。
+不把 SDE/logprob math 降成 fp16。
 不默认开启 TIS。
 不直接照搬 slime token-level tis_clip=2.0。
 不为了通过 guard 隐藏 raw mismatch metrics。
@@ -288,7 +294,7 @@ runtime_debug / rollout chunk metadata
 
 这样之后看到 drift，不会再猜是 dtype、TF32 还是 Ray worker policy。
 
-## 7. T1：跑 bf16/bf16 parity gate
+## 7. T1：跑 SD3.5 FP16 rollout precision check
 
 真实 run：
 
@@ -298,9 +304,7 @@ python -m vrl.scripts.train \
   trainer.total_epochs=1 \
   actor.optim.lr=0.0 \
   eval.enable=false \
-  precision.rollout=bf16 \
-  precision.compute=bf16 \
-  precision.math=fp32 \
+  precision=fp16 \
   trainer.precision_drift_guard.mode=warn
 ```
 
@@ -311,25 +315,84 @@ A. fp32/fp32/TF32 off baseline:
    ratio_abs_dev_mean = 0
    ratio_abs_dev_max  = 0
 
-B. bf16/fp32:
+B. fp16/fp32:
+   预期 fail 或明显 drift；这是 unsafe split，不是验收目标。
+
+C. fp16/fp16:
+   必须通过 precision check；目标是接近 A，而不是接近 B。
+
+历史校准数据:
+
+bf16/fp32:
    ratio_abs_dev_mean ~= 1.4e-3
    ratio_abs_dev_max  ~= 1e-2
-
-C. bf16/bf16:
-   目标是接近 A，而不是接近 B。
 ```
 
 如果 C 仍然明显 drift，先定位一致性问题，不进入 TIS。
+
+### T1 本地验收记录（2026-06-07）
+
+SD3.5 OCR 小规模真实 run 已通过 FP16 precision check：
+
+```bash
+python -m vrl.scripts.train \
+  --config experiment/diffusion/sd3_5/online_grpo_ocr \
+  trainer.output_dir=outputs/sd3_5_ocr_fp16_precision_check_default_yaml_20260607_114000 \
+  trainer.total_epochs=1 \
+  actor.optim.lr=0.0 \
+  eval.enable=false \
+  rollout.n=2 \
+  rollout.rollout_batch_size=2 \
+  rollout.sample_batch_size=2 \
+  trainer.precision_drift_guard.mode=fail
+```
+
+结果：
+
+```text
+output_dir:
+  outputs/sd3_5_ocr_fp16_precision_check_default_yaml_20260607_114000
+
+precision_drift_guard:
+  mode = fail
+  violated = false
+  compute_precision = fp16
+  rollout_precision = fp16
+  math_precision = fp32
+  trainer_transformer_dtype = float16
+  rollout_transformer_dtype = float16
+  trainer_autocast_enabled = true
+  rollout_autocast_enabled = true
+
+worst_stats:
+  logprob_abs_diff_mean = 0.0
+  logprob_abs_diff_max = 0.0
+  ratio_abs_dev_mean = 0.0
+  ratio_abs_dev_max = 0.0
+
+metrics.csv:
+  logprob_abs_diff_mean = 0.0
+  logprob_abs_diff_max = 0.0
+  ratio_abs_dev_mean = 0.0
+  ratio_abs_dev_max = 0.0
+```
+
+结论：
+
+```text
+SD3.5 FP16 rollout / FP16 replay / FP32 math 可以通过 precision check。
+当前不需要 TIS/correction 来让这条 FP16 path 成立。
+```
 
 ## 8. T2：对齐 rollout/replay backend policy
 
 需要检查和修正：
 
 ```text
-1. Trainer replay autocast 是否真的打开 bf16。
-2. Replay model transformer dtype 是否真的是 bf16。
-3. Ray rollout worker transformer dtype 是否真的是 bf16。
-4. TF32 policy 是否两边一致；即使 bf16 下 TF32 不应是主项，也要记录。
+1. Trainer replay autocast 是否真的打开 fp16。
+2. Replay model transformer dtype 是否真的是 fp16。
+3. Ray rollout worker transformer dtype 是否真的是 fp16。
+4. TF32 policy 是否两边一致；即使 fp16 下 TF32 不应是主项，也要记录。
 5. CFG batching 是否同形状。
 6. timestep packing 是否最终给 transformer 相同 dtype/shape。
 7. trajectory tensors 是否保留了足够精度：latents/action 可以 fp32，forward input 再 cast 到 transformer dtype。
@@ -351,10 +414,10 @@ P2: deterministic kernel / batch shape alignment
 rollout_precision != compute_precision -> auto fail
 ```
 
-这对 bf16/fp32 是对的，但生产目标要求：
+这对 fp16/fp32 是对的，但生产目标要求：
 
 ```text
-rollout=bf16, compute=bf16, math=fp32 -> allowed and checked
+precision: fp16 -> compute_precision=fp16, rollout_precision=fp16, math_precision=fp32
 ```
 
 建议 guard 语义：
@@ -373,9 +436,9 @@ math precision:
 
 也就是说，guard 应比较 forward precision policy，而不是简单比较所有 precision axes。
 
-## 10. T4：如果 bf16/bf16 仍 drift，再进入 fallback
+## 10. T4：如果 fp16/fp16 仍 drift，再进入 fallback
 
-只有当对齐后仍不能让 16-bit rollout/replay parity 通过，才打开 correction fallback。
+只有当对齐后仍不能让 SD3.5 FP16 rollout/replay parity 通过，才打开 correction fallback。
 
 候选：
 
@@ -407,19 +470,19 @@ policy_loss =
 单元测试：
 
 ```text
-test_precision_guard_allows_same_forward_precision_bf16_math_fp32
-test_precision_guard_fails_bf16_rollout_fp32_compute_without_correction
+test_precision_guard_allows_same_forward_precision_fp16_math_fp32
+test_precision_guard_fails_fp16_rollout_fp32_compute_without_correction
 test_precision_debug_records_rollout_and_replay_transformer_dtype
-test_sd3_replay_forward_uses_transformer_dtype_under_bf16_compute
+test_sd3_replay_forward_uses_transformer_dtype_under_fp16_compute
 test_rollout_executor_records_transformer_dtype
 ```
 
 集成测试：
 
 ```text
-test_online_precision_bridge_sets_bf16_compute_and_bf16_rollout
+test_online_precision_bridge_sets_fp16_compute_and_fp16_rollout
 test_same_precision_low_precision_guard_runs_without_extra_policy_split
-test_bf16_bf16_metrics_are_reported_as_regular_csv_columns
+test_fp16_fp16_metrics_are_reported_as_regular_csv_columns
 ```
 
 真实 run 验证：
@@ -427,12 +490,12 @@ test_bf16_bf16_metrics_are_reported_as_regular_csv_columns
 ```text
 SD3.5 OCR:
   fp32/fp32/TF32 off
-  bf16/fp32
-  bf16/bf16
+  fp16/fp32
+  fp16/fp16
 
 通过标准:
-  bf16/bf16 first-step drift 接近 fp32/fp32 baseline；
-  bf16/fp32 继续复现 drift；
+  fp16/fp16 通过 precision check；
+  fp16/fp32 继续复现 drift 或被 guard 拒绝；
   metrics 能解释差异来源。
 ```
 
@@ -442,16 +505,14 @@ SD3.5 OCR:
 
 ```text
 production low-precision rollout:
-  precision.rollout=bf16
-  precision.compute=bf16
-  precision.math=fp32
+  precision: fp16
 
-unsupported by default:
-  precision.rollout=bf16
+rejected config surface:
+  precision.rollout=fp16
   precision.compute=fp32
 ```
 
-如果业务必须用 bf16 rollout + fp32 compute，另开 correction sprint，参考 slime TIS/MIS 源码，但不要把它和 16-bit parity 目标混在一起。
+如果业务必须用 fp16 rollout + fp32 compute，另开 correction sprint 和显式实验入口，参考 slime TIS/MIS 源码，但不要把它和 FP16 parity 目标混在一起。
 
 ## 13. 参考
 

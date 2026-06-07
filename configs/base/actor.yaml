@@ -1,4 +1,6 @@
 # Actor / training-loop config
+precision: bf16
+
 actor:
   optim:
     lr: ???
@@ -14,8 +16,6 @@ actor:
   # behavior. SD3 Flow-GRPO parity overrides this to 4.
   gradient_accumulation_steps: 0
   drop_zero_advantage: true
-  mixed_precision: bf16
-  bf16: true
   gradient_checkpointing: true
 
   # Train loss only on a subset of denoising timesteps (compute saving).

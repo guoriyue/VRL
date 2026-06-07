@@ -116,14 +116,89 @@ def _get_autocast(
     model: Any | None = None,
 ) -> Any:
     """Return the configured autocast context manager."""
-    if bool(getattr(model, "disable_train_autocast", False)):
+    autocast_dtype = _trainer_autocast_dtype(config, device, model=model)
+    if autocast_dtype is None:
         return contextlib.nullcontext()
+    return torch.amp.autocast(str(device), dtype=autocast_dtype)
+
+
+def _trainer_autocast_dtype(
+    config: TrainerConfig,
+    device: torch.device,
+    model: Any | None = None,
+) -> torch.dtype | None:
+    if bool(getattr(model, "disable_train_autocast", False)):
+        return None
     precision = _resolve_mixed_precision(config)
     if precision == "bf16":
-        return torch.amp.autocast(str(device), dtype=torch.bfloat16)
+        return torch.bfloat16
     if precision == "fp16" and device.type == "cuda":
-        return torch.amp.autocast(str(device), dtype=torch.float16)
-    return contextlib.nullcontext()
+        return torch.float16
+    return None
+
+
+def _precision_label(value: Any) -> str:
+    token = str(value or "").strip().lower()
+    return "fp32" if token in ("", "no") else token.removeprefix("torch.")
+
+
+def _dtype_label(value: Any) -> str | None:
+    if value is None:
+        return None
+    return str(value).removeprefix("torch.")
+
+
+def _model_transformer_dtype(model: Any) -> str | None:
+    getter = getattr(model, "_transformer_dtype", None)
+    if callable(getter):
+        try:
+            return _dtype_label(getter())
+        except Exception:
+            pass
+    transformer = getattr(model, "transformer", None)
+    dtype = getattr(transformer, "dtype", None)
+    if dtype is not None:
+        return _dtype_label(dtype)
+    parameters = getattr(transformer if transformer is not None else model, "parameters", None)
+    if callable(parameters):
+        try:
+            return _dtype_label(next(parameters()).dtype)
+        except (StopIteration, RuntimeError, TypeError):
+            return None
+    return None
+
+
+def _trainer_precision_metadata(
+    config: TrainerConfig,
+    device: torch.device,
+    model: Any,
+) -> dict[str, Any]:
+    compute_precision = _precision_label(_resolve_mixed_precision(config))
+    rollout_precision = _precision_label(config.rollout_precision or compute_precision)
+    autocast_dtype = _trainer_autocast_dtype(config, device, model=model)
+    return {
+        "compute_precision": compute_precision,
+        "rollout_precision": rollout_precision,
+        "math_precision": _precision_label(config.math_precision),
+        "mixed_precision": _resolve_mixed_precision(config),
+        "trainer_autocast_enabled": autocast_dtype is not None,
+        "trainer_autocast_dtype": _dtype_label(autocast_dtype),
+        "trainer_transformer_dtype": _model_transformer_dtype(model),
+        "allow_tf32_config": bool(config.optim.allow_tf32),
+        "allow_tf32_matmul": bool(torch.backends.cuda.matmul.allow_tf32),
+        "allow_tf32_cudnn": bool(torch.backends.cudnn.allow_tf32),
+    }
+
+
+def _merge_rollout_precision_context(
+    metadata: dict[str, Any],
+    batch_context: dict[str, Any],
+) -> dict[str, Any]:
+    merged = dict(metadata)
+    for key in ("rollout_transformer_dtype", "rollout_autocast_enabled"):
+        if key in batch_context:
+            merged[key] = batch_context[key]
+    return merged
 
 
 # ---------------------------------------------------------------------------
@@ -435,6 +510,10 @@ class OnlineTrainer(Trainer):
         # Debug first step: compare old vs fresh log-probs on first timestep
         # (using first filtered batch so memory footprint is bounded).
         first_step_debug_record: dict[str, Any] | None = None
+        precision_metadata = _merge_rollout_precision_context(
+            _trainer_precision_metadata(cfg, self.device, self.model),
+            filtered_batches[0].context,
+        )
         if cfg.debug.first_step and self.state.step == 0 and uses_evaluator:
             _dbg_batch = filtered_batches[0]
             with torch.no_grad(), autocast_ctx, record_function("trainer.replay"):
@@ -471,20 +550,25 @@ class OnlineTrainer(Trainer):
                 "global_step": int(self.state.global_step),
                 "device": str(self.device),
                 "mixed_precision": _resolve_mixed_precision(cfg),
-                "autocast_enabled": _resolve_mixed_precision(cfg) != "no",
+                "autocast_enabled": precision_metadata["trainer_autocast_enabled"],
+                "precision_policy": precision_metadata,
                 "old_log_prob": tensor_stats(_old_lp_0),
                 "fresh_log_prob": tensor_stats(_dbg_log_prob),
                 "abs_diff": tensor_stats(_diff),
                 "ratio": tensor_stats(_ratio),
                 "driver_trainable_before_step": trainable_state_digest(self.model),
                 "driver_parameter_state_before_step": parameter_state_summary(self.model),
+                "rollout_context": {
+                    key: value
+                    for key, value in _dbg_batch.context.items()
+                    if key != "runtime_debug"
+                },
                 "runtime_debug": _dbg_batch.context.get("runtime_debug"),
             }
 
         # Precision drift guard: on the first step (before any optimizer update),
-        # check rollout-vs-replay logprob parity. `auto` only does real work when
-        # rollout!=compute; it resolves to off otherwise and returns without an
-        # extra forward.
+        # check rollout-vs-replay logprob parity. `auto` protects unsafe precision
+        # splits; explicit warn/fail is used for same-precision acceptance runs.
         if self.state.step == 0 and uses_evaluator and self.evaluator is not None:
             _guard_batch = filtered_batches[0]
 
@@ -513,6 +597,7 @@ class OnlineTrainer(Trainer):
                 math_precision=cfg.math_precision,
                 timestep_indices=train_indices,
                 evaluate_fn=_guard_evaluate,
+                metadata=precision_metadata,
                 logger=logger,
             )
             if _guard_record is not None and first_step_debug_record is not None:

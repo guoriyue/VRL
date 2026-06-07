@@ -1,5 +1,7 @@
 # SPRINT: Real attention-backend dispatch (SGLang/vLLM-style)
 
+状态：done（T1–T4 已落地，2026-06-06；后续细粒度优化见 `SPRINT_attention_kernel_medium.md`）。
+
 ## 0. Core Decision
 
 把 AR 解码的注意力从"一个布尔开关 + inline 的 naive 分支"升级成 **SGLang/vLLM 式的按名字选择的 attention-backend dispatch**:每条解码路径都是一个实现了同一协议的 backend,由 AR backend selector 按名字选择。

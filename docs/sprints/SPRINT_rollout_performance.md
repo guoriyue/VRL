@@ -208,11 +208,137 @@ denoise.latent_write_s     0.002% of denoise
 当前非靶点：scheduler/SDE、latent clone、trajectory buffer write、VAE decode、text encode
 ```
 
+### U0：Utilization-first profiling（2026-06-07）
+
+这次 profiling 要回答的不是“denoise 是否慢”，而是“慢的时候 GPU 是否已经把可用计算资源吃满”。
+结论是：**GPU 不是 idle，但也没有接近峰值算力利用**。
+
+粗粒度 `nvidia-smi` 采样看到 GPU utilization 100%、功耗约 575W、显存约 31GB，说明 workload
+确实把 GPU 保持在 busy 状态。但 Nsight Compute 的 Compute(SM) / Memory / DRAM 指标显示，
+主 kernel 离峰值还有明显距离。因此这里的“not fully used”含义是：
+
+```text
+不是：GPU 大量空闲，Python/HF overhead 是唯一瓶颈
+而是：GPU 很忙，但主 kernel 没有吃满 SM / tensor core / memory peak
+```
+
+本地 NCU 简单采样结果：
+
+| probe | Compute(SM) | Memory | DRAM | note |
+| --- | ---: | ---: | ---: | --- |
+| GEMM sample avg | 42.8% | 62.3% | 21.7% | 19 个 fp32 SIMT SGEMM samples |
+| representative larger GEMM | 58.3% | 48.4% | 5.1% | 920us，waves/SM 1.22 |
+| Attention samples | 41.9% | 24.4% | 4.4% | `fmha_cutlassF_f32` samples |
+
+Duration-weighted NCU 读法更可靠，因为它不会让很多短小 GEMM 把平均值拉偏：
+
+| probe | sampled duration | Compute(SM) | Memory | DRAM | Waves/SM | note |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| fp32 SIMT SGEMM | 8.758ms | 51.2% | 62.3% | 10.2% | 4.83 | 19 samples |
+| fp32 attention forward | 17.190ms | 41.9% | 24.4% | 4.3% | 21.48 | 3 `fmha_cutlassF_f32` samples |
+
+Nsight Systems 的时间分布也支持同一个判断：rollout/training 热点主要是 fp32 GEMM 和
+fp32 memory-efficient attention，而不是 scheduler/write/clone：
+
+```text
+fp32 SIMT SGEMM:          40.000s   52.8%   51,013 instances
+elementwise/copy/cat:     13.631s   18.0%  188,243 instances
+fp32 attention forward:   11.496s   15.2%    2,883 instances
+tensorop GEMM:             5.748s    7.6%   24,835 instances
+fp32 attention backward:   2.293s    3.0%      185 instances
+```
+
+CUDA API 也显示很多 launch/sync 调用：
+
+```text
+cudaLaunchKernel:      228,357 calls, 33.569s total CPU time
+cuLaunchKernel:         75,715 calls, 14.345s total CPU time
+cudaStreamSynchronize:  12,119 calls, 21.290s total CPU time
+```
+
+但这不等于 denoise 内部有大量可 staged 的 GPU 空洞。把 GPU kernel intervals 按 `>=100ms`
+的大 gap 切成 dense segments 后，主段内部几乎是连续发 kernel：
+
+| dense segment span | GPU kernel busy | internal gap | busy ratio |
+| ---: | ---: | ---: | ---: |
+| 13.771s | 13.135s | 0.636s | 95.4% |
+| 10.447s | 10.063s | 0.384s | 96.3% |
+| 10.346s | 10.232s | 0.115s | 98.9% |
+| 10.324s | 10.208s | 0.116s | 98.9% |
+| 10.295s | 10.184s | 0.111s | 98.9% |
+| 10.250s | 10.137s | 0.112s | 98.9% |
+| 10.206s | 10.091s | 0.116s | 98.9% |
+
+所以 staging 的结论要分层：它可以隐藏阶段之间的等待，但不能让 denoise dense segment 里的
+fp32 GEMM / attention kernel 自己从 40-50% Compute(SM) 变成 90%。当前更像 kernel path /
+precision / shape 利用率问题，不是 denoise 内部 producer-consumer pipeline 问题。
+
+Attention 的 NCU 样本要谨慎读：这次 attention-only NCU 捕到的是中段 kernel sample
+（单个 sample 约 4-6ms），Nsight Systems 的 aggregate 更适合判断全局时间占比。NCU 在这里主要用于看
+kernel utilization characteristic，不用于替代 nsys 的全局时间占比。
+
+BF16 rollout parity calibration（compute/replay fp32，rollout bf16，`n=2`，1 prompt group）失败：
+
+```text
+output:
+outputs/diffusion_util_bf16_rollout_parity/
+
+precision:
+compute=fp32, rollout=bf16, math=fp32, frozen=bf16
+
+guard:
+mode=warn
+worst_timestep=8
+logprob_abs_diff_max=1.016e-02
+ratio_abs_dev_max=1.011e-02
+limit=1.000e-03
+```
+
+这说明 `fp32 replay + bf16 rollout` 不能直接作为默认性能路径；它会让 collection-time
+old logprob 和 replay fresh logprob 偏离，破坏 GRPO ratio≈1 的假设。BF16/FA2 仍然可能是性能主线，
+但必须走 parity gate：要么 replay 也切同 dtype 并证明 SD3.5 数值稳定，要么引入明确的 correction /
+容差策略，不能静默开启。
+
+保存的 profile artifacts：
+
+```text
+torch profiler trace:
+outputs/diffusion_util_torch_profile_enabled/torch_profiler/generation/rollout-0/
+
+nsys report:
+outputs/diffusion_util_nsys/sd3_5_ocr_rollout.nsys-rep
+outputs/diffusion_util_nsys/sd3_5_ocr_rollout.sqlite
+
+ncu roofline reports:
+outputs/diffusion_util_ncu/sd3_5_ocr_gemm_attention_roofline.ncu-rep
+outputs/diffusion_util_ncu/sd3_5_ocr_attention_mid_roofline.ncu-rep
+
+bf16 rollout parity calibration:
+outputs/diffusion_util_bf16_rollout_parity/training_debug.jsonl
+outputs/diffusion_util_bf16_rollout_parity/metrics.csv
+```
+
+决策：这组数据**不支持现在重写 native diffusion transformer / custom Triton backend**。
+它支持先做更低风险、直接作用在同一热路径上的工作：
+
+```text
+1. 先落地真正的 rollout-only transformer compile 边界（不要复用 `model.torch_compile`）
+2. fp32 → bf16 / FA2 必须先过 parity gate；当前 `fp32 replay + bf16 rollout` 已超阈值
+3. larger batch 或 multi-GPU 只解决总吞吐，不解决单 GPU kernel Compute(SM) 偏低
+4. 上面都做完仍明显 under-utilized，再评估 native/Triton boundary
+```
+
 ### D1：Rollout-only transformer compile（当前主线）
 
 不要复用 `model.torch_compile.enable`。那个开关现在同时影响 rollout 和 trainer replay，
 而 trainer replay 会因为 zero-advantage filtering 出现动态 microbatch。rollout denoise shape 相对固定，
 应该有独立策略：
+
+当前代码状态（2026-06-07）：`RuntimeBuildSpec.torch_compile` 只读 `model.torch_compile`，
+`build_sd3_5_runtime_bundle()` 和 `build_sd3_5_replay_runtime_bundle()` 都会消费它。因此现在不能用
+`model.torch_compile.enable=true` 做 rollout-only 实验；那会把 replay compile / recompile / warmup
+混进结果。正确落点是在 Ray generation launch payload 里把 `rollout.denoise_compile` 覆盖到
+rollout worker 的 `model_config["torch_compile"]`，driver replay bundle 继续保持 `model.torch_compile=false`。
 
 ```yaml
 rollout:
