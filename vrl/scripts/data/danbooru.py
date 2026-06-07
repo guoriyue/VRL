@@ -1455,62 +1455,6 @@ def select_positive_targets(
     }
 
 
-
-def _load_reward_rollouts(path: str, *, max_samples: int) -> list[Any]:
-    from PIL import Image
-
-    from vrl.rewards.types import RewardRollout, RewardTrajectory
-
-    rows = []
-    for row in iter_metadata(path):
-        image_path = row.get("image_path")
-        if not image_path:
-            continue
-        p = Path(str(image_path)).expanduser()
-        if not p.exists():
-            continue
-        rows.append(
-            RewardRollout(
-                request=None,
-                trajectory=RewardTrajectory(
-                    prompt=str(row.get("prompt", "")),
-                    output=Image.open(p).convert("RGB"),
-                ),
-                metadata={"manifest_row": row},
-            ),
-        )
-        if len(rows) >= max_samples:
-            break
-    return rows
-
-
-def _metric_report(positive_scores: list[float], negative_scores: list[float]) -> dict[str, Any]:
-    return {
-        "positive_mean": _mean(positive_scores),
-        "hard_negative_mean": _mean(negative_scores),
-        "auc": _pairwise_auc(positive_scores, negative_scores),
-    }
-
-
-def _mean(values: list[float]) -> float:
-    return sum(values) / len(values) if values else 0.0
-
-
-def _pairwise_auc(positive_scores: list[float], negative_scores: list[float]) -> float:
-    if not positive_scores or not negative_scores:
-        return 0.0
-    wins = 0.0
-    total = 0
-    for pos in positive_scores:
-        for neg in negative_scores:
-            total += 1
-            if pos > neg:
-                wins += 1.0
-            elif pos == neg:
-                wins += 0.5
-    return wins / total
-
-
 def _select_quota_rows(
     buckets: Mapping[str, list[Any]],
     *,
@@ -1692,13 +1636,8 @@ def _interleave_manifest_rows(
     return out
 
 
-select_quota_rows = _select_quota_rows
-interleave_bucket_rows = _interleave_bucket_rows
-proportional_group_counts = _proportional_group_counts
-proportional_text_group_counts = _proportional_text_group_counts
-interleave_manifest_rows = _interleave_manifest_rows
+# Tests monkeypatch this hook to avoid network fetches through setup.py.
 _http_download = http_download
-_count_lines = count_jsonl_rows
 
 
 def _current_http_download() -> Callable[[str, Path], None]:
@@ -1825,8 +1764,6 @@ __all__ = [
     "hand_crop_rows",
     "hard_negative_rows",
     "http_download",
-    "interleave_bucket_rows",
-    "interleave_manifest_rows",
     "is_anatomy_positive",
     "iter_metadata",
     "label_queue_rows",
@@ -1835,14 +1772,11 @@ __all__ = [
     "positive_image_rows",
     "prompt_anchor_texts",
     "prompt_from_tags",
-    "proportional_group_counts",
-    "proportional_text_group_counts",
     "record_id",
     "record_score",
     "register",
 
     "select_positive_targets",
-    "select_quota_rows",
     "split_prompt_rows",
     "split_safety_prompt_rows",
     "write_jsonl",

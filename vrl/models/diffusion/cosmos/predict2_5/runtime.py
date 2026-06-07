@@ -173,9 +173,6 @@ def build_cosmos_predict25_replay_runtime_bundle_from_cfg(
     return build_cosmos_predict25_replay_runtime_bundle(spec)
 
 
-"""Cosmos Predict2.5 diffusion executor."""
-
-
 class CosmosPredict25PipelineExecutor(DiffusionPipelineExecutorBase):
     """Diffusion executor for Cosmos Predict2.5 text-to-world rollouts."""
 

@@ -46,6 +46,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from vrl.models.ar.janus_pro import JANUS_R1_SEGMENTS
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 from vrl.models.utils import count_trainable_params, disable_adapter_on, load_weights_into
 
@@ -62,7 +63,6 @@ JANUS_R1_SELFCHECK_PROMPT = (
 JANUS_R1_REGEN_PROMPT = (
     "<｜end▁of▁sentence｜>\nNext, I will draw a new image<begin_of_image>"  # noqa: RUF001
 )
-JANUS_R1_SEGMENTS = ("initial_image", "selfcheck_text", "final_image")
 
 
 def _trajectory_role_value(segment: Any, role: str) -> Any:
@@ -1292,6 +1292,7 @@ __all__ = [
     "JANUS_IMAGE_PIXEL_SIZE",
     "JANUS_IMAGE_TOKEN_NUM",
     "JANUS_IMAGE_VOCAB_SIZE",
+    "JANUS_R1_SEGMENTS",
     "JanusProConfig",
     "JanusProModel",
     "JanusProReplayCore",

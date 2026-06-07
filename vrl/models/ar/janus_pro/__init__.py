@@ -10,12 +10,14 @@ Requires the upstream package ``deepseek-ai/Janus`` (not on PyPI):
 
 from __future__ import annotations
 
-from vrl.models.ar.janus_pro.model import (
+JANUS_R1_SEGMENTS = ("initial_image", "selfcheck_text", "final_image")
+
+from vrl.models.ar.janus_pro.model import (  # noqa: E402
     JanusProConfig,
     JanusProModel,
     image_token_logits_from_hidden,
 )
-from vrl.models.ar.janus_pro.runtime import (
+from vrl.models.ar.janus_pro.runtime import (  # noqa: E402
     JanusProChunkGatherer,
     JanusProPipelineExecutor,
     JanusProR1ChunkGatherer,
@@ -25,6 +27,7 @@ from vrl.models.ar.janus_pro.runtime import (
 )
 
 __all__ = [
+    "JANUS_R1_SEGMENTS",
     "JanusProChunkGatherer",
     "JanusProConfig",
     "JanusProModel",

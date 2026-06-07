@@ -324,7 +324,7 @@ class ARDecodeLoop:
 
         self._require_hooks(("init_ar", "step_ar", "finalize_ar"))
 
-        init_state = self._call_with_supported_kwargs(
+        init_state = call_with_supported_kwargs(
             self.runner.init_ar,
             *self.init_args,
             **dict(self.init_kwargs or {}),
@@ -355,7 +355,7 @@ class ARDecodeLoop:
             scheduler_batches += 1
             decode_tokens += len(batch.sequences)
             step_batch = envelope.build_step_batch(batch.sequences)
-            step_output = self._call_with_supported_kwargs(
+            step_output = call_with_supported_kwargs(
                 self.runner.step_ar,
                 state,
                 step_batch,
@@ -419,19 +419,21 @@ class ARDecodeLoop:
             for row_index, row in enumerate(sample_rows)
         ]
 
-    def _call_with_supported_kwargs(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
-        try:
-            signature = inspect.signature(fn)
-        except (TypeError, ValueError):
-            return fn(*args, **kwargs)
-        parameters = signature.parameters
-        if any(
-            param.kind is inspect.Parameter.VAR_KEYWORD
-            for param in parameters.values()
-        ):
-            return fn(*args, **kwargs)
-        supported = {key: value for key, value in kwargs.items() if key in parameters}
-        return fn(*args, **supported)
+def call_with_supported_kwargs(fn: Any, *args: Any, **kwargs: Any) -> Any:
+    """Call hooks while dropping optional kwargs unsupported by older signatures."""
+
+    try:
+        signature = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return fn(*args, **kwargs)
+    parameters = signature.parameters
+    if any(
+        param.kind is inspect.Parameter.VAR_KEYWORD
+        for param in parameters.values()
+    ):
+        return fn(*args, **kwargs)
+    supported = {key: value for key, value in kwargs.items() if key in parameters}
+    return fn(*args, **supported)
 
 
 def _row_indices(sequences: Sequence[ActiveSequence], *, size: int) -> list[int]:
@@ -459,4 +461,5 @@ __all__ = [
     "TokenScheduler",
     "ar_concat_rows",
     "ar_split_rows",
+    "call_with_supported_kwargs",
 ]

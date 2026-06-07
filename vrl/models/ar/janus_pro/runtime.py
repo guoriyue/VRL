@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -11,7 +10,7 @@ from typing import Any
 import torch
 
 from vrl.generation.ar import ARPipelineExecutorBase, ARRequestLayout, ARSamplingParams
-from vrl.generation.ar.decode_loop import ARDecodeLoop
+from vrl.generation.ar.decode_loop import ARDecodeLoop, call_with_supported_kwargs
 from vrl.generation.capabilities import FamilyCapability
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.execution.planner import attach_engine_plan, build_engine_plan
@@ -23,8 +22,8 @@ from vrl.generation.types import (
     WorkloadSignature,
 )
 from vrl.models.ar.capabilities import ar_discrete_family_capability
+from vrl.models.ar.janus_pro import JANUS_R1_SEGMENTS
 from vrl.models.ar.janus_pro.model import (
-    JANUS_R1_SEGMENTS,
     JanusProConfig,
     JanusProModel,
     JanusProReplayModel,
@@ -52,7 +51,7 @@ JANUS_PRO_R1_FAMILY_CAPABILITY = ar_discrete_family_capability(
     "janus_pro_r1",
     "ar_t2i_r1",
     trajectory_kind="multisegment",
-    trainable_segments=("initial_image", "selfcheck_text", "final_image"),
+    trainable_segments=JANUS_R1_SEGMENTS,
 )
 
 
@@ -205,18 +204,6 @@ def _resolve_lora_block(spec: RuntimeBuildSpec, defaults: dict[str, Any]) -> dic
     return lora
 
 
-def _call_with_supported_kwargs(fn: Any, *args: Any, **kwargs: Any) -> Any:
-    try:
-        signature = inspect.signature(fn)
-    except (TypeError, ValueError):
-        return fn(*args, **kwargs)
-    parameters = signature.parameters
-    if any(param.kind is inspect.Parameter.VAR_KEYWORD for param in parameters.values()):
-        return fn(*args, **kwargs)
-    supported = {key: value for key, value in kwargs.items() if key in parameters}
-    return fn(*args, **supported)
-
-
 def _ar_engine_counters(
     *,
     params: ARSamplingParams,
@@ -233,39 +220,6 @@ def _ar_engine_counters(
         "ar_scheduler_batch_size": params.ar_scheduler_batch_size,
         "ar_scheduler_batches": scheduler_batches,
     }
-
-
-"""Janus-Pro AR text-to-image pipeline executor.
-
-Owns the autoregressive image-token sampling + VQ decode previously
-inlined in the Janus-Pro rollout collector. The collector keeps
-reward scoring and ``RolloutBatch`` packing.
-
-Boundary:
-
-- This module MUST NOT import ``vrl.rollouts.*`` or ``RolloutBatch``.
-- This module MUST NOT compute reward.
-- Inputs come from ``GenerationRequest.sampling`` + ``prompts`` (the
-  collector packs them).
-- Outputs are the canonical ``GenerationOutput`` whose ``output`` is the
-  decoded image tensor and whose ``extra`` carries per-token ids,
-  per-token log-probs, the prompt token ids/masks (needed for replay
-  forward), and the unconditional token ids/masks (needed for replay /
-  audit).
-
-Difference from diffusion executors: AR runs a token loop. The runtime
-prepares embeddings and delegates token progression to
-``vrl.generation.ar.decode_loop.ARDecodeLoop`` through ``JanusProARModelRunner`` so the
-scheduled decode loop owns row scheduling and KV-cache lane transport while
-vLLM is brought up.
-
-Parity contract: same prompts + same seed (when seeded) produce
-bitwise-equal token ids, log-probs, and images, since
-``JanusProARModelRunner.step_ar`` runs under ``torch.no_grad`` and the
-only randomness is ``torch.multinomial``. The collector must apply
-``torch.manual_seed(seed)`` before calling the runtime to make this
-reproducible.
-"""
 
 
 @dataclass(slots=True)
@@ -788,13 +742,6 @@ class JanusProChunkGatherer:
         )
 
 
-"""Janus-Pro-R1 AR text-to-image pipeline executor.
-
-This executor owns generation only. Reward computation, advantage
-normalization, and rollout packing stay outside the model family layer.
-"""
-
-
 @dataclass(slots=True)
 class JanusProR1ChunkResult:
     """Output of one prompt/sample Janus-Pro-R1 chunk."""
@@ -847,7 +794,7 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
             record_function("engine.cache_write"),
         ):
             scheduler_batches: list[int] = []
-            result = _call_with_supported_kwargs(
+            result = call_with_supported_kwargs(
                 self.model.generate_with_refine,
                 prompt_ids,
                 prompt_mask,
@@ -943,7 +890,7 @@ class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
         ):
             chunk_specs = self.chunk_sample_rows(request, chunk)
             scheduler_batches: list[int] = []
-            result = _call_with_supported_kwargs(
+            result = call_with_supported_kwargs(
                 self.model.generate_with_refine,
                 prompt_ids,
                 prompt_mask,

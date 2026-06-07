@@ -192,9 +192,6 @@ def build_cosmos_predict2_replay_runtime_bundle_from_cfg(
     return build_cosmos_predict2_replay_runtime_bundle(spec)
 
 
-"""Cosmos Predict2 Video2World diffusion pipeline executor."""
-
-
 class CosmosPipelineExecutor(DiffusionPipelineExecutorBase):
     """Diffusion executor for Cosmos Predict2 Video2World rollouts."""
 

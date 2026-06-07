@@ -20,6 +20,7 @@ from vrl.models.ar.capabilities import (
     ar_continuous_family_capability,
     ar_discrete_family_capability,
 )
+from vrl.models.ar.janus_pro import JANUS_R1_SEGMENTS
 from vrl.models.diffusion.capabilities import diffusion_family_capability
 
 CollectorKind = Literal["diffusion", "ar_discrete", "ar_continuous", "ar_r1"]
@@ -273,7 +274,7 @@ register_rollout_family(
             "janus_pro_r1",
             "ar_t2i_r1",
             trajectory_kind="multisegment",
-            trainable_segments=("initial_image", "selfcheck_text", "final_image"),
+            trainable_segments=JANUS_R1_SEGMENTS,
         ),
     ),
 )

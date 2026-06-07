@@ -2,7 +2,7 @@
 
 状态: auto-generated (per-file audit). 已解决的条目随实现一并删除。
 
-剩余待处理: 20 个文件。审查基准 = AGENTS.md Architecture Hygiene。
+剩余待处理: 12 个文件。审查基准 = AGENTS.md Architecture Hygiene。
 
 ## 汇总
 
@@ -11,7 +11,7 @@
 | delete | 0 |
 | consolidate | 1 |
 | question | 2 |
-| improve | 17 |
+| improve | 9 |
 
 ## 🟠 CONSOLIDATE（1）
 
@@ -25,7 +25,7 @@
 - **`vrl/rewards/functions/ocr.py`** — 顶部三个 'for tests' edit-distance helper 既不被 reward 也不被 model 用，仅 test import，测试工具误入长期模块
   → [SPRINT_vrl_rewards_functions_ocr.md](SPRINT_vrl_rewards_functions_ocr.md)
 
-## 🔵 IMPROVE（17）
+## 🔵 IMPROVE（9）
 
 - **`vrl/algorithms/diffusion_nft.py`** (core) — advantage 归一化与 GRPO 逐行重复应抽共享 helper，`compute_batch_timestep_loss` 偏 god-method 可拆
   → [SPRINT_vrl_algorithms_diffusion_nft.md](SPRINT_vrl_algorithms_diffusion_nft.md)
@@ -33,18 +33,6 @@
   → [SPRINT_vrl_algorithms_dpo.md](SPRINT_vrl_algorithms_dpo.md)
 - **`vrl/generation/ar/executor.py`** (facade) — 10 个方法是对 `self.layout` 的纯单行转发，调用方又混用 `self.layout.xxx`，转发层无边界价值应收敛
   → [SPRINT_vrl_generation_ar_executor.md](SPRINT_vrl_generation_ar_executor.md)
-- **`vrl/models/ar/janus_pro/model.py`** (core) — 死字段 `_frame_constants` 已删；剩 `JANUS_R1_SEGMENTS` 被 runtime.py:55 手抄应改用导入的常量
-  → [SPRINT_vrl_models_ar_janus_pro_model.md](SPRINT_vrl_models_ar_janus_pro_model.md)
-- **`vrl/models/ar/janus_pro/runtime.py`** (core) — god-file 塞三条管线，两处悬空三引号当章节分隔，`_call_with_supported_kwargs` 与 decode_loop 重复；拆分须跨家族一致
-  → [SPRINT_vrl_models_ar_janus_pro_runtime.md](SPRINT_vrl_models_ar_janus_pro_runtime.md)
-- **`vrl/models/ar/nextstep_1/model.py`** (core) — docstring 仍自称 TODO scaffolding（实际只剩1处TODO）且上游 sys.path 引导复制了两份
-  → [SPRINT_vrl_models_ar_nextstep_1_model.md](SPRINT_vrl_models_ar_nextstep_1_model.md)
-- **`vrl/models/ar/nextstep_1/runtime.py`** (core) — 中段有一个被丢弃的伪 docstring 裸字符串（与 janus_pro 同款，应一起处理）
-  → [SPRINT_vrl_models_ar_nextstep_1_runtime.md](SPRINT_vrl_models_ar_nextstep_1_runtime.md)
-- **`vrl/models/diffusion/cosmos/predict2/runtime.py`** (registry-config) — 游离 module-level 字符串是合并残留死语句应删（predict2_5 同款）
-  → [SPRINT_vrl_models_diffusion_cosmos_predict2_runtime.md](SPRINT_vrl_models_diffusion_cosmos_predict2_runtime.md)
-- **`vrl/models/diffusion/wan_2_1/__init__.py`** (package-init) — 唯一 0 字节的家族 init，缺兄弟家族都有的描述 docstring，补一行即可（勿加 re-export）
-  → [SPRINT_vrl_models_diffusion_wan_2_1___init__.md](SPRINT_vrl_models_diffusion_wan_2_1___init__.md)
 - **`vrl/models/replay_loading.py`** (helper) — 职责过载且文件名误导：应把通用后端加载动作从 replay 元数据中拆出，并对仅测试触达的 parser 路径表态
   → [SPRINT_vrl_models_replay_loading.md](SPRINT_vrl_models_replay_loading.md)
 - **`vrl/rewards/models/kling_video_reward.py`** (core) — dtype 重复已统一到 `vrl/models/dtypes.py`；剩**可选**的 prompt-template 表外置
@@ -55,9 +43,5 @@
   → [SPRINT_vrl_scripts_common_factory.md](SPRINT_vrl_scripts_common_factory.md)
 - **`vrl/scripts/data/bootstrap.py`** (script) — `_MANIFEST_POPULATE_HINTS` 是手抄的路径→命令映射，会与真实子命令脱钩；`--run` 仅半实现只认 pickapic（注：`populate`→`setup` 改名已落地）
   → [SPRINT_vrl_scripts_data_bootstrap.md](SPRINT_vrl_scripts_data_bootstrap.md)
-- **`vrl/scripts/data/danbooru.py`** (script) — 1858 行 god-file；确证死代码（`_load_reward_rollouts`/`_metric_report`/`_pairwise_auc`/`_mean`）与 5 个无人用的 back-compat alias 应删；ALL_CAPS taxonomy 保留
-  → [SPRINT_vrl_scripts_data_danbooru.md](SPRINT_vrl_scripts_data_danbooru.md)
 - **`vrl/scripts/diffusion/wan_2_1/train_dpo.py`** (script) — CSV header drift 已修（`fields(DPOStepMetrics)`）；剩 export 块重复两遍、单函数职责过载
   → [SPRINT_vrl_scripts_diffusion_wan_2_1_train_dpo.md](SPRINT_vrl_scripts_diffusion_wan_2_1_train_dpo.md)
-- **`vrl/trainers/online/trainer.py`** (core) — `_step_impl` 内嵌一次性 grad-split/first-step 调试脚手架（写 `/tmp`、三处重复样板），应抽离隔离
-  → [SPRINT_vrl_trainers_online_trainer.md](SPRINT_vrl_trainers_online_trainer.md)

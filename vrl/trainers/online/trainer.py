@@ -480,24 +480,6 @@ class OnlineTrainer(Trainer):
                 "runtime_debug": _dbg_batch.context.get("runtime_debug"),
             }
 
-        if cfg.debug.grad_split:
-            import sys
-
-            _msg = (
-                f"\n[GRAD-SPLIT TRACER] about to enter inner loop: "
-                f"step={self.state.step} ppo_epochs={cfg.ppo_epochs} "
-                f"num_filtered_batches={len(filtered_batches)} "
-                f"grad_accum_batches={grad_accum_batches} "
-                f"num_train_indices={len(train_indices)}\n"
-            )
-            print(_msg, file=sys.stderr, flush=True)
-            print(_msg, flush=True)
-            logger.info(_msg.strip())
-            try:
-                with open("/tmp/grad_split_debug.log", "a") as _f:
-                    _f.write(_msg)
-            except Exception:
-                pass
         for _inner_epoch in range(cfg.ppo_epochs):
             # Accumulate a configurable number of rollout micro-batches per
             # optimizer update. Flow-GRPO sets this to num_batches_per_epoch//2,
@@ -567,87 +549,6 @@ class OnlineTrainer(Trainer):
                             # optimizer update; timestep accumulation follows
                             # Flow-GRPO's per-denoise-step surrogate structure.
                             loss = loss / loss_scale
-
-                        # Grad-split diagnostic: fire ONCE per process on first
-                        # backward we actually reach, to verify the KL term is
-                        # not drowning the policy gradient. Stamps a class flag
-                        # to ensure single-shot.
-                        _grad_split_fired = getattr(
-                            OnlineTrainer,
-                            "_grad_split_already_fired",
-                            False,
-                        )
-                        if cfg.debug.grad_split and not _grad_split_fired:
-                            OnlineTrainer._grad_split_already_fired = True  # type: ignore[attr-defined]
-                            import sys
-
-                            _enter = (
-                                f"\n[GRAD-SPLIT] entering diagnostic block "
-                                f"(step={self.state.step}, j={j})\n"
-                            )
-                            print(_enter, file=sys.stderr, flush=True)
-                            print(_enter, flush=True)
-                            logger.info(_enter.strip())
-                            try:
-                                with open("/tmp/grad_split_debug.log", "a") as _f:
-                                    _f.write(_enter)
-                            except Exception:
-                                pass
-                            try:
-                                p_t = getattr(self.algorithm, "_last_policy_loss_tensor", None)
-                                k_t = getattr(self.algorithm, "_last_kl_term_tensor", None)
-                                params = [p for p in self.model.parameters() if p.requires_grad]
-                                p_norm = float("nan")
-                                k_norm = float("nan")
-                                if p_t is not None and p_t.requires_grad:
-                                    p_grads = torch.autograd.grad(
-                                        p_t,
-                                        params,
-                                        retain_graph=True,
-                                        allow_unused=True,
-                                    )
-                                    p_norm = (
-                                        sum(
-                                            (g.detach() ** 2).sum().item()
-                                            for g in p_grads
-                                            if g is not None
-                                        )
-                                    ) ** 0.5
-                                if k_t is not None and k_t.requires_grad:
-                                    k_grads = torch.autograd.grad(
-                                        k_t,
-                                        params,
-                                        retain_graph=True,
-                                        allow_unused=True,
-                                    )
-                                    k_norm = (
-                                        sum(
-                                            (g.detach() ** 2).sum().item()
-                                            for g in k_grads
-                                            if g is not None
-                                        )
-                                    ) ** 0.5
-                                ratio = p_norm / k_norm if k_norm and k_norm > 0 else float("inf")
-                                _result = (
-                                    f"\n[GRAD-SPLIT RESULT] step={self.state.step} j={j} "
-                                    f"||grad(policy)||={p_norm:.4e} "
-                                    f"||grad(beta*kl)||={k_norm:.4e} "
-                                    f"policy/kl_ratio={ratio:.3f} "
-                                    f"policy_loss={p_t.item() if p_t is not None else float('nan'):.4e} "
-                                    f"kl_term={k_t.item() if k_t is not None else float('nan'):.4e}\n"
-                                )
-                                import sys
-
-                                print(_result, file=sys.stderr, flush=True)
-                                print(_result, flush=True)
-                                logger.info(_result.strip())
-                                try:
-                                    with open("/tmp/grad_split_debug.log", "a") as _f:
-                                        _f.write(_result)
-                                except Exception:
-                                    pass
-                            except Exception as _e:
-                                logger.warning("debug_grad_split failed: %s", _e)
 
                         with timer.time("backward"):
                             self._backward(loss)
