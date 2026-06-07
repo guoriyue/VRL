@@ -318,12 +318,139 @@ outputs/diffusion_util_bf16_rollout_parity/training_debug.jsonl
 outputs/diffusion_util_bf16_rollout_parity/metrics.csv
 ```
 
+### U1：bf16/fp16 forward micro-benchmark（2026-06-07）
+
+U0 之后所有 SD3.5 实验已默认切到 `precision: bf16`（rollout 与 replay 同 dtype，
+解除了 U0 里 `fp32 replay + bf16 rollout` 的 parity 失败——两边 dtype 一致，ratio≈1 成立）。
+为量化"低精度到底带来多少显存余量和多少 forward 提速"，对 SD3.5 transformer forward
+（D0：占 denoise 99.88%）做隔离实测。
+
+硬件 RTX 5090 31.3GB；真实 rollout shape：latent `16×64×64`（512px），text_seq 256，
+eager（未开 compile/FA2 强制）；median over 20 iters，`max_memory_allocated` 读峰值，
+`max_batch` 为 forward 不 OOM 的最大 batch（step=8）：
+
+| dtype | weights | B=8 latency | peak mem | max batch (forward-only) |
+| --- | ---: | ---: | ---: | ---: |
+| fp32 | 8.36GB | 467.6ms | 9.95GB | ~192 |
+| bf16 | 4.18GB | 152.2ms | 5.01GB | ~376 |
+| fp16 | 4.18GB | 140.1ms | 5.01GB | ~376 |
+
+关键读法：
+
+```text
+fp16 vs bf16：weights / peak mem / max_batch 三项完全相同（都是 16-bit, 2 bytes/elem）。
+              latency 140 vs 152ms 是 run-to-run 噪声，不是 fp16 的系统性优势。
+              → fp16 相对 bf16 在显存和吞吐上零收益；增大 batch 的红利来自 16-bit vs fp32。
+fp32 → bf16：weights 砍半（8.36→4.18GB）、peak 砍半（9.95→5.01GB）、
+              forward 快 ~3x（467→152ms，Tensor Core 替掉 fp32 SIMT，优于 U0 预测的 2x）、
+              forward-only max_batch 接近翻倍（192→376）。
+```
+
+注意 `max_batch≈376` 是**纯 transformer forward** 的余量，不是完整 rollout 上限。
+完整 rollout 还要叠加 T5 text encoder、VAE、GRPO trajectory replay buffer（存 10 个 denoise step
+的 latent）、CFG 2x（cfg_4_5 → cond+uncond）。所以可用 `sample_batch_size` 会低于 376，
+但 fp32→bf16 约 2x 的**相对**余量成立——当前 `sample_batch_size: 8` 有明确上调空间。
+
+测量脚本为一次性产物（`_scratch_precision_bench.py`），数字记录于此后即删除。
+
+#### Full rollout profile（bf16，2026-06-07）
+
+micro-benchmark 之后又跑了完整 SD3.5 OCR rollout profile，使用当前默认 `precision: bf16`，
+同一个 10-step denoise / rollout batch=8 shape，关闭 eval，未开启 compile。
+
+first-step parity 通过：
+
+```text
+output:
+outputs/diffusion_util_low_precision_torch_profile_bf16/training_debug.jsonl
+
+compute=bf16, rollout=bf16, math=fp32, frozen=bf16
+abs_diff_mean=1.70e-08
+abs_diff_max=1.19e-07
+ratio_min=1.000000000
+ratio_max=1.000000119
+```
+
+torch profiler 直接对比：
+
+| range/op | fp32 CUDA total | bf16 CUDA total | speedup |
+| --- | ---: | ---: | ---: |
+| `engine.forward_chunk` | 14.026s | 5.303s | 2.64x |
+| `generation.denoise_step` | 13.569s | 4.824s | 2.81x |
+| `generation.denoise_forward` | 13.568s | 4.824s | 2.81x |
+| `aten::linear` | 9.078s | 3.859s | 2.35x |
+| `aten::addmm` | 7.235s | 1.832s | 3.95x |
+| `aten::scaled_dot_product_attention` | 2.187s | 0.339s | 6.45x |
+
+Kernel path 已按预期切换：
+
+```text
+fp32 attention:
+aten::_scaled_dot_product_efficient_attention
+fmha_cutlassF_f32_aligned_64x64_rf_sm80
+
+bf16 attention:
+aten::_scaled_dot_product_flash_attention
+pytorch_flash::flash_fwd_kernel<..., bfloat16_t, ...>
+
+fp32 GEMM:
+cutlass_80_simt_sgemm_*
+
+bf16 GEMM:
+cutlass_80_tensorop_bf16_s16816gemm_*
+```
+
+Nsight Systems bf16 report：
+
+```text
+outputs/diffusion_util_low_precision_nsys_bf16/sd3_5_ocr_rollout_bf16.nsys-rep
+outputs/diffusion_util_low_precision_nsys_bf16/sd3_5_ocr_rollout_bf16.sqlite
+```
+
+这个 nsys run 是 120s SIGINT 采样，覆盖 rollout + replay/backward；bf16 在同样 wall time
+内推进了更多训练工作，所以不要拿 total kernel seconds 和 fp32 做端到端 speedup。它用于判断 kernel mix：
+
+| class | fp32 nsys share | bf16 nsys share | interpretation |
+| --- | ---: | ---: | --- |
+| fp32 SIMT SGEMM | 52.8% | ~0.0% | 已基本消失 |
+| bf16 tensorop GEMM | 0.0% | 42.8% | 主 GEMM path 已切换 |
+| fp32 attention forward | 15.2% | 0.1% | 已基本消失 |
+| flash attention forward | 0.0% | 9.0% | attention path 已切换 |
+| elementwise/copy/cat | 18.0% | 42.3% | 低精度后成为更显眼的残余瓶颈 |
+
+CUDA API 也显示 launch/sync 仍然很多：
+
+```text
+cudaLaunchKernel:      976,983 calls, 47.688s total CPU time
+cuLaunchKernel:        237,317 calls, 10.702s total CPU time
+cudaStreamSynchronize:  15,672 calls, 17.558s total CPU time
+```
+
+Nsight Compute bf16 roofline samples：
+
+```text
+outputs/diffusion_util_low_precision_ncu_bf16/sd3_5_ocr_bf16_top_gemm_roofline.ncu-rep
+outputs/diffusion_util_low_precision_ncu_bf16/sd3_5_ocr_bf16_flash_roofline.ncu-rep
+```
+
+| kernel | duration | Compute(SM) | Memory | DRAM |
+| --- | ---: | ---: | ---: | ---: |
+| `tensorop_bf16_s16816gemm_relu_bf16_256x128...` | 0.522ms | 42.2% | 33.8% | 7.2% |
+| `flash_fwd_kernel<..., bfloat16_t, ...>` | 0.675-1.020ms | 44.6% | 27.9% | 13.3% |
+
+读法：低精度后单 kernel 的 Compute(SM) 百分比仍不接近 90%，但这是按更高 bf16/tensor
+peak 计算的百分比；真正重要的是热路径 wall time 已经明显下降。bf16 top GEMM 比 fp32
+representative large GEMM（0.920ms）更快，即使 Compute(SM)% 看起来更低。
+
+新的性能主线不是重写 GEMM/attention，而是低精度后暴露出来的
+`elementwise/copy/cat`、launch/sync 和 shape/compile 问题。
+
 决策：这组数据**不支持现在重写 native diffusion transformer / custom Triton backend**。
 它支持先做更低风险、直接作用在同一热路径上的工作：
 
 ```text
 1. 先落地真正的 rollout-only transformer compile 边界（不要复用 `model.torch_compile`）
-2. fp32 → bf16 / FA2 必须先过 parity gate；当前 `fp32 replay + bf16 rollout` 已超阈值
+2. fp32 → bf16 已落地（rollout==replay 同 dtype，parity gate 解除，见 U1）；下一步是 FA2 + compile
 3. larger batch 或 multi-GPU 只解决总吞吐，不解决单 GPU kernel Compute(SM) 偏低
 4. 上面都做完仍明显 under-utilized，再评估 native/Triton boundary
 ```
