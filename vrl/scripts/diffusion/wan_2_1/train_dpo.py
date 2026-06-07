@@ -259,6 +259,14 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         max_train_steps, trainer_cfg.beta, lr, num_frames,
     )
 
+    # LoRA-only checkpoints export the adapter weights; full fine-tunes export
+    # nothing extra. The decision is fixed for the run, so resolve it once.
+    export_modules = (
+        {LORA_WEIGHTS_NAME: transformer}
+        if bool(require(cfg, "model.use_lora")) and hasattr(transformer, "save_pretrained")
+        else None
+    )
+
     step = resume_checkpoint.next_step if resume_checkpoint is not None else 0
     if step > max_train_steps:
         raise ValueError(
@@ -299,9 +307,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
                     "global_step": trainer.global_step,
                 },
                 rng_state=capture_rng_state(),
-                export_modules={LORA_WEIGHTS_NAME: transformer}
-                if bool(require(cfg, "model.use_lora")) and hasattr(transformer, "save_pretrained")
-                else None,
+                export_modules=export_modules,
             )
             logger.info("Saved checkpoint -> %s", ckpt)
 
@@ -319,9 +325,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
             "global_step": trainer.global_step,
         },
         rng_state=capture_rng_state(),
-        export_modules={LORA_WEIGHTS_NAME: transformer}
-        if bool(require(cfg, "model.use_lora")) and hasattr(transformer, "save_pretrained")
-        else None,
+        export_modules=export_modules,
     )
     logger.info("Final checkpoint -> %s", final_path)
     logger.info("DPO training complete.")

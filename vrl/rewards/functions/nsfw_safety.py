@@ -34,13 +34,5 @@ class NSFWSafetyReward(RewardFunction):
             ),
         )
 
-    def probability_batch(self, images: list[Any]) -> list[float]:
-        """Raw NSFW probabilities for image-level safety audits."""
-
-        return self._model.probability_batch(images)
-
-    def _probability_from_classifier_result(self, result: Any) -> float:
-        return self._model._probability_from_classifier_result(result)
-
 
 __all__ = ["NSFWSafetyReward"]

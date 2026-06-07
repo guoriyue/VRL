@@ -60,7 +60,7 @@ def test_nsfw_classifier_result_parsing_prefers_nsfw_labels() -> None:
     """Checks NSFW classifier result parsing prefers NSFW labels."""
     reward = NSFWSafetyReward(model_name="test", threshold=0.35)
 
-    probability = reward._probability_from_classifier_result(
+    probability = reward._model._probability_from_classifier_result(
         [
             {"label": "normal", "score": 0.80},
             {"label": "unsafe", "score": 0.20},
@@ -74,7 +74,7 @@ def test_nsfw_safety_reward_exposes_raw_probabilities_for_audits() -> None:
     """Checks NSFW safety reward exposes raw probabilities for audits."""
     reward = NSFWSafetyReward(model_name="test", scorer=lambda images: [0.10, 0.90])
 
-    probabilities = reward.probability_batch([object(), object()])
+    probabilities = reward._model.probability_batch([object(), object()])
 
     assert probabilities == pytest.approx([0.10, 0.90])
 
