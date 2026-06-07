@@ -188,39 +188,6 @@ def _nextstep_1_config_from_runtime_spec(spec: RuntimeBuildSpec) -> dict[str, An
     return config
 
 
-"""NextStep-1 pipeline executor.
-
-Owns the continuous-token autoregressive sampling loop previously inlined
-in the NextStep-1 rollout collector. The
-collector keeps reward scoring and ``RolloutBatch`` packing.
-
-Boundary:
-
-- This module MUST NOT import ``vrl.rollouts.*`` or ``RolloutBatch``.
-- This module MUST NOT compute reward.
-- Inputs come from ``GenerationRequest.sampling`` (collector packs them).
-- Outputs are the canonical ``GenerationOutput``. NextStep-1 is AR with
-  continuous tokens + a flow-matching head, so there is no diffusion
-  trajectory; instead, ``output`` is the decoded image and ``extra``
-  carries the three replay-determinism artifacts:
-
-      * ``tokens``      [B, L_img, D_token]  — sampled continuous tokens
-                                              (used as ``RolloutBatch.actions``)
-      * ``saved_noise`` [B, L_img, D_token]  — per-token x_0 prior for the
-                                              flow ODE; replay reads this so
-                                              ``recompute_logprobs`` can
-                                              re-run the same trajectory.
-      * ``log_probs``   [B, L_img]           — Gaussian per-token log-prob
-                                              from sampling time
-                                              (i.e. ``old_log_prob``).
-
-Determinism contract: same prompts + same generator state ⇒ same
-``tokens``/``saved_noise``/``log_probs``. The runtime passes the generator
-into ``NextStep1ARModelRunner`` so each scheduled token step consumes the
-same random stream for the same request.
-"""
-
-
 @dataclass(slots=True)
 class NextStep1ARChunkResult:
     """Output of one prompt/sample NextStep-1 AR chunk."""

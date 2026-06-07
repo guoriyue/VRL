@@ -17,13 +17,9 @@ log-prob tensors), so no trainer-side change is required.
 
 UPSTREAM BINDING
 ================
-This module is a *scaffolding* — every real call into the upstream
-NextStep-1 package is marked ``# TODO(nextstep-binding)``. Once you've
-done ``pip install -e .`` from ``stepfun-ai/NextStep-1``, fill in:
-    - ``_load_pipeline``     : how the upstream pipeline is constructed
-    - ``_run_llm_step``      : single-token LLM forward returning hidden
-    - ``_image_in_projector``: continuous-token → LLM-hidden projection
-    - ``_decode_via_vae``    : token sequence → pixels via the f8ch16 VAE
+This wrapper calls the upstream NextStep-1 package and its ``inference/``
+scripts directly. The remaining binding-sensitive point is ``_init_kv``:
+the KV-cache handle follows the upstream Qwen-style decoder cache type.
 
 The flow head's velocity-call signature is handled in
 ``vrl.math.ar.flow_matching``.
@@ -161,31 +157,9 @@ class NextStep1Model(nn.Module):
     def _load_pipeline(self) -> Any:
         """Instantiate the upstream NextStep-1 pipeline.
 
-        Upstream layout: ``inference/`` is a top-level directory in the
-        cloned repo (NOT a submodule of ``nextstep``), and its
-        ``gen_pipeline.py`` uses bare ``from gen_pipeline import ...``
-        imports — so we have to put that directory on ``sys.path`` before
-        importing.
+        The upstream inference modules must already be importable in the
+        runtime environment; this wrapper does not mutate ``sys.path``.
         """
-        import os
-        import sys
-
-        try:
-            import nextstep  # type: ignore[import-not-found]
-        except ImportError as e:
-            raise ImportError(
-                "NextStep-1 wrapper requires `stepfun-ai/NextStep-1`. Install with:\n"
-                "    git clone https://github.com/stepfun-ai/NextStep-1\n"
-                "    cd NextStep-1 && pip install -e ."
-            ) from e
-
-        # NextStep ships its inference pipeline outside the package, so we
-        # locate the cloned repo via the ``nextstep/`` package's parent.
-        repo_root = os.path.dirname(os.path.dirname(nextstep.__file__))
-        inference_dir = os.path.join(repo_root, "inference")
-        if inference_dir not in sys.path:
-            sys.path.insert(0, inference_dir)
-
         from gen_pipeline import NextStepPipeline  # type: ignore[import-not-found]
 
         return NextStepPipeline(
@@ -497,23 +471,6 @@ class NextStep1ReplayModel(NextStep1Model):
 
 def _load_nextstep_replay_model(config: NextStep1Config) -> Any:
     """Load the upstream NextStep model without the inference pipeline or VAE."""
-
-    import os
-    import sys
-
-    try:
-        import nextstep  # type: ignore[import-not-found]
-    except ImportError as e:
-        raise ImportError(
-            "NextStep-1 wrapper requires `stepfun-ai/NextStep-1`. Install with:\n"
-            "    git clone https://github.com/stepfun-ai/NextStep-1\n"
-            "    cd NextStep-1 && pip install -e ."
-        ) from e
-
-    repo_root = os.path.dirname(os.path.dirname(nextstep.__file__))
-    inference_dir = os.path.join(repo_root, "inference")
-    if inference_dir not in sys.path:
-        sys.path.insert(0, inference_dir)
 
     from nextstep_model import NextStep  # type: ignore[import-not-found]
 
