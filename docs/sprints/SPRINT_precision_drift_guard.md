@@ -239,12 +239,89 @@ test_metrics_are_zero_when_fresh_equals_old
 
 P2 是研究项，不作为 P0/P1 的前置条件。
 
-候选方向：
+### P2.0：先测,再决定(本节其余的前置)
+
+不要凭空决定上不上 TIS。先用真实 rollout-bf16 数据测漂移分布,因为我们**已经处在 slime 的
+`use_rollout_logprobs` 等价档**——`old_log_prob` 就是 rollout 行为 logprob
+（`trajectory.py` 的 `_old_log_prob_from_trajectory`),mismatch 已经被吃进 GRPO 的
+clipped ratio。所以真正要回答的不是"要不要 IS",而是:
+
+```text
+step-0 的 ratio = exp(fresh_compute_logprob - rollout_behavior_logprob) 偏离 1 多少?
+这个偏离是否被 PPO 的 eps_clip 大量裁剪(= mismatch 被静默偏置)?
+```
+
+复用现有指标即可,不新增 profiler:
+
+```text
+grpo/continuous.py:102  ratio = exp(log_prob - old_log_probs)
+grpo/continuous.py:140  clip_fraction = mean(|ratio - 1| > eps_clip)
+grpo/continuous.py:141  approx_kl
+```
+
+测法:开 rollout=bf16 / compute=fp32 跑若干 batch,记录 **step-0** 的
+`ratio` 分布、`clip_fraction`、`approx_kl`。判定:
+
+```text
+clip_fraction 接近 0、ratio 集中在 1 附近  -> mismatch 已被 eps_clip 容下,use_rollout_logprobs 现状即可,不必上 TIS
+clip_fraction 明显 > 0(mismatch 撞 eps_clip) -> eps_clip 不是后端精度差的合适容差,才进下面的 TIS/correction
+```
+
+关键认知:slime 的 `use_rollout_logprobs` 和 `use_tis` **互斥**(`arguments.py:1685`)。
+我们已在前者;TIS 是给后端 mismatch 一组**独立、可单独标定**的截断容差,替代"借用 eps_clip"。
+
+### P2.0 本地测量记录（SD3.5 OCR，2026-06-06）
+
+目的:只测 precision/backend drift,不测 policy update。所有 run 都设置:
+
+```text
+precision.compute=fp32
+precision.math=fp32
+trainer.precision_drift_guard.mode=warn
+trainer.total_epochs=1
+actor.optim.lr=0.0
+eval.enable=false
+```
+
+结果:
+
+| run | rollout | group_size | eps_clip | clip_fraction | logprob_abs_diff_mean | logprob_abs_diff_max | ratio_abs_dev_mean | ratio_abs_dev_max | guard violated |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `outputs/sd3_5_ocr_precision_drift_warn_p2_20260607_002` | bf16 | 2 | `1e-4` | 0.5000 | 0.001479 | 0.010243 | 0.001474 | 0.010190 | true |
+| `outputs/sd3_5_ocr_precision_drift_warn_p2_20260607_003` | bf16 | 4 | `1e-4` | 0.6111 | 0.001413 | 0.010591 | 0.001408 | 0.010535 | true |
+| `outputs/sd3_5_ocr_precision_drift_fp32_fp32_p2_20260607_004` | fp32 | 2 | `1e-4` | 0.1111 | 0.000049 | 0.000497 | 0.000049 | 0.000497 | false |
+| `outputs/sd3_5_ocr_precision_drift_fp32_fp32_p2_20260607_005` | fp32 | 4 | `1e-4` | 0.1111 | 0.000030 | 0.000413 | 0.000030 | 0.000413 | false |
+
+解读:
+
+```text
+1. lr=0.0,first run step,所以这里的 ratio drift 不是 policy update 引起的。
+2. bf16 rollout 的 ratio_abs_dev_mean ~1.4e-3,ratio_abs_dev_max ~1.0e-2,明显大于当前 eps_clip=1e-4。
+3. bf16 rollout 的 clip_fraction 0.5~0.61,说明当前 PPO clip 正在大量裁剪 backend mismatch。
+4. fp32 rollout/compute baseline 的 drift 小 30~50 倍,guard 不违反;measurement path 本身基本正确。
+5. fp32 baseline 仍有少量 3e-5~5e-4 drift,说明不是 bit-exact,但远小于 bf16 rollout split。
+6. guard finite=true,所以不是 NaN/Inf 问题,而是稳定的 bf16 rollout vs fp32 replay mismatch。
+```
+
+当前决策:
+
+```text
+P0/P1 hard gate + metrics 仍然正确。
+rollout=bf16 / compute=fp32 不应默认当作正式安全路径通过。
+下一步可以进入 P2.x correction spike:优先比较 decoupled behavior/proximal correction 与 TIS,
+但不要直接把 slime 的 token-LM tis_clip 搬过来。
+本地两组 run 给出的 log-space drift 上界约 0.0106,只能作为初始 sweep 候选,
+不能作为生产 tis_clip。
+```
+
+### P2.x：correction 候选(仅当 P2.0 证明 eps_clip 不够时)
 
 ```text
 1. decoupled behavior/proximal correction：显式区分 rollout behavior logprob 和 replay proximal logprob。
-2. bounded IS / rejection：借鉴 slime TIS/MIS，但需要适配 diffusion per-timestep continuous logprob。
-3. 禁止高风险 split：如果 drift gate 在真实模型上经常失败，配置层直接拒绝 rollout=bf16, compute=fp32。
+2. TIS（truncated importance sampling）：pg_loss *= clamp(exp(train_lp - rollout_lp), tis_clip_low, tis_clip)
+   （slime loss.py:752-764）。token→diffusion per-timestep 连续 SDE logprob,且 tis_clip 必须在
+   diffusion 数据上重标定——slime 的 token-LM clip 值不可直接搬。与 use_rollout_logprobs 互斥。
+3. 禁止高风险 split：如果 drift 在真实模型上经常超出可修正范围，配置层直接拒绝 rollout=bf16, compute=fp32。
 ```
 
 非目标：
@@ -258,8 +335,10 @@ P2 是研究项，不作为 P0/P1 的前置条件。
 P2 成功标准：
 
 ```text
-写出一页 decision note：继续 guard-only、加入 IS correction、还是拒绝 split。
-至少用一组 SD3.5 OCR rollout 数据报告 ratio drift 分布。
+P2.0：用一组 SD3.5 OCR rollout=bf16/compute=fp32 数据报告 step-0 的 ratio 分布 + clip_fraction + approx_kl。
+基于 P2.0 数据写一页 decision note：mismatch 已被 eps_clip 容下(guard-only 即可)、
+  需要 TIS correction、还是直接拒绝 split。
+仅在 decision note 选 TIS 时,才报告 diffusion 上重标定后的 tis_clip 取值。
 ```
 
 ## 7. Architecture hygiene

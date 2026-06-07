@@ -17,6 +17,13 @@ class TrainStepMetrics:
     advantage_mean: float = 0.0
     clip_fraction: float = 0.0
     approx_kl: float = 0.0
+    # Rollout-vs-replay logprob mismatch (precision/backend drift diagnostics).
+    logprob_abs_diff_mean: float = 0.0
+    logprob_abs_diff_max: float = 0.0
+    ratio_abs_dev_mean: float = 0.0
+    ratio_abs_dev_max: float = 0.0
+    mismatch_kl: float = 0.0
+    mismatch_k3_kl: float = 0.0
     grad_norm: float = 0.0
     adv_saturation: float = 0.0
     adv_zero_rate: float = 0.0

@@ -26,6 +26,14 @@ trainer:
     first_step: false
     grad_split: false
 
+  precision_drift_guard:
+    mode: auto
+    max_batches: 1
+    max_timestep_checks: 3
+    max_abs_log_ratio: 0.001
+    max_ratio_abs_dev: 0.001
+    fail_on_nonfinite: true
+
 # trainer.rollout_orchestration is supplied by the /base/rollout/orchestration
 # defaults group (strict by default; override with
 # /base/rollout/orchestration=continuous).

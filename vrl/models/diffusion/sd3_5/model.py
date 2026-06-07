@@ -316,13 +316,23 @@ class SD3_5Model(DiffusionModelBase):
         """
         t = state.timesteps[step_idx]
         bsz = state.latents.shape[0]
-        td = state.prompt_embeds.dtype
+        td = self._transformer_dtype()
 
         latent_input = state.latents.to(td)
         # SD3 timestep is broadcast across batch as the raw float (not /1000).
         # If t is already shape [B] (eval path packs timesteps as [1, B]),
         # Tensor.expand(bsz) is a no-op on the equal-sized dim.
-        timestep_batch = expand_batch_timestep(t, bsz)
+        timestep_batch = expand_batch_timestep(t, bsz).to(device=latent_input.device, dtype=td)
+        prompt_embeds = state.prompt_embeds.to(td)
+        pooled_prompt_embeds = state.pooled_prompt_embeds.to(td)
+        negative_prompt_embeds = (
+            None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
+        )
+        negative_pooled_prompt_embeds = (
+            None
+            if state.negative_pooled_prompt_embeds is None
+            else state.negative_pooled_prompt_embeds.to(td)
+        )
         output = DiffusionBackboneCaller(
             self.transformer,
             SD3DiffusionBackboneRunner(),
@@ -330,14 +340,14 @@ class SD3_5Model(DiffusionModelBase):
             DiffusionBackboneInput(
                 hidden_states=latent_input,
                 timestep=timestep_batch,
-                prompt_embeds=state.prompt_embeds,
-                negative_prompt_embeds=state.negative_prompt_embeds,
+                prompt_embeds=prompt_embeds,
+                negative_prompt_embeds=negative_prompt_embeds,
                 guidance_scale=state.guidance_scale,
                 do_cfg=state.do_cfg,
                 output_dtype=td,
                 extra={
-                    "pooled_prompt_embeds": state.pooled_prompt_embeds,
-                    "negative_pooled_prompt_embeds": state.negative_pooled_prompt_embeds,
+                    "pooled_prompt_embeds": pooled_prompt_embeds,
+                    "negative_pooled_prompt_embeds": negative_pooled_prompt_embeds,
                 },
             ),
         )

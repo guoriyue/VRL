@@ -67,6 +67,10 @@ def _apply_precision_policy(cfg: DictConfig, trainer_config: Any) -> None:
     policy = resolve_precision_policy(cfg)
     trainer_config.mixed_precision = policy.compute
     trainer_config.bf16 = policy.compute != "fp32"
+    # Expose the rollout dtype so the precision drift guard can compare it against
+    # the compute dtype (rollout != compute is the case it watches).
+    trainer_config.rollout_precision = policy.rollout
+    trainer_config.math_precision = policy.math
 
 
 def default_reference_model(bundle: Any, cfg: Any) -> Any | None:
@@ -334,7 +338,9 @@ def _prepare_metrics_csv(
     component_cols = ",".join(f"r_{name}" for name in component_names)
     header = (
         "epoch,loss,policy_loss,kl_penalty,reward_mean,reward_std,"
-        "clip_fraction,approx_kl,advantage_mean,grad_norm,adv_saturation,"
+        "clip_fraction,approx_kl,logprob_abs_diff_mean,logprob_abs_diff_max,"
+        "ratio_abs_dev_mean,ratio_abs_dev_max,mismatch_kl,mismatch_k3_kl,"
+        "advantage_mean,grad_norm,adv_saturation,"
         "adv_zero_rate,group_size,trained_prompt_num"
     )
     if component_cols:
@@ -367,6 +373,12 @@ def _write_metric_row(
         "reward_std": metrics.reward_std,
         "clip_fraction": metrics.clip_fraction,
         "approx_kl": metrics.approx_kl,
+        "logprob_abs_diff_mean": metrics.logprob_abs_diff_mean,
+        "logprob_abs_diff_max": metrics.logprob_abs_diff_max,
+        "ratio_abs_dev_mean": metrics.ratio_abs_dev_mean,
+        "ratio_abs_dev_max": metrics.ratio_abs_dev_max,
+        "mismatch_kl": metrics.mismatch_kl,
+        "mismatch_k3_kl": metrics.mismatch_k3_kl,
         "advantage_mean": metrics.advantage_mean,
         "grad_norm": metrics.grad_norm,
         "adv_saturation": metrics.adv_saturation,
@@ -389,6 +401,12 @@ def _write_metric_row(
                     f"{row['reward_std']:.4f}",
                     f"{row['clip_fraction']:.4f}",
                     f"{row['approx_kl']:.6f}",
+                    f"{row['logprob_abs_diff_mean']:.6f}",
+                    f"{row['logprob_abs_diff_max']:.6f}",
+                    f"{row['ratio_abs_dev_mean']:.6f}",
+                    f"{row['ratio_abs_dev_max']:.6f}",
+                    f"{row['mismatch_kl']:.6f}",
+                    f"{row['mismatch_k3_kl']:.6f}",
                     f"{row['advantage_mean']:.6f}",
                     f"{row['grad_norm']:.6f}",
                     f"{row['adv_saturation']:.4f}",

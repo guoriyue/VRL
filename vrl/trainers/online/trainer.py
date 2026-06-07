@@ -29,6 +29,7 @@ from vrl.rollouts.orchestration import build_rollout_schedule
 from vrl.trainers.core.base import Trainer
 from vrl.trainers.core.types import TrainerConfig, TrainState
 from vrl.trainers.online.ema import EMAModuleWrapper
+from vrl.trainers.online.precision_guard import run_precision_drift_guard
 from vrl.trainers.precision import trainer_mixed_precision
 from vrl.trainers.weight_sync import TrainableStateGetter, WeightSyncer
 from vrl.utils.model_diagnostics import (
@@ -480,6 +481,43 @@ class OnlineTrainer(Trainer):
                 "runtime_debug": _dbg_batch.context.get("runtime_debug"),
             }
 
+        # Precision drift guard: on the first step (before any optimizer update),
+        # check rollout-vs-replay logprob parity. `auto` only does real work when
+        # rollout!=compute; it resolves to off otherwise and returns without an
+        # extra forward.
+        if self.state.step == 0 and uses_evaluator and self.evaluator is not None:
+            _guard_batch = filtered_batches[0]
+
+            def _guard_evaluate(timestep_idx: int) -> TrajectorySignalBatch:
+                with torch.no_grad(), autocast_ctx, record_function("trainer.replay"):
+                    _sig = self.evaluator.evaluate(
+                        self.model,
+                        _guard_batch,
+                        timestep_idx,
+                        ref_model=self.ref_model,
+                        signal_request=SignalRequest(
+                            need_ref=False, need_kl_intermediates=False,
+                        ),
+                    )
+                if not isinstance(_sig, TrajectorySignalBatch):
+                    raise TypeError(
+                        "evaluator output must be TrajectorySignalBatch; "
+                        f"got {type(_sig).__name__}",
+                    )
+                return _sig
+
+            _guard_record = run_precision_drift_guard(
+                cfg.precision_drift_guard,
+                compute_precision=_resolve_mixed_precision(cfg),
+                rollout_precision=cfg.rollout_precision or _resolve_mixed_precision(cfg),
+                math_precision=cfg.math_precision,
+                timestep_indices=train_indices,
+                evaluate_fn=_guard_evaluate,
+                logger=logger,
+            )
+            if _guard_record is not None and first_step_debug_record is not None:
+                first_step_debug_record["precision_drift_guard"] = _guard_record
+
         for _inner_epoch in range(cfg.ppo_epochs):
             # Accumulate a configurable number of rollout micro-batches per
             # optimizer update. Flow-GRPO sets this to num_batches_per_epoch//2,
@@ -560,6 +598,12 @@ class OnlineTrainer(Trainer):
                         agg_metrics["kl_penalty"].append(metrics.kl_penalty)
                         agg_metrics["clip_fraction"].append(metrics.clip_fraction)
                         agg_metrics["approx_kl"].append(metrics.approx_kl)
+                        agg_metrics["logprob_abs_diff_mean"].append(metrics.logprob_abs_diff_mean)
+                        agg_metrics["logprob_abs_diff_max"].append(metrics.logprob_abs_diff_max)
+                        agg_metrics["ratio_abs_dev_mean"].append(metrics.ratio_abs_dev_mean)
+                        agg_metrics["ratio_abs_dev_max"].append(metrics.ratio_abs_dev_max)
+                        agg_metrics["mismatch_kl"].append(metrics.mismatch_kl)
+                        agg_metrics["mismatch_k3_kl"].append(metrics.mismatch_k3_kl)
 
                         # Continuous rollout production runs on the same asyncio
                         # loop as training orchestration. Yield once per
@@ -586,6 +630,10 @@ class OnlineTrainer(Trainer):
         def avg(key: str) -> float:
             vals = agg_metrics.get(key, [])
             return sum(vals) / len(vals) if vals else 0.0
+
+        def mx(key: str) -> float:
+            vals = agg_metrics.get(key, [])
+            return max(vals) if vals else 0.0
 
         reward_mean = pre_filter_reward_mean
         reward_std = pre_filter_reward_std
@@ -634,6 +682,12 @@ class OnlineTrainer(Trainer):
             advantage_mean=adv_mean,
             clip_fraction=avg("clip_fraction"),
             approx_kl=avg("approx_kl"),
+            logprob_abs_diff_mean=avg("logprob_abs_diff_mean"),
+            logprob_abs_diff_max=mx("logprob_abs_diff_max"),
+            ratio_abs_dev_mean=avg("ratio_abs_dev_mean"),
+            ratio_abs_dev_max=mx("ratio_abs_dev_max"),
+            mismatch_kl=avg("mismatch_kl"),
+            mismatch_k3_kl=avg("mismatch_k3_kl"),
             grad_norm=avg("grad_norm"),
             adv_saturation=adv_saturation,
             adv_zero_rate=adv_zero_rate,

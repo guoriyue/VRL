@@ -13,6 +13,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from typing import Any
 
+import torch
 import torch.nn as nn
 
 from vrl.generation.diffusion.layout import VideoGenerationRequest
@@ -153,6 +154,20 @@ class DiffusionModelBase(nn.Module, ABC):
                 f"{type(self).__name__} has no registered trainable transformer",
             )
         return transformer
+
+    def _transformer_dtype(self) -> torch.dtype:
+        """Return the dtype of the current trainable transformer."""
+
+        transformer = self._require_transformer()
+        dtype = getattr(transformer, "dtype", None)
+        if dtype is not None:
+            return dtype
+        try:
+            return next(transformer.parameters()).dtype
+        except StopIteration as exc:
+            raise RuntimeError(
+                f"{type(self).__name__} transformer has no parameters to infer dtype",
+            ) from exc
 
     def disable_adapter(self) -> contextlib.AbstractContextManager[None]:
         """Disable LoRA/adapters, or return a no-op context when absent."""

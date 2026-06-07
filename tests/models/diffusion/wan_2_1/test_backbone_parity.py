@@ -74,6 +74,30 @@ def test_wan_t2v_forward_step_runs_real_batched_cfg() -> None:
     assert not torch.allclose(cond, uncond)
 
 
+def test_wan_t2v_forward_step_casts_replay_tensors_to_transformer_dtype() -> None:
+    """Checks bf16 rollout tensors replay cleanly through an fp32 transformer."""
+    transformer = build_tiny_wan_transformer()
+    calls = record_forward_calls(transformer)
+    model = _model(WanT2VDiffusersModel, transformer)
+    state = WanT2VSamplingState(
+        latents=torch.randn(_LATENT_SHAPE, dtype=torch.bfloat16),
+        timesteps=torch.tensor([5.0], dtype=torch.bfloat16),
+        scheduler=None,
+        prompt_embeds=torch.randn(2, _TEXT_LEN, _TEXT_DIM, dtype=torch.bfloat16),
+        negative_prompt_embeds=None,
+        guidance_scale=1.0,
+        do_cfg=False,
+        seed=0,
+    )
+
+    out = model.forward_step(state, 0)
+
+    assert out["noise_pred"].dtype == torch.float32
+    assert calls[0]["hidden_states"].dtype == torch.float32
+    assert calls[0]["timestep"].dtype == torch.float32
+    assert calls[0]["encoder_hidden_states"].dtype == torch.float32
+
+
 def test_wan_i2v_forward_step_threads_condition_and_image_embeds() -> None:
     """Checks Wan I2V forward step threads condition and image embeds."""
     transformer = build_tiny_wan_i2v_transformer()

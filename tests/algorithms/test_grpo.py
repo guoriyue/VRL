@@ -184,6 +184,32 @@ class TestGRPOClippedSurrogate:
         assert metrics.clip_fraction == pytest.approx(0.5)
         assert metrics.approx_kl == pytest.approx(expected_kl)
 
+    def test_reports_logprob_mismatch_metrics(self) -> None:
+        """GRPO surfaces rollout-vs-replay (fresh vs old) drift in TrainStepMetrics."""
+        grpo = GRPO(GRPOConfig(init_kl_coef=0.0))
+        signals = _flow_signals(
+            log_prob=torch.full((2,), 0.1),  # replay logprob
+            old_log_prob=torch.zeros(2),  # rollout behavior logprob
+        )
+        _, metrics = grpo.compute_loss(
+            AlgorithmInput(signals=signals, advantages=torch.ones(2)),
+        )
+        ratio = torch.exp(torch.tensor(0.1)).item()
+        assert metrics.logprob_abs_diff_mean == pytest.approx(0.1, abs=1e-6)
+        assert metrics.ratio_abs_dev_mean == pytest.approx(ratio - 1.0, abs=1e-6)
+        assert metrics.mismatch_kl == pytest.approx(-0.1, abs=1e-6)
+
+    def test_mismatch_metrics_zero_when_on_policy(self) -> None:
+        """fresh == old → all mismatch metrics are zero."""
+        grpo = GRPO(GRPOConfig(init_kl_coef=0.0))
+        signals = _flow_signals(log_prob=torch.zeros(3), old_log_prob=torch.zeros(3))
+        _, metrics = grpo.compute_loss(
+            AlgorithmInput(signals=signals, advantages=torch.ones(3)),
+        )
+        assert metrics.logprob_abs_diff_mean == 0.0
+        assert metrics.ratio_abs_dev_max == 0.0
+        assert metrics.mismatch_k3_kl == 0.0
+
 
 def _flow_signals(
     *,

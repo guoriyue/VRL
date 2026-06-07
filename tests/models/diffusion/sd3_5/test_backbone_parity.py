@@ -86,3 +86,30 @@ def test_sd3_forward_step_single_branch_skips_cfg() -> None:
     torch.testing.assert_close(
         out["noise_pred_uncond"], torch.zeros_like(out["noise_pred_uncond"])
     )
+
+
+def test_sd3_forward_step_casts_replay_tensors_to_transformer_dtype() -> None:
+    """Checks bf16 rollout tensors replay cleanly through an fp32 transformer."""
+    transformer = build_tiny_sd3_transformer()
+    calls = record_forward_calls(transformer)
+    model = _model(transformer)
+    state = SD3SamplingState(
+        latents=torch.randn(TINY_SD3_LATENT_SHAPE, dtype=torch.bfloat16),
+        timesteps=torch.tensor([[5.0, 6.0]], dtype=torch.bfloat16),
+        scheduler=None,
+        prompt_embeds=torch.randn(2, _TEXT_LEN, TINY_SD3_JOINT_DIM, dtype=torch.bfloat16),
+        pooled_prompt_embeds=torch.randn(2, TINY_SD3_POOLED_DIM, dtype=torch.bfloat16),
+        negative_prompt_embeds=None,
+        negative_pooled_prompt_embeds=None,
+        guidance_scale=1.0,
+        do_cfg=False,
+        seed=0,
+    )
+
+    out = model.forward_step(state, 0)
+
+    assert out["noise_pred"].dtype == torch.float32
+    assert calls[0]["hidden_states"].dtype == torch.float32
+    assert calls[0]["timestep"].dtype == torch.float32
+    assert calls[0]["encoder_hidden_states"].dtype == torch.float32
+    assert calls[0]["pooled_projections"].dtype == torch.float32

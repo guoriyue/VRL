@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from vrl.algorithms.base import Algorithm
+from vrl.algorithms.logprob_mismatch import compute_logprob_mismatch_stats
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.types import TrainStepMetrics
 
@@ -140,12 +141,22 @@ class GRPO(Algorithm):
         clip_fraction = torch.mean((torch.abs(ratio - 1.0) > cfg.eps_clip).float()).item()
         approx_kl = 0.5 * torch.mean((signals.log_prob - old_log_probs) ** 2).item()
 
+        # Rollout-vs-replay logprob drift: with a same-dtype on-policy first step this
+        # is ~0; under rollout!=compute precision it surfaces the backend mismatch.
+        mismatch = compute_logprob_mismatch_stats(signals.log_prob, old_log_probs)
+
         metrics = TrainStepMetrics(
             loss=loss.item(),
             policy_loss=policy_loss.item(),
             kl_penalty=kl_loss.item(),
             clip_fraction=clip_fraction,
             approx_kl=approx_kl,
+            logprob_abs_diff_mean=mismatch.logprob_abs_diff_mean,
+            logprob_abs_diff_max=mismatch.logprob_abs_diff_max,
+            ratio_abs_dev_mean=mismatch.ratio_abs_dev_mean,
+            ratio_abs_dev_max=mismatch.ratio_abs_dev_max,
+            mismatch_kl=mismatch.mismatch_kl,
+            mismatch_k3_kl=mismatch.mismatch_k3_kl,
         )
 
         return loss, metrics

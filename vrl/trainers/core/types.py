@@ -39,6 +39,40 @@ class DebugConfig:
 
 
 @dataclass(slots=True)
+class PrecisionDriftGuardConfig:
+    """Rollout-vs-replay logprob parity guard (precision/backend drift).
+
+    A correctness guard, not a debug probe: when ``precision.rollout`` differs from
+    ``precision.compute`` the collection-time logprob no longer equals the recomputed
+    replay logprob, so the GRPO importance ratio drifts from 1 at the first step.
+
+    ``mode``: ``"off"``/``"warn"``/``"fail"`` are explicit; ``"auto"`` enables the guard
+    only when rollout!=compute precision (same-dtype parity is the debug probe's job) and
+    resolves to ``"fail"``. Use explicit ``"warn"`` for P2 calibration runs that need to
+    measure drift without stopping the run.
+    """
+
+    mode: str = "auto"  # "auto" | "off" | "warn" | "fail"
+    max_batches: int = 1
+    max_timestep_checks: int = 3
+    max_abs_log_ratio: float = 1e-3
+    max_ratio_abs_dev: float = 1e-3
+    fail_on_nonfinite: bool = True
+
+    def __post_init__(self) -> None:
+        if self.mode not in ("auto", "off", "warn", "fail"):
+            raise ValueError("precision_drift_guard.mode must be auto/off/warn/fail")
+        if int(self.max_batches) != 1:
+            raise ValueError("precision_drift_guard.max_batches currently supports only 1")
+        if int(self.max_timestep_checks) < 0:
+            raise ValueError("precision_drift_guard.max_timestep_checks must be >= 0")
+        if float(self.max_abs_log_ratio) < 0:
+            raise ValueError("precision_drift_guard.max_abs_log_ratio must be >= 0")
+        if float(self.max_ratio_abs_dev) < 0:
+            raise ValueError("precision_drift_guard.max_ratio_abs_dev must be >= 0")
+
+
+@dataclass(slots=True)
 class ContinuousRolloutConfig:
     """Tuning for ``mode='continuous'`` (producer/ready-queue/consumer).
 
@@ -121,6 +155,9 @@ class TrainerConfig:
     optim: OptimConfig = field(default_factory=OptimConfig)
     ema: EMAConfig = field(default_factory=EMAConfig)
     debug: DebugConfig = field(default_factory=DebugConfig)
+    precision_drift_guard: PrecisionDriftGuardConfig = field(
+        default_factory=PrecisionDriftGuardConfig,
+    )
     rollout_orchestration: RolloutOrchestrationConfig = field(
         default_factory=RolloutOrchestrationConfig,
     )
@@ -143,6 +180,12 @@ class TrainerConfig:
     mixed_precision: str = ""
     bf16: bool = True
     gradient_checkpointing: bool = True
+    # Rollout (generation) compute precision, bridged from the unified precision
+    # policy. Empty -> treated as same as compute. The drift guard compares this
+    # against the compute precision to decide whether to enforce parity.
+    rollout_precision: str = ""
+    # Math precision used by replay log-prob arithmetic, bridged for guard reports.
+    math_precision: str = "fp32"
 
     # --- rollout knobs the trainer drives ---
     n: int = 4

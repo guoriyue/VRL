@@ -42,6 +42,7 @@ def build_trainer_config(cfg: DictConfig):
         DebugConfig,
         EMAConfig,
         OptimConfig,
+        PrecisionDriftGuardConfig,
         RolloutOrchestrationConfig,
         TorchProfilerConfig,
         TrainerConfig,
@@ -50,6 +51,11 @@ def build_trainer_config(cfg: DictConfig):
     optim_dict = require(cfg, "actor.optim")
     ema_dict = require(cfg, "actor.ema")
     debug_dict = require(cfg, "trainer.debug")
+    precision_drift_guard_dict = (
+        require(cfg, "trainer.precision_drift_guard")
+        if path_exists(cfg, "trainer.precision_drift_guard")
+        else {}
+    )
     rollout_orchestration_dict = (
         require(cfg, "trainer.rollout_orchestration")
         if path_exists(cfg, "trainer.rollout_orchestration")
@@ -71,6 +77,7 @@ def build_trainer_config(cfg: DictConfig):
         optim=OptimConfig(**optim_dict),
         ema=EMAConfig(**ema_dict),
         debug=DebugConfig(**debug_dict),
+        precision_drift_guard=PrecisionDriftGuardConfig(**precision_drift_guard_dict),
         rollout_orchestration=RolloutOrchestrationConfig(
             **rollout_orchestration_dict,
         ),
