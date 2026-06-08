@@ -71,6 +71,31 @@ class TestOnlineTrainerResumeState:
 
         assert trainer._rollout_weights_initialized is False
 
+    def test_fp16_cuda_state_dict_round_trips_grad_scaler(self) -> None:
+        """CUDA fp16 training must save and restore GradScaler state."""
+        import torch
+
+        if not torch.cuda.is_available():
+            pytest.skip("CUDA is required for fp16 GradScaler")
+
+        source = _make_resume_trainer(device="cuda", mixed_precision="fp16")
+        assert source._grad_scaler is not None
+
+        optimizer = source._ensure_optimizer()
+        with torch.amp.autocast("cuda", dtype=torch.float16):
+            loss = source.model(torch.ones(1, 1, device="cuda")).sum()
+        source._backward(loss)
+        source._clip_and_step(optimizer)
+        state = source.state_dict()
+
+        assert "grad_scaler" in state
+
+        restored = _make_resume_trainer(device="cuda", mixed_precision="fp16")
+        restored.load_state_dict(state, strict=True)
+
+        assert restored._grad_scaler is not None
+        assert restored._grad_scaler.state_dict()["scale"] == state["grad_scaler"]["scale"]
+
     def test_resume_pushes_restored_driver_weights_before_next_collect(self) -> None:
         """Checks resume pushes restored driver weights before next collect."""
         import asyncio
@@ -164,6 +189,8 @@ def _make_resume_trainer(
     ema: bool = False,
     weight_syncer=None,
     collector=None,
+    device: str = "cpu",
+    mixed_precision: str = "",
 ):
     import torch
     import torch.nn as nn
@@ -174,6 +201,7 @@ def _make_resume_trainer(
     model = nn.Linear(1, 1, bias=False)
     with torch.no_grad():
         model.weight.fill_(1.0)
+    model.to(device)
     return OnlineTrainer(
         algorithm=_ResumeAlgorithm(),
         collector=collector or _ResumeCollector(),
@@ -191,8 +219,9 @@ def _make_resume_trainer(
             debug=DebugConfig(),
             n=2,
             bf16=False,
+            mixed_precision=mixed_precision,
         ),
-        device="cpu",
+        device=device,
     )
 
 
@@ -203,5 +232,4 @@ def _adam_exp_avg_values(optimizer) -> list[float]:
         if exp_avg is not None:
             values.extend(float(v) for v in exp_avg.reshape(-1).detach().cpu().tolist())
     return values
-
 

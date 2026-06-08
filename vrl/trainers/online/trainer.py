@@ -137,6 +137,19 @@ def _trainer_autocast_dtype(
     return None
 
 
+def _needs_grad_scaler(
+    config: TrainerConfig,
+    device: torch.device,
+    model: Any,
+    accelerator: Any | None,
+) -> bool:
+    """Use dynamic loss scaling for native CUDA fp16 training."""
+
+    if accelerator is not None:
+        return False
+    return _trainer_autocast_dtype(config, device, model=model) == torch.float16
+
+
 def _precision_label(value: Any) -> str:
     token = str(value or "").strip().lower()
     return "fp32" if token in ("", "no") else token.removeprefix("torch.")
@@ -243,6 +256,11 @@ class OnlineTrainer(Trainer):
         self.device = torch.device(device) if isinstance(device, str) else device
         self.state = TrainState()
         self.accelerator = accelerator
+        self._grad_scaler: torch.amp.GradScaler | None = (
+            torch.amp.GradScaler("cuda")
+            if _needs_grad_scaler(self.config, self.device, self.model, self.accelerator)
+            else None
+        )
 
         self._optimizer: torch.optim.Optimizer | None = None
         self._ema: EMAModuleWrapper | None = None
@@ -293,7 +311,9 @@ class OnlineTrainer(Trainer):
     # ------------------------------------------------------------------
 
     def _backward(self, loss: Any) -> None:
-        if self.accelerator is not None:
+        if self._grad_scaler is not None:
+            self._grad_scaler.scale(loss).backward()
+        elif self.accelerator is not None:
             self.accelerator.backward(loss)
         else:
             loss.backward()
@@ -306,6 +326,8 @@ class OnlineTrainer(Trainer):
             if self.accelerator.sync_gradients and cfg.max_norm > 0:
                 grad_norm = self.accelerator.clip_grad_norm_(self.model.parameters(), cfg.max_norm)
         else:
+            if self._grad_scaler is not None:
+                self._grad_scaler.unscale_(optimizer)
             if cfg.max_norm > 0:
                 grad_norm = nn.utils.clip_grad_norm_(self.model.parameters(), cfg.max_norm)
             else:
@@ -315,7 +337,11 @@ class OnlineTrainer(Trainer):
                     if p.grad is not None:
                         sq_sum += float(p.grad.detach().pow(2).sum().item())
                 grad_norm = sq_sum**0.5
-        optimizer.step()
+        if self._grad_scaler is not None:
+            self._grad_scaler.step(optimizer)
+            self._grad_scaler.update()
+        else:
+            optimizer.step()
         optimizer.zero_grad()
         return float(grad_norm)
 
@@ -823,6 +849,8 @@ class OnlineTrainer(Trainer):
         }
         if self._optimizer is not None:
             d["optimizer"] = self._optimizer.state_dict()
+        if self._grad_scaler is not None:
+            d["grad_scaler"] = self._grad_scaler.state_dict()
         if self._ema is not None:
             d["ema"] = self._ema.state_dict()
         return d
@@ -844,6 +872,21 @@ class OnlineTrainer(Trainer):
                 if strict:
                     raise
                 logger.warning("Skipping incompatible optimizer state during non-strict load")
+
+        if "grad_scaler" in state:
+            if self._grad_scaler is None:
+                if strict:
+                    raise ValueError(
+                        "checkpoint contains GradScaler state but trainer fp16 scaling is disabled",
+                    )
+                logger.warning("Skipping GradScaler state because fp16 scaling is disabled")
+            else:
+                try:
+                    self._grad_scaler.load_state_dict(state["grad_scaler"])
+                except Exception:
+                    if strict:
+                        raise
+                    logger.warning("Skipping incompatible GradScaler state during non-strict load")
 
         if "ema" in state:
             if not self.config.ema.enable:
