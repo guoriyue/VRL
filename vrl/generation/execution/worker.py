@@ -143,6 +143,7 @@ class GenerationWorkerCore:
                     envelope,
                     runtime_debug=runtime_debug,
                     plan_aware_chunk=True,
+                    chunk_output=output,
                 ),
                 plan_id=envelope.plan_id,
                 stage_id=envelope.stage_id,
@@ -217,6 +218,7 @@ class GenerationWorkerCore:
         *,
         runtime_debug: bool,
         plan_aware_chunk: bool | None = None,
+        chunk_output: Any | None = None,
     ) -> dict[str, Any]:
         metrics = self.worker_metadata(runtime_debug=runtime_debug)
         metrics.update(
@@ -232,6 +234,8 @@ class GenerationWorkerCore:
         )
         if plan_aware_chunk is not None:
             metrics["plan_aware_chunk"] = plan_aware_chunk
+        if runtime_debug and chunk_output is not None:
+            metrics.update(_chunk_output_debug_metrics(chunk_output))
         return metrics
 
     @staticmethod
@@ -398,6 +402,42 @@ def _require_chunked_executor(executor: Any) -> PipelineExecutor:
             "forward_chunk_plan(...) and gather_chunks(...)",
         )
     return executor
+
+
+def _chunk_output_debug_metrics(output: Any) -> dict[str, Any]:
+    metrics: dict[str, Any] = {}
+
+    stage_durations = getattr(output, "stage_durations", None)
+    if isinstance(stage_durations, Mapping):
+        metrics["stage_durations_s"] = {
+            str(key): float(value) for key, value in stage_durations.items()
+        }
+
+    engine_counters = getattr(output, "engine_counters", None)
+    if isinstance(engine_counters, Mapping):
+        metrics["engine_counters"] = _debug_metric_value(dict(engine_counters))
+
+    peak_memory_mb = getattr(output, "peak_memory_mb", None)
+    if peak_memory_mb is not None:
+        metrics["peak_memory_mb"] = float(peak_memory_mb)
+
+    return metrics
+
+
+def _debug_metric_value(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, Mapping):
+        return {str(key): _debug_metric_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_debug_metric_value(item) for item in value]
+    item = getattr(value, "item", None)
+    if callable(item):
+        try:
+            return item()
+        except Exception:
+            pass
+    return repr(value)
 
 
 def _import_from_path(path: str) -> Any:

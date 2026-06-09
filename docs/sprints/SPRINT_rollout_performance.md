@@ -722,25 +722,186 @@ kernel/activation/decode 代价抵消了少跑一个 chunk 的收益。
    OOM / recompile status
 ```
 
-### D2：Compile warmup + recompile observability
+#### Batching follow-up：b4/b8/b16 steady-state（2026-06-08）
 
-compile cost 不能算进第一个训练 rollout。runtime 初始化或首个 rollout 前要支持 warmup：
+目的：把 "bigger batch 是否更快" 和 "compile warmup 是否污染计时" 分开。当前 main
+没有 `rollout.blocks.decode_latents.batch_size` 入口，本轮只测 legacy
+`rollout.sample_batch_size`，不混入 VAE decode micro-batch。
 
-```text
-构造固定 sampling shape 的 warmup request
-跑 1 个 denoise chunk
-记录 compile warmup time
-后续 rollout 单独记录 steady-state denoise time
-```
-
-需要观测：
+先修了一个 instrumentation gap：Ray worker 的 `runtime_debug.ray_chunks[*]` 之前只返回
+chunk metadata，没有把 `DiffusionChunkResult.stage_durations / engine_counters /
+peak_memory_mb` 带回 trainer debug record。现在 debug chunk metrics 会包含：
 
 ```text
-compile.warmup_s
-compile.graph_break_count（如果可读）
-compile.recompile_count（如果可读）
-generation.denoise_forward CUDA time before/after
+stage_durations_s
+engine_counters
+peak_memory_mb
 ```
+
+测试：
+
+```bash
+pytest -q tests/generation/execution/test_worker_debug_metrics.py \
+          tests/rollouts/runtime/test_runtime_inputs.py
+```
+
+普通 run（`rollout.n=32`，bf16，single-GPU colocated，`eval.enable=false`）：
+
+```text
+outputs/sd35_batching_metrics_off_b4_n32_20260608_231408
+outputs/sd35_batching_metrics_off_b8_n32_20260608_231408
+outputs/sd35_batching_metrics_on_b4_n32_20260608_231408
+outputs/sd35_batching_metrics_on_b8_n32_20260608_231408
+```
+
+注意：`stage_durations_s` 是 executor 里的 CPU wall ranges，没有 CUDA synchronize。
+它适合看 chunk 形状、首 chunk warmup 和容量趋势；不要把它当精确 GPU kernel time。
+
+CPU wall range summary（drop first = 去掉首 chunk warmup / first decode allocation）：
+
+| run | chunks | all total/sample | drop-first total/sample | drop-first denoise/sample | max peak |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| b4 no-compile | 8 x 4 | 0.465s | 0.453s | 0.443s | 19,702 MiB |
+| b8 no-compile | 4 x 8 | 0.464s | 0.447s | 0.442s | 23,577 MiB |
+| b4 compile | 8 x 4 | 0.572s | 0.332s | 0.322s | 19,702 MiB |
+| b8 compile | 4 x 8 | 0.547s | 0.292s | 0.287s | 23,577 MiB |
+
+CUDA profiler run（`rollout.n=16`，`rollout.torch_profiler.skip_first=1`，
+只 profile 第二个 steady-state chunk，避免首 chunk compile warmup）：
+
+```text
+outputs/sd35_batching_cuda_off_b4_n16_20260608_232130
+outputs/sd35_batching_cuda_off_b8_n16_20260608_232130
+outputs/sd35_batching_cuda_on_b4_n16_20260608_232130
+outputs/sd35_batching_cuda_on_b8_n16_20260608_232130
+```
+
+CUDA total summary：
+
+| run | profiled chunk | engine CUDA / sample | denoise_step CUDA / sample | cudaLaunchKernel calls | compile graphs |
+| --- | ---: | ---: | ---: | ---: | --- |
+| b4 no-compile | 4 | 0.598s | 0.548s | 34,874 | n/a |
+| b8 no-compile | 8 | 0.642s | 0.597s | 34,875 | n/a |
+| b4 compile | 4 | 0.433s | 0.379s | 3,638 | unique=1, breaks=0 |
+| b8 compile | 8 | 0.376s | 0.331s | 3,639 | unique=1, breaks=0 |
+
+读法：
+
+```text
+1. compile 仍然是有效主线：launch 数从约 34.9k 降到约 3.6k。
+2. compiled b8 是当前单卡 steady-state 最好点；b4 更省显存但更慢。
+3. no-compile 下 b8 没有稳定胜过 b4，说明 "bigger batch" 本身不是可靠收益来源。
+4. compiled b8 的 dynamo unique_graphs=1、graph_breaks=0，第二个 chunk 没有 recompile。
+```
+
+b16 容量结果：
+
+```text
+outputs/sd35_batching_off_b16_n32_20260608_230246
+  no-compile b16: first 16-sample chunk passed, second chunk OOM in VAE decode.
+  allocation: tried 4.00 GiB, only 1.89 GiB free.
+
+outputs/sd35_batching_on_b16_n32_20260608_230246
+  compile b16: first 16-sample chunk OOM in VAE decode.
+  allocation: tried 4.00 GiB, only 3.20 GiB free.
+  CUDA Graph private pools: 2.32 GiB.
+```
+
+Batching decision：
+
+```text
+Keep sample_batch_size=8 as the SD3.5 single-GPU default.
+Do not promote b16: it is not faster in earlier smoke and fails under repeated chunks / compile.
+Do not treat VAE micro-batch as a speed feature; it is only a capacity isolation knob.
+For performance comparisons, use compiled b8 steady-state as the baseline.
+```
+
+#### Compile-mode A/B：default vs reduce-overhead（2026-06-09）
+
+目的：确认 compile mode 是不是性能杠杆。同一 session、同一卡（RTX 5090 32 GiB）背靠背重跑
+两种 mode，b8 / `rollout.n=16` / profiler 只抓第 2 个 steady-state chunk（`skip_first=1`），
+完全镜像 6-08 的 CUDA baseline，消除隔天方差。
+
+```text
+outputs/sd35_compilemode_default_b8_n16_20260609_160402
+outputs/sd35_compilemode_reduce-overhead_b8_n16_20260609_160402
+```
+
+| run | denoise_step CUDA total | /sample | cudaLaunchKernel | **Self CUDA total** | CUDA graphs | peak alloc (b8) |
+| --- | ---: | ---: | ---: | ---: | --- | ---: |
+| default（今天） | 2.654s | 0.332s | 4029 | **2.591s** | no | 23,576 MiB |
+| reduce-overhead（今天） | 2.017s | 0.252s | 3639 | **2.573s** | yes (10) | 23,576 MiB |
+| reduce-overhead（6-08 baseline） | 2.645s | 0.331s | 3639 | **2.574s** | yes | 23,577 MiB |
+
+读法（重要）：
+
+```text
+1. 真实 GPU 工作量持平：Self CUDA total = default 2.591s vs RO 2.573s，差 0.7%，在噪声内。
+   compile mode 不改变 kernel 工作量。
+2. headline 指标 denoise_step CUDA/sample 不可靠：同一个 RO 配置 6-08=0.331、6-09=0.252，
+   隔天摆 24%。==> 这个指标 <20% 的差都别信；只有 compile-vs-no-compile（launch 10x、
+   CUDA total ~2x）那种大差是真的。先前 "b8 比 b4 快 13%" 落在这条噪声带里，定性排序
+   (compile >> no-compile) 成立，但 per-config 细排序不成立。
+3. RO 唯一的机械优势是 launch 更少（3639 vs 4029），但 denoise 是 GPU-bound（~2.58s kernel
+   时间），多出的 ~390 次 launch（每次 2-6us、可重叠）换不成 wall-clock，所以不提速。
+4. 内存：b8 allocated peak 两者相同（23,576 MiB），但 RO 额外 reserve 一块 CUDA Graph
+   private pool（b16 时实测 2.32 GiB），torch max_memory_allocated 不计它、却吃掉 free 显存。
+   这正是 6-08 compile-b16 在第 1 个 chunk VAE decode OOM、而 no-compile-b16 能过第 1 个
+   chunk 的根因。
+```
+
+Compile-mode decision：
+
+```text
+Keep denoise_compile.mode=default (it is already the config default in
+configs/base/rollout/diffusion.yaml). Do NOT switch the default to reduce-overhead.
+- Throughput: default == reduce-overhead on real GPU work (Self CUDA within 0.7%).
+- Memory: default has NO CUDA-graph private pool, so it keeps ~2.3 GiB more free
+  headroom — strictly better for capacity (e.g. unblocking larger denoise/VAE batches).
+reduce-overhead only pays off when a workload is CPU launch-bound; SD3.5 denoise is
+GPU-bound, so it is the wrong mode here.
+Methodology fix: report Self CUDA total + cudaLaunchKernel count, not denoise_step
+CUDA/sample (that inclusive-region metric is run-to-run noisy under CUDA graphs).
+```
+
+Follow-up worth one run（未做）：default mode 没有 graph private pool，compile-b16 可能在
+default 下 fit（6-08 的 b16 compile OOM 用的是 reduce-overhead）。但 no-compile b16 已证明
+per-sample 不更快，所以这只是容量问题、非性能问题，优先级低。
+
+### D2：Recompile observability（用 torch 内置，零 repo 代码）
+
+想知道 compile 在 steady-state 是否还在帮忙、有没有静默 recompile 吃掉收益——但**不为这个
+往代码里加任何观测脚本/模块**。torch 自己就提供 recompile 可观测性，零 repo 代码：
+
+```bash
+# 每次 recompile 打印一行，含触发它的 guard（哪个 shape/值变了）
+TORCH_LOGS=recompiles python -m vrl.scripts.train \
+  --config experiment/diffusion/sd3_5/online_grpo_ocr \
+  rollout.denoise_compile.enable=true rollout.denoise_compile.mode=reduce-overhead
+
+# 也可加 graph_breaks 看图是否被切碎
+TORCH_LOGS=recompiles,graph_breaks ...
+```
+
+读法：
+
+```text
+warmup 后日志里不再出现 "Recompiling function ..." -> 编译稳定，D1 的收益在 steady-state 成立
+持续出现 recompiles + guard 原因 -> 有 shape/guard 漂移，那条 rollout 没拿到稳定收益
+```
+
+可选的 CI / fail-fast 守门（也是 torch 内置，不是自写脚本）：
+
+```python
+import torch._dynamo as dynamo
+dynamo.config.error_on_recompile = True   # steady-state 再 recompile 直接报错
+```
+
+**不做的**（曾经做过一版、已撤回）：
+- 不写自定义 `compile_metrics.py` / 不往 `engine_counters` 里塞 `diffusion_compile_*` 计数。
+  那是「为一个 config 往代码里加观测脚本」，正是不想要的。torch 的 `TORCH_LOGS` 已经够。
+- 不做 warmup move（worker 跑合成 forward 强制编译）——它会**主动多触发一次编译**，是额外
+  compiler 动作，不加。第一个 chunk 天然含 compile cost，跑 profile 时丢掉首 chunk 即可。
 
 ### D3：Latent clone cleanup（hygiene，不是性能优先级）
 
@@ -967,7 +1128,7 @@ P2 target with 2 rollout GPUs:      wall clock close to 50% of 1-GPU rollout
 ```text
 D0: rollout torch profiler trace 有 generation.* denoise ranges，已能解释 denoise 内部占比
 D1: rollout transformer compile 启用，无持续 recompile，generation.denoise_forward CUDA time 下降 >15%
-D2: compile warmup cost 单独记录，不混入 steady-state rollout measurement
+D2: recompile observability 用 torch 内置 `TORCH_LOGS=recompiles`（零 repo 代码），不写自定义观测脚本、不加 warmup 强制编译。steady-state 无 recompile 日志即 D1 收益成立。
 D3: clone cleanup 若执行，只作为 memory/code hygiene，不作为性能验收主线
 P0 bf16: 只有 ratio==1 parity 验证通过后才允许启用，不把 bf16 当默认完成项
 每个性能 phase 都有 before/after profile 文件路径和同 shape 数字对比
