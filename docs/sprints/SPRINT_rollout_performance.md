@@ -616,6 +616,112 @@ outputs/diffusion_util_batch_compile_ncu_bf16/
 “硬件坏了/5090 不行”，而是 PyTorch/diffusers shape + launch path 的实际限制：compile 能显著
 减少 overhead，但 GEMM roofline 仍没有变成满 SM。
 
+#### Runtime block smoke：b16 denoise + VAE decode micro-batch（2026-06-08）
+
+这次 smoke 不是新的同口径 profiler baseline，而是验证 `rollout.blocks` 能否把
+denoise batch 和 VAE decode micro-batch 分开。它直接覆盖上面 `compile + larger batch`
+实验暴露的问题：larger denoise batch 先在 VAE decode 附近撞到容量边界。
+
+命令：
+
+```bash
+timeout 900 python -u -m vrl.scripts.train \
+  --config experiment/diffusion/sd3_5/online_grpo_ocr \
+  trainer.total_epochs=1 \
+  trainer.output_dir=outputs/sd3_5_ocr_block_policy_b16_decode1_20260608_222142 \
+  trainer.save_freq=999999 \
+  eval.enable=false \
+  trainer.precision_drift_guard.mode="'off'" \
+  trainer.debug.first_step=true \
+  actor.gradient_accumulation_steps=1 \
+  rollout.n=16 \
+  rollout.rollout_batch_size=1 \
+  rollout.blocks.denoise.batch_size=16 \
+  rollout.blocks.decode_latents.batch_size=1
+```
+
+Resolved config / request 链路：
+
+```text
+request sample_batch_size: 16
+executor sample_batch_size: 16
+runtime_blocks.decode_latents.batch_size: 1
+legacy rollout.sample_batch_size: 8
+```
+
+同配置 b8 control：
+
+```bash
+timeout 900 python -u -m vrl.scripts.train \
+  --config experiment/diffusion/sd3_5/online_grpo_ocr \
+  trainer.total_epochs=1 \
+  trainer.output_dir=outputs/sd3_5_ocr_block_policy_b8_decode1_control_20260608_222142 \
+  trainer.save_freq=999999 \
+  eval.enable=false \
+  trainer.precision_drift_guard.mode="'off'" \
+  trainer.debug.first_step=true \
+  actor.gradient_accumulation_steps=1 \
+  rollout.n=16 \
+  rollout.rollout_batch_size=1 \
+  rollout.blocks.denoise.batch_size=8 \
+  rollout.blocks.decode_latents.batch_size=1
+```
+
+真实结果（both bf16, no compile, one prompt group, `rollout.n=16`, `decode_latents.batch_size=1`）：
+
+| metric | b8 control | b16 denoise | read |
+| --- | ---: | ---: | --- |
+| chunks | 2 × 8 | 1 × 16 | b16 reduces chunk count |
+| chunk keys | `0:8`, `8:16` | `0:16` | request chunking followed block policy |
+| `diffusion_decode_batch_size` | 1 | 1 | VAE decode micro-batch applied in both |
+| `diffusion_rollout_transformer_dtype` | `bfloat16` | `bfloat16` | current 16-bit default path |
+| encode total | 0.177s | 0.145s | b16 saves one prompt-encode boundary |
+| prepare total | 0.010s | 0.005s | small |
+| denoise total | 7.109s | 7.272s | b16 denoise is slightly slower here |
+| decode total | 0.464s | 0.642s | b16 decode wall is higher despite same decode micro-batch |
+| recorded stages total | 7.760s | 8.064s | b16 is 3.9% slower in this smoke |
+| recorded stages / sample | 0.485s | 0.504s | no standalone throughput win |
+| denoise / sample | 0.444s | 0.455s | b16 is 2.3% slower in denoise/sample |
+| peak memory | 16,875 MiB | 17,690 MiB | b16 costs about +815 MiB |
+| first-step logprob diff max | 1.68e-05 | 0.0 | parity held for this smoke |
+
+Performance 读法：
+
+```text
+What this proves:
+  runtime block policy is wired through config -> request sampling -> Ray executor -> diffusion runtime
+  denoise batch can be raised to 16 while VAE decode is capped at batch 1
+  VAE decode micro-batch avoids the old "larger batch dies at decode allocation" failure mode
+  decode is still not the main wall-clock stage in this successful run
+
+What this does not prove yet:
+  standalone throughput speedup from b8 -> b16
+  compiled b16 steady-state performance
+  that b24/b32 also fit once decode is micro-batched
+```
+
+结论：**b16 + decode1 是容量可行性改进，不是当前 eager/no-compile 路径的性能改进。**
+在这次同配置 control 下，b16 虽然把 16 samples 合成一个 chunk，但 per-sample wall
+反而略慢。说明当前 b8 的 chunk boundary overhead 已经不大，larger denoise shape 带来的
+kernel/activation/decode 代价抵消了少跑一个 chunk 的收益。
+
+对策略的影响：
+
+```text
+1. 不要把 denoise batch 默认从 8 提到 16；当前 smoke 没有支持这个默认值变更。
+2. 保留 decode_latents.batch_size 作为容量旋钮，因为它解开了 denoise batch 和 VAE decode allocation。
+3. 它不能替代 rollout-only compile；compiled b8 的 profiler 数字仍明显强于 no-compile b16。
+4. 下一步只测能改变结论的组合：
+   b16 decode1 reduce-overhead compile
+   b24 decode1 no-compile
+   b24 decode1 reduce-overhead compile
+5. 对每组只比较这些派生指标：
+   denoise_s / diffusion_sample_batch_size
+   (encode_s + prepare_s + denoise_s + decode_s) / diffusion_sample_batch_size
+   peak_memory_mb
+   OOM / recompile status
+```
+
 ### D2：Compile warmup + recompile observability
 
 compile cost 不能算进第一个训练 rollout。runtime 初始化或首个 rollout 前要支持 warmup：

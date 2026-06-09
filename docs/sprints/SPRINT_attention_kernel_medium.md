@@ -1,6 +1,7 @@
 # SPRINT: Own the AR decoder driver while reusing HF submodules
 
-状态: proposed. 接续 `SPRINT_backend.md` 已落地的 name-based attention-backend dispatch.
+状态: proposed. 接续已落地的 name-based attention-backend dispatch
+(`vrl.nn.modules.ar_attention_backends.resolve_attention_backend`).
 
 本 sprint 的真实目标不是“仍走 HF forward”。它是:
 **自己维护一个 Llama/Qwen2-compatible AR decoder forward driver,**
