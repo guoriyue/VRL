@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -15,6 +16,7 @@ from vrl.generation.ray.config import (
     RayGenerationConfig,
 )
 from vrl.generation.ray.launcher import RayGenerationLauncher
+from vrl.models.interfaces import RuntimeBuildSpec
 
 
 class _CudaPolicy:
@@ -57,6 +59,43 @@ class _FakeGatherer:
         )
 
 
+class _FakeCapability:
+    trajectory_kind = "diffusion"
+    supports_torch_compile = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "family": "sd3_5",
+            "task": "t2i",
+            "trajectory_kind": self.trajectory_kind,
+            "supports_torch_compile": self.supports_torch_compile,
+        }
+
+
+class _FakeArCapability(_FakeCapability):
+    trajectory_kind = "ar_discrete"
+    supports_torch_compile = False
+
+
+def extract_fake_runtime_spec(cfg: Any, device: str, weight_dtype: str) -> RuntimeBuildSpec:
+    del cfg
+    return RuntimeBuildSpec(
+        model_name_or_path="unit-test",
+        device=device,
+        dtype=weight_dtype,
+        model_config={
+            "marker": "driver-config",
+            "torch_compile": {
+                "enable": False,
+                "mode": "default",
+            },
+        },
+        sampling_config={
+            "num_steps": 1,
+        },
+    )
+
+
 def _launch_contract() -> GenerationRuntimeLaunchContract:
     return GenerationRuntimeLaunchContract(
         family="janus_pro",
@@ -65,6 +104,27 @@ def _launch_contract() -> GenerationRuntimeLaunchContract:
             "tests.generation.ray.test_rollout_launcher:build_tiny_runtime_bundle"
         ),
         executor_cls="tests.generation.ray.test_rollout_launcher:_TinyChunkExecutor",
+    )
+
+
+def _build_inputs_entry(capability: Any | None = None) -> Any:
+    return SimpleNamespace(
+        family="sd3_5",
+        task="t2i",
+        runtime_builder="tests.generation.ray.test_runtime_config:build_fake_runtime",
+        executor_cls="tests.generation.ray.test_runtime_config:FakeExecutor",
+        runtime_spec_extractor=(
+            "tests.generation.ray.test_runtime_config:extract_fake_runtime_spec"
+        ),
+        gatherer=SimpleNamespace(
+            import_path="tests.generation.ray.test_runtime_config:_FakeGatherer",
+            kwargs={},
+        ),
+        capability=capability or _FakeCapability(),
+        executor_kwargs=SimpleNamespace(
+            include_sample_batch_size=False,
+            include_reference_image=False,
+        ),
     )
 
 
@@ -135,12 +195,92 @@ def _resource_cfg(
     )
 
 
+def _build_inputs_cfg(*, denoise_compile: dict[str, Any] | None = None) -> Any:
+    cfg: dict[str, Any] = {
+        "distributed": {
+            "backend": "ray",
+            "resources": {
+                "visible_devices": [],
+                "trainer": {
+                    "num_gpus": 0,
+                    "devices": [],
+                },
+                "rollout": {
+                    "num_gpus": 0,
+                    "devices": [],
+                    "gpus_per_worker": 0,
+                    "num_workers": 1,
+                },
+                "allow_overlap": False,
+            },
+        },
+        "rollout": {},
+    }
+    if denoise_compile is not None:
+        cfg["rollout"]["denoise_compile"] = denoise_compile
+    return OmegaConf.create(cfg)
+
+
 def test_rollout_backend_config_from_cfg_uses_ray_by_default() -> None:
     """Checks rollout backend config from CFG uses Ray by default."""
     config = RayGenerationConfig.from_cfg(_cfg(backend=None))
 
     assert config.resources is not None
     assert config.num_workers == 1
+
+
+def test_ray_build_inputs_leaves_model_compile_config_without_rollout_override() -> None:
+    """Checks build inputs keep model compile config when rollout override is absent."""
+    launch_inputs = RayGenerationLauncher.build_inputs(
+        _build_inputs_cfg(),
+        _build_inputs_entry(),
+        weight_dtype="bfloat16",
+    )
+
+    model_build = launch_inputs.launch_contract.model_build
+    assert model_build["device"] == "cpu"
+    assert model_build["dtype"] == "bfloat16"
+    assert model_build["model_config"]["marker"] == "driver-config"
+    assert model_build["model_config"]["torch_compile"] == {
+        "enable": False,
+        "mode": "default",
+    }
+
+
+def test_ray_build_inputs_applies_rollout_only_compile_override() -> None:
+    """Checks rollout denoise compile only mutates the worker launch payload."""
+    launch_inputs = RayGenerationLauncher.build_inputs(
+        _build_inputs_cfg(
+            denoise_compile={
+                "enable": True,
+                "mode": "reduce-overhead",
+            },
+        ),
+        _build_inputs_entry(),
+        weight_dtype="bfloat16",
+    )
+
+    model_config = launch_inputs.launch_contract.model_build["model_config"]
+    assert model_config["marker"] == "driver-config"
+    assert model_config["torch_compile"] == {
+        "enable": True,
+        "mode": "reduce-overhead",
+    }
+
+
+def test_ray_build_inputs_rejects_compile_on_family_without_capability() -> None:
+    """Checks enabling rollout compile on a family that can't compile fails fast."""
+    with pytest.raises(ValueError, match="does not support torch compile"):
+        RayGenerationLauncher.build_inputs(
+            _build_inputs_cfg(
+                denoise_compile={
+                    "enable": True,
+                    "mode": "reduce-overhead",
+                },
+            ),
+            _build_inputs_entry(_FakeArCapability()),
+            weight_dtype="bfloat16",
+        )
 
 
 @pytest.mark.parametrize(

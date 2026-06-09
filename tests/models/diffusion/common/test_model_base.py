@@ -35,6 +35,12 @@ class _AdapterTransformer(nn.Linear):
             self.disabled = False
 
 
+class _CompiledWrapper(nn.Module):
+    def __init__(self, module: nn.Module) -> None:
+        super().__init__()
+        self._orig_mod = module
+
+
 class _ModelBaseStub(DiffusionModelBase):
     family = "stub"
 
@@ -258,6 +264,23 @@ def test_load_trainable_state_accepts_trainable_keys() -> None:
 
     assert torch.equal(runtime.transformer.weight, replacement["weight"])
     assert torch.equal(runtime.transformer.bias, replacement["bias"])
+
+
+def test_load_trainable_state_accepts_compiled_transformer_wrapper() -> None:
+    """Checks weight sync loads into torch.compile wrapped modules."""
+    runtime = _ModelBaseStub()
+    original = runtime.transformer
+    runtime._set_transformer(_CompiledWrapper(original))
+    replacement = {
+        "weight": torch.full_like(original.weight, 2.0),
+        "bias": torch.full_like(original.bias, 3.0),
+    }
+    state = {f"transformer.{key}": value for key, value in replacement.items()}
+
+    runtime.load_trainable_state(state)
+
+    assert torch.equal(original.weight, replacement["weight"])
+    assert torch.equal(original.bias, replacement["bias"])
 
 
 def test_load_trainable_state_rejects_all_unmatched_keys() -> None:

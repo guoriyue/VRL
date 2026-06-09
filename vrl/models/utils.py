@@ -42,6 +42,8 @@ def load_weights_into(
         )
     stripped = {key[len(dot):]: value for key, value in state.items()}
 
+    module = getattr(module, "_orig_mod", module)
+
     named_parameters = getattr(module, "named_parameters", None)
     if not callable(named_parameters):
         raise TypeError(f"{label} must expose named_parameters()")

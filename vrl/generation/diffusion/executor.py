@@ -476,6 +476,7 @@ class DiffusionPipelineExecutorBase(
                             return_dt=config.return_kl,
                             noise_level=config.noise_level,
                             sde_type=config.sde_type,
+                            step_index=step_idx,
                         )
                     else:
                         in_sde_window = config.sde_window is None or (
@@ -492,6 +493,7 @@ class DiffusionPipelineExecutorBase(
                                 return_dt=config.return_kl,
                                 noise_level=config.noise_level,
                                 sde_type=config.sde_type,
+                                step_index=step_idx,
                             )
                         prev_latents = sde_result.prev_sample
                     with record_function("generation.latent_write"):

@@ -58,6 +58,7 @@ def diffusion_family_capability(
         supports_batched_decode=True,
         supports_reference_conditioning=supports_reference_conditioning,
         supports_resident_rollout_state=True,
+        supports_torch_compile=True,
         cache_kinds=("prompt_embed_cache", "latent_cache"),
     )
 

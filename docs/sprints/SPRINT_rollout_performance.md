@@ -464,8 +464,9 @@ representative large GEMM（0.920ms）更快，即使 Compute(SM)% 看起来更�
 当前代码状态（2026-06-07）：`RuntimeBuildSpec.torch_compile` 只读 `model.torch_compile`，
 `build_sd3_5_runtime_bundle()` 和 `build_sd3_5_replay_runtime_bundle()` 都会消费它。因此现在不能用
 `model.torch_compile.enable=true` 做 rollout-only 实验；那会把 replay compile / recompile / warmup
-混进结果。正确落点是在 Ray generation launch payload 里把 `rollout.denoise_compile` 覆盖到
-rollout worker 的 `model_config["torch_compile"]`，driver replay bundle 继续保持 `model.torch_compile=false`。
+混进结果。正确落点是：diffusion rollout family 在 registry 里声明 compile metadata，
+Ray generation launch payload 按这个 metadata 把 `rollout.denoise_compile` 覆盖到 rollout worker 的
+`model_config["torch_compile"]`，driver replay bundle 继续保持 `model.torch_compile=false`。
 
 ```yaml
 rollout:
@@ -473,10 +474,6 @@ rollout:
     enable: true
     target: transformer
     mode: reduce-overhead
-    fullgraph: false
-    warmup_batches: 1
-    static_shapes: true
-    fail_on_recompile: false
 ```
 
 第一版只 compile transformer，不 compile whole denoise loop。原因是 scheduler/SDE/logprob/buffer writes
@@ -499,6 +496,125 @@ torch profiler trace 仍能看到 generation.denoise_forward / scheduler_step / 
 reward/output 分布无明显异常
 trainer replay 仍然可以保持 uncompiled 或使用自己的 compile 策略
 ```
+
+2026-06-07 已落地：
+
+```text
+configs/base/rollout/diffusion.yaml
+  rollout.denoise_compile: {enable: false, target: transformer, mode: default}
+
+vrl/generation/ray/launcher.py
+  Generic Ray worker launch payload applies entry.compile metadata and overrides
+  only launch_contract.model_build.model_config["torch_compile"].
+
+vrl/rollouts/families/registry.py
+  Diffusion entries declare RolloutCompileMetadata(
+      config_path="rollout.denoise_compile",
+      target="transformer",
+      model_config_key="torch_compile",
+  ).
+
+vrl/models/utils.py
+  load_weights_into unwraps torch.compile OptimizedModule via _orig_mod before
+  strict trainable-key matching, so rollout LoRA weight sync keeps using the
+  uncompiled trainer's transformer.* keys.
+```
+
+适用范围：
+
+```text
+This is now a shared diffusion rollout strategy, not an SD3.5-only switch.
+
+Covered online diffusion families:
+  sd3_5
+  wan_2_1 / wan_2_1_i2v
+  cosmos-predict2
+  cosmos-predict2.5
+  cosmos-predict2-anima
+
+Not covered:
+  offline diffusion DPO: no Ray rollout worker
+  AR families: no denoise transformer target; they need a separate profiled
+  prefill/decode compile strategy, not the diffusion denoise_compile switch
+```
+
+同口径 torch profiler（bf16, `skip_first=1`, one rollout chunk, 10 denoise steps）：
+
+```text
+no compile:
+  outputs/diffusion_util_no_compile_torch_profile_bf16_skip1/
+
+rollout-only compile, mode=reduce-overhead:
+  outputs/diffusion_util_rollout_compile_torch_profile_bf16/
+```
+
+| metric | no compile | rollout-only compile | read |
+| --- | ---: | ---: | --- |
+| `engine.forward_chunk` CUDA total | 5.158s | 2.363s | 2.18x faster |
+| `generation.denoise_step` CUDA total | 4.797s | 2.001s | 2.40x faster |
+| `aten::copy_` CUDA total / calls | 842.1ms / 10602 | 26.1ms / 606 | copy pressure mostly removed |
+| `aten::to` CUDA total / calls | 637.2ms / 14068 | 0.72ms / 772 | dtype/device copy path mostly removed |
+| `aten::_to_copy` CUDA total / calls | 637.2ms / 9632 | 0.72ms / 386 | same |
+| `aten::cat` CUDA total / calls | 126.7ms / 801 | not top-level visible | fused/hidden by compiled graph |
+| `cudaLaunchKernel` calls | 34905 | 3669 | ~90% fewer |
+| `cuLaunchKernel` calls | 9746 | 966 | ~90% fewer |
+
+读法：compile 解决的是 launch / elementwise / copy / cat overhead，不是把 GEMM 本身
+推到 90% Compute(SM)。这正好验证了之前的判断：先做 PyTorch path 内的 compile，比直接
+重写 native/Triton 更有证据。
+
+记忆点：
+
+```text
+torch.compile 的收益来源不是让 CUTLASS GEMM 更接近峰值，而是把 eager PyTorch 的
+大量 Python/ATen 边界、逐 op kernel launch、dtype/device/layout copy、cat/pointwise
+临时张量合并进 compiled graph。reduce-overhead 模式还会用 CUDA Graph replay 降低
+CPU launch path 成本。
+
+所以这次看到的是:
+  launch/copy/elementwise overhead 明显下降
+  denoise chunk wall time 明显下降
+  GEMM Compute(SM) 没有变成 80-90%
+
+这说明当前瓶颈不是“5090 没开满所以换硬件”，而是 diffusers/PyTorch 的 shape 和执行路径。
+```
+
+Batch sweep NCU（bf16 no compile, top GEMM target）：
+
+```text
+outputs/diffusion_util_batch_sweep_ncu_bf16/
+outputs/diffusion_util_low_precision_ncu_bf16/
+```
+
+| chunk batch | representative longest top GEMM | Compute(SM) | Memory | DRAM |
+| ---: | ---: | ---: | ---: | ---: |
+| 8 | 522.9us | 42.2% | 33.8% | 7.2% |
+| 16 | 539.5us | 44.3% | 34.3% | 7.1% |
+| 24 | 806.3us | 44.0% | 34.1% | 6.9% |
+| 32 | 420.0us | 42.3% | 33.8% | 6.4% |
+
+读法：把 `rollout.n/sample_batch_size` 扫到 16/24/32，没有把主力 GEMM 推到高 SM 占用；
+大 kernel 仍在 42-44% Compute(SM) 区间。batch 增大能改善 per-sample overhead，但不是
+“把 5090 算力单元吃满”的解法。
+
+Compile + batch NCU 结果：
+
+```text
+outputs/diffusion_util_batch_compile_ncu_bf16/
+```
+
+| run | result |
+| --- | --- |
+| b24 + `reduce-overhead` | OOM in VAE decode; CUDA Graph private pools ~3.44GiB, then decode needed another 3GiB |
+| b16 + `reduce-overhead` | OOM in VAE decode; CUDA Graph private pools ~2.71GiB, then decode needed another 4GiB |
+| b24 + `default` | OOM in VAE decode; no graph pool, but NCU/compile run left only ~4.69GiB free before a 6GiB allocation |
+| b8 + `reduce-overhead`, `Kernel2` first samples | valid report, but captures tiny WMMA kernels; weighted Compute(SM) 15.0% |
+| b8 + `reduce-overhead`, `Kernel2 --launch-skip 100` | valid report; captured mid-size WMMA kernels, weighted Compute(SM) 31.2%, max sample 48.1% |
+
+读法：compile 和 larger batch 不能直接叠加到 b16/b24/b32；32GB 卡上容量边界先出现。
+可测到的 compiled `Kernel2` samples 也没有接近 90% Compute(SM)。所以当前结论不是
+“硬件坏了/5090 不行”，而是 PyTorch/diffusers shape + launch path 的实际限制：compile 能显著
+减少 overhead，但 GEMM roofline 仍没有变成满 SM。
 
 ### D2：Compile warmup + recompile observability
 
@@ -568,6 +684,45 @@ denoise worker -> decode/reward worker
 不要先上完整 SGLang-Omni runtime。SGLang-Omni 的价值是多阶段异构 serving：
 每个 stage 独立 scheduler、inbox/outbox、shared-memory relay。当前 RL diffusion rollout 更像
 “一个重 denoise stage + reward”，先做 denoise block optimization 更直接。
+
+### D5：Remove per-step host syncs in `sde_step_with_logprob`（已落地，2026-06-07）
+
+D1 的 transformer compile 只覆盖 transformer forward；`sde_step_with_logprob`
+（`vrl/math/diffusion/flow_matching.py`）仍在 compile 边界外，每个 denoise step 触发
+host-device 同步，是 bf16 nsys 里 `cudaStreamSynchronize: 15,672 calls / 17.558s` 的主
+要残余来源，也是把整个 denoise step 塞进单张 CUDA Graph（D1 的下一步）的硬阻塞——graph
+capture 无法捕获把 GPU 值读回 host 的操作。
+
+两处 per-step 同步已消除（无签名破坏、对其它 caller 向后兼容）：
+
+```text
+1. sigma_max/sigma_min: scheduler.sigmas[1].item() / [-1].item() 每步两次 .item()。
+   这两个是整条 schedule 的 loop-invariant 端点，改为保留 0-d device tensor，算术里
+   直接用，去掉 .item() host 读回。
+
+2. index_for_timestep: step_index = [scheduler.index_for_timestep(t) for t in timestep]
+   内部做 (timesteps == t).nonzero().item() 搜索 → 每步同步。新增可选 step_index 参数，
+   rollout loop（executor.py 两个 denoise_mode 分支）把已知的 step_idx 传进来，绕过搜索。
+   默认 step_index=None 保留旧搜索行为，replay/evaluator 路径（sde_logprob.py）不受影响。
+```
+
+安全性：`state.timesteps` 直接来自 `scheduler.timesteps`（`sd3_5/model.py:266-267`），flow-match
+timesteps 严格单调，故 rollout loop 的 `step_idx` 精确等于 `scheduler.index_for_timestep`。
+
+验证（CPU，真实 `FlowMatchEulerDiscreteScheduler`，10 步）：
+
+```text
+step_idx == scheduler.index_for_timestep : max_err = 0      （安全性成立）
+log_prob / prev_mean  None-path vs step_index : max_err = 0.0  （位级一致）
+std_dev_t  tensor-sigma vs float-sigma        : max_err = 0.0  （sigma 改动位级一致）
+pytest tests/generation tests/math/test_ar_flow_matching.py
+       tests/algorithms/test_grpo.py tests/rollouts : 157 passed
+```
+
+未做（仍属同步源，但不在本次 surgical 范围）：native denoise_mode 里 `state.scheduler.step()`
+（diffusers 自带方法，内部也 index_for_timestep）；以及 fp32 upcast 的 elementwise（属
+fused-kernel 范畴，见上）。下一步应在 compiled trace 上重数 `cudaStreamSynchronize`，确认
+SDE-loop 同步已消除、为 whole-step CUDA Graph 解锁。
 
 ### Non-goals
 

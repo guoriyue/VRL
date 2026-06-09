@@ -14,6 +14,17 @@ from vrl.models.interfaces.replay import RuntimeModel
 
 MEMORY_POLICY_METADATA_KEY = "memory_policy"
 
+# Single source of truth for the model_config compile block that the
+# ``RuntimeBuildSpec.torch_compile`` property below consumes. Writers (e.g. the
+# Ray rollout launcher) build it through ``torch_compile_model_config`` so the
+# key and block shape live in one place instead of being re-hardcoded per writer.
+TORCH_COMPILE_MODEL_KEY = "torch_compile"
+
+
+def torch_compile_model_config(*, enable: bool, mode: str) -> dict[str, Any]:
+    """Build the ``model_config[TORCH_COMPILE_MODEL_KEY]`` block this spec reads."""
+    return {TORCH_COMPILE_MODEL_KEY: {"enable": enable, "mode": mode}}
+
 
 @dataclass
 class RuntimeBuildSpec:
@@ -91,7 +102,7 @@ class RuntimeBuildSpec:
     @property
     def torch_compile(self) -> dict[str, Any] | None:
         """``model.torch_compile`` block only when ``enable`` is truthy."""
-        block = (self.model_config or {}).get("torch_compile") or {}
+        block = (self.model_config or {}).get(TORCH_COMPILE_MODEL_KEY) or {}
         if not block.get("enable"):
             return None
         return {"enable": True, "mode": block.get("mode", "default")}

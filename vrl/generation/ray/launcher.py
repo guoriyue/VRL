@@ -23,6 +23,7 @@ from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.weight_sync import RayGenerationWeightSync
 from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.models.dtypes import dtype_to_config_string
+from vrl.models.interfaces.runtime import torch_compile_model_config
 from vrl.ray.actor_group import RayActorGroup
 from vrl.ray.dependencies import current_node_ip, require_ray
 from vrl.ray.lifecycle import kill_actors, remove_placement_group
@@ -209,12 +210,14 @@ class RayGenerationLauncher:
         resolved_executor_kwargs.update(dict(executor_kwargs or {}))
         runtime_extra = _runtime_extra(cfg)
         runtime_extra["family_capability"] = entry.capability.to_dict()
+        runtime_build_payload = _runtime_build_payload(runtime_build)
+        _apply_rollout_compile_override(runtime_build_payload, cfg, entry)
 
         return RayGenerationLaunchInputs(
             launch_contract=GenerationRuntimeLaunchContract(
                 family=entry.family,
                 task=entry.task,
-                model_build=_runtime_build_payload(runtime_build),
+                model_build=runtime_build_payload,
                 executor_kwargs=resolved_executor_kwargs,
                 policy_version=policy_version,
                 runtime_builder=entry.runtime_builder,
@@ -337,6 +340,45 @@ def _runtime_build_payload(runtime_build: Any) -> dict[str, Any]:
     if payload.get("frozen_dtype") is not None:
         payload["frozen_dtype"] = dtype_to_config_string(payload["frozen_dtype"])
     return payload
+
+
+# Launcher-local input path; the written compile block is owned by the runtime
+# spec via ``torch_compile_model_config`` (single source of key + shape).
+_ROLLOUT_COMPILE_CFG_PATH = "rollout.denoise_compile"
+
+
+def _apply_rollout_compile_override(payload: dict[str, Any], cfg: Any, entry: Any) -> None:
+    """Map rollout-only compile config onto the worker runtime model config.
+
+    A rollout family opts in through ``capability.supports_torch_compile``.
+    """
+
+    compile_cfg = cfg_path(cfg, _ROLLOUT_COMPILE_CFG_PATH, None)
+    if compile_cfg is None:
+        return
+    compile_cfg = _to_builtin(compile_cfg)
+    if not isinstance(compile_cfg, Mapping):
+        raise TypeError(f"{_ROLLOUT_COMPILE_CFG_PATH} must be a mapping")
+    if not compile_cfg.get("enable", False):
+        return
+
+    if not entry.capability.supports_torch_compile:
+        raise ValueError(
+            f"{entry.family} does not support torch compile but "
+            f"{_ROLLOUT_COMPILE_CFG_PATH}.enable is set",
+        )
+
+    raw_model_config = payload.get("model_config") or {}
+    if not isinstance(raw_model_config, Mapping):
+        raise TypeError("runtime model_config must be a mapping")
+    model_config = dict(raw_model_config)
+    model_config.update(
+        torch_compile_model_config(
+            enable=True,
+            mode=str(compile_cfg.get("mode", "default")),
+        )
+    )
+    payload["model_config"] = model_config
 
 
 def _runtime_extra(cfg: Any) -> dict[str, Any]:

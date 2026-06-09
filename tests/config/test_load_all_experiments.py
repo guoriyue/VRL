@@ -154,6 +154,26 @@ def test_experiments_do_not_use_legacy_precision_fields() -> None:
     assert offenders == []
 
 
+def test_online_diffusion_experiments_have_rollout_compile_strategy() -> None:
+    """Checks online diffusion rollouts inherit the shared compile strategy block."""
+    offenders = []
+    for name in _experiment_names():
+        cfg = load_config(f"experiment/{name}")
+        if not name.startswith("diffusion/") or str(cfg.algorithm.kind) == "diffusion_dpo":
+            continue
+        compile_cfg = cfg.get("rollout", {}).get("denoise_compile")
+        if compile_cfg is None:
+            offenders.append(name)
+            continue
+        if dict(compile_cfg) != {
+            "enable": False,
+            "mode": "default",
+        }:
+            offenders.append(name)
+
+    assert offenders == []
+
+
 def test_model_memory_policy_defaults_are_yaml_backed() -> None:
     """Checks model memory policy defaults are YAML backed."""
     import torch

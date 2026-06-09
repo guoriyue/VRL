@@ -30,12 +30,19 @@ def sde_step_with_logprob(
     noise_level: float = 1.0,
     sde_type: str = "sde",
     math_dtype: Any = None,
+    step_index: Any = None,
 ) -> SDEStepResult:
     """Compute one flow-matching SDE step and its per-sample log-probability.
 
     ``math_dtype`` is the dtype the SDE/log-prob math runs in (the ``logprob``
     precision axis). Defaults to fp32 — the numerically-protected default — so a
     bf16 ``model_output`` is upcast before the Gaussian log-density.
+
+    ``step_index`` lets a sequential denoise caller pass the loop counter it
+    already holds. When omitted, the scheduler is searched for each timestep,
+    which reads a GPU tensor back to host (a per-step ``cudaStreamSynchronize``
+    stall). Since ``state.timesteps`` is ``scheduler.timesteps``, the rollout
+    loop index equals the scheduler index, so passing it is exact and sync-free.
     """
     import torch
     from diffusers.utils.torch_utils import randn_tensor
@@ -46,7 +53,10 @@ def sde_step_with_logprob(
     if prev_sample is not None:
         prev_sample = prev_sample.to(md)
 
-    step_index = [scheduler.index_for_timestep(t) for t in timestep]
+    if step_index is None:
+        step_index = [scheduler.index_for_timestep(t) for t in timestep]
+    elif isinstance(step_index, int):
+        step_index = [step_index] * len(timestep)
     prev_step_index = [s + 1 for s in step_index]
 
     scheduler.sigmas = scheduler.sigmas.to(sample.device)
@@ -55,8 +65,10 @@ def sde_step_with_logprob(
 
     sigma = scheduler.sigmas[step_index].view(*view_shape)
     sigma_prev = scheduler.sigmas[prev_step_index].view(*view_shape)
-    sigma_max = scheduler.sigmas[1].item()
-    sigma_min = scheduler.sigmas[-1].item()
+    # sigmas[1] / sigmas[-1] are loop-invariant schedule endpoints; keep them as
+    # 0-d device tensors instead of .item() to drop two per-step host syncs.
+    sigma_max = scheduler.sigmas[1]
+    sigma_min = scheduler.sigmas[-1]
     dt = sigma_prev - sigma
 
     if sde_type == "cps":
@@ -95,7 +107,7 @@ def sde_step_with_logprob(
                     1
                     - torch.where(
                         sigma == 1,
-                        torch.tensor(sigma_max, device=sigma.device),
+                        sigma_max,
                         sigma,
                     )
                 )

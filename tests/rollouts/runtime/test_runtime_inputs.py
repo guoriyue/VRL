@@ -142,6 +142,58 @@ def test_diffusion_launch_contract_uses_worker_primitive_device_and_dtype() -> N
     assert inputs.launch_contract.model_build["dtype"] == "float16"
 
 
+@pytest.mark.parametrize(
+    ("experiment", "family"),
+    [
+        ("diffusion/sd3_5/online_grpo_ocr", "sd3_5"),
+        ("diffusion/wan_2_1/online_grpo_ocr", "wan_2_1"),
+        ("diffusion/wan_2_1/online_grpo_physics_i2v", "wan_2_1_i2v"),
+        ("diffusion/cosmos_predict2/online_grpo_kling_video_reward", "cosmos-predict2"),
+        (
+            "diffusion/cosmos_predict2_5/online_nft_kling_video_reward",
+            "cosmos-predict2.5",
+        ),
+        ("diffusion/anima_preview3/online_grpo_aesthetic", "cosmos-predict2-anima"),
+    ],
+)
+def test_diffusion_rollout_compile_override_applies_to_all_diffusion_families(
+    experiment: str,
+    family: str,
+) -> None:
+    """Checks rollout denoise compile is wired through every diffusion family."""
+    cfg = load_config(
+        f"experiment/{experiment}",
+        overrides=[
+            "distributed.backend=ray",
+            "distributed.resources.visible_devices=[]",
+            "distributed.resources.trainer.num_gpus=0",
+            "distributed.resources.rollout.num_gpus=0",
+            "distributed.resources.rollout.gpus_per_worker=0",
+            "distributed.resources.rollout.num_workers=1",
+            "distributed.resources.reward.num_gpus=0",
+            "distributed.resources.reward.gpus_per_worker=0",
+            "rollout.denoise_compile.enable=true",
+            "rollout.denoise_compile.mode=reduce-overhead",
+        ],
+    )
+    entry = get_rollout_family_entry(family)
+
+    inputs = build_ray_generation_inputs_for_family(
+        cfg,
+        family,
+        weight_dtype=torch.bfloat16,
+    )
+
+    assert entry.capability.trajectory_kind == "diffusion"
+    assert entry.capability.supports_torch_compile is True
+    assert inputs.launch_contract.model_build is not None
+    model_config = inputs.launch_contract.model_build["model_config"]
+    assert model_config["torch_compile"] == {
+        "enable": True,
+        "mode": "reduce-overhead",
+    }
+
+
 def test_cosmos_runtime_inputs_include_reference_image_from_cfg() -> None:
     """Checks Cosmos runtime inputs include reference image from CFG."""
     cfg = load_config(
