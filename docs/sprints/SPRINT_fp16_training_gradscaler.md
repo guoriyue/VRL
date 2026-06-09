@@ -1,6 +1,8 @@
 # SPRINT: FP16 训练梯度缩放（GradScaler）
 
-状态：proposed。前置动作已落地——所有 experiment config 已统一默认 `precision: bf16`（见「背景」）。本 sprint 的目标是：**当用户确实需要 FP16 训练时，给 OnlineTrainer 的裸 backward/step 路径补上 GradScaler，让 FP16 成为一条安全可验收的训练路径**，而不是当前这种"FP16 前向 + 裸反向、无任何下溢保护"的状态。
+状态：implemented（2026-06-08）。GradScaler 已接入 OnlineTrainer 的裸 backward/step 路径，FP16 现在是一条安全、可验收的训练路径（scaler 创建条件、loss 放大、unscale-before-clip、跳坏步不传导 EMA/adapter、checkpoint 存取全部落地）。验收 gate G1–G4 有单测覆盖（`tests/trainers/online/test_grad_scaler.py` + `test_state_restore.py`），G5 smoke 为一次性产物按需跑。前置动作（所有 experiment config 统一默认 `precision: bf16`）见「背景」。
+
+本 sprint 的目标：**当用户确实需要 FP16 训练时，给 OnlineTrainer 的裸 backward/step 路径补上 GradScaler，让 FP16 成为一条安全可验收的训练路径**，而不是原先"FP16 前向 + 裸反向、无任何下溢保护"的状态。
 
 本 sprint 只覆盖 **训练侧（trainer replay backward）** 的 FP16 安全性。它与 `SPRINT_low_precision_rollout_production.md` 是两件事：那个 sprint 解决 **rollout/replay forward precision 对齐**（importance ratio parity），本 sprint 解决 **FP16 反向传播的梯度下溢**。两者正交。
 
@@ -99,11 +101,11 @@ optimizer.zero_grad()
 
 ## 5. 验收 Gate
 
-- **G1 单测 - 启用矩阵**：scaler 仅在 fp16+cuda+无accelerator 时 `enabled is True`；bf16 / fp32 / 有 accelerator / cpu 时 `enabled is False`。
-- **G2 单测 - 顺序**：用 mock optimizer 断言 `unscale_` 在 `clip_grad_norm_` 之前调用（patch 计数 / call order）。
-- **G3 单测 - resume**：scaler `state_dict` round-trip，scale 值一致。
-- **G4 单测 - 跳步**：构造一次 inf 梯度，断言该步 optimizer 未更新且 EMA / after_optimizer_step 未触发。
-- **G5 smoke**：在强制 `precision: fp16` 的 SD3.5 OCR recipe 上跑数十步，断言 loss/grad_norm 全程 finite、有权重更新。（一次性验证产物，记录结论后删除，命名 `*_smoke`。）
+- **G1 单测 - 启用矩阵**：✅ `test_needs_grad_scaler_matrix`——`_needs_grad_scaler` 仅 fp16+cuda+无accelerator 为 True；fp16+cpu / bf16 / fp32 / 有 accelerator 为 False。
+- **G2 单测 - 顺序**：✅ `test_unscale_runs_before_clip`——fake scaler + patch `clip_grad_norm_`，断言 `unscale_` 在 clip 之前。
+- **G3 单测 - resume**：✅ `test_state_restore.py`——scaler `state_dict` round-trip。
+- **G4 单测 - 跳步**：✅ 两层——`test_clip_and_step_reports_skipped`（scaler 跳步时 `_clip_and_step` 返回 `stepped=False`）+ `test_skipped_step_does_not_update_ema_or_adapter`（集成：skip 时 EMA.step / after_optimizer_step 未触发、global_step 仍 +1；对照 `test_applied_step_updates_ema_and_adapter`）。
+- **G5 smoke**：（pending，一次性）在强制 `precision: fp16` 的 SD3.5 OCR recipe 上跑数十步，断言 loss/grad_norm 全程 finite、有权重更新。需 cuda+真实 GradScaler；记录结论后删除，命名 `*_smoke`。
 
 ## 6. 风险
 

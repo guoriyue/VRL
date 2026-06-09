@@ -318,8 +318,14 @@ class OnlineTrainer(Trainer):
         else:
             loss.backward()
 
-    def _clip_and_step(self, optimizer: Any) -> float:
-        """Clip grads, step optimizer, return pre-clip total grad-norm (float)."""
+    def _clip_and_step(self, optimizer: Any) -> tuple[float, bool]:
+        """Clip grads and step the optimizer.
+
+        Returns ``(pre_clip_grad_norm, stepped)``. ``stepped`` is False only when
+        the fp16 ``GradScaler`` skipped the step because it found inf/nan grads;
+        callers must not run EMA / ``after_optimizer_step`` on a skipped step (it
+        would fold an update that never happened into the averaged/adapter state).
+        """
         cfg = self.config
         grad_norm: Any = 0.0
         if self.accelerator is not None:
@@ -337,13 +343,19 @@ class OnlineTrainer(Trainer):
                     if p.grad is not None:
                         sq_sum += float(p.grad.detach().pow(2).sum().item())
                 grad_norm = sq_sum**0.5
+        stepped = True
         if self._grad_scaler is not None:
+            scale_before = self._grad_scaler.get_scale()
             self._grad_scaler.step(optimizer)
             self._grad_scaler.update()
+            # The scaler lowers its scale by the backoff factor only when it
+            # skipped the step on inf/nan grads; an unchanged or grown scale
+            # means the optimizer actually applied the update.
+            stepped = self._grad_scaler.get_scale() >= scale_before
         else:
             optimizer.step()
         optimizer.zero_grad()
-        return float(grad_norm)
+        return float(grad_norm), stepped
 
     # ------------------------------------------------------------------
     # Training step — CEA pipeline
@@ -723,16 +735,20 @@ class OnlineTrainer(Trainer):
                         await asyncio.sleep(0)
 
                 with timer.time("optim_step"):
-                    _gn = self._clip_and_step(optimizer)
+                    _gn, _stepped = self._clip_and_step(optimizer)
                     agg_metrics["grad_norm"].append(_gn)
 
-                after_optimizer_step = getattr(self.algorithm, "after_optimizer_step", None)
-                if callable(after_optimizer_step):
-                    after_optimizer_step(self.model, self.state.global_step)
+                # A scaler-skipped step (inf/nan grads) left the weights
+                # unchanged — do not fold a non-update into EMA or the
+                # algorithm's post-step adapter sync.
+                if _stepped:
+                    after_optimizer_step = getattr(self.algorithm, "after_optimizer_step", None)
+                    if callable(after_optimizer_step):
+                        after_optimizer_step(self.model, self.state.global_step)
 
-                if ema is not None:
-                    trainable = [p for p in self.model.parameters() if p.requires_grad]
-                    ema.step(trainable, self.state.global_step)
+                    if ema is not None:
+                        trainable = [p for p in self.model.parameters() if p.requires_grad]
+                        ema.step(trainable, self.state.global_step)
 
                 self.state.global_step += 1
 
