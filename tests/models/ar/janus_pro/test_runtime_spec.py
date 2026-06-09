@@ -19,6 +19,7 @@ def test_janus_runtime_spec_does_not_expose_decode_strategy() -> None:
                 "path": "deepseek-ai/Janus-Pro-1B",
                 "use_lora": False,
             },
+            "precision": "fp32",
             "sampling": {
                 "cfg_weight": 5.0,
                 "temperature": 1.0,
@@ -51,6 +52,6 @@ def test_janus_executor_parse_sampling_params_reads_scheduler_batch_size() -> No
         },
     )
 
-    params = JanusProPipelineExecutor(model=object()).parse_sampling_params(request)
+    params = JanusProPipelineExecutor(model=object()).layout.parse_sampling_params(request)
 
     assert params.ar_scheduler_batch_size == 8
