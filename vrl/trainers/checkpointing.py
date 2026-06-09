@@ -122,20 +122,27 @@ def save_training_checkpoint(
     export_modules = export_modules or {}
     trainable_parameters: list[Any] = []
     used_ema_export = False
-    if export_ema is not None and export_modules and _ema_has_updates(export_ema):
-        for module in bundle.trainable_modules.values():
-            parameters = getattr(module, "parameters", None)
-            if callable(parameters):
-                trainable_parameters.extend(p for p in parameters() if p.requires_grad)
-        if not trainable_parameters:
-            raise ValueError("export_ema was provided but bundle has no trainable parameters")
-        export_ema.copy_ema_to(trainable_parameters, store_temp=True)
-        used_ema_export = True
-    elif export_ema is not None and export_modules:
-        logger.info(
-            "Skipping EMA export weights because EMA has not updated; "
-            "exporting raw trainable weights.",
-        )
+    if export_ema is not None and export_modules:
+        has_updates = getattr(export_ema, "has_updates", None)
+        # A missing has_updates attribute means the EMA cannot report, so export.
+        if has_updates is None:
+            has_updates = True
+        elif callable(has_updates):
+            has_updates = has_updates()
+        if has_updates:
+            for module in bundle.trainable_modules.values():
+                parameters = getattr(module, "parameters", None)
+                if callable(parameters):
+                    trainable_parameters.extend(p for p in parameters() if p.requires_grad)
+            if not trainable_parameters:
+                raise ValueError("export_ema was provided but bundle has no trainable parameters")
+            export_ema.copy_ema_to(trainable_parameters, store_temp=True)
+            used_ema_export = True
+        else:
+            logger.info(
+                "Skipping EMA export weights because EMA has not updated; "
+                "exporting raw trainable weights.",
+            )
 
     try:
         for name, module in export_modules.items():
@@ -279,15 +286,6 @@ def load_trainable_state(
         if not callable(load_state_dict):
             raise TypeError(f"trainable module {name!r} does not expose load_state_dict()")
         load_state_dict(state[name], strict=strict)
-
-
-def _ema_has_updates(export_ema: Any) -> bool:
-    value = getattr(export_ema, "has_updates", None)
-    if value is None:
-        return True
-    if callable(value):
-        value = value()
-    return bool(value)
 
 
 def capture_rng_state(**generators: torch.Generator) -> dict[str, Any]:

@@ -36,8 +36,7 @@ class AlgorithmAdapter:
             raise RuntimeError("AlgorithmInput.rewards is required to compute advantages")
         group_ids = inputs.group_ids
         if group_ids is None and inputs.signals is not None:
-            signals = _ensure_trajectory_signals(inputs)
-            group_ids = signals.group_ids
+            group_ids = inputs.signals.group_ids
         if group_ids is None:
             raise RuntimeError("AlgorithmInput.group_ids is required to compute advantages")
         return algorithm.compute_advantages_from_tensors(inputs.rewards, group_ids)
@@ -53,29 +52,15 @@ class AlgorithmAdapter:
                 f"{type(algorithm).__name__} must expose compute_loss(AlgorithmInput)",
             )
 
-        return compute_loss(_with_advantages(algorithm, inputs, self))
-
-
-def _ensure_trajectory_signals(inputs: AlgorithmInput) -> TrajectorySignalBatch:
-    if inputs.signals is None:
-        raise RuntimeError("AlgorithmInput.signals is required for signal-based algorithms")
-    return inputs.signals
-
-
-def _with_advantages(
-    algorithm: Any,
-    inputs: AlgorithmInput,
-    adapter: AlgorithmAdapter,
-) -> AlgorithmInput:
-    if inputs.advantages is not None:
-        return inputs
-    return AlgorithmInput(
-        signals=inputs.signals,
-        rewards=inputs.rewards,
-        group_ids=inputs.group_ids,
-        advantages=adapter.compute_advantages(algorithm, inputs),
-        metadata=inputs.metadata,
-    )
+        if inputs.advantages is None:
+            inputs = AlgorithmInput(
+                signals=inputs.signals,
+                rewards=inputs.rewards,
+                group_ids=inputs.group_ids,
+                advantages=self.compute_advantages(algorithm, inputs),
+                metadata=inputs.metadata,
+            )
+        return compute_loss(inputs)
 
 
 __all__ = [

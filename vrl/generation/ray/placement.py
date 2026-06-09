@@ -28,10 +28,6 @@ class RayPlacement:
     trainer_gpu_ids: tuple[int, ...]
     rollout_gpu_ids: tuple[int, ...]
 
-    @property
-    def ordered_rollout_bundle_indices(self) -> list[int]:
-        return self.ordered_bundle_indices
-
 
 class _InfoActor:
     def get_ip_and_gpu_ids(self) -> tuple[str, tuple[int, ...]]:
