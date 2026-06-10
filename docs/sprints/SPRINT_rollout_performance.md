@@ -903,6 +903,31 @@ dynamo.config.error_on_recompile = True   # steady-state 再 recompile 直接报
 - 不做 warmup move（worker 跑合成 forward 强制编译）——它会**主动多触发一次编译**，是额外
   compiler 动作，不加。第一个 chunk 天然含 compile cost，跑 profile 时丢掉首 chunk 即可。
 
+#### 验证结果（2026-06-09，单卡 5090，✅ 通过）
+
+```bash
+TORCH_LOGS=recompiles ... rollout.n=32 rollout.sample_batch_size=8 \
+  rollout.denoise_compile.enable=true rollout.denoise_compile.mode=reduce-overhead
+# outputs/sd35_compile_recompile_check_20260609
+```
+
+| chunk | denoise CPU wall |
+| ---: | ---: |
+| 0 | 33.36s（编译 warmup）|
+| 1 | 2.29s |
+| 2 | 2.29s |
+| 3 | 2.29s |
+
+判定：
+- `TORCH_LOGS=recompiles` 全程零输出（注意：该 log 只在 **re**compile 时出声，初次编译静默——
+  所以单看零输出不够，须结合首 chunk 33s 证明编译确实发生）。
+- chunk 1-3 耗时逐毫秒一致 = CUDA graph 稳定 replay，无 shape/guard 漂移。
+- steady-state 2.29s/chunk vs 此前 no-compile b8 ≈3.5s/chunk → ~1.5x（CPU wall 口径；
+  CUDA-time 口径见 D1 的 2.4x）。
+- 训练数值正常（reward_mean 0.376，metrics.csv 完整）。
+
+**结论：D1 的 rollout-only compile 在 steady-state 成立，无 recompile。D2 关闭。**
+
 ### D3：Latent clone cleanup（hygiene，不是性能优先级）
 
 当前每步先 clone：
