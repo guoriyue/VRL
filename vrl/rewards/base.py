@@ -146,7 +146,6 @@ class RewardFunction:
         default_score_key: str = "",
         default_artifact_format: str = "tensor",
         debug_dir: str = "",
-        timeout_s: float = 60.0,
         max_inflight_batches: int = 1,
         scheduling: str = "sync",
         backend: str | None = None,
@@ -167,7 +166,6 @@ class RewardFunction:
         from vrl.rewards.artifacts import VideoRewardArtifactStore
         from vrl.rewards.ray.runtime import RayRewardRuntime
 
-        del timeout_s
         if backend is not None:
             raise ValueError(
                 f"reward.kwargs.{config_key}.backend is no longer supported; "

@@ -1,5 +1,4 @@
 distributed:
-  backend: ray
   resources:
     visible_devices: auto
     cross_node: true
@@ -16,4 +15,3 @@ distributed:
     placement_strategy: SPREAD
     max_inflight_chunks_per_worker: 1
     sync_trainable_state: lora_only
-    release_after_collect: false

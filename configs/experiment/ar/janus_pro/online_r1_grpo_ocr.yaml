@@ -24,17 +24,3 @@ rollout:
   n_samples_per_prompt: 2
   rollout_batch_size: 1
 
-eval:
-  fixed:
-    enabled: true
-    interval_epochs: 40
-    output_dir: ${trainer.output_dir}/fixed_eval
-    prompts:
-      - A clean white sign with large black text that reads "JANUS R1".
-      - A storefront window sticker that clearly says "OPEN 24".
-      - A red book cover with the title "TOKEN RL".
-      - A blue street sign that reads "MARS AVE".
-      - A coffee cup label with the word "LATTE".
-      - A museum placard that reads "ART 2026".
-      - A classroom poster with the text "READ MORE".
-      - A shipping box label that clearly says "FRAGILE".

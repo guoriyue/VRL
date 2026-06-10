@@ -49,6 +49,3 @@ production:
     enabled: true
     report_path: outputs/cosmos_world_model_production_report.md
 
-eval:
-  prompts_file: datasets/videophy/eval.txt
-  seeds: 1

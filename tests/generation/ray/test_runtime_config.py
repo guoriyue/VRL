@@ -130,7 +130,6 @@ def _build_inputs_entry(capability: Any | None = None) -> Any:
 
 def _cfg(
     *,
-    backend: str | None = "ray",
     num_workers: int = 1,
     overlap: bool = False,
     release_after_collect: bool = False,
@@ -154,8 +153,6 @@ def _cfg(
             "release_before_reward_model": release_before_reward_model,
         },
     }
-    if backend is not None:
-        distributed["backend"] = backend
     return OmegaConf.create(
         {
             "distributed": distributed,
@@ -174,7 +171,6 @@ def _resource_cfg(
     return OmegaConf.create(
         {
             "distributed": {
-                "backend": "ray",
                 "resources": {
                     "visible_devices": sorted(set(trainer_devices) | set(rollout_devices)),
                     "trainer": {"devices": trainer_devices},
@@ -198,7 +194,6 @@ def _resource_cfg(
 def _build_inputs_cfg(*, denoise_compile: dict[str, Any] | None = None) -> Any:
     cfg: dict[str, Any] = {
         "distributed": {
-            "backend": "ray",
             "resources": {
                 "visible_devices": [],
                 "trainer": {
@@ -219,14 +214,6 @@ def _build_inputs_cfg(*, denoise_compile: dict[str, Any] | None = None) -> Any:
     if denoise_compile is not None:
         cfg["rollout"]["denoise_compile"] = denoise_compile
     return OmegaConf.create(cfg)
-
-
-def test_rollout_backend_config_from_cfg_uses_ray_by_default() -> None:
-    """Checks rollout backend config from CFG uses Ray by default."""
-    config = RayGenerationConfig.from_cfg(_cfg(backend=None))
-
-    assert config.resources is not None
-    assert config.num_workers == 1
 
 
 def test_ray_build_inputs_leaves_model_compile_config_without_rollout_override() -> None:

@@ -21,12 +21,13 @@
 #
 # Note: max_ready_groups must be >= rollout_batch_size (one iteration's worth of
 # prompt groups); the schedule raises the effective queue cap to fit if smaller.
+# weight_sync_barrier is derived for this mode
+# (pause_admission_and_drain_inflight) — continuous supports no other value.
 trainer:
   rollout_orchestration:
     mode: continuous
     max_pending_rollouts: 2
     require_separate_gpus: true
-    weight_sync_barrier: pause_admission_and_drain_inflight
 
     continuous:
       max_inflight_groups: 1

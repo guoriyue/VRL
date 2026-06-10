@@ -57,10 +57,6 @@ class RayGenerationConfig:
         if distributed is _MISSING:
             raise ValueError("distributed.resources is required")
 
-        backend = cfg_get(distributed, "backend", "ray")
-        if str(backend) != "ray":
-            raise ValueError("distributed.backend only supports 'ray' when set")
-
         resources_node = cfg_get(distributed, "resources", _MISSING)
         if resources_node is _MISSING:
             raise ValueError("distributed.resources is required")
@@ -87,12 +83,10 @@ class RayGenerationConfig:
             sync_trainable_state=str(
                 cfg_get(rollout, "sync_trainable_state", "disabled"),
             ),
-            release_after_collect=bool(
-                cfg_get(rollout, "release_after_collect", False),
-            ),
-            release_before_reward_model=bool(
-                cfg_get(rollout, "release_before_reward_model", False),
-            ),
+            # Resolved values: unset YAML flags derive from the GPU topology
+            # (resolve_distributed_resources is the single source of truth).
+            release_after_collect=resources.rollout_release_after_collect,
+            release_before_reward_model=resources.rollout_release_before_reward_model,
             resources=resources,
         )
 

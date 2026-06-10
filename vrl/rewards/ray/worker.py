@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Mapping
 from typing import Any
@@ -12,6 +13,8 @@ from vrl.rewards.inference import (
     RewardInferenceResult,
     score_artifacts_with_model,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class RewardModelWorker:
@@ -25,8 +28,43 @@ class RewardModelWorker:
     def load_model(self) -> None:
         """Import the configured factory and build the reward model."""
 
-        factory = import_from_path(str(self.worker_config["model_factory"]))
-        self._model = factory(self.worker_config)
+        factory_path = str(self.worker_config["model_factory"])
+        started = time.perf_counter()
+        _emit_worker_log(
+            "reward worker loading model",
+            worker_id=self.worker_id,
+            factory=factory_path,
+            reward_model_version=str(self.worker_config.get("reward_model_version", "")),
+        )
+        try:
+            import_started = time.perf_counter()
+            factory = import_from_path(factory_path)
+            _emit_worker_log(
+                "reward worker imported model factory",
+                worker_id=self.worker_id,
+                factory=factory_path,
+                elapsed_s=time.perf_counter() - import_started,
+            )
+
+            build_started = time.perf_counter()
+            self._model = factory(self.worker_config)
+            _emit_worker_log(
+                "reward worker built model",
+                worker_id=self.worker_id,
+                factory=factory_path,
+                elapsed_s=time.perf_counter() - build_started,
+                total_s=time.perf_counter() - started,
+            )
+        except Exception as exc:
+            logger.exception(
+                "reward worker failed to load model worker_id=%s factory=%s",
+                self.worker_id,
+                factory_path,
+            )
+            raise RuntimeError(
+                "reward worker failed to load model "
+                f"worker_id={self.worker_id!r} factory={factory_path!r}",
+            ) from exc
 
     def shutdown(self) -> None:
         """Release the loaded model."""
@@ -84,6 +122,16 @@ def _validate_worker_config(worker_config: Mapping[str, Any]) -> dict[str, Any]:
         )
     config["model_factory"] = model_factory
     return config
+
+
+def _emit_worker_log(message: str, **fields: Any) -> None:
+    payload = " ".join(
+        f"{key}={value:.3f}" if isinstance(value, float) else f"{key}={value}"
+        for key, value in fields.items()
+    )
+    line = f"{message}: {payload}" if payload else message
+    logger.info(line)
+    print(line, flush=True)
 
 
 __all__ = ["RewardModelWorker"]

@@ -66,6 +66,3 @@ production:
     enabled: true
     report_path: outputs/cosmos_predict2_5_2b_motion_physics/production_report.md
 
-eval:
-  prompts_file: datasets/videophy/eval.txt
-  seeds: 1

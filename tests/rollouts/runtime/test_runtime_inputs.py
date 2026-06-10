@@ -84,7 +84,6 @@ def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
     cfg = load_config(
         f"experiment/{experiment}",
         overrides=[
-            "distributed.backend=ray",
             "distributed.resources.visible_devices=[]",
             "distributed.resources.trainer.num_gpus=0",
             "distributed.resources.rollout.num_gpus=0",
@@ -121,7 +120,6 @@ def test_diffusion_launch_contract_uses_worker_primitive_device_and_dtype() -> N
     cfg = load_config(
         "experiment/diffusion/sd3_5/online_grpo_ocr",
         overrides=[
-            "distributed.backend=ray",
             "distributed.resources.visible_devices=[0,1]",
             "distributed.resources.trainer.num_gpus=0",
             "distributed.resources.rollout.num_gpus=1",
@@ -164,7 +162,6 @@ def test_diffusion_rollout_compile_override_applies_to_all_diffusion_families(
     cfg = load_config(
         f"experiment/{experiment}",
         overrides=[
-            "distributed.backend=ray",
             "distributed.resources.visible_devices=[]",
             "distributed.resources.trainer.num_gpus=0",
             "distributed.resources.rollout.num_gpus=0",
@@ -199,7 +196,6 @@ def test_cosmos_runtime_inputs_include_reference_image_from_cfg() -> None:
     cfg = load_config(
         "experiment/diffusion/cosmos_predict2/online_grpo_kling_video_reward",
         overrides=[
-            "distributed.backend=ray",
             "distributed.resources.visible_devices=[]",
             "distributed.resources.trainer.num_gpus=0",
             "distributed.resources.rollout.num_gpus=0",
@@ -230,7 +226,6 @@ def test_wan_i2v_runtime_inputs_include_reference_image_from_cfg() -> None:
     cfg = load_config(
         "experiment/diffusion/wan_2_1/online_grpo_physics_i2v",
         overrides=[
-            "distributed.backend=ray",
             "distributed.resources.visible_devices=[]",
             "distributed.resources.trainer.num_gpus=0",
             "distributed.resources.rollout.num_gpus=0",
@@ -266,7 +261,6 @@ def test_explicit_executor_kwargs_override_registry_defaults() -> None:
     cfg = load_config(
         "experiment/diffusion/sd3_5/online_grpo_ocr",
         overrides=[
-            "distributed.backend=ray",
             "distributed.resources.visible_devices=[]",
             "distributed.resources.trainer.num_gpus=0",
             "distributed.resources.rollout.num_gpus=0",

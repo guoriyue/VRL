@@ -39,11 +39,3 @@ reward:
     kling_video_reward:
       artifact_format: mp4
 
-eval:
-  eval_only: false
-  prompts_file: data/external/video_world/manifests/robot_eval.jsonl
-  seeds: 1
-  sanity_gates:
-    enable: true
-    clip_fraction_threshold: 0.5
-    approx_kl_threshold: 0.1

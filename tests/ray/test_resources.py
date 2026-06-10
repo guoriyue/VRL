@@ -15,20 +15,29 @@ from vrl.ray.resources import (
 def _cfg(
     resources: dict,
     *,
-    rollout_release_after_collect: bool = False,
-    rollout_release_before_reward_model: bool = False,
-    reward_release_after_score: bool = False,
+    rollout_release_after_collect: bool | None = None,
+    rollout_release_before_reward_model: bool | None = None,
+    reward_release_after_score: bool | None = None,
     kling_video_reward: bool = False,
 ) -> object:
+    # None leaves the key unset so the resolver derives it from topology.
+    rollout_runtime = {
+        key: value
+        for key, value in {
+            "release_after_collect": rollout_release_after_collect,
+            "release_before_reward_model": rollout_release_before_reward_model,
+        }.items()
+        if value is not None
+    }
+    reward_runtime = (
+        {} if reward_release_after_score is None
+        else {"release_after_score": reward_release_after_score}
+    )
     data = {
         "distributed": {
-            "backend": "ray",
             "resources": resources,
-            "rollout": {
-                "release_after_collect": rollout_release_after_collect,
-                "release_before_reward_model": rollout_release_before_reward_model,
-            },
-            "reward": {"release_after_score": reward_release_after_score},
+            "rollout": rollout_runtime,
+            "reward": reward_runtime,
         },
     }
     if kling_video_reward:
@@ -369,8 +378,8 @@ def test_ray_video_reward_requires_reward_gpu_budget() -> None:
         )
 
 
-def test_reward_rollout_overlap_requires_shared_release_lifecycle() -> None:
-    """Checks reward rollout overlap requires shared release lifecycle."""
+def test_reward_rollout_overlap_rejects_explicit_resident_lifecycle() -> None:
+    """Checks explicit release=false contradicts a shared reward/rollout pool."""
     with pytest.raises(ValueError, match="release_before_reward_model"):
         resolve_distributed_resources(
             _cfg(
@@ -384,8 +393,52 @@ def test_reward_rollout_overlap_requires_shared_release_lifecycle() -> None:
                         "share_with_rollout": True,
                     },
                 },
+                rollout_release_before_reward_model=False,
             ),
         )
+
+
+def test_reward_shared_pool_derives_release_lifecycle_when_unset() -> None:
+    """Checks unset release flags derive to true for a shared reward pool."""
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0, 1],
+                "trainer": {"devices": [0]},
+                "rollout": {"devices": [1], "gpus_per_worker": 1},
+                "reward": {
+                    "num_gpus": 1,
+                    "gpus_per_worker": 1,
+                    "num_workers": 1,
+                    "share_with_rollout": True,
+                },
+            },
+        ),
+    )
+
+    assert resolved.reward_shared_with_rollout is True
+    assert resolved.rollout_release_after_collect is True
+    assert resolved.rollout_release_before_reward_model is True
+    assert resolved.reward_release_after_score is True
+
+
+def test_dedicated_reward_gpu_derives_resident_lifecycle_when_unset() -> None:
+    """Checks unset release flags derive to false when reward has its own GPU."""
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0, 1, 2],
+                "trainer": {"devices": [0]},
+                "rollout": {"devices": [1], "gpus_per_worker": 1},
+                "reward": {"devices": [2], "gpus_per_worker": 1, "num_workers": 1},
+            },
+        ),
+    )
+
+    assert resolved.reward_shared_with_rollout is False
+    assert resolved.rollout_release_after_collect is False
+    assert resolved.rollout_release_before_reward_model is False
+    assert resolved.reward_release_after_score is False
 
 
 def test_reward_can_share_rollout_pool_when_phases_release() -> None:

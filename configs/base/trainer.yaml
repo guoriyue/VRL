@@ -6,19 +6,10 @@ trainer:
   log_freq: 1
   output_dir: ???
   seed: 0
+  # Profiling is off in the baseline. To profile a run, compose the
+  # /profile/torch_profiler preset — all torch_profiler tuning keys live
+  # there, not here (code defaults in vrl/utils/profiling.py otherwise).
   profile: false
-  torch_profiler:
-    enabled: false
-    output_dir: ""
-    activities:
-      - cpu
-      - cuda
-    record_shapes: true
-    profile_memory: true
-    with_stack: false
-    with_flops: false
-    skip_first: 0
-    max_steps: 1
   resume_from: ""
   resume_strict: true
 

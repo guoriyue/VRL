@@ -16,9 +16,17 @@ async def collect_prompt_batches(
     runtime_debug: bool,
     policy_version: int | None,
 ) -> list[RolloutBatch]:
-    """Collect trainer prompts through ``RolloutCollector`` and split by group."""
+    """Collect trainer prompts through ``RolloutCollector`` and split by group.
 
-    all_batches: list[RolloutBatch] = []
+    Two phases: generate every prompt group first (the generation runtime stays
+    resident throughout), then score all groups through one reward call. Shared
+    single-GPU reward runs therefore pay the rollout release and the reward
+    actor cold start once per call instead of once per group.
+    """
+
+    # (unscored group, group-id remap: per-sample indices for plain-string
+    # batches, a single prompt index for PromptExample groups)
+    unscored_groups: list[tuple[Any, list[int] | int]] = []
     pending_prompts: list[str] = []
     pending_indices: list[int] = []
 
@@ -30,9 +38,11 @@ async def collect_prompt_batches(
             runtime_debug=runtime_debug,
             policy_version=policy_version,
         )
-        batch = await collector.collect(list(pending_prompts), **collect_kwargs)
-        remap_group_ids_(batch, pending_indices)
-        all_batches.extend(split_batch_by_group(batch))
+        unscored = await collector.collect_unscored(
+            list(pending_prompts),
+            **collect_kwargs,
+        )
+        unscored_groups.append((unscored, list(pending_indices)))
         pending_prompts.clear()
         pending_indices.clear()
 
@@ -45,17 +55,30 @@ async def collect_prompt_batches(
                 runtime_debug=runtime_debug,
                 policy_version=policy_version,
             )
-            batch = await collector.collect(
+            unscored = await collector.collect_unscored(
                 [str(item.prompt)],
                 **collect_kwargs,
             )
-            batch.group_ids[:] = prompt_idx
-            all_batches.extend(split_batch_by_group(batch))
+            unscored_groups.append((unscored, prompt_idx))
         else:
             pending_prompts.append(str(item))
             pending_indices.append(prompt_idx)
 
     await flush_pending_prompts()
+    if not unscored_groups:
+        return []
+
+    batches = await collector.score_rollouts(
+        [unscored for unscored, _ in unscored_groups],
+    )
+
+    all_batches: list[RolloutBatch] = []
+    for batch, (_, remap) in zip(batches, unscored_groups, strict=True):
+        if isinstance(remap, list):
+            remap_group_ids_(batch, remap)
+        else:
+            batch.group_ids[:] = remap
+        all_batches.extend(split_batch_by_group(batch))
     return all_batches
 
 

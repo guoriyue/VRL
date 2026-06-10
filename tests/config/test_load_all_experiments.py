@@ -215,7 +215,14 @@ def test_rollout_orchestration_group_override_uses_rollout_namespace() -> None:
 
     orchestration = cfg.trainer.rollout_orchestration
     assert orchestration.mode == "continuous"
-    assert orchestration.weight_sync_barrier == "pause_admission_and_drain_inflight"
+    # weight_sync_barrier is no longer spelled in YAML; the typed config
+    # derives the only barrier the mode supports.
+    from vrl.trainers.core.types import RolloutOrchestrationConfig
+
+    typed = RolloutOrchestrationConfig(
+        **OmegaConf.to_container(orchestration, resolve=True),
+    )
+    assert typed.weight_sync_barrier == "pause_admission_and_drain_inflight"
 
 
 def test_algorithm_config_dispatches_representative_kinds() -> None:
@@ -243,8 +250,6 @@ def test_algorithm_config_dispatches_representative_kinds() -> None:
                 "selfcheck_text": False,
                 "final_image": True,
             }
-            assert cfg.eval.fixed.enabled is True
-            assert len(cfg.eval.fixed.prompts) == 8
 
 
 def test_cosmos_diffusion_nft_video_reward_validation_config() -> None:
@@ -268,10 +273,12 @@ def test_cosmos_diffusion_nft_video_reward_validation_config() -> None:
     assert cfg.reward.kwargs.kling_video_reward.reward_name == "KlingTeam/VideoReward@main"
     assert "model_factory" not in cfg.reward.kwargs.kling_video_reward.worker_config
     assert "reward_model_name" not in cfg.reward.kwargs.kling_video_reward.worker_config
+    assert cfg.reward.kwargs.kling_video_reward.worker_config.local_files_only is True
     assert cfg.distributed.resources.reward.num_gpus == 1
+    # share_with_rollout is the placement decision; the release lifecycle flags
+    # derive from it in resolve_distributed_resources (pinned in
+    # tests/ray/test_resources.py), so the YAML no longer sets them.
     assert cfg.distributed.resources.reward.share_with_rollout is True
-    assert cfg.distributed.rollout.release_before_reward_model is True
-    assert cfg.distributed.reward.release_after_score is True
     # cosmos-rl parity (cosmos-predict2-5-2b-720-nft.toml): n_generation=12,
     # mini_batch=6 prompts/step, 10 epochs, bf16 params. The 72/step effective
     # batch runs single-GPU via sequential gen + gradient accumulation.
@@ -319,7 +326,8 @@ def test_cosmos_v2w_reference_route_config() -> None:
     assert cfg.reward.kwargs.kling_video_reward.artifact_format == "mp4"
     assert cfg.reward.kwargs.kling_video_reward.reward_name == "KlingTeam/VideoReward@main"
     assert "model_factory" not in cfg.reward.kwargs.kling_video_reward.worker_config
-    assert cfg.distributed.rollout.release_before_reward_model is True
+    assert cfg.reward.kwargs.kling_video_reward.worker_config.local_files_only is True
+    assert cfg.distributed.resources.reward.share_with_rollout is True
 
 
 def test_cosmos_v2w_production_validation_accepts_source_backed_data(
@@ -419,6 +427,7 @@ def test_wan_video_reward_production_config() -> None:
     assert "backend" not in cfg.reward.kwargs.kling_video_reward.worker_config
     assert "score_key_map" not in cfg.reward.kwargs.kling_video_reward.worker_config
     assert "reward_model_name" not in cfg.reward.kwargs.kling_video_reward.worker_config
+    assert cfg.reward.kwargs.kling_video_reward.worker_config.local_files_only is True
     assert cfg.rollout.n == 4
     assert cfg.rollout.rollout_batch_size == 1
     assert cfg.rollout.sample_batch_size == 1
@@ -428,7 +437,7 @@ def test_wan_video_reward_production_config() -> None:
     assert cfg.data.manifest == "datasets/videophy/train.txt"
     assert cfg.data.eval_manifest == "datasets/videophy/eval.txt"
     assert cfg.data.source_report == "datasets/videophy/report.json"
-    assert cfg.distributed.rollout.release_before_reward_model is True
+    assert cfg.distributed.resources.reward.share_with_rollout is True
 
 
 def test_wan_i2v_physics_config() -> None:

@@ -94,7 +94,6 @@ def test_reward_config_receives_resolved_resource_plan() -> None:
     cfg = OmegaConf.create(
         {
             "distributed": {
-                "backend": "ray",
                 "resources": {
                     "visible_devices": [0],
                     "trainer": {"num_gpus": 0},

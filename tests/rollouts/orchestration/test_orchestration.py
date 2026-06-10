@@ -71,10 +71,13 @@ class _Collector:
         self.runtime = runtime
         self.calls: list[dict[str, Any]] = []
 
-    async def collect(self, prompts, **kwargs):
+    async def collect_unscored(self, prompts, **kwargs):
         prompts = list(prompts)
         self.calls.append({"prompts": prompts, **dict(kwargs)})
         return _batch(prompts, int(kwargs.get("group_size", 1)))
+
+    async def score_rollouts(self, pendings):
+        return list(pendings)
 
     async def release_runtime_memory(self) -> None:
         self.calls.append({"release_runtime_memory": True})

@@ -5,17 +5,15 @@ distributed:
       num_gpus: 1
       gpus_per_worker: 1.0
       num_workers: 1
+      # share_with_rollout is the placement decision; the release lifecycle
+      # flags (release_before_reward_model / release_after_score /
+      # release_after_collect) derive from it automatically in
+      # resolve_distributed_resources and are no longer set here.
       share_with_rollout: true
-  rollout:
-    # Runtime default is false. Shared single-GPU video reward runs opt in
-    # because the reward model actor cannot reserve the rollout GPU until
-    # rollout actors are explicitly torn down.
-    release_before_reward_model: true
   reward:
     cpus_per_worker: 4.0
     placement_strategy: STRICT_PACK
     max_inflight_batches: 1
-    release_after_score: true
 
 reward:
   components:
@@ -29,8 +27,8 @@ reward:
       media_type: video
       artifact_format: tensor
       artifact_dir: ${trainer.output_dir}/reward_artifacts
-      timeout_s: 60.0
       debug_dir: ${trainer.output_dir}/reward_debug
       worker_config:
         model_path: ""
         dtype: bfloat16
+        local_files_only: true

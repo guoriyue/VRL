@@ -62,8 +62,27 @@ class RewardScorer:
         self,
         request: RewardScoringInput,
     ) -> torch.Tensor:
+        return (await self.score_many([request]))[0]
+
+    async def score_many(
+        self,
+        requests: list[RewardScoringInput],
+    ) -> list[torch.Tensor]:
+        """Score several prompt groups through one reward call.
+
+        Rollout metadata/prompts are per-sample, so groups concatenate into a
+        single score_batch call — model-backed rewards then pay one actor
+        lifecycle (and one inference request) per call instead of one per
+        group. Scores split back by each request's batch size.
+        """
+
+        if not requests:
+            return []
         if self.reward_fn is None:
-            return torch.zeros(request.batch_size, device=request.device)
+            return [
+                torch.zeros(request.batch_size, device=request.device)
+                for request in requests
+            ]
 
         rollouts = [
             RewardRollout(
@@ -74,6 +93,7 @@ class RewardScorer:
                 ),
                 metadata=dict(request.metadata),
             )
+            for request in requests
             for i in range(request.batch_size)
         ]
 
@@ -91,12 +111,21 @@ class RewardScorer:
                 raw.append(value)
 
         scores = [float(score) for score in raw]
-        if len(scores) != request.batch_size:
+        if len(scores) != len(rollouts):
             raise ValueError(
                 "reward function returned wrong number of scores: "
-                f"scores={len(scores)}, expected={request.batch_size}",
+                f"scores={len(scores)}, expected={len(rollouts)}",
             )
-        return torch.tensor(scores, device=request.device, dtype=torch.float32)
+
+        split: list[torch.Tensor] = []
+        offset = 0
+        for request in requests:
+            chunk = scores[offset : offset + request.batch_size]
+            offset += request.batch_size
+            split.append(
+                torch.tensor(chunk, device=request.device, dtype=torch.float32),
+            )
+        return split
 
 
 __all__ = ["RewardScorer", "RewardScoringInput"]

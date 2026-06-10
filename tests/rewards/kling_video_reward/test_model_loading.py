@@ -92,12 +92,20 @@ def test_kling_video_reward_builds_repo_owned_model(
             captured["model_device"] = device
             return self
 
-    def _fake_create_model_and_processor(model_config, peft_config, *, dtype, disable_flash_attn2):
+    def _fake_create_model_and_processor(
+        model_config,
+        peft_config,
+        *,
+        dtype,
+        disable_flash_attn2,
+        local_files_only,
+    ):
         del model_config, peft_config
         captured.update(
             {
                 "dtype": dtype,
                 "disable_flash_attn2": disable_flash_attn2,
+                "local_files_only": local_files_only,
             },
         )
         return _FakeModel(), object()
@@ -121,17 +129,116 @@ def test_kling_video_reward_builds_repo_owned_model(
             "device": "cpu",
             "dtype": "bfloat16",
             "disable_flash_attn2": True,
+            "local_files_only": True,
         },
     )
 
     assert captured == {
         "dtype": kling_reward.torch.bfloat16,
         "disable_flash_attn2": True,
+        "local_files_only": True,
         "checkpoint_dir": root,
         "checkpoint_step": -1,
         "model_eval": True,
         "model_device": "cpu",
     }
+
+
+def test_kling_video_reward_snapshot_download_honors_local_files_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Checks Kling video reward passes local-only mode to snapshot download."""
+    from vrl.rewards.models.kling_video_reward import _resolve_model_root
+
+    root = _video_reward_root(tmp_path)
+    captured = {}
+
+    def _fake_snapshot_download(**kwargs):
+        captured.update(kwargs)
+        return str(root)
+
+    monkeypatch.setattr("huggingface_hub.snapshot_download", _fake_snapshot_download)
+
+    resolved = _resolve_model_root(
+        {
+            "reward_model_name": "KlingTeam/VideoReward@main",
+            "local_files_only": True,
+        },
+    )
+
+    assert resolved == root
+    assert captured["repo_id"] == "KlingTeam/VideoReward"
+    assert captured["revision"] == "main"
+    assert captured["local_files_only"] is True
+
+
+def test_kling_video_reward_base_loader_honors_local_files_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Checks Kling video reward keeps base model loading offline when requested."""
+    from vrl.rewards.models import kling_video_reward as kling_reward
+
+    captured = {}
+
+    class _FakeTokenizer:
+        padding_side = "right"
+        pad_token_id = 0
+
+    class _FakeProcessor:
+        tokenizer = _FakeTokenizer()
+
+    class _FakeModelConfig:
+        pass
+
+    class _FakeModel:
+        config = _FakeModelConfig()
+
+        def to(self, dtype):
+            captured["to_dtype"] = dtype
+            return self
+
+    class _FakeAutoProcessor:
+        @staticmethod
+        def from_pretrained(*args, **kwargs):
+            captured["processor"] = (args, kwargs)
+            return _FakeProcessor()
+
+    def _fake_from_pretrained(*args, **kwargs):
+        captured["model"] = (args, kwargs)
+        return _FakeModel()
+
+    monkeypatch.setattr(
+        kling_reward.KlingQwen2VLRewardModel,
+        "from_pretrained",
+        staticmethod(_fake_from_pretrained),
+    )
+    monkeypatch.setattr(
+        "transformers.AutoProcessor",
+        _FakeAutoProcessor,
+    )
+
+    model_config = kling_reward._ModelConfig(
+        model_name_or_path="Qwen/Qwen2-VL-2B-Instruct",
+        model_revision="main",
+        torch_dtype="bfloat16",
+    )
+    peft_config = kling_reward._PeftLoraConfig(lora_enable=False)
+
+    model, processor = kling_reward._create_model_and_processor(
+        model_config,
+        peft_config,
+        dtype=kling_reward.torch.bfloat16,
+        disable_flash_attn2=True,
+        local_files_only=True,
+    )
+
+    assert isinstance(model, _FakeModel)
+    assert isinstance(processor, _FakeProcessor)
+    assert captured["processor"][1]["local_files_only"] is True
+    assert captured["processor"][1]["revision"] == "main"
+    assert captured["model"][1]["local_files_only"] is True
+    assert captured["model"][1]["revision"] == "main"
 
 
 def test_kling_video_reward_remaps_qwen2vl_checkpoint_keys() -> None:

@@ -140,7 +140,10 @@ class _ResumeAlgorithm:
 
 
 class _ResumeCollector:
-    async def collect(self, prompts, **kwargs):
+    async def score_rollouts(self, pendings):
+        return list(pendings)
+
+    async def collect_unscored(self, prompts, **kwargs):
         import torch
 
         from vrl.rollouts.batch import RolloutBatch
@@ -161,9 +164,9 @@ class _SyncCountingCollector(_ResumeCollector):
         self.syncer = syncer
         self.seen_counts = seen_counts
 
-    async def collect(self, prompts, **kwargs):
+    async def collect_unscored(self, prompts, **kwargs):
         self.seen_counts.append(len(self.syncer.calls))
-        return await super().collect(prompts, **kwargs)
+        return await super().collect_unscored(prompts, **kwargs)
 
 
 class _ResumeEvaluator:

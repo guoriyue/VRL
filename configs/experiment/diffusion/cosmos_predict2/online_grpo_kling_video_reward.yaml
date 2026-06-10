@@ -42,11 +42,3 @@ trainer:
 # eval.eval_only=true switches the driver into base-vs-LoRA comparison
 # mode (no training); requires model.lora.path to point at a trained
 # checkpoint.
-eval:
-  eval_only: false
-  prompts_file: datasets/drawbench/eval_64.txt
-  seeds: 1                         # seeds per eval prompt
-  sanity_gates:
-    enable: true
-    clip_fraction_threshold: 0.5
-    approx_kl_threshold: 0.1

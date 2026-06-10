@@ -62,7 +62,11 @@ def build_trainer_config(cfg: DictConfig):
         if path_exists(cfg, "trainer.rollout_orchestration")
         else {}
     )
-    torch_profiler_dict = require(cfg, "trainer.torch_profiler")
+    torch_profiler_dict = (
+        require(cfg, "trainer.torch_profiler")
+        if path_exists(cfg, "trainer.torch_profiler")
+        else {}
+    )
 
     if path_exists(cfg, "rollout.n_samples_per_prompt"):
         n_value = require(cfg, "rollout.n_samples_per_prompt")

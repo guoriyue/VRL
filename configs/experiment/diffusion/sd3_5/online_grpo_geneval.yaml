@@ -26,17 +26,6 @@ rollout:
   rollout_batch_size: 8
   sample_batch_size: 8
 
-eval:
-  enable: true
-  freq: 60
-  manifest: datasets/geneval/test.jsonl
-  max_prompts: 16
-  num_steps: 40
-  sample_batch_size: 8
-  noise_level: 0.0
-  seed: 20260504
-  use_ema: true
-
 trainer:
   entrypoint: vrl.scripts.diffusion.sd3_5.train:train_sd3_5_grpo
   output_dir: outputs/sd3_5_geneval_grpo

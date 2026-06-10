@@ -79,6 +79,12 @@ class _RewardScorer:
         self.outputs_shape = tuple(request.outputs.shape)
         return torch.zeros(request.batch_size, device=request.device)
 
+    async def score_many(
+        self,
+        requests: list[RewardScoringInput],
+    ) -> list[torch.Tensor]:
+        return [await self.score(request) for request in requests]
+
 
 @pytest.mark.asyncio
 async def test_collector_releases_generation_output_after_reward_scoring() -> None:

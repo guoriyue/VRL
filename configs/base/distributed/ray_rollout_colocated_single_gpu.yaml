@@ -1,6 +1,5 @@
 # Single-GPU colocated Ray rollout preset for workstation validation runs.
 distributed:
-  backend: ray
   resources:
     visible_devices: auto
     trainer:
@@ -16,4 +15,3 @@ distributed:
     placement_strategy: STRICT_PACK
     max_inflight_chunks_per_worker: 1
     sync_trainable_state: lora_only
-    release_after_collect: true

@@ -62,5 +62,3 @@ trainer:
       max_ready_groups: 16
       max_stale_policy_versions: 0
 
-eval:
-  enable: false

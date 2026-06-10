@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import time
 from contextlib import nullcontext
+from dataclasses import dataclass, field
 from typing import Any
 
 from vrl.generation import GenerationOutput, GenerationRuntime
@@ -26,6 +27,16 @@ from vrl.rollouts.collector.rewards import RewardScorer
 from vrl.rollouts.families import get_rollout_family_entry
 from vrl.trajectory import trajectory_storage_policy_from_cfg
 from vrl.utils.config import cfg_get
+
+
+@dataclass(slots=True)
+class UnscoredRollout:
+    """A generated-but-unscored prompt group awaiting deferred reward scoring."""
+
+    output: GenerationOutput
+    collector_request: CollectorRequest
+    profile: bool = False
+    phases: dict[str, float] = field(default_factory=dict)
 
 
 class RolloutCollector:
@@ -85,11 +96,26 @@ class RolloutCollector:
         prompts: list[str],
         **kwargs: Any,
     ) -> RolloutBatch:
+        unscored = await self.collect_unscored(prompts, **kwargs)
+        return (await self.score_rollouts([unscored]))[0]
+
+    async def collect_unscored(
+        self,
+        prompts: list[str],
+        **kwargs: Any,
+    ) -> UnscoredRollout:
+        """Generate one prompt group without scoring it.
+
+        Deferred-scoring half of collect(): the generation runtime stays
+        resident so several groups can be generated back to back; scoring (and
+        the rollout release shared-GPU reward runs need before it) happens in
+        score_rollouts().
+        """
+
         group_size = int(kwargs.get("group_size", self.default_group_size))
         collector_request = self.request_builder.build(prompts, group_size, dict(kwargs))
 
         profile = os.environ.get("VRL_PROFILE_COLLECT") == "1"
-        phases: dict[str, float] = {}
         phase_t = _sync_time() if profile else None
 
         output = await self.runtime.generate(collector_request.request)
@@ -99,63 +125,73 @@ class RolloutCollector:
                 f"(request_id={collector_request.request.request_id}): {output.error}",
             )
 
+        unscored = UnscoredRollout(
+            output=output,
+            collector_request=collector_request,
+            profile=profile,
+        )
+        if profile and phase_t is not None:
+            unscored.phases["collect.engine_generate"] = _sync_time() - phase_t
+        return unscored
+
+    async def score_rollouts(self, unscored: list[UnscoredRollout]) -> list[RolloutBatch]:
+        """Score unscored groups through one reward call and build their batches.
+
+        Rollout prompts/metadata are per-sample, so all groups score in a
+        single reward_scorer.score_many call — model-backed rewards with
+        release_after_score pay one actor cold start per call instead of one
+        per group. Batches return in input order.
+        """
+
+        if not unscored:
+            return []
         if self._should_release_runtime_before_reward_model():
             # Shared single-GPU reward runs must drop rollout actors before reward
             # model actors can reserve the same GPU.
             await self.release_runtime_memory()
 
-        if profile and phase_t is not None:
-            now = _sync_time()
-            phases["collect.engine_generate"] = now - phase_t
-            phase_t = now
-
-        batch = await self._output_batch_to_rollout_batch(
-            output,
-            collector_request=collector_request,
-            phases=phases if profile else None,
-            phase_t=phase_t,
-        )
-
-        if profile:
-            self.last_collect_phases.clear()
-            self.last_collect_phases.update(phases)
-
-        return batch
-
-    async def _output_batch_to_rollout_batch(
-        self,
-        output: GenerationOutput,
-        *,
-        collector_request: CollectorRequest,
-        phases: dict[str, float] | None = None,
-        phase_t: float | None = None,
-    ) -> RolloutBatch:
-        context = RolloutBatchBuildContext(
-            metadata=dict(collector_request.metadata),
-            device=_device_from_model(self.model),
-            kl_reward=float(cfg_get(self.config, "kl_reward", 0.0)),
-            reward_view_name=_reward_view_name(self.config),
-            trajectory_storage_policy=trajectory_storage_policy_from_cfg(
-                cfg_get(self.config, "trajectory_storage", None),
-            ),
-            reward_artifact_policy=reward_artifact_policy_from_cfg(
-                cfg_get(self.config, "reward_artifact", None),
-            ),
-        )
-        batch_builder = TrajectoryRolloutBatchBuilder(output, context)
-
-        with _record_function("collector.reward_score"):
-            rewards = await self.reward_scorer.score(
-                batch_builder.reward_scoring_input(collector_request.metadata),
+        contexts = []
+        builders = []
+        for rollout in unscored:
+            context = RolloutBatchBuildContext(
+                metadata=dict(rollout.collector_request.metadata),
+                device=_device_from_model(self.model),
+                kl_reward=float(cfg_get(self.config, "kl_reward", 0.0)),
+                reward_view_name=_reward_view_name(self.config),
+                trajectory_storage_policy=trajectory_storage_policy_from_cfg(
+                    cfg_get(self.config, "trajectory_storage", None),
+                ),
+                reward_artifact_policy=reward_artifact_policy_from_cfg(
+                    cfg_get(self.config, "reward_artifact", None),
+                ),
             )
+            contexts.append(context)
+            builders.append(TrajectoryRolloutBatchBuilder(rollout.output, context))
 
-        if phases is not None and phase_t is not None:
-            phases["collect.reward_score"] = _sync_time() - phase_t
+        profile = any(rollout.profile for rollout in unscored)
+        phase_t = _sync_time() if profile else None
+        with _record_function("collector.reward_score"):
+            rewards = await self.reward_scorer.score_many(
+                [
+                    builder.reward_scoring_input(rollout.collector_request.metadata)
+                    for builder, rollout in zip(builders, unscored, strict=True)
+                ],
+            )
+        reward_score_s = _sync_time() - phase_t if phase_t is not None else None
 
-        batch = batch_builder.build(rewards)
-        release_reward_artifact_if_needed(batch, context.reward_artifact_policy)
-        release_reward_artifact_if_needed(output, context.reward_artifact_policy)
-        return batch
+        batches: list[RolloutBatch] = []
+        for builder, context, rollout, group_rewards in zip(
+            builders, contexts, unscored, rewards, strict=True,
+        ):
+            batch = builder.build(group_rewards)
+            release_reward_artifact_if_needed(batch, context.reward_artifact_policy)
+            release_reward_artifact_if_needed(rollout.output, context.reward_artifact_policy)
+            if rollout.profile and reward_score_s is not None:
+                rollout.phases["collect.reward_score"] = reward_score_s
+                self.last_collect_phases.clear()
+                self.last_collect_phases.update(rollout.phases)
+            batches.append(batch)
+        return batches
 
     def _should_release_runtime_before_reward_model(self) -> bool:
         # Ask the runtime (GenerationRuntime protocol) instead of probing its
@@ -238,5 +274,6 @@ def _sync_time() -> float:
 
 __all__ = [
     "RolloutCollector",
+    "UnscoredRollout",
     "build_rollout_collector",
 ]

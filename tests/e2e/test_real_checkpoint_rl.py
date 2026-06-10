@@ -442,7 +442,7 @@ class _SyntheticDiffusionReplayCollector:
         self.device = device
         self.runtime = _StaticPolicyRuntime()
 
-    async def collect(self, prompts: list[str], **kwargs: Any) -> Any:
+    async def collect_unscored(self, prompts: list[str], **kwargs: Any) -> Any:
         return _synthetic_diffusion_replay_batch(
             model=self.model,
             case=self.case,
@@ -452,6 +452,9 @@ class _SyntheticDiffusionReplayCollector:
             policy_version=kwargs.get("policy_version"),
             device=self.device,
         )
+
+    async def score_rollouts(self, pendings: Any) -> Any:
+        return list(pendings)
 
     async def release_runtime_memory(self) -> None:
         if torch.cuda.is_available():

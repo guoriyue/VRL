@@ -14,12 +14,12 @@ from vrl.rollouts.orchestration.strict_on_policy import StrictOnPolicyRolloutSch
 
 
 class _RaisingCollector:
-    """Collector whose collect() always raises, like a mid-rollout crash."""
+    """Collector whose generation always raises, like a mid-rollout crash."""
 
     def __init__(self) -> None:
         self.runtime = None
 
-    async def collect(self, *_args: object, **_kwargs: object) -> object:
+    async def collect_unscored(self, *_args: object, **_kwargs: object) -> object:
         raise RuntimeError("collect blew up")
 
 
@@ -109,5 +109,5 @@ class _OkCollector:
     def __init__(self) -> None:
         self.runtime = None
 
-    async def collect(self, *_args: object, **_kwargs: object) -> object:  # pragma: no cover
+    async def collect_unscored(self, *_args: object, **_kwargs: object) -> object:  # pragma: no cover
         raise AssertionError("should not be called for empty prompts")

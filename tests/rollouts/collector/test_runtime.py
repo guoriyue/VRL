@@ -113,6 +113,12 @@ class _RewardScorer:
         )
         return torch.arange(request.batch_size, dtype=torch.float32)
 
+    async def score_many(
+        self,
+        requests: list[RewardScoringInput],
+    ) -> list[torch.Tensor]:
+        return [await self.score(request) for request in requests]
+
 
 def _collector(
     *,
@@ -213,6 +219,54 @@ def test_reward_scoring_input_rejects_prompt_output_mismatch() -> None:
             metadata={},
             device="cpu",
         )
+
+
+def test_reward_scorer_score_many_uses_one_call_and_splits_per_group() -> None:
+    """Checks score_many merges groups into one score_batch with per-group metadata."""
+    import asyncio
+
+    from vrl.rollouts.collector.rewards import RewardScorer
+
+    class _CountingReward:
+        def __init__(self) -> None:
+            self.score_batch_calls: list[list[Any]] = []
+
+        async def score_batch(self, rollouts: list[Any]) -> list[float]:
+            self.score_batch_calls.append(list(rollouts))
+            return [float(i) for i in range(len(rollouts))]
+
+    reward_fn = _CountingReward()
+    scorer = RewardScorer(reward_fn)
+    requests = [
+        RewardScoringInput(
+            outputs=torch.ones(2, 3),
+            prompts=["g0-a", "g0-b"],
+            metadata={"target_text": "group-0"},
+            device="cpu",
+        ),
+        RewardScoringInput(
+            outputs=torch.ones(3, 3),
+            prompts=["g1-a", "g1-b", "g1-c"],
+            metadata={"target_text": "group-1"},
+            device="cpu",
+        ),
+    ]
+
+    rewards = asyncio.run(scorer.score_many(requests))
+
+    # One reward call for both groups — this is what keeps one actor
+    # lifecycle per epoch for release_after_score rewards.
+    assert len(reward_fn.score_batch_calls) == 1
+    rollouts = reward_fn.score_batch_calls[0]
+    assert [r.trajectory.prompt for r in rollouts] == [
+        "g0-a", "g0-b", "g1-a", "g1-b", "g1-c",
+    ]
+    assert [r.metadata["target_text"] for r in rollouts] == [
+        "group-0", "group-0", "group-1", "group-1", "group-1",
+    ]
+    # Scores split back by group size, in order.
+    assert rewards[0].tolist() == [0.0, 1.0]
+    assert rewards[1].tolist() == [2.0, 3.0, 4.0]
 
 
 def test_reward_view_selection_fails_fast_when_ambiguous() -> None:

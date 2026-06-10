@@ -188,16 +188,23 @@ class KlingVideoRewardModel(RewardModel):
             or self.worker_config.get("model_name")
             or "",
         ).strip()
+        self.local_files_only = bool(self.worker_config.get("local_files_only", False))
+        _emit_kling_load_log(
+            "resolving Kling VideoReward root",
+            reward_model_name=self.reward_model_name,
+            model_path=str(self.worker_config.get("model_path", "")).strip(),
+            local_files_only=self.local_files_only,
+        )
         self.model_root = _resolve_model_root(self.worker_config)
         self.dtype = _torch_dtype(str(self.worker_config.get("dtype", "bfloat16")))
         self.device = str(self.worker_config.get("device", "cuda:0"))
         self.use_norm = bool(self.worker_config.get("use_norm", True))
-        logger.info(
-            "Loading Kling VideoReward model root=%s device=%s dtype=%s use_norm=%s",
-            self.model_root,
-            self.device,
-            self.dtype,
-            self.use_norm,
+        _emit_kling_load_log(
+            "resolved Kling VideoReward root",
+            root=self.model_root,
+            device=self.device,
+            dtype=self.dtype,
+            use_norm=self.use_norm,
         )
         disable_flash_attn2 = self.worker_config.get("disable_flash_attn2", None)
         if disable_flash_attn2 is None:
@@ -207,23 +214,39 @@ class KlingVideoRewardModel(RewardModel):
         if disable_flash_attn2:
             logger.info("Forcing Kling VideoReward to use SDPA attention")
 
+        _emit_kling_load_log("loading Kling VideoReward configs", root=self.model_root)
         data_config, model_config, peft_config, inference_config = _load_configs(self.model_root)
+        _emit_kling_load_log(
+            "building Kling VideoReward base model",
+            base_model=model_config.model_name_or_path,
+            revision=model_config.model_revision,
+            local_files_only=self.local_files_only,
+            disable_flash_attn2=disable_flash_attn2,
+        )
         model, processor = _create_model_and_processor(
             model_config,
             peft_config,
             dtype=self.dtype,
             disable_flash_attn2=disable_flash_attn2,
+            local_files_only=self.local_files_only,
         )
+        _emit_kling_load_log("loading Kling VideoReward checkpoint", root=self.model_root)
         model, _checkpoint_step = load_kling_video_reward_checkpoint(
             model,
             self.model_root,
             -1,
+        )
+        _emit_kling_load_log(
+            "moving Kling VideoReward model to device",
+            device=self.device,
+            checkpoint_step=_checkpoint_step,
         )
         model.eval()
         self.model = model.to(self.device)
         self.processor = processor
         self.data_config = data_config
         self.inference_config = inference_config
+        _emit_kling_load_log("loaded Kling VideoReward model", device=self.device)
 
     def __call__(
         self,
@@ -594,7 +617,23 @@ def _resolve_model_root(worker_config: Mapping[str, Any]) -> Path:
             )
         from huggingface_hub import snapshot_download
 
-        root = Path(snapshot_download(repo_id=repo_id, revision=revision)).resolve()
+        local_files_only = bool(worker_config.get("local_files_only", False))
+        try:
+            root = Path(
+                snapshot_download(
+                    repo_id=repo_id,
+                    revision=revision,
+                    local_files_only=local_files_only,
+                ),
+            ).resolve()
+        except Exception as exc:
+            mode = "local cache" if local_files_only else "Hugging Face download"
+            raise RuntimeError(
+                f"Failed to resolve Kling VideoReward model root from {mode}: "
+                f"repo_id={repo_id!r} revision={revision!r}. Set "
+                "reward.kwargs.kling_video_reward.worker_config.model_path to a "
+                "local snapshot path, or pre-download the model cache before training.",
+            ) from exc
 
     if not (root / "model_config.json").exists():
         parent = root.parent
@@ -630,6 +669,7 @@ def _create_model_and_processor(
     *,
     dtype: torch.dtype,
     disable_flash_attn2: bool,
+    local_files_only: bool = False,
 ) -> tuple[Any, Any]:
     if model_config.load_in_8bit or model_config.load_in_4bit:
         raise ValueError("Kling VideoReward inference does not support 8-bit/4-bit loading")
@@ -640,6 +680,8 @@ def _create_model_and_processor(
     torch_dtype = _torch_dtype(model_config.torch_dtype, fallback=dtype)
     processor = AutoProcessor.from_pretrained(
         model_config.model_name_or_path,
+        revision=model_config.model_revision,
+        local_files_only=local_files_only,
         padding_side="right",
     )
     special_token_ids = None
@@ -655,6 +697,7 @@ def _create_model_and_processor(
         torch_dtype=torch_dtype,
         attn_implementation="sdpa" if disable_flash_attn2 else "flash_attention_2",
         revision=model_config.model_revision,
+        local_files_only=local_files_only,
         use_cache=True,
     )
     if model_config.use_special_tokens:
@@ -736,6 +779,13 @@ def _torch_dtype(name: str | None, *, fallback: torch.dtype | None = None) -> to
     from vrl.models.dtypes import resolve_torch_dtype
 
     return resolve_torch_dtype(name)
+
+
+def _emit_kling_load_log(message: str, **fields: Any) -> None:
+    payload = " ".join(f"{key}={value}" for key, value in fields.items())
+    line = f"{message}: {payload}" if payload else message
+    logger.info(line)
+    print(line, flush=True)
 
 
 def _remap_qwen2vl_state_dict(

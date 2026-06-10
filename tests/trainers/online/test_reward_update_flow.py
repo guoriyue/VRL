@@ -53,7 +53,10 @@ class TestRewardUpdateFlow:
                 )
 
         class _CapturingCollector:
-            async def collect(self, prompts, **kwargs):
+            async def score_rollouts(self, pendings):
+                return list(pendings)
+
+            async def collect_unscored(self, prompts, **kwargs):
                 captured_kwargs.append(dict(kwargs))
                 group_size = int(kwargs.get("group_size", 1))
                 return RolloutBatch(
@@ -152,7 +155,10 @@ class TestRewardUpdateFlow:
                 )
 
         class _Collector:
-            async def collect(self, prompts, **kwargs):
+            async def score_rollouts(self, pendings):
+                return list(pendings)
+
+            async def collect_unscored(self, prompts, **kwargs):
                 prompts = list(prompts)
                 collect_calls.append(prompts)
                 group_size = int(kwargs.get("group_size", 1))
@@ -240,7 +246,10 @@ class TestRewardUpdateFlow:
                 return loss, TrainStepMetrics(loss=loss.item(), policy_loss=loss.item())
 
         class _Collector:
-            async def collect(self, prompts, **kwargs):
+            async def score_rollouts(self, pendings):
+                return list(pendings)
+
+            async def collect_unscored(self, prompts, **kwargs):
                 prompts = list(prompts)
                 group_size = int(kwargs.get("group_size", 1))
                 batch_size = len(prompts) * group_size
@@ -325,7 +334,10 @@ class TestRewardUpdateFlow:
                 return loss, TrainStepMetrics(loss=loss.item(), policy_loss=loss.item())
 
         class _Collector:
-            async def collect(self, prompts, **kwargs):
+            async def score_rollouts(self, pendings):
+                return list(pendings)
+
+            async def collect_unscored(self, prompts, **kwargs):
                 prompts = list(prompts)
                 group_size = int(kwargs.get("group_size", 1))
                 batch_size = len(prompts) * group_size
@@ -428,7 +440,10 @@ class TestRewardUpdateFlow:
                 return loss, TrainStepMetrics(loss=loss.item(), policy_loss=loss.item())
 
         class _Collector:
-            async def collect(self, prompts, **kwargs):
+            async def score_rollouts(self, pendings):
+                return list(pendings)
+
+            async def collect_unscored(self, prompts, **kwargs):
                 prompts = list(prompts)
                 group_size = int(kwargs.get("group_size", 1))
                 batch_size = len(prompts) * group_size

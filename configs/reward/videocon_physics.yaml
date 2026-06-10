@@ -7,16 +7,13 @@ distributed:
       num_gpus: 1
       gpus_per_worker: 1.0
       num_workers: 1
+      # Release lifecycle flags derive from share_with_rollout in
+      # resolve_distributed_resources; only the placement decision lives here.
       share_with_rollout: true
-  rollout:
-    # Reward and rollout share the same GPU bundle; rollout must release before
-    # the reward model loads.
-    release_before_reward_model: true
   reward:
     cpus_per_worker: 4.0
     placement_strategy: STRICT_PACK
     max_inflight_batches: 1
-    release_after_score: true
 
 reward:
   components:
@@ -30,7 +27,6 @@ reward:
       media_type: video
       artifact_format: mp4
       artifact_dir: ${trainer.output_dir}/reward_artifacts
-      timeout_s: 90.0
       debug_dir: ${trainer.output_dir}/reward_debug
       worker_config:
         model_path: ""

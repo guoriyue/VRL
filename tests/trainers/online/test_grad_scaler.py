@@ -155,7 +155,10 @@ class _Algorithm:
 
 
 class _Collector:
-    async def collect(self, prompts, **kwargs):
+    async def score_rollouts(self, pendings):
+        return list(pendings)
+
+    async def collect_unscored(self, prompts, **kwargs):
         group_size = int(kwargs.get("group_size", 1))
         return RolloutBatch(
             observations=torch.zeros(group_size, 2, 1),

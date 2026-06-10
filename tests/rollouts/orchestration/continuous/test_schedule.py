@@ -68,10 +68,13 @@ class _Collector:
         self.runtime = runtime
         self.calls: list[dict[str, Any]] = []
 
-    async def collect(self, prompts: Any, **kwargs: Any) -> RolloutBatch:
+    async def collect_unscored(self, prompts: Any, **kwargs: Any) -> RolloutBatch:
         prompts = list(prompts)
         self.calls.append({"prompts": prompts, **dict(kwargs)})
         return _batch(prompts, int(kwargs.get("group_size", 1)))
+
+    async def score_rollouts(self, pendings: Any) -> list[RolloutBatch]:
+        return list(pendings)
 
     async def release_runtime_memory(self) -> None:
         self.calls.append({"release_runtime_memory": True})
@@ -213,7 +216,7 @@ class _FailingCollector(_Collector):
         super().__init__(runtime)
         self.message = message
 
-    async def collect(self, prompts: Any, **kwargs: Any) -> RolloutBatch:
+    async def collect_unscored(self, prompts: Any, **kwargs: Any) -> RolloutBatch:
         raise RuntimeError(self.message)
 
 
