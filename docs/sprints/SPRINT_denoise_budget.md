@@ -1,15 +1,16 @@
-# SPRINT: Denoise budget — fewer steps, no CFG（rollout 性能的最后一个大杠杆）
+# SPRINT: Denoise budget — 步数 sweep（rollout 性能的最后一个大杠杆）
 
 状态：proposed。接续 `SPRINT_rollout_performance.md`（其 P3 占位的展开）。
 
 ## 0. 一句话
 
 rollout 时间 ≈ **步数 × 每步计算量 × 每次 forward 速度**。第三个因子已经吃完
-（compile + bf16 + b8 ≈ 2x，见 SPRINT_rollout_performance）；前两个因子从没动过：
-训练 rollout 走 10 步、每步开 CFG（条件+无条件 = 2 份计算）。两个都砍 = 理论 4x。
-这是单卡 SD3.5 剩下唯一的大杠杆。
+（compile + bf16 + b8 ≈ 2x，见 SPRINT_rollout_performance）；本 sprint 打第一个因子：
+训练 rollout 当前走 10 步，往下扫找拐点，上限 ~2x。这是单卡 SD3.5 剩下唯一的大杠杆。
 
-**关键区别**：这不是纯工程优化——减步数/关 CFG 会改变生成质量，从而改变 reward 和
+第二个因子（CFG 每步算 2 份）**评估后判定不可砍**，原因见 §4a——记录在此防止以后重提。
+
+**关键区别**：这不是纯工程优化——减步数会改变生成质量，从而改变 reward 和
 RL 训练效果。所以验收标准是 **reward 曲线**，不是 wall clock。
 
 ## 1. 已知事实（代码证据）
@@ -22,23 +23,19 @@ RL 训练效果。所以验收标准是 **reward 曲线**，不是 wall clock。
 - CFG 的代价是真实 2x：`vrl/models/diffusion/sd3_5/runner.py:48` `cfg_mode = "batched_cfg"`，
   条件+无条件拼成双倍 batch 一次 forward。denoise 是 GPU-bound（profiler 证实），
   双倍 batch ≈ 双倍时间。
-- no-CFG 预设已存在：`configs/sampling/denoise/10_step_no_cfg.yaml`
-  （`cfg: false, guidance_scale: 1.0`），零代码即可实验。
 - GRPO 的轨迹长度 = 去噪步数：`sde_step_with_logprob` 每步写一个 log_prob
   （`vrl/generation/diffusion/executor.py` → `buffers.log_probs`）。减步数 = RL 信号密度
   也变，这是比图像质量更深的一层影响，必须用训练曲线验证。
 - 性能对照基线：compiled b8（`SPRINT_rollout_performance` 的 batching decision）。
 
-## 2. 两个旋钮（不预设具体数值，拐点是实验的输出）
+## 2. 主线只有一个旋钮：步数 sweep
 
 | 旋钮 | 含义 | 理论提速 | 成本 |
 |---|---|---|---|
-| E1: CFG on/off | 每步算 2 份（条件+无条件）还是 1 份 | off ≈ 2x | 零代码（`10_step_no_cfg` 预设已存在） |
-| E2: 步数 sweep | `num_steps` 从 10（baseline）往下扫，找 reward 开始劣化的拐点 | 与步数成正比 | 每档一个配置文件 |
+| 步数 sweep | `num_steps` 从 10（baseline）往下扫，找 reward 开始劣化的拐点 | 与步数成正比，上限 ~2x | 每档一个配置文件 |
 
-E2 的正确问法不是「能不能用 N 步」，而是「**reward-vs-steps 曲线的拐点在哪**」。
-具体扫哪几档由前一档结果决定（例如先试一个明显低档看劣化程度，再二分逼近拐点），
-不在 sprint 里写死。两个旋钮先各自单独扫，最后才试最优组合。
+正确问法不是「能不能用 N 步」，而是「**reward-vs-steps 曲线的拐点在哪**」。
+具体扫哪几档由前一档结果决定（先试一个明显低档看劣化程度，再逼近拐点），不写死。
 
 每组跑同样长度的短训练（与 baseline 同 epoch 数、同 seed、compiled b8、bf16），对比：
 
@@ -52,21 +49,40 @@ rollout wall clock / epoch（应接近理论倍数）
 ## 3. 验收
 
 ```text
-某组合 reward 终值接近 baseline（差距 < 约 5-10%，按 OCR reward 的 run-to-run 方差定）
+某档步数 reward 终值接近 baseline（差距 < 约 5-10%，按 OCR reward 的 run-to-run 方差定）
 且 rollout wall clock 下降接近理论倍数
-  → 把该组合设为 SD3.5 OCR 默认，写回本 sprint + 更新 experiment config
+  → 把该档设为 SD3.5 OCR 默认，写回本 sprint + 更新 experiment config
 
-所有组合 reward 都明显劣化
+所有低档 reward 都明显劣化
   → 记录数字结论，维持 10 步 CFG 现状，sprint 关闭（负结果也是结论）
 ```
 
 ## 4. 风险与注意
 
-- **OCR reward 对图像质量敏感**：文字渲染是 SD3.5 的弱项，少步/无引导可能直接让文字
-  不可读——所以先单因子各自扫，确认各自的安全范围后才试组合，不要一上来就两个旋钮全拧。
+- **OCR reward 对图像质量敏感**：文字渲染是 SD3.5 的弱项，步数砍狠了文字可能直接
+  不可读——先试一档看劣化程度，再逼近，不要跳档。
 - **不要用单次 run 下结论**：reward 曲线有 run-to-run 方差，关键对比至少跑 2 个 seed。
-- **CFG off 同时改变 RL 的探索分布**：no-CFG 样本更多样（无引导收缩），对 GRPO 可能
-  是好事（多样性）也可能是坏事（低质量样本浪费 reward 调用）——让曲线说话。
+
+### 4a. 为什么不关 CFG（已评估，决定不做——记录防止重提）
+
+CFG 每步算 2 份（条件+无条件），关掉理论省一半。但对 SD3.5 + GRPO + OCR 这个组合
+**大概率冷启动失败**，2026-06-09 评估后决定不做：
+
+1. **没有 CFG，SD3.5 几乎渲染不出文字**，而 OCR reward 只看文字。
+2. **GRPO 靠组内 reward 差异学习**：一组 8 张图全都没字 → 全员低分 → 组内无差异 →
+   advantage ≈ 0 → 没有梯度方向。不是学得慢，是没有起跑信号。
+3. **CFG 是被优化的策略本身**：flow_grpo 训练侧重算 log-prob 时做同样的 CFG 混合
+   （`~/Desktop/flow_grpo/scripts/train_sd3.py:185-195`），rollout 与 replay 必须一致。
+   关 CFG = 换一个起点差得多的策略类。
+
+注意「降低 guidance_scale」**不省任何时间**——成本是双份 forward，与强度数值无关。
+未来若真要砍这一半，仅有的两条原则性路径（都超出本 sprint）：
+- **CFG interval**：只在中段步开 CFG、两端步跳过 uncond forward（部分省）；需要
+  executor 支持按步开关且 replay 镜像同样的开关。
+- **先做 CFG 蒸馏再 RL**：把引导行为蒸进权重，再无 CFG 训练（一次性 SFT 大工程）。
+
+对照：cosmos predict2.5 + NFT 走 no-CFG 是**算法设计**（NFT 不需要 log-prob/CFG，
+checkpoint 也经过后训练），与 SD3.5 GRPO 不可类比。
 
 ## 5. Non-goals
 
