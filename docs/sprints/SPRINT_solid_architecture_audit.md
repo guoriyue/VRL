@@ -1,6 +1,6 @@
 # SPRINT: 全仓 SOLID / 架构审计（主索引）
 
-状态：A/C/D implemented（2026-06-09，commit ed2bba0，子 sprint doc 已随实现删除）；B 暂跳过（用户决定，doc 保留）。审计完成于 2026-06-08。
+状态：closed（2026-06-09）。A/C/D implemented（commit ed2bba0）；B（god-file 拆分）用户决定不做，doc 已删。本文件保留作审计结论与 Non-Goals 的决策记录。审计完成于 2026-06-08。
 
 本文件是**索引 + 决策记录**，不直接写实施步骤。具体改动在 4 个子 sprint 里，每个独立可执行。
 
@@ -68,7 +68,7 @@
 | 子 sprint | 主题 | 状态 |
 |---|---|---|
 | **A** | rollouts 编排层 DIP 收口（getattr → protocol） | ✅ done（含审计漏掉的第三处 `runtime_is_colocated`；契约测试 `tests/rollouts/test_runtime_protocol_contract.py`） |
-| **B** `SPRINT_solid_god_file_splits.md` | 5 个 god-file 拆分 | ⏭️ 暂跳过（用户决定） |
+| **B** | 5 个 god-file 拆分 | ❌ 不做（用户决定，doc 已删；god-file 现状可接受） |
 | **C** | 跨家族真重复下沉到共享层 | ✅ done（T6 与 B 绑定一并跳过；predict2_5 的 apply_lora 有意偏离保留） |
 | **D** | 字符串分支 → 多态 / 策略 | ✅ D1 done；D2-D5 评估后不实施（D2 热路径需 golden、D3 绑 B、D4/D5 YAGNI） |
 
