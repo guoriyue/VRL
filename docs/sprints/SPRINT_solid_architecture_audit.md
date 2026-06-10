@@ -1,6 +1,6 @@
 # SPRINT: 全仓 SOLID / 架构审计（主索引）
 
-状态：planned（审计已完成 2026-06-08；落地拆成 4 个子 sprint，见 §5）。
+状态：A/C/D implemented（2026-06-09，commit ed2bba0，子 sprint doc 已随实现删除）；B 暂跳过（用户决定，doc 保留）。审计完成于 2026-06-08。
 
 本文件是**索引 + 决策记录**，不直接写实施步骤。具体改动在 4 个子 sprint 里，每个独立可执行。
 
@@ -65,12 +65,14 @@
 
 ## 5. 子 Sprint 索引
 
-| 子 sprint | 文件 | 主题 | 优先级 |
-|---|---|---|---|
-| **A** | `SPRINT_solid_rollout_dip.md` | rollouts 编排层 DIP 收口（getattr → protocol） | 🔴 先做 |
-| **B** | `SPRINT_solid_god_file_splits.md` | 5 个 god-file 拆分 | 🟡 |
-| **C** | `SPRINT_solid_cross_family_dedup.md` | 跨家族真重复下沉到共享层 | 🟡 |
-| **D** | `SPRINT_solid_ocp_polymorphism.md` | 字符串分支 → 多态 / 策略（OCP/LSP） | 🟡 |
+| 子 sprint | 主题 | 状态 |
+|---|---|---|
+| **A** | rollouts 编排层 DIP 收口（getattr → protocol） | ✅ done（含审计漏掉的第三处 `runtime_is_colocated`；契约测试 `tests/rollouts/test_runtime_protocol_contract.py`） |
+| **B** `SPRINT_solid_god_file_splits.md` | 5 个 god-file 拆分 | ⏭️ 暂跳过（用户决定） |
+| **C** | 跨家族真重复下沉到共享层 | ✅ done（T6 与 B 绑定一并跳过；predict2_5 的 apply_lora 有意偏离保留） |
+| **D** | 字符串分支 → 多态 / 策略 | ✅ D1 done；D2-D5 评估后不实施（D2 热路径需 golden、D3 绑 B、D4/D5 YAGNI） |
+
+A/C/D 的子 sprint doc 已随实现删除（详细落地记录见 commit ed2bba0 及删除前的 doc 历史）。
 
 low 级 single-use 内联（`_max_batch_size`/`_require_hooks`/`_build_sequences`/`_dtype_label`/`select_tensor_tree` 等）**不开专项 PR**，路过对应文件时顺手处理。
 
