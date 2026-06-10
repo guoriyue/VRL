@@ -83,10 +83,13 @@ class TransformerBlock(nn.Module):
     ) -> torch.Tensor:
         if self.use_self_attn:
             normed = self.norm_self_attn(x)
+            # Self-attention keys are x itself, so they take the target-side
+            # rotary table; the qwen-side table only applies to cross-attn keys
+            # (the two tokenizers can disagree on sequence length).
             x = x + self.self_attn(
                 normed,
                 position_embeddings=position_embeddings,
-                position_embeddings_context=position_embeddings_context,
+                position_embeddings_context=position_embeddings,
             )
         normed = self.norm_cross_attn(x)
         x = x + self.cross_attn(
