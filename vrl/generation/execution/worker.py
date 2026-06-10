@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import dataclasses
 import importlib
-import logging
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -21,9 +20,10 @@ from vrl.generation.protocols import PipelineExecutor
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces import require_runtime_model
 from vrl.utils.cuda_memory import release_cuda_memory
+from vrl.utils.logging import init_logger
 from vrl.utils.profiling import TorchProfilerConfig
 
-logger = logging.getLogger(__name__)
+logger = init_logger(__name__)
 
 
 class GenerationWorkerCore:

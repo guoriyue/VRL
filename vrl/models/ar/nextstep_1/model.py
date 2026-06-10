@@ -28,7 +28,6 @@ The flow head's velocity-call signature is handled in
 from __future__ import annotations
 
 import contextlib
-import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -42,8 +41,9 @@ from vrl.math.ar.flow_matching import (
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 from vrl.models.utils import count_trainable_params, disable_adapter_on, load_weights_into
+from vrl.utils.logging import init_logger
 
-logger = logging.getLogger(__name__)
+logger = init_logger(__name__)
 
 
 # NextStep-1 image grid: 32x32 continuous patches at f8ch16 = 16-channel,

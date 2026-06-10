@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -20,8 +19,9 @@ from vrl.models.replay_loading import (
 from vrl.models.runtime_config import (
     extract_runtime_spec,
 )
+from vrl.utils.logging import init_logger
 
-logger = logging.getLogger(__name__)
+logger = init_logger(__name__)
 
 ANIMA_FAMILY = "cosmos-predict2-anima"
 

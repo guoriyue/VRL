@@ -6,7 +6,6 @@ does not import diffusers or cosmos-library backends eagerly.
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from vrl.generation.diffusion import (
@@ -32,9 +31,10 @@ from vrl.models.replay_loading import (
 from vrl.models.runtime_config import (
     extract_runtime_spec,
 )
+from vrl.utils.logging import init_logger
 from vrl.utils.media import load_reference_image
 
-logger = logging.getLogger(__name__)
+logger = init_logger(__name__)
 COSMOS_PREDICT2_FAMILY_CAPABILITY = diffusion_family_capability(
     "cosmos-predict2",
     "v2w",

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from pathlib import Path
@@ -22,8 +21,9 @@ from transformers import Qwen2VLForConditionalGeneration
 
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
 from vrl.rewards.ray.model import RewardModel
+from vrl.utils.logging import init_logger, kv
 
-logger = logging.getLogger(__name__)
+logger = init_logger(__name__)
 
 _SPECIAL_TOKENS = ["<|VQ_reward|>", "<|MQ_reward|>", "<|TA_reward|>"]
 _DEFAULT_REWARD_MODEL = "KlingTeam/VideoReward"
@@ -189,22 +189,26 @@ class KlingVideoRewardModel(RewardModel):
             or "",
         ).strip()
         self.local_files_only = bool(self.worker_config.get("local_files_only", False))
-        _emit_kling_load_log(
-            "resolving Kling VideoReward root",
-            reward_model_name=self.reward_model_name,
-            model_path=str(self.worker_config.get("model_path", "")).strip(),
-            local_files_only=self.local_files_only,
+        logger.info(
+            "resolving Kling VideoReward root %s",
+            kv(
+                reward_model_name=self.reward_model_name,
+                model_path=str(self.worker_config.get("model_path", "")).strip(),
+                local_files_only=self.local_files_only,
+            ),
         )
         self.model_root = _resolve_model_root(self.worker_config)
         self.dtype = _torch_dtype(str(self.worker_config.get("dtype", "bfloat16")))
         self.device = str(self.worker_config.get("device", "cuda:0"))
         self.use_norm = bool(self.worker_config.get("use_norm", True))
-        _emit_kling_load_log(
-            "resolved Kling VideoReward root",
-            root=self.model_root,
-            device=self.device,
-            dtype=self.dtype,
-            use_norm=self.use_norm,
+        logger.info(
+            "resolved Kling VideoReward root %s",
+            kv(
+                root=self.model_root,
+                device=self.device,
+                dtype=self.dtype,
+                use_norm=self.use_norm,
+            ),
         )
         disable_flash_attn2 = self.worker_config.get("disable_flash_attn2", None)
         if disable_flash_attn2 is None:
@@ -214,14 +218,16 @@ class KlingVideoRewardModel(RewardModel):
         if disable_flash_attn2:
             logger.info("Forcing Kling VideoReward to use SDPA attention")
 
-        _emit_kling_load_log("loading Kling VideoReward configs", root=self.model_root)
+        logger.info("loading Kling VideoReward configs %s", kv(root=self.model_root))
         data_config, model_config, peft_config, inference_config = _load_configs(self.model_root)
-        _emit_kling_load_log(
-            "building Kling VideoReward base model",
-            base_model=model_config.model_name_or_path,
-            revision=model_config.model_revision,
-            local_files_only=self.local_files_only,
-            disable_flash_attn2=disable_flash_attn2,
+        logger.info(
+            "building Kling VideoReward base model %s",
+            kv(
+                base_model=model_config.model_name_or_path,
+                revision=model_config.model_revision,
+                local_files_only=self.local_files_only,
+                disable_flash_attn2=disable_flash_attn2,
+            ),
         )
         model, processor = _create_model_and_processor(
             model_config,
@@ -230,23 +236,22 @@ class KlingVideoRewardModel(RewardModel):
             disable_flash_attn2=disable_flash_attn2,
             local_files_only=self.local_files_only,
         )
-        _emit_kling_load_log("loading Kling VideoReward checkpoint", root=self.model_root)
+        logger.info("loading Kling VideoReward checkpoint %s", kv(root=self.model_root))
         model, _checkpoint_step = load_kling_video_reward_checkpoint(
             model,
             self.model_root,
             -1,
         )
-        _emit_kling_load_log(
-            "moving Kling VideoReward model to device",
-            device=self.device,
-            checkpoint_step=_checkpoint_step,
+        logger.info(
+            "moving Kling VideoReward model to device %s",
+            kv(device=self.device, checkpoint_step=_checkpoint_step),
         )
         model.eval()
         self.model = model.to(self.device)
         self.processor = processor
         self.data_config = data_config
         self.inference_config = inference_config
-        _emit_kling_load_log("loaded Kling VideoReward model", device=self.device)
+        logger.info("loaded Kling VideoReward model %s", kv(device=self.device))
 
     def __call__(
         self,
@@ -779,13 +784,6 @@ def _torch_dtype(name: str | None, *, fallback: torch.dtype | None = None) -> to
     from vrl.models.dtypes import resolve_torch_dtype
 
     return resolve_torch_dtype(name)
-
-
-def _emit_kling_load_log(message: str, **fields: Any) -> None:
-    payload = " ".join(f"{key}={value}" for key, value in fields.items())
-    line = f"{message}: {payload}" if payload else message
-    logger.info(line)
-    print(line, flush=True)
 
 
 def _remap_qwen2vl_state_dict(

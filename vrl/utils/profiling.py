@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import contextlib
-import logging
 import socket
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from vrl.utils.logging import init_logger
+
+logger = init_logger(__name__)
 
 
 @dataclass(slots=True)

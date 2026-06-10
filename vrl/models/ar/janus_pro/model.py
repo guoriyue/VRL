@@ -37,7 +37,6 @@ DeepSeek's reference implementation:
 from __future__ import annotations
 
 import contextlib
-import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -49,8 +48,9 @@ import torch.nn.functional as F
 from vrl.models.ar.janus_pro import JANUS_R1_SEGMENTS
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 from vrl.models.utils import count_trainable_params, disable_adapter_on, load_weights_into
+from vrl.utils.logging import init_logger
 
-logger = logging.getLogger(__name__)
+logger = init_logger(__name__)
 
 # Janus-Pro-1B image-tokenizer constants (from deepseek-ai/Janus config)
 JANUS_IMAGE_TOKEN_NUM = 576           # 24 x 24 latent grid per image

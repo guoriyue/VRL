@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -39,8 +38,9 @@ from vrl.models.runtime_config import (
     extract_runtime_spec,
 )
 from vrl.trajectory import build_ar_discrete_trajectory, build_ar_multisegment_trajectory
+from vrl.utils.logging import init_logger
 
-logger = logging.getLogger(__name__)
+logger = init_logger(__name__)
 
 JANUS_PRO_FAMILY_CAPABILITY = ar_discrete_family_capability("janus_pro", "ar_t2i")
 JANUS_PRO_R1_FAMILY_CAPABILITY = ar_discrete_family_capability(

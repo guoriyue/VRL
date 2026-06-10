@@ -7,7 +7,6 @@ does not import diffusers or wan-library backends eagerly.
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from vrl.generation.diffusion import (
@@ -37,9 +36,10 @@ from vrl.models.runtime_config import (
     extract_runtime_spec,
 )
 from vrl.utils.config import cfg_get
+from vrl.utils.logging import init_logger
 from vrl.utils.media import load_reference_image
 
-logger = logging.getLogger(__name__)
+logger = init_logger(__name__)
 WAN_2_1_FAMILY_CAPABILITY = diffusion_family_capability("wan_2_1", "t2v")
 WAN_2_1_I2V_FAMILY_CAPABILITY = diffusion_family_capability(
     "wan_2_1_i2v",

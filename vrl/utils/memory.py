@@ -9,8 +9,9 @@ from typing import Any
 
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.models.replay_loading import bundle_loads_full_generation_modules
+from vrl.utils.logging import init_logger
 
-logger = logging.getLogger(__name__)
+logger = init_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)

@@ -6,7 +6,6 @@ does not import diffusers or future native backends eagerly.
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from vrl.generation.diffusion import (
@@ -35,8 +34,9 @@ from vrl.models.replay_loading import (
 from vrl.models.runtime_config import (
     extract_runtime_spec,
 )
+from vrl.utils.logging import init_logger
 
-logger = logging.getLogger(__name__)
+logger = init_logger(__name__)
 SD3_5_FAMILY_CAPABILITY = diffusion_family_capability("sd3_5", "t2i")
 
 

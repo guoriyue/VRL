@@ -17,6 +17,8 @@ Two collection-time gates live here:
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from tests import ci_envs
@@ -63,3 +65,15 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "optional" in item.keywords:
                 item.add_marker(skip_optional)
+
+
+@pytest.fixture(autouse=True)
+def _propagate_vrl_logs():
+    """vrl.utils.logging sets propagate=False on the "vrl" logger so production
+    output is emitted exactly once; caplog relies on propagation to the root
+    logger, so re-enable it for the duration of each test."""
+    vrl_logger = logging.getLogger("vrl")
+    previous = vrl_logger.propagate
+    vrl_logger.propagate = True
+    yield
+    vrl_logger.propagate = previous

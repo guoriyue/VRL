@@ -17,7 +17,6 @@ vendored ``third_party.mplug_owl_video`` module directly.
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -28,8 +27,9 @@ import torch.nn as nn
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
 from vrl.rewards.ray.model import RewardModel
+from vrl.utils.logging import init_logger
 
-logger = logging.getLogger(__name__)
+logger = init_logger(__name__)
 
 _DEFAULT_REWARD_MODEL = "videophysics/videocon_physics"
 _DEFAULT_REVISION = "main"
