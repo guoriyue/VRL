@@ -18,7 +18,7 @@ from vrl.models.diffusion.common.latent_decode import (
     LatentDecodeSpec,
     LatentDecodeTransform,
 )
-from vrl.models.diffusion.common.replay_tensors import (
+from vrl.models.diffusion.common.tensors import (
     align_replay_tensor,
     replay_tensor,
     shared_replay_tensor,

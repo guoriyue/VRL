@@ -31,10 +31,39 @@ class ChunkGatherer(Protocol):
     ) -> GenerationOutput: ...
 
 
+@runtime_checkable
+class PolicyVersionProvider(Protocol):
+    """Anything that can report the policy version its weights correspond to.
+
+    Orchestration asks providers (collector runtime, weight syncer) for the
+    version through this contract instead of reaching into their internals.
+    ``None`` means "I do not track a version".
+    """
+
+    current_policy_version: int | None
+
+
 class GenerationRuntime(Protocol):
     """Generation runtime consumed by rollout collectors."""
 
+    current_policy_version: int | None
+
     async def generate(self, request: GenerationRequest) -> GenerationOutput: ...
+
+    def should_release_memory_before_reward(self) -> bool:
+        """Whether rollout memory must be dropped before reward-model scoring.
+
+        Owned by the runtime because only it knows its release mode and GPU
+        sharing; callers must not probe runtime internals for this decision.
+        """
+        ...
+
+    def is_colocated(self) -> bool:
+        """Whether the trainer and rollout share a GPU.
+
+        Owned by the runtime for the same reason as the release decision.
+        """
+        ...
 
 
 @runtime_checkable
@@ -70,4 +99,5 @@ __all__ = [
     "ChunkResult",
     "GenerationRuntime",
     "PipelineExecutor",
+    "PolicyVersionProvider",
 ]

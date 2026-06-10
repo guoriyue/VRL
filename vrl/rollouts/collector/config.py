@@ -6,9 +6,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from omegaconf import DictConfig, ListConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf
 
-from vrl.utils.config import cfg_get
+from vrl.utils.config import cfg_get, to_builtin_deep
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,7 +132,7 @@ def _has_sde_sampling(values: dict[str, Any]) -> bool:
 
 
 def _normalize_config_value(name: str, value: Any) -> Any:
-    value = _to_builtin(value)
+    value = to_builtin_deep(value)
     if name == "sde_window_range":
         return tuple(value)
     return value
@@ -142,7 +142,7 @@ def _cfg_mapping(cfg: Any, path: str) -> dict[str, Any]:
     value = _cfg_select(cfg, path, _MISSING)
     if value is _MISSING or value is None:
         return {}
-    value = _to_builtin(value)
+    value = to_builtin_deep(value)
     if isinstance(value, Mapping):
         return {str(key): inner for key, inner in value.items()}
     raise ValueError(f"{path} config must be a mapping")
@@ -157,18 +157,6 @@ def _cfg_select(cfg: Any, path: str, default: Any) -> Any:
         if node is _MISSING:
             return default
     return node
-
-
-def _to_builtin(value: Any) -> Any:
-    if isinstance(value, (DictConfig, ListConfig)):
-        return OmegaConf.to_container(value, resolve=True)
-    if isinstance(value, dict):
-        return {str(key): _to_builtin(inner) for key, inner in value.items()}
-    if isinstance(value, list):
-        return [_to_builtin(inner) for inner in value]
-    if isinstance(value, tuple):
-        return tuple(_to_builtin(inner) for inner in value)
-    return value
 
 
 _MISSING = object()

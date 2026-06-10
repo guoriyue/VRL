@@ -36,10 +36,6 @@ from vrl.models.replay_loading import (
 from vrl.models.runtime_config import (
     extract_runtime_spec,
 )
-from vrl.nn.modules.ar_attention_backends import (
-    attention_backend_name,
-    resolve_attention_backend,
-)
 from vrl.trajectory import build_ar_continuous_trajectory
 
 logger = logging.getLogger(__name__)
@@ -231,6 +227,8 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
     """
 
     family: str = "nextstep_1"
+    _runner_cls = NextStep1ARModelRunner
+    _runner_attention_family = "nextstep_1"
     task: str = "ar_t2i"
     family_capability: FamilyCapability = NEXTSTEP_1_FAMILY_CAPABILITY
     default_image_token_num: int | None = None
@@ -495,19 +493,6 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
 
     # -- internals -----------------------------------------------------
 
-    def _ar_runner(self, request: GenerationRequest) -> NextStep1ARModelRunner:
-        sampling = request.sampling
-        return NextStep1ARModelRunner(
-            self.model,
-            attention_backend=resolve_attention_backend(
-                "nextstep_1",
-                attention_backend_name(sampling),
-                self.model,
-                block_size=int(sampling.get("ar_paged_block_size", 16)),
-                cache_dtype=str(sampling.get("ar_paged_cache_dtype", "auto")),
-            ),
-        )
-
     def _tokenize_prompts(
         self,
         prompts: list[str],
@@ -532,22 +517,13 @@ class NextStep1PipelineExecutor(ARPipelineExecutorBase):
         )
         ids = enc["input_ids"]
         mask = enc["attention_mask"]
-        if ids.shape[1] < max_text_length:
-            pad_id = getattr(tok, "pad_token_id", None) or 0
-            extra_len = max_text_length - ids.shape[1]
-            ids = torch.cat(
-                [ids, torch.full((ids.shape[0], extra_len), pad_id, dtype=ids.dtype)],
-                dim=1,
-            )
-            mask = torch.cat(
-                [mask, torch.zeros((mask.shape[0], extra_len), dtype=mask.dtype)],
-                dim=1,
-            )
+        ids, mask = self._align_tokenizer_output(
+            ids,
+            mask,
+            max_text_length=max_text_length,
+            pad_id=getattr(tok, "pad_token_id", None) or 0,
+        )
         return ids.to(device), mask.to(device)
-
-    def _embed(self, token_ids: torch.Tensor) -> torch.Tensor:
-        embed = self.model.language_model.get_input_embeddings()
-        return embed(token_ids)
 
 
 class NextStep1ChunkGatherer:

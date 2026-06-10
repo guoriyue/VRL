@@ -8,8 +8,6 @@ from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from omegaconf import DictConfig, ListConfig, OmegaConf
-
 from vrl.generation.execution import (
     DistributedExecutionPlanner,
     DistributedWorkerHandle,
@@ -29,7 +27,7 @@ from vrl.ray.dependencies import current_node_ip, require_ray
 from vrl.ray.lifecycle import kill_actors, remove_placement_group
 from vrl.ray.placement import validate_actor_gpu_ids
 from vrl.ray.resources import format_distributed_resource_plan
-from vrl.utils.config import cfg_path
+from vrl.utils.config import cfg_path, to_builtin_deep
 
 logger = logging.getLogger(__name__)
 
@@ -356,7 +354,7 @@ def _apply_rollout_compile_override(payload: dict[str, Any], cfg: Any, entry: An
     compile_cfg = cfg_path(cfg, _ROLLOUT_COMPILE_CFG_PATH, None)
     if compile_cfg is None:
         return
-    compile_cfg = _to_builtin(compile_cfg)
+    compile_cfg = to_builtin_deep(compile_cfg)
     if not isinstance(compile_cfg, Mapping):
         raise TypeError(f"{_ROLLOUT_COMPILE_CFG_PATH} must be a mapping")
     if not compile_cfg.get("enable", False):
@@ -385,7 +383,7 @@ def _runtime_extra(cfg: Any) -> dict[str, Any]:
     profiler_cfg = cfg_path(cfg, "rollout.torch_profiler", None)
     if profiler_cfg is None:
         return {}
-    profiler = _to_builtin(profiler_cfg)
+    profiler = to_builtin_deep(profiler_cfg)
     if not isinstance(profiler, dict):
         return {}
     return {
@@ -402,16 +400,6 @@ def _import_from_path(path: str) -> Any:
 
 def _device_to_string(value: Any) -> str:
     return str(value)
-
-
-def _to_builtin(value: Any) -> Any:
-    if isinstance(value, (DictConfig, ListConfig)):
-        return OmegaConf.to_container(value, resolve=True)
-    if isinstance(value, Mapping):
-        return {str(key): _to_builtin(inner) for key, inner in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_to_builtin(inner) for inner in value]
-    return value
 
 
 __all__ = [

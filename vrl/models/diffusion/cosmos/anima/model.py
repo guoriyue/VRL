@@ -23,6 +23,7 @@ from vrl.models.diffusion.common import (
     LatentDecodeSpec,
     LatentDecodeTransform,
 )
+from vrl.models.diffusion.common.lora import LoraModelMixin
 from vrl.models.diffusion.common.vae_decode_memory import apply_vae_decode_memory
 from vrl.models.diffusion.cosmos.anima.adapter import AnimaLLMAdapter
 from vrl.models.dtypes import resolve_torch_dtype
@@ -44,7 +45,7 @@ class AnimaSamplingState:
     seed: int
 
 
-class AnimaModel(DiffusionModelBase):
+class AnimaModel(LoraModelMixin, DiffusionModelBase):
     """Single-file Anima model on the shared diffusion RL path."""
 
     family = "cosmos-predict2-anima-t2i"
@@ -155,32 +156,12 @@ class AnimaModel(DiffusionModelBase):
             memory_metadata=memory_metadata,
         )
 
-    def apply_lora(self, spec: Any) -> None:
-        from peft import LoraConfig, PeftModel, get_peft_model
+    def _lora_transformer(self) -> Any:
+        return self.transformer
 
-        self.transformer.requires_grad_(False)
-        self.transformer.to(self.device, dtype=self._dtype)
-
-        lora_path = spec.lora_path
-        if lora_path:
-            transformer = PeftModel.from_pretrained(
-                self.transformer,
-                lora_path,
-                is_trainable=True,
-            )
-            transformer.set_adapter("default")
-            self._set_transformer(transformer)
-            return
-
-        lora_config = spec.lora
-        assert lora_config is not None
-        cfg = LoraConfig(
-            r=lora_config["rank"],
-            lora_alpha=lora_config["alpha"],
-            init_lora_weights="gaussian",
-            target_modules=lora_config["target_modules"],
-        )
-        self._set_transformer(get_peft_model(self.transformer, cfg))
+    def _lora_dtype(self, spec: Any) -> Any:
+        del spec
+        return self._dtype
 
     def enable_full_finetune(self) -> None:
         self.transformer.requires_grad_(True)

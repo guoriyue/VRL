@@ -45,6 +45,34 @@ class ReplaySegmentResult:
             )
         return self.values[key]
 
+    def logprobs(self, token_ids: Any | None = None) -> Any:
+        """Per-token log-probs for this segment.
+
+        Families either store them directly (``log_probs``) or store logits
+        under a modality-named key (``logits`` / ``image_logits`` /
+        ``text_logits``). That field-name knowledge lives here with the payload
+        contract, so consumers (evaluators) do not switch on payload keys and a
+        new modality only touches this method.
+        """
+        direct = self.values.get("log_probs")
+        if direct is not None:
+            return direct.float()
+
+        logits = self.values.get("logits")
+        if logits is None:
+            logits = self.values.get("image_logits")
+        if logits is None:
+            logits = self.values.get("text_logits")
+        if logits is None:
+            logits = self.require_value("logits")  # raises with available keys
+
+        if token_ids is None:
+            token_ids = self.require_value("token_ids")
+
+        from vrl.math.ar.logprob import gather_categorical_log_probs
+
+        return gather_categorical_log_probs(logits, token_ids)
+
 
 @dataclass(slots=True)
 class ReplayResult:

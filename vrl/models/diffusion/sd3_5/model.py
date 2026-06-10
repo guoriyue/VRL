@@ -46,6 +46,7 @@ from vrl.models.diffusion.common import (
     expand_batch_timestep,
     pack_eval_timestep,
 )
+from vrl.models.diffusion.common.lora import LoraModelMixin
 from vrl.models.diffusion.sd3_5.runner import (
     SD3DiffusionBackboneRunner,
     install_sd3_joint_attention_processor,
@@ -69,7 +70,7 @@ class SD3SamplingState:
     seed: int
 
 
-class SD3_5Model(DiffusionModelBase):
+class SD3_5Model(LoraModelMixin, DiffusionModelBase):
     """Diffusers-backed SD 3.5 t2i model."""
 
     family = "sd3_5-diffusers-t2i"
@@ -141,32 +142,8 @@ class SD3_5Model(DiffusionModelBase):
         pipeline.vae.to(spec.device, dtype=torch.float32)
         return cls(pipeline=pipeline, device=spec.device)
 
-    def apply_lora(self, spec: Any) -> None:
-        """Wrap the SD3 transformer with PEFT LoRA per spec.lora_*."""
-        from peft import LoraConfig, PeftModel, get_peft_model
-
-        self.pipeline.transformer.requires_grad_(False)
-        self.pipeline.transformer.to(self.device, dtype=resolve_torch_dtype(spec.dtype))
-
-        lora_path = spec.lora_path
-        if lora_path:
-            transformer = PeftModel.from_pretrained(
-                self.pipeline.transformer, lora_path, is_trainable=True,
-            )
-            transformer.set_adapter("default")
-            self._set_transformer(transformer)
-        else:
-            lora_config = spec.lora
-            assert lora_config is not None
-            cfg = LoraConfig(
-                r=lora_config["rank"],
-                lora_alpha=lora_config["alpha"],
-                init_lora_weights="gaussian",
-                target_modules=lora_config["target_modules"],
-            )
-            self._set_transformer(
-                get_peft_model(self.pipeline.transformer, cfg),
-            )
+    def _lora_dtype(self, spec: Any) -> Any:
+        return resolve_torch_dtype(spec.dtype)
 
     def enable_full_finetune(self) -> None:
         """Mark transformer fully trainable (no-LoRA path)."""

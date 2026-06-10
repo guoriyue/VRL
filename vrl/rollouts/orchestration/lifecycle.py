@@ -77,14 +77,12 @@ class RolloutLifecycle:
         return bool(getattr(runtime, "requires_driver_model_offload", False))
 
     def runtime_is_colocated(self) -> bool:
+        # Ask the runtime (GenerationRuntime protocol) instead of probing its
+        # config internals.
         runtime = self._collector_runtime()
         if runtime is None:
             return False
-        config = getattr(runtime, "config", None)
-        if bool(getattr(config, "allow_driver_gpu_overlap", False)):
-            return True
-        resources = getattr(config, "resources", None)
-        return bool(getattr(resources, "colocated", False))
+        return bool(runtime.is_colocated())
 
     def should_offload_driver_model_for_rollout(self) -> bool:
         return self.device.type == "cuda" and self.requires_driver_model_offload()
@@ -125,14 +123,15 @@ class RolloutLifecycle:
             return None
 
     def _runtime_policy_version(self, *, default: int | None) -> int | None:
-        runtime = self._collector_runtime()
-        value = getattr(runtime, "current_policy_version", None)
-        if value is None:
-            sync_runtime = getattr(self.weight_syncer, "runtime", None)
-            value = getattr(sync_runtime, "current_policy_version", None)
-        if value is None:
-            return default
-        return int(value)
+        # Ask each PolicyVersionProvider (collector runtime, then weight syncer)
+        # through the protocol instead of probing their internal structure.
+        for provider in (self._collector_runtime(), self.weight_syncer):
+            if provider is None:
+                continue
+            value = provider.current_policy_version
+            if value is not None:
+                return int(value)
+        return default
 
     def _next_fallback_policy_version(self) -> int:
         if self._last_policy_version is None:

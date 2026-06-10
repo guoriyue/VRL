@@ -11,6 +11,7 @@ from vrl.models.diffusion.common import (
     DiffusionBackboneInput,
     DiffusionBranch,
 )
+from vrl.models.diffusion.common.tensors import require_tensor
 
 
 @dataclass(slots=True)
@@ -30,7 +31,7 @@ class CosmosPredict25DiffusionBackboneRunner:
         extra = request.extra
         embeds = request.prompt_embeds
         if branch == "uncond":
-            embeds = _require_tensor(request.negative_prompt_embeds)
+            embeds = require_tensor(request.negative_prompt_embeds, "Cosmos Predict2.5 negative_prompt_embeds")
         hidden_states, timestep, gt_velocity = self._prepare_branch(
             latents=request.hidden_states,
             cond_latent=extra["cond_latent"],
@@ -88,7 +89,3 @@ class CosmosPredict25DiffusionBackboneRunner:
         return hidden_states, timestep, gt_velocity
 
 
-def _require_tensor(value: torch.Tensor | None) -> torch.Tensor:
-    if value is None:
-        raise ValueError("Cosmos Predict2.5 CFG branch requires negative_prompt_embeds")
-    return value

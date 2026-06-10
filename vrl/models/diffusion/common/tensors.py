@@ -1,21 +1,30 @@
-"""Replay-tensor batch helpers shared by Cosmos diffusion families.
-
-These resolve per-sample replay tensors during eval/replay reconstruction:
-broadcast a leading-1 batch dim, fall back to batch_context, and slice the
-shared (CFG-invariant) row. They are byte-identical across the Cosmos
-Predict2 and Predict2.5 ``restore_eval_state`` paths.
-
-Note: the Anima family deliberately keeps its own variants — its
-``_align_replay_tensor`` omits ``.contiguous()`` and its shared-tensor helper
-has a different signature (no ``batch_context``). Those are not the same
-function and are intentionally NOT consolidated here.
-"""
+"""Shared tensor helpers for diffusion family runners and replay paths."""
 
 from __future__ import annotations
 
 from typing import Any
 
 import torch
+
+
+def require_tensor(value: torch.Tensor | None, name: str) -> torch.Tensor:
+    """Fail fast when a CFG branch input that must exist is ``None``."""
+    if value is None:
+        raise ValueError(f"CFG branch requires {name}")
+    return value
+
+
+# -- replay-tensor batch helpers (shared by Cosmos Predict2 / Predict2.5) ----
+#
+# These resolve per-sample replay tensors during eval/replay reconstruction:
+# broadcast a leading-1 batch dim, fall back to batch_context, and slice the
+# shared (CFG-invariant) row. They are byte-identical across the Cosmos
+# Predict2 and Predict2.5 ``restore_eval_state`` paths.
+#
+# Note: the Anima family deliberately keeps its own variants — its
+# ``_align_replay_tensor`` omits ``.contiguous()`` and its shared-tensor helper
+# has a different signature (no ``batch_context``). Those are not the same
+# function and are intentionally NOT consolidated here.
 
 
 def align_replay_tensor(value: Any, batch_size: int) -> Any:
@@ -51,5 +60,6 @@ def shared_replay_tensor(
 __all__ = [
     "align_replay_tensor",
     "replay_tensor",
+    "require_tensor",
     "shared_replay_tensor",
 ]

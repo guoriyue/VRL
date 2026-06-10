@@ -37,6 +37,7 @@ from vrl.models.diffusion.common import (
     replay_tensor,
     shared_replay_tensor,
 )
+from vrl.models.diffusion.common.lora import LoraModelMixin
 from vrl.models.diffusion.cosmos.predict2.runner import (
     CosmosPredict2DiffusionBackboneRunner,
 )
@@ -72,7 +73,7 @@ class CosmosPredict2SamplingState:
     sigma_conditioning: float = 0.0001
 
 
-class CosmosPredict2Model(DiffusionModelBase):
+class CosmosPredict2Model(LoraModelMixin, DiffusionModelBase):
     """Diffusers-backed Cosmos Predict2 Video2World model (RL path).
 
     The pipeline is constructed by the family runtime
@@ -137,32 +138,6 @@ class CosmosPredict2Model(DiffusionModelBase):
         pipeline.vae.to(spec.device, dtype=torch.float32)
         pipeline.text_encoder.to(spec.device, dtype=spec.dtype)
         return cls(pipeline=pipeline, device=spec.device)
-
-    def apply_lora(self, spec: Any) -> None:
-        from peft import LoraConfig, PeftModel, get_peft_model
-
-        self.pipeline.transformer.requires_grad_(False)
-        self.pipeline.transformer.to(self.device)
-
-        lora_path = spec.lora_path
-        if lora_path:
-            transformer = PeftModel.from_pretrained(
-                self.pipeline.transformer, lora_path, is_trainable=True,
-            )
-            transformer.set_adapter("default")
-            self._set_transformer(transformer)
-        else:
-            lora_config = spec.lora
-            assert lora_config is not None
-            cfg = LoraConfig(
-                r=lora_config["rank"],
-                lora_alpha=lora_config["alpha"],
-                init_lora_weights="gaussian",
-                target_modules=lora_config["target_modules"],
-            )
-            self._set_transformer(
-                get_peft_model(self.pipeline.transformer, cfg),
-            )
 
     def enable_full_finetune(self) -> None:
         self.pipeline.transformer.requires_grad_(True)

@@ -1,6 +1,12 @@
 # SPRINT: rollouts 编排层 DIP 收口（getattr → protocol）
 
-状态：planned。父：`SPRINT_solid_architecture_audit.md`（子 sprint A，优先级最高）。
+状态：implemented（2026-06-09）。父：`SPRINT_solid_architecture_audit.md`（子 sprint A）。
+
+落地记录：
+- T1 ✅ `GenerationRuntime` 协议加 `should_release_memory_before_reward()`；两个 Ray runtime 各自实现（persistent → False，releasable → 读自己的 config）；collector 改为问协议。
+- T2 ✅ `PolicyVersionProvider` 协议（protocols.py）；`GenerationRuntime` 协议声明 `current_policy_version`；`WeightSyncer` ABC 加默认 `current_policy_version=None` property，`RayRuntimeWeightSyncer` 报自己 runtime 的版本；lifecycle `_runtime_policy_version` 改为依次问 provider。
+- T3 ✅ 扫描发现 doc 未列的第三处同类穿透：`lifecycle.runtime_is_colocated()`（runtime→config→resources 三级 getattr），一并修复——协议加 `is_colocated()`，两个 runtime 实现。其余 getattr 均为「读可选字段/tensor 属性」，按 Non-Goals 保留。
+- 测试：`tests/rollouts/test_runtime_protocol_contract.py`（11 个契约用例）；5 个测试文件的 fake 从「模拟内部结构」改为「实现协议方法」；rollouts+trainers+generation 全量 253 passed。
 
 ## 0. Core Decision
 

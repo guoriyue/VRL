@@ -86,4 +86,26 @@ def to_builtin(value: Any) -> Any:
     return value
 
 
-__all__ = ["cfg_get", "cfg_path", "plain_mapping", "to_builtin"]
+def to_builtin_deep(value: Any) -> Any:
+    """Deep-convert OmegaConf configs and nested Mapping/list/tuple to plain types.
+
+    Use for config payloads that must serialize cleanly (e.g. the Ray launch
+    contract). Tuples become lists; YAML-sourced configs never carry tuples, so
+    this only matters for hand-built test values.
+    """
+
+    try:
+        from omegaconf import DictConfig, ListConfig, OmegaConf
+    except Exception:
+        return value
+
+    if isinstance(value, (DictConfig, ListConfig)):
+        return OmegaConf.to_container(value, resolve=True)
+    if isinstance(value, Mapping):
+        return {str(key): to_builtin_deep(inner) for key, inner in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [to_builtin_deep(inner) for inner in value]
+    return value
+
+
+__all__ = ["cfg_get", "cfg_path", "plain_mapping", "to_builtin", "to_builtin_deep"]

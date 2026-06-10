@@ -10,6 +10,7 @@ from vrl.models.diffusion.common import (
     DiffusionBackboneInput,
     DiffusionBranch,
 )
+from vrl.models.diffusion.common.tensors import require_tensor
 from vrl.nn.layers.attention.joint import SD3JointAttentionProcessor
 
 
@@ -57,8 +58,8 @@ class SD3DiffusionBackboneRunner:
             embeds = request.prompt_embeds
             pooled = request.extra["pooled_prompt_embeds"]
         else:
-            embeds = _require_tensor(request.negative_prompt_embeds, "negative_prompt_embeds")
-            pooled = _require_tensor(
+            embeds = require_tensor(request.negative_prompt_embeds, "negative_prompt_embeds")
+            pooled = require_tensor(
                 request.extra.get("negative_pooled_prompt_embeds"),
                 "negative_pooled_prompt_embeds",
             )
@@ -90,7 +91,3 @@ class SD3DiffusionBackboneRunner:
         return combined
 
 
-def _require_tensor(value: torch.Tensor | None, name: str) -> torch.Tensor:
-    if value is None:
-        raise ValueError(f"SD3 CFG branch requires {name}")
-    return value

@@ -20,6 +20,7 @@ from vrl.models.diffusion.common import (
     DiffusionBackboneInput,
     DiffusionBranch,
 )
+from vrl.models.diffusion.common.tensors import require_tensor
 
 
 class WanDiffusionBackboneRunner:
@@ -35,7 +36,7 @@ class WanDiffusionBackboneRunner:
     ) -> DiffusionBranch:
         embeds = request.prompt_embeds
         if branch == "uncond":
-            embeds = _require_tensor(request.negative_prompt_embeds)
+            embeds = require_tensor(request.negative_prompt_embeds, "Wan negative_prompt_embeds")
         return DiffusionBranch(
             name=branch,
             hidden_states=request.hidden_states,
@@ -95,11 +96,11 @@ class WanI2VDiffusionBackboneRunner:
     ) -> DiffusionBranch:
         embeds = request.prompt_embeds
         if branch == "uncond":
-            embeds = _require_tensor(request.negative_prompt_embeds)
+            embeds = require_tensor(request.negative_prompt_embeds, "Wan negative_prompt_embeds")
 
         extra = request.extra
         condition = _batch_align_tensor(
-            _require_tensor(extra.get("condition")),
+            require_tensor(extra.get("condition"), "Wan condition"),
             request.hidden_states.shape[0],
         )
         # Channel-wise concat (mimics WanImageToVideoPipeline `__call__`:
@@ -113,7 +114,7 @@ class WanI2VDiffusionBackboneRunner:
         image_embeds = extra.get("image_embeds")
         if image_embeds is not None:
             extra_kwargs["encoder_hidden_states_image"] = _batch_align_tensor(
-                _require_tensor(image_embeds),
+                require_tensor(image_embeds, "Wan image_embeds"),
                 request.hidden_states.shape[0],
             )
 
@@ -145,10 +146,6 @@ class WanI2VDiffusionBackboneRunner:
         return combined
 
 
-def _require_tensor(value: torch.Tensor | None) -> torch.Tensor:
-    if value is None:
-        raise ValueError("Wan CFG branch requires non-None tensor input")
-    return value
 
 
 def _batch_align_tensor(value: torch.Tensor, batch_size: int) -> torch.Tensor:

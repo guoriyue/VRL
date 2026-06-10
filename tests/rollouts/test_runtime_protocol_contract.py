@@ -1,0 +1,124 @@
+"""GenerationRuntime / PolicyVersionProvider protocol contract (SOLID sub-sprint A).
+
+Orchestration asks runtimes and weight syncers questions through these
+protocols instead of probing their internal structure with getattr. These
+tests pin the contract: every production implementation must answer.
+"""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+import pytest
+
+from vrl.generation.protocols import PolicyVersionProvider
+from vrl.generation.ray.config import RayGenerationConfig
+from vrl.generation.ray.runtime import (
+    RayGenerationRuntime,
+    ReleasableRayGenerationRuntime,
+)
+from vrl.trainers.weight_sync import RayRuntimeWeightSyncer, WeightSyncer
+
+
+def _releasable_runtime(
+    *,
+    release_before_reward_model: bool = False,
+    reward_shared_with_rollout: bool = False,
+    allow_driver_gpu_overlap: bool = False,
+    colocated: bool = False,
+) -> ReleasableRayGenerationRuntime:
+    config = RayGenerationConfig(
+        release_before_reward_model=release_before_reward_model,
+        allow_driver_gpu_overlap=allow_driver_gpu_overlap,
+        resources=SimpleNamespace(
+            reward_shared_with_rollout=reward_shared_with_rollout,
+            colocated=colocated,
+        ),
+    )
+    return ReleasableRayGenerationRuntime(
+        config,
+        launch_contract=SimpleNamespace(policy_version=None),
+        gatherer=object(),
+    )
+
+
+# --------------------------------------------------------------------------
+# should_release_memory_before_reward
+# --------------------------------------------------------------------------
+def test_persistent_runtime_never_releases_before_reward() -> None:
+    runtime = RayGenerationRuntime(executor=object())
+    assert runtime.should_release_memory_before_reward() is False
+
+
+@pytest.mark.parametrize(
+    ("release_flag", "shared", "expected"),
+    [
+        (True, True, True),    # release mode + shared GPU -> must release
+        (True, False, False),  # release mode but reward has its own GPU
+        (False, True, False),  # not in release mode
+    ],
+)
+def test_releasable_runtime_release_decision(release_flag, shared, expected) -> None:
+    runtime = _releasable_runtime(
+        release_before_reward_model=release_flag,
+        reward_shared_with_rollout=shared,
+    )
+    assert runtime.should_release_memory_before_reward() is expected
+
+
+# --------------------------------------------------------------------------
+# is_colocated
+# --------------------------------------------------------------------------
+def test_persistent_runtime_is_not_colocated() -> None:
+    runtime = RayGenerationRuntime(executor=object())
+    assert runtime.is_colocated() is False
+
+
+@pytest.mark.parametrize(
+    ("overlap", "colocated", "expected"),
+    [
+        (True, False, True),
+        (False, True, True),
+        (False, False, False),
+    ],
+)
+def test_releasable_runtime_colocation(overlap, colocated, expected) -> None:
+    runtime = _releasable_runtime(
+        allow_driver_gpu_overlap=overlap,
+        colocated=colocated,
+    )
+    assert runtime.is_colocated() is expected
+
+
+# --------------------------------------------------------------------------
+# PolicyVersionProvider
+# --------------------------------------------------------------------------
+def test_runtimes_satisfy_policy_version_provider() -> None:
+    persistent = RayGenerationRuntime(executor=object())
+    releasable = _releasable_runtime()
+    assert isinstance(persistent, PolicyVersionProvider)
+    assert isinstance(releasable, PolicyVersionProvider)
+
+
+def test_weight_syncer_reports_its_runtime_version() -> None:
+    async def _update_weights(state, version):  # pragma: no cover - signature only
+        del state, version
+
+    runtime = SimpleNamespace(
+        update_weights=_update_weights,
+        current_policy_version=7,
+    )
+    syncer = RayRuntimeWeightSyncer(runtime)
+    assert isinstance(syncer, PolicyVersionProvider)
+    assert syncer.current_policy_version == 7
+
+
+def test_base_weight_syncer_defaults_to_no_version() -> None:
+    class _NullSyncer(WeightSyncer):
+        async def push(self, state_dict):  # pragma: no cover - contract only
+            del state_dict
+
+        async def pull(self):  # pragma: no cover - contract only
+            return {}
+
+    assert _NullSyncer().current_policy_version is None

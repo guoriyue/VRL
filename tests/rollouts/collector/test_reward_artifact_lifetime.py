@@ -41,6 +41,9 @@ class _RequestBuilder:
 
 
 class _Runtime:
+    def should_release_memory_before_reward(self) -> bool:
+        return False
+
     async def generate(self, request: GenerationRequest) -> GenerationOutput:
         batch_size = len(request.prompts) * request.samples_per_prompt
         sample_rows = _sample_rows(request)

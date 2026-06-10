@@ -56,7 +56,8 @@ logger = logging.getLogger(__name__)
 JANUS_IMAGE_TOKEN_NUM = 576           # 24 x 24 latent grid per image
 JANUS_IMAGE_VOCAB_SIZE = 16_384       # gen_vision_model codebook size
 JANUS_IMAGE_PATCH_SIZE = 16           # decoder upsample factor → 384 px
-JANUS_IMAGE_PIXEL_SIZE = 384
+# Derived: sqrt(576 tokens) = 24-wide latent grid x 16 px/patch = 384 px.
+JANUS_IMAGE_PIXEL_SIZE = int(JANUS_IMAGE_TOKEN_NUM**0.5) * JANUS_IMAGE_PATCH_SIZE
 JANUS_R1_SELFCHECK_PROMPT = (
     "<end_of_image>\nLet me think Does this image match the prompt..."
 )

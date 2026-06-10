@@ -42,6 +42,7 @@ from vrl.models.diffusion.common import (
     expand_batch_timestep,
     pack_eval_timestep,
 )
+from vrl.models.diffusion.common.lora import LoraModelMixin
 from vrl.models.diffusion.common.vae_decode_memory import apply_vae_decode_memory
 from vrl.models.diffusion.wan_2_1.runner import (
     WanDiffusionBackboneRunner,
@@ -79,7 +80,7 @@ class WanI2VSamplingState:
     seed: int
 
 
-class WanT2VDiffusersModel(DiffusionModelBase):
+class WanT2VDiffusersModel(LoraModelMixin, DiffusionModelBase):
     """Diffusers-backed Wan 2.1 T2V model (1.3B variant)."""
 
     family = "wan-diffusers-t2v"
@@ -137,33 +138,8 @@ class WanT2VDiffusersModel(DiffusionModelBase):
             memory_metadata=memory_metadata,
         )
 
-    def apply_lora(self, spec: Any) -> None:
-        """Wrap the Wan transformer with PEFT LoRA per spec.lora_*."""
-        from peft import LoraConfig, PeftModel, get_peft_model
-
-        self.pipeline.transformer.requires_grad_(False)
-        self.pipeline.transformer.to(self.device)
-
-        lora_path = spec.lora_path
-        if lora_path:
-            transformer = PeftModel.from_pretrained(
-                self.pipeline.transformer, lora_path, is_trainable=True,
-            )
-            transformer.set_adapter("default")
-            self._set_transformer(transformer)
-        else:
-            lora_config = spec.lora
-            assert lora_config is not None
-            cfg = LoraConfig(
-                r=lora_config["rank"],
-                lora_alpha=lora_config["alpha"],
-                # Empty training adapters must initially preserve base Wan output.
-                init_lora_weights=lora_config.get("init_lora_weights", True),
-                target_modules=lora_config["target_modules"],
-            )
-            self._set_transformer(
-                get_peft_model(self.pipeline.transformer, cfg),
-            )
+    # Empty training adapters must initially preserve base Wan output.
+    _lora_default_init_weights = True
 
     def enable_full_finetune(self) -> None:
         self.pipeline.transformer.requires_grad_(True)

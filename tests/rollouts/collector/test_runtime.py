@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -52,12 +51,14 @@ class _Runtime:
     ) -> None:
         self.requests: list[GenerationRequest] = []
         self.events: list[str] = []
-        self.config = SimpleNamespace(
-            release_before_reward_model=release_before_reward_model,
-            resources=SimpleNamespace(
-                reward_shared_with_rollout=reward_shared_with_rollout,
-            ),
+        self._release_before_reward = (
+            release_before_reward_model and reward_shared_with_rollout
         )
+
+    def should_release_memory_before_reward(self) -> bool:
+        # Fakes implement the GenerationRuntime protocol method directly
+        # instead of mimicking the runtime's internal config layout.
+        return self._release_before_reward
 
     async def generate(self, request: GenerationRequest) -> GenerationOutput:
         self.requests.append(request)

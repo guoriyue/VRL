@@ -1,6 +1,16 @@
 # SPRINT: 跨家族真重复下沉到共享层
 
-状态：planned。父：`SPRINT_solid_architecture_audit.md`（子 sprint C）。
+状态：implemented（2026-06-09，T6 除外）。父：`SPRINT_solid_architecture_audit.md`（子 sprint C）。
+
+落地记录：
+- T1 ✅ `LoraModelMixin`（`diffusion/common/lora.py`）：wan/sd3_5/predict2/anima 四家收口，hook 参数化（`_lora_default_init_weights`、`_lora_transformer`、`_lora_dtype`）。**实测发现 doc「仅 init_lora_weights 不同」不准确**：sd3_5 的 `.to()` 带 dtype、anima 的 transformer 不在 pipeline 上。predict2_5 两处**有意偏离**（NFT previous adapter），按守则跳过并注释记录。
+- T2 ✅ `require_tensor`（`diffusion/common/tensors.py`）：4 个 runner 收口，统一带 `name` 的错误信息（无测试断言旧文字）。
+- T3 ✅ `ARPipelineExecutorBase` 加 `_embed` / `_ar_runner` 模板（`_runner_cls` + `_runner_attention_family`）/ `_align_tokenizer_output`。**注意**：attention family 用独立属性而非 `self.family`——`janus_pro_r1` 的 family 与 backend 注册键（janus_pro）不同，直接用 family 会变行为。
+- T4 ✅ `to_builtin_deep` 进 `vrl/utils/config.py`（以 launcher 深递归版为准），launcher + collector/config 两处本地版删除。tuple 行为差异不在 YAML 输入域内。
+- T5 ✅（形式与 doc 不同）：videocon 的 `_torch_dtype` 经先前 dtype 统一后已是 `resolve_torch_dtype` 纯转发皮——直接删皮改直调；kling 版有真实语义（required/auto/fallback），保留。无需新建 `_video_utils.py`。
+- T6 ⏭️ 跳过：doc 要求与子 sprint B 的 danbooru 拆分合做，B 被明确跳过。
+- T7 ✅ `JANUS_IMAGE_PIXEL_SIZE` 改派生（`int(576**0.5) * 16`），断言 ==384 验证。
+- 验证：models/generation/rollouts/rewards/scripts 全量 335 passed，ruff 干净。
 
 ## 0. Core Decision
 

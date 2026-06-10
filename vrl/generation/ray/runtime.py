@@ -39,6 +39,19 @@ class RayGenerationRuntime(GenerationRuntime):
             request = replace(request, policy_version=self.current_policy_version)
         return await self.executor.execute(request)
 
+    def should_release_memory_before_reward(self) -> bool:
+        # Persistent workers stay resident; only the releasable wrapper drops
+        # actors between phases.
+        return False
+
+    def is_colocated(self) -> bool:
+        # Guaranteed, not assumed: trainer/rollout GPU overlap is rejected at
+        # startup unless release_after_collect=true (ray/config.py overlap
+        # validation), and that mode constructs ReleasableRayGenerationRuntime
+        # instead. If this persistent runtime is alive, its workers own
+        # dedicated rollout GPUs.
+        return False
+
     async def update_weights(self, state_ref: Any, policy_version: int) -> None:
         if self.weight_sync is None:
             raise RuntimeError("RayGenerationRuntime has no GenerationWeightSync")
@@ -108,6 +121,23 @@ class ReleasableRayGenerationRuntime(GenerationRuntime):
     async def generate(self, request: Any) -> Any:
         runtime = await self._ensure_runtime()
         return await runtime.generate(request)
+
+    def should_release_memory_before_reward(self) -> bool:
+        # The runtime owns its config, so reading it here is a legal internal
+        # access (the old collector-side getattr chain probed these fields from
+        # outside). Release only when the reward model shares the rollout GPU.
+        if not self.config.release_before_reward_model:
+            return False
+        resources = self.config.resources
+        return bool(resources is not None and resources.reward_shared_with_rollout)
+
+    def is_colocated(self) -> bool:
+        # Trainer and rollout share a GPU either via the explicit overlap flag
+        # or via overlapping device sets in the resource plan.
+        if self.config.allow_driver_gpu_overlap:
+            return True
+        resources = self.config.resources
+        return bool(resources is not None and resources.colocated)
 
     async def update_weights(self, state_ref: Any, policy_version: int) -> None:
         if self.weight_sync is None:

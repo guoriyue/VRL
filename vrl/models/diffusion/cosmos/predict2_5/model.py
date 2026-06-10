@@ -183,6 +183,9 @@ class CosmosPredict25Model(DiffusionModelBase):
         )
 
     def apply_lora(self, spec: Any) -> None:
+        # Deliberately NOT LoraModelMixin: this family also manages a second
+        # "previous" adapter for NFT previous-policy replay (different shape,
+        # not a copy of the shared attach logic).
         from peft import LoraConfig, PeftModel, get_peft_model
 
         self.pipeline.transformer.requires_grad_(False)

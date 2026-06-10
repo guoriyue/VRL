@@ -158,12 +158,12 @@ class RolloutCollector:
         return batch
 
     def _should_release_runtime_before_reward_model(self) -> bool:
+        # Ask the runtime (GenerationRuntime protocol) instead of probing its
+        # config internals; the release decision is the runtime's own knowledge.
         runtime = self._runtime
-        config = getattr(runtime, "config", None)
-        if not bool(getattr(config, "release_before_reward_model", False)):
+        if runtime is None:
             return False
-        resources = getattr(config, "resources", None)
-        return bool(getattr(resources, "reward_shared_with_rollout", False))
+        return bool(runtime.should_release_memory_before_reward())
 
 
 def build_rollout_collector(

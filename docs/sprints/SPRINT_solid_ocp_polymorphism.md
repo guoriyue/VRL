@@ -1,6 +1,13 @@
 # SPRINT: 字符串分支 → 多态 / 策略（OCP / LSP）
 
-状态：planned。父：`SPRINT_solid_architecture_audit.md`（子 sprint D）。
+状态：D1 implemented（2026-06-09）；D2-D5 评估后不实施（见下）。父：`SPRINT_solid_architecture_audit.md`（子 sprint D）。
+
+落地记录：
+- D1 ✅ **方案修正**：`ReplaySegmentResult` 没有子类层级（统一 dataclass + dict payload），所以不是「子类多态」而是把字段名知识收进 result 类本身——新增 `ReplaySegmentResult.logprobs(token_ids)`（`models/interfaces/replay.py`），log_probs/logits/image_logits/text_logits 的 payload-key 解析归数据契约 owner；evaluator 的 `_extract_logprobs` 退化为「补 token_ids 兜底 + 调 result.logprobs()」。加新模态字段名只改 replay.py 一处。
+- D2 ⏭️ 不实施：230 行 rollout 热路径重构，doc 要求 golden 逐位验证（需 GPU + Janus 权重跑真实 R1 rollout）；R1 executor 当前工作正常，按「不重写工作中的架构」原则保留继承形态，待真实需要第二个执行模式时再 Strategy 化。
+- D3 ⏭️ 不实施：doc 要求与子 sprint B 的 T4 合做，B 被明确跳过。
+- D4/D5 ⏭️ 按 doc 自身判断（YAGNI / 排后）记录不实施。
+- 验证：rollouts+models 197 passed，ruff 干净。
 
 ## 0. Core Decision
 

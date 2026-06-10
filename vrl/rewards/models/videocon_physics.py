@@ -25,6 +25,7 @@ from typing import Any
 import torch
 import torch.nn as nn
 
+from vrl.models.dtypes import resolve_torch_dtype
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
 from vrl.rewards.ray.model import RewardModel
 
@@ -56,7 +57,7 @@ class VideoConPhysicsModel(RewardModel):
             or "",
         ).strip()
         self.model_root = _resolve_model_root(self.worker_config)
-        self.dtype = _torch_dtype(str(self.worker_config.get("dtype", "bfloat16")))
+        self.dtype = resolve_torch_dtype(str(self.worker_config.get("dtype", "bfloat16")))
         self.device = str(self.worker_config.get("device", "cuda:0"))
         self.num_frames = int(self.worker_config.get("num_frames", _DEFAULT_NUM_FRAMES))
         self.physics_template = str(
@@ -263,12 +264,6 @@ def _resolve_model_root(worker_config: Mapping[str, Any]) -> Path:
     from huggingface_hub import snapshot_download
 
     return Path(snapshot_download(repo_id=repo_id, revision=revision)).resolve()
-
-
-def _torch_dtype(name: str) -> torch.dtype:
-    from vrl.models.dtypes import resolve_torch_dtype
-
-    return resolve_torch_dtype(name)
 
 
 __all__ = [

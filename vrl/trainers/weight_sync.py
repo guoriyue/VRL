@@ -23,6 +23,15 @@ class WeightSyncer(ABC):
     async def pull(self) -> dict[str, Any]:
         """Fetch the latest weights."""
 
+    @property
+    def current_policy_version(self) -> int | None:
+        """Policy version of the last pushed weights (PolicyVersionProvider).
+
+        ``None`` means this syncer does not track a version. Orchestration asks
+        through this property instead of reaching into syncer internals.
+        """
+        return None
+
 
 class RayRuntimeWeightSyncer(WeightSyncer):
     """Bridge ``OnlineTrainer`` weight pushes to a Ray rollout runtime."""
@@ -54,6 +63,13 @@ class RayRuntimeWeightSyncer(WeightSyncer):
 
     async def pull(self) -> dict[str, Any]:
         return dict(self._last_state)
+
+    @property
+    def current_policy_version(self) -> int | None:
+        # The syncer owns its runtime, so reading the runtime's version here is
+        # a legal internal access (callers used to probe syncer.runtime from
+        # outside).
+        return self.runtime.current_policy_version
 
 
 def build_runtime_weight_syncer(
@@ -99,6 +115,11 @@ def flatten_trainable_module_state(modules: Mapping[str, Any]) -> dict[str, Any]
         name = str(module_name)
         if not name:
             raise ValueError("trainable module names must be non-empty")
+        # Sync payload keys live in the uncompiled namespace on both ends:
+        # the receiver unwraps its OptimizedModule the same way (models/utils.py
+        # load_weights_into), so a compiled trainer module must not leak its
+        # _orig_mod. prefix into the payload.
+        module = getattr(module, "_orig_mod", module)
         state_dict = getattr(module, "state_dict", None)
         if not callable(state_dict):
             raise TypeError(f"trainable module {name!r} does not expose state_dict()")

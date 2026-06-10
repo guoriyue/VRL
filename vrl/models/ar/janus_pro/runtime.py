@@ -38,10 +38,6 @@ from vrl.models.replay_loading import (
 from vrl.models.runtime_config import (
     extract_runtime_spec,
 )
-from vrl.nn.modules.ar_attention_backends import (
-    attention_backend_name,
-    resolve_attention_backend,
-)
 from vrl.trajectory import build_ar_discrete_trajectory, build_ar_multisegment_trajectory
 
 logger = logging.getLogger(__name__)
@@ -276,6 +272,8 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
     """
 
     family: str = "janus_pro"
+    _runner_cls = JanusProARModelRunner
+    _runner_attention_family = "janus_pro"
     task: str = "ar_t2i"
     family_capability: FamilyCapability = JANUS_PRO_FAMILY_CAPABILITY
 
@@ -559,19 +557,6 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
 
     # -- internals -----------------------------------------------------
 
-    def _ar_runner(self, request: GenerationRequest) -> JanusProARModelRunner:
-        sampling = request.sampling
-        return JanusProARModelRunner(
-            self.model,
-            attention_backend=resolve_attention_backend(
-                "janus_pro",
-                attention_backend_name(sampling),
-                self.model,
-                block_size=int(sampling.get("ar_paged_block_size", 16)),
-                cache_dtype=str(sampling.get("ar_paged_cache_dtype", "auto")),
-            ),
-        )
-
     def _tokenize_prompts(
         self,
         prompts: list[str],
@@ -598,33 +583,12 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
         ids = enc["input_ids"]
         mask = enc["attention_mask"]
 
-        # Belt-and-braces: enforce L_text == max_text_length even if the
-        # tokenizer ignored padding="max_length" (stubs / tokenisers
-        # without a pad_token).
-        if ids.shape[1] < max_text_length:
-            pad_id = getattr(tokenizer, "pad_token_id", None) or 0
-            extra_len = max_text_length - ids.shape[1]
-            ids = torch.cat(
-                [
-                    ids,
-                    torch.full(
-                        (ids.shape[0], extra_len),
-                        pad_id,
-                        dtype=ids.dtype,
-                    ),
-                ],
-                dim=1,
-            )
-            mask = torch.cat(
-                [
-                    mask,
-                    torch.zeros(
-                        (mask.shape[0], extra_len),
-                        dtype=mask.dtype,
-                    ),
-                ],
-                dim=1,
-            )
+        ids, mask = self._align_tokenizer_output(
+            ids,
+            mask,
+            max_text_length=max_text_length,
+            pad_id=getattr(tokenizer, "pad_token_id", None) or 0,
+        )
         return ids.to(device), mask.to(device)
 
     @staticmethod
@@ -638,10 +602,6 @@ class JanusProPipelineExecutor(ARPipelineExecutorBase):
             f"<｜User｜>: {prompt}\n\n"  # noqa: RUF001
             f"<｜Assistant｜>:<begin_of_image>"  # noqa: RUF001
         )
-
-    def _embed(self, token_ids: torch.Tensor) -> torch.Tensor:
-        embed = self.model.language_model.get_input_embeddings()
-        return embed(token_ids)
 
 
 class JanusProChunkGatherer:

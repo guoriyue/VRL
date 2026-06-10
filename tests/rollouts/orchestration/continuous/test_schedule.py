@@ -37,10 +37,12 @@ class _Runtime:
     def __init__(self) -> None:
         self.current_policy_version = 0
         self.requires_driver_model_offload = False
-        self.config = SimpleNamespace(
-            allow_driver_gpu_overlap=False,
-            resources=SimpleNamespace(colocated=False),
-        )
+        self.colocated = False
+
+    def is_colocated(self) -> bool:
+        # Fakes implement the GenerationRuntime protocol method directly
+        # instead of mimicking the runtime's internal config layout.
+        return self.colocated
 
 
 class _Syncer:
@@ -54,6 +56,11 @@ class _Syncer:
 
     async def pull(self) -> dict[str, Any]:
         return dict(self.calls[-1])
+
+    @property
+    def current_policy_version(self) -> int | None:
+        # Mirrors RayRuntimeWeightSyncer's PolicyVersionProvider contract.
+        return self.runtime.current_policy_version
 
 
 class _Collector:
@@ -194,7 +201,7 @@ async def test_queue_capacity_autosizes_to_prompt_set() -> None:
 async def test_rejects_colocated_runtime() -> None:
     """Checks that rejects colocated runtime."""
     runtime = _Runtime()
-    runtime.config.resources.colocated = True
+    runtime.colocated = True
     schedule = _build(_continuous_config(), _Collector(runtime), None)
 
     with pytest.raises(RuntimeError, match="separate trainer and rollout GPU"):

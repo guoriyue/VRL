@@ -174,6 +174,8 @@ class _ResumeEvaluator:
 
 
 class _Syncer:
+    current_policy_version = None  # PolicyVersionProvider: no version tracked
+
     def __init__(self) -> None:
         self.calls: list[dict] = []
 

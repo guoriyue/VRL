@@ -11,6 +11,7 @@ from vrl.models.diffusion.common import (
     DiffusionBackboneInput,
     DiffusionBranch,
 )
+from vrl.models.diffusion.common.tensors import require_tensor
 
 
 @dataclass(slots=True)
@@ -37,8 +38,8 @@ class CosmosPredict2DiffusionBackboneRunner:
             indicator = extra["cond_indicator"]
             condition_mask = extra["cond_mask"]
         else:
-            embeds = _require_tensor(request.negative_prompt_embeds)
-            indicator = _require_tensor(extra.get("uncond_indicator"))
+            embeds = require_tensor(request.negative_prompt_embeds, "Cosmos Predict2 negative_prompt_embeds")
+            indicator = require_tensor(extra.get("uncond_indicator"), "Cosmos Predict2 uncond_indicator")
             condition_mask = extra.get("uncond_mask")
         hidden_states, timestep = self._prepare_branch(
             latents=request.hidden_states,
@@ -112,7 +113,3 @@ class CosmosPredict2DiffusionBackboneRunner:
         return indicator * init_latents + (1 - indicator) * branch
 
 
-def _require_tensor(value: torch.Tensor | None) -> torch.Tensor:
-    if value is None:
-        raise ValueError("Cosmos Predict2 CFG branch requires uncond tensors")
-    return value

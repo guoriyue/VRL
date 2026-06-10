@@ -7,7 +7,6 @@ from typing import Any
 
 import torch
 
-from vrl.math.ar.logprob import gather_categorical_log_probs
 from vrl.models.interfaces import (
     ReplayModel,
     ReplayRequest,
@@ -182,22 +181,13 @@ def _extract_logprobs(
     result: ReplaySegmentResult,
     segment: dict[str, Any],
 ) -> torch.Tensor:
-    values = result.values
-    if "log_probs" in values:
-        return result.require_value("log_probs").float()
-
-    logits = values.get("logits")
-    if logits is None:
-        logits = values.get("image_logits")
-    if logits is None:
-        logits = values.get("text_logits")
-    if logits is None:
-        logits = result.require_value("logits")
-
-    token_ids = values.get("token_ids")
+    # The payload-key knowledge (log_probs vs modality-named logits) lives on
+    # ReplaySegmentResult itself; this evaluator only supplies the trajectory
+    # token-id fallback.
+    token_ids = result.values.get("token_ids")
     if token_ids is None:
         token_ids = _segment_tensor(segment, "token_ids")
-    return gather_categorical_log_probs(logits, token_ids)
+    return result.logprobs(token_ids)
 
 
 def _segment_tensor(segment: dict[str, Any], key: str) -> torch.Tensor:

@@ -417,6 +417,13 @@ class _DirectExecutorGenerationRuntime:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
+    def should_release_memory_before_reward(self) -> bool:
+        # In-process executor has no Ray release mode; never drop before reward.
+        return False
+
+    def is_colocated(self) -> bool:
+        return False
+
 
 class _SyntheticDiffusionReplayCollector:
     """Collector that exercises replay training without full generation assets."""
