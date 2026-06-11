@@ -4,9 +4,14 @@
 
 进度：
 - 2026-06-09 晚：P1.4（deferred per-epoch reward scoring）代码 + 测试落地
-  （tests/trainers 97 passed，tests/rollouts+rewards+ray 195 passed）；
-  live gate 等当前 50-epoch run 结束后的下一个 GPU run。
+  （tests/trainers 97 passed，tests/rollouts+rewards+ray 195 passed）。
 - P1.5（warm offload）降级为 P1.4 之后再测；P2 被 P1.4 取代。
+- 2026-06-10：P1.4 live gate 通过（motion run 全程每 epoch 恰好 1 次
+  `reward worker built model`，epoch 13.4 → 12.35 min）。P0 trace 落盘并
+  分析（见 P0 Results：launch-bound，elementwise 47%）。
+- compile smoke 并入 multi-GPU 全参 bring-up：单卡 cosmos NFT 配方已随
+  LoRA 移除而退役（2026-06-10），在退役配方上烧 GPU 验证 compile 不再有
+  对象；P0 的结论（elementwise 融合收益）直接转入全参路径首跑时验证。
 
 ## 0. Core Decision
 

@@ -1,7 +1,22 @@
 # SPRINT: predict2 GRPO logprob parity 修复（2026-06-10）
 
-状态：root cause located（2026-06-10，静态分析 + smoke 日志离线取证，见 T2）；
-修复未开始 —— 等工作区 P1.4 改动先提交，避免 diff 混杂。
+状态：**done（2026-06-10，G1 GPU live gate 通过）**。换域修复落在
+`vrl/math/diffusion/flow_matching.py`（单点，采样/重放两侧自动一致）。
+
+G1 实测（复跑 6/9 同一份 resolved config，lr=0 / cps / 512p93f / 35 步，
+唯一变量是修复；`outputs/parity_fix_smoke_20260610/`）：
+
+| 指标 | broken 6/9 | fixed 6/10 | gate |
+| --- | ---: | ---: | --- |
+| old_log_prob mean | -4635 | **-0.9707** | O(1) ✓ |
+| parity abs_diff mean | 115.5 | **5.3e-6** | <1e-3 ✓（优于 wan 的 2.6e-3，接近 sd3_5）|
+| ratio | ~3.5e-41 | **0.999995** | ≈1 ✓ |
+| approx_kl @ lr=0 | 539.5 | **0.0** | ≈0 ✓ |
+
+验证体系四层全绿：域同构 pin 测试（6 项）→ cosmos-rl 参考实现 bit 级对照
+（flow/EDM 两域 diff=0.0）→ 真 scheduler 离线复算 → 真 checkpoint GPU 复跑。
+另落地一条防线：trainer first_step parity 偏差 >0.01 时 logger.warning 大声报警
+（vrl/trainers/online/trainer.py），不再只写 jsonl。
 
 ## 0. 问题与口径
 
@@ -29,7 +44,8 @@ G2  根因有单元测试钉死（修什么就 pin 什么，防回归）
 G3  T0 的 P1.4 live gate 三项全过（见下）
 ```
 
-## T0. P1.4 live gate（半天，先跑掉）
+## T0. P1.4 live gate —— done（2026-06-10，见 SPRINT_cosmos_performance.md 进度：
+motion run 全程每 epoch 恰好 1 次 `reward worker built model`，epoch 13.4 → 12.35 min）
 
 P1.4（deferred per-epoch reward scoring，`SPRINT_cosmos_performance.md` §P1.4）代码
 和单测已落地，缺一个 live GPU 验证。50-epoch 旧流程 run 已结束、GPU 空闲，正好补上。
@@ -107,31 +123,54 @@ cps logprob 是未归一化平方距离（无 /2σ²、无 log 项，flow_matchi
 - ~~训练侧 scheduler 没 set_timesteps~~：`predict2/runtime.py:92-94` 构建 bundle 时
   调 `model.set_num_steps(spec.num_steps)`；evaluator 用的就是 bundle scheduler。
 
-**待 GPU 确认的次要项**（修复时一并验证，不改变根因结论）：
-- fresh 侧样本间 std=32（old 仅 0.57）—— replay noise_pred 的逐样本波动来源
-  （bf16 kernel 非确定性 vs V2W 条件还原差异），修完换域后量级会缩回去，届时再看残差。
-- 窗口外确定性步的 logprob 在 cps 下是 `-(euler_prev - cps_mean)²`（结构性大值，
-  无意义）；buffer 存全部 35 步（executor.py:122-138 无窗口裁剪），trainer 按
-  `timestep_fraction` 均匀抽样（trainer.py:534-540）会抽到这些步 —— 修复时要么
-  裁剪到窗口、要么让确定性步不进训练。
+**predict2.5 勘误（2026-06-10 实证）**：predict2.5 不受影响。它的 UniPC config 虽写
+`sigma_max=200`，但 `use_flow_sigmas: true` 使运行时 sigma 表已归一化（实测
+set_timesteps(35) 后 sigmas = 0.995 → 0.0099 ∈ [0,1]）。这同时否决了"按
+config.sigma_max 判域"的方案 —— 判域必须看运行时 sigma 表。
 
-## T3. 修复 + 回归测试
+**窗口勘误（2026-06-10）**：T2 初稿"窗口外确定性步混入训练"的担忧不成立。
+`layout.select_sde_window`（layout.py:211-222）在 `window_size <= 0` 时返回 None，
+executor 把 None 解释为全部步随机 —— smoke 的 `window_size: 0` ⇒ 35 步全是随机
+SDE 步。全仓库 configs 仅一处 window_size 且为 0，windowed SDE 当前无人使用。
+留档的潜在 gap：若未来启用 window_size>0，随机窗口（per-request randint）不会
+被记录进 trajectory，窗口外确定性步的 logprob 无意义且会进训练 —— 启用前需先
+把窗口写入 batch context 并在 trainer 侧裁剪 train_indices。
 
-修复方向（实现时定夺，原则：SDE 数学只在归一化流域里做）：
+**待 GPU 确认的次要项**：fresh 侧样本间 std=32（old 仅 0.57）—— replay noise_pred
+的逐样本波动来源（bf16 kernel 非确定性 vs V2W 条件还原差异）。换域后放大系数
+从 ~σ²≈4600 回到 O(1)，残差应缩到其它家族水平（≤1e-3 量级），G1 跑完看数字。
+
+## T3. 修复 + 回归测试（已实现，2026-06-10）
+
+实现取了方案 A 的变体：换域不在两个调用点做，而是**收进
+`sde_step_with_logprob` 内部单点处理**（`vrl/math/diffusion/flow_matching.py`），
+采样侧与 replay 侧自动一致，杜绝两侧变换不同步的回归面：
 
 ```text
-方案 A（倾向）：在进入 sde_step_with_logprob 前把 EDM sigma 归一化为
-  σ_flow = σ/(1+σ)（即 runner.current_t 的同一变换），model_output 做配套换域；
-  采样侧（executor.py:486）与 replay 侧（sde_logprob.py:86）必须用同一变换。
-方案 B：给 flow_matching 增加 EDM 域的 cps/sde 推导版本，按 scheduler 域分发。
-两案共同要求：变换处加注释说明域假设；wan/sd3_5/anima 路径逐位不变。
+- 判域：运行时 sigma 表 max > 1 ⇒ EDM 域（config 不可靠，见 T2 勘误）；
+  判定结果缓存在 scheduler 上（_vrl_edm_sigma_domain），避免逐步 GPU→host 同步
+- 换域：t = σ/(1+σ)；x̃ = x/(1+σ)；ṽ = n̂·(1+σ) − x
+  （EDM 侧 model_output 是噪声估计 n̂=(x−x0)/σ，见 predict2 runner.finalize_noise_pred）
+- 域约定：prev_sample 转回 scheduler 自己的域（轨迹/buffer 连续性）；
+  log_prob / prev_sample_mean / std_dev_t / sqrt_neg_dt 一律 flow 域
+  （Jacobian 常数在 ratio 与 KL 中相消，量级与 flow 原生家族可比）
+- wan / sd3_5 / anima / predict2.5 路径逐位不变（flow 域判定为 False 走原代码）
 ```
 
-- 加 pin 测试：构造 sigma_max>1 的 scheduler，断言 sde_step_with_logprob 的
-  std_dev_t/log_prob 量级在归一化域（防止再次把 EDM sigma 直喂 [0,1] 公式）。
-- 处理窗口外确定性步（见 T2 末尾）：裁剪或排除出训练信号，并钉测试。
-- 重跑 T1 的 smoke：G1 三个数字达标；同时人工看一眼窗口内步骤修复后的视频质量
-  （采样噪声量级从 ~68 回到 ~1，生成行为会变化 —— 这是修复的预期效果，不是回归）。
+验证（CPU，无 GPU）：
+
+```text
+- tests/math/test_diffusion_flow_matching.py 新增 6 项全过：
+  EDM↔flow 域同构等价（sde+cps）/ EDM 采样→重放 parity（bit 级一致）/
+  flow 域走原路径 / 域判定缓存
+- 离线复算（真 predict2 scheduler, set_timesteps(35), cps, noise_level=1.0）：
+  log_prob -0.976（修前 -4635）；replay parity abs diff 0.0（修前 ~115）
+- 全量回归：tests/math+algorithms+rollouts+generation+trainers 310 passed，
+  tests/models 96 passed，e2e 正常 collect
+```
+
+剩余：重跑 T1 的 GPU smoke，G1 三个数字达标；同时人工看一眼修复后的视频质量
+（采样噪声量级从 ~68 回到正确尺度，生成行为会变化 —— 这是修复的预期效果，不是回归）。
 
 ## T4. wan parity warn（顺带，不阻塞）
 

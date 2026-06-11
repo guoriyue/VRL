@@ -43,6 +43,14 @@ def sde_step_with_logprob(
     which reads a GPU tensor back to host (a per-step ``cudaStreamSynchronize``
     stall). Since ``state.timesteps`` is ``scheduler.timesteps``, the rollout
     loop index equals the scheduler index, so passing it is exact and sync-free.
+
+    Sigma-domain contract: schedulers whose runtime sigma table exceeds 1
+    (EDM domain, e.g. Cosmos Predict2) are converted to the rectified-flow
+    [0, 1] domain internally. ``prev_sample`` is always returned in the
+    caller's (scheduler's) domain so the denoise loop and trajectory buffers
+    stay consistent; ``log_prob`` / ``prev_sample_mean`` / ``std_dev_t`` /
+    ``sqrt_neg_dt`` are flow-domain quantities on every path, which keeps
+    ratios, parity checks, and KL comparable across model families.
     """
     import torch
     from diffusers.utils.torch_utils import randn_tensor
@@ -70,6 +78,40 @@ def sde_step_with_logprob(
     sigma_max = scheduler.sigmas[1]
     sigma_min = scheduler.sigmas[-1]
     dt = sigma_prev - sigma
+
+    # Cosmos Predict2's FlowMatch scheduler keeps its sigma table in the EDM
+    # domain (sigma_max=80) while all math below is derived for rectified-flow
+    # sigmas in [0, 1] (x_t = (1-t)*x0 + t*noise). Feeding EDM sigmas through
+    # the [0, 1] formulas silently produces ~sigma^2-scale garbage log-probs
+    # (observed: logprob ~ -68^2 on Predict2 GRPO). Detect the domain from the
+    # RUNTIME sigma table — config keys are unreliable: Predict2.5's UniPC
+    # declares sigma_max=200 yet use_flow_sigmas=True already normalizes its
+    # runtime table to [0, 1]. Cache the verdict on the scheduler so steps
+    # after the first do not pay a GPU->host sync for the max().
+    edm_domain = getattr(scheduler, "_vrl_edm_sigma_domain", None)
+    if edm_domain is None:
+        edm_domain = bool(scheduler.sigmas.max().item() > 1.0)
+        scheduler._vrl_edm_sigma_domain = edm_domain
+    one_plus_sigma_prev = None
+    if edm_domain:
+        # Convert to the flow domain: t = s/(1+s); x_flow = x/(1+s); the EDM
+        # model_output is the noise estimate n = (x - x0)/s (see Cosmos
+        # Predict2 runner.finalize_noise_pred), so the flow velocity
+        # (noise - x0) is n*(1+s) - x. prev_sample converts back to the EDM
+        # domain before returning; log_prob / prev_sample_mean / std_dev_t
+        # stay in the flow domain — the constant Jacobian offset cancels in
+        # policy ratios and KL, and magnitudes match the flow-native families.
+        one_plus_sigma = 1 + sigma
+        one_plus_sigma_prev = 1 + sigma_prev
+        model_output = model_output * one_plus_sigma - sample
+        sample = sample / one_plus_sigma
+        if prev_sample is not None:
+            prev_sample = prev_sample / one_plus_sigma_prev
+        sigma = sigma / one_plus_sigma
+        sigma_prev = sigma_prev / one_plus_sigma_prev
+        sigma_max = sigma_max / (1 + sigma_max)
+        sigma_min = sigma_min / (1 + sigma_min)
+        dt = sigma_prev - sigma
 
     if sde_type == "cps":
         std_dev_t = sigma_prev * math.sin(noise_level * math.pi / 2)
@@ -142,6 +184,9 @@ def sde_step_with_logprob(
             - torch.log(torch.sqrt(2 * torch.as_tensor(math.pi)))
         )
         log_prob = log_prob.mean(dim=tuple(range(1, log_prob.ndim)))
+
+    if one_plus_sigma_prev is not None:
+        prev_sample = prev_sample * one_plus_sigma_prev
 
     sqrt_neg_dt = torch.sqrt(-1 * dt) if return_dt else None
     return SDEStepResult(

@@ -582,6 +582,19 @@ class OnlineTrainer(Trainer):
                 _old_lp_first.item(),
                 _fresh_lp_first.item(),
             )
+            # Replay parity is the ratio==1 invariant: with unchanged weights
+            # the fresh log-prob must reproduce the collection-time one. A
+            # large gap means the training signal is garbage (e.g. the
+            # Predict2 EDM-sigma-domain bug sat at mean diff ~115 in metrics
+            # nobody alerted on) — shout, do not just persist a jsonl row.
+            if _diff.mean().item() > 0.01:
+                logger.warning(
+                    "first-step log-prob parity violated: mean abs diff "
+                    "%.4f > 0.01. Replay does not reproduce rollout "
+                    "log-probs; GRPO ratios are untrustworthy. Suspect "
+                    "replay-side conditioning/scheduler-domain drift.",
+                    _diff.mean().item(),
+                )
             first_step_debug_record = {
                 "event": "first_step_logprob_parity",
                 "trainer_step": int(self.state.step),
