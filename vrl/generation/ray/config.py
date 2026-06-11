@@ -28,6 +28,9 @@ class RayGenerationConfig:
     placement_strategy: str = "SPREAD"
     allow_driver_gpu_overlap: bool = False
     max_inflight_chunks_per_worker: int = 1
+    # Chunk->worker binding: "round_robin" binds at plan time (baseline);
+    # "dynamic" binds at dispatch time (pull + LPT). Equivalent for 1 worker.
+    chunk_placement_strategy: str = "round_robin"
     sync_trainable_state: str = "disabled"
     release_after_collect: bool = False
     release_before_reward_model: bool = False
@@ -46,6 +49,10 @@ class RayGenerationConfig:
             raise ValueError("max_inflight_chunks_per_worker must be >= 1")
         if self.sync_trainable_state not in {"disabled", "lora_only"}:
             raise ValueError("sync_trainable_state must be 'disabled' or 'lora_only'")
+        if self.chunk_placement_strategy not in {"round_robin", "dynamic"}:
+            raise ValueError(
+                "chunk_placement_strategy must be 'round_robin' or 'dynamic'",
+            )
 
     @classmethod
     def from_cfg(cls, cfg: Any) -> RayGenerationConfig:
@@ -82,6 +89,9 @@ class RayGenerationConfig:
             ),
             sync_trainable_state=str(
                 cfg_get(rollout, "sync_trainable_state", "disabled"),
+            ),
+            chunk_placement_strategy=str(
+                cfg_get(rollout, "chunk_placement_strategy", "round_robin"),
             ),
             # Resolved values: unset YAML flags derive from the GPU topology
             # (resolve_distributed_resources is the single source of truth).
@@ -124,6 +134,7 @@ class RayGenerationConfig:
             "allow_driver_gpu_overlap": self.allow_driver_gpu_overlap,
             "max_inflight_chunks_per_worker": self.max_inflight_chunks_per_worker,
             "sync_trainable_state": self.sync_trainable_state,
+            "chunk_placement_strategy": self.chunk_placement_strategy,
             "release_after_collect": self.release_after_collect,
             "release_before_reward_model": self.release_before_reward_model,
         }

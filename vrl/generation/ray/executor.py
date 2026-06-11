@@ -6,7 +6,7 @@ from typing import Any
 
 from vrl.generation.execution.ids import build_sample_rows
 from vrl.generation.execution.planner import attach_engine_plan
-from vrl.generation.execution.scheduler import DistributedExecutionPlanner
+from vrl.generation.execution.chunk_placement import DistributedExecutionPlanner
 from vrl.generation.execution.types import (
     ChunkExecutionResult,
     DistributedWorkerHandle,
@@ -49,16 +49,31 @@ class RayGenerationExecutor:
         assignments = list(generation_plan.assignments)
         engine_plan = generation_plan.engine_plan
         worker_by_id = {worker.worker_id: worker for worker in self.workers}
+        strategy = self.planner.policy.strategy
         remote_jobs: list[RayActorJob] = []
         result_pairs: list[tuple[int, ChunkExecutionResult]] = []
+        schedule_rows: list[dict[str, Any]] = []
 
         for job_index, assignment in enumerate(assignments):
+            if assignment.envelope is None:
+                raise RuntimeError("distributed rollout assignment is missing execution envelope")
+            if assignment.worker_id is None:
+                # Dynamic placement: binding happens in the actor pool. The
+                # estimated cost becomes the submission priority (LPT).
+                remote_jobs.append(
+                    RayActorJob(
+                        job_index=job_index,
+                        worker_id=None,
+                        remote_method=None,
+                        payload=assignment.envelope,
+                        priority=assignment.estimated_cost,
+                    ),
+                )
+                continue
             worker = worker_by_id[assignment.worker_id]
             actor = worker.actor
             if actor is None:
                 raise RuntimeError(f"worker {worker.worker_id!r} has no actor")
-            if assignment.envelope is None:
-                raise RuntimeError("distributed rollout assignment is missing execution envelope")
             execute_chunk = actor.execute_chunk
             remote = getattr(execute_chunk, "remote", None)
             if callable(remote):
@@ -76,8 +91,16 @@ class RayGenerationExecutor:
                 )
 
         if remote_jobs:
+            worker_methods = None
+            if any(job.worker_id is None for job in remote_jobs):
+                worker_methods = self._remote_worker_methods()
             result_pairs.extend(
-                await self._run_remote_jobs(remote_jobs),
+                await run_actor_jobs(
+                    remote_jobs,
+                    max_inflight_per_actor=self.max_inflight_chunks_per_worker,
+                    worker_methods=worker_methods,
+                    schedule=schedule_rows,
+                ),
             )
 
         results = [result for _, result in sorted(result_pairs, key=lambda pair: pair[0])]
@@ -117,6 +140,24 @@ class RayGenerationExecutor:
         output = self.gatherer.gather_chunks(request, sample_rows, chunk_outputs)
         attach_engine_plan(output, engine_plan)
         output.extra["ray_chunk_metrics"] = [dict(result.metrics) for result in results]
+        if schedule_rows:
+            by_index = {row["job_index"]: row for row in schedule_rows}
+            output.extra["ray_chunk_schedule"] = [
+                {
+                    "chunk_key": (
+                        f"{assignment.chunk.prompt_index}:"
+                        f"{assignment.chunk.sample_start}:"
+                        f"{assignment.chunk.sample_count}"
+                    ),
+                    "assignment_strategy": strategy,
+                    "estimated_cost": assignment.estimated_cost,
+                    "assigned_worker": by_index[job_index]["worker_id"],
+                    "queue_wait_s": by_index[job_index]["queue_wait_s"],
+                    "execution_s": by_index[job_index]["execution_s"],
+                }
+                for job_index, assignment in enumerate(assignments)
+                if job_index in by_index
+            ]
         runtime_debug = [
             result.metrics for result in results if result.metrics.get("runtime_debug")
         ]
@@ -124,13 +165,19 @@ class RayGenerationExecutor:
             output.extra["runtime_debug"] = {"ray_chunks": runtime_debug}
         return output
 
-    async def _run_remote_jobs(
-        self,
-        jobs: list[RayActorJob],
-    ) -> list[tuple[int, Any]]:
-        return await run_actor_jobs(
-            jobs,
-            max_inflight_per_actor=self.max_inflight_chunks_per_worker,
-        )
+    def _remote_worker_methods(self) -> dict[str, Any]:
+        """Collect remote execute_chunk handles for pull-based dispatch."""
+
+        methods: dict[str, Any] = {}
+        for worker in self.workers:
+            actor = worker.actor
+            remote = getattr(getattr(actor, "execute_chunk", None), "remote", None)
+            if not callable(remote):
+                raise RuntimeError(
+                    "dynamic chunk placement requires Ray actor workers; "
+                    f"worker {worker.worker_id!r} has no remote execute_chunk",
+                )
+            methods[worker.worker_id] = remote
+        return methods
 
 __all__ = ["RayGenerationExecutor"]

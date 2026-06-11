@@ -16,7 +16,8 @@ from vrl.generation.execution.planner import (
     build_engine_plan,
 )
 from vrl.generation.execution.request_batch import RequestBatch
-from vrl.generation.execution.scheduler import (
+from vrl.generation.execution.chunk_placement import (
+    ChunkPlacementPolicy,
     DeviceAssignment,
     DistributedExecutionPlanner,
     DistributedGenerationPlan,
@@ -31,6 +32,7 @@ from vrl.generation.execution.worker import GenerationWorkerCore
 __all__ = [
     "ChunkExecutionEnvelope",
     "ChunkExecutionResult",
+    "ChunkPlacementPolicy",
     "DeviceAssignment",
     "DistributedExecutionPlanner",
     "DistributedGenerationPlan",

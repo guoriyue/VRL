@@ -1,6 +1,36 @@
 # SPRINT: Generation scheduler upgrade
 
-状态：proposed。
+状态：**Track A implemented（2026-06-11，dormant until multi-GPU）**；
+Track B gated 不变。落地内容：
+
+```text
+A1  execution/scheduler.py -> chunk_placement.py（原子改名，零残留，
+    架构测试清单同步）
+T1  vrl/ray/actor_pool.py 派发循环打点（queue_wait_s / execution_s），
+    executor 汇总进 GenerationOutput.extra["ray_chunk_schedule"]
+    （chunk_key / assignment_strategy / estimated_cost / assigned_worker）
+T2  pull 式动态派发：RayActorJob.worker_id 可为 None，pool 把未绑定 job
+    派给当前 inflight 最少的空闲 worker；LPT 经 RayActorJob.priority
+    （= estimated_cost）在派发层排序，gather 顺序零接触。
+    配置键（实际落点，沿 distributed.rollout.* 平铺模式）：
+      distributed.rollout.chunk_placement_strategy: round_robin | dynamic
+    默认 round_robin —— 静态路径逐位不变（priority 全 0 + 稳定排序）。
+验证  tests/ray/test_chunk_dispatch.py 9 项（fake-ray 控制完成顺序，
+    确定性、无真 Ray）：静态绑定不迁移 / pull 让快 worker 多拿活 /
+    LPT 提交序 / 未绑定缺 worker_methods 报错 / telemetry 行 /
+    planner 两策略 / 成本轴 / 策略词汇表封闭。全量回归 430 passed。
+```
+
+收益兑现仍挂在多卡 rollout 之后（单 worker 下两策略等价）——多卡
+bring-up 时把 `chunk_placement_strategy: dynamic` 打开即可，T1 telemetry
+当场给出 imbalance 对比数据。当前所有实验跑
+`ray_rollout_colocated_single_gpu.yaml`（num_workers: 1）——单 worker 下
+round-robin 与 dynamic 派发等价、LPT 排序无意义，Track A 收益严格为零。
+本文档的价值是把设计坑位提前想清（静态绑定事实、互斥约束、backpressure、
+policy barrier），多卡 bring-up 第一周直接照此开工（T1+T2 一起上，telemetry
+当场验证收益）。在那之前，单卡的工程时间应花在 cross-model perf sprint 的
+Wave 2 transport 项上（uint8 过线 / pinned 拷贝——它们同时是 Track B 未来
+relay 的前置测量）。
 
 目标：把当前 generation scheduler 的职责讲清楚，并给出两阶段改进路线：
 

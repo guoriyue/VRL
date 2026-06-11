@@ -186,7 +186,7 @@ def test_generation_execution_core_stays_flat_and_ray_neutral() -> None:
     execution_root = VRL_ROOT / "generation" / "execution"
     for expected in (
         "__init__.py",
-        "scheduler.py",
+        "chunk_placement.py",
         "types.py",
         "worker.py",
     ):

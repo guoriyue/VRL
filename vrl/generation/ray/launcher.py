@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from vrl.generation.execution import (
+    ChunkPlacementPolicy,
     DistributedExecutionPlanner,
     DistributedWorkerHandle,
 )
@@ -124,7 +125,12 @@ class RayGenerationLauncher:
         ]
 
         executor = RayGenerationExecutor(
-            DistributedExecutionPlanner(contract.extra.get("family_capability")),
+            DistributedExecutionPlanner(
+                contract.extra.get("family_capability"),
+                policy=ChunkPlacementPolicy(
+                    strategy=rollout_config.chunk_placement_strategy,
+                ),
+            ),
             workers,
             chunk_gatherer,
             max_inflight_chunks_per_worker=rollout_config.max_inflight_chunks_per_worker,
