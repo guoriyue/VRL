@@ -35,4 +35,4 @@ trainer:
 
 model:
   torch_compile:
-    enable: false
+    enable: true   # launch-bound profile (P0 trace): elementwise 47%, 1M kernels/step

@@ -22,7 +22,10 @@ algorithm:
 rollout:
   n: 4
   rollout_batch_size: 1
-  sample_batch_size: 1
+  sample_batch_size: 4   # batch the denoise forward; sbs=1 left the GPU at 25% (smoke 2026-06-09)
+  denoise_compile:
+    enable: true
+    mode: default
   # Wan rollout artifacts should use Wan's native diffusers scheduler.
   # SDE knobs below are still used to score GRPO transition logprobs.
   denoise_mode: native

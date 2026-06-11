@@ -98,7 +98,8 @@ class MultiReward(RewardFunction):
         triples: list[tuple[str, float, RewardFunction]] = []
         for name, weight in score_dict.items():
             reward_cls = get_reward(name)
-            extra = reward_kwargs.get(name, {})
+            # `or {}`: a bare YAML key (kwargs: <name>:) parses as None.
+            extra = reward_kwargs.get(name) or {}
             triples.append((name, weight, reward_cls(device=device, **extra)))
         return cls(triples)
 

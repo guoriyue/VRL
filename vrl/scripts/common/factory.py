@@ -127,7 +127,7 @@ def _with_resolved_reward_runtime_kwargs(
     if not reward_key:
         return reward_kwargs
 
-    video_kwargs = dict(reward_kwargs.get(reward_key, {}))
+    video_kwargs = dict(reward_kwargs.get(reward_key) or {})
     if str(video_kwargs.get("inference_runtime", "")) != "ray":
         return reward_kwargs
 

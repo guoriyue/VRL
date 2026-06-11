@@ -18,7 +18,7 @@ algorithm:
 
 rollout:
   n: 4
-  rollout_batch_size: 1
+  rollout_batch_size: 4   # amortize the ~14s fixed per-cycle cost (56% util at rbs=1)
   sample_batch_size: 4
   sde:
     type: sde

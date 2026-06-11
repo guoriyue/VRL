@@ -39,4 +39,4 @@ model:
   # Flow-GRPO SD3 doesn't compile during GRPO; also avoids recompiles when
   # zero-advantage filtering changes the replay microbatch size.
   torch_compile:
-    enable: false
+    enable: true   # launch-bound profile (P0 trace): elementwise 47%, 1M kernels/step

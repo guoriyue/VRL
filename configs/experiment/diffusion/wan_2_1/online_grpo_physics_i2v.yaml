@@ -20,7 +20,10 @@ algorithm:
 rollout:
   n: 2
   rollout_batch_size: 1
-  sample_batch_size: 1
+  sample_batch_size: 4   # batch the denoise forward; sbs=1 left the GPU at 25% (smoke 2026-06-09)
+  denoise_compile:
+    enable: true
+    mode: default
   denoise_mode: native
   noise_level: 0.7
   sde:

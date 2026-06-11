@@ -4,7 +4,7 @@
 `vrl/math/diffusion/flow_matching.py`（单点，采样/重放两侧自动一致）。
 
 G1 实测（复跑 6/9 同一份 resolved config，lr=0 / cps / 512p93f / 35 步，
-唯一变量是修复；`outputs/parity_fix_smoke_20260610/`）：
+唯一变量是修复；产物为一次性验证已删除，关键数字如下表）：
 
 | 指标 | broken 6/9 | fixed 6/10 | gate |
 | --- | ---: | ---: | --- |
@@ -196,6 +196,8 @@ docs/sprints/SPRINT_cosmos_performance.md §P1.4       live gate 标准
 outputs/model_smoke_20260609/cosmos2_v2w/run/         training_debug.jsonl / metrics.csv
                                                       / resolved_config.yaml（num_steps=35,
                                                       sde window [0,10), noise_level=1.0）
+                                                      —— 一次性产物已删（2026-06-10），
+                                                      关键数字均已抄录入本文档
 HF cache .../Cosmos-Predict2-2B-Video2World/scheduler/scheduler_config.json
                                                       sigma_max=80.0 / sigma_min=0.002（EDM 域）
 vrl/math/diffusion/flow_matching.py:74-99             CPS 分支（[0,1] 域假设 + 未归一化 logprob）

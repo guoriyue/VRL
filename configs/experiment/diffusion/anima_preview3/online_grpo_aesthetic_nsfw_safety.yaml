@@ -25,8 +25,8 @@ algorithm:
 
 rollout:
   n: 2
-  rollout_batch_size: 1
-  sample_batch_size: 1
+  rollout_batch_size: 4   # amortize fixed per-cycle cost (smoke 2026-06-09)
+  sample_batch_size: 4
   sde:
     type: sde
 

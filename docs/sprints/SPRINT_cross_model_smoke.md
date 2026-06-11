@@ -1,6 +1,7 @@
 # SPRINT: Cross-model rollout smoke (2026-06-09)
 
-状态：done（一次性验证，结论已落档；原始产物在 `outputs/model_smoke_20260609/`，确认后可删）。
+状态：done（一次性验证，结论已落档；原始产物 `outputs/model_smoke_20260609/` 已于
+2026-06-10 删除 —— predict2 parity 取证数字保存在 SPRINT_predict2_logprob_parity.md）。
 
 ## 0. 问题与口径
 

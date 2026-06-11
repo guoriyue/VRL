@@ -20,7 +20,7 @@ reward:
       score_key: overall_reward
       scheduling: sync
       media_type: video
-      artifact_format: tensor
+      artifact_format: mp4   # tensor (.pt) is unreadable by decord; every working run uses mp4
       artifact_dir: ${trainer.output_dir}/reward_artifacts
       debug_dir: ${trainer.output_dir}/reward_debug
       # Omit model_path to resolve reward_model_name from the local HF
