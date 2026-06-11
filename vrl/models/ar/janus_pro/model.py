@@ -46,6 +46,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from vrl.models.ar.janus_pro import JANUS_R1_SEGMENTS
+from vrl.trajectory import role_tensor
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 from vrl.models.utils import count_trainable_params, disable_adapter_on, load_weights_into
 from vrl.utils.logging import init_logger
@@ -64,15 +65,6 @@ JANUS_R1_SELFCHECK_PROMPT = (
 JANUS_R1_REGEN_PROMPT = (
     "<｜end▁of▁sentence｜>\nNext, I will draw a new image<begin_of_image>"  # noqa: RUF001
 )
-
-
-def _trajectory_role_value(segment: Any, role: str) -> Any:
-    matches = [tensor.value for tensor in segment.tensors.values() if tensor.role == role]
-    if len(matches) != 1:
-        raise RuntimeError(
-            f"trajectory segment {segment.name!r} requires exactly one {role!r} tensor",
-        )
-    return matches[0]
 
 
 @dataclass(slots=True)
@@ -496,7 +488,7 @@ class JanusProModel(nn.Module):
         segment = trajectory.segments[segment_name]
         payload: dict[str, Any] = {
             "name": segment.name,
-            "token_ids": _trajectory_role_value(segment, "action"),
+            "token_ids": role_tensor(segment, "action").value,
             "visual": bool(segment.metadata.get("visual", segment.modality == "image")),
             "modality": segment.modality,
         }

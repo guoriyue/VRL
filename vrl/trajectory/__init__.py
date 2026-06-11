@@ -42,6 +42,7 @@ from vrl.trajectory.validation import (
     tensor_ref,
 )
 from vrl.trajectory.views import (
+    role_tensor,
     AlgorithmFamily,
     LossUnit,
     RewardModality,
@@ -51,6 +52,7 @@ from vrl.trajectory.views import (
 )
 
 __all__ = [
+    "role_tensor",
     "AdvantageScope",
     "AlgorithmFamily",
     "AxisKind",

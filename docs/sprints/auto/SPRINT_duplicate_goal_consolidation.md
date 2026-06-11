@@ -68,14 +68,17 @@ vrl/models/ar/janus_pro/model.py:69 ↔ vrl/rollouts/evaluators/ar/multi_segment
 
 落点：`vrl/trajectory/`（role 枚举的所在层）。
 
-### S6. ocr / nsfw_safety 绕过已有 reward 基类
+### S6. ocr / nsfw_safety 绕过已有 reward 基类 —— 实施时再判为不做（2026-06-10）
 
 ```text
 vrl/rewards/models/base.py:20 TorchRewardModel（_load/_ensure_loaded/score_media 契约）
 aesthetic/pickscore 正确继承；ocr.py:34 与 nsfw_safety.py:28 独立类，自写 _ensure_loaded
 ```
 
-对齐到 TorchRewardModel（落点已存在，不新建抽象）。
+细读后撤回：OCR 的 __call__ 依赖 artifact.metadata["target_text"]、NSFW 有批量
+score_request + 可注入 scorer——两者是 artifact 级契约，与 score_media(media, prompt)
+的逐媒体契约不同。强行继承只共享 3 行 _ensure_loaded，却要扭曲构造器与调用面，
+属"为对齐而对齐"。保留现状。
 
 ### S7. `torch_compile_transformer` ×4（4 行同构）
 

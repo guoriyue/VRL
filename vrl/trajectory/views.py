@@ -107,9 +107,9 @@ def build_training_view(
     for segment in trajectory.segments.values():
         if not segment.trainable:
             continue
-        action = _role_tensor(segment, "action")
-        old_log_prob = _role_tensor(segment, "old_log_prob")
-        mask = _role_tensor(segment, "mask")
+        action = role_tensor(segment, "action")
+        old_log_prob = role_tensor(segment, "old_log_prob")
+        mask = role_tensor(segment, "mask")
         loss_axis = _loss_axis(action.axes)
         loss_units.append(
             LossUnit(
@@ -134,7 +134,7 @@ def build_training_view(
     return TrajectoryValidator(trajectory).validate_training_view(view)
 
 
-def _role_tensor(segment: TrajectorySegment, role: str) -> TrajectoryTensor:
+def role_tensor(segment: TrajectorySegment, role: str) -> TrajectoryTensor:
     matches = [tensor for tensor in segment.tensors.values() if tensor.role == role]
     if len(matches) != 1:
         raise RuntimeError(
@@ -153,6 +153,7 @@ def _loss_axis(axes: tuple[str, ...]) -> str:
 
 __all__ = [
     "AlgorithmFamily",
+    "role_tensor",
     "LossUnit",
     "RewardModality",
     "RewardValueRange",

@@ -18,6 +18,7 @@ from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
 from vrl.rollouts.evaluators.trajectory import TrajectorySignalBuilder
 from vrl.rollouts.evaluators.types import SegmentSignal, SignalRequest, TrajectorySignalBatch
+from vrl.trajectory import role_tensor
 
 
 class MultiSegmentTokenLogProbEvaluator(Evaluator):
@@ -153,9 +154,9 @@ def _segments_from_batch(batch: RolloutBatch) -> dict[str, Any] | None:
 def _trajectory_segment_payload(segment: Any) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "name": segment.name,
-        "token_ids": _trajectory_role_value(segment, "action"),
-        "token_log_probs": _trajectory_role_value(segment, "old_log_prob"),
-        "token_mask": _trajectory_role_value(segment, "mask"),
+        "token_ids": role_tensor(segment, "action").value,
+        "token_log_probs": role_tensor(segment, "old_log_prob").value,
+        "token_mask": role_tensor(segment, "mask").value,
         "visual": bool(segment.metadata.get("visual", segment.modality == "image")),
         "cfg": bool(segment.metadata.get("cfg", False)),
         "train": bool(segment.metadata.get("train", segment.trainable)),
@@ -166,15 +167,6 @@ def _trajectory_segment_payload(segment: Any) -> dict[str, Any]:
         if tensor is not None:
             payload[key] = tensor.value
     return payload
-
-
-def _trajectory_role_value(segment: Any, role: str) -> Any:
-    matches = [tensor.value for tensor in segment.tensors.values() if tensor.role == role]
-    if len(matches) != 1:
-        raise RuntimeError(
-            f"trajectory segment {segment.name!r} requires exactly one {role!r} tensor",
-        )
-    return matches[0]
 
 
 def _extract_logprobs(
