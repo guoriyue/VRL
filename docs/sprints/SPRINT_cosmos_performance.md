@@ -215,18 +215,23 @@ Interpretation:
 
 目标：把当前“终端采样 + JSONL debug”升级为可复查的 profiler artifact。
 
-Command shape:
+Command shape (note: `/profile=torch_profiler` does NOT work here — defaults
+overrides only substitute an existing group entry, and this experiment has no
+`profile` group in its defaults; use dotlist overrides instead):
 
 ```bash
 python -u -m vrl.scripts.train \
   --config experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward \
-  /profile=torch_profiler \
+  trainer.profile=true \
+  trainer.torch_profiler.enabled=true \
+  trainer.torch_profiler.max_steps=1 \
+  rollout.torch_profiler.enabled=true \
+  rollout.torch_profiler.max_steps=1 \
   rollout.rollout_batch_size=1 \
   sampling.width=416 \
   sampling.height=240 \
   sampling.num_frames=33 \
   trainer.total_epochs=1 \
-  reward.kwargs.kling_video_reward.worker_config.local_files_only=true \
   trainer.output_dir=outputs/cosmos25_perf_profile_short
 ```
 
@@ -248,6 +253,37 @@ reward_debug JSONL exists
 ```
 
 Do not run a 50-epoch production job with torch profiler enabled; profiler should be a short diagnostic run only.
+
+#### P0 Results（2026-06-09 深夜，real bs=6 config，1 step trace 落盘）
+
+Artifacts:
+
+```text
+outputs/cosmos25_perf_profile_bs6/torch_profiler/trainer/*.pt.trace.json   (6.0G, 完整 step)
+outputs/cosmos25_perf_profile_bs6/torch_profiler/generation/rollout-0/     (trace + summary.txt)
+outputs/cosmos25_perf_profile_bs6/trainer_trace_analysis.txt               (流式解析输出)
+```
+
+训练 step（54 次切片迭代）GPU kernel 分布：
+
+```text
+GEMM         250.4s   50.7%   (279k launches)
+elementwise  231.9s   46.9%   (1.02M launches  ← 主要发现)
+norm          11.8s    2.4%
+attention       ~0s     ~0%   (240p 序列太短；SDPA backward 合计 2.8s)
+```
+
+结论：
+
+1. 训练阶段是 launch-bound：GPU 在训练 span 内只有 ~64% 时间在忙
+   （494s kernel / 775s span），一个 step 发射 1.3M+ kernel，elementwise
+   占了近一半 GPU 时间（LoRA 缩放 / RoPE / 调制 / NFT 混合算术的碎 kernel）。
+2. attention 在 240p 下不是成本——attention-kernel 类优化对此配置无关。
+3. generation 侧同病：一组 12 视频纯前向 GPU 只有 ~2.8s（denoise 1.8s +
+   VAE 0.9s），每组 ~25s 周期的其余部分是 CPU 序列化/同步/落盘
+   （Command Buffer Full 44% self-CPU，37 万次 copy/to）。
+4. 行动含义：torch.compile（Inductor elementwise 融合 + launch 削减）正中
+   此画像，优先级上调；compile smoke 是下一个 GPU 空闲窗口的第一件事。
 
 ### P1: Separate reward GPU and keep reward actor resident
 
