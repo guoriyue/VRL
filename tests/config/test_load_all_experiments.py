@@ -275,10 +275,10 @@ def test_cosmos_diffusion_nft_video_reward_validation_config() -> None:
     assert "reward_model_name" not in cfg.reward.kwargs.kling_video_reward.worker_config
     assert cfg.reward.kwargs.kling_video_reward.worker_config.local_files_only is True
     assert cfg.distributed.resources.reward.num_gpus == 1
-    # share_with_rollout is the placement decision; the release lifecycle flags
-    # derive from it in resolve_distributed_resources (pinned in
-    # tests/ray/test_resources.py), so the YAML no longer sets them.
-    assert cfg.distributed.resources.reward.share_with_rollout is True
+    # Placement is auto-derived from GPU topology (pinned in
+    # tests/ray/test_resources.py); the YAML no longer spells
+    # share_with_rollout or the release lifecycle flags.
+    assert "share_with_rollout" not in cfg.distributed.resources.reward
     # cosmos-rl parity (cosmos-predict2-5-2b-720-nft.toml): n_generation=12,
     # mini_batch=6 prompts/step, 10 epochs, bf16 params. The 72/step effective
     # batch runs single-GPU via sequential gen + gradient accumulation.
@@ -327,7 +327,7 @@ def test_cosmos_v2w_reference_route_config() -> None:
     assert cfg.reward.kwargs.kling_video_reward.reward_name == "KlingTeam/VideoReward@main"
     assert "model_factory" not in cfg.reward.kwargs.kling_video_reward.worker_config
     assert cfg.reward.kwargs.kling_video_reward.worker_config.local_files_only is True
-    assert cfg.distributed.resources.reward.share_with_rollout is True
+    assert "share_with_rollout" not in cfg.distributed.resources.reward
 
 
 def test_cosmos_v2w_production_validation_accepts_source_backed_data(
@@ -437,7 +437,7 @@ def test_wan_video_reward_production_config() -> None:
     assert cfg.data.manifest == "datasets/videophy/train.txt"
     assert cfg.data.eval_manifest == "datasets/videophy/eval.txt"
     assert cfg.data.source_report == "datasets/videophy/report.json"
-    assert cfg.distributed.resources.reward.share_with_rollout is True
+    assert "share_with_rollout" not in cfg.distributed.resources.reward
 
 
 def test_wan_i2v_physics_config() -> None:
@@ -602,9 +602,11 @@ def test_anima_config_keeps_artifact_names_without_local_paths() -> None:
     )
     assert cfg.model.text_encoder_file == "split_files/text_encoders/qwen_3_06b_base.safetensors"
     assert cfg.model.vae_file == "split_files/vae/qwen_image_vae.safetensors"
-    assert cfg.model.transformer_path == ""
-    assert cfg.model.text_encoder_path == ""
-    assert cfg.model.vae_path == ""
+    # Local-path overrides are omitted, not spelled as "" (omission and ""
+    # are equivalent: the runtime reads them via .get(field, "")).
+    assert "transformer_path" not in cfg.model
+    assert "text_encoder_path" not in cfg.model
+    assert "vae_path" not in cfg.model
     assert "tokenizer_root" not in cfg.model
     assert "anima-inference" not in model_yaml
     assert "ComfyUI" not in model_yaml

@@ -4,4 +4,3 @@ reward:
     ocr: 1.0
   kwargs:
     ocr:
-      debug_dir: ""

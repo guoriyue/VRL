@@ -31,7 +31,10 @@ class RewardResourceConfig(RoleResourceConfig):
 
     gpus_per_worker: float = 1.0
     num_workers: int | str = "auto"
-    share_with_rollout: bool = False
+    # Tri-state placement preference: None derives from GPU topology (use a
+    # dedicated spare GPU when one exists, otherwise share the rollout pool);
+    # explicit true forces sharing, explicit false forces a dedicated GPU.
+    share_with_rollout: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -325,7 +328,9 @@ def _distributed_resource_config_from_cfg(cfg: Any) -> DistributedResourceConfig
             devices=_parse_devices(cfg_get(reward_node, "devices", "auto")),
             gpus_per_worker=float(cfg_get(reward_node, "gpus_per_worker", 1.0)),
             num_workers=cfg_get(reward_node, "num_workers", "auto"),
-            share_with_rollout=bool(cfg_get(reward_node, "share_with_rollout", False)),
+            share_with_rollout=_parse_optional_bool(
+                cfg_get(reward_node, "share_with_rollout", None),
+            ),
         )
     return DistributedResourceConfig(
         visible_devices=_parse_devices(cfg_get(resources, "visible_devices", "auto")),
@@ -611,7 +616,39 @@ def _resolve_reward_devices(
         )
         return devices
 
-    if reward_config.share_with_rollout:
+    share = reward_config.share_with_rollout
+    if share is None:
+        # Auto placement: prefer a dedicated spare GPU when the visible pool
+        # can satisfy the request; otherwise fall back to sharing the rollout
+        # pool. Removes the footgun where a spelled-out true kept forcing
+        # shared single-GPU churn even on machines with spare GPUs.
+        spare_excluded = set(trainer_devices) | set(rollout_devices)
+        spare_pool = tuple(
+            device for device in visible_devices if device not in spare_excluded
+        )
+        spare_requested = _requested_role_gpu_count(
+            role="reward",
+            num_gpus=reward_config.num_gpus,
+            num_workers=reward_config.num_workers,
+            gpus_per_worker=reward_config.gpus_per_worker,
+            available_count=len(spare_pool),
+        )
+        if spare_requested > 0 and len(spare_pool) >= spare_requested:
+            devices = tuple(spare_pool[:spare_requested])
+            _validate_reward_overlap(
+                devices=devices,
+                trainer_devices=trainer_devices,
+                rollout_devices=rollout_devices,
+                reward_config=reward_config,
+                allow_overlap=allow_overlap,
+                rollout_release_after_collect=rollout_release_after_collect,
+                rollout_release_before_reward_model=rollout_release_before_reward_model,
+                reward_release_after_score=reward_release_after_score,
+            )
+            return devices
+        share = True
+
+    if share:
         requested = _requested_role_gpu_count(
             role="reward",
             num_gpus=reward_config.num_gpus,
@@ -694,7 +731,9 @@ def _validate_reward_overlap(
 ) -> None:
     rollout_overlap = sorted(set(devices) & set(rollout_devices))
     if rollout_overlap:
-        if not reward_config.share_with_rollout:
+        # None means auto placement chose sharing; only an explicit false
+        # contradicts an overlapping topology.
+        if reward_config.share_with_rollout is False:
             raise ValueError(
                 "Reward and rollout devices overlap but "
                 "distributed.resources.reward.share_with_rollout=false: "

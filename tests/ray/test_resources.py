@@ -441,6 +441,44 @@ def test_dedicated_reward_gpu_derives_resident_lifecycle_when_unset() -> None:
     assert resolved.reward_release_after_score is False
 
 
+def test_reward_auto_placement_prefers_dedicated_spare_gpu() -> None:
+    """Checks unset share_with_rollout takes the spare GPU on multi-GPU boxes."""
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0, 1, 2],
+                "trainer": {"devices": [0]},
+                "rollout": {"devices": [1], "gpus_per_worker": 1},
+                "reward": {"num_gpus": 1, "gpus_per_worker": 1, "num_workers": 1},
+            },
+        ),
+    )
+
+    assert resolved.reward_devices == (2,)
+    assert resolved.reward_shared_with_rollout is False
+    assert resolved.reward_release_after_score is False
+
+
+def test_reward_auto_placement_falls_back_to_shared_pool_on_single_gpu() -> None:
+    """Checks unset share_with_rollout shares the rollout GPU when none is spare."""
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0],
+                "trainer": {"devices": [0]},
+                "rollout": {"devices": [0], "gpus_per_worker": 1},
+                "allow_overlap": True,
+                "reward": {"num_gpus": 1, "gpus_per_worker": 1, "num_workers": 1},
+            },
+        ),
+    )
+
+    assert resolved.reward_devices == (0,)
+    assert resolved.reward_shared_with_rollout is True
+    assert resolved.rollout_release_before_reward_model is True
+    assert resolved.reward_release_after_score is True
+
+
 def test_reward_can_share_rollout_pool_when_phases_release() -> None:
     """Checks reward can share rollout pool when phases release."""
     resolved = resolve_distributed_resources(

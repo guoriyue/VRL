@@ -13,7 +13,6 @@ model:
   lora:
     rank: 32
     alpha: 64
-    path: ""
     target_modules:
       - add_k_proj
       - add_q_proj

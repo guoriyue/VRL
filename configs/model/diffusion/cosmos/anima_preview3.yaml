@@ -7,9 +7,6 @@ model:
   transformer_file: split_files/diffusion_models/anima-preview3-base.safetensors
   text_encoder_file: split_files/text_encoders/qwen_3_06b_base.safetensors
   vae_file: split_files/vae/qwen_image_vae.safetensors
-  transformer_path: ""
-  text_encoder_path: ""
-  vae_path: ""
   qwen_tokenizer_path: Qwen/Qwen2.5-0.5B
   t5_tokenizer_path: google-t5/t5-base
   scheduler_shift: 3.0
@@ -23,7 +20,6 @@ model:
   lora:
     rank: 32
     alpha: 16
-    path: ""
     target_modules:
       - to_k
       - to_q

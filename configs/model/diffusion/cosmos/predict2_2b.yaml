@@ -8,7 +8,6 @@ model:
   lora:
     rank: 64
     alpha: 32
-    path: ""
     target_modules:
       - to_k
       - to_q

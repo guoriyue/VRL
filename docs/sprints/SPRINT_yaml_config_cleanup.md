@@ -1,6 +1,20 @@
 # SPRINT: YAML config cleanup — 死 key / 假选项 / 孤儿设置
 
-状态：批次 1-3 implemented（2026-06-09）；批次 4 deferred（与在途 reward 放置重构撞车，见 §4）。
+状态：批次 1-5 全部 implemented（1-3: 2026-06-09；4/5: 2026-06-10）。
+唯一遗留：§4b 根因修复（`extra="forbid"` 迁移，刻意分阶段，单独做）。
+
+批次 4 落地记录（2026-06-10，解除 deferred）：
+- `RewardResourceConfig.share_with_rollout` 改三态 `bool | None = None`（沿用对方
+  reward 重构给 release flag 建立的同一范式）。
+- **None = auto**：visible 池里有空余卡且够请求数 → reward 拿专卡；不够 → 回落共享
+  rollout 池。`true`/`false` 保留为显式强制。
+- `_validate_reward_overlap` 只对显式 `false` 拒绝重叠（auto 选择共享是合法的）。
+- 删除 `kling_video_reward.yaml` / `videocon_physics.yaml` 的 `share_with_rollout: true`，
+  注释改为说明 auto 规则。
+- 新增 2 条验收测试（auto 多卡拿专卡 / auto 单卡回落共享）+ 3 条旧断言改为「key 不存在」。
+- **footgun 实测消除**：kling experiment resolve —— 1 卡 → 全共享 GPU0（照常能跑）；
+  3 卡 → trainer=0 rollout=1 reward=2 专卡（旧行为是 3 卡也强制共享）。
+- 全量 698 passed，ruff clean。
 
 ## 0. 一句话
 
@@ -42,6 +56,32 @@ continuous→`pause_admission_and_drain_inflight`），原来却要求 YAML 逐�
 optional（缺省走 `vrl/utils/profiling.py` 的 dataclass 默认值，**与原 YAML 逐项相同**，
 行为零变化）。要 profiling = 组合 `/profile/torch_profiler` preset（早已存在且自带
 `profile: true`）。
+
+## 1a. 批次 5 — 空字符串占位清理（2026-06-10）
+
+模式：YAML 里写 `key: ""` 表示「未设置」。对用户像漏填，实际是占位。判别标准：
+**读取方有 `.get(key, "")` 兜底（省略 == 空串）才删**；否则是必填占位，保留。
+
+已删（13 行，省略与 `""` 行为逐项验证等价）：
+- `worker_config.model_path: ""`（kling/videocon，读取方 `kling_video_reward.py:618`
+  `.get("model_path","")`）——删行并加注释说明「省略 = 按模型名走 HF 缓存」。
+- `lora.path: ""` ×7（全部 diffusion model yaml，读取方 `models/interfaces/runtime.py:72`
+  `lora.get("path") or None`）。
+- anima `transformer_path/text_encoder_path/vae_path: ""`（读取方 `anima/runtime.py:66-75`
+  `model_config.get(field, "")`）。
+- `ocr.debug_dir: ""`（`rewards/models/ocr.py:49` falsy 检查）。
+- `profile/torch_profiler.yaml` 两处 `output_dir: ""`（dataclass 默认即 `""`，
+  `profiling.py:137` 空串自动派生）。
+- 同步改 `test_anima_config_keeps_artifact_names_without_local_paths`：断言从
+  「值为 ""」改为「key 不存在」。
+
+保留的 5 处（删了会崩或语义是必填）：
+- `model.reference_image: ""` ×2 —— `cosmos/train.py:139` **直接属性访问**，省略即
+  Missing key；global reference 模式的必填占位。
+- `dataset/pickapic_v2.yaml cache_dir: ""` —— `schema.py:229` 显式「缺失报错、空串合法」。
+- `trainer.resume_from: ""` —— `builders.py` `require()`。
+- `reward/geneval.yaml import_path: ""` —— 必填槽位（evaluator=import_path 时空值在
+  打分时报错），留作提示。
 
 ## 2. 验证
 

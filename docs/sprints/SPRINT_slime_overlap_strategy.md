@@ -278,6 +278,50 @@ reward artifacts 的内存生命周期已经可控
 
 否则独立 reward stage 只会增加状态机、backpressure 和 failure handling 复杂度。
 
+## 4a. Multi-GPU placement strategy（记录：当前 auto 规则不是最优解）
+
+### 现状（2026-06-10 落地的保守默认）
+
+`share_with_rollout` 已三态化（`vrl/ray/resources.py`）：unset = auto——有空余卡给
+reward 专卡，否则共享 rollout 池。它解决的是**单卡 footgun**（显式 true 在多卡机上仍
+强制 reward/rollout 挤一张卡、每轮 7s+ 装卸churn），是正确性修复，**不是吞吐最优的
+多卡分配策略**。
+
+### 为什么"reward 专卡"很可能是错的多卡策略
+
+GPU-seconds 账（SD3.5/cosmos 实测）：一轮里 rollout denoise ≈ 78s，reward 推理
+≈ 1.1s（93ms/video × 12）。auto 在 3 卡机上给 reward 整卡 = 把一张卡分给**忙 1% 的
+角色**，而真正的瓶颈（generation）只有 1 卡。吞吐最优很可能是：
+
+```text
+trainer=0  rollout=1+2(DP)  reward 与 trainer 时分共享 GPU0
+```
+
+reward 与 trainer 天然时分互补：trainer 在 generation/scoring 阶段闲置，reward 恰好
+在那时运行——同卡不冲突，且都可常驻（显存够时）或 warm offload（之前评估过的
+P1.5 `model.to('cpu')` 方案在这个组合里复活）。
+
+### slime 的三种 placement（都不是"reward 专卡"）
+
+```text
+--colocate (+--offload)   推理引擎与 actor 同卡时分复用,阶段间 offload
+                          (slime/utils/arguments.py:70-93)
+disaggregate              训练与推理分池(默认形态)
+--rm-type remote_rm       reward 外包成远程服务,不占训练集群 GPU
+                          (slime/utils/arguments.py:1180-1207)
+```
+
+### 未来决策规则（多卡机器到位后用这个，不要用 auto 的直觉）
+
+1. **按实测 phase wall time 分配边际 GPU**：先量 rollout / reward / train 三段墙钟，
+   边际卡永远给最大消耗者（当前数据下 = rollout DP worker）。
+2. **reward 专卡排最后**：只有 reward wall time 成为主要部分（大 VLM reward、高
+   fps/分辨率、大 batch）才值得独立卡——与本 sprint §T5 的 gate 同一判据。
+3. **优先考虑 reward↔trainer 同卡时分**，其次 remote rm 服务化（slime 路线），
+   最后才是专卡。
+4. auto 规则保留为安全默认（它保证能跑、消除 churn），但多卡 production 配置应当
+   显式写 placement，并附 phase-time 依据。
+
 ## 5. Architecture Hygiene
 
 ### 应该改

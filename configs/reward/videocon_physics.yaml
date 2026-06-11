@@ -7,9 +7,6 @@ distributed:
       num_gpus: 1
       gpus_per_worker: 1.0
       num_workers: 1
-      # Release lifecycle flags derive from share_with_rollout in
-      # resolve_distributed_resources; only the placement decision lives here.
-      share_with_rollout: true
   reward:
     cpus_per_worker: 4.0
     placement_strategy: STRICT_PACK
@@ -28,7 +25,8 @@ reward:
       artifact_format: mp4
       artifact_dir: ${trainer.output_dir}/reward_artifacts
       debug_dir: ${trainer.output_dir}/reward_debug
+      # Omit model_path to resolve reward_model_name from the local HF
+      # cache; set worker_config.model_path to load a local checkpoint dir.
       worker_config:
-        model_path: ""
         dtype: bfloat16
         num_frames: 32
