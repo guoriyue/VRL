@@ -38,7 +38,6 @@ trainer:
   save_freq: 100
   log_freq: 1
 
-# Cosmos-specific eval / sanity-gate / paired-LoRA-vs-base config.
-# eval.eval_only=true switches the driver into base-vs-LoRA comparison
-# mode (no training); requires model.lora.path to point at a trained
-# checkpoint.
+# Cosmos-specific eval / sanity-gate config. eval.eval_only=true switches the
+# driver into trained-vs-base comparison mode (no training); with LoRA removed
+# (2026-06-10) it requires a full-model checkpoint via trainer.resume_from.

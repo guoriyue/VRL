@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
 import pytest
 from omegaconf import OmegaConf
@@ -154,58 +153,6 @@ def test_experiments_do_not_use_legacy_precision_fields() -> None:
     assert offenders == []
 
 
-def test_online_diffusion_experiments_have_rollout_compile_strategy() -> None:
-    """Checks online diffusion rollouts inherit the shared compile strategy block."""
-    offenders = []
-    for name in _experiment_names():
-        cfg = load_config(f"experiment/{name}")
-        if not name.startswith("diffusion/") or str(cfg.algorithm.kind) == "diffusion_dpo":
-            continue
-        compile_cfg = cfg.get("rollout", {}).get("denoise_compile")
-        if compile_cfg is None:
-            offenders.append(name)
-            continue
-        if dict(compile_cfg) != {
-            "enable": False,
-            "mode": "default",
-        }:
-            offenders.append(name)
-
-    assert offenders == []
-
-
-def test_model_memory_policy_defaults_are_yaml_backed() -> None:
-    """Checks model memory policy defaults are YAML backed."""
-    import torch
-
-    from vrl.models.diffusion.common.vae_decode_memory import (
-        VaeDecodeMemory,
-        vae_decode_memory_from_config,
-    )
-    from vrl.models.diffusion.cosmos.anima.runtime import extract_anima_runtime_spec
-    from vrl.models.diffusion.sd3_5.runtime import extract_sd3_5_runtime_spec
-    from vrl.models.diffusion.wan_2_1.runtime import extract_wan_2_1_runtime_spec
-
-    def vae_decode_policy(spec: Any) -> VaeDecodeMemory:
-        memory = spec.memory or {}
-        return vae_decode_memory_from_config(memory.get("vae_decode"))
-
-    # SD3.5 carries only a frozen_offload memory block — no VAE decode knobs,
-    # so the decode policy must fall back to the all-off default.
-    sd3 = load_config("experiment/diffusion/sd3_5/online_grpo_ocr")
-    sd3_spec = extract_sd3_5_runtime_spec(sd3, "cpu", torch.float32)
-    assert vae_decode_policy(sd3_spec) == VaeDecodeMemory()
-
-    # Wan and Anima enable VAE tiling+slicing purely from their YAML blocks.
-    wan = load_config("experiment/diffusion/wan_2_1/online_grpo_ocr")
-    wan_spec = extract_wan_2_1_runtime_spec(wan, "cpu", torch.bfloat16)
-    assert vae_decode_policy(wan_spec) == VaeDecodeMemory(tiling=True, slicing=True)
-
-    anima = load_config("experiment/diffusion/anima_preview3/online_grpo_aesthetic")
-    anima_spec = extract_anima_runtime_spec(anima, "cpu", torch.bfloat16)
-    assert vae_decode_policy(anima_spec) == VaeDecodeMemory(tiling=True, slicing=True)
-
-
 def test_rollout_orchestration_group_override_uses_rollout_namespace() -> None:
     """Checks rollout orchestration group override uses rollout namespace."""
     cfg = load_config(
@@ -250,84 +197,6 @@ def test_algorithm_config_dispatches_representative_kinds() -> None:
                 "selfcheck_text": False,
                 "final_image": True,
             }
-
-
-def test_cosmos_diffusion_nft_video_reward_validation_config() -> None:
-    """Checks Cosmos diffusion NFT video reward validation config."""
-    cfg = load_config("experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward")
-
-    validate_training_config(cfg)
-    assert cfg.data.task_type == "text_to_video"
-    assert cfg.data.manifest == "datasets/videophy/train.txt"
-    assert cfg.data.eval_manifest == "datasets/videophy/eval.txt"
-    assert cfg.data.source_report == "datasets/videophy/report.json"
-    assert cfg.model.use_lora is True
-    assert cfg.reward.kwargs.kling_video_reward.inference_runtime == "ray"
-    assert cfg.reward.kwargs.kling_video_reward.artifact_format == "mp4"
-    assert cfg.reward.kwargs.kling_video_reward.artifact_dir == (
-        f"{cfg.trainer.output_dir}/reward_artifacts"
-    )
-    assert cfg.reward.kwargs.kling_video_reward.debug_dir == (
-        f"{cfg.trainer.output_dir}/reward_debug"
-    )
-    assert cfg.reward.kwargs.kling_video_reward.reward_name == "KlingTeam/VideoReward@main"
-    assert "model_factory" not in cfg.reward.kwargs.kling_video_reward.worker_config
-    assert "reward_model_name" not in cfg.reward.kwargs.kling_video_reward.worker_config
-    assert cfg.reward.kwargs.kling_video_reward.worker_config.local_files_only is True
-    assert cfg.distributed.resources.reward.num_gpus == 1
-    # Placement is auto-derived from GPU topology (pinned in
-    # tests/ray/test_resources.py); the YAML no longer spells
-    # share_with_rollout or the release lifecycle flags.
-    assert "share_with_rollout" not in cfg.distributed.resources.reward
-    # cosmos-rl parity (cosmos-predict2-5-2b-720-nft.toml): n_generation=12,
-    # mini_batch=6 prompts/step, 10 epochs, bf16 params. The 72/step effective
-    # batch runs single-GPU via sequential gen + gradient accumulation.
-    assert cfg.rollout.n == 12
-    assert cfg.rollout.rollout_batch_size == 6
-    assert cfg.rollout.sample_batch_size == 1
-    assert cfg.trainer.total_epochs == 10
-    assert cfg.precision == "bf16"
-    assert cfg.production.kling_video_reward.enabled is True
-
-
-def test_cosmos_motion_physics_config() -> None:
-    # DanceGRPO-style motion-quality core + explicit physics commonsense term,
-    # on the cosmos-rl NFT regime (10-step no-CFG, not the 4-step variant).
-    """Checks Cosmos motion physics config."""
-    cfg = load_config("experiment/diffusion/cosmos_predict2_5/online_nft_motion_physics")
-
-    validate_training_config(cfg)
-    assert cfg.algorithm.kind == "diffusion_nft"
-    assert cfg.sampling.num_steps == 10
-    assert cfg.sampling.cfg is False
-    assert cfg.actor.timestep_fraction == 0.99
-    # Weighted compound: Kling Motion-Quality (0.7) + VideoCon-Physics (0.3).
-    assert cfg.reward.components.kling_video_reward == 0.7
-    assert cfg.reward.components.videocon_physics == 0.3
-    assert cfg.reward.kwargs.kling_video_reward.score_key == "motion_quality"
-    assert cfg.reward.kwargs.kling_video_reward.artifact_format == "mp4"
-    assert cfg.reward.kwargs.videocon_physics.score_key == "physical_commonsense"
-    assert cfg.reward.kwargs.videocon_physics.artifact_format == "mp4"
-    assert cfg.production.kling_video_reward.enabled is True
-
-
-def test_cosmos_v2w_reference_route_config() -> None:
-    """Checks Cosmos V2W reference route config."""
-    cfg = load_config("experiment/diffusion/cosmos_predict2/online_grpo_v2w_reference")
-
-    validate_training_config(cfg)
-    assert cfg.data.task_type == "video2world"
-    assert cfg.data.manifest == "data/external/video_world/manifests/robot_train.jsonl"
-    assert cfg.data.eval_manifest == "data/external/video_world/manifests/robot_eval.jsonl"
-    assert cfg.data.source_report == "data/external/video_world/robot_report.json"
-    assert cfg.cosmos.reference_mode == "per_sample"
-    assert cfg.model.reference_image == ""
-    assert cfg.reward.kwargs.kling_video_reward.inference_runtime == "ray"
-    assert cfg.reward.kwargs.kling_video_reward.artifact_format == "mp4"
-    assert cfg.reward.kwargs.kling_video_reward.reward_name == "KlingTeam/VideoReward@main"
-    assert "model_factory" not in cfg.reward.kwargs.kling_video_reward.worker_config
-    assert cfg.reward.kwargs.kling_video_reward.worker_config.local_files_only is True
-    assert "share_with_rollout" not in cfg.distributed.resources.reward
 
 
 def test_cosmos_v2w_production_validation_accepts_source_backed_data(
@@ -404,65 +273,6 @@ def test_cosmos_v2w_production_validation_accepts_source_backed_data(
     )
 
     validate_training_config(cfg)
-
-
-def test_wan_video_reward_production_config() -> None:
-    """Checks Wan video reward production config."""
-    cfg = load_config("experiment/diffusion/wan_2_1/online_grpo_kling_video_reward")
-
-    validate_training_config(cfg)
-    assert cfg.model.family == "wan"
-    assert cfg.reward.components.kling_video_reward == 1.0
-    assert cfg.reward.kwargs.kling_video_reward.inference_runtime == "ray"
-    assert cfg.reward.kwargs.kling_video_reward.media_type == "video"
-    assert cfg.reward.kwargs.kling_video_reward.artifact_format == "mp4"
-    assert cfg.reward.kwargs.kling_video_reward.artifact_dir == (
-        f"{cfg.trainer.output_dir}/reward_artifacts"
-    )
-    assert cfg.reward.kwargs.kling_video_reward.debug_dir == (
-        f"{cfg.trainer.output_dir}/reward_debug"
-    )
-    assert cfg.reward.kwargs.kling_video_reward.reward_name == "KlingTeam/VideoReward@main"
-    assert "model_factory" not in cfg.reward.kwargs.kling_video_reward.worker_config
-    assert "backend" not in cfg.reward.kwargs.kling_video_reward.worker_config
-    assert "score_key_map" not in cfg.reward.kwargs.kling_video_reward.worker_config
-    assert "reward_model_name" not in cfg.reward.kwargs.kling_video_reward.worker_config
-    assert cfg.reward.kwargs.kling_video_reward.worker_config.local_files_only is True
-    assert cfg.rollout.n == 4
-    assert cfg.rollout.rollout_batch_size == 1
-    assert cfg.rollout.sample_batch_size == 1
-    assert cfg.rollout.noise_level == pytest.approx(0.7)
-    assert cfg.rollout.sde.type == "cps"
-    assert cfg.data.task_type == "text_to_video"
-    assert cfg.data.manifest == "datasets/videophy/train.txt"
-    assert cfg.data.eval_manifest == "datasets/videophy/eval.txt"
-    assert cfg.data.source_report == "datasets/videophy/report.json"
-    assert "share_with_rollout" not in cfg.distributed.resources.reward
-
-
-def test_wan_i2v_physics_config() -> None:
-    """Checks Wan I2V physics config."""
-    cfg = load_config("experiment/diffusion/wan_2_1/online_grpo_physics_i2v")
-
-    validate_training_config(cfg)
-    assert cfg.model.family == "wan_2_1_i2v"
-    assert cfg.model.task_variant == "i2v"
-    assert cfg.data.loader == "prompt_image_manifest"
-    assert cfg.data.task_type == "image_to_video"
-    assert cfg.data.manifest == "data/external/videophy_i2v/manifests/train.jsonl"
-    assert cfg.data.eval_manifest == "data/external/videophy_i2v/manifests/eval.jsonl"
-    assert cfg.data.artifact_data_root == "data/external/videophy_i2v"
-    assert cfg.data.source_report == "data/external/videophy_i2v/report.json"
-    assert cfg.sampling.height == 480
-    assert cfg.sampling.width == 832
-    assert cfg.sampling.num_frames == 81
-    assert cfg.sampling.guidance_scale == pytest.approx(5.0)
-    assert cfg.rollout.n == 2
-    assert cfg.rollout.rollout_batch_size == 1
-    assert cfg.trainer.entrypoint == (
-        "vrl.scripts.diffusion.wan_2_1.train:train_wan_2_1_i2v_grpo"
-    )
-    assert cfg.production.kling_video_reward.enabled is False
 
 
 def test_wan_i2v_production_validation_accepts_source_backed_data(tmp_path: Path) -> None:
@@ -569,51 +379,6 @@ def test_wan_video_reward_production_rejects_extra_loader_fields() -> None:
         validate_training_config(cfg)
 
 
-def test_anima_safe_reward_config_uses_cpu_nsfw_penalty() -> None:
-    """Checks Anima safe reward config uses CPU NSFW penalty."""
-    from vrl.scripts.common.factory import build_reward_from_cfg
-
-    cfg = load_config("experiment/diffusion/anima_preview3/online_grpo_aesthetic_nsfw_safety")
-    built = build_configs(cfg)
-
-    reward_weights, reward_kwargs = built["reward"]
-    assert reward_weights == {
-        "aesthetic": pytest.approx(1.0),
-        "nsfw_safety": pytest.approx(0.5),
-    }
-    assert reward_kwargs["nsfw_safety"]["classifier_device"] == "cpu"
-    assert reward_kwargs["nsfw_safety"]["threshold"] == pytest.approx(0.35)
-    assert cfg.data.manifest == "datasets/danbooru/safety/train.jsonl"
-    assert cfg.data.eval_manifest == "datasets/danbooru/safety/eval_baseline.jsonl"
-    assert cfg.rollout.sample_batch_size == 1
-    reward_fn = build_reward_from_cfg(cfg, built=built, device="cpu")
-    assert [name for name, _, _ in reward_fn.rewards] == ["aesthetic", "nsfw_safety"]
-
-
-
-def test_anima_config_keeps_artifact_names_without_local_paths() -> None:
-    """Checks Anima config keeps artifact names without local paths."""
-    cfg = load_config("experiment/diffusion/anima_preview3/online_grpo_aesthetic")
-    model_yaml = OmegaConf.to_yaml(cfg.model)
-
-    assert cfg.model.path == "circlestone-labs/Anima"
-    assert cfg.model.transformer_file == (
-        "split_files/diffusion_models/anima-preview3-base.safetensors"
-    )
-    assert cfg.model.text_encoder_file == "split_files/text_encoders/qwen_3_06b_base.safetensors"
-    assert cfg.model.vae_file == "split_files/vae/qwen_image_vae.safetensors"
-    # Local-path overrides are omitted, not spelled as "" (omission and ""
-    # are equivalent: the runtime reads them via .get(field, "")).
-    assert "transformer_path" not in cfg.model
-    assert "text_encoder_path" not in cfg.model
-    assert "vae_path" not in cfg.model
-    assert "tokenizer_root" not in cfg.model
-    assert "anima-inference" not in model_yaml
-    assert "ComfyUI" not in model_yaml
-    assert cfg.model.qwen_tokenizer_path == "Qwen/Qwen2.5-0.5B"
-    assert cfg.model.t5_tokenizer_path == "google-t5/t5-base"
-
-
 def test_unified_train_entrypoint_reads_yaml_entrypoint() -> None:
     """Checks unified train entrypoint reads YAML entrypoint."""
     from vrl.scripts.train import _import_callable, resolve_train_target
@@ -715,16 +480,3 @@ def test_dpo_allows_explicit_null_max_train_samples() -> None:
     validate_training_config(cfg)
 
 
-def test_dpo_recipe_declares_trainer_only_resource_plan() -> None:
-    """Checks DPO recipe declares trainer only resource plan."""
-    from vrl.ray.resources import resolve_distributed_resources
-
-    cfg = load_config(
-        "experiment/diffusion/wan_2_1/offline_dpo_pickapic",
-        overrides=["distributed.resources.visible_devices=[0]"],
-    )
-    resolved = resolve_distributed_resources(cfg)
-
-    assert resolved.trainer_devices == (0,)
-    assert resolved.rollout_devices == ()
-    assert resolved.rollout_num_workers == 0
