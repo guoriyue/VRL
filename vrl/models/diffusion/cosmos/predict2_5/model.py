@@ -233,7 +233,11 @@ class CosmosPredict25Model(DiffusionModelBase):
         self._set_transformer(transformer)
 
     def sync_previous_policy_adapter(self, *, decay: float = 0.0) -> None:
-        """Refresh the DiffusionNFT previous-policy adapter from the trainable adapter."""
+        """Refresh the DiffusionNFT previous-policy adapter from the trainable adapter.
+
+        Reached via getattr dispatch in vrl/algorithms/diffusion_nft.py, not a
+        direct call — keep even though textual call-site searches miss it.
+        """
 
         _copy_adapter_weights(
             self.transformer,
@@ -253,9 +257,6 @@ class CosmosPredict25Model(DiffusionModelBase):
 
     def set_num_steps(self, n: int) -> None:
         self.pipeline.scheduler.set_timesteps(n, device=self.device)
-
-    def describe(self) -> dict[str, Any]:
-        return {"family": self.family, "device": str(self.device)}
 
     def encode_prompt(
         self,

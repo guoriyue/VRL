@@ -18,7 +18,6 @@ from vrl.generation.types import (
     GenerationOutput,
     GenerationRequest,
     GenerationSampleRow,
-    WorkloadSignature,
 )
 from vrl.models.ar.capabilities import ar_discrete_family_capability
 from vrl.models.ar.janus_pro import JANUS_R1_SEGMENTS
@@ -288,9 +287,6 @@ class JanusProChunkExecutor(ARChunkExecutorBase):
         self.model = model
 
     # -- protocol ------------------------------------------------------
-
-    def workload_signature(self, request: GenerationRequest) -> WorkloadSignature:
-        return WorkloadSignature.from_request_and_capability(request, self.capability())
 
     def capability(self) -> FamilyCapability:
         return self.family_capability

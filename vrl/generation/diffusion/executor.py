@@ -22,7 +22,6 @@ from vrl.generation.execution.chunks import (
     run_sample_chunks_with_oom_retry,
 )
 from vrl.generation.execution.planner import attach_engine_plan, build_engine_plan
-from vrl.generation.execution.request_batch import RequestBatch
 from vrl.generation.protocols import (
     GenerationChunkExecutor,
 )
@@ -30,7 +29,6 @@ from vrl.generation.types import (
     GenerationOutput,
     GenerationRequest,
     GenerationSampleRow,
-    WorkloadSignature,
 )
 from vrl.math.diffusion.flow_matching import sde_step_with_logprob
 from vrl.trajectory.storage import trajectory_tensor_bytes
@@ -255,9 +253,6 @@ class DiffusionChunkExecutorBase(
             default_max_sequence_length=self.default_max_sequence_length,
             sde_type=self.sde_type,
         )
-
-    def workload_signature(self, request: GenerationRequest) -> WorkloadSignature:
-        return WorkloadSignature.from_request_and_capability(request, self.capability())
 
     def capability(self) -> FamilyCapability:
         if self.family_capability is None:
@@ -746,35 +741,6 @@ class DiffusionChunkExecutorBase(
             sample_rows,
             chunks,
         )
-
-    def forward_batch_plan(
-        self,
-        requests: list[GenerationRequest],
-        sample_rows_by_request: dict[str, list[GenerationSampleRow]],
-        engine_plans_by_request: dict[str, Any],
-    ) -> dict[str, GenerationOutput]:
-        def forward(
-            request: GenerationRequest,
-            sample_rows: list[GenerationSampleRow],
-        ) -> GenerationOutput:
-            plan = engine_plans_by_request.get(request.request_id)
-            if plan is None:
-                plan = self.plan(request, sample_rows)
-            output = self.forward_plan(request, sample_rows, plan)
-            execution_extra = output.extra.setdefault("engine_execution", {})
-            if isinstance(execution_extra, dict):
-                execution_extra["plan_aware_forward"] = True
-                execution_extra["forward_plan_id"] = plan.request_id
-            return output
-
-        outputs = RequestBatch(
-            requests=requests,
-            sample_rows_by_request=sample_rows_by_request,
-        ).run(forward)
-        return {
-            request_id: attach_engine_plan(output, engine_plans_by_request[request_id])
-            for request_id, output in outputs.items()
-        }
 
     # -- family hooks --------------------------------------------------
 

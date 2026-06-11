@@ -1,6 +1,6 @@
 # SPRINT: Duplicate-goal consolidation (proposed)
 
-状态：implemented（2026-06-10，本仓 5 个 commit：S1-S5/S7 + Phase A/B/D；S6 撤回、S8 未做——taste 项留给 maintainer）。与 `SPRINT_small_function_consolidation.md`
+状态：proposed（2026-06-10 审计完成，未实施）。与 `SPRINT_small_function_consolidation.md`
 （小函数/死代码镜头）互补，本篇是**重复目标函数**镜头：同一件事在多处有各自的实现。
 
 ## 0. 方法与覆盖（诚实声明）
@@ -68,17 +68,14 @@ vrl/models/ar/janus_pro/model.py:69 ↔ vrl/rollouts/evaluators/ar/multi_segment
 
 落点：`vrl/trajectory/`（role 枚举的所在层）。
 
-### S6. ocr / nsfw_safety 绕过已有 reward 基类 —— 实施时再判为不做（2026-06-10）
+### S6. ocr / nsfw_safety 绕过已有 reward 基类
 
 ```text
 vrl/rewards/models/base.py:20 TorchRewardModel（_load/_ensure_loaded/score_media 契约）
 aesthetic/pickscore 正确继承；ocr.py:34 与 nsfw_safety.py:28 独立类，自写 _ensure_loaded
 ```
 
-细读后撤回：OCR 的 __call__ 依赖 artifact.metadata["target_text"]、NSFW 有批量
-score_request + 可注入 scorer——两者是 artifact 级契约，与 score_media(media, prompt)
-的逐媒体契约不同。强行继承只共享 3 行 _ensure_loaded，却要扭曲构造器与调用面，
-属"为对齐而对齐"。保留现状。
+对齐到 TorchRewardModel（落点已存在，不新建抽象）。
 
 ### S7. `torch_compile_transformer` ×4（4 行同构）
 

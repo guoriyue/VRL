@@ -17,7 +17,6 @@ from vrl.generation.types import (
     GenerationOutput,
     GenerationRequest,
     GenerationSampleRow,
-    WorkloadSignature,
 )
 from vrl.models.ar.capabilities import ar_continuous_family_capability
 from vrl.models.ar.nextstep_1.model import (
@@ -241,9 +240,6 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
         self.model = model
 
     # -- protocol ------------------------------------------------------
-
-    def workload_signature(self, request: GenerationRequest) -> WorkloadSignature:
-        return WorkloadSignature.from_request_and_capability(request, self.family_capability)
 
     def capability(self) -> FamilyCapability:
         return self.family_capability

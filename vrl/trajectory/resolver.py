@@ -185,25 +185,6 @@ class TrajectoryResolver:
             out[tensor_name] = move_value_to_device(value, device)
         return out
 
-    def resolve_training_view(self, view: TrainingView) -> ResolvedTrainingView:
-        """Resolve a training view into typed tensors owned by the trajectory."""
-
-        TrajectoryValidator(self.trajectory).validate_training_view(view)
-        resolved_units = tuple(self._resolve_loss_unit(unit) for unit in view.loss_units)
-        return ResolvedTrainingView(
-            trajectory=self.trajectory,
-            view=view,
-            loss_units=resolved_units,
-        )
-
-    def resolve_loss_unit(self, unit: LossUnit) -> ResolvedLossUnit:
-        """Resolve a single loss unit after validating it against the trajectory."""
-
-        TrajectoryValidator(self.trajectory).validate_training_view(
-            TrainingView(loss_units=(unit,), primary_segment=unit.segment)
-        )
-        return self._resolve_loss_unit(unit)
-
     def _resolve_loss_unit(self, unit: LossUnit) -> ResolvedLossUnit:
         segment = self.trajectory.segments.get(unit.segment)
         if segment is None:

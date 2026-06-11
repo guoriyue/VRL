@@ -70,11 +70,6 @@ class NSFWSafetyRewardModel:
         images = _extract_images(artifact.as_media(), self._image_sample_count)
         return {"nsfw_safety": self._penalty_from_probs(self._score_images(images))}
 
-    def probability_batch(self, images: list[Any]) -> list[float]:
-        """Raw NSFW probabilities for image-level safety audits."""
-
-        return self._score_images(images)
-
     def _score_images(self, images: list[Any]) -> list[float]:
         if not images:
             return []

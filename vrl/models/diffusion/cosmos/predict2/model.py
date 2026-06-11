@@ -184,9 +184,6 @@ class CosmosPredict2Model(LoraModelMixin, DiffusionModelBase):
     def device(self) -> Any:
         return self._device if self._device is not None else self.pipeline.device
 
-    def describe(self) -> dict[str, Any]:
-        return {"family": self.family, "device": str(self.device)}
-
     # -- encode_prompt -------------------------------------------------
 
     def encode_prompt(

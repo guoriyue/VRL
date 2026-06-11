@@ -36,10 +36,6 @@ class _TinyChunkExecutor:
         type(self).build_count += 1
         self.model = model
 
-    def workload_signature(self, request: GenerationRequest) -> Any:
-        del request
-        return None
-
     def forward_chunk_plan(self, *args: Any, **kwargs: Any) -> ChunkResult:
         raise NotImplementedError("Ray worker idempotency test never executes chunks")
 

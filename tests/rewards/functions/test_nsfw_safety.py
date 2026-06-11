@@ -70,15 +70,6 @@ def test_nsfw_classifier_result_parsing_prefers_nsfw_labels() -> None:
     assert probability == pytest.approx(0.20)
 
 
-def test_nsfw_safety_reward_exposes_raw_probabilities_for_audits() -> None:
-    """Checks NSFW safety reward exposes raw probabilities for audits."""
-    reward = NSFWSafetyReward(model_name="test", scorer=lambda images: [0.10, 0.90])
-
-    probabilities = reward._model.probability_batch([object(), object()])
-
-    assert probabilities == pytest.approx([0.10, 0.90])
-
-
 def test_nsfw_safety_reward_rejects_invalid_reverse_like_config() -> None:
     """Checks NSFW safety reward rejects invalid reverse like config."""
     with pytest.raises(ValueError, match="penalty_scale"):

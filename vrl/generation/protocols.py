@@ -12,7 +12,6 @@ if TYPE_CHECKING:
         GenerationOutput,
         GenerationRequest,
         GenerationSampleRow,
-        WorkloadSignature,
     )
 
 
@@ -72,11 +71,6 @@ class GenerationChunkExecutor(Protocol):
 
     family: str
     task: str
-
-    def workload_signature(
-        self,
-        request: GenerationRequest,
-    ) -> WorkloadSignature: ...
 
     def forward_chunk_plan(
         self,

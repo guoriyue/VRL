@@ -34,9 +34,6 @@ class DiffusionModelBase(nn.Module, ABC):
         """Load heavy modules. Default no-op for adapters constructed eagerly."""
         return None
 
-    def describe(self) -> dict[str, Any]:
-        return {"family": self.family}
-
     @abstractmethod
     def encode_prompt(
         self,

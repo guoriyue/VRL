@@ -78,10 +78,6 @@ class ActiveSequence:
             self.position = self.max_new_tokens
             self.finished = True
 
-    def mark_finished(self) -> None:
-        self.position = min(self.position, self.max_new_tokens)
-        self.finished = True
-
 
 @dataclass(slots=True)
 class TokenBatch:

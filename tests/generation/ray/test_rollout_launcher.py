@@ -41,10 +41,6 @@ class _TinyChunkExecutor:
     def __init__(self, model: _TinyRuntimeModel) -> None:
         self.model = model
 
-    def workload_signature(self, request: GenerationRequest) -> Any:
-        del request
-        return None
-
     def forward_chunk_plan(self, *args: Any, **kwargs: Any) -> ChunkResult:
         raise NotImplementedError("Ray launcher test only verifies worker construction")
 

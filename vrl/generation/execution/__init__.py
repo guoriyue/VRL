@@ -15,7 +15,6 @@ from vrl.generation.execution.planner import (
     attach_engine_plan,
     build_engine_plan,
 )
-from vrl.generation.execution.request_batch import RequestBatch
 from vrl.generation.execution.chunk_placement import (
     ChunkPlacementPolicy,
     DeviceAssignment,
@@ -41,7 +40,6 @@ __all__ = [
     "EnginePlanner",
     "ExecutionStage",
     "GenerationWorkerCore",
-    "RequestBatch",
     "ResolvedAxis",
     "SampleChunk",
     "SampleChunkSchedule",

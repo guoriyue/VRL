@@ -191,9 +191,6 @@ class AnimaModel(LoraModelMixin, DiffusionModelBase):
     def device(self) -> Any:
         return self._device
 
-    def describe(self) -> dict[str, Any]:
-        return {"family": self.family, "device": str(self.device)}
-
     def _set_transformer(self, transformer: Any) -> None:
         self.transformer = transformer
 

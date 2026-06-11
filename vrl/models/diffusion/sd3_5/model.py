@@ -107,9 +107,6 @@ class SD3_5Model(LoraModelMixin, DiffusionModelBase):
     def device(self) -> Any:
         return self._device if self._device is not None else self.pipeline.device
 
-    def describe(self) -> dict[str, Any]:
-        return {"family": self.family, "device": str(self.device)}
-
     # -- backend ownership (called by runtime, not by collectors) -------
 
     @classmethod
