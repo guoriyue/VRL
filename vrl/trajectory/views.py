@@ -51,12 +51,10 @@ class LossUnit:
 
     segment: str
     axis: str
-    axis_index: int | None
     action_ref: str
     old_log_prob_ref: str
     mask_ref: str
     advantage_scope: AdvantageScope = "sample"
-    signal_requirements: tuple[str, ...] = ()
     replay_input_refs: tuple[str, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -70,9 +68,6 @@ class LossUnit:
         ):
             if not isinstance(value, str) or not value:
                 raise ValueError(f"{name} must be a non-empty string")
-        if self.axis_index is not None and self.axis_index < 0:
-            raise ValueError("LossUnit.axis_index must be >= 0 when set")
-        require_string_tuple("LossUnit.signal_requirements", self.signal_requirements)
         require_string_tuple("LossUnit.replay_input_refs", self.replay_input_refs)
 
 
@@ -115,7 +110,6 @@ def build_training_view(
             LossUnit(
                 segment=segment.name,
                 axis=loss_axis,
-                axis_index=None,
                 action_ref=tensor_ref(segment.name, action.name),
                 old_log_prob_ref=tensor_ref(segment.name, old_log_prob.name),
                 mask_ref=tensor_ref(segment.name, mask.name),

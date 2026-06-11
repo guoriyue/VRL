@@ -7,11 +7,6 @@ from vrl.trajectory.builders import (
     build_diffusion_trajectory,
 )
 from vrl.trajectory.resolver import (
-    ResolvedContextValue,
-    ResolvedLossUnit,
-    ResolvedReplayInput,
-    ResolvedTrainingView,
-    ResolvedTrajectoryTensor,
     TrajectoryResolver,
     TrajectoryResolverError,
 )
@@ -60,11 +55,6 @@ __all__ = [
     "LossUnit",
     "ReplayInput",
     "ReplaySignalKind",
-    "ResolvedContextValue",
-    "ResolvedLossUnit",
-    "ResolvedReplayInput",
-    "ResolvedTrainingView",
-    "ResolvedTrajectoryTensor",
     "RewardModality",
     "RewardView",
     "SegmentModality",

@@ -10,68 +10,17 @@ from vrl.trajectory.types import (
     ReplayInput,
     TensorRole,
     TrajectoryBatch,
-    TrajectorySegment,
     TrajectoryTensor,
 )
 from vrl.trajectory.validation import (
     TrajectoryValidator,
     tensor_ref,
 )
-from vrl.trajectory.views import LossUnit, TrainingView
+from vrl.trajectory.views import TrainingView
 
 
 class TrajectoryResolverError(ValueError):
     """Raised when a training view cannot be resolved to trajectory facts."""
-
-
-@dataclass(frozen=True, slots=True)
-class ResolvedTrajectoryTensor:
-    """A trajectory tensor after loss-unit axis slicing has been applied."""
-
-    ref: str
-    value: Any
-    axes: tuple[str, ...]
-    role: TensorRole
-    source: TrajectoryTensor
-
-
-@dataclass(frozen=True, slots=True)
-class ResolvedContextValue:
-    """A serializable trajectory context value required by a replay input."""
-
-    ref: str
-    value: Any
-
-
-@dataclass(frozen=True, slots=True)
-class ResolvedReplayInput:
-    """A replay recipe with all tensor and context refs resolved."""
-
-    ref: str
-    replay_input: ReplayInput
-    tensors: tuple[ResolvedTrajectoryTensor, ...]
-    context_values: tuple[ResolvedContextValue, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class ResolvedLossUnit:
-    """Resolved tensors for one logical training loss unit."""
-
-    loss_unit: LossUnit
-    segment: TrajectorySegment
-    action: ResolvedTrajectoryTensor
-    old_log_prob: ResolvedTrajectoryTensor
-    mask: ResolvedTrajectoryTensor
-    replay_inputs: tuple[ResolvedReplayInput, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class ResolvedTrainingView:
-    """Resolved loss units for a training view."""
-
-    trajectory: TrajectoryBatch
-    view: TrainingView
-    loss_units: tuple[ResolvedLossUnit, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,111 +134,6 @@ class TrajectoryResolver:
             out[tensor_name] = move_value_to_device(value, device)
         return out
 
-    def _resolve_loss_unit(self, unit: LossUnit) -> ResolvedLossUnit:
-        segment = self.trajectory.segments.get(unit.segment)
-        if segment is None:
-            _fail(f"LossUnit.segment={unit.segment!r} is unknown")
-
-        action = self._resolve_tensor(
-            unit,
-            unit.action_ref,
-            expected_role="action",
-            require_loss_axis=True,
-        )
-        old_log_prob = self._resolve_tensor(
-            unit,
-            unit.old_log_prob_ref,
-            expected_role="old_log_prob",
-            require_loss_axis=True,
-        )
-        mask = self._resolve_tensor(
-            unit,
-            unit.mask_ref,
-            expected_role="mask",
-            require_loss_axis=True,
-        )
-        _require_core_shapes_match(unit, action, old_log_prob, mask)
-        replay_inputs = tuple(
-            self._resolve_replay_input(unit, replay_ref)
-            for replay_ref in unit.replay_input_refs
-        )
-        return ResolvedLossUnit(
-            loss_unit=unit,
-            segment=segment,
-            action=action,
-            old_log_prob=old_log_prob,
-            mask=mask,
-            replay_inputs=replay_inputs,
-        )
-
-    def _resolve_replay_input(
-        self,
-        unit: LossUnit,
-        ref: str,
-    ) -> ResolvedReplayInput:
-        segment_name, replay_name = _split_ref(ref, "replay input")
-        if segment_name != unit.segment:
-            _fail(
-                f"LossUnit replay input {ref!r} must reference segment "
-                f"{unit.segment!r}",
-            )
-        segment = self.trajectory.segments.get(segment_name)
-        if segment is None:
-            _fail(f"LossUnit references unknown replay input {ref!r}")
-        replay_input = segment.replay_inputs.get(replay_name)
-        if replay_input is None:
-            _fail(f"LossUnit references unknown replay input {ref!r}")
-
-        resolved_tensors = tuple(
-            self._resolve_tensor(
-                unit,
-                self._canonical_tensor_ref(segment_name, tensor_ref_value),
-                expected_role=None,
-                require_loss_axis=False,
-            )
-            for tensor_ref_value in replay_input.tensor_refs
-        )
-        context_values = tuple(
-            self._resolve_context_value(context_ref)
-            for context_ref in replay_input.context_refs
-        )
-        return ResolvedReplayInput(
-            ref=ref,
-            replay_input=replay_input,
-            tensors=resolved_tensors,
-            context_values=context_values,
-        )
-
-    def _resolve_tensor(
-        self,
-        unit: LossUnit,
-        ref: str,
-        *,
-        expected_role: TensorRole | None,
-        require_loss_axis: bool,
-    ) -> ResolvedTrajectoryTensor:
-        source = self._lookup_tensor(ref)
-        if expected_role is not None and source.role != expected_role:
-            _fail(f"tensor {ref!r} must have role {expected_role!r}, got {source.role!r}")
-        if require_loss_axis and unit.axis not in source.axes:
-            _fail(f"tensor {ref!r} does not contain loss axis {unit.axis!r}")
-
-        axes = source.axes
-        value = source.value
-        if unit.axis_index is not None and unit.axis in axes:
-            axis_dim = axes.index(unit.axis)
-            value = _slice_axis(value, ref, axis_dim, unit.axis_index)
-            axes = axes[:axis_dim] + axes[axis_dim + 1 :]
-
-        _require_axis_shape(self.trajectory, ref, value, axes)
-        return ResolvedTrajectoryTensor(
-            ref=ref,
-            value=value,
-            axes=axes,
-            role=source.role,
-            source=source,
-        )
-
     def _lookup_tensor(self, ref: str) -> TrajectoryTensor:
         segment_name, tensor_name = _split_ref(ref, "tensor")
         segment = self.trajectory.segments.get(segment_name)
@@ -299,11 +143,6 @@ class TrajectoryResolver:
         if tensor is None:
             _fail(f"unknown tensor ref {ref!r}: tensor {tensor_name!r} is unknown")
         return tensor
-
-    def _resolve_context_value(self, ref: str) -> ResolvedContextValue:
-        if ref not in self.trajectory.context:
-            _fail(f"ReplayInput references unknown context value {ref!r}")
-        return ResolvedContextValue(ref=ref, value=self.trajectory.context[ref])
 
     def _canonical_tensor_ref(self, segment_name: str, ref: str) -> str:
         if "." in ref:
@@ -359,76 +198,6 @@ def _slice_sequence_axis(value: Any, axis_dim: int, axis_index: int, ref: str) -
         _fail(f"failed to slice tensor {ref!r}: {exc}")
 
 
-def _require_core_shapes_match(
-    unit: LossUnit,
-    action: ResolvedTrajectoryTensor,
-    old_log_prob: ResolvedTrajectoryTensor,
-    mask: ResolvedTrajectoryTensor,
-) -> None:
-    baseline_axes = action.axes
-    for resolved in (old_log_prob, mask):
-        if resolved.axes != baseline_axes:
-            _fail(
-                f"LossUnit for segment {unit.segment!r} has axis mismatch: "
-                f"{resolved.ref!r} axes {resolved.axes!r} != {baseline_axes!r}",
-            )
-
-    baseline_shape = _logical_shape(action)
-    for resolved in (old_log_prob, mask):
-        shape = _logical_shape(resolved)
-        if baseline_shape is not None and shape is not None and shape != baseline_shape:
-            _fail(
-                f"LossUnit for segment {unit.segment!r} has shape mismatch: "
-                f"{resolved.ref!r} logical shape {shape!r} != {baseline_shape!r}",
-            )
-
-    old_shape = _shape(old_log_prob.value)
-    mask_shape = _shape(mask.value)
-    if old_shape is not None and mask_shape is not None and old_shape != mask_shape:
-        _fail(
-            f"LossUnit for segment {unit.segment!r} has shape mismatch: "
-            f"old_log_prob shape {old_shape!r} != mask shape {mask_shape!r}",
-        )
-
-
-def _require_axis_shape(
-    trajectory: TrajectoryBatch,
-    ref: str,
-    value: Any,
-    axes: tuple[str, ...],
-) -> None:
-    shape = _shape(value)
-    if shape is None:
-        return
-    if len(shape) < len(axes):
-        _fail(
-            f"tensor {ref!r} rank {len(shape)} is smaller than "
-            f"resolved axes {axes!r}",
-        )
-    for dim, axis_name in enumerate(axes):
-        axis = trajectory.axes.get(axis_name)
-        if axis is None:
-            _fail(f"tensor {ref!r} references unknown axis {axis_name!r}")
-        expected = axis.length
-        if expected is not None and shape[dim] != expected:
-            _fail(
-                f"tensor {ref!r} axis {axis_name!r} has shape {shape[dim]}, "
-                f"expected {expected}",
-            )
-
-
-def _logical_shape(resolved: ResolvedTrajectoryTensor) -> tuple[int, ...] | None:
-    shape = _shape(resolved.value)
-    if shape is None:
-        return None
-    if len(shape) < len(resolved.axes):
-        _fail(
-            f"tensor {resolved.ref!r} rank {len(shape)} is smaller than "
-            f"resolved axes {resolved.axes!r}",
-        )
-    return shape[: len(resolved.axes)]
-
-
 def _shape(value: Any) -> tuple[int, ...] | None:
     shape = getattr(value, "shape", None)
     if shape is not None:
@@ -444,11 +213,6 @@ def _fail(message: str) -> None:
 
 
 __all__ = [
-    "ResolvedContextValue",
-    "ResolvedLossUnit",
-    "ResolvedReplayInput",
-    "ResolvedTrainingView",
-    "ResolvedTrajectoryTensor",
     "TrajectoryResolver",
     "TrajectoryResolverError",
 ]

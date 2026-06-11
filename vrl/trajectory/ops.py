@@ -21,39 +21,6 @@ from vrl.trajectory.types import (
 from vrl.trajectory.validation import TrajectoryValidator
 
 
-def slice_trajectory_batch(
-    data: Any,
-    *,
-    request: GenerationRequest,
-    sample_rows: list[GenerationSampleRow],
-    offset: int,
-    count: int,
-    total: int,
-) -> Any:
-    """Slice a TrajectoryBatch along the sample axis, preserving bridge safety."""
-
-    if data is None:
-        return None
-    if not isinstance(data, TrajectoryBatch):
-        return data
-
-    return _rebuild_trajectory(
-        data,
-        request_id=request.request_id,
-        family=request.family,
-        task=request.task,
-        sample_rows=list(sample_rows),
-        group_ids=_slice_value(data.group_ids, offset, count, total),
-        tensor_value_fn=lambda tensor: _slice_value(tensor.value, offset, count, total)
-        if tensor.axes and tensor.axes[0] == "sample"
-        else tensor.value,
-        axes_sample_length=count,
-        metrics_sample_count=count,
-        metrics_values=_slice_value(data.metrics.values, offset, count, total),
-        context=_slice_value(data.context, offset, count, total),
-    )
-
-
 def select_trajectory_batch(data: Any, selector: Any) -> Any:
     """Select TrajectoryBatch rows by boolean mask or integer indices."""
 
@@ -211,21 +178,6 @@ def _rebuild_trajectory(
     return TrajectoryValidator(out).validate_batch()
 
 
-def _slice_value(value: Any, offset: int, count: int, total: int) -> Any:
-    if value is None:
-        return None
-    shape = getattr(value, "shape", None)
-    if shape is not None and len(shape) > 0 and int(shape[0]) == total:
-        return value[offset : offset + count]
-    if isinstance(value, list) and len(value) == total:
-        return value[offset : offset + count]
-    if isinstance(value, tuple) and len(value) == total:
-        return value[offset : offset + count]
-    if isinstance(value, dict):
-        return {key: _slice_value(inner, offset, count, total) for key, inner in value.items()}
-    return value
-
-
 def _select_value(value: Any, selector: Any, batch_size: int) -> Any:
     if value is None:
         return None
@@ -311,6 +263,5 @@ def _segment_name_for_tensor(data: TrajectoryBatch, target: TrajectoryTensor) ->
 __all__ = [
     "move_trajectory_batch",
     "select_trajectory_batch",
-    "slice_trajectory_batch",
     "stack_trajectory_batches",
 ]

@@ -150,15 +150,6 @@ class TrajectoryValidator:
         if unit.axis not in self.batch.axes:
             self._fail(f"LossUnit.axis={unit.axis!r} is unknown")
         axis = self.batch.axes[unit.axis]
-        if (
-            unit.axis_index is not None
-            and axis.length is not None
-            and unit.axis_index >= axis.length
-        ):
-            self._fail(
-                f"LossUnit.axis_index={unit.axis_index} is out of range for "
-                f"axis {unit.axis!r} length={axis.length}",
-            )
         for field_name, ref in (
             ("action_ref", unit.action_ref),
             ("old_log_prob_ref", unit.old_log_prob_ref),

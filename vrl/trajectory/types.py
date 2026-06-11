@@ -85,7 +85,6 @@ class ReplayInput:
 
     name: str
     tensor_refs: tuple[str, ...] = ()
-    context_refs: tuple[str, ...] = ()
     signal_kind: ReplaySignalKind = "logprob"
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -93,7 +92,6 @@ class ReplayInput:
         if not self.name:
             raise ValueError("ReplayInput.name must be non-empty")
         require_string_tuple("ReplayInput.tensor_refs", self.tensor_refs)
-        require_string_tuple("ReplayInput.context_refs", self.context_refs)
 
 
 @dataclass(slots=True)
