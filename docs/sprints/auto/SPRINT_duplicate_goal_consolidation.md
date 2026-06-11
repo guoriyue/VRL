@@ -1,6 +1,6 @@
 # SPRINT: Duplicate-goal consolidation (proposed)
 
-状态：proposed（2026-06-10 审计完成，未实施）。与 `SPRINT_small_function_consolidation.md`
+状态：implemented（2026-06-10，本仓 5 个 commit：S1-S5/S7 + Phase A/B/D；S6 撤回、S8 未做——taste 项留给 maintainer）。与 `SPRINT_small_function_consolidation.md`
 （小函数/死代码镜头）互补，本篇是**重复目标函数**镜头：同一件事在多处有各自的实现。
 
 ## 0. 方法与覆盖（诚实声明）
