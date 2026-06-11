@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from vrl.generation.diffusion import (
-    DiffusionPipelineExecutorBase,
+    DiffusionChunkExecutorBase,
     DiffusionSamplingParams,
 )
 from vrl.generation.diffusion.layout import VideoGenerationRequest
@@ -176,7 +176,7 @@ def build_cosmos_predict25_replay_runtime_bundle_from_cfg(
     return build_cosmos_predict25_replay_runtime_bundle(spec)
 
 
-class CosmosPredict25PipelineExecutor(DiffusionPipelineExecutorBase):
+class CosmosPredict25ChunkExecutor(DiffusionChunkExecutorBase):
     """Diffusion executor for Cosmos Predict2.5 text-to-world rollouts."""
 
     family: str = "cosmos-predict2.5"
@@ -228,7 +228,7 @@ class CosmosPredict25PipelineExecutor(DiffusionPipelineExecutorBase):
 
 
 __all__ = [
-    "CosmosPredict25PipelineExecutor",
+    "CosmosPredict25ChunkExecutor",
     "build_cosmos_predict25_replay_runtime_bundle",
     "build_cosmos_predict25_replay_runtime_bundle_from_cfg",
     "build_cosmos_predict25_runtime_bundle",

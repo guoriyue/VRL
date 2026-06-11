@@ -1,4 +1,4 @@
-"""Generation pipeline executor protocols."""
+"""Generation runtime and chunk executor protocols."""
 
 from __future__ import annotations
 
@@ -67,7 +67,7 @@ class GenerationRuntime(Protocol):
 
 
 @runtime_checkable
-class PipelineExecutor(Protocol):
+class GenerationChunkExecutor(Protocol):
     """Family-specific distributed chunk executor."""
 
     family: str
@@ -97,7 +97,7 @@ class PipelineExecutor(Protocol):
 __all__ = [
     "ChunkGatherer",
     "ChunkResult",
+    "GenerationChunkExecutor",
     "GenerationRuntime",
-    "PipelineExecutor",
     "PolicyVersionProvider",
 ]

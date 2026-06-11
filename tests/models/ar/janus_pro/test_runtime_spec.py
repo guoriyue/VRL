@@ -6,7 +6,7 @@ from omegaconf import OmegaConf
 
 from vrl.generation import GenerationRequest
 from vrl.models.ar.janus_pro.runtime import (
-    JanusProPipelineExecutor,
+    JanusProChunkExecutor,
     extract_janus_pro_runtime_spec,
 )
 
@@ -52,6 +52,6 @@ def test_janus_executor_parse_sampling_params_reads_scheduler_batch_size() -> No
         },
     )
 
-    params = JanusProPipelineExecutor(model=object()).layout.parse_sampling_params(request)
+    params = JanusProChunkExecutor(model=object()).layout.parse_sampling_params(request)
 
     assert params.ar_scheduler_batch_size == 8

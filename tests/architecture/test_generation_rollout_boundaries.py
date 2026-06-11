@@ -159,6 +159,8 @@ def test_generation_ray_adapter_stays_lean() -> None:
         "launcher.py",
         "placement.py",
         "runtime.py",
+        "pipeline_runner.py",
+        "stage_worker.py",
         "weight_sync.py",
         "worker.py",
     }
@@ -168,6 +170,8 @@ def test_generation_ray_adapter_stays_lean() -> None:
         ray_root / "launcher.py",
         ray_root / "placement.py",
         ray_root / "runtime.py",
+        ray_root / "pipeline_runner.py",
+        ray_root / "stage_worker.py",
         ray_root / "worker.py",
         ray_root / "weight_sync.py",
     )

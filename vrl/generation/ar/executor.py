@@ -7,7 +7,7 @@ from typing import Any
 from vrl.generation.ar.layout import ARRequestLayout
 from vrl.generation.execution.planner import attach_engine_plan
 from vrl.generation.execution.request_batch import RequestBatch
-from vrl.generation.protocols import PipelineExecutor
+from vrl.generation.protocols import GenerationChunkExecutor
 from vrl.generation.types import (
     GenerationOutput,
     GenerationRequest,
@@ -15,8 +15,8 @@ from vrl.generation.types import (
 )
 
 
-class ARPipelineExecutorBase(
-    PipelineExecutor,
+class ARChunkExecutorBase(
+    GenerationChunkExecutor,
 ):
     """Base helpers for AR family executors.
 
@@ -153,5 +153,5 @@ class ARPipelineExecutorBase(
 
 
 __all__ = [
-    "ARPipelineExecutorBase",
+    "ARChunkExecutorBase",
 ]

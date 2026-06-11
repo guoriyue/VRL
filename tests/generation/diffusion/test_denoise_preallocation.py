@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 import torch
 
 from vrl.generation.diffusion import (
+    DiffusionChunkExecutorBase,
     DiffusionDenoiseConfig,
-    DiffusionPipelineExecutorBase,
     preallocate_denoise_buffers,
 )
+from vrl.generation.execution.chunks import SampleChunk
+from vrl.generation.types import GenerationRequest
 
 
 def test_preallocate_denoise_buffers_matches_latent_shape_dtype_and_device() -> None:
@@ -105,6 +108,40 @@ def test_decode_denoise_result_threads_rollout_dtype_into_context() -> None:
     assert chunk.context["rollout_autocast_enabled"] is False
 
 
+def test_forward_chunk_plan_routes_through_stage_boundary_methods() -> None:
+    """Checks fused chunk execution runs through the typed stage boundary."""
+    executor = _StageTrackingExecutor()
+    request = GenerationRequest(
+        request_id="req-1",
+        family="test",
+        task="t2i",
+        prompts=["prompt"],
+        samples_per_prompt=2,
+    )
+    chunk = SampleChunk(
+        prompt_index=0,
+        prompt="prompt",
+        sample_start=0,
+        sample_count=2,
+    )
+
+    result = executor.forward_chunk_plan(
+        request,
+        chunk,
+        execution_stage=None,
+        plan_summary={},
+    )
+
+    assert result == {"decoded": True, "stage_durations": {"encode": 1.0, "denoise": 2.0}}
+    assert executor.calls == [
+        "build_prompt_stage_input",
+        "run_prompt_encode_stage",
+        "run_prepare_stage",
+        "run_denoise_stage",
+        "run_decode_stage",
+    ]
+
+
 def _config(*, sample_count: int = 2, return_kl: bool = False) -> DiffusionDenoiseConfig:
     return DiffusionDenoiseConfig(
         prompt_index=0,
@@ -158,7 +195,65 @@ class _Model:
         return {"model_family": "test"}
 
 
-class _Executor(DiffusionPipelineExecutorBase):
+class _Executor(DiffusionChunkExecutorBase):
     family = "test"
     task = "t2i"
     model = _Model()
+
+
+class _StageTrackingExecutor(DiffusionChunkExecutorBase):
+    family = "test"
+    task = "t2i"
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def build_prompt_stage_input(
+        self,
+        request: GenerationRequest,
+        chunk: SampleChunk,
+    ) -> SimpleNamespace:
+        assert request.request_id == "req-1"
+        assert chunk.chunk_key == "prompt:0:samples:0:2"
+        self.calls.append("build_prompt_stage_input")
+        return SimpleNamespace(stage="prompt")
+
+    def run_prompt_encode_stage(
+        self,
+        payload: Any,
+        *,
+        stage_durations: dict[str, float],
+        record_function: Any,
+    ) -> SimpleNamespace:
+        assert payload.stage == "prompt"
+        assert callable(record_function)
+        self.calls.append("run_prompt_encode_stage")
+        stage_durations["encode"] = 1.0
+        return SimpleNamespace(stage="encoded")
+
+    def run_prepare_stage(
+        self,
+        payload: Any,
+        *,
+        stage_durations: dict[str, float],
+    ) -> SimpleNamespace:
+        assert payload.stage == "encoded"
+        assert stage_durations == {"encode": 1.0}
+        self.calls.append("run_prepare_stage")
+        return SimpleNamespace(stage="prepared")
+
+    def run_denoise_stage(
+        self,
+        payload: Any,
+        *,
+        stage_durations: dict[str, float],
+    ) -> SimpleNamespace:
+        assert payload.stage == "prepared"
+        self.calls.append("run_denoise_stage")
+        stage_durations["denoise"] = 2.0
+        return SimpleNamespace(stage="denoised", stage_durations=dict(stage_durations))
+
+    def run_decode_stage(self, payload: Any) -> dict[str, Any]:
+        assert payload.stage == "denoised"
+        self.calls.append("run_decode_stage")
+        return {"decoded": True, "stage_durations": payload.stage_durations}

@@ -2,10 +2,14 @@
 
 from vrl.generation.diffusion.executor import (
     DiffusionChunkResult,
+    DiffusionDenoisedStageOutput,
     DiffusionDenoiseBuffers,
     DiffusionDenoiseConfig,
     DiffusionDenoiseResult,
-    DiffusionPipelineExecutorBase,
+    DiffusionChunkExecutorBase,
+    DiffusionPreparedStageOutput,
+    DiffusionPromptStageInput,
+    DiffusionPromptStageOutput,
     preallocate_denoise_buffers,
 )
 from vrl.generation.diffusion.gather import DiffusionChunkGatherer
@@ -21,10 +25,14 @@ __all__ = [
     "DiffusionBaseParams",
     "DiffusionChunkGatherer",
     "DiffusionChunkResult",
+    "DiffusionDenoisedStageOutput",
     "DiffusionDenoiseBuffers",
     "DiffusionDenoiseConfig",
     "DiffusionDenoiseResult",
-    "DiffusionPipelineExecutorBase",
+    "DiffusionChunkExecutorBase",
+    "DiffusionPreparedStageOutput",
+    "DiffusionPromptStageInput",
+    "DiffusionPromptStageOutput",
     "DiffusionRequestLayout",
     "DiffusionSDEParams",
     "DiffusionSamplingParams",

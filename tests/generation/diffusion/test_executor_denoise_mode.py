@@ -7,8 +7,8 @@ from dataclasses import dataclass
 import torch
 
 from vrl.generation.diffusion.executor import (
+    DiffusionChunkExecutorBase,
     DiffusionDenoiseConfig,
-    DiffusionPipelineExecutorBase,
 )
 
 
@@ -45,7 +45,7 @@ def test_native_denoise_mode_uses_scheduler_step() -> None:
     assert result.log_probs.shape == (1, 1)
 
 
-class _Executor(DiffusionPipelineExecutorBase):
+class _Executor(DiffusionChunkExecutorBase):
     family = "fake"
     task = "t2i"
 

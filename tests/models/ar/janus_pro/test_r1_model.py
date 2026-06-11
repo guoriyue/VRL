@@ -12,7 +12,7 @@ from vrl.models.ar.janus_pro.model import (
     JanusProConfig,
     JanusProModel,
 )
-from vrl.models.ar.janus_pro.runtime import JanusProR1PipelineExecutor
+from vrl.models.ar.janus_pro.runtime import JanusProR1ChunkExecutor
 from vrl.models.interfaces import ReplayRequest, ReplayResult
 from vrl.rollouts.batch import RolloutBatch
 from vrl.trajectory import build_ar_multisegment_trajectory, build_training_view
@@ -393,7 +393,7 @@ class _ExecutorModel:
 
 def test_r1_executor_forward_emits_canonical_family_and_segment_schema() -> None:
     """Checks R1 executor forward emits canonical family and segment schema."""
-    executor = JanusProR1PipelineExecutor(_ExecutorModel())
+    executor = JanusProR1ChunkExecutor(_ExecutorModel())
     request = GenerationRequest(
         request_id="r1",
         family="janus_pro_r1",

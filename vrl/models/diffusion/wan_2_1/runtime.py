@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from vrl.generation.diffusion import (
-    DiffusionPipelineExecutorBase,
+    DiffusionChunkExecutorBase,
     DiffusionSamplingParams,
 )
 from vrl.generation.diffusion.layout import VideoGenerationRequest
@@ -229,7 +229,7 @@ def build_wan_2_1_replay_runtime_bundle_from_cfg(
 """Wan 2.1 diffusion pipeline executor."""
 
 
-class Wan_2_1PipelineExecutor(DiffusionPipelineExecutorBase):
+class Wan_2_1ChunkExecutor(DiffusionChunkExecutorBase):
     """Diffusion executor for Wan 2.1 text-to-video rollouts."""
 
     family: str = "wan_2_1"
@@ -275,7 +275,7 @@ class Wan_2_1PipelineExecutor(DiffusionPipelineExecutorBase):
         return chunk_encoded
 
 
-class Wan_2_1I2VPipelineExecutor(DiffusionPipelineExecutorBase):
+class Wan_2_1I2VChunkExecutor(DiffusionChunkExecutorBase):
     """Diffusion executor for Wan 2.1 image-to-video rollouts."""
 
     family: str = "wan_2_1_i2v"
@@ -399,8 +399,8 @@ def _normalize_task_variant(task_variant: str | None) -> str:
 
 
 __all__ = [
-    "Wan_2_1I2VPipelineExecutor",
-    "Wan_2_1PipelineExecutor",
+    "Wan_2_1I2VChunkExecutor",
+    "Wan_2_1ChunkExecutor",
     "build_wan_2_1_replay_runtime_bundle",
     "build_wan_2_1_replay_runtime_bundle_from_cfg",
     "build_wan_2_1_runtime_bundle",

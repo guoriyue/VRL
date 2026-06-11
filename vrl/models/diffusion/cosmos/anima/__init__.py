@@ -2,7 +2,7 @@
 
 from vrl.models.diffusion.cosmos.anima.model import AnimaModel
 from vrl.models.diffusion.cosmos.anima.runtime import (
-    AnimaPipelineExecutor,
+    AnimaChunkExecutor,
     build_anima_replay_runtime_bundle,
     build_anima_runtime_bundle,
     extract_anima_replay_runtime_spec,
@@ -11,7 +11,7 @@ from vrl.models.diffusion.cosmos.anima.runtime import (
 
 __all__ = [
     "AnimaModel",
-    "AnimaPipelineExecutor",
+    "AnimaChunkExecutor",
     "build_anima_replay_runtime_bundle",
     "build_anima_runtime_bundle",
     "extract_anima_replay_runtime_spec",

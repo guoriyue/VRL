@@ -134,7 +134,7 @@ register_rollout_family(
         family="sd3_5",
         task="t2i",
         aliases=(),
-        executor_cls="vrl.models.diffusion.sd3_5.runtime:SD3_5PipelineExecutor",
+        executor_cls="vrl.models.diffusion.sd3_5.runtime:SD3_5ChunkExecutor",
         runtime_builder="vrl.models.diffusion.sd3_5.runtime:build_sd3_5_runtime_bundle",
         runtime_spec_extractor="vrl.models.diffusion.sd3_5.runtime:extract_sd3_5_runtime_spec",
         request_prefix="sd3_5",
@@ -147,7 +147,7 @@ register_rollout_family(
         family="wan_2_1",
         task="t2v",
         aliases=("wan",),
-        executor_cls="vrl.models.diffusion.wan_2_1.runtime:Wan_2_1PipelineExecutor",
+        executor_cls="vrl.models.diffusion.wan_2_1.runtime:Wan_2_1ChunkExecutor",
         runtime_builder="vrl.models.diffusion.wan_2_1.runtime:build_wan_2_1_runtime_bundle",
         runtime_spec_extractor="vrl.models.diffusion.wan_2_1.runtime:extract_wan_2_1_runtime_spec",
         request_prefix="wan_2_1",
@@ -160,7 +160,7 @@ register_rollout_family(
         family="wan_2_1_i2v",
         task="i2v",
         aliases=("wan_i2v",),
-        executor_cls="vrl.models.diffusion.wan_2_1.runtime:Wan_2_1I2VPipelineExecutor",
+        executor_cls="vrl.models.diffusion.wan_2_1.runtime:Wan_2_1I2VChunkExecutor",
         runtime_builder="vrl.models.diffusion.wan_2_1.runtime:build_wan_2_1_runtime_bundle",
         runtime_spec_extractor="vrl.models.diffusion.wan_2_1.runtime:extract_wan_2_1_runtime_spec",
         request_prefix="wan_2_1_i2v",
@@ -174,7 +174,7 @@ register_rollout_family(
         family="cosmos-predict2",
         task="v2w",
         aliases=("cosmos", "cosmos_predict2"),
-        executor_cls="vrl.models.diffusion.cosmos.predict2.runtime:CosmosPipelineExecutor",
+        executor_cls="vrl.models.diffusion.cosmos.predict2.runtime:CosmosChunkExecutor",
         runtime_builder=(
             "vrl.models.diffusion.cosmos.predict2.runtime:"
             "build_cosmos_predict2_runtime_bundle"
@@ -196,7 +196,7 @@ register_rollout_family(
         aliases=("cosmos_predict2_5",),
         executor_cls=(
             "vrl.models.diffusion.cosmos.predict2_5.runtime:"
-            "CosmosPredict25PipelineExecutor"
+            "CosmosPredict25ChunkExecutor"
         ),
         runtime_builder=(
             "vrl.models.diffusion.cosmos.predict2_5.runtime:"
@@ -216,7 +216,7 @@ register_rollout_family(
         family="cosmos-predict2-anima",
         task="t2i",
         aliases=("anima", "cosmos_anima"),
-        executor_cls="vrl.models.diffusion.cosmos.anima.runtime:AnimaPipelineExecutor",
+        executor_cls="vrl.models.diffusion.cosmos.anima.runtime:AnimaChunkExecutor",
         runtime_builder=(
             "vrl.models.diffusion.cosmos.anima.runtime:"
             "build_anima_runtime_bundle"
@@ -240,7 +240,7 @@ register_rollout_family(
             request_prefix="janus_pro",
             return_artifacts=_default_return_artifacts,
         ),
-        executor_cls="vrl.models.ar.janus_pro.runtime:JanusProPipelineExecutor",
+        executor_cls="vrl.models.ar.janus_pro.runtime:JanusProChunkExecutor",
         runtime_builder="vrl.models.ar.janus_pro.runtime:build_janus_pro_runtime_bundle",
         runtime_spec_extractor=(
             "vrl.models.ar.janus_pro.runtime:extract_janus_pro_runtime_spec"
@@ -262,7 +262,7 @@ register_rollout_family(
             request_prefix="janus_pro_r1",
             return_artifacts=_default_return_artifacts,
         ),
-        executor_cls="vrl.models.ar.janus_pro.runtime:JanusProR1PipelineExecutor",
+        executor_cls="vrl.models.ar.janus_pro.runtime:JanusProR1ChunkExecutor",
         runtime_builder="vrl.models.ar.janus_pro.runtime:build_janus_pro_runtime_bundle",
         runtime_spec_extractor=(
             "vrl.models.ar.janus_pro.runtime:extract_janus_pro_runtime_spec"
@@ -290,7 +290,7 @@ register_rollout_family(
             return_artifacts=_default_return_artifacts,
             metadata_key="rollout_metadata",
         ),
-        executor_cls="vrl.models.ar.nextstep_1.runtime:NextStep1PipelineExecutor",
+        executor_cls="vrl.models.ar.nextstep_1.runtime:NextStep1ChunkExecutor",
         runtime_builder="vrl.models.ar.nextstep_1.runtime:build_nextstep_1_runtime_bundle",
         runtime_spec_extractor=(
             "vrl.models.ar.nextstep_1.runtime:extract_nextstep_1_runtime_spec"

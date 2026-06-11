@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from vrl.generation.ar.executor import ARPipelineExecutorBase
+from vrl.generation.ar.executor import ARChunkExecutorBase
 from vrl.generation.types import GenerationRequest
 
 
-class _Executor(ARPipelineExecutorBase):
+class _Executor(ARChunkExecutorBase):
     family = "janus_pro"
     task = "ar_t2i"
 

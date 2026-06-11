@@ -8,7 +8,7 @@ from typing import Any
 
 import torch
 
-from vrl.generation.ar import ARPipelineExecutorBase, ARRequestLayout, ARSamplingParams
+from vrl.generation.ar import ARChunkExecutorBase, ARRequestLayout, ARSamplingParams
 from vrl.generation.ar.decode_loop import ARDecodeLoop
 from vrl.generation.capabilities import FamilyCapability
 from vrl.generation.execution.chunks import SampleChunk
@@ -204,7 +204,7 @@ class NextStep1ARChunkResult:
     peak_memory_mb: float | None = None
 
 
-class NextStep1PipelineExecutor(ARPipelineExecutorBase):
+class NextStep1ChunkExecutor(ARChunkExecutorBase):
     """Continuous-token AR executor for NextStep-1 text-to-image rollouts.
 
     The collector constructs a ``GenerationRequest`` whose ``sampling``
@@ -635,7 +635,7 @@ class NextStep1ChunkGatherer:
 __all__ = [
     "NextStep1ARChunkResult",
     "NextStep1ChunkGatherer",
-    "NextStep1PipelineExecutor",
+    "NextStep1ChunkExecutor",
     "build_nextstep_1_replay_runtime_bundle",
     "build_nextstep_1_runtime_bundle",
     "extract_nextstep_1_runtime_spec",

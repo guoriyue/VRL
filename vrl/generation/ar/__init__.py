@@ -1,6 +1,6 @@
 """Autoregressive generation helpers."""
 
-from vrl.generation.ar.executor import ARPipelineExecutorBase
+from vrl.generation.ar.executor import ARChunkExecutorBase
 from vrl.generation.ar.layout import (
     ARChunkResult,
     ARRequestLayout,
@@ -9,7 +9,7 @@ from vrl.generation.ar.layout import (
 
 __all__ = [
     "ARChunkResult",
-    "ARPipelineExecutorBase",
+    "ARChunkExecutorBase",
     "ARRequestLayout",
     "ARSamplingParams",
 ]

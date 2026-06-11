@@ -8,7 +8,7 @@ from typing import Any
 
 import torch
 
-from vrl.generation.ar import ARPipelineExecutorBase, ARRequestLayout, ARSamplingParams
+from vrl.generation.ar import ARChunkExecutorBase, ARRequestLayout, ARSamplingParams
 from vrl.generation.ar.decode_loop import ARDecodeLoop, call_with_supported_kwargs
 from vrl.generation.capabilities import FamilyCapability
 from vrl.generation.execution.chunks import SampleChunk
@@ -237,7 +237,7 @@ class JanusProARChunkResult:
     peak_memory_mb: float | None = None
 
 
-class JanusProPipelineExecutor(ARPipelineExecutorBase):
+class JanusProChunkExecutor(ARChunkExecutorBase):
     """AR executor for Janus-Pro text-to-image rollouts.
 
     The collector constructs a ``GenerationRequest`` whose ``sampling``
@@ -718,7 +718,7 @@ class JanusProR1ChunkResult:
     peak_memory_mb: float | None = None
 
 
-class JanusProR1PipelineExecutor(JanusProPipelineExecutor):
+class JanusProR1ChunkExecutor(JanusProChunkExecutor):
     """R1-style Janus-Pro executor for three-stage AR T2I generation."""
 
     family: str = "janus_pro_r1"
@@ -1103,10 +1103,10 @@ def _segment_token_steps(segments: dict[str, dict[str, Any]]) -> int:
 __all__ = [
     "JanusProARChunkResult",
     "JanusProChunkGatherer",
-    "JanusProPipelineExecutor",
+    "JanusProChunkExecutor",
     "JanusProR1ChunkGatherer",
     "JanusProR1ChunkResult",
-    "JanusProR1PipelineExecutor",
+    "JanusProR1ChunkExecutor",
     "build_janus_pro_replay_runtime_bundle",
     "build_janus_pro_runtime_bundle",
     "extract_janus_pro_runtime_spec",

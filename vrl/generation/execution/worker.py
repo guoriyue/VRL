@@ -16,7 +16,7 @@ from vrl.generation.execution.types import (
     ChunkExecutionResult,
 )
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
-from vrl.generation.protocols import PipelineExecutor
+from vrl.generation.protocols import GenerationChunkExecutor
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces import require_runtime_model
 from vrl.utils.cuda_memory import release_cuda_memory
@@ -39,7 +39,7 @@ class GenerationWorkerCore:
         self.worker_id = worker_id
         self.launch_contract = self._normalize_launch_contract(launch_contract)
         self.family = self.launch_contract.family
-        self.executor: PipelineExecutor | None = None
+        self.executor: GenerationChunkExecutor | None = None
         self._policy_version: int | None = self.launch_contract.policy_version
         self._profiler_config = self._profiler_config_from_contract(self.launch_contract)
         self._profiler_output_dir = str(
@@ -247,7 +247,7 @@ class GenerationWorkerCore:
             raise ValueError("GenerationRuntimeLaunchContract.family is required")
         return contract
 
-    def _build_executor(self) -> PipelineExecutor:
+    def _build_executor(self) -> GenerationChunkExecutor:
         launch_contract = self.launch_contract
         builder_path = launch_contract.runtime_builder
         executor_path = launch_contract.executor_cls
@@ -299,7 +299,7 @@ class GenerationWorkerCore:
 
     def _merge_loaded_capability(
         self,
-        executor: PipelineExecutor,
+        executor: GenerationChunkExecutor,
     ) -> FamilyCapability:
         runtime_caps = getattr(executor, "runtime_caps", None)
         merged = self.capability.with_runtime_caps(
@@ -324,7 +324,7 @@ class GenerationWorkerCore:
 
     @staticmethod
     def _declared_executor_capability(
-        executor: PipelineExecutor,
+        executor: GenerationChunkExecutor,
     ) -> FamilyCapability | None:
         method = getattr(executor, "capability", None)
         if callable(method):
@@ -393,7 +393,7 @@ class GenerationWorkerCore:
         return {"worker_id": self.worker_id, "node_ip": "unknown", "gpu_ids": []}
 
 
-def _require_chunked_executor(executor: Any) -> PipelineExecutor:
+def _require_chunked_executor(executor: Any) -> GenerationChunkExecutor:
     forward_chunk_plan = getattr(executor, "forward_chunk_plan", None)
     gather_chunks = getattr(executor, "gather_chunks", None)
     if not callable(forward_chunk_plan) or not callable(gather_chunks):

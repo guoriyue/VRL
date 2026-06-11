@@ -24,7 +24,7 @@ from vrl.generation.execution.chunks import (
 from vrl.generation.execution.planner import attach_engine_plan, build_engine_plan
 from vrl.generation.execution.request_batch import RequestBatch
 from vrl.generation.protocols import (
-    PipelineExecutor,
+    GenerationChunkExecutor,
 )
 from vrl.generation.types import (
     GenerationOutput,
@@ -75,6 +75,52 @@ class DiffusionDenoiseBuffers:
     log_probs: torch.Tensor
     timesteps: torch.Tensor
     kl: torch.Tensor
+
+
+@dataclass(slots=True)
+class DiffusionPromptStageInput:
+    """Prompt-encode stage input for one diffusion sample chunk."""
+
+    generation_request: GenerationRequest
+    chunk: SampleChunk
+    params: DiffusionSamplingParams
+    video_request: VideoGenerationRequest
+
+
+@dataclass(slots=True)
+class DiffusionPromptStageOutput:
+    """Prompt-encode stage output for downstream prepare/denoise stages."""
+
+    generation_request: GenerationRequest
+    chunk: SampleChunk
+    params: DiffusionSamplingParams
+    video_request: VideoGenerationRequest
+    encoded: dict[str, Any]
+
+
+@dataclass(slots=True)
+class DiffusionPreparedStageOutput:
+    """Prepared latent state and denoise config for the denoise stage."""
+
+    generation_request: GenerationRequest
+    chunk: SampleChunk
+    params: DiffusionSamplingParams
+    video_request: VideoGenerationRequest
+    encoded: dict[str, Any]
+    chunk_encoded: dict[str, Any]
+    prepare_kwargs: dict[str, Any]
+    config: DiffusionDenoiseConfig
+    state: Any
+
+
+@dataclass(slots=True)
+class DiffusionDenoisedStageOutput:
+    """Denoise stage output before VAE decode."""
+
+    request: VideoGenerationRequest
+    config: DiffusionDenoiseConfig
+    denoise_result: DiffusionDenoiseResult
+    stage_durations: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -182,8 +228,8 @@ def _expand_timestep_for_buffer(
         ) from exc
 
 
-class DiffusionPipelineExecutorBase(
-    PipelineExecutor,
+class DiffusionChunkExecutorBase(
+    GenerationChunkExecutor,
 ):
     """Common GenerationRequest -> diffusion GenerationOutput execution path."""
 
@@ -330,58 +376,142 @@ class DiffusionPipelineExecutorBase(
 
         from vrl.utils.profiling import record_function
 
+        stage_durations: dict[str, float] = {}
+        prompt_input = self.build_prompt_stage_input(request, chunk)
+        prompt_output = self.run_prompt_encode_stage(
+            prompt_input,
+            stage_durations=stage_durations,
+            record_function=record_function,
+        )
+        prepared = self.run_prepare_stage(
+            prompt_output,
+            stage_durations=stage_durations,
+        )
+        denoised = self.run_denoise_stage(
+            prepared,
+            stage_durations=stage_durations,
+        )
+        return self.run_decode_stage(denoised)
+
+    def build_prompt_stage_input(
+        self,
+        request: GenerationRequest,
+        chunk: SampleChunk,
+    ) -> DiffusionPromptStageInput:
+        """Build the prompt-encode payload for one chunk."""
+
         params = self.parse_sampling_params(request)
         video_request = self.build_video_request(chunk.prompt, params)
-        stage_durations: dict[str, float] = {}
+        return DiffusionPromptStageInput(
+            generation_request=request,
+            chunk=chunk,
+            params=params,
+            video_request=video_request,
+        )
+
+    def run_prompt_encode_stage(
+        self,
+        payload: DiffusionPromptStageInput,
+        *,
+        stage_durations: dict[str, float],
+        record_function: Any,
+    ) -> DiffusionPromptStageOutput:
+        """Run prompt encoding and return the typed stage payload."""
 
         started = time.perf_counter()
         with record_function("generation.prompt_encode"):
             encoded = self.encode_prompt_for_chunk(
-                generation_request=request,
-                video_request=video_request,
-                params=params,
-                chunk=chunk,
+                generation_request=payload.generation_request,
+                video_request=payload.video_request,
+                params=payload.params,
+                chunk=payload.chunk,
             )
         stage_durations["encode"] = time.perf_counter() - started
+        return DiffusionPromptStageOutput(
+            generation_request=payload.generation_request,
+            chunk=payload.chunk,
+            params=payload.params,
+            video_request=payload.video_request,
+            encoded=encoded,
+        )
+
+    def run_prepare_stage(
+        self,
+        payload: DiffusionPromptStageOutput,
+        *,
+        stage_durations: dict[str, float],
+    ) -> DiffusionPreparedStageOutput:
+        """Prepare latent state and denoise config for one chunk."""
 
         started = time.perf_counter()
         chunk_encoded = self.build_chunk_encoded(
-            encoded=encoded,
-            generation_request=request,
-            video_request=video_request,
-            params=params,
-            chunk=chunk,
+            encoded=payload.encoded,
+            generation_request=payload.generation_request,
+            video_request=payload.video_request,
+            params=payload.params,
+            chunk=payload.chunk,
         )
         prepare_kwargs = self.build_prepare_kwargs(
-            encoded=encoded,
-            generation_request=request,
-            video_request=video_request,
-            params=params,
-            chunk=chunk,
+            encoded=payload.encoded,
+            generation_request=payload.generation_request,
+            video_request=payload.video_request,
+            params=payload.params,
+            chunk=payload.chunk,
         )
-        config = self.build_denoise_config(params, chunk)
+        config = self.build_denoise_config(payload.params, payload.chunk)
         state = self.prepare_denoise_state(
-            request=video_request,
+            request=payload.video_request,
             encoded=chunk_encoded,
             config=config,
             prepare_kwargs=prepare_kwargs,
         )
         stage_durations["prepare_latent"] = time.perf_counter() - started
+        return DiffusionPreparedStageOutput(
+            generation_request=payload.generation_request,
+            chunk=payload.chunk,
+            params=payload.params,
+            video_request=payload.video_request,
+            encoded=payload.encoded,
+            chunk_encoded=chunk_encoded,
+            prepare_kwargs=prepare_kwargs,
+            config=config,
+            state=state,
+        )
+
+    def run_denoise_stage(
+        self,
+        payload: DiffusionPreparedStageOutput,
+        *,
+        stage_durations: dict[str, float],
+    ) -> DiffusionDenoisedStageOutput:
+        """Run the trainable denoise stage for one chunk."""
 
         started = time.perf_counter()
         denoise_result = self.run_denoise_steps(
-            state=state,
-            encoded=chunk_encoded,
-            config=config,
+            state=payload.state,
+            encoded=payload.chunk_encoded,
+            config=payload.config,
         )
         stage_durations["denoise"] = time.perf_counter() - started
+        return DiffusionDenoisedStageOutput(
+            request=payload.video_request,
+            config=payload.config,
+            denoise_result=denoise_result,
+            stage_durations=dict(stage_durations),
+        )
+
+    def run_decode_stage(
+        self,
+        payload: DiffusionDenoisedStageOutput,
+    ) -> DiffusionChunkResult:
+        """Run VAE decode and pack the final chunk result."""
 
         started = time.perf_counter()
         chunk_result = self.decode_denoise_result(
-            request=video_request,
-            config=config,
-            denoise_result=denoise_result,
-            stage_durations=stage_durations,
+            request=payload.request,
+            config=payload.config,
+            denoise_result=payload.denoise_result,
+            stage_durations=payload.stage_durations,
         )
         chunk_result.stage_durations["decode"] = time.perf_counter() - started
         return chunk_result
@@ -696,10 +826,16 @@ class DiffusionPipelineExecutorBase(
         return None
 
 __all__ = [
+    "DiffusionChunkExecutorBase",
     "DiffusionChunkResult",
+    "DiffusionDenoiseBuffers",
     "DiffusionDenoiseConfig",
     "DiffusionDenoiseResult",
-    "DiffusionPipelineExecutorBase",
+    "DiffusionDenoisedStageOutput",
+    "DiffusionPreparedStageOutput",
+    "DiffusionPromptStageInput",
+    "DiffusionPromptStageOutput",
     "DiffusionRequestLayout",
     "DiffusionSamplingParams",
+    "preallocate_denoise_buffers",
 ]

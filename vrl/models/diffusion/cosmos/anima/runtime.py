@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from vrl.generation.diffusion import DiffusionPipelineExecutorBase
+from vrl.generation.diffusion import DiffusionChunkExecutorBase
 from vrl.models.diffusion.capabilities import diffusion_family_capability
 from vrl.models.interfaces.runtime import (
     RuntimeBuildSpec,
@@ -189,7 +189,7 @@ def build_anima_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
     )
 
 
-class AnimaPipelineExecutor(DiffusionPipelineExecutorBase):
+class AnimaChunkExecutor(DiffusionChunkExecutorBase):
     """Diffusion executor for Anima text-to-image rollouts."""
 
     family: str = ANIMA_FAMILY
@@ -264,7 +264,7 @@ def load_anima_transformer_component(spec: RuntimeBuildSpec) -> Any:
 
 __all__ = [
     "ANIMA_FAMILY",
-    "AnimaPipelineExecutor",
+    "AnimaChunkExecutor",
     "build_anima_replay_runtime_bundle",
     "build_anima_runtime_bundle",
     "extract_anima_replay_runtime_spec",

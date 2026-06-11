@@ -9,7 +9,7 @@ import torch
 
 from vrl.config.loading import load_config
 from vrl.generation.diffusion import DiffusionChunkGatherer
-from vrl.generation.protocols import PipelineExecutor
+from vrl.generation.protocols import GenerationChunkExecutor
 from vrl.models.ar.janus_pro.runtime import JanusProChunkGatherer, JanusProR1ChunkGatherer
 from vrl.models.ar.nextstep_1.runtime import NextStep1ChunkGatherer
 from vrl.rollouts.families import (
@@ -112,7 +112,7 @@ def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
     assert inputs.launch_contract.executor_cls == entry.executor_cls
     assert inputs.launch_contract.executor_kwargs == {"sample_batch_size": 2}
     assert isinstance(inputs.gatherer, expected_gatherer)
-    assert not isinstance(inputs.gatherer, PipelineExecutor)
+    assert not isinstance(inputs.gatherer, GenerationChunkExecutor)
 
 
 def test_diffusion_launch_contract_uses_worker_primitive_device_and_dtype() -> None:

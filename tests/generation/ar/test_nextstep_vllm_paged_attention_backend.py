@@ -12,7 +12,7 @@ from vrl.generation.types import GenerationRequest
 from vrl.models.ar.nextstep_1.runner import (
     NextStep1ARModelRunner,
 )
-from vrl.models.ar.nextstep_1.runtime import NextStep1PipelineExecutor
+from vrl.models.ar.nextstep_1.runtime import NextStep1ChunkExecutor
 from vrl.nn.layers.attention.paged import (
     ARAttentionPrefillInput,
     ARAttentionStepInput,
@@ -110,7 +110,7 @@ def test_nextstep_runtime_uses_vllm_paged_attention_by_default(monkeypatch) -> N
         },
     )
 
-    runner = NextStep1PipelineExecutor(model)._ar_runner(request)
+    runner = NextStep1ChunkExecutor(model)._ar_runner(request)
 
     assert isinstance(runner, NextStep1ARModelRunner)
     assert runner.attention_backend is backend

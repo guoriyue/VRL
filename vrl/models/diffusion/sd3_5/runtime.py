@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from vrl.generation.diffusion import (
-    DiffusionPipelineExecutorBase,
+    DiffusionChunkExecutorBase,
     DiffusionSamplingParams,
 )
 from vrl.generation.diffusion.layout import VideoGenerationRequest
@@ -179,7 +179,7 @@ def build_sd3_5_replay_runtime_bundle_from_cfg(
     return build_sd3_5_replay_runtime_bundle(spec)
 
 
-class SD3_5PipelineExecutor(DiffusionPipelineExecutorBase):
+class SD3_5ChunkExecutor(DiffusionChunkExecutorBase):
     """Diffusion executor for SD3.5-M text-to-image rollouts."""
 
     family: str = "sd3_5"
@@ -236,7 +236,7 @@ class SD3_5PipelineExecutor(DiffusionPipelineExecutorBase):
 
 
 __all__ = [
-    "SD3_5PipelineExecutor",
+    "SD3_5ChunkExecutor",
     "build_sd3_5_replay_runtime_bundle",
     "build_sd3_5_replay_runtime_bundle_from_cfg",
     "build_sd3_5_runtime_bundle",
