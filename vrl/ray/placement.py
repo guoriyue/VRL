@@ -13,8 +13,14 @@ def create_placement_group(
     bundles: Sequence[Mapping[str, float]],
     *,
     strategy: str,
+    ready_timeout_s: float = 600.0,
 ) -> Any:
-    """Create a Ray placement group and wait until it is ready."""
+    """Create a Ray placement group and wait until it is ready.
+
+    ``pg.ready()`` never resolves when the cluster cannot satisfy the bundles
+    (e.g. a GPU bundle while resident actors hold every free GPU), so the wait
+    is bounded and failure reports the requested bundles instead of hanging.
+    """
 
     if not bundles:
         raise ValueError("Ray placement group requires at least one bundle")
@@ -22,7 +28,16 @@ def create_placement_group(
     from ray.util.placement_group import placement_group
 
     pg = placement_group([dict(bundle) for bundle in bundles], strategy=str(strategy))
-    ray.get(pg.ready())
+    try:
+        ray.get(pg.ready(), timeout=float(ready_timeout_s))
+    except Exception as exc:
+        remove_placement_group(pg)
+        raise RuntimeError(
+            f"Ray placement group not ready after {ready_timeout_s:.0f}s: "
+            f"bundles={[dict(b) for b in bundles]} strategy={strategy!r}. "
+            "The cluster cannot satisfy these bundles — check whether resident "
+            "actors hold the GPUs this group is trying to reserve.",
+        ) from exc
     return pg
 
 
@@ -41,12 +56,6 @@ def actor_scheduling_strategy(
         placement_group_bundle_index=bundle_index,
         placement_group_capture_child_tasks=capture_child_tasks,
     )
-
-
-def shutdown_placement_group(placement_group: Any | None) -> None:
-    """Remove a placement group if one exists."""
-
-    remove_placement_group(placement_group)
 
 
 def validate_actor_gpu_ids(
@@ -139,6 +148,5 @@ def _validate_cross_node_actor_gpu_ids(
 __all__ = [
     "actor_scheduling_strategy",
     "create_placement_group",
-    "shutdown_placement_group",
     "validate_actor_gpu_ids",
 ]

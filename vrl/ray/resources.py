@@ -220,10 +220,21 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
         and rollout_num_workers > 0
         and not config.cross_node
     )
+    # Devices still held in Ray's accounting when the reward PG is created:
+    # non-released rollout workers and the trainer-reservation actor. The
+    # reward PG must not try to pin those slots — Ray could never satisfy the
+    # extra GPU bundles and pg.ready() would hang.
+    rollout_resident = not (
+        rollout_release_after_collect or rollout_release_before_reward_model
+    )
     reward_gpu_reservation_count = _reward_gpu_reservation_count(
         visible_devices=visible_devices,
         reward_devices=reward_devices,
         reward_gpus_per_worker=reward_gpus_per_worker,
+        resident_devices=(
+            (rollout_devices if rollout_resident else ())
+            + (trainer_devices if requires_trainer_reservation else ())
+        ),
     )
     total_gpu_slots = len(set(trainer_devices) | set(rollout_devices) | set(reward_devices))
     ray_total_bundles = rollout_num_workers + reward_num_workers + (
@@ -848,11 +859,29 @@ def _reward_gpu_reservation_count(
     visible_devices: tuple[int, ...],
     reward_devices: tuple[int, ...],
     reward_gpus_per_worker: float,
+    resident_devices: tuple[int, ...] = (),
 ) -> int:
+    """Count Ray-free GPU slots below the first reward device.
+
+    The reward placement group pins that many 1-GPU bundles so Ray's
+    ascending allocation pushes the worker bundle onto the reward device.
+    Slots held by resident actors (non-released rollout workers, the
+    trainer-reservation actor) are skipped: Ray cannot hand them to the
+    reward worker anyway, and pinning them would ask for more free GPUs
+    than the node has, hanging pg.ready() forever.
+    """
+
     if reward_gpus_per_worker <= 0 or not reward_devices:
         return 0
     positions = [visible_devices.index(device) for device in reward_devices if device in visible_devices]
-    return min(positions) if positions else 0
+    if not positions:
+        return 0
+    resident = set(resident_devices)
+    return sum(
+        1
+        for position in range(min(positions))
+        if visible_devices[position] not in resident
+    )
 
 
 def _parse_optional_bool(value: Any) -> bool | None:

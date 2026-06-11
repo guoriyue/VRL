@@ -9,11 +9,10 @@ from typing import Any
 
 from vrl.ray.actor_group import RayActorGroup
 from vrl.ray.dependencies import require_ray
-from vrl.ray.lifecycle import kill_actors
+from vrl.ray.lifecycle import kill_actors, remove_placement_group
 from vrl.ray.placement import (
     actor_scheduling_strategy,
     create_placement_group,
-    shutdown_placement_group,
     validate_actor_gpu_ids,
 )
 
@@ -73,7 +72,7 @@ class RayActorMethodRuntime:
             kill_actors(ray, self._reservation_actors)
             self._reservation_actors.clear()
         if self._placement_group is not None:
-            shutdown_placement_group(self._placement_group)
+            remove_placement_group(self._placement_group)
             self._placement_group = None
 
     def _ensure_actor_group(self) -> RayActorGroup:
@@ -101,7 +100,7 @@ class RayActorMethodRuntime:
             metadata = [
                 {
                     "worker_id": handle.worker_id,
-                    "node_ip": handle.node_id,
+                    "node_ip": handle.node_ip,
                     "gpu_ids": handle.gpu_ids,
                 }
                 for handle in self._actor_group.handles
@@ -164,7 +163,7 @@ class RayActorMethodRuntime:
                 kill_actors(ray, self._reservation_actors)
                 self._reservation_actors.clear()
             if self._placement_group is not None:
-                shutdown_placement_group(self._placement_group)
+                remove_placement_group(self._placement_group)
                 self._placement_group = None
 
 

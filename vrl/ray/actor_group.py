@@ -17,7 +17,7 @@ class RayActorHandle:
     """Driver-visible metadata for one Ray actor."""
 
     worker_id: str
-    node_id: str
+    node_ip: str
     gpu_ids: tuple[int, ...] = ()
     actor: Any | None = None
 
@@ -84,7 +84,7 @@ class RayActorGroup:
         handles = [
             RayActorHandle(
                 worker_id=worker_id,
-                node_id=str(_meta_get(meta, "node_ip", "unknown")),
+                node_ip=str(_meta_get(meta, "node_ip", "unknown")),
                 gpu_ids=tuple(int(gpu_id) for gpu_id in _meta_get(meta, "gpu_ids", ())),
                 actor=actor,
             )

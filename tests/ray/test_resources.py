@@ -360,7 +360,13 @@ def test_reward_role_resolves_after_trainer_and_rollout_devices() -> None:
     assert resolved.reward_num_workers == 1
     assert resolved.reward_gpus_per_worker == 1.0
     assert resolved.reward_shared_with_rollout is False
-    assert resolved.reward_gpu_reservation_count == 2
+    # Slot 0 is held by the trainer-reservation actor and slot 1 by the
+    # resident rollout worker; pinning them would ask Ray for GPUs it can
+    # never free and pg.ready() would hang (the old expectation of 2 encoded
+    # exactly that bug).
+    assert resolved.requires_trainer_reservation is True
+    assert resolved.rollout_release_before_reward_model is False
+    assert resolved.reward_gpu_reservation_count == 0
 
 
 def test_ray_video_reward_requires_reward_gpu_budget() -> None:
@@ -544,3 +550,47 @@ def test_reward_trainer_overlap_requires_explicit_allow_overlap() -> None:
                 },
             ),
         )
+
+
+def test_reward_reservation_pins_released_colocated_gpu() -> None:
+    """Colocated trainer+rollout on GPU 0 releases after collect; the freed
+    slot 0 must still be pinned so the reward worker lands on GPU 1."""
+
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0, 1],
+                "trainer": {"devices": [0]},
+                "rollout": {"devices": [0], "num_workers": 1},
+                "reward": {"devices": [1], "num_workers": 1, "gpus_per_worker": 1.0},
+                "allow_overlap": True,
+            },
+            kling_video_reward=True,
+        ),
+    )
+    assert resolved.colocated is True
+    assert resolved.rollout_release_after_collect is True
+    assert resolved.reward_gpu_reservation_count == 1
+
+
+def test_reward_reservation_zero_for_shared_single_gpu() -> None:
+    """Shared single-GPU reward sits on the rollout device: nothing below it."""
+
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0],
+                "trainer": {"devices": [0]},
+                "rollout": {"devices": [0], "num_workers": 1},
+                "reward": {
+                    "devices": [0],
+                    "num_workers": 1,
+                    "gpus_per_worker": 1.0,
+                    "share_with_rollout": True,
+                },
+                "allow_overlap": True,
+            },
+            kling_video_reward=True,
+        ),
+    )
+    assert resolved.reward_gpu_reservation_count == 0

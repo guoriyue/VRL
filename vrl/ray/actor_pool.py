@@ -105,6 +105,9 @@ async def run_actor_jobs(
                 submit_time_by_ref[ref] = time.perf_counter()
                 made_progress = True
 
+    # Fail-fast on worker error: a raising ray.get propagates immediately and
+    # in-flight refs on other actors are abandoned (not cancelled) — their
+    # results are dropped when the caller tears the group down.
     _submit_ready()
     while ref_to_job:
         ready, _ = await asyncio.to_thread(

@@ -101,7 +101,7 @@ class RayGenerationLauncher:
             metadata = [
                 {
                     "worker_id": handle.worker_id,
-                    "node_ip": handle.node_id,
+                    "node_ip": handle.node_ip,
                     "gpu_ids": handle.gpu_ids,
                 }
                 for handle in actor_group.handles
@@ -117,7 +117,7 @@ class RayGenerationLauncher:
         workers = [
             DistributedWorkerHandle(
                 worker_id=handle.worker_id,
-                node_id=handle.node_id,
+                node_id=handle.node_ip,
                 gpu_ids=handle.gpu_ids,
                 actor=handle.actor,
             )
