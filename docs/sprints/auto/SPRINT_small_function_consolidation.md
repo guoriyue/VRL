@@ -1,6 +1,6 @@
 # SPRINT: Small-function consolidation (proposed)
 
-状态：proposed（2026-06-10 审计完成，未实施）。
+状态：implemented（2026-06-10，Phase A/B/D 已落地；Phase C 热点逐文件整理与 A5 验证项未做）。实施中两处修正：WorkloadSignature 类型保留（planner.py:107 消费），timestep.py 保留（3 家族经包出口消费）。
 
 ## 0. Core Decision
 
@@ -23,7 +23,7 @@ spend limit 全军覆没；改为机械扫描 + 主会话人工校验，对本�
 ### A1. `workload_signature` 整个面（~5 文件）
 
 ```text
-vrl/generation/protocols.py:76        PipelineExecutor.workload_signature 协议方法
+vrl/generation/protocols.py:76        GenerationChunkExecutor.workload_signature 协议方法
 vrl/generation/diffusion/executor.py:213   实现（仅 return WorkloadSignature.from_...）
 vrl/models/ar/janus_pro/runtime.py:292     实现
 vrl/models/ar/nextstep_1/runtime.py:245    实现
@@ -56,12 +56,17 @@ vrl/models/diffusion/base.py:37（基类）+ wan_2_1/sd3_5/predict2/predict2_5/a
 ### A4. 单点死代码（逐条已过 configs/tests 复核）
 
 ```text
-vrl/trajectory/resolver.py:188,199   resolve_training_view / resolve_loss_unit — 零引用
-vrl/models/ar/nextstep_1/model.py:193  trainable_param_count — 零引用
+vrl/trajectory/resolver.py:188,199   resolve_training_view / resolve_loss_unit — 只删这两个
+                                     公共壳；私有 _resolve_loss_unit(:207) 有活调用方
+                                     (:192,:205)，保留（2026-06-10 复核修正）
 vrl/generation/ar/decode_loop.py:81    mark_finished — 零引用
 vrl/rewards/models/nsfw_safety.py:73   probability_batch — 仅自测引用
 vrl/models/diffusion/cosmos/predict2_5/model.py:235  sync_previous_policy_adapter — 仅自测引用
 ```
+
+降级（2026-06-10 复核）：`nextstep_1/model.py:193 trainable_param_count` 不做单边删除——
+janus_pro/model.py:309 日志字符串承诺 "will be reported by trainable_param_count()"，
+且 janus/nextstep 为跨家族对；要么成对删 + 改日志，要么保留。
 
 ### A5. 需再核一层才能删（标 verify，不直接进 A）
 
