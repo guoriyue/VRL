@@ -339,7 +339,7 @@ def _build_executor_kwargs(entry: Any, cfg: Any) -> dict[str, Any]:
 
 def _runtime_build_payload(runtime_build: Any) -> dict[str, Any]:
     payload = asdict(runtime_build)
-    payload["device"] = _device_to_string(payload["device"])
+    payload["device"] = str(payload["device"])
     payload["dtype"] = dtype_to_config_string(payload["dtype"])
     if payload.get("frozen_dtype") is not None:
         payload["frozen_dtype"] = dtype_to_config_string(payload["frozen_dtype"])
@@ -402,10 +402,6 @@ def _import_from_path(path: str) -> Any:
     module_path, attr = path.split(":", 1)
     module = importlib.import_module(module_path)
     return getattr(module, attr)
-
-
-def _device_to_string(value: Any) -> str:
-    return str(value)
 
 
 __all__ = [

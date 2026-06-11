@@ -230,7 +230,7 @@ class ContinuousRolloutProducer:
     def _enqueue_result(self, result: dict[str, Any]) -> None:
         completed_at = time.time()
         for batch in result["batches"]:
-            stored = self._store_batch(batch)
+            stored = move_training_batch_to_device(batch, _CPU)
             item = ContinuousRolloutItem(
                 item_id=self._item_counter,
                 group_key=int(result["slot"]),
@@ -242,9 +242,6 @@ class ContinuousRolloutProducer:
             )
             self._item_counter += 1
             self.queue.put(item)
-
-    def _store_batch(self, batch: Any) -> Any:
-        return move_training_batch_to_device(batch, _CPU)
 
     def _record_tick(self) -> None:
         now = time.monotonic()

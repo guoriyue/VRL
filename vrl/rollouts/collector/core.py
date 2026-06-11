@@ -155,7 +155,7 @@ class RolloutCollector:
         for rollout in unscored:
             context = RolloutBatchBuildContext(
                 metadata=dict(rollout.collector_request.metadata),
-                device=_device_from_model(self.model),
+                device=getattr(self.model, "device", None),
                 kl_reward=float(cfg_get(self.config, "kl_reward", 0.0)),
                 reward_view_name=_reward_view_name(self.config),
                 trajectory_storage_policy=trajectory_storage_policy_from_cfg(
@@ -242,10 +242,6 @@ def build_rollout_collector(
         ),
         runtime=runtime,
     )
-
-
-def _device_from_model(model: Any | None) -> Any | None:
-    return getattr(model, "device", None)
 
 
 def _reward_view_name(config: Any) -> str | None:

@@ -10,7 +10,16 @@ from vrl.ray.actor_pool import RayActorJob, run_actor_jobs
 from vrl.ray.dependencies import require_ray
 from vrl.ray.lifecycle import kill_actors
 from vrl.ray.placement import actor_scheduling_strategy
-from vrl.ray.types import RayActorHandle
+
+
+@dataclass(frozen=True, slots=True)
+class RayActorHandle:
+    """Driver-visible metadata for one Ray actor."""
+
+    worker_id: str
+    node_id: str
+    gpu_ids: tuple[int, ...] = ()
+    actor: Any | None = None
 
 
 @dataclass(slots=True)

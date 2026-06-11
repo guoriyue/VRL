@@ -114,7 +114,7 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
             return [
                 name
                 for name, segment in segments.items()
-                if _segment_enabled(segment)
+                if bool(segment.get("enabled", segment.get("train", True)))
             ]
         if isinstance(self.enabled_segments, Mapping):
             return [
@@ -207,10 +207,6 @@ def _segment_modality(name: str, segment: dict[str, Any]) -> str:
     if name.endswith("_text"):
         return "text"
     return "image"
-
-
-def _segment_enabled(segment: dict[str, Any]) -> bool:
-    return bool(segment.get("enabled", segment.get("train", True)))
 
 
 def _primary_segment_name(batch: RolloutBatch, enabled_names: list[str]) -> str:
