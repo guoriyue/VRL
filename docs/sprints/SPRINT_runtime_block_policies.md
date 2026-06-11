@@ -387,7 +387,7 @@ write executor kwargs sample_batch_size
 Acceptance：
 
 ```text
-rollout.blocks.denoise.batch_size reaches DiffusionPipelineExecutorBase.default_sample_batch_size
+rollout.blocks.denoise.batch_size reaches DiffusionChunkExecutorBase.default_sample_batch_size
 rollout.blocks.denoise.batch_size reaches request.sampling["sample_batch_size"] for planner chunking
 legacy rollout.sample_batch_size remains compatible
 new path wins over legacy sample_batch_size when both are present
