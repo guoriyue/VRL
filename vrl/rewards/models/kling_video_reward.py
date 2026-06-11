@@ -201,6 +201,16 @@ class KlingVideoRewardModel(RewardModel):
         self.dtype = _torch_dtype(str(self.worker_config.get("dtype", "bfloat16")))
         self.device = str(self.worker_config.get("device", "cuda:0"))
         self.use_norm = bool(self.worker_config.get("use_norm", True))
+        # Optional per-frame pixel bounds for qwen smart_resize. min upscales
+        # low-res rollout videos toward the reward model's training frame
+        # budget (checkpoint data_config.max_frame_pixels, 200704 for
+        # KlingTeam/VideoReward) so scores are calibrated in-distribution;
+        # max overrides the checkpoint's own budget. None keeps checkpoint
+        # behavior.
+        min_frame_pixels = self.worker_config.get("min_frame_pixels")
+        self.min_frame_pixels = None if min_frame_pixels is None else int(min_frame_pixels)
+        max_frame_pixels = self.worker_config.get("max_frame_pixels")
+        self.max_frame_pixels = None if max_frame_pixels is None else int(max_frame_pixels)
         logger.info(
             "resolved Kling VideoReward root %s",
             kv(
@@ -208,6 +218,8 @@ class KlingVideoRewardModel(RewardModel):
                 device=self.device,
                 dtype=self.dtype,
                 use_norm=self.use_norm,
+                min_frame_pixels=self.min_frame_pixels,
+                max_frame_pixels=self.max_frame_pixels,
             ),
         )
         disable_flash_attn2 = self.worker_config.get("disable_flash_attn2", None)
@@ -269,6 +281,8 @@ class KlingVideoRewardModel(RewardModel):
         rewards = self._reward(
             [artifact_path],
             [prompt],
+            min_pixels=self.min_frame_pixels,
+            max_pixels=self.max_frame_pixels,
             use_norm=self.use_norm,
         )
         if not rewards:
@@ -285,6 +299,7 @@ class KlingVideoRewardModel(RewardModel):
         fps: float | None = None,
         num_frames: int | None = None,
         max_pixels: int | None = None,
+        min_pixels: int | None = None,
     ) -> Mapping[str, Any]:
         from qwen_vl_utils import process_vision_info
 
@@ -305,6 +320,7 @@ class KlingVideoRewardModel(RewardModel):
                             "type": "video",
                             "video": f"file://{video_path}",
                             "max_pixels": max_pixels,
+                            **({"min_pixels": min_pixels} if min_pixels is not None else {}),
                             **({"nframes": num_frames} if num_frames is not None else {"fps": fps}),
                         },
                         {
@@ -347,11 +363,12 @@ class KlingVideoRewardModel(RewardModel):
         fps: float | None = None,
         num_frames: int | None = None,
         max_pixels: int | None = None,
+        min_pixels: int | None = None,
         use_norm: bool = True,
     ) -> list[dict[str, float]]:
         if fps is not None and num_frames is not None:
             raise ValueError("fps and num_frames cannot be set at the same time")
-        batch = self._prepare_batch(video_paths, prompts, fps, num_frames, max_pixels)
+        batch = self._prepare_batch(video_paths, prompts, fps, num_frames, max_pixels, min_pixels)
         with torch.no_grad():
             logits = self.model(return_dict=True, **batch)["logits"]
         rewards = [

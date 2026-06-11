@@ -144,6 +144,47 @@ def test_kling_video_reward_builds_repo_owned_model(
     }
 
 
+def test_kling_video_reward_parses_frame_pixel_bounds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Checks min/max frame pixel bounds parse from worker_config."""
+    from vrl.rewards.models import kling_video_reward as kling_reward
+    from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
+
+    class _FakeModel:
+        def eval(self):
+            return None
+
+        def to(self, device):
+            del device
+            return self
+
+    monkeypatch.setattr(
+        kling_reward,
+        "_create_model_and_processor",
+        lambda *args, **kwargs: (_FakeModel(), object()),
+    )
+    monkeypatch.setattr(
+        kling_reward,
+        "load_kling_video_reward_checkpoint",
+        lambda model, checkpoint_dir, checkpoint_step: (model, "final"),
+    )
+
+    root = _video_reward_root(tmp_path)
+    model = KlingVideoRewardModel(
+        {
+            "model_path": str(root),
+            "device": "cpu",
+            "disable_flash_attn2": True,
+            "min_frame_pixels": 200704,
+        },
+    )
+
+    assert model.min_frame_pixels == 200704
+    assert model.max_frame_pixels is None  # checkpoint budget stays in charge
+
+
 def test_kling_video_reward_snapshot_download_honors_local_files_only(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

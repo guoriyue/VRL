@@ -32,3 +32,7 @@ reward:
         model_path: ""
         dtype: bfloat16
         local_files_only: true
+        # Upscale low-res rollout videos to the reward model's training frame
+        # budget (checkpoint data_config.max_frame_pixels = 200704 ≈ 448²)
+        # before scoring, so 240p training runs are scored in-distribution.
+        min_frame_pixels: 200704
