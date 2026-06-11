@@ -6,6 +6,12 @@ model:
   family: cosmos-predict2
   path: nvidia/Cosmos-Predict2-2B-Video2World
 
+  # Tiled VAE encode/decode: trades a little latency for peak memory, and is
+  # the encode-path unlock for native 1280x704x93f on a single 32GB card.
+  memory:
+    vae_decode:
+      tiling: true
+
   torch_compile:
     enable: false
     mode: default

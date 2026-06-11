@@ -38,6 +38,7 @@ from vrl.models.diffusion.common import (
     shared_replay_tensor,
 )
 from vrl.models.diffusion.common.lora import LoraModelMixin
+from vrl.models.diffusion.common.vae_decode_memory import apply_vae_decode_memory
 from vrl.models.diffusion.cosmos.predict2.runner import (
     CosmosPredict2DiffusionBackboneRunner,
 )
@@ -84,11 +85,18 @@ class CosmosPredict2Model(LoraModelMixin, DiffusionModelBase):
 
     family = "cosmos-predict2-diffusers-v2w"
 
-    def __init__(self, *, pipeline: Any, device: Any = None) -> None:
+    def __init__(
+        self,
+        *,
+        pipeline: Any,
+        device: Any = None,
+        memory_metadata: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__()
         object.__setattr__(self, "_pipeline", pipeline)
         self.transformer = pipeline.transformer
         self._device = device
+        self.memory_metadata = dict(memory_metadata or {})
 
     @property
     def pipeline(self) -> Any:
@@ -136,8 +144,17 @@ class CosmosPredict2Model(LoraModelMixin, DiffusionModelBase):
         pipeline.vae.requires_grad_(False)
         pipeline.text_encoder.requires_grad_(False)
         pipeline.vae.to(spec.device, dtype=torch.float32)
+        memory_metadata = apply_vae_decode_memory(
+            pipeline.vae,
+            memory_config=getattr(spec, "memory", None),
+            owner="Cosmos Predict2 VAE",
+        )
         pipeline.text_encoder.to(spec.device, dtype=spec.dtype)
-        return cls(pipeline=pipeline, device=spec.device)
+        return cls(
+            pipeline=pipeline,
+            device=spec.device,
+            memory_metadata=memory_metadata,
+        )
 
     def enable_full_finetune(self) -> None:
         self.pipeline.transformer.requires_grad_(True)

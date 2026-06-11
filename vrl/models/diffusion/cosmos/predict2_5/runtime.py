@@ -97,6 +97,7 @@ def build_cosmos_predict25_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBund
             "model_revision": _model_revision_from_spec(spec),
             "skip_text_encoder": _skip_text_encoder_from_spec(spec),
             **full_generation_bundle_metadata(),
+            **(getattr(model, "memory_metadata", None) or {}),
         },
     )
 

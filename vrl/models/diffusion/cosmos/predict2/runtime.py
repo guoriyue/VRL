@@ -112,6 +112,7 @@ def build_cosmos_predict2_runtime_bundle(
             "use_lora": use_lora,
             "reference_image": _reference_image_from_spec(spec),
             **full_generation_bundle_metadata(),
+            **(getattr(model, "memory_metadata", None) or {}),
         },
     )
 

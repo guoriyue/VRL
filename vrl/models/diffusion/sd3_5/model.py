@@ -47,6 +47,7 @@ from vrl.models.diffusion.common import (
     pack_eval_timestep,
 )
 from vrl.models.diffusion.common.lora import LoraModelMixin
+from vrl.models.diffusion.common.vae_decode_memory import apply_vae_decode_memory
 from vrl.models.diffusion.sd3_5.runner import (
     SD3DiffusionBackboneRunner,
     install_sd3_joint_attention_processor,
@@ -75,11 +76,18 @@ class SD3_5Model(LoraModelMixin, DiffusionModelBase):
 
     family = "sd3_5-diffusers-t2i"
 
-    def __init__(self, *, pipeline: Any, device: Any = None) -> None:
+    def __init__(
+        self,
+        *,
+        pipeline: Any,
+        device: Any = None,
+        memory_metadata: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__()
         object.__setattr__(self, "_pipeline", pipeline)
         self.transformer = pipeline.transformer
         self._device = device
+        self.memory_metadata = dict(memory_metadata or {})
         self.uses_vrl_attention_processor = install_sd3_joint_attention_processor(
             self.transformer,
         )
@@ -140,7 +148,18 @@ class SD3_5Model(LoraModelMixin, DiffusionModelBase):
                 enc.requires_grad_(False)
                 enc.to(spec.device, dtype=frozen_dtype)
         pipeline.vae.to(spec.device, dtype=torch.float32)
-        return cls(pipeline=pipeline, device=spec.device)
+        # getattr: bare/test specs may omit ``memory`` (same fallback contract
+        # as ``frozen_dtype`` above).
+        memory_metadata = apply_vae_decode_memory(
+            pipeline.vae,
+            memory_config=getattr(spec, "memory", None),
+            owner="SD3.5 VAE",
+        )
+        return cls(
+            pipeline=pipeline,
+            device=spec.device,
+            memory_metadata=memory_metadata,
+        )
 
     def _lora_dtype(self, spec: Any) -> Any:
         return resolve_torch_dtype(spec.dtype)

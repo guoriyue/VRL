@@ -97,6 +97,7 @@ def build_sd3_5_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
             "dtype": str(spec.dtype),
             "use_lora": use_lora,
             **full_generation_bundle_metadata(),
+            **(getattr(model, "memory_metadata", None) or {}),
         },
     )
 

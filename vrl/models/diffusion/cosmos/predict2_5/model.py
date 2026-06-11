@@ -21,6 +21,7 @@ from vrl.models.diffusion.common import (
     replay_tensor,
     shared_replay_tensor,
 )
+from vrl.models.diffusion.common.vae_decode_memory import apply_vae_decode_memory
 from vrl.models.diffusion.cosmos.predict2_5.runner import (
     CosmosPredict25DiffusionBackboneRunner,
 )
@@ -111,12 +112,14 @@ class CosmosPredict25Model(DiffusionModelBase):
         pipeline: Any,
         device: Any = None,
         synthetic_prompt_embeds: bool = False,
+        memory_metadata: dict[str, Any] | None = None,
     ) -> None:
         super().__init__()
         object.__setattr__(self, "_pipeline", pipeline)
         self.transformer = pipeline.transformer
         self._device = device
         self.synthetic_prompt_embeds = bool(synthetic_prompt_embeds)
+        self.memory_metadata = dict(memory_metadata or {})
 
     @property
     def pipeline(self) -> Any:
@@ -170,9 +173,15 @@ class CosmosPredict25Model(DiffusionModelBase):
                 _predict_mod.CosmosSafetyChecker = orig_safety_checker
         torch.set_grad_enabled(True)
         pipeline.set_progress_bar_config(disable=True)
+        memory_metadata: dict[str, Any] = {}
         if hasattr(pipeline, "vae"):
             pipeline.vae.requires_grad_(False)
             pipeline.vae.to(spec.device, dtype=torch.float32)
+            memory_metadata = apply_vae_decode_memory(
+                pipeline.vae,
+                memory_config=getattr(spec, "memory", None),
+                owner="Cosmos Predict2.5 VAE",
+            )
         if getattr(pipeline, "text_encoder", None) is not None:
             pipeline.text_encoder.requires_grad_(False)
             pipeline.text_encoder.to(spec.device, dtype=spec.dtype)
@@ -180,6 +189,7 @@ class CosmosPredict25Model(DiffusionModelBase):
             pipeline=pipeline,
             device=spec.device,
             synthetic_prompt_embeds=skip_text_encoder,
+            memory_metadata=memory_metadata,
         )
 
     def apply_lora(self, spec: Any) -> None:

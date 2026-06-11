@@ -9,6 +9,8 @@ model:
       enable: true
       modules: [text_encoder, text_encoder_2, text_encoder_3, vae]
       empty_cache: true
+    vae_decode:
+      tiling: true
 
   use_lora: true
   lora:

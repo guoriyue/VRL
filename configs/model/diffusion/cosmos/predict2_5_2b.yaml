@@ -12,6 +12,10 @@ model:
   revision: diffusers/base/post-trained
   skip_text_encoder: false
 
+  memory:
+    vae_decode:
+      tiling: true
+
   torch_compile:
     enable: false
     mode: default
