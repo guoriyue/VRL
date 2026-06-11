@@ -212,4 +212,23 @@ class DiffusionModelBase(nn.Module, ABC):
         raise NotImplementedError
 
 
+class ReplayRolloutStubs:
+    """Rollout-only surface stubs shared by replay models.
+
+    Replay models load only the modules needed to recompute log-probs, so the
+    rollout-side ABC methods are unreachable by construction. They raise with
+    the concrete class name here instead of each family re-writing the stub.
+    """
+
+    def encode_prompt(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        raise RuntimeError(f"{type(self).__name__} cannot encode prompts")
+
+    def prepare_sampling(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError(f"{type(self).__name__} cannot run rollout sampling")
+
+    def decode_latents(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError(f"{type(self).__name__} cannot decode latents")
+
+
+
 __all__ = ["DiffusionModelBase"]

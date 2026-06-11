@@ -36,7 +36,7 @@ from typing import Any
 import torch
 
 from vrl.generation.diffusion.layout import VideoGenerationRequest
-from vrl.models.diffusion import DiffusionModelBase
+from vrl.models.diffusion import DiffusionModelBase, ReplayRolloutStubs
 from vrl.models.diffusion.common import (
     ChunkedLatentDecoder,
     DiffusionBackboneCaller,
@@ -422,7 +422,7 @@ class SD3_5Model(LoraModelMixin, DiffusionModelBase):
         return decoder(latents)
 
 
-class SD3_5ReplayModel(SD3_5Model):
+class SD3_5ReplayModel(ReplayRolloutStubs, SD3_5Model):
     """Replay-only SD3.5 model that owns no prompt encoders, VAE, or pipeline."""
 
     def __init__(self, *, transformer: Any, scheduler: Any, device: Any = None) -> None:
@@ -451,28 +451,6 @@ class SD3_5ReplayModel(SD3_5Model):
     @property
     def backend_handle(self) -> Any:
         return None
-
-    def encode_prompt(
-        self,
-        prompt: str | list[str],
-        negative_prompt: str | list[str] | None = None,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        del prompt, negative_prompt, kwargs
-        raise RuntimeError("SD3_5ReplayModel cannot encode prompts")
-
-    def prepare_sampling(
-        self,
-        request: VideoGenerationRequest,
-        encoded: dict[str, Any],
-        **kwargs: Any,
-    ) -> SD3SamplingState:
-        del request, encoded, kwargs
-        raise RuntimeError("SD3_5ReplayModel cannot run rollout sampling")
-
-    def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
-        del latents
-        raise RuntimeError("SD3_5ReplayModel cannot decode latents")
 
 
 __all__ = ["SD3SamplingState", "SD3_5Model", "SD3_5ReplayModel"]

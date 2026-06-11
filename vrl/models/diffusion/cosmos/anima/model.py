@@ -17,7 +17,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from vrl.generation.diffusion.layout import VideoGenerationRequest
-from vrl.models.diffusion import DiffusionModelBase
+from vrl.models.diffusion import DiffusionModelBase, ReplayRolloutStubs
 from vrl.models.diffusion.common import (
     ChunkedLatentDecoder,
     LatentDecodeSpec,
@@ -483,7 +483,7 @@ def _tokenize_anima_t5_targets(
     return result
 
 
-class AnimaReplayModel(AnimaModel):
+class AnimaReplayModel(ReplayRolloutStubs, AnimaModel):
     """Replay-only Anima model without text encoder, LLM adapter, or VAE."""
 
     def __init__(
@@ -507,28 +507,6 @@ class AnimaReplayModel(AnimaModel):
     @property
     def backend_handle(self) -> Any:
         return None
-
-    def encode_prompt(
-        self,
-        prompt: str | list[str],
-        negative_prompt: str | list[str] | None = None,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        del prompt, negative_prompt, kwargs
-        raise RuntimeError("AnimaReplayModel cannot encode prompts")
-
-    def prepare_sampling(
-        self,
-        request: VideoGenerationRequest,
-        encoded: dict[str, Any],
-        **kwargs: Any,
-    ) -> AnimaSamplingState:
-        del request, encoded, kwargs
-        raise RuntimeError("AnimaReplayModel cannot run rollout sampling")
-
-    def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
-        del latents
-        raise RuntimeError("AnimaReplayModel cannot decode latents")
 
 
 def _cosmos_t2i_transformer_config() -> dict[str, Any]:

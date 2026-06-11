@@ -10,7 +10,7 @@ from typing import Any
 import torch
 
 from vrl.generation.diffusion.layout import VideoGenerationRequest
-from vrl.models.diffusion import DiffusionModelBase
+from vrl.models.diffusion import DiffusionModelBase, ReplayRolloutStubs
 from vrl.models.diffusion.common import (
     ChunkedLatentDecoder,
     DiffusionBackboneCaller,
@@ -570,7 +570,7 @@ class CosmosPredict25Model(DiffusionModelBase):
         return decoder(latents)
 
 
-class CosmosPredict25ReplayModel(CosmosPredict25Model):
+class CosmosPredict25ReplayModel(ReplayRolloutStubs, CosmosPredict25Model):
     """Replay-only Cosmos Predict2.5 model without text encoder, VAE, or pipeline."""
 
     def __init__(self, *, transformer: Any, scheduler: Any, device: Any = None) -> None:
@@ -640,24 +640,6 @@ class CosmosPredict25ReplayModel(CosmosPredict25Model):
     def set_num_steps(self, n: int) -> None:
         self.scheduler.set_timesteps(n, device=self.device)
 
-    def encode_prompt(
-        self,
-        prompt: str | list[str],
-        negative_prompt: str | list[str] | None = None,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        del prompt, negative_prompt, kwargs
-        raise RuntimeError("CosmosPredict25ReplayModel cannot encode prompts")
-
-    def prepare_sampling(
-        self,
-        request: VideoGenerationRequest,
-        encoded: dict[str, Any],
-        **kwargs: Any,
-    ) -> CosmosPredict25SamplingState:
-        del request, encoded, kwargs
-        raise RuntimeError("CosmosPredict25ReplayModel cannot run rollout sampling")
-
     # restore_eval_state is inherited from CosmosPredict25Model: it reads
     # ``self.scheduler``, which this replay model overrides to return its own
     # ``self._scheduler`` (the parent's property resolves to pipeline.scheduler).
@@ -693,10 +675,6 @@ class CosmosPredict25ReplayModel(CosmosPredict25Model):
         }
 
     nft_prepare_transformer_input = diffusion_nft_prepare_transformer_input
-
-    def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
-        del latents
-        raise RuntimeError("CosmosPredict25ReplayModel cannot decode latents")
 
 
 

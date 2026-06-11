@@ -25,7 +25,7 @@ from typing import Any
 import torch
 
 from vrl.generation.diffusion.layout import VideoGenerationRequest
-from vrl.models.diffusion import DiffusionModelBase
+from vrl.models.diffusion import DiffusionModelBase, ReplayRolloutStubs
 from vrl.models.diffusion.common import (
     ChunkedLatentDecoder,
     DiffusionBackboneCaller,
@@ -571,7 +571,7 @@ class CosmosPredict2Model(LoraModelMixin, DiffusionModelBase):
         return decoder(latents)
 
 
-class CosmosPredict2ReplayModel(CosmosPredict2Model):
+class CosmosPredict2ReplayModel(ReplayRolloutStubs, CosmosPredict2Model):
     """Replay-only Cosmos Predict2 model without pipeline-only modules."""
 
     def __init__(self, *, transformer: Any, scheduler: Any, device: Any = None) -> None:
@@ -595,31 +595,9 @@ class CosmosPredict2ReplayModel(CosmosPredict2Model):
     def backend_handle(self) -> Any:
         return None
 
-    def encode_prompt(
-        self,
-        prompt: str | list[str],
-        negative_prompt: str | list[str] | None = None,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        del prompt, negative_prompt, kwargs
-        raise RuntimeError("CosmosPredict2ReplayModel cannot encode prompts")
-
-    def prepare_sampling(
-        self,
-        request: VideoGenerationRequest,
-        encoded: dict[str, Any],
-        **kwargs: Any,
-    ) -> CosmosPredict2SamplingState:
-        del request, encoded, kwargs
-        raise RuntimeError("CosmosPredict2ReplayModel cannot run rollout sampling")
-
     # restore_eval_state is inherited from CosmosPredict2Model: it reads
     # ``self.scheduler``, which this replay model overrides to return its own
     # ``self._scheduler`` (the parent's property resolves to pipeline.scheduler).
-
-    def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
-        del latents
-        raise RuntimeError("CosmosPredict2ReplayModel cannot decode latents")
 
 
 __all__ = [

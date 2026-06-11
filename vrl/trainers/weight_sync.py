@@ -97,7 +97,7 @@ def build_trainable_state_sync_getter(bundle: Any) -> TrainableStateGetter:
     call ``policy.load_trainable_state(payload)`` without knowing bundle shape.
     """
 
-    modules = _require_trainable_modules(bundle)
+    modules = require_trainable_modules(bundle)
 
     def _getter() -> dict[str, Any]:
         return flatten_trainable_module_state(modules)
@@ -155,7 +155,7 @@ def _resolve_next_policy_version(
     return int(current) + 1
 
 
-def _require_trainable_modules(bundle: Any) -> Mapping[str, Any]:
+def require_trainable_modules(bundle: Any) -> Mapping[str, Any]:
     modules = getattr(bundle, "trainable_modules", None)
     if not isinstance(modules, Mapping) or not modules:
         raise ValueError("RuntimeBundle.trainable_modules must be a non-empty mapping")

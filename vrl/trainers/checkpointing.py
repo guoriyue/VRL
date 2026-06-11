@@ -12,7 +12,7 @@ from typing import Any
 
 import torch
 
-from vrl.trainers.weight_sync import to_cpu
+from vrl.trainers.weight_sync import require_trainable_modules, to_cpu
 from vrl.utils.config import cfg_get, cfg_path
 
 logger = logging.getLogger(__name__)
@@ -253,7 +253,7 @@ def restore_training_checkpoint(
 def export_trainable_state(bundle: Any) -> dict[str, dict[str, Any]]:
     """Export all trainable module state_dicts to CPU tensors."""
 
-    modules = _require_trainable_modules(bundle)
+    modules = require_trainable_modules(bundle)
     out: dict[str, dict[str, Any]] = {}
     for name, module in modules.items():
         state_dict = getattr(module, "state_dict", None)
@@ -271,7 +271,7 @@ def load_trainable_state(
 ) -> None:
     """Load trainable module state_dicts into a runtime bundle."""
 
-    modules = _require_trainable_modules(bundle)
+    modules = require_trainable_modules(bundle)
     missing = sorted(set(modules) - set(state))
     extra = sorted(set(state) - set(modules))
     if strict and (missing or extra):
@@ -464,13 +464,6 @@ def _non_negative_int(value: Any, field: str) -> int:
     if parsed < 0:
         raise ValueError(f"{field} must be >= 0, got {parsed}")
     return parsed
-
-
-def _require_trainable_modules(bundle: Any) -> dict[str, Any]:
-    modules = getattr(bundle, "trainable_modules", None)
-    if not isinstance(modules, dict) or not modules:
-        raise ValueError("RuntimeBundle.trainable_modules must be a non-empty dict")
-    return modules
 
 
 _MISSING = object()

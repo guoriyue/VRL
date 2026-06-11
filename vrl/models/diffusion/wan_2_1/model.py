@@ -32,7 +32,7 @@ from typing import Any
 import torch
 
 from vrl.generation.diffusion.layout import VideoGenerationRequest
-from vrl.models.diffusion import DiffusionModelBase
+from vrl.models.diffusion import DiffusionModelBase, ReplayRolloutStubs
 from vrl.models.diffusion.common import (
     ChunkedLatentDecoder,
     DiffusionBackboneCaller,
@@ -378,7 +378,7 @@ class WanT2VDiffusersModel(LoraModelMixin, DiffusionModelBase):
         return decoder(latents)
 
 
-class WanT2VReplayModel(WanT2VDiffusersModel):
+class WanT2VReplayModel(ReplayRolloutStubs, WanT2VDiffusersModel):
     """Replay-only Wan model that owns no text encoder, VAE, or pipeline."""
 
     def __init__(self, *, transformer: Any, scheduler: Any, device: Any = None) -> None:
@@ -401,28 +401,6 @@ class WanT2VReplayModel(WanT2VDiffusersModel):
     @property
     def backend_handle(self) -> Any:
         return None
-
-    def encode_prompt(
-        self,
-        prompt: str | list[str],
-        negative_prompt: str | list[str] | None = None,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        del prompt, negative_prompt, kwargs
-        raise RuntimeError("WanT2VReplayModel cannot encode prompts")
-
-    def prepare_sampling(
-        self,
-        request: VideoGenerationRequest,
-        encoded: dict[str, Any],
-        **kwargs: Any,
-    ) -> WanT2VSamplingState:
-        del request, encoded, kwargs
-        raise RuntimeError("WanT2VReplayModel cannot run rollout sampling")
-
-    def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
-        del latents
-        raise RuntimeError("WanT2VReplayModel cannot decode latents")
 
 
 class WanI2VDiffusersModel(WanT2VDiffusersModel):
@@ -677,7 +655,7 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
         return image_embeds.to(self.transformer.dtype)
 
 
-class WanI2VReplayModel(WanI2VDiffusersModel):
+class WanI2VReplayModel(ReplayRolloutStubs, WanI2VDiffusersModel):
     """Replay-only Wan I2V model that owns no text, image, VAE, or pipeline modules."""
 
     def __init__(self, *, transformer: Any, scheduler: Any, device: Any = None) -> None:
@@ -700,28 +678,6 @@ class WanI2VReplayModel(WanI2VDiffusersModel):
     @property
     def backend_handle(self) -> Any:
         return None
-
-    def encode_prompt(
-        self,
-        prompt: str | list[str],
-        negative_prompt: str | list[str] | None = None,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        del prompt, negative_prompt, kwargs
-        raise RuntimeError("WanI2VReplayModel cannot encode prompts")
-
-    def prepare_sampling(
-        self,
-        request: VideoGenerationRequest,
-        encoded: dict[str, Any],
-        **kwargs: Any,
-    ) -> WanI2VSamplingState:
-        del request, encoded, kwargs
-        raise RuntimeError("WanI2VReplayModel cannot run rollout sampling")
-
-    def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
-        del latents
-        raise RuntimeError("WanI2VReplayModel cannot decode latents")
 
 
 def _align_optional_batch(value: torch.Tensor | None, batch_size: int) -> torch.Tensor | None:
