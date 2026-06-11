@@ -95,6 +95,19 @@ active 段（`sm_util > 50%`）统计：
 明确未改：Wan 14B I2V 没套用这次 1.3B T2V 的 GPM 结论；它的 480p81f + 14B
 内存边界不同，仍需要单独 live gate。
 
+### Live gate 结果（2026-06-10，lr=0 单 epoch + GPM 采样）
+
+| family | gate | occupancy（上一档→这一档） | 峰值显存 | 判定 |
+| --- | --- | --- | --- | --- |
+| wan sbs=8 | **pass** | 18% → 19%（持平） | 17.0 GB | 吞吐另算（occupancy 上限非 batch 决定，是 kernel 形状）；sbs=8 保留 |
+| anima sbs=8 | **pass** | 20% → **27%**，DRAM 27→38% | **6.3 GB** | 仍有大余量，下一档可试 16 |
+| sd3_5 b16 | **pass（加 slicing 后）** | 20% → 20%，tensor 28→32% | 17.6 GB | 根因：sd3_5 yaml 此前只有 tiling 没有 **slicing**（b16 batch decode 需逐图）；`memory.vae_decode.slicing=true` 后通过。occupancy 与 wan 同样被 kernel 形状钉住 |
+| predict2 sbs=8 | **fail，已回退 sbs=1** | — | OOM @ transformer RMSNorm | 512p93f 在 sbs=1 时峰值已 31.8GB，CFG 又把 batch ×2 —— **该分辨率在 32GB 上没有 sample-batch 余量**；26% occupancy 的余量只能靠 compile/融合吃 |
+
+两次 OOM 共同证伪了表格里的安全网假设：**chunk OOM 自动 split 在 ray
+executor 路径上不存在**（`vrl/generation/ray/executor.py:93` 直接 raise）。
+要么补 ray 路径的 OOM 降级，要么把"自动 split"从假设里删掉——已列入 Wave 4。
+
 ## 4. Wave 3 — hours 级（cosmos squeeze 主体，按收益排序）
 
 1. **predict2 VAE tiling 接线**（track 5a）：predict2 的 VAE 就是 wan/anima 已在用
@@ -132,6 +145,8 @@ active 段（`sm_util > 50%`）统计：
 - 不动 timestep_fraction / lr / reward weights；Wave 2 只把 `n` 当作让
   `sample_batch_size` 生效的容量 knob 处理，后续实验解读必须标记 group size 变化。
 - reward worker 内部 mini-batch 打分维持 parked（SPRINT_reward_batched_inference.md）。
+- Physical stage runtime / SGLang-Omni-style stage topology 不属于本 sprint；
+  另见 `docs/sprints/SPRINT_physical_stage_runtime.md`。
 
 ## 7. References
 

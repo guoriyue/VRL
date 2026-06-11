@@ -5,12 +5,15 @@ model:
   path: stabilityai/stable-diffusion-3.5-medium
 
   memory:
+    # Sliced/tiled VAE decode: b16 chunks OOM in the image VAE conv stack
+    # otherwise (scale gate 2026-06-10); slicing decodes per-image.
+    vae_decode:
+      tiling: true
+      slicing: true
     frozen_offload:
       enable: true
       modules: [text_encoder, text_encoder_2, text_encoder_3, vae]
       empty_cache: true
-    vae_decode:
-      tiling: true
 
   use_lora: true
   lora:

@@ -20,7 +20,7 @@ algorithm:
 rollout:
   n: 8
   rollout_batch_size: 1
-  sample_batch_size: 8   # Same reference per prompt, so batching samples preserves V2W conditioning.
+  sample_batch_size: 1   # 512p93f peaks ~31.8GB at sbs=1; CFG doubles the transformer batch — no sample-batch headroom on 32GB (scale gate OOM 2026-06-10)
   sde:
     type: cps
   same_latent: false
