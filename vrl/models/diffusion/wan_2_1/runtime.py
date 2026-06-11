@@ -37,7 +37,7 @@ from vrl.models.runtime_config import (
 )
 from vrl.utils.config import cfg_get
 from vrl.utils.logging import init_logger
-from vrl.utils.media import load_reference_image
+from vrl.models.diffusion.common.reference_conditioning import ReferenceConditionedChunks
 
 logger = init_logger(__name__)
 WAN_2_1_FAMILY_CAPABILITY = diffusion_family_capability("wan_2_1", "t2v")
@@ -275,7 +275,7 @@ class Wan_2_1ChunkExecutor(DiffusionChunkExecutorBase):
         return chunk_encoded
 
 
-class Wan_2_1I2VChunkExecutor(DiffusionChunkExecutorBase):
+class Wan_2_1I2VChunkExecutor(ReferenceConditionedChunks, DiffusionChunkExecutorBase):
     """Diffusion executor for Wan 2.1 image-to-video rollouts."""
 
     family: str = "wan_2_1_i2v"
@@ -294,25 +294,6 @@ class Wan_2_1I2VChunkExecutor(DiffusionChunkExecutorBase):
         self.model = model
         self.reference_image = reference_image
         self.default_sample_batch_size = max(1, int(sample_batch_size))
-
-    def encode_prompt_for_chunk(
-        self,
-        *,
-        generation_request: GenerationRequest,
-        video_request: VideoGenerationRequest,
-        params: DiffusionSamplingParams,
-        chunk: SampleChunk,
-    ) -> dict[str, Any]:
-        """Encode text and image conditioning for one I2V prompt chunk."""
-
-        reference_image = self._reference_image_for_request(generation_request)
-        return self.model.encode_prompt(
-            chunk.prompt,
-            video_request.negative_prompt or None,
-            max_sequence_length=params.base.max_sequence_length,
-            guidance_scale=params.base.guidance_scale,
-            reference_image=reference_image,
-        )
 
     def build_chunk_encoded(
         self,
@@ -349,29 +330,6 @@ class Wan_2_1I2VChunkExecutor(DiffusionChunkExecutorBase):
                 chunk_g,
             )
         return chunk_encoded
-
-    def build_prepare_kwargs(
-        self,
-        *,
-        encoded: dict[str, Any],
-        generation_request: GenerationRequest,
-        video_request: VideoGenerationRequest,
-        params: DiffusionSamplingParams,
-        chunk: SampleChunk,
-    ) -> dict[str, Any]:
-        """Thread the active reference image into Wan I2V prepare_sampling."""
-
-        del encoded, video_request, params, chunk
-        return {
-            "reference_image": self._reference_image_for_request(
-                generation_request,
-            ),
-        }
-
-    def _reference_image_for_request(self, request: GenerationRequest) -> Any:
-        return load_reference_image(
-            request.metadata.get("reference_image", self.reference_image),
-        )
 
 
 def _task_variant_from_cfg(cfg: Any) -> str:

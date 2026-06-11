@@ -193,8 +193,12 @@ class DiffusionModelBase(nn.Module, ABC):
     def enable_full_finetune(self) -> None:  # pragma: no cover (default no-op)
         raise NotImplementedError
 
-    def torch_compile_transformer(self, mode: str) -> None:  # pragma: no cover
-        raise NotImplementedError
+    def torch_compile_transformer(self, mode: str) -> None:
+        """Apply torch.compile to the family transformer in-place."""
+
+        self._set_transformer(
+            torch.compile(self.transformer, mode=mode, fullgraph=False),
+        )
 
     def set_num_steps(self, n: int) -> None:  # pragma: no cover
         raise NotImplementedError

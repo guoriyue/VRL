@@ -25,6 +25,7 @@ from vrl.models.diffusion.common.vae_decode_memory import apply_vae_decode_memor
 from vrl.models.diffusion.cosmos.predict2_5.runner import (
     CosmosPredict25DiffusionBackboneRunner,
 )
+from vrl.models.diffusion.cosmos.replay import CosmosReplayForward
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 
 
@@ -101,7 +102,7 @@ class CosmosPredict25SamplingState:
     conditional_frame_timestep: float = 0.1
 
 
-class CosmosPredict25Model(DiffusionModelBase):
+class CosmosPredict25Model(CosmosReplayForward, DiffusionModelBase):
     """Cosmos-Predict2.5 PredictBase model with DiffusionNFT training extras."""
 
     family = "cosmos-predict2.5-diffusers"
@@ -476,34 +477,6 @@ class CosmosPredict25Model(DiffusionModelBase):
             num_frames=batch_context["num_frames"],
             fps=batch_context["fps"],
             conditional_frame_timestep=batch_context.get("conditional_frame_timestep", 0.1),
-        )
-
-    def replay_forward(
-        self,
-        batch: Any,
-        timestep_idx: int,
-        *,
-        request: ReplayRequest | None = None,
-    ) -> ReplayResult:
-        del request
-        replay_tensors, batch_context, latents = self._replay_inputs_for_step(
-            batch,
-            timestep_idx,
-        )
-        state = self.restore_eval_state(
-            replay_tensors,
-            batch_context,
-            latents,
-            timestep_idx,
-        )
-        values = self.forward_step(state, timestep_idx)
-        return ReplayResult(
-            segments={
-                "denoise": ReplaySegmentResult(
-                    segment="denoise",
-                    values=dict(values),
-                ),
-            },
         )
 
     def diffusion_nft_prepare_transformer_input(

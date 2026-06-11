@@ -166,12 +166,6 @@ class SD3_5Model(LoraModelMixin, DiffusionModelBase):
         self.pipeline.transformer.requires_grad_(True)
         self.pipeline.transformer.to(self.device)
 
-    def torch_compile_transformer(self, mode: str) -> None:
-        """Apply torch.compile to the transformer in-place."""
-        self._set_transformer(
-            torch.compile(self.pipeline.transformer, mode=mode, fullgraph=False),
-        )
-
     def set_num_steps(self, n: int) -> None:
         """Initialize the scheduler timesteps for sampling."""
         self.pipeline.scheduler.set_timesteps(n, device=self.device)

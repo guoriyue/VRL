@@ -27,6 +27,7 @@ from vrl.models.diffusion.common.lora import LoraModelMixin
 from vrl.models.diffusion.common.vae_decode_memory import apply_vae_decode_memory
 from vrl.models.diffusion.cosmos.anima.adapter import AnimaLLMAdapter
 from vrl.models.dtypes import resolve_torch_dtype
+from vrl.models.diffusion.cosmos.replay import CosmosReplayForward
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 
 
@@ -45,7 +46,7 @@ class AnimaSamplingState:
     seed: int
 
 
-class AnimaModel(LoraModelMixin, DiffusionModelBase):
+class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
     """Single-file Anima model on the shared diffusion RL path."""
 
     family = "cosmos-predict2-anima-t2i"
@@ -166,11 +167,6 @@ class AnimaModel(LoraModelMixin, DiffusionModelBase):
     def enable_full_finetune(self) -> None:
         self.transformer.requires_grad_(True)
         self.transformer.to(self.device, dtype=self._dtype)
-
-    def torch_compile_transformer(self, mode: str) -> None:
-        self._set_transformer(
-            torch.compile(self.transformer, mode=mode, fullgraph=False),
-        )
 
     def set_num_steps(self, n: int) -> None:
         self.scheduler.set_timesteps(int(n), device=self.device)
@@ -380,34 +376,6 @@ class AnimaModel(LoraModelMixin, DiffusionModelBase):
             do_cfg=batch_context["cfg"] and batch_context["guidance_scale"] > 1.0,
             padding_mask=_shared_replay_tensor(replay_tensors, "padding_mask"),
             seed=0,
-        )
-
-    def replay_forward(
-        self,
-        batch: Any,
-        timestep_idx: int,
-        *,
-        request: ReplayRequest | None = None,
-    ) -> ReplayResult:
-        del request
-        replay_tensors, batch_context, latents = self._replay_inputs_for_step(
-            batch,
-            timestep_idx,
-        )
-        state = self.restore_eval_state(
-            replay_tensors,
-            batch_context,
-            latents,
-            timestep_idx,
-        )
-        values = self.forward_step(state, timestep_idx)
-        return ReplayResult(
-            segments={
-                "denoise": ReplaySegmentResult(
-                    segment="denoise",
-                    values=dict(values),
-                ),
-            },
         )
 
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:

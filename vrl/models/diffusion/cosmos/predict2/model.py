@@ -42,6 +42,7 @@ from vrl.models.diffusion.common.vae_decode_memory import apply_vae_decode_memor
 from vrl.models.diffusion.cosmos.predict2.runner import (
     CosmosPredict2DiffusionBackboneRunner,
 )
+from vrl.models.diffusion.cosmos.replay import CosmosReplayForward
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 
 
@@ -74,7 +75,7 @@ class CosmosPredict2SamplingState:
     sigma_conditioning: float = 0.0001
 
 
-class CosmosPredict2Model(LoraModelMixin, DiffusionModelBase):
+class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
     """Diffusers-backed Cosmos Predict2 Video2World model (RL path).
 
     The pipeline is constructed by the family runtime
@@ -159,11 +160,6 @@ class CosmosPredict2Model(LoraModelMixin, DiffusionModelBase):
     def enable_full_finetune(self) -> None:
         self.pipeline.transformer.requires_grad_(True)
         self.pipeline.transformer.to(self.device)
-
-    def torch_compile_transformer(self, mode: str) -> None:
-        self._set_transformer(
-            torch.compile(self.pipeline.transformer, mode=mode, fullgraph=False),
-        )
 
     def set_num_steps(self, n: int) -> None:
         self.pipeline.scheduler.set_timesteps(n, device=self.device)
@@ -488,42 +484,6 @@ class CosmosPredict2Model(LoraModelMixin, DiffusionModelBase):
             fps=batch_context["fps"],
             seed=0,
             sigma_conditioning=batch_context.get("sigma_conditioning", 0.0001),
-        )
-
-    def replay_forward(
-        self,
-        batch: Any,
-        timestep_idx: int,
-        *,
-        request: ReplayRequest | None = None,
-    ) -> ReplayResult:
-        """Cosmos replay: forward with the real ``timestep_idx`` (NOT 0).
-
-        Unlike sd3/wan which pack timesteps as ``[1, B]`` and call
-        ``forward_step(state, 0)``, Cosmos's ``forward_step`` indexes
-        ``state.scheduler.sigmas[step_idx]`` so the eval path must pass
-        through the actual ``timestep_idx`` to keep sigma scaling consistent
-        with the rollout-time scheduler state.
-        """
-        del request
-        replay_tensors, batch_context, latents = self._replay_inputs_for_step(
-            batch,
-            timestep_idx,
-        )
-        state = self.restore_eval_state(
-            replay_tensors,
-            batch_context,
-            latents,
-            timestep_idx,
-        )
-        values = self.forward_step(state, timestep_idx)
-        return ReplayResult(
-            segments={
-                "denoise": ReplaySegmentResult(
-                    segment="denoise",
-                    values=dict(values),
-                ),
-            },
         )
 
     # -- decode_latents ------------------------------------------------

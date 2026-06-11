@@ -142,11 +142,6 @@ class WanT2VDiffusersModel(LoraModelMixin, DiffusionModelBase):
         self.pipeline.transformer.requires_grad_(True)
         self.pipeline.transformer.to(self.device)
 
-    def torch_compile_transformer(self, mode: str) -> None:
-        self._set_transformer(
-            torch.compile(self.pipeline.transformer, mode=mode, fullgraph=False),
-        )
-
     def set_num_steps(self, n: int) -> None:
         self.pipeline.scheduler.set_timesteps(n, device=self.device)
 

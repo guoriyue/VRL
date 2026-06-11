@@ -32,6 +32,7 @@ from vrl.models.runtime_config import (
     extract_runtime_spec,
 )
 from vrl.utils.logging import init_logger
+from vrl.models.diffusion.common.reference_conditioning import ReferenceConditionedChunks
 from vrl.utils.media import load_reference_image
 
 logger = init_logger(__name__)
@@ -195,7 +196,7 @@ def build_cosmos_predict2_replay_runtime_bundle_from_cfg(
     return build_cosmos_predict2_replay_runtime_bundle(spec)
 
 
-class CosmosChunkExecutor(DiffusionChunkExecutorBase):
+class CosmosChunkExecutor(ReferenceConditionedChunks, DiffusionChunkExecutorBase):
     """Diffusion executor for Cosmos Predict2 Video2World rollouts."""
 
     family: str = "cosmos-predict2"
@@ -216,25 +217,6 @@ class CosmosChunkExecutor(DiffusionChunkExecutorBase):
         self.model = model
         self.reference_image = load_reference_image(reference_image)
         self.default_sample_batch_size = max(1, int(sample_batch_size))
-
-    def encode_prompt_for_chunk(
-        self,
-        *,
-        generation_request: GenerationRequest,
-        video_request: VideoGenerationRequest,
-        params: DiffusionSamplingParams,
-        chunk: SampleChunk,
-    ) -> dict[str, Any]:
-        """Encode Cosmos text and preserve the Video2World reference image."""
-
-        reference_image = self._reference_image_for_request(generation_request)
-        return self.model.encode_prompt(
-            chunk.prompt,
-            video_request.negative_prompt or None,
-            max_sequence_length=params.base.max_sequence_length,
-            guidance_scale=params.base.guidance_scale,
-            reference_image=reference_image,
-        )
 
     def build_chunk_encoded(
         self,
@@ -266,29 +248,6 @@ class CosmosChunkExecutor(DiffusionChunkExecutorBase):
         else:
             chunk_encoded["negative_prompt_embeds"] = None
         return chunk_encoded
-
-    def build_prepare_kwargs(
-        self,
-        *,
-        encoded: dict[str, Any],
-        generation_request: GenerationRequest,
-        video_request: VideoGenerationRequest,
-        params: DiffusionSamplingParams,
-        chunk: SampleChunk,
-    ) -> dict[str, Any]:
-        """Thread the active reference image into Cosmos prepare_sampling."""
-
-        del encoded, video_request, params, chunk
-        return {
-            "reference_image": self._reference_image_for_request(
-                generation_request,
-            ),
-        }
-
-    def _reference_image_for_request(self, request: GenerationRequest) -> Any:
-        return load_reference_image(
-            request.metadata.get("reference_image", self.reference_image),
-        )
 
 
 __all__ = [
