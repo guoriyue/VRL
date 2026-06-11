@@ -32,7 +32,7 @@ from vrl.models.runtime_config import (
     extract_runtime_spec,
 )
 from vrl.utils.logging import init_logger
-from vrl.models.diffusion.common.reference_conditioning import ReferenceConditionedChunks
+from vrl.generation.diffusion.executor import ReferenceConditionedChunks
 from vrl.utils.media import load_reference_image
 
 logger = init_logger(__name__)

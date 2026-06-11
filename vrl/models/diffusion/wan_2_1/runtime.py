@@ -37,7 +37,7 @@ from vrl.models.runtime_config import (
 )
 from vrl.utils.config import cfg_get
 from vrl.utils.logging import init_logger
-from vrl.models.diffusion.common.reference_conditioning import ReferenceConditionedChunks
+from vrl.generation.diffusion.executor import ReferenceConditionedChunks
 
 logger = init_logger(__name__)
 WAN_2_1_FAMILY_CAPABILITY = diffusion_family_capability("wan_2_1", "t2v")

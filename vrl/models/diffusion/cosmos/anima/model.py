@@ -27,7 +27,7 @@ from vrl.models.diffusion.common.lora import LoraModelMixin
 from vrl.models.diffusion.common.vae_decode_memory import apply_vae_decode_memory
 from vrl.models.diffusion.cosmos.anima.adapter import AnimaLLMAdapter
 from vrl.models.dtypes import resolve_torch_dtype
-from vrl.models.diffusion.cosmos.replay import CosmosReplayForward
+from vrl.models.diffusion.cosmos import CosmosReplayForward
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 
 

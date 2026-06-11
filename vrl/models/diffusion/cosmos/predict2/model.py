@@ -42,7 +42,7 @@ from vrl.models.diffusion.common.vae_decode_memory import apply_vae_decode_memor
 from vrl.models.diffusion.cosmos.predict2.runner import (
     CosmosPredict2DiffusionBackboneRunner,
 )
-from vrl.models.diffusion.cosmos.replay import CosmosReplayForward
+from vrl.models.diffusion.cosmos import CosmosReplayForward
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 
 
