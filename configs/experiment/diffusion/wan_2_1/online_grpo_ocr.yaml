@@ -12,6 +12,9 @@ actor:
     lr: 1.0e-4
 
 rollout:
+  n: 8
+  rollout_batch_size: 4
+  sample_batch_size: 8   # GPM: sbs=4 leaves SM occupancy at ~18%; next safe T2V scale.
   denoise_mode: native
 
 trainer:

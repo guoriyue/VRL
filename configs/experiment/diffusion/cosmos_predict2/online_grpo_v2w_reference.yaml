@@ -18,9 +18,9 @@ algorithm:
   init_kl_coef: 0.004
 
 rollout:
-  n: 4
+  n: 8
   rollout_batch_size: 1
-  sample_batch_size: 1
+  sample_batch_size: 8   # Same reference per prompt, so batching samples preserves V2W conditioning.
   sde:
     type: cps
   same_latent: false
@@ -38,4 +38,3 @@ reward:
   kwargs:
     kling_video_reward:
       artifact_format: mp4
-

@@ -22,9 +22,9 @@ algorithm:
   global_std: true
 
 rollout:
-  n: 8
+  n: 16
   rollout_batch_size: 8
-  sample_batch_size: 8
+  sample_batch_size: 16
 
 trainer:
   entrypoint: vrl.scripts.diffusion.sd3_5.train:train_sd3_5_grpo

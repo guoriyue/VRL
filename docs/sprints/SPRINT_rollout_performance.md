@@ -816,6 +816,13 @@ Do not treat VAE micro-batch as a speed feature; it is only a capacity isolation
 For performance comparisons, use compiled b8 steady-state as the baseline.
 ```
 
+2026-06-10 update：该 default decision 被 GPM scale bump 取代。旧 b16 failure 的
+capacity boundary 是 VAE decode；当前 `configs/model/diffusion/sd3_5/medium.yaml`
+已启用 `model.memory.vae_decode.tiling=true`，且 chunk 执行器仍保留 CUDA-OOM split
+回退。因此默认实验入口已升到 `rollout.n=16` / `rollout.sample_batch_size=16`，live
+gate 继续看是否真的带来端到端吞吐收益；若 tiling 后仍 OOM 或变慢，再回退到本节的
+compiled b8 baseline。
+
 #### Compile-mode A/B：default vs reduce-overhead（2026-06-09）
 
 目的：确认 compile mode 是不是性能杠杆。同一 session、同一卡（RTX 5090 32 GiB）背靠背重跑

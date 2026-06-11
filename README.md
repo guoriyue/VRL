@@ -64,8 +64,8 @@ The recipe composes these reusable config layers:
 Important defaults in `configs/experiment/diffusion/sd3_5/online_grpo_ocr.yaml`:
 
 - OCR-only reward: `reward.components.ocr=1.0`.
-- Flow-GRPO parity rollout shape: `rollout.n=8`,
-  `rollout.rollout_batch_size=8`, and `rollout.sample_batch_size=8`.
+- GPM scale-bump rollout shape: `rollout.n=16`,
+  `rollout.rollout_batch_size=8`, and `rollout.sample_batch_size=16`.
 - Flow-GRPO parity optimizer rhythm:
   `actor.gradient_accumulation_steps=4`, which gives two optimizer updates per
   outer rollout epoch with eight prompt groups.

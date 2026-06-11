@@ -17,9 +17,9 @@ algorithm:
   init_kl_coef: 0.004
 
 rollout:
-  n: 4
-  rollout_batch_size: 4   # amortize the ~14s fixed per-cycle cost (56% util at rbs=1)
-  sample_batch_size: 4
+  n: 8
+  rollout_batch_size: 4   # amortize fixed per-cycle cost; sbs=4 GPM still shows ~20% SM occupancy.
+  sample_batch_size: 8
   sde:
     type: sde
 

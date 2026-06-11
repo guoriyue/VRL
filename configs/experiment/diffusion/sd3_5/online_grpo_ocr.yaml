@@ -23,10 +23,10 @@ algorithm:
   global_std: true
 
 rollout:
-  # Flow-GRPO SD3 OCR 1GPU parity: 8 images/prompt, 8 prompt groups/epoch.
-  n: 8
+  # GPM active samples at n/sbs=8 still show ~20% SM occupancy; VAE tiling is on.
+  n: 16
   rollout_batch_size: 8
-  sample_batch_size: 8
+  sample_batch_size: 16
 
 trainer:
   entrypoint: vrl.scripts.diffusion.sd3_5.train:train_sd3_5_grpo

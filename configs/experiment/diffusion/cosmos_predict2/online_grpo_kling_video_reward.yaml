@@ -22,9 +22,9 @@ algorithm:
   init_kl_coef: 0.004
 
 rollout:
-  n: 4
+  n: 8
   rollout_batch_size: 1
-  sample_batch_size: 8
+  sample_batch_size: 8   # GPM preview at smaller chunks shows ~26% SM occupancy; make sbs=8 effective.
   sde:
     type: cps
   same_latent: false

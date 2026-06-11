@@ -24,9 +24,9 @@ algorithm:
   init_kl_coef: 0.004
 
 rollout:
-  n: 2
-  rollout_batch_size: 4   # amortize fixed per-cycle cost (smoke 2026-06-09)
-  sample_batch_size: 4
+  n: 8
+  rollout_batch_size: 4   # amortize fixed per-cycle cost; sbs=4 GPM still shows ~20% SM occupancy.
+  sample_batch_size: 8
   sde:
     type: sde
 

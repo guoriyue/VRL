@@ -97,7 +97,7 @@ SD3.5 不踩是因为它默认不 compile trainer。`tests/trainers/test_weight_
 
 ```text
 P0  查 predict2 GRPO logprob parity（§2）—— 正确性问题，先于一切性能工作
-P1  wan 实验把 rollout.sample_batch_size 从 1 提到 4~8（对齐 anima/sd3_5），重测利用率
+P1  wan 实验把 rollout.sample_batch_size 从 1 提到 4~8（已在 cross-model performance wave 1/2 落地）
 P2  predict2 接 vae_decode_memory（已有共享模块，wan/anima 是现成模式）解锁原生 704p
 P3  AR 家族（janus）单独立项 prefill/decode 优化 —— 与 diffusion denoise 路线分开
 ```

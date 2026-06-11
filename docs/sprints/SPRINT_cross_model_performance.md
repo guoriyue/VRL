@@ -1,6 +1,6 @@
 # SPRINT: Cross-Model Performance（5-track 并行探索综合）
 
-状态：wave 1 已落地，验证中（2026-06-10）。输入：5 个并行只读探索 agent 的结构化结果
+状态：wave 2 GPM scale bump 已落地，待 live gate（2026-06-10）。输入：5 个并行只读探索 agent 的结构化结果
 （parity / transport / compute / util / vae-gaps），叠加 P0 trace
 （`outputs/cosmos25_perf_profile_bs6/`）与 cross-model smoke
 （`docs/sprints/SPRINT_cross_model_smoke.md`）。
@@ -61,7 +61,41 @@ OCR 实验启动——消费端已改为 `reward_kwargs.get(name) or {}`
 sd3_5/wan 的 trainer compile 在 steady-state 的 recompile 行为待长 run 时用
 `TORCH_LOGS=recompiles` 观察（短 smoke 只覆盖 warmup）。
 
-## 3. Wave 2 — hours 级（cosmos squeeze 主体，按收益排序）
+## 3. Wave 2 — GPM scale bump（已应用 2026-06-10）
+
+GPM 采样目录：
+
+```text
+outputs/sm_profile_sd3_5/gpm.csv
+outputs/sm_profile_wan/gpm.csv
+outputs/sm_profile_anima/gpm.csv
+outputs/sm_profile_cosmos2/gpm.csv
+```
+
+active 段（`sm_util > 50%`）统计：
+
+| family | profiled shape | sm_util | sm_occupancy | tensor core | DRAM bandwidth | read |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| sd3_5 | n/sbs=8, rbs=8 | 83.7% | 19.9% | 27.8% | 30.9% | busy but under-filled |
+| wan 1.3B T2V | n/sbs=4, rbs=1 | 89.2% | 18.4% | 31.4% | 30.2% | sbs=4 仍不是上限 |
+| anima | n/sbs=4, rbs=4 | 72.2% | 20.4% | 21.9% | 27.5% | fixed-cycle amortization improved, chunk still small |
+| cosmos-predict2 | n=2, sbs=1, 512p93f preview | 97.0% | 26.4% | 30.5% | 30.3% | active compute not saturated |
+
+结论：`nvidia-smi` / `sm_util` 的 70-97% busy 不是 scale 上限；SM 内部 occupancy
+只有约 18-26%，tensor core 与 DRAM 都约 20-31%。这是小 shape / fragmented kernel
+的指纹。下一档先加 denoise chunk，再用 OOM retry / VAE tiling 兜住容量边界。
+
+| 改动 | 文件 | 依据 / 边界 |
+| --- | --- | --- |
+| sd3_5 `n/sample_batch_size` 8→16 | sd3_5 三个实验 yaml | 旧 b16 风险来自 VAE decode；`model.memory.vae_decode.tiling=true` 已接上，chunk OOM 仍会自动 split |
+| wan 1.3B T2V `n/sample_batch_size` 4→8 | `online_grpo_ocr`, `online_grpo_kling_video_reward`, `online_grpo_physics` | GPM sbs=4 occupancy 18%；保留 video-reward 实验 `rollout_batch_size=1`，不把 prompt batching 和 reward 请求混在一起 |
+| anima `n/sample_batch_size` →8 | anima 两个实验 yaml | `rollout_batch_size=4` 已摊掉固定周期；下一瓶颈是每 prompt denoise chunk 小 |
+| predict2 `n` 4→8 / per-sample `sample_batch_size` 1→8 | predict2 两个实验 yaml | GPM preview sbs=1 occupancy 26%；同 prompt 内样本共用 reference，sample batching 不改变 V2W conditioning |
+
+明确未改：Wan 14B I2V 没套用这次 1.3B T2V 的 GPM 结论；它的 480p81f + 14B
+内存边界不同，仍需要单独 live gate。
+
+## 4. Wave 3 — hours 级（cosmos squeeze 主体，按收益排序）
 
 1. **predict2 VAE tiling 接线**（track 5a）：predict2 的 VAE 就是 wan/anima 已在用
    tiling 的同款 diffusers AutoencoderKLWan，缺的只是
@@ -78,7 +112,7 @@ sd3_5/wan 的 trainer compile 在 steady-state 的 recompile 行为待长 run �
    LoRA 项，预计 forward+backward -20~30%；**不要在单卡 32GB 试**（autotune
    workspace 可能压垮）。
 
-## 4. Wave 3 — day 级（按需）
+## 5. Wave 4 — day 级（按需）
 
 - trajectory dtype 策略移到 worker 侧 + 按算法裁剪导出（NFT 不消费
   observations/actions 的 216MB/组——现 dtype knob 在
@@ -92,13 +126,14 @@ sd3_5/wan 的 trainer compile 在 steady-state 的 recompile 行为待长 run �
 - wan-OCR 的 ~74s GPU 空窗（CPU PaddleOCR reward）：先做 3-epoch 时间戳归因，
   比 sbs 更值钱的可能性存在。
 
-## 5. Non-Goals
+## 6. Non-Goals
 
 - AR 家族（janus prefill/decode、nextstep 多卡装载）独立立项，不混入本 sprint。
-- 不动算法超参（timestep_fraction、n、lr）——那是实验设计，不是性能工程。
+- 不动 timestep_fraction / lr / reward weights；Wave 2 只把 `n` 当作让
+  `sample_batch_size` 生效的容量 knob 处理，后续实验解读必须标记 group size 变化。
 - reward worker 内部 mini-batch 打分维持 parked（SPRINT_reward_batched_inference.md）。
 
-## 6. References
+## 7. References
 
 探索原始输出：`/tmp/.../tasks/w1rwdfjj9.output`（5 track 结构化 findings，
 514k subagent tokens）。关键代码锚点见各 track 的 evidence 字段；本文档只保留
