@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from vrl.generation.execution.ids import build_sample_rows
@@ -111,13 +112,16 @@ class RayGenerationExecutor:
                 f"{len(results)} != {len(assignments)}",
             )
 
+        results, oom_splits = await self._degrade_oom_chunks(
+            results,
+            envelope_by_chunk_key={
+                assignment.envelope.chunk_key: assignment.envelope
+                for assignment in assignments
+            },
+            worker_by_id=worker_by_id,
+        )
+
         for result in results:
-            if result.error:
-                raise RuntimeError(
-                    "distributed rollout chunk failed "
-                    f"(worker_id={result.worker_id}, chunk={result.chunk}): "
-                    f"{result.error}",
-                )
             if (
                 request.policy_version is not None
                 and result.policy_version != request.policy_version
@@ -158,12 +162,90 @@ class RayGenerationExecutor:
                 for job_index, assignment in enumerate(assignments)
                 if job_index in by_index
             ]
+        if oom_splits:
+            output.extra["ray_chunk_oom_splits"] = oom_splits
         runtime_debug = [
             result.metrics for result in results if result.metrics.get("runtime_debug")
         ]
         if runtime_debug:
             output.extra["runtime_debug"] = {"ray_chunks": runtime_debug}
         return output
+
+    async def _degrade_oom_chunks(
+        self,
+        results: list[ChunkExecutionResult],
+        *,
+        envelope_by_chunk_key: dict[str, Any],
+        worker_by_id: dict[str, DistributedWorkerHandle],
+    ) -> tuple[list[ChunkExecutionResult], list[dict[str, Any]]]:
+        """Split OOM chunks in half and re-run until success or single sample.
+
+        The retry lives on the driver so vrl/ray stays chunk-agnostic, and the
+        gatherer reassembles by (prompt_index, sample_start) metadata, so the
+        extra child results need no positional bookkeeping. Children rebind to
+        the worker that OOMed: with max_inflight 1 the two halves run
+        sequentially there instead of landing concurrently on the GPU that
+        just proved too full.
+        """
+
+        final: list[ChunkExecutionResult] = []
+        pending = list(results)
+        splits: list[dict[str, Any]] = []
+        while pending:
+            retry_jobs: list[RayActorJob] = []
+            local_calls: list[tuple[Any, Any]] = []
+            for result in pending:
+                if not result.error:
+                    final.append(result)
+                    continue
+                chunk = result.chunk
+                if not _is_oom_error(result.error) or chunk.sample_count <= 1:
+                    raise RuntimeError(
+                        "distributed rollout chunk failed "
+                        f"(worker_id={result.worker_id}, chunk={chunk}): "
+                        f"{result.error}",
+                    )
+                parent_envelope = envelope_by_chunk_key[chunk.chunk_key]
+                worker = worker_by_id.get(result.worker_id)
+                if worker is None or worker.actor is None:
+                    raise RuntimeError(
+                        "distributed rollout chunk OOMed on unknown worker "
+                        f"{result.worker_id!r}: {result.error}",
+                    )
+                children = chunk.split()
+                splits.append(
+                    {
+                        "chunk_key": chunk.chunk_key,
+                        "worker_id": result.worker_id,
+                        "sample_count": chunk.sample_count,
+                        "children": [child.chunk_key for child in children],
+                    },
+                )
+                execute_chunk = worker.actor.execute_chunk
+                remote = getattr(execute_chunk, "remote", None)
+                for child in children:
+                    child_envelope = replace(parent_envelope, chunk=child)
+                    envelope_by_chunk_key[child_envelope.chunk_key] = child_envelope
+                    if callable(remote):
+                        retry_jobs.append(
+                            RayActorJob(
+                                job_index=len(retry_jobs),
+                                worker_id=result.worker_id,
+                                remote_method=remote,
+                                payload=child_envelope,
+                            ),
+                        )
+                    else:
+                        local_calls.append((execute_chunk, child_envelope))
+            pending = []
+            if retry_jobs:
+                pairs = await run_actor_jobs(
+                    retry_jobs,
+                    max_inflight_per_actor=self.max_inflight_chunks_per_worker,
+                )
+                pending.extend(result for _, result in pairs)
+            pending.extend(call(envelope) for call, envelope in local_calls)
+        return final, splits
 
     def _remote_worker_methods(self) -> dict[str, Any]:
         """Collect remote execute_chunk handles for pull-based dispatch."""
@@ -179,5 +261,11 @@ class RayGenerationExecutor:
                 )
             methods[worker.worker_id] = remote
         return methods
+
+def _is_oom_error(message: str) -> bool:
+    """Match CUDA/HIP allocator failures flattened to str by the worker."""
+
+    return "out of memory" in message.lower()
+
 
 __all__ = ["RayGenerationExecutor"]

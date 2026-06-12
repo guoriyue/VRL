@@ -110,10 +110,11 @@ executor 路径上不存在**（`vrl/generation/ray/executor.py:93` 直接 raise
 
 ## 4. Wave 3 — hours 级（cosmos squeeze 主体，按收益排序）
 
-1. **predict2 VAE tiling 接线**（track 5a）：predict2 的 VAE 就是 wan/anima 已在用
-   tiling 的同款 diffusers AutoencoderKLWan，缺的只是
-   `vrl/models/diffusion/common/vae_decode_memory.py` 的 ~20 行镜像接线 + 4 行
-   config。**解锁单卡原生 1280×704×93f**（encode 路径就是 704p OOM 点）。
+1. **predict2 VAE tiling 接线**（track 5a）：✅ done（2026-06-10 随 cleanup 落地：
+   `vae_decode_memory.py` 镜像接线 + 配置已进 main）。predict2 的 VAE 就是 wan/anima
+   已在用 tiling 的同款 diffusers AutoencoderKLWan。**解锁单卡原生 1280×704×93f**
+   （encode 路径就是 704p OOM 点）；704p 全程跑通另需 OOM 降级兜底
+   （见 SPRINT_ray_oom_degradation.md，已实现）。
 2. **解码视频 uint8 过线**（track 2）：717MB/组 wire 预算中 474MB（66%）是 fp32
    解码视频，唯一消费者是 uint8 mp4 编码器。打包为 uint8 = -356MB/组。
    风险点：`vrl/rollouts/batch/ops.py:22` 等假设 float 视频的消费者要兼容。
