@@ -22,11 +22,10 @@ from vrl.models.diffusion.common import (
     shared_replay_tensor,
 )
 from vrl.models.diffusion.common.vae_decode_memory import apply_vae_decode_memory
+from vrl.models.diffusion.cosmos import CosmosReplayForward
 from vrl.models.diffusion.cosmos.predict2_5.runner import (
     CosmosPredict25DiffusionBackboneRunner,
 )
-from vrl.models.diffusion.cosmos import CosmosReplayForward
-from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 
 
 class _NoOpCosmosSafetyChecker:

@@ -31,13 +31,13 @@ from vrl.generation.types import (
     GenerationSampleRow,
 )
 from vrl.math.diffusion.flow_matching import sde_step_with_logprob
-from vrl.utils.media import load_reference_image, to_uint8
 from vrl.trajectory.storage import (
     TrajectoryStoragePolicy,
     apply_value_storage_policy,
     trajectory_storage_policy_from_cfg,
     trajectory_tensor_bytes,
 )
+from vrl.utils.media import load_reference_image, to_uint8
 
 
 @dataclass(frozen=True, slots=True)
@@ -897,7 +897,6 @@ class DiffusionChunkExecutorBase(
 
 __all__ = [
     "DiffusionChunkExecutorBase",
-    "ReferenceConditionedChunks",
     "DiffusionChunkResult",
     "DiffusionDenoiseBuffers",
     "DiffusionDenoiseConfig",
@@ -908,5 +907,6 @@ __all__ = [
     "DiffusionPromptStageOutput",
     "DiffusionRequestLayout",
     "DiffusionSamplingParams",
+    "ReferenceConditionedChunks",
     "preallocate_denoise_buffers",
 ]

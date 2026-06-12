@@ -7,7 +7,6 @@ from typing import Any
 
 from vrl.trajectory.device import move_value_to_device
 from vrl.trajectory.types import (
-    ReplayInput,
     TensorRole,
     TrajectoryBatch,
     TrajectoryTensor,

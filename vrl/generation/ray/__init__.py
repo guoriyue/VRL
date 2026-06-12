@@ -8,13 +8,13 @@ from vrl.generation.ray.launcher import (
     RayGenerationLauncher,
     RayGenerationLaunchInputs,
 )
-from vrl.generation.ray.runtime import (
-    RayGenerationRuntime,
-    ReleasableRayGenerationRuntime,
-)
 from vrl.generation.ray.pipeline_runner import (
     RayPipelineRunner,
     RayPipelineStageHandle,
+)
+from vrl.generation.ray.runtime import (
+    RayGenerationRuntime,
+    ReleasableRayGenerationRuntime,
 )
 from vrl.generation.ray.stage_worker import RayPipelineStageWorker
 

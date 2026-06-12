@@ -13,6 +13,7 @@ from vrl.generation.diffusion import (
     DiffusionChunkExecutorBase,
     DiffusionSamplingParams,
 )
+from vrl.generation.diffusion.executor import ReferenceConditionedChunks
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
@@ -37,7 +38,6 @@ from vrl.models.runtime_config import (
 )
 from vrl.utils.config import cfg_get
 from vrl.utils.logging import init_logger
-from vrl.generation.diffusion.executor import ReferenceConditionedChunks
 
 logger = init_logger(__name__)
 WAN_2_1_FAMILY_CAPABILITY = diffusion_family_capability("wan_2_1", "t2v")
@@ -357,8 +357,8 @@ def _normalize_task_variant(task_variant: str | None) -> str:
 
 
 __all__ = [
-    "Wan_2_1I2VChunkExecutor",
     "Wan_2_1ChunkExecutor",
+    "Wan_2_1I2VChunkExecutor",
     "build_wan_2_1_replay_runtime_bundle",
     "build_wan_2_1_replay_runtime_bundle_from_cfg",
     "build_wan_2_1_runtime_bundle",

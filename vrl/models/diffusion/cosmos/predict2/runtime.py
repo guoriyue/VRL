@@ -12,6 +12,7 @@ from vrl.generation.diffusion import (
     DiffusionChunkExecutorBase,
     DiffusionSamplingParams,
 )
+from vrl.generation.diffusion.executor import ReferenceConditionedChunks
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
@@ -32,7 +33,6 @@ from vrl.models.runtime_config import (
     extract_runtime_spec,
 )
 from vrl.utils.logging import init_logger
-from vrl.generation.diffusion.executor import ReferenceConditionedChunks
 from vrl.utils.media import load_reference_image
 
 logger = init_logger(__name__)

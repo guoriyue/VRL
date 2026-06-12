@@ -1,12 +1,12 @@
 """Diffusion generation helpers."""
 
 from vrl.generation.diffusion.executor import (
+    DiffusionChunkExecutorBase,
     DiffusionChunkResult,
-    DiffusionDenoisedStageOutput,
     DiffusionDenoiseBuffers,
     DiffusionDenoiseConfig,
+    DiffusionDenoisedStageOutput,
     DiffusionDenoiseResult,
-    DiffusionChunkExecutorBase,
     DiffusionPreparedStageOutput,
     DiffusionPromptStageInput,
     DiffusionPromptStageOutput,
@@ -23,13 +23,13 @@ from vrl.generation.diffusion.layout import (
 
 __all__ = [
     "DiffusionBaseParams",
+    "DiffusionChunkExecutorBase",
     "DiffusionChunkGatherer",
     "DiffusionChunkResult",
-    "DiffusionDenoisedStageOutput",
     "DiffusionDenoiseBuffers",
     "DiffusionDenoiseConfig",
     "DiffusionDenoiseResult",
-    "DiffusionChunkExecutorBase",
+    "DiffusionDenoisedStageOutput",
     "DiffusionPreparedStageOutput",
     "DiffusionPromptStageInput",
     "DiffusionPromptStageOutput",

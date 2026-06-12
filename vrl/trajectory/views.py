@@ -147,11 +147,11 @@ def _loss_axis(axes: tuple[str, ...]) -> str:
 
 __all__ = [
     "AlgorithmFamily",
-    "role_tensor",
     "LossUnit",
     "RewardModality",
     "RewardValueRange",
     "RewardView",
     "TrainingView",
     "build_training_view",
+    "role_tensor",
 ]

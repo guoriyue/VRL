@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any
 
-from vrl.generation.types import GenerationRequest, GenerationSampleRow
+from vrl.generation.types import GenerationSampleRow
 from vrl.trajectory.device import move_value_to_device
 from vrl.trajectory.types import (
     TrajectoryBatch,

@@ -39,11 +39,10 @@ from vrl.models.diffusion.common import (
 )
 from vrl.models.diffusion.common.lora import LoraModelMixin
 from vrl.models.diffusion.common.vae_decode_memory import apply_vae_decode_memory
+from vrl.models.diffusion.cosmos import CosmosReplayForward
 from vrl.models.diffusion.cosmos.predict2.runner import (
     CosmosPredict2DiffusionBackboneRunner,
 )
-from vrl.models.diffusion.cosmos import CosmosReplayForward
-from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 
 
 @dataclass

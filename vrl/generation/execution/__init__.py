@@ -1,5 +1,11 @@
 """Engine execution planning and request batches."""
 
+from vrl.generation.execution.chunk_placement import (
+    ChunkPlacementPolicy,
+    DeviceAssignment,
+    DistributedExecutionPlanner,
+    DistributedGenerationPlan,
+)
 from vrl.generation.execution.chunks import (
     SampleChunk,
     SampleChunkSchedule,
@@ -14,12 +20,6 @@ from vrl.generation.execution.planner import (
     ResolvedAxis,
     attach_engine_plan,
     build_engine_plan,
-)
-from vrl.generation.execution.chunk_placement import (
-    ChunkPlacementPolicy,
-    DeviceAssignment,
-    DistributedExecutionPlanner,
-    DistributedGenerationPlan,
 )
 from vrl.generation.execution.types import (
     ChunkExecutionEnvelope,

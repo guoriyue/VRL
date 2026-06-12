@@ -10,8 +10,8 @@ from vrl.models.diffusion.cosmos.anima.runtime import (
 )
 
 __all__ = [
-    "AnimaModel",
     "AnimaChunkExecutor",
+    "AnimaModel",
     "build_anima_replay_runtime_bundle",
     "build_anima_runtime_bundle",
     "extract_anima_replay_runtime_spec",

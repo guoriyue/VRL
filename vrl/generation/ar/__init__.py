@@ -8,8 +8,8 @@ from vrl.generation.ar.layout import (
 )
 
 __all__ = [
-    "ARChunkResult",
     "ARChunkExecutorBase",
+    "ARChunkResult",
     "ARRequestLayout",
     "ARSamplingParams",
 ]

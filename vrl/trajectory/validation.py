@@ -149,7 +149,6 @@ class TrajectoryValidator:
             self._fail(f"LossUnit.segment={unit.segment!r} is unknown")
         if unit.axis not in self.batch.axes:
             self._fail(f"LossUnit.axis={unit.axis!r} is unknown")
-        axis = self.batch.axes[unit.axis]
         for field_name, ref in (
             ("action_ref", unit.action_ref),
             ("old_log_prob_ref", unit.old_log_prob_ref),

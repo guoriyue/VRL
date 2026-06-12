@@ -46,9 +46,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from vrl.models.ar.janus_pro import JANUS_R1_SEGMENTS
-from vrl.trajectory import role_tensor
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 from vrl.models.utils import count_trainable_params, disable_adapter_on, load_weights_into
+from vrl.trajectory import role_tensor
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)

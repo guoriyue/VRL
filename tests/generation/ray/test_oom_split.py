@@ -16,8 +16,8 @@ from vrl.generation.execution.chunk_placement import (
     DeviceAssignment,
     DistributedGenerationPlan,
 )
-from vrl.generation.execution.planner import build_engine_plan
 from vrl.generation.execution.chunks import SampleChunk
+from vrl.generation.execution.planner import build_engine_plan
 from vrl.generation.execution.types import (
     ChunkExecutionEnvelope,
     ChunkExecutionResult,

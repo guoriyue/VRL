@@ -9,8 +9,8 @@ from vrl.models.diffusion.cosmos.predict2_5.runtime import (
 )
 
 __all__ = [
-    "CosmosPredict25Model",
     "CosmosPredict25ChunkExecutor",
+    "CosmosPredict25Model",
     "build_cosmos_predict25_runtime_bundle",
     "build_cosmos_predict25_runtime_bundle_from_cfg",
     "extract_cosmos_predict25_runtime_spec",

@@ -39,5 +39,5 @@ def test_global_mode_requires_existing_path(tmp_path) -> None:
 
 
 def test_global_mode_requires_non_empty_path() -> None:
-    with pytest.raises(ValueError, match="requires model.reference_image"):
+    with pytest.raises(ValueError, match=r"requires model\.reference_image"):
         _predict2_collector_kwargs(_cfg(""), examples=[])

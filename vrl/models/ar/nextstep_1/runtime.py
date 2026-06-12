@@ -630,8 +630,8 @@ class NextStep1ChunkGatherer:
 
 __all__ = [
     "NextStep1ARChunkResult",
-    "NextStep1ChunkGatherer",
     "NextStep1ChunkExecutor",
+    "NextStep1ChunkGatherer",
     "build_nextstep_1_replay_runtime_bundle",
     "build_nextstep_1_runtime_bundle",
     "extract_nextstep_1_runtime_spec",

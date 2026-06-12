@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any
 
+from vrl.generation.execution.chunk_placement import DistributedExecutionPlanner
 from vrl.generation.execution.ids import build_sample_rows
 from vrl.generation.execution.planner import attach_engine_plan
-from vrl.generation.execution.chunk_placement import DistributedExecutionPlanner
 from vrl.generation.execution.types import (
     ChunkExecutionResult,
     DistributedWorkerHandle,

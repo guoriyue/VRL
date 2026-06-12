@@ -37,17 +37,16 @@ from vrl.trajectory.validation import (
     tensor_ref,
 )
 from vrl.trajectory.views import (
-    role_tensor,
     AlgorithmFamily,
     LossUnit,
     RewardModality,
     RewardView,
     TrainingView,
     build_training_view,
+    role_tensor,
 )
 
 __all__ = [
-    "role_tensor",
     "AdvantageScope",
     "AlgorithmFamily",
     "AxisKind",
@@ -77,6 +76,7 @@ __all__ = [
     "build_diffusion_trajectory",
     "build_training_view",
     "replay_input_ref",
+    "role_tensor",
     "tensor_ref",
     "trajectory_storage_policy_from_cfg",
     "trajectory_tensor_bytes",

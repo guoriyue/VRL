@@ -8,7 +8,6 @@ from vrl.generation.ar.layout import ARRequestLayout
 from vrl.generation.protocols import GenerationChunkExecutor
 from vrl.generation.types import (
     GenerationRequest,
-    GenerationSampleRow,
 )
 
 
