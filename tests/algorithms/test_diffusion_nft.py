@@ -273,3 +273,28 @@ def test_after_optimizer_step_syncs_previous_adapter() -> None:
         model, global_step=7,
     )
     assert torch.allclose(named[a_name], named[d_name])
+
+
+def test_first_step_invariant_check_passes_when_previous_synced() -> None:
+    """Advantage-flip invariant holds with previous freshly synced (lr=0 gate)."""
+
+    model = _build_model()
+    model.sync_previous_policy_adapter(decay=0.0)
+    batch = _build_batch(
+        x0=torch.randn(_LATENT_SHAPE),
+        noise=torch.randn(_LATENT_SHAPE),
+        prompt_embeds=torch.randn(_BATCH, _TEXT_LEN, _TEXT_DIM),
+        timestep=500.0,
+    )
+
+    record = DiffusionNFT(DiffusionNFTConfig()).first_step_invariant_check(
+        model=model,
+        batch=batch,
+        advantages=torch.tensor([2.0]),
+        timestep_index=0,
+    )
+
+    assert record["event"] == "first_step_nft_invariant"
+    assert record["passed"] is True
+    assert record["abs_diff"] <= record["threshold"]
+    assert record["loss"] == pytest.approx(record["flipped_loss"], abs=1e-6)

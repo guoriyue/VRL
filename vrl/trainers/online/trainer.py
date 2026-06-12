@@ -625,6 +625,49 @@ class OnlineTrainer(Trainer):
                 },
                 "runtime_debug": _dbg_batch.context.get("runtime_debug"),
             }
+        elif cfg.debug.first_step and self.state.step == 0:
+            # Non-evaluator algorithms (NFT) compute no log-prob ratio, so the
+            # parity probe above is blind to them. Ask the algorithm for its
+            # own lr=0 invariant through the optional protocol method instead
+            # of hardcoding algorithm checks here.
+            _invariant_check = getattr(self.algorithm, "first_step_invariant_check", None)
+            if callable(_invariant_check):
+                _dbg_batch = filtered_batches[0]
+                with torch.no_grad(), autocast_ctx, record_function("trainer.replay"):
+                    _invariant = _invariant_check(
+                        model=self.model,
+                        batch=_dbg_batch,
+                        advantages=filtered_advs[0],
+                        timestep_index=0,
+                    )
+                logger.info(
+                    "DEBUG first-step %s: abs_diff=%.3e (threshold %.1e)",
+                    _invariant["event"],
+                    _invariant["abs_diff"],
+                    _invariant["threshold"],
+                )
+                if not _invariant.get("passed", True):
+                    logger.warning(
+                        "first-step %s invariant violated: abs_diff %.3e > %.1e. "
+                        "The collection-time training signal is untrustworthy; "
+                        "suspect replay-side conditioning/scheduler-domain drift.",
+                        _invariant["invariant"],
+                        _invariant["abs_diff"],
+                        _invariant["threshold"],
+                    )
+                first_step_debug_record = {
+                    **_invariant,
+                    "trainer_step": int(self.state.step),
+                    "global_step": int(self.state.global_step),
+                    "device": str(self.device),
+                    "mixed_precision": _resolve_mixed_precision(cfg),
+                    "precision_policy": precision_metadata,
+                    "rollout_context": {
+                        key: value
+                        for key, value in _dbg_batch.context.items()
+                        if key != "runtime_debug"
+                    },
+                }
 
         # Precision drift guard: on the first step (before any optimizer update),
         # check rollout-vs-replay logprob parity. `auto` protects unsafe precision

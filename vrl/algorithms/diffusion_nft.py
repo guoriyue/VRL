@@ -57,6 +57,53 @@ class DiffusionNFT(Algorithm):
             global_std=cfg.global_std,
         )
 
+    def first_step_invariant_check(
+        self,
+        *,
+        model: Any,
+        batch: Any,
+        advantages: Any,
+        timestep_index: int = 0,
+        threshold: float = 1.0e-6,
+    ) -> dict[str, Any]:
+        """NFT's lr=0 invariant: flipping advantages must not change the loss.
+
+        Ratio-style parity is blind to NFT (it computes no log-prob ratio); the
+        equivalent collection-time check is advantage antisymmetry — with the
+        previous adapter freshly synced, the loss is invariant to flipping the
+        advantage signs. The RNG is forked and seeded so both evaluations draw
+        the same NFT noise when the trajectory carries none.
+
+        Called by the trainer's debug.first_step branch through this optional
+        protocol method, keeping algorithm-specific checks out of the trainer.
+        """
+
+        import torch
+
+        def _loss(adv: Any) -> float:
+            with torch.random.fork_rng():
+                torch.manual_seed(0)
+                loss, _ = self.compute_batch_timestep_loss(
+                    model,
+                    batch,
+                    timestep_index,
+                    adv,
+                )
+            return float(loss.detach().float().item())
+
+        loss = _loss(advantages)
+        flipped_loss = _loss(-advantages)
+        abs_diff = abs(loss - flipped_loss)
+        return {
+            "event": "first_step_nft_invariant",
+            "invariant": "advantage_flip",
+            "loss": loss,
+            "flipped_loss": flipped_loss,
+            "abs_diff": abs_diff,
+            "threshold": threshold,
+            "passed": abs_diff <= threshold,
+        }
+
     def compute_loss(
         self,
         inputs: AlgorithmInput,
