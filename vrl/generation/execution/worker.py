@@ -369,20 +369,51 @@ class GenerationWorkerCore:
 
     @classmethod
     def _to_cpu(cls, value: Any) -> Any:
+        """Move a chunk output to CPU with pinned, queued copies.
+
+        Per-tensor ``.cpu()`` synchronizes the stream once per tensor (~376ms
+        of cudaStreamSynchronize per chunk measured on the wire-diet profile);
+        pinned-buffer ``non_blocking`` copies queue every transfer and the
+        device synchronizes once before the payload is handed to Ray.
+        """
+
+        pending = {"cuda_copies": False}
+        copied = cls._queue_to_cpu(value, pending)
+        if pending["cuda_copies"]:
+            import torch
+
+            torch.cuda.synchronize()
+        return copied
+
+    @classmethod
+    def _queue_to_cpu(cls, value: Any, pending: dict[str, bool]) -> Any:
         if cls._is_tensor(value):
-            return value.detach().cpu()
+            tensor = value.detach()
+            if getattr(tensor, "is_cuda", False):
+                import torch
+
+                host = torch.empty(
+                    tensor.shape,
+                    dtype=tensor.dtype,
+                    device="cpu",
+                    pin_memory=True,
+                )
+                host.copy_(tensor, non_blocking=True)
+                pending["cuda_copies"] = True
+                return host
+            return tensor.cpu()
         if dataclasses.is_dataclass(value) and not isinstance(value, type):
             payload = {
-                field.name: cls._to_cpu(getattr(value, field.name))
+                field.name: cls._queue_to_cpu(getattr(value, field.name), pending)
                 for field in dataclasses.fields(value)
             }
             return type(value)(**payload)
         if isinstance(value, dict):
-            return {key: cls._to_cpu(inner) for key, inner in value.items()}
+            return {key: cls._queue_to_cpu(inner, pending) for key, inner in value.items()}
         if isinstance(value, list):
-            return [cls._to_cpu(inner) for inner in value]
+            return [cls._queue_to_cpu(inner, pending) for inner in value]
         if isinstance(value, tuple):
-            return tuple(cls._to_cpu(inner) for inner in value)
+            return tuple(cls._queue_to_cpu(inner, pending) for inner in value)
         return value
 
     @staticmethod
