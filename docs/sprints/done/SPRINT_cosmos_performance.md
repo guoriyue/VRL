@@ -502,7 +502,7 @@ only scheduling latency, so no further batching work is planned there.
 
 Worker-internal mini-batching (one forward over N videos instead of batch=1
 per artifact) is a separate, parked sprint with explicit start triggers:
-docs/sprints/SPRINT_reward_batched_inference.md — currently 0.8% of epoch,
+docs/sprints/parked/SPRINT_reward_batched_inference.md — currently 0.8% of epoch,
 not worth doing on this box.
 
 ### P3: Move weight sync off Ray object store
@@ -519,7 +519,7 @@ NCCL becomes data plane for model/LoRA weight sync
 Use the prior scaling sprint for implementation details:
 
 ```text
-docs/sprints/SPRINT_cosmos_rl_scaling_learnings.md
+docs/sprints/reading/SPRINT_cosmos_rl_scaling_learnings.md
 ```
 
 ## 5. Non-Goals

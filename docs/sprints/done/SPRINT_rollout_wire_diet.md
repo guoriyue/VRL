@@ -58,4 +58,4 @@ G1 ◐ 改后侧字节计量在线(observations/actions 各 21MB/8样本,即 T2b
 - `vrl/generation/diffusion/executor.py`（打包 + wire policy + 字节计量）
 - `vrl/rollouts/collector/batch_builder.py`（还原 + 兜底）
 - `vrl/utils/media.py`（`to_uint8`，全仓唯一量化公式）
-- `docs/sprints/SPRINT_cross_model_performance.md`（717MB 数字出处）
+- `docs/sprints/done/SPRINT_cross_model_performance.md`（717MB 数字出处）

@@ -191,5 +191,5 @@ Step 3（与 Layer B 解耦）：native transformer executor 按
 - `vrl/generation/diffusion/executor.py`
 - `vrl/generation/ray/{launcher,placement,weight_sync,worker}.py`
 - `vrl/rollouts/orchestration/continuous/{producer,consumer,queue,staleness}.py`
-- `docs/sprints/SPRINT_diffusion_native_transformer_executor.md`（Layer B）
+- `docs/sprints/planned/SPRINT_diffusion_native_transformer_executor.md`（Layer B）
 - 外部对标：`/home/mingfeiguo/Desktop/sglang-omni`（AR-LLM 多模态 serving 框架，不含 diffusion）

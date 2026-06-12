@@ -415,4 +415,4 @@ not copying apply_vae_decode_memory(...) into its loader.
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/trajectory/storage.py`
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/ray/resources.py`
 - `/home/mingfeiguo/Desktop/wm-infra/tests/architecture/test_memory_policy_boundaries.py`
-- `/home/mingfeiguo/Desktop/wm-infra/docs/sprints/SPRINT_runtime_block_policies.md`
+- `/home/mingfeiguo/Desktop/wm-infra/docs/sprints/parked/SPRINT_runtime_block_policies.md`

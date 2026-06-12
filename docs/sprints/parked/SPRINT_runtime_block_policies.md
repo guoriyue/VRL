@@ -706,5 +706,5 @@ Keep `forward_chunk_plan()` as the serial coordinator. Do not create duplicate `
 /home/mingfeiguo/Desktop/wm-infra/vrl/models/diffusion/common/vae_decode_memory.py
 /home/mingfeiguo/Desktop/wm-infra/vrl/models/diffusion/sd3_5/model.py
 /home/mingfeiguo/Desktop/wm-infra/docs/sprints/SPRINT_rollout_performance.md
-/home/mingfeiguo/Desktop/wm-infra/docs/sprints/SPRINT_diffusion_rollout_stage_pipeline.md
+/home/mingfeiguo/Desktop/wm-infra/docs/sprints/parked/SPRINT_diffusion_rollout_stage_pipeline.md
 ```

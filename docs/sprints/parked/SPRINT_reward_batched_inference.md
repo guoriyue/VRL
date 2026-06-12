@@ -89,7 +89,7 @@ reward GPU 显存峰值在 batch=N 下不 OOM（240p 与 512p 各测一次）
 vrl/rewards/inference.py:292-314    批量钩子 + 逐 artifact fallback + 计时
 vrl/rewards/models/kling_video_reward.py:251,276   __call__ / _prepare_batch
 vrl/rewards/ray/runtime.py:53-64    shard_reward_request 多 worker 切片
-docs/sprints/SPRINT_cosmos_performance.md   P1.4（调度层合并，已落地）
+docs/sprints/done/SPRINT_cosmos_performance.md   P1.4（调度层合并，已落地）
 outputs/cosmos25_nft_240p_bs6_reward_retry_20260609_202313/reward_debug/
                                     inference_ms 实测来源
 ```

@@ -10,7 +10,7 @@ only build a physical stage pipeline after profiling proves that the single
 physical chunk boundary is a real bottleneck.
 
 Immediate work should go through
-`docs/sprints/SPRINT_runtime_block_policies.md`: it covers per-block batch,
+`docs/sprints/parked/SPRINT_runtime_block_policies.md`: it covers per-block batch,
 memory, and compile policies while keeping execution serial inside the existing
 executor.
 
@@ -712,7 +712,7 @@ VRL:
 /home/mingfeiguo/Desktop/wm-infra/vrl/models/diffusion/common/vae_decode_memory.py
 /home/mingfeiguo/Desktop/wm-infra/vrl/models/diffusion/sd3_5/model.py
 /home/mingfeiguo/Desktop/wm-infra/docs/sprints/SPRINT_rollout_performance.md
-/home/mingfeiguo/Desktop/wm-infra/docs/sprints/SPRINT_diffusion_rollout_system.md
+/home/mingfeiguo/Desktop/wm-infra/docs/sprints/reading/SPRINT_diffusion_rollout_system.md
 ```
 
 SGLang-Omni:

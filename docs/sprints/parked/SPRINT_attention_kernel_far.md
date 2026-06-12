@@ -275,7 +275,7 @@ Stop or defer this sprint if:
 ## 11. References
 
 ```text
-docs/sprints/SPRINT_attention_kernel_medium.md
+docs/sprints/planned/SPRINT_attention_kernel_medium.md
   required precursor: owned driver + HF submodules
 
 vrl/nn/layers/attention/kernel.py

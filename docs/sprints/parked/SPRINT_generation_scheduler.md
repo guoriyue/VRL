@@ -855,9 +855,9 @@ OOM retry behavior is documented for stage failures
 
 ## 9. References
 
-- `docs/sprints/SPRINT_physical_stage_runtime.md`
-- `docs/sprints/SPRINT_diffusion_rollout_stage_pipeline.md`
-- `docs/sprints/SPRINT_runtime_block_policies.md`
+- `docs/sprints/parked/SPRINT_physical_stage_runtime.md`
+- `docs/sprints/parked/SPRINT_diffusion_rollout_stage_pipeline.md`
+- `docs/sprints/parked/SPRINT_runtime_block_policies.md`
 - `vrl/generation/execution/scheduler.py`
 - `vrl/generation/execution/planner.py`
 - `vrl/generation/execution/chunks.py`
