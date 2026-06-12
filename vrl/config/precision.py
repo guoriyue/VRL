@@ -95,59 +95,25 @@ def resolve_precision_policy(cfg: Any) -> PrecisionPolicy:
     forward dtype.
     """
 
-    _reject_legacy_precision_keys(cfg)
     block = _select(cfg, "precision", _MISSING)
     if block is _MISSING:
         raise ValueError(
-            "top-level `precision` is required; actor.mixed_precision/actor.bf16 "
-            "were removed. Use `precision: fp16`, `precision: bf16`, or "
-            "`precision: fp32`.",
+            "top-level `precision` is required. Use `precision: fp16`, "
+            "`precision: bf16`, or `precision: fp32`.",
         )
     return _from_precision_block(block)
 
 
 def _from_precision_block(block: Any) -> PrecisionPolicy:
+    # Unknown keys inside a precision mapping are reported by the whole-tree
+    # walker (vrl.config.unknown_keys); this parser only reads the known axes.
     if isinstance(block, (str, bool)):
         return _policy_from_compute(normalize_precision(block))
-    if _select(block, "compute", _MISSING) is not _MISSING:
-        raise ValueError(
-            "precision.compute is no longer supported; rollout and replay forward "
-            "precision must be configured together via `precision: fp16` or "
-            "`precision.forward: fp16`.",
-        )
-    if _select(block, "rollout", _MISSING) is not _MISSING:
-        raise ValueError(
-            "precision.rollout is no longer supported; rollout and replay forward "
-            "precision must be configured together via `precision: fp16` or "
-            "`precision.forward: fp16`.",
-        )
     forward = normalize_precision(_select(block, "forward", "fp32"))
     math = normalize_precision(_select(block, "math", "fp32"))
     frozen_raw = _select(block, "frozen", None)
     frozen = normalize_precision(frozen_raw) if frozen_raw is not None else _frozen_default(forward)
     return PrecisionPolicy(compute=forward, rollout=forward, math=math, frozen=frozen)
-
-
-def _reject_legacy_precision_keys(cfg: Any) -> None:
-    legacy = [
-        path
-        for path in (
-            "actor.mixed_precision",
-            "actor.bf16",
-            "+actor.mixed_precision",
-            "+actor.bf16",
-            "+precision.compute",
-            "+precision.rollout",
-        )
-        if _select(cfg, path, _MISSING) is not _MISSING
-    ]
-    if legacy:
-        raise ValueError(
-            "legacy precision config is no longer supported: "
-            + ", ".join(legacy)
-            + ". Use top-level `precision: fp16`, `precision: bf16`, or "
-            "`precision: fp32`.",
-        )
 
 
 def _select(obj: Any, path: str, default: Any = None) -> Any:

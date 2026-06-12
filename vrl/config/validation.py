@@ -76,13 +76,6 @@ def path_exists(cfg: DictConfig, path: str) -> bool:
 
 def resolve_algorithm_kind(algo: DictConfig) -> str:
     """Resolve and validate the algorithm dispatch key."""
-    if "adv_estimator" in algo:
-        raise ValueError("algorithm.adv_estimator is no longer supported; use algorithm.kind")
-    if "per_prompt_stat_tracking" in algo:
-        raise ValueError(
-            "algorithm.per_prompt_stat_tracking is no longer supported; "
-            "use actor.drop_zero_advantage",
-        )
     kind = algo.get("kind", None)
     if kind is None:
         raise ValueError("algorithm.kind required")
@@ -98,6 +91,9 @@ def validate_reward_config(cfg: DictConfig) -> None:
     """Validate reward component shape and model-backed reward kwargs."""
     if "reward" not in cfg:
         raise ValueError("config missing required field: reward")
+    from vrl.config.unknown_keys import warn_unknown_keys
+
+    warn_unknown_keys(cfg.reward, section="reward")
     reward_raw = (
         OmegaConf.to_container(cfg.reward, resolve=True, throw_on_missing=True) or {}
     )
@@ -108,13 +104,8 @@ def validate_reward_config(cfg: DictConfig) -> None:
 
 
 def validate_production_kling_video_reward_config(cfg: DictConfig) -> None:
-    """Check file existence for production Kling VideoReward paths.
-
-    Structural rules (media_type, artifact_format, reward_name, worker_config
-    forbidden fields, data.task_type) are handled by the typed schema inside
-    parse_config(). This function only checks path existence and data integrity,
-    which must not enter the schema per D4.
-    """
+    """Production Kling VideoReward gate: structural contract + path existence."""
+    validate_production_reward_contract(cfg)
     for path_name in ("data.manifest", "data.eval_manifest", "data.source_report"):
         value = str(require(cfg, path_name)).strip()
         if not value:
@@ -126,6 +117,50 @@ def validate_production_kling_video_reward_config(cfg: DictConfig) -> None:
         _validate_video_world_production_data(cfg)
     if task_type == "image_to_video":
         _validate_image_to_video_production_data(cfg)
+
+
+def validate_production_reward_contract(cfg: DictConfig) -> None:
+    """Structural production contract for the Kling VideoReward.
+
+    Reads the raw cfg directly — per-reward config knowledge deliberately does
+    not live in the schema (rewards own their contracts at construction; this
+    gate exists because production misconfiguration is unrecoverable mid-run).
+    """
+    vr_kwargs = (
+        OmegaConf.select(cfg, "reward.kwargs.kling_video_reward")
+        or OmegaConf.select(cfg, "reward.kwargs.video_reward")
+        or {}
+    )
+    if str(vr_kwargs.get("media_type", "")) != "video":
+        raise ValueError(
+            "production.kling_video_reward requires "
+            "reward.kwargs.kling_video_reward.media_type=video"
+        )
+    if str(vr_kwargs.get("artifact_format", "")) != "mp4":
+        raise ValueError("production.kling_video_reward requires artifact_format=mp4")
+    if not str(vr_kwargs.get("reward_name", "")).strip():
+        raise ValueError(
+            "production.kling_video_reward requires "
+            "reward.kwargs.kling_video_reward.reward_name"
+        )
+    worker_config = vr_kwargs.get("worker_config") or {}
+    forbidden = sorted(
+        k for k in ("backend", "backend_import_path", "backend_code_dir",
+                    "import_path", "model_subdir", "score_key_map", "model_factory")
+        if k in worker_config
+    )
+    if forbidden:
+        raise ValueError(
+            "production.kling_video_reward worker_config should name the reward "
+            "model directly; "
+            f"remove extra loader fields: {', '.join(forbidden)}",
+        )
+    task_type = str(OmegaConf.select(cfg, "data.task_type", default="") or "")
+    if task_type not in {"text_to_video", "image_to_video", "video2world"}:
+        raise ValueError(
+            "production.kling_video_reward requires "
+            "data.task_type=text_to_video, image_to_video, or video2world"
+        )
 
 
 def _validate_video_world_production_data(cfg: DictConfig) -> None:
@@ -285,6 +320,9 @@ def _validate_image_to_video_source_report(
 
 def validate_training_config(cfg: DictConfig) -> None:
     """Validate unresolved mandatory values and cross-field contracts."""
+    from vrl.config.unknown_keys import warn_unknown_keys
+
+    warn_unknown_keys(cfg)
     parse_config(cfg)
     from vrl.config.precision import resolve_precision_policy
 
@@ -305,6 +343,7 @@ __all__ = [
     "require",
     "resolve_algorithm_kind",
     "validate_production_kling_video_reward_config",
+    "validate_production_reward_contract",
     "validate_production_video_reward_config",
     "validate_reward_config",
     "validate_training_config",

@@ -80,12 +80,21 @@ def test_scalar_fp32_keeps_frozen_fp16():
     assert p == PrecisionPolicy(compute="fp32", rollout="fp32", math="fp32", frozen="fp16")
 
 
-def test_dict_rejects_decoupled_rollout_compute():
-    """Checks public precision config rejects rollout/replay split."""
-    with pytest.raises(ValueError, match=r"precision\.compute"):
-        resolve_precision_policy(_cfg(precision={"compute": "bf16", "rollout": "fp32"}))
-    with pytest.raises(ValueError, match=r"precision\.rollout"):
-        resolve_precision_policy(_cfg(precision={"forward": "bf16", "rollout": "fp32"}))
+def test_unknown_precision_keys_are_flagged_and_cannot_split():
+    """Unknown precision keys (incl. old compute/rollout) are reported by the
+    whole-tree walker and ignored by the parser, so rollout/replay forward
+    precision stays coupled via `forward` only."""
+    from omegaconf import OmegaConf
+
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    block = {"forward": "bf16", "rollout": "fp32", "compute": "fp16"}
+    p = resolve_precision_policy(_cfg(precision=block))
+    assert p.compute == "bf16"
+    assert p.rollout == "bf16"  # still coupled to forward — split is impossible
+    unknown = find_unknown_keys(OmegaConf.create({"precision": block}))
+    assert "precision.compute" in unknown
+    assert "precision.rollout" in unknown
 
 
 def test_math_protected_unless_explicit():
@@ -105,52 +114,21 @@ def test_top_level_precision_is_required():
         resolve_precision_policy(_cfg())
 
 
-def test_legacy_actor_precision_fields_are_rejected():
-    """Checks legacy actor precision fields are rejected."""
-    with pytest.raises(ValueError, match="legacy precision config"):
-        resolve_precision_policy(_cfg(precision="fp16", mixed_precision="no"))
-    with pytest.raises(ValueError, match="legacy precision config"):
-        resolve_precision_policy(_cfg(precision="fp16", bf16=False))
+def test_legacy_actor_precision_keys_warn_via_schema(caplog):
+    """actor.mixed_precision/bf16 are plain unknown keys now: warn, still load."""
+    import logging
 
-
-@pytest.mark.parametrize(
-    "override",
-    [
-        "actor.mixed_precision=bf16",
-        "+actor.mixed_precision=bf16",
-    ],
-)
-def test_legacy_precision_cli_override_is_rejected(override):
-    """Checks legacy precision CLI overrides are rejected."""
+    from vrl.config.loading import load_config
     from vrl.config.validation import validate_training_config
 
     cfg = load_config(
         "experiment/diffusion/sd3_5/online_grpo_ocr",
-        overrides=[override],
+        overrides=["actor.mixed_precision=bf16"],
     )
-    with pytest.raises(ValueError, match="legacy precision config"):
+    with caplog.at_level(logging.WARNING):
         validate_training_config(cfg)
-
-
-@pytest.mark.parametrize(
-    "override",
-    [
-        "precision.compute=bf16",
-        "precision.rollout=bf16",
-        "+precision.compute=bf16",
-        "+precision.rollout=bf16",
-    ],
-)
-def test_decoupled_precision_cli_override_is_rejected(override):
-    """Checks CLI overrides cannot split rollout/replay precision."""
-    from vrl.config.validation import validate_training_config
-
-    cfg = load_config(
-        "experiment/diffusion/sd3_5/online_grpo_ocr",
-        overrides=[override],
-    )
-    with pytest.raises(ValueError, match=r"precision\.(compute|rollout)"):
-        validate_training_config(cfg)
+    joined = " ".join(r.getMessage() for r in caplog.records)
+    assert "mixed_precision" in joined
 
 
 # Every online GRPO recipe must keep rollout/replay forward precision aligned.

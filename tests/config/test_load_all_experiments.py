@@ -428,30 +428,12 @@ def test_unknown_algorithm_config_fields_fail_fast() -> None:
         build_algorithm_config(cfg)
 
 
-def test_removed_algorithm_zero_advantage_fields_fail_fast() -> None:
-    """Checks removed algorithm zero advantage fields fail fast."""
-    cfg = OmegaConf.create({"algorithm": {"kind": "grpo", "per_prompt_stat_tracking": False}})
-    with pytest.raises(ValueError, match=r"actor\.drop_zero_advantage"):
-        build_algorithm_config(cfg)
-
+def test_missing_drop_zero_advantage_fails_fast() -> None:
+    """actor.drop_zero_advantage is required; removing it fails loudly."""
     cfg = load_config("experiment/diffusion/sd3_5/online_grpo_ocr")
     del cfg.actor["drop_zero_advantage"]
     with pytest.raises(ValueError, match=r"actor\.drop_zero_advantage"):
         build_configs(cfg)
-
-    cfg = load_config("experiment/diffusion/sd3_5/online_grpo_ocr")
-    cfg.algorithm.per_prompt_stat_tracking = False
-    with pytest.raises(ValueError, match=r"actor\.drop_zero_advantage"):
-        validate_training_config(cfg)
-
-
-def test_reward_backbone_kwargs_are_required() -> None:
-    """Checks reward backbone kwargs are required."""
-    cfg = load_config("experiment/diffusion/cosmos_predict2/online_grpo_kling_video_reward")
-    del cfg.reward.kwargs.kling_video_reward["score_key"]
-
-    with pytest.raises(ValueError, match="kling_video_reward"):
-        validate_reward_config(cfg)
 
 
 def test_negative_reward_component_weights_are_rejected() -> None:

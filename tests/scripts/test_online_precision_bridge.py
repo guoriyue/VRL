@@ -74,15 +74,6 @@ def _with_precision(experiment, block):
     return OmegaConf.merge(cfg, OmegaConf.create({"precision": block}))
 
 
-def test_decoupled_rollout_compute_is_rejected():
-    """Checks public precision rejects rollout/replay split."""
-    cfg = _with_precision(
-        "diffusion/sd3_5/online_grpo_ocr", {"compute": "bf16", "rollout": "fp32"},
-    )
-    with pytest.raises(ValueError, match=r"precision\.compute"):
-        build_configs(cfg)
-
-
 @pytest.mark.parametrize("math,expected", [("fp32", torch.float32), ("bf16", torch.bfloat16)])
 def test_math_axis_resolves_to_dtype(math, expected):
     # P2: the `math` axis resolves to the evaluator's log-prob math dtype.

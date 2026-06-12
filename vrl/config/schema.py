@@ -2,95 +2,58 @@
 
 OmegaConf handles YAML defaults, interpolation, and CLI overrides.
 Pydantic validates the fully-resolved, merged container after OmegaConf finishes.
-The schema intentionally uses extra="ignore" during migration so that YAML fields
-not yet represented here are silently accepted rather than rejected.
+Unknown YAML keys load fine and are reported loudly by the single whole-tree
+walker in vrl.config.unknown_keys — a typo, a dead key, and a removed legacy
+key all get the same treatment: one warning naming the dotted path.
 """
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from omegaconf import DictConfig, OmegaConf
 from omegaconf.errors import MissingMandatoryValue
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-# ── Kling VideoReward kwargs model ────────────────────────────────────────────
+from vrl.config.unknown_keys import OPEN, ConfigBlock
+from vrl.generation.ray.config import RayGenerationConfig
+from vrl.ray.resources import (
+    RewardResourceConfig,
+    RoleResourceConfig,
+    RolloutResourceConfig,
+)
+from vrl.trainers.core.types import (
+    DebugConfig,
+    EMAConfig,
+    OptimConfig,
+    PrecisionDriftGuardConfig,
+    RolloutOrchestrationConfig,
+)
+from vrl.trajectory.storage import TrajectoryStoragePolicy
+from vrl.utils.profiling import TorchProfilerConfig
 
 
-class KlingVideoRewardKwargs(BaseModel):
-    """Validates non-production Kling VideoReward kwargs.
-
-    Two scopes handled here:
-      - removed top-level fields raise immediately with clear migration messages
-      - inference_runtime and scheduling are checked unconditionally
-
-    Production-only checks live in RootConfig._validate_production_kling_video_reward,
-    gated on production.kling_video_reward.enabled.
+class ConfigBase(BaseModel):
+    """Shared typed-boundary base. Field declarations double as the known-key
+    registry consumed by vrl.config.unknown_keys (the single whole-tree
+    unknown-key reporter); unknown keys are tolerated here and reported there.
     """
 
     model_config = ConfigDict(extra="ignore")
 
-    inference_runtime: str
-    reward_name: str
-    score_key: str
-    scheduling: str = "sync"
-    worker_config: dict[str, Any]
-    # captured for production cross-field check in RootConfig
-    media_type: str | None = None
-    artifact_format: str | None = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def _reject_removed_top_fields(cls, data: Any) -> Any:
-        if not isinstance(data, dict):
-            return data
-        # backend has a specific migration message pointing to inference_runtime
-        if "backend" in data:
-            raise ValueError(
-                "reward.kwargs.kling_video_reward.backend is no longer supported; "
-                "use reward.kwargs.kling_video_reward.inference_runtime=ray",
-            )
-        if not isinstance(data.get("worker_config"), dict):
-            raise ValueError(
-                "reward.kwargs.kling_video_reward.worker_config must be a mapping"
-            )
-        removed = sorted(
-            k for k in ("enqueue_url", "fetch_url", "token", "poll_interval_s",
-                        "max_wait_s", "stub_scale", "device")
-            if k in data
-        )
-        if removed:
-            raise ValueError(
-                "reward.kwargs.kling_video_reward no longer supports external "
-                "reward endpoint fields: "
-                + ", ".join(removed),
-            )
-        return data
-
-    @model_validator(mode="after")
-    def _validate_runtime_constraints(self) -> KlingVideoRewardKwargs:
-        if self.inference_runtime != "ray":
-            raise ValueError(
-                "reward.kwargs.kling_video_reward.inference_runtime must be 'ray'"
-            )
-        if self.scheduling != "sync":
-            raise ValueError(
-                "reward.kwargs.kling_video_reward.scheduling currently supports only 'sync'"
-            )
-        return self
-
-
-VideoRewardKwargs = KlingVideoRewardKwargs
 
 
 # ── Reward section ────────────────────────────────────────────────────────────
 
 
-class RewardConfig(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    components: dict[str, Any]
-    kwargs: dict[str, Any] = Field(default_factory=dict)
+class RewardConfig(ConfigBase):
+    # reward names are user-chosen — open by design
+    components: Annotated[dict[str, Any], OPEN]
+    # each reward's kwargs contract is owned and validated by the reward class
+    # itself at construction (vrl/rewards/), same as model families — the
+    # config layer does not duplicate per-reward knowledge
+    kwargs: Annotated[dict[str, Any], OPEN] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _validate_reward(self) -> RewardConfig:
@@ -113,75 +76,70 @@ class RewardConfig(BaseModel):
                 raise ValueError(f"reward.components.{name} must be >= 0, got {weight}")
             if weight == 0:
                 continue
-            # Kling VideoReward has constraints that scripts cannot self-heal.
-            if name in {"kling_video_reward", "video_reward"}:
-                sub = self.kwargs.get(name)
-                if not isinstance(sub, dict):
-                    raise ValueError(
-                        f"config missing required field: reward.kwargs.{name} "
-                        f"(component {name!r} has non-zero weight)",
-                    )
-                try:
-                    KlingVideoRewardKwargs.model_validate(sub)
-                except ValidationError as exc:
-                    first = exc.errors(include_url=False)[0]
-                    error_type = first["type"]
-                    msg = first["msg"]
-                    loc = ".".join(str(p) for p in first["loc"])
-                    if error_type == "missing":
-                        raise ValueError(
-                            f"config missing required field: reward.kwargs.{name}.{loc}"
-                        ) from exc
-                    if msg.startswith("Value error, "):
-                        msg = msg[len("Value error, "):]
-                    raise ValueError(msg) from exc
-
         return self
 
 
 # ── Algorithm section ─────────────────────────────────────────────────────────
 
 
-class AlgorithmConfig(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
+class AlgorithmConfig(ConfigBase):
     kind: Literal[
         "grpo", "token_grpo", "token_grpo_multisegment", "diffusion_dpo", "diffusion_nft"
     ]
 
-    @model_validator(mode="before")
-    @classmethod
-    def _reject_removed_algorithm_fields(cls, data: Any) -> Any:
-        if not isinstance(data, dict):
-            return data
-        if "adv_estimator" in data:
-            raise ValueError(
-                "algorithm.adv_estimator is no longer supported; use algorithm.kind"
-            )
-        if "per_prompt_stat_tracking" in data:
-            raise ValueError(
-                "algorithm.per_prompt_stat_tracking is no longer supported; "
-                "use actor.drop_zero_advantage",
-            )
-        return data
+    # Key registry: values are validated by the algorithm dataclasses in
+    # vrl/algorithms/* (build_algorithm_config), not here.
+    adv_clip_max: Any = None
+    advantage_high: Any = None
+    advantage_low: Any = None
+    beta: Any = None
+    eps: Any = None
+    eps_clip: Any = None
+    flow_kl_use_dt: Any = None
+    global_std: Any = None
+    init_kl_coef: Any = None
+    kl_beta: Any = None
+    kl_estimator: Any = None
+    kl_reward: Any = None
+    mask_key: Any = None
+    nft_beta: Any = None
+    segment_weights: Any = None
+    sft_weight: Any = None
+    train_segments: Any = None
+    uncentralized_training: Any = None
+    weight_copy_decay: Any = None
 
 
 # ── Data section ──────────────────────────────────────────────────────────────
 
 
-class DataConfig(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
+class DataConfig(ConfigBase):
     loader: Literal["pickapic_preference", "prompt_manifest", "prompt_image_manifest"]
     manifest: str | None = None
     eval_manifest: str | None = None
-    preprocessing: dict[str, Any] | None = None
-    sampler: dict[str, Any] | None = None
+    # readers: _validate_data + loader tooling
+    preprocessing: Annotated[
+        dict[str, Any] | None,
+        ConfigBlock((
+            "resolution", "random_crop", "horizontal_flip",
+            "format", "image_field", "caption_field", "media_type",
+            "conditioning", "metadata_schema", "target_text",
+        )),
+    ] = None
+    sampler: Annotated[
+        dict[str, Any] | None,
+        ConfigBlock(("type", "shuffle", "drop_last", "dataloader_num_workers")),
+    ] = None
     dataset_name: str | None = None
     split: str | None = None
     cache_dir: str | None = None
     max_train_samples: Any = None
     task_type: str | None = None
+    # Key registry: consumed by data/eval tooling, not validated here.
+    allow_absolute_artifact_paths: Any = None
+    artifact_data_root: Any = None
+    source: Any = None
+    source_report: Any = None
 
     @model_validator(mode="after")
     def _validate_data(self) -> DataConfig:
@@ -250,59 +208,173 @@ class DataConfig(BaseModel):
 # ── Supporting sections for cross-field validation ────────────────────────────
 
 
-class RolloutConfig(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    sde: dict[str, Any] | None = None
+class RolloutConfig(ConfigBase):
+    # readers: math/diffusion flow_matching window + RootConfig check
+    sde: Annotated[
+        dict[str, Any] | None,
+        ConfigBlock(("type", "window_size", "window_range")),
+    ] = None
     noise_level: float | None = None
     final_image_policy: str | None = None
     n: int | None = None
     n_samples_per_prompt: int | None = None
     rollout_batch_size: int | None = None
+    # Key registry: validated by their reader layers (generation/trainers).
+    # reader: generation/ray/launcher.py compile override
+    denoise_compile: Annotated[Any, ConfigBlock(("enable", "mode"))] = None
+    denoise_mode: Any = None
+    max_reflect_len: Any = None
+    max_text_length: Any = None
+    same_latent: Any = None
+    sample_batch_size: Any = None
+    temperature: Any = None
+    torch_profiler: Annotated[Any, ConfigBlock(TorchProfilerConfig)] = None
+    trajectory_storage: Annotated[Any, ConfigBlock(TrajectoryStoragePolicy)] = None
 
 
-class SamplingConfig(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+class SamplingConfig(ConfigBase):
+    # reader: rollouts/collector/config.py + RootConfig cross-field check
+    r1: Annotated[
+        dict[str, Any] | None,
+        ConfigBlock(("final_image_policy", "train_segments")),
+    ] = None
+    # Key registry: parsed by family layout/runtime-spec extractors.
+    ar_scheduler_batch_size: Any = None
+    cfg: Any = None
+    cfg_scale: Any = None
+    cfg_weight: Any = None
+    fps: Any = None
+    guidance_scale: Any = None
+    height: Any = None
+    image_size: Any = None
+    image_token_num: Any = None
+    max_reflect_len: Any = None
+    max_sequence_length: Any = None
+    noise_level: Any = None
+    num_flow_steps: Any = None
+    num_frames: Any = None
+    num_steps: Any = None
+    temperature: Any = None
+    width: Any = None
 
-    # keep as raw dict to avoid nested model complexity during migration
-    r1: dict[str, Any] | None = None
 
-
-class ModelConfig(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
+class ModelConfig(ConfigBase):
     family: str | None = None
+    # Key registry: consumed by family runtime loaders.
+    dtype: Any = None
+    enable_model_cpu_offload: Any = None
+    freeze_aligner: Any = None
+    freeze_image_head: Any = None
+    freeze_vae: Any = None
+    freeze_vision_encoder: Any = None
+    freeze_vq: Any = None
+    # readers: models/interfaces/runtime.py + family runtime.py lora blocks
+    lora: Annotated[
+        Any,
+        ConfigBlock((
+            "rank", "alpha", "path", "target_modules",
+            "init_lora_weights", "dropout", "init",
+        )),
+    ] = None
+    # vae_decode self-validates strictly; frozen_offload: sd3_5 train entrypoint
+    memory: Annotated[Any, ConfigBlock(("vae_decode", "frozen_offload"))] = None
+    path: Any = None
+    qwen_tokenizer_path: Any = None
+    reference_image: Any = None
+    revision: Any = None
+    scheduler_shift: Any = None
+    skip_text_encoder: Any = None
+    t5_tokenizer_path: Any = None
+    task_variant: Any = None
+    text_encoder_file: Any = None
+    torch_compile: Annotated[Any, ConfigBlock(("enable", "mode"))] = None
+    transformer_file: Any = None
+    use_lora: Any = None
+    vae_file: Any = None
+    vae_path: Any = None
 
 
-class ProductionKlingVideoRewardConfig(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    enabled: bool = False
-    report_path: str | None = None
+# ── Section key registries (values validated by their own layers) ────────────
 
 
-ProductionVideoRewardConfig = ProductionKlingVideoRewardConfig
+class TrainerSection(ConfigBase):
+    """Key registry for trainer.*; values validated by vrl.config.builders."""
+
+    entrypoint: Any = None
+    total_epochs: Any = None
+    save_freq: Any = None
+    log_freq: Any = None
+    output_dir: Any = None
+    seed: Any = None
+    profile: Any = None
+    resume_from: Any = None
+    resume_strict: Any = None
+    debug: Annotated[Any, ConfigBlock(DebugConfig)] = None
+    precision_drift_guard: Annotated[Any, ConfigBlock(PrecisionDriftGuardConfig)] = None
+    # continuous sub-block nests automatically from the dataclass field type
+    rollout_orchestration: Annotated[Any, ConfigBlock(RolloutOrchestrationConfig)] = None
+    torch_profiler: Annotated[Any, ConfigBlock(TorchProfilerConfig)] = None
+    # offline DPO entrypoint (vrl/scripts/diffusion/wan_2_1/train_dpo.py)
+    checkpointing_steps: Any = None
+    log_interval: Any = None
+    max_train_steps: Any = None
 
 
-class ProductionConfig(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+class ActorSection(ConfigBase):
+    """Key registry for actor.*; values validated by vrl.config.builders."""
 
-    kling_video_reward: ProductionKlingVideoRewardConfig | None = None
-    video_reward: ProductionKlingVideoRewardConfig | None = None
+    optim: Annotated[Any, ConfigBlock(OptimConfig)] = None
+    ema: Annotated[Any, ConfigBlock(EMAConfig)] = None
+    max_norm: Any = None
+    ppo_epochs: Any = None
+    gradient_accumulation_steps: Any = None
+    drop_zero_advantage: Any = None
+    gradient_checkpointing: Any = None
+    timestep_fraction: Any = None
+    # offline DPO entrypoint (vrl/scripts/diffusion/wan_2_1/train_dpo.py)
+    prediction_type: Any = None
+    scale_lr: Any = None
+    train_batch_size: Any = None
+    use_adafactor: Any = None
+
+
+class DistributedSection(ConfigBase):
+    """Key registry for distributed.*; values validated by vrl.ray.resources."""
+
+    # reader: vrl/ray/resources.py resolve_distributed_resources
+    resources: Annotated[
+        Any,
+        ConfigBlock(
+            ("visible_devices", "trainer", "rollout", "reward",
+             "allow_overlap", "cross_node"),
+            {
+                "trainer": ConfigBlock(RoleResourceConfig),
+                "rollout": ConfigBlock(RolloutResourceConfig),
+                "reward": ConfigBlock(RewardResourceConfig),
+            },
+        ),
+    ] = None
+    # RayGenerationConfig is the typed consumer of this block
+    rollout: Annotated[Any, ConfigBlock(RayGenerationConfig)] = None
+    # reader: vrl/ray/resources.py reward runtime block
+    reward: Annotated[
+        Any,
+        ConfigBlock(("cpus_per_worker", "placement_strategy",
+                     "max_inflight_batches", "release_after_score")),
+    ] = None
 
 
 # ── Root config ───────────────────────────────────────────────────────────────
 
 
-class RootConfig(BaseModel):
+class RootConfig(ConfigBase):
     """Top-level typed boundary for all training config sections.
 
-    Only sections relevant to validation are modelled; the rest are silently
-    accepted via extra="ignore" so that YAML fields not yet in the schema never
-    break existing runs during the migration period.
+    Sections with leaf validation are modelled; trainer/actor/distributed are
+    key registries (values validated by builders / ray.resources); precision
+    is parsed by vrl.config.precision; cosmos by the cosmos entrypoint.
+    Anything else warns via ConfigBase.
     """
-
-    model_config = ConfigDict(extra="ignore")
 
     algorithm: AlgorithmConfig | None = None
     data: DataConfig | None = None
@@ -310,7 +382,16 @@ class RootConfig(BaseModel):
     rollout: RolloutConfig | None = None
     model: ModelConfig | None = None
     sampling: SamplingConfig | None = None
-    production: ProductionConfig | None = None
+    # per-component production gates; contract checks live in
+    # vrl/config/validation.py validate_production_* (raw-cfg checks)
+    production: Annotated[dict[str, Any] | None, OPEN] = None
+    trainer: TrainerSection | None = None
+    actor: ActorSection | None = None
+    distributed: DistributedSection | None = None
+    # reader: vrl/config/precision.py (scalar form skips the block walk)
+    precision: Annotated[Any, ConfigBlock(("forward", "math", "frozen"))] = None
+    # reader: vrl/scripts/diffusion/cosmos/train.py
+    cosmos: Annotated[Any, ConfigBlock(("reference_mode",))] = None
 
     @model_validator(mode="after")
     def _cross_field_validate(self) -> RootConfig:
@@ -355,65 +436,7 @@ class RootConfig(BaseModel):
                     "sampling.r1.final_image_policy must match rollout.final_image_policy"
                 )
 
-        # production Kling VideoReward structural rules (path existence stays separate)
-        prod = self.production
-        production_enabled = bool(
-            prod
-            and (
-                (prod.kling_video_reward and prod.kling_video_reward.enabled)
-                or (prod.video_reward and prod.video_reward.enabled)
-            )
-        )
-        if production_enabled:
-            self._validate_production_kling_video_reward()
-
         return self
-
-    def _validate_production_kling_video_reward(self) -> None:
-        vr_kwargs: dict[str, Any] = {}
-        if self.reward and self.reward.kwargs:
-            vr_kwargs = (
-                self.reward.kwargs.get("kling_video_reward")
-                or self.reward.kwargs.get("video_reward")
-                or {}
-            )
-
-        media_type = str(vr_kwargs.get("media_type", ""))
-        if media_type != "video":
-            raise ValueError(
-                "production.kling_video_reward requires "
-                "reward.kwargs.kling_video_reward.media_type=video"
-            )
-        artifact_format = str(vr_kwargs.get("artifact_format", ""))
-        if artifact_format != "mp4":
-            raise ValueError("production.kling_video_reward requires artifact_format=mp4")
-        reward_name = str(vr_kwargs.get("reward_name", "")).strip()
-        if not reward_name:
-            raise ValueError(
-                "production.kling_video_reward requires "
-                "reward.kwargs.kling_video_reward.reward_name"
-            )
-
-        worker_config = vr_kwargs.get("worker_config") or {}
-        forbidden = sorted(
-            k for k in ("backend", "backend_import_path", "backend_code_dir",
-                        "import_path", "model_subdir", "score_key_map", "model_factory")
-            if k in worker_config
-        )
-        if forbidden:
-            raise ValueError(
-                "production.kling_video_reward worker_config should name the reward "
-                "model directly; "
-                f"remove extra loader fields: {', '.join(forbidden)}",
-            )
-
-        task_type = str((self.data.task_type or "") if self.data else "")
-        if task_type not in {"text_to_video", "image_to_video", "video2world"}:
-            raise ValueError(
-                "production.kling_video_reward requires "
-                "data.task_type=text_to_video, image_to_video, or video2world"
-            )
-
 
 # ── Parse boundary ────────────────────────────────────────────────────────────
 
@@ -462,15 +485,10 @@ def parse_config(cfg: DictConfig) -> RootConfig:
 __all__ = [
     "AlgorithmConfig",
     "DataConfig",
-    "KlingVideoRewardKwargs",
     "ModelConfig",
-    "ProductionConfig",
-    "ProductionKlingVideoRewardConfig",
-    "ProductionVideoRewardConfig",
     "RewardConfig",
     "RolloutConfig",
     "RootConfig",
     "SamplingConfig",
-    "VideoRewardKwargs",
     "parse_config",
 ]

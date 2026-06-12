@@ -8,7 +8,6 @@ from omegaconf import OmegaConf
 from vrl.config.schema import (
     AlgorithmConfig,
     DataConfig,
-    KlingVideoRewardKwargs,
     RewardConfig,
     parse_config,
 )
@@ -63,17 +62,20 @@ def test_unknown_algorithm_kind_raises() -> None:
         parse_config(cfg)
 
 
-def test_adv_estimator_raises_with_migration_message() -> None:
-    """Checks adv estimator raises with migration message."""
-    with pytest.raises(ValueError, match="adv_estimator"):
-        AlgorithmConfig(kind="grpo", adv_estimator="dpo")
+def test_unknown_algorithm_keys_warn_and_load() -> None:
+    """Removed keys, typos, and never-seen keys all warn — none of them raise."""
+    from vrl.config.unknown_keys import find_unknown_keys
 
-
-def test_extra_algorithm_fields_are_ignored() -> None:
-    # extra="ignore" — unknown keys must not raise
-    """Checks extra algorithm fields are ignored."""
-    algo = AlgorithmConfig.model_validate({"kind": "grpo", "init_kl_coef": 0.04, "future_field": True})
-    assert algo.kind == "grpo"
+    cfg = OmegaConf.create(
+        {"algorithm": {"kind": "grpo", "adv_estimator": "dpo", "future_field": True}}
+    )
+    algo = AlgorithmConfig.model_validate(
+        OmegaConf.to_container(cfg.algorithm, resolve=True)
+    )
+    assert algo.kind == "grpo"  # loads fine
+    unknown = find_unknown_keys(cfg)
+    assert "algorithm.adv_estimator" in unknown
+    assert "algorithm.future_field" in unknown
 
 
 # ── Data loader discriminator ─────────────────────────────────────────────────
@@ -200,59 +202,6 @@ def test_non_numeric_reward_weight_raises() -> None:
 
 
 
-# ── KlingVideoRewardKwargs: removed field rejection ────────────────────────────────
-
-
-def test_video_reward_backend_field_raises_specific_message() -> None:
-    """Checks video reward backend field raises specific message."""
-    with pytest.raises(ValueError, match="backend is no longer supported"):
-        KlingVideoRewardKwargs.model_validate({**_kling_video_reward_kwargs(), "backend": "http"})
-
-
-@pytest.mark.parametrize(
-    "removed_field",
-    ["enqueue_url", "fetch_url", "token", "poll_interval_s", "max_wait_s", "stub_scale", "device"],
-)
-def test_video_reward_removed_endpoint_fields_raise(removed_field: str) -> None:
-    """Checks video reward removed endpoint fields raise."""
-    with pytest.raises(ValueError, match="no longer supports external reward endpoint fields"):
-        KlingVideoRewardKwargs.model_validate({**_kling_video_reward_kwargs(), removed_field: "value"})
-
-
-def test_video_reward_non_ray_inference_runtime_raises() -> None:
-    """Checks video reward non Ray inference runtime raises."""
-    with pytest.raises(ValueError, match="inference_runtime must be 'ray'"):
-        KlingVideoRewardKwargs.model_validate(
-            {**_kling_video_reward_kwargs(), "inference_runtime": "local"}
-        )
-
-
-def test_video_reward_non_sync_scheduling_raises() -> None:
-    """Checks video reward non sync scheduling raises."""
-    with pytest.raises(ValueError, match="scheduling currently supports only 'sync'"):
-        KlingVideoRewardKwargs.model_validate(
-            {**_kling_video_reward_kwargs(), "scheduling": "async"}
-        )
-
-
-def test_video_reward_valid_kwargs_accepted() -> None:
-    """Checks video reward valid kwargs accepted."""
-    vr = KlingVideoRewardKwargs.model_validate(_kling_video_reward_kwargs())
-    assert vr.inference_runtime == "ray"
-    assert vr.scheduling == "sync"
-
-
-def test_video_reward_extra_fields_are_ignored() -> None:
-    """Checks video reward extra fields are ignored."""
-    vr = KlingVideoRewardKwargs.model_validate(
-        {**_kling_video_reward_kwargs(), "artifact_dir": "/tmp/out", "timeout_s": 60.0}
-    )
-    assert vr.reward_name == "org/model@main"
-
-
-# ── Cross-field validators ────────────────────────────────────────────────────
-
-
 def test_grpo_requires_valid_sde_type() -> None:
     """Checks GRPO requires valid SDE type."""
     cfg = _minimal_grpo_cfg()
@@ -356,8 +305,10 @@ def test_production_video_reward_structural_rules() -> None:
             "production": {"kling_video_reward": {"enabled": True}},
         }
     )
-    parsed = parse_config(cfg)
-    assert parsed.production.kling_video_reward.enabled is True
+    from vrl.config.validation import validate_production_reward_contract
+
+    parse_config(cfg)  # schema parse stays clean
+    validate_production_reward_contract(cfg)
 
 
 def test_production_video_reward_accepts_image_to_video_task_type() -> None:
@@ -431,8 +382,10 @@ def test_production_video_reward_missing_reward_name_raises() -> None:
             "production": {"kling_video_reward": {"enabled": True}},
         }
     )
+    from vrl.config.validation import validate_production_reward_contract
+
     with pytest.raises(ValueError, match="reward_name"):
-        parse_config(cfg)
+        validate_production_reward_contract(cfg)
 
 
 def test_production_video_reward_forbidden_worker_key_raises() -> None:
@@ -464,8 +417,10 @@ def test_production_video_reward_forbidden_worker_key_raises() -> None:
             "production": {"kling_video_reward": {"enabled": True}},
         }
     )
+    from vrl.config.validation import validate_production_reward_contract
+
     with pytest.raises(ValueError, match="remove extra loader fields"):
-        parse_config(cfg)
+        validate_production_reward_contract(cfg)
 
 
 # ── Missing field mapping (??? → ValueError) ──────────────────────────────────

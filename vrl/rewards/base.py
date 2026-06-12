@@ -148,7 +148,6 @@ class RewardFunction:
         debug_dir: str = "",
         max_inflight_batches: int = 1,
         scheduling: str = "sync",
-        backend: str | None = None,
         actor_runtime: Any | None = None,
         **kwargs: Any,
     ) -> None:
@@ -166,11 +165,6 @@ class RewardFunction:
         from vrl.rewards.artifacts import VideoRewardArtifactStore
         from vrl.rewards.ray.runtime import RayRewardRuntime
 
-        if backend is not None:
-            raise ValueError(
-                f"reward.kwargs.{config_key}.backend is no longer supported; "
-                "use inference_runtime='ray'",
-            )
         if str(scheduling) != "sync":
             raise ValueError(
                 f"reward.kwargs.{config_key}.scheduling currently supports only 'sync'",

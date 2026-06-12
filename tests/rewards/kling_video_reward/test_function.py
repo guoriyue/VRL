@@ -131,19 +131,6 @@ async def test_video_reward_rejects_missing_runtime_results(tmp_path: Path) -> N
         await reward.score_batch([_rollout(torch.ones(1, 2, 2, 2))])
 
 
-def test_video_reward_rejects_removed_backend_field(tmp_path: Path) -> None:
-    """Checks video reward rejects removed backend field."""
-    with pytest.raises(ValueError, match="backend is no longer supported"):
-        KlingVideoReward(
-            backend="removed",
-            inference_runtime="ray",
-            reward_name="kling_video_reward",
-            score_key="overall_reward",
-            artifact_dir=str(tmp_path),
-            actor_runtime=_FakeActorRuntime(),
-        )
-
-
 def test_video_reward_rejects_non_ray_runtime(tmp_path: Path) -> None:
     """Checks video reward rejects non Ray runtime."""
     with pytest.raises(ValueError, match="inference_runtime must be 'ray'"):
@@ -156,31 +143,8 @@ def test_video_reward_rejects_non_ray_runtime(tmp_path: Path) -> None:
         )
 
 
-def test_video_reward_config_rejects_removed_backend_field() -> None:
-    """Checks video reward config rejects removed backend field."""
-    cfg = _video_reward_config(backend="removed")
-
-    with pytest.raises(ValueError, match=r"kling_video_reward\.backend is no longer supported"):
-        validate_reward_config(cfg)
-
-
-def test_video_reward_config_rejects_removed_endpoint_fields() -> None:
-    """Checks video reward config rejects removed endpoint fields."""
-    cfg = _video_reward_config(enqueue_url="/removed")
-
-    with pytest.raises(ValueError, match="external reward endpoint fields"):
-        validate_reward_config(cfg)
-
-
 def test_video_reward_config_accepts_ray_runtime() -> None:
     """Checks video reward config accepts Ray runtime."""
     validate_reward_config(_video_reward_config())
 
 
-def test_video_reward_config_rejects_missing_worker_config() -> None:
-    """Checks video reward config rejects missing worker config."""
-    cfg = _video_reward_config()
-    del cfg.reward.kwargs.kling_video_reward["worker_config"]
-
-    with pytest.raises(ValueError, match="worker_config must be a mapping"):
-        validate_reward_config(cfg)
