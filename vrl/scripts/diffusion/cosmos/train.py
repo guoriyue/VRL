@@ -136,30 +136,25 @@ def _predict2_collector_kwargs(cfg: DictConfig, examples: Any) -> dict[str, Any]
     if mode not in {"global", "per_sample"}:
         raise ValueError("cosmos.reference_mode must be 'global' or 'per_sample'")
     if mode == "global":
-        return {"reference_image": _load_required_reference_image(str(cfg.model.reference_image))}
+        # Pass the validated path, not a loaded PIL image: the Ray launch
+        # contract only accepts primitive executor kwargs, and the worker-side
+        # executor loads paths itself (load_reference_image in its __init__).
+        path_text = str(cfg.model.reference_image or "").strip()
+        if not path_text:
+            raise ValueError(
+                "Cosmos Predict2 Video2World GRPO requires model.reference_image "
+                "unless cosmos.reference_mode=per_sample",
+            )
+        path = Path(path_text).expanduser()
+        if not path.exists():
+            raise FileNotFoundError(f"model.reference_image does not exist: {path}")
+        return {"reference_image": str(path)}
     _normalize_per_sample_reference_images(
         examples,
         manifest_path=Path(str(cfg.data.manifest)),
         rollout_batch_size=int(cfg.rollout.rollout_batch_size),
     )
     return {}
-
-
-def _load_required_reference_image(reference_image_path: str) -> Any:
-    path_text = str(reference_image_path or "").strip()
-    if not path_text:
-        raise ValueError(
-            "Cosmos Predict2 Video2World GRPO requires model.reference_image "
-            "unless cosmos.reference_mode=per_sample",
-        )
-
-    path = Path(path_text).expanduser()
-    if not path.exists():
-        raise FileNotFoundError(f"model.reference_image does not exist: {path}")
-
-    from PIL import Image
-
-    return Image.open(path).convert("RGB")
 
 
 def _normalize_per_sample_reference_images(
