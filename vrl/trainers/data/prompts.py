@@ -107,6 +107,7 @@ class JsonlPromptDataset(Dataset):
 
     def __init__(self, path: str | Path) -> None:
         self.examples: list[PromptExample] = []
+        known_fields = set(PromptExample.__dataclass_fields__)
         with open(path) as f:
             for line in f:
                 line = line.strip()
@@ -115,7 +116,6 @@ class JsonlPromptDataset(Dataset):
                 obj = json.loads(line)
                 if not isinstance(obj, dict):
                     raise ValueError(f"{path}: JSONL rows must be objects")
-                known_fields = set(PromptExample.__dataclass_fields__)
                 extra_metadata = {
                     key: value for key, value in obj.items() if key not in known_fields
                 }
@@ -133,13 +133,6 @@ class JsonlPromptDataset(Dataset):
     def __getitem__(self, idx: int) -> dict[str, Any]:
         ex = self.examples[idx]
         return {"prompt": ex.prompt, "metadata": ex.metadata, "example": ex}
-
-    @staticmethod
-    def collate_fn(examples: list[dict[str, Any]]) -> tuple[list[str], list[dict]]:
-        return (
-            [e["prompt"] for e in examples],
-            [e["metadata"] for e in examples],
-        )
 
 
 class ImageCaptionPromptDataset(Dataset):
@@ -214,34 +207,6 @@ class ImageCaptionPromptDataset(Dataset):
         ex = self.examples[idx]
         return {"prompt": ex.prompt, "metadata": ex.metadata, "example": ex}
 
-    @staticmethod
-    def collate_fn(examples: list[dict[str, Any]]) -> tuple[list[str], list[dict]]:
-        return (
-            [e["prompt"] for e in examples],
-            [e["metadata"] for e in examples],
-        )
-
-
-class TextPromptDataset(Dataset):
-    """Simple dataset that loads prompts from a text file (one per line)."""
-
-    def __init__(self, path: str) -> None:
-        with open(path) as f:
-            self.prompts = [line.strip() for line in f if line.strip()]
-
-    def __len__(self) -> int:
-        return len(self.prompts)
-
-    def __getitem__(self, idx: int) -> dict[str, Any]:
-        return {"prompt": self.prompts[idx], "metadata": {}}
-
-    @staticmethod
-    def collate_fn(examples: list[dict[str, Any]]) -> tuple[list[str], list[dict]]:
-        return (
-            [e["prompt"] for e in examples],
-            [e["metadata"] for e in examples],
-        )
-
 
 def _required_string_field(
     obj: dict[str, Any],
@@ -262,7 +227,6 @@ __all__ = [
     "ImageCaptionPromptDataset",
     "JsonlPromptDataset",
     "PromptExample",
-    "TextPromptDataset",
     "load_prompt_examples_from_config",
     "load_prompt_image_manifest",
     "load_prompt_manifest",

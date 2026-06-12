@@ -190,12 +190,10 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         beta=float(dpo_config.beta),
         sft_weight=float(dpo_config.sft_weight),
         lr=lr,
-        scale_lr=False,                       # already scaled above
         max_grad_norm=float(require(cfg, "actor.max_norm")),
         gradient_accumulation_steps=grad_accum,
         prediction_type=str(require(cfg, "actor.prediction_type")),
         num_train_timesteps=pipeline.scheduler.config.num_train_timesteps,
-        num_frames=num_frames,
         mixed_precision=mixed_precision,
         use_adafactor=bool(require(cfg, "actor.use_adafactor")),
     )

@@ -19,10 +19,6 @@ class WeightSyncer(ABC):
     async def push(self, state_dict: dict[str, Any]) -> None:
         """Send updated weights to inference workers."""
 
-    @abstractmethod
-    async def pull(self) -> dict[str, Any]:
-        """Fetch the latest weights."""
-
     @property
     def current_policy_version(self) -> int | None:
         """Policy version of the last pushed weights (PolicyVersionProvider).
@@ -50,7 +46,6 @@ class RayRuntimeWeightSyncer(WeightSyncer):
             runtime,
             initial_policy_version,
         )
-        self._last_state: dict[str, Any] = {}
         self._push_lock = asyncio.Lock()
 
     async def push(self, state_dict: dict[str, Any]) -> None:
@@ -59,10 +54,6 @@ class RayRuntimeWeightSyncer(WeightSyncer):
             policy_version = self._next_policy_version
             await self.runtime.update_weights(state, policy_version)
             self._next_policy_version = policy_version + 1
-            self._last_state = state
-
-    async def pull(self) -> dict[str, Any]:
-        return dict(self._last_state)
 
     @property
     def current_policy_version(self) -> int | None:

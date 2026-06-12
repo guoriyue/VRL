@@ -15,7 +15,6 @@ trainer:
 
   debug:
     first_step: false
-    grad_split: false
 
   precision_drift_guard:
     mode: auto

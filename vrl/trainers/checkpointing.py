@@ -154,7 +154,7 @@ def save_training_checkpoint(
         if used_ema_export:
             export_ema.copy_temp_to(trainable_parameters)
 
-    meta = write_checkpoint_meta(
+    return write_checkpoint_meta(
         path,
         family=family,
         trainer_state=trainer_state,
@@ -162,9 +162,6 @@ def save_training_checkpoint(
         next_epoch=int(progress.get("next_epoch", progress.get("next_step", 0))),
         uses_lora=export_modules.get(LORA_WEIGHTS_NAME) is not None,
     )
-    meta["checkpoint_file"] = TRAINING_CHECKPOINT_NAME
-    (path / CHECKPOINT_META_NAME).write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n")
-    return meta
 
 
 def load_training_checkpoint(path: str | Path) -> TrainingCheckpoint:
@@ -444,6 +441,7 @@ def write_checkpoint_meta(
     meta = {
         "schema_version": CHECKPOINT_SCHEMA_VERSION,
         "family": family,
+        "checkpoint_file": TRAINING_CHECKPOINT_NAME,
         "trainer_step": int(trainer_state.get("step", 0)),
         "global_step": int(trainer_state.get("global_step", 0)),
         "completed_epoch": int(completed_epoch),

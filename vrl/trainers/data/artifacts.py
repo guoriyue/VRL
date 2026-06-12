@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -300,17 +299,6 @@ def validate_source_backed_video_world_manifest_pair(
     )
 
 
-def write_manifest_report(report: ArtifactManifestReport, path: str | Path) -> None:
-    """Write a validation report as stable JSON."""
-
-    output_path = Path(path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
-        json.dumps(report.to_dict(), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-
-
 def _coerce_data_root(value: str | Path | None) -> Path:
     return Path(value).expanduser().resolve() if value is not None else default_data_root()
 
@@ -368,5 +356,4 @@ __all__ = [
     "validate_artifact_manifest",
     "validate_artifact_manifest_pair",
     "validate_source_backed_video_world_manifest_pair",
-    "write_manifest_report",
 ]

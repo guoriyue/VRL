@@ -7,9 +7,9 @@ The two batteries-included paths are:
   * SD UNet (epsilon prediction, ``DDPMScheduler.add_noise``)
   * Wan / SD3 transformer (flow-matching velocity, ``scheduler.scale_noise``)
 
-For Wan video models, image-only datasets (Pick-a-Pic) are handled by
-replicating each image to ``num_frames`` along the temporal dim before
-VAE encoding. Set ``num_frames=1`` for true image-style training.
+For Wan video models, image-only datasets (Pick-a-Pic) are handled by the
+caller's ``encode_pixels`` replicating each image along the temporal dim
+before VAE encoding (see ``vrl/scripts/diffusion/wan_2_1/train_dpo.py``).
 """
 
 from __future__ import annotations
@@ -38,8 +38,9 @@ class OfflineDPOTrainerConfig:
     sft_weight: float = 0.0
 
     # --- optimizer ---
+    # The caller resolves lr scaling (e.g. by effective batch size) before
+    # constructing this config; the trainer applies ``lr`` as-is.
     lr: float = 1e-8
-    scale_lr: bool = True            # scale lr by effective batch size
     adam_beta1: float = 0.9
     adam_beta2: float = 0.999
     adam_weight_decay: float = 1e-2
@@ -53,15 +54,8 @@ class OfflineDPOTrainerConfig:
     num_train_timesteps: int = 1000          # for epsilon schedulers
     timestep_subset: tuple[int, int] | None = None  # restrict sampling, e.g. (0, 200)
 
-    # --- video: replicate images to T frames for Wan ---
-    num_frames: int = 1
-    vae_scale_factor_temporal: int = 1   # for logging only
-
     # --- mixed precision ---
     mixed_precision: str = "bf16"        # "fp16" | "bf16" | "no"
-
-    # --- logging ---
-    log_every: int = 10
 
 
 @dataclass(slots=True)

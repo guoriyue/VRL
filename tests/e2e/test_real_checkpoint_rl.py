@@ -607,7 +607,6 @@ def _common_training_overrides(tmp_path: Path) -> tuple[str, ...]:
         "trainer.log_freq=1",
         f"trainer.output_dir={tmp_path.as_posix()}",
         "trainer.debug.first_step=false",
-        "trainer.debug.grad_split=false",
         "trainer.profile=false",
         "trainer.torch_profiler.enabled=false",
         "trainer.rollout_orchestration.require_separate_gpus=false",

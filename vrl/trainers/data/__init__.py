@@ -10,7 +10,6 @@ from vrl.trainers.data.artifacts import (
     resolve_prompt_example_artifacts,
     validate_artifact_manifest,
     validate_artifact_manifest_pair,
-    write_manifest_report,
 )
 from vrl.trainers.data.preferences import (
     PickAPicPreferenceDataset,
@@ -22,7 +21,6 @@ from vrl.trainers.data.prompts import (
     ImageCaptionPromptDataset,
     JsonlPromptDataset,
     PromptExample,
-    TextPromptDataset,
     load_prompt_examples_from_config,
     load_prompt_image_manifest,
     load_prompt_manifest,
@@ -40,7 +38,6 @@ __all__ = [
     "PreferenceBatch",
     "PromptExample",
     "ResolvedArtifact",
-    "TextPromptDataset",
     "collate_preference",
     "default_data_root",
     "load_pickapic",
@@ -51,5 +48,4 @@ __all__ = [
     "resolve_prompt_example_artifacts",
     "validate_artifact_manifest",
     "validate_artifact_manifest_pair",
-    "write_manifest_report",
 ]

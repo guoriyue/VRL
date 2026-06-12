@@ -46,7 +46,6 @@ def _make_trainer(scheduler_timesteps, *, timestep_subset=None) -> OfflineDPOTra
     cfg = OfflineDPOTrainerConfig(
         prediction_type="epsilon",
         timestep_subset=timestep_subset,
-        num_frames=1,
     )
     return OfflineDPOTrainer(
         model=torch.nn.Linear(4, 4),
@@ -86,7 +85,7 @@ class TestSampleTimesteps:
         """Same red line when the scheduler doesn't expose timesteps at all."""
         scheduler = SimpleNamespace(config=SimpleNamespace(num_train_timesteps=1000))
         # Avoid setting ``timesteps`` - getattr should return None.
-        cfg = OfflineDPOTrainerConfig(prediction_type="epsilon", num_frames=1)
+        cfg = OfflineDPOTrainerConfig(prediction_type="epsilon")
         trainer = OfflineDPOTrainer(
             model=torch.nn.Linear(4, 4),
             ref_model=None,

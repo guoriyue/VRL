@@ -34,8 +34,6 @@ class DebugConfig:
 
     # First-step log-prob round-trip check (collected old_lp vs fresh_lp).
     first_step: bool = False
-    # Deprecated compatibility knob; the one-shot grad-split probe was removed.
-    grad_split: bool = False
 
 
 @dataclass(slots=True)

@@ -49,7 +49,7 @@ def test_ray_runtime_weight_syncer_pushes_cpu_state_with_monotonic_versions() ->
     assert [version for _, version in runtime.calls] == [1, 2]
     assert runtime.current_policy_version == 2
     assert all(call[0]["weight"].device.type == "cpu" for call in runtime.calls)
-    assert torch.equal(asyncio.run(syncer.pull())["weight"], torch.full((2,), 2.0))
+    assert torch.equal(runtime.calls[-1][0]["weight"], torch.full((2,), 2.0))
 
 
 def test_ray_runtime_weight_syncer_serializes_concurrent_push_versions() -> None:
