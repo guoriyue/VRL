@@ -59,6 +59,11 @@ class RealCheckpointCase:
     replay_runtime_builder: str | None = None
     replay_runtime_spec_extractor: str | None = None
     synthetic_replay_rollout: bool = False
+    # Sample->replay log-prob parity bound (GRPO ratio==1 invariant). With
+    # ppo_epochs=1 the optimizer steps after the whole timestep loop, so every
+    # replayed log-prob is computed against unchanged weights even at lr>0.
+    # NFT cases report 0.0 (no evaluator log-probs) and pass trivially.
+    logprob_parity_tol: float = 5e-3
 
 
 CASES: tuple[RealCheckpointCase, ...] = (
@@ -95,6 +100,9 @@ CASES: tuple[RealCheckpointCase, ...] = (
             "sampling.max_sequence_length=64",
         ),
         min_cuda_memory_gib=24.0,
+        # wan's bf16 replay carries ~2.6e-3 mean recompute noise (cross-model
+        # smoke 2026-06-09) — a known, separately-tracked warn, not the EDM bug.
+        logprob_parity_tol=1e-2,
     ),
     RealCheckpointCase(
         case_id="sd3_5",
@@ -568,6 +576,17 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
         assert metrics.adv_zero_rate < 1.0
         _assert_finite("loss", metrics.loss)
         _assert_finite_positive("grad_norm", metrics.grad_norm)
+        if not case.synthetic_replay_rollout:
+            # Sample->replay log-prob parity (GRPO ratio==1). Regression guard
+            # for family-specific replay wiring: predict2 sat at mean 13.9
+            # before the EDM sigma-domain fix while every metric here still
+            # looked alive. Synthetic-replay cases fabricate old log-probs and
+            # are excluded.
+            assert metrics.logprob_abs_diff_mean < case.logprob_parity_tol, (
+                f"{case.case_id}: replay log-prob diverged from collection "
+                f"(mean {metrics.logprob_abs_diff_mean:.6f} >= "
+                f"{case.logprob_parity_tol}) — broken sample/replay parity"
+            )
         if case.use_config_reward:
             _assert_ray_reward_artifacts(tmp_path, reward_fn)
     finally:
