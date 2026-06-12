@@ -412,13 +412,19 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusionModelBas
     ) -> dict[str, Any]:
         """Project SamplingState into trajectory replay tensors.
 
-        ``init_latents`` is per-sample because Video2World conditioning
-        depends on the reference image.
+        ``init_latents`` must be aligned to the sample batch: the state holds
+        it with a leading-1 dim (forward expands lazily), but the trajectory
+        builder silently drops replay tensors whose dim-0 != batch_size — with
+        sample_batch_size > 1 an unaligned export loses the key and replay
+        restore KeyErrors on ``init_latents``.
         """
         return {
             "prompt_embeds": state.prompt_embeds,
             "negative_prompt_embeds": state.negative_prompt_embeds,
-            "init_latents": state.init_latents,
+            "init_latents": align_replay_tensor(
+                state.init_latents,
+                state.latents.shape[0],
+            ),
             "cond_mask": align_replay_tensor(state.cond_mask, state.latents.shape[0]),
             "uncond_mask": align_replay_tensor(
                 state.uncond_mask,

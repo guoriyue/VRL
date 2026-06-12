@@ -93,3 +93,22 @@ tests/generation/ray/test_oom_split.py  5 个确定性用例（fake 容量 worke
 
 `SPRINT_cross_model_performance.md` Wave 3 #1（predict2 VAE tiling 接线）实际已于
 2026-06-10 随 cleanup 落地（`vae_decode_memory.py` 镜像接线 + 配置），本次标记 done。
+
+## 7. 真 GPU gate 结果（2026-06-11 22:31，predict2 sbs=8 @512p93f num_steps=2）
+
+**降级机制本身：行为上通过。** 已知必 OOM 配置只发生 1 次
+`torch.OutOfMemoryError`（1.5GiB @ transformer），随后 driver 侧静默 split，
+generation 全部完成、Kling 打分完成——OOM 不再杀 run。
+
+**但 gate 整体 fail（exit=1），死因是一个无关的新回归**：trainer 重放阶段
+`restore_eval_state` KeyError `'init_latents'`
+（`vrl/models/diffusion/cosmos/predict2/model.py:470`）。复现：上面的 gate
+命令（任何 predict2 GRPO 真训练步都会踩；n=1 的 probe 因零优势跳过训练步而
+幸免）。范围：G1 parity run（6/10 11:48）同路径正常 ⇒ 回归窗口为其后的
+提交（wire-diet fbd9234 / stage pipeline b224383 / pull dispatch 0e8ec69）
+或工作区进行中改动。线索：`init_latents` 经 forward `extra` dict
+（model.py:378）进入重放段，restore 侧读 `replay_tensors["init_latents"]`
+——查 `extra` 持久化到 replay tensors 的链路在重构中是否丢键。
+
+telemetry 验收（training_debug 里的 `ray_chunk_oom_splits`）因 run 在写
+debug 文件前死亡而未确认，待 init_latents 修复后复跑确认。
