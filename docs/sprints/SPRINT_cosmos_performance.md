@@ -1,6 +1,10 @@
 # SPRINT: Cosmos Performance
 
-状态：P1.4 implemented, awaiting live gate（基于 Cosmos Predict2.5 + DiffusionNFT + Kling VideoReward 单卡 run，2026-06-09）。
+状态：**done（2026-06-11 收口）**。P1.4 已落地且 live gate 通过（motion run
+全程每 epoch 恰 1 次 reward 构建，epoch 13.4 → 12.35 min）；P0 trace 已分析
+（launch-bound 结论）；P1（多卡 reward 常驻）随多卡 sprint 走；P1.5/P2 已按
+文中结论关闭或被取代。后续性能工作的活跃文档是
+`SPRINT_cross_model_performance.md` 与 `SPRINT_rollout_wire_diet.md`。
 
 进度：
 - 2026-06-09 晚：P1.4（deferred per-epoch reward scoring）代码 + 测试落地

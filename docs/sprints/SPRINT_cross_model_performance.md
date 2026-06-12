@@ -1,6 +1,10 @@
 # SPRINT: Cross-Model Performance（5-track 并行探索综合）
 
-状态：wave 2 GPM scale bump 已落地，待 live gate（2026-06-10）。输入：5 个并行只读探索 agent 的结构化结果
+状态：**done（2026-06-11 收口）**。Wave 1/2 已落地且 live gate 全部完成
+（见 §2/§3 表格）；Wave 3 的 VAE tiling 已落地；其余 Wave 3/4 工程项已整体
+移交 `SPRINT_rollout_wire_diet.md`（执行中）。parity 修复 + 每家族回归测试
+已入库（`d323bdd`）。本文档转为结论存档。
+输入：5 个并行只读探索 agent 的结构化结果
 （parity / transport / compute / util / vae-gaps），叠加 P0 trace
 （`outputs/cosmos25_perf_profile_bs6/`）与 cross-model smoke
 （`docs/sprints/SPRINT_cross_model_smoke.md`）。
@@ -29,10 +33,17 @@ FlowMatch scheduler 用 EDM 量级 sigma 表（sigma_max=80），而
 修复为单点换域（`vrl/math/diffusion/flow_matching.py:82-114`，按运行时 sigma
 表判域），离线复算 logprob -4635 → -0.98、parity → 0。
 
-- G1 gate：lr=0 短 smoke，`training_debug.jsonl` 的 abs_diff mean < 1e-3、
-  approx_kl≈0（运行中：`outputs/predict2_parity_g1/`）。
-- wan 的 0.0026 warn 不共享根因（wan sigma 表本就是流域），是独立的 bf16
-  重算噪声；G1 残差给出基线后再决定是否调 guard 阈值。
+- G1 gate：**passed（2026-06-10）**——复跑 6/9 同配置 lr=0 smoke：
+  parity abs_diff mean 5.3e-6（修前 115.5）、ratio 0.999995、approx_kl 0.0。
+- wan 的 0.0026 warn：**closed（2026-06-11，定性完成）**。在今天的代码上
+  不可复现——三组 lr=0 对照（compile ON/OFF × sbs 1/4，含复刻 6/9 的
+  rollout/replay 形状不对称）全部落在 **1.7e-5 ~ 2.6e-5**，guard 阈值
+  0.01 余量 400+ 倍。排除 compile 不对称与 batch 形状两假设；6/9 的
+  2.6e-3 定性为已消失的历史状态（6/9-6/11 间 replay 路径多笔改动，smoke
+  产物已删无法二分，且当时也在阈下、无实际损失）。当前无 bug、无需调
+  阈值；trainer parity warning（>0.01）兜住未来回归。过程备注：sbs=1
+  probe 需 `actor.drop_zero_advantage=false`，否则 OCR 全零优势会跳过
+  训练步连带跳过 parity 检查。
 - 留档：windowed SDE（window_size>0）启用前必须把窗口写进 batch context 并在
   trainer 过滤 train_indices，否则确定性步的无意义 logprob 会进 loss。
 
@@ -110,18 +121,20 @@ executor 路径上不存在**（`vrl/generation/ray/executor.py:93` 直接 raise
 
 ## 4. Wave 3 — hours 级（cosmos squeeze 主体，按收益排序）
 
-1. **predict2 VAE tiling 接线**（track 5a）：✅ done（2026-06-10 随 cleanup 落地：
-   `vae_decode_memory.py` 镜像接线 + 配置已进 main）。predict2 的 VAE 就是 wan/anima
-   已在用 tiling 的同款 diffusers AutoencoderKLWan。**解锁单卡原生 1280×704×93f**
-   （encode 路径就是 704p OOM 点）；704p 全程跑通另需 OOM 降级兜底
-   （见 SPRINT_ray_oom_degradation.md，已实现）。
-2. **解码视频 uint8 过线**（track 2）：717MB/组 wire 预算中 474MB（66%）是 fp32
-   解码视频，唯一消费者是 uint8 mp4 编码器。打包为 uint8 = -356MB/组。
-   风险点：`vrl/rollouts/batch/ops.py:22` 等假设 float 视频的消费者要兼容。
+1. ~~**predict2 VAE tiling 接线**~~（track 5a）：✅ **done** —— 随
+   "enable VAE tiling for all families" 落地（predict2/predict2.5/sd3_5 接线 +
+   config；sd3_5 slicing 在 Wave 2 live gate 补上）。**解锁单卡原生
+   1280×704×93f**（encode 路径就是 704p OOM 点）；704p 全程跑通另有 OOM 降级
+   兜底（见 SPRINT_ray_oom_degradation.md，已实现）。**704p 探针通过
+   （2026-06-11）**：原生 1280×704×93f 全链路（encode→denoise→decode→Kling
+   打分→checkpoint）零 OOM，证据 `outputs/predict2_704p_probe/`。
+2. **解码视频 uint8 过线**（track 2）：**已移交独立交接 sprint
+   `SPRINT_rollout_wire_diet.md`**（连同 #4 与 Wave 4 的 replay 导出裁剪），
+   细节与验收 gate 以那份为准。
 3. **worker `_to_cpu` pinned+异步 + 去掉逐步 `sigma.item()` 同步**（track 2）：
    376ms/chunk 的 cudaStreamSynchronize，可回收 1-2s/组。
-4. **EMA `_foreach` + AdamW `fused=True`**（track 3）：launch 1.7k→~3/step；
-   收益小（1-3%）但零风险顺手。
+4. **EMA `_foreach` + AdamW `fused=True`**（track 3）：已并入
+   `SPRINT_rollout_wire_diet.md` T3。
 5. cosmos 全参首跑（多卡）直接开 compile：full-param 下 elementwise 基数已剔除
    LoRA 项，预计 forward+backward -20~30%；**不要在单卡 32GB 试**（autotune
    workspace 可能压垮）。
@@ -137,8 +150,12 @@ executor 路径上不存在**（`vrl/generation/ray/executor.py:93` 直接 raise
 - LoRA adapter dtype（ToCopyBackward0 ×80k 的来源）：bf16 adapter 需 A/B 稳定性。
 - grad-ckpt 对小模型探测性关闭（sd3_5/wan1.3B）：slice 计算 -20~30%，先单步
   显存探测。
-- wan-OCR 的 ~74s GPU 空窗（CPU PaddleOCR reward）：先做 3-epoch 时间戳归因，
-  比 sbs 更值钱的可能性存在。
+- ~~wan-OCR 的 ~74s GPU 空窗（CPU PaddleOCR reward）~~：**已归因并证伪
+  （2026-06-11，3-epoch profile run，`outputs/wan_ocr_gap/`）**。steady-state
+  epoch 399.6s 的构成：generation ~120s（4 组 × 30s）+ **OCR 打分仅
+  ~21.6s（5.4%）** + evaluate 82.4s + backward 175.5s。smoke 时代的 74s 空窗
+  = 一次性构建（step0 比 step1 多 ~99s：compile warmup + 初始化）+ 旧
+  sbs=1 的串行化，两者均已修。CPU OCR 税只有 5%，不值得工程化。
 
 ## 6. Non-Goals
 
