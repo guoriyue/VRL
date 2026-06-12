@@ -39,11 +39,18 @@ NFT 不消费 observations/actions（~216MB/组）但 worker 照寄。砍掉它�
 5. 回归:GRPO lr=0 parity 不变;NFT loss 曲线与全量导出逐位一致
 ```
 
-## 3. 待跑验收（下次 GPU smoke 顺带）
+## 3. 验收结果（2026-06-11 GPU smoke + worktree A/B）
 
 ```text
-G1 字节实测:改前后对比 wire 字节(锚点 executor.py 的 diffusion_*_bytes)
-G2 GRPO lr=0 parity 与基线同量级(predict2 基线 5.3e-6)
+G2 ✅ 同机同命令 A/B(worktree @ df46979 vs fbd9234):
+     logprob_abs_diff  基线 mean=1.43e-3/max=1.11e-2
+                       本线 mean=1.35e-3/max=1.01e-2  → 同量级,uint8 未碰概率数学
+     reward 经 uint8 路径正常出分(OCR 0.2812)
+G1 ◐ 改后侧字节计量在线(observations/actions 各 21MB/8样本,即 T2b 标的);
+     视频字节无独立计数器,改前后全量对比待有需要时补
+⚠ 先存发现(非本线引入):SD3.5 parity 水位 1.7e-5(06-08 记录)→1.4e-3,
+   发生于 06-08 至 df46979 之间的某批改动(batch API 重构/cross-model wave 1
+   为候选),建议归属方 bisect
 ```
 
 ## 4. References
