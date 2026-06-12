@@ -257,3 +257,100 @@ class _StageTrackingExecutor(DiffusionChunkExecutorBase):
         assert payload.stage == "denoised"
         self.calls.append("run_decode_stage")
         return {"decoded": True, "stage_durations": payload.stage_durations}
+
+
+def test_decode_denoise_result_packs_video_as_uint8() -> None:
+    """Checks decoded video crosses the wire as uint8 (wire diet T1).
+
+    Training tensors (observations/actions/log_probs) must stay untouched;
+    only the decoded video is quantized, with the canonical to_uint8 formula.
+    """
+
+    class _UnitVideoModel(_Model):
+        def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
+            del latents
+            return torch.linspace(0.0, 1.0, 16, dtype=torch.float32).view(1, 1, 4, 4)
+
+    class _UnitVideoExecutor(DiffusionChunkExecutorBase):
+        family = "test"
+        task = "t2i"
+        model = _UnitVideoModel()
+
+    executor = _UnitVideoExecutor()
+    denoise = executor.run_denoise_steps(
+        state=_state(batch=2, steps=1),
+        encoded={},
+        config=_config(sample_count=2),
+    )
+
+    chunk = executor.decode_denoise_result(
+        request=SimpleNamespace(),
+        config=_config(sample_count=2),
+        denoise_result=denoise,
+    )
+
+    from vrl.utils.media import to_uint8
+
+    assert chunk.video.dtype == torch.uint8
+    expected = to_uint8(torch.linspace(0.0, 1.0, 16, dtype=torch.float32).view(1, 1, 4, 4))
+    assert torch.equal(chunk.video, expected)
+    # One byte per element on the wire.
+    assert chunk.engine_counters["diffusion_video_bytes"] == chunk.video.numel()
+    # Training tensors keep their dtype.
+    assert chunk.observations.is_floating_point()
+    assert chunk.log_probs.dtype == torch.float32
+
+
+def test_apply_wire_storage_policy_downcasts_before_wire() -> None:
+    """Checks rollout.trajectory_storage applies at the worker boundary.
+
+    Downcasting only saves transfer bytes if it happens BEFORE the
+    worker->driver wire; the driver-side application stays as an idempotent
+    fallback. The default preserve policy must be an identity (GRPO baseline).
+    """
+    executor = _Executor()
+    denoise = executor.run_denoise_steps(
+        state=_state(batch=2, steps=1),
+        encoded={},
+        config=_config(sample_count=2),
+    )
+    chunk = executor.decode_denoise_result(
+        request=SimpleNamespace(),
+        config=_config(sample_count=2),
+        denoise_result=denoise,
+    )
+
+    request = GenerationRequest(
+        request_id="req-policy",
+        family="test",
+        task="t2i",
+        prompts=["p"],
+        samples_per_prompt=2,
+        sampling={"trajectory_storage": {"dtype": "float16"}},
+    )
+    out = executor.apply_wire_storage_policy(request, chunk)
+
+    assert out.observations.dtype == torch.float16
+    assert out.actions.dtype == torch.float16
+    assert out.replay_tensors["prompt_embeds"].dtype == torch.float16
+
+    # Default policy is a strict identity: same tensor objects, no copies.
+    chunk2 = executor.decode_denoise_result(
+        request=SimpleNamespace(),
+        config=_config(sample_count=2),
+        denoise_result=executor.run_denoise_steps(
+            state=_state(batch=2, steps=1),
+            encoded={},
+            config=_config(sample_count=2),
+        ),
+    )
+    plain_request = GenerationRequest(
+        request_id="req-plain",
+        family="test",
+        task="t2i",
+        prompts=["p"],
+        samples_per_prompt=2,
+    )
+    before = chunk2.observations
+    untouched = executor.apply_wire_storage_policy(plain_request, chunk2)
+    assert untouched.observations is before

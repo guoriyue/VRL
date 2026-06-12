@@ -31,8 +31,13 @@ from vrl.generation.types import (
     GenerationSampleRow,
 )
 from vrl.math.diffusion.flow_matching import sde_step_with_logprob
-from vrl.utils.media import load_reference_image
-from vrl.trajectory.storage import trajectory_tensor_bytes
+from vrl.utils.media import load_reference_image, to_uint8
+from vrl.trajectory.storage import (
+    TrajectoryStoragePolicy,
+    apply_value_storage_policy,
+    trajectory_storage_policy_from_cfg,
+    trajectory_tensor_bytes,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -443,7 +448,41 @@ class DiffusionChunkExecutorBase(
             prepared,
             stage_durations=stage_durations,
         )
-        return self.run_decode_stage(denoised)
+        return self.apply_wire_storage_policy(
+            request,
+            self.run_decode_stage(denoised),
+        )
+
+    def apply_wire_storage_policy(
+        self,
+        request: GenerationRequest,
+        chunk_result: DiffusionChunkResult,
+    ) -> DiffusionChunkResult:
+        """Apply rollout.trajectory_storage BEFORE tensors cross the wire.
+
+        The same policy is re-applied driver-side when the trajectory batch is
+        built (idempotent there); applying it here is what turns a dtype
+        downcast into actual worker->driver transfer savings. The default
+        preserve/preserve policy is a no-op, keeping the GRPO baseline
+        bit-for-bit.
+        """
+
+        policy = trajectory_storage_policy_from_cfg(
+            request.sampling.get("trajectory_storage"),
+        )
+        if policy == TrajectoryStoragePolicy():
+            return chunk_result
+        chunk_result.observations = apply_value_storage_policy(
+            chunk_result.observations, policy,
+        )
+        chunk_result.actions = apply_value_storage_policy(chunk_result.actions, policy)
+        chunk_result.log_probs = apply_value_storage_policy(chunk_result.log_probs, policy)
+        chunk_result.timesteps = apply_value_storage_policy(chunk_result.timesteps, policy)
+        chunk_result.kl = apply_value_storage_policy(chunk_result.kl, policy)
+        chunk_result.replay_tensors = apply_value_storage_policy(
+            chunk_result.replay_tensors, policy,
+        )
+        return chunk_result
 
     def build_prompt_stage_input(
         self,
@@ -754,6 +793,14 @@ class DiffusionChunkExecutorBase(
         state = denoise_result.state
         with record_function("generation.decode_latents"):
             video = model.decode_latents(state.latents)
+        # Pack decoded video as uint8 before it crosses the worker->driver
+        # wire: every downstream consumer (reward models, mp4 artifacts)
+        # quantizes to uint8 anyway, so fp32 here is 4x wasted transfer
+        # (~474MB/group). The driver reconstructs [0, 1] floats as k/255,
+        # which round-trips bit-exactly through the same to_uint8 formula.
+        # Training tensors (latents/log_probs/replay) are NOT touched.
+        if isinstance(video, torch.Tensor) and video.is_floating_point():
+            video = to_uint8(video)
         replay_tensors = model.export_replay_tensors(state)
         context = dict(model.export_batch_context(state))
         context.setdefault("denoise_mode", config.denoise_mode)

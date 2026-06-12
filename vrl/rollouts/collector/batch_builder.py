@@ -76,6 +76,12 @@ class TrajectoryRolloutBatchBuilder:
 
         view = self._reward_view()
         reward_output = self._reward_output(view)
+        if isinstance(reward_output, torch.Tensor) and reward_output.dtype == torch.uint8:
+            # Worker-side wire packing (see decode_denoise_result): decoded
+            # video crosses the wire as uint8. k/255 reconstruction round-trips
+            # bit-exactly through every downstream to_uint8 quantization, so
+            # reward scores are unchanged.
+            return reward_output.float() / 255.0
         if view.value_range == "tanh":
             reward_output = ((reward_output + 1.0) * 0.5).clamp(0.0, 1.0)
         return reward_output

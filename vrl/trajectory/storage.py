@@ -74,6 +74,21 @@ def apply_trajectory_storage_policy(
     return batch
 
 
+def apply_value_storage_policy(value: Any, policy: TrajectoryStoragePolicy) -> Any:
+    """Apply the placement/dtype policy to one tensor-like value tree.
+
+    The leaf semantics are identical to ``apply_trajectory_storage_policy``;
+    this entry point exists for callers that hold raw tensors/dicts (e.g. the
+    generation worker applying the policy BEFORE tensors cross the
+    worker->driver wire, where downcasting actually saves transfer bytes).
+    Re-applying the same policy driver-side is a no-op.
+    """
+
+    if policy == TrajectoryStoragePolicy():
+        return value
+    return _apply_value_policy(value, policy)
+
+
 def trajectory_tensor_bytes(value: object) -> int:
     """Return an estimated byte count for tensor-like leaves in ``value``."""
 
@@ -156,6 +171,7 @@ def _is_torch_tensor(value: object) -> bool:
 __all__ = [
     "TrajectoryStoragePolicy",
     "apply_trajectory_storage_policy",
+    "apply_value_storage_policy",
     "trajectory_storage_policy_from_cfg",
     "trajectory_tensor_bytes",
 ]

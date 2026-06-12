@@ -344,3 +344,54 @@ def _sample_rows(request: GenerationRequest) -> list[GenerationSampleRow]:
                 ),
             )
     return rows
+
+
+def test_reward_outputs_reconstructs_uint8_wire_video_exactly() -> None:
+    """Checks uint8 wire-packed video reconstructs to k/255 floats.
+
+    The worker packs decoded video as uint8 before the wire (wire diet T1);
+    reward_outputs must hand consumers [0, 1] floats that round-trip
+    bit-exactly through every downstream to_uint8 quantization, keeping
+    reward scores identical to the fp32-over-wire path.
+    """
+    import asyncio
+
+    from vrl.utils.media import to_uint8
+
+    request = GenerationRequest(
+        request_id="unit-request",
+        family="unit",
+        task="collect",
+        prompts=["p0"],
+        samples_per_prompt=1,
+    )
+    output = asyncio.run(_Runtime().generate(request))
+    packed = torch.arange(256, dtype=torch.uint8).reshape(1, 1, 16, 16)
+    output.output = packed
+
+    reconstructed = TrajectoryRolloutBatchBuilder(
+        output,
+        RolloutBatchBuildContext(metadata={}, reward_view_name="image"),
+    ).reward_outputs()
+
+    assert reconstructed.dtype == torch.float32
+    assert float(reconstructed.min()) >= 0.0
+    assert float(reconstructed.max()) <= 1.0
+    # The G3 guarantee: re-quantizing recovers every byte value exactly.
+    assert torch.equal(to_uint8(reconstructed), packed)
+
+
+def test_uint8_quantization_roundtrip_is_exact_for_all_byte_values() -> None:
+    """Checks k/255 floats survive both downstream quantization formulas.
+
+    Pins the mechanism behind reward-score equality: to_uint8 (reward
+    models) and the *255-round mp4 path must both map k/255 back to k.
+    """
+    k = torch.arange(256, dtype=torch.float32)
+    grid = k / 255.0
+
+    from vrl.utils.media import to_uint8
+
+    assert torch.equal(to_uint8(grid), k.to(torch.uint8))
+    mp4_path = (grid * 255.0).round().clamp(0, 255).to(torch.uint8)
+    assert torch.equal(mp4_path, k.to(torch.uint8))

@@ -53,12 +53,21 @@ def _create_optimizer(
 ) -> torch.optim.Optimizer:
     """Create an AdamW optimizer."""
     optim = config.optim
+    parameters = list(parameters)
+    # fused=True collapses the per-parameter optimizer step into a handful of
+    # kernels (the loop variant launched ~1.7k/step on LoRA models). It is
+    # only valid for CUDA float params; anything else falls back to default.
+    use_fused = bool(parameters) and all(
+        isinstance(p, torch.Tensor) and p.is_cuda and p.is_floating_point()
+        for p in parameters
+    )
     return torch.optim.AdamW(
         parameters,
         lr=optim.lr,
         betas=(optim.adam_beta1, optim.adam_beta2),
         weight_decay=optim.weight_decay,
         eps=optim.eps,
+        fused=use_fused or None,
     )
 
 

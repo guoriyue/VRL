@@ -59,16 +59,27 @@ class EMAModuleWrapper:
         one_minus_decay = 1 - self.get_current_decay(optimization_step)
 
         if (optimization_step + 1) % self.update_step_interval == 0:
+            # Same-device pairs update via one batched _foreach lerp (the
+            # per-parameter loop launched ~1.7k kernels/step on LoRA models);
+            # ema.lerp_(param, w) computes ema + w*(param - ema), the exact
+            # formula of the previous loop. Cross-device pairs keep the
+            # explicit staging copy.
+            fused_ema: list[torch.Tensor] = []
+            fused_param: list[torch.Tensor] = []
             for ema_param, param in zip(self.ema_parameters, parameters, strict=True):
-                if param.requires_grad:
-                    if ema_param.device == param.device:
-                        ema_param.add_(one_minus_decay * (param - ema_param))
-                    else:
-                        param_copy = param.detach().to(ema_param.device)
-                        param_copy.sub_(ema_param)
-                        param_copy.mul_(one_minus_decay)
-                        ema_param.add_(param_copy)
-                        del param_copy
+                if not param.requires_grad:
+                    continue
+                if ema_param.device == param.device:
+                    fused_ema.append(ema_param)
+                    fused_param.append(param.detach())
+                else:
+                    param_copy = param.detach().to(ema_param.device)
+                    param_copy.sub_(ema_param)
+                    param_copy.mul_(one_minus_decay)
+                    ema_param.add_(param_copy)
+                    del param_copy
+            if fused_ema:
+                torch._foreach_lerp_(fused_ema, fused_param, one_minus_decay)
             self.num_updates += 1
 
     def to(self, device: torch.device | None = None, dtype: torch.dtype | None = None) -> None:
