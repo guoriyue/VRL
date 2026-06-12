@@ -298,3 +298,53 @@ def test_first_step_invariant_check_passes_when_previous_synced() -> None:
     assert record["passed"] is True
     assert record["abs_diff"] <= record["threshold"]
     assert record["loss"] == pytest.approx(record["flipped_loss"], abs=1e-6)
+
+
+def test_edm_scale_timestep_grid_fails_loudly() -> None:
+    """Checks EDM-scale timestep grids cannot silently pass the /1000 heuristic.
+
+    Cosmos Predict2's FlowMatch grid reaches 80000; after /1000 that is t=80,
+    and xt = (1-t)*x0 + t*noise would leave the data manifold without a
+    single warning — the same failure shape as the sigma-domain incident.
+    """
+    model = _build_model()
+    batch = _build_batch(
+        x0=torch.randn(_LATENT_SHAPE),
+        noise=torch.randn(_LATENT_SHAPE),
+        prompt_embeds=torch.randn(_BATCH, _TEXT_LEN, _TEXT_DIM),
+        timestep=80000.0,
+    )
+
+    with pytest.raises(RuntimeError, match="EDM-scale"):
+        DiffusionNFT(DiffusionNFTConfig()).compute_batch_timestep_loss(
+            model, batch, 0, torch.tensor([1.0]),
+        )
+
+
+def test_lr_zero_reward_channel_is_inert() -> None:
+    """Checks the NFT analog of the GRPO ratio==1 invariant.
+
+    With the previous adapter synced to the trainable one (the lr=0 /
+    just-synced state), forward == previous, so positive and negative
+    branch losses coincide and the advantage mix cannot move the policy
+    loss: flipping the advantage sign must leave the loss bit-identical.
+    """
+    torch.manual_seed(4321)
+    x0 = torch.randn(_LATENT_SHAPE)
+    noise = torch.randn(_LATENT_SHAPE)
+    prompt_embeds = torch.randn(_BATCH, _TEXT_LEN, _TEXT_DIM)
+    model = _build_model()
+    # Sync previous <- default exactly (decay=0), as after_optimizer_step does.
+    nft = DiffusionNFT(DiffusionNFTConfig(weight_copy_decay=0.0, kl_beta=0.0))
+    nft.after_optimizer_step(model, global_step=0)
+    batch = _build_batch(x0=x0, noise=noise, prompt_embeds=prompt_embeds, timestep=500.0)
+
+    loss_pos, metrics_pos = nft.compute_batch_timestep_loss(
+        model, batch, 0, torch.tensor([5.0]),
+    )
+    loss_neg, metrics_neg = nft.compute_batch_timestep_loss(
+        model, batch, 0, torch.tensor([-5.0]),
+    )
+
+    assert metrics_pos.policy_loss == metrics_neg.policy_loss
+    assert float(loss_pos) == float(loss_neg)

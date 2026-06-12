@@ -189,6 +189,18 @@ class DiffusionNFT(Algorithm):
         t = t_raw.to(device=x0.device, dtype=torch.float32)
         if bool((t > 1.0).any()):
             t = t / 1000.0
+        # The /1000 heuristic assumes a [0, 1] or [0, 1000] timestep grid.
+        # EDM-style grids (e.g. Cosmos Predict2 FlowMatch, timesteps up to
+        # 80000) would land far outside [0, 1] and silently push the
+        # xt = (1-t)*x0 + t*noise interpolation off the data manifold — the
+        # same failure shape as the predict2 sigma-domain incident. Fail loud.
+        if bool((t > 1.0).any()) or bool((t < 0.0).any()):
+            raise RuntimeError(
+                "DiffusionNFT timestep grid must normalize into [0, 1]; got "
+                f"min={float(t.min()):.4g}, max={float(t.max()):.4g} after "
+                "the /1000 heuristic. EDM-scale timestep grids are not "
+                "supported by this normalization.",
+            )
         t = t.to(dtype=x0.dtype)
         t_expanded = t.view(-1, *([1] * (x0.ndim - 1)))
         noise = replay_tensors.get("diffusion_nft_noise")
