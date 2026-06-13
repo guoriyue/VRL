@@ -19,10 +19,10 @@ from vrl.algorithms.base import Algorithm
 from vrl.algorithms.types import TrainStepMetrics
 from vrl.rollouts.batch import RolloutBatch, stack_batches
 from vrl.rollouts.batch.ops import (
-    select_batch,
     move_training_batch_to_device,
     nonzero_advantage_mask,
     pad_zero_advantage_mask,
+    select_batch,
     shuffle_and_rebatch_batches,
 )
 from vrl.rollouts.orchestration import build_rollout_schedule
@@ -240,10 +240,10 @@ class OnlineTrainer(Trainer):
         collector: Any,
         evaluator: Any,
         model: nn.Module,
+        config: TrainerConfig,
         ref_model: nn.Module | None = None,
         weight_syncer: WeightSyncer | None = None,
         sync_state_getter: TrainableStateGetter | None = None,
-        config: TrainerConfig | None = None,
         prompts: list[str] | None = None,
         device: torch.device | str = "cuda",
         accelerator: Any | None = None,
@@ -260,7 +260,7 @@ class OnlineTrainer(Trainer):
                 "getter; syncing model.state_dict() would send frozen modules.",
             )
         self.sync_state_getter = sync_state_getter
-        self.config = config or TrainerConfig()
+        self.config = config
         self.prompts = prompts or []
         self.device = torch.device(device) if isinstance(device, str) else device
         self.state = TrainState()
@@ -402,7 +402,7 @@ class OnlineTrainer(Trainer):
         # 1. The rollout schedule owns collect/offload/release/sync timing.
         iteration = await self.rollout_schedule.next_iteration(
             list(self.prompts),
-            group_size=cfg.n,
+            group_size=cfg.n_samples_per_prompt,
             runtime_debug=runtime_debug_collect,
         )
         all_batches: list[RolloutBatch] = iteration.batches

@@ -163,7 +163,6 @@ _MISSING = object()
 
 _REQUEST_SAMPLING_EXCLUDES = {
     "kl_reward",
-    "n",
     "n_samples_per_prompt",
     "reward_view",
     "rollout_batch_size",

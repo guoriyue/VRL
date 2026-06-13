@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 import socket
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -18,15 +18,15 @@ logger = init_logger(__name__)
 class TorchProfilerConfig:
     """PyTorch profiler settings for visual TensorBoard traces."""
 
-    enabled: bool = False
-    output_dir: str = ""
-    activities: tuple[str, ...] = ("cpu", "cuda")
-    record_shapes: bool = True
-    profile_memory: bool = True
-    with_stack: bool = False
-    with_flops: bool = False
-    skip_first: int = 0
-    max_steps: int = 1
+    enabled: bool = field(default=False)
+    output_dir: str = field(default="")
+    activities: tuple[str, ...] = field(default=("cpu", "cuda"))
+    record_shapes: bool = field(default=True)
+    profile_memory: bool = field(default=True)
+    with_stack: bool = field(default=False)
+    with_flops: bool = field(default=False)
+    skip_first: int = field(default=0)
+    max_steps: int = field(default=1)
 
     def __post_init__(self) -> None:
         self.enabled = bool(self.enabled)

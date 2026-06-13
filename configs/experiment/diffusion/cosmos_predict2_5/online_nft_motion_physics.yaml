@@ -30,7 +30,7 @@ actor:
     update_interval: 1
 
 rollout:
-  n: 2
+  n_samples_per_prompt: 2
   rollout_batch_size: 1
   sample_batch_size: 1
   noise_level: 0.7

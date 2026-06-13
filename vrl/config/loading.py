@@ -141,6 +141,18 @@ def load_config(
         assert isinstance(cfg, DictConfig)
 
     OmegaConf.resolve(cfg)
+
+    # Hard-required keys are declared as ``???`` in YAML (OmegaConf's mandatory
+    # marker, e.g. trainer.entrypoint in configs/base/trainer.yaml). Enforce
+    # them here so every entrypoint fails at load time with the full list,
+    # instead of one MissingMandatoryValue at first access deep into a run.
+    missing = sorted(OmegaConf.missing_keys(cfg))
+    if missing:
+        raise ValueError(
+            "config is missing required key(s) declared as '???': "
+            + ", ".join(missing)
+            + ". Set them in the experiment YAML or via dotlist overrides.",
+        )
     return cfg
 
 

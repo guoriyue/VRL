@@ -23,20 +23,11 @@
 # prompt groups); the schedule raises the effective queue cap to fit if smaller.
 # weight_sync_barrier is derived for this mode
 # (pause_admission_and_drain_inflight) — continuous supports no other value.
+# Queue/staleness tuning defaults (max_inflight_groups, max_ready_groups,
+# max_ready_bytes_mb, max_stale_policy_versions=0 Phase A, drop_policy,
+# wait_timeout_s, queue_poll_interval_s) live on ContinuousRolloutConfig in
+# vrl/trainers/core/types.py — set them via dotlist as in the recipe above.
 trainer:
   rollout_orchestration:
     mode: continuous
     max_pending_rollouts: 2
-    require_separate_gpus: true
-
-    continuous:
-      max_inflight_groups: 1
-      max_ready_groups: 2
-      max_ready_bytes_mb: 8192
-
-      # Phase A default: behavior-equivalent to strict on-policy.
-      max_stale_policy_versions: 0
-      drop_policy: drop_oldest_stale
-
-      wait_timeout_s: 300.0
-      queue_poll_interval_s: 0.05

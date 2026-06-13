@@ -18,7 +18,7 @@ algorithm:
   init_kl_coef: 0.004
 
 rollout:
-  n: 2
+  n_samples_per_prompt: 2
   rollout_batch_size: 1
   sample_batch_size: 4   # batch the denoise forward; sbs=1 left the GPU at 25% (smoke 2026-06-09)
   denoise_compile:

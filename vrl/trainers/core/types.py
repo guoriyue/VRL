@@ -1,4 +1,18 @@
-"""Trainer configuration and training state."""
+"""Trainer configuration and training state.
+
+Signature convention (applies to every config dataclass in this module,
+recursively): every field is written with explicit ``field(...)``.
+``field()`` with no default = REQUIRED — torch semantics, the experiment
+config must supply it, and construction fails naming the missing field.
+``field(default=...)`` / ``field(default_factory=...)`` = optional, and that
+default is the single copy (base YAML must not restate it).
+
+``metadata={"yaml": ...}`` appears only on ``TrainerConfig`` fields because it
+aggregates three YAML sections (actor/trainer/rollout) and the home of each
+field cannot be inferred. Nested section classes map 1:1 to the section
+declared on their parent field (key == field name inside it), so their fields
+carry no metadata.
+"""
 
 from __future__ import annotations
 
@@ -9,23 +23,27 @@ from vrl.utils.profiling import TorchProfilerConfig
 
 @dataclass(slots=True)
 class OptimConfig:
-    """Optimizer hyper-parameters."""
+    """Optimizer hyper-parameters.
 
-    lr: float = 1e-4
-    adam_beta1: float = 0.9
-    adam_beta2: float = 0.999
-    weight_decay: float = 1e-4
-    eps: float = 1e-8
-    allow_tf32: bool = True
+    ``lr`` is required: there is no sane global learning rate, so it must come
+    from the experiment config (base actor.yaml declares it ``???``).
+    """
+
+    lr: float = field()
+    adam_beta1: float = field(default=0.9)
+    adam_beta2: float = field(default=0.999)
+    weight_decay: float = field(default=1e-4)
+    eps: float = field(default=1e-8)
+    allow_tf32: bool = field(default=True)
 
 
 @dataclass(slots=True)
 class EMAConfig:
     """Exponential moving average of model weights."""
 
-    enable: bool = False
-    decay: float = 0.9999
-    update_interval: int = 1
+    enable: bool = field(default=False)
+    decay: float = field(default=0.9999)
+    update_interval: int = field(default=1)
 
 
 @dataclass(slots=True)
@@ -33,7 +51,7 @@ class DebugConfig:
     """Diagnostic toggles consumed by the trainer."""
 
     # First-step log-prob round-trip check (collected old_lp vs fresh_lp).
-    first_step: bool = False
+    first_step: bool = field(default=False)
 
 
 @dataclass(slots=True)
@@ -51,12 +69,12 @@ class PrecisionDriftGuardConfig:
     SD3.5 FP16 rollout/replay parity checks.
     """
 
-    mode: str = "auto"  # "auto" | "off" | "warn" | "fail"
-    max_batches: int = 1
-    max_timestep_checks: int = 3
-    max_abs_log_ratio: float = 1e-3
-    max_ratio_abs_dev: float = 1e-3
-    fail_on_nonfinite: bool = True
+    mode: str = field(default="auto")  # "auto" | "off" | "warn" | "fail"
+    max_batches: int = field(default=1)
+    max_timestep_checks: int = field(default=3)
+    max_abs_log_ratio: float = field(default=1e-3)
+    max_ratio_abs_dev: float = field(default=1e-3)
+    fail_on_nonfinite: bool = field(default=True)
 
     def __post_init__(self) -> None:
         if self.mode not in ("auto", "off", "warn", "fail"):
@@ -81,13 +99,13 @@ class ContinuousRolloutConfig:
     turns on bounded off-policy prefetch (the cross-node throughput mode).
     """
 
-    max_inflight_groups: int = 1
-    max_ready_groups: int = 2
-    max_ready_bytes_mb: int = 8192
-    max_stale_policy_versions: int = 0
-    drop_policy: str = "drop_oldest_stale"
-    wait_timeout_s: float = 300.0
-    queue_poll_interval_s: float = 0.05
+    max_inflight_groups: int = field(default=1)
+    max_ready_groups: int = field(default=2)
+    max_ready_bytes_mb: int = field(default=8192)
+    max_stale_policy_versions: int = field(default=0)
+    drop_policy: str = field(default="drop_oldest_stale")
+    wait_timeout_s: float = field(default=300.0)
+    queue_poll_interval_s: float = field(default=0.05)
 
     def __post_init__(self) -> None:
         if int(self.max_inflight_groups) < 1:
@@ -106,12 +124,12 @@ class ContinuousRolloutConfig:
 class RolloutOrchestrationConfig:
     """RL rollout schedule configuration."""
 
-    mode: str = "strict_on_policy"
-    max_pending_rollouts: int = 1
-    require_separate_gpus: bool = True
+    mode: str = field(default="strict_on_policy")
+    max_pending_rollouts: int = field(default=1)
+    require_separate_gpus: bool = field(default=True)
     # None derives the only barrier each mode supports; an explicit value is
     # still validated so a contradictory override fails loudly.
-    weight_sync_barrier: str | None = None
+    weight_sync_barrier: str | None = field(default=None)
     continuous: ContinuousRolloutConfig = field(default_factory=ContinuousRolloutConfig)
 
     def __post_init__(self) -> None:
@@ -156,60 +174,87 @@ class RolloutOrchestrationConfig:
 
 @dataclass(slots=True)
 class TrainerConfig:
-    """Configuration for the online RL training loop."""
+    """Configuration for the online RL training loop.
+
+    Fields without defaults are required (torch signature semantics): they are
+    experiment decisions with no sane global value, and a silent default would
+    design the experiment for the user. Fields with defaults are infra knobs;
+    their default here is the single copy (base YAML must not restate it).
+
+    Each field also declares its YAML home in ``metadata={"yaml": ...}``:
+    a section name for scalars (the YAML key equals the field name), a dotted
+    section path for nested config dataclasses, or ``"bridged"`` for values
+    computed by ``build_trainer_config`` (the precision policy expands one
+    ``precision:`` key into the four precision fields). The builder derives the
+    whole layout from this metadata — there is no separate layout table to
+    maintain, and a field without metadata fails loudly at build time.
+    """
+
+    # --- required: experiment-semantic decisions ---
+    optim: OptimConfig = field(metadata={"yaml": "actor.optim"})
+    # GRPO advantage group size (samples per prompt).
+    n_samples_per_prompt: int = field(metadata={"yaml": "rollout"})
+    rollout_batch_size: int = field(metadata={"yaml": "rollout"})
+    # Fraction of denoise timesteps that receive loss (gradient estimator
+    # coverage) — an experiment decision, not a tuning knob.
+    timestep_fraction: float = field(metadata={"yaml": "actor"})
+    total_epochs: int = field(metadata={"yaml": "trainer"})
+    output_dir: str = field(metadata={"yaml": "trainer"})
+    # Whether zero-advantage samples enter the loss (they still carry KL
+    # weight); changes the trained sample set.
+    drop_zero_advantage: bool = field(metadata={"yaml": "actor"})
 
     # --- nested groups ---
-    optim: OptimConfig = field(default_factory=OptimConfig)
-    ema: EMAConfig = field(default_factory=EMAConfig)
-    debug: DebugConfig = field(default_factory=DebugConfig)
+    ema: EMAConfig = field(default_factory=EMAConfig, metadata={"yaml": "actor.ema"})
+    debug: DebugConfig = field(
+        default_factory=DebugConfig,
+        metadata={"yaml": "trainer.debug"},
+    )
     precision_drift_guard: PrecisionDriftGuardConfig = field(
         default_factory=PrecisionDriftGuardConfig,
+        metadata={"yaml": "trainer.precision_drift_guard"},
     )
     rollout_orchestration: RolloutOrchestrationConfig = field(
         default_factory=RolloutOrchestrationConfig,
+        metadata={"yaml": "trainer.rollout_orchestration"},
     )
-    torch_profiler: TorchProfilerConfig = field(default_factory=TorchProfilerConfig)
+    torch_profiler: TorchProfilerConfig = field(
+        default_factory=TorchProfilerConfig,
+        metadata={"yaml": "trainer.torch_profiler"},
+    )
 
     # --- gradient ---
-    max_norm: float = 1.0
+    max_norm: float = field(default=1.0, metadata={"yaml": "actor"})
 
     # --- PPO/GRPO loop ---
-    ppo_epochs: int = 1
+    ppo_epochs: int = field(default=1, metadata={"yaml": "actor"})
     # 0 preserves the legacy behavior: accumulate every collected rollout
     # batch in one optimizer update. Positive values match Flow-GRPO's
     # microbatch accumulation cadence.
-    gradient_accumulation_steps: int = 0
-    drop_zero_advantage: bool = False
+    gradient_accumulation_steps: int = field(default=0, metadata={"yaml": "actor"})
 
-    # --- precision ---
+    # --- precision (bridged from the unified precision policy) ---
     # Empty means "derive from bf16" for direct test construction/backward
     # compatibility. YAML configs should set this explicitly.
-    mixed_precision: str = ""
-    bf16: bool = True
-    gradient_checkpointing: bool = True
-    # Rollout (generation) compute precision, bridged from the unified precision
-    # policy. Empty -> treated as same as compute. The drift guard compares this
-    # against the compute precision to decide whether to enforce parity.
-    rollout_precision: str = ""
+    mixed_precision: str = field(default="", metadata={"yaml": "bridged"})
+    bf16: bool = field(default=True, metadata={"yaml": "bridged"})
+    gradient_checkpointing: bool = field(default=True, metadata={"yaml": "actor"})
+    # Rollout (generation) compute precision. Empty -> treated as same as
+    # compute. The drift guard compares this against the compute precision to
+    # decide whether to enforce parity.
+    rollout_precision: str = field(default="", metadata={"yaml": "bridged"})
     # Math precision used by replay log-prob arithmetic, bridged for guard reports.
-    math_precision: str = "fp32"
-
-    # --- rollout knobs the trainer drives ---
-    n: int = 4
-    rollout_batch_size: int = 4
-    timestep_fraction: float = 1.0
+    math_precision: str = field(default="fp32", metadata={"yaml": "bridged"})
 
     # --- lifecycle ---
-    total_epochs: int = 10000
-    save_freq: int = 50
-    log_freq: int = 1
-    output_dir: str = "outputs/"
-    seed: int = 0
-    resume_from: str = ""
-    resume_strict: bool = True
+    save_freq: int = field(default=50, metadata={"yaml": "trainer"})
+    log_freq: int = field(default=1, metadata={"yaml": "trainer"})
+    seed: int = field(default=0, metadata={"yaml": "trainer"})
+    resume_from: str = field(default="", metadata={"yaml": "trainer"})
+    resume_strict: bool = field(default=True, metadata={"yaml": "trainer"})
 
     # --- profiling ---
-    profile: bool = False
+    profile: bool = field(default=False, metadata={"yaml": "trainer"})
 
 
 @dataclass(slots=True)

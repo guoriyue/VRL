@@ -7,7 +7,6 @@ from typing import Any
 from omegaconf import DictConfig
 
 from vrl.scripts.common.online import (
-    configure_ar_rollout,
     export_language_model_lora,
     run_online_recipe,
 )
@@ -23,7 +22,6 @@ async def train_nextstep_1_ocr_grpo(cfg: DictConfig) -> None:
             family="nextstep_1",
             build_bundle=_build_bundle,
             build_replay_bundle=_build_replay_bundle,
-            configure_trainer=configure_ar_rollout,
             export_modules_getter=export_language_model_lora,
         ),
     )

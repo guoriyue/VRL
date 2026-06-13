@@ -219,10 +219,15 @@ def _make_resume_trainer(
             else None
         ),
         config=TrainerConfig(
+            rollout_batch_size=1,
+            timestep_fraction=1.0,
+            total_epochs=1,
+            drop_zero_advantage=False,
+            output_dir="outputs/",
             optim=OptimConfig(lr=0.01),
             ema=EMAConfig(enable=ema),
             debug=DebugConfig(),
-            n=2,
+            n_samples_per_prompt=2,
             bf16=False,
             mixed_precision=mixed_precision,
         ),

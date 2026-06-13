@@ -74,8 +74,14 @@ def _apply_precision_policy(cfg: DictConfig, trainer_config: Any) -> None:
 def default_reference_model(bundle: Any, cfg: Any) -> Any | None:
     """Reference model for KL: the (LoRA) policy itself when use_lora and init_kl_coef>0, else None."""
 
-    init_kl_coef = float(getattr(cfg.algorithm, "init_kl_coef", 0.0))
-    if bool(getattr(cfg.model, "use_lora", False)) and init_kl_coef > 0:
+    # Convention for config reads in this module: keys that family configs
+    # legitimately omit (e.g. cosmos full-param dropped use_lora from its model
+    # yaml) are read with OmegaConf.select + explicit default, which also
+    # tolerates a missing parent section. Required keys keep raw attribute
+    # access on purpose — a missing required key must fail loudly at startup,
+    # not silently default.
+    init_kl_coef = float(OmegaConf.select(cfg, "algorithm.init_kl_coef", default=0.0) or 0.0)
+    if bool(OmegaConf.select(cfg, "model.use_lora", default=False)) and init_kl_coef > 0:
         return bundle.model
     return None
 
@@ -84,7 +90,9 @@ def export_transformer_lora(bundle: Any, cfg: DictConfig) -> dict[str, Any] | No
     """Export diffusion transformer LoRA weights when configured."""
 
     transformer = bundle.model.transformer
-    if bool(getattr(cfg.model, "use_lora", False)) and hasattr(transformer, "save_pretrained"):
+    if bool(OmegaConf.select(cfg, "model.use_lora", default=False)) and hasattr(
+        transformer, "save_pretrained"
+    ):
         return {LORA_WEIGHTS_NAME: transformer}
     return None
 
@@ -92,16 +100,9 @@ def export_transformer_lora(bundle: Any, cfg: DictConfig) -> dict[str, Any] | No
 def export_language_model_lora(bundle: Any, cfg: DictConfig) -> dict[str, Any] | None:
     """Export AR language-model LoRA weights when configured."""
 
-    if bool(getattr(cfg.model, "use_lora", False)):
+    if bool(OmegaConf.select(cfg, "model.use_lora", default=False)):
         return {LORA_WEIGHTS_NAME: bundle.model.language_model}
     return None
-
-
-def configure_ar_rollout(cfg: DictConfig, trainer_config: Any) -> None:
-    """Bind AR rollout sizing onto the trainer config."""
-
-    trainer_config.n = int(cfg.rollout.n_samples_per_prompt)
-    trainer_config.rollout_batch_size = int(cfg.rollout.rollout_batch_size)
 
 
 def enable_transformer_gradient_checkpointing(
@@ -112,8 +113,15 @@ def enable_transformer_gradient_checkpointing(
 ) -> None:
     """Enable transformer gradient checkpointing while preserving family policy."""
 
+    from vrl.trainers.core.types import TrainerConfig
+
     transformer = bundle.model.transformer
-    if not bool(cfg.actor.gradient_checkpointing):
+    # Optional key: base yaml no longer restates the dataclass default, so an
+    # absent key means "use the TrainerConfig default" — derived, not copied.
+    enabled = OmegaConf.select(cfg, "actor.gradient_checkpointing")
+    if enabled is None:
+        enabled = TrainerConfig.__dataclass_fields__["gradient_checkpointing"].default
+    if not bool(enabled):
         return
 
     enable = getattr(transformer, "enable_gradient_checkpointing", None)
@@ -294,7 +302,7 @@ async def run_online_recipe(
         components.family,
         trainer_config.total_epochs,
         len(examples),
-        trainer_config.n,
+        trainer_config.n_samples_per_prompt,
     )
     for epoch in range(start_epoch, trainer_config.total_epochs):
         idx = sample_prompt_indices(
@@ -495,7 +503,6 @@ def _save_checkpoint(
 
 
 __all__ = [
-    "configure_ar_rollout",
     "default_reference_model",
     "enable_transformer_gradient_checkpointing",
     "export_language_model_lora",

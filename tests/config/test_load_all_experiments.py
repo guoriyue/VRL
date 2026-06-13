@@ -45,6 +45,58 @@ def _experiment_names() -> list[str]:
     )
 
 
+def test_load_config_enforces_mandatory_marker(tmp_path: Path) -> None:
+    """Keys declared '???' must be set by the experiment or a dotlist override."""
+    config = tmp_path / "exp.yaml"
+    config.write_text("trainer:\n  entrypoint: ???\n  seed: 0\n")
+
+    with pytest.raises(ValueError, match=r"trainer\.entrypoint"):
+        load_config(config)
+
+    cfg = load_config(config, overrides=["trainer.entrypoint=pkg.mod:fn"])
+    assert cfg.trainer.entrypoint == "pkg.mod:fn"
+
+
+def test_build_trainer_config_reports_all_missing_required_keys() -> None:
+    """Missing required keys are reported together, each with its full YAML path."""
+    cfg = OmegaConf.create(
+        {
+            "actor": {},
+            "trainer": {},
+            "rollout": {},
+            "precision": "bf16",
+        },
+    )
+
+    from vrl.config.builders import build_trainer_config
+
+    with pytest.raises(ValueError) as exc:
+        build_trainer_config(cfg)
+
+    message = str(exc.value)
+    for path in (
+        "actor.optim.lr",
+        "actor.drop_zero_advantage",
+        "actor.timestep_fraction",
+        "trainer.total_epochs",
+        "trainer.output_dir",
+        "rollout.rollout_batch_size",
+        "rollout.n_samples_per_prompt",
+    ):
+        assert path in message
+
+
+def test_typo_yaml_home_is_rejected() -> None:
+    """A metadata address naming an unknown top-level section fails loudly."""
+    from vrl.config.builders import _validate_yaml_home
+
+    _validate_yaml_home("save_freq", "trainer")          # known section: ok
+    _validate_yaml_home("optim", "actor.optim")          # dotted path: ok
+
+    with pytest.raises(AssertionError, match=r"trainerx"):
+        _validate_yaml_home("save_freq", "trainerx")
+
+
 def test_config_groups_are_not_flattened() -> None:
     """Checks config groups are not flattened."""
     flattened = [

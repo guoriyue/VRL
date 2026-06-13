@@ -4,4 +4,3 @@
 trainer:
   rollout_orchestration:
     mode: strict_on_policy
-    require_separate_gpus: true

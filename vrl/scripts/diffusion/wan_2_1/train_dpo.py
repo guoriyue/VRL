@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.precision import resolve_precision_policy
 from vrl.models.dtypes import resolve_torch_dtype
@@ -34,6 +34,7 @@ from vrl.trainers.checkpointing import (
     save_resolved_config,
     save_training_checkpoint,
 )
+from vrl.trainers.core.types import TrainerConfig
 
 logger = logging.getLogger(__name__)
 
@@ -124,11 +125,18 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
 
     precision = resolve_precision_policy(cfg)
     mixed_precision = _trainer_precision_label(precision.compute)
+    # Optional knobs: base yaml no longer restates dataclass defaults, so an
+    # absent key falls back to the typed default — derived, never copied.
+    _trainer_fields = TrainerConfig.__dataclass_fields__
+    resume_strict = OmegaConf.select(cfg, "trainer.resume_strict")
+    if resume_strict is None:
+        resume_strict = _trainer_fields["resume_strict"].default
+    resume_strict = bool(resume_strict)
     resume_checkpoint = load_training_checkpoint_from_config(cfg)
     prepare_model_config_for_training_resume(
         cfg,
         resume_checkpoint,
-        strict=bool(require(cfg, "trainer.resume_strict")),
+        strict=resume_strict,
     )
 
     resources = resolve_distributed_resources(cfg)
@@ -142,7 +150,10 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     pipeline = bundle.backend_handle
     transformer = wan_model.transformer
 
-    if bool(require(cfg, "actor.gradient_checkpointing")):
+    gradient_checkpointing = OmegaConf.select(cfg, "actor.gradient_checkpointing")
+    if gradient_checkpointing is None:
+        gradient_checkpointing = _trainer_fields["gradient_checkpointing"].default
+    if bool(gradient_checkpointing):
         transformer.enable_gradient_checkpointing()
 
     # 2. Encoders bound to the loaded pipeline
@@ -190,7 +201,13 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         beta=float(dpo_config.beta),
         sft_weight=float(dpo_config.sft_weight),
         lr=lr,
-        max_grad_norm=float(require(cfg, "actor.max_norm")),
+        max_grad_norm=float(
+            OmegaConf.select(
+                cfg,
+                "actor.max_norm",
+                default=_trainer_fields["max_norm"].default,
+            ),
+        ),
         gradient_accumulation_steps=grad_accum,
         prediction_type=str(require(cfg, "actor.prediction_type")),
         num_train_timesteps=pipeline.scheduler.config.num_train_timesteps,
@@ -215,7 +232,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
             resume_checkpoint,
             trainer=trainer,
             bundle=bundle,
-            strict=bool(require(cfg, "trainer.resume_strict")),
+            strict=resume_strict,
         )
         logger.info(
             "Resuming from %s, start_step=%d",

@@ -17,7 +17,7 @@ algorithm:
   init_kl_coef: 0.004
 
 rollout:
-  n: 8
+  n_samples_per_prompt: 8
   rollout_batch_size: 4   # amortize fixed per-cycle cost; sbs=4 GPM still shows ~20% SM occupancy.
   sample_batch_size: 8
   sde:

@@ -31,7 +31,7 @@ sampling:
 
 rollout:
   # 2 images per group, 2 groups per step - 16x fewer pixels vs. baseline.
-  n: 2
+  n_samples_per_prompt: 2
   rollout_batch_size: 2
   sample_batch_size: 2
 

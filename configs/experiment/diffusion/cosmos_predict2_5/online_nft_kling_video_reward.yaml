@@ -23,7 +23,7 @@ actor:
     update_interval: 1
 
 rollout:
-  n: 12                     # advantage group size; the n samples are forwarded
+  n_samples_per_prompt: 12                     # advantage group size; the n samples are forwarded
                             # together, so this is the main single-GPU memory knob
   rollout_batch_size: 6     # prompts/step (cosmos-rl mini_batch)
   sample_batch_size: 1

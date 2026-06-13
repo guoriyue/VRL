@@ -7,7 +7,6 @@ from typing import Any
 from omegaconf import DictConfig
 
 from vrl.scripts.common.online import (
-    configure_ar_rollout,
     export_language_model_lora,
     run_online_recipe,
 )
@@ -43,7 +42,6 @@ async def _run_janus_recipe(cfg: DictConfig, *, family: str) -> None:
                 dtype,
                 family=family,
             ),
-            configure_trainer=configure_ar_rollout,
             export_modules_getter=export_language_model_lora,
         ),
     )

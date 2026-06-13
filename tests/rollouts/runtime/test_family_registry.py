@@ -115,7 +115,7 @@ def test_request_sampling_is_projected_from_resolved_yaml_config() -> None:
                 "cfg": True,
             },
             "rollout": {
-                "n": 4,
+                "n_samples_per_prompt": 4,
                 "rollout_batch_size": 1,
                 "sample_batch_size": 8,
                 "reward_view": "image",

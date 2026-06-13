@@ -216,7 +216,6 @@ class RolloutConfig(ConfigBase):
     ] = None
     noise_level: float | None = None
     final_image_policy: str | None = None
-    n: int | None = None
     n_samples_per_prompt: int | None = None
     rollout_batch_size: int | None = None
     # Key registry: validated by their reader layers (generation/trainers).

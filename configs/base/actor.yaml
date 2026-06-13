@@ -1,22 +1,17 @@
-# Actor / training-loop config
+# Actor / training-loop config.
+#
+# Only experiment decisions live here (lr is ???; drop_zero_advantage and
+# timestep_fraction are repo-wide choices that diverge from the dataclass
+# "off" defaults, as is the ema block). All optimizer/clip/loop infra defaults
+# live on the dataclasses in vrl/trainers/core/types.py — base YAML must not
+# restate them.
 precision: bf16
 
 actor:
   optim:
     lr: ???
-    adam_beta1: 0.9
-    adam_beta2: 0.999
-    weight_decay: 1.0e-4
-    eps: 1.0e-8
-    allow_tf32: true
 
-  max_norm: 1.0
-  ppo_epochs: 1
-  # 0 = one optimizer update per OnlineTrainer.step, preserving legacy VRL
-  # behavior. SD3 Flow-GRPO parity overrides this to 4.
-  gradient_accumulation_steps: 0
   drop_zero_advantage: true
-  gradient_checkpointing: true
 
   # Train loss only on a subset of denoising timesteps (compute saving).
   # Diffusion-RL specific — LLM RL has no analog. Belongs in actor because
