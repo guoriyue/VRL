@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import time
-from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -27,6 +26,7 @@ from vrl.rollouts.collector.rewards import RewardScorer
 from vrl.rollouts.families import get_rollout_family_entry
 from vrl.trajectory import trajectory_storage_policy_from_cfg
 from vrl.utils.config import cfg_get
+from vrl.utils.profiling import record_function
 
 
 @dataclass(slots=True)
@@ -170,7 +170,7 @@ class RolloutCollector:
 
         profile = any(rollout.profile for rollout in unscored)
         phase_t = _sync_time() if profile else None
-        with _record_function("collector.reward_score"):
+        with record_function("collector.reward_score"):
             rewards = await self.reward_scorer.score_many(
                 [
                     builder.reward_scoring_input(rollout.collector_request.metadata)
@@ -245,19 +245,8 @@ def build_rollout_collector(
 
 
 def _reward_view_name(config: Any) -> str | None:
-    for name in ("reward_view", "reward_view_name"):
-        value = cfg_get(config, name, None)
-        if value:
-            return str(value)
-    return None
-
-
-def _record_function(name: str) -> Any:
-    try:
-        from vrl.utils.profiling import record_function
-    except ImportError:
-        return nullcontext()
-    return record_function(name)
+    value = cfg_get(config, "reward_view", None)
+    return str(value) if value else None
 
 
 def _sync_time() -> float:

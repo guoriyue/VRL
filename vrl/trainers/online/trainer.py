@@ -19,7 +19,7 @@ from vrl.algorithms.base import Algorithm
 from vrl.algorithms.types import TrainStepMetrics
 from vrl.rollouts.batch import RolloutBatch, stack_batches
 from vrl.rollouts.batch.ops import (
-    apply_sample_mask,
+    select_batch,
     move_training_batch_to_device,
     nonzero_advantage_mask,
     pad_zero_advantage_mask,
@@ -458,7 +458,7 @@ class OnlineTrainer(Trainer):
                     num_batches=len(all_batches),
                 )
                 if bool(mask.any()):
-                    combined = apply_sample_mask(combined, mask)
+                    combined = select_batch(combined, mask)
                     adv_all = advantages_all[mask.to(advantages_all.device)]
                     filtered_batches, filtered_advs = shuffle_and_rebatch_batches(
                         [combined],
@@ -471,7 +471,7 @@ class OnlineTrainer(Trainer):
                     if not bool(mask.any()):
                         continue
                     if not bool(mask.all()):
-                        b = apply_sample_mask(b, mask)
+                        b = select_batch(b, mask)
                         adv_b = adv_b[mask.to(adv_b.device)]
                     if b.rewards.shape[0] > 0:
                         filtered_batches.append(b)

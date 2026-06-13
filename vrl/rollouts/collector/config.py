@@ -166,7 +166,6 @@ _REQUEST_SAMPLING_EXCLUDES = {
     "n",
     "n_samples_per_prompt",
     "reward_view",
-    "reward_view_name",
     "rollout_batch_size",
 }
 

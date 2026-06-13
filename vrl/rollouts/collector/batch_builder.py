@@ -21,9 +21,9 @@ from vrl.trajectory import (
     TrajectoryBatch,
     TrajectorySegment,
     TrajectoryStoragePolicy,
-    TrajectoryTensor,
     apply_trajectory_storage_policy,
     build_training_view,
+    role_tensor,
 )
 
 
@@ -107,8 +107,8 @@ class TrajectoryRolloutBatchBuilder:
         segment: TrajectorySegment,
         rewards_raw: torch.Tensor,
     ) -> RolloutBatch:
-        observations = self._role_tensor(segment, "observation").value
-        actions = self._role_tensor(segment, "action").value
+        observations = role_tensor(segment, "observation").value
+        actions = role_tensor(segment, "action").value
         kl_tensor = self._named_tensor(segment, "kl").value
         device = observations.device
 
@@ -149,7 +149,7 @@ class TrajectoryRolloutBatchBuilder:
         segment: TrajectorySegment,
         rewards_raw: torch.Tensor,
     ) -> RolloutBatch:
-        actions = self._role_tensor(segment, "action").value
+        actions = role_tensor(segment, "action").value
         prompt_ids = self._named_tensor(segment, "prompt_input_ids").value
         device = self.context.device or prompt_ids.device
         images = self.output.output
@@ -186,7 +186,7 @@ class TrajectoryRolloutBatchBuilder:
             primary = trainable[-1]
             primary_name = primary.name
 
-        token_ids = self._role_tensor(primary, "action").value
+        token_ids = role_tensor(primary, "action").value
         prompt_ids = self._optional_named_tensor(primary, "prompt_input_ids")
         if prompt_ids is None:
             prompt_ids = torch.zeros(
@@ -299,23 +299,6 @@ class TrajectoryRolloutBatchBuilder:
             if segment.trainable:
                 return segment
         raise RuntimeError("TrajectoryBatch has no trainable segment")
-
-    def _role_tensor(
-        self,
-        segment: TrajectorySegment,
-        role: str,
-    ) -> TrajectoryTensor:
-        matches = [
-            tensor
-            for tensor in segment.tensors.values()
-            if tensor.role == role
-        ]
-        if len(matches) != 1:
-            raise RuntimeError(
-                f"segment {segment.name!r} requires exactly one role {role!r}, "
-                f"found {len(matches)}",
-            )
-        return matches[0]
 
     def _named_tensor(
         self,

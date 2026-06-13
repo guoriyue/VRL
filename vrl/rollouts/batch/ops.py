@@ -7,6 +7,7 @@ from typing import Any
 import torch
 
 from vrl.rollouts.batch import RolloutBatch, stack_batches
+from vrl.trajectory.device import map_tensor_tree
 from vrl.trajectory.ops import move_trajectory_batch, select_trajectory_batch
 
 
@@ -17,7 +18,7 @@ def select_batch(batch: RolloutBatch, selector: torch.Tensor) -> RolloutBatch:
     new_extras: dict[str, Any] = {}
     batch_size = batch.rewards.shape[0]
     for key, value in batch.extras.items():
-        new_extras[key] = select_tensor_tree(value, selector, batch_size)
+        new_extras[key] = _select_tensor_tree(value, selector, batch_size)
     videos = (
         batch.videos[selector.to(batch.videos.device)]
         if batch.videos is not None
@@ -47,29 +48,19 @@ def select_batch(batch: RolloutBatch, selector: torch.Tensor) -> RolloutBatch:
     )
 
 
-def select_tensor_tree(value: Any, selector: torch.Tensor, batch_size: int) -> Any:
+def _select_tensor_tree(value: Any, selector: torch.Tensor, batch_size: int) -> Any:
     """Select per-sample tensor leaves inside nested rollout metadata."""
 
-    if isinstance(value, torch.Tensor):
-        if value.dim() > 0 and value.shape[0] == batch_size:
-            return value[selector.to(value.device)]
-        return value
-    if isinstance(value, dict):
-        return {
-            key: select_tensor_tree(inner, selector, batch_size)
-            for key, inner in value.items()
-        }
-    if isinstance(value, list):
-        return [select_tensor_tree(inner, selector, batch_size) for inner in value]
-    if isinstance(value, tuple):
-        return tuple(select_tensor_tree(inner, selector, batch_size) for inner in value)
-    return value
+    def _select(leaf: torch.Tensor) -> torch.Tensor:
+        if leaf.dim() > 0 and leaf.shape[0] == batch_size:
+            return leaf[selector.to(leaf.device)]
+        return leaf
 
-
-def apply_sample_mask(batch: RolloutBatch, mask: torch.Tensor) -> RolloutBatch:
-    """Filter ``RolloutBatch`` along the sample dimension."""
-
-    return select_batch(batch, mask)
+    return map_tensor_tree(
+        value,
+        _select,
+        is_leaf=lambda v: isinstance(v, torch.Tensor),
+    )
 
 
 def nonzero_advantage_mask(advantages: torch.Tensor) -> torch.Tensor:
@@ -151,7 +142,7 @@ def split_batch_by_group(batch: RolloutBatch) -> list[RolloutBatch]:
             ordered_ids.append(gid)
     if len(ordered_ids) <= 1:
         return [batch]
-    return [apply_sample_mask(batch, group_ids == group_id) for group_id in ordered_ids]
+    return [select_batch(batch, group_ids == group_id) for group_id in ordered_ids]
 
 
 def remap_group_ids_(batch: RolloutBatch, global_prompt_indices: list[int]) -> None:
@@ -169,16 +160,12 @@ def remap_group_ids_(batch: RolloutBatch, global_prompt_indices: list[int]) -> N
         batch.trajectory.group_ids = remapped.to(device)
 
 
-def move_tensor_tree(value: Any, device: torch.device) -> Any:
-    if isinstance(value, torch.Tensor):
-        return value.to(device)
-    if isinstance(value, dict):
-        return {key: move_tensor_tree(inner, device) for key, inner in value.items()}
-    if isinstance(value, list):
-        return [move_tensor_tree(inner, device) for inner in value]
-    if isinstance(value, tuple):
-        return tuple(move_tensor_tree(inner, device) for inner in value)
-    return value
+def _move_tensor_tree(value: Any, device: torch.device) -> Any:
+    return map_tensor_tree(
+        value,
+        lambda leaf: leaf.to(device),
+        is_leaf=lambda v: isinstance(v, torch.Tensor),
+    )
 
 
 def move_training_batch_to_device(
@@ -199,8 +186,8 @@ def move_training_batch_to_device(
         rewards=batch.rewards.to(device),
         dones=batch.dones.to(device),
         group_ids=batch.group_ids.to(device),
-        extras=batch.extras if defer_replay_tensors else move_tensor_tree(batch.extras, device),
-        context=batch.context if defer_replay_tensors else move_tensor_tree(batch.context, device),
+        extras=batch.extras if defer_replay_tensors else _move_tensor_tree(batch.extras, device),
+        context=batch.context if defer_replay_tensors else _move_tensor_tree(batch.context, device),
         videos=batch.videos,
         prompts=batch.prompts,
         trajectory=batch.trajectory
@@ -211,14 +198,11 @@ def move_training_batch_to_device(
 
 
 __all__ = [
-    "apply_sample_mask",
-    "move_tensor_tree",
     "move_training_batch_to_device",
     "nonzero_advantage_mask",
     "pad_zero_advantage_mask",
     "remap_group_ids_",
     "select_batch",
-    "select_tensor_tree",
     "shuffle_and_rebatch_batches",
     "split_batch_by_group",
 ]

@@ -100,9 +100,9 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
         primary_name = _primary_segment_name(batch, enabled_names)
         return TrajectorySignalBatch(
             segments=segment_signals,
-            group_ids=_group_ids_from_batch(batch),
+            group_ids=signal_builder.group_ids,
             context={
-                **_context_from_batch(batch),
+                **signal_builder.context,
                 "segment_order": tuple(enabled_names),
                 "primary_segment": primary_name,
             },
@@ -220,20 +220,6 @@ def _primary_segment_name(batch: RolloutBatch, enabled_names: list[str]) -> str:
         if isinstance(primary, str) and primary in enabled_names:
             return primary
     return enabled_names[0]
-
-
-def _group_ids_from_batch(batch: RolloutBatch) -> Any:
-    trajectory = getattr(batch, "trajectory", None)
-    if trajectory is not None:
-        return trajectory.group_ids
-    return batch.group_ids
-
-
-def _context_from_batch(batch: RolloutBatch) -> dict[str, Any]:
-    trajectory = getattr(batch, "trajectory", None)
-    if trajectory is not None:
-        return dict(trajectory.context)
-    return dict(batch.context)
 
 
 __all__ = ["MultiSegmentTokenLogProbEvaluator"]

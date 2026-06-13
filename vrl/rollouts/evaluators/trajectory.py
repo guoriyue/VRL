@@ -8,7 +8,7 @@ from typing import Any
 import torch
 
 from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
-from vrl.trajectory import TrainingView, TrajectoryBatch
+from vrl.trajectory import TrainingView, TrajectoryBatch, role_tensor
 from vrl.trajectory.device import move_value_to_device
 from vrl.trajectory.views import LossUnit
 
@@ -191,7 +191,7 @@ class TrajectorySignalBuilder:
                 "trajectory-native evaluator signals require batch.trajectory with "
                 "an old_log_prob tensor",
             )
-        value = self._role_value(segment, "old_log_prob")
+        value = role_tensor(segment, "old_log_prob").value
         return self._select_loss_value_if_needed(
             value,
             log_prob,
@@ -212,7 +212,7 @@ class TrajectorySignalBuilder:
         value = (
             tensor.value
             if tensor is not None and tensor.role == "mask"
-            else self._role_value(segment, "mask")
+            else role_tensor(segment, "mask").value
         )
         value = self._select_loss_value_if_needed(
             value,
@@ -222,16 +222,6 @@ class TrajectorySignalBuilder:
         if self._same_shape(value, log_prob):
             return value
         return torch.ones_like(log_prob)
-
-    @staticmethod
-    def _role_value(segment: Any, role: str) -> Any:
-        matches = [tensor for tensor in segment.tensors.values() if tensor.role == role]
-        if len(matches) != 1:
-            raise RuntimeError(
-                f"segment {segment.name!r} requires exactly one role {role!r}, "
-                f"found {len(matches)}",
-            )
-        return matches[0].value
 
     @classmethod
     def _select_loss_value_if_needed(
@@ -251,14 +241,6 @@ class TrajectorySignalBuilder:
             return value
         if (
             len(value_shape) == len(log_prob_shape) + 1
-            and int(value_shape[0]) == int(log_prob_shape[0])
-        ):
-            selected = value[:, timestep_idx]
-            if cls._same_shape(selected, log_prob):
-                return selected
-        if (
-            len(value_shape) == 2
-            and len(log_prob_shape) == 1
             and int(value_shape[0]) == int(log_prob_shape[0])
         ):
             selected = value[:, timestep_idx]

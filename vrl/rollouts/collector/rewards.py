@@ -58,12 +58,6 @@ class RewardScorer:
     def __init__(self, reward_fn: Any | None) -> None:
         self.reward_fn = reward_fn
 
-    async def score(
-        self,
-        request: RewardScoringInput,
-    ) -> torch.Tensor:
-        return (await self.score_many([request]))[0]
-
     async def score_many(
         self,
         requests: list[RewardScoringInput],
