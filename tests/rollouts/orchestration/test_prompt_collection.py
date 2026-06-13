@@ -112,3 +112,49 @@ async def test_mixed_prompts_preserve_group_id_remap() -> None:
     ]
     assert [batch.group_ids.unique().tolist() for batch in batches] == [[0], [1], [2]]
     assert [batch.prompts for batch in batches] == [["s0"], ["e1"], ["s2"]]
+
+
+@dataclass
+class _Unscored:
+    batch: RolloutBatch
+    phases: dict[str, float]
+
+
+class _PhasedCollector:
+    """Collector fake exposing per-call phase timings like RolloutCollector."""
+
+    async def collect_unscored(self, prompts: list[str], **kwargs: Any) -> _Unscored:
+        prompts = list(prompts)
+        return _Unscored(
+            batch=_batch(prompts, int(kwargs.get("group_size", 1))),
+            phases={"collect.engine_generate": 1.0},
+        )
+
+    async def score_rollouts(self, pendings: list[_Unscored]) -> list[RolloutBatch]:
+        # Call-level timings on the first group only (RolloutCollector contract).
+        pendings[0].phases["collect.reward_score"] = 0.5
+        pendings[0].phases["collect.batch_build"] = 0.25
+        return [pending.batch for pending in pendings]
+
+
+@pytest.mark.asyncio
+async def test_phase_times_accumulate_per_call() -> None:
+    """Checks the out-param sums generation per group and score/build once."""
+    from vrl.utils.stats import RolloutStats
+
+    stats = RolloutStats()
+
+    await collect_prompt_batches(
+        collector=_PhasedCollector(),
+        prompts=[_PromptExample(prompt="p0"), _PromptExample(prompt="p1")],
+        group_size=1,
+        runtime_debug=False,
+        policy_version=None,
+        stats=stats,
+    )
+
+    assert stats.phase_seconds == {
+        "collect.engine_generate": 2.0,
+        "collect.reward_score": 0.5,
+        "collect.batch_build": 0.25,
+    }

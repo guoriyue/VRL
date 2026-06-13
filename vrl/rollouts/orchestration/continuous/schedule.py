@@ -103,7 +103,7 @@ class ContinuousRolloutSchedule:
             poll_interval_s=self.queue_poll_interval_s,
             producer_state=self.producer.state,
         )
-        iteration.phase_times.update(phase_times)
+        iteration.stats.add_phases(phase_times)
         self._attach_producer_metrics(iteration)
         return iteration
 
@@ -168,10 +168,10 @@ class ContinuousRolloutSchedule:
         if self.producer is None or self.queue is None:
             return
         state = self.producer.state
-        stats = self.queue.stats()
+        queue_stats = self.queue.stats()
         version = iteration.policy_version
         metadata = iteration.metadata
-        iteration.phase_times.update(
+        iteration.stats.add_phases(
             {
                 "continuous.producer_inflight": float(state.inflight_count),
                 "continuous.producer_tick_count": float(state.tick_count),
@@ -179,12 +179,12 @@ class ContinuousRolloutSchedule:
                 "continuous.producer_max_tick_gap_s": float(state.max_tick_gap_s),
                 "continuous.producer_submitted": float(state.submitted_count),
                 "continuous.producer_completed": float(state.completed_count),
-                "continuous.queue_ready_items": stats["ready_items"],
-                "continuous.queue_ready_groups": stats["ready_groups"],
-                "continuous.queue_ready_bytes": stats["ready_bytes"],
+                "continuous.queue_ready_items": queue_stats["ready_items"],
+                "continuous.queue_ready_groups": queue_stats["ready_groups"],
+                "continuous.queue_ready_bytes": queue_stats["ready_bytes"],
                 "continuous.item_age_s": float(metadata.get("continuous_item_age_s", 0.0)),
-                "continuous.dropped_stale": stats["dropped_stale"],
-                "continuous.dropped_backpressure": stats["dropped_backpressure"],
+                "continuous.dropped_stale": queue_stats["dropped_stale"],
+                "continuous.dropped_backpressure": queue_stats["dropped_backpressure"],
                 "continuous.producer_errors": float(state.error_count),
                 "continuous.consume_policy_version": float(
                     metadata.get("consume_policy_version") or 0,

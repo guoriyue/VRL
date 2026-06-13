@@ -62,7 +62,6 @@ class RolloutCollector:
         self.reward_scorer = reward_scorer
         self.default_group_size = max(1, int(default_group_size))
         self._runtime = runtime
-        self.last_collect_phases: dict[str, float] = {}
 
     def set_runtime(self, runtime: GenerationRuntime) -> None:
         if not callable(getattr(runtime, "generate", None)):
@@ -179,6 +178,7 @@ class RolloutCollector:
             )
         reward_score_s = _sync_time() - phase_t if phase_t is not None else None
 
+        build_t = _sync_time() if profile else None
         batches: list[RolloutBatch] = []
         for builder, context, rollout, group_rewards in zip(
             builders, contexts, unscored, rewards, strict=True,
@@ -186,11 +186,15 @@ class RolloutCollector:
             batch = builder.build(group_rewards)
             release_reward_artifact_if_needed(batch, context.reward_artifact_policy)
             release_reward_artifact_if_needed(rollout.output, context.reward_artifact_policy)
-            if rollout.profile and reward_score_s is not None:
-                rollout.phases["collect.reward_score"] = reward_score_s
-                self.last_collect_phases.clear()
-                self.last_collect_phases.update(rollout.phases)
             batches.append(batch)
+        if reward_score_s is not None and build_t is not None:
+            # One score_many call and one build pass cover every group, so the
+            # call-level timings live on the first group only: a caller summing
+            # phases over groups must not multiply the same wall time. The
+            # phases stay on the rollouts (caller-owned) so concurrent collects
+            # never share mutable collector state.
+            unscored[0].phases["collect.reward_score"] = reward_score_s
+            unscored[0].phases["collect.batch_build"] = _sync_time() - build_t
         return batches
 
     def _should_release_runtime_before_reward_model(self) -> bool:

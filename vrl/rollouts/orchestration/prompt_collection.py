@@ -6,6 +6,7 @@ from typing import Any
 
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.batch.ops import remap_group_ids_, split_batch_by_group
+from vrl.utils.stats import RolloutStats
 
 
 async def collect_prompt_batches(
@@ -15,6 +16,7 @@ async def collect_prompt_batches(
     group_size: int,
     runtime_debug: bool,
     policy_version: int | None,
+    stats: RolloutStats | None = None,
 ) -> list[RolloutBatch]:
     """Collect trainer prompts through ``RolloutCollector`` and split by group.
 
@@ -22,6 +24,11 @@ async def collect_prompt_batches(
     resident throughout), then score all groups through one reward call. Shared
     single-GPU reward runs therefore pay the rollout release and the reward
     actor cold start once per call instead of once per group.
+
+    ``stats`` (when given) accumulates this call's collect phase timings
+    (``collect.engine_generate`` / ``collect.reward_score`` /
+    ``collect.batch_build``) plus any reward-inference timings. The accumulator
+    is owned by this call, so concurrent collects never overwrite each other.
     """
 
     # (unscored group, group-id remap: per-sample indices for plain-string
@@ -71,6 +78,16 @@ async def collect_prompt_batches(
     batches = await collector.score_rollouts(
         [unscored for unscored, _ in unscored_groups],
     )
+
+    if stats is not None:
+        # Per-call phases live on the unscored groups (collector writes the
+        # call-level score/build timings on the first group only). The
+        # collect.reward_score wall time is already here; the fine-grained
+        # RewardInferenceResult queue/inference split would fold in via
+        # stats.fold_reward_timing once score_many surfaces it (today it
+        # returns only score tensors).
+        for unscored, _ in unscored_groups:
+            stats.add_phases(getattr(unscored, "phases", {}))
 
     all_batches: list[RolloutBatch] = []
     for batch, (_, remap) in zip(batches, unscored_groups, strict=True):

@@ -38,6 +38,7 @@ from vrl.utils.model_diagnostics import (
     trainable_state_digest,
     write_jsonl,
 )
+from vrl.utils.stats import LoggingStatsSink, RolloutStats, StatsSink
 
 logger = logging.getLogger(__name__)
 
@@ -265,6 +266,9 @@ class OnlineTrainer(Trainer):
         self.device = torch.device(device) if isinstance(device, str) else device
         self.state = TrainState()
         self.accelerator = accelerator
+        # Sink for the per-step phase-timing line (recording decoupled from
+        # emitting); swap for a jsonl/Prometheus sink later.
+        self._stats_sink: StatsSink = LoggingStatsSink(logger)
         self._grad_scaler: torch.amp.GradScaler | None = (
             torch.amp.GradScaler("cuda")
             if _needs_grad_scaler(self.config, self.device, self.model, self.accelerator)
@@ -522,7 +526,7 @@ class OnlineTrainer(Trainer):
                 adv_zero_rate=adv_zero_rate,
                 group_size=group_size,
                 trained_prompt_num=trained_prompt_num,
-                phase_times={**iteration.phase_times, **dict(timer.times)},
+                phase_times=self._step_stats(iteration, timer).as_phase_dict(),
             )
 
         defer_replay_tensor_move = uses_evaluator and bool(
@@ -831,39 +835,15 @@ class OnlineTrainer(Trainer):
         reward_std = pre_filter_reward_std
         adv_mean = pre_filter_adv_mean
 
-        phase_times = dict(iteration.phase_times)
-        for key, value in timer.times.items():
-            phase_times[key] = phase_times.get(key, 0.0) + value
-        if cfg.profile:
-            phase_times.update(getattr(self.collector, "last_collect_phases", {}))
+        # collect.* phase timings arrive inside iteration.stats: each collect
+        # call owns its timings (no shared collector state), and the
+        # schedule/consumer aggregates them per iteration. The trainer phases
+        # (timer) merge on top into one typed accumulator, emitted via the sink.
+        step_stats = self._step_stats(iteration, timer)
+        phase_times = step_stats.as_phase_dict()
         if cfg.profile and phase_times:
-            total = sum(v for k, v in phase_times.items() if not k.startswith("collect."))
-            parts = " | ".join(
-                f"{k}={v:.3f}s ({100 * v / total:.1f}%)" for k, v in phase_times.items()
-            )
-            logger.info("phase_times[step=%d] total=%.3fs | %s", self.state.step, total, parts)
-            try:
-                import json
-                import os
-
-                _evt_path = os.path.join(cfg.output_dir, "phase_events.jsonl")
-                os.makedirs(cfg.output_dir, exist_ok=True)
-                with open(_evt_path, "a") as _f:
-                    for _n, _s, _e in timer.events:
-                        _f.write(
-                            json.dumps(
-                                {
-                                    "step": self.state.step,
-                                    "phase": _n,
-                                    "start": _s,
-                                    "end": _e,
-                                }
-                            )
-                            + "\n"
-                        )
-                timer.events.clear()
-            except Exception:
-                pass
+            self._stats_sink.record(self.state.step, step_stats)
+            self._write_phase_events(timer)
 
         metrics = TrainStepMetrics(
             loss=avg("loss"),
@@ -911,6 +891,40 @@ class OnlineTrainer(Trainer):
             )
 
         return metrics
+
+    def _step_stats(self, iteration: Any, timer: PhaseTimer) -> RolloutStats:
+        """Typed per-step stats: the iteration's accumulator + trainer phases."""
+
+        stats = RolloutStats()
+        stats.merge(iteration.stats)
+        stats.add_phases(timer.times)
+        return stats
+
+    def _write_phase_events(self, timer: PhaseTimer) -> None:
+        """Append the per-phase start/end events to phase_events.jsonl."""
+
+        try:
+            import json
+            import os
+
+            evt_path = os.path.join(self.config.output_dir, "phase_events.jsonl")
+            os.makedirs(self.config.output_dir, exist_ok=True)
+            with open(evt_path, "a") as handle:
+                for name, start, end in timer.events:
+                    handle.write(
+                        json.dumps(
+                            {
+                                "step": self.state.step,
+                                "phase": name,
+                                "start": start,
+                                "end": end,
+                            },
+                        )
+                        + "\n",
+                    )
+            timer.events.clear()
+        except Exception:
+            pass
 
     def _clear_algorithm_diagnostics(self) -> None:
         for attr in ("_last_policy_loss_tensor", "_last_kl_term_tensor"):

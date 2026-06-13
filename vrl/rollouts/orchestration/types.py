@@ -7,6 +7,7 @@ from enum import Enum
 from typing import Any
 
 from vrl.rollouts.batch import RolloutBatch
+from vrl.utils.stats import RolloutStats
 
 
 class RolloutScheduleMode(str, Enum):
@@ -35,7 +36,7 @@ class RolloutIteration:
     batches: list[RolloutBatch]
     prompt_count: int
     sample_count: int
-    phase_times: dict[str, float] = field(default_factory=dict)
+    stats: RolloutStats = field(default_factory=RolloutStats)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -46,6 +47,12 @@ class RolloutIteration:
         if self.sample_count < 0:
             raise ValueError("RolloutIteration.sample_count must be >= 0")
 
+    @property
+    def phase_times(self) -> dict[str, float]:
+        """Read-only back-compat view of this iteration's phase timings."""
+
+        return self.stats.as_phase_dict()
+
 
 def build_rollout_iteration(
     *,
@@ -54,7 +61,7 @@ def build_rollout_iteration(
     mode: RolloutScheduleMode,
     batches: list[RolloutBatch],
     prompt_count: int,
-    phase_times: dict[str, float] | None = None,
+    stats: RolloutStats | None = None,
 ) -> RolloutIteration:
     """Build a rollout iteration from collected batches.
 
@@ -80,7 +87,7 @@ def build_rollout_iteration(
         batches=batches,
         prompt_count=int(prompt_count),
         sample_count=sample_count,
-        phase_times=dict(phase_times or {}),
+        stats=stats if stats is not None else RolloutStats(),
         metadata=metadata,
     )
 

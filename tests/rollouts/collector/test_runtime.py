@@ -395,3 +395,33 @@ def test_uint8_quantization_roundtrip_is_exact_for_all_byte_values() -> None:
     assert torch.equal(to_uint8(grid), k.to(torch.uint8))
     mp4_path = (grid * 255.0).round().clamp(0, 255).to(torch.uint8)
     assert torch.equal(mp4_path, k.to(torch.uint8))
+
+
+def test_collect_phase_timings_are_per_call_not_shared(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Phase timings live on each call's rollouts; no shared collector state."""
+    import asyncio
+
+    monkeypatch.setenv("VRL_PROFILE_COLLECT", "1")
+    collector = _collector(runtime=_Runtime(), reward_scorer=_RewardScorer())
+
+    async def _run() -> tuple[Any, Any]:
+        first = await collector.collect_unscored(["p0"], group_size=1)
+        second = await collector.collect_unscored(["p1"], group_size=1)
+        await collector.score_rollouts([first, second])
+        return first, second
+
+    first, second = asyncio.run(_run())
+
+    # Generation time is owned per collect_unscored call.
+    assert "collect.engine_generate" in first.phases
+    assert "collect.engine_generate" in second.phases
+    # Call-level score/build timings land on the first group only, so summing
+    # phases over groups never multiplies the same wall time.
+    assert "collect.reward_score" in first.phases
+    assert "collect.batch_build" in first.phases
+    assert "collect.reward_score" not in second.phases
+    assert "collect.batch_build" not in second.phases
+    # The old shared mutable dict (clobbered by concurrent collects) is gone.
+    assert not hasattr(collector, "last_collect_phases")

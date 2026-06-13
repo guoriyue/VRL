@@ -26,6 +26,7 @@ from vrl.rollouts.orchestration.types import (
     annotate_batch_context,
     build_rollout_iteration,
 )
+from vrl.utils.stats import RolloutStats
 
 
 class ContinuousRolloutConsumer:
@@ -164,7 +165,14 @@ class ContinuousRolloutConsumer:
 
         staleness = self.staleness.staleness(version, current_version)
         item_age_s = max((item.age_s for item in items), default=0.0)
-        phase_times = {"continuous.queue_wait_s": float(queue_wait_s)}
+        stats = RolloutStats()
+        stats.add_phase("continuous.queue_wait_s", float(queue_wait_s))
+        # Merge the per-item collect stats (each collect call attached its
+        # timings to exactly one item) so the iteration reports cumulative
+        # generation/reward/build time, matching the strict schedule's
+        # one-call-per-iteration accounting.
+        for item in items:
+            stats.merge(item.stats)
 
         iteration = build_rollout_iteration(
             rollout_id=rollout_id,
@@ -172,7 +180,7 @@ class ContinuousRolloutConsumer:
             mode=mode,
             batches=batches,
             prompt_count=len(items),
-            phase_times=phase_times,
+            stats=stats,
         )
         iteration.metadata.update(
             {

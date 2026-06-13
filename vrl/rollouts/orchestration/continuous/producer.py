@@ -29,6 +29,7 @@ from vrl.rollouts.orchestration.continuous.types import (
 )
 from vrl.rollouts.orchestration.lifecycle import RolloutLifecycle
 from vrl.rollouts.orchestration.prompt_collection import collect_prompt_batches
+from vrl.utils.stats import RolloutStats
 
 _CPU = torch.device("cpu")
 _OBSERVABILITY_LOG_INTERVAL_S = 30.0
@@ -185,18 +186,21 @@ class ContinuousRolloutProducer:
         version: int | None,
         submitted_at: float,
     ) -> dict[str, Any]:
+        stats = RolloutStats()
         batches = await collect_prompt_batches(
             collector=self.lifecycle.collector,
             prompts=[prompt],
             group_size=self.group_size,
             runtime_debug=self.runtime_debug,
             policy_version=version,
+            stats=stats,
         )
         return {
             "slot": slot,
             "version": version,
             "submitted_at": submitted_at,
             "batches": batches,
+            "stats": stats,
         }
 
     def _harvest_done(self) -> None:
@@ -229,7 +233,7 @@ class ContinuousRolloutProducer:
 
     def _enqueue_result(self, result: dict[str, Any]) -> None:
         completed_at = time.time()
-        for batch in result["batches"]:
+        for index, batch in enumerate(result["batches"]):
             stored = move_training_batch_to_device(batch, _CPU)
             item = ContinuousRolloutItem(
                 item_id=self._item_counter,
@@ -239,6 +243,10 @@ class ContinuousRolloutProducer:
                 submitted_at=float(result["submitted_at"]),
                 completed_at=completed_at,
                 nbytes=estimate_batch_bytes(stored),
+                # Stats cover the whole collect call; attach them to the first
+                # item only so a consumer merging over items never multiplies
+                # the same wall time.
+                stats=result["stats"] if index == 0 else RolloutStats(),
             )
             self._item_counter += 1
             self.queue.put(item)

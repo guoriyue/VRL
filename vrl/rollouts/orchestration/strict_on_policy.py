@@ -13,6 +13,7 @@ from vrl.rollouts.orchestration.types import (
     annotate_batch_context,
     build_rollout_iteration,
 )
+from vrl.utils.stats import RolloutStats
 
 
 class StrictOnPolicyRolloutSchedule:
@@ -31,27 +32,35 @@ class StrictOnPolicyRolloutSchedule:
         group_size: int,
         runtime_debug: bool = False,
     ) -> RolloutIteration:
-        phase_times: dict[str, float] = {}
-        await self.lifecycle.ensure_initial_weights(phase_times)
+        # Schedule-level phases (weight init / offload / collect / release /
+        # sync) are timed into a local dict via the lifecycle's record_phase;
+        # the per-request collect stats accumulate into a typed RolloutStats.
+        # Both are merged onto the iteration so nothing about the reported
+        # breakdown changes.
+        schedule_phases: dict[str, float] = {}
+        stats = RolloutStats()
+        await self.lifecycle.ensure_initial_weights(schedule_phases)
         rollout_id = self.state.rollout_id
         self.state.rollout_id += 1
         policy_version = self.lifecycle.current_policy_version()
 
-        offloaded = self.lifecycle.offload_driver_model_for_rollout(phase_times)
+        offloaded = self.lifecycle.offload_driver_model_for_rollout(schedule_phases)
         try:
-            with record_phase(phase_times, "rollout.collect_s"):
+            with record_phase(schedule_phases, "rollout.collect_s"):
                 batches = await collect_prompt_batches(
                     collector=self.lifecycle.collector,
                     prompts=list(prompts),
                     group_size=group_size,
                     runtime_debug=runtime_debug,
                     policy_version=policy_version,
+                    stats=stats,
                 )
         finally:
-            await self.lifecycle.release_rollout_runtime_memory(phase_times)
+            await self.lifecycle.release_rollout_runtime_memory(schedule_phases)
             if offloaded:
-                self.lifecycle.restore_driver_model_after_rollout(phase_times)
+                self.lifecycle.restore_driver_model_after_rollout(schedule_phases)
 
+        stats.add_phases(schedule_phases)
         return annotate_batch_context(
             build_rollout_iteration(
                 rollout_id=rollout_id,
@@ -59,7 +68,7 @@ class StrictOnPolicyRolloutSchedule:
                 mode=self.mode,
                 batches=batches,
                 prompt_count=len(prompts),
-                phase_times=phase_times,
+                stats=stats,
             )
         )
 
