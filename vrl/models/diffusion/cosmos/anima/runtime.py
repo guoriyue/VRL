@@ -7,6 +7,9 @@ from pathlib import Path
 from typing import Any
 
 from vrl.generation.diffusion import DiffusionChunkExecutorBase
+from vrl.models.diffusion.common.vae_decode_memory import (
+    apply_generation_memory_policy,
+)
 from vrl.models.diffusion.capabilities import diffusion_family_capability
 from vrl.models.interfaces.runtime import (
     RuntimeBuildSpec,
@@ -104,7 +107,11 @@ def build_anima_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
             generation_only_modules=("text_encoder", "llm_adapter", "vae"),
         ),
     }
-    metadata.update(getattr(model, "memory_metadata", None) or {})
+    metadata.update(apply_generation_memory_policy(
+        model,
+        memory_config=getattr(spec, "memory", None),
+        owner="Anima VAE",
+    ))
     return RuntimeBundle(
         model=model,
         trainable_modules=model.trainable_modules,

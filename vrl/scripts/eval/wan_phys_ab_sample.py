@@ -20,7 +20,7 @@ from diffusers.utils import export_to_video
 
 from vrl.models.diffusion.common.vae_decode_memory import (
     VaeDecodeMemory,
-    configure_vae_decode,
+    configure_memory_mechanisms,
 )
 
 PROMPTS = [
@@ -66,7 +66,7 @@ def main() -> None:
         pipe.enable_model_cpu_offload()
     else:
         pipe.to("cuda")
-    configure_vae_decode(
+    configure_memory_mechanisms(
         pipe.vae,
         VaeDecodeMemory(tiling=True, slicing=True),
         owner="wan eval VAE",

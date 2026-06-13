@@ -16,6 +16,9 @@ from vrl.generation.diffusion.executor import ReferenceConditionedChunks
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
+from vrl.models.diffusion.common.vae_decode_memory import (
+    apply_generation_memory_policy,
+)
 from vrl.models.diffusion.capabilities import diffusion_family_capability
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.loader import (
@@ -113,7 +116,11 @@ def build_cosmos_predict2_runtime_bundle(
             "use_lora": use_lora,
             "reference_image": _reference_image_from_spec(spec),
             **full_generation_bundle_metadata(),
-            **(getattr(model, "memory_metadata", None) or {}),
+            **apply_generation_memory_policy(
+                model,
+                memory_config=getattr(spec, "memory", None),
+                owner="Cosmos Predict2 VAE",
+            ),
         },
     )
 

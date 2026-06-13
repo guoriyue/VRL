@@ -49,58 +49,74 @@ def vae_decode_memory_from_config(
     return replace(VaeDecodeMemory(), **updates)
 
 
-def configure_vae_decode(
-    vae: Any,
+def configure_memory_mechanisms(
+    target: Any,
     mem: VaeDecodeMemory,
     *,
     owner: str,
 ) -> tuple[str, ...]:
-    """Apply VAE decode memory knobs and fail on unsupported requests."""
+    """Apply memory mechanisms to one target; fail on unsupported requests."""
 
     applied: list[str] = []
     if mem.tiling:
-        _call_required(vae, "enable_tiling", owner=owner)
+        _call_required(target, "enable_tiling", owner=owner)
         applied.append("tiling")
     if mem.slicing:
-        _call_required(vae, "enable_slicing", owner=owner)
+        _call_required(target, "enable_slicing", owner=owner)
         applied.append("slicing")
     return tuple(applied)
 
 
-def apply_vae_decode_memory(
-    vae: Any,
+# Metadata prefixes are a downstream contract (bundle metadata + tests):
+# the historical vae_decode target reports as ``vae_tiling`` / ``vae_slicing``.
+# New targets default to their own name as prefix.
+_METADATA_PREFIX = {"vae_decode": "vae"}
+
+
+def apply_generation_memory_policy(
+    model: Any,
     *,
     memory_config: Mapping[str, Any] | None,
     owner: str,
 ) -> dict[str, dict[str, bool]]:
-    """Apply ``model.memory.vae_decode`` and return bundle metadata."""
+    """Apply ``model.memory`` to the model's declared targets; return metadata.
 
-    section = memory_config.get("vae_decode") if memory_config else None
-    mem = vae_decode_memory_from_config(section)
-    applied = configure_vae_decode(vae, mem, owner=owner)
-    return vae_decode_memory_metadata(mem, applied=applied)
-
-
-def vae_decode_memory_metadata(
-    mem: VaeDecodeMemory,
-    *,
-    applied: Iterable[str] = (),
-) -> dict[str, dict[str, bool]]:
-    """Return report-only metadata for VAE decode memory behavior.
-
-    The ``vae_tiling`` / ``vae_slicing`` metadata key names are a downstream
-    contract (bundle metadata + tests) and must stay stable.
+    ``model.memory`` is target-keyed: every section name must match a key in
+    the model's ``generation_memory_targets()`` (today ``vae_decode``; future
+    targets — encoders, transformer offload — appear here without policy
+    changes). Family models declare WHAT can be configured; this policy owns
+    HOW and WHEN. Runtime builders call it once after model construction and
+    attach the returned metadata to the bundle. A section naming a target the
+    model does not expose (including typos) is a config error, never a silent
+    no-op.
     """
 
-    applied_set = set(applied)
-    return {
-        MEMORY_POLICY_METADATA_KEY: {
-            "model_build": {
-                "vae_tiling": bool(mem.tiling and "tiling" in applied_set),
-                "vae_slicing": bool(mem.slicing and "slicing" in applied_set),
-            },
-        },
-    }
+    targets = model.generation_memory_targets()
+    sections = dict(memory_config or {})
+    unknown = sorted(set(sections) - set(targets))
+    if unknown:
+        exposed = ", ".join(sorted(targets)) or "<none>"
+        raise ValueError(
+            f"{owner} configures model.memory section(s) "
+            f"{', '.join(unknown)} but the model only exposes generation "
+            f"memory target(s): {exposed}",
+        )
+
+    metadata: dict[str, bool] = {}
+    for target_name in sorted(set(targets) | set(sections)):
+        mem = vae_decode_memory_from_config(sections.get(target_name))
+        applied: tuple[str, ...] = ()
+        if target_name in sections:
+            applied = configure_memory_mechanisms(
+                targets[target_name],
+                mem,
+                owner=f"{owner}:{target_name}",
+            )
+        prefix = _METADATA_PREFIX.get(target_name, target_name)
+        applied_set = set(applied)
+        metadata[f"{prefix}_tiling"] = bool(mem.tiling and "tiling" in applied_set)
+        metadata[f"{prefix}_slicing"] = bool(mem.slicing and "slicing" in applied_set)
+    return {MEMORY_POLICY_METADATA_KEY: {"model_build": metadata}}
 
 
 def _call_required(target: Any, method_name: str, *, owner: str) -> None:
@@ -112,8 +128,7 @@ def _call_required(target: Any, method_name: str, *, owner: str) -> None:
 
 __all__ = [
     "VaeDecodeMemory",
-    "apply_vae_decode_memory",
-    "configure_vae_decode",
+    "apply_generation_memory_policy",
+    "configure_memory_mechanisms",
     "vae_decode_memory_from_config",
-    "vae_decode_memory_metadata",
 ]

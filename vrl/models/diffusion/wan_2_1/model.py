@@ -43,7 +43,6 @@ from vrl.models.diffusion.common import (
     pack_eval_timestep,
 )
 from vrl.models.diffusion.common.lora import LoraModelMixin
-from vrl.models.diffusion.common.vae_decode_memory import apply_vae_decode_memory
 from vrl.models.diffusion.wan_2_1.runner import (
     WanDiffusionBackboneRunner,
     WanI2VDiffusionBackboneRunner,
@@ -90,13 +89,11 @@ class WanT2VDiffusersModel(LoraModelMixin, DiffusionModelBase):
         *,
         pipeline: Any,
         device: Any = None,
-        memory_metadata: dict[str, Any] | None = None,
     ) -> None:
         super().__init__()
         object.__setattr__(self, "_pipeline", pipeline)
         self.transformer = pipeline.transformer
         self._device = device
-        self.memory_metadata = dict(memory_metadata or {})
 
     @property
     def pipeline(self) -> Any:
@@ -123,16 +120,10 @@ class WanT2VDiffusersModel(LoraModelMixin, DiffusionModelBase):
         pipeline.vae.requires_grad_(False)
         pipeline.text_encoder.requires_grad_(False)
         pipeline.vae.to(spec.device, dtype=torch.float32)
-        memory_metadata = apply_vae_decode_memory(
-            pipeline.vae,
-            memory_config=spec.memory,
-            owner="Wan VAE",
-        )
         pipeline.text_encoder.to(spec.device, dtype=spec.dtype)
         return cls(
             pipeline=pipeline,
             device=spec.device,
-            memory_metadata=memory_metadata,
         )
 
     # Empty training adapters must initially preserve base Wan output.
@@ -420,11 +411,6 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
             if module is not None:
                 module.requires_grad_(False)
 
-        memory_metadata = apply_vae_decode_memory(
-            pipeline.vae,
-            memory_config=spec.memory,
-            owner="Wan I2V VAE",
-        )
 
         # Offload flags ride in model_config (the whole cfg.model block) now,
         # not a curated spec.extra.
@@ -450,7 +436,7 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
             pipeline.text_encoder.to(spec.device, dtype=spec.dtype)
             if getattr(pipeline, "image_encoder", None) is not None:
                 pipeline.image_encoder.to(spec.device, dtype=spec.dtype)
-        return cls(pipeline=pipeline, device=spec.device, memory_metadata=memory_metadata)
+        return cls(pipeline=pipeline, device=spec.device)
 
     def encode_prompt(
         self,

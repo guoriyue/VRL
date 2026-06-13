@@ -15,6 +15,9 @@ from vrl.generation.diffusion import (
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
+from vrl.models.diffusion.common.vae_decode_memory import (
+    apply_generation_memory_policy,
+)
 from vrl.models.diffusion.capabilities import diffusion_family_capability
 from vrl.models.interfaces.runtime import (
     RuntimeBuildSpec,
@@ -97,7 +100,11 @@ def build_sd3_5_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
             "dtype": str(spec.dtype),
             "use_lora": use_lora,
             **full_generation_bundle_metadata(),
-            **(getattr(model, "memory_metadata", None) or {}),
+            **apply_generation_memory_policy(
+                model,
+                memory_config=getattr(spec, "memory", None),
+                owner="SD3.5 VAE",
+            ),
         },
     )
 

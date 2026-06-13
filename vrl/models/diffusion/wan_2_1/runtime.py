@@ -17,6 +17,9 @@ from vrl.generation.diffusion.executor import ReferenceConditionedChunks
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
+from vrl.models.diffusion.common.vae_decode_memory import (
+    apply_generation_memory_policy,
+)
 from vrl.models.diffusion.capabilities import diffusion_family_capability
 from vrl.models.interfaces.runtime import (
     RuntimeBuildSpec,
@@ -121,7 +124,11 @@ def build_wan_2_1_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         "reference_image": (spec.model_config or {}).get("reference_image"),
         **full_generation_bundle_metadata(),
     }
-    metadata.update(getattr(model, "memory_metadata", None) or {})
+    metadata.update(apply_generation_memory_policy(
+        model,
+        memory_config=getattr(spec, "memory", None),
+        owner="Wan VAE",
+    ))
     return RuntimeBundle(
         model=model,
         trainable_modules=model.trainable_modules,

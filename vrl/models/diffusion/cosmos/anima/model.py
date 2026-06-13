@@ -24,7 +24,6 @@ from vrl.models.diffusion.common import (
     LatentDecodeTransform,
 )
 from vrl.models.diffusion.common.lora import LoraModelMixin
-from vrl.models.diffusion.common.vae_decode_memory import apply_vae_decode_memory
 from vrl.models.diffusion.cosmos import CosmosReplayForward
 from vrl.models.diffusion.cosmos.anima.adapter import AnimaLLMAdapter
 from vrl.models.dtypes import resolve_torch_dtype
@@ -63,7 +62,6 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
         t5_tokenizer: Any,
         device: Any,
         dtype: torch.dtype,
-        memory_metadata: dict[str, Any] | None = None,
     ) -> None:
         super().__init__()
         self.transformer = transformer
@@ -76,7 +74,6 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
         self.t5_tokenizer = t5_tokenizer
         self._device = device
         self._dtype = dtype
-        self.memory_metadata = dict(memory_metadata or {})
 
     @classmethod
     def from_spec(cls, spec: Any) -> AnimaModel:
@@ -109,11 +106,6 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
         )
         vae = AutoencoderKLQwenImage()
         vae.load_state_dict(vae_state, strict=True)
-        memory_metadata = apply_vae_decode_memory(
-            vae,
-            memory_config=spec.memory,
-            owner="Anima VAE",
-        )
         del vae_state
 
         scheduler = FlowMatchEulerDiscreteScheduler(
@@ -153,7 +145,6 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
             t5_tokenizer=t5_tokenizer,
             device=spec.device,
             dtype=dtype,
-            memory_metadata=memory_metadata,
         )
 
     def _lora_transformer(self) -> Any:

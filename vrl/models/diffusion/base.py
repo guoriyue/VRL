@@ -215,6 +215,21 @@ class DiffusionModelBase(nn.Module, ABC):
     def backend_handle(self) -> Any:  # pragma: no cover
         raise NotImplementedError
 
+    def generation_memory_targets(self) -> dict[str, Any]:
+        """Named modules the generation memory policy may configure.
+
+        Every diffusers-backed family carries its VAE on ``pipeline.vae``;
+        Anima (single-file checkpoint, no pipeline) carries ``self.vae``.
+        Replay models raise on ``pipeline`` and own no VAE — they expose no
+        targets, and the policy fails loud if config still asks for one.
+        """
+
+        try:
+            vae = self.pipeline.vae
+        except (AttributeError, RuntimeError):
+            vae = getattr(self, "vae", None)
+        return {} if vae is None else {"vae_decode": vae}
+
 
 class ReplayRolloutStubs:
     """Rollout-only surface stubs shared by replay models.
