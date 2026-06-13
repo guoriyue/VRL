@@ -9,8 +9,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from vrl.ray.dependencies import require_ray
-
 
 @dataclass(frozen=True, slots=True)
 class RayActorJob:
@@ -58,7 +56,6 @@ async def run_actor_jobs(
             "dispatch requires worker_methods",
         )
 
-    ray = require_ray()
     # Stable sort: equal priorities (the static path always submits 0.0)
     # preserve caller order bit-for-bit.
     pending = deque(sorted(jobs, key=lambda job: -job.priority))
@@ -88,7 +85,9 @@ async def run_actor_jobs(
         _, worker_id = min(free)
         return worker_id, worker_methods[worker_id]  # type: ignore[index]
 
-    def _submit_ready() -> None:
+    def _submit_ready() -> list[Any]:
+        """Submit every job whose worker has a free slot; return the new refs."""
+        new_refs: list[Any] = []
         made_progress = True
         while pending and made_progress:
             made_progress = False
@@ -103,34 +102,58 @@ async def run_actor_jobs(
                 ref_to_job[ref] = (job.job_index, worker_id)
                 inflight_by_worker[worker_id] += 1
                 submit_time_by_ref[ref] = time.perf_counter()
+                new_refs.append(ref)
                 made_progress = True
+        return new_refs
 
-    # Fail-fast on worker error: a raising ray.get propagates immediately and
+    async def _await_ref(ref: Any) -> tuple[Any, Any]:
+        # Ray ObjectRefs are awaitable; awaiting resolves to the value or
+        # re-raises the worker exception — same fail-fast as the old
+        # ray.get(ready[0]), but without bouncing through a thread pool.
+        return ref, await ref
+
+    # task -> ref, so a completed wrapper task maps back to its job/telemetry.
+    waiters: dict[Any, Any] = {}
+
+    def _spawn(refs: list[Any]) -> None:
+        for ref in refs:
+            waiters[asyncio.ensure_future(_await_ref(ref))] = ref
+
+    # Fail-fast on worker error: a raising waiter propagates immediately and
     # in-flight refs on other actors are abandoned (not cancelled) — their
-    # results are dropped when the caller tears the group down.
-    _submit_ready()
-    while ref_to_job:
-        ready, _ = await asyncio.to_thread(
-            ray.wait,
-            list(ref_to_job),
-            num_returns=1,
-        )
-        job_index, worker_id = ref_to_job.pop(ready[0])
-        inflight_by_worker[worker_id] -= 1
-        result = await asyncio.to_thread(ray.get, ready[0])
-        result_pairs.append((job_index, result))
-        if schedule is not None:
-            submitted = submit_time_by_ref.pop(ready[0])
-            done = time.perf_counter()
-            schedule.append(
-                {
-                    "job_index": job_index,
-                    "worker_id": worker_id,
-                    "queue_wait_s": submitted - pool_started,
-                    "execution_s": done - submitted,
-                },
+    # results are dropped when the caller tears the group down. The finally
+    # block cancels the leftover waiters so no "Task was destroyed but it is
+    # pending" warning leaks; it does not cancel the underlying Ray work.
+    _spawn(_submit_ready())
+    try:
+        while waiters:
+            done, _ = await asyncio.wait(
+                waiters,
+                return_when=asyncio.FIRST_COMPLETED,
             )
-        _submit_ready()
+            for task in done:
+                waiters.pop(task, None)
+                ref, result = task.result()
+                job_index, worker_id = ref_to_job.pop(ref)
+                inflight_by_worker[worker_id] -= 1
+                result_pairs.append((job_index, result))
+                if schedule is not None:
+                    submitted = submit_time_by_ref.pop(ref)
+                    finished = time.perf_counter()
+                    schedule.append(
+                        {
+                            "job_index": job_index,
+                            "worker_id": worker_id,
+                            "queue_wait_s": submitted - pool_started,
+                            "execution_s": finished - submitted,
+                        },
+                    )
+            _spawn(_submit_ready())
+    finally:
+        for task in waiters:
+            task.cancel()
+        if waiters:
+            await asyncio.gather(*waiters, return_exceptions=True)
 
     return sorted(result_pairs, key=lambda pair: pair[0])
 

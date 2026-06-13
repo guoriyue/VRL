@@ -1,6 +1,6 @@
 """Deterministic tests for chunk placement and pull-based actor dispatch.
 
-These use a fake ray module so completion order is fully controlled — no Ray
+These use awaitable fake refs so completion order is fully controlled — no Ray
 runtime, no slow markers. They pin the Track A contract:
 round_robin keeps plan-time binding bit-for-bit; dynamic binds at dispatch
 time (pull + LPT) and never changes gather order.
@@ -9,11 +9,11 @@ time (pull + LPT) and never changes gather order.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Generator
 from typing import Any
 
 import pytest
 
-import vrl.ray.actor_pool as actor_pool_module
 from vrl.generation.execution.chunk_placement import (
     ChunkPlacementPolicy,
     DistributedExecutionPlanner,
@@ -31,22 +31,22 @@ from vrl.ray.actor_pool import RayActorJob, run_actor_jobs
 
 
 class _FakeRef:
-    """One in-flight fake actor call; completion_rank orders ray.wait."""
+    """One in-flight fake actor call; completion_rank orders completion.
+
+    ``run_actor_jobs`` now awaits refs directly (like real Ray ObjectRefs), so
+    the fake controls order by suspending ``completion_rank`` event-loop steps
+    before resolving: a lower-rank ref finishes first, one per ``asyncio.wait``
+    iteration, with no wall-clock sleeps.
+    """
 
     def __init__(self, result: Any, completion_rank: int) -> None:
         self.result = result
         self.completion_rank = completion_rank
 
-
-class _FakeRay:
-    @staticmethod
-    def wait(refs: list[_FakeRef], num_returns: int = 1) -> tuple[list[_FakeRef], list[_FakeRef]]:
-        ready = min(refs, key=lambda ref: ref.completion_rank)
-        return [ready], [ref for ref in refs if ref is not ready]
-
-    @staticmethod
-    def get(ref: _FakeRef) -> Any:
-        return ref.result
+    def __await__(self) -> Generator[Any, None, Any]:
+        for _ in range(self.completion_rank):
+            yield
+        return self.result
 
 
 class _FakeWorker:
@@ -61,11 +61,6 @@ class _FakeWorker:
         self.received.append(payload)
         self._rank += 1
         return _FakeRef(result=(self.worker_id, payload), completion_rank=self._rank)
-
-
-@pytest.fixture(autouse=True)
-def _fake_ray(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(actor_pool_module, "require_ray", lambda: _FakeRay())
 
 
 def _request(num_steps: int = 10, samples: int = 8, sbs: int = 2) -> GenerationRequest:
