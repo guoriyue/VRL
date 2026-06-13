@@ -1,7 +1,10 @@
 # SPRINT: Slime overlap strategy 对齐
 
-状态：proposed。目标是把 slime 的 async rollout 经验吸收到 VRL continuous rollout，
-但不把 slime 的实现细节机械搬过来。
+状态：T1/T2/T3 已落地（2026-06-12）；T4/T5 未动。
+（2026-06-12 读完 `docs/sprints/reading/slime.md` 后复核：主方向仍成立；
+补充 straggler control / 非 draining barrier 的后续边界，见 §3a / §4）。
+目标是把 slime 的 async rollout 经验吸收到 VRL continuous rollout，但不把 slime 的实现细节
+机械搬过来。
 
 ## 0. 一句话
 
@@ -189,14 +192,46 @@ algorithm:
    slime 的优势是完整 rollout future 与 train overlap；VRL 已经有 producer/queue/consumer
    的更强边界，应该强化这个边界，而不是把算法逻辑推回 rollout manager。
 
-4. **weight sync 前必须 drain generation + reward。**
-   slime 在 update weights 前等 pending generation 完成；VRL continuous 的
+4. **当前阶段 weight sync 前仍 drain generation + reward；但这不是终局。**
+   slime async 在 update weights 前等 pending generation 完成；VRL continuous 的
    `pause_admission -> drain_inflight -> sync_weights -> resume_admission` 是同一原则。
-   因为 VRL 的 in-flight collect 包含 reward，所以 drain 必须覆盖 reward。
+   因为 VRL 的 in-flight collect 包含 reward，所以当前 strict barrier 必须覆盖 reward。
+   但 `reading/SPRINT_framework_lessons_vrl.md` 的 P1-1 也说明：长视频上全局 drain 会让
+   trainer 被 straggler 卡住。后续要单独做非 draining barrier：按 request/chunk 边界换权重，
+   由 `StalenessPolicy` 接住 mixed-version tail，保证单条 denoise trajectory 不跨 policy。
+
+### 3a. Reading refresh：哪些 slime 机制该吸收，哪些不该照搬
+
+读完 `docs/sprints/reading/slime.md` 后，本 sprint 的判断需要更精确：
+
+```text
+保留：
+  ready queue 只放完整、已打分、trainer-ready 的 batch。
+  reward failure fail-fast；不要让 trainer 消费半成品。
+  reward normalization 不下沉到 collector；VRL algorithm 层继续做 advantage 语义。
+
+新增：
+  collect phase timing 必须绑定到 item/batch/request，不能读共享 last_collect_phases。
+  over-sample / first-completed-wins / abort-tail 是 straggler control 的正确方向。
+  每次 surplus / abort / wasted group 必须有 telemetry，不能像 slime 一样静默丢 finished work。
+
+暂不做：
+  partial-rollout resume。AR token 可以从 partial tokens 恢复；diffusion latent trajectory
+  不能安全跨 policy/step 续跑。若未来做 diffusion partial buffer，buffer 内容必须进 checkpoint，
+  不能复制 slime 的"buffer 不随 cursor 保存"缺口。
+  非 draining weight sync。本 sprint 只先把当前 strict barrier 测准；非 draining barrier
+  是后续独立 sprint。
+```
 
 ## 4. 实施计划
 
-### T1. 固化 ready queue contract
+### T1. 固化 ready queue contract — DONE (2026-06-12)
+
+落地于 `tests/rollouts/orchestration/continuous/test_contracts.py`
+（`test_ready_queue_gets_items_only_after_reward_scoring` /
+`test_failed_reward_scoring_never_enqueues`）和
+`tests/rollouts/orchestration/continuous/test_schedule.py`
+（`test_reward_failure_fails_fast_and_never_reaches_queue`）。
 
 新增/扩展 continuous rollout 测试，证明：
 
@@ -213,7 +248,13 @@ pytest -q tests/rollouts/orchestration/continuous/test_schedule.py
 pytest -q tests/rollouts/collector/test_runtime.py
 ```
 
-### T2. 覆盖 reward-in-flight weight sync barrier
+### T2. 覆盖 reward-in-flight weight sync barrier — DONE (2026-06-12)
+
+落地于 `test_schedule.py::test_weight_sync_waits_for_inflight_reward`（schedule 级，
+gated reward fake）和 `test_contracts.py::test_drain_inflight_waits_for_generation_and_reward`
+（producer 级，generation 与 reward 双 gate），外加
+`test_contracts.py::test_items_carry_policy_version_captured_at_submission`
+钉住 submission-time version stamping。
 
 新增一个慢 reward fake：generation 已完成、reward 仍在等待时触发
 `after_train_step()`，断言 sync 不会在 reward 完成前发生。
@@ -225,9 +266,19 @@ after_train_step waits for in-flight collect, including reward_score
 policy version does not change inside one generated/scored batch
 ```
 
-### T3. 修正 continuous collect phase metrics 的归属
+### T3. 修正 continuous collect phase metrics 的归属 — DONE (2026-06-12)
 
-当前 `RolloutCollector.last_collect_phases` 是 collector 实例上的共享 mutable 状态。
+`RolloutCollector.last_collect_phases` 已删除。phase 时间随 collect 调用流动：
+`UnscoredRollout.phases`（engine_generate per call；call 级 reward_score/batch_build
+只记在第一个 group 上避免重复计数）→ `collect_prompt_batches(phase_times=...)` 聚合
+→ strict 写进 `iteration.phase_times`，continuous 经 `ContinuousRolloutItem.phase_times`
+（每个 collect 调用只挂在首个 item 上）由 consumer 求和进 `iteration.phase_times`；
+trainer 不再读 collector 共享字段（`vrl/trainers/online/trainer.py`）。
+测试：`test_runtime.py::test_collect_phase_timings_are_per_call_not_shared`、
+`test_prompt_collection.py::test_phase_times_accumulate_per_call`、
+`test_contracts.py::test_consumer_aggregates_item_phase_times`。
+
+原始问题：`RolloutCollector.last_collect_phases` 是 collector 实例上的共享 mutable 状态。
 在 continuous mode 多个 in-flight collect 并发时，这个字段不适合作为 per-item
 指标来源。
 
@@ -246,6 +297,12 @@ continuous phase_times 能同时报告 engine_generate 和 reward_score
 并发 collect 不互相覆盖 last_collect_phases
 strict mode 继续保留现有 profile 输出
 ```
+
+这个任务现在优先级上调。`reading/slime.md` 的 per-request tracing / nested metric
+accumulator 证明：phase timing 应随 sample/request 生命周期流动，而不是挂在单例 collector
+字段上。VRL 不需要复制 slime 的 `Sample` dataclass，但应把 `collect.engine_generate` /
+`collect.reward_score` 放进 `ContinuousRolloutItem.phase_times` 或 batch context，由 consumer
+聚合到 `RolloutIteration.phase_times`。
 
 ### T4. 保留 raw reward，显式记录 normalized advantage
 
@@ -277,6 +334,38 @@ reward artifacts 的内存生命周期已经可控
 ```
 
 否则独立 reward stage 只会增加状态机、backpressure 和 failure handling 复杂度。
+
+### T6. Straggler control：over-sample / first-completed-wins / abort tail
+
+slime 最值得借的 runtime 策略不是把 reward 拆成单独 stage，而是：
+
+```text
+submit > needed groups
+collect first N completed groups
+abort or cancel tail
+record wasted / dropped / aborted groups
+```
+
+VRL 当前 continuous producer 固定维持 `max_inflight_groups` collect jobs，consumer 等
+`min_groups` same-policy groups。长视频或慢 reward 下，一个慢 group 会拉长整轮等待。
+
+首版只做完整 group 级别，不做 partial resume：
+
+```text
+admit N + spare complete groups
+consumer 取 first-completed 的 min_groups
+tail group 在 request/chunk 边界 cancel 或让其完成后丢弃
+所有 surplus/drop 都写 telemetry
+```
+
+验收：
+
+```text
+同 seed 下被接受 group 的 group_id / sample order deterministic
+surplus 完成但未消费的 group 有 wasted_groups / wasted_samples telemetry
+abort tail 不产生 trainer-visible batch
+不引入 partial latent resume 或跨 policy continuation
+```
 
 ## 4a. Multi-GPU placement strategy（记录：当前 auto 规则不是最优解）
 
