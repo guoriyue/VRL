@@ -1,7 +1,9 @@
 # SPRINT: NFT 的 lr=0 不变式（非 ratio 算法的 parity gate 等价物）
 
-状态：**T1 / T2 implemented（2026-06-11）**；T3（trainer first_step 的 NFT
-记录）pending —— 实现时注意别把算法特定检查硬编进 trainer，走可选协议方法。
+状态：**T1 / T2 / T3 全部 implemented（2026-06-11）**。T3 已按"可选协议方法"
+要求落地（commit 7756de4）：DiffusionNFT.first_step_invariant_check（advantage
+翻号不变式，fork_rng 钉噪声）+ trainer debug.first_step 的 uses_evaluator=False
+分支，超阈值 warning 与 GRPO parity 警报对称，trainer 零算法特定逻辑。
 
 落地摘要：
 
