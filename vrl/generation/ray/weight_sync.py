@@ -31,7 +31,7 @@ class RayGenerationWeightSync(GenerationWeightSync):
         state_ref: Any,
         policy_version: int,
     ) -> None:
-        refs: list[Any] = []
+        remote_methods: list[Any] = []
         for worker in self.workers:
             actor = worker.actor
             if actor is None:
@@ -39,13 +39,24 @@ class RayGenerationWeightSync(GenerationWeightSync):
             update_weights = actor.update_weights
             remote = getattr(update_weights, "remote", None)
             if callable(remote):
-                refs.append(remote(state_ref, policy_version))
+                remote_methods.append(remote)
             else:
+                # Local (non-Ray) fake workers used in tests: call directly.
                 update_weights(state_ref, policy_version)
 
-        if refs:
-            ray = require_ray()
-            await asyncio.to_thread(ray.get, refs)
+        if not remote_methods:
+            return
+
+        ray = require_ray()
+        # Serialize the (potentially large) state dict once into the object
+        # store and hand every worker the same ObjectRef. Passing the dict
+        # straight to each actor.update_weights.remote(...) makes Ray
+        # re-serialize and store one copy per worker, so weight-sync cost grew
+        # linearly in worker count for identical data. Ray auto-dereferences
+        # the ref into the real dict before the worker method runs.
+        shared_state = ray.put(state_ref)
+        refs = [remote(shared_state, policy_version) for remote in remote_methods]
+        await asyncio.to_thread(ray.get, refs)
 
 __all__ = [
     "GenerationWeightSync",
