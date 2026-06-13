@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 from typing import Any
 
@@ -15,6 +16,8 @@ from vrl.generation.execution.types import (
 from vrl.generation.protocols import ChunkGatherer, ChunkResult
 from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.actor_pool import RayActorJob, run_actor_jobs
+
+logger = logging.getLogger(__name__)
 
 
 class RayGenerationExecutor:
@@ -144,15 +147,14 @@ class RayGenerationExecutor:
         output = self.gatherer.gather_chunks(request, sample_rows, chunk_outputs)
         attach_engine_plan(output, engine_plan)
         output.extra["ray_chunk_metrics"] = [dict(result.metrics) for result in results]
+        runtime_debug_on = bool(request.metadata.get("_runtime_debug"))
+        schedule_summary: list[dict[str, Any]] = []
         if schedule_rows:
             by_index = {row["job_index"]: row for row in schedule_rows}
-            output.extra["ray_chunk_schedule"] = [
+            schedule_summary = [
                 {
-                    "chunk_key": (
-                        f"{assignment.chunk.prompt_index}:"
-                        f"{assignment.chunk.sample_start}:"
-                        f"{assignment.chunk.sample_count}"
-                    ),
+                    "chunk_key": assignment.chunk.chunk_key,
+                    "sample_count": assignment.chunk.sample_count,
                     "assignment_strategy": strategy,
                     "estimated_cost": assignment.estimated_cost,
                     "assigned_worker": by_index[job_index]["worker_id"],
@@ -162,13 +164,34 @@ class RayGenerationExecutor:
                 for job_index, assignment in enumerate(assignments)
                 if job_index in by_index
             ]
+            output.extra["ray_chunk_schedule"] = schedule_summary
+        if runtime_debug_on:
+            for row in schedule_summary:
+                logger.info(
+                    "ray chunk schedule [%s]: chunk=%s worker=%s samples=%d "
+                    "cost=%.0f queue_wait=%.3fs exec=%.3fs",
+                    strategy,
+                    row["chunk_key"],
+                    row["assigned_worker"],
+                    row["sample_count"],
+                    row["estimated_cost"],
+                    row["queue_wait_s"],
+                    row["execution_s"],
+                )
         if oom_splits:
             output.extra["ray_chunk_oom_splits"] = oom_splits
-        runtime_debug = [
+        worker_debug_rows = [
             result.metrics for result in results if result.metrics.get("runtime_debug")
         ]
-        if runtime_debug:
-            output.extra["runtime_debug"] = {"ray_chunks": runtime_debug}
+        debug_payload: dict[str, Any] = {}
+        if worker_debug_rows:
+            debug_payload["ray_chunks"] = worker_debug_rows
+        if runtime_debug_on and schedule_summary:
+            debug_payload["chunk_schedule"] = schedule_summary
+        if runtime_debug_on and oom_splits:
+            debug_payload["chunk_oom_splits"] = oom_splits
+        if debug_payload:
+            output.extra["runtime_debug"] = debug_payload
         return output
 
     async def _degrade_oom_chunks(
@@ -213,6 +236,13 @@ class RayGenerationExecutor:
                         f"{result.worker_id!r}: {result.error}",
                     )
                 children = chunk.split()
+                logger.warning(
+                    "ray chunk %s OOMed on worker %s; splitting %d samples into %s",
+                    chunk.chunk_key,
+                    result.worker_id,
+                    chunk.sample_count,
+                    [child.chunk_key for child in children],
+                )
                 splits.append(
                     {
                         "chunk_key": chunk.chunk_key,

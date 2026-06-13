@@ -128,6 +128,7 @@ def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray() -> No
                 gpus_per_worker=0.0,
                 cpus_per_worker=0.5,
                 sync_trainable_state="disabled",
+                chunk_placement_strategy="dynamic",
             ),
             _launch_contract(),
             _Gatherer(),
@@ -137,6 +138,8 @@ def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray() -> No
         assert runtime.current_policy_version == 7
         assert runtime.weight_sync is None
         assert runtime._placement_group is not None
+        # Config-selected placement strategy must reach the live planner.
+        assert runtime.executor.planner.policy.strategy == "dynamic"
 
         workers = runtime.executor.workers
         assert [worker.worker_id for worker in workers] == ["rollout-0"]

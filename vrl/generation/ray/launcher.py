@@ -394,7 +394,9 @@ def _runtime_extra(cfg: Any) -> dict[str, Any]:
         return {}
     return {
         "torch_profiler": profiler,
-        "profiler_output_dir": str(cfg_path(cfg, "trainer.output_dir", "outputs/")),
+        # trainer.output_dir is required (??? in base yaml, enforced at load
+        # time) — no silent fallback that would shadow the contract.
+        "profiler_output_dir": str(cfg_path(cfg, "trainer.output_dir")),
     }
 
 

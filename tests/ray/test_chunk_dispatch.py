@@ -19,8 +19,13 @@ from vrl.generation.execution.chunk_placement import (
     DistributedExecutionPlanner,
     estimate_chunk_cost,
 )
-from vrl.generation.execution.types import DistributedWorkerHandle
-from vrl.generation.types import GenerationRequest
+from vrl.generation.execution.types import (
+    ChunkExecutionEnvelope,
+    ChunkExecutionResult,
+    DistributedWorkerHandle,
+)
+from vrl.generation.ray.executor import RayGenerationExecutor
+from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.models.diffusion.capabilities import diffusion_family_capability
 from vrl.ray.actor_pool import RayActorJob, run_actor_jobs
 
@@ -227,3 +232,141 @@ def test_placement_policy_rejects_unknown_strategy() -> None:
     """Checks the strategy vocabulary is closed."""
     with pytest.raises(ValueError, match="round_robin"):
         ChunkPlacementPolicy(strategy="work_stealing")
+
+
+# ----------------------------------------------------- executor end to end
+
+
+class _FakeActor:
+    """Fake Ray actor: execute_chunk.remote returns a real chunk result."""
+
+    def __init__(self, worker_id: str, speed_rank_base: int) -> None:
+        self.worker_id = worker_id
+        self._rank = speed_rank_base
+        self.executed: list[str] = []
+
+        class _ExecuteChunk:
+            @staticmethod
+            def remote(envelope: ChunkExecutionEnvelope) -> _FakeRef:
+                return self._execute(envelope)
+
+        self.execute_chunk = _ExecuteChunk()
+
+    def _execute(self, envelope: ChunkExecutionEnvelope) -> _FakeRef:
+        chunk = envelope.chunk
+        self.executed.append(chunk.chunk_key)
+        self._rank += 1
+        result = ChunkExecutionResult(
+            request_id=envelope.request.request_id,
+            worker_id=self.worker_id,
+            chunk=chunk,
+            output={"chunk_key": chunk.chunk_key, "samples": chunk.sample_count},
+        )
+        return _FakeRef(result=result, completion_rank=self._rank)
+
+
+class _ListGatherer:
+    def gather_chunks(
+        self,
+        request: GenerationRequest,
+        sample_rows: Any,
+        chunks: list[Any],
+    ) -> GenerationOutput:
+        return GenerationOutput(
+            request_id=request.request_id,
+            family=request.family,
+            task=request.task,
+            prompts=list(request.prompts),
+            sample_rows=list(sample_rows),
+            output=list(chunks),
+        )
+
+
+def _executor(strategy: str, actors: list[_FakeActor]) -> RayGenerationExecutor:
+    workers = [
+        DistributedWorkerHandle(
+            worker_id=actor.worker_id,
+            node_id="node-0",
+            gpu_ids=(idx,),
+            actor=actor,
+        )
+        for idx, actor in enumerate(actors)
+    ]
+    return RayGenerationExecutor(
+        DistributedExecutionPlanner(
+            diffusion_family_capability("sd3_5", "t2i"),
+            policy=ChunkPlacementPolicy(strategy=strategy),
+        ),
+        workers,
+        _ListGatherer(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_executor_round_robin_dispatches_per_plan_binding() -> None:
+    """Checks config strategy round_robin reaches the actual dispatch."""
+    actors = [_FakeActor("w0", 0), _FakeActor("w1", 100)]
+    executor = _executor("round_robin", actors)
+
+    output = await executor.execute(_request(num_steps=10, samples=8, sbs=2))
+
+    # 4 chunks alternate w0/w1 even though w1 is much slower: plan-time binding.
+    assert actors[0].executed == ["prompt:0:samples:0:2", "prompt:0:samples:4:6"]
+    assert actors[1].executed == ["prompt:0:samples:2:4", "prompt:0:samples:6:8"]
+    schedule = output.extra["ray_chunk_schedule"]
+    assert [row["assigned_worker"] for row in schedule] == ["w0", "w1", "w0", "w1"]
+    for row in schedule:
+        assert row["assignment_strategy"] == "round_robin"
+        assert row["sample_count"] == 2
+        assert row["estimated_cost"] == 20.0
+
+
+@pytest.mark.asyncio
+async def test_executor_dynamic_dispatches_by_pull() -> None:
+    """Checks config strategy dynamic actually changes worker placement."""
+    actors = [_FakeActor("w0", 0), _FakeActor("w1", 100)]
+    executor = _executor("dynamic", actors)
+
+    output = await executor.execute(_request(num_steps=10, samples=8, sbs=2))
+
+    # The fast worker pulls every queued chunk once the slow one is busy.
+    assert len(actors[0].executed) == 3
+    assert len(actors[1].executed) == 1
+    schedule = output.extra["ray_chunk_schedule"]
+    assert all(row["assignment_strategy"] == "dynamic" for row in schedule)
+    by_worker = {
+        worker: sum(1 for row in schedule if row["assigned_worker"] == worker)
+        for worker in ("w0", "w1")
+    }
+    assert by_worker == {"w0": 3, "w1": 1}
+    # Gather order is untouched by dynamic placement.
+    assert [entry["chunk_key"] for entry in output.output] == [
+        "prompt:0:samples:0:2",
+        "prompt:0:samples:2:4",
+        "prompt:0:samples:4:6",
+        "prompt:0:samples:6:8",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_executor_runtime_debug_exposes_chunk_schedule() -> None:
+    """Checks runtime_debug surfaces per-chunk placement telemetry."""
+    actors = [_FakeActor("w0", 0), _FakeActor("w1", 100)]
+    executor = _executor("round_robin", actors)
+    request = _request(num_steps=10, samples=8, sbs=2)
+    request.metadata["_runtime_debug"] = True
+
+    output = await executor.execute(request)
+
+    debug_schedule = output.extra["runtime_debug"]["chunk_schedule"]
+    assert len(debug_schedule) == 4
+    for row in debug_schedule:
+        assert {
+            "chunk_key",
+            "sample_count",
+            "assignment_strategy",
+            "estimated_cost",
+            "assigned_worker",
+            "queue_wait_s",
+            "execution_s",
+        } <= set(row)

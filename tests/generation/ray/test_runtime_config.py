@@ -216,6 +216,22 @@ def _build_inputs_cfg(*, denoise_compile: dict[str, Any] | None = None) -> Any:
     return OmegaConf.create(cfg)
 
 
+def test_chunk_placement_strategy_switches_from_cfg() -> None:
+    """Checks distributed.rollout.chunk_placement_strategy flips the policy."""
+    assert RayGenerationConfig.from_cfg(_cfg()).chunk_placement_strategy == "round_robin"
+
+    cfg = _cfg()
+    cfg.distributed.rollout.chunk_placement_strategy = "dynamic"
+    dynamic = RayGenerationConfig.from_cfg(cfg)
+    assert dynamic.chunk_placement_strategy == "dynamic"
+    # Releasable relaunches rebuild from to_dict(); the strategy must survive.
+    assert dynamic.to_dict()["chunk_placement_strategy"] == "dynamic"
+
+    cfg.distributed.rollout.chunk_placement_strategy = "work_stealing"
+    with pytest.raises(ValueError, match="chunk_placement_strategy"):
+        RayGenerationConfig.from_cfg(cfg)
+
+
 def test_ray_build_inputs_leaves_model_compile_config_without_rollout_override() -> None:
     """Checks build inputs keep model compile config when rollout override is absent."""
     launch_inputs = RayGenerationLauncher.build_inputs(
