@@ -1,6 +1,8 @@
 # SPRINT: Ray chunk OOM degradation (split-on-OOM)
 
-状态：implemented（2026-06-11，确定性测试 5/5 绿；真 GPU 验收 gate 未跑，见 §5）。
+状态：implemented（2026-06-11）。真 GPU gate 已跑：降级机制行为通过，期间暴露的
+init_latents 回归已修（b8ac677），仅剩 telemetry 复跑确认 `ray_chunk_oom_splits`
+落盘（见 §8）。
 
 ## 0. Core Decision
 
@@ -72,7 +74,7 @@ tests/generation/ray/test_oom_split.py  5 个确定性用例（fake 容量 worke
 分类器 → CUDA/HIP 命中，ValueError 不命中
 ```
 
-## 5. 真 GPU 验收 gate（待跑，需要 wm-infra 的 5090）
+## 5. 真 GPU 验收 gate（定义；运行结果见 §8）
 
 ```text
 配置:  predict2 sbs=8（Wave 2 已知必 OOM 的 live gate 配置）
@@ -94,21 +96,17 @@ tests/generation/ray/test_oom_split.py  5 个确定性用例（fake 容量 worke
 `SPRINT_cross_model_performance.md` Wave 3 #1（predict2 VAE tiling 接线）实际已于
 2026-06-10 随 cleanup 落地（`vae_decode_memory.py` 镜像接线 + 配置），本次标记 done。
 
-## 7. 真 GPU gate 结果（2026-06-11 22:31，predict2 sbs=8 @512p93f num_steps=2）
+## 8. 真 GPU gate 结果（2026-06-11 22:31，predict2 sbs=8 @512p93f num_steps=2）
 
 **降级机制本身：行为上通过。** 已知必 OOM 配置只发生 1 次
 `torch.OutOfMemoryError`（1.5GiB @ transformer），随后 driver 侧静默 split，
 generation 全部完成、Kling 打分完成——OOM 不再杀 run。
 
-**但 gate 整体 fail（exit=1），死因是一个无关的新回归**：trainer 重放阶段
-`restore_eval_state` KeyError `'init_latents'`
-（`vrl/models/diffusion/cosmos/predict2/model.py:470`）。复现：上面的 gate
-命令（任何 predict2 GRPO 真训练步都会踩；n=1 的 probe 因零优势跳过训练步而
-幸免）。范围：G1 parity run（6/10 11:48）同路径正常 ⇒ 回归窗口为其后的
-提交（wire-diet fbd9234 / stage pipeline b224383 / pull dispatch 0e8ec69）
-或工作区进行中改动。线索：`init_latents` 经 forward `extra` dict
-（model.py:378）进入重放段，restore 侧读 `replay_tensors["init_latents"]`
-——查 `extra` 持久化到 replay tensors 的链路在重构中是否丢键。
+**gate 当次 fail（exit=1）的死因是一个无关回归，现已修复**：trainer 重放阶段
+`restore_eval_state` KeyError `'init_latents'`。根因是 `SamplingState` 的
+init_latents 带 leading-1 维，trajectory builder 会静默丢掉 dim-0 != batch_size
+的 replay tensor，故 sample_batch_size > 1 时该键消失。已在 b8ac677 用
+`align_replay_tensor` 对齐导出并加 replay-export 对齐测试钉死。
 
-telemetry 验收（training_debug 里的 `ray_chunk_oom_splits`）因 run 在写
-debug 文件前死亡而未确认，待 init_latents 修复后复跑确认。
+唯一遗留：telemetry 验收（training_debug 里的 `ray_chunk_oom_splits`）因当次 run
+在写 debug 文件前死亡而未确认，待在 b8ac677 之上复跑该 gate 命令确认。

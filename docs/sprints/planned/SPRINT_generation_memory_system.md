@@ -1,7 +1,7 @@
 # SPRINT: Generation memory system（设计，未实施）
 
-状态：proposed。前置 `SPRINT_generation_memory_policy.md`（planned，其核心已由
-`SPRINT_single_gpu_generation_memory_hardening.md` Part 2 落地）。本篇回答的问题：
+状态：proposed。前置 `done/SPRINT_generation_memory_policy.md`（其核心已由
+`done/SPRINT_single_gpu_generation_memory_hardening.md` Part 2 落地）。本篇回答的问题：
 静态 policy 之上，"统一内存系统"应该长什么样，向 vLLM / SGLang / SGLang-Omni /
 slime / cosmos-rl 各学哪一块。
 
