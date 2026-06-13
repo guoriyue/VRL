@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
 import logging
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field
@@ -24,7 +23,7 @@ from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.models.dtypes import dtype_to_config_string
 from vrl.models.interfaces.runtime import torch_compile_model_config
 from vrl.ray.actor_group import RayActorGroup
-from vrl.ray.dependencies import current_node_ip, require_ray
+from vrl.ray.dependencies import current_node_ip, import_from_path, require_ray
 from vrl.ray.lifecycle import kill_actors, remove_placement_group
 from vrl.ray.placement import validate_actor_gpu_ids
 from vrl.ray.resources import format_distributed_resource_plan
@@ -314,12 +313,12 @@ def _call_runtime_build_extractor(
     device: str,
     weight_dtype: str,
 ) -> Any:
-    extractor = _import_from_path(entry.runtime_spec_extractor)
+    extractor = import_from_path(entry.runtime_spec_extractor)
     return extractor(cfg, device, weight_dtype)
 
 
 def _build_gatherer(entry: Any) -> ChunkGatherer:
-    gatherer_cls = _import_from_path(entry.gatherer.import_path)
+    gatherer_cls = import_from_path(entry.gatherer.import_path)
     return gatherer_cls(**entry.gatherer.kwargs)
 
 
@@ -398,12 +397,6 @@ def _runtime_extra(cfg: Any) -> dict[str, Any]:
         # time) — no silent fallback that would shadow the contract.
         "profiler_output_dir": str(cfg_path(cfg, "trainer.output_dir")),
     }
-
-
-def _import_from_path(path: str) -> Any:
-    module_path, attr = path.split(":", 1)
-    module = importlib.import_module(module_path)
-    return getattr(module, attr)
 
 
 __all__ = [

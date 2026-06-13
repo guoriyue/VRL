@@ -13,6 +13,7 @@ from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.weight_sync import GenerationWeightSync
 from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.dependencies import require_ray
+from vrl.ray.lifecycle import kill_actors, remove_placement_group
 
 
 class RayGenerationRuntime(GenerationRuntime):
@@ -72,23 +73,15 @@ class RayGenerationRuntime(GenerationRuntime):
         if release_refs:
             with contextlib.suppress(Exception):
                 ray.get(release_refs, timeout=60)
-        for worker in self._owned_workers:
-            actor = worker.actor
-            if actor is None:
-                continue
-            with contextlib.suppress(Exception):
-                ray.kill(actor, no_restart=True)
+        kill_actors(
+            ray,
+            [worker.actor for worker in self._owned_workers if worker.actor is not None],
+        )
         self._owned_workers.clear()
-        for actor in self._owned_actors:
-            with contextlib.suppress(Exception):
-                ray.kill(actor, no_restart=True)
+        kill_actors(ray, self._owned_actors)
         self._owned_actors.clear()
-        if self._placement_group is not None:
-            with contextlib.suppress(Exception):
-                from ray.util import remove_placement_group
-
-                remove_placement_group(self._placement_group)
-            self._placement_group = None
+        remove_placement_group(self._placement_group)
+        self._placement_group = None
         return None
 
 
