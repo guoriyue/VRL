@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import dataclasses
 import importlib
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -377,18 +376,14 @@ class GenerationWorkerCore:
         device synchronizes once before the payload is handed to Ray.
         """
 
+        # Lazy import: this module stays torch-free at import time, and the
+        # trajectory package (the walker's home) pulls torch transitively.
+        from vrl.trajectory.device import map_tensor_tree
+
         pending = {"cuda_copies": False}
-        copied = cls._queue_to_cpu(value, pending)
-        if pending["cuda_copies"]:
-            import torch
 
-            torch.cuda.synchronize()
-        return copied
-
-    @classmethod
-    def _queue_to_cpu(cls, value: Any, pending: dict[str, bool]) -> Any:
-        if cls._is_tensor(value):
-            tensor = value.detach()
+        def _pinned_copy(leaf: Any) -> Any:
+            tensor = leaf.detach()
             if getattr(tensor, "is_cuda", False):
                 import torch
 
@@ -402,19 +397,13 @@ class GenerationWorkerCore:
                 pending["cuda_copies"] = True
                 return host
             return tensor.cpu()
-        if dataclasses.is_dataclass(value) and not isinstance(value, type):
-            payload = {
-                field.name: cls._queue_to_cpu(getattr(value, field.name), pending)
-                for field in dataclasses.fields(value)
-            }
-            return type(value)(**payload)
-        if isinstance(value, dict):
-            return {key: cls._queue_to_cpu(inner, pending) for key, inner in value.items()}
-        if isinstance(value, list):
-            return [cls._queue_to_cpu(inner, pending) for inner in value]
-        if isinstance(value, tuple):
-            return tuple(cls._queue_to_cpu(inner, pending) for inner in value)
-        return value
+
+        copied = map_tensor_tree(value, _pinned_copy, is_leaf=cls._is_tensor)
+        if pending["cuda_copies"]:
+            import torch
+
+            torch.cuda.synchronize()
+        return copied
 
     @staticmethod
     def _is_tensor(value: Any) -> bool:

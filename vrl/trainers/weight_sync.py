@@ -9,6 +9,8 @@ from typing import Any
 
 import torch
 
+from vrl.trajectory.device import map_tensor_tree
+
 TrainableStateGetter = Callable[[], dict[str, Any]]
 
 
@@ -175,12 +177,8 @@ def _cpu_state_dict(state_dict: dict[str, Any]) -> dict[str, Any]:
 
 
 def to_cpu(value: Any) -> Any:
-    if isinstance(value, torch.Tensor):
-        return value.detach().cpu()
-    if isinstance(value, dict):
-        return {key: to_cpu(inner) for key, inner in value.items()}
-    if isinstance(value, list):
-        return [to_cpu(inner) for inner in value]
-    if isinstance(value, tuple):
-        return tuple(to_cpu(inner) for inner in value)
-    return value
+    return map_tensor_tree(
+        value,
+        lambda leaf: leaf.detach().cpu(),
+        is_leaf=lambda v: isinstance(v, torch.Tensor),
+    )
