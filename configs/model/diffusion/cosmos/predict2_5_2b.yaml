@@ -1,16 +1,26 @@
 # Cosmos Predict2.5 2B PredictBase for DiffusionNFT RL.
 #
-# Full-parameter post-training (paper §4.2.2 regime) is the target; LoRA was
-# removed 2026-06-10. NOTE: the current DiffusionNFT implementation still
-# needs the LoRA default/previous adapter pair for its three-branch forward
-# (enable_full_finetune raises), so this recipe cannot launch until the
-# full-finetune NFT/GRPO path lands with multi-GPU training — prerequisites
-# tracked in docs/sprints/SPRINT_multi_gpu_training.md.
+# VRL's current DiffusionNFT objective needs two PEFT adapters: trainable
+# `default` and frozen `previous`. Full-parameter post-training would need a
+# separate previous-policy state path and multi-GPU capacity; keep this local
+# recipe on the LoRA path used by the upstream Cosmos-RL NFT config.
 model:
   family: cosmos-predict2.5
   path: nvidia/Cosmos-Predict2.5-2B
   revision: diffusers/base/post-trained
   skip_text_encoder: false
+
+  use_lora: true
+  lora:
+    rank: 32
+    alpha: 64
+    target_modules:
+      - to_k
+      - to_out.0
+      - to_q
+      - to_v
+      - ff.net.0.proj
+      - ff.net.2
 
   memory:
     vae_decode:

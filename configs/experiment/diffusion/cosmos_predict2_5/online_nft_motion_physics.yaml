@@ -1,5 +1,6 @@
 # Cosmos Predict2.5 2B + DiffusionNFT, DanceGRPO-style video reward + physics.
-# Aligned to the cosmos-rl DiffusionNFT regime: 10-step no-CFG denoising.
+# Aligned to the Cosmos-Predict2.5 RL paper: 20-step no-CFG denoising,
+# then ten evenly spaced training timestep slices.
 # DanceGRPO optimizes video generators against the Kling VideoReward axes
 # (Visual / Motion / Text), and Motion Quality is its closest thing to a
 # physical-plausibility signal. This recipe keeps that DanceGRPO motion-quality
@@ -13,17 +14,17 @@ defaults:
   - /recipe/online/diffusion_nft
   - /model/diffusion/cosmos/predict2_5_2b
   - /sampling/video/512p_93f
-  - /sampling/denoise/10_step_no_cfg
+  - /sampling/denoise/20_step_no_cfg
   - /reward/kling_video_reward
   - /reward/videocon_physics
   - /dataset/videophy
 
 actor:
   optim:
-    lr: 3.0e-4
+    lr: 3.0e-5
   ppo_epochs: 1
   gradient_accumulation_steps: 1
-  timestep_fraction: 0.99
+  timestep_fraction: 0.5
   ema:
     enable: true
     decay: 0.9
@@ -65,4 +66,3 @@ production:
   kling_video_reward:
     enabled: true
     report_path: outputs/cosmos_predict2_5_2b_motion_physics/production_report.md
-

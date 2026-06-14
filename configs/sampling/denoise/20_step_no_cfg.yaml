@@ -1,0 +1,5 @@
+# Shared diffusion denoise preset: 20 steps, no classifier-free guidance.
+sampling:
+  num_steps: 20
+  guidance_scale: 1.0
+  cfg: false

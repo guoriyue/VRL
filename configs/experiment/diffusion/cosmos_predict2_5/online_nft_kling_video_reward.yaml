@@ -1,11 +1,11 @@
 # Cosmos Predict2.5 2B + DiffusionNFT + Kling video reward.
-# Hyperparameters track cosmos-rl's cosmos-predict2-5-2b-720-nft.toml; vrl's
-# DiffusionNFT/actor defaults already match it except for the fields set below.
+# The Cosmos-Predict2.5 RL paper uses 20 diffusion steps per generated output,
+# then trains on ten evenly spaced conditional-probability slices.
 defaults:
   - /recipe/online/diffusion_nft
   - /model/diffusion/cosmos/predict2_5_2b
   - /sampling/video/512p_93f
-  - /sampling/denoise/10_step_no_cfg
+  - /sampling/denoise/20_step_no_cfg
   - /reward/kling_video_reward
   - /dataset/videophy
 
@@ -13,10 +13,10 @@ precision: bf16
 
 actor:
   optim:
-    lr: 3.0e-4
+    lr: 3.0e-5
   ppo_epochs: 1
   gradient_accumulation_steps: 1
-  timestep_fraction: 0.99
+  timestep_fraction: 0.5
   ema:
     enable: true
     decay: 0.9
@@ -48,4 +48,3 @@ production:
   kling_video_reward:
     enabled: true
     report_path: outputs/cosmos_world_model_production_report.md
-

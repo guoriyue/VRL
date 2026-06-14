@@ -212,6 +212,33 @@ def test_all_experiments_load_and_validate() -> None:
         validate_training_config(cfg)
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "diffusion/cosmos_predict2_5/online_nft_kling_video_reward",
+        "diffusion/cosmos_predict2_5/online_nft_motion_physics",
+    ],
+)
+def test_cosmos_predict25_nft_uses_paper_timestep_budget(name: str) -> None:
+    """Checks Cosmos Predict2.5 NFT recipes keep the paper timestep budget."""
+    cfg = load_config(f"experiment/{name}")
+
+    assert cfg.sampling.num_steps == 20
+    assert cfg.sampling.cfg is False
+    assert cfg.sampling.guidance_scale == 1.0
+    assert cfg.actor.optim.lr == pytest.approx(3.0e-5)
+    assert cfg.actor.timestep_fraction == 0.5
+    assert cfg.model.use_lora is True
+    assert set(cfg.model.lora.target_modules) == {
+        "ff.net.0.proj",
+        "ff.net.2",
+        "to_k",
+        "to_out.0",
+        "to_q",
+        "to_v",
+    }
+
+
 def test_experiments_do_not_use_legacy_precision_fields() -> None:
     """Checks live YAML uses top-level precision only."""
     offenders = []
@@ -528,5 +555,3 @@ def test_dpo_allows_explicit_null_max_train_samples() -> None:
 
     assert optional_none(cfg, "data.max_train_samples") is None
     validate_training_config(cfg)
-
-
