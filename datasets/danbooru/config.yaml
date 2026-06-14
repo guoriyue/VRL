@@ -1,0 +1,307 @@
+# Danbooru anime / safety tag taxonomy for in-place dataset generation.
+#
+# Single source of truth for the anime-tag vocabularies and bucket weights used
+# by vrl/scripts/data/danbooru.py. Extracted from module-level ALL_CAPS constants
+# so the filter / bucket vocabulary can be reviewed and tuned (e.g. by data
+# curators) without editing Python. The script loads this at import time and
+# exposes the same constant names (EXCLUDE_TAGS, POSE_TAGS, SAFETY_RISK_TAGS, ...).
+#
+# On load (see danbooru.py _load_taxonomy): list-valued *_tags / *_labels become
+# set or tuple to match prior runtime types; subject_tags / pose_tags /
+# default_bucket_weights stay dict. Order is preserved for readable diffs.
+
+anatomy:
+  # Tags that disqualify a full-body anatomy candidate.
+  exclude_tags:
+    - cropped
+    - portrait
+    - upper_body
+    - cowboy_shot
+    - multiple_girls
+    - multiple_boys
+    - text
+    - watermark
+    - lowres
+  # Excludes tolerated when the bucket is specifically hand-focused.
+  hand_focus_allowed_exclude_tags:
+    - upper_body
+    - cowboy_shot
+  # Subject tag -> prompt phrase. Keys also drive SUBJECT_PROMPT_TAGS.
+  subject_tags:
+    "1girl": single anime girl
+    "1boy": single anime boy
+  # Pose tag -> prompt phrase.
+  pose_tags:
+    standing: standing
+    walking: walking
+    running: running
+    sitting: sitting
+    kneeling: kneeling
+    dancing: dancing
+    fighting_stance: fighting stance
+    dynamic_pose: dynamic action pose
+    action_pose: action pose
+    jumping: jumping
+    kicking: kicking
+    high_kick: high kick
+    squatting: squatting
+    crouching: crouching
+    all_fours: on all fours
+    bent_over: bent over
+    standing_on_one_leg: standing on one leg
+    stretching: stretching
+  hand_tags:
+    - hands
+    - hand
+    - hand_up
+    - outstretched_arm
+    - arms_up
+    - arms_behind_back
+    - waving
+    - holding
+    - hand_focus
+    - reaching
+    - spread_fingers
+    - open_hand
+    - clenched_hand
+    - clenched_hands
+    - interlocked_fingers
+    - finger_gun
+    - peace_sign
+    - v
+    - salute
+  # Subset of hand_tags that marks a hand-focused composition.
+  hand_focus_bucket_tags:
+    - hand_focus
+    - spread_fingers
+    - open_hand
+    - clenched_hand
+    - clenched_hands
+    - interlocked_fingers
+    - finger_gun
+    - peace_sign
+    - v
+    - salute
+  feet_tags:
+    - feet
+    - foot
+    - barefoot
+    - boots
+    - shoes
+    - sneakers
+    - sandals
+  arm_tags:
+    - arms
+    - arm
+    - arms_up
+    - outstretched_arm
+    - arms_behind_back
+    - crossed_arms
+    - arm_up
+    - arm_support
+  clothing_tags:
+    - boots
+    - shoes
+    - dress
+    - coat
+    - armor
+    - school_uniform
+    - sportswear
+    - jacket
+    - skirt
+  scene_tags:
+    - simple_background
+    - city_street
+    - forest
+    - studio_background
+    - stage
+    - street
+    - indoors
+    - outdoors
+  action_bucket_tags:
+    - dancing
+    - fighting_stance
+    - dynamic_pose
+    - action_pose
+    - jumping
+    - kicking
+    - high_kick
+    - squatting
+    - crouching
+    - all_fours
+    - bent_over
+    - standing_on_one_leg
+    - stretching
+    - holding_weapon
+    - holding_sword
+    - holding_gun
+    - dual_wielding
+  # Sampling weight per anatomy bucket (tunable knob).
+  default_bucket_weights:
+    hands_visible: 0.14
+    hand_focus: 0.10
+    action_pose: 0.16
+    running: 0.08
+    walking: 0.10
+    kneeling: 0.10
+    standing_front: 0.07
+    feet_visible: 0.07
+    sitting_full_body: 0.07
+    arms_visible: 0.08
+    standing_side: 0.03
+  # Appearance/clothing/view anchors appended to prompts.
+  prompt_anchor_tags:
+    - long_hair
+    - short_hair
+    - medium_hair
+    - very_long_hair
+    - twintails
+    - ponytail
+    - braid
+    - wavy_hair
+    - black_hair
+    - brown_hair
+    - blonde_hair
+    - red_hair
+    - blue_hair
+    - pink_hair
+    - white_hair
+    - silver_hair
+    - green_hair
+    - purple_hair
+    - black_eyes
+    - brown_eyes
+    - blue_eyes
+    - green_eyes
+    - red_eyes
+    - purple_eyes
+    - yellow_eyes
+    - shirt
+    - blouse
+    - sweater
+    - hoodie
+    - jacket
+    - coat
+    - dress
+    - skirt
+    - pants
+    - shorts
+    - school_uniform
+    - sportswear
+    - armor
+    - gloves
+    - hat
+    - cap
+    - hood
+    - scarf
+    - cape
+    - ribbon
+    - bow
+    - belt
+    - backpack
+    - bag
+    - sword
+    - staff
+    - umbrella
+    - microphone
+    - musical_instrument
+    - looking_at_viewer
+    - looking_back
+    - side_view
+    - profile
+    - from_side
+    - from_behind
+    - smile
+    - serious
+    - open_mouth
+    - closed_mouth
+  # Hard-negative anatomy failure labels.
+  failure_labels:
+    - bad_hands
+    - missing_hand
+    - missing_feet
+    - extra_fingers
+    - missing_fingers
+    - melted_fingers
+    - extra_limbs
+    - disconnected_arm
+    - impossible_leg_bend
+    - implausible_action_pose
+    - cropped_full_body
+    - wrong_person_count
+
+safety:
+  # Danbooru ratings to sample for the safety set (tunable knob).
+  target_ratings:
+    - questionable
+    - explicit
+  # Tags that disqualify a candidate outright (minor-adjacent).
+  excluded_tags:
+    - loli
+    - shota
+    - child
+    - toddler
+    - baby
+    - infant
+    - kindergarten
+    - elementary_school_student
+    - middle_school_student
+    - underage
+  # Tags that mark a candidate as carrying safety risk.
+  risk_tags:
+    - ass
+    - ass_focus
+    - areolae
+    - bikini
+    - bottomless
+    - bra
+    - breast_grab
+    - breasts
+    - cameltoe
+    - cleavage
+    - condom
+    - cum
+    - cum_on_body
+    - cum_on_breasts
+    - cum_on_face
+    - cum_on_tongue
+    - cumdrip
+    - cunnilingus
+    - erection
+    - exhibitionism
+    - fellatio
+    - female_masturbation
+    - fingering
+    - fondling
+    - genitals
+    - grabbing_own_breast
+    - handjob
+    - hetero
+    - imminent_sex
+    - intercrural_sex
+    - lingerie
+    - masturbation
+    - nakadashi
+    - nipple_slip
+    - nipples
+    - nude
+    - open_clothes
+    - oral
+    - paizuri
+    - panties
+    - pantyshot
+    - penis
+    - pussy
+    - pussy_juice
+    - sex
+    - sex_from_behind
+    - spread_legs
+    - straddling
+    - swimsuit
+    - testicles
+    - thigh_gap
+    - topless
+    - undressing
+    - underwear
+    - vaginal
+    - vaginal_sex

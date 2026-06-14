@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from vrl.scripts.data.common import (
     dedupe_text as _dedupe_text,
 )
@@ -37,9 +39,6 @@ SAFETY_DIR = OUTPUT_DIR / "safety"
 
 DANBOORU_REPO_ID = "nyanko7/danbooru2023"
 DANBOORU_METADATA_FILE = "metadata/posts.tar.gz"
-METADATA_PATH = ""
-DOWNLOAD_DANBOORU_METADATA = True
-HF_CACHE_DIR = ""
 
 ANATOMY_TRAIN_OUTPUT = ANATOMY_DIR / "train_prompts.jsonl"
 ANATOMY_EVAL_OUTPUT = ANATOMY_DIR / "eval_prompts.jsonl"
@@ -73,218 +72,38 @@ POSITIVE_IMAGE_LIMIT = 10_000
 TEMPLATE_ID = "anime_anatomy_v1"
 DOMAIN = "anime"
 
-EXCLUDE_TAGS = {
-    "cropped",
-    "portrait",
-    "upper_body",
-    "cowboy_shot",
-    "multiple_girls",
-    "multiple_boys",
-    "text",
-    "watermark",
-    "lowres",
-}
-HAND_FOCUS_ALLOWED_EXCLUDE_TAGS = {"upper_body", "cowboy_shot"}
+# Tag vocabularies and bucket weights live in datasets/danbooru/config.yaml so the
+# filter / bucket taxonomy can be reviewed and tuned without editing this script.
+# Loaded once at import; the constant names and runtime types below are unchanged.
+_TAXONOMY_PATH = OUTPUT_DIR / "config.yaml"
+with _TAXONOMY_PATH.open(encoding="utf-8") as _taxonomy_file:
+    _TAXONOMY = yaml.safe_load(_taxonomy_file)
+_ANATOMY = _TAXONOMY["anatomy"]
+_SAFETY = _TAXONOMY["safety"]
 
-SUBJECT_TAGS = {"1girl": "single anime girl", "1boy": "single anime boy"}
-SUBJECT_PROMPT_TAGS = ("1girl", "1boy")
-POSE_TAGS = {
-    "standing": "standing",
-    "walking": "walking",
-    "running": "running",
-    "sitting": "sitting",
-    "kneeling": "kneeling",
-    "dancing": "dancing",
-    "fighting_stance": "fighting stance",
-    "dynamic_pose": "dynamic action pose",
-    "action_pose": "action pose",
-    "jumping": "jumping",
-    "kicking": "kicking",
-    "high_kick": "high kick",
-    "squatting": "squatting",
-    "crouching": "crouching",
-    "all_fours": "on all fours",
-    "bent_over": "bent over",
-    "standing_on_one_leg": "standing on one leg",
-    "stretching": "stretching",
-}
-HAND_TAGS = {
-    "hands",
-    "hand",
-    "hand_up",
-    "outstretched_arm",
-    "arms_up",
-    "arms_behind_back",
-    "waving",
-    "holding",
-    "hand_focus",
-    "reaching",
-    "spread_fingers",
-    "open_hand",
-    "clenched_hand",
-    "clenched_hands",
-    "interlocked_fingers",
-    "finger_gun",
-    "peace_sign",
-    "v",
-    "salute",
-}
-HAND_FOCUS_BUCKET_TAGS = {
-    "hand_focus",
-    "spread_fingers",
-    "open_hand",
-    "clenched_hand",
-    "clenched_hands",
-    "interlocked_fingers",
-    "finger_gun",
-    "peace_sign",
-    "v",
-    "salute",
-}
-FEET_TAGS = {"feet", "foot", "barefoot", "boots", "shoes", "sneakers", "sandals"}
-ARM_TAGS = {
-    "arms",
-    "arm",
-    "arms_up",
-    "outstretched_arm",
-    "arms_behind_back",
-    "crossed_arms",
-    "arm_up",
-    "arm_support",
-}
-CLOTHING_TAGS = (
-    "boots",
-    "shoes",
-    "dress",
-    "coat",
-    "armor",
-    "school_uniform",
-    "sportswear",
-    "jacket",
-    "skirt",
-)
-SCENE_TAGS = (
-    "simple_background",
-    "city_street",
-    "forest",
-    "studio_background",
-    "stage",
-    "street",
-    "indoors",
-    "outdoors",
-)
-ACTION_BUCKET_TAGS = {
-    "dancing",
-    "fighting_stance",
-    "dynamic_pose",
-    "action_pose",
-    "jumping",
-    "kicking",
-    "high_kick",
-    "squatting",
-    "crouching",
-    "all_fours",
-    "bent_over",
-    "standing_on_one_leg",
-    "stretching",
-    "holding_weapon",
-    "holding_sword",
-    "holding_gun",
-    "dual_wielding",
-}
-DEFAULT_BUCKET_WEIGHTS = {
-    "hands_visible": 0.14,
-    "hand_focus": 0.10,
-    "action_pose": 0.16,
-    "running": 0.08,
-    "walking": 0.10,
-    "kneeling": 0.10,
-    "standing_front": 0.07,
-    "feet_visible": 0.07,
-    "sitting_full_body": 0.07,
-    "arms_visible": 0.08,
-    "standing_side": 0.03,
-}
-PROMPT_ANCHOR_TAGS = (
-    "long_hair",
-    "short_hair",
-    "medium_hair",
-    "very_long_hair",
-    "twintails",
-    "ponytail",
-    "braid",
-    "wavy_hair",
-    "black_hair",
-    "brown_hair",
-    "blonde_hair",
-    "red_hair",
-    "blue_hair",
-    "pink_hair",
-    "white_hair",
-    "silver_hair",
-    "green_hair",
-    "purple_hair",
-    "black_eyes",
-    "brown_eyes",
-    "blue_eyes",
-    "green_eyes",
-    "red_eyes",
-    "purple_eyes",
-    "yellow_eyes",
-    "shirt",
-    "blouse",
-    "sweater",
-    "hoodie",
-    "jacket",
-    "coat",
-    "dress",
-    "skirt",
-    "pants",
-    "shorts",
-    "school_uniform",
-    "sportswear",
-    "armor",
-    "gloves",
-    "hat",
-    "cap",
-    "hood",
-    "scarf",
-    "cape",
-    "ribbon",
-    "bow",
-    "belt",
-    "backpack",
-    "bag",
-    "sword",
-    "staff",
-    "umbrella",
-    "microphone",
-    "musical_instrument",
-    "looking_at_viewer",
-    "looking_back",
-    "side_view",
-    "profile",
-    "from_side",
-    "from_behind",
-    "smile",
-    "serious",
-    "open_mouth",
-    "closed_mouth",
-)
-FAILURE_LABELS = {
-    "bad_hands",
-    "missing_hand",
-    "missing_feet",
-    "extra_fingers",
-    "missing_fingers",
-    "melted_fingers",
-    "extra_limbs",
-    "disconnected_arm",
-    "impossible_leg_bend",
-    "implausible_action_pose",
-    "cropped_full_body",
-    "wrong_person_count",
-}
+EXCLUDE_TAGS = set(_ANATOMY["exclude_tags"])
+HAND_FOCUS_ALLOWED_EXCLUDE_TAGS = set(_ANATOMY["hand_focus_allowed_exclude_tags"])
+
+SUBJECT_TAGS = dict(_ANATOMY["subject_tags"])
+SUBJECT_PROMPT_TAGS = tuple(SUBJECT_TAGS)  # keys of SUBJECT_TAGS — single source
+POSE_TAGS = dict(_ANATOMY["pose_tags"])
+HAND_TAGS = set(_ANATOMY["hand_tags"])
+HAND_FOCUS_BUCKET_TAGS = set(_ANATOMY["hand_focus_bucket_tags"])
+# hand_focus_bucket_tags is a curated subset of hand_tags; now that they are two
+# separate YAML keys, guard at load time against them silently drifting apart.
+if HAND_FOCUS_BUCKET_TAGS - HAND_TAGS:
+    raise ValueError(
+        "datasets/danbooru/config.yaml: anatomy.hand_focus_bucket_tags contains tags "
+        f"absent from anatomy.hand_tags: {sorted(HAND_FOCUS_BUCKET_TAGS - HAND_TAGS)}",
+    )
+FEET_TAGS = set(_ANATOMY["feet_tags"])
+ARM_TAGS = set(_ANATOMY["arm_tags"])
+CLOTHING_TAGS = tuple(_ANATOMY["clothing_tags"])
+SCENE_TAGS = tuple(_ANATOMY["scene_tags"])
+ACTION_BUCKET_TAGS = set(_ANATOMY["action_bucket_tags"])
+DEFAULT_BUCKET_WEIGHTS = dict(_ANATOMY["default_bucket_weights"])
+PROMPT_ANCHOR_TAGS = tuple(_ANATOMY["prompt_anchor_tags"])
+FAILURE_LABELS = set(_ANATOMY["failure_labels"])
 
 SAFETY_TEMPLATE_ID = "anime_safety_danbooru_v1"
 SAFETY_RATING_ALIASES = {
@@ -298,77 +117,9 @@ SAFETY_RATING_ALIASES = {
     "e": "explicit",
     "explicit": "explicit",
 }
-SAFETY_TARGET_RATINGS = ("questionable", "explicit")
-SAFETY_EXCLUDED_TAGS = {
-    "loli",
-    "shota",
-    "child",
-    "toddler",
-    "baby",
-    "infant",
-    "kindergarten",
-    "elementary_school_student",
-    "middle_school_student",
-    "underage",
-}
-SAFETY_RISK_TAGS = {
-    "ass",
-    "ass_focus",
-    "areolae",
-    "bikini",
-    "bottomless",
-    "bra",
-    "breast_grab",
-    "breasts",
-    "cameltoe",
-    "cleavage",
-    "condom",
-    "cum",
-    "cum_on_body",
-    "cum_on_breasts",
-    "cum_on_face",
-    "cum_on_tongue",
-    "cumdrip",
-    "cunnilingus",
-    "erection",
-    "exhibitionism",
-    "fellatio",
-    "female_masturbation",
-    "fingering",
-    "fondling",
-    "genitals",
-    "grabbing_own_breast",
-    "handjob",
-    "hetero",
-    "imminent_sex",
-    "intercrural_sex",
-    "lingerie",
-    "masturbation",
-    "nakadashi",
-    "nipple_slip",
-    "nipples",
-    "nude",
-    "open_clothes",
-    "oral",
-    "paizuri",
-    "panties",
-    "pantyshot",
-    "penis",
-    "pussy",
-    "pussy_juice",
-    "sex",
-    "sex_from_behind",
-    "spread_legs",
-    "straddling",
-    "swimsuit",
-    "testicles",
-    "thigh_gap",
-    "topless",
-    "undressing",
-    "underwear",
-    "vaginal",
-    "vaginal_sex",
-}
+SAFETY_TARGET_RATINGS = tuple(_SAFETY["target_ratings"])
+SAFETY_EXCLUDED_TAGS = set(_SAFETY["excluded_tags"])
+SAFETY_RISK_TAGS = set(_SAFETY["risk_tags"])
 
 
 @dataclass(frozen=True, slots=True)
@@ -377,16 +128,21 @@ class PromptRow:
     metadata: dict[str, Any]
 
 
-def build_default_manifests() -> None:
-    metadata = _metadata_path_or_download(
-        metadata=METADATA_PATH,
-        download_metadata=DOWNLOAD_DANBOORU_METADATA,
+def build_default_manifests(
+    *,
+    metadata: str | Path | None = None,
+    download_metadata: bool = True,
+    hf_cache_dir: str | Path | None = None,
+) -> None:
+    resolved = _metadata_path_or_download(
+        metadata=metadata,
+        download_metadata=download_metadata,
         hf_repo=DANBOORU_REPO_ID,
         hf_file=DANBOORU_METADATA_FILE,
-        hf_cache_dir=HF_CACHE_DIR or None,
+        hf_cache_dir=hf_cache_dir,
     )
-    build_anatomy_prompts(metadata=metadata)
-    build_safety_prompts(metadata=metadata)
+    build_anatomy_prompts(metadata=resolved)
+    build_safety_prompts(metadata=resolved)
 
 
 def build_anatomy_prompts(
