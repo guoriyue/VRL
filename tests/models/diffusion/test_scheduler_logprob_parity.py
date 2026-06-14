@@ -1,13 +1,31 @@
 """Per-family scheduler log-prob parity (sample -> replay, ratio == 1).
 
 The predict2 parity bug lived in one family's REAL scheduler sigma table (EDM
-domain, sigma_max=80), not in the shared SDE math — synthetic-table tests in
-tests/math/test_diffusion_flow_matching.py cannot catch the next family-specific
-regression. Each case here drives ``sde_step_with_logprob`` with the family's
-actual scheduler: pipeline-owned schedulers load their checkpoint config from
-the local HF cache (skipped when the cache is absent, e.g. clean CI); anima
-constructs its scheduler explicitly in code, mirroring
-vrl/models/diffusion/cosmos/anima/runtime.py.
+domain, sigma_max=80), not in the shared SDE math. Each case here drives
+``sde_step_with_logprob`` with the family's actual scheduler: pipeline-owned
+schedulers load their checkpoint config from the local HF cache (skipped when
+the cache is absent, e.g. clean CI); anima constructs its scheduler explicitly
+in code, mirroring vrl/models/diffusion/cosmos/anima/runtime.py.
+
+Coverage split (what runs where):
+- The EDM->flow CONVERSION BRANCH itself (vrl/math/diffusion/flow_matching.py)
+  is already covered cache-free in EVERY CI run by
+  tests/math/test_diffusion_flow_matching.py, which feeds a synthetic EDM-domain
+  table (sigma_max > 1) through ``sde_step_with_logprob`` and pins the same
+  ratio==1 / std_dev / prev_sample_mean invariants. So clean CI never loses the
+  conversion-math coverage even though the cache-loaded families below skip.
+- The REAL per-family sigma TABLES (the actual predict2 EDM sigma_max=80 table,
+  etc.) only execute when their HF checkpoint config is cached. On a clean CI
+  runner with no cache those families skip, so the real tables currently run
+  only under the gated e2e suite (tests/.../test_real_checkpoint_rl.py). The
+  anima case is the lone family that runs cache-free here (in-code scheduler).
+
+TODO(option-a): publish/pin a tiny scheduler-only HF repo per family
+(scheduler_config.json is a few KB, not weights) and load it via ``from_config``
+at a pinned revision instead of ``local_files_only`` cache lookup, so the real
+per-family sigma tables run on every CI runner without the gated e2e suite.
+Keep the ratio==1 invariant + ``sigma.max() > 1`` magnitude pin; do NOT assert
+literal sigma values (config-as-declaration).
 
 Pinned invariant per family x sde_type x step: replaying the recorded
 prev_sample under unchanged inputs reproduces the collection log-prob exactly,
@@ -41,6 +59,10 @@ def _hf_scheduler(repo: str, revision: str | None = None):
             local_files_only=True,
         )
     except Exception as exc:  # cache miss / offline CI
+        # Silent no-op on clean CI: the cache-loaded families skip here. The
+        # conversion-math itself stays covered cache-free by
+        # tests/math/test_diffusion_flow_matching.py; see module docstring +
+        # the TODO(option-a) tiny-scheduler-repo plan to run the real tables.
         pytest.skip(f"scheduler config for {repo} not in local HF cache: {exc}")
     scheduler_cls = getattr(diffusers, config["_class_name"])
     return scheduler_cls.from_config(config)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from typing import Any
 
@@ -9,6 +10,7 @@ import pytest
 import torch
 import torch.nn as nn
 
+from tests.rollouts.orchestration.continuous._helpers import _wait_until
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.orchestration import (
     ContinuousRolloutSchedule,
@@ -276,8 +278,6 @@ class _GatedScoreCollector(_Collector):
 
     def __init__(self, runtime: _Runtime) -> None:
         super().__init__(runtime)
-        import asyncio
-
         self.allow_score = asyncio.Event()
         self.allow_score.set()
 
@@ -291,8 +291,6 @@ async def test_weight_sync_waits_for_inflight_reward() -> None:
     # after_train_step must drain in-flight generation+reward before pushing
     # weights; syncing earlier would mix two policies inside one request.
     """Checks weight sync waits for in-flight reward scoring."""
-    import asyncio
-
     runtime = _Runtime()
     collector = _GatedScoreCollector(runtime)
     syncer = _Syncer(runtime)
@@ -304,10 +302,7 @@ async def test_weight_sync_waits_for_inflight_reward() -> None:
         # Gate scoring, then wait for the producer's next in-flight group to
         # reach (and block inside) the reward phase.
         collector.allow_score.clear()
-        deadline = asyncio.get_running_loop().time() + 5.0
-        while schedule.producer.state.inflight_count == 0:
-            assert asyncio.get_running_loop().time() < deadline
-            await asyncio.sleep(0.001)
+        await _wait_until(lambda: schedule.producer.state.inflight_count > 0)
 
         sync_calls_before = len(syncer.calls)
         barrier = asyncio.create_task(schedule.after_train_step())

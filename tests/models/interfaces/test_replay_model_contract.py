@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from tests.models.interfaces import registered_family_model_classes
 from vrl.models.interfaces import (
     ReplayModel,
     ReplayRequest,
@@ -14,6 +15,10 @@ from vrl.models.interfaces import (
     ReplaySegmentResult,
     require_replay_model,
 )
+
+# ReplayModel's required surface. Mirrors ``require_replay_model`` so a method
+# rename in the protocol guard surfaces here too.
+_REPLAY_MODEL_METHODS = ("replay_forward", "disable_adapter")
 
 
 class _MinimalReplayModel:
@@ -108,6 +113,23 @@ def test_replay_request_requires_non_empty_segment_names() -> None:
 def test_replay_model_protocol_accepts_minimal_shape() -> None:
     """Checks replay model protocol accepts minimal shape."""
     assert isinstance(_MinimalReplayModel(), ReplayModel)
+
+
+@pytest.mark.parametrize(
+    "family",
+    sorted(registered_family_model_classes()),
+)
+def test_registered_family_replay_model_satisfies_contract(family: str) -> None:
+    """Every registered family's replay-model class satisfies ReplayModel.
+
+    Runs over the family registry (not a hand-written list) so a newly
+    registered family cannot silently skip the contract. The check is
+    class-level — ``callable(getattr(cls, m))`` like ``_missing_callables`` —
+    because instantiating a real family model needs weights/GPU.
+    """
+    _runtime_cls, replay_cls = registered_family_model_classes()[family]
+    missing = [m for m in _REPLAY_MODEL_METHODS if not callable(getattr(replay_cls, m, None))]
+    assert not missing, f"{family}: {replay_cls.__name__} missing ReplayModel methods {missing}"
 
 
 def test_require_replay_model_reports_missing_methods() -> None:

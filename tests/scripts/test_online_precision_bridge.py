@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 import torch
 from omegaconf import OmegaConf
 
+from tests.config.test_load_all_experiments import _experiment_names
 from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
 from vrl.config.precision import resolve_precision_policy
@@ -17,11 +20,14 @@ from vrl.scripts.common.online import (
 )
 from vrl.trainers.precision import torch_dtype_for_trainer_precision
 
+# Derive every online recipe from the experiment glob (the single source of
+# truth in test_load_all_experiments) rather than hand-maintaining a subset —
+# the old hand list had drifted and only exercised four recipes. "online" ==
+# every experiment whose final path component is not an `offline_*` recipe.
 _RECIPES = [
-    "diffusion/sd3_5/online_grpo_ocr",          # bf16
-    "diffusion/sd3_5/online_grpo_geneval",      # bf16
-    "diffusion/wan_2_1/online_grpo_ocr",        # bf16
-    "ar/janus_pro/online_grpo_ocr",             # bf16
+    name
+    for name in _experiment_names()
+    if not Path(name).name.startswith("offline_")
 ]
 
 

@@ -11,13 +11,13 @@ These pin the behaviors the trainer relies on:
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 import pytest
 import torch
 
+from tests.rollouts.orchestration.continuous._helpers import _wait_until
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.orchestration.continuous.consumer import ContinuousRolloutConsumer
 from vrl.rollouts.orchestration.continuous.producer import ContinuousRolloutProducer
@@ -101,15 +101,6 @@ def _producer(
         max_inflight_groups=1,
         poll_interval_s=0.001,
     )
-
-
-async def _wait_until(condition: Callable[[], bool], timeout_s: float = 5.0) -> None:
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout_s
-    while not condition():
-        if loop.time() >= deadline:
-            raise AssertionError("condition not reached before timeout")
-        await asyncio.sleep(0.001)
 
 
 # ------------------------------------------------------------- ready queue

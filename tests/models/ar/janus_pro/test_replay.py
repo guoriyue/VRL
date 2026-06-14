@@ -7,10 +7,10 @@ from types import SimpleNamespace
 import torch
 import torch.nn as nn
 
+from tests.models.ar.fixtures import build_stub_janus_model
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.models.ar.janus_pro.model import (
     JANUS_IMAGE_VOCAB_SIZE,
-    JanusProConfig,
     JanusProModel,
 )
 from vrl.models.interfaces import ReplayResult
@@ -57,32 +57,13 @@ class _StubLM(nn.Module):
         )
 
 
-class _StubVQ(nn.Module):
-    def decode_code(self, ids: torch.Tensor, shape: list[int]) -> torch.Tensor:
-        B, _, h, w = shape
-        return torch.zeros(B, 3, h * 16, w * 16)
-
-
-class _StubMMGPT(nn.Module):
-    def __init__(self) -> None:
-        super().__init__()
-        self.language_model = _StubLM()
-        self.gen_vision_model = _StubVQ()
-        self.gen_head = nn.Linear(HIDDEN, JANUS_IMAGE_VOCAB_SIZE)
-        self.gen_aligner = nn.Identity()
-        self.gen_embed = nn.Embedding(JANUS_IMAGE_VOCAB_SIZE, HIDDEN)
-
-    def prepare_gen_img_embeds(self, ids: torch.Tensor) -> torch.Tensor:
-        return self.gen_embed(ids)
-
-
 def _build_stub_model(*, unfreeze_gen_head: bool = False) -> JanusProModel:
-    cfg = JanusProConfig(use_lora=False)
-    model = JanusProModel(config=cfg, mmgpt=_StubMMGPT(), processor=object())
-    if unfreeze_gen_head:
-        for p in model.mmgpt.gen_head.parameters():
-            p.requires_grad_(True)
-    return model
+    return build_stub_janus_model(
+        language_model=_StubLM(),
+        hidden_size=HIDDEN,
+        image_vocab_size=JANUS_IMAGE_VOCAB_SIZE,
+        unfreeze_gen_head=unfreeze_gen_head,
+    )
 
 
 def _request() -> GenerationRequest:

@@ -50,6 +50,13 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "gpu" in item.keywords:
                 item.add_marker(skip_gpu)
+    # NOTE: the `distributed` and `optional` gating branches below are reserved
+    # vLLM-parity lanes (commit "vLLM-style marker gating") with no current
+    # members — `@pytest.mark.distributed`/`@pytest.mark.optional` is unused
+    # repo-wide. Keep them: they preserve structural parity with vLLM's marker
+    # scaffold and are the opt-in points for future real multi-node/optional
+    # suites. Do not delete as dead code.
+    #
     # Distributed tests need an explicit lane; slow local Ray tests should use
     # slow_test instead of distributed.
     if not (config.getoption("--distributed") or ci_envs.VRL_RUN_DISTRIBUTED_TESTS):

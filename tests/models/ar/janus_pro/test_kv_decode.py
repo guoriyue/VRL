@@ -8,11 +8,11 @@ from typing import Any
 import torch
 import torch.nn as nn
 
+from tests.models.ar.fixtures import RecordingHead, build_stub_janus_model
 from vrl.generation.ar.decode_loop import ARDecodeLoop
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
 from vrl.models.ar.janus_pro.model import (
     JANUS_IMAGE_VOCAB_SIZE,
-    JanusProConfig,
     JanusProModel,
 )
 from vrl.models.ar.janus_pro.runner import JanusProARModelRunner
@@ -67,47 +67,14 @@ class _RecordingLM(nn.Module):
         )
 
 
-class _RecordingHead(nn.Module):
-    def __init__(self) -> None:
-        super().__init__()
-        self.inputs: list[torch.Tensor] = []
-
-    def forward(self, hidden: torch.Tensor) -> torch.Tensor:
-        self.inputs.append(hidden.detach().clone())
-        logits = torch.full(
-            (*hidden.shape[:-1], JANUS_IMAGE_VOCAB_SIZE),
-            -20.0,
-            device=hidden.device,
-        )
-        logits[..., 0] = hidden[..., 0]
-        return logits
-
-
-class _StubVQ(nn.Module):
-    def decode_code(self, ids: torch.Tensor, shape: list[int]) -> torch.Tensor:
-        batch_size, _, height, width = shape
-        return torch.zeros(batch_size, 3, height * 16, width * 16)
-
-
-class _StubMMGPT(nn.Module):
-    def __init__(self) -> None:
-        super().__init__()
-        self.language_model = _RecordingLM()
-        self.gen_head = _RecordingHead()
-        self.gen_vision_model = _StubVQ()
-        self.gen_aligner = nn.Identity()
-        self.gen_embed = nn.Embedding(JANUS_IMAGE_VOCAB_SIZE, HIDDEN)
-
-    def prepare_gen_img_embeds(self, ids: torch.Tensor) -> torch.Tensor:
-        return self.gen_embed(ids)
-
-
 def _model() -> JanusProModel:
-    config = JanusProConfig(
-        use_lora=False,
+    return build_stub_janus_model(
+        language_model=_RecordingLM(),
+        hidden_size=HIDDEN,
+        image_vocab_size=JANUS_IMAGE_VOCAB_SIZE,
+        gen_head=RecordingHead(image_vocab_size=JANUS_IMAGE_VOCAB_SIZE),
         image_token_num=2,
     )
-    return JanusProModel(config=config, mmgpt=_StubMMGPT(), processor=object())
 
 
 def _prompt_tensors() -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:

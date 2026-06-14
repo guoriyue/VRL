@@ -77,6 +77,38 @@ def build_tiny_cosmos_transformer(*, seed: int = 0) -> Any:
     )
 
 
+def build_tiny_anima_transformer(*, seed: int = 0) -> Any:
+    """Tiny real ``CosmosTransformer3DModel`` with Anima's channel geometry.
+
+    Anima reuses the Cosmos Predict2 Text2Image backbone but, unlike predict2/2.5,
+    feeds the latents to the transformer DIRECTLY (no runner-side condition-mask
+    channel expansion — see ``AnimaModel.forward_step``), so ``in_channels`` equals
+    ``out_channels`` (the bare latent channels) rather than latent + 1. It still
+    sets ``concat_padding_mask=True`` (the real Anima config does), so the model
+    appends a resized padding-mask channel internally; the wrapper therefore must
+    pass a ``[1, 1, H, W]`` ``padding_mask``. This asymmetry — in==out at the
+    wrapper boundary, with the mask channel added inside the model — is exactly
+    what a hand-written ``torch.ones_like(hidden_states)`` fake cannot exercise.
+    """
+
+    from diffusers import CosmosTransformer3DModel
+
+    torch.manual_seed(seed)
+    return CosmosTransformer3DModel(
+        in_channels=TINY_COSMOS_LATENT_SHAPE[1],
+        out_channels=TINY_COSMOS_LATENT_SHAPE[1],
+        num_attention_heads=2,
+        attention_head_dim=16,
+        num_layers=1,
+        mlp_ratio=2.0,
+        text_embed_dim=TINY_COSMOS_TEXT_DIM,
+        adaln_lora_dim=8,
+        max_size=(4, 16, 16),
+        patch_size=(1, 2, 2),
+        concat_padding_mask=True,
+    )
+
+
 TINY_SD3_LATENT_SHAPE = (2, 4, 8, 8)
 TINY_SD3_JOINT_DIM = 16
 TINY_SD3_POOLED_DIM = 16

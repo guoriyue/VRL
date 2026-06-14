@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import torch
 
+from tests.config.test_load_all_experiments import _experiment_names
 from vrl.config.loading import load_config
 from vrl.config.precision import (
     PrecisionPolicy,
@@ -132,24 +134,20 @@ def test_legacy_actor_precision_keys_warn_via_schema(caplog):
 
 
 # Every online GRPO recipe must keep rollout/replay forward precision aligned.
-_ONLINE_RECIPES = [
-    "ar/janus_pro/online_grpo_ocr",
-    "ar/janus_pro/online_r1_grpo_ocr",
-    "ar/nextstep_1/online_grpo_ocr",
-    "diffusion/anima_preview3/online_grpo_aesthetic",
-    "diffusion/anima_preview3/online_grpo_aesthetic_nsfw_safety",
-    "diffusion/cosmos_predict2_5/online_nft_kling_video_reward",
-    "diffusion/cosmos_predict2/online_grpo_kling_video_reward",
-    "diffusion/cosmos_predict2/online_grpo_v2w_reference",
-    "diffusion/sd3_5/online_grpo_geneval",
-    "diffusion/sd3_5/online_grpo_ocr",
-    "diffusion/sd3_5/online_grpo_ocr_crossnode_debug",
-    "diffusion/sd3_5/online_grpo_pickscore",
-    "diffusion/wan_2_1/online_grpo_kling_video_reward",
-    "diffusion/wan_2_1/online_grpo_ocr",
-    "diffusion/wan_2_1/online_grpo_physics",
-    "diffusion/wan_2_1/online_grpo_physics_i2v",
-]
+# Derive the list from the experiment glob (the single source of truth in
+# test_load_all_experiments) instead of hand-maintaining it — a hand list
+# silently drops new recipes (it had already drifted, missing
+# cosmos_predict2_5/online_nft_motion_physics). "online" == every experiment
+# whose final path component is not an `offline_*` recipe.
+def _online_recipes() -> list[str]:
+    return [
+        name
+        for name in _experiment_names()
+        if not Path(name).name.startswith("offline_")
+    ]
+
+
+_ONLINE_RECIPES = _online_recipes()
 
 
 @pytest.mark.parametrize("experiment", _ONLINE_RECIPES)

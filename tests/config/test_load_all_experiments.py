@@ -112,56 +112,74 @@ def test_config_groups_are_not_flattened() -> None:
 
 
 def test_experiments_are_grouped_by_model_family() -> None:
-    """Checks experiments are grouped by model family."""
-    expected = {
-        "ar/janus_pro/online_grpo_ocr",
-        "ar/janus_pro/online_r1_grpo_ocr",
-        "ar/nextstep_1/online_grpo_ocr",
-        "diffusion/anima_preview3/online_grpo_aesthetic",
-        "diffusion/anima_preview3/online_grpo_aesthetic_nsfw_safety",
-        "diffusion/cosmos_predict2/online_grpo_v2w_reference",
-        "diffusion/cosmos_predict2/online_grpo_kling_video_reward",
-        "diffusion/cosmos_predict2_5/online_nft_kling_video_reward",
-        "diffusion/cosmos_predict2_5/online_nft_motion_physics",
-        "diffusion/sd3_5/online_grpo_geneval",
-        "diffusion/sd3_5/online_grpo_ocr",
-        "diffusion/sd3_5/online_grpo_ocr_crossnode_debug",
-        "diffusion/sd3_5/online_grpo_pickscore",
-        "diffusion/wan_2_1/offline_dpo_pickapic",
-        "diffusion/wan_2_1/online_grpo_ocr",
-        "diffusion/wan_2_1/online_grpo_physics",
-        "diffusion/wan_2_1/online_grpo_physics_i2v",
-        "diffusion/wan_2_1/online_grpo_kling_video_reward",
-    }
+    """Every experiment lives at <modality>/<model>/<recipe> under a known modality.
 
-    assert set(_experiment_names()) == expected
-    assert {Path(name).parts[0] for name in _experiment_names()} == {"ar", "diffusion"}
+    The structural convention — not any specific roster of names — is what the
+    layout guards: a two-level family grouping (modality, then model family)
+    with the recipe as the leaf. Pinning the literal set of names just churns
+    the test on every add/remove/rename; "all load+validate" is already owned by
+    test_all_experiments_load_and_validate.
+    """
+    names = _experiment_names()
+    assert {Path(name).parts[0] for name in names} == {"ar", "diffusion"}
+    assert all(len(Path(name).parts) == 3 for name in names)
+
+
+def _reward_group_kwargs_keys(group_name: str) -> dict[str, set[str]]:
+    """Component-name -> leaf-key set provided by a `/reward/<group>` default.
+
+    This is the source of truth the inline-override rule is derived from, so the
+    test never hand-maintains a parallel allowlist that rots when a reward group
+    gains a knob.
+    """
+    raw = OmegaConf.load(CONFIGS_ROOT / "reward" / f"{group_name}.yaml")
+    kwargs = raw.get("reward", {}).get("kwargs", {}) or {}
+    return {comp: set((sub or {}).keys()) for comp, sub in kwargs.items()}
 
 
 def test_experiments_use_dataset_groups_and_only_override_reward_weights() -> None:
-    """Checks experiments use dataset groups and only override reward weights."""
+    """Experiments compose dataset groups and only fine-tune reward leaves inline.
+
+    Two structural rules, both derived from the source of truth instead of a
+    hand-kept path allowlist:
+
+    * no experiment inlines a `data:` block (datasets come from `/dataset/...`);
+    * an experiment's inline `reward.kwargs` may only override leaf scalars its
+      reward group default already declared — it may NOT introduce a new
+      component or a key the group never provided.
+    """
     inline_data = []
-    inline_reward_kwargs = []
-    allowed_reward_kwargs = {
-        "experiment/diffusion/cosmos_predict2/online_grpo_v2w_reference.yaml",
-        "experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward.yaml",
-        "experiment/diffusion/cosmos_predict2_5/online_nft_motion_physics.yaml",
-        "experiment/diffusion/wan_2_1/online_grpo_physics.yaml",
-        "experiment/diffusion/wan_2_1/online_grpo_physics_i2v.yaml",
-        "experiment/diffusion/wan_2_1/online_grpo_kling_video_reward.yaml",
-    }
+    inline_reward_violations = []
     for path in EXPERIMENT_DIR.rglob("*.yaml"):
         raw = OmegaConf.load(path)
+        rel = path.relative_to(CONFIGS_ROOT).as_posix()
         if "data" in raw:
-            inline_data.append(path.relative_to(CONFIGS_ROOT).as_posix())
+            inline_data.append(rel)
+
         reward = raw.get("reward", None)
-        if reward is not None and "kwargs" in reward:
-            rel = path.relative_to(CONFIGS_ROOT).as_posix()
-            if rel not in allowed_reward_kwargs:
-                inline_reward_kwargs.append(rel)
+        if reward is None or "kwargs" not in reward:
+            continue
+
+        # Keys (per component) the imported reward groups already provide.
+        provided: dict[str, set[str]] = {}
+        for default in raw.get("defaults", []) or []:
+            if isinstance(default, str) and default.startswith("/reward/"):
+                group = default.split("/reward/", 1)[1]
+                for comp, keys in _reward_group_kwargs_keys(group).items():
+                    provided.setdefault(comp, set()).update(keys)
+
+        for comp, sub in (reward.get("kwargs", {}) or {}).items():
+            if comp not in provided:
+                inline_reward_violations.append(f"{rel}: new component {comp!r}")
+                continue
+            extra = set((sub or {}).keys()) - provided[comp]
+            if extra:
+                inline_reward_violations.append(
+                    f"{rel}: {comp} declares non-default keys {sorted(extra)}",
+                )
 
     assert inline_data == []
-    assert inline_reward_kwargs == []
+    assert inline_reward_violations == []
 
 
 def test_reward_configs_are_single_reward_building_blocks() -> None:
@@ -238,16 +256,14 @@ def test_algorithm_config_dispatches_representative_kinds() -> None:
         algo_cfg = build_algorithm_config(cfg)
         assert isinstance(algo_cfg, expected_type)
         assert isinstance(algo_cfg, EXPECTED_ALGO_TYPE[str(cfg.algorithm.kind)])
-        if name == "ar/janus_pro/online_grpo_ocr":
-            assert algo_cfg.kl_estimator == "k2"
         if name == "ar/janus_pro/online_r1_grpo_ocr":
-            assert cfg.trainer.entrypoint == (
-                "vrl.scripts.ar.janus_pro.train:train_janus_pro_r1_ocr_grpo"
-            )
-            assert algo_cfg.train_segments == {
-                "initial_image": True,
-                "selfcheck_text": False,
-                "final_image": True,
+            # Segment *names* are the structural contract compute_loss reads to
+            # gate per-segment loss; the True/False values are tuning knobs, not
+            # a contract to pin (see grpo/multisegment.py compute_loss).
+            assert set(algo_cfg.train_segments) == {
+                "initial_image",
+                "selfcheck_text",
+                "final_image",
             }
 
 

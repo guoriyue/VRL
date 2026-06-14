@@ -10,6 +10,7 @@ import pytest
 import torch
 import torch.nn as nn
 
+from tests.models.interfaces import registered_family_model_classes
 from vrl.models.diffusion import DiffusionModelBase
 from vrl.models.interfaces import (
     ReplayRequest,
@@ -19,6 +20,10 @@ from vrl.models.interfaces import (
     RuntimeModel,
     require_runtime_model,
 )
+
+# RuntimeModel's required surface. Mirrors ``require_runtime_model`` so a method
+# rename in the protocol guard surfaces here too.
+_RUNTIME_MODEL_METHODS = ("replay_forward", "disable_adapter", "load_trainable_state")
 
 
 class _MinimalRuntimeModel:
@@ -126,6 +131,23 @@ class _DiffusionModelBaseStub(DiffusionModelBase):
 def test_runtime_model_protocol_accepts_minimal_shape() -> None:
     """Checks runtime model protocol accepts minimal shape."""
     assert isinstance(_MinimalRuntimeModel(), RuntimeModel)
+
+
+@pytest.mark.parametrize(
+    "family",
+    sorted(registered_family_model_classes()),
+)
+def test_registered_family_runtime_model_satisfies_contract(family: str) -> None:
+    """Every registered family's runtime-model class satisfies RuntimeModel.
+
+    Runs over the family registry (not a hand-written list) so a newly
+    registered family cannot silently skip the contract. The check is
+    class-level — ``callable(getattr(cls, m))`` like ``_missing_callables`` —
+    because instantiating a real family model needs weights/GPU.
+    """
+    runtime_cls, _replay_cls = registered_family_model_classes()[family]
+    missing = [m for m in _RUNTIME_MODEL_METHODS if not callable(getattr(runtime_cls, m, None))]
+    assert not missing, f"{family}: {runtime_cls.__name__} missing RuntimeModel methods {missing}"
 
 
 def test_require_runtime_model_reports_missing_state_loader() -> None:

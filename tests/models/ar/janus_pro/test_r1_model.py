@@ -7,9 +7,9 @@ from types import SimpleNamespace
 import torch
 import torch.nn as nn
 
+from tests.models.ar.fixtures import StubVQ, build_stub_janus_model
 from vrl.generation import GenerationRequest, GenerationSampleRow, build_sample_rows
 from vrl.models.ar.janus_pro.model import (
-    JanusProConfig,
     JanusProModel,
 )
 from vrl.models.ar.janus_pro.runtime import JanusProR1ChunkExecutor
@@ -91,39 +91,17 @@ class _LM(nn.Module):
         )
 
 
-class _VQ(nn.Module):
-    def __init__(self) -> None:
-        super().__init__()
-        self.quantize = nn.Module()
-        self.quantize.embedding = nn.Embedding(IMAGE_VOCAB, 4)
-
-    def decode_code(self, ids: torch.Tensor, shape: list[int]) -> torch.Tensor:
-        batch, _, height, width = shape
-        return torch.zeros(batch, 3, height * 16, width * 16)
-
-
-class _MMGPT(nn.Module):
-    def __init__(self) -> None:
-        super().__init__()
-        self.language_model = _LM()
-        self.gen_vision_model = _VQ()
-        self.gen_head = nn.Linear(HIDDEN, IMAGE_VOCAB)
-        self.gen_embed = nn.Embedding(IMAGE_VOCAB, HIDDEN)
-
-    def prepare_gen_img_embeds(self, ids: torch.Tensor) -> torch.Tensor:
-        return self.gen_embed(ids.clamp_min(0) % IMAGE_VOCAB)
-
-
 def _model() -> JanusProModel:
-    return JanusProModel(
-        JanusProConfig(
-            use_lora=False,
-            device="cpu",
-            image_token_num=4,
-            r1_refine_mode="selfcheck",
-        ),
-        mmgpt=_MMGPT(),
+    return build_stub_janus_model(
+        language_model=_LM(),
+        hidden_size=HIDDEN,
+        image_vocab_size=IMAGE_VOCAB,
+        gen_vision_model=StubVQ(vocab_size=IMAGE_VOCAB, latent_channels=4),
+        embed_ids="clamp",
         processor=_Processor(),
+        device="cpu",
+        image_token_num=4,
+        r1_refine_mode="selfcheck",
     )
 
 
