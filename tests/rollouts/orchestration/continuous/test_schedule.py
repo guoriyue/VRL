@@ -242,6 +242,93 @@ async def test_persistent_producer_failure_fails_fast_with_root_cause() -> None:
         await schedule.producer.stop()
 
 
+class _RewardFailingCollector(_Collector):
+    """Generation succeeds; reward scoring always fails."""
+
+    async def score_rollouts(self, pendings: Any) -> list[RolloutBatch]:
+        raise RuntimeError("reward model exploded")
+
+
+@pytest.mark.asyncio
+async def test_reward_failure_fails_fast_and_never_reaches_queue() -> None:
+    # Reward scoring (not generation) fails persistently: the consumer must
+    # surface that root cause and the ready queue must stay empty.
+    """Checks reward failure fails fast and never reaches queue."""
+    runtime = _Runtime()
+    collector = _RewardFailingCollector(runtime)
+    syncer = _Syncer(runtime)
+    schedule = _build(
+        _continuous_config(wait_timeout_s=30.0, fail_fast_errors=2),
+        collector,
+        syncer,
+    )
+
+    try:
+        with pytest.raises(RuntimeError, match="reward model exploded"):
+            await schedule.next_iteration(["p0", "p1"], group_size=2)
+        assert schedule.queue.size() == 0
+    finally:
+        await schedule.producer.stop()
+
+
+class _GatedScoreCollector(_Collector):
+    """Reward scoring blocks until the test opens the gate."""
+
+    def __init__(self, runtime: _Runtime) -> None:
+        super().__init__(runtime)
+        import asyncio
+
+        self.allow_score = asyncio.Event()
+        self.allow_score.set()
+
+    async def score_rollouts(self, pendings: Any) -> list[RolloutBatch]:
+        await self.allow_score.wait()
+        return await super().score_rollouts(pendings)
+
+
+@pytest.mark.asyncio
+async def test_weight_sync_waits_for_inflight_reward() -> None:
+    # after_train_step must drain in-flight generation+reward before pushing
+    # weights; syncing earlier would mix two policies inside one request.
+    """Checks weight sync waits for in-flight reward scoring."""
+    import asyncio
+
+    runtime = _Runtime()
+    collector = _GatedScoreCollector(runtime)
+    syncer = _Syncer(runtime)
+    schedule = _build(_continuous_config(), collector, syncer)
+
+    try:
+        await schedule.next_iteration(["p0", "p1"], group_size=2)
+
+        # Gate scoring, then wait for the producer's next in-flight group to
+        # reach (and block inside) the reward phase.
+        collector.allow_score.clear()
+        deadline = asyncio.get_running_loop().time() + 5.0
+        while schedule.producer.state.inflight_count == 0:
+            assert asyncio.get_running_loop().time() < deadline
+            await asyncio.sleep(0.001)
+
+        sync_calls_before = len(syncer.calls)
+        barrier = asyncio.create_task(schedule.after_train_step())
+        await asyncio.sleep(0.05)
+        # Reward still in flight: admission paused, sync not yet performed.
+        assert schedule.producer.state.paused_for_weight_sync is True
+        assert len(syncer.calls) == sync_calls_before
+        assert not barrier.done()
+
+        collector.allow_score.set()
+        await asyncio.wait_for(barrier, 5.0)
+        assert len(syncer.calls) == sync_calls_before + 1
+        assert schedule.producer.state.paused_for_weight_sync is False
+        # The drained group was harvested with its pre-sync policy version.
+        assert all(
+            item.rollout_policy_version == 1 for item in schedule.queue._items
+        )
+    finally:
+        await schedule.producer.stop()
+
+
 @pytest.mark.asyncio
 async def test_prompt_set_update_swaps_producer_source() -> None:
     """Checks prompt set update swaps producer source."""

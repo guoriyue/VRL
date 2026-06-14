@@ -21,6 +21,7 @@ from vrl.trajectory import (
     TrajectoryBatch,
     TrajectorySegment,
     TrajectoryStoragePolicy,
+    TrajectoryTensor,
     apply_trajectory_storage_policy,
     build_training_view,
     role_tensor,
