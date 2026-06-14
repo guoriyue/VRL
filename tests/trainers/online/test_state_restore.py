@@ -52,6 +52,18 @@ class TestOnlineTrainerResumeState:
             torch.full_like(restored._ema.ema_parameters[0], 7.0),
         )
 
+    def test_state_dict_includes_initial_ema_state_before_first_step(self) -> None:
+        """Checks zero-step EMA checkpoints can resume strictly."""
+        source = _make_resume_trainer(ema=True)
+
+        state = source.state_dict()
+        restored = _make_resume_trainer(ema=True)
+        restored.load_state_dict(state, strict=True)
+
+        assert "ema" in state
+        assert state["ema"]["num_updates"] == 0
+        assert restored._ema is not None
+
     def test_load_state_dict_rejects_ema_state_when_ema_is_disabled(self) -> None:
         """Checks load state dict rejects EMA state when EMA is disabled."""
         source = _make_resume_trainer(ema=True)
@@ -242,4 +254,3 @@ def _adam_exp_avg_values(optimizer) -> list[float]:
         if exp_avg is not None:
             values.extend(float(v) for v in exp_avg.reshape(-1).detach().cpu().tolist())
     return values
-

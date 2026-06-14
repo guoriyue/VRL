@@ -946,8 +946,9 @@ class OnlineTrainer(Trainer):
             d["optimizer"] = self._optimizer.state_dict()
         if self._grad_scaler is not None:
             d["grad_scaler"] = self._grad_scaler.state_dict()
-        if self._ema is not None:
-            d["ema"] = self._ema.state_dict()
+        ema = self._ensure_ema()
+        if ema is not None:
+            d["ema"] = ema.state_dict()
         return d
 
     def load_state_dict(self, state: dict, *, strict: bool = True) -> None:
