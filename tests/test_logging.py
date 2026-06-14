@@ -17,10 +17,13 @@ def test_init_logger_installs_single_handler() -> None:
     init_logger("vrl.test_logging.b")
 
     root = logging.getLogger("vrl")
-    stream_handlers = [
-        h for h in root.handlers if isinstance(h, logging.StreamHandler)
+    stdout_handlers = [
+        h
+        for h in root.handlers
+        if h.__class__.__module__ == "vrl.utils.logging"
+        and h.__class__.__name__ == "_StdoutHandler"
     ]
-    assert len(stream_handlers) == 1
+    assert len(stdout_handlers) == 1
 
 
 def test_logger_emits_once_to_stdout(capsys) -> None:

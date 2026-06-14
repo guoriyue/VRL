@@ -17,6 +17,7 @@ from vrl.generation.ray.runtime import (
     RayGenerationRuntime,
     ReleasableRayGenerationRuntime,
 )
+from vrl.ray.placement import RolePlacement
 from vrl.trainers.weight_sync import RayRuntimeWeightSyncer, WeightSyncer
 
 
@@ -39,6 +40,11 @@ def _releasable_runtime(
         config,
         launch_contract=SimpleNamespace(policy_version=None),
         gatherer=object(),
+        placement=RolePlacement(
+            placement_group=object(),
+            bundle_indices=(),
+            expected_gpu_ids=(),
+        ),
     )
 
 
