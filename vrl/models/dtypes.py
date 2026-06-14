@@ -24,8 +24,8 @@ _DTYPE_SPELLINGS: dict[str, tuple[str, ...]] = {
     "float16": ("fp16", "half"),
     "float32": ("fp32", "float"),
 }
-# Tolerant spelling -> canonical config string. Single source of truth for both
-# the forward (string -> torch.dtype) and reverse (-> config string) directions.
+# Derived tolerant-spelling lookup shared by both dtype resolution directions:
+# string -> torch.dtype and dtype/string -> canonical config string.
 _DTYPE_NAME_BY_INPUT: dict[str, str] = {
     spelling: canonical
     for canonical, spellings in _DTYPE_SPELLINGS.items()
