@@ -20,8 +20,10 @@ from pathlib import Path
 
 from vrl.scripts.data import bootstrap, danbooru, pickapic, video_world, videophy_i2v
 
-# dataset -> artifact directories to create under the data root.
-_ARTIFACT_DIRS = {
+# init-dirs CLI: dataset -> directories to create under the data root. This is the
+# init-dirs command's own small wiring table, not a generic artifact registry (the
+# module docstring rules that out); keep it local rather than a per-dataset protocol.
+_INIT_DIRS_BY_DATASET = {
     "pickapic": ("pickapic",),
     "anime": ("danbooru/images", "danbooru/hand_crops"),
     "video-world": ("video_world/references", "video_world/source_videos"),
@@ -33,7 +35,7 @@ def _cmd_init_dirs(args: argparse.Namespace) -> None:
 
     data_root = args.data_root.expanduser().resolve() if args.data_root else default_data_root()
     created: list[Path] = []
-    for rel in _ARTIFACT_DIRS[args.dataset]:
+    for rel in _INIT_DIRS_BY_DATASET[args.dataset]:
         path = data_root / rel
         path.mkdir(parents=True, exist_ok=True)
         created.append(path)
@@ -62,7 +64,7 @@ def _register_init_dirs(
         "init-dirs",
         help="Create the empty artifact directories a dataset downloads into.",
     )
-    parser.add_argument("dataset", choices=tuple(_ARTIFACT_DIRS))
+    parser.add_argument("dataset", choices=tuple(_INIT_DIRS_BY_DATASET))
     parser.add_argument(
         "--data-root",
         type=Path,

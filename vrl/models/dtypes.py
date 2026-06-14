@@ -16,17 +16,20 @@ from __future__ import annotations
 
 from typing import Any
 
+# Canonical dtype name -> tolerant input spellings accepted at config/checkpoint
+# boundaries. Source of truth; the lenient lookup below is derived from it so the
+# identity entry (a canonical name accepts itself) is generated, not hand-listed.
+_DTYPE_SPELLINGS: dict[str, tuple[str, ...]] = {
+    "bfloat16": ("bf16",),
+    "float16": ("fp16", "half"),
+    "float32": ("fp32", "float"),
+}
 # Tolerant spelling -> canonical config string. Single source of truth for both
 # the forward (string -> torch.dtype) and reverse (-> config string) directions.
-_CANONICAL_STRING: dict[str, str] = {
-    "bf16": "bfloat16",
-    "bfloat16": "bfloat16",
-    "fp16": "float16",
-    "float16": "float16",
-    "half": "float16",
-    "fp32": "float32",
-    "float32": "float32",
-    "float": "float32",
+_DTYPE_NAME_BY_INPUT: dict[str, str] = {
+    spelling: canonical
+    for canonical, spellings in _DTYPE_SPELLINGS.items()
+    for spelling in (canonical, *spellings)
 }
 
 
@@ -39,7 +42,7 @@ def resolve_torch_dtype(value: Any) -> Any:
         return value
     key = str(value).removeprefix("torch.").lower()
     try:
-        name = _CANONICAL_STRING[key]
+        name = _DTYPE_NAME_BY_INPUT[key]
     except KeyError as exc:
         raise ValueError(f"unsupported torch dtype: {value!r}") from exc
     return {
@@ -57,7 +60,7 @@ def dtype_to_config_string(value: Any) -> str:
     """
 
     text = str(value).removeprefix("torch.")
-    return _CANONICAL_STRING.get(text.lower(), text)
+    return _DTYPE_NAME_BY_INPUT.get(text.lower(), text)
 
 
 __all__ = ["dtype_to_config_string", "resolve_torch_dtype"]

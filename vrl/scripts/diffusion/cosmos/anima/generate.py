@@ -26,7 +26,7 @@ from vrl.utils.media import to_pil_image
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_NEGATIVE_PROMPT = "worst quality, low quality, score_1, score_2, score_3, artist name"
+_DEFAULT_NEGATIVE_PROMPT = "worst quality, low quality, score_1, score_2, score_3, artist name"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -77,7 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-sequence-length", type=int, default=0)
     parser.add_argument(
         "--negative-prompt",
-        default=DEFAULT_NEGATIVE_PROMPT,
+        default=_DEFAULT_NEGATIVE_PROMPT,
         help="Negative prompt used when CFG is enabled.",
     )
     parser.add_argument(

@@ -59,6 +59,12 @@ JANUS_IMAGE_VOCAB_SIZE = 16_384       # gen_vision_model codebook size
 JANUS_IMAGE_PATCH_SIZE = 16           # decoder upsample factor → 384 px
 # Derived: sqrt(576 tokens) = 24-wide latent grid x 16 px/patch = 384 px.
 JANUS_IMAGE_PIXEL_SIZE = int(JANUS_IMAGE_TOKEN_NUM**0.5) * JANUS_IMAGE_PATCH_SIZE
+# Byte-sensitive model-protocol prompts: the R1 self-correction loop feeds these
+# to the model verbatim. The special tokens (<end_of_image>, <begin_of_image>) and
+# the FULLWIDTH VERTICAL LINE (U+FF5C) inside the end-of-sentence token must survive
+# byte-for-byte. Keep in Python — do NOT move to YAML, where an editor/loader may
+# normalize that ambiguous character (RUF001, suppressed below) or the leading
+# newline and silently break the R1 loop.
 JANUS_R1_SELFCHECK_PROMPT = (
     "<end_of_image>\nLet me think Does this image match the prompt..."
 )
