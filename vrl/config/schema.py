@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from vrl.config.unknown_keys import OPEN, ConfigBlock
 from vrl.generation.ray.config import RayGenerationConfig
+from vrl.models.interfaces.runtime import MODEL_MEMORY_SECTIONS
 from vrl.ray.resources import (
     RewardResourceConfig,
     RoleResourceConfig,
@@ -275,8 +276,8 @@ class ModelConfig(ConfigBase):
             "init_lora_weights", "dropout", "init",
         )),
     ] = None
-    # vae_decode self-validates strictly; frozen_offload: sd3_5 train entrypoint
-    memory: Annotated[Any, ConfigBlock(("vae_decode", "frozen_offload"))] = None
+    # model.memory sections (today only vae_decode, which self-validates strictly)
+    memory: Annotated[Any, ConfigBlock(MODEL_MEMORY_SECTIONS)] = None
     path: Any = None
     qwen_tokenizer_path: Any = None
     reference_image: Any = None

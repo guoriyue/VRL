@@ -27,7 +27,14 @@ def test_diffusion_model_loaders_use_vae_decode_memory_boundary() -> None:
 
 
 def test_diffusion_train_scripts_do_not_inline_cpu_offload_policy() -> None:
-    """Driver CPU offload must go through vrl.trainers.frozen_module."""
+    """Train scripts must not inline driver CPU offload.
+
+    The trainer never loads the generation-only modules (text encoders, VAE):
+    each family builds a minimal ReplayModel that omits them, so there is
+    nothing to offload. A train.py reaching for ``.to("cpu")`` or
+    ``enable_model_cpu_offload`` is reintroducing a problem the ReplayModel
+    boundary already removed.
+    """
 
     violations = _forbidden_text(
         VRL_ROOT / "scripts" / "diffusion",

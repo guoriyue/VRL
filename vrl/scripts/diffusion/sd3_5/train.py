@@ -13,14 +13,7 @@ from vrl.scripts.common.online import (
     run_online_recipe,
 )
 from vrl.scripts.common.types import OnlineRecipeDefinition
-from vrl.trainers.frozen_module import (
-    FrozenModuleOffload,
-    frozen_module_offload_from_config,
-    frozen_module_offload_metadata,
-    park_frozen_modules,
-)
 from vrl.trainers.precision import torch_dtype_for_trainer_precision
-from vrl.utils.config import plain_mapping
 
 
 async def train_sd3_5_grpo(cfg: DictConfig) -> None:
@@ -56,55 +49,11 @@ def _build_replay_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any
 
 def _after_bundle_built(bundle: Any, cfg: DictConfig) -> None:
     enable_transformer_gradient_checkpointing(bundle, cfg)
-    bundle.metadata.update(_offload_driver_frozen_modules(bundle.model, cfg))
 
 
 def _resolve_weight_dtype(cfg: DictConfig, trainer_config: Any, torch: Any) -> Any:
     del cfg
     return torch_dtype_for_trainer_precision(trainer_config, torch)
-
-
-def _offload_driver_frozen_modules(
-    model: object,
-    cfg: DictConfig | None = None,
-) -> dict[str, dict[str, Any]]:
-    """Move frozen driver-only modules off CUDA before Ray workers load."""
-
-    pipeline = getattr(model, "_pipeline", None)
-    if pipeline is None:
-        return {}
-    defaults = FrozenModuleOffload(
-        enable=True,
-        module_names=(
-            "text_encoder",
-            "text_encoder_2",
-            "text_encoder_3",
-            "vae",
-        ),
-        empty_cache=True,
-    )
-    section = _extract_frozen_offload_config(cfg)
-    offload = frozen_module_offload_from_config(section, defaults=defaults)
-    moved = park_frozen_modules(pipeline, offload)
-    return frozen_module_offload_metadata(offload, moved=moved)
-
-
-def _extract_frozen_offload_config(cfg: DictConfig | None) -> dict[str, Any] | None:
-    """Return the trainer lifecycle memory section owned by SD3 training."""
-
-    if cfg is None:
-        return None
-    model_cfg = getattr(cfg, "model", None)
-    if model_cfg is None:
-        return None
-    raw = getattr(model_cfg, "memory", None)
-    if raw is None:
-        return None
-    memory = plain_mapping(raw, field_name="model.memory")
-    section = memory.get("frozen_offload")
-    if section is None:
-        return None
-    return plain_mapping(section, field_name="model.memory.frozen_offload")
 
 
 __all__ = ["train_sd3_5_grpo"]

@@ -234,16 +234,21 @@ def test_full_generation_runtime_bundles_record_model_build_memory_metadata(
     }
 
 
-def test_apply_generation_memory_policy_requires_target_when_configured() -> None:
-    """vae_decode config against a target-less model is a config error."""
-    import pytest
+def test_declared_section_without_target_is_skipped_not_applied() -> None:
+    """A declared section the model exposes no target for applies nothing.
 
-    with pytest.raises(ValueError, match="only exposes generation"):
-        apply_generation_memory_policy(
-            _FakeModel(vae=None),
-            memory_config={"vae_decode": {"tiling": True}},
-            owner="test VAE",
-        )
+    Namespace validity is owned once by MODEL_MEMORY_SECTIONS (shared with the
+    schema lint); only a genuinely unknown section name (typo) fails. A real
+    generation model always exposes its VAE target, so this target-less path is
+    defensive — it must not fabricate metadata for a mechanism it never ran.
+    """
+    metadata = apply_generation_memory_policy(
+        _FakeModel(vae=None),
+        memory_config={"vae_decode": {"tiling": True}},
+        owner="test VAE",
+    )
+
+    assert metadata == {MEMORY_POLICY_METADATA_KEY: {"model_build": {}}}
 
 
 def test_targetless_model_passes_when_nothing_configured() -> None:

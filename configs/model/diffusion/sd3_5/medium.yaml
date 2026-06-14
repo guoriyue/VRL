@@ -10,10 +10,6 @@ model:
     vae_decode:
       tiling: true
       slicing: true
-    frozen_offload:
-      enable: true
-      modules: [text_encoder, text_encoder_2, text_encoder_3, vae]
-      empty_cache: true
 
   use_lora: true
   lora:

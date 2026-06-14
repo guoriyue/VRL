@@ -14,6 +14,15 @@ from vrl.models.interfaces.replay import RuntimeModel
 
 MEMORY_POLICY_METADATA_KEY = "memory_policy"
 
+# Single source of truth for valid ``model.memory`` subsection names, shared by
+# the config schema's unknown-key lint and the generation memory policy's typo
+# check. Today only ``vae_decode`` (sliced/tiled VAE decode, applied on the
+# rollout/generation side). The trainer needs no section here: each family
+# builds a minimal ReplayModel that never loads the generation-only modules, so
+# there is nothing to offload. Adding a section means editing this tuple once;
+# both consumers derive from it.
+MODEL_MEMORY_SECTIONS: tuple[str, ...] = ("vae_decode",)
+
 # Single source of truth for the model_config compile block that the
 # ``RuntimeBuildSpec.torch_compile`` property below consumes. Writers (e.g. the
 # Ray rollout launcher) build it through ``torch_compile_model_config`` so the

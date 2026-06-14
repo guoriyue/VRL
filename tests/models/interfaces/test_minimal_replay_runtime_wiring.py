@@ -132,6 +132,11 @@ def test_diffusion_replay_builders_return_minimal_bundles(
     require_minimal_replay_bundle(bundle)
     profile = module_loading_profile_from_metadata(bundle.metadata)
     assert profile.runtime_role == MINIMAL_REPLAY_RUNTIME_ROLE
+    # The replay bundle declares the generation-only modules it deliberately
+    # never loads (text encoders, VAE) — this IS the trainer-side memory
+    # boundary: nothing to offload because nothing was loaded.
+    assert "text_encoder" in profile.generation_only_modules
+    assert "vae" in profile.generation_only_modules
     assert bundle.backend_handle is None
     assert set(bundle.trainable_modules) == {"transformer"}
     assert "pipeline" not in vars(bundle.model)
@@ -375,15 +380,3 @@ def test_ar_replay_builders_return_minimal_bundles(
     require_minimal_replay_bundle(bundle)
     assert bundle.backend_handle is None
     assert set(bundle.trainable_modules) == {"model"}
-
-
-def test_sd3_after_bundle_hook_ignores_replay_model_without_pipeline() -> None:
-    """Checks SD3 after bundle hook ignores replay model without pipeline."""
-    from vrl.scripts.diffusion.sd3_5.train import _offload_driver_frozen_modules
-
-    class _ReplayLike:
-        @property
-        def pipeline(self) -> Any:
-            raise RuntimeError("no pipeline")
-
-    _offload_driver_frozen_modules(_ReplayLike())

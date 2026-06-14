@@ -8,11 +8,14 @@ is decode-path execution — not a pure config view.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, fields, replace
 from typing import Any
 
-from vrl.models.interfaces.runtime import MEMORY_POLICY_METADATA_KEY
+from vrl.models.interfaces.runtime import (
+    MEMORY_POLICY_METADATA_KEY,
+    MODEL_MEMORY_SECTIONS,
+)
 from vrl.utils.config import plain_mapping
 
 
@@ -92,21 +95,26 @@ def apply_generation_memory_policy(
     """
 
     targets = model.generation_memory_targets()
-    sections = dict(memory_config or {})
-    unknown = sorted(set(sections) - set(targets))
-    if unknown:
+    configured = dict(memory_config or {})
+    # A configured section that is neither a generation target nor a declared
+    # model.memory section is a typo — fail loud. A declared section the model
+    # exposes no target for (e.g. vae_decode on a model that owns no VAE) is
+    # tolerated and skipped, not rejected; the valid-section list lives once in
+    # MODEL_MEMORY_SECTIONS, shared with the schema's unknown-key lint.
+    typos = sorted(set(configured) - set(targets) - set(MODEL_MEMORY_SECTIONS))
+    if typos:
         exposed = ", ".join(sorted(targets)) or "<none>"
         raise ValueError(
-            f"{owner} configures model.memory section(s) "
-            f"{', '.join(unknown)} but the model only exposes generation "
-            f"memory target(s): {exposed}",
+            f"{owner} configures unknown model.memory section(s) "
+            f"{', '.join(typos)}; model exposes generation memory "
+            f"target(s): {exposed}",
         )
 
     metadata: dict[str, bool] = {}
-    for target_name in sorted(set(targets) | set(sections)):
-        mem = vae_decode_memory_from_config(sections.get(target_name))
+    for target_name in sorted(targets):
+        mem = vae_decode_memory_from_config(configured.get(target_name))
         applied: tuple[str, ...] = ()
-        if target_name in sections:
+        if target_name in configured:
             applied = configure_memory_mechanisms(
                 targets[target_name],
                 mem,
