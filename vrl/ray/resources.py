@@ -64,6 +64,9 @@ class DistributedResourceConfig:
 class ResolvedDistributedResources:
     """Concrete resource plan consumed by trainer and Ray role launchers."""
 
+    # display/provenance-only: the full visible GPU pool, printed by
+    # format_distributed_resource_plan. No behavioral consumer reads it; it
+    # records which GPUs the machine exposed (may exceed the role union's spare).
     visible_devices: tuple[int, ...]
     trainer_devices: tuple[int, ...]
     rollout_devices: tuple[int, ...]
@@ -71,7 +74,6 @@ class ResolvedDistributedResources:
     rollout_num_gpus: int
     rollout_num_workers: int
     rollout_gpus_per_worker: float
-    reward_num_gpus: int
     reward_num_workers: int
     reward_gpus_per_worker: float
     reward_shared_with_rollout: bool
@@ -81,8 +83,6 @@ class ResolvedDistributedResources:
     reward_placement_strategy: str
     reward_cpus_per_worker: float
     reward_max_inflight_batches: int
-    total_gpu_slots: int
-    ray_total_bundles: int
     requires_trainer_reservation: bool
     colocated: bool
     cross_node: bool
@@ -219,11 +219,6 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
         and rollout_num_workers > 0
         and not config.cross_node
     )
-    total_gpu_slots = len(set(trainer_devices) | set(rollout_devices) | set(reward_devices))
-    ray_total_bundles = rollout_num_workers + reward_num_workers + (
-        len(trainer_devices) if requires_trainer_reservation else 0
-    )
-
     return ResolvedDistributedResources(
         visible_devices=visible_devices,
         trainer_devices=trainer_devices,
@@ -232,7 +227,6 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
         rollout_num_gpus=rollout_num_gpus,
         rollout_num_workers=rollout_num_workers,
         rollout_gpus_per_worker=rollout_gpus_per_worker,
-        reward_num_gpus=reward_num_gpus,
         reward_num_workers=reward_num_workers,
         reward_gpus_per_worker=reward_gpus_per_worker,
         reward_shared_with_rollout=reward_shared_with_rollout,
@@ -242,8 +236,6 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
         reward_placement_strategy=config.reward_placement_strategy,
         reward_cpus_per_worker=config.reward_cpus_per_worker,
         reward_max_inflight_batches=config.reward_max_inflight_batches,
-        total_gpu_slots=total_gpu_slots,
-        ray_total_bundles=ray_total_bundles,
         requires_trainer_reservation=requires_trainer_reservation,
         colocated=colocated,
         cross_node=config.cross_node,
@@ -287,7 +279,6 @@ def format_distributed_resource_plan(
         f"colocated={resolved.colocated}",
         f"cross_node={resolved.cross_node}",
         f"trainer_reservation={resolved.requires_trainer_reservation}",
-        f"ray_bundles={resolved.ray_total_bundles}",
     ]
     if actual_placement is not None:
         parts.append(f"actual={actual_placement}")

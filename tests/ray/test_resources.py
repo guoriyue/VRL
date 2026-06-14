@@ -73,8 +73,6 @@ def test_auto_split_uses_remaining_visible_gpus_for_rollout() -> None:
     assert resolved.reward_devices == ()
     assert resolved.rollout_num_workers == 3
     assert resolved.reward_num_workers == 0
-    assert resolved.total_gpu_slots == 4
-    assert resolved.ray_total_bundles == 4
     assert resolved.requires_trainer_reservation is True
     assert trainer_torch_device(resolved) == "cuda:0"
 
@@ -127,7 +125,6 @@ def test_explicit_overlap_marks_colocated_when_allowed() -> None:
 
     assert resolved.colocated is True
     assert resolved.requires_trainer_reservation is False
-    assert resolved.ray_total_bundles == 1
 
 
 def test_devices_must_be_subset_of_visible_devices() -> None:
@@ -200,7 +197,6 @@ def test_cpu_only_rollout_uses_no_gpu_bundles() -> None:
     assert resolved.trainer_devices == ()
     assert resolved.rollout_devices == ()
     assert resolved.rollout_num_workers == 2
-    assert resolved.ray_total_bundles == 2
     assert trainer_torch_device(resolved) == "cpu"
 
 
@@ -223,7 +219,6 @@ def test_trainer_only_plan_allows_zero_rollout_workers() -> None:
     assert resolved.trainer_devices == (0,)
     assert resolved.rollout_devices == ()
     assert resolved.rollout_num_workers == 0
-    assert resolved.ray_total_bundles == 0
     assert trainer_torch_device(resolved) == "cuda:0"
 
 
@@ -267,7 +262,6 @@ def test_cross_node_rollout_satisfies_budget_from_explicit_counts() -> None:
     assert resolved.rollout_num_workers == 1
     assert resolved.colocated is False
     assert resolved.requires_trainer_reservation is False
-    assert resolved.ray_total_bundles == 1
     assert trainer_torch_device(resolved) == "cuda:0"
 
 
@@ -357,7 +351,6 @@ def test_reward_role_resolves_after_trainer_and_rollout_devices() -> None:
     )
 
     assert resolved.reward_devices == (2,)
-    assert resolved.reward_num_gpus == 1
     assert resolved.reward_num_workers == 1
     assert resolved.reward_gpus_per_worker == 1.0
     assert resolved.reward_shared_with_rollout is False
