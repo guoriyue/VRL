@@ -15,6 +15,10 @@ from vrl.trajectory.types import (
 )
 from vrl.trajectory.views import LossUnit, RewardView, TrainingView
 
+# Curated denylist: engine-execution telemetry fields from GenerationMetrics
+# (vrl/generation/types.py) that must NOT leak into serialized trajectory
+# metrics. Deliberately a SUBSET of GenerationMetrics (num_prompts/num_samples
+# are allowed), so do NOT derive from fields(GenerationMetrics).
 FORBIDDEN_TRAJECTORY_METRICS = frozenset(
     {
         "queue_wait_s",

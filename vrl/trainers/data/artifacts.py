@@ -4,15 +4,24 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
 from vrl.trainers.data.prompts import PromptExample, load_prompt_manifest
 
 DATA_ROOT_ENV = "VRL_DATA_ROOT"
-DEFAULT_ARTIFACT_FIELDS = ("reference_image", "reference_video", "references")
+# Derived from PromptExample fields tagged metadata={'artifact': True} — single source of truth.
+DEFAULT_ARTIFACT_FIELDS = tuple(
+    f.name for f in fields(PromptExample) if f.metadata.get("artifact")
+)
 IMAGE_SUFFIXES = {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".ppm", ".webp"}
+# Shares the {source_repo, source_frame_index, decode_method, conditioning}
+# provenance sub-vocabulary with the Image2Video manifest check in
+# vrl/config/validation.py:_validate_image_to_video_manifest — keep in sync.
+# Tuple order is load-bearing: required_metadata_fields is iterated in order and
+# the first missing field is named in the error (tested in
+# tests/data/test_video_world_manifests.py), so it is NOT auto-derived.
 SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS = (
     "source",
     "source_repo",
