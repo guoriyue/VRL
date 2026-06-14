@@ -1,5 +1,12 @@
 # Cosmos Predict2 2B Video2World + GRPO (single-GPU Ray rollout backend).
-# This recipe requires real Video2World conditioning. Use either:
+#
+# This is the global-reference smoke/debug recipe. It is useful when a caller
+# explicitly overrides model.reference_image, but it is not the production
+# learning setup: one fixed reference image paired with unrelated text prompts
+# gives Kling VideoReward little trainable signal. For source-backed training,
+# use experiment/diffusion/cosmos_predict2/online_grpo_v2w_reference.
+#
+# This recipe still requires real Video2World conditioning. Use either:
 #   1. global mode: override model.reference_image=/path/to/reference.png
 #   2. per-sample mode: set cosmos.reference_mode=per_sample and use JSONL rows:
 #      {"prompt": "...", "reference_image": "path/to/frame.png"}
@@ -11,15 +18,17 @@ defaults:
   - /reward/kling_video_reward
   - /dataset/drawbench_train_192
 
-# Cosmos source defaults: lr=1e-5, beta=0.004, eps_clip=1e-3, n=4, ppo_epochs=1.
+# The upstream beta=0.004 KL prior is too strong for the current VRL
+# loss-scale on Kling reward: local diagnostics showed the objective dominated
+# by beta * KL while policy gradients stayed ~1e-4 and reward stayed flat.
 actor:
   optim:
-    lr: 1.0e-5
+    lr: 1.0e-4
   ppo_epochs: 1
 
 algorithm:
   eps_clip: 1.0e-3
-  init_kl_coef: 0.004
+  init_kl_coef: 0.0
 
 rollout:
   n_samples_per_prompt: 8
@@ -35,8 +44,10 @@ cosmos:
 trainer:
   entrypoint: vrl.scripts.diffusion.cosmos.train:train_cosmos_predict2_grpo
   output_dir: outputs/cosmos_pred2_2b_grpo
-  save_freq: 100
+  save_freq: 20
   log_freq: 1
+  debug:
+    first_step: true
 
 # Cosmos-specific eval / sanity-gate config. eval.eval_only=true switches the
 # driver into trained-vs-base comparison mode (no training); with LoRA removed

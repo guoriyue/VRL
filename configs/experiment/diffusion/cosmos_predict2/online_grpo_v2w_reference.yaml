@@ -10,12 +10,15 @@ defaults:
 
 actor:
   optim:
-    lr: 1.0e-5
+    lr: 1.0e-4
   ppo_epochs: 1
 
 algorithm:
   eps_clip: 1.0e-3
-  init_kl_coef: 0.004
+  # Keep the loss-side KL off until reward movement is established. With the
+  # current Kling score scale, beta=0.004 dominates the GRPO policy signal and
+  # produces flat reward curves even when rewards and advantages are non-zero.
+  init_kl_coef: 0.0
 
 rollout:
   n_samples_per_prompt: 8
@@ -33,6 +36,8 @@ trainer:
   output_dir: outputs/cosmos_predict2_v2w_kling_video_reward
   save_freq: 20
   log_freq: 1
+  debug:
+    first_step: true
 
 reward:
   kwargs:
