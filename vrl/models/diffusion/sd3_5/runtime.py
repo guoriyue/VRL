@@ -15,10 +15,10 @@ from vrl.generation.diffusion import (
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
+from vrl.models.diffusion.capabilities import diffusion_family_capability
 from vrl.models.diffusion.common.vae_decode_memory import (
     apply_generation_memory_policy,
 )
-from vrl.models.diffusion.capabilities import diffusion_family_capability
 from vrl.models.interfaces.runtime import (
     RuntimeBuildSpec,
     RuntimeBundle,

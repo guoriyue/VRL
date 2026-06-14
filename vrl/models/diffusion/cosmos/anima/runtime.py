@@ -7,10 +7,10 @@ from pathlib import Path
 from typing import Any
 
 from vrl.generation.diffusion import DiffusionChunkExecutorBase
+from vrl.models.diffusion.capabilities import diffusion_family_capability
 from vrl.models.diffusion.common.vae_decode_memory import (
     apply_generation_memory_policy,
 )
-from vrl.models.diffusion.capabilities import diffusion_family_capability
 from vrl.models.interfaces.runtime import (
     RuntimeBuildSpec,
     RuntimeBundle,
