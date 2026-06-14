@@ -160,12 +160,46 @@ def test_ray_reward_runtime_fans_out_across_workers_with_timing() -> None:
 
 @pytest.mark.gpu
 def test_ray_reward_runtime_assigns_gpu_ids_for_tensor_model(tmp_path: Path) -> None:
-    """Checks Ray reward runtime assigns GPU IDs for tensor model."""
+    """Reward GPU actors schedule into the owner's placement group."""
     ray = pytest.importorskip("ray")
+    from omegaconf import OmegaConf
+
+    from vrl.ray.placement import GlobalRayPlacementOwner
+    from vrl.ray.resources import resolve_distributed_resources
 
     artifact = tmp_path / "artifact.pt"
     torch.save(torch.ones(2, 2), artifact)
     ray.shutdown()
+    ray.init(
+        ignore_reinit_error=True,
+        include_dashboard=False,
+        num_cpus=2,
+        num_gpus=1,
+        log_to_driver=False,
+    )
+    resolved = resolve_distributed_resources(
+        OmegaConf.create(
+            {
+                "distributed": {
+                    "resources": {
+                        "visible_devices": [0],
+                        "trainer": {"num_gpus": 0},
+                        "rollout": {"num_gpus": 0, "gpus_per_worker": 0, "num_workers": 1},
+                        "reward": {
+                            "devices": [0],
+                            "num_gpus": 1,
+                            "gpus_per_worker": 1,
+                            "num_workers": 1,
+                        },
+                    },
+                    "rollout": {},
+                    "reward": {},
+                },
+            },
+        ),
+    )
+    owner = GlobalRayPlacementOwner(resolved, rollout_cpus_per_worker=0.5)
+    owner.create()
     runtime = None
     try:
         runtime = RayRewardRuntime(
@@ -181,16 +215,9 @@ def test_ray_reward_runtime_assigns_gpu_ids_for_tensor_model(tmp_path: Path) -> 
                 "num_workers": 1,
                 "cpus_per_worker": 0.5,
                 "gpus_per_worker": 1.0,
-                "expected_gpu_ids": (0,),
-                "placement_strategy": "STRICT_PACK",
+                "placement": owner.reward_placement,
             },
-            ray_init_kwargs={
-                "ignore_reinit_error": True,
-                "include_dashboard": False,
-                "num_cpus": 1,
-                "num_gpus": 1,
-                "log_to_driver": False,
-            },
+            init_ray=False,
         )
 
         results = asyncio.run(runtime.score_batch(_request(artifact)))
@@ -202,4 +229,5 @@ def test_ray_reward_runtime_assigns_gpu_ids_for_tensor_model(tmp_path: Path) -> 
     finally:
         if runtime is not None:
             asyncio.run(runtime.shutdown())
+        owner.shutdown()
         ray.shutdown()

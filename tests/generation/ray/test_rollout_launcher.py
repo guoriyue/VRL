@@ -107,22 +107,16 @@ def _launch_contract() -> GenerationRuntimeLaunchContract:
 
 
 def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray() -> None:
-    """Checks Ray generation launcher builds worker runtime with embedded Ray."""
+    """Launcher builds real workers into the owner's placement group."""
     ray = pytest.importorskip("ray")
     import vrl.generation.ray.launcher as launcher_mod
 
     ray.shutdown()
+    ray.init(ignore_reinit_error=True, include_dashboard=False, num_cpus=2, log_to_driver=False)
+    owner = _cpu_rollout_owner(ray)
     runtime: RayGenerationRuntime | None = None
     try:
-        runtime = launcher_mod.RayGenerationLauncher(
-            init_ray=True,
-            ray_init_kwargs={
-                "ignore_reinit_error": True,
-                "include_dashboard": False,
-                "num_cpus": 2,
-                "log_to_driver": False,
-            },
-        ).launch(
+        runtime = launcher_mod.RayGenerationLauncher(init_ray=False).launch(
             RayGenerationConfig(
                 num_workers=1,
                 gpus_per_worker=0.0,
@@ -132,12 +126,14 @@ def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray() -> No
             ),
             _launch_contract(),
             _Gatherer(),
+            placement=owner.rollout_placement,
         )
 
         assert isinstance(runtime, RayGenerationRuntime)
         assert runtime.current_policy_version == 7
         assert runtime.weight_sync is None
-        assert runtime._placement_group is not None
+        # Launcher uses the owner's group; it does not own/remove it.
+        assert runtime._placement_group is None
         # Config-selected placement strategy must reach the live planner.
         assert runtime.executor.planner.policy.strategy == "dynamic"
 
@@ -151,4 +147,106 @@ def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray() -> No
     finally:
         if runtime is not None:
             asyncio.run(runtime.shutdown())
+        owner.shutdown()
+        ray.shutdown()
+
+
+def _cpu_rollout_owner(ray: Any) -> Any:
+    """Build a GlobalRayPlacementOwner with a single CPU rollout bundle."""
+    from omegaconf import OmegaConf
+
+    from vrl.ray.placement import GlobalRayPlacementOwner
+    from vrl.ray.resources import resolve_distributed_resources
+
+    resolved = resolve_distributed_resources(
+        OmegaConf.create(
+            {
+                "distributed": {
+                    "resources": {
+                        "visible_devices": [],
+                        "trainer": {"num_gpus": 0},
+                        "rollout": {"num_gpus": 0, "gpus_per_worker": 0, "num_workers": 1},
+                    },
+                    "rollout": {},
+                    "reward": {},
+                },
+            },
+        ),
+    )
+    owner = GlobalRayPlacementOwner(resolved, rollout_cpus_per_worker=0.5)
+    owner.create()
+    return owner
+
+
+def test_owner_placement_runtime_does_not_own_placement_group() -> None:
+    """Persistent runtime built on owner placement must not own/remove the PG."""
+    ray = pytest.importorskip("ray")
+    import vrl.generation.ray.launcher as launcher_mod
+
+    ray.shutdown()
+    ray.init(ignore_reinit_error=True, include_dashboard=False, num_cpus=2, log_to_driver=False)
+    owner = _cpu_rollout_owner(ray)
+    runtime: RayGenerationRuntime | None = None
+    try:
+        runtime = launcher_mod.RayGenerationLauncher(init_ray=False).launch(
+            RayGenerationConfig(
+                num_workers=1,
+                gpus_per_worker=0.0,
+                cpus_per_worker=0.5,
+                sync_trainable_state="disabled",
+            ),
+            _launch_contract(),
+            _Gatherer(),
+            placement=owner.rollout_placement,
+        )
+
+        # Runtime owns its workers but not the owner-managed placement group.
+        assert runtime._placement_group is None
+        assert runtime._owned_actors == []
+        assert [w.worker_id for w in runtime.executor.workers] == ["rollout-0"]
+
+        # Tearing down the runtime kills workers but leaves the owner's PG alive.
+        asyncio.run(runtime.shutdown())
+        runtime = None
+        assert owner._placement_group is not None
+    finally:
+        if runtime is not None:
+            asyncio.run(runtime.shutdown())
+        owner.shutdown()
+        ray.shutdown()
+
+
+def test_releasable_owner_placement_survives_release_memory() -> None:
+    """Releasable runtime drops workers on release but never the owner-managed PG."""
+    ray = pytest.importorskip("ray")
+    from vrl.generation.ray.runtime import ReleasableRayGenerationRuntime
+
+    ray.shutdown()
+    ray.init(ignore_reinit_error=True, include_dashboard=False, num_cpus=2, log_to_driver=False)
+    owner = _cpu_rollout_owner(ray)
+    runtime = ReleasableRayGenerationRuntime(
+        RayGenerationConfig(
+            num_workers=1,
+            gpus_per_worker=0.0,
+            cpus_per_worker=0.5,
+            sync_trainable_state="disabled",
+            release_after_collect=True,
+        ),
+        _launch_contract(),
+        _Gatherer(),
+        placement=owner.rollout_placement,
+    )
+    try:
+        # Acquire workers, then release: the underlying runtime is dropped...
+        inner = asyncio.run(runtime._ensure_runtime())
+        assert inner._placement_group is None  # inner never owned the PG
+        asyncio.run(runtime.release_memory())
+        assert runtime._runtime is None
+        # ...but the owner's placement group is untouched and reacquire works.
+        assert owner._placement_group is not None
+        reacquired = asyncio.run(runtime._ensure_runtime())
+        assert [w.worker_id for w in reacquired.executor.workers] == ["rollout-0"]
+    finally:
+        asyncio.run(runtime.shutdown())
+        owner.shutdown()
         ray.shutdown()

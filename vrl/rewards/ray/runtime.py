@@ -83,6 +83,15 @@ class RayRewardRuntime:
         if not isinstance(worker_config_raw, Mapping):
             raise TypeError("reward worker_config must be a mapping")
 
+        # Run-level placement injected by online.py via the owner; when present
+        # the reward actors share that group and never remove it.
+        placement = cfg.get("placement")
+        placement_group = None
+        bundle_indices: tuple[int, ...] = ()
+        if placement is not None:
+            placement_group = placement.placement_group
+            bundle_indices = tuple(placement.bundle_indices)
+
         return RayActorMethodRuntime(
             worker_cls=RewardModelWorker,
             worker_config=dict(worker_config_raw),
@@ -97,8 +106,13 @@ class RayRewardRuntime:
             ray_init_kwargs=dict(ray_init_kwargs or {}),
             release_after_call=bool(cfg.get("release_after_score", False)),
             placement_strategy=str(cfg.get("placement_strategy", "SPREAD")),
-            expected_gpu_ids=tuple(int(gpu_id) for gpu_id in cfg.get("expected_gpu_ids", ())),
-            gpu_reservation_count=int(cfg.get("gpu_reservation_count", 0)),
+            expected_gpu_ids=(
+                tuple(int(gpu_id) for gpu_id in placement.expected_gpu_ids)
+                if placement is not None
+                else tuple(int(gpu_id) for gpu_id in cfg.get("expected_gpu_ids", ()))
+            ),
+            placement_group=placement_group,
+            bundle_indices=bundle_indices,
             validate_role="reward",
         )
 

@@ -81,7 +81,6 @@ class ResolvedDistributedResources:
     reward_placement_strategy: str
     reward_cpus_per_worker: float
     reward_max_inflight_batches: int
-    reward_gpu_reservation_count: int
     total_gpu_slots: int
     ray_total_bundles: int
     requires_trainer_reservation: bool
@@ -220,22 +219,6 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
         and rollout_num_workers > 0
         and not config.cross_node
     )
-    # Devices still held in Ray's accounting when the reward PG is created:
-    # non-released rollout workers and the trainer-reservation actor. The
-    # reward PG must not try to pin those slots — Ray could never satisfy the
-    # extra GPU bundles and pg.ready() would hang.
-    rollout_resident = not (
-        rollout_release_after_collect or rollout_release_before_reward_model
-    )
-    reward_gpu_reservation_count = _reward_gpu_reservation_count(
-        visible_devices=visible_devices,
-        reward_devices=reward_devices,
-        reward_gpus_per_worker=reward_gpus_per_worker,
-        resident_devices=(
-            (rollout_devices if rollout_resident else ())
-            + (trainer_devices if requires_trainer_reservation else ())
-        ),
-    )
     total_gpu_slots = len(set(trainer_devices) | set(rollout_devices) | set(reward_devices))
     ray_total_bundles = rollout_num_workers + reward_num_workers + (
         len(trainer_devices) if requires_trainer_reservation else 0
@@ -259,7 +242,6 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
         reward_placement_strategy=config.reward_placement_strategy,
         reward_cpus_per_worker=config.reward_cpus_per_worker,
         reward_max_inflight_batches=config.reward_max_inflight_batches,
-        reward_gpu_reservation_count=reward_gpu_reservation_count,
         total_gpu_slots=total_gpu_slots,
         ray_total_bundles=ray_total_bundles,
         requires_trainer_reservation=requires_trainer_reservation,
@@ -850,37 +832,95 @@ def reward_runtime_resource_kwargs(
         "release_after_score": resolved.reward_release_after_score,
         "placement_strategy": resolved.reward_placement_strategy,
         "expected_gpu_ids": tuple(resolved.reward_devices),
-        "gpu_reservation_count": resolved.reward_gpu_reservation_count,
     }
 
 
-def _reward_gpu_reservation_count(
-    *,
-    visible_devices: tuple[int, ...],
-    reward_devices: tuple[int, ...],
-    reward_gpus_per_worker: float,
-    resident_devices: tuple[int, ...] = (),
-) -> int:
-    """Count Ray-free GPU slots below the first reward device.
+@dataclass(frozen=True, slots=True)
+class BundleLayout:
+    """Run-level mapping of execution roles to placement-group bundle indices.
 
-    The reward placement group pins that many 1-GPU bundles so Ray's
-    ascending allocation pushes the worker bundle onto the reward device.
-    Slots held by resident actors (non-released rollout workers, the
-    trainer-reservation actor) are skipped: Ray cannot hand them to the
-    reward worker anyway, and pinning them would ask for more free GPUs
-    than the node has, hanging pg.ready() forever.
+    One GPU bundle per distinct device the run touches; one CPU bundle per
+    CPU-only worker. This is the source of truth a single run-level placement
+    group is built from, replacing the per-role private placement groups plus
+    the reward ``gpu_reservation_count`` offset math: a role targets its own
+    bundle index directly instead of pinning the slots beneath it.
+
+    ``bundle_gpu_ids[i]`` is the GPU ordinal bundle ``i`` reserves, or ``None``
+    for a CPU-only bundle. Trainer bundles are *reserved* (no actor runs in
+    them) purely to keep the driver GPU out of Ray's scheduling pool. Two roles
+    that resolve to the same physical GPU share one bundle index (coalescing) --
+    that overlap *is* the "shared GPU" fact, read it off the indices rather than
+    storing a separate flag.
     """
 
-    if reward_gpus_per_worker <= 0 or not reward_devices:
-        return 0
-    positions = [visible_devices.index(device) for device in reward_devices if device in visible_devices]
-    if not positions:
-        return 0
-    resident = set(resident_devices)
-    return sum(
-        1
-        for position in range(min(positions))
-        if visible_devices[position] not in resident
+    bundle_gpu_ids: tuple[int | None, ...]
+    trainer_bundle_indices: tuple[int, ...]
+    rollout_bundle_indices: tuple[int, ...]
+    reward_bundle_indices: tuple[int, ...]
+
+    @property
+    def total_bundles(self) -> int:
+        return len(self.bundle_gpu_ids)
+
+    def gpu_id_for_bundle(self, bundle_index: int) -> int | None:
+        return self.bundle_gpu_ids[bundle_index]
+
+
+def build_bundle_layout(resolved: ResolvedDistributedResources) -> BundleLayout:
+    """Derive a run-level role->bundle plan from a resolved resource plan.
+
+    GPU roles share one bundle per physical device: a trainer-reserved GPU, a
+    rollout GPU, and a reward GPU that lands on the same device all collapse to
+    a single bundle. CPU-only roles (``gpus_per_worker == 0``) get one bundle
+    per worker. The owner probes the live placement group to learn which bundle
+    index maps to which GPU, so the ordinals here are the *requested* devices
+    the probe is validated against.
+    """
+
+    bundle_gpu_ids: list[int | None] = []
+    gpu_bundle_by_id: dict[int, int] = {}
+
+    def _gpu_bundle(gpu_id: int) -> int:
+        index = gpu_bundle_by_id.get(gpu_id)
+        if index is None:
+            index = len(bundle_gpu_ids)
+            bundle_gpu_ids.append(gpu_id)
+            gpu_bundle_by_id[gpu_id] = index
+        return index
+
+    def _cpu_bundles(count: int) -> tuple[int, ...]:
+        indices: list[int] = []
+        for _ in range(count):
+            indices.append(len(bundle_gpu_ids))
+            bundle_gpu_ids.append(None)
+        return tuple(indices)
+
+    # Trainer reserved bundles first so the driver GPU is protected before any
+    # actor role can claim a bundle (single-node dedicated-trainer plans only;
+    # colocated and cross-node set requires_trainer_reservation=False).
+    trainer = (
+        tuple(_gpu_bundle(gpu_id) for gpu_id in resolved.trainer_devices)
+        if resolved.requires_trainer_reservation
+        else ()
+    )
+
+    if resolved.rollout_gpus_per_worker > 0:
+        rollout = tuple(_gpu_bundle(gpu_id) for gpu_id in resolved.rollout_devices)
+    else:
+        rollout = _cpu_bundles(resolved.rollout_num_workers)
+
+    if resolved.reward_gpus_per_worker > 0:
+        # Shared reward reuses the rollout GPU's existing bundle index; a
+        # dedicated reward GPU appends a fresh bundle.
+        reward = tuple(_gpu_bundle(gpu_id) for gpu_id in resolved.reward_devices)
+    else:
+        reward = _cpu_bundles(resolved.reward_num_workers)
+
+    return BundleLayout(
+        bundle_gpu_ids=tuple(bundle_gpu_ids),
+        trainer_bundle_indices=trainer,
+        rollout_bundle_indices=rollout,
+        reward_bundle_indices=reward,
     )
 
 
@@ -1024,11 +1064,13 @@ def _to_plain(value: Any) -> Any:
 
 
 __all__ = [
+    "BundleLayout",
     "DistributedResourceConfig",
     "ResolvedDistributedResources",
     "RewardResourceConfig",
     "RoleResourceConfig",
     "RolloutResourceConfig",
+    "build_bundle_layout",
     "format_distributed_resource_plan",
     "resolve_distributed_resources",
     "reward_runtime_resource_kwargs",

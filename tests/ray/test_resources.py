@@ -6,6 +6,7 @@ import pytest
 from omegaconf import OmegaConf
 
 from vrl.ray.resources import (
+    build_bundle_layout,
     format_distributed_resource_plan,
     resolve_distributed_resources,
     trainer_torch_device,
@@ -360,13 +361,8 @@ def test_reward_role_resolves_after_trainer_and_rollout_devices() -> None:
     assert resolved.reward_num_workers == 1
     assert resolved.reward_gpus_per_worker == 1.0
     assert resolved.reward_shared_with_rollout is False
-    # Slot 0 is held by the trainer-reservation actor and slot 1 by the
-    # resident rollout worker; pinning them would ask Ray for GPUs it can
-    # never free and pg.ready() would hang (the old expectation of 2 encoded
-    # exactly that bug).
     assert resolved.requires_trainer_reservation is True
     assert resolved.rollout_release_before_reward_model is False
-    assert resolved.reward_gpu_reservation_count == 0
 
 
 def test_ray_video_reward_requires_reward_gpu_budget() -> None:
@@ -552,9 +548,9 @@ def test_reward_trainer_overlap_requires_explicit_allow_overlap() -> None:
         )
 
 
-def test_reward_reservation_pins_released_colocated_gpu() -> None:
-    """Colocated trainer+rollout on GPU 0 releases after collect; the freed
-    slot 0 must still be pinned so the reward worker lands on GPU 1."""
+def test_colocated_reward_on_dedicated_gpu_owns_its_own_bundle() -> None:
+    """Colocated trainer+rollout on GPU 0; a dedicated reward GPU 1 owns its own
+    bundle (the run-level layout targets it directly, no reservation offset)."""
 
     resolved = resolve_distributed_resources(
         _cfg(
@@ -570,11 +566,17 @@ def test_reward_reservation_pins_released_colocated_gpu() -> None:
     )
     assert resolved.colocated is True
     assert resolved.rollout_release_after_collect is True
-    assert resolved.reward_gpu_reservation_count == 1
+
+    layout = build_bundle_layout(resolved)
+    # Colocated trainer+rollout -> no reserved trainer bundle; reward owns a
+    # bundle distinct from rollout (its own GPU 1).
+    assert layout.trainer_bundle_indices == ()
+    assert layout.reward_bundle_indices != ()
+    assert set(layout.rollout_bundle_indices).isdisjoint(layout.reward_bundle_indices)
 
 
-def test_reward_reservation_zero_for_shared_single_gpu() -> None:
-    """Shared single-GPU reward sits on the rollout device: nothing below it."""
+def test_shared_single_gpu_reward_reuses_rollout_bundle() -> None:
+    """Shared single-GPU reward sits on the rollout device: same bundle index."""
 
     resolved = resolve_distributed_resources(
         _cfg(
@@ -593,4 +595,7 @@ def test_reward_reservation_zero_for_shared_single_gpu() -> None:
             kling_video_reward=True,
         ),
     )
-    assert resolved.reward_gpu_reservation_count == 0
+
+    layout = build_bundle_layout(resolved)
+    assert layout.rollout_bundle_indices == layout.reward_bundle_indices
+    assert layout.total_bundles == 1

@@ -85,8 +85,8 @@ expose scheduling handles for rollout and reward runtimes
 remove placement group exactly once at run shutdown
 ```
 
-它应该是唯一 PG owner。`RayGenerationRuntime` 和 `RayActorMethodRuntime` 在 external
-placement 模式下只 owns workers，不 owns PG。
+它应该是唯一 PG owner。`RayGenerationRuntime` 和 `RayActorMethodRuntime` 在
+owner-managed placement 模式下只 owns workers，不 owns PG。
 
 ### 2.2 Bundle plan from resources
 
@@ -121,7 +121,7 @@ train phase:
   shared inference workers released when trainer shares that GPU
 ```
 
-因此 external placement API 必须支持：
+因此 role placement API 必须支持：
 
 ```text
 same placement_group
@@ -175,7 +175,7 @@ shared rollout/reward derives release_after_collect / release_before_reward_mode
 新增 owner，不接入 runtime：
 
 ```text
-vrl/ray/global_placement.py
+vrl/ray/placement.py
 ```
 
 它只根据 `ResolvedDistributedResources` 创建 bundle plan、PG、probe actual placement，
@@ -188,9 +188,9 @@ colocated trainer+rollout debug
 cross-node no trainer reservation
 ```
 
-### P2. External placement for rollout
+### P2. Owner-managed placement for rollout
 
-让 `RayGenerationLauncher.launch(...)` 支持 external placement：
+让 `RayGenerationLauncher.launch(...)` 接收 owner-managed placement：
 
 ```text
 placement_group
@@ -202,14 +202,14 @@ owned_by_launcher: false
 
 ```text
 persistent runtime keeps old behavior
-Releasable runtime releases workers/model but not external PG
+Releasable runtime releases workers/model but not the owner-managed PG
 launcher error path only kills workers it created
-launcher does not remove externally owned PG
+launcher does not remove the owner-managed PG
 ```
 
-### P3. External placement for reward
+### P3. Owner-managed placement for reward
 
-让 `RayActorMethodRuntime` 支持 external placement：
+让 `RayActorMethodRuntime` 接收 owner-managed placement：
 
 ```text
 placement_group
@@ -222,8 +222,8 @@ owns_placement: false
 要求：
 
 ```text
-release_after_call kills reward actors but leaves external PG alive
-no gpu_reservation_count needed when external bundle indices are supplied
+release_after_call kills reward actors but leaves the owner-managed PG alive
+no gpu_reservation_count needed when role bundle indices are supplied
 validation still checks actual reward gpu_ids
 ```
 
@@ -272,8 +272,8 @@ actual placement validation inputs
 补 runtime tests：
 
 ```text
-rollout external PG is not removed by release_memory
-reward external PG is not removed by release_after_call
+rollout owner-managed PG is not removed by release_memory
+reward owner-managed PG is not removed by release_after_call
 shared rollout/reward use same bundle index but are not resident together
 shutdown removes PG once
 error path removes PG once
@@ -304,8 +304,8 @@ Runtime proof:
 ```text
 PG created once per run
 PG removed once per run
-rollout actor release does not remove external PG
-reward actor release does not remove external PG
+rollout actor release does not remove the owner-managed PG
+reward actor release does not remove the owner-managed PG
 shared rollout/reward never launch simultaneously on the same bundle
 ```
 
@@ -313,8 +313,8 @@ shared rollout/reward never launch simultaneously on the same bundle
 
 ```text
 online.py becomes the owner of run-level Ray placement lifecycle.
-RayGenerationLauncher accepts externally owned placement.
-RayActorMethodRuntime accepts externally owned placement.
+RayGenerationLauncher accepts owner-managed placement.
+RayActorMethodRuntime accepts owner-managed placement.
 resources.py emits a role bundle plan instead of reward gpu_reservation_count.
 tests assert bundle ownership and phase handoff, not reservation-count arithmetic.
 ```
@@ -408,21 +408,21 @@ First read these files and cite the exact current contracts before editing:
 Goal: replace independent rollout/reward placement groups with one run-level
 GlobalRayPlacementOwner created by online.py. The owner creates/probes one PG,
 maps roles to bundle indices, and is removed exactly once at run shutdown.
-Rollout and reward runtimes receive external placement and must not remove the
+Rollout and reward runtimes receive owner-managed placement and must not remove the
 shared PG when releasing actors.
 
 Implement in phases:
 1. Add characterization tests for current separate-PG behavior and release flags.
 2. Add GlobalRayPlacementOwner and role bundle plan tests.
-3. Add external placement support to RayGenerationLauncher/Releasable runtime.
-4. Add external placement support to RayActorMethodRuntime/RayRewardRuntime.
+3. Add owner-managed placement support to RayGenerationLauncher/Releasable runtime.
+4. Add owner-managed placement support to RayActorMethodRuntime/RayRewardRuntime.
 5. Wire online.py to create/pass/shutdown the owner.
 6. Replace reward_gpu_reservation_count tests with role bundle plan tests.
 
 Hard requirements:
 - shared rollout/reward GPU uses the same bundle index and actors are not resident together.
 - dedicated reward GPU can keep reward actors resident.
-- external placement is never removed by rollout/reward runtime release.
+- owner-managed placement is never removed by rollout/reward runtime release.
 - error paths remove the shared PG exactly once.
 - trainer remains the driver process, not a Ray actor.
 

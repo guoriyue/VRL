@@ -15,6 +15,8 @@ from vrl.config.precision import resolve_precision_policy
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces import require_runtime_model
+from vrl.ray.dependencies import require_ray
+from vrl.ray.placement import GlobalRayPlacementOwner
 from vrl.ray.resources import (
     format_distributed_resource_plan,
     resolve_distributed_resources,
@@ -186,12 +188,33 @@ async def run_online_recipe(
     )
     scheduler = definition.scheduler_getter(bundle)
 
+    # One run-level Ray placement group owns trainer/rollout/reward bundles for
+    # the whole run. Created after the trainer model is on its GPU (so Ray init
+    # keeps following model placement) and before reward/rollout are built, so
+    # both receive owner-managed placement into the same group instead of each
+    # building (and per-epoch rebuilding) its own.
+    placement_owner = GlobalRayPlacementOwner(
+        resources,
+        rollout_cpus_per_worker=float(
+            OmegaConf.select(cfg, "distributed.rollout.cpus_per_worker", default=1.0),
+        ),
+    )
+    ray = require_ray()
+    if not ray.is_initialized():
+        ray.init()
+    if resources.cross_node:
+        from vrl.generation.ray.launcher import _cross_node_preflight
+
+        _cross_node_preflight(ray, resources)
+    placement_owner.create()
+
     components = build_online_recipe_components(
         cfg,
         family=definition.family,
         device=str(device),
         scheduler=scheduler,
         built=built,
+        reward_placement=placement_owner.reward_placement,
     )
     rollout_executor_kwargs = (
         definition.collector_kwargs_getter(cfg, examples)
@@ -218,6 +241,7 @@ async def run_online_recipe(
             driver_bundle=bundle,
             launch_contract=runtime_inputs.launch_contract,
             gatherer=runtime_inputs.gatherer,
+            placement=placement_owner.rollout_placement,
         ),
     )
     log_host_memory("after_rollout_backend_build", log=logger)

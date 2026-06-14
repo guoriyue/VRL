@@ -90,8 +90,14 @@ def build_reward_from_cfg(
     *,
     built: dict[str, Any] | None = None,
     device: str = "cuda",
+    reward_placement: Any | None = None,
 ) -> Any:
-    """Build the online reward function from the shared config loader output."""
+    """Build the online reward function from the shared config loader output.
+
+    ``reward_placement`` is the reward role's placement handle from a
+    ``GlobalRayPlacementOwner``; when given, the Ray reward runtime schedules its
+    actors into the shared run-level placement group instead of building its own.
+    """
 
     built = built or build_configs(cfg)
     if "reward" not in built:
@@ -101,7 +107,12 @@ def build_reward_from_cfg(
     reward_weights, reward_kwargs = built["reward"]
     if not reward_weights:
         raise ValueError("At least one reward component must have weight > 0.")
-    reward_kwargs = _with_resolved_reward_runtime_kwargs(cfg, reward_weights, reward_kwargs)
+    reward_kwargs = _with_resolved_reward_runtime_kwargs(
+        cfg,
+        reward_weights,
+        reward_kwargs,
+        reward_placement=reward_placement,
+    )
     from vrl.rewards.functions.registry import MultiReward
 
     return MultiReward.from_dict(
@@ -115,6 +126,8 @@ def _with_resolved_reward_runtime_kwargs(
     cfg: DictConfig,
     reward_weights: dict[str, float],
     reward_kwargs: dict[str, dict],
+    *,
+    reward_placement: Any | None = None,
 ) -> dict[str, dict]:
     reward_key = next(
         (
@@ -135,6 +148,10 @@ def _with_resolved_reward_runtime_kwargs(
     resolved_runtime = reward_runtime_resource_kwargs(resources)
     merged = dict(video_kwargs)
     merged.update(resolved_runtime)
+    if reward_placement is not None:
+        # Run-level placement owner supplied: the reward runtime schedules its
+        # actors into the shared group's reward bundle.
+        merged["placement"] = reward_placement
 
     out = dict(reward_kwargs)
     out[reward_key] = merged
@@ -284,13 +301,23 @@ def build_online_recipe_components(
     family: str | RolloutFamilyEntry | None = None,
     scheduler: Any | None = None,
     built: dict[str, Any] | None = None,
+    reward_placement: Any | None = None,
 ) -> OnlineRecipeFactoryOutput:
-    """Build config-derived online recipe components without loading a model."""
+    """Build config-derived online recipe components without loading a model.
+
+    ``reward_placement`` is forwarded to the reward runtime so Ray reward actors
+    share the run-level placement group owned by a ``GlobalRayPlacementOwner``.
+    """
 
     built = built or build_configs(cfg)
     entry = _entry_from_family(cfg, family)
     collector_config = _rollout_config_for_entry(cfg, entry)
-    reward_fn = build_reward_from_cfg(cfg, built=built, device=device)
+    reward_fn = build_reward_from_cfg(
+        cfg,
+        built=built,
+        device=device,
+        reward_placement=reward_placement,
+    )
     pair = build_algorithm_and_evaluator_from_cfg(
         cfg,
         family=entry,

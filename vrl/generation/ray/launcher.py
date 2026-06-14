@@ -16,7 +16,6 @@ from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import ChunkGatherer, GenerationRuntime
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.executor import RayGenerationExecutor
-from vrl.generation.ray.placement import create_generation_placement_group
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.weight_sync import RayGenerationWeightSync
 from vrl.generation.ray.worker import RayGenerationWorker
@@ -24,9 +23,7 @@ from vrl.models.dtypes import dtype_to_config_string
 from vrl.models.interfaces.runtime import torch_compile_model_config
 from vrl.ray.actor_group import RayActorGroup
 from vrl.ray.dependencies import current_node_ip, import_from_path, require_ray
-from vrl.ray.lifecycle import kill_actors, remove_placement_group
-from vrl.ray.placement import validate_actor_gpu_ids
-from vrl.ray.resources import format_distributed_resource_plan
+from vrl.ray.placement import RolePlacement, validate_actor_gpu_ids
 from vrl.utils.config import cfg_path, to_builtin_deep
 
 logger = logging.getLogger(__name__)
@@ -52,7 +49,17 @@ class RayGenerationLauncher:
         config: RayGenerationConfig | Mapping[str, Any],
         launch_contract: GenerationRuntimeLaunchContract | Mapping[str, Any],
         gatherer: ChunkGatherer,
+        *,
+        placement: RolePlacement,
     ) -> RayGenerationRuntime:
+        """Launch rollout workers and return a collector-facing runtime.
+
+        Workers are scheduled into a run-level placement group owned by a
+        ``GlobalRayPlacementOwner``. The launcher uses the rollout role's bundles,
+        validates the workers against the role's expected GPUs, and never removes
+        the group; the owner does that once at run shutdown.
+        """
+
         rollout_config = RayGenerationConfig.from_cfg(config)
 
         contract = GenerationRuntimeLaunchContract.from_value(launch_contract)
@@ -64,27 +71,13 @@ class RayGenerationLauncher:
         if self.init_ray and not ray.is_initialized():
             ray.init(**self.ray_init_kwargs)
 
-        if rollout_config.resources is not None and rollout_config.resources.cross_node:
-            _cross_node_preflight(ray, rollout_config.resources)
+        placement_group = placement.placement_group
+        bundle_indices = list(placement.bundle_indices)
+        owned_placement_group = None  # owned by GlobalRayPlacementOwner
+        expected_gpu_ids = placement.expected_gpu_ids
 
-        placement = create_generation_placement_group(rollout_config)
-        if rollout_config.resources is not None:
-            logger.info(
-                format_distributed_resource_plan(
-                    rollout_config.resources,
-                    actual_placement={
-                        "trainer_gpu_ids": list(placement.trainer_gpu_ids),
-                        "rollout_gpu_ids": list(placement.rollout_gpu_ids),
-                    },
-                ),
-            )
-
-        worker_ids: list[str] = []
-        worker_configs: list[GenerationRuntimeLaunchContract] = []
-        for logical_idx, _bundle_idx in enumerate(placement.ordered_bundle_indices):
-            worker_id = f"rollout-{logical_idx}"
-            worker_ids.append(worker_id)
-            worker_configs.append(contract)
+        worker_ids = [f"rollout-{logical_idx}" for logical_idx in range(len(bundle_indices))]
+        worker_configs = [contract for _ in bundle_indices]
 
         try:
             actor_group = RayActorGroup.launch(
@@ -93,8 +86,8 @@ class RayGenerationLauncher:
                 worker_ids=worker_ids,
                 num_cpus=rollout_config.cpus_per_worker,
                 num_gpus=rollout_config.gpus_per_worker,
-                placement_group=placement.placement_group,
-                bundle_indices=placement.ordered_bundle_indices,
+                placement_group=placement_group,
+                bundle_indices=bundle_indices,
                 startup_method="load_policy",
             )
             metadata = [
@@ -105,12 +98,16 @@ class RayGenerationLauncher:
                 }
                 for handle in actor_group.handles
             ]
-            _validate_worker_gpu_ids(rollout_config, metadata)
+            _validate_worker_gpu_ids(
+                rollout_config,
+                metadata,
+                expected_gpu_ids=expected_gpu_ids,
+            )
         except Exception:
             if "actor_group" in locals():
                 actor_group.shutdown()
-            kill_actors(ray, placement.trainer_reservation_actors)
-            remove_placement_group(placement.placement_group)
+            # The launcher only created the workers; the placement group belongs
+            # to the GlobalRayPlacementOwner.
             raise
 
         workers = [
@@ -143,8 +140,8 @@ class RayGenerationLauncher:
             executor,
             weight_sync=weight_sync,
             owned_workers=workers,
-            owned_actors=placement.trainer_reservation_actors,
-            placement_group=placement.placement_group,
+            owned_actors=[],
+            placement_group=owned_placement_group,
         )
         if contract.policy_version is not None:
             runtime.current_policy_version = contract.policy_version
@@ -159,6 +156,7 @@ class RayGenerationLauncher:
         trainable_modules: Mapping[str, Any] | Iterable[Any] | None = None,
         launch_contract: Any | None = None,
         gatherer: Any | None = None,
+        placement: RolePlacement | None = None,
     ) -> GenerationRuntime:
         """Build the Ray generation runtime from training config and launch inputs."""
 
@@ -177,11 +175,27 @@ class RayGenerationLauncher:
             )
         )
         if resolved_contract is not None and gatherer is not None:
+            if placement is None:
+                raise ValueError(
+                    "RayGenerationLauncher.launch_from_cfg requires placement: "
+                    "rollout workers schedule into the run-level placement group "
+                    "built by a GlobalRayPlacementOwner.",
+                )
             if config.release_after_collect:
                 from vrl.generation.ray.runtime import ReleasableRayGenerationRuntime
 
-                return ReleasableRayGenerationRuntime(config, resolved_contract, gatherer)
-            return self.launch(config, resolved_contract, gatherer)
+                return ReleasableRayGenerationRuntime(
+                    config,
+                    resolved_contract,
+                    gatherer,
+                    placement=placement,
+                )
+            return self.launch(
+                config,
+                resolved_contract,
+                gatherer,
+                placement=placement,
+            )
 
         raise ValueError(
             "Ray generation launch requires launch_contract plus gatherer so "
@@ -243,6 +257,8 @@ def _require_chunk_gatherer(gatherer: Any) -> ChunkGatherer:
 def _validate_worker_gpu_ids(
     config: RayGenerationConfig,
     metadata: list[Mapping[str, Any]],
+    *,
+    expected_gpu_ids: tuple[int, ...] | None = None,
 ) -> None:
     resources = config.resources
     if resources is None or resources.rollout_gpus_per_worker <= 0:
@@ -255,9 +271,12 @@ def _validate_worker_gpu_ids(
         except Exception:
             driver_node_ip = None
 
+    # The placement owner supplies the role's expected GPUs (empty under
+    # cross-node, where the node-aware check applies instead).
+    expected = resources.rollout_devices if expected_gpu_ids is None else expected_gpu_ids
     validate_actor_gpu_ids(
         metadata,
-        expected_gpu_ids=resources.rollout_devices,
+        expected_gpu_ids=expected,
         role="generation",
         cross_node=resources.cross_node,
         driver_node_ip=driver_node_ip,

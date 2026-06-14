@@ -9,17 +9,7 @@ from typing import Any
 
 from vrl.ray.actor_group import RayActorGroup
 from vrl.ray.dependencies import require_ray
-from vrl.ray.lifecycle import kill_actors, remove_placement_group
-from vrl.ray.placement import (
-    actor_scheduling_strategy,
-    create_placement_group,
-    validate_actor_gpu_ids,
-)
-
-
-class _GpuReservationActor:
-    def ping(self) -> bool:
-        return True
+from vrl.ray.placement import validate_actor_gpu_ids
 
 
 @dataclass(slots=True)
@@ -40,11 +30,14 @@ class RayActorMethodRuntime:
     release_after_call: bool = False
     placement_strategy: str = "SPREAD"
     expected_gpu_ids: tuple[int, ...] = ()
-    gpu_reservation_count: int = 0
     validate_role: str = "actor"
+    # Owner-managed run-level placement. GPU actors schedule into these bundles;
+    # the runtime never builds or removes the group, so release_after_call /
+    # shutdown drop the actors only. CPU-only actors self-schedule as plain Ray
+    # tasks and need no placement at all.
+    placement_group: Any | None = None
+    bundle_indices: tuple[int, ...] = ()
     _actor_group: RayActorGroup | None = field(default=None, init=False, repr=False)
-    _placement_group: Any | None = field(default=None, init=False, repr=False)
-    _reservation_actors: list[Any] = field(default_factory=list, init=False, repr=False)
 
     async def map(self, payloads: Sequence[Any]) -> list[Any]:
         """Map configured actor method over payloads using the shared actor group."""
@@ -67,13 +60,6 @@ class RayActorMethodRuntime:
         self._actor_group = None
         if actor_group is not None:
             actor_group.shutdown()
-        ray = require_ray()
-        if self._reservation_actors:
-            kill_actors(ray, self._reservation_actors)
-            self._reservation_actors.clear()
-        if self._placement_group is not None:
-            remove_placement_group(self._placement_group)
-            self._placement_group = None
 
     def _ensure_actor_group(self) -> RayActorGroup:
         if self._actor_group is not None:
@@ -85,7 +71,7 @@ class RayActorMethodRuntime:
             ray.init(**self.ray_init_kwargs)
         worker_ids = [f"{self.worker_id_prefix}-{index}" for index in range(self.num_workers)]
         worker_configs = [dict(self.worker_config) for _ in worker_ids]
-        placement_group, bundle_indices = self._ensure_placement(ray)
+        placement_group, bundle_indices = self._ensure_placement()
         self._actor_group = RayActorGroup.launch(
             worker_cls=self.worker_cls,
             worker_configs=worker_configs,
@@ -112,45 +98,19 @@ class RayActorMethodRuntime:
             )
         return self._actor_group
 
-    def _ensure_placement(self, ray: Any) -> tuple[Any | None, list[int] | None]:
-        if self.gpus_per_worker <= 0 or not self.expected_gpu_ids:
-            return None, None
-        if self._placement_group is not None:
-            first_worker_bundle = int(self.gpu_reservation_count)
-            return self._placement_group, [
-                first_worker_bundle + index
-                for index in range(self.num_workers)
-            ]
-
-        bundles: list[dict[str, float]] = []
-        for _ in range(max(0, int(self.gpu_reservation_count))):
-            bundles.append({"CPU": 0.001, "GPU": 1.0})
-        worker_bundle_indices: list[int] = []
-        for _ in range(self.num_workers):
-            worker_bundle_indices.append(len(bundles))
-            bundle = {"CPU": float(self.cpus_per_worker)}
-            if self.gpus_per_worker > 0:
-                bundle["GPU"] = float(self.gpus_per_worker)
-            bundles.append(bundle)
-
-        self._placement_group = create_placement_group(
-            bundles,
-            strategy=self.placement_strategy,
-        )
-        if self.gpu_reservation_count > 0:
-            remote_reservation = ray.remote(num_cpus=0.001, num_gpus=1.0)(_GpuReservationActor)
-            self._reservation_actors = [
-                remote_reservation.options(
-                    scheduling_strategy=actor_scheduling_strategy(
-                        placement_group=self._placement_group,
-                        bundle_index=index,
-                        capture_child_tasks=True,
-                    ),
-                ).remote()
-                for index in range(int(self.gpu_reservation_count))
-            ]
-            ray.get([actor.ping.remote() for actor in self._reservation_actors])
-        return self._placement_group, worker_bundle_indices
+    def _ensure_placement(self) -> tuple[Any | None, list[int] | None]:
+        if self.placement_group is not None:
+            # Owner-managed run-level group: use its bundles, build nothing,
+            # remove nothing.
+            return self.placement_group, list(self.bundle_indices)
+        if self.gpus_per_worker > 0:
+            raise ValueError(
+                "RayActorMethodRuntime needs placement for GPU actors: "
+                "GPU workers schedule into the run-level placement group owned by "
+                "a GlobalRayPlacementOwner (wired in vrl/scripts/common/online.py).",
+            )
+        # CPU-only actors self-schedule as plain Ray tasks; no placement group.
+        return None, None
 
     def __del__(self) -> None:
         with contextlib.suppress(Exception):
@@ -158,13 +118,6 @@ class RayActorMethodRuntime:
             self._actor_group = None
             if actor_group is not None:
                 actor_group.shutdown()
-            ray = require_ray()
-            if self._reservation_actors:
-                kill_actors(ray, self._reservation_actors)
-                self._reservation_actors.clear()
-            if self._placement_group is not None:
-                remove_placement_group(self._placement_group)
-                self._placement_group = None
 
 
 __all__ = ["RayActorMethodRuntime"]

@@ -30,6 +30,84 @@ def build_constant_reward_model(worker_config):
     return _model
 
 
+class _EchoWorker:
+    """Minimal RayActorMethodRuntime worker for owner-placement tests."""
+
+    def __init__(self, worker_id, worker_config):
+        self.worker_id = str(worker_id)
+
+    def worker_metadata(self):
+        return {"worker_id": self.worker_id, "node_ip": "local", "gpu_ids": []}
+
+    def echo(self, payload):
+        return (self.worker_id, payload)
+
+
+def _cpu_owner(ray):
+    from omegaconf import OmegaConf
+
+    from vrl.ray.placement import GlobalRayPlacementOwner
+    from vrl.ray.resources import resolve_distributed_resources
+
+    resolved = resolve_distributed_resources(
+        OmegaConf.create(
+            {
+                "distributed": {
+                    "resources": {
+                        "visible_devices": [],
+                        "trainer": {"num_gpus": 0},
+                        "rollout": {"num_gpus": 0, "gpus_per_worker": 0, "num_workers": 1},
+                    },
+                    "rollout": {},
+                    "reward": {},
+                },
+            },
+        ),
+    )
+    owner = GlobalRayPlacementOwner(resolved, rollout_cpus_per_worker=0.5)
+    owner.create()
+    return owner
+
+
+def test_actor_method_runtime_owner_placement_survives_release() -> None:
+    """release_after_call drops actors but never the owner-managed PG."""
+    ray = pytest.importorskip("ray")
+    from vrl.ray.runtime import RayActorMethodRuntime
+
+    ray.shutdown()
+    ray.init(ignore_reinit_error=True, include_dashboard=False, num_cpus=2, log_to_driver=False)
+    owner = _cpu_owner(ray)
+    placement = owner.rollout_placement
+    runtime = RayActorMethodRuntime(
+        worker_cls=_EchoWorker,
+        worker_config={},
+        method_name="echo",
+        worker_id_prefix="reward",
+        num_workers=1,
+        cpus_per_worker=0.5,
+        gpus_per_worker=0.0,
+        init_ray=False,
+        release_after_call=True,
+        placement_group=placement.placement_group,
+        bundle_indices=placement.bundle_indices,
+        validate_role="reward",
+    )
+    try:
+        out = asyncio.run(runtime.map(["ping"]))
+        assert out == [("reward-0", "ping")]
+        # Actors released, but the owner-managed PG is untouched.
+        assert runtime._actor_group is None
+        assert owner._placement_group is not None
+        # ...and a second call re-acquires actors into the same owner-managed PG.
+        out2 = asyncio.run(runtime.map(["pong"]))
+        assert out2 == [("reward-0", "pong")]
+        assert owner._placement_group is not None
+    finally:
+        asyncio.run(runtime.shutdown())
+        owner.shutdown()
+        ray.shutdown()
+
+
 def _request() -> RewardInferenceRequest:
     return RewardInferenceRequest(
         request_id="req",

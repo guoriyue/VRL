@@ -14,6 +14,7 @@ from vrl.generation.ray.weight_sync import GenerationWeightSync
 from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.dependencies import require_ray
 from vrl.ray.lifecycle import kill_actors, remove_placement_group
+from vrl.ray.placement import RolePlacement
 
 
 class RayGenerationRuntime(GenerationRuntime):
@@ -101,10 +102,16 @@ class ReleasableRayGenerationRuntime(GenerationRuntime):
         config: RayGenerationConfig,
         launch_contract: Any,
         gatherer: Any,
+        *,
+        placement: RolePlacement,
     ) -> None:
         self.config = config
         self.launch_contract = launch_contract
         self.gatherer = gatherer
+        # Run-level placement owned by a GlobalRayPlacementOwner. The workers are
+        # recreated into it each acquire cycle; release_memory drops the workers
+        # but never the placement group.
+        self.placement = placement
         self.weight_sync = object() if config.sync_trainable_state != "disabled" else None
         self.requires_driver_model_offload = config.gpus_per_worker > 0
         self.current_policy_version = _launch_contract_policy_version(launch_contract)
@@ -158,6 +165,7 @@ class ReleasableRayGenerationRuntime(GenerationRuntime):
                 self.config,
                 self.launch_contract,
                 self.gatherer,
+                placement=self.placement,
             )
             self._runtime = runtime
             if self._last_state is not None:

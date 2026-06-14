@@ -1,12 +1,40 @@
-"""Shared Ray placement helpers."""
+"""Run-level Ray placement owner.
+
+A single :class:`GlobalRayPlacementOwner` builds one placement group for the
+whole run from the resolved :class:`BundleLayout`, probes which physical GPU
+each bundle actually landed on, and hands rollout/reward runtimes role placement
+handles (the shared PG plus the bundle indices they may schedule into). It removes
+the placement group exactly once at run shutdown.
+
+This replaces two independent placement groups (one built by the rollout
+launcher, one by the reward actor runtime) and the reward ``gpu_reservation_count``
+offset math. The trainer stays the driver process — never a Ray actor — so its
+GPU is protected by a *reserved* (empty) bundle rather than a reservation actor.
+
+Why probe-then-assign: Ray decides the bundle->physical-GPU mapping when the PG
+is created, and that mapping is not controllable up front. So the owner probes
+the live PG once to learn ``bundle_index -> gpu_id``, then matches each role's
+*requested* device ordinals to the bundles that actually hold those GPUs. Naive
+"bundle i serves GPU i" would let a trainer-reserved bundle land on a rollout
+GPU (or vice versa) and silently collide the driver with a rollout worker.
+"""
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Any
 
-from vrl.ray.dependencies import require_ray
-from vrl.ray.lifecycle import remove_placement_group
+from vrl.ray.dependencies import current_gpu_ids, current_node_ip, require_ray
+from vrl.ray.lifecycle import kill_actors, remove_placement_group
+from vrl.ray.resources import (
+    BundleLayout,
+    ResolvedDistributedResources,
+    build_bundle_layout,
+)
+
+logger = logging.getLogger(__name__)
 
 
 def create_placement_group(
@@ -35,7 +63,7 @@ def create_placement_group(
         raise RuntimeError(
             f"Ray placement group not ready after {ready_timeout_s:.0f}s: "
             f"bundles={[dict(b) for b in bundles]} strategy={strategy!r}. "
-            "The cluster cannot satisfy these bundles — check whether resident "
+            "The cluster cannot satisfy these bundles -- check whether resident "
             "actors hold the GPUs this group is trying to reserve.",
         ) from exc
     return pg
@@ -145,7 +173,240 @@ def _validate_cross_node_actor_gpu_ids(
     return tuple(sorted(gpu_ids))
 
 
+@dataclass(frozen=True, slots=True)
+class RolePlacement:
+    """Placement handle for one execution role.
+
+    The role's runtime schedules its actors into ``bundle_indices`` of the
+    shared ``placement_group`` and never removes the group itself.
+    ``expected_gpu_ids`` are the device ordinals the role's actors must land on
+    (empty under cross-node, where node-aware validation is used instead).
+    """
+
+    placement_group: Any
+    bundle_indices: tuple[int, ...]
+    expected_gpu_ids: tuple[int, ...]
+
+
+class _ProbeActor:
+    def node_and_gpus(self) -> tuple[str, tuple[int, ...]]:
+        return current_node_ip(), tuple(current_gpu_ids())
+
+
+@dataclass(slots=True)
+class GlobalRayPlacementOwner:
+    """Owns the single run-level Ray placement group and role->bundle mapping."""
+
+    resources: ResolvedDistributedResources
+    rollout_cpus_per_worker: float = 1.0
+    placement_strategy: str | None = None
+    layout: BundleLayout = field(init=False)
+    _placement_group: Any | None = field(default=None, init=False, repr=False)
+    _bundle_gpu_actual: dict[int, int] = field(default_factory=dict, init=False, repr=False)
+    _role_bundles: dict[str, tuple[int, ...]] = field(default_factory=dict, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self.layout = build_bundle_layout(self.resources)
+
+    # -- lifecycle -----------------------------------------------------------
+
+    def create(self) -> None:
+        """Create the placement group, probe GPU bundles, and assign roles."""
+
+        if self._placement_group is not None:
+            return
+        if self.layout.total_bundles == 0:
+            # Trainer-only / no-rollout plans need no Ray placement.
+            self._role_bundles = {"rollout": (), "reward": ()}
+            return
+
+        ray = require_ray()
+        pg = create_placement_group(self._bundle_specs(), strategy=self._strategy())
+        try:
+            probed = self._probe_gpu_bundles(ray, pg)
+            self._role_bundles = self.assign_roles(probed)
+        except Exception:
+            remove_placement_group(pg)
+            raise
+        self._placement_group = pg
+        self._bundle_gpu_actual = probed
+        logger.info(
+            "GlobalRayPlacementOwner created: bundles=%s probed_gpus=%s roles=%s",
+            self.layout.bundle_gpu_ids,
+            probed,
+            self._role_bundles,
+        )
+
+    def shutdown(self) -> None:
+        """Remove the placement group exactly once."""
+
+        pg = self._placement_group
+        self._placement_group = None
+        if pg is not None:
+            remove_placement_group(pg)
+
+    # -- role placement handles ---------------------------------------------
+
+    @property
+    def rollout_placement(self) -> RolePlacement | None:
+        return self._role_placement("rollout", self.resources.rollout_devices)
+
+    @property
+    def reward_placement(self) -> RolePlacement | None:
+        return self._role_placement("reward", self.resources.reward_devices)
+
+    def _role_placement(
+        self,
+        role: str,
+        expected_gpu_ids: tuple[int, ...],
+    ) -> RolePlacement | None:
+        bundles = self._role_bundles.get(role, ())
+        if not bundles or self._placement_group is None:
+            return None
+        return RolePlacement(
+            placement_group=self._placement_group,
+            bundle_indices=bundles,
+            expected_gpu_ids=() if self.resources.cross_node else tuple(expected_gpu_ids),
+        )
+
+    # -- role assignment (pure; unit-tested with an injected probe) ----------
+
+    def assign_roles(self, probed: dict[int, int]) -> dict[str, tuple[int, ...]]:
+        """Map roles to bundle indices given a ``bundle_index -> gpu_id`` probe.
+
+        Single-node: match each role's requested device ordinals to the bundle
+        that actually holds that GPU, so a reserved trainer bundle never doubles
+        as a rollout bundle. Cross-node: device ordinals are budget tokens that
+        cannot be matched to real remote GPU ids, so roles keep the plan's
+        positional bundle indices and rely on node-aware validation at launch.
+        CPU bundles (no GPU) always keep their positional plan indices.
+        """
+
+        if self.resources.cross_node:
+            return {
+                "rollout": self.layout.rollout_bundle_indices,
+                "reward": self.layout.reward_bundle_indices,
+            }
+
+        gpu_to_bundle: dict[int, int] = {}
+        for bundle_index, gpu_id in probed.items():
+            if gpu_id in gpu_to_bundle:
+                raise RuntimeError(
+                    f"two bundles probed to GPU {gpu_id}: "
+                    f"{gpu_to_bundle[gpu_id]} and {bundle_index}",
+                )
+            gpu_to_bundle[gpu_id] = bundle_index
+
+        return {
+            "rollout": self._match_gpu_bundles(
+                "rollout",
+                self.resources.rollout_devices,
+                self.resources.rollout_gpus_per_worker,
+                self.layout.rollout_bundle_indices,
+                gpu_to_bundle,
+            ),
+            "reward": self._match_gpu_bundles(
+                "reward",
+                self.resources.reward_devices,
+                self.resources.reward_gpus_per_worker,
+                self.layout.reward_bundle_indices,
+                gpu_to_bundle,
+            ),
+        }
+
+    def _match_gpu_bundles(
+        self,
+        role: str,
+        devices: tuple[int, ...],
+        gpus_per_worker: float,
+        cpu_plan_indices: tuple[int, ...],
+        gpu_to_bundle: dict[int, int],
+    ) -> tuple[int, ...]:
+        if gpus_per_worker <= 0:
+            # CPU-only role: positional plan bundles (probe does not cover them).
+            return cpu_plan_indices
+        matched: list[int] = []
+        for gpu_id in devices:
+            bundle_index = gpu_to_bundle.get(gpu_id)
+            if bundle_index is None:
+                raise RuntimeError(
+                    f"{role} device GPU {gpu_id} has no bundle in the probed "
+                    f"placement group (probed GPUs={sorted(gpu_to_bundle)})",
+                )
+            matched.append(bundle_index)
+        return tuple(matched)
+
+    # -- internals -----------------------------------------------------------
+
+    def _strategy(self) -> str:
+        if self.placement_strategy:
+            return self.placement_strategy
+        # Cross-node spreads bundles across nodes; single-node packs them.
+        return "SPREAD" if self.resources.cross_node else "PACK"
+
+    def _bundle_specs(self) -> list[dict[str, float]]:
+        specs: list[dict[str, float]] = []
+        for bundle_index, gpu_id in enumerate(self.layout.bundle_gpu_ids):
+            cpu = self._bundle_cpu(bundle_index, gpu_id)
+            spec: dict[str, float] = {"CPU": cpu}
+            if gpu_id is not None:
+                spec["GPU"] = 1.0
+            specs.append(spec)
+        return specs
+
+    def _bundle_cpu(self, bundle_index: int, gpu_id: int | None) -> float:
+        """CPU a bundle reserves = max over the roles that may run in it.
+
+        A trainer-reserved GPU bundle (no role) only needs a token CPU so the
+        empty bundle is schedulable while still holding the GPU out of Ray's
+        pool.
+        """
+
+        cpus: list[float] = []
+        if bundle_index in self.layout.rollout_bundle_indices:
+            cpus.append(float(self.rollout_cpus_per_worker))
+        if bundle_index in self.layout.reward_bundle_indices:
+            cpus.append(float(self.resources.reward_cpus_per_worker))
+        if not cpus:
+            return 0.001
+        return max(cpus)
+
+    def _probe_gpu_bundles(self, ray: Any, pg: Any) -> dict[int, int]:
+        gpu_bundles = [
+            index
+            for index, gpu_id in enumerate(self.layout.bundle_gpu_ids)
+            if gpu_id is not None
+        ]
+        if not gpu_bundles:
+            return {}
+        remote_probe = ray.remote(num_cpus=0.001, num_gpus=1.0)(_ProbeActor)
+        actors = [
+            remote_probe.options(
+                scheduling_strategy=actor_scheduling_strategy(
+                    placement_group=pg,
+                    bundle_index=bundle_index,
+                    capture_child_tasks=True,
+                ),
+            ).remote()
+            for bundle_index in gpu_bundles
+        ]
+        try:
+            results = ray.get([actor.node_and_gpus.remote() for actor in actors])
+        finally:
+            kill_actors(ray, actors)
+        probed: dict[int, int] = {}
+        for bundle_index, (_node_ip, gpu_ids) in zip(gpu_bundles, results, strict=True):
+            if not gpu_ids:
+                raise RuntimeError(
+                    f"placement-group bundle {bundle_index} received no GPU",
+                )
+            probed[bundle_index] = int(gpu_ids[0])
+        return probed
+
+
 __all__ = [
+    "GlobalRayPlacementOwner",
+    "RolePlacement",
     "actor_scheduling_strategy",
     "create_placement_group",
     "validate_actor_gpu_ids",
