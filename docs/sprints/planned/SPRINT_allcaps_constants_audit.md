@@ -224,6 +224,10 @@ HF_CACHE_DIR = ""
 
 ### P3 — 散件
 
+> **口径已修订（2026-06-13，见附录 B）**：下方原把 R1 prompts 判 MOVE→yaml、`_ARTIFACT_DIRS` 判
+> CONSOLIDATE→动态化。实读源码后**全部撤销**——R1 prompts 是 byte-sensitive 协议文本（KEEP+注释），
+> `_ARTIFACT_DIRS` 顶撞模块 "no framework" docstring（KEEP+可选改名）。最终口径以**附录 B**为准。
+
 **`JANUS_R1_SELFCHECK_PROMPT` / `JANUS_R1_REGEN_PROMPT`** — `vrl/models/ar/janus_pro/model.py:62,65`
 （MOVE，medium）
 - 问题（`prompt_template`）：R1 生成流水线的 prompt 文本硬编码在工作流代码里（`:656/817` 使用）。
@@ -401,6 +405,149 @@ family 名（`cosmos-predict2`、`cosmos-predict2.5`、`wan_2_1`、`sd3_5`、`co
 
 其余确认无误的关键判断：`SUBJECT_PROMPT_TAGS` 是干净 DERIVE；`MEDIA_TYPES`/`SINGLETON_TENSOR_ROLES`
 注释已明确是单一来源/已派生（KEEP）；danbooru 空串可变全局确属配置注入反模式。
+
+---
+
+## 附录 A：dict 型 ALL_CAPS 专项审计（必保留清单 + 删除判据）
+
+> 用 AST 扫 `vrl/` 全部模块级 dict 型 ALL_CAPS（比正文的 `^[A-Z]` grep 更全——还抓到下划线前缀的
+> 模块私有 dict）。共 **15 个**：**12 个必须保留**，**3 个**（danbooru 领域数据）已随 P0 迁出。
+> 行号为审计时快照；danbooru 三项迁出后行号已变（见 A.2）。
+
+### A.1 必须保留的 12 个（按边界类型）
+
+| dict | 路径 | 为什么是真实边界 |
+|---|---|---|
+| `FAMILY_REGISTRY` | `vrl/rollouts/families/registry.py:80` | 运行时注册填充的 registry（空 `{}` 起步） |
+| `_REWARD_REGISTRY` | `vrl/rewards/functions/registry.py:16` | 同上，`_register_builtins()` 填充 |
+| `_FAMILY_ALIASES` | `vrl/rollouts/families/registry.py:305` | **已经是派生的**——`{alias: family for ... in FAMILY_REGISTRY}`，正是该有的写法 |
+| `_CANONICAL_STRING` | `vrl/models/dtypes.py:21` | 容错拼写→规范 dtype 串归一化表；正反向单一真相源；详见 A.3 |
+| `SAFETY_RATING_ALIASES` | `vrl/scripts/data/danbooru.py`（safety 区） | 解析 danbooru 外部 `g/s/q/e` 评级码；数据格式契约，详见 A.3 |
+| `_MODEL_BY_TASK` | `vrl/models/diffusion/wan_2_1/runtime.py:53` | task→model 类的 dispatch 表（字符串懒加载路径） |
+| `_SCORE_KEY_MAP` | `vrl/rewards/models/kling_video_reward.py:32` | 内部 key→Kling 模型维度码的外部 API 字段映射 |
+| `_METADATA_PREFIX` | `vrl/models/diffusion/common/vae_decode_memory.py:76` | 注释明写 "downstream contract（bundle metadata + tests）"，schema 契约 |
+| `_JANUS_LORA_DEFAULTS` | `vrl/models/ar/janus_pro/runtime.py:141` | LoRA 配方默认值，config `model.lora` 可覆盖（已有 override 路径） |
+| `_NEXTSTEP_LORA_DEFAULTS` | `vrl/models/ar/nextstep_1/runtime.py:134` | 同上 |
+| `_ARTIFACT_DIRS` | `vrl/scripts/data/setup.py:24` | init-dirs 命令的本地小 wiring 表（P3 改判 KEEP，见 §0/§4） |
+| `_DIMENSION_DESCRIPTIONS` | `vrl/rewards/models/kling_video_reward.py:39` | 唯一边界项：是 prose 描述文本，但与 Kling 模型 prompt 格式耦合——倾向保留；若想搬只有它够格 |
+
+### A.2 已迁出的 3 个（danbooru 领域数据，P0 完成）
+
+| dict | 原路径 | 性质 | 去向 |
+|---|---|---|---|
+| `SUBJECT_TAGS` | `danbooru.py:89` | anime 领域词表 | `datasets/danbooru/config.yaml`，`dict(_ANATOMY["subject_tags"])` 加载 |
+| `POSE_TAGS` | `danbooru.py:91`（18 项） | 同上 | 同上（`pose_tags`） |
+| `DEFAULT_BUCKET_WEIGHTS` | `danbooru.py:195`（11 项） | 可调采样权重旋钮 | 同上（`default_bucket_weights`） |
+
+### A.3 两个 alias 表的核验（实读 + grep 实测，不是凭注释）
+
+两个看似"只为校验正确性、可删"的 alias 表，实测都在**解析外部输入**，不可删：
+
+**`_CANONICAL_STRING`（dtypes.py）— 表必须留，但有 4 个死条目：**
+- `resolve_torch_dtype` 拿它解析 dtype，**表里没有就 `ValueError`**。
+- config 实测：`bf16`（alias）被用 **7 次**（含 `configs/base/actor.yaml`），`bfloat16`/`float32` 共 5 次 → 表 load-bearing，删不得。
+- 但 `fp16`/`half`/`fp32`/`float` 这 4 个 alias **零 config 使用** = dead tolerance。技术上可删，但它们是 ML 常见简写、留着是 4 行免费容错；删了将来谁写 `fp16` 就吃莫名 `ValueError`。**建议保留**（严格输入 vs 免费容错的取舍，非正确性问题）。
+
+**`SAFETY_RATING_ALIASES`（danbooru）— 不能删，是外部数据格式解析器：**
+- Danbooru2023 原始 metadata 把分级写成单字母 `g/s/q/e`；`_record_rating` → `_normalize_rating` 用本表把它们→规范名。删单字母条目，**每条记录 rating 变 unknown，safety 数据集 build 报废**。
+- identity 条目（`questionable→questionable`）也 load-bearing：`SAFETY_TARGET_RATINGS` 也要过 `_normalize_rating`，没 identity 会被判无效直接 `raise`。
+
+### A.4 判据：硬编码 dict 何时能删
+
+只有满足以下之一才删得：
+1. **可派生** —— 信息在别处有类型化来源（如 `_FAMILY_ALIASES` 从 `FAMILY_REGISTRY` 派生）。
+2. **零引用** —— grep 全仓没人用（如那 4 个 dtype alias）。
+
+否则删不得：它在编码**某处唯一存在的信息**——外部数据格式（danbooru `g/s/q/e`、Kling API 字段）、
+真实输入容错（`bf16`）、或默认值本身（LoRA 配方）。这三类不是"图方便"，是"信息只此一份"。
+`defaults` 类（`_JANUS_LORA_DEFAULTS` 等）可以**搬进 config 换地方放**，但不能凭空删——默认值总得有出处。
+
+---
+
+## 附录 B：保留项的"写清楚"口径（语义源 + 派生表 + 准确命名）— 2026-06-13 定稿
+
+附录 A 已证这些表 load-bearing、不可删；本附录回答下一个问题：**既然保留，怎么写才不被误读/误删。**
+核心口径——**不是搬 YAML / 建 registry / 拆新文件，而是把硬编码写成「语义源 + 派生表 + 准确命名」**。
+问题从来不是"它存在 / 在 .py 里"，而是 **flat dict 看不出哪些是外部输入、哪些是 canonical、哪些 identity
+项是必须的**——读者据此误删。逐项（行号见 A.1，均已实读核对；这批替代原 §4 P3 的 MOVE/动态化方案）：
+
+### B.1 `SAFETY_RATING_ALIASES`（danbooru.py:109）— DERIVE-in-place（保留 A.3 证的全部 load-bearing 条目）
+
+A.3 已证：单字母 `g/s/q/e` 解析外部 Danbooru metadata、identity 条目供 `SAFETY_TARGET_RATINGS` 过
+`_normalize_rating`——都不可删。改写成语义源 + 派生，把 identity 条目**改为自动生成（不是删除，
+load-bearing 要求不变）**，消除"手写冗余"的错觉：
+
+```python
+_SAFETY_RATING_SPELLINGS = {
+    "general": ("g", "safe"),
+    "sensitive": ("s",),
+    "questionable": ("q",),
+    "explicit": ("e",),
+}
+SAFETY_RATING_ALIASES = {
+    spelling: canonical
+    for canonical, spellings in _SAFETY_RATING_SPELLINGS.items()
+    for spelling in (canonical, *spellings)   # canonical 自身也被接受 → identity 自动生成
+}
+```
+
+消费方仅 `:957 SAFETY_RATING_ALIASES.get(text)` 纯查表，顺序无关，派生前后值完全等价。
+
+### B.2 `_CANONICAL_STRING`（dtypes.py:21）— 改名 + DERIVE（保留 A.3 的"免费容错"立场）
+
+A.3 已证表 load-bearing，并主张保留 4 个零-config-使用的 alias（`fp16/half/fp32/float`）作免费容错。
+本口径**不改这个立场**——派生形式同样保留全部 alias，只是：(a) 名字 `_CANONICAL_STRING` 没说出它是
+"宽松输入解析器"（docstring 自述 "the lenient parser"），改名 `_DTYPE_NAME_BY_INPUT`；(b) identity
+条目自动生成；(c) 源具名抽出，与 `_SAFETY_RATING_SPELLINGS` 对称：
+
+```python
+_DTYPE_SPELLINGS = {
+    "bfloat16": ("bf16",),
+    "float16": ("fp16", "half"),
+    "float32": ("fp32", "float"),
+}
+_DTYPE_NAME_BY_INPUT = {
+    spelling: canonical
+    for canonical, spellings in _DTYPE_SPELLINGS.items()
+    for spelling in (canonical, *spellings)
+}
+```
+
+`resolve_torch_dtype` 内另有一张 canonical→`torch.dtype` 表（:45-49）：canonical 名字作共享源即不漂移；
+`dtype_to_config_string` 的 pass-through（未知原样返回）保持不变。
+
+### B.3 Janus R1 prompts（model.py:62,65）— 改判 KEEP（撤销原 §4 P3 的 MOVE）
+
+保留在 Python，不进 YAML。加注释说明是 **byte-sensitive model protocol prompt**：
+`<｜end▁of▁sentence｜>` 里的全角 `｜`（正是 `# noqa: RUF001` 在压的易混淆字符）**不能被编辑器规范化**。
+搬 YAML 会有破坏 token 字节序、静默打断 R1 自校正循环的风险。
+
+### B.4 `_ARTIFACT_DIRS`（setup.py:24）— KEEP（per A.1），可选改名 `_INIT_DIRS_BY_DATASET`
+
+撤销原 §4 P3 的"动态化 / per-module `artifact_dirs()` 协议"——模块 docstring 明写
+**"No generic artifact-manifest framework lives here"**，动态 registry 正是它刻意不要的框架。仅**可选改名**
+让"它是 `init-dirs` CLI 的目录表、非通用 registry"一目了然。`args.dataset == "pickapic"` 的 HF cache
+特例是 pickapic 专属，保留。
+
+### B.5 `DEFAULT_NEGATIVE_PROMPT`（generate.py:29）— 改名降噪，非架构改造
+
+只有一个 argparse default 用途、且已有 `--negative-prompt` 覆盖。改成 `_DEFAULT_NEGATIVE_PROMPT`
+（下划线标 private 默认），保持 `add_argument` 调用可读；不进 config。
+
+### B.6 `_JANUS_LORA_DEFAULTS` / `_NEXTSTEP_LORA_DEFAULTS`（*/runtime.py:141/134）— 改名最弱 + 一处真 smell
+
+A.1 判 KEEP（默认值有出处）。改名 `_*_RUNTIME_LORA_DEFAULTS` **收益弱**——它们本就在 `runtime.py`，
+路径已带 "runtime"，再塞 `_RUNTIME_` 与路径重复。**更值得记的相邻发现**：两个 dict 内容**逐字节相同**
+（rank32 / alpha64 / q,v_proj / dropout0 / gaussian），却**解析路径不一致**——Janus 走共享 helper
+`_resolve_lora_block(spec, defaults)`（:162），NextStep 走内联 `dict(defaults)+update`（:155-156）。
+统一两边 lora 解析路径是**单独 follow-up**，不混进本 naming PR。
+
+### B.7 落地与非目标
+
+全是单文件、纯改名/派生、**零行为变化**，打**一个小 PR**。硬约束：删手写表前加一次性断言确认
+`SAFETY_RATING_ALIASES` / `_DTYPE_NAME_BY_INPUT` 派生前后 dict 完全相等（保护 A.3 证的全部 load-bearing
+条目）。**非目标**：B 不删任何 alias（含 A.3 的 4 个 dtype 免费容错）、不搬任何表去 YAML/config（除非将来
+defaults 真要外置）、不动已判 KEEP 的边界项。
 
 ---
 

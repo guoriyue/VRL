@@ -7,7 +7,7 @@
 输入：5 个并行只读探索 agent 的结构化结果
 （parity / transport / compute / util / vae-gaps），叠加 P0 trace
 （`outputs/cosmos25_perf_profile_bs6/`）与 cross-model smoke
-（`docs/sprints/done/SPRINT_cross_model_smoke.md`）。
+（`docs/sprints/info/SPRINT_cross_model_smoke.md`）。
 
 ## 0. Core Decision
 
