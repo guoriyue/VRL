@@ -98,11 +98,6 @@ class JanusProConfig:
     trust_remote_code: bool = True
     device: str = "cuda"
 
-    # Frozen sub-modules (we never train these for T2I RL)
-    freeze_vq: bool = True            # gen_vision_model
-    freeze_vision_encoder: bool = True  # SigLIP understanding tower
-    freeze_aligner: bool = True       # gen_aligner / aligner
-
     # VQ decoder shape — None ⇒ auto-detect from ``vq_model.config``.
     # Janus-Pro-1B uses 8 latent channels; Janus-Pro-7B may differ.
     # Override only if auto-detect fails.

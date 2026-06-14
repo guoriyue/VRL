@@ -210,7 +210,6 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         ),
         gradient_accumulation_steps=grad_accum,
         prediction_type=str(require(cfg, "actor.prediction_type")),
-        num_train_timesteps=pipeline.scheduler.config.num_train_timesteps,
         mixed_precision=mixed_precision,
         use_adafactor=bool(require(cfg, "actor.use_adafactor")),
     )

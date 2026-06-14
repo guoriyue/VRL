@@ -23,4 +23,3 @@ model:
 
   # Frozen sub-modules
   freeze_vae: true
-  freeze_image_head: false       # train the 157M flow head with LoRA-style updates

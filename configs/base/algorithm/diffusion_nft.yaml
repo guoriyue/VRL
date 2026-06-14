@@ -8,7 +8,6 @@ algorithm:
   # Cosmos-RL DiffusionNFT parity knobs.
   nft_beta: 1.0
   kl_beta: 1.0
-  uncentralized_training: true
   advantage_high: 5.0
   advantage_low: -5.0
   weight_copy_decay: 0.0

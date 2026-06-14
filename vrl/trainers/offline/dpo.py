@@ -51,7 +51,6 @@ class OfflineDPOTrainerConfig:
 
     # --- noise / schedule ---
     prediction_type: str = field(default="flow_matching")  # "epsilon" | "v_prediction" | "flow_matching"
-    num_train_timesteps: int = field(default=1000)         # for epsilon schedulers
     timestep_subset: tuple[int, int] | None = field(default=None)  # restrict sampling, e.g. (0, 200)
 
     # --- mixed precision ---

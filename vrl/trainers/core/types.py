@@ -70,7 +70,6 @@ class PrecisionDriftGuardConfig:
     """
 
     mode: str = field(default="auto")  # "auto" | "off" | "warn" | "fail"
-    max_batches: int = field(default=1)
     max_timestep_checks: int = field(default=3)
     max_abs_log_ratio: float = field(default=1e-3)
     max_ratio_abs_dev: float = field(default=1e-3)
@@ -79,8 +78,6 @@ class PrecisionDriftGuardConfig:
     def __post_init__(self) -> None:
         if self.mode not in ("auto", "off", "warn", "fail"):
             raise ValueError("precision_drift_guard.mode must be auto/off/warn/fail")
-        if int(self.max_batches) != 1:
-            raise ValueError("precision_drift_guard.max_batches currently supports only 1")
         if int(self.max_timestep_checks) < 0:
             raise ValueError("precision_drift_guard.max_timestep_checks must be >= 0")
         if float(self.max_abs_log_ratio) < 0:

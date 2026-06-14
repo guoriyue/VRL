@@ -176,9 +176,6 @@ def _janus_config_from_runtime_spec(spec: RuntimeBuildSpec) -> dict[str, Any]:
 
     for key in (
         "trust_remote_code",
-        "freeze_vq",
-        "freeze_vision_encoder",
-        "freeze_aligner",
         "vq_latent_channels",
     ):
         # ``None`` means "unset" in YAML; defer to JanusProConfig's own default

@@ -107,7 +107,6 @@ class AlgorithmConfig(ConfigBase):
     segment_weights: Any = None
     sft_weight: Any = None
     train_segments: Any = None
-    uncentralized_training: Any = None
     weight_copy_decay: Any = None
 
 
@@ -263,11 +262,7 @@ class ModelConfig(ConfigBase):
     # Key registry: consumed by family runtime loaders.
     dtype: Any = None
     enable_model_cpu_offload: Any = None
-    freeze_aligner: Any = None
-    freeze_image_head: Any = None
     freeze_vae: Any = None
-    freeze_vision_encoder: Any = None
-    freeze_vq: Any = None
     # readers: models/interfaces/runtime.py + family runtime.py lora blocks
     lora: Annotated[
         Any,

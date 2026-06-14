@@ -18,8 +18,3 @@ model:
       - k_proj
       - v_proj
       - o_proj
-
-  # Frozen sub-modules — never trained for T2I RL.
-  freeze_vq: true
-  freeze_vision_encoder: true
-  freeze_aligner: true

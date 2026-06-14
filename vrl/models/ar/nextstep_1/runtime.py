@@ -170,12 +170,11 @@ def _nextstep_1_config_from_runtime_spec(spec: RuntimeBuildSpec) -> dict[str, An
         "noise_level",
         "image_token_num",
         "token_dim",
-        "image_size",
     ):
         if key in sampling_config:
             config[key] = sampling_config[key]
 
-    for key in ("vae_path", "freeze_vae", "freeze_image_head", "gradient_checkpointing"):
+    for key in ("vae_path", "freeze_vae", "gradient_checkpointing"):
         value = model_config.get(key)
         if value is not None:
             config[key] = value

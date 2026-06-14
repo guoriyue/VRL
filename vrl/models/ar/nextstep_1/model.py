@@ -51,7 +51,6 @@ logger = init_logger(__name__)
 # a different checkpoint that uses a different grid.
 NEXTSTEP_DEFAULT_TOKEN_NUM = 1024     # 32 x 32 patches per 256^2 image
 NEXTSTEP_DEFAULT_TOKEN_DIM = 64       # latent_patch_size^2 * f8ch16 channels
-NEXTSTEP_DEFAULT_PIXEL_SIZE = 256
 
 
 @dataclass(slots=True)
@@ -86,11 +85,9 @@ class NextStep1Config:
     # AR loop
     image_token_num: int = NEXTSTEP_DEFAULT_TOKEN_NUM
     token_dim: int = NEXTSTEP_DEFAULT_TOKEN_DIM
-    image_size: int = NEXTSTEP_DEFAULT_PIXEL_SIZE
 
     # Frozen sub-modules
     freeze_vae: bool = True
-    freeze_image_head: bool = False     # train the 157M flow head with LoRA-style updates
 
     # Memory
     gradient_checkpointing: bool = True
@@ -483,7 +480,6 @@ def _load_nextstep_replay_model(config: NextStep1Config) -> Any:
 
 
 __all__ = [
-    "NEXTSTEP_DEFAULT_PIXEL_SIZE",
     "NEXTSTEP_DEFAULT_TOKEN_DIM",
     "NEXTSTEP_DEFAULT_TOKEN_NUM",
     "NextStep1Config",
