@@ -574,7 +574,7 @@ memory 等长期 relay。没有 P2 收益，不做 P3。
 
 ## 8. References
 
-- `docs/sprints/done/SPRINT_cross_model_performance.md`
+- `docs/sprints/info/SPRINT_cross_model_performance.md`
 - `docs/sprints/parked/SPRINT_diffusion_rollout_stage_pipeline.md`
 - `docs/sprints/reading/SPRINT_diffusion_rollout_system.md`
 - `docs/sprints/parked/SPRINT_generation_scheduler.md`

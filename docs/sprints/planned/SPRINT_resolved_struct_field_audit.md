@@ -18,10 +18,16 @@ findings + 路径 + 整改逻辑都在本文。按 P0→P3 分批做，每批独
 保留；只有 4 个有问题：2 个纯死字段（只被测试断言读）、2 个只进日志。真正该删的就 3 个，测试改动面
 极小（1 个测试文件、7 行断言）。**
 
-更重要的是广义结论：**问题不是"字段多"。** 用户感觉到的"一堆超大 dataclass/config"里，绝大多数是
-**input_config（用户/spec 面向的 YAML 配置结构）**，宽是**合理的**，不该碰。真正会"静默堆积没人读的
-预计算字段"的，只有**派生型结构体（resolved/derived：算一次、到处读）**。全仓这类胖结构体只有 2 个
-出问题：`ResolvedDistributedResources`（本文主体）和 `FamilyCapability`（第二个 offender，见 §5）。
+更重要的是广义判据：**判据从来不是"字段数"，而是"每个字段有没有真实消费方"——这条对 config 和
+派生结构体都成立，且对 config 更严。** 一个声明了却没人读的**配置键**是面向用户的"空操作陷阱"
+（用户填了以为生效、实则静默无效），比内部死字段更糟。所以**"精确匹配"（每个字段都对应真实效果）
+是对的目标**——之前写"input_config 宽是合理的、不该碰"是错的：字段多只要每个都被消费才健康
+（如 `TrainerConfig` 26 个 knob 全被 builder 读），病的是"声明了没人读"，config 同样要查。
+
+注意区分两种胖结构体的风险，但**都要审**：**派生型（resolved/derived：算一次、到处读）**最容易静默
+堆积没人读的预计算字段——已逐字段证过的有 `ResolvedDistributedResources`（本文主体）和
+`FamilyCapability`（第二个 offender，见 §5）；**input_config / DTO（14 个宽结构体）**我目前只做了
+scan 级、**没逐字段证**，属"待同等审计"而非"已证清白"（见 §5、§7 修正）。
 
 按动作拆分（23 字段）：
 
@@ -168,12 +174,15 @@ stored 字段），但它和 `ray_total_bundles` **本质不同，倾向保留**
   对抗式反驳。**列为 follow-up**：用同一套 workflow 方法（审计→反驳→测试影响）逐 flag 确认后再删，
   不要凭这张表直接动手。
 
-**其余 14 个宽结构体 = 合理，明确不碰**（按 kind 分桶）：
+**其余 14 个宽结构体 = 待同等审计（目前只到 scan 级，不是"免审/明确不碰"）**（按 kind 分桶）：
 
-- **input_config（用户/spec 面向，宽是本分）**：`TrainerConfig`(26)、`NextStep1Config`(19)、
-  `JanusProConfig`(18)、`OfflineDPOTrainerConfig`(14)、`VideoGenerationRequest`(14)。每字段都有
-  builder/trainer 消费，且多数已按项目约定显式 `field(default=...)` 逐行拼写（见
-  [[feedback_explicit_field_spelling]]）。**宽 ≠ 病**。
+- **input_config（用户/spec 面向）**：`TrainerConfig`(26)、`NextStep1Config`(19)、`JanusProConfig`(18)、
+  `OfflineDPOTrainerConfig`(14)、`VideoGenerationRequest`(14)。scan agent 称"每字段都有 builder/trainer
+  消费"，但**未逐字段证**（不像 §3 过了审计+反驳两道）。**config 的判据更严**：一个声明了没人读的配置
+  键是面向用户的"空操作陷阱"，比内部死字段更糟。follow-up 应对它们跑同一套审计找死键。删之前给三类
+  **合法 passthrough 显式白名单+注释、勿误删**：(a) 分支门控字段（仅某功能开启时被读）、(b) 整体传给
+  外部库的 kwargs（diffusers/PEFT/transformers 消费，vrl 内 grep 不到）、(c) dump 进 checkpoint 供
+  复现/溯源的 schema 字段。字段多只要每个都被消费就健康——病的只是"声明了没人读"。
 - **working-state（per-rollout 私有工作状态，刻意做胖以免泄漏进引擎契约）**：
   `CosmosPredict25SamplingState`(17)、`CosmosPredict2SamplingState`(16)、`SegmentSignal`(15)、
   `NextStep1ARChunkResult`(14)、`DiffusionChunkResult`(14)。docstring 明确禁止 collector 内省。
@@ -208,11 +217,15 @@ stored 字段），但它和 `ray_total_bundles` **本质不同，倾向保留**
 
 - **不把 `ResolvedDistributedResources` 拆成嵌套子结构体**（rollout/reward/topology 分组）。当前
   全部消费方都是直读 `resources.<field>`、零动态访问，flat shape 的 **grep 一致性**正是它的价值；
-  分组要改所有 call site，是为口味而搅动正确架构 —— 违反 [[feedback_no_big_refactors]] /
-  [[feedback_consistency_over_cleanup]]。本 sprint 只删确证的死字段，不重组。
+  分组要改所有 call site，是为口味而搅动正确架构 —— 违反 AGENTS.md "no big refactors / consistency
+  over cleanup"。本 sprint 只删确证的死字段，不重组。
 - **不碰 19 个 NECESSARY 字段**，也不碰它们流经的 `reward_runtime_resource_kwargs` /
   `format_distributed_resource_plan` 形状（除删 `ray_total_bundles` 那一行日志）。
-- **不碰 14 个健康的宽结构体**（input_config / working-state / DTO）。宽不是病。
+- **不靠裸 grep 删字段**："精确匹配"的目标对，但要靠证据审计（审计+反驳两道）才能"删对"。对分支门控
+  字段 / 库 passthrough kwargs / checkpoint provenance 字段给显式白名单+注释，别把 load-bearing 的
+  误判成死字段。
+- **不预先豁免 config 宽结构体**：14 个宽 config/DTO 是"待审"不是"免审"（已纠正 §1/§5 早前"宽是本分"
+  的错误措辞）。**config 死键审计已执行，见 §9**（`FamilyCapability` 仍为 follow-up）。
 - **不凭 §5 的 scan 表直接删 `FamilyCapability` 字段** —— 先逐 flag 对抗式复核。
 - **不为清理而清理**：只动"零消费方"或"重复预计算会漂移"的字段，其余视为正确。
 
@@ -233,6 +246,104 @@ stored 字段），但它和 `ray_total_bundles` **本质不同，倾向保留**
 
 ---
 
+## 9. 配置死键审计（已执行 —— 兑现"精确匹配"）
+
+§5 把 config 宽结构体列为"待审"，本节是审计结果。**这才是"死配置键比内部死字段更值得抓"的实活**：
+死配置键是面向用户的 YAML 旋钮，用户填了以为生效、实则静默无效，比内部死字段危害更大。
+
+> 方法：同一套 workflow（发现 → 逐结构体逐字段审计 → 对每个死键候选对抗式反驳），35 个 agent，
+> 跑在干净克隆 `~/Desktop/VRL`。发现并审计 **18 个 YAML/spec-backed 配置结构体**（TrainerConfig 整棵
+> 嵌套树 + 模型/DTO config + 算法/Ray config）。我随后**逐个独立读源码复核**了每个删除候选（见下方
+> 复核记录），未盲信 agent。
+
+### 9.1 结论（18 结构体 / 共 ~180 字段）
+
+| 处置 | 数量 | 字段 |
+|---|---|---|
+| **DELETE（已执行）** | 8 | `JanusProConfig.{freeze_vq,freeze_vision_encoder,freeze_aligner}`、`NextStep1Config.{freeze_image_head,image_size}`、`DiffusionNFTConfig.uncentralized_training`、`PrecisionDriftGuardConfig.max_batches`、`OfflineDPOTrainerConfig.num_train_timesteps` |
+| **DEFER（本节记录，未删）** | 7 | `TrainerConfig.log_freq` + `VideoGenerationRequest.{prompt,references,task_type,model_name,shift,extra}` |
+| **KEEP（escape_hatch / 验证用，非死键）** | — | `TrainerConfig.{gradient_checkpointing,resume_from}`（provenance/checkpoint 消费）、`RolloutOrchestrationConfig.weight_sync_barrier`（`__post_init__` 派生消费 types.py:158） |
+| **CLEAN（全字段必要）** | 10 结构体 | `OptimConfig`、`EMAConfig`、`DebugConfig`、`ContinuousRolloutConfig`、`TorchProfilerConfig`、`GRPOConfig`、`RayGenerationConfig`、`DistributedResourceConfig`、`RolloutResourceConfig`、`RewardResourceConfig` |
+
+### 9.2 已删的 8 个死键（含 footgun 说明 + 完整 surface）
+
+每个都过了"审计 + 对抗式反驳"两道，`removable=true`、`hiddenConsumer=null`，并经我读源码确认。
+
+**1–3. Janus `freeze_vq` / `freeze_vision_encoder` / `freeze_aligner`**（最典型 footgun）
+- 真相：`JanusProModel.__init__` 无条件 `for p in mmgpt.parameters(): p.requires_grad_(False)`
+  （model.py:182-185，注释"Freeze everything by default — LoRA wrap re-enables only attention
+  projections"）。这 3 个 flag **从不被读**。用户在 `1b.yaml` 写 `freeze_vq: false` 想训 VQ 模块——
+  静默无效，照样全冻。这是 LoRA-only 设计下的纯残留旋钮。
+- surface：model.py:102-104（字段）、schema.py:266/269/270、runtime.py:179-181（spec copy-list）、
+  `configs/model/ar/janus_pro/1b.yaml:23-25`。
+
+**4. NextStep `freeze_image_head`**（干净对照：`freeze_vae` 真被读、它没有）
+- `NextStep1Model.__init__` 只有 `if config.freeze_vae:` 这一条 freeze 分支（model.py:146-148）；
+  `freeze_image_head` 从不被读。注释写"train the 157M flow head"却无实现。
+- surface：model.py:93、schema.py:267、runtime.py:178（copy-list）、`1_1.yaml:26`。
+
+**5. NextStep `image_size`**（重复 sampling 参数的死副本）
+- `config.image_size` 从 `sampling.image_size` 拷进来（runtime.py:173），但 `__init__` 从不读它；
+  真正解码用的是 per-request 的 `params.image_size`（AR layout，generation/ar/layout.py，
+  runtime.py:324 `decode_image_tokens(image_size=params.image_size)`）。decode 方法签名里的 `image_size`
+  当场 `del`。**只删 config 字段 + copy-list 条目**；`sampling.image_size` YAML 键 + schema:249 保留（活）。
+- surface：model.py:89（字段）、runtime.py:173（sampling copy-list 条目）；连带删孤儿常量
+  `NEXTSTEP_DEFAULT_PIXEL_SIZE`（model.py:54 + `__all__`，唯一消费者就是被删的字段）。
+
+**6. DiffusionNFT `uncentralized_training`**
+- loss 读 `cfg.eps/adv_clip_max/global_std/nft_beta/kl_beta/advantage_*/weight_copy_decay`，**从不读
+  `uncentralized_training`**（loss 路径无条件 uncentralized）。用户写 `false` 想要 centralized——无效。
+- surface：diffusion_nft.py:26、schema.py:110、`configs/base/algorithm/diffusion_nft.yaml:11`。
+
+**7. PrecisionDriftGuard `max_batches`**（仅自我校验的旋钮）
+- 唯一读者是自己的 `__post_init__`：`if int(self.max_batches) != 1: raise "only supports 1"`。除了
+  "只准等于 1"它什么都不做，没有任何地方拿它去 bound 批数。无 YAML、无 schema、无测试引用。
+- surface：types.py:73（字段）+ types.py:82-83（`__post_init__` 校验）。
+
+**8. OfflineDPO `num_train_timesteps`**（set 了但被刻意不读）
+- `train_dpo.py:213` 从 scheduler 把它塞进 config，但 trainer 的 `_sample_timesteps` **故意不回退**到它
+  （dpo.py:222-235 直接 raise，红线测试 `test_offline_dpo_timesteps.py::test_empty_timesteps_raises`
+  守的就是"不许 silently fall back"）。红线测试用的是 **scheduler 的** `num_train_timesteps`
+  （`SimpleNamespace`），不是这个 config 字段——删字段不动红线行为。
+- surface：dpo.py:54（字段）、train_dpo.py:213（构造实参）。
+
+### 9.3 缓删的 7 个（DEFER，本 sprint 未动）
+
+- **`TrainerConfig.log_freq`** —— 确属死键（schema.py:306 + 9 个 experiment YAML 都写 `log_freq: 1`，但
+  在线 loop 每 epoch 无条件记录、无人读它）。**缓删原因**：(1) surface 最宽（schema + 9 个实验配置 +
+  base 注释 + 1 个 e2e override），改动面大；(2) 它是**唯一"删 vs 接线"意图真歧义**的一个——可能团队
+  本就想让日志按 `log_freq` 节流。需你拍板：删旋钮，还是把日志节流接上（两者都对，现状是旋钮空转）。
+- **`VideoGenerationRequest.{prompt,references,task_type,model_name,shift,extra}`** —— 它是**代码构造的
+  请求 DTO，不是 YAML 配置键**，不属本次"死配置键"范畴，**单独立项、独立 MR 复核，本 MR 不碰**。
+  但我已用只读追踪**复核确认这 6 个确属死字段**（之前怀疑 `prompt` 判死是 agent 误判 —— 是我错了，
+  agent 判对了）：
+  - **从不写、从不读（4 个，最干净）**：`references` / `task_type` / `model_name` / `shift` —— RL 路径
+    `build_video_request`（executor.py:342-368）只塞 8 个 base 采样字段 + `extra`，从不设它们；脚本
+    `anima/generate.py:321` 也不设；无任何 model 读它们。
+  - **只写不读（write-only，2 个）**：`prompt`（仅 `anima/generate.py:322` 写，但脚本用单独
+    `model.encode_prompt(...)` 的 `encoded`，RL 用 `chunk.prompt`，executor.py:260 —— 请求上的 prompt
+    无人读）；`extra`（`build_video_request` + 脚本都写，但 `DiffusionBackboneInput.extra` 是
+    `prepare_sampling` 里**新建**的，`predict2/model.py:367 extra={...}`，**不从 `request.extra` 拷**；
+    runner 里的 `request.extra` 读的是 `DiffusionBackboneInput`（带 `.prompt_embeds`），另一种类型）。
+  - **结论/为何独立 MR**：6 个删掉收益真实（DTO 表面收窄、消除"写了没人读"），但 `prompt`/`extra` 是
+    write-only，删字段须连带删写入点（executor.py + anima/generate.py），属 DTO 重构而非配置键清理，
+    与本 MR 主题正交 —— 放独立 MR 更干净。
+
+### 9.4 复核记录 + 验证
+
+- **独立复核**：8 个删除项我都读了实现确认（Janus/NextStep 的 `__init__` freeze 逻辑、NFT loss 的
+  `cfg.*` 读取面、DPO `_sample_timesteps`、`image_size` 的 sampling-param 真实流向）。`prompt` 判死可疑
+  → 主动剔出删除集。
+- **测试**（`PYTHONPATH=~/Desktop/VRL ~/Desktop/wm-infra/.venv/bin/python -m pytest`）：
+  `tests/config/test_load_all_experiments.py`（全实验配置加载）、`test_schema.py`、`test_unknown_keys.py`、
+  `tests/trainers/test_offline_dpo_timesteps.py`、`tests/trainers/online/test_precision_drift_guard.py`、
+  `tests/models/ar/{janus_pro,nextstep_1}/*` **全过**（共 95 passed）。`tests/algorithms/test_diffusion_nft.py`
+  7 例失败**仅因本地 venv 缺 `peft`**（fixture import 处即崩，与改动无关，属环境缺口同
+  [[test_env_torchvision_gap]]）；改动本身已验证 inert（`DiffusionNFTConfig` 去掉字段后 import 干净）。
+- **改动落点**：`~/Desktop/VRL` 分支 `audit/config-dead-keys`，12 文件 `-32/+1`，**未 commit**（等你过目）。
+
+---
+
 ## 关键文件引用
 
 - `vrl/ray/resources.py:64-90`（`ResolvedDistributedResources` 定义），`:95-268`（resolver），
@@ -247,3 +358,11 @@ stored 字段），但它和 `ray_total_bundles` **本质不同，倾向保留**
 - 测试改动面：`tests/ray/test_resources.py:75,76,129,202,225,269,359`（删 7 行断言）
 - 第二个 offender（follow-up）：`vrl/generation/capabilities.py:116`（`FamilyCapability`）
 - 防腐约定落点：`AGENTS.md` → "Architecture Hygiene"
+
+配置死键审计（§9，已执行于 `~/Desktop/VRL` 分支 `audit/config-dead-keys`）：
+- Janus freeze flags：`vrl/models/ar/janus_pro/model.py:182-185`（无条件冻结，footgun 根因）、
+  `runtime.py:177-183`（spec copy-list）、`vrl/config/schema.py:263-270`、`configs/model/ar/janus_pro/1b.yaml`
+- NextStep：`vrl/models/ar/nextstep_1/model.py:89,93,146-148`、`runtime.py:166-178`、`configs/model/ar/nextstep_1/1_1.yaml`
+- DiffusionNFT：`vrl/algorithms/diffusion_nft.py:26`、`configs/base/algorithm/diffusion_nft.yaml:11`
+- PrecisionDriftGuard / DPO：`vrl/trainers/core/types.py:73,82-83`、`vrl/trainers/offline/dpo.py:54` + `vrl/scripts/diffusion/wan_2_1/train_dpo.py:213`
+- 缓删：`vrl/trainers/core/types.py:251`（`log_freq`，+ schema.py:306 + 9 个实验 YAML）、`vrl/generation/diffusion/layout.py:19`（`VideoGenerationRequest` DTO）

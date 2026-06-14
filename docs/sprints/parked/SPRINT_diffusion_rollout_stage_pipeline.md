@@ -711,7 +711,7 @@ VRL:
 /home/mingfeiguo/Desktop/wm-infra/vrl/models/diffusion/common/latent_decode.py
 /home/mingfeiguo/Desktop/wm-infra/vrl/models/diffusion/common/vae_decode_memory.py
 /home/mingfeiguo/Desktop/wm-infra/vrl/models/diffusion/sd3_5/model.py
-/home/mingfeiguo/Desktop/wm-infra/docs/sprints/SPRINT_rollout_performance.md
+/home/mingfeiguo/Desktop/wm-infra/docs/sprints/info/SPRINT_rollout_performance.md
 /home/mingfeiguo/Desktop/wm-infra/docs/sprints/reading/SPRINT_diffusion_rollout_system.md
 ```
 
