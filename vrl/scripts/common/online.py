@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import os
 from pathlib import Path
@@ -206,183 +207,198 @@ async def run_online_recipe(
         from vrl.generation.ray.launcher import _cross_node_preflight
 
         _cross_node_preflight(ray, resources)
-    placement_owner.create()
 
-    components = build_online_recipe_components(
-        cfg,
-        family=definition.family,
-        device=str(device),
-        scheduler=scheduler,
-        built=built,
-        reward_placement=placement_owner.reward_placement,
-    )
-    rollout_executor_kwargs = (
-        definition.collector_kwargs_getter(cfg, examples)
-        if definition.collector_kwargs_getter is not None
-        else {}
-    )
-    collector = build_collector_from_cfg(
-        cfg,
-        family=components.family_entry,
-        model=model,
-        reward_fn=components.reward_fn,
-        collector_config=components.collector_config,
-    )
-    runtime_inputs = build_ray_generation_inputs_for_family(
-        cfg,
-        components.family,
-        weight_dtype=rollout_weight_dtype,
-        executor_kwargs=dict(rollout_executor_kwargs),
-    )
-    log_host_memory("before_rollout_backend_build", log=logger)
-    collector.set_runtime(
-        RayGenerationLauncher().launch_from_cfg(
+    collector: Any | None = None
+    reward_fn: Any | None = None
+    run_error: BaseException | None = None
+    try:
+        placement_owner.create()
+        components = build_online_recipe_components(
             cfg,
-            driver_bundle=bundle,
-            launch_contract=runtime_inputs.launch_contract,
-            gatherer=runtime_inputs.gatherer,
-            placement=placement_owner.rollout_placement,
-        ),
-    )
-    log_host_memory("after_rollout_backend_build", log=logger)
-
-    ref_model = (
-        definition.reference_model_getter(bundle, cfg)
-        if definition.reference_model_getter is not None
-        else None
-    )
-    trainer = OnlineTrainer(
-        algorithm=components.algorithm,
-        collector=collector,
-        evaluator=components.evaluator,
-        model=model,
-        ref_model=ref_model,
-        weight_syncer=build_runtime_weight_syncer(
-            collector.runtime,
-            initial_policy_version=resume_checkpoint.next_step
-            if resume_checkpoint is not None
-            else None,
-        ),
-        sync_state_getter=build_trainable_state_sync_getter(bundle),
-        config=trainer_config,
-        device=device,
-    )
-
-    if resume_checkpoint is not None:
-        restore_training_checkpoint(
-            resume_checkpoint,
-            trainer=trainer,
-            bundle=bundle,
-            strict=trainer_config.resume_strict,
+            family=definition.family,
+            device=str(device),
+            scheduler=scheduler,
+            built=built,
+            reward_placement=placement_owner.reward_placement,
         )
-        logger.info(
-            "Resuming from %s, start_epoch=%d",
-            resume_checkpoint.checkpoint_dir,
-            resume_checkpoint.next_epoch,
+        reward_fn = components.reward_fn
+        rollout_executor_kwargs = (
+            definition.collector_kwargs_getter(cfg, examples)
+            if definition.collector_kwargs_getter is not None
+            else {}
         )
-
-    output_dir = Path(trainer_config.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    save_resolved_config(cfg, output_dir, resumed=resume_checkpoint is not None)
-
-    component_names = tuple(components.built["reward"][0].keys())
-    csv_path = output_dir / "metrics.csv"
-    _prepare_metrics_csv(
-        csv_path,
-        component_names,
-        resume=resume_checkpoint is not None,
-        prepare_metrics_csv=prepare_metrics_csv,
-    )
-
-    rng = torch.Generator().manual_seed(trainer_config.seed)
-    start_epoch = resume_checkpoint.next_epoch if resume_checkpoint is not None else 0
-    if start_epoch > trainer_config.total_epochs:
-        raise ValueError(
-            "resume checkpoint starts after configured total_epochs: "
-            f"start_epoch={start_epoch}, total_epochs={trainer_config.total_epochs}",
-        )
-    if resume_checkpoint is not None:
-        restore_rng_state(resume_checkpoint.rng_state, prompt_generator=rng)
-
-    stack = OnlineRecipeStack(
-        cfg=cfg,
-        definition=definition,
-        bundle=bundle,
-        model=model,
-        reward_fn=components.reward_fn,
-        collector=collector,
-        algorithm=components.algorithm,
-        evaluator=components.evaluator,
-        trainer=trainer,
-        trainer_config=trainer_config,
-        collector_config=components.collector_config,
-        family=components.family,
-        output_dir=output_dir,
-        component_names=component_names,
-    )
-
-    logger.info(
-        "Starting %s online recipe: epochs=%d examples=%d n=%d",
-        components.family,
-        trainer_config.total_epochs,
-        len(examples),
-        trainer_config.n_samples_per_prompt,
-    )
-    for epoch in range(start_epoch, trainer_config.total_epochs):
-        idx = sample_prompt_indices(
-            rng,
-            num_examples=len(examples),
-            rollout_batch_size=trainer_config.rollout_batch_size,
-            strategy=str(
-                OmegaConf.select(
-                    cfg,
-                    "data.sampler.type",
-                    default="random_without_replacement",
-                ),
-            ),
-            epoch=epoch,
-        )
-        example_batch = [examples[i] for i in idx]
-        if definition.before_step is not None:
-            maybe_awaitable = definition.before_step(stack, epoch, example_batch)
-            if maybe_awaitable is not None:
-                await maybe_awaitable
-
-        components.reward_fn.reset_components()
-        metrics = await trainer.step(example_batch)
-        _write_metric_row(
-            csv_path,
-            epoch,
-            metrics,
+        collector = build_collector_from_cfg(
+            cfg,
+            family=components.family_entry,
+            model=model,
             reward_fn=components.reward_fn,
-            component_names=component_names,
-            metric_row_hook=definition.metric_row_hook,
+            collector_config=components.collector_config,
+        )
+        runtime_inputs = build_ray_generation_inputs_for_family(
+            cfg,
+            components.family,
+            weight_dtype=rollout_weight_dtype,
+            executor_kwargs=dict(rollout_executor_kwargs),
+        )
+        log_host_memory("before_rollout_backend_build", log=logger)
+        collector.set_runtime(
+            RayGenerationLauncher().launch_from_cfg(
+                cfg,
+                driver_bundle=bundle,
+                launch_contract=runtime_inputs.launch_contract,
+                gatherer=runtime_inputs.gatherer,
+                placement=placement_owner.rollout_placement,
+            ),
+        )
+        log_host_memory("after_rollout_backend_build", log=logger)
+
+        ref_model = (
+            definition.reference_model_getter(bundle, cfg)
+            if definition.reference_model_getter is not None
+            else None
+        )
+        trainer = OnlineTrainer(
+            algorithm=components.algorithm,
+            collector=collector,
+            evaluator=components.evaluator,
+            model=model,
+            ref_model=ref_model,
+            weight_syncer=build_runtime_weight_syncer(
+                collector.runtime,
+                initial_policy_version=resume_checkpoint.next_step
+                if resume_checkpoint is not None
+                else None,
+            ),
+            sync_state_getter=build_trainable_state_sync_getter(bundle),
+            config=trainer_config,
+            device=device,
         )
 
-        if definition.after_step is not None:
-            maybe_awaitable = definition.after_step(stack, epoch, example_batch)
-            if maybe_awaitable is not None:
-                await maybe_awaitable
-
-        if trainer_config.save_freq > 0 and (epoch + 1) % trainer_config.save_freq == 0:
-            _save_checkpoint(
-                output_dir / f"checkpoint-{epoch + 1}",
-                stack,
-                epoch=epoch + 1,
-                rng=rng,
-                save_training_checkpoint=save_training_checkpoint,
-                capture_rng_state=capture_rng_state,
+        if resume_checkpoint is not None:
+            restore_training_checkpoint(
+                resume_checkpoint,
+                trainer=trainer,
+                bundle=bundle,
+                strict=trainer_config.resume_strict,
+            )
+            logger.info(
+                "Resuming from %s, start_epoch=%d",
+                resume_checkpoint.checkpoint_dir,
+                resume_checkpoint.next_epoch,
             )
 
-    _save_checkpoint(
-        output_dir / "checkpoint-final",
-        stack,
-        epoch=trainer_config.total_epochs,
-        rng=rng,
-        save_training_checkpoint=save_training_checkpoint,
-        capture_rng_state=capture_rng_state,
-    )
-    logger.info("Training complete. Final checkpoint: %s", output_dir / "checkpoint-final")
+        output_dir = Path(trainer_config.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        save_resolved_config(cfg, output_dir, resumed=resume_checkpoint is not None)
+
+        component_names = tuple(components.built["reward"][0].keys())
+        csv_path = output_dir / "metrics.csv"
+        _prepare_metrics_csv(
+            csv_path,
+            component_names,
+            resume=resume_checkpoint is not None,
+            prepare_metrics_csv=prepare_metrics_csv,
+        )
+
+        rng = torch.Generator().manual_seed(trainer_config.seed)
+        start_epoch = resume_checkpoint.next_epoch if resume_checkpoint is not None else 0
+        if start_epoch > trainer_config.total_epochs:
+            raise ValueError(
+                "resume checkpoint starts after configured total_epochs: "
+                f"start_epoch={start_epoch}, total_epochs={trainer_config.total_epochs}",
+            )
+        if resume_checkpoint is not None:
+            restore_rng_state(resume_checkpoint.rng_state, prompt_generator=rng)
+
+        stack = OnlineRecipeStack(
+            cfg=cfg,
+            definition=definition,
+            bundle=bundle,
+            model=model,
+            reward_fn=components.reward_fn,
+            collector=collector,
+            algorithm=components.algorithm,
+            evaluator=components.evaluator,
+            trainer=trainer,
+            trainer_config=trainer_config,
+            collector_config=components.collector_config,
+            family=components.family,
+            output_dir=output_dir,
+            component_names=component_names,
+        )
+
+        logger.info(
+            "Starting %s online recipe: epochs=%d examples=%d n=%d",
+            components.family,
+            trainer_config.total_epochs,
+            len(examples),
+            trainer_config.n_samples_per_prompt,
+        )
+        for epoch in range(start_epoch, trainer_config.total_epochs):
+            idx = sample_prompt_indices(
+                rng,
+                num_examples=len(examples),
+                rollout_batch_size=trainer_config.rollout_batch_size,
+                strategy=str(
+                    OmegaConf.select(
+                        cfg,
+                        "data.sampler.type",
+                        default="random_without_replacement",
+                    ),
+                ),
+                epoch=epoch,
+            )
+            example_batch = [examples[i] for i in idx]
+            if definition.before_step is not None:
+                maybe_awaitable = definition.before_step(stack, epoch, example_batch)
+                if maybe_awaitable is not None:
+                    await maybe_awaitable
+
+            components.reward_fn.reset_components()
+            metrics = await trainer.step(example_batch)
+            _write_metric_row(
+                csv_path,
+                epoch,
+                metrics,
+                reward_fn=components.reward_fn,
+                component_names=component_names,
+                metric_row_hook=definition.metric_row_hook,
+            )
+
+            if definition.after_step is not None:
+                maybe_awaitable = definition.after_step(stack, epoch, example_batch)
+                if maybe_awaitable is not None:
+                    await maybe_awaitable
+
+            if trainer_config.save_freq > 0 and (epoch + 1) % trainer_config.save_freq == 0:
+                _save_checkpoint(
+                    output_dir / f"checkpoint-{epoch + 1}",
+                    stack,
+                    epoch=epoch + 1,
+                    rng=rng,
+                    save_training_checkpoint=save_training_checkpoint,
+                    capture_rng_state=capture_rng_state,
+                )
+
+        _save_checkpoint(
+            output_dir / "checkpoint-final",
+            stack,
+            epoch=trainer_config.total_epochs,
+            rng=rng,
+            save_training_checkpoint=save_training_checkpoint,
+            capture_rng_state=capture_rng_state,
+        )
+        logger.info("Training complete. Final checkpoint: %s", output_dir / "checkpoint-final")
+    except BaseException as exc:
+        run_error = exc
+        raise
+    finally:
+        await _shutdown_online_recipe_runtime(
+            collector=collector,
+            reward_fn=reward_fn,
+            placement_owner=placement_owner,
+            run_error=run_error,
+        )
 
 
 def _preflight_production_video_reward(cfg: DictConfig) -> None:
@@ -494,6 +510,43 @@ def _write_metric_row(
             )
             + "\n",
         )
+
+
+async def _shutdown_online_recipe_runtime(
+    *,
+    collector: Any | None,
+    reward_fn: Any | None,
+    placement_owner: Any | None,
+    run_error: BaseException | None,
+) -> None:
+    shutdown_errors: list[tuple[str, Exception]] = []
+
+    async def _run_shutdown(name: str, target: Any, method_name: str = "shutdown") -> None:
+        shutdown = getattr(target, method_name, None)
+        if shutdown is None:
+            return
+        try:
+            result = shutdown()
+            if inspect.isawaitable(result):
+                await result
+        except Exception as exc:
+            shutdown_errors.append((name, exc))
+
+    await _run_shutdown("collector", collector)
+    await _run_shutdown("reward_fn", reward_fn)
+    await _run_shutdown("placement_owner", placement_owner)
+
+    if not shutdown_errors:
+        return
+    for name, exc in shutdown_errors:
+        logger.error(
+            "%s shutdown failed during online recipe cleanup",
+            name,
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+    if run_error is None:
+        name, exc = shutdown_errors[0]
+        raise RuntimeError(f"{name} shutdown failed during online recipe cleanup") from exc
 
 
 def _save_checkpoint(

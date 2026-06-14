@@ -1,6 +1,39 @@
-# SPRINT: Global Ray placement owner（future）
+# SPRINT: Global Ray placement owner（closeout）
 
-状态：proposed / future。不要混进当前 Ray cleanup MR；从 clean branch 独立做。
+状态：implemented / closeout（2026-06-14）。核心 run-level owner、role bundle
+mapping、rollout/reward owner-managed placement、online recipe cleanup 已落地；本文保留
+原设计作为决策记录，剩余吞吐主线转入 `SPRINT_reward_execution.md`。
+
+## Closeout 状态（2026-06-14）
+
+已完成：
+
+- `vrl/ray/placement.py` 提供 `GlobalRayPlacementOwner` / `RolePlacement`，由一个
+  run-level owner 创建、probe、持有并关闭唯一 placement group。
+- `vrl/ray/resources.py` 的 `BundleLayout` 是 role bundle plan 的 source of truth；
+  旧的 reward offset / resource plan 冗余字段已删除。
+- `vrl/generation/ray/launcher.py` 与 `ReleasableRayGenerationRuntime` 接收
+  owner-managed placement；`release_memory()` 只释放 rollout actors，不移除 owner PG。
+- `vrl/ray/runtime.py` / `vrl/rewards/ray/runtime.py` 接收 reward role placement；
+  reward runtime release 只释放 reward actors，不移除 owner PG。
+- `vrl/scripts/common/online.py` 在 run 开始创建 owner，并在 `finally` 中按
+  collector -> reward -> placement owner 顺序 shutdown；训练异常、launch 异常、构建异常、
+  checkpoint 保存异常都不会泄漏 owner PG，shutdown 失败也不会盖掉原始训练异常。
+- `tests/scripts/test_online_lifecycle.py` 覆盖 run-level 生命周期：正常结束、owner create
+  失败、rollout launch 失败、reward/collector 构建失败、final checkpoint 失败、cleanup
+  失败不覆盖训练异常。
+- `tests/generation/ray/test_rollout_launcher.py` 已覆盖 releasable runtime release 不删除
+  owner-managed PG。
+
+剩余项 / 转出：
+
+- Reward async scoring、reward backlog 与 collect->score barrier 拆分：转入
+  `SPRINT_reward_execution.md` P1。
+- `vrl/scripts/common/factory.py` 里 reward key 硬编码派发和成本感知 auto placement：保留为
+  `SPRINT_reward_execution.md` P2 follow-up。
+- Memory budget、ReplayModel parity、把 trainer 变成 Ray actor 都不是本 sprint 目标。
+- 不保留 `vrl/generation/ray/placement.py` 兼容 shim；调用方直接从 `vrl.ray.placement`
+  导入全局 placement 边界。
 
 ## 0. Core Decision
 
@@ -8,7 +41,7 @@
 `GlobalRayPlacementOwner` 在 run 开始时创建、probe、持有并在 run 结束时释放
 placement group。
 
-当前结构是两套独立 PG：
+落地前结构是两套独立 PG：
 
 ```text
 rollout:
@@ -26,7 +59,7 @@ reward:
 `gpu_reservation_count` offset math，避免单独的 reward PG 抢错 GPU 或挂在
 `pg.ready()`。
 
-目标结构：
+已落地目标结构：
 
 ```text
 online.py
@@ -55,7 +88,7 @@ resource tests
 
 ```text
 vrl/scripts/common/online.py
-vrl/generation/ray/{launcher,runtime,placement}.py
+vrl/generation/ray/{launcher,runtime}.py
 vrl/rewards/ray/runtime.py
 vrl/ray/{runtime,resources,placement}.py
 tests/ray/test_resources.py
@@ -387,51 +420,23 @@ startup semantics or reward/generation business contracts.
 不为了删除 LOC flatten runtime facades
 ```
 
-## 9. Execution Prompt
+## 9. 后续不要重做
 
-可直接给后续 agent：
+这份 sprint 的 placement owner 主体已经落地。后续 agent 不要按旧 prompt 重建
+`GlobalRayPlacementOwner`、`RolePlacement`、owner-managed rollout/reward runtime 或
+run-level online cleanup。
+
+只剩两类工作应该继续：
 
 ```text
-We need to implement docs/sprints/SPRINT_global_ray_placement_owner.md.
+reward execution:
+  - P1 async scoring / reward backlog
+  - P2 cost-aware auto placement
+  - P2 remove reward-key hardcoding in factory.py
 
-First read these files and cite the exact current contracts before editing:
-- vrl/scripts/common/online.py
-- vrl/generation/ray/launcher.py
-- vrl/generation/ray/runtime.py
-- vrl/generation/ray/placement.py
-- vrl/rewards/ray/runtime.py
-- vrl/ray/runtime.py
-- vrl/ray/resources.py
-- tests/ray/test_resources.py
-- tests/generation/ray/
-
-Goal: replace independent rollout/reward placement groups with one run-level
-GlobalRayPlacementOwner created by online.py. The owner creates/probes one PG,
-maps roles to bundle indices, and is removed exactly once at run shutdown.
-Rollout and reward runtimes receive owner-managed placement and must not remove the
-shared PG when releasing actors.
-
-Implement in phases:
-1. Add characterization tests for current separate-PG behavior and release flags.
-2. Add GlobalRayPlacementOwner and role bundle plan tests.
-3. Add owner-managed placement support to RayGenerationLauncher/Releasable runtime.
-4. Add owner-managed placement support to RayActorMethodRuntime/RayRewardRuntime.
-5. Wire online.py to create/pass/shutdown the owner.
-6. Replace reward_gpu_reservation_count tests with role bundle plan tests.
-
-Hard requirements:
-- shared rollout/reward GPU uses the same bundle index and actors are not resident together.
-- dedicated reward GPU can keep reward actors resident.
-- owner-managed placement is never removed by rollout/reward runtime release.
-- error paths remove the shared PG exactly once.
-- trainer remains the driver process, not a Ray actor.
-
-Run:
-pytest -q tests/ray/test_resources.py
-pytest -q tests/generation/ray/
-pytest -q tests/rewards/ray/ tests/rewards/
-pytest -q tests/rollouts/orchestration/
-pytest -q tests/trainers/
+verification:
+  - keep run-level lifecycle tests green
+  - keep releasable runtime release from deleting owner PG
 ```
 
 ## 10. References
@@ -439,9 +444,10 @@ pytest -q tests/trainers/
 - `vrl/scripts/common/online.py`
 - `vrl/generation/ray/launcher.py`
 - `vrl/generation/ray/runtime.py`
-- `vrl/generation/ray/placement.py`
 - `vrl/rewards/ray/runtime.py`
 - `vrl/ray/runtime.py`
+- `vrl/ray/placement.py`
 - `vrl/ray/resources.py`
+- `tests/scripts/test_online_lifecycle.py`
 - `tests/ray/test_resources.py`
 - `tests/generation/ray/`

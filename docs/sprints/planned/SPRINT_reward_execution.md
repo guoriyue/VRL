@@ -312,6 +312,9 @@ reward 的卡由谁分，两条路：
    这会让下一个 GPU reward 必须改公共 factory。它不是协议边界，也不是稳定 taxonomy；
    应改成按已有的 `inference_runtime` 派发，factory 不再 hardcode reward-key。
 
+   2026-06-14 closeout：Ray placement owner 收尾只记录这个 smell，不在该短 sprint
+   展开奖励派发重构；保留为 P2 follow-up，和成本感知 auto placement 一起处理。
+
 2. `vrl/ray/resources.py` 的 `share_with_rollout=None` auto 分支。
    现在 auto 只看 spare GPU；P2 后应消费 `inference_runtime + reward_cost + backlog`，把
    "spare exists" 降级为一个 topology fact，而不是最终策略。
