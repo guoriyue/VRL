@@ -49,6 +49,7 @@ from vrl.trainers.data import load_prompt_examples_from_config
 from vrl.trainers.distributed import assert_strategy_executable, resolve_training_context
 from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.precision import torch_dtype_for_trainer_precision
+from vrl.trainers.strategy import SingleProcessStrategy
 from vrl.trainers.weight_sync import (
     build_runtime_weight_syncer,
     build_trainable_state_sync_getter,
@@ -277,6 +278,10 @@ async def run_online_recipe(
             sync_state_getter=build_trainable_state_sync_getter(bundle),
             config=trainer_config,
             device=device,
+            # Strategy carries the resolved rank/device identity. fsdp already
+            # fail-fasted in assert_strategy_executable above, so this is always
+            # single_process here; the FSDP strategy slots in by context.strategy.
+            strategy=SingleProcessStrategy(training_context),
         )
 
         if resume_checkpoint is not None:
