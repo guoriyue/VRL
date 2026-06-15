@@ -10,6 +10,7 @@ import contextlib
 import logging
 import time
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -230,6 +231,30 @@ def _merge_rollout_precision_context(
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True, slots=True)
+class TrainingBatch:
+    """The data half of one step: filtered rollouts + advantages + diagnostics.
+
+    ``collect_training_batch`` produces it and ``train_on_rollout_batch`` consumes
+    it; everything the train half reads — the filtered batches/advantages, the
+    pre-filter reward/advantage diagnostics, and the shared timer/iteration whose
+    timings both halves accumulate into — travels in here. The split is the seam
+    a future rank split would collect/train across.
+    """
+
+    iteration: Any
+    timer: PhaseTimer
+    batches: list[RolloutBatch]
+    advantages: list[torch.Tensor]
+    group_size: float
+    trained_prompt_num: int
+    adv_zero_rate: float
+    adv_saturation: float
+    pre_filter_reward_mean: float
+    pre_filter_reward_std: float
+    pre_filter_adv_mean: float
+
+
 class OnlineTrainer(Trainer):
     """Orchestrates the CEA online RL loop.
 
@@ -386,16 +411,24 @@ class OnlineTrainer(Trainer):
 
     async def _step_impl(self, prompts: list[str] | None = None) -> TrainStepMetrics:
         """Run one full training step without profiler wrapping."""
-        from vrl.algorithms.trajectory import AlgorithmAdapter, AlgorithmInput
-        from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
-        from vrl.utils.profiling import record_function
+        batch = await self.collect_training_batch(prompts)
+        return await self.train_on_rollout_batch(batch)
 
+    async def collect_training_batch(
+        self,
+        prompts: list[str] | None = None,
+    ) -> TrainingBatch:
+        """Collect rollouts and compute + filter advantages — the data half.
+
+        Returns everything ``train_on_rollout_batch`` needs; in single-process
+        ``step()`` the two run back-to-back. The shared ``timer`` is created here
+        and carried through the batch so both halves' phase timings land in one
+        accumulator, exactly as the previous single method did.
+        """
         if prompts is not None:
             self.prompts = prompts
 
         cfg = self.config
-        optimizer = self._ensure_optimizer()
-        ema = self._ensure_ema()
 
         timer = PhaseTimer(enabled=cfg.profile)
         runtime_debug_collect = bool(cfg.debug.first_step and self.state.step == 0)
@@ -486,6 +519,48 @@ class OnlineTrainer(Trainer):
                     filtered_advs,
                     num_batches=len(all_batches),
                 )
+
+        return TrainingBatch(
+            iteration=iteration,
+            timer=timer,
+            batches=filtered_batches,
+            advantages=filtered_advs,
+            group_size=group_size,
+            trained_prompt_num=trained_prompt_num,
+            adv_zero_rate=adv_zero_rate,
+            adv_saturation=adv_saturation,
+            pre_filter_reward_mean=pre_filter_reward_mean,
+            pre_filter_reward_std=pre_filter_reward_std,
+            pre_filter_adv_mean=pre_filter_adv_mean,
+        )
+
+    async def train_on_rollout_batch(self, batch: TrainingBatch) -> TrainStepMetrics:
+        """Train on a collected batch — the compute half of one step.
+
+        Stays async on purpose: the per-timestep ``await asyncio.sleep(0)`` in the
+        inner loop lets the continuous-rollout producer advance on the shared
+        asyncio loop between CUDA-heavy iterations. Making this synchronous would
+        change rollout interleaving, so the split keeps it awaitable. Behavior is
+        identical to the previous single method.
+        """
+        from vrl.algorithms.trajectory import AlgorithmAdapter, AlgorithmInput
+        from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
+        from vrl.utils.profiling import record_function
+
+        cfg = self.config
+        optimizer = self._ensure_optimizer()
+        ema = self._ensure_ema()
+        iteration = batch.iteration
+        timer = batch.timer
+        filtered_batches = batch.batches
+        filtered_advs = batch.advantages
+        group_size = batch.group_size
+        trained_prompt_num = batch.trained_prompt_num
+        adv_zero_rate = batch.adv_zero_rate
+        adv_saturation = batch.adv_saturation
+        pre_filter_reward_mean = batch.pre_filter_reward_mean
+        pre_filter_reward_std = batch.pre_filter_reward_std
+        pre_filter_adv_mean = batch.pre_filter_adv_mean
 
         # 3. Train loop — gradient accumulation across per-prompt batches.
         self.model.train()
