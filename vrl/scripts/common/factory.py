@@ -133,7 +133,7 @@ def _with_resolved_reward_runtime_kwargs(
         name
         for name, weight in reward_weights.items()
         if float(weight) > 0.0
-        and str((reward_kwargs.get(name) or {}).get("inference_runtime", "")) == "ray"
+        and str((reward_kwargs.get(name) or {}).get("execution", "")) == "pool"
     ]
     if not ray_reward_keys:
         return reward_kwargs

@@ -17,7 +17,7 @@ reward:
     videocon_physics: 1.0
   kwargs:
     videocon_physics:
-      inference_runtime: ray
+      execution: pool
       reward_name: videophysics/videocon_physics@main
       score_key: physical_commonsense
       scheduling: sync

@@ -65,7 +65,7 @@ def test_ray_reward_runtime_uses_repo_owned_model_factory(tmp_path: Path) -> Non
     try:
         runtime = RayRewardRuntime(
             {
-                "inference_runtime": "ray",
+                "execution": "pool",
                 "worker_config": {
                     "model_factory": (
                         "tests.rewards.ray.test_runtime:build_tensor_mean_model"
@@ -106,7 +106,7 @@ def test_ray_reward_runtime_fans_out_across_workers_with_timing() -> None:
     try:
         runtime = RayRewardRuntime(
             {
-                "inference_runtime": "ray",
+                "execution": "pool",
                 "worker_config": {
                     "model_factory": (
                         "tests.rewards.ray.test_runtime:build_constant_reward_model"
@@ -204,7 +204,7 @@ def test_ray_reward_runtime_assigns_gpu_ids_for_tensor_model(tmp_path: Path) -> 
     try:
         runtime = RayRewardRuntime(
             {
-                "inference_runtime": "ray",
+                "execution": "pool",
                 "worker_config": {
                     "model_factory": (
                         "tests.rewards.ray.test_runtime:build_tensor_mean_model"

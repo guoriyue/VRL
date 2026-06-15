@@ -133,7 +133,7 @@ def test_reward_runtime_releases_actors_after_score_when_configured() -> None:
     try:
         runtime = RayRewardRuntime(
             {
-                "inference_runtime": "ray",
+                "execution": "pool",
                 "worker_config": {
                     "model_factory": _CONSTANT_MODEL_FACTORY,
                     "scores": {"overall_reward": 3.0},
@@ -190,7 +190,7 @@ def test_reward_config_receives_resolved_resource_plan() -> None:
                 "components": {"kling_video_reward": 1.0},
                 "kwargs": {
                     "kling_video_reward": {
-                        "inference_runtime": "ray",
+                        "execution": "pool",
                         "reward_name": "KlingTeam/VideoReward@main",
                         "score_key": "overall_reward",
                         "worker_config": {
@@ -211,7 +211,7 @@ def test_reward_config_receives_resolved_resource_plan() -> None:
                 {"kling_video_reward": 1.0},
                 {
                     "kling_video_reward": {
-                        "inference_runtime": "ray",
+                        "execution": "pool",
                         "reward_name": "KlingTeam/VideoReward@main",
                         "score_key": "overall_reward",
                         "worker_config": {

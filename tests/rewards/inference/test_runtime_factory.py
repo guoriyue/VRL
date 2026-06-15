@@ -47,7 +47,7 @@ def test_shard_reward_request_balances_artifacts() -> None:
 def test_runtime_factory_rejects_missing_worker_config() -> None:
     """Checks runtime factory rejects missing worker config."""
     with pytest.raises(ValueError, match="worker_config"):
-        RayRewardRuntime({"inference_runtime": "ray"})
+        RayRewardRuntime({"execution": "pool"})
 
 
 def test_reward_name_without_worker_config_is_not_a_worker_loader() -> None:
@@ -55,7 +55,7 @@ def test_reward_name_without_worker_config_is_not_a_worker_loader() -> None:
     with pytest.raises(ValueError, match="worker_config"):
         RayRewardRuntime(
             {
-                "inference_runtime": "ray",
+                "execution": "pool",
                 "reward_name": "KlingTeam/VideoReward@main",
                 "score_key": "overall_reward",
             },

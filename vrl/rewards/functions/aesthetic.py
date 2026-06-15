@@ -15,7 +15,7 @@ class AestheticReward(RewardFunction):
         device: str = "cuda",
         dtype: str = "float32",
         model_name: str = "openai/clip-vit-large-patch14",
-        inference_runtime: str = "local",
+        execution: str = "inline",
         **kwargs: Any,
     ) -> None:
         worker_config = {
@@ -29,7 +29,7 @@ class AestheticReward(RewardFunction):
             score_key="aesthetic",
             model_factory="vrl.rewards.models.aesthetic:aesthetic_reward_model",
             worker_config=worker_config,
-            inference_runtime=inference_runtime,
+            execution=execution,
         )
 
 

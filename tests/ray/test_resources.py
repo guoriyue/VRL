@@ -45,7 +45,7 @@ def _cfg(
     }
     if kling_video_reward:
         reward_components = {"kling_video_reward": 1.0}
-        reward_kwargs = {"kling_video_reward": {"inference_runtime": "ray"}}
+        reward_kwargs = {"kling_video_reward": {"execution": "pool"}}
     if reward_components is not None:
         data["reward"] = {
             "components": reward_components,
@@ -389,7 +389,7 @@ def test_ray_reward_requires_reward_gpu_budget_for_any_component() -> None:
                     "rollout": {"devices": [1], "gpus_per_worker": 1},
                 },
                 reward_components={"custom_gpu_reward": 1.0},
-                reward_kwargs={"custom_gpu_reward": {"inference_runtime": "ray"}},
+                reward_kwargs={"custom_gpu_reward": {"execution": "pool"}},
             ),
         )
 
@@ -469,8 +469,8 @@ def test_multiple_ray_rewards_derive_release_after_score_on_dedicated_gpu() -> N
             },
             reward_components={"first_gpu_reward": 1.0, "second_gpu_reward": 1.0},
             reward_kwargs={
-                "first_gpu_reward": {"inference_runtime": "ray"},
-                "second_gpu_reward": {"inference_runtime": "ray"},
+                "first_gpu_reward": {"execution": "pool"},
+                "second_gpu_reward": {"execution": "pool"},
             },
         ),
     )
@@ -493,8 +493,8 @@ def test_multiple_ray_rewards_reject_resident_dedicated_gpu() -> None:
                 reward_release_after_score=False,
                 reward_components={"first_gpu_reward": 1.0, "second_gpu_reward": 1.0},
                 reward_kwargs={
-                    "first_gpu_reward": {"inference_runtime": "ray"},
-                    "second_gpu_reward": {"inference_runtime": "ray"},
+                    "first_gpu_reward": {"execution": "pool"},
+                    "second_gpu_reward": {"execution": "pool"},
                 },
             ),
         )

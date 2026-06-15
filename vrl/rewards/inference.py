@@ -62,7 +62,7 @@ class RewardInferenceArtifact:
             return self.path
         raise ValueError(
             f"reward artifact {self.artifact_id!r} has no materialized path; "
-            "use inference_runtime='ray' or materialize the artifact first",
+            "use execution='pool' or materialize the artifact first",
         )
 
 

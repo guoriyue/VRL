@@ -108,7 +108,7 @@ class RewardFunction:
         score_key: str,
         model_factory: str,
         worker_config: Mapping[str, Any],
-        inference_runtime: str,
+        execution: str,
         media_type: str = "image",
     ) -> None:
         """Initialize a RewardFunction backed by a RewardModel factory."""
@@ -120,7 +120,7 @@ class RewardFunction:
             reward_name=reward_name,
             score_key=score_key,
             runtime=make_reward_runtime(
-                inference_runtime,
+                execution,
                 model_factory=model_factory,
                 worker_config=worker_config,
             ),
@@ -137,7 +137,7 @@ class RewardFunction:
         config_key: str,
         request_prefix: str,
         debug_basename: str,
-        inference_runtime: str = "ray",
+        execution: str = "pool",
         reward_name: str | None = None,
         score_key: str | None = None,
         media_type: str = "video",
@@ -170,9 +170,9 @@ class RewardFunction:
             raise ValueError(
                 f"reward.kwargs.{config_key}.scheduling currently supports only 'sync'",
             )
-        self.inference_runtime = str(inference_runtime)
-        if self.inference_runtime != "ray":
-            raise ValueError(f"reward.kwargs.{config_key}.inference_runtime must be 'ray'")
+        self.execution = str(execution)
+        if self.execution != "pool":
+            raise ValueError(f"reward.kwargs.{config_key}.execution must be 'pool'")
 
         resolved_reward_name = str(
             reward_name if reward_name is not None else default_reward_name,

@@ -60,7 +60,7 @@ class LocalRewardRuntime:
 
 
 def make_reward_runtime(
-    inference_runtime: str,
+    execution: str,
     *,
     model_factory: str,
     worker_config: Mapping[str, Any] | None = None,
@@ -68,10 +68,10 @@ def make_reward_runtime(
     """Build the local or ray reward runtime for a given model factory."""
 
     worker_cfg = {**dict(worker_config or {}), "model_factory": str(model_factory)}
-    runtime = str(inference_runtime or "local")
-    if runtime == "local":
+    runtime = str(execution or "inline")
+    if runtime == "inline":
         return LocalRewardRuntime(worker_cfg)
-    if runtime == "ray":
+    if runtime == "pool":
         # Imported lazily so local-only usage never pulls in Ray.
         from vrl.rewards.ray.runtime import RayRewardRuntime
 
@@ -80,7 +80,7 @@ def make_reward_runtime(
         ray_cfg = {**worker_cfg, "worker_config": worker_cfg}
         return RayRewardRuntime(ray_cfg)
     raise ValueError(
-        f"unsupported inference_runtime={inference_runtime!r}; expected 'local' or 'ray'",
+        f"unsupported execution={execution!r}; expected 'inline' or 'pool'",
     )
 
 

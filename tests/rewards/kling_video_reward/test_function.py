@@ -68,7 +68,7 @@ def _rollout(output: torch.Tensor, *, policy_version: int = 3) -> RewardRollout:
 
 def _video_reward_config(**video_kwargs: object):
     kwargs = {
-        "inference_runtime": "ray",
+        "execution": "pool",
         "reward_name": "kling_video_reward",
         "score_key": "overall_reward",
         "worker_config": {
@@ -93,7 +93,7 @@ async def test_video_reward_materializes_artifacts_and_returns_runtime_scores(
     """Checks video reward materializes artifacts and returns runtime scores."""
     actor_runtime = _FakeActorRuntime()
     reward = KlingVideoReward(
-        inference_runtime="ray",
+        execution="pool",
         reward_name="kling_video_reward",
         score_key="overall_reward",
         media_type="video",
@@ -120,7 +120,7 @@ async def test_video_reward_materializes_artifacts_and_returns_runtime_scores(
 async def test_video_reward_rejects_missing_runtime_results(tmp_path: Path) -> None:
     """Checks video reward rejects missing runtime results."""
     reward = KlingVideoReward(
-        inference_runtime="ray",
+        execution="pool",
         reward_name="kling_video_reward",
         score_key="overall_reward",
         artifact_dir=str(tmp_path / "artifacts"),
@@ -133,9 +133,9 @@ async def test_video_reward_rejects_missing_runtime_results(tmp_path: Path) -> N
 
 def test_video_reward_rejects_non_ray_runtime(tmp_path: Path) -> None:
     """Checks video reward rejects non Ray runtime."""
-    with pytest.raises(ValueError, match="inference_runtime must be 'ray'"):
+    with pytest.raises(ValueError, match="execution must be 'pool'"):
         KlingVideoReward(
-            inference_runtime="local",
+            execution="inline",
             reward_name="kling_video_reward",
             score_key="overall_reward",
             artifact_dir=str(tmp_path),

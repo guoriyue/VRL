@@ -57,7 +57,7 @@ def _rollout() -> RewardRollout:
 async def test_video_reward_debug_records_versions_and_latency(tmp_path: Path) -> None:
     """Checks video reward debug records versions and latency."""
     reward = KlingVideoReward(
-        inference_runtime="ray",
+        execution="pool",
         reward_name="KlingTeam/VideoReward@main",
         score_key="overall_reward",
         artifact_dir=str(tmp_path / "reward_artifacts"),
@@ -100,7 +100,7 @@ def test_video_reward_rejects_async_scheduling_until_supported(tmp_path: Path) -
     """Checks video reward rejects async scheduling until supported."""
     with pytest.raises(ValueError, match="scheduling"):
         KlingVideoReward(
-            inference_runtime="ray",
+            execution="pool",
             reward_name="KlingTeam/VideoReward@main",
             score_key="overall_reward",
             artifact_dir=str(tmp_path / "reward_artifacts"),

@@ -76,7 +76,7 @@ class RayRewardRuntime:
         worker_config_raw = cfg.get("worker_config")
         if worker_config_raw is None:
             raise ValueError(
-                "reward inference_runtime='ray' requires explicit worker_config. "
+                "reward execution='pool' requires explicit worker_config. "
                 "KlingVideoReward derives the model from reward_name; tests pass "
                 "worker_config.model_factory pointing at a RewardModel factory.",
             )

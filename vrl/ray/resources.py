@@ -174,7 +174,7 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
     ray_reward_count = _count_ray_rewards(cfg)
     if ray_reward_count > 0 and reward_gpus_per_worker > 0 and reward_num_gpus == 0:
         raise ValueError(
-            "reward component with inference_runtime=ray requires "
+            "reward component with execution=pool requires "
             "distributed.resources.reward.num_gpus > 0",
         )
     reward_num_workers = _resolve_role_num_workers(
@@ -219,7 +219,7 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
         and not reward_release_after_score
     ):
         raise ValueError(
-            "multiple active reward components with inference_runtime=ray share "
+            "multiple active reward components with execution=pool share "
             "the reward role placement; set distributed.reward.release_after_score "
             "to true (or leave it unset) until per-reward placement is supported",
         )
@@ -1008,7 +1008,7 @@ def _count_ray_rewards(cfg: Any) -> int:
         if reward_weight <= 0:
             continue
         reward_kwargs = cfg_get(kwargs, str(reward_key), {})
-        if str(cfg_get(reward_kwargs, "inference_runtime", "")) == "ray":
+        if str(cfg_get(reward_kwargs, "execution", "")) == "pool":
             count += 1
     return count
 

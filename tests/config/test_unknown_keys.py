@@ -42,7 +42,7 @@ def test_open_blocks_accept_arbitrary_keys() -> None:
                 "kwargs": {
                     "ocr": {"anything": 1},
                     "kling_video_reward": {
-                        "inference_runtime": "ray",
+                        "execution": "pool",
                         "reward_name": "r",
                         "score_key": "s",
                         "worker_config": {"any_worker_key": True},

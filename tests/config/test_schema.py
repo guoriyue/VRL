@@ -32,7 +32,7 @@ def _minimal_grpo_cfg(**overrides):
 
 def _kling_video_reward_kwargs(**overrides) -> dict:
     base = {
-        "inference_runtime": "ray",
+        "execution": "pool",
         "reward_name": "org/model@main",
         "score_key": "overall",
         "worker_config": {"model_path": "/tmp/model"},
@@ -293,7 +293,7 @@ def test_production_video_reward_structural_rules() -> None:
                 "components": {"kling_video_reward": 1.0},
                 "kwargs": {
                     "kling_video_reward": {
-                        "inference_runtime": "ray",
+                        "execution": "pool",
                         "reward_name": "org/model@main",
                         "score_key": "overall",
                         "media_type": "video",
@@ -335,7 +335,7 @@ def test_production_video_reward_accepts_image_to_video_task_type() -> None:
                 "components": {"kling_video_reward": 1.0},
                 "kwargs": {
                     "kling_video_reward": {
-                        "inference_runtime": "ray",
+                        "execution": "pool",
                         "reward_name": "org/model@main",
                         "score_key": "overall",
                         "media_type": "video",
@@ -370,7 +370,7 @@ def test_production_video_reward_missing_reward_name_raises() -> None:
                 "components": {"kling_video_reward": 1.0},
                 "kwargs": {
                     "kling_video_reward": {
-                        "inference_runtime": "ray",
+                        "execution": "pool",
                         "reward_name": "",  # empty
                         "score_key": "overall",
                         "media_type": "video",
@@ -405,7 +405,7 @@ def test_production_video_reward_forbidden_worker_key_raises() -> None:
                 "components": {"kling_video_reward": 1.0},
                 "kwargs": {
                     "kling_video_reward": {
-                        "inference_runtime": "ray",
+                        "execution": "pool",
                         "reward_name": "org/model@main",
                         "score_key": "overall",
                         "media_type": "video",

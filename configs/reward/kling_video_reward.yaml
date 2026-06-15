@@ -15,7 +15,7 @@ reward:
     kling_video_reward: 1.0
   kwargs:
     kling_video_reward:
-      inference_runtime: ray
+      execution: pool
       reward_name: KlingTeam/VideoReward@main
       score_key: overall_reward
       scheduling: sync

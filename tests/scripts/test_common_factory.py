@@ -84,8 +84,8 @@ def test_reward_runtime_kwargs_apply_to_any_active_ray_reward() -> None:
                     "ocr": 1.0,
                 },
                 "kwargs": {
-                    "custom_gpu_reward": {"inference_runtime": "ray"},
-                    "second_gpu_reward": {"inference_runtime": "ray"},
+                    "custom_gpu_reward": {"execution": "pool"},
+                    "second_gpu_reward": {"execution": "pool"},
                     "ocr": {"debug_dir": "ocr-debug"},
                 },
             },
@@ -97,8 +97,8 @@ def test_reward_runtime_kwargs_apply_to_any_active_ray_reward() -> None:
         cfg,
         {"custom_gpu_reward": 1.0, "second_gpu_reward": 1.0, "ocr": 1.0},
         {
-            "custom_gpu_reward": {"inference_runtime": "ray"},
-            "second_gpu_reward": {"inference_runtime": "ray"},
+            "custom_gpu_reward": {"execution": "pool"},
+            "second_gpu_reward": {"execution": "pool"},
             "ocr": {"debug_dir": "ocr-debug"},
         },
         reward_placement=placement,
