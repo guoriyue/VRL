@@ -296,7 +296,8 @@ class TrainingStrategy(Protocol):
     context: DistributedTrainingContext
 
     def backward(self, loss: torch.Tensor) -> None: ...
-    def clip_grad_norm(self, parameters: Iterable[torch.nn.Parameter], max_norm: float) -> float: ...
+    # clip + grad-scaler-aware optimizer step + zero_grad; returns (grad_norm, stepped)
+    def clip_and_step(self, optimizer: torch.optim.Optimizer) -> tuple[float, bool]: ...
     def export_trainable_state(self, bundle: RuntimeBundle) -> dict[str, dict[str, Any]]: ...
     def export_rollout_state(self, bundle: RuntimeBundle) -> dict[str, Any]: ...
     def load_trainable_state(self, bundle: RuntimeBundle, state: dict[str, Any]) -> None: ...
@@ -307,12 +308,20 @@ class TrainingStrategy(Protocol):
 
 ```text
 backward -> existing OnlineTrainer._backward semantics
-clip_grad_norm -> existing _clip_and_step clipping semantics
+clip_and_step -> existing _clip_and_step (clip + grad-scaler-aware optimizer step + zero_grad); returns (grad_norm, stepped)
 export_trainable_state -> checkpointing.export_trainable_state
 export_rollout_state -> weight_sync.flatten_trainable_module_state
 load_trainable_state -> checkpointing.load_trainable_state
 barrier -> no-op
 ```
+
+`backward` 和 `clip_and_step` 都按 `self._grad_scaler` / `self.accelerator` 分派：`_backward`
+有 grad_scaler / accelerator / 裸 `loss.backward()` 三分支（trainer.py:326），`_clip_and_step`
+在 fp16 GradScaler 下走 `scaler.step/update` 并据缩放是否回退判定是否真的 stepped
+（trainer.py:334）。所以 `SingleProcessStrategy` 必须持有这两个句柄，不能简化成
+`loss.backward()` + `clip_grad_norm_`。返回的 `stepped` 是 load-bearing：trainer 只在 stepped
+时跑 EMA / `after_optimizer_step` / 推进 global_step（trainer.py:813-822）；丢掉 `stepped`，
+P3「输出和当前 helper 一致」就不再是无行为变化。
 
 这看起来是薄层，但它是必要边界：
 
@@ -473,8 +482,8 @@ single-process checkpoint/resume 必须完全不变。
 
 完成条件：
 
-- trainer backward / clip / checkpoint export / rollout export 经过 strategy seam。
-- `SingleProcessStrategy` 输出和当前 helper 输出一致。
+- trainer backward / clip+step / checkpoint export / rollout export 经过 strategy seam。
+- `SingleProcessStrategy` 输出和当前 helper 输出一致（含 `_clip_and_step` 返回的 `stepped`）。
 - 没有 FSDP wrapper 代码进入本阶段。
 
 ### P4. OnlineTrainer collect/train split
