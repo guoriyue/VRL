@@ -9,6 +9,39 @@ replay 契约设计想清再写码（改错会静默污染 GRPO）。
 
 ---
 
+## 0.5 实施状态（first cut，分支 `feat/wan-2-2-dual-expert`，CPU 可验证部分已过）
+
+I2V 双专家机制已落地（T2V-A14B 留作镜像 follow-up）。设计决策：**两个专家都训**（LoRA 各打一个，
+`trainable_modules` 含两个，weight-sync 的 name→module dict 天然支持），保留 diffusers 命名
+（`transformer`=high-noise / `transformer_2`=low-noise），避免命名反转。
+
+**已实现（§2 的 7 处）：**
+- 路由真相源对齐 diffusers `pipeline_wan_i2v.py:736-754`：`boundary_timestep = boundary_ratio *
+  num_train_timesteps`（ckpt=0.9×1000=900），`t >= 900` → high-noise，否则 low-noise。做成纯函数
+  `_wan_boundary_timestep` + 方法 `_expert_for_timestep`，**5 个单测覆盖**（边界、批量/标量、单塔回退）。
+- gen model：`from_spec` 放开 boundary guard（仅留 `expand_timesteps` 拒绝）、`__init__` 跟踪
+  `transformer_2`+boundary、`forward_step` 按步派发专家。
+- replay model：`WanI2VReplayModel` 持双专家+boundary，继承到的派发逻辑保证重算走同一专家。
+- replay bundle：`DiffusionPipeline.load_config` 读 boundary、`subfolder="transformer_2"` 载第二专家、
+  metadata replay_modules 含 `transformer_2`。
+- LoRA：gen 走 mixin override（包两个）、replay 走 `apply_lora_to_transformer` 扩展（`getattr` 守卫，
+  其它族零影响）；新增共享 `wrap_transformer_lora`。
+- config：`configs/model/diffusion/wan_2_1/i2v_a14b.yaml`（2.2 无 image cross-attn → LoRA target 去掉
+  `add_*_proj`；2×14B 单卡 `enable_sequential_cpu_offload`）。
+
+**已验证（无需 GPU）：** 新路由 5 单测 + 改后 wan 全套 16 + 跨族 diffusion 88 全过；ruff 全过；
+`DiffusionPipeline.load_config` API 确认存在。
+
+**仍需 GPU 验收（§5 硬指标，本机无法跑 126GB 模型）：**
+1. **rollout `old_log_prob` vs replay 重算逐步一致、跨 boundary 不漂移**——契约正确性唯一硬指标。
+2. 单卡显存（2×14B + sequential offload）实测是否可行。
+3. 双专家 weight-sync 端到端（trainer 两份 LoRA → rollout worker 加载两份）。
+
+**已知 follow-up（非本 cut）：** dual-expert **断点续训**（单 `lora_path` 装不下两专家，已 fail-fast
+报错，需 per-expert adapter 目录）；显存优化（只训 low-noise）；T2V-A14B；5B `expand_timesteps`（非目标）。
+
+---
+
 ## 0. Core Decision（含 go/no-go）
 
 把 Wan 2.2 A14B（high-noise `transformer` + low-noise `transformer_2`，按 `boundary_ratio` 的

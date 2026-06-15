@@ -82,8 +82,17 @@ def apply_lora_to_transformer(model: Any, spec: Any) -> None:
     if callable(to):
         to(model.device, dtype=resolve_torch_dtype(spec.dtype))
 
+    # Wan 2.2 dual-expert replay also holds a second low-noise expert; other
+    # families have no ``transformer_2`` so this stays None and is a no-op.
+    transformer_2 = getattr(model, "transformer_2", None)
+
     lora_path = spec.lora_path
     if lora_path:
+        if transformer_2 is not None:
+            raise NotImplementedError(
+                "Resuming Wan 2.2 dual-expert replay from a single lora_path is "
+                "not supported; per-expert adapter dirs are a follow-up.",
+            )
         wrapped = PeftModel.from_pretrained(
             transformer,
             lora_path,
@@ -103,6 +112,12 @@ def apply_lora_to_transformer(model: Any, spec: Any) -> None:
         target_modules=lora_config["target_modules"],
     )
     model._set_transformer(get_peft_model(transformer, cfg))
+    if transformer_2 is not None:
+        from vrl.models.diffusion.common.lora import wrap_transformer_lora
+
+        model._set_transformer_2(
+            wrap_transformer_lora(transformer_2, spec, model.device),
+        )
 
 
 def enable_transformer_full_finetune(model: Any) -> None:

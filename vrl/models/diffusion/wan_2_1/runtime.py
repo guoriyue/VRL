@@ -144,6 +144,33 @@ def build_wan_2_1_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
     )
 
 
+def _wan_i2v_dual_expert_replay_kwargs(spec: RuntimeBuildSpec, scheduler: Any) -> dict[str, Any]:
+    """Extra replay kwargs for a Wan 2.2 dual-expert checkpoint, else ``{}``.
+
+    Reads the pipeline config (``model_index.json``, no weights) to detect the
+    ``boundary_ratio``; when present, also loads the low-noise ``transformer_2``
+    so the replay model recomputes log-probs through the same expert per step.
+    """
+    from diffusers import DiffusionPipeline
+
+    from vrl.models.diffusion.wan_2_1.model import _wan_boundary_timestep
+
+    config = DiffusionPipeline.load_config(spec.model_name_or_path)
+    if isinstance(config, tuple):
+        config = config[0]
+    boundary_ratio = config.get("boundary_ratio")
+    if boundary_ratio is None:
+        return {}
+    return {
+        "transformer_2": load_diffusers_transformer(
+            spec, "WanTransformer3DModel", subfolder="transformer_2",
+        ),
+        "boundary_timestep": _wan_boundary_timestep(
+            boundary_ratio, int(scheduler.config.num_train_timesteps),
+        ),
+    }
+
+
 def build_wan_2_1_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
     """Build the trainer replay bundle without loading Wan text/VAE modules."""
 
@@ -160,16 +187,18 @@ def build_wan_2_1_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle
         task_variant,
         spec.model_name_or_path,
     )
+    scheduler = load_diffusers_scheduler(spec, "UniPCMultistepScheduler")
+    transformer = load_diffusers_transformer(spec, "WanTransformer3DModel")
+    replay_extra = (
+        _wan_i2v_dual_expert_replay_kwargs(spec, scheduler)
+        if task_variant == "i2v"
+        else {}
+    )
     model = replay_cls(
-        transformer=load_diffusers_transformer(
-            spec,
-            "WanTransformer3DModel",
-        ),
-        scheduler=load_diffusers_scheduler(
-            spec,
-            "UniPCMultistepScheduler",
-        ),
+        transformer=transformer,
+        scheduler=scheduler,
         device=spec.device,
+        **replay_extra,
     )
 
     use_lora = spec.use_lora
@@ -200,7 +229,11 @@ def build_wan_2_1_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle
             "use_lora": use_lora,
             "reference_image": (spec.model_config or {}).get("reference_image"),
             **minimal_replay_bundle_metadata(
-                replay_modules=("transformer", "scheduler"),
+                replay_modules=(
+                    ("transformer", "transformer_2", "scheduler")
+                    if "transformer_2" in replay_extra
+                    else ("transformer", "scheduler")
+                ),
                 generation_only_modules=(
                     "text_encoder",
                     "image_encoder",

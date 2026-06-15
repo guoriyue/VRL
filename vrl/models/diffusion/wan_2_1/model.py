@@ -117,6 +117,18 @@ class WanT2VDiffusersModel(LoraModelMixin, DiffusionModelBase):
         pipeline = WanPipeline.from_pretrained(
             spec.model_name_or_path, torch_dtype=spec.dtype,
         )
+        # Wan 2.2 T2V-A14B is also a two-stage MoE, but only the I2V dual-expert
+        # path is wired so far. Fail fast instead of silently running just the
+        # high-noise expert (which would corrupt generation and GRPO log-probs).
+        if (
+            getattr(pipeline, "transformer_2", None) is not None
+            or _config_value(getattr(pipeline, "config", None), "boundary_ratio") is not None
+        ):
+            raise NotImplementedError(
+                "Wan 2.2 T2V is a two-stage MoE (transformer + transformer_2); only Wan 2.2 "
+                "I2V dual-expert is wired. Use the I2V path, or mirror the dual-expert dispatch "
+                "from WanI2VDiffusersModel onto WanT2VDiffusersModel.",
+            )
         pipeline.vae.requires_grad_(False)
         pipeline.text_encoder.requires_grad_(False)
         pipeline.vae.to(spec.device, dtype=torch.float32)
@@ -390,9 +402,78 @@ class WanT2VReplayModel(ReplayRolloutStubs, WanT2VDiffusersModel):
 
 
 class WanI2VDiffusersModel(WanT2VDiffusersModel):
-    """Diffusers-backed Wan 2.1 I2V model (14B 480P variant)."""
+    """Diffusers-backed Wan I2V model.
+
+    Wan 2.1 (14B 480P) is single-tower. Wan 2.2 (A14B) is a two-stage MoE: a
+    high-noise expert (``transformer``) for early steps and a low-noise expert
+    (``transformer_2``) for later steps, routed deterministically by timestep
+    (see :meth:`_expert_for_timestep`). Both experts are the RL policy here.
+    """
 
     family = "wan-diffusers-i2v"
+
+    def __init__(self, *, pipeline: Any, device: Any = None) -> None:
+        super().__init__(pipeline=pipeline, device=device)
+        # ``transformer_2`` exists only on Wan 2.2 dual-expert checkpoints. The
+        # boundary (and the scheduler read it needs) is only meaningful when a
+        # second expert is present; single-tower Wan 2.1 stays untouched.
+        self.transformer_2 = getattr(pipeline, "transformer_2", None)
+        if self.transformer_2 is None:
+            self._boundary_timestep = None
+        else:
+            self._boundary_timestep = _wan_boundary_timestep(
+                _config_value(pipeline.config, "boundary_ratio"),
+                int(pipeline.scheduler.config.num_train_timesteps),
+            )
+
+    def _set_transformer_2(self, transformer: Any) -> None:
+        self.transformer_2 = transformer
+        if getattr(self, "_pipeline", None) is not None:
+            self.pipeline.transformer_2 = transformer
+
+    def _expert_for_timestep(self, timestep: Any) -> Any:
+        """Active denoising expert for one step (Wan 2.2 two-stage MoE).
+
+        Mirrors diffusers ``pipeline_wan_i2v.py``: ``t >= boundary_timestep`` →
+        high-noise ``transformer``; below it → low-noise ``transformer_2``. All
+        samples in a single ``forward_step`` share the same timestep ``t``.
+        """
+        if self.transformer_2 is None or self._boundary_timestep is None:
+            return self.transformer
+        tv = (
+            float(timestep.reshape(-1)[0].item())
+            if hasattr(timestep, "reshape")
+            else float(timestep)
+        )
+        return self.transformer if tv >= self._boundary_timestep else self.transformer_2
+
+    @property
+    def trainable_modules(self) -> dict[str, Any]:
+        mods: dict[str, Any] = {"transformer": self.transformer}
+        if self.transformer_2 is not None:
+            mods["transformer_2"] = self.transformer_2
+        return mods
+
+    def apply_lora(self, spec: Any) -> None:
+        """Attach LoRA to both experts (Wan 2.2) or the single transformer (2.1)."""
+        super().apply_lora(spec)
+        if self.transformer_2 is not None:
+            from vrl.models.diffusion.common.lora import wrap_transformer_lora
+
+            self._set_transformer_2(
+                wrap_transformer_lora(
+                    self.transformer_2,
+                    spec,
+                    self.device,
+                    default_init=self._lora_default_init_weights,
+                ),
+            )
+
+    def enable_full_finetune(self) -> None:
+        super().enable_full_finetune()
+        if self.transformer_2 is not None:
+            self.transformer_2.requires_grad_(True)
+            self.transformer_2.to(self.device)
 
     @classmethod
     def from_spec(cls, spec: Any) -> WanI2VDiffusersModel:
@@ -403,7 +484,7 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
             spec.model_name_or_path,
             torch_dtype=spec.dtype,
         )
-        _ensure_single_transformer_wan_i2v(pipeline)
+        _ensure_supported_wan_i2v(pipeline)
         pipeline.set_progress_bar_config(disable=True)
 
         for module_name in ("vae", "text_encoder", "image_encoder"):
@@ -566,7 +647,7 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
             None if state.negative_prompt_embeds is None else state.negative_prompt_embeds.to(td)
         )
         output = DiffusionBackboneCaller(
-            self.transformer,
+            self._expert_for_timestep(t),
             WanI2VDiffusionBackboneRunner(),
         )(
             DiffusionBackboneInput(
@@ -637,11 +718,27 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
 
 
 class WanI2VReplayModel(ReplayRolloutStubs, WanI2VDiffusersModel):
-    """Replay-only Wan I2V model that owns no text, image, VAE, or pipeline modules."""
+    """Replay-only Wan I2V model that owns no text, image, VAE, or pipeline modules.
 
-    def __init__(self, *, transformer: Any, scheduler: Any, device: Any = None) -> None:
+    Wan 2.2 replay holds BOTH experts (``transformer`` + ``transformer_2``) plus the
+    boundary, so :meth:`_expert_for_timestep` recomputes log-probs through the same
+    expert that produced each rollout step. ``transformer_2``/``boundary_timestep``
+    are ``None`` for single-tower Wan 2.1.
+    """
+
+    def __init__(
+        self,
+        *,
+        transformer: Any,
+        scheduler: Any,
+        device: Any = None,
+        transformer_2: Any = None,
+        boundary_timestep: float | None = None,
+    ) -> None:
         DiffusionModelBase.__init__(self)
         self.transformer = transformer
+        self.transformer_2 = transformer_2
+        self._boundary_timestep = boundary_timestep
         self._scheduler = scheduler
         self._device = device
 
@@ -695,16 +792,24 @@ def _transformer_config(transformer: Any) -> Any:
     return getattr(transformer, "config", None)
 
 
-def _ensure_single_transformer_wan_i2v(pipeline: Any) -> None:
-    if _config_value(pipeline.config, "boundary_ratio") is not None:
-        raise NotImplementedError(
-            "Wan I2V RL currently supports single-transformer Wan 2.1 I2V; "
-            "Wan 2.2 dual-stage I2V needs a separate replay contract.",
-        )
+def _ensure_supported_wan_i2v(pipeline: Any) -> None:
+    # Wan 2.2 dual-expert (``boundary_ratio`` set) is supported via the two-stage
+    # dispatch + replay contract below. Only the 5B ``expand_timesteps`` mode,
+    # which blends conditioning into hidden_states differently, stays out of scope.
     if bool(_config_value(pipeline.config, "expand_timesteps", False)):
         raise NotImplementedError(
             "Wan I2V RL does not yet support expand_timesteps pipelines.",
         )
+
+
+def _wan_boundary_timestep(boundary_ratio: Any, num_train_timesteps: int) -> float | None:
+    """Wan 2.2 two-stage MoE boundary timestep, mirroring diffusers
+    ``pipeline_wan_i2v.py``: ``boundary_ratio * num_train_timesteps``. The high-noise
+    ``transformer`` runs for ``t >= boundary``; the low-noise ``transformer_2`` below it.
+    Returns ``None`` for single-tower Wan 2.1 (no second expert)."""
+    if boundary_ratio is None:
+        return None
+    return float(boundary_ratio) * float(num_train_timesteps)
 
 
 def _config_value(config: Any, name: str, default: Any = None) -> Any:
