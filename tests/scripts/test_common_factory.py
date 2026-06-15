@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import torch
+from omegaconf import OmegaConf
 
 from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
 from vrl.models.diffusion.wan_2_1.runtime import extract_wan_2_1_runtime_spec
 from vrl.scripts.common.factory import (
+    _with_resolved_reward_runtime_kwargs,
     build_algorithm_and_evaluator_from_cfg,
     build_rollout_config_from_cfg,
 )
@@ -47,3 +49,68 @@ def test_wan_empty_lora_preserves_base_policy_initially() -> None:
     # Wan's apply_lora reads ``init_lora_weights`` with a True default, so an
     # empty training adapter still initially preserves base Wan output.
     assert lora_config.get("init_lora_weights", True) is True
+
+
+def test_reward_runtime_kwargs_apply_to_any_active_ray_reward() -> None:
+    """Checks generic Ray reward kwargs are derived from distributed resources."""
+    cfg = OmegaConf.create(
+        {
+            "distributed": {
+                "resources": {
+                    "visible_devices": [0],
+                    "trainer": {"num_gpus": 0},
+                    "rollout": {
+                        "num_gpus": 0,
+                        "gpus_per_worker": 0,
+                        "num_workers": 1,
+                    },
+                    "reward": {
+                        "num_gpus": 1,
+                        "gpus_per_worker": 1,
+                        "num_workers": 1,
+                    },
+                },
+                "reward": {
+                    "release_after_score": True,
+                    "cpus_per_worker": 0.5,
+                    "max_inflight_batches": 2,
+                    "placement_strategy": "STRICT_PACK",
+                },
+            },
+            "reward": {
+                "components": {
+                    "custom_gpu_reward": 1.0,
+                    "second_gpu_reward": 1.0,
+                    "ocr": 1.0,
+                },
+                "kwargs": {
+                    "custom_gpu_reward": {"inference_runtime": "ray"},
+                    "second_gpu_reward": {"inference_runtime": "ray"},
+                    "ocr": {"debug_dir": "ocr-debug"},
+                },
+            },
+        },
+    )
+    placement = object()
+
+    reward_kwargs = _with_resolved_reward_runtime_kwargs(
+        cfg,
+        {"custom_gpu_reward": 1.0, "second_gpu_reward": 1.0, "ocr": 1.0},
+        {
+            "custom_gpu_reward": {"inference_runtime": "ray"},
+            "second_gpu_reward": {"inference_runtime": "ray"},
+            "ocr": {"debug_dir": "ocr-debug"},
+        },
+        reward_placement=placement,
+    )
+
+    for reward_key in ("custom_gpu_reward", "second_gpu_reward"):
+        custom = reward_kwargs[reward_key]
+        assert custom["num_workers"] == 1
+        assert custom["gpus_per_worker"] == 1.0
+        assert custom["expected_gpu_ids"] == (0,)
+        assert custom["release_after_score"] is True
+        assert custom["max_inflight_batches"] == 2
+        assert custom["placement_strategy"] == "STRICT_PACK"
+        assert custom["placement"] is placement
+    assert reward_kwargs["ocr"] == {"debug_dir": "ocr-debug"}

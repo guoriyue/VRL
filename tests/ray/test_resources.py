@@ -20,6 +20,8 @@ def _cfg(
     rollout_release_before_reward_model: bool | None = None,
     reward_release_after_score: bool | None = None,
     kling_video_reward: bool = False,
+    reward_components: dict[str, float] | None = None,
+    reward_kwargs: dict[str, dict] | None = None,
 ) -> object:
     # None leaves the key unset so the resolver derives it from topology.
     rollout_runtime = {
@@ -42,9 +44,12 @@ def _cfg(
         },
     }
     if kling_video_reward:
+        reward_components = {"kling_video_reward": 1.0}
+        reward_kwargs = {"kling_video_reward": {"inference_runtime": "ray"}}
+    if reward_components is not None:
         data["reward"] = {
-            "components": {"kling_video_reward": 1.0},
-            "kwargs": {"kling_video_reward": {"inference_runtime": "ray"}},
+            "components": reward_components,
+            "kwargs": reward_kwargs or {},
         }
     return OmegaConf.create(
         data,
@@ -373,6 +378,22 @@ def test_ray_video_reward_requires_reward_gpu_budget() -> None:
         )
 
 
+def test_ray_reward_requires_reward_gpu_budget_for_any_component() -> None:
+    """Checks any active Ray reward requires reward GPU budget."""
+    with pytest.raises(ValueError, match=r"distributed\.resources\.reward\.num_gpus > 0"):
+        resolve_distributed_resources(
+            _cfg(
+                {
+                    "visible_devices": [0, 1],
+                    "trainer": {"devices": [0]},
+                    "rollout": {"devices": [1], "gpus_per_worker": 1},
+                },
+                reward_components={"custom_gpu_reward": 1.0},
+                reward_kwargs={"custom_gpu_reward": {"inference_runtime": "ray"}},
+            ),
+        )
+
+
 def test_reward_rollout_overlap_rejects_explicit_resident_lifecycle() -> None:
     """Checks explicit release=false contradicts a shared reward/rollout pool."""
     with pytest.raises(ValueError, match="release_before_reward_model"):
@@ -434,6 +455,49 @@ def test_dedicated_reward_gpu_derives_resident_lifecycle_when_unset() -> None:
     assert resolved.rollout_release_after_collect is False
     assert resolved.rollout_release_before_reward_model is False
     assert resolved.reward_release_after_score is False
+
+
+def test_multiple_ray_rewards_derive_release_after_score_on_dedicated_gpu() -> None:
+    """Checks sequential Ray reward models release a shared reward placement."""
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0, 1, 2],
+                "trainer": {"devices": [0]},
+                "rollout": {"devices": [1], "gpus_per_worker": 1},
+                "reward": {"devices": [2], "gpus_per_worker": 1, "num_workers": 1},
+            },
+            reward_components={"first_gpu_reward": 1.0, "second_gpu_reward": 1.0},
+            reward_kwargs={
+                "first_gpu_reward": {"inference_runtime": "ray"},
+                "second_gpu_reward": {"inference_runtime": "ray"},
+            },
+        ),
+    )
+
+    assert resolved.reward_shared_with_rollout is False
+    assert resolved.reward_release_after_score is True
+
+
+def test_multiple_ray_rewards_reject_resident_dedicated_gpu() -> None:
+    """Checks multiple Ray rewards cannot all stay resident on one role placement."""
+    with pytest.raises(ValueError, match="multiple active reward components"):
+        resolve_distributed_resources(
+            _cfg(
+                {
+                    "visible_devices": [0, 1, 2],
+                    "trainer": {"devices": [0]},
+                    "rollout": {"devices": [1], "gpus_per_worker": 1},
+                    "reward": {"devices": [2], "gpus_per_worker": 1, "num_workers": 1},
+                },
+                reward_release_after_score=False,
+                reward_components={"first_gpu_reward": 1.0, "second_gpu_reward": 1.0},
+                reward_kwargs={
+                    "first_gpu_reward": {"inference_runtime": "ray"},
+                    "second_gpu_reward": {"inference_runtime": "ray"},
+                },
+            ),
+        )
 
 
 def test_reward_auto_placement_prefers_dedicated_spare_gpu() -> None:

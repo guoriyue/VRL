@@ -171,9 +171,10 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
         reward_release_after_score=config.reward_release_after_score,
     )
     reward_num_gpus = len(reward_devices)
-    if _uses_ray_video_reward(cfg) and reward_gpus_per_worker > 0 and reward_num_gpus == 0:
+    ray_reward_count = _count_ray_rewards(cfg)
+    if ray_reward_count > 0 and reward_gpus_per_worker > 0 and reward_num_gpus == 0:
         raise ValueError(
-            "reward.kwargs.kling_video_reward.inference_runtime=ray requires "
+            "reward component with inference_runtime=ray requires "
             "distributed.resources.reward.num_gpus > 0",
         )
     reward_num_workers = _resolve_role_num_workers(
@@ -209,8 +210,19 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
     )
     reward_release_after_score = _derived_release_flag(
         config.reward_release_after_score,
-        derived=reward_shared_with_rollout,
+        derived=reward_shared_with_rollout
+        or (ray_reward_count > 1 and reward_gpus_per_worker > 0),
     )
+    if (
+        ray_reward_count > 1
+        and reward_gpus_per_worker > 0
+        and not reward_release_after_score
+    ):
+        raise ValueError(
+            "multiple active reward components with inference_runtime=ray share "
+            "the reward role placement; set distributed.reward.release_after_score "
+            "to true (or leave it unset) until per-reward placement is supported",
+        )
 
     requires_trainer_reservation = (
         bool(trainer_devices)
@@ -983,20 +995,22 @@ def _parse_num_workers(
     return parsed
 
 
-def _uses_ray_video_reward(cfg: Any) -> bool:
+def _count_ray_rewards(cfg: Any) -> int:
     reward = cfg_get(cfg, "reward", {})
     components = cfg_get(reward, "components", {})
     kwargs = cfg_get(reward, "kwargs", {})
-    for reward_key in ("kling_video_reward", "video_reward"):
+    count = 0
+    for reward_key in components or {}:
         try:
-            video_weight = float(cfg_get(components, reward_key, 0.0))
+            reward_weight = float(cfg_get(components, str(reward_key), 0.0))
         except (TypeError, ValueError):
-            video_weight = 0.0
-        if video_weight <= 0:
+            reward_weight = 0.0
+        if reward_weight <= 0:
             continue
-        video_kwargs = cfg_get(kwargs, reward_key, {})
-        return str(cfg_get(video_kwargs, "inference_runtime", "")) == "ray"
-    return False
+        reward_kwargs = cfg_get(kwargs, str(reward_key), {})
+        if str(cfg_get(reward_kwargs, "inference_runtime", "")) == "ray":
+            count += 1
+    return count
 
 
 def _dedupe_ints(values: list[int], *, field_name: str) -> list[int]:

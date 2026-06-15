@@ -129,32 +129,27 @@ def _with_resolved_reward_runtime_kwargs(
     *,
     reward_placement: Any | None = None,
 ) -> dict[str, dict]:
-    reward_key = next(
-        (
-            key
-            for key in ("kling_video_reward", "video_reward")
-            if float(reward_weights.get(key, 0.0)) > 0
-        ),
-        "",
-    )
-    if not reward_key:
-        return reward_kwargs
-
-    video_kwargs = dict(reward_kwargs.get(reward_key) or {})
-    if str(video_kwargs.get("inference_runtime", "")) != "ray":
+    ray_reward_keys = [
+        name
+        for name, weight in reward_weights.items()
+        if float(weight) > 0.0
+        and str((reward_kwargs.get(name) or {}).get("inference_runtime", "")) == "ray"
+    ]
+    if not ray_reward_keys:
         return reward_kwargs
 
     resources = resolve_distributed_resources(cfg)
     resolved_runtime = reward_runtime_resource_kwargs(resources)
-    merged = dict(video_kwargs)
-    merged.update(resolved_runtime)
-    if reward_placement is not None:
-        # Run-level placement owner supplied: the reward runtime schedules its
-        # actors into the shared group's reward bundle.
-        merged["placement"] = reward_placement
 
     out = dict(reward_kwargs)
-    out[reward_key] = merged
+    for reward_key in ray_reward_keys:
+        merged = dict(reward_kwargs.get(reward_key) or {})
+        merged.update(resolved_runtime)
+        if reward_placement is not None:
+            # Run-level placement owner supplied: the reward runtime schedules its
+            # actors into the shared group's reward bundle.
+            merged["placement"] = reward_placement
+        out[reward_key] = merged
     return out
 
 
