@@ -38,9 +38,20 @@ _TEXT_DIM = 16
 _LATENT_SHAPE = (2, 4, 1, 4, 4)
 
 
-def _model(cls: type, transformer: torch.nn.Module) -> Any:
+def _model(
+    cls: type,
+    transformer: torch.nn.Module,
+    *,
+    transformer_2: torch.nn.Module | None = None,
+    boundary_ratio: float | None = None,
+) -> Any:
     return cls(
-        pipeline=SimpleNamespace(transformer=transformer, device=torch.device("cpu")),
+        pipeline=SimpleNamespace(
+            transformer=transformer,
+            transformer_2=transformer_2,
+            config=SimpleNamespace(boundary_ratio=boundary_ratio),
+            device=torch.device("cpu"),
+        ),
         device=torch.device("cpu"),
     )
 
@@ -130,6 +141,45 @@ def test_wan_i2v_forward_step_threads_condition_and_image_embeds() -> None:
     assert not torch.allclose(cond, uncond)
 
 
+def test_wan_i2v_dual_stage_routes_by_diffusers_boundary() -> None:
+    """Checks Wan 2.2 A14B routes high/low timesteps to the matching transformer."""
+    high = build_tiny_wan_i2v_transformer(seed=1)
+    low = build_tiny_wan_i2v_transformer(seed=2)
+    high_calls = record_forward_calls(high)
+    low_calls = record_forward_calls(low)
+    model = _model(
+        WanI2VDiffusersModel,
+        high,
+        transformer_2=low,
+        boundary_ratio=0.5,
+    )
+    state = WanI2VSamplingState(
+        latents=torch.randn(_LATENT_SHAPE),
+        timesteps=torch.tensor([750.0, 250.0]),
+        scheduler=None,
+        prompt_embeds=torch.randn(2, _TEXT_LEN, _TEXT_DIM),
+        negative_prompt_embeds=None,
+        image_embeds=torch.randn(2, 2, _TEXT_DIM),
+        condition=torch.randn(_LATENT_SHAPE),
+        guidance_scale=1.0,
+        do_cfg=False,
+        seed=0,
+        guidance_scale_2=1.0,
+        boundary_ratio=0.5,
+        num_train_timesteps=1000,
+    )
+
+    high_out = model.forward_step(state, 0)
+    low_out = model.forward_step(state, 1)
+
+    assert len(high_calls) == 1
+    assert len(low_calls) == 1
+    torch.testing.assert_close(high_calls[0]["timestep"], torch.full((2,), 750.0))
+    torch.testing.assert_close(low_calls[0]["timestep"], torch.full((2,), 250.0))
+    assert set(model.trainable_modules) == {"transformer_2"}
+    assert not torch.allclose(high_out["noise_pred"], low_out["noise_pred"])
+
+
 def test_wan_i2v_replay_state_roundtrip_keeps_conditioning_tensors() -> None:
     # Pure state plumbing (no forward): export -> restore must preserve the
     # conditioning tensors and slice the per-step timestep.
@@ -146,6 +196,9 @@ def test_wan_i2v_replay_state_roundtrip_keeps_conditioning_tensors() -> None:
         guidance_scale=2.0,
         do_cfg=True,
         seed=0,
+        guidance_scale_2=3.0,
+        boundary_ratio=0.5,
+        num_train_timesteps=1000,
     )
     replay = model.export_replay_tensors(state)
     replay["timesteps"] = torch.tensor([[9.0, 7.0], [9.0, 7.0]])
@@ -160,3 +213,6 @@ def test_wan_i2v_replay_state_roundtrip_keeps_conditioning_tensors() -> None:
     torch.testing.assert_close(restored.condition, state.condition)
     torch.testing.assert_close(restored.image_embeds, state.image_embeds)
     torch.testing.assert_close(restored.timesteps, torch.tensor([[7.0, 7.0]]))
+    assert restored.guidance_scale_2 == 3.0
+    assert restored.boundary_ratio == 0.5
+    assert restored.num_train_timesteps == 1000

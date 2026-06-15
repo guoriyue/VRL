@@ -79,11 +79,11 @@ class WanI2VDiffusionBackboneRunner:
       the batched-CFG packer concatenates it along dim 0 alongside
       ``prompt_embeds``.
 
-    Note on Wan 2.2 expand_timesteps mode: the runner currently only
-    supports Wan 2.1 (boundary_ratio is None, expand_timesteps is False).
-    Wan 2.2 5B with expand_timesteps blends ``(1 - first_frame_mask) *
-    condition + first_frame_mask * latents`` into hidden_states; that
-    branch is intentionally left out as a future 2.2 upgrade path.
+    Note on Wan 2.2 expand_timesteps mode: the runner supports the A14B
+    dual-stage path, where routing selects ``transformer`` or
+    ``transformer_2`` outside the runner. Wan 2.2 5B with expand_timesteps
+    blends ``(1 - first_frame_mask) * condition + first_frame_mask * latents``
+    into hidden_states; that branch remains a separate future upgrade path.
     """
 
     cfg_mode = "batched_cfg"
@@ -144,8 +144,6 @@ class WanI2VDiffusionBackboneRunner:
     ) -> torch.Tensor:
         del request, cond, uncond
         return combined
-
-
 
 
 def _batch_align_tensor(value: torch.Tensor, batch_size: int) -> torch.Tensor:

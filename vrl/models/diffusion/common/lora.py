@@ -69,39 +69,4 @@ class LoraModelMixin:
         self._set_transformer(get_peft_model(transformer, cfg))
 
 
-def wrap_transformer_lora(
-    transformer: Any,
-    spec: Any,
-    device: Any,
-    *,
-    default_init: Any = "gaussian",
-) -> Any:
-    """Wrap a single transformer with a fresh PEFT LoRA adapter and return it.
-
-    Mirrors ``LoraModelMixin.apply_lora`` / ``apply_lora_to_transformer`` for one
-    module, without the pipeline/self coupling — used to attach a second adapter
-    to Wan 2.2's low-noise expert (``transformer_2``). Resume-from-checkpoint
-    (``spec.lora_path``) is rejected here because a single adapter dir cannot
-    carry two distinct experts; per-expert adapter dirs are a follow-up.
-    """
-    from peft import LoraConfig, get_peft_model
-
-    if spec.lora_path:
-        raise NotImplementedError(
-            "Resuming a second LoRA expert (Wan 2.2 transformer_2) from a single "
-            "lora_path is not supported; fresh adapters only for now.",
-        )
-    transformer.requires_grad_(False)
-    transformer.to(device)
-    lora_config = spec.lora
-    assert lora_config is not None
-    cfg = LoraConfig(
-        r=lora_config["rank"],
-        lora_alpha=lora_config["alpha"],
-        init_lora_weights=lora_config.get("init_lora_weights", default_init),
-        target_modules=lora_config["target_modules"],
-    )
-    return get_peft_model(transformer, cfg)
-
-
-__all__ = ["LoraModelMixin", "wrap_transformer_lora"]
+__all__ = ["LoraModelMixin"]

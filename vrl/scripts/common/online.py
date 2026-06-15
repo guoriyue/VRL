@@ -94,11 +94,20 @@ def default_reference_model(bundle: Any, cfg: Any) -> Any | None:
 def export_transformer_lora(bundle: Any, cfg: DictConfig) -> dict[str, Any] | None:
     """Export diffusion transformer LoRA weights when configured."""
 
-    transformer = bundle.model.transformer
-    if bool(OmegaConf.select(cfg, "model.use_lora", default=False)) and hasattr(
-        transformer, "save_pretrained"
-    ):
-        return {LORA_WEIGHTS_NAME: transformer}
+    if not bool(OmegaConf.select(cfg, "model.use_lora", default=False)):
+        return None
+    exportable = [
+        module
+        for module in getattr(bundle, "trainable_modules", {}).values()
+        if hasattr(module, "save_pretrained")
+    ]
+    if len(exportable) == 1:
+        return {LORA_WEIGHTS_NAME: exportable[0]}
+    if len(exportable) > 1:
+        raise ValueError(
+            "export_transformer_lora only supports one exportable transformer; "
+            "set model.trainable_transformers to a single module before exporting",
+        )
     return None
 
 
@@ -120,7 +129,6 @@ def enable_transformer_gradient_checkpointing(
 
     from vrl.trainers.core.types import TrainerConfig
 
-    transformer = bundle.model.transformer
     # Optional key: base yaml no longer restates the dataclass default, so an
     # absent key means "use the TrainerConfig default" — derived, not copied.
     enabled = OmegaConf.select(cfg, "actor.gradient_checkpointing")
@@ -129,14 +137,18 @@ def enable_transformer_gradient_checkpointing(
     if not bool(enabled):
         return
 
-    enable = getattr(transformer, "enable_gradient_checkpointing", None)
-    if enable is None:
-        if require_method:
-            raise AttributeError(
-                "bundle.model.transformer does not expose enable_gradient_checkpointing",
-            )
-        return
-    enable()
+    trainable_modules = getattr(bundle, "trainable_modules", None) or {
+        "transformer": bundle.model.transformer,
+    }
+    for name, module in trainable_modules.items():
+        enable = getattr(module, "enable_gradient_checkpointing", None)
+        if enable is None:
+            if require_method:
+                raise AttributeError(
+                    f"trainable module {name!r} does not expose enable_gradient_checkpointing",
+                )
+            continue
+        enable()
 
 
 async def run_online_recipe(

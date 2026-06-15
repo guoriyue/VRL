@@ -16,8 +16,9 @@ exercise: single-GPU offload mode is selected from the ``model.*`` config block
     the spec device.
 
 In every branch the generation-only modules (vae / text_encoder / image_encoder)
-are frozen, the progress bar is disabled, and ``_ensure_single_transformer_wan_i2v``
-rejects Wan 2.2 dual-stage / expand-timesteps pipelines.
+are frozen and the progress bar is disabled. Wan 2.2 A14B dual-stage pipelines
+are accepted when they expose ``transformer_2``; expand-timesteps pipelines
+remain unsupported.
 """
 
 from __future__ import annotations
@@ -48,12 +49,12 @@ class _FakeModule:
 class _FakePipeline:
     def __init__(self) -> None:
         self.transformer = _FakeModule()
+        self.transformer_2 = None
         self.vae = _FakeModule()
         self.text_encoder = _FakeModule()
         self.image_encoder = _FakeModule()
         self.device = "cpu"
-        # Single-transformer Wan 2.1 I2V: no boundary_ratio / expand_timesteps,
-        # so _ensure_single_transformer_wan_i2v must pass.
+        # Single-transformer Wan 2.1 I2V: no boundary_ratio / expand_timesteps.
         self.config = SimpleNamespace(boundary_ratio=None, expand_timesteps=False)
         self.progress_bar_disabled: bool | None = None
         self.sequential_offload_gpu: int | None = None
@@ -175,19 +176,16 @@ def test_wan_i2v_from_spec_no_offload_stages_frozen_modules(monkeypatch) -> None
     assert pipeline.image_encoder.to_calls == [(spec.device, torch.bfloat16)]
 
 
-def test_wan_i2v_from_spec_loads_dual_stage_experts(monkeypatch) -> None:
-    """Wan 2.2 dual-stage (boundary_ratio set) now loads BOTH experts and routes."""
+def test_wan_i2v_from_spec_accepts_dual_stage_pipeline(monkeypatch) -> None:
+    """Wan 2.2 A14B dual-stage pipelines train the low-noise transformer by default."""
     from vrl.models.diffusion.wan_2_1.model import WanI2VDiffusersModel
 
     pipeline, _ = _patch_from_pretrained(monkeypatch)
+    pipeline.config = SimpleNamespace(boundary_ratio=0.5, expand_timesteps=False)
     pipeline.transformer_2 = _FakeModule()
-    pipeline.scheduler = SimpleNamespace(
-        config=SimpleNamespace(num_train_timesteps=1000),
-    )
-    pipeline.config = SimpleNamespace(boundary_ratio=0.9, expand_timesteps=False)
 
     spec = SimpleNamespace(
-        model_name_or_path="Wan-AI/Wan2.2-I2V-A14B-Diffusers",
+        model_name_or_path="Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
         dtype=torch.bfloat16,
         device=torch.device("cuda:0"),
         model_config={},
@@ -195,23 +193,21 @@ def test_wan_i2v_from_spec_loads_dual_stage_experts(monkeypatch) -> None:
 
     model = WanI2VDiffusersModel.from_spec(spec)
 
+    assert model.boundary_ratio == 0.5
     assert model.transformer_2 is pipeline.transformer_2
-    assert model._boundary_timestep == 900.0  # boundary_ratio * num_train_timesteps
-    assert set(model.trainable_modules) == {"transformer", "transformer_2"}
-    # t >= boundary -> high-noise transformer; below -> low-noise transformer_2.
-    assert model._expert_for_timestep(torch.tensor(950.0)) is pipeline.transformer
-    assert model._expert_for_timestep(torch.tensor(100.0)) is pipeline.transformer_2
+    assert model.trainable_modules == {"transformer_2": pipeline.transformer_2}
 
 
-def test_wan_i2v_from_spec_rejects_expand_timesteps(monkeypatch) -> None:
-    """The 5B expand_timesteps mode stays out of scope and is rejected at load."""
+def test_wan_i2v_from_spec_rejects_expand_timesteps_pipeline(monkeypatch) -> None:
+    """Wan 2.2 5B expand-timesteps pipelines still need a separate runner contract."""
     from vrl.models.diffusion.wan_2_1.model import WanI2VDiffusersModel
 
     pipeline, _ = _patch_from_pretrained(monkeypatch)
-    pipeline.config = SimpleNamespace(boundary_ratio=None, expand_timesteps=True)
+    pipeline.config = SimpleNamespace(boundary_ratio=0.5, expand_timesteps=True)
+    pipeline.transformer_2 = _FakeModule()
 
     spec = SimpleNamespace(
-        model_name_or_path="Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
+        model_name_or_path="Wan-AI/Wan2.2-I2V-5B-Diffusers",
         dtype=torch.bfloat16,
         device=torch.device("cuda:0"),
         model_config={},

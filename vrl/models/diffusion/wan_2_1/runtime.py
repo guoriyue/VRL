@@ -26,9 +26,6 @@ from vrl.models.interfaces.runtime import (
     RuntimeBundle,
 )
 from vrl.models.loader import (
-    apply_lora_to_transformer,
-    compile_transformer,
-    enable_transformer_full_finetune,
     load_diffusers_scheduler,
     load_diffusers_transformer,
 )
@@ -62,8 +59,7 @@ def _resolve_model_cls(task_variant: str | None) -> type:
     task = _normalize_task_variant(task_variant)
     if task not in _MODEL_BY_TASK:
         raise NotImplementedError(
-            f"wan_2_1 has no model for task={task!r}; "
-            f"registered: {sorted(_MODEL_BY_TASK)}",
+            f"wan_2_1 has no model for task={task!r}; registered: {sorted(_MODEL_BY_TASK)}",
         )
     spec = _MODEL_BY_TASK[task]
     mod_path, cls_name = spec.rsplit(":", 1)
@@ -101,7 +97,8 @@ def build_wan_2_1_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         if lora_config:
             logger.info(
                 "Applied LoRA (rank=%d, alpha=%d)",
-                lora_config["rank"], lora_config["alpha"],
+                lora_config["rank"],
+                lora_config["alpha"],
             )
     else:
         model.enable_full_finetune()
@@ -122,13 +119,17 @@ def build_wan_2_1_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         "dtype": str(spec.dtype),
         "use_lora": use_lora,
         "reference_image": (spec.model_config or {}).get("reference_image"),
+        "boundary_ratio": getattr(model, "boundary_ratio", None),
+        "trainable_transformers": tuple(model.trainable_modules),
         **full_generation_bundle_metadata(),
     }
-    metadata.update(apply_generation_memory_policy(
-        model,
-        memory_config=getattr(spec, "memory", None),
-        owner="Wan VAE",
-    ))
+    metadata.update(
+        apply_generation_memory_policy(
+            model,
+            memory_config=getattr(spec, "memory", None),
+            owner="Wan VAE",
+        )
+    )
     return RuntimeBundle(
         model=model,
         trainable_modules=model.trainable_modules,
@@ -144,33 +145,6 @@ def build_wan_2_1_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
     )
 
 
-def _wan_i2v_dual_expert_replay_kwargs(spec: RuntimeBuildSpec, scheduler: Any) -> dict[str, Any]:
-    """Extra replay kwargs for a Wan 2.2 dual-expert checkpoint, else ``{}``.
-
-    Reads the pipeline config (``model_index.json``, no weights) to detect the
-    ``boundary_ratio``; when present, also loads the low-noise ``transformer_2``
-    so the replay model recomputes log-probs through the same expert per step.
-    """
-    from diffusers import DiffusionPipeline
-
-    from vrl.models.diffusion.wan_2_1.model import _wan_boundary_timestep
-
-    config = DiffusionPipeline.load_config(spec.model_name_or_path)
-    if isinstance(config, tuple):
-        config = config[0]
-    boundary_ratio = config.get("boundary_ratio")
-    if boundary_ratio is None:
-        return {}
-    return {
-        "transformer_2": load_diffusers_transformer(
-            spec, "WanTransformer3DModel", subfolder="transformer_2",
-        ),
-        "boundary_timestep": _wan_boundary_timestep(
-            boundary_ratio, int(scheduler.config.num_train_timesteps),
-        ),
-    }
-
-
 def build_wan_2_1_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
     """Build the trainer replay bundle without loading Wan text/VAE modules."""
 
@@ -181,35 +155,51 @@ def build_wan_2_1_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle
 
     task_variant = _normalize_task_variant(spec.task_variant)
     replay_cls = WanI2VReplayModel if task_variant == "i2v" else WanT2VReplayModel
+    boundary_ratio = _boundary_ratio_from_spec(spec)
+    transformer_2 = (
+        load_diffusers_transformer(
+            spec,
+            "WanTransformer3DModel",
+            subfolder="transformer_2",
+        )
+        if boundary_ratio is not None
+        else None
+    )
+    trainable_transformers = (spec.model_config or {}).get("trainable_transformers")
 
     logger.info(
         "Building wan_2_1 replay runtime bundle (task=%s) from %s",
         task_variant,
         spec.model_name_or_path,
     )
-    scheduler = load_diffusers_scheduler(spec, "UniPCMultistepScheduler")
-    transformer = load_diffusers_transformer(spec, "WanTransformer3DModel")
-    replay_extra = (
-        _wan_i2v_dual_expert_replay_kwargs(spec, scheduler)
-        if task_variant == "i2v"
-        else {}
-    )
     model = replay_cls(
-        transformer=transformer,
-        scheduler=scheduler,
+        transformer=load_diffusers_transformer(
+            spec,
+            "WanTransformer3DModel",
+        ),
+        transformer_2=transformer_2,
+        boundary_ratio=boundary_ratio,
+        trainable_transformers=trainable_transformers,
+        scheduler=load_diffusers_scheduler(
+            spec,
+            "UniPCMultistepScheduler",
+        ),
         device=spec.device,
-        **replay_extra,
     )
 
     use_lora = spec.use_lora
     if use_lora:
-        apply_lora_to_transformer(model, spec)
+        model.apply_lora(spec)
     else:
-        enable_transformer_full_finetune(model)
+        model.enable_full_finetune()
 
     compile_cfg = spec.torch_compile or {}
     if compile_cfg.get("enable"):
-        compile_transformer(model, compile_cfg["mode"])
+        model.torch_compile_transformer(compile_cfg["mode"])
+
+    replay_modules = ["transformer", "scheduler"]
+    if boundary_ratio is not None:
+        replay_modules.insert(1, "transformer_2")
 
     return RuntimeBundle(
         model=model,
@@ -228,12 +218,10 @@ def build_wan_2_1_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle
             "dtype": str(spec.dtype),
             "use_lora": use_lora,
             "reference_image": (spec.model_config or {}).get("reference_image"),
+            "boundary_ratio": boundary_ratio,
+            "trainable_transformers": tuple(model.trainable_modules),
             **minimal_replay_bundle_metadata(
-                replay_modules=(
-                    ("transformer", "transformer_2", "scheduler")
-                    if "transformer_2" in replay_extra
-                    else ("transformer", "scheduler")
-                ),
+                replay_modules=tuple(replay_modules),
                 generation_only_modules=(
                     "text_encoder",
                     "image_encoder",
@@ -249,7 +237,9 @@ def build_wan_2_1_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle
 
 
 def build_wan_2_1_runtime_bundle_from_cfg(
-    cfg: Any, device: Any, weight_dtype: Any,
+    cfg: Any,
+    device: Any,
+    weight_dtype: Any,
 ) -> RuntimeBundle:
     """Outer convenience: whole-cfg → spec → bundle."""
     spec = extract_wan_2_1_runtime_spec(cfg, device, weight_dtype)
@@ -394,6 +384,31 @@ def _normalize_task_variant(task_variant: str | None) -> str:
     if text in {"image_to_video", "image-to-video", "i2v"}:
         return "i2v"
     return "t2v"
+
+
+def _boundary_ratio_from_spec(spec: RuntimeBuildSpec) -> float | None:
+    model_config = spec.model_config or {}
+    if "boundary_ratio" in model_config:
+        return _optional_float(model_config.get("boundary_ratio"), "model.boundary_ratio")
+    if "Wan2.2" not in str(spec.model_name_or_path):
+        return None
+    return _load_boundary_ratio_from_pipeline_config(spec)
+
+
+def _load_boundary_ratio_from_pipeline_config(spec: RuntimeBuildSpec) -> float | None:
+    from diffusers import DiffusionPipeline
+
+    config = DiffusionPipeline.load_config(spec.model_name_or_path)
+    return _optional_float(config.get("boundary_ratio"), "pipeline boundary_ratio")
+
+
+def _optional_float(value: Any, field_name: str) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be a float or null") from exc
 
 
 __all__ = [

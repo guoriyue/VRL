@@ -197,6 +197,47 @@ def test_wan_i2v_replay_builder_uses_i2v_replay_model(
     assert "image_encoder" in bundle.metadata["generation_only_modules"]
 
 
+def test_wan_dual_stage_replay_builder_loads_low_noise_transformer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Checks Wan 2.2 replay loads transformer_2 and trains it by default."""
+    from vrl.models.diffusion.wan_2_1 import runtime
+
+    loaded_subfolders: list[str] = []
+
+    def fake_transformer_loader(
+        _spec: Any,
+        _class_name: str,
+        *,
+        subfolder: str = "transformer",
+    ) -> _TinyTransformer:
+        loaded_subfolders.append(subfolder)
+        return _TinyTransformer()
+
+    monkeypatch.setattr(runtime, "load_diffusers_transformer", fake_transformer_loader)
+    monkeypatch.setattr(
+        runtime,
+        "load_diffusers_scheduler",
+        lambda *_args, **_kwargs: _TinyScheduler(),
+    )
+
+    bundle = runtime.build_wan_2_1_replay_runtime_bundle(
+        _spec(
+            task_variant="i2v",
+            extra={
+                "boundary_ratio": 0.9,
+                "trainable_transformers": ["transformer_2"],
+            },
+        ),
+    )
+
+    require_minimal_replay_bundle(bundle)
+    assert loaded_subfolders == ["transformer_2", "transformer"]
+    assert set(bundle.trainable_modules) == {"transformer_2"}
+    assert bundle.metadata["boundary_ratio"] == 0.9
+    assert "transformer_2" in bundle.metadata["replay_modules"]
+
+
 def test_cosmos_predict25_replay_builder_keeps_diffusion_nft_surface(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
