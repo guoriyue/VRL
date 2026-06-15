@@ -333,6 +333,24 @@ class ActorSection(ConfigBase):
     use_adafactor: Any = None
 
 
+class TrainingSection(ConfigBase):
+    """distributed.training: how the trainer process maps onto GPUs.
+
+    Only the fields the readiness sprint actually consumes are declared:
+    ``strategy`` (the single source of truth for the allowed backends — resource
+    validation and the training context dispatch on it; the Literal is the only
+    allow-list) plus the ``num_nodes``/``gpus_per_node`` topology the fsdp context
+    cross-checks against ``WORLD_SIZE``. FSDP2 knobs (mesh, mixed precision,
+    offload, state-dict mode, process-group backend/init) are declared in
+    SPRINT_multi_gpu_training.md where they are actually read — declaring them
+    here while nothing reads them would be a user-facing no-op footgun.
+    """
+
+    strategy: Literal["single_process", "fsdp"] = "single_process"
+    num_nodes: int = 1
+    gpus_per_node: int = 1
+
+
 class DistributedSection(ConfigBase):
     """Key registry for distributed.*; values validated by vrl.ray.resources."""
 
@@ -357,6 +375,9 @@ class DistributedSection(ConfigBase):
         ConfigBlock(("cpus_per_worker", "placement_strategy",
                      "max_inflight_batches", "release_after_score")),
     ] = None
+    # readers: vrl/trainers/distributed.py resolve_training_context (rank/device)
+    # + vrl/ray/resources.py strategy-aware trainer GPU validation
+    training: TrainingSection | None = None
 
 
 # ── Root config ───────────────────────────────────────────────────────────────

@@ -46,6 +46,7 @@ from vrl.trainers.checkpointing import (
     save_training_checkpoint,
 )
 from vrl.trainers.data import load_prompt_examples_from_config
+from vrl.trainers.distributed import assert_strategy_executable, resolve_training_context
 from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.precision import torch_dtype_for_trainer_precision
 from vrl.trainers.weight_sync import (
@@ -162,6 +163,10 @@ async def run_online_recipe(
     resources = resolve_distributed_resources(cfg)
     logger.info(format_distributed_resource_plan(resources))
     device = torch.device(trainer_torch_device(resources))
+    # Resolve the training process identity (rank/device) and fail-fast on
+    # not-yet-implemented strategies before building the model / Ray runtime.
+    training_context = resolve_training_context(cfg, device=device)
+    assert_strategy_executable(training_context)
     # Replay/training model storage follows ``compute`` (via trainer_config);
     # the generation (rollout) model can use a different ``rollout`` dtype.
     weight_dtype = (

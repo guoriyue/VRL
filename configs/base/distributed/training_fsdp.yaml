@@ -1,0 +1,11 @@
+# FSDP2 trainer strategy. Accepted by the schema and validated through context
+# preflight, but execution is gated (assert_strategy_executable) until
+# SPRINT_multi_gpu_training.md lands real FSDP2 — which is also where the FSDP
+# knobs (mesh / mixed precision / offload / state-dict / backend) get declared
+# and read. Launch under torchrun so RANK / LOCAL_RANK / WORLD_SIZE are set;
+# WORLD_SIZE must equal num_nodes * gpus_per_node.
+distributed:
+  training:
+    strategy: fsdp
+    num_nodes: 1
+    gpus_per_node: 2

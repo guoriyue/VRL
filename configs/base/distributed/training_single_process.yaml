@@ -1,0 +1,8 @@
+# Default training strategy: one process owns the trainer on 0 or 1 GPU.
+# This is the implicit default when distributed.training is absent; the file
+# exists so experiments can pin it explicitly and so the fsdp variant has a peer.
+distributed:
+  training:
+    strategy: single_process
+    num_nodes: 1
+    gpus_per_node: 1

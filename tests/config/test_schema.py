@@ -9,6 +9,7 @@ from vrl.config.schema import (
     AlgorithmConfig,
     DataConfig,
     RewardConfig,
+    TrainingSection,
     parse_config,
 )
 
@@ -76,6 +77,40 @@ def test_unknown_algorithm_keys_warn_and_load() -> None:
     unknown = find_unknown_keys(cfg)
     assert "algorithm.adv_estimator" in unknown
     assert "algorithm.future_field" in unknown
+
+
+# ── distributed.training strategy ─────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("strategy", ["single_process", "fsdp"])
+def test_valid_training_strategies_are_accepted(strategy: str) -> None:
+    """Both readiness strategies validate; the Literal is the only allow-list."""
+    section = TrainingSection(strategy=strategy)
+    assert section.strategy == strategy
+
+
+def test_unknown_training_strategy_raises() -> None:
+    """An unimplemented/typo strategy is rejected at parse time, not silently run."""
+    cfg = _minimal_grpo_cfg(distributed={"training": {"strategy": "deepspeed"}})
+    with pytest.raises(ValueError, match=r"unknown distributed\.training\.strategy"):
+        parse_config(cfg)
+
+
+def test_training_keys_are_registered_not_unknown() -> None:
+    """distributed.training.* keys are known to the unknown-key walker."""
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg = _minimal_grpo_cfg(
+        distributed={
+            "training": {
+                "strategy": "fsdp",
+                "num_nodes": 1,
+                "gpus_per_node": 2,
+            }
+        }
+    )
+    unknown = find_unknown_keys(cfg)
+    assert not [k for k in unknown if k.startswith("distributed.training")]
 
 
 # ── Data loader discriminator ─────────────────────────────────────────────────
