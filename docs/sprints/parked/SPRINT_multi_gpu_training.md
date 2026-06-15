@@ -4,20 +4,25 @@
 
 本 sprint 的目标是让训练侧支持真正的 multi-GPU training，而不是只把 rollout worker 分到多张卡。
 
-先支持两类 PyTorch 原生策略：
+**主路径是 FSDP2（torch-native `fully_shard` + DTensor），不是 Megatron。** 依据（详见 §10.5）：
+
+- 你的 OOM 是"优化器/梯度/激活显存"问题、模型**前向放得下一张卡** —— 这正是 FSDP(ZeRO-3) 的本命，不是 TP 的场景。
+- 模型是 diffusers `SD3Transformer2DModel` / Wan / Cosmos + PEFT LoRA。Megatron 不吃 diffusers/PEFT，要按它的并行层重写模型 —— 是模型移植，不是加 flag。
+- 连 cosmos-rl 都是 **torch-native**（`reading/cosmos-rl.md:699`："no Megatron-LM engine ... torchtitan-style: DTensor TP plans + FSDP2 `fully_shard`"），diffusion 更是纯 FSDP2；它从整个 Megatron 只借了**一个 MoE kernel**（dense DiT 用不上）。
+
+策略集合收敛到最小开关，**不预留其他 backend 空槽**（避免投机抽象）：
 
 ```text
-single_process
-ddp
-fsdp
+single_process    # 当前单卡路径，行为不变
+fsdp              # 新增：FSDP2，本 sprint 主体
 ```
 
-`megatron` 只保留 schema 和设计边界，不在第一阶段实现。原因是 Megatron 不是简单的 wrapper；它要求 tensor/pipeline parallel 模型切分、Megatron checkpoint 格式、optimizer/state sharding、权重同步协议和 family model adapter 都重新定义。它应该是后续独立 backend，而不是混在 DDP/FSDP sprint 里。
+- `megatron` **不进 schema**。只有"大 MoE / 最大规模 dense LLM"才值得，diffusion+LoRA 永远走 FSDP（§10.5）。
 
 本 sprint 基于已经落地的 role-level resource resolver，但职责不同：
 
 - `vrl/ray/resources.py` 和 `vrl/generation/ray/*`：决定 trainer / rollout 拿多少资源并创建 Ray placement。
-- 本 sprint：决定 trainer 如何在这些资源上创建 rank、wrap model、shard batch、同步梯度、保存 checkpoint、向 rollout workers 推送权重。
+- 本 sprint：决定 trainer 如何在这些资源上创建 rank、`fully_shard` model、shard batch、reduce-scatter 梯度、保存 DTensor checkpoint、向 rollout workers 推送 **unwrapped** 权重。
 
 ## 1. Current Code Reality
 
@@ -45,7 +50,7 @@ sync_state_getter=build_trainable_state_sync_getter(bundle)  # online.py:155
 # rollout schedule 内部用 weight_syncer + sync_state_getter 推 flatten 后的 trainable state
 ```
 
-所以多 GPU 的诉求**不是**"干掉 `self.model.state_dict()`"（那行不存在），而是：让 `sync_state_getter` 返回的 state 在 DDP/FSDP wrap 之后仍然是 unwrapped、policy-facing 的 key space。
+所以多 GPU 的诉求**不是**"干掉 `self.model.state_dict()`"（那行不存在），而是：让 `sync_state_getter` 返回的 state 在 FSDP wrap 之后仍然是 unwrapped、policy-facing 的 key space。
 
 checkpoint 依赖 `RuntimeBundle.trainable_modules`：
 
@@ -53,7 +58,7 @@ checkpoint 依赖 `RuntimeBundle.trainable_modules`：
 "trainable_modules": export_trainable_state(bundle)
 ```
 
-所以 multi-GPU training 不能只是把 policy 外面套一层 DDP/FSDP。必须同时解决：
+所以 multi-GPU training 不能只是把 policy 外面套一层 FSDP。必须同时解决：
 
 - trainer rank / local rank / world size。
 - model wrapper 放在哪一层。
@@ -66,9 +71,8 @@ checkpoint 依赖 `RuntimeBundle.trainable_modules`：
 
 本 sprint 覆盖：
 
-- `torchrun` 启动的 single-node DDP。
 - `torchrun` 启动的 single-node FSDP。
-- 为 multi-node DDP/FSDP 保留 schema 和环境变量路径。
+- 为 multi-node FSDP 保留 schema 和环境变量路径。
 - rank0 负责 rollout collection、reward、eval、metrics、checkpoint。
 - all ranks 负责 replay loss、backward、optimizer step。
 - rank0 从 wrapped model 导出 rollout-compatible trainable state，并同步给 Ray rollout workers。
@@ -88,7 +92,6 @@ checkpoint 依赖 `RuntimeBundle.trainable_modules`：
 
 ```text
 configs/base/distributed/training_single_process.yaml
-configs/base/distributed/training_ddp.yaml
 configs/base/distributed/training_fsdp.yaml
 ```
 
@@ -97,35 +100,27 @@ configs/base/distributed/training_fsdp.yaml
 ```yaml
 distributed:
   training:
-    strategy: single_process   # single_process | ddp | fsdp | megatron
-    launcher: none             # none | torchrun | ray
+    strategy: single_process   # single_process | fsdp
+    launcher: none             # none | torchrun
     num_nodes: 1
     gpus_per_node: 1
     backend: nccl
     init_method: env
-    find_unused_parameters: false
 
-    fsdp:
-      sharding_strategy: FULL_SHARD
-      backward_prefetch: BACKWARD_PRE
-      cpu_offload: false
-      use_orig_params: true
-      mixed_precision: actor
+    fsdp:                          # FSDP2 (fully_shard / DTensor)
+      mesh: ["dp_shard"]           # 1D 起步；多节点 HSDP ["dp_replicate","dp_shard"]
+      mixed_precision: actor       # → MixedPrecisionPolicy(param=bf16, reduce=fp32)，接 precision config
+      reshard_after_forward: true  # = ZeRO-3；false 省通信、费显存
       activation_checkpointing: actor
-      state_dict_type: full_rank0
-
-    megatron:
-      enabled: false
-      tensor_model_parallel_size: 1
-      pipeline_model_parallel_size: 1
+      cpu_offload: false
+      state_dict: full_rank0       # DTensor → rank0 full（dcp.get_model_state_dict, full_state_dict=True）
 ```
 
 规则：
 
 - `strategy=single_process` 时行为必须和当前 repo 一致。
-- `strategy=ddp/fsdp` 时必须通过 `torchrun` 或等价环境启动。
-- `strategy=ddp/fsdp` 且 `WORLD_SIZE` 缺失时 fail-fast。
-- `strategy=megatron` 第一阶段必须 fail-fast，错误信息说明未实现。
+- `strategy=fsdp` 时必须通过 `torchrun` 启动；`WORLD_SIZE` 缺失时 fail-fast。
+- `strategy=megatron` **不接受**（schema 里没有这个值），传入即 fail-fast 指向 §10.5。
 - `distributed.resources.trainer.num_gpus` 必须等于 `training.num_nodes * training.gpus_per_node`，否则启动时报错。
 
 ## 4. Training Strategy Abstraction
@@ -133,15 +128,20 @@ distributed:
 新增：
 
 ```text
-vrl/ray/training/context.py        # 注：放进现有 vrl/ray/ 下，不另开 vrl/distributed/ 顶层包
-vrl/ray/training/strategy.py
-vrl/ray/training/ddp.py
-vrl/ray/training/fsdp.py
-tests/ray/training/test_context.py
-tests/ray/training/test_strategy.py
+vrl/trainers/distributed.py        # DistributedTrainingContext + torchrun env resolver
+vrl/trainers/strategy.py
+vrl/trainers/fsdp.py
+tests/trainers/test_distributed_training.py
+tests/trainers/test_strategy.py
 ```
 
-> 已有地基：`vrl/trainers/fsdp.py`（183 行，`FSDPConfig` + `fsdp_wrapper`）已经存在但**没有测试**。`FSDPStrategy` 应复用它而不是重写，并在本 sprint 补上它的 config→wrap-policy 单测。布局上不新开 `vrl/distributed/` 顶层包——分布式相关已经在 `vrl/ray/` 和 `vrl/generation/ray/`，新代码并入 `vrl/ray/training/` 保持一致。
+> **更正（2026-06-14）**：`vrl/trainers/fsdp.py` 已被删除（commit `a34b815`），且它是 **FSDP1**（`FullyShardedDataParallel` / `transformer_auto_wrap_policy` / `FullStateDictConfig`）——**不要复活它**。`FSDPStrategy` 写 **FSDP2**（`torch.distributed.fsdp.fully_shard` + DTensor，逐 block）新实现。可借的"老 multi-GPU 逻辑"只有两处：
+> 1. 老 fsdp.py 里 `init_device_mesh` 建 mesh 的形状（mesh 概念可借，wrapping 全改 FSDP2）。
+> 2. **`vrl/trainers/data/samplers.py:DistributedKRepeatSampler`**（已存在但当前是 dead code）——它正是"K 个 sample/prompt、按 rank 切、`k` 必须整除 `num_replicas*batch_size`、**不破坏 GRPO group**"的分布式 sampler（`samplers.py:14-40`）。DPO 路径直接复用；GRPO 的 rank-split（§6）也参照它的 group-aware 切法。
+>
+> 布局上不新开 `vrl/distributed/` 顶层包。torchrun/FSDP 训练身份和 strategy 归属
+> `vrl/trainers/`；Ray placement、Ray actor lifecycle 继续归属 `vrl/ray/`。FSDP2 applier
+>（reach handle → 穿 PEFT → `fully_shard` blocks）可放 `vrl/trainers/fsdp.py` 重建。
 
 目标接口：
 
@@ -188,12 +188,38 @@ class DistributedTrainingContext:
 原则：
 
 - train script 不直接读 `RANK` / `LOCAL_RANK`。
-- trainer 不直接知道 DDP/FSDP 细节。
+- trainer 不直接知道 FSDP 细节。
 - checkpoint 和 rollout sync 通过 strategy 导出 unwrapped/full trainable state。
 
 ## 5. Model Wrapping Contract
 
 不要 wrap 整个 policy。优先 wrap `RuntimeBundle.trainable_modules` 里的 trainable root。
+
+**已核对的 seam（2026-06-14，path:line）—— applier 基本通用，只分两种 shape：**
+
+```text
+diffusion（sd3_5/wan/cosmos 统一）   handle = model.transformer
+  vrl/models/diffusion/common/backbone.py:88   self.transformer = transformer
+  vrl/models/diffusion/base.py:207             trainable_modules 属性
+  vrl/models/loader.py:1-32                     _set_transformer / apply_lora_to_transformer
+AR（janus_pro / nextstep_1）          handle = model.language_model
+  vrl/models/ar/janus_pro/model.py:1100        self.language_model = LlamaForCausalLM(...)
+  runtime.py                                   trainable_modules={"model": model}
+```
+
+要点：
+- **block 不在 VRL 代码里**，在被包的库模型里（diffusers DiT 的 `transformer_blocks` / `_no_split_modules`，Llama 的 `model.layers`）。applier 走 `trainable_modules` 契约拿 handle，再 shard 它的 blocks（多数能从 `_no_split_modules` 自动派生）。
+- **LoRA 之后 transformer 是 `PeftModel`**（`loader.py` `get_peft_model`），applier 必须**穿过 PEFT 包装**找到 base transformer 的 blocks 再 `fully_shard`；LoRA-before-shard 天然满足（build 时注入）。
+- 所以**不是每家族手写 hook**，是一个 applier + 两种 handle（diffusion/AR），换 mesh 即从 8 卡扩到上千卡，模型代码不变。
+
+> **直接照抄起点（cosmos-rl 源码，已核对）**：`~/Desktop/cosmos-rl/cosmos_rl/policy/model/diffusers/parallelize.py` —— 它和 VRL 的设计**一模一样**：
+> - `:21-24` `from torch.distributed.fsdp import fully_shard, MixedPrecisionPolicy`（确认是 FSDP2）
+> - `:43` `assert pp_size == 1`（diffusion 不要 PP/TP）
+> - `:52` `apply_fsdp(model.transformer, ...)`（shard 的就是 `.transformer` handle —— VRL 同款）
+> - `:88` `getattr(model, "_no_split_modules", None)`（block 列表从 `_no_split_modules` 派生 —— 确认我的设计）
+> - `:94-110` per-block `fully_shard(module, reshard_after_forward=True)` → 最后 `fully_shard(model)`（root），外加 `_skip_layerwise_casting_patterns` 让敏感层走 high-precision MixedPrecisionPolicy
+>
+> VRL 的 `apply_fsdp` 就是这段 + "穿过 PeftModel 找 base transformer" 一步。
 
 Diffusion families 当前已经适合：
 
@@ -245,7 +271,7 @@ rank0:
 all ranks:
   shard training payload
   replay forward/backward
-  all-reduce/reduce-scatter through DDP/FSDP
+  reduce-scatter through FSDP
   optimizer step
 
 rank0:
@@ -258,12 +284,16 @@ rank0:
 
 ```python
 async def collect_training_batch(...)
-def train_on_rollout_batch(...)
+async def train_on_rollout_batch(...)
 ```
 
 `OnlineTrainer.step()` 在 single-process 下继续调用两者，保持旧行为。
 
-DDP/FSDP 训练 shard 规则：
+`train_on_rollout_batch()` 必须保持 async，因为当前 per-timestep 训练内循环会
+`await asyncio.sleep(0)`，让 continuous rollout producer 在同一个 asyncio loop 上继续
+推进。拆分 collect/train 时不能把这条交织行为变成同步阻塞。
+
+FSDP 训练 shard 规则：
 
 - GRPO group 必须完整保留，不能把同一个 prompt 的 `n` 个 samples 分散后再各自算 advantage。
 - advantage 在 rank0 统一算好后再分片。
@@ -272,7 +302,7 @@ DDP/FSDP 训练 shard 规则：
 
 ## 6.5 torchrun training world ↔ Ray rollout cluster 协同（最深的未知）
 
-这是本 sprint 唯一"未知中的未知"，必须在 Phase 4 之前定清楚：现有 rollout 是 Ray-based（`RayGenerationRuntime`，`vrl/generation/ray/runtime.py`），而 DDP/FSDP 训练侧是 `torchrun` 起的 N 个进程。两套并发模型要拉通：
+这是本 sprint 唯一"未知中的未知"，必须在 Phase 4 之前定清楚：现有 rollout 是 Ray-based（`RayGenerationRuntime`，`vrl/generation/ray/runtime.py`），而 FSDP 训练侧是 `torchrun` 起的 N 个进程。两套并发模型要拉通：
 
 - **谁持有 Ray client**：约定只有 rank0 连 Ray、提交 generate / 收 reward；非 rank0 在 collection 阶段进入 `strategy.barrier()` 等待 rank0 broadcast training payload。避免 N 个 rank 各自连 Ray 重复采样。
 - **资源不打架**：`vrl/ray/resources.py` 现在按 role 分卡，但它不知道 `torchrun` 又 fork 了 `gpus_per_node` 个训练进程。必须明确：训练 ranks 占用的物理卡（`LOCAL_RANK` → device）与 Ray rollout worker 的 placement **不重叠**，或在 colocated 模式下显式 release。新增校验：`training.num_nodes * training.gpus_per_node` 的训练卡集合 ∩ rollout worker 卡集合 = ∅（除非 colocated 且声明 overlap）。
@@ -287,10 +317,10 @@ Wan DPO 是 offline trainer，应该单独接 distributed dataloader：
 
 - `DistributedSampler`
 - rank-local batch
-- DDP/FSDP backward/step
+- FSDP backward/step
 - rank0-only metrics/checkpoint
 
-这条路径比 online GRPO 简单，可以作为 DDP/FSDP 的第二个验证目标。
+这条路径比 online GRPO 简单，可以作为 FSDP 的第二个验证目标。
 
 ## 8. Checkpoint and Resume
 
@@ -305,22 +335,24 @@ vrl/trainers/offline/dpo.py
 要求：
 
 - single-process checkpoint 格式保持兼容。
-- DDP checkpoint 只在 rank0 保存 unwrapped module state。
-- FSDP checkpoint 第一版使用 rank0 full state dict，不做 shard checkpoint。
-- resume 时所有 ranks 必须加载同一份 trainable state。
-- optimizer state 第一版可以要求 full optimizer state rank0 保存 / broadcast；如果实现复杂，FSDP optimizer resume 可以先 fail-fast，但必须明确写入 DoD。
-- EMA 第一版默认只支持 DDP；FSDP + EMA 先 fail-fast，除非实现完整参数 gather/update。
+- **FSDP2 checkpoint 第一版用 DTensor → rank0 full**：`torch.distributed.checkpoint.state_dict.get_model_state_dict(model, options=StateDictOptions(full_state_dict=True, cpu_offload=True))`（或逐 param `DTensor.full_tensor()` gather 到 rank0），不做 sharded checkpoint。
+- resume 时所有 ranks 必须加载同一份 trainable state（rank0 读 → broadcast，或各 rank `dcp` load）。
+- optimizer state：`get_optimizer_state_dict(..., full_state_dict=True)` rank0 full；如实现复杂，FSDP optimizer resume 可先 fail-fast，但写入 DoD。
+- EMA：FSDP2 + EMA 第一版 fail-fast，除非实现完整 DTensor gather/update。
+
+> **这是本 sprint 最大的触点**：三处现在都假设完整 tensor，FSDP2 下它们拿到的是 DTensor 分片，必须先 materialize：
+> `export_trainable_state`（`checkpointing.py:250`）、`OnlineTrainer.state_dict`（`trainer.py:938`）、`flatten_trainable_module_state`（`weight_sync.py:101`）。统一走 `get_model_state_dict(full_state_dict=True)` / `full_tensor()` 收成 full、再 `to_cpu`/导出。
 
 rollout sync 的现状是 `build_trainable_state_sync_getter(bundle)`（`vrl/trainers/weight_sync.py:86`）返回一个 `Callable[[], dict]`，由 rollout schedule 内部推送。多 GPU 下要把这个 getter 换成 strategy-aware 版本：
 
 ```python
 # 现状（single-process）：
 sync_state_getter = build_trainable_state_sync_getter(bundle)
-# 目标：getter 内部走 strategy，导出 unwrapped/full state（去掉 DDP/FSDP wrapper key）
+# 目标：getter 内部走 strategy，导出 unwrapped/full state（去掉 wrapper / FSDP internal key）
 sync_state_getter = lambda: strategy.export_trainable_state(bundle)
 ```
 
-关键不变量：getter 返回的 key space 必须是 rollout policy 能直接 `load_trainable_state()` 的（diffusion 要求 `transformer.*` prefix），**不能**泄漏 DDP 的 `module.` 或 FSDP 的 shard key。
+关键不变量：getter 返回的 key space 必须是 rollout policy 能直接 `load_trainable_state()` 的（diffusion 要求 `transformer.*` prefix），**不能**泄漏 wrapper 的 `module.` 或 FSDP 的 shard key。
 
 ## 9. Rollout Weight Sync Contract
 
@@ -338,23 +370,24 @@ Diffusion families 当前要求 `transformer.*` prefix：
 load_trainable_state only accepts trainable keys prefixed with "transformer."
 ```
 
-因此 strategy 导出后要统一成 policy-facing key space，而不是 DDP/FSDP wrapper key space。
+因此 strategy 导出后要统一成 policy-facing key space，而不是 wrapper / FSDP internal key space。
 
 新增测试：
 
-- DDP-wrapped transformer 导出的 key 不包含 `module.` 泄漏。
+- wrapped transformer 导出的 key 不包含 `module.` 泄漏。
 - FSDP full state 导出的 key 能被 fresh rollout policy `load_trainable_state()` 加载。
 - LoRA-only sync 仍然只推 trainable adapter state，不推 frozen checkpoint。
 
 ## 10. Megatron Boundary
 
-`strategy=megatron` 第一阶段只做配置校验和 fail-fast：
+`megatron` **不进 strategy schema**（§3）。传入 `strategy=megatron` 直接 fail-fast 指向 §10.5：
 
 ```text
-distributed.training.strategy=megatron is reserved for a future Megatron backend and is not implemented in this sprint.
+distributed.training.strategy=megatron is not a supported value.
+diffusion + LoRA uses FSDP2 (torch-native); see §10.5 for why Megatron is not the tool here.
 ```
 
-后续 Megatron sprint 需要独立解决：
+下面记录"如果有一天真要 Megatron"（训大 MoE / 最大规模 dense LLM）才需要独立解决什么：
 
 - model family 是否有 Megatron-compatible module。
 - tensor/pipeline parallel size。
@@ -362,6 +395,45 @@ distributed.training.strategy=megatron is reserved for a future Megatron backend
 - Megatron checkpoint import/export。
 - rollout worker 如何接收 TP/PP shard 或 rank0 gathered LoRA state。
 - diffusion transformer 是否值得 Megatron 化，还是只支持 AR LLM-like trunk。
+
+## 10.5 并行 / kernel 来源（torch-native，不是 Megatron）
+
+这一节是"为什么 FSDP2、不要 Megatron"的存档，免得以后反复 re-litigate。
+
+**领域已经把 Megatron 的精华 unbundle 进了 torch core + TransformerEngine：**
+
+```text
+FSDP/ZeRO-3        → torch.distributed.fsdp.fully_shard
+DTensor 切分       → torch DTensor
+1F1B 流水          → torch.distributed.pipelining（cosmos patch 的就是 torch 的）
+dist-checkpoint    → torch.distributed.checkpoint
+fused attention    → flash-attn / TransformerEngine
+FP8 / fused norm / CP → TransformerEngine
+MoE token dispatch → Megatron（唯一真正独立可搬，dense DiT 用不上）
+```
+
+所以 cosmos-rl（上千卡）才是 torch-native、从整个 Megatron 只 import 一个 `pad_routing_map`（MoE kernel，`reading/cosmos-rl.md:699,1232`）。
+
+**kernel 来源表（你的 dense DiT 该去哪拿）：**
+
+| 需求 | 来源（不是 Megatron） |
+|---|---|
+| attention | flash-attn（drop-in）|
+| fused norm / FP8 | TransformerEngine（有 DiT 用法）|
+| 长视频序列并行 | xDiT / Ulysses / TE-CP |
+| 自研 kernel | moemoekit 的 Triton（native executor 线）|
+
+**FSDP2 的搭档：NCCL weight sync（follow-on，不在 Phase 1）。**
+LoRA 同步走现有 Ray object-store 推送已够（`weight_sync.py` 已用单次 `ray.put` 广播）；一旦上 **full-param FSDP2**，"Ray 推 CPU state_dict" 会变成每步多 GB 瓶颈、且 O(#rollout-actor) 放大 → 换 GPU↔GPU NCCL（cosmos `pynccl.py` 可整段 lift）。这是 §9 weight-sync contract 的性能升级，不改 contract。
+
+**视频 DiT 的 scaling（FSDP 之后的下一层，按"分辨率×帧数"触发）：**
+
+```text
+2.5B–14B 图像/视频，参数显存       → FSDP2（层放得下；cosmos 14B 已验证纯 FSDP）
+高清 / 长视频（激活/attention 爆）  → FSDP2 + CP/SP（序列并行），必要时 + TP
+```
+
+DiT 深而不宽，所以先碰到的是 **CP/SP（序列），不是经典 TP（权重）**；且 CP/SP 叠在 FSDP 之上，不替代。这一档单独排（见 `parked/` 视频 scaling，触发条件写成"激活占比超阈值"），本 sprint 不做。
 
 ## 11. Implementation Phases
 
@@ -372,19 +444,19 @@ distributed.training.strategy=megatron is reserved for a future Megatron backend
 完成条件：
 
 - `single_process` 默认行为不变。
-- `ddp/fsdp` 能从 `torchrun` 环境解析 rank/local_rank/world_size/device。
+- `fsdp` 能从 `torchrun` 环境解析 rank/local_rank/world_size/device。
 - `megatron` fail-fast。
 - 配置校验覆盖 resources/training GPU 数一致性。
 
 ### Phase 2: Strategy Abstraction
 
-新增 `SingleProcessStrategy`、`DDPStrategy`、`FSDPStrategy` skeleton。
+新增 `SingleProcessStrategy`、`FSDPStrategy` skeleton。
 
 完成条件：
 
 - trainer 通过 strategy backward/clip/export/load。
 - single-process tests 全部不变。
-- DDP unit test 能证明 wrapper key export 正确。
+- fake wrapper unit test 能证明 wrapper key export 正确。
 
 ### Phase 3: Diffusion Family Wrapping
 
@@ -413,23 +485,13 @@ distributed.training.strategy=megatron is reserved for a future Megatron backend
 
 完成条件：
 
-- DDP resume 正常。
 - FSDP rank0 full checkpoint 正常。
 - rollout workers 收到的 state 是 unwrapped policy-facing state。
 - FSDP + EMA 如未完整实现必须 fail-fast。
 
 ### Phase 6: Real Runs
 
-至少完成：
-
-```bash
-torchrun --nproc-per-node=2 -m vrl.scripts.train \
-  --config experiment/diffusion/sd3_5/online_grpo_ocr \
-  distributed.training.strategy=ddp \
-  distributed.resources.trainer.num_gpus=2
-```
-
-以及：
+必须完成（FSDP2 是本 sprint 的真实交付目标）：
 
 ```bash
 torchrun --nproc-per-node=2 -m vrl.scripts.train \
@@ -440,27 +502,28 @@ torchrun --nproc-per-node=2 -m vrl.scripts.train \
 
 真实 checkpoint DoD：
 
-- DDP 2-GPU SD3 OCR 能跑至少 2 epoch。
-- FSDP 2-GPU SD3 OCR 能跑至少 2 epoch，或明确 fail-fast 在不支持的配置上。
+- **FSDP2 2-GPU SD3 OCR 能跑至少 2 epoch**（reward 曲线不发散），或在明确不支持的配置上 fail-fast。
 - rank0 metrics 不重复写。
-- checkpoint 可以 resume。
-- rollout worker policy version 正常递增。
+- checkpoint 可以 resume（DTensor → rank0 full）。
+- rollout worker 收到 **unwrapped** state、policy version 正常递增。
 - fixed eval 使用 rank0 model state，输出不重复。
+- 前置：先有一条**单卡** SD3 OCR 会涨的 reward 曲线作 baseline（多卡只是"同样的东西更快"，不该同时引入新变量）。
 
 ## 12. Acceptance Criteria
 
 代码层：
 
 - 所有 train scripts 不再直接决定 distributed rank/device。
-- `sync_state_getter` 升级为 strategy-aware：DDP/FSDP wrap 后导出的仍是 unwrapped、policy-facing state（保持 `OnlineTrainer` 现有的"必须显式 getter、不推全量 state_dict"不变量）。
+- `sync_state_getter` 升级为 strategy-aware：FSDP wrap 后导出的仍是 unwrapped、policy-facing state（保持 `OnlineTrainer` 现有的"必须显式 getter、不推全量 state_dict"不变量）。
 - checkpoint export/load 走 strategy。
-- DDP/FSDP 不污染 rollout-facing state dict keys。
+- FSDP 不污染 rollout-facing state dict keys。
 - unsupported family + unsupported strategy 有明确错误。
 
 测试层：
 
 ```bash
-python -m pytest -q tests/ray/training
+python -m pytest -q tests/trainers/test_distributed_training.py
+python -m pytest -q tests/trainers/test_strategy.py
 python -m pytest -q tests/trainers/test_online.py
 python -m pytest -q tests/trainers/test_checkpointing.py
 python -m pytest -q tests/ray
@@ -469,9 +532,8 @@ python -m pytest -q tests/config/test_load_all_experiments.py
 
 手动真实运行：
 
-- single-process SD3 OCR 仍然能跑。
-- 2-GPU DDP SD3 OCR 能跑。
-- 2-GPU FSDP SD3 OCR 能跑或在明确未支持项 fail-fast。
+- single-process SD3 OCR 仍然能跑（baseline，reward 会涨）。
+- 2-GPU **FSDP2** SD3 OCR 能跑或在明确未支持项 fail-fast。
 
 ## 13. References
 
@@ -490,7 +552,10 @@ python -m pytest -q tests/config/test_load_all_experiments.py
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/trainers/offline/dpo.py`
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/trainers/checkpointing.py`
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/trainers/weight_sync.py`（`TrainableStateGetter` + `build_trainable_state_sync_getter`）
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/trainers/fsdp.py`（已有 `FSDPConfig`/`fsdp_wrapper`，待接入+补测）
+- `vrl/trainers/fsdp.py`（**已删除**，commit `a34b815`，原为 FSDP1；本 sprint 在此重建 **FSDP2** applier）
+- `vrl/trainers/data/samplers.py`（`DistributedKRepeatSampler`，已存在但 dead，GRPO-group-aware 分布式 sampler，可复用）
+- `docs/sprints/reading/cosmos-rl.md`（torch-native FSDP2 模板 + "no Megatron" 证据，§699/§1232）
+- `docs/sprints/reading/SPRINT_cosmos_rl_scaling_learnings.md`（FSDP2/NCCL 的 Tier 1 路线）
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/trainers/data/prompts.py`（prompt loader / sampler，原 `vrl/trainers/data.py` 已拆成包）
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/models/interfaces/runtime.py`
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/models/diffusion/base.py`
@@ -503,6 +568,49 @@ python -m pytest -q tests/config/test_load_all_experiments.py
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/generation/ray/worker.py`
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/generation/ray/weight_sync.py`
 - 注：`vrl/distributed/ray/train/group.py`（RayTrainGroup）在第 2 节是 non-goal，当前不存在，本 sprint 不创建。
+
+cosmos-rl 源码（`~/Desktop/cosmos-rl`，实现时直接对照 —— 已逐条核对 path:line）：
+
+```text
+# FSDP2 模板（diffusion —— 你的主路径，几乎照抄）
+cosmos_rl/policy/model/diffusers/parallelize.py
+  :21-24   from torch.distributed.fsdp import fully_shard, MixedPrecisionPolicy  (FSDP2)
+  :33-66   parallelize(): mesh dims (dp_shard_cp / dp_replicate)，apply_fsdp(model.transformer)
+  :43      assert pp_size == 1   (diffusion 不要 PP/TP)
+  :69-110  apply_fsdp(): MixedPrecisionPolicy + _no_split_modules → per-block fully_shard → root fully_shard
+  :88-89   _no_split_modules / _skip_layerwise_casting_patterns（block 列表 + 敏感层高精度）
+
+# FSDP2 模板（AR / LLM trunk —— 给 janus/nextstep 用）
+cosmos_rl/policy/model/gpt/parallelize.py
+  :22      fully_shard / MixedPrecisionPolicy / CPUOffloadPolicy
+  :82-95   mesh dims + apply_fsdp 入口
+  :366+    apply_fsdp() 实现
+
+# mesh / 并行维度
+cosmos_rl/utils/parallelism.py
+  :29      init_device_mesh
+  :85-126  class ParallelDims（dp_shard / dp_replicate / dp_shard_with_ep；1D→HSDP 怎么建）
+
+# meta-init → parallelize → 物化（大模型加载，别 from_pretrained().cuda()）
+cosmos_rl/policy/trainer/llm_trainer/llm_trainer.py
+  :92      with torch.device("meta")
+  :116-119 model.parallelize_fn(...)
+  :146     post_to_empty_hook  (物化分片)
+  :315+    sync_all_states     (rank→rank NCCL 广播全套 state)
+
+# DTensor 优化器 + checkpoint（本 sprint 最大触点的参照）
+cosmos_rl/policy/trainer/optm/__init__.py
+  :28      get_optimizer_state_dict
+  :135-153 fused 模式按 p.device_mesh 分组（DTensor 不能跨 mesh fused）
+  :214     get_optimizer_state_dict(...) 做 per-rank checkpoint
+
+# NCCL 权重同步（FSDP2 全参的搭档，§10.5）
+cosmos_rl/utils/pynccl.py            # 自包含 ctypes NCCL wrapper，可整段 lift
+cosmos_rl/utils/parallelism_map.py   # 跨布局分片指令（DTensor metadata → per-rank slice）
+
+# 唯一从 Megatron 借的（MoE only，dense DiT 用不上）
+cosmos_rl/policy/kernel/megatron_moe/token_dispatcher.py:284  pad_routing_map
+```
 
 相关设计：
 
