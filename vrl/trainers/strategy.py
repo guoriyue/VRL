@@ -2,7 +2,7 @@
 
 The trainer drives the GRPO loop; *how* a step executes on the hardware —
 backward, grad clipping, and trainable-state export/load — goes through a
-``TrainingStrategy`` so the trainer never hard-codes single-process vs FSDP2.
+``Strategy`` so the trainer never hard-codes single-process vs FSDP2.
 
 This readiness sprint ships only ``SingleProcessStrategy`` (current behavior
 moved behind the protocol, byte-for-byte). The FSDP2 strategy — DTensor-aware
@@ -21,7 +21,7 @@ from torch import nn
 from vrl.trainers.distributed import DistributedTrainingContext
 
 
-class TrainingStrategy(Protocol):
+class Strategy(Protocol):
     """How one training step executes; the only seam the trainer depends on."""
 
     context: DistributedTrainingContext
@@ -55,7 +55,7 @@ class TrainingStrategy(Protocol):
         ...
 
 
-class SingleProcessStrategy:
+class SingleProcessStrategy(Strategy):
     """The current single-GPU behavior, moved behind the strategy protocol.
 
     Every method here is the existing trainer / checkpoint / weight-sync logic
@@ -110,4 +110,4 @@ def _single_process_context() -> DistributedTrainingContext:
     )
 
 
-__all__ = ["SingleProcessStrategy", "TrainingStrategy"]
+__all__ = ["SingleProcessStrategy", "Strategy"]

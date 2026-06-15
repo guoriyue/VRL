@@ -1,7 +1,7 @@
 """SingleProcessStrategy parity (readiness P3).
 
 The strategy seam moves the existing backward / clip / state-export logic behind
-``TrainingStrategy``. These lock that the moved methods reproduce the underlying
+``Strategy``. These lock that the moved methods reproduce the underlying
 helpers exactly, so installing the seam changes nothing for a single-GPU run.
 """
 

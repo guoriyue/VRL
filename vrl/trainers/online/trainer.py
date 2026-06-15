@@ -32,7 +32,7 @@ from vrl.trainers.core.types import TrainerConfig, TrainState
 from vrl.trainers.online.ema import EMAModuleWrapper
 from vrl.trainers.online.precision_guard import run_precision_drift_guard
 from vrl.trainers.precision import trainer_mixed_precision
-from vrl.trainers.strategy import SingleProcessStrategy, TrainingStrategy
+from vrl.trainers.strategy import SingleProcessStrategy, Strategy
 from vrl.trainers.weight_sync import TrainableStateGetter, WeightSyncer
 from vrl.utils.model_diagnostics import (
     parameter_state_summary,
@@ -274,7 +274,7 @@ class OnlineTrainer(Trainer):
         prompts: list[str] | None = None,
         device: torch.device | str = "cuda",
         accelerator: Any | None = None,
-        strategy: TrainingStrategy | None = None,
+        strategy: Strategy | None = None,
     ) -> None:
         self.algorithm = algorithm
         self.collector = collector
@@ -296,7 +296,7 @@ class OnlineTrainer(Trainer):
         # How a step runs on the hardware (backward / clip / state export). The
         # default keeps current single-GPU behavior; FSDP2 swaps this in later
         # without the trainer loop changing. See vrl/trainers/strategy.py.
-        self._strategy: TrainingStrategy = strategy or SingleProcessStrategy()
+        self._strategy: Strategy = strategy or SingleProcessStrategy()
         # Sink for the per-step phase-timing line (recording decoupled from
         # emitting); swap for a jsonl/Prometheus sink later.
         self._stats_sink: StatsSink = LoggingStatsSink(logger)
