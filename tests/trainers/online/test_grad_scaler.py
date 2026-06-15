@@ -21,6 +21,7 @@ from vrl.rollouts.evaluators.base import Evaluator
 from vrl.trainers.core.types import EMAConfig, OptimConfig, TrainerConfig
 from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.online.trainer import _needs_grad_scaler
+from vrl.trainers.strategy import SingleProcessStrategy
 
 
 # --------------------------------------------------------------------------
@@ -83,6 +84,7 @@ def _fake_trainer(grad_scaler, max_norm=1.0):
         accelerator=None,
         model=model,
         _grad_scaler=grad_scaler,
+        _strategy=SingleProcessStrategy(),
     )
 
 

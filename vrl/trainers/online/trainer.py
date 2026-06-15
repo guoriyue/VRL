@@ -31,6 +31,7 @@ from vrl.trainers.core.types import TrainerConfig, TrainState
 from vrl.trainers.online.ema import EMAModuleWrapper
 from vrl.trainers.online.precision_guard import run_precision_drift_guard
 from vrl.trainers.precision import trainer_mixed_precision
+from vrl.trainers.strategy import SingleProcessStrategy, TrainingStrategy
 from vrl.trainers.weight_sync import TrainableStateGetter, WeightSyncer
 from vrl.utils.model_diagnostics import (
     parameter_state_summary,
@@ -248,6 +249,7 @@ class OnlineTrainer(Trainer):
         prompts: list[str] | None = None,
         device: torch.device | str = "cuda",
         accelerator: Any | None = None,
+        strategy: TrainingStrategy | None = None,
     ) -> None:
         self.algorithm = algorithm
         self.collector = collector
@@ -266,6 +268,10 @@ class OnlineTrainer(Trainer):
         self.device = torch.device(device) if isinstance(device, str) else device
         self.state = TrainState()
         self.accelerator = accelerator
+        # How a step runs on the hardware (backward / clip / state export). The
+        # default keeps current single-GPU behavior; FSDP2 swaps this in later
+        # without the trainer loop changing. See vrl/trainers/strategy.py.
+        self._strategy: TrainingStrategy = strategy or SingleProcessStrategy()
         # Sink for the per-step phase-timing line (recording decoupled from
         # emitting); swap for a jsonl/Prometheus sink later.
         self._stats_sink: StatsSink = LoggingStatsSink(logger)
@@ -324,12 +330,7 @@ class OnlineTrainer(Trainer):
     # ------------------------------------------------------------------
 
     def _backward(self, loss: Any) -> None:
-        if self._grad_scaler is not None:
-            self._grad_scaler.scale(loss).backward()
-        elif self.accelerator is not None:
-            self.accelerator.backward(loss)
-        else:
-            loss.backward()
+        self._strategy.backward(loss, grad_scaler=self._grad_scaler)
 
     def _clip_and_step(self, optimizer: Any) -> tuple[float, bool]:
         """Clip grads and step the optimizer.
@@ -341,21 +342,17 @@ class OnlineTrainer(Trainer):
         """
         cfg = self.config
         grad_norm: Any = 0.0
-        if self.accelerator is not None:
-            if self.accelerator.sync_gradients and cfg.max_norm > 0:
-                grad_norm = self.accelerator.clip_grad_norm_(self.model.parameters(), cfg.max_norm)
+        if self._grad_scaler is not None:
+            self._grad_scaler.unscale_(optimizer)
+        if cfg.max_norm > 0:
+            grad_norm = self._strategy.clip_grad_norm(self.model.parameters(), cfg.max_norm)
         else:
-            if self._grad_scaler is not None:
-                self._grad_scaler.unscale_(optimizer)
-            if cfg.max_norm > 0:
-                grad_norm = nn.utils.clip_grad_norm_(self.model.parameters(), cfg.max_norm)
-            else:
-                # no clip — compute norm manually for diagnostic
-                sq_sum = 0.0
-                for p in self.model.parameters():
-                    if p.grad is not None:
-                        sq_sum += float(p.grad.detach().pow(2).sum().item())
-                grad_norm = sq_sum**0.5
+            # no clip — compute norm manually for diagnostic
+            sq_sum = 0.0
+            for p in self.model.parameters():
+                if p.grad is not None:
+                    sq_sum += float(p.grad.detach().pow(2).sum().item())
+            grad_norm = sq_sum**0.5
         stepped = True
         if self._grad_scaler is not None:
             scale_before = self._grad_scaler.get_scale()
