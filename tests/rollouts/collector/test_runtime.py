@@ -14,8 +14,10 @@ from vrl.rollouts.collector.batch_builder import (
 )
 from vrl.rollouts.collector.core import RolloutCollector
 from vrl.rollouts.collector.requests import CollectorRequest
-from vrl.rollouts.collector.rewards import RewardScoringInput
+from vrl.rollouts.collector.rewards import RewardScorer, RewardScoringInput
+from vrl.rollouts.orchestration.prompt_collection import collect_prompt_batches
 from vrl.trajectory import RewardView, build_ar_discrete_trajectory
+from vrl.utils.stats import RolloutStats
 
 
 class _RequestBuilder:
@@ -225,8 +227,6 @@ def test_reward_scorer_score_many_uses_one_call_and_splits_per_group() -> None:
     """Checks score_many merges groups into one score_batch with per-group metadata."""
     import asyncio
 
-    from vrl.rollouts.collector.rewards import RewardScorer
-
     class _CountingReward:
         def __init__(self) -> None:
             self.score_batch_calls: list[list[Any]] = []
@@ -267,6 +267,59 @@ def test_reward_scorer_score_many_uses_one_call_and_splits_per_group() -> None:
     # Scores split back by group size, in order.
     assert rewards[0].tolist() == [0.0, 1.0]
     assert rewards[1].tolist() == [2.0, 3.0, 4.0]
+
+    assert asyncio.run(scorer.score_many([])) == []
+    assert scorer.last_reward_timing_ms == {}
+
+
+def test_collect_prompt_batches_folds_reward_timing_into_stats() -> None:
+    """Checks reward runtime timing reaches RolloutStats."""
+    import asyncio
+
+    class _TimedReward:
+        def __init__(self) -> None:
+            self.batch_sizes: list[int] = []
+            self.last_timing_ms: dict[str, float] = {}
+
+        async def score_batch(self, rollouts: list[Any]) -> list[float]:
+            self.batch_sizes.append(len(rollouts))
+            self.last_timing_ms = {
+                "latency_ms": 12.0,
+                "queue_wait_ms": 3.0,
+                "inference_ms": 9.0,
+            }
+            return [float(index + 1) for index in range(len(rollouts))]
+
+    reward_fn = _TimedReward()
+    collector = RolloutCollector(
+        model=None,
+        config=object(),
+        family="unit",
+        task="collect",
+        request_builder=_RequestBuilder(),
+        reward_scorer=RewardScorer(reward_fn),
+        runtime=_Runtime(),
+    )
+    stats = RolloutStats()
+
+    batches = asyncio.run(
+        collect_prompt_batches(
+            collector=collector,
+            prompts=["p0"],
+            group_size=2,
+            runtime_debug=False,
+            policy_version=None,
+            stats=stats,
+        ),
+    )
+
+    assert reward_fn.batch_sizes == [2]
+    assert len(batches) == 1
+    assert batches[0].rewards.tolist() == [1.0, 2.0]
+    assert stats.reward_latency_ms == 12.0
+    assert stats.reward_queue_wait_ms == 3.0
+    assert stats.reward_inference_ms == 9.0
+    assert stats.as_phase_dict()["reward.queue_wait_s"] == 0.003
 
 
 def test_reward_view_selection_fails_fast_when_ambiguous() -> None:

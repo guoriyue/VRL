@@ -37,6 +37,7 @@ class UnscoredRollout:
     collector_request: CollectorRequest
     profile: bool = False
     phases: dict[str, float] = field(default_factory=dict)
+    reward_timing_ms: dict[str, float] = field(default_factory=dict)
 
 
 class RolloutCollector:
@@ -176,6 +177,11 @@ class RolloutCollector:
                     for builder, rollout in zip(builders, unscored, strict=True)
                 ],
             )
+        reward_timing_ms = dict(
+            getattr(self.reward_scorer, "last_reward_timing_ms", {}) or {},
+        )
+        if reward_timing_ms:
+            unscored[0].reward_timing_ms.update(reward_timing_ms)
         reward_score_s = _sync_time() - phase_t if phase_t is not None else None
 
         build_t = _sync_time() if profile else None

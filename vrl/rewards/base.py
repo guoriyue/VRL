@@ -76,6 +76,7 @@ class RewardFunction:
         self._request_prefix = request_prefix
         self._debug_basename = debug_basename
         self.last_results: list[RewardInferenceResult] = []
+        self.last_timing_ms: dict[str, float] = {}
 
     async def score(self, rollout: RewardRollout) -> float:
         """Score a single rollout."""
@@ -244,6 +245,8 @@ class RewardFunction:
         rollouts: list[RewardRollout],
     ) -> list[float]:
         if not rollouts:
+            self.last_results = []
+            self.last_timing_ms = {}
             return []
 
         runtime = self.runtime
@@ -272,6 +275,13 @@ class RewardFunction:
         inference_total_ms = (time.perf_counter() - inference_started) * 1000.0
         total_latency_ms = (time.perf_counter() - total_started) * 1000.0
         self.last_results = list(results)
+        self.last_timing_ms = {
+            "latency_ms": total_latency_ms,
+            "queue_wait_ms": _max_result_timing(results, "queue_wait_ms"),
+            "inference_ms": _sum_result_timing(results, "inference_ms")
+            if results
+            else inference_total_ms,
+        }
         self._write_debug(
             request,
             results,
@@ -311,5 +321,23 @@ class RewardFunction:
         with results_file.open("a", encoding="utf-8") as handle:
             for result in results:
                 handle.write(json.dumps(asdict(result), sort_keys=True) + "\n")
+
+
+def _max_result_timing(results: list[RewardInferenceResult], field: str) -> float:
+    values = [
+        float(value)
+        for result in results
+        if (value := getattr(result, field, None)) is not None
+    ]
+    return max(values, default=0.0)
+
+
+def _sum_result_timing(results: list[RewardInferenceResult], field: str) -> float:
+    return sum(
+        float(value)
+        for result in results
+        if (value := getattr(result, field, None)) is not None
+    )
+
 
 __all__ = ["ArtifactBuilder", "RewardFunction"]

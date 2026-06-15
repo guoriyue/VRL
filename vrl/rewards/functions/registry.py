@@ -67,6 +67,8 @@ class MultiReward(RewardFunction):
     ) -> None:
         self.rewards = rewards
         self.last_components: dict[str, list[float]] = {}
+        self.last_results: list[Any] = []
+        self.last_timing_ms: dict[str, float] = {}
 
     def reset_components(self) -> None:
         """Clear component score history before a new trainer step."""
@@ -104,20 +106,24 @@ class MultiReward(RewardFunction):
         return cls(triples)
 
     async def score(self, rollout: RewardRollout) -> float:
+        self._reset_last_inference_observations()
         total = 0.0
         components: dict[str, list[float]] = {}
         for name, weight, fn in self.rewards:
             s = await fn.score(rollout)
+            self._append_inference_observations(fn)
             components[name] = [s]
             total += weight * s
         self._append_components(components)
         return total
 
     async def score_batch(self, rollouts: list[RewardRollout]) -> list[float]:
+        self._reset_last_inference_observations()
         totals = [0.0] * len(rollouts)
         components: dict[str, list[float]] = {}
         for name, weight, fn in self.rewards:
             sub_scores = await fn.score_batch(rollouts)
+            self._append_inference_observations(fn)
             components[name] = list(sub_scores)
             for i, s in enumerate(sub_scores):
                 totals[i] += weight * s
@@ -127,3 +133,12 @@ class MultiReward(RewardFunction):
     def _append_components(self, components: dict[str, list[float]]) -> None:
         for name, values in components.items():
             self.last_components.setdefault(name, []).extend(float(v) for v in values)
+
+    def _reset_last_inference_observations(self) -> None:
+        self.last_results = []
+        self.last_timing_ms = {}
+
+    def _append_inference_observations(self, fn: RewardFunction) -> None:
+        self.last_results.extend(list(getattr(fn, "last_results", []) or []))
+        for key, value in (getattr(fn, "last_timing_ms", {}) or {}).items():
+            self.last_timing_ms[str(key)] = self.last_timing_ms.get(str(key), 0.0) + float(value)

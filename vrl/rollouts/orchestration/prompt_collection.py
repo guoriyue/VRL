@@ -81,13 +81,17 @@ async def collect_prompt_batches(
 
     if stats is not None:
         # Per-call phases live on the unscored groups (collector writes the
-        # call-level score/build timings on the first group only). The
-        # collect.reward_score wall time is already here; the fine-grained
-        # RewardInferenceResult queue/inference split would fold in via
-        # stats.fold_reward_timing once score_many surfaces it (today it
-        # returns only score tensors).
+        # call-level score/build timings and reward inference timings on the
+        # first group only).
         for unscored, _ in unscored_groups:
             stats.add_phases(getattr(unscored, "phases", {}))
+            reward_timing_ms = getattr(unscored, "reward_timing_ms", {}) or {}
+            if reward_timing_ms:
+                stats.fold_reward_timing(
+                    latency_ms=reward_timing_ms.get("latency_ms"),
+                    queue_wait_ms=reward_timing_ms.get("queue_wait_ms"),
+                    inference_ms=reward_timing_ms.get("inference_ms"),
+                )
 
     all_batches: list[RolloutBatch] = []
     for batch, (_, remap) in zip(batches, unscored_groups, strict=True):

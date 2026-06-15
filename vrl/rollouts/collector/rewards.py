@@ -9,6 +9,7 @@ from typing import Any
 
 import torch
 
+from vrl.rewards.inference import RewardInferenceResult
 from vrl.rewards.types import RewardRollout, RewardTrajectory
 
 
@@ -57,6 +58,7 @@ class RewardScorer:
 
     def __init__(self, reward_fn: Any | None) -> None:
         self.reward_fn = reward_fn
+        self.last_reward_timing_ms: dict[str, float] = {}
 
     async def score_many(
         self,
@@ -70,6 +72,7 @@ class RewardScorer:
         group. Scores split back by each request's batch size.
         """
 
+        self.last_reward_timing_ms = {}
         if not requests:
             return []
         if self.reward_fn is None:
@@ -110,6 +113,7 @@ class RewardScorer:
                 "reward function returned wrong number of scores: "
                 f"scores={len(scores)}, expected={len(rollouts)}",
             )
+        self.last_reward_timing_ms = _reward_timing_ms(self.reward_fn)
 
         split: list[torch.Tensor] = []
         offset = 0
@@ -120,6 +124,33 @@ class RewardScorer:
                 torch.tensor(chunk, device=request.device, dtype=torch.float32),
             )
         return split
+
+
+def _reward_timing_ms(reward_fn: Any) -> dict[str, float]:
+    timing = getattr(reward_fn, "last_timing_ms", None)
+    if timing:
+        return {str(key): float(value) for key, value in dict(timing).items()}
+
+    results = list(getattr(reward_fn, "last_results", []) or [])
+    if not results or not all(isinstance(result, RewardInferenceResult) for result in results):
+        return {}
+    return {
+        "latency_ms": max(
+            (float(result.latency_ms) for result in results if result.latency_ms is not None),
+            default=0.0,
+        ),
+        "queue_wait_ms": max(
+            (
+                float(result.queue_wait_ms)
+                for result in results
+                if result.queue_wait_ms is not None
+            ),
+            default=0.0,
+        ),
+        "inference_ms": sum(
+            float(result.inference_ms) for result in results if result.inference_ms is not None
+        ),
+    }
 
 
 __all__ = ["RewardScorer", "RewardScoringInput"]
