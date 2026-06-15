@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+import pytest
 import torch
 
 from vrl.trainers.weight_sync import (
@@ -96,6 +97,69 @@ def test_flatten_trainable_module_state_skips_frozen_parameters() -> None:
     state = flatten_trainable_module_state({"adapter": module})
 
     assert set(state) == {"adapter.weight"}
+
+
+# --------------------------------------------------------------------------
+# State export contract (readiness P5): rollout payload keys must be flat
+# policy-facing names — no training-time wrapper prefix leaks through.
+# --------------------------------------------------------------------------
+class _DDPLike(torch.nn.Module):
+    """Mimics DDP / FSDP1: the inner module sits under ``.module`` so the
+    wrapper's own ``state_dict()`` keys carry a ``module.`` prefix."""
+
+    def __init__(self, inner: torch.nn.Module) -> None:
+        super().__init__()
+        self.module = inner
+
+
+class _CompiledLike(torch.nn.Module):
+    """Mimics torch.compile's OptimizedModule: inner under ``_orig_mod``."""
+
+    def __init__(self, inner: torch.nn.Module) -> None:
+        super().__init__()
+        self._orig_mod = inner
+
+
+def test_flatten_strips_ddp_module_prefix() -> None:
+    """A `.module`-wrapped trainable root must not leak `module.` to rollout."""
+    inner = torch.nn.Linear(2, 1, bias=False)
+    wrapped = _DDPLike(inner)
+    assert "module.weight" in wrapped.state_dict()  # the wrapper prefixes keys
+
+    state = flatten_trainable_module_state({"adapter": wrapped})
+
+    assert set(state) == {"adapter.weight"}  # prefix stripped
+    assert torch.equal(state["adapter.weight"], inner.weight)
+
+
+def test_flatten_strips_compile_orig_mod_prefix() -> None:
+    """A compiled-like `_orig_mod` wrapper keeps the existing clean-key behavior."""
+    inner = torch.nn.Linear(2, 1, bias=False)
+    state = flatten_trainable_module_state({"adapter": _CompiledLike(inner)})
+
+    assert set(state) == {"adapter.weight"}
+    assert torch.equal(state["adapter.weight"], inner.weight)
+
+
+def test_flatten_strips_nested_compile_and_ddp_wrappers() -> None:
+    """Wrapper nesting (compile(DDP(m))) unwraps fully regardless of order."""
+    inner = torch.nn.Linear(2, 1, bias=False)
+    state = flatten_trainable_module_state({"adapter": _CompiledLike(_DDPLike(inner))})
+
+    assert set(state) == {"adapter.weight"}
+    assert torch.equal(state["adapter.weight"], inner.weight)
+
+
+def test_flatten_empty_mapping_fails_fast() -> None:
+    with pytest.raises(ValueError, match="non-empty mapping"):
+        flatten_trainable_module_state({})
+
+
+def test_flatten_all_frozen_module_fails_fast() -> None:
+    module = torch.nn.Linear(2, 1, bias=False)
+    module.weight.requires_grad_(False)
+    with pytest.raises(ValueError, match="no trainable parameters"):
+        flatten_trainable_module_state({"adapter": module})
 
 
 def test_build_trainable_state_sync_getter_reads_bundle_trainable_modules() -> None:

@@ -108,11 +108,18 @@ def flatten_trainable_module_state(modules: Mapping[str, Any]) -> dict[str, Any]
         name = str(module_name)
         if not name:
             raise ValueError("trainable module names must be non-empty")
-        # Sync payload keys live in the uncompiled namespace on both ends:
-        # the receiver unwraps its OptimizedModule the same way (models/utils.py
-        # load_weights_into), so a compiled trainer module must not leak its
-        # _orig_mod. prefix into the payload.
-        module = getattr(module, "_orig_mod", module)
+        # Sync payload keys live in the policy's uncompiled, unwrapped namespace:
+        # torch.compile exposes the inner module as ``_orig_mod``, DDP / FSDP1 as
+        # ``.module``. The receiver unwraps its own compile wrapper the same way
+        # (models/utils.py load_weights_into), so neither wrapper prefix may leak
+        # into the rollout payload. Loop because wrapper nesting/order varies
+        # (e.g. compile(DDP(m)) vs DDP(compile(m))).
+        while True:
+            unwrapped = getattr(module, "_orig_mod", module)
+            unwrapped = getattr(unwrapped, "module", unwrapped)
+            if unwrapped is module:
+                break
+            module = unwrapped
         state_dict = getattr(module, "state_dict", None)
         if not callable(state_dict):
             raise TypeError(f"trainable module {name!r} does not expose state_dict()")
