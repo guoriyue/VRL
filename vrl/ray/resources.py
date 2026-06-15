@@ -100,22 +100,30 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
     """
 
     config = _distributed_resource_config_from_cfg(cfg)
+    training = cfg_get(cfg_get(cfg, "distributed", {}), "training", {})
+    training_strategy = str(cfg_get(training, "strategy", "single_process"))
+    training_world_size = int(cfg_get(training, "num_nodes", 1)) * int(
+        cfg_get(training, "gpus_per_node", 1),
+    )
     if config.cross_node:
         visible_devices = _resolve_cross_node_visible_devices(config)
     else:
         visible_devices = _resolve_visible_devices(config.visible_devices)
 
+    # fsdp runs one torchrun process per GPU, so an unset trainer GPU count
+    # defaults to the whole training world; single_process stays one device.
+    trainer_default_auto = (
+        training_world_size
+        if training_strategy == "fsdp"
+        else (1 if visible_devices else 0)
+    )
     trainer_devices = _resolve_role_devices(
         role="trainer",
         visible_devices=visible_devices,
         role_config=config.trainer,
-        default_auto_count=1 if visible_devices else 0,
+        default_auto_count=trainer_default_auto,
     )
-    if len(trainer_devices) > 1:
-        raise ValueError(
-            "distributed.resources.trainer.devices currently supports only "
-            f"0 or 1 GPU for the single-process trainer, got {trainer_devices}",
-        )
+    _validate_trainer_device_count(training_strategy, trainer_devices, training_world_size)
 
     rollout_gpus_per_worker = float(config.rollout.gpus_per_worker)
     if rollout_gpus_per_worker not in {0.0, 1.0}:
@@ -198,6 +206,12 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
             f"trainer={list(trainer_devices)} reward={list(reward_devices)}",
         )
 
+    # Under fsdp every rank owns its GPU; rollout/reward run as separate Ray
+    # actors. The trainer GPU set must be disjoint from both regardless of
+    # allow_overlap (the single-GPU colocated debug path is single_process only).
+    if training_strategy == "fsdp":
+        _validate_fsdp_trainer_disjoint(trainer_devices, rollout_devices, reward_devices)
+
     # Unset release flags follow the resolved topology: roles that share a GPU
     # must hand it over between phases; roles with dedicated GPUs stay resident.
     rollout_release_after_collect = _derived_release_flag(
@@ -252,6 +266,56 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
         colocated=colocated,
         cross_node=config.cross_node,
     )
+
+
+def _validate_trainer_device_count(
+    strategy: str,
+    trainer_devices: tuple[int, ...],
+    world_size: int,
+) -> None:
+    """Trainer GPU-count rule, gated by ``distributed.training.strategy``.
+
+    ``single_process`` is one process on one device (0 or 1 GPU).
+    ``fsdp`` runs one torchrun process per GPU, so the trainer device set must
+    cover the whole training world (``num_nodes * gpus_per_node``).
+    """
+
+    if strategy == "fsdp":
+        if len(trainer_devices) != world_size:
+            raise ValueError(
+                "distributed.training.strategy=fsdp: trainer must own "
+                f"num_nodes*gpus_per_node={world_size} GPUs, got "
+                f"{list(trainer_devices)} (count {len(trainer_devices)}). Set "
+                f"distributed.resources.trainer.num_gpus={world_size} (or matching "
+                "devices).",
+            )
+        return
+    if len(trainer_devices) > 1:
+        raise ValueError(
+            "distributed.resources.trainer.devices currently supports only "
+            f"0 or 1 GPU for the single-process trainer, got {trainer_devices}. "
+            "Set distributed.training.strategy=fsdp for multi-GPU training.",
+        )
+
+
+def _validate_fsdp_trainer_disjoint(
+    trainer_devices: tuple[int, ...],
+    rollout_devices: tuple[int, ...],
+    reward_devices: tuple[int, ...],
+) -> None:
+    """fsdp trainer GPUs must not overlap rollout/reward (even with allow_overlap)."""
+
+    overlap_rollout = sorted(set(trainer_devices) & set(rollout_devices))
+    overlap_reward = sorted(set(trainer_devices) & set(reward_devices))
+    if overlap_rollout or overlap_reward:
+        raise ValueError(
+            "distributed.training.strategy=fsdp requires trainer GPUs disjoint from "
+            "rollout and reward (each FSDP rank owns its GPU; rollout/reward run as "
+            "separate Ray actors). "
+            f"trainer={list(trainer_devices)} rollout={list(rollout_devices)} "
+            f"reward={list(reward_devices)} "
+            f"(overlap rollout={overlap_rollout}, reward={overlap_reward}).",
+        )
 
 
 def trainer_torch_device(

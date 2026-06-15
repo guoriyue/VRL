@@ -656,3 +656,81 @@ def test_shared_single_gpu_reward_reuses_rollout_bundle() -> None:
     layout = build_bundle_layout(resolved)
     assert layout.rollout_bundle_indices == layout.reward_bundle_indices
     assert layout.total_bundles == 1
+
+
+# ---------------------------------------------------------------- fsdp (P2)
+
+
+def _cfg_training(resources: dict, training: dict) -> object:
+    return OmegaConf.create(
+        {
+            "distributed": {
+                "resources": resources,
+                "rollout": {},
+                "reward": {},
+                "training": training,
+            },
+        },
+    )
+
+
+def test_fsdp_trainer_allows_multi_gpu_disjoint_from_rollout() -> None:
+    """fsdp lifts the single-device cap: trainer can own N GPUs."""
+    resolved = resolve_distributed_resources(
+        _cfg_training(
+            {
+                "visible_devices": [0, 1, 2],
+                "trainer": {"devices": [0, 1]},
+                "rollout": {"devices": [2], "gpus_per_worker": 1},
+            },
+            {"strategy": "fsdp", "num_nodes": 1, "gpus_per_node": 2},
+        ),
+    )
+    assert resolved.trainer_devices == (0, 1)
+    assert resolved.rollout_devices == (2,)
+
+
+def test_fsdp_trainer_count_must_equal_world_size() -> None:
+    """fsdp trainer device count must match num_nodes*gpus_per_node."""
+    with pytest.raises(ValueError, match=r"must own num_nodes\*gpus_per_node=2"):
+        resolve_distributed_resources(
+            _cfg_training(
+                {
+                    "visible_devices": [0, 1],
+                    "trainer": {"devices": [0]},
+                    "rollout": {"devices": [1], "gpus_per_worker": 1},
+                },
+                {"strategy": "fsdp", "num_nodes": 1, "gpus_per_node": 2},
+            ),
+        )
+
+
+def test_fsdp_trainer_must_be_disjoint_from_rollout_even_with_overlap() -> None:
+    """fsdp rejects trainer/rollout GPU overlap regardless of allow_overlap."""
+    with pytest.raises(ValueError, match="fsdp requires trainer GPUs disjoint"):
+        resolve_distributed_resources(
+            _cfg_training(
+                {
+                    "visible_devices": [0, 1],
+                    "trainer": {"devices": [0, 1]},
+                    "rollout": {"devices": [1], "gpus_per_worker": 1},
+                    "allow_overlap": True,
+                },
+                {"strategy": "fsdp", "num_nodes": 1, "gpus_per_node": 2},
+            ),
+        )
+
+
+def test_single_process_still_rejects_multi_gpu_trainer() -> None:
+    """The single-device cap is preserved for single_process (default)."""
+    with pytest.raises(ValueError, match="0 or 1 GPU"):
+        resolve_distributed_resources(
+            _cfg_training(
+                {
+                    "visible_devices": [0, 1],
+                    "trainer": {"devices": [0, 1]},
+                    "rollout": {"num_gpus": 0, "gpus_per_worker": 0, "num_workers": 1},
+                },
+                {"strategy": "single_process"},
+            ),
+        )
