@@ -239,6 +239,16 @@ def test_cosmos_predict25_nft_uses_paper_timestep_budget(name: str) -> None:
     }
 
 
+def test_cosmos_predict25_kling_reward_uses_paper_rl_batch() -> None:
+    """Checks the Kling reward recipe matches the paper RL batch geometry."""
+    cfg = load_config("experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward")
+
+    assert cfg.rollout.n_samples_per_prompt == 8
+    assert cfg.rollout.rollout_batch_size == 32
+    assert cfg.rollout.sample_batch_size == 1
+    assert cfg.actor.gradient_accumulation_steps == 32
+
+
 def test_experiments_do_not_use_legacy_precision_fields() -> None:
     """Checks live YAML uses top-level precision only."""
     offenders = []

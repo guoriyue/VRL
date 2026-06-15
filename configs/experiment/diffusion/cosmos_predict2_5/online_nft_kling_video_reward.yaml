@@ -15,7 +15,7 @@ actor:
   optim:
     lr: 3.0e-5
   ppo_epochs: 1
-  gradient_accumulation_steps: 1
+  gradient_accumulation_steps: 32
   timestep_fraction: 0.5
   ema:
     enable: true
@@ -23,9 +23,11 @@ actor:
     update_interval: 1
 
 rollout:
-  n_samples_per_prompt: 12                     # advantage group size; the n samples are forwarded
-                            # together, so this is the main single-GPU memory knob
-  rollout_batch_size: 6     # prompts/step (cosmos-rl mini_batch)
+  # Paper-shaped RL batch: 8 outputs per input condition and 32 input
+  # conditions per optimizer update. Generation still uses sample_batch_size=1
+  # so rollout denoising can stream on limited memory.
+  n_samples_per_prompt: 8
+  rollout_batch_size: 32
   sample_batch_size: 1
   noise_level: 0.7
   sde:
