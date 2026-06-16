@@ -276,7 +276,7 @@ def format_report(bd: Breakdown) -> str:
 # --------------------------------------------------------------------------- #
 
 
-def _build_synthetic(
+def build_synthetic_inputs(
     family: str,
     *,
     batch: int,
@@ -284,13 +284,15 @@ def _build_synthetic(
     dtype: torch.dtype,
     layers: int | None = None,
     concat_padding_mask: bool = True,
-) -> tuple[nn.Module, Callable[[], Any]]:
-    """Build a config-init transformer + a zero-arg forward thunk for ``family``.
+) -> tuple[nn.Module, dict[str, Any]]:
+    """Config-init transformer + its forward kwargs for ``family``.
 
-    Dims default to production-faithful proportions; override depth via ``layers``
-    to match an exact checkpoint or to shrink for a fast CPU self-test (the
-    per-category GEMM ratio is layer-count-independent -- every block has the same
-    projection mix). Random weights -- only shapes matter for GEMM time.
+    Single source of the production-faithful dims so every perf tool (the GEMM
+    breakdown here, the compile A/B in ``compile_benchmark.py``) profiles the
+    exact same shapes. Returns ``(model, kwargs)`` where ``model(**kwargs)`` runs
+    one forward. Override depth via ``layers`` (the per-category GEMM ratio is
+    layer-count-independent -- every block has the same projection mix); shrink
+    for a fast CPU self-test. Random weights -- only shapes matter for kernel time.
     """
 
     torch.manual_seed(0)
@@ -307,17 +309,14 @@ def _build_synthetic(
         ).to(device=device, dtype=dtype).eval()
         h = w = 64
         seq = 333  # ~512px image latent context length
-        hs = torch.randn(batch, 16, h, w, device=device, dtype=dtype)
-        enc = torch.randn(batch, seq, 4096, device=device, dtype=dtype)
-        pooled = torch.randn(batch, 2048, device=device, dtype=dtype)
-        ts = torch.randint(0, 1000, (batch,), device=device).to(dtype)
-
-        def forward_fn() -> Any:
-            with torch.no_grad():
-                return model(hidden_states=hs, encoder_hidden_states=enc,
-                             pooled_projections=pooled, timestep=ts, return_dict=False)
-
-        return model, forward_fn
+        kwargs: dict[str, Any] = dict(
+            hidden_states=torch.randn(batch, 16, h, w, device=device, dtype=dtype),
+            encoder_hidden_states=torch.randn(batch, seq, 4096, device=device, dtype=dtype),
+            pooled_projections=torch.randn(batch, 2048, device=device, dtype=dtype),
+            timestep=torch.randint(0, 1000, (batch,), device=device).to(dtype),
+            return_dict=False,
+        )
+        return model, kwargs
 
     if family in ("cosmos-predict2", "cosmos-predict2.5"):
         from diffusers import CosmosTransformer3DModel
@@ -335,17 +334,19 @@ def _build_synthetic(
         ).to(device=device, dtype=dtype).eval()
         t, h, w = 1, 44, 80  # ~704x1280 latent at /16 -> modest video latent grid
         seq = 512
-        hs = torch.randn(batch, in_ch, t, h, w, device=device, dtype=dtype)
-        enc = torch.randn(batch, seq, 1024, device=device, dtype=dtype)
-        ts = torch.rand(batch, device=device, dtype=dtype)
-        pad = torch.zeros(batch, 1, h, w, device=device, dtype=dtype) if concat_padding_mask else None
-
-        def forward_fn() -> Any:
-            with torch.no_grad():
-                return model(hidden_states=hs, timestep=ts, encoder_hidden_states=enc,
-                             padding_mask=pad, return_dict=False)
-
-        return model, forward_fn
+        kwargs = dict(
+            hidden_states=torch.randn(batch, in_ch, t, h, w, device=device, dtype=dtype),
+            timestep=torch.rand(batch, device=device, dtype=dtype),
+            encoder_hidden_states=torch.randn(batch, seq, 1024, device=device, dtype=dtype),
+            # [1, 1, H, W] -- the real runtime keeps the mask un-batched and the
+            # transformer .repeat()s it to the batch internally (see cosmos
+            # predict2/model.py:343 and diffusers pipeline_cosmos*). A [batch, ...]
+            # mask double-repeats and breaks the input cat for batch > 1.
+            padding_mask=(torch.zeros(1, 1, h, w, device=device, dtype=dtype)
+                          if concat_padding_mask else None),
+            return_dict=False,
+        )
+        return model, kwargs
 
     if family == "wan_2_1":
         from diffusers import WanTransformer3DModel
@@ -357,18 +358,38 @@ def _build_synthetic(
         ).to(device=device, dtype=dtype).eval()
         t, h, w = 3, 30, 52
         seq = 512
-        hs = torch.randn(batch, 16, t, h, w, device=device, dtype=dtype)
-        enc = torch.randn(batch, seq, 4096, device=device, dtype=dtype)
-        ts = torch.rand(batch, device=device, dtype=dtype)
-
-        def forward_fn() -> Any:
-            with torch.no_grad():
-                return model(hidden_states=hs, timestep=ts, encoder_hidden_states=enc,
-                             return_dict=False)
-
-        return model, forward_fn
+        kwargs = dict(
+            hidden_states=torch.randn(batch, 16, t, h, w, device=device, dtype=dtype),
+            timestep=torch.rand(batch, device=device, dtype=dtype),
+            encoder_hidden_states=torch.randn(batch, seq, 4096, device=device, dtype=dtype),
+            return_dict=False,
+        )
+        return model, kwargs
 
     raise ValueError(f"unknown family {family!r}")
+
+
+def _build_synthetic(
+    family: str,
+    *,
+    batch: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    layers: int | None = None,
+    concat_padding_mask: bool = True,
+) -> tuple[nn.Module, Callable[[], Any]]:
+    """Config-init transformer + a zero-arg no-grad forward thunk for ``family``."""
+
+    model, kwargs = build_synthetic_inputs(
+        family, batch=batch, device=device, dtype=dtype, layers=layers,
+        concat_padding_mask=concat_padding_mask,
+    )
+
+    def forward_fn() -> Any:
+        with torch.no_grad():
+            return model(**kwargs)
+
+    return model, forward_fn
 
 
 def apply_qkv_fusion(model: nn.Module, family: str) -> bool:
