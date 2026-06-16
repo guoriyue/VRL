@@ -1,8 +1,17 @@
 # SPRINT: 内存预算驱动的 microbatch 切片(单根派生,不设两次)（planned）
 
-状态：proposed / design。本 sprint 是 `SPRINT_streaming_rollout_accumulation.md`(流式累积,已落地 VRL
+状态：**T1 + T2 已实现(未提交,VRL 分支 `trainer/microbatch-size-knob`,待 review)**;T3/T4 未做。
+本 sprint 是 `SPRINT_streaming_rollout_accumulation.md`(流式累积,已落地 VRL
 main `4c85f3b`)的**收尾精炼**:把"切多少"从一个**手填的次数**改成一个**大小/内存预算**,派生其余,
 并用**真实 RSS** 而不是低估的字节公式来预测/自动定档。对标 slime 的"单根 + 派生 + 预算式切分"。
+
+> **进度(2026-06-15)**:T1 旋钮 + cosmos 迁移 + 配置 schema + T2 RSS fail-fast + 测试全绿(238 passed)。
+> **更正一处误判**:T2 曾被以"与 `SPRINT_generation_memory_system.md` 重叠"为由暂缓——经多 agent 对抗审计
+> 核实,该理由**不成立**:那个 sprint 管的是 **GPU 字节预算**(`MemoryContract` 按卡/角色派生),只在"已有机制"
+> 表里提过一次 host memory snapshot,并不拥有 **host RSS** 预算/fail-fast 这条轴;且 RSS fail-fast 在 vrl 里
+> 全无实现(6 处 `log_host_memory` 都是纯日志),所需原语 `capture_host_memory()`(rss/available/used_fraction)
+> 已存在却没人消费。故 T2 在本分支落地**不与任何在飞工作冲突**。"可观测/legacy 告警"那半确实已由上游
+> `d400638`(`_log_rollout_memory_plan`)落地,但那只是日志/告警,不是 T2 要的 **RSS 外推 fail-fast**。
 
 > 方法:核了 slime 源码(`/home/mingfeiguo/Desktop/slime`)+ reading doc,逐条带 `path:line`;核了 vrl
 > 现状(`estimate_batch_bytes`、`log_host_memory`、per-timestep backward)与 torch 的 host/GPU 内存 API。
@@ -17,7 +26,7 @@ main `4c85f3b`)的**收尾精炼**:把"切多少"从一个**手填的次数**改
 
 要改的只有两点,都向 slime 看齐:
 
-1. **把 `gradient_accumulation_steps`(次数)降级为派生量,新增 `rollout_microbatch_size`(大小)做唯一手填切片旋钮**——你设"一刀放得下几组",次数 = `rollout_batch_size ÷ microbatch_size` 自己掉出来。语义从"切几刀"变成"每刀多大",这才是你真正关心、且能直接对内存的量。
+1. **把 `gradient_accumulation_steps`(次数)降级为派生量,新增 `microbatch_size`(大小)做唯一手填切片旋钮**——你设"一刀放得下几组",次数 = `rollout_batch_size ÷ microbatch_size` 自己掉出来。语义从"切几刀"变成"每刀多大",这才是你真正关心、且能直接对内存的量。
 2. **内存预测用真实 RSS,不用 `estimate_batch_bytes`**——后者是队列背压启发式,系统性低估(见 §2);改成在**第一个 microbatch** 上量 `log_host_memory` 的 RSS 增量,据此 fail-fast 或自动定档。
 
 非目标:不动已落地的梯度等价数学;不为 GPU 再加一个 micro-batch 旋钮(per-timestep 已经管住 GPU)。
@@ -85,13 +94,13 @@ vrl 与 slime 的结构差异:slime 的 rollout 和 train 是**独立进程**,tr
 
 ```text
 rollout.rollout_batch_size        # 根:每次优化器更新的目标组数(prompt 条件数)。不变。
-rollout.rollout_microbatch_size   # 新:每个采集/训练切片几组(= 你一刀放得下多少)。
-actor.gradient_accumulation_steps # 降级为派生量 = rollout_batch_size // rollout_microbatch_size
+rollout.microbatch_size   # 新:每个采集/训练切片几组(= 你一刀放得下多少)。
+actor.gradient_accumulation_steps # 降级为派生量 = rollout_batch_size // microbatch_size
 ```
 
-- 用户**只填 `rollout_microbatch_size`**(或继续填 `gradient_accumulation_steps`,二选一)。
+- 用户**只填 `microbatch_size`**(或继续填 `gradient_accumulation_steps`,二选一)。
 - 同时填两个 → **assert 一致**(slime 式,`arguments.py:1768-1776` 的同款防漂移),不让两者并存打架。
-- 校验沿用已落地的 `TrainerConfig.__post_init__`:`rollout_batch_size % rollout_microbatch_size == 0`、
+- 校验沿用已落地的 `TrainerConfig.__post_init__`:`rollout_batch_size % microbatch_size == 0`、
   `>= 1`、`ppo_epochs == 1`(流式不能跨 epoch 重放)。
 - **`gradient_accumulation_steps == 0` 兼容路径保留**(legacy 整批)。
 
@@ -100,7 +109,7 @@ actor.gradient_accumulation_steps # 降级为派生量 = rollout_batch_size // r
 
 ### 4.2 vrl 已经"切一次两用",不加第二刀
 
-- **host 轴** = microbatch 组数(`rollout_microbatch_size` 控制,采完即 release);
+- **host 轴** = microbatch 组数(`microbatch_size` 控制,采完即 release);
 - **GPU 轴** = `for j in train_indices` 逐去噪步,GPU 同时只活"一个 timestep × microbatch 样本"——
   这等价于 slime 的 micro_batch 独立于 data batch,**vrl 免费拿到**(扩散天然按 timestep 切)。
 
@@ -114,29 +123,38 @@ actor.gradient_accumulation_steps # 降级为派生量 = rollout_batch_size // r
 - **fail-fast(开跑前/第一刀)**:第一个 microbatch `collect+backward` 前后各 `log_host_memory()` 一次,
   RSS 增量 = "一个 microbatch 真实占多少 host"(含碎片/Python/pinned 全部)。外推峰值 ≈
   `microbatch_groups × per_microbatch_rss`(流式下其实就是 ~1 个 microbatch),超 host 预算 → 清晰报错
-  "这台机放不下,调小 `rollout_microbatch_size`",**一刀内就告诉你**,不再白生成两小时。
-- **auto-tune(可选)**:据 RSS 增量反推**放得下的最大 `rollout_microbatch_size`**(rbs 的最大因子),
+  "这台机放不下,调小 `microbatch_size`",**一刀内就告诉你**,不再白生成两小时。
+- **auto-tune(可选)**:据 RSS 增量反推**放得下的最大 `microbatch_size`**(rbs 的最大因子),
   自动定档——把内存↔吞吐的甜点交给测量而不是手调(microbatch 越大越摊薄 Ray 往返 / reward 批 / 生成 GPU 利用率)。
 
 ---
 
 ## 5. 实施计划
 
-### T1 — 旋钮:`rollout_microbatch_size` 为主,`gradient_accumulation_steps` 派生
-- `TrainerConfig` / `rollout` 配置加 `rollout_microbatch_size`;在 `__post_init__` 里:二选一、同填则 assert
-  相等、派生 `gradient_accumulation_steps`。复用已落地的整除/`ppo_epochs==1` 校验。
-- `online.py:_run_streaming_optimizer_update` 改用 `rollout_microbatch_size` 切片(`micro = rollout_microbatch_size`),
-  其余不动。
-- 配置迁移:cosmos kling `gas=32/rbs=32` → `rollout_microbatch_size=1`(等价);其余 §6 列。
-- 测试:语义/派生/assert 校验;`gradient_accumulation_steps` 旧写法仍可用(派生一致)。
+### T1 — 旋钮:`microbatch_size` 为主,`gradient_accumulation_steps` 派生 ✅ 已实现
+- `TrainerConfig` 加 `microbatch_size`(`metadata={"yaml":"rollout"}`);`__post_init__`:二选一、同填则 assert
+  相等、互相派生。复用已落地的整除/`ppo_epochs==1` 校验。`vrl/trainers/core/types.py`。
+- **`online.py` 无需改**:`_run_streaming_optimizer_update` 读的是派生后的 `gradient_accumulation_steps`,
+  `micro = rbs // gas` 已正确(纯换壳,梯度数学不动)。比原计划更省 churn。
+- **配置 schema**:`vrl/config/schema.py:RolloutConfig` 加 `microbatch_size`(否则 unknown-key 校验拒收)。
+- 配置迁移:cosmos kling `gas=32/rbs=32` → `microbatch_size=1`、cosmos motion `1/1 → 1`(等价)。
+- 测试:`test_reward_update_flow` 加派生/assert 用例;`test_load_all_experiments` 的 kling 几何测试从
+  "断言原始 yaml gas==32" 改为"断言 schema 声明 size + TrainerConfig **派生** gas==32"(去 exact-config)。
 
-### T2 — RSS 预算 fail-fast(用现成 `log_host_memory`)
-- 在第一个 microbatch 前后量 RSS;外推峰值超 host 预算 → `raise` 清晰报错(含建议的更小 microbatch)。
-- host 预算来源:配置项 + 读机器总内存(留 headroom);**不引入 psutil**(沿用 `/proc`)。
-- 测试:用假 RSS 注入,断言超预算时 fail-fast、否则放行。
+### T2 — RSS 预算 fail-fast(用现成 `capture_host_memory`)✅ 已实现
+- **配置项**:`TrainerConfig.host_memory_budget_fraction`(yaml:`rollout`,`field(default=0.0)`,`__post_init__`
+  校验 `[0.0,1.0)`;`0.0` = 关)。schema 同步登记,unknown-key 校验通过。`vrl/trainers/core/types.py`。
+- **fail-fast**:`online.py:_check_host_memory_budget` —— 流式累积下"持有 ~1 个 microbatch"即 host 峰值,故
+  **采到第一个 microbatch 后**量真实 RSS(`capture_host_memory` 读 `/proc`,非字节估算,因 Ray OOM 监控按 RSS 杀),
+  `used_fraction > budget` 即 `raise MemoryError`,报错含快照 + "调小 `microbatch_size`"的建议。
+  在 `_run_streaming_optimizer_update` 的 `mb_index==0` 处调用(每个 update 起点查一次,catch host-RAM creep)。
+- **配置启用**:两个 cosmos_predict2_5 配置加 `host_memory_budget_fraction: 0.9`(就是报"延迟 OOM"的那批受限显存视频跑)。
+- 测试:`test_host_memory_budget_fail_fast`(注入假 RSS:超预算 raise、≤预算放行、读不到内存不误杀)+
+  `test_host_memory_budget_fraction_bounds`(边界校验)。238 passed。
+- **可观测那半**已由上游 `d400638`(`_log_rollout_memory_plan`)落地(streaming plan 日志 + legacy 告警),与本 fail-fast 互补。
 
-### T3 —(可选)auto-tune microbatch
-- 据 RSS 增量反推最大可行 `rollout_microbatch_size`(rbs 因子),日志说明选了哪档、为什么。
+### T3 —(可选)auto-tune microbatch ⏸ 未做(可基于 T2 的 RSS 量测)
+- 据 RSS 增量反推最大可行 `microbatch_size`(rbs 因子),日志说明选了哪档、为什么。
 - 默认关闭(显式 opt-in),避免"自动改 batch 形状"的意外。
 
 ### T4 — 真机 smoke(你来跑,需 GPU)
@@ -146,7 +164,7 @@ actor.gradient_accumulation_steps # 降级为派生量 = rollout_batch_size // r
 
 ## 6. 配置迁移(在线 + gas>0 的)
 
-| 配置 | 现 `gas/rbs` | `rollout_microbatch_size`(= rbs/gas) | 备注 |
+| 配置 | 现 `gas/rbs` | `microbatch_size`(= rbs/gas) | 备注 |
 |---|---|---|---|
 | cosmos kling | 32 / 32 | 1 | 等价,1 组一刀 |
 | cosmos motion | 1 / 1 | 1 | 等价 |

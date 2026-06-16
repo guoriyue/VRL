@@ -54,7 +54,7 @@ from vrl.trainers.weight_sync import (
     build_runtime_weight_syncer,
     build_trainable_state_sync_getter,
 )
-from vrl.utils.memory import log_host_memory
+from vrl.utils.memory import capture_host_memory, format_host_memory, log_host_memory
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +191,37 @@ def enable_transformer_gradient_checkpointing(
         enable()
 
 
+def _check_host_memory_budget(
+    budget_fraction: float,
+    *,
+    microbatch_prompts: int,
+    n_samples_per_prompt: int,
+) -> None:
+    """Fail fast if one streamed microbatch already pushes host RAM past budget.
+
+    Streaming accumulation holds ~one microbatch of rollout/replay tensors at a
+    time, so if system memory is already over budget right after collecting the
+    first microbatch, a larger ``microbatch_size`` (or simply more
+    epochs) would only OOM later in the run. Raising now — with the measured
+    snapshot — turns a delayed mid-run OOM into an immediate, actionable error.
+    Real RSS is measured (``capture_host_memory`` reads /proc), not estimated
+    from tensor byte counts, because the Ray OOM monitor kills on RSS.
+    """
+    snapshot = capture_host_memory()
+    used = snapshot.used_fraction
+    if used is None or used <= budget_fraction:
+        return
+    raise MemoryError(
+        f"Host RAM is at used={used:.1%} after collecting one streamed microbatch "
+        f"({microbatch_prompts} prompt group(s) x {n_samples_per_prompt} samples), "
+        f"above rollout.host_memory_budget_fraction={budget_fraction:.1%} "
+        f"({format_host_memory(snapshot)}). One microbatch already does not fit the "
+        "host-RAM budget; reduce rollout.microbatch_size to stream smaller "
+        "slices, or lower rollout.n_samples_per_prompt / sample resolution if it is "
+        "already 1.",
+    )
+
+
 async def _run_streaming_optimizer_update(
     trainer: OnlineTrainer,
     reward_fn: Any,
@@ -199,6 +230,7 @@ async def _run_streaming_optimizer_update(
     gradient_accumulation_steps: int,
     rollout_batch_size: int,
     n_samples_per_prompt: int,
+    host_memory_budget_fraction: float = 0.0,
 ) -> Any:
     """One optimizer update streamed over ``gradient_accumulation_steps`` microbatches.
 
@@ -209,6 +241,10 @@ async def _run_streaming_optimizer_update(
     optimizer.step / EMA / weight-sync / metric row per update; gradients
     accumulate across microbatches with a global loss scale, so the update is
     gradient-equivalent to the legacy full-batch path.
+
+    When ``host_memory_budget_fraction`` > 0, the first collected microbatch is
+    checked against the host-RAM budget and the run fails fast if it is already
+    over budget (SPRINT_memory_budgeted_microbatch T2).
     """
     micro = rollout_batch_size // gradient_accumulation_steps
     microbatches = [
@@ -224,9 +260,17 @@ async def _run_streaming_optimizer_update(
     weight_total = 0
     trained_prompt_num = 0
     group_size = float(n_samples_per_prompt)
-    for microbatch in microbatches:
+    for mb_index, microbatch in enumerate(microbatches):
         batch = await trainer.collect_training_batch(microbatch)
         try:
+            # Host-RAM fail-fast on the first microbatch: one slice is the host
+            # peak under streaming, so if it is already over budget, stop now.
+            if host_memory_budget_fraction > 0.0 and mb_index == 0:
+                _check_host_memory_budget(
+                    host_memory_budget_fraction,
+                    microbatch_prompts=len(microbatch),
+                    n_samples_per_prompt=n_samples_per_prompt,
+                )
             await trainer.backward_on_training_batch(batch, total_groups=total_groups)
             # Sample-count-weighted aggregation of this microbatch's pre-filter stats
             # so the one metric row reflects ALL samples, not the last microbatch.
@@ -500,6 +544,9 @@ async def run_online_recipe(
                     gradient_accumulation_steps=gradient_accumulation_steps,
                     rollout_batch_size=int(trainer_config.rollout_batch_size),
                     n_samples_per_prompt=int(trainer_config.n_samples_per_prompt),
+                    host_memory_budget_fraction=float(
+                        getattr(trainer_config, "host_memory_budget_fraction", 0.0),
+                    ),
                 )
             else:
                 components.reward_fn.reset_components()

@@ -3,17 +3,17 @@
 状态：proposed / bridge design。本 sprint 是两份现有工作的桥接层：
 
 - `SPRINT_streaming_rollout_accumulation.md` 已经修了 Cosmos paper-shaped batch 的 host OOM：把一个 optimizer target batch 切成多个 microbatch，逐个 `collect -> backward -> release`。
-- `SPRINT_memory_budgeted_microbatch.md` 继续把“切几次”改成“每刀多大”：`rollout_microbatch_size` 是唯一手填切片旋钮，`gradient_accumulation_steps` 派生。
+- `SPRINT_memory_budgeted_microbatch.md` 继续把“切几次”改成“每刀多大”：`microbatch_size` 是唯一手填切片旋钮，`gradient_accumulation_steps` 派生。
 - `SPRINT_continuous_scheduler_redesign.md` 讨论真正异步调度、staleness、weight sync barrier，但还没有把 microbatch 定义成 rollout/reward/train 共用的 pipeline item。
 
-本 sprint 补这个缺口：**把 `rollout_microbatch_size` 对应的完整 prompt group 集合定义为流水线 item**，让
+本 sprint 补这个缺口：**把 `microbatch_size` 对应的完整 prompt group 集合定义为流水线 item**，让
 `rollout(m+1)` 可以和 `train(m)` 重叠，同时 optimizer step 仍然只在完整 target batch 累积完之后发生。
 
 ---
 
 ## 0. 核心判断
 
-**应该共享同一个 `rollout_microbatch_size`，但要把它升级成调度 item，而不只是内存切片。**
+**应该共享同一个 `microbatch_size`，但要把它升级成调度 item，而不只是内存切片。**
 
 当前 streaming path 的真实形状是串行的：
 
@@ -63,7 +63,7 @@ for b, adv_b in zip(device_batches, device_advs, strict=True):
 ```
 
 GPU 侧已经有 `timestep × rollout_microbatch` 的天然切片。先不要再加第二个 train-only microbatch；只有当
-`rollout_microbatch_size=1` 且单 timestep 仍然 GPU OOM 时，才需要单独开新的 GPU 子切片 sprint。
+`microbatch_size=1` 且单 timestep 仍然 GPU OOM 时，才需要单独开新的 GPU 子切片 sprint。
 
 ---
 
@@ -125,23 +125,23 @@ self.producer.resume_admission()
 
 ```text
 rollout.rollout_batch_size        # target prompt conditions per optimizer update
-rollout.rollout_microbatch_size   # pipeline item size: prompt conditions per collect/train item
-actor.gradient_accumulation_steps # derived = rollout_batch_size / rollout_microbatch_size
+rollout.microbatch_size   # pipeline item size: prompt conditions per collect/train item
+actor.gradient_accumulation_steps # derived = rollout_batch_size / microbatch_size
 rollout.sample_batch_size         # generation backend chunk size only
 ```
 
-> 现状对齐（Evidence-First）：`rollout_microbatch_size` **目前还没落地**（由
+> 现状对齐（Evidence-First）：`microbatch_size` **目前还没落地**（由
 > `SPRINT_memory_budgeted_microbatch.md` 引入）。当前代码里手填的是 `actor.gradient_accumulation_steps`，
 > microbatch 大小 = `rollout_batch_size // gradient_accumulation_steps`（`vrl/trainers/core/types.py`
 > 强制整除，且 `gradient_accumulation_steps>0` 时强制 `ppo_epochs==1`）。本 sprint 与两种参数化都兼容；
-> 若 `rollout_microbatch_size` 尚未合入，应在依赖里标注它先行。
+> 若 `microbatch_size` 尚未合入，应在依赖里标注它先行。
 
 示例：Cosmos Predict2.5 + Kling paper-shaped batch：
 
 ```text
 rollout_batch_size = 32
 n_samples_per_prompt = 8
-rollout_microbatch_size = 1
+microbatch_size = 1
 
 => 32 microbatch items
 => each item has 1 complete prompt group = 8 videos/replay trajectories
@@ -167,7 +167,7 @@ RolloutMicrobatch
 
 关键点：
 
-- `group_count == rollout_microbatch_size`，最后一刀不允许短缺；`rollout_batch_size` 必须整除。
+- `group_count == microbatch_size`，最后一刀不允许短缺；`rollout_batch_size` 必须整除。
 - 每个 prompt group 必须完整包含 `n_samples_per_prompt` 个样本，不能把一个 GRPO/NFT group 拆开。
 - `rollout_policy_version` 必须可追踪；strict path 下一个 optimizer update 内不能混版本。
 - item 训练完必须释放 replay tensors；队列里不能长期保留已经 backward 的 `TrainingBatch`。
@@ -279,7 +279,7 @@ microbatch.rollout_actor_idle_gap_s  # if available from Ray runtime stats
 等 T1/T2 在 strict/streaming path 证明正确后，再把 continuous scheduler 的消费边界从“整 iteration”降到“microbatch item”：
 
 ```text
-drain_for_microbatch(min_groups=rollout_microbatch_size)
+drain_for_microbatch(min_groups=microbatch_size)
 ```
 
 保留现有 `ContinuousRolloutItem` 作为单 prompt group ready item；consumer 负责把 N 个 same-policy group 合成一个 microbatch item。不要把 queue 里的基础 item 直接改成整 microbatch，否则会损失 group 级 staleness/drop/backpressure 的灵活性。
@@ -309,7 +309,7 @@ drain_for_microbatch(min_groups=rollout_microbatch_size)
 应该保持：
 
 - `rollout_batch_size` 仍表示 optimizer target prompt conditions。
-- `rollout_microbatch_size` 是唯一用户关心的切片大小；不新增 train-only microbatch knob。
+- `microbatch_size` 是唯一用户关心的切片大小；不新增 train-only microbatch knob。
 - `sample_batch_size` 仍只管 generation backend chunk，不表达 RL batch。
 - `ContinuousRolloutItem` 继续代表单 prompt group。它是 group-level queue/staleness/backpressure 的协议边界，不要为了“少一层”改掉。
 - strict-on-policy 默认保持保守；staleness 放宽必须显式配置。
@@ -347,7 +347,7 @@ ALL_CAPS / thin file 处理：
 
 真机验收：
 
-- Cosmos Predict2.5 + Kling，`rollout_batch_size=32`、`n_samples_per_prompt=8`、`rollout_microbatch_size=1`，不发生 host OOM。
+- Cosmos Predict2.5 + Kling，`rollout_batch_size=32`、`n_samples_per_prompt=8`、`microbatch_size=1`，不发生 host OOM。
 - 与串行 streaming 相比，`trainer_idle_wait_s` 下降或 rollout actor idle gap 下降。
 - `metrics.csv` 仍然一行代表一个 optimizer update，不是一行一个 microbatch。
 - e20/e40 reward 曲线不比串行 streaming 差；重点确认吞吐提升没有破坏 RL 信号。

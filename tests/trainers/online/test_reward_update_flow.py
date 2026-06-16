@@ -684,6 +684,50 @@ def test_gradient_accumulation_steps_validation() -> None:
         _cfg(4, -1)
 
 
+def test_microbatch_size_reconciles_with_gradient_accumulation_steps() -> None:
+    """microbatch_size (size) and gradient_accumulation_steps (count) derive each other."""
+    import pytest
+
+    from vrl.trainers.core.types import OptimConfig, TrainerConfig
+
+    def _cfg(**kw: object) -> TrainerConfig:
+        base = dict(
+            optim=OptimConfig(lr=1e-4),
+            n_samples_per_prompt=2,
+            rollout_batch_size=32,
+            timestep_fraction=0.5,
+            total_epochs=1,
+            output_dir="x",
+            drop_zero_advantage=False,
+        )
+        base.update(kw)
+        return TrainerConfig(**base)  # type: ignore[arg-type]
+
+    # Declare the SIZE -> the microstep count derives.
+    c = _cfg(microbatch_size=4)
+    assert c.gradient_accumulation_steps == 8
+    assert c.microbatch_size == 4
+    # Declare the COUNT (legacy) -> the slice size derives.
+    c = _cfg(gradient_accumulation_steps=8)
+    assert c.microbatch_size == 4
+    assert c.gradient_accumulation_steps == 8
+    # Both declared + consistent is allowed.
+    _cfg(microbatch_size=4, gradient_accumulation_steps=8)
+    # Neither -> legacy full-batch (no streaming).
+    c = _cfg()
+    assert c.gradient_accumulation_steps == 0
+    assert c.microbatch_size == 0
+
+    with pytest.raises(ValueError, match="evenly divide"):
+        _cfg(microbatch_size=5)
+    with pytest.raises(ValueError, match="set only one"):
+        _cfg(microbatch_size=4, gradient_accumulation_steps=4)
+    with pytest.raises(ValueError, match="ppo_epochs"):
+        _cfg(microbatch_size=4, ppo_epochs=2)
+    with pytest.raises(ValueError, match=">= 0"):
+        _cfg(microbatch_size=-1)
+
+
 def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
     """Startup logs should make rollout microbatch residency visible."""
     import logging
@@ -717,6 +761,68 @@ def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
     legacy_messages = [record.getMessage() for record in caplog.records]
     assert any("legacy full-batch accumulation" in msg for msg in legacy_messages)
     assert any("host RAM may hold up to 4 prompt groups" in msg for msg in legacy_messages)
+
+
+def test_host_memory_budget_fail_fast(monkeypatch) -> None:
+    """The host-RAM guard raises over budget and passes under it (injected RSS)."""
+    import pytest
+
+    from vrl.scripts.common import online
+    from vrl.utils.memory import HostMemorySnapshot
+
+    def _inject(used_fraction: float) -> None:
+        # total=100GiB; available carved so used_fraction comes out as asked.
+        total = 100_000.0
+        snap = HostMemorySnapshot(
+            rss_mb=total * used_fraction,
+            available_mb=total * (1.0 - used_fraction),
+            total_mb=total,
+        )
+        monkeypatch.setattr(online, "capture_host_memory", lambda: snap)
+
+    # Over budget -> fail fast with an actionable message.
+    _inject(0.95)
+    with pytest.raises(MemoryError, match=r"rollout\.microbatch_size"):
+        online._check_host_memory_budget(0.9, microbatch_prompts=1, n_samples_per_prompt=8)
+
+    # Exactly at / under budget -> pass (<= budget does not trip).
+    _inject(0.90)
+    online._check_host_memory_budget(0.9, microbatch_prompts=1, n_samples_per_prompt=8)
+    _inject(0.50)
+    online._check_host_memory_budget(0.9, microbatch_prompts=1, n_samples_per_prompt=8)
+
+    # Unreadable host memory (used_fraction None) -> never raises (no false kill).
+    monkeypatch.setattr(
+        online,
+        "capture_host_memory",
+        lambda: HostMemorySnapshot(rss_mb=None, available_mb=None, total_mb=None),
+    )
+    online._check_host_memory_budget(0.9, microbatch_prompts=1, n_samples_per_prompt=8)
+
+
+def test_host_memory_budget_fraction_bounds() -> None:
+    """host_memory_budget_fraction must be in [0.0, 1.0); 0.0 disables the guard."""
+    import pytest
+
+    from vrl.trainers.core.types import OptimConfig, TrainerConfig
+
+    def _cfg(fraction: float) -> TrainerConfig:
+        return TrainerConfig(
+            optim=OptimConfig(lr=1e-4),
+            n_samples_per_prompt=2,
+            rollout_batch_size=4,
+            timestep_fraction=0.5,
+            total_epochs=1,
+            output_dir="x",
+            drop_zero_advantage=False,
+            host_memory_budget_fraction=fraction,
+        )
+
+    for ok in (0.0, 0.5, 0.9, 0.999):
+        assert _cfg(ok).host_memory_budget_fraction == ok
+    for bad in (-0.1, 1.0, 1.5):
+        with pytest.raises(ValueError, match="host_memory_budget_fraction"):
+            _cfg(bad)
 
 
 def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:

@@ -246,7 +246,23 @@ def test_cosmos_predict25_kling_reward_uses_paper_rl_batch() -> None:
     assert cfg.rollout.n_samples_per_prompt == 8
     assert cfg.rollout.rollout_batch_size == 32
     assert cfg.rollout.sample_batch_size == 1
-    assert cfg.actor.gradient_accumulation_steps == 32
+    # The optimizer-target slice is declared once as a size (one prompt group
+    # per microbatch); the microstep count (gradient_accumulation_steps) is
+    # derived by TrainerConfig, so check the derivation, not a literal YAML key.
+    assert cfg.rollout.microbatch_size == 1
+    from vrl.trainers.core.types import OptimConfig, TrainerConfig
+
+    derived = TrainerConfig(
+        optim=OptimConfig(lr=1e-4),
+        n_samples_per_prompt=cfg.rollout.n_samples_per_prompt,
+        rollout_batch_size=cfg.rollout.rollout_batch_size,
+        microbatch_size=cfg.rollout.microbatch_size,
+        timestep_fraction=0.5,
+        total_epochs=1,
+        output_dir="x",
+        drop_zero_advantage=False,
+    )
+    assert derived.gradient_accumulation_steps == 32
 
 
 def test_experiments_do_not_use_legacy_precision_fields() -> None:

@@ -229,6 +229,21 @@ class TrainerConfig:
     # batch in one optimizer update. Positive values match Flow-GRPO's
     # microbatch accumulation cadence.
     gradient_accumulation_steps: int = field(default=0, metadata={"yaml": "actor"})
+    # Streaming slice declared as a SIZE: groups per microbatch. Inverse of
+    # gradient_accumulation_steps (= rollout_batch_size // this). Set ONE of the
+    # two; __post_init__ derives the other so they cannot drift. 0 = unset
+    # (derive from gradient_accumulation_steps). This is the "set the slice once"
+    # knob: you declare how many groups fit in one slice, the microstep count
+    # falls out (SPRINT_memory_budgeted_microbatch).
+    microbatch_size: int = field(default=0, metadata={"yaml": "rollout"})
+    # Fail-fast host-RAM guard for streaming accumulation: if, after collecting
+    # one streamed microbatch, system memory used-fraction exceeds this, raise
+    # immediately instead of OOMing minutes into the run. Streaming holds ~one
+    # microbatch of replay tensors at a time, so one microbatch already over
+    # budget means a bigger slice (or more epochs) will OOM later. 0.0 = off
+    # (no measurement); e.g. 0.9 = fail when >90% of host RAM is in use
+    # (SPRINT_memory_budgeted_microbatch T2).
+    host_memory_budget_fraction: float = field(default=0.0, metadata={"yaml": "rollout"})
 
     # --- precision (bridged from the unified precision policy) ---
     # Empty means "derive from bf16" for direct test construction/backward
@@ -254,17 +269,44 @@ class TrainerConfig:
     profile: bool = field(default=False, metadata={"yaml": "trainer"})
 
     def __post_init__(self) -> None:
-        # Streaming-accumulation semantics (SPRINT_streaming_rollout_accumulation):
-        # gradient_accumulation_steps is the number of rollout/train microsteps the
-        # optimizer-target batch (rollout_batch_size conditions) is split into. 0
-        # keeps the legacy unsplit full-batch collect+train+step path.
+        # Streaming-accumulation slice (SPRINT_streaming_rollout_accumulation +
+        # SPRINT_memory_budgeted_microbatch). The optimizer-target batch
+        # (rollout_batch_size groups) is collected/trained/released in
+        # microbatches. The slice may be declared as a SIZE
+        # (microbatch_size = groups per microbatch) OR as a COUNT
+        # (gradient_accumulation_steps = number of microbatches); set ONE and the
+        # other is derived here so the two views can never drift. 0/0 keeps the
+        # legacy unsplit full-batch path.
+        rbs = int(self.rollout_batch_size)
         gas = int(self.gradient_accumulation_steps)
+        mbs = int(self.microbatch_size)
         if gas < 0:
             raise ValueError(
                 f"actor.gradient_accumulation_steps must be >= 0 (got {gas})",
             )
-        if gas > 0:
-            rbs = int(self.rollout_batch_size)
+        if mbs < 0:
+            raise ValueError(
+                f"rollout.microbatch_size must be >= 0 (got {mbs})",
+            )
+        if mbs > 0 and gas > 0:
+            # Both declared: must agree (no drift). Tell the user to set one.
+            if rbs != gas * mbs:
+                raise ValueError(
+                    "rollout.microbatch_size * actor.gradient_accumulation_steps "
+                    f"must equal rollout.rollout_batch_size ({mbs} * {gas} != {rbs}); "
+                    "set only one of them.",
+                )
+        elif mbs > 0:
+            # Size declared -> derive the microstep count.
+            if rbs % mbs != 0:
+                raise ValueError(
+                    "rollout.microbatch_size must evenly divide "
+                    f"rollout.rollout_batch_size ({rbs} % {mbs} != 0)",
+                )
+            gas = rbs // mbs
+            self.gradient_accumulation_steps = gas
+        elif gas > 0:
+            # Count declared (legacy) -> derive the slice size.
             if rbs % gas != 0:
                 raise ValueError(
                     "actor.gradient_accumulation_steps must evenly divide "
@@ -272,18 +314,27 @@ class TrainerConfig:
                     "rollout/train microsteps the optimizer target batch is split "
                     f"into): {rbs} % {gas} != 0",
                 )
+            self.microbatch_size = rbs // gas
+        # Streaming-on checks (gas>0 after reconciliation).
+        if gas > 0:
             if rbs // gas < 1:
                 raise ValueError(
-                    "rollout.rollout_batch_size // actor.gradient_accumulation_steps "
-                    f"must be >= 1 (got {rbs} // {gas} = {rbs // gas})",
+                    "rollout.rollout_batch_size // gradient_accumulation_steps must be "
+                    f">= 1 (got {rbs} // {gas} = {rbs // gas})",
                 )
             if int(self.ppo_epochs) != 1:
                 raise ValueError(
-                    "actor.ppo_epochs must be 1 when actor.gradient_accumulation_steps "
-                    "> 0: streaming accumulation collects and releases each microbatch, "
-                    "so the same rollout cannot be replayed across epochs "
+                    "actor.ppo_epochs must be 1 when streaming accumulation is on "
+                    "(gradient_accumulation_steps>0 or microbatch_size>0): a "
+                    "released microbatch cannot be replayed across epochs "
                     f"(got ppo_epochs={self.ppo_epochs})",
                 )
+        budget = float(self.host_memory_budget_fraction)
+        if not 0.0 <= budget < 1.0:
+            raise ValueError(
+                "rollout.host_memory_budget_fraction must be in [0.0, 1.0) "
+                f"(0.0 disables the host-RAM fail-fast guard; got {budget})",
+            )
 
 
 @dataclass(slots=True)

@@ -218,6 +218,13 @@ class RolloutConfig(ConfigBase):
     final_image_policy: str | None = None
     n_samples_per_prompt: int | None = None
     rollout_batch_size: int | None = None
+    # "Set the slice once" size knob: prompt groups per streamed microbatch.
+    # reader: TrainerConfig.__post_init__ derives actor.gradient_accumulation_steps
+    # from it (vrl/trainers/core/types.py).
+    microbatch_size: int | None = None
+    # Fail-fast host-RAM guard fraction for streaming accumulation (0.0 = off).
+    # reader: vrl/scripts/common/online.py:_run_streaming_optimizer_update.
+    host_memory_budget_fraction: float | None = None
     # Key registry: validated by their reader layers (generation/trainers).
     # reader: generation/ray/launcher.py compile override
     denoise_compile: Annotated[Any, ConfigBlock(("enable", "mode"))] = None
