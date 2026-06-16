@@ -335,6 +335,20 @@ class TrainerConfig:
                 "rollout.host_memory_budget_fraction must be in [0.0, 1.0) "
                 f"(0.0 disables the host-RAM fail-fast guard; got {budget})",
             )
+        # The guard only runs per streamed microbatch (gas>0). With no streaming
+        # the legacy full-batch path holds ALL groups before backward and never
+        # consults the budget, so a >0 budget here would silently do nothing.
+        # Reject it: the budget guard requires streaming, not the unsplit path it
+        # cannot protect.
+        if budget > 0.0 and gas == 0:
+            raise ValueError(
+                "rollout.host_memory_budget_fraction>0 requires streaming "
+                "accumulation (the guard checks host RAM per streamed microbatch); "
+                "set rollout.microbatch_size (or actor.gradient_accumulation_steps) "
+                "so the optimizer-target batch is streamed. Got "
+                f"host_memory_budget_fraction={budget} with no streaming "
+                "(gradient_accumulation_steps=0).",
+            )
 
 
 @dataclass(slots=True)

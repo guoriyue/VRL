@@ -801,12 +801,12 @@ def test_host_memory_budget_fail_fast(monkeypatch) -> None:
 
 
 def test_host_memory_budget_fraction_bounds() -> None:
-    """host_memory_budget_fraction must be in [0.0, 1.0); 0.0 disables the guard."""
+    """host_memory_budget_fraction in [0.0,1.0); >0 requires streaming (no footgun)."""
     import pytest
 
     from vrl.trainers.core.types import OptimConfig, TrainerConfig
 
-    def _cfg(fraction: float) -> TrainerConfig:
+    def _cfg(fraction: float, *, microbatch_size: int = 0) -> TrainerConfig:
         return TrainerConfig(
             optim=OptimConfig(lr=1e-4),
             n_samples_per_prompt=2,
@@ -815,14 +815,22 @@ def test_host_memory_budget_fraction_bounds() -> None:
             total_epochs=1,
             output_dir="x",
             drop_zero_advantage=False,
+            microbatch_size=microbatch_size,
             host_memory_budget_fraction=fraction,
         )
 
-    for ok in (0.0, 0.5, 0.9, 0.999):
-        assert _cfg(ok).host_memory_budget_fraction == ok
+    # >0 budget is valid when streaming is on (microbatch_size>0 -> gas>0).
+    for ok in (0.5, 0.9, 0.999):
+        assert _cfg(ok, microbatch_size=1).host_memory_budget_fraction == ok
+    # 0.0 (guard off) is valid with or without streaming.
+    assert _cfg(0.0).host_memory_budget_fraction == 0.0
+    # Out-of-range always rejected.
     for bad in (-0.1, 1.0, 1.5):
         with pytest.raises(ValueError, match="host_memory_budget_fraction"):
-            _cfg(bad)
+            _cfg(bad, microbatch_size=1)
+    # Footgun: >0 budget with no streaming is a config error, not a silent no-op.
+    with pytest.raises(ValueError, match="requires streaming"):
+        _cfg(0.9)
 
 
 def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:
