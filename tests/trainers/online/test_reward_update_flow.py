@@ -224,8 +224,8 @@ class TestRewardUpdateFlow:
         assert evaluate_batch_sizes == [2, 2, 2, 2]
         assert evaluate_group_ids == [[0, 0], [0, 0], [1, 1], [1, 1]]
 
-    def test_gradient_accumulation_steps_control_optimizer_updates(self) -> None:
-        """Positive gradient_accumulation_steps splits one rollout step into multiple updates."""
+    def test_streaming_accumulation_runs_one_optimizer_step(self) -> None:
+        """gradient_accumulation_steps>0 streams microbatches into ONE optimizer update."""
         import asyncio
 
         import torch
@@ -233,8 +233,12 @@ class TestRewardUpdateFlow:
 
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.rollouts.batch import RolloutBatch
+        from vrl.scripts.common.online import _run_streaming_optimizer_update
         from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
         from vrl.trainers.online import OnlineTrainer
+
+        collect_calls: list[list[str]] = []
+        after_step_calls: list[int] = []
 
         class _Algorithm:
             class _Config:
@@ -255,12 +259,17 @@ class TestRewardUpdateFlow:
                 loss = signals.log_prob.mean()
                 return loss, TrainStepMetrics(loss=loss.item(), policy_loss=loss.item())
 
+            def after_optimizer_step(self, model, global_step):
+                del model
+                after_step_calls.append(global_step)
+
         class _Collector:
             async def score_rollouts(self, pendings):
                 return list(pendings)
 
             async def collect_unscored(self, prompts, **kwargs):
                 prompts = list(prompts)
+                collect_calls.append(list(prompts))
                 group_size = int(kwargs.get("group_size", 1))
                 batch_size = len(prompts) * group_size
                 group_ids = torch.tensor(
@@ -284,6 +293,10 @@ class TestRewardUpdateFlow:
                 del kw
                 return _trajectory_signals(batch, model.weight.view(1).expand(batch.rewards.shape[0]), timestep_idx)
 
+        class _Reward:
+            def reset_components(self):
+                pass
+
         model = nn.Linear(1, 1, bias=False)
         with torch.no_grad():
             model.weight.fill_(1.0)
@@ -294,7 +307,7 @@ class TestRewardUpdateFlow:
             evaluator=_Evaluator(),
             model=model,
             config=TrainerConfig(
-                rollout_batch_size=1,
+                rollout_batch_size=4,
                 timestep_fraction=1.0,
                 total_epochs=1,
                 drop_zero_advantage=False,
@@ -304,15 +317,28 @@ class TestRewardUpdateFlow:
                 debug=DebugConfig(),
                 n_samples_per_prompt=2,
                 bf16=False,
-                gradient_accumulation_steps=2,
+                gradient_accumulation_steps=4,
             ),
             device="cpu",
         )
 
-        asyncio.run(trainer.step(["prompt-a", "prompt-b", "prompt-c", "prompt-d"]))
+        asyncio.run(
+            _run_streaming_optimizer_update(
+                trainer,
+                _Reward(),
+                ["prompt-a", "prompt-b", "prompt-c", "prompt-d"],
+                gradient_accumulation_steps=4,
+                rollout_batch_size=4,
+                n_samples_per_prompt=2,
+            ),
+        )
 
+        # 4 microbatches of 1 prompt each, collected/trained/released separately.
+        assert collect_calls == [["prompt-a"], ["prompt-b"], ["prompt-c"], ["prompt-d"]]
+        # ...but ONE optimizer update: step/global_step advance once, NFT sync once.
         assert trainer.state.step == 1
-        assert trainer.state.global_step == 2
+        assert trainer.state.global_step == 1
+        assert after_step_calls == [0]
 
     def test_flow_grpo_loss_scaling_includes_timesteps(self) -> None:
         """Flow-GRPO accumulation scales loss by microbatches * train timesteps."""
@@ -325,9 +351,14 @@ class TestRewardUpdateFlow:
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.rollouts.batch import RolloutBatch
         from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
+        from vrl.scripts.common.online import _run_streaming_optimizer_update
         from vrl.trainers.online import OnlineTrainer
 
         recorded_grads: list[float] = []
+
+        class _Reward:
+            def reset_components(self):
+                pass
 
         class _Algorithm:
             class _Config:
@@ -387,7 +418,7 @@ class TestRewardUpdateFlow:
             evaluator=_Evaluator(),
             model=model,
             config=TrainerConfig(
-                rollout_batch_size=1,
+                rollout_batch_size=4,
                 timestep_fraction=1.0,
                 total_epochs=1,
                 drop_zero_advantage=False,
@@ -397,7 +428,7 @@ class TestRewardUpdateFlow:
                 debug=DebugConfig(),
                 n_samples_per_prompt=2,
                 bf16=False,
-                gradient_accumulation_steps=2,
+                gradient_accumulation_steps=4,
             ),
             device="cpu",
         )
@@ -411,15 +442,25 @@ class TestRewardUpdateFlow:
 
         trainer._clip_and_step = _recording_step  # type: ignore[method-assign]
 
-        asyncio.run(trainer.step(["prompt-a", "prompt-b", "prompt-c", "prompt-d"]))
+        asyncio.run(
+            _run_streaming_optimizer_update(
+                trainer,
+                _Reward(),
+                ["prompt-a", "prompt-b", "prompt-c", "prompt-d"],
+                gradient_accumulation_steps=4,
+                rollout_batch_size=4,
+                n_samples_per_prompt=2,
+            ),
+        )
 
-        # Each update accumulates 2 rollout microbatches * 3 timesteps.
-        # Without timestep-aware scaling these gradients would be 3.0.
-        assert recorded_grads == pytest.approx([1.0, 1.0])
-        assert trainer.state.global_step == 2
+        # One optimizer update over 4 microbatches (1 group each) * 3 timesteps:
+        # loss_scale = total_groups(4) * train_timesteps(3) = 12, so the single
+        # accumulated gradient is 1.0 (not 3.0 without timestep scaling, not 12.0).
+        assert recorded_grads == pytest.approx([1.0])
+        assert trainer.state.global_step == 1
 
-    def test_flow_grpo_zero_advantage_padding_rebatches_evenly(self) -> None:
-        """Flow-style zero-advantage filtering pads rows before rebatching."""
+    def test_streaming_matches_full_batch_gradient(self) -> None:
+        """Streaming microbatch path is gradient-equivalent to the full-batch path."""
         import asyncio
 
         import torch
@@ -427,36 +468,27 @@ class TestRewardUpdateFlow:
 
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.rollouts.batch import RolloutBatch
+        from vrl.scripts.common.online import _run_streaming_optimizer_update
         from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
         from vrl.trainers.online import OnlineTrainer
 
-        seen_batch_sizes: list[int] = []
-
         class _Algorithm:
             class _Config:
-                global_std = True
+                global_std = False
                 eps = 1e-8
                 adv_clip_max = 5.0
                 init_kl_coef = 0.0
 
             config = _Config()
 
-            def __init__(self) -> None:
-                self.advantages_seen: list[float] = []
-
             def compute_advantages_from_tensors(self, rewards, group_ids):
                 del group_ids
-                out = torch.zeros_like(rewards)
-                out[0] = 1.0
-                return out
+                return rewards - rewards.mean()
 
             def compute_loss(self, inputs):
                 signals, advantages, old_log_probs = _algorithm_inputs(inputs)
-                del old_log_probs
-                self.advantages_seen.extend(
-                    float(x) for x in advantages.detach().cpu().reshape(-1).tolist()
-                )
-                loss = signals.log_prob.mean() + advantages.mean() * 0.0
+                del advantages, old_log_probs
+                loss = signals.log_prob.mean()
                 return loss, TrainStepMetrics(loss=loss.item(), policy_loss=loss.item())
 
         class _Collector:
@@ -472,8 +504,8 @@ class TestRewardUpdateFlow:
                     dtype=torch.long,
                 )
                 return RolloutBatch(
-                    observations=torch.zeros(batch_size, 1, 1),
-                    actions=torch.zeros(batch_size, 1, 1),
+                    observations=torch.zeros(batch_size, 2, 1),
+                    actions=torch.zeros(batch_size, 2, 1),
                     rewards=torch.arange(batch_size, dtype=torch.float32),
                     dones=torch.ones(batch_size, dtype=torch.bool),
                     group_ids=group_ids,
@@ -483,42 +515,92 @@ class TestRewardUpdateFlow:
         class _Evaluator(Evaluator):
             def evaluate(self, model, batch, timestep_idx, **kw):
                 del kw
-                seen_batch_sizes.append(int(batch.rewards.shape[0]))
                 return _trajectory_signals(batch, model.weight.view(1).expand(batch.rewards.shape[0]), timestep_idx)
 
-        algorithm = _Algorithm()
-        model = nn.Linear(1, 1, bias=False)
-        with torch.no_grad():
-            model.weight.fill_(1.0)
+        class _Reward:
+            def reset_components(self):
+                pass
 
-        trainer = OnlineTrainer(
-            algorithm=algorithm,
-            collector=_Collector(),
-            evaluator=_Evaluator(),
-            model=model,
-            config=TrainerConfig(
-                rollout_batch_size=1,
-                timestep_fraction=1.0,
-                total_epochs=1,
-                output_dir="outputs/",
-                optim=OptimConfig(lr=0.01),
-                ema=EMAConfig(),
-                debug=DebugConfig(),
+        def _make_trainer(gas: int) -> OnlineTrainer:
+            model = nn.Linear(1, 1, bias=False)
+            with torch.no_grad():
+                model.weight.fill_(1.0)
+            return OnlineTrainer(
+                algorithm=_Algorithm(),
+                collector=_Collector(),
+                evaluator=_Evaluator(),
+                model=model,
+                config=TrainerConfig(
+                    rollout_batch_size=4,
+                    timestep_fraction=1.0,
+                    total_epochs=1,
+                    drop_zero_advantage=False,
+                    output_dir="outputs/",
+                    optim=OptimConfig(lr=0.1),
+                    ema=EMAConfig(),
+                    debug=DebugConfig(),
+                    n_samples_per_prompt=2,
+                    bf16=False,
+                    gradient_accumulation_steps=gas,
+                ),
+                device="cpu",
+            )
+
+        prompts = ["p0", "p1", "p2", "p3"]
+        trainer_full = _make_trainer(gas=0)
+        asyncio.run(trainer_full.step(list(prompts)))
+
+        trainer_stream = _make_trainer(gas=4)
+        asyncio.run(
+            _run_streaming_optimizer_update(
+                trainer_stream,
+                _Reward(),
+                list(prompts),
+                gradient_accumulation_steps=4,
+                rollout_batch_size=4,
                 n_samples_per_prompt=2,
-                bf16=False,
-                gradient_accumulation_steps=2,
-                drop_zero_advantage=True,
             ),
-            device="cpu",
         )
 
-        asyncio.run(trainer.step(["prompt-a", "prompt-b", "prompt-c"]))
+        assert trainer_full.state.global_step == 1
+        assert trainer_stream.state.global_step == 1
+        # Same accumulated gradient + one SGD step from identical init weights.
+        assert torch.allclose(
+            trainer_full.model.weight, trainer_stream.model.weight, atol=1e-6,
+        )
 
-        assert seen_batch_sizes == [1, 1, 1]
-        assert len(algorithm.advantages_seen) == 3
-        assert algorithm.advantages_seen.count(1.0) == 1
-        assert algorithm.advantages_seen.count(0.0) == 2
-        assert trainer.state.global_step == 2
+
+def test_gradient_accumulation_steps_validation() -> None:
+    """gradient_accumulation_steps must evenly divide rollout_batch_size when > 0."""
+    import pytest
+
+    from vrl.trainers.core.types import OptimConfig, TrainerConfig
+
+    def _cfg(rbs: int, gas: int, ppo: int = 1) -> TrainerConfig:
+        return TrainerConfig(
+            optim=OptimConfig(lr=1e-4),
+            n_samples_per_prompt=2,
+            rollout_batch_size=rbs,
+            timestep_fraction=0.5,
+            total_epochs=1,
+            output_dir="x",
+            drop_zero_advantage=False,
+            gradient_accumulation_steps=gas,
+            ppo_epochs=ppo,
+        )
+
+    # Valid: divisible (streaming) or 0 (legacy full-batch, any ppo_epochs).
+    for rbs, gas, ppo in [(32, 32, 1), (8, 4, 1), (4, 4, 1), (4, 0, 1), (4, 0, 3)]:
+        _cfg(rbs, gas, ppo)
+
+    with pytest.raises(ValueError, match="evenly divide"):
+        _cfg(6, 4)
+    with pytest.raises(ValueError, match="evenly divide"):
+        _cfg(1, 2)
+    with pytest.raises(ValueError, match="ppo_epochs"):
+        _cfg(4, 2, ppo=3)
+    with pytest.raises(ValueError, match=">= 0"):
+        _cfg(4, -1)
 
 
 def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:

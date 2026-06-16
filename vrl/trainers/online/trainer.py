@@ -18,13 +18,11 @@ import torch.nn as nn
 
 from vrl.algorithms.base import Algorithm
 from vrl.algorithms.types import TrainStepMetrics
-from vrl.rollouts.batch import RolloutBatch, stack_batches
+from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.batch.ops import (
     move_training_batch_to_device,
     nonzero_advantage_mask,
-    pad_zero_advantage_mask,
     select_batch,
-    shuffle_and_rebatch_batches,
 )
 from vrl.rollouts.orchestration import build_rollout_schedule
 from vrl.trainers.core.base import Trainer
@@ -482,43 +480,26 @@ class OnlineTrainer(Trainer):
         # the outer rollout epoch, pads enough zero-advantage rows back in for
         # exact rebatching, then shuffles/rebatches into
         # num_batches_per_epoch training microbatches.
+        # Per-group batches (one RolloutBatch per prompt group). Streaming
+        # accumulation (gradient_accumulation_steps>0) splits the optimizer
+        # target into prompt microbatches in the recipe loop, so the collector
+        # no longer rebatches internally; advantage stays per-group either way.
         filtered_batches: list[RolloutBatch] = []
         filtered_advs: list[torch.Tensor] = []
         if cfg.drop_zero_advantage:
-            if cfg.gradient_accumulation_steps > 0:
-                combined = stack_batches(all_batches)
-                mask = pad_zero_advantage_mask(
-                    nonzero_advantage_mask(advantages_all),
-                    num_batches=len(all_batches),
-                )
-                if bool(mask.any()):
-                    combined = select_batch(combined, mask)
-                    adv_all = advantages_all[mask.to(advantages_all.device)]
-                    filtered_batches, filtered_advs = shuffle_and_rebatch_batches(
-                        [combined],
-                        [adv_all],
-                        num_batches=len(all_batches),
-                    )
-            else:
-                for b, adv_b in zip(all_batches, adv_split, strict=True):
-                    mask = nonzero_advantage_mask(adv_b)
-                    if not bool(mask.any()):
-                        continue
-                    if not bool(mask.all()):
-                        b = select_batch(b, mask)
-                        adv_b = adv_b[mask.to(adv_b.device)]
-                    if b.rewards.shape[0] > 0:
-                        filtered_batches.append(b)
-                        filtered_advs.append(adv_b)
+            for b, adv_b in zip(all_batches, adv_split, strict=True):
+                mask = nonzero_advantage_mask(adv_b)
+                if not bool(mask.any()):
+                    continue
+                if not bool(mask.all()):
+                    b = select_batch(b, mask)
+                    adv_b = adv_b[mask.to(adv_b.device)]
+                if b.rewards.shape[0] > 0:
+                    filtered_batches.append(b)
+                    filtered_advs.append(adv_b)
         else:
             filtered_batches = list(all_batches)
             filtered_advs = adv_split
-            if cfg.gradient_accumulation_steps > 0:
-                filtered_batches, filtered_advs = shuffle_and_rebatch_batches(
-                    filtered_batches,
-                    filtered_advs,
-                    num_batches=len(all_batches),
-                )
 
         return TrainingBatch(
             iteration=iteration,
@@ -533,6 +514,207 @@ class OnlineTrainer(Trainer):
             pre_filter_reward_std=pre_filter_reward_std,
             pre_filter_adv_mean=pre_filter_adv_mean,
         )
+
+    @staticmethod
+    def _train_timestep_indices(num_timesteps: int, timestep_fraction: float) -> list[int]:
+        """Denoise timesteps that receive loss (single source of truth)."""
+        train_timestep_count = max(1, int(num_timesteps * timestep_fraction))
+        if train_timestep_count < num_timesteps:
+            step_size = num_timesteps / train_timestep_count
+            return [int(i * step_size) for i in range(train_timestep_count)]
+        return list(range(num_timesteps))
+
+    # ------------------------------------------------------------------
+    # Streaming accumulation boundary (gradient_accumulation_steps>0):
+    # begin -> backward(microbatch)* -> finish. One optimizer update spans
+    # several separately-collected prompt microbatches so the whole target
+    # batch never has to be materialized at once (SPRINT_streaming_rollout_
+    # accumulation). The legacy full-batch path keeps train_on_rollout_batch.
+    # ------------------------------------------------------------------
+
+    def begin_optimizer_update(self) -> None:
+        """Start one streaming optimizer update: reset grads + metric accumulator.
+
+        The recipe pairs this with ``reward_fn.reset_components()`` once per
+        update (the trainer holds no reward_fn reference).
+        """
+        self._update_optimizer = self._ensure_optimizer()
+        self._update_ema = self._ensure_ema()
+        self.model.train()
+        self._update_agg_metrics: dict[str, list[float]] = defaultdict(list)
+        self._update_optimizer.zero_grad(set_to_none=True)
+
+    async def backward_on_training_batch(
+        self,
+        batch: TrainingBatch,
+        *,
+        total_groups: int,
+    ) -> None:
+        """Evaluate + loss + backward for ONE collected microbatch; no optimizer step.
+
+        ``total_groups`` is the global prompt-group count across the whole
+        optimizer update (= rollout_batch_size); loss divides by
+        ``total_groups * num_train_timesteps`` so the accumulated gradient over
+        all microbatches equals the legacy full-batch path.
+        """
+        from vrl.algorithms.trajectory import AlgorithmAdapter, AlgorithmInput
+        from vrl.rollouts.evaluators.types import SignalRequest, TrajectorySignalBatch
+        from vrl.utils.profiling import record_function
+
+        cfg = self.config
+        if not batch.batches:
+            return
+        autocast_ctx = _get_autocast(cfg, self.device, model=self.model)
+        uses_evaluator = bool(getattr(self.algorithm, "uses_evaluator", True))
+        algorithm_adapter = AlgorithmAdapter()
+        defer = uses_evaluator and bool(
+            getattr(self.evaluator, "supports_deferred_replay_tensor_move", False),
+        )
+        device_batches = [
+            move_training_batch_to_device(b, self.device, defer_replay_tensors=defer)
+            for b in batch.batches
+        ]
+        device_advs = [adv.to(self.device) for adv in batch.advantages]
+        num_timesteps = device_batches[0].observations.shape[1]
+        train_indices = self._train_timestep_indices(num_timesteps, cfg.timestep_fraction)
+        loss_scale = int(total_groups) * len(train_indices)
+        agg = self._update_agg_metrics
+        for b, adv_b in zip(device_batches, device_advs, strict=True):
+            for j in train_indices:
+                with autocast_ctx:
+                    if not uses_evaluator:
+                        with record_function("trainer.loss"):
+                            loss, metrics = algorithm_adapter.compute_loss(
+                                self.algorithm,
+                                AlgorithmInput(
+                                    rewards=b.rewards,
+                                    group_ids=b.group_ids,
+                                    advantages=adv_b,
+                                    metadata={
+                                        "model": self.model,
+                                        "rollout_batch": b,
+                                        "timestep_index": j,
+                                    },
+                                ),
+                            )
+                    else:
+                        if self.evaluator is None:
+                            raise RuntimeError(
+                                f"{type(self.algorithm).__name__} requires an evaluator",
+                            )
+                        init_kl_coef = float(
+                            getattr(self.algorithm.config, "init_kl_coef", 0.0),
+                        )
+                        with record_function("trainer.replay"):
+                            signals = self.evaluator.evaluate(
+                                self.model,
+                                b,
+                                j,
+                                ref_model=self.ref_model,
+                                signal_request=SignalRequest(
+                                    need_ref=init_kl_coef > 0,
+                                    need_kl_intermediates=init_kl_coef > 0,
+                                ),
+                            )
+                        with record_function("trainer.loss"):
+                            if not isinstance(signals, TrajectorySignalBatch):
+                                raise TypeError(
+                                    "evaluator output must be TrajectorySignalBatch; "
+                                    f"got {type(signals).__name__}",
+                                )
+                            loss, metrics = algorithm_adapter.compute_loss(
+                                self.algorithm,
+                                AlgorithmInput(
+                                    signals=signals,
+                                    advantages=adv_b,
+                                    group_ids=b.group_ids,
+                                ),
+                            )
+                    loss = loss / loss_scale
+                self._backward(loss)
+                self._clear_algorithm_diagnostics()
+                agg["loss"].append(metrics.loss)
+                agg["policy_loss"].append(metrics.policy_loss)
+                agg["kl_penalty"].append(metrics.kl_penalty)
+                agg["clip_fraction"].append(metrics.clip_fraction)
+                agg["approx_kl"].append(metrics.approx_kl)
+                agg["logprob_abs_diff_mean"].append(metrics.logprob_abs_diff_mean)
+                agg["logprob_abs_diff_max"].append(metrics.logprob_abs_diff_max)
+                agg["ratio_abs_dev_mean"].append(metrics.ratio_abs_dev_mean)
+                agg["ratio_abs_dev_max"].append(metrics.ratio_abs_dev_max)
+                agg["mismatch_kl"].append(metrics.mismatch_kl)
+                agg["mismatch_k3_kl"].append(metrics.mismatch_k3_kl)
+                await asyncio.sleep(0)
+
+    async def finish_optimizer_update(
+        self,
+        *,
+        phase_times: dict[str, float],
+        reward_mean: float,
+        reward_std: float,
+        adv_mean: float,
+        adv_zero_rate: float,
+        adv_saturation: float,
+        group_size: float,
+        trained_prompt_num: int,
+    ) -> TrainStepMetrics:
+        """Clip + optimizer.step + EMA/NFT (once) and build the one update's metrics.
+
+        ``phase_times`` is the caller-aggregated collect/timer phase dict summed
+        across the update's microbatches — the streaming recipe owns aggregation
+        so each microbatch's tensors are released before this runs.
+        """
+        optimizer = self._update_optimizer
+        agg = self._update_agg_metrics
+        grad_norm, stepped = self._clip_and_step(optimizer)
+        agg["grad_norm"].append(grad_norm)
+        if stepped:
+            after_optimizer_step = getattr(self.algorithm, "after_optimizer_step", None)
+            if callable(after_optimizer_step):
+                after_optimizer_step(self.model, self.state.global_step)
+            if self._update_ema is not None:
+                trainable = [p for p in self.model.parameters() if p.requires_grad]
+                self._update_ema.step(trainable, self.state.global_step)
+        self.state.global_step += 1
+
+        def avg(key: str) -> float:
+            vals = agg.get(key, [])
+            return sum(vals) / len(vals) if vals else 0.0
+
+        def mx(key: str) -> float:
+            vals = agg.get(key, [])
+            return max(vals) if vals else 0.0
+
+        phase_times = dict(phase_times)
+        metrics = TrainStepMetrics(
+            loss=avg("loss"),
+            policy_loss=avg("policy_loss"),
+            kl_penalty=avg("kl_penalty"),
+            reward_mean=reward_mean,
+            reward_std=reward_std,
+            advantage_mean=adv_mean,
+            clip_fraction=avg("clip_fraction"),
+            approx_kl=avg("approx_kl"),
+            logprob_abs_diff_mean=avg("logprob_abs_diff_mean"),
+            logprob_abs_diff_max=mx("logprob_abs_diff_max"),
+            ratio_abs_dev_mean=avg("ratio_abs_dev_mean"),
+            ratio_abs_dev_max=mx("ratio_abs_dev_max"),
+            mismatch_kl=avg("mismatch_kl"),
+            mismatch_k3_kl=avg("mismatch_k3_kl"),
+            grad_norm=avg("grad_norm"),
+            adv_saturation=adv_saturation,
+            adv_zero_rate=adv_zero_rate,
+            group_size=group_size,
+            trained_prompt_num=trained_prompt_num,
+            phase_times=phase_times,
+        )
+        self.state.step += 1
+        self.state.total_reward += metrics.reward_mean
+        self.state.total_loss += metrics.loss
+        sync_phase_times = await self.rollout_schedule.after_train_step()
+        for key, value in sync_phase_times.items():
+            phase_times[key] = phase_times.get(key, 0.0) + value
+        return metrics
 
     async def train_on_rollout_batch(self, batch: TrainingBatch) -> TrainStepMetrics:
         """Train on a collected batch — the compute half of one step.

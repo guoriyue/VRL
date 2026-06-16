@@ -151,6 +151,73 @@ def enable_transformer_gradient_checkpointing(
         enable()
 
 
+async def _run_streaming_optimizer_update(
+    trainer: OnlineTrainer,
+    reward_fn: Any,
+    example_batch: list[Any],
+    *,
+    gradient_accumulation_steps: int,
+    rollout_batch_size: int,
+    n_samples_per_prompt: int,
+) -> Any:
+    """One optimizer update streamed over ``gradient_accumulation_steps`` microbatches.
+
+    Splits the ``rollout_batch_size`` prompts into microbatches and runs
+    collect -> backward -> RELEASE for each before the next, so host RAM holds
+    ~one microbatch of rollout/replay tensors instead of the whole target batch
+    (the memory fix that lets bigger models train on limited GPUs). One
+    optimizer.step / EMA / weight-sync / metric row per update; gradients
+    accumulate across microbatches with a global loss scale, so the update is
+    gradient-equivalent to the legacy full-batch path.
+    """
+    micro = rollout_batch_size // gradient_accumulation_steps
+    microbatches = [
+        example_batch[k : k + micro] for k in range(0, len(example_batch), micro)
+    ]
+    total_groups = int(rollout_batch_size)
+
+    reward_fn.reset_components()
+    trainer.begin_optimizer_update()
+
+    phase_times: dict[str, float] = {}
+    reward_mean_w = reward_std_w = adv_mean_w = adv_zero_w = adv_sat_w = 0.0
+    weight_total = 0
+    trained_prompt_num = 0
+    group_size = float(n_samples_per_prompt)
+    for microbatch in microbatches:
+        batch = await trainer.collect_training_batch(microbatch)
+        await trainer.backward_on_training_batch(batch, total_groups=total_groups)
+        # Sample-count-weighted aggregation of this microbatch's pre-filter stats
+        # so the one metric row reflects ALL samples, not the last microbatch.
+        weight = max(1, len(microbatch) * n_samples_per_prompt)
+        reward_mean_w += batch.pre_filter_reward_mean * weight
+        reward_std_w += batch.pre_filter_reward_std * weight
+        adv_mean_w += batch.pre_filter_adv_mean * weight
+        adv_zero_w += batch.adv_zero_rate * weight
+        adv_sat_w += batch.adv_saturation * weight
+        weight_total += weight
+        trained_prompt_num += int(batch.trained_prompt_num)
+        if batch.group_size:
+            group_size = float(batch.group_size)
+        mb_phase = trainer._step_stats(batch.iteration, batch.timer).as_phase_dict()
+        for key, value in mb_phase.items():
+            phase_times[key] = phase_times.get(key, 0.0) + value
+        # Release this microbatch's rollout/replay tensors before the next.
+        del batch
+
+    weight_total = max(1, weight_total)
+    return await trainer.finish_optimizer_update(
+        phase_times=phase_times,
+        reward_mean=reward_mean_w / weight_total,
+        reward_std=reward_std_w / weight_total,
+        adv_mean=adv_mean_w / weight_total,
+        adv_zero_rate=adv_zero_w / weight_total,
+        adv_saturation=adv_sat_w / weight_total,
+        group_size=group_size,
+        trained_prompt_num=trained_prompt_num,
+    )
+
+
 async def run_online_recipe(
     cfg: DictConfig,
     definition: OnlineRecipeDefinition,
@@ -376,8 +443,23 @@ async def run_online_recipe(
                 if maybe_awaitable is not None:
                     await maybe_awaitable
 
-            components.reward_fn.reset_components()
-            metrics = await trainer.step(example_batch)
+            if int(trainer_config.gradient_accumulation_steps) > 0:
+                # Streaming accumulation: split the optimizer-target batch into
+                # microbatches collected/trained/released one at a time so host
+                # RAM does not have to hold the whole batch at once.
+                metrics = await _run_streaming_optimizer_update(
+                    trainer,
+                    components.reward_fn,
+                    example_batch,
+                    gradient_accumulation_steps=int(
+                        trainer_config.gradient_accumulation_steps,
+                    ),
+                    rollout_batch_size=int(trainer_config.rollout_batch_size),
+                    n_samples_per_prompt=int(trainer_config.n_samples_per_prompt),
+                )
+            else:
+                components.reward_fn.reset_components()
+                metrics = await trainer.step(example_batch)
             _write_metric_row(
                 csv_path,
                 epoch,

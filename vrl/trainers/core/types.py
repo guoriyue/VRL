@@ -253,6 +253,38 @@ class TrainerConfig:
     # --- profiling ---
     profile: bool = field(default=False, metadata={"yaml": "trainer"})
 
+    def __post_init__(self) -> None:
+        # Streaming-accumulation semantics (SPRINT_streaming_rollout_accumulation):
+        # gradient_accumulation_steps is the number of rollout/train microsteps the
+        # optimizer-target batch (rollout_batch_size conditions) is split into. 0
+        # keeps the legacy unsplit full-batch collect+train+step path.
+        gas = int(self.gradient_accumulation_steps)
+        if gas < 0:
+            raise ValueError(
+                f"actor.gradient_accumulation_steps must be >= 0 (got {gas})",
+            )
+        if gas > 0:
+            rbs = int(self.rollout_batch_size)
+            if rbs % gas != 0:
+                raise ValueError(
+                    "actor.gradient_accumulation_steps must evenly divide "
+                    "rollout.rollout_batch_size when > 0 (it is the number of "
+                    "rollout/train microsteps the optimizer target batch is split "
+                    f"into): {rbs} % {gas} != 0",
+                )
+            if rbs // gas < 1:
+                raise ValueError(
+                    "rollout.rollout_batch_size // actor.gradient_accumulation_steps "
+                    f"must be >= 1 (got {rbs} // {gas} = {rbs // gas})",
+                )
+            if int(self.ppo_epochs) != 1:
+                raise ValueError(
+                    "actor.ppo_epochs must be 1 when actor.gradient_accumulation_steps "
+                    "> 0: streaming accumulation collects and releases each microbatch, "
+                    "so the same rollout cannot be replayed across epochs "
+                    f"(got ppo_epochs={self.ppo_epochs})",
+                )
+
 
 @dataclass(slots=True)
 class TrainState:
