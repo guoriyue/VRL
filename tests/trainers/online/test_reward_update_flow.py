@@ -340,6 +340,87 @@ class TestRewardUpdateFlow:
         assert trainer.state.global_step == 1
         assert after_step_calls == [0]
 
+    def test_streaming_releases_microbatch_before_next_collect(self) -> None:
+        """Streaming should not retain the previous rollout batch while collecting the next."""
+        import asyncio
+        import gc
+        import weakref
+
+        from vrl.scripts.common.online import _run_streaming_optimizer_update
+
+        class _Batch:
+            __slots__ = (
+                "__weakref__",
+                "adv_saturation",
+                "adv_zero_rate",
+                "group_size",
+                "iteration",
+                "pre_filter_adv_mean",
+                "pre_filter_reward_mean",
+                "pre_filter_reward_std",
+                "timer",
+                "trained_prompt_num",
+            )
+
+            def __init__(self) -> None:
+                self.iteration = object()
+                self.timer = object()
+                self.pre_filter_reward_mean = 1.0
+                self.pre_filter_reward_std = 0.0
+                self.pre_filter_adv_mean = 0.0
+                self.adv_zero_rate = 0.0
+                self.adv_saturation = 0.0
+                self.trained_prompt_num = 1
+                self.group_size = 2
+
+        class _Stats:
+            def as_phase_dict(self):
+                return {}
+
+        class _Trainer:
+            def __init__(self) -> None:
+                self.batch_refs = []
+
+            def begin_optimizer_update(self):
+                pass
+
+            async def collect_training_batch(self, prompts):
+                del prompts
+                if self.batch_refs:
+                    gc.collect()
+                    assert self.batch_refs[-1]() is None
+                batch = _Batch()
+                self.batch_refs.append(weakref.ref(batch))
+                return batch
+
+            async def backward_on_training_batch(self, batch, *, total_groups):
+                del batch, total_groups
+
+            def _step_stats(self, iteration, timer):
+                del iteration, timer
+                return _Stats()
+
+            async def finish_optimizer_update(self, **kwargs):
+                return kwargs
+
+        class _Reward:
+            def reset_components(self):
+                pass
+
+        trainer = _Trainer()
+        asyncio.run(
+            _run_streaming_optimizer_update(
+                trainer,
+                _Reward(),
+                ["prompt-a", "prompt-b"],
+                gradient_accumulation_steps=2,
+                rollout_batch_size=2,
+                n_samples_per_prompt=2,
+            ),
+        )
+        gc.collect()
+        assert trainer.batch_refs[-1]() is None
+
     def test_flow_grpo_loss_scaling_includes_timesteps(self) -> None:
         """Flow-GRPO accumulation scales loss by microbatches * train timesteps."""
         import asyncio
@@ -350,8 +431,8 @@ class TestRewardUpdateFlow:
 
         from vrl.algorithms.types import TrainStepMetrics
         from vrl.rollouts.batch import RolloutBatch
-        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
         from vrl.scripts.common.online import _run_streaming_optimizer_update
+        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
         from vrl.trainers.online import OnlineTrainer
 
         recorded_grads: list[float] = []
@@ -601,6 +682,41 @@ def test_gradient_accumulation_steps_validation() -> None:
         _cfg(4, 2, ppo=3)
     with pytest.raises(ValueError, match=">= 0"):
         _cfg(4, -1)
+
+
+def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
+    """Startup logs should make rollout microbatch residency visible."""
+    import logging
+
+    from vrl.scripts.common.online import _log_rollout_memory_plan
+    from vrl.trainers.core.types import OptimConfig, TrainerConfig
+
+    def _cfg(rbs: int, gas: int) -> TrainerConfig:
+        return TrainerConfig(
+            optim=OptimConfig(lr=1e-4),
+            n_samples_per_prompt=2,
+            rollout_batch_size=rbs,
+            timestep_fraction=1.0,
+            total_epochs=1,
+            output_dir="x",
+            drop_zero_advantage=False,
+            gradient_accumulation_steps=gas,
+        )
+
+    logger_name = "vrl.scripts.common.online"
+    with caplog.at_level(logging.INFO, logger=logger_name):
+        _log_rollout_memory_plan(_cfg(4, 4))
+    streaming_messages = [record.getMessage() for record in caplog.records]
+    assert any("streaming accumulation enabled" in msg for msg in streaming_messages)
+    assert any("microbatch_prompts=1" in msg for msg in streaming_messages)
+    assert any("target_samples_per_update=8" in msg for msg in streaming_messages)
+
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger=logger_name):
+        _log_rollout_memory_plan(_cfg(4, 0))
+    legacy_messages = [record.getMessage() for record in caplog.records]
+    assert any("legacy full-batch accumulation" in msg for msg in legacy_messages)
+    assert any("host RAM may hold up to 4 prompt groups" in msg for msg in legacy_messages)
 
 
 def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:

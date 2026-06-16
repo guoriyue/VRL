@@ -76,6 +76,46 @@ def _apply_precision_policy(cfg: DictConfig, trainer_config: Any) -> None:
     trainer_config.math_precision = policy.math
 
 
+def _log_rollout_memory_plan(trainer_config: Any) -> None:
+    """Log how many rollout tensors one optimizer update can hold at once."""
+
+    rollout_batch_size = int(trainer_config.rollout_batch_size)
+    samples_per_prompt = int(trainer_config.n_samples_per_prompt)
+    target_samples = rollout_batch_size * samples_per_prompt
+    gas = int(getattr(trainer_config, "gradient_accumulation_steps", 0))
+    if gas > 0:
+        microbatch_prompts = rollout_batch_size // gas
+        microbatch_samples = microbatch_prompts * samples_per_prompt
+        logger.info(
+            "Rollout memory plan: streaming accumulation enabled "
+            "(rollout_batch_size=%d, gradient_accumulation_steps=%d, "
+            "microbatch_prompts=%d, microbatch_samples=%d, "
+            "target_samples_per_update=%d)",
+            rollout_batch_size,
+            gas,
+            microbatch_prompts,
+            microbatch_samples,
+            target_samples,
+        )
+        return
+
+    logger.info(
+        "Rollout memory plan: legacy full-batch accumulation "
+        "(rollout_batch_size=%d, target_samples_per_update=%d)",
+        rollout_batch_size,
+        target_samples,
+    )
+    if rollout_batch_size > 1:
+        logger.warning(
+            "Legacy full-batch rollout accumulation is enabled; host RAM may hold "
+            "up to %d prompt groups (%d samples) before backward. Set "
+            "actor.gradient_accumulation_steps to a divisor of rollout_batch_size "
+            "to stream rollout microbatches and fail earlier on memory issues.",
+            rollout_batch_size,
+            target_samples,
+        )
+
+
 def default_reference_model(bundle: Any, cfg: Any) -> Any | None:
     """Reference model for KL: the (LoRA) policy itself when use_lora and init_kl_coef>0, else None."""
 
@@ -186,24 +226,28 @@ async def _run_streaming_optimizer_update(
     group_size = float(n_samples_per_prompt)
     for microbatch in microbatches:
         batch = await trainer.collect_training_batch(microbatch)
-        await trainer.backward_on_training_batch(batch, total_groups=total_groups)
-        # Sample-count-weighted aggregation of this microbatch's pre-filter stats
-        # so the one metric row reflects ALL samples, not the last microbatch.
-        weight = max(1, len(microbatch) * n_samples_per_prompt)
-        reward_mean_w += batch.pre_filter_reward_mean * weight
-        reward_std_w += batch.pre_filter_reward_std * weight
-        adv_mean_w += batch.pre_filter_adv_mean * weight
-        adv_zero_w += batch.adv_zero_rate * weight
-        adv_sat_w += batch.adv_saturation * weight
-        weight_total += weight
-        trained_prompt_num += int(batch.trained_prompt_num)
-        if batch.group_size:
-            group_size = float(batch.group_size)
-        mb_phase = trainer._step_stats(batch.iteration, batch.timer).as_phase_dict()
-        for key, value in mb_phase.items():
-            phase_times[key] = phase_times.get(key, 0.0) + value
-        # Release this microbatch's rollout/replay tensors before the next.
-        del batch
+        try:
+            await trainer.backward_on_training_batch(batch, total_groups=total_groups)
+            # Sample-count-weighted aggregation of this microbatch's pre-filter stats
+            # so the one metric row reflects ALL samples, not the last microbatch.
+            weight = max(1, len(microbatch) * n_samples_per_prompt)
+            reward_mean_w += batch.pre_filter_reward_mean * weight
+            reward_std_w += batch.pre_filter_reward_std * weight
+            adv_mean_w += batch.pre_filter_adv_mean * weight
+            adv_zero_w += batch.adv_zero_rate * weight
+            adv_sat_w += batch.adv_saturation * weight
+            weight_total += weight
+            trained_prompt_num += int(batch.trained_prompt_num)
+            if batch.group_size:
+                group_size = float(batch.group_size)
+            mb_phase = trainer._step_stats(batch.iteration, batch.timer).as_phase_dict()
+            for key, value in mb_phase.items():
+                phase_times[key] = phase_times.get(key, 0.0) + value
+        finally:
+            # Release this microbatch's rollout/replay tensors before the next,
+            # including exception paths where traceback locals can otherwise keep
+            # large batches alive longer than needed.
+            del batch
 
     weight_total = max(1, weight_total)
     return await trainer.finish_optimizer_update(
@@ -230,6 +274,8 @@ async def run_online_recipe(
     if definition.configure_trainer is not None:
         definition.configure_trainer(cfg, trainer_config)
     _apply_precision_policy(cfg, trainer_config)
+    _log_rollout_memory_plan(trainer_config)
+    gradient_accumulation_steps = int(getattr(trainer_config, "gradient_accumulation_steps", 0))
     if trainer_config.profile:
         os.environ["VRL_PROFILE_COLLECT"] = "1"
 
@@ -443,7 +489,7 @@ async def run_online_recipe(
                 if maybe_awaitable is not None:
                     await maybe_awaitable
 
-            if int(trainer_config.gradient_accumulation_steps) > 0:
+            if gradient_accumulation_steps > 0:
                 # Streaming accumulation: split the optimizer-target batch into
                 # microbatches collected/trained/released one at a time so host
                 # RAM does not have to hold the whole batch at once.
@@ -451,9 +497,7 @@ async def run_online_recipe(
                     trainer,
                     components.reward_fn,
                     example_batch,
-                    gradient_accumulation_steps=int(
-                        trainer_config.gradient_accumulation_steps,
-                    ),
+                    gradient_accumulation_steps=gradient_accumulation_steps,
                     rollout_batch_size=int(trainer_config.rollout_batch_size),
                     n_samples_per_prompt=int(trainer_config.n_samples_per_prompt),
                 )

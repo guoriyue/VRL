@@ -124,9 +124,9 @@ def test_cosmos_predict2_from_spec_swaps_safety_checker_and_re_enables_grad(
         device="cuda:0",
     )
 
-    # The wrapper flips the process-global grad flag; restore it after the test
-    # so neighbouring tests are not affected regardless of outcome.
-    grad_was_enabled = torch.is_grad_enabled()
+    # The wrapper's contract is to leave training code with autograd enabled
+    # after diffusers' loader disables it globally. Keep that process-global
+    # state true after the test so downstream trainer tests are not affected.
     try:
         model = CosmosPredict2Model.from_spec(spec)
 
@@ -162,4 +162,4 @@ def test_cosmos_predict2_from_spec_swaps_safety_checker_and_re_enables_grad(
         assert pipeline.text_encoder.requires_grad_enabled is False
         assert pipeline.text_encoder.to_calls == [("cuda:0", torch.bfloat16)]
     finally:
-        torch.set_grad_enabled(grad_was_enabled)
+        torch.set_grad_enabled(True)
