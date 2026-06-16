@@ -142,6 +142,7 @@ class RayGenerationLauncher:
             owned_workers=workers,
             owned_actors=[],
             placement_group=owned_placement_group,
+            colocated=rollout_config.allow_driver_gpu_overlap,
         )
         if contract.policy_version is not None:
             runtime.current_policy_version = contract.policy_version
@@ -182,9 +183,7 @@ class RayGenerationLauncher:
                     "built by a GlobalRayPlacementOwner.",
                 )
             if config.release_after_collect:
-                from vrl.generation.ray.runtime import ReleasableRayGenerationRuntime
-
-                return ReleasableRayGenerationRuntime(
+                return RayGenerationRuntime.with_release_after_collect(
                     config,
                     resolved_contract,
                     gatherer,
@@ -227,6 +226,9 @@ class RayGenerationLauncher:
         resolved_executor_kwargs.update(dict(executor_kwargs or {}))
         runtime_extra = _runtime_extra(cfg)
         runtime_extra["family_capability"] = entry.capability.to_dict()
+        if ray_config.gpu_memory_fraction is not None:
+            # Worker-side allocator cap for colocated rollout (applied in load_policy).
+            runtime_extra["gpu_memory_fraction"] = ray_config.gpu_memory_fraction
         runtime_build_payload = _runtime_build_payload(runtime_build)
         _apply_rollout_compile_override(runtime_build_payload, cfg, entry)
 

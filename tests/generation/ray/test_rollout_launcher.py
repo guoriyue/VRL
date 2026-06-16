@@ -216,15 +216,46 @@ def test_owner_placement_runtime_does_not_own_placement_group() -> None:
         ray.shutdown()
 
 
-def test_releasable_owner_placement_survives_release_memory() -> None:
-    """Releasable runtime drops workers on release but never the owner-managed PG."""
+def test_launcher_marks_explicit_colocated_persistent_runtime() -> None:
+    """Launcher preserves the colocated bit for single-GPU continuous debug."""
     ray = pytest.importorskip("ray")
-    from vrl.generation.ray.runtime import ReleasableRayGenerationRuntime
+    import vrl.generation.ray.launcher as launcher_mod
 
     ray.shutdown()
     ray.init(ignore_reinit_error=True, include_dashboard=False, num_cpus=2, log_to_driver=False)
     owner = _cpu_rollout_owner(ray)
-    runtime = ReleasableRayGenerationRuntime(
+    runtime: RayGenerationRuntime | None = None
+    try:
+        runtime = launcher_mod.RayGenerationLauncher(init_ray=False).launch(
+            RayGenerationConfig(
+                num_workers=1,
+                gpus_per_worker=0.0,
+                cpus_per_worker=0.5,
+                allow_driver_gpu_overlap=True,
+                persistent_colocated_workers=True,
+                sync_trainable_state="disabled",
+            ),
+            _launch_contract(),
+            _Gatherer(),
+            placement=owner.rollout_placement,
+        )
+
+        assert runtime.is_colocated() is True
+    finally:
+        if runtime is not None:
+            asyncio.run(runtime.shutdown())
+        owner.shutdown()
+        ray.shutdown()
+
+
+def test_release_after_collect_owner_placement_survives_release_memory() -> None:
+    """Release-after-collect runtime drops workers but never the owner-managed PG."""
+    ray = pytest.importorskip("ray")
+
+    ray.shutdown()
+    ray.init(ignore_reinit_error=True, include_dashboard=False, num_cpus=2, log_to_driver=False)
+    owner = _cpu_rollout_owner(ray)
+    runtime = RayGenerationRuntime.with_release_after_collect(
         RayGenerationConfig(
             num_workers=1,
             gpus_per_worker=0.0,
@@ -241,7 +272,8 @@ def test_releasable_owner_placement_survives_release_memory() -> None:
         inner = asyncio.run(runtime._ensure_runtime())
         assert inner._placement_group is None  # inner never owned the PG
         asyncio.run(runtime.release_memory())
-        assert runtime._runtime is None
+        assert runtime._release_after_collect is not None
+        assert runtime._release_after_collect.runtime is None
         # ...but the owner's placement group is untouched and reacquire works.
         assert owner._placement_group is not None
         reacquired = asyncio.run(runtime._ensure_runtime())

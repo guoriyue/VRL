@@ -82,7 +82,7 @@ OOM split 降级为安全网（成本模型标定误差的兜底），不再是�
 ### L3 带标签的相位交接（替换 kill/relaunch）
 
 ```text
-现状：ReleasableRayGenerationRuntime 整 actor 拆毁重建（NFT 周期 ~5min 重载）
+现状：RayGenerationRuntime 的 release-after-collect 模式整 actor 拆毁重建（NFT 周期 ~5min 重载）
 目标：slime 形状——权重 tag 常驻、激活/缓冲 tag 释放；reward 相位只让出激活
   显存，回到 rollout 相位免重载
 依赖：torch_memory_saver 或等价的 allocator pause/resume；风险在与

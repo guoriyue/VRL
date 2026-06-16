@@ -53,8 +53,12 @@ class GenerationWorkerCore:
 
         if self.executor is not None:
             return
+        from vrl.utils.cuda_memory import cap_cuda_memory_fraction
         from vrl.utils.memory import log_host_memory
 
+        # Cap the allocator before the model loads so a colocated worker leaves the
+        # trainer its share of the shared GPU (no-op when unset / dedicated GPU).
+        cap_cuda_memory_fraction(self.launch_contract.extra.get("gpu_memory_fraction"))
         log_host_memory(f"generation_worker:{self.worker_id}:before_load_policy", log=logger)
         self.executor = self._build_executor()
         self.capability = self._merge_loaded_capability(self.executor)

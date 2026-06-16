@@ -12,10 +12,7 @@ from vrl.generation.ray.pipeline_runner import (
     RayPipelineRunner,
     RayPipelineStageHandle,
 )
-from vrl.generation.ray.runtime import (
-    RayGenerationRuntime,
-    ReleasableRayGenerationRuntime,
-)
+from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.stage_worker import RayPipelineStageWorker
 
 __all__ = [
@@ -27,5 +24,4 @@ __all__ = [
     "RayPipelineRunner",
     "RayPipelineStageHandle",
     "RayPipelineStageWorker",
-    "ReleasableRayGenerationRuntime",
 ]

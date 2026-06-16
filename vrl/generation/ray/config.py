@@ -34,6 +34,10 @@ class RayGenerationConfig:
     sync_trainable_state: str = "disabled"
     release_after_collect: bool = False
     release_before_reward_model: bool = False
+    persistent_colocated_workers: bool = False
+    # Hard cap on this worker's CUDA allocator share, in (0, 1]; None = no cap.
+    # Applied in the worker process via torch.cuda.set_per_process_memory_fraction.
+    gpu_memory_fraction: float | None = None
     resources: ResolvedDistributedResources | None = None
 
     def __post_init__(self) -> None:
@@ -53,6 +57,16 @@ class RayGenerationConfig:
             raise ValueError(
                 "chunk_placement_strategy must be 'round_robin' or 'dynamic'",
             )
+        if self.persistent_colocated_workers and not self.allow_driver_gpu_overlap:
+            raise ValueError(
+                "persistent_colocated_workers=true requires trainer/rollout GPU overlap",
+            )
+        if self.persistent_colocated_workers and self.release_after_collect:
+            raise ValueError(
+                "persistent_colocated_workers=true requires release_after_collect=false",
+            )
+        if self.gpu_memory_fraction is not None and not 0.0 < self.gpu_memory_fraction <= 1.0:
+            raise ValueError("gpu_memory_fraction must be in (0, 1] when set")
 
     @classmethod
     def from_cfg(cls, cfg: Any) -> RayGenerationConfig:
@@ -97,6 +111,8 @@ class RayGenerationConfig:
             # (resolve_distributed_resources is the single source of truth).
             release_after_collect=resources.rollout_release_after_collect,
             release_before_reward_model=resources.rollout_release_before_reward_model,
+            persistent_colocated_workers=resources.rollout_persistent_colocated_workers,
+            gpu_memory_fraction=resources.rollout_gpu_memory_fraction,
             resources=resources,
         )
 
@@ -137,6 +153,8 @@ class RayGenerationConfig:
             "chunk_placement_strategy": self.chunk_placement_strategy,
             "release_after_collect": self.release_after_collect,
             "release_before_reward_model": self.release_before_reward_model,
+            "persistent_colocated_workers": self.persistent_colocated_workers,
+            "gpu_memory_fraction": self.gpu_memory_fraction,
         }
 
 
@@ -177,11 +195,13 @@ def _validate_driver_cuda_ownership(
             "for single-GPU debug.",
         )
 
-    if not config.release_after_collect:
+    if not config.release_after_collect and not config.persistent_colocated_workers:
         raise ValueError(
             f"Trainer device cuda:{overlap_list[0]} overlaps rollout devices "
             f"{rollout_devices}, but distributed.rollout.release_after_collect=false. "
-            "Set release_after_collect=true for single-GPU Ray debug.",
+            "Set release_after_collect=true for single-GPU Ray debug, or set "
+            "persistent_colocated_workers=true only for tiny continuous-rollout "
+            "debug runs that intentionally keep both policies resident.",
         )
 
 

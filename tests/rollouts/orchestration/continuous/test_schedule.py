@@ -213,6 +213,23 @@ async def test_rejects_colocated_runtime() -> None:
         await schedule.next_iteration(["p0"], group_size=1)
 
 
+@pytest.mark.asyncio
+async def test_allows_colocated_runtime_when_separate_gpu_requirement_is_disabled() -> None:
+    """Checks single-GPU continuous debug can opt into colocated rollout."""
+    runtime = _Runtime()
+    runtime.colocated = True
+    config = _continuous_config()
+    config.require_separate_gpus = False
+    schedule = _build(config, _Collector(runtime), _Syncer(runtime))
+
+    try:
+        iteration = await schedule.next_iteration(["p0"], group_size=1)
+        assert iteration.mode is RolloutScheduleMode.CONTINUOUS
+        assert iteration.policy_version == 1
+    finally:
+        await schedule.producer.stop()
+
+
 class _FailingCollector(_Collector):
     def __init__(self, runtime: _Runtime, message: str = "boom") -> None:
         super().__init__(runtime)

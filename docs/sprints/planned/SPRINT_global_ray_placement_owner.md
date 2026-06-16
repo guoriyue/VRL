@@ -12,8 +12,9 @@ mapping、rollout/reward owner-managed placement、online recipe cleanup 已落�
   run-level owner 创建、probe、持有并关闭唯一 placement group。
 - `vrl/ray/resources.py` 的 `BundleLayout` 是 role bundle plan 的 source of truth；
   旧的 reward offset / resource plan 冗余字段已删除。
-- `vrl/generation/ray/launcher.py` 与 `ReleasableRayGenerationRuntime` 接收
-  owner-managed placement；`release_memory()` 只释放 rollout actors，不移除 owner PG。
+- `vrl/generation/ray/launcher.py` 与 `RayGenerationRuntime` 的
+  release-after-collect 模式接收 owner-managed placement；`release_memory()` 只释放
+  rollout actors，不移除 owner PG。
 - `vrl/ray/runtime.py` / `vrl/rewards/ray/runtime.py` 接收 reward role placement；
   reward runtime release 只释放 reward actors，不移除 owner PG。
 - `vrl/scripts/common/online.py` 在 run 开始创建 owner，并在 `finally` 中按
@@ -22,8 +23,8 @@ mapping、rollout/reward owner-managed placement、online recipe cleanup 已落�
 - `tests/scripts/test_online_lifecycle.py` 覆盖 run-level 生命周期：正常结束、owner create
   失败、rollout launch 失败、reward/collector 构建失败、final checkpoint 失败、cleanup
   失败不覆盖训练异常。
-- `tests/generation/ray/test_rollout_launcher.py` 已覆盖 releasable runtime release 不删除
-  owner-managed PG。
+- `tests/generation/ray/test_rollout_launcher.py` 已覆盖 release-after-collect runtime
+  release 不删除 owner-managed PG。
 
 剩余项 / 转出：
 
@@ -72,7 +73,8 @@ online.py
 
 ## 1. Why Full Is A Separate Sprint
 
-`ReleasableRayGenerationRuntime` 的 scoped 优化只解决 rollout PG 每 epoch 重建。
+`RayGenerationRuntime` 的 release-after-collect scoped 优化只解决 rollout PG 每 epoch
+重建。
 full 版本要改的是 resource model：
 
 ```text
@@ -196,7 +198,7 @@ trainer reservation is skipped when it cannot protect remote nodes
 ```text
 rollout creates its own PG
 reward creates its own PG
-ReleasableRayGenerationRuntime release removes rollout PG
+RayGenerationRuntime release-after-collect release removes rollout PG
 reward_gpu_reservation_count protects reward placement in split-GPU plans
 shared rollout/reward derives release_after_collect / release_before_reward_model / release_after_score
 ```
@@ -399,7 +401,7 @@ Keep:
 
 ```text
 RayGenerationLauncher: rollout actor launch boundary
-RayGenerationRuntime / ReleasableRayGenerationRuntime: collector-facing runtime boundary
+RayGenerationRuntime: collector-facing runtime boundary, including resident and release-after-collect lifecycles
 RayRewardRuntime: reward transport boundary
 RayActorMethodRuntime: generic actor-method adapter
 RayActorGroup: actor launch facade
@@ -436,7 +438,7 @@ reward execution:
 
 verification:
   - keep run-level lifecycle tests green
-  - keep releasable runtime release from deleting owner PG
+  - keep release-after-collect runtime release from deleting owner PG
 ```
 
 ## 10. References

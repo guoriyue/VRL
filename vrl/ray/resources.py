@@ -53,6 +53,12 @@ class DistributedResourceConfig:
     # Explicit values that contradict a shared topology fail in validation.
     rollout_release_after_collect: bool | None = None
     rollout_release_before_reward_model: bool | None = None
+    rollout_persistent_colocated_workers: bool = False
+    # Hard cap on the rollout worker's share of its GPU, in (0, 1]. None means
+    # "no cap" (the worker owns its whole dedicated GPU). Required when
+    # persistent_colocated_workers is set: the worker then shares the trainer GPU,
+    # so its allocator must be bounded to leave the trainer room.
+    rollout_gpu_memory_fraction: float | None = None
     reward_release_after_score: bool | None = None
     reward_placement_strategy: str = "SPREAD"
     reward_cpus_per_worker: float = 0.5
@@ -79,6 +85,8 @@ class ResolvedDistributedResources:
     reward_shared_with_rollout: bool
     rollout_release_after_collect: bool
     rollout_release_before_reward_model: bool
+    rollout_persistent_colocated_workers: bool
+    rollout_gpu_memory_fraction: float | None
     reward_release_after_score: bool
     reward_placement_strategy: str
     reward_cpus_per_worker: float
@@ -212,11 +220,49 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
     if training_strategy == "fsdp":
         _validate_fsdp_trainer_disjoint(trainer_devices, rollout_devices, reward_devices)
 
+    if config.rollout_persistent_colocated_workers and not colocated:
+        raise ValueError(
+            "distributed.rollout.persistent_colocated_workers=true requires "
+            "trainer and rollout devices to overlap",
+        )
+    if config.rollout_persistent_colocated_workers and reward_shared_with_rollout:
+        raise ValueError(
+            "distributed.rollout.persistent_colocated_workers=true cannot share "
+            "the rollout GPU with a Ray reward worker",
+        )
+    if (
+        config.rollout_persistent_colocated_workers
+        and config.rollout_release_after_collect is True
+    ):
+        raise ValueError(
+            "distributed.rollout.persistent_colocated_workers=true requires "
+            "distributed.rollout.release_after_collect=false",
+        )
+    gpu_memory_fraction = config.rollout_gpu_memory_fraction
+    if gpu_memory_fraction is not None and not 0.0 < gpu_memory_fraction <= 1.0:
+        raise ValueError(
+            "distributed.rollout.gpu_memory_fraction must be in (0, 1] when set, got "
+            f"{gpu_memory_fraction}",
+        )
+    if config.rollout_persistent_colocated_workers and gpu_memory_fraction is None:
+        # Resident worker + resident trainer on one GPU: without a cap the worker's
+        # allocator can grow until the trainer's backward OOMs. Force an explicit
+        # budget so the split is declared, not hoped for (cf. vLLM/cosmos-rl
+        # gpu_memory_utilization on the colocated rollout backend).
+        raise ValueError(
+            "distributed.rollout.persistent_colocated_workers=true requires an "
+            "explicit distributed.rollout.gpu_memory_fraction in (0, 1): the rollout "
+            "worker shares the trainer GPU, so cap its share to leave the trainer room",
+        )
+
     # Unset release flags follow the resolved topology: roles that share a GPU
     # must hand it over between phases; roles with dedicated GPUs stay resident.
+    # The explicit single-GPU async debug path opts out for tiny workloads that
+    # intentionally keep trainer and rollout workers resident together.
     rollout_release_after_collect = _derived_release_flag(
         config.rollout_release_after_collect,
-        derived=colocated or reward_shared_with_rollout,
+        derived=(colocated or reward_shared_with_rollout)
+        and not config.rollout_persistent_colocated_workers,
     )
     rollout_release_before_reward_model = _derived_release_flag(
         config.rollout_release_before_reward_model,
@@ -258,6 +304,8 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
         reward_shared_with_rollout=reward_shared_with_rollout,
         rollout_release_after_collect=rollout_release_after_collect,
         rollout_release_before_reward_model=rollout_release_before_reward_model,
+        rollout_persistent_colocated_workers=config.rollout_persistent_colocated_workers,
+        rollout_gpu_memory_fraction=gpu_memory_fraction,
         reward_release_after_score=reward_release_after_score,
         reward_placement_strategy=config.reward_placement_strategy,
         reward_cpus_per_worker=config.reward_cpus_per_worker,
@@ -349,6 +397,9 @@ def format_distributed_resource_plan(
         f"reward_gpus_per_worker={resolved.reward_gpus_per_worker:g}",
         f"reward_shared_with_rollout={resolved.reward_shared_with_rollout}",
         f"rollout_release_after_collect={resolved.rollout_release_after_collect}",
+        "rollout_persistent_colocated_workers="
+        f"{resolved.rollout_persistent_colocated_workers}",
+        f"rollout_gpu_memory_fraction={resolved.rollout_gpu_memory_fraction}",
         "rollout_release_before_reward_model="
         f"{resolved.rollout_release_before_reward_model}",
         f"reward_release_after_score={resolved.reward_release_after_score}",
@@ -403,6 +454,12 @@ def _distributed_resource_config_from_cfg(cfg: Any) -> DistributedResourceConfig
         ),
         rollout_release_before_reward_model=_parse_optional_bool(
             cfg_get(rollout_runtime, "release_before_reward_model", None),
+        ),
+        rollout_persistent_colocated_workers=bool(
+            cfg_get(rollout_runtime, "persistent_colocated_workers", False),
+        ),
+        rollout_gpu_memory_fraction=_parse_optional_float(
+            cfg_get(rollout_runtime, "gpu_memory_fraction", None),
         ),
         reward_release_after_score=_parse_optional_bool(
             cfg_get(reward_runtime, "release_after_score", None),
@@ -995,6 +1052,18 @@ def _parse_optional_bool(value: Any) -> bool | None:
     if value is None:
         return None
     return bool(value)
+
+
+def _parse_optional_float(value: Any) -> float | None:
+    value = _to_plain(value)
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"distributed.rollout.gpu_memory_fraction must be a float or null, got {value!r}",
+        ) from exc
 
 
 def _derived_release_flag(explicit: bool | None, *, derived: bool) -> bool:

@@ -1,0 +1,73 @@
+# SD 3.5 OCR GRPO - single-GPU continuous rollout debug.
+#
+# This is a tiny orchestration probe, not a throughput profile. It intentionally
+# keeps the trainer replay model and the Ray rollout worker resident on one GPU,
+# so only use it for small shapes that you know fit together.
+#
+# Usage:
+#   CUDA_VISIBLE_DEVICES=0 vrl-train \
+#     --config experiment/diffusion/sd3_5/online_grpo_ocr_single_gpu_async_debug
+defaults:
+  - /recipe/online/flow_matching_grpo
+  - /model/diffusion/sd3_5/medium
+  - /sampling/image/512
+  - /sampling/denoise/10_step_cfg_4_5
+  - /reward/ocr
+  - /dataset/ocr
+  - /base/rollout/orchestration/continuous
+
+precision: bf16
+
+sampling:
+  height: 128
+  width: 128
+  num_steps: 4
+  max_sequence_length: 64
+
+distributed:
+  rollout:
+    # Keep the rollout worker resident instead of using the normal single-GPU
+    # release-after-collect path. This is what makes continuous overlap observable
+    # on one GPU, and it is only safe for tiny debug workloads.
+    release_after_collect: false
+    persistent_colocated_workers: true
+    # Hard-cap the resident rollout worker's GPU share so it cannot starve the
+    # trainer on the shared card (required by persistent_colocated_workers). The
+    # trainer gets the remaining ~0.55; both fit at the tiny 128x128/4-step shape.
+    gpu_memory_fraction: 0.45
+
+actor:
+  optim:
+    lr: 3.0e-4
+  gradient_accumulation_steps: 1
+  gradient_checkpointing: false
+
+algorithm:
+  init_kl_coef: 0.04
+  global_std: true
+
+rollout:
+  n_samples_per_prompt: 2
+  rollout_batch_size: 2
+  sample_batch_size: 1
+
+trainer:
+  entrypoint: vrl.scripts.diffusion.sd3_5.train:train_sd3_5_grpo
+  output_dir: outputs/sd3_5_ocr_grpo_single_gpu_async_debug
+  total_epochs: 3
+  save_freq: 9999
+  profile: true
+  debug:
+    first_step: true
+
+  rollout_orchestration:
+    require_separate_gpus: false
+    continuous:
+      max_inflight_groups: 2
+      max_ready_groups: 4
+      max_stale_policy_versions: 1
+      max_ready_bytes_mb: 4096
+
+model:
+  torch_compile:
+    enable: false

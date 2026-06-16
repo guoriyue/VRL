@@ -13,21 +13,18 @@ import pytest
 
 from vrl.generation.protocols import PolicyVersionProvider
 from vrl.generation.ray.config import RayGenerationConfig
-from vrl.generation.ray.runtime import (
-    RayGenerationRuntime,
-    ReleasableRayGenerationRuntime,
-)
+from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.ray.placement import RolePlacement
 from vrl.trainers.weight_sync import RayRuntimeWeightSyncer, WeightSyncer
 
 
-def _releasable_runtime(
+def _release_after_collect_runtime(
     *,
     release_before_reward_model: bool = False,
     reward_shared_with_rollout: bool = False,
     allow_driver_gpu_overlap: bool = False,
     colocated: bool = False,
-) -> ReleasableRayGenerationRuntime:
+) -> RayGenerationRuntime:
     config = RayGenerationConfig(
         release_before_reward_model=release_before_reward_model,
         allow_driver_gpu_overlap=allow_driver_gpu_overlap,
@@ -36,7 +33,7 @@ def _releasable_runtime(
             colocated=colocated,
         ),
     )
-    return ReleasableRayGenerationRuntime(
+    return RayGenerationRuntime.with_release_after_collect(
         config,
         launch_contract=SimpleNamespace(policy_version=None),
         gatherer=object(),
@@ -64,8 +61,8 @@ def test_persistent_runtime_never_releases_before_reward() -> None:
         (False, True, False),  # not in release mode
     ],
 )
-def test_releasable_runtime_release_decision(release_flag, shared, expected) -> None:
-    runtime = _releasable_runtime(
+def test_release_after_collect_runtime_release_decision(release_flag, shared, expected) -> None:
+    runtime = _release_after_collect_runtime(
         release_before_reward_model=release_flag,
         reward_shared_with_rollout=shared,
     )
@@ -88,8 +85,8 @@ def test_persistent_runtime_is_not_colocated() -> None:
         (False, False, False),
     ],
 )
-def test_releasable_runtime_colocation(overlap, colocated, expected) -> None:
-    runtime = _releasable_runtime(
+def test_release_after_collect_runtime_colocation(overlap, colocated, expected) -> None:
+    runtime = _release_after_collect_runtime(
         allow_driver_gpu_overlap=overlap,
         colocated=colocated,
     )
@@ -101,9 +98,9 @@ def test_releasable_runtime_colocation(overlap, colocated, expected) -> None:
 # --------------------------------------------------------------------------
 def test_runtimes_satisfy_policy_version_provider() -> None:
     persistent = RayGenerationRuntime(executor=object())
-    releasable = _releasable_runtime()
+    release_after_collect = _release_after_collect_runtime()
     assert isinstance(persistent, PolicyVersionProvider)
-    assert isinstance(releasable, PolicyVersionProvider)
+    assert isinstance(release_after_collect, PolicyVersionProvider)
 
 
 def test_weight_syncer_reports_its_runtime_version() -> None:

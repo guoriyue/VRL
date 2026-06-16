@@ -279,6 +279,22 @@ def test_rollout_orchestration_group_override_uses_rollout_namespace() -> None:
     assert typed.weight_sync_barrier == "pause_admission_and_drain_inflight"
 
 
+def test_sd35_single_gpu_async_debug_uses_persistent_colocated_rollout() -> None:
+    """Checks the single-GPU async debug recipe opts into colocated continuous rollout."""
+    cfg = load_config("experiment/diffusion/sd3_5/online_grpo_ocr_single_gpu_async_debug")
+
+    assert cfg.trainer.rollout_orchestration.mode == "continuous"
+    assert cfg.trainer.rollout_orchestration.require_separate_gpus is False
+    assert cfg.trainer.rollout_orchestration.continuous.max_stale_policy_versions == 1
+    assert cfg.distributed.resources.allow_overlap is True
+    assert cfg.distributed.rollout.release_after_collect is False
+    assert cfg.distributed.rollout.persistent_colocated_workers is True
+    assert cfg.rollout.rollout_batch_size == 2
+    assert cfg.rollout.sample_batch_size == 1
+    assert cfg.sampling.height == 128
+    assert cfg.sampling.width == 128
+
+
 def test_algorithm_config_dispatches_representative_kinds() -> None:
     """Checks algorithm config dispatches representative kinds."""
     examples = {

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import contextlib
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any
 
 from vrl.generation.execution.types import DistributedWorkerHandle
@@ -17,50 +17,134 @@ from vrl.ray.lifecycle import kill_actors, remove_placement_group
 from vrl.ray.placement import RolePlacement
 
 
+@dataclass(slots=True)
+class _ReleaseAfterCollectState:
+    """State for the on-demand worker lifecycle."""
+
+    config: RayGenerationConfig
+    launch_contract: Any
+    gatherer: Any
+    placement: RolePlacement
+    runtime: RayGenerationRuntime | None = None
+    last_state: Any | None = None
+
+
 class RayGenerationRuntime(GenerationRuntime):
-    """Collector-facing runtime backed by Ray generation workers."""
+    """Collector-facing Ray generation runtime.
+
+    One public runtime covers both worker lifecycles:
+    resident workers stay alive for split-GPU throughput and tiny colocated
+    async debug; release-after-collect workers are recreated on demand when a
+    shared GPU needs to be handed back to the trainer or reward model.
+    """
 
     def __init__(
         self,
-        executor: RayGenerationExecutor,
+        executor: RayGenerationExecutor | Any,
         *,
         weight_sync: GenerationWeightSync | None = None,
         owned_workers: list[DistributedWorkerHandle] | None = None,
         owned_actors: list[Any] | None = None,
         placement_group: Any | None = None,
+        colocated: bool = False,
     ) -> None:
         self.executor = executor
         self.weight_sync = weight_sync
         self._owned_workers = list(owned_workers or [])
         self._owned_actors = list(owned_actors or [])
         self._placement_group = placement_group
+        self._colocated = bool(colocated)
+        self._release_after_collect: _ReleaseAfterCollectState | None = None
+        self.requires_driver_model_offload = False
         self.current_policy_version: int | None = None
 
+    @classmethod
+    def with_release_after_collect(
+        cls,
+        config: RayGenerationConfig,
+        launch_contract: Any,
+        gatherer: Any,
+        *,
+        placement: RolePlacement,
+    ) -> RayGenerationRuntime:
+        """Build a runtime that recreates Ray workers between collect phases."""
+        runtime = cls.__new__(cls)
+        runtime.executor = None
+        runtime.weight_sync = (
+            object() if config.sync_trainable_state != "disabled" else None
+        )
+        runtime._owned_workers = []
+        runtime._owned_actors = []
+        runtime._placement_group = None
+        runtime._colocated = False
+        runtime._release_after_collect = _ReleaseAfterCollectState(
+            config=config,
+            launch_contract=launch_contract,
+            gatherer=gatherer,
+            placement=placement,
+        )
+        runtime.requires_driver_model_offload = config.gpus_per_worker > 0
+        runtime.current_policy_version = _launch_contract_policy_version(launch_contract)
+        return runtime
+
     async def generate(self, request: GenerationRequest) -> GenerationOutput:
+        runtime = await self._ensure_runtime()
+        if runtime is not self:
+            return await runtime.generate(request)
+        if self.executor is None:
+            raise RuntimeError("RayGenerationRuntime has no active executor")
         if request.policy_version is None and self.current_policy_version is not None:
             request = replace(request, policy_version=self.current_policy_version)
         return await self.executor.execute(request)
 
     def should_release_memory_before_reward(self) -> bool:
-        # Persistent workers stay resident; only the releasable wrapper drops
-        # actors between phases.
-        return False
+        state = self._release_after_collect
+        if state is None:
+            return False
+        if not state.config.release_before_reward_model:
+            return False
+        resources = state.config.resources
+        return bool(resources is not None and resources.reward_shared_with_rollout)
 
     def is_colocated(self) -> bool:
-        # Guaranteed, not assumed: trainer/rollout GPU overlap is rejected at
-        # startup unless release_after_collect=true (ray/config.py overlap
-        # validation), and that mode constructs ReleasableRayGenerationRuntime
-        # instead. If this persistent runtime is alive, its workers own
-        # dedicated rollout GPUs.
-        return False
+        state = self._release_after_collect
+        if state is not None:
+            if state.config.allow_driver_gpu_overlap:
+                return True
+            resources = state.config.resources
+            return bool(resources is not None and resources.colocated)
+        return self._colocated
 
     async def update_weights(self, state_ref: Any, policy_version: int) -> None:
+        state = self._release_after_collect
+        if state is not None:
+            if self.weight_sync is None:
+                raise RuntimeError("RayGenerationRuntime has no generation weight sync")
+            state.last_state = state_ref
+            self.current_policy_version = int(policy_version)
+            if state.runtime is not None:
+                await state.runtime.update_weights(state_ref, self.current_policy_version)
+            return
         if self.weight_sync is None:
             raise RuntimeError("RayGenerationRuntime has no GenerationWeightSync")
         await self.weight_sync.push_to_rollout_workers(state_ref, policy_version)
         self.current_policy_version = int(policy_version)
 
+    async def release_memory(self) -> None:
+        state = self._release_after_collect
+        if state is None:
+            return None
+        runtime = state.runtime
+        if runtime is None:
+            return None
+        state.runtime = None
+        await runtime.shutdown()
+        return None
+
     async def shutdown(self) -> None:
+        if self._release_after_collect is not None:
+            await self.release_memory()
+            return None
         if not self._owned_workers and not self._owned_actors and self._placement_group is None:
             return None
         ray = require_ray()
@@ -85,95 +169,26 @@ class RayGenerationRuntime(GenerationRuntime):
         self._placement_group = None
         return None
 
-
-class ReleasableRayGenerationRuntime(GenerationRuntime):
-    """Ray runtime wrapper that can drop generation actors between train phases.
-
-    Single-GPU Ray debugging colocates the trainer and one generation worker on
-    the same CUDA device. Keeping the generation worker alive after collection
-    leaves the full generation pipeline resident while the trainer replays the
-    batch, which is too much for large diffusion models. This wrapper keeps the
-    public runtime object stable for the trainer/weight-syncer, but tears down
-    and recreates the underlying Ray actors when ``release_memory()`` is called.
-    """
-
-    def __init__(
-        self,
-        config: RayGenerationConfig,
-        launch_contract: Any,
-        gatherer: Any,
-        *,
-        placement: RolePlacement,
-    ) -> None:
-        self.config = config
-        self.launch_contract = launch_contract
-        self.gatherer = gatherer
-        # Run-level placement owned by a GlobalRayPlacementOwner. The workers are
-        # recreated into it each acquire cycle; release_memory drops the workers
-        # but never the placement group.
-        self.placement = placement
-        self.weight_sync = object() if config.sync_trainable_state != "disabled" else None
-        self.requires_driver_model_offload = config.gpus_per_worker > 0
-        self.current_policy_version = _launch_contract_policy_version(launch_contract)
-        self._runtime: Any | None = None
-        self._last_state: Any | None = None
-
-    async def generate(self, request: Any) -> Any:
-        runtime = await self._ensure_runtime()
-        return await runtime.generate(request)
-
-    def should_release_memory_before_reward(self) -> bool:
-        # The runtime owns its config, so reading it here is a legal internal
-        # access (the old collector-side getattr chain probed these fields from
-        # outside). Release only when the reward model shares the rollout GPU.
-        if not self.config.release_before_reward_model:
-            return False
-        resources = self.config.resources
-        return bool(resources is not None and resources.reward_shared_with_rollout)
-
-    def is_colocated(self) -> bool:
-        # Trainer and rollout share a GPU either via the explicit overlap flag
-        # or via overlapping device sets in the resource plan.
-        if self.config.allow_driver_gpu_overlap:
-            return True
-        resources = self.config.resources
-        return bool(resources is not None and resources.colocated)
-
-    async def update_weights(self, state_ref: Any, policy_version: int) -> None:
-        if self.weight_sync is None:
-            raise RuntimeError("ReleasableRayGenerationRuntime has no generation weight sync")
-        self._last_state = state_ref
-        self.current_policy_version = int(policy_version)
-        if self._runtime is not None:
-            await self._runtime.update_weights(state_ref, self.current_policy_version)
-
-    async def release_memory(self) -> None:
-        runtime = self._runtime
-        if runtime is None:
-            return
-        self._runtime = None
-        await runtime.shutdown()
-
-    async def shutdown(self) -> None:
-        await self.release_memory()
-
-    async def _ensure_runtime(self) -> Any:
-        if self._runtime is None:
+    async def _ensure_runtime(self) -> RayGenerationRuntime:
+        state = self._release_after_collect
+        if state is None:
+            return self
+        if state.runtime is None:
             from vrl.generation.ray.launcher import RayGenerationLauncher
 
             runtime = RayGenerationLauncher().launch(
-                self.config,
-                self.launch_contract,
-                self.gatherer,
-                placement=self.placement,
+                state.config,
+                state.launch_contract,
+                state.gatherer,
+                placement=state.placement,
             )
-            self._runtime = runtime
-            if self._last_state is not None:
+            state.runtime = runtime
+            if state.last_state is not None:
                 await runtime.update_weights(
-                    self._last_state,
+                    state.last_state,
                     int(self.current_policy_version),
                 )
-        return self._runtime
+        return state.runtime
 
 
 def _launch_contract_policy_version(launch_contract: Any) -> int | None:
@@ -191,4 +206,4 @@ def _launch_contract_policy_version(launch_contract: Any) -> int | None:
     return int(contract.policy_version)
 
 
-__all__ = ["RayGenerationRuntime", "ReleasableRayGenerationRuntime"]
+__all__ = ["RayGenerationRuntime"]

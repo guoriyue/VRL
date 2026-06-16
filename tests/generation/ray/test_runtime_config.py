@@ -134,6 +134,7 @@ def _cfg(
     overlap: bool = False,
     release_after_collect: bool = False,
     release_before_reward_model: bool = False,
+    persistent_colocated_workers: bool = False,
 ):
     rollout_devices = [0] if overlap else [1]
     visible_devices = [0] if overlap else [0, 1]
@@ -151,6 +152,7 @@ def _cfg(
         "rollout": {
             "release_after_collect": release_after_collect,
             "release_before_reward_model": release_before_reward_model,
+            "persistent_colocated_workers": persistent_colocated_workers,
         },
     }
     return OmegaConf.create(
@@ -167,7 +169,17 @@ def _resource_cfg(
     allow_overlap: bool = False,
     release_after_collect: bool = False,
     release_before_reward_model: bool = False,
+    persistent_colocated_workers: bool = False,
+    gpu_memory_fraction: float | None = None,
 ):
+    rollout_runtime: dict[str, Any] = {
+        "cpus_per_worker": 1,
+        "release_after_collect": release_after_collect,
+        "release_before_reward_model": release_before_reward_model,
+        "persistent_colocated_workers": persistent_colocated_workers,
+    }
+    if gpu_memory_fraction is not None:
+        rollout_runtime["gpu_memory_fraction"] = gpu_memory_fraction
     return OmegaConf.create(
         {
             "distributed": {
@@ -181,11 +193,7 @@ def _resource_cfg(
                     },
                     "allow_overlap": allow_overlap,
                 },
-                "rollout": {
-                    "cpus_per_worker": 1,
-                    "release_after_collect": release_after_collect,
-                    "release_before_reward_model": release_before_reward_model,
-                },
+                "rollout": rollout_runtime,
             },
         },
     )
@@ -269,6 +277,31 @@ def test_ray_build_inputs_applies_rollout_only_compile_override() -> None:
         "enable": True,
         "mode": "reduce-overhead",
     }
+
+
+def test_ray_build_inputs_carries_gpu_memory_fraction_to_worker_contract() -> None:
+    """Checks the rollout GPU budget reaches the worker via the launch contract."""
+    cfg = _build_inputs_cfg()
+    cfg.distributed.rollout = {"gpu_memory_fraction": 0.4}
+
+    launch_inputs = RayGenerationLauncher.build_inputs(
+        cfg,
+        _build_inputs_entry(),
+        weight_dtype="bfloat16",
+    )
+
+    assert launch_inputs.launch_contract.extra["gpu_memory_fraction"] == 0.4
+
+
+def test_ray_build_inputs_omits_gpu_memory_fraction_when_unset() -> None:
+    """Checks no budget key is sent when the cap is unset (dedicated-GPU worker)."""
+    launch_inputs = RayGenerationLauncher.build_inputs(
+        _build_inputs_cfg(),
+        _build_inputs_entry(),
+        weight_dtype="bfloat16",
+    )
+
+    assert "gpu_memory_fraction" not in launch_inputs.launch_contract.extra
 
 
 def test_ray_build_inputs_rejects_compile_on_family_without_capability() -> None:
@@ -376,3 +409,22 @@ def test_ray_backend_overlap_requires_release_after_collect() -> None:
                 release_after_collect=False,
             ),
         ).validate_driver_state(driver_policy=_CudaPolicy())
+
+
+def test_ray_backend_allows_persistent_colocated_debug_without_release() -> None:
+    """Checks explicit tiny-workload debug can keep colocated rollout workers resident."""
+    config = RayGenerationConfig.from_cfg(
+        _resource_cfg(
+            trainer_devices=[0],
+            rollout_devices=[0],
+            allow_overlap=True,
+            release_after_collect=False,
+            persistent_colocated_workers=True,
+            gpu_memory_fraction=0.45,
+        ),
+    ).validate_driver_state(driver_policy=_CudaPolicy())
+
+    assert config.allow_driver_gpu_overlap is True
+    assert config.release_after_collect is False
+    assert config.persistent_colocated_workers is True
+    assert config.gpu_memory_fraction == 0.45
