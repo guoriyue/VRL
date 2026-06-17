@@ -1066,9 +1066,6 @@ class BundleLayout:
     def total_bundles(self) -> int:
         return len(self.bundle_gpu_ids)
 
-    def gpu_id_for_bundle(self, bundle_index: int) -> int | None:
-        return self.bundle_gpu_ids[bundle_index]
-
 
 def build_bundle_layout(resolved: ResolvedDistributedResources) -> BundleLayout:
     """Derive a run-level role->bundle plan from a resolved resource plan.
