@@ -10,6 +10,16 @@ actor:
   optim:
     lr: 1.0e-4
 
+rollout:
+  # Stream one prompt group at a time (rbs=4 -> gradient_accumulation_steps=4)
+  # so host RAM holds ~1 group's AR replay tensors instead of all 4 before
+  # backward. Gradient-identical to full-batch: advantages are per-group
+  # (global_std=false) and the loss is reduced per prompt group, so streaming
+  # only partitions the per-group loop (ppo_epochs=1).
+  microbatch_size: 1
+  # Fail fast if one streamed group already uses >90% of host RAM (0.0 disables).
+  host_memory_budget_fraction: 0.9
+
 trainer:
   entrypoint: vrl.scripts.ar.nextstep_1.train:train_nextstep_1_ocr_grpo
   output_dir: outputs/nextstep_1_ocr_grpo
