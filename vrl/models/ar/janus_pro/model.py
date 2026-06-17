@@ -599,7 +599,7 @@ class JanusProModel(nn.Module):
             image_token_num=image_token_num,
         )
         initial_image = self.decode_image_tokens(initial_ids, image_size=image_size)
-        image_embeds = self._image_embeds(initial_ids)
+        image_embeds = self._base().prepare_gen_img_embeds(initial_ids)
         image_mask = torch.ones(
             image_embeds.shape[:2],
             dtype=prompt_attention_mask.dtype,
@@ -829,9 +829,6 @@ class JanusProModel(nn.Module):
                 "ar_kv_cache_enabled": True,
             },
         }
-
-    def _image_embeds(self, image_token_ids: torch.Tensor) -> torch.Tensor:
-        return self._base().prepare_gen_img_embeds(image_token_ids)
 
     def _pad_token_id(self) -> int:
         tokenizer = self.processor.tokenizer
