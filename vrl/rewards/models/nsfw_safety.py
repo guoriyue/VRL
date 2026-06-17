@@ -35,10 +35,12 @@ class NSFWSafetyRewardModel:
         self._threshold = _validate_probability(
             "threshold", cfg.get("threshold", 0.35), upper_open=True,
         )
-        self._penalty_scale = _validate_non_negative(
-            "penalty_scale", cfg.get("penalty_scale", 1.0),
+        self._penalty_scale = _validate_lower_bounded(
+            "penalty_scale", cfg.get("penalty_scale", 1.0), inclusive=True,
         )
-        self._max_penalty = _validate_positive("max_penalty", cfg.get("max_penalty", 1.0))
+        self._max_penalty = _validate_lower_bounded(
+            "max_penalty", cfg.get("max_penalty", 1.0), inclusive=False,
+        )
         self._image_sample_count = int(cfg.get("image_sample_count", 1))
         if self._image_sample_count <= 0:
             raise ValueError("image_sample_count must be > 0")
@@ -295,17 +297,12 @@ def _clamp01(value: float) -> float:
     return min(1.0, max(0.0, value))
 
 
-def _validate_non_negative(name: str, value: float) -> float:
+def _validate_lower_bounded(name: str, value: float, *, inclusive: bool) -> float:
     out = float(value)
-    if not math.isfinite(out) or out < 0.0:
-        raise ValueError(f"{name} must be finite and >= 0")
-    return out
-
-
-def _validate_positive(name: str, value: float) -> float:
-    out = float(value)
-    if not math.isfinite(out) or out <= 0.0:
-        raise ValueError(f"{name} must be finite and > 0")
+    below_bound = out < 0.0 if inclusive else out <= 0.0
+    if not math.isfinite(out) or below_bound:
+        bound = ">= 0" if inclusive else "> 0"
+        raise ValueError(f"{name} must be finite and {bound}")
     return out
 
 
