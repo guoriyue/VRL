@@ -24,14 +24,15 @@ from vrl.config.schema import (
 )
 
 _MISSING = object()
+_REQUIRED = object()
 
 
-def require(cfg: DictConfig, path: str) -> Any:
-    """Fetch a required dotted path from a config.
+def _select_field(cfg: DictConfig, path: str, *, on_none: Any) -> Any:
+    """Resolve a dotted path, sharing the missing/None/container handling.
 
-    YAML should declare experiment-owned required values with ``???``. This
-    helper keeps a stable repo-level error message around OmegaConf's missing
-    value semantics.
+    ``require`` and ``optional_none`` differ only in what happens when the
+    resolved node is ``None``: pass the ``_REQUIRED`` sentinel to reject it
+    like a missing field, or any other value to return it.
     """
     try:
         node = OmegaConf.select(cfg, path, default=_MISSING, throw_on_missing=True)
@@ -41,26 +42,27 @@ def require(cfg: DictConfig, path: str) -> Any:
     if node is _MISSING:
         raise ValueError(f"config missing required field: {path}")
     if node is None:
-        raise ValueError(f"config missing required field: {path} (got None)")
+        if on_none is _REQUIRED:
+            raise ValueError(f"config missing required field: {path} (got None)")
+        return on_none
     if isinstance(node, (DictConfig, ListConfig)):
         return OmegaConf.to_container(node, resolve=True, throw_on_missing=True)
     return node
+
+
+def require(cfg: DictConfig, path: str) -> Any:
+    """Fetch a required dotted path from a config.
+
+    YAML should declare experiment-owned required values with ``???``. This
+    helper keeps a stable repo-level error message around OmegaConf's missing
+    value semantics.
+    """
+    return _select_field(cfg, path, on_none=_REQUIRED)
 
 
 def optional_none(cfg: DictConfig, path: str) -> Any | None:
     """Fetch a dotted path that may explicitly be ``null``."""
-    try:
-        node = OmegaConf.select(cfg, path, default=_MISSING, throw_on_missing=True)
-    except MissingMandatoryValue as exc:
-        missing_path = getattr(exc, "full_key", path) or path
-        raise ValueError(f"config missing required field: {missing_path}") from exc
-    if node is _MISSING:
-        raise ValueError(f"config missing required field: {path}")
-    if node is None:
-        return None
-    if isinstance(node, (DictConfig, ListConfig)):
-        return OmegaConf.to_container(node, resolve=True, throw_on_missing=True)
-    return node
+    return _select_field(cfg, path, on_none=None)
 
 
 def path_exists(cfg: DictConfig, path: str) -> bool:
