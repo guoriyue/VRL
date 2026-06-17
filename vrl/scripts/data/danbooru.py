@@ -12,7 +12,7 @@ from collections import Counter, defaultdict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import yaml
 
@@ -896,7 +896,7 @@ def split_safety_prompt_rows(
         key = str(metadata.get("rating") or metadata.get("category") or "unknown")
         groups[key].append(dict(row))
 
-    eval_counts = _proportional_text_group_counts(
+    eval_counts = _proportional_group_counts(
         {key: len(value) for key, value in groups.items()},
         limit=eval_limit,
     )
@@ -1317,36 +1317,14 @@ def _interleave_bucket_rows(
     return out
 
 
+_GroupKey = TypeVar("_GroupKey")
+
+
 def _proportional_group_counts(
-    group_sizes: Mapping[tuple[str, str], int],
+    group_sizes: Mapping[_GroupKey, int],
     *,
     limit: int,
-) -> dict[tuple[str, str], int]:
-    total = sum(group_sizes.values())
-    if total <= 0 or limit <= 0:
-        return {key: 0 for key in group_sizes}
-    raw = {key: min(size, limit * size / total) for key, size in group_sizes.items()}
-    counts = {key: int(value) for key, value in raw.items()}
-    remainder = min(limit, total) - sum(counts.values())
-    for key, _ in sorted(
-        raw.items(),
-        key=lambda item: (item[1] - int(item[1]), item[0]),
-        reverse=True,
-    ):
-        if remainder <= 0:
-            break
-        if counts[key] >= group_sizes[key]:
-            continue
-        counts[key] += 1
-        remainder -= 1
-    return counts
-
-
-def _proportional_text_group_counts(
-    group_sizes: Mapping[str, int],
-    *,
-    limit: int,
-) -> dict[str, int]:
+) -> dict[_GroupKey, int]:
     total = sum(group_sizes.values())
     if total <= 0 or limit <= 0:
         return {key: 0 for key in group_sizes}
