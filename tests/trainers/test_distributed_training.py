@@ -7,8 +7,6 @@ import torch
 from omegaconf import OmegaConf
 
 from vrl.trainers.distributed import (
-    DistributedTrainingContext,
-    assert_strategy_executable,
     resolve_training_context,
 )
 
@@ -88,25 +86,8 @@ def test_fsdp_local_rank_must_be_in_range() -> None:
         )
 
 
-# ── execution gate ────────────────────────────────────────────────────────────
-
-
-def test_assert_strategy_executable_blocks_fsdp() -> None:
-    ctx = DistributedTrainingContext(
-        strategy="fsdp",
-        distributed=True,
-        rank=0,
-        local_rank=0,
-        world_size=2,
-        is_primary=True,
-        device=torch.device("cpu"),
-    )
-    with pytest.raises(NotImplementedError, match=r"FSDP2 execution is not implemented"):
-        assert_strategy_executable(ctx)
-
-
-def test_assert_strategy_executable_allows_single_process() -> None:
-    ctx = resolve_training_context(
-        _cfg({"strategy": "single_process"}), device=torch.device("cpu"), env={}
-    )
-    assert_strategy_executable(ctx)  # no raise
+# The execution gate moved out of this module: build_strategy
+# (tests/trainers/test_strategy.py) constructs the FSDP2 strategy + runs the §10
+# config gates, and the online recipe's _require_supported_online_strategy
+# (tests/scripts/test_online_lifecycle.py) gates the not-yet-wired multi-rank
+# orchestration. distributed.py now only resolves/validates the context.

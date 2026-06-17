@@ -295,6 +295,10 @@ class OnlineTrainer(Trainer):
         # default keeps current single-GPU behavior; FSDP2 swaps this in later
         # without the trainer loop changing. See vrl/trainers/strategy.py.
         self._strategy: Strategy = strategy or SingleProcessStrategy()
+        # Route the model through the strategy once: identity for single process,
+        # fully_shard wrapping for FSDP2. Done before optimizer / grad-scaler / EMA
+        # so they bind to the (possibly sharded) parameters the strategy returns.
+        self.model = self._strategy.prepare_model(self.model)
         # Sink for the per-step phase-timing line (recording decoupled from
         # emitting); swap for a jsonl/Prometheus sink later.
         self._stats_sink: StatsSink = LoggingStatsSink(logger)

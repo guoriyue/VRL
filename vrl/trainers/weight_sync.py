@@ -106,41 +106,69 @@ def flatten_trainable_module_state(modules: Mapping[str, Any]) -> dict[str, Any]
     state: dict[str, Any] = {}
     for module_name, module in modules.items():
         name = str(module_name)
-        if not name:
-            raise ValueError("trainable module names must be non-empty")
-        # Sync payload keys live in the policy's uncompiled, unwrapped namespace:
-        # torch.compile exposes the inner module as ``_orig_mod``, DDP / FSDP1 as
-        # ``.module``. The receiver unwraps its own compile wrapper the same way
-        # (models/utils.py load_weights_into), so neither wrapper prefix may leak
-        # into the rollout payload. Loop because wrapper nesting/order varies
-        # (e.g. compile(DDP(m)) vs DDP(compile(m))).
-        while True:
-            unwrapped = getattr(module, "_orig_mod", module)
-            unwrapped = getattr(unwrapped, "module", unwrapped)
-            if unwrapped is module:
-                break
-            module = unwrapped
+        module = unwrap_compile_and_ddp(module)
         state_dict = getattr(module, "state_dict", None)
         if not callable(state_dict):
             raise TypeError(f"trainable module {name!r} does not expose state_dict()")
-        module_state = state_dict()
-        if not isinstance(module_state, Mapping):
-            raise TypeError(f"trainable module {name!r} state_dict() must return a mapping")
-        trainable_names = _trainable_parameter_names(module, name)
-        missing = sorted(trainable_names - set(module_state))
-        if missing:
-            preview = ", ".join(missing[:5])
-            suffix = " ..." if len(missing) > 5 else ""
-            raise ValueError(
-                f"trainable module {name!r} state_dict() is missing trainable "
-                f"parameters: {preview}{suffix}",
-            )
-        for key, value in module_state.items():
-            if str(key) in trainable_names:
-                state[f"{name}.{key}"] = value
+        state.update(select_trainable_state(module, name, state_dict()))
     if not state:
         raise ValueError("trainable module state is empty")
     return state
+
+
+def select_trainable_state(module: Any, name: str, module_state: Any) -> dict[str, Any]:
+    """Pick a module's trainable-parameter entries, prefixed ``name.``.
+
+    Shared by single-process sync (``module_state`` from ``module.state_dict()``)
+    and FSDP2 (``module_state`` gathered from DTensor shards): both select the same
+    ``module_name.param`` keys in the policy-facing, unwrapped namespace, so the
+    rollout payload is byte-for-byte identical whether or not the trainer was
+    sharded. ``module`` must already be unwrapped enough that its
+    ``named_parameters()`` names match ``module_state`` keys.
+    """
+
+    if not name:
+        raise ValueError("trainable module names must be non-empty")
+    if not isinstance(module_state, Mapping):
+        raise TypeError(f"trainable module {name!r} state_dict() must return a mapping")
+    trainable_names = _trainable_parameter_names(module, name)
+    missing = sorted(trainable_names - set(module_state))
+    if missing:
+        preview = ", ".join(missing[:5])
+        suffix = " ..." if len(missing) > 5 else ""
+        raise ValueError(
+            f"trainable module {name!r} state_dict() is missing trainable "
+            f"parameters: {preview}{suffix}",
+        )
+    return {
+        f"{name}.{key}": value
+        for key, value in module_state.items()
+        if str(key) in trainable_names
+    }
+
+
+def unwrap_compile_and_ddp(module: Any) -> Any:
+    """Peel torch.compile (``_orig_mod``) and DDP / FSDP1 (``.module``) wrappers.
+
+    Sync payload keys live in the policy's uncompiled, unwrapped namespace; the
+    receiver unwraps its own compile wrapper the same way (models/utils.py
+    load_weights_into), so neither wrapper prefix may leak into the rollout
+    payload. PEFT is deliberately NOT peeled — LoRA keys (``base_model.model.*``)
+    are part of the policy-facing namespace. Loop because wrapper nesting/order
+    varies (e.g. compile(DDP(m)) vs DDP(compile(m))).
+
+    FSDP2 export reuses this (vrl/trainers/strategy.py) so a sharded gather lands
+    in the same namespace as single-process sync: ``get_model_state_dict`` strips
+    ``_orig_mod.`` while ``named_parameters()`` keeps it, so selecting trainable
+    keys on a still-compiled module would mismatch.
+    """
+
+    while True:
+        unwrapped = getattr(module, "_orig_mod", module)
+        unwrapped = getattr(unwrapped, "module", unwrapped)
+        if unwrapped is module:
+            return module
+        module = unwrapped
 
 
 def _resolve_next_policy_version(

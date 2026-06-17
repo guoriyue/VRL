@@ -46,17 +46,35 @@ from vrl.trainers.checkpointing import (
     save_training_checkpoint,
 )
 from vrl.trainers.data import load_prompt_examples_from_config
-from vrl.trainers.distributed import assert_strategy_executable, resolve_training_context
+from vrl.trainers.distributed import DistributedTrainingContext, resolve_training_context
 from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.precision import torch_dtype_for_trainer_precision
-from vrl.trainers.strategy import SingleProcessStrategy
-from vrl.trainers.weight_sync import (
-    build_runtime_weight_syncer,
-    build_trainable_state_sync_getter,
-)
+from vrl.trainers.strategy import build_strategy
+from vrl.trainers.weight_sync import build_runtime_weight_syncer
 from vrl.utils.memory import capture_host_memory, format_host_memory, log_host_memory
 
 logger = logging.getLogger(__name__)
+
+
+def _require_supported_online_strategy(context: DistributedTrainingContext) -> None:
+    """Fail-fast when the online recipe cannot yet drive the resolved strategy.
+
+    The FSDP2 strategy layer exists and is unit-tested, but run_online_recipe has
+    no multi-rank GRPO orchestration to drive it yet, so any non-single_process
+    strategy would silently mis-drive Ray from every rank. The full rationale and
+    the user-facing remedy live in the raised message below (kept there, not
+    duplicated here, so the grep-able error stays the single source of truth).
+    """
+
+    if context.strategy != "single_process":
+        raise NotImplementedError(
+            f"distributed.training.strategy={context.strategy!r}: the FSDP2 strategy "
+            "layer exists (vrl/trainers/fsdp.py + FSDPStrategy), but run_online_recipe "
+            "does not yet implement the multi-rank GRPO orchestration that drives it "
+            "(rank-split collect/train + torchrun↔Ray coordination, "
+            "SPRINT_multi_gpu_training.md Phase 4/§6.5). Use strategy=single_process "
+            "for online RL; FSDP2 is exercised in tests/trainers/test_fsdp.py.",
+        )
 
 
 def _apply_precision_policy(cfg: DictConfig, trainer_config: Any) -> None:
@@ -370,9 +388,10 @@ async def run_online_recipe(
     logger.info(format_distributed_resource_plan(resources))
     device = torch.device(trainer_torch_device(resources))
     # Resolve the training process identity (rank/device) and fail-fast on
-    # not-yet-implemented strategies before building the model / Ray runtime.
+    # strategies the online recipe can't yet drive end-to-end, before building the
+    # model / Ray runtime.
     training_context = resolve_training_context(cfg, device=device)
-    assert_strategy_executable(training_context)
+    _require_supported_online_strategy(training_context)
     # Replay/training model storage follows ``compute`` (via trainer_config);
     # the generation (rollout) model can use a different ``rollout`` dtype.
     weight_dtype = (
@@ -468,6 +487,14 @@ async def run_online_recipe(
             if definition.reference_model_getter is not None
             else None
         )
+        # The strategy is the single owner of trainable-state export for both
+        # rollout weight sync and checkpointing. build_strategy maps the resolved
+        # context to a concrete strategy; fsdp is fail-fasted by
+        # _require_supported_online_strategy above, so this is single_process in
+        # the live online path. The FSDPStrategy slots in here once the online
+        # rank-split orchestration lands, without the recipe changing how state
+        # leaves the trainer.
+        strategy = build_strategy(cfg, training_context)
         trainer = OnlineTrainer(
             algorithm=components.algorithm,
             collector=collector,
@@ -480,13 +507,12 @@ async def run_online_recipe(
                 if resume_checkpoint is not None
                 else None,
             ),
-            sync_state_getter=build_trainable_state_sync_getter(bundle),
+            # Rollout weight sync re-reads live trainable state on every push, so
+            # bind the strategy export lazily instead of snapshotting once.
+            sync_state_getter=lambda: strategy.export_rollout_state(bundle),
             config=trainer_config,
             device=device,
-            # Strategy carries the resolved rank/device identity. fsdp already
-            # fail-fasted in assert_strategy_executable above, so this is always
-            # single_process here; the FSDP strategy slots in by context.strategy.
-            strategy=SingleProcessStrategy(training_context),
+            strategy=strategy,
         )
 
         if resume_checkpoint is not None:
@@ -512,7 +538,6 @@ async def run_online_recipe(
             csv_path,
             component_names,
             resume=resume_checkpoint is not None,
-            prepare_metrics_csv=prepare_metrics_csv,
         )
 
         rng = torch.Generator().manual_seed(trainer_config.seed)
@@ -535,6 +560,7 @@ async def run_online_recipe(
             algorithm=components.algorithm,
             evaluator=components.evaluator,
             trainer=trainer,
+            strategy=strategy,
             trainer_config=trainer_config,
             collector_config=components.collector_config,
             family=components.family,
@@ -607,8 +633,6 @@ async def run_online_recipe(
                     stack,
                     epoch=epoch + 1,
                     rng=rng,
-                    save_training_checkpoint=save_training_checkpoint,
-                    capture_rng_state=capture_rng_state,
                 )
 
         _save_checkpoint(
@@ -616,8 +640,6 @@ async def run_online_recipe(
             stack,
             epoch=trainer_config.total_epochs,
             rng=rng,
-            save_training_checkpoint=save_training_checkpoint,
-            capture_rng_state=capture_rng_state,
         )
         logger.info("Training complete. Final checkpoint: %s", output_dir / "checkpoint-final")
     except BaseException as exc:
@@ -656,7 +678,6 @@ def _prepare_metrics_csv(
     component_names: tuple[str, ...],
     *,
     resume: bool,
-    prepare_metrics_csv: Any,
 ) -> None:
     component_cols = ",".join(f"r_{name}" for name in component_names)
     header = (
@@ -786,8 +807,6 @@ def _save_checkpoint(
     *,
     epoch: int,
     rng: Any,
-    save_training_checkpoint: Any,
-    capture_rng_state: Any,
 ) -> None:
     export_modules = (
         stack.definition.export_modules_getter(stack.bundle, stack.cfg)
@@ -807,6 +826,7 @@ def _save_checkpoint(
         rng_state=capture_rng_state(prompt_generator=rng),
         export_modules=export_modules,
         export_ema=getattr(stack.trainer, "_ema", None),
+        strategy=stack.strategy,
     )
 
 

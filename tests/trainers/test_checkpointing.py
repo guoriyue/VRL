@@ -51,6 +51,40 @@ def test_training_checkpoint_round_trips_trainer_and_trainable_modules(tmp_path)
     assert restored.module.weight.item() == pytest.approx(3.0)
 
 
+def test_save_training_checkpoint_routes_export_through_strategy(tmp_path) -> None:
+    """When a strategy is wired, checkpoint trainable state comes from its export.
+
+    Locks sprint P3 ownership: the checkpoint reads the strategy seam, not the
+    bundle's raw modules directly, so the future FSDP full-state export controls
+    what lands on disk. The spy returns weights the bundle does not hold, so a
+    match proves the strategy -- not ``export_trainable_state(bundle)`` -- was used.
+    """
+
+    class _SpyStrategy:
+        def __init__(self) -> None:
+            self.calls: list[object] = []
+
+        def export_trainable_state(self, bundle):
+            self.calls.append(bundle)
+            return {"module": {"weight": torch.full((1, 1), 9.0)}}
+
+    strategy = _SpyStrategy()
+    bundle = _Bundle()  # module weight is the Linear default, never 9.0
+    save_training_checkpoint(
+        tmp_path / "checkpoint-strategy",
+        trainer=_Trainer(),
+        bundle=bundle,
+        family="unit",
+        progress={"next_epoch": 1},
+        rng_state={},
+        strategy=strategy,
+    )
+
+    checkpoint = load_training_checkpoint(tmp_path / "checkpoint-strategy")
+    assert strategy.calls == [bundle]
+    assert checkpoint.trainable_state["module"]["weight"].item() == pytest.approx(9.0)
+
+
 def test_training_checkpoint_writes_optional_lora_export(tmp_path) -> None:
     """Checks training checkpoint writes optional LoRA export."""
     class _ExportModule:

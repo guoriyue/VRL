@@ -340,22 +340,41 @@ class ActorSection(ConfigBase):
     use_adafactor: Any = None
 
 
+class FSDPConfig(ConfigBase):
+    """distributed.training.fsdp: the FSDP2 knobs ``build_strategy`` reads.
+
+    Only the fields a reader consumes are declared (the same philosophy as
+    ``TrainingSection``): ``vrl/trainers/strategy.py`` build_strategy +
+    ``vrl/trainers/fsdp.py`` read ``mesh`` / ``mixed_precision`` /
+    ``reshard_after_forward``. The remaining FSDP2 knobs from
+    SPRINT_multi_gpu_training.md §3 (activation_checkpointing, cpu_offload,
+    state_dict, process-group backend/init) land here when their readers do —
+    declaring an unread knob is a user-facing no-op footgun.
+    """
+
+    # 1D ZeRO-3 over the whole world; 2D HSDP is the multi-node follow-on.
+    mesh: list[str] = Field(default_factory=lambda: ["dp_shard"])
+    # actor -> MixedPrecisionPolicy(param=bf16, reduce=fp32); none -> full precision.
+    mixed_precision: Literal["actor", "none"] = "actor"
+    # True = re-gather params after forward (ZeRO-3, lowest memory).
+    reshard_after_forward: bool = True
+
+
 class TrainingSection(ConfigBase):
     """distributed.training: how the trainer process maps onto GPUs.
 
-    Only the fields the readiness sprint actually consumes are declared:
-    ``strategy`` (the single source of truth for the allowed backends — resource
-    validation and the training context dispatch on it; the Literal is the only
-    allow-list) plus the ``num_nodes``/``gpus_per_node`` topology the fsdp context
-    cross-checks against ``WORLD_SIZE``. FSDP2 knobs (mesh, mixed precision,
-    offload, state-dict mode, process-group backend/init) are declared in
-    SPRINT_multi_gpu_training.md where they are actually read — declaring them
-    here while nothing reads them would be a user-facing no-op footgun.
+    Only the fields a reader actually consumes are declared: ``strategy`` (the
+    single source of truth for the allowed backends — resource validation and the
+    training context dispatch on it; the Literal is the only allow-list), the
+    ``num_nodes``/``gpus_per_node`` topology the fsdp context cross-checks against
+    ``WORLD_SIZE``, and the ``fsdp`` knob block read by ``build_strategy`` when
+    strategy=fsdp.
     """
 
     strategy: Literal["single_process", "fsdp"] = "single_process"
     num_nodes: int = 1
     gpus_per_node: int = 1
+    fsdp: FSDPConfig | None = None
 
 
 class DistributedSection(ConfigBase):

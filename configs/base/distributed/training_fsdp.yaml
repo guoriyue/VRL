@@ -1,11 +1,16 @@
-# FSDP2 trainer strategy. Accepted by the schema and validated through context
-# preflight, but execution is gated (assert_strategy_executable) until
-# SPRINT_multi_gpu_training.md lands real FSDP2 — which is also where the FSDP
-# knobs (mesh / mixed precision / offload / state-dict / backend) get declared
-# and read. Launch under torchrun so RANK / LOCAL_RANK / WORLD_SIZE are set;
-# WORLD_SIZE must equal num_nodes * gpus_per_node.
+# FSDP2 trainer strategy (torch-native fully_shard + DTensor). The strategy
+# layer is implemented (vrl/trainers/fsdp.py + FSDPStrategy, exercised on a
+# single CPU rank in tests/trainers/test_fsdp.py). The online GRPO multi-rank
+# orchestration (rank0 collect / all-rank train + torchrun<->Ray coordination)
+# is a separate, not-yet-wired phase, so run_online_recipe still fail-fasts on
+# fsdp (SPRINT_multi_gpu_training.md Phase 4/6). Launch under torchrun so RANK /
+# LOCAL_RANK / WORLD_SIZE are set; WORLD_SIZE must equal num_nodes * gpus_per_node.
 distributed:
   training:
     strategy: fsdp
     num_nodes: 1
     gpus_per_node: 2
+    fsdp:
+      mesh: ["dp_shard"]          # 1D ZeRO-3; 2D HSDP is the multi-node follow-on
+      mixed_precision: actor      # bf16 params/compute, fp32 grad reduction
+      reshard_after_forward: true # ZeRO-3 (re-gather params each forward)

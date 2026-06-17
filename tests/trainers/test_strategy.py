@@ -29,7 +29,9 @@ def test_default_context_is_single_process() -> None:
     )
 
 
-def test_backward_matches_plain_backward() -> None:
+def test_prepare_model_is_identity_for_single_process() -> None:
+    model = nn.Linear(3, 1)
+    assert SingleProcessStrategy().prepare_model(model) is model
     x = torch.randn(4, 3, generator=torch.Generator().manual_seed(0))
     ref = nn.Linear(3, 1)
     strat = nn.Linear(3, 1)

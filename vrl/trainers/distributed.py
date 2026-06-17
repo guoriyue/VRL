@@ -6,9 +6,13 @@ actor lifecycle stay in ``vrl/ray/``. The strategy seam (backward / clip / state
 export) lives in ``vrl/trainers/strategy.py`` and consumes the context produced
 here.
 
-The readiness sprint only resolves and validates the context. Real FSDP2 process
-group setup and model wrapping land in ``SPRINT_multi_gpu_training.md``; until then
-``assert_strategy_executable`` fail-fasts the ``fsdp`` execution path.
+This module only resolves and validates the context. The FSDP2 strategy layer
+(``fully_shard`` wrapping + DTensor full-state export) now lives in
+``vrl/trainers/fsdp.py`` + ``FSDPStrategy``, built from this context by
+``vrl/trainers/strategy.py`` build_strategy. The online GRPO multi-rank
+orchestration that would actually *run* it (rank0 collect / all-rank train +
+torchrun↔Ray coordination, ``SPRINT_multi_gpu_training.md`` Phase 4/6) is still
+gated in ``run_online_recipe``.
 """
 
 from __future__ import annotations
@@ -73,8 +77,9 @@ def resolve_training_context(
     resource-resolved ``device``; it ignores env entirely. ``fsdp`` parses and
     validates ``RANK`` / ``LOCAL_RANK`` / ``WORLD_SIZE`` (fail-fast on missing or
     inconsistent values) and derives a per-process ``cuda:<local_rank>`` device. It
-    does NOT create a process group — execution stays gated by
-    ``assert_strategy_executable`` until FSDP2 lands.
+    does NOT create a process group; ``vrl/trainers/strategy.py`` build_strategy
+    turns this context into the matching strategy, and ``vrl/trainers/fsdp.py``
+    owns the process-group setup and model wrapping.
     """
 
     env = os.environ if env is None else env
@@ -127,20 +132,3 @@ def resolve_training_context(
         f"unknown distributed.training.strategy={strategy!r}; "
         "expected 'single_process' or 'fsdp'"
     )
-
-
-def assert_strategy_executable(context: DistributedTrainingContext) -> None:
-    """Fail-fast for strategies whose execution path is not implemented yet.
-
-    This readiness sprint installs schema + context + strategy seam only. The real
-    FSDP2 wrap-and-run lands in ``SPRINT_multi_gpu_training.md``; configuring
-    ``strategy=fsdp`` should preflight cleanly (schema / resources / context) and
-    then stop here with an actionable message rather than half-running.
-    """
-
-    if context.strategy == "fsdp":
-        raise NotImplementedError(
-            "distributed.training.strategy=fsdp is configured, but FSDP2 execution "
-            "is not implemented yet. Complete SPRINT_multi_gpu_training.md after this "
-            "readiness sprint."
-        )

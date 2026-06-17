@@ -94,6 +94,7 @@ def save_training_checkpoint(
     rng_state: dict[str, Any] | None = None,
     export_modules: dict[str, Any] | None = None,
     export_ema: Any | None = None,
+    strategy: Any | None = None,
 ) -> dict[str, Any]:
     """Save a generic Torch training checkpoint.
 
@@ -102,17 +103,26 @@ def save_training_checkpoint(
     always stores the current/raw training state. When ``export_ema`` is passed,
     optional ``save_pretrained`` artifacts are written from EMA weights and then
     the raw training weights are restored.
+
+    Trainable-state export goes through the training ``strategy`` when one is
+    wired (the strategy seam owns state export; single_process today, FSDP2
+    full-state export later). ``export_trainable_state`` below is that
+    single_process implementation -- the strategy delegates to it -- and stays
+    the default for callers without a strategy (e.g. the Wan DPO trainer).
     """
 
     path = Path(checkpoint_dir)
     path.mkdir(parents=True, exist_ok=True)
+    export_trainable = (
+        strategy.export_trainable_state if strategy is not None else export_trainable_state
+    )
     trainer_state = trainer.state_dict()
     payload = {
         "schema_version": CHECKPOINT_SCHEMA_VERSION,
         "family": family,
         "trainer": trainer_state,
         "model": {
-            "trainable_modules": export_trainable_state(bundle),
+            "trainable_modules": export_trainable(bundle),
         },
         "progress": dict(progress),
         "rng": rng_state or capture_rng_state(),

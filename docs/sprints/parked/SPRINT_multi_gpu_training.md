@@ -1,6 +1,36 @@
 # SPRINT: Multi-GPU Training
 
-状态：parked / blocked-on-event（等待真实 multi-GPU 硬件 → Phase 6 的 torchrun 2-GPU FSDP2 SD3 OCR 真实运行）。前置 readiness sprint 已落地（schema TrainingSection.strategy Literal["single_process","fsdp"]、DistributedTrainingContext/resolve_training_context、Strategy/SingleProcessStrategy 接缝、collect/train step split，commits d19faa2/b0d7b57/0d1b046/f979cce/fea4ba9/e6facbd/001ab41/1e6dc24），但本 sprint 的 FSDP2 主体（FSDPStrategy / fully_shard / DTensor / vrl/models/trainable.py / torchrun launcher）尚未实现，strategy=fsdp 当前由 assert_strategy_executable 主动 fail-fast（distributed.py:141-146）。
+状态：parked / blocked-on-event（等待真实 multi-GPU 硬件 → Phase 6 的 torchrun 2-GPU FSDP2 SD3 OCR 真实运行）。前置 readiness sprint 已落地（schema TrainingSection.strategy Literal["single_process","fsdp"]、DistributedTrainingContext/resolve_training_context、Strategy/SingleProcessStrategy 接缝、collect/train step split，commits d19faa2/b0d7b57/0d1b046/f979cce/fea4ba9/e6facbd/001ab41/1e6dc24）。FSDP2 **strategy 层**（FSDPStrategy / fully_shard / DTensor export）也已落地（见下方 Implementation status），但多卡编排（Phase 4 rank-split collect/train、§6.5 torchrun↔Ray、Phase 6 真实 2-GPU 运行）尚未实现，strategy=fsdp 当前由 run_online_recipe 的 _require_supported_online_strategy 主动 fail-fast。
+
+## Implementation status (2026-06-16) — strategy layer landed
+
+The FSDP2 **strategy layer** (Phase 2 + the FSDP2 core of Phases 3/5) is now
+implemented and unit-tested on a single CPU rank (gloo, `world_size=1`), where
+`fully_shard` really shards, forward/backward runs, and
+`get_model_state_dict(full_state_dict=True)` materializes plain full tensors:
+
+- `vrl/trainers/fsdp.py` — process-group init/destroy, 1D `dp_shard` mesh,
+  `MixedPrecisionPolicy` mapping, `unwrap_module` (compile + PEFT), `iter_blocks`
+  (`_no_split_modules`), `apply_fsdp` (per-block + root `fully_shard`),
+  `gather_full_state_dict` / `load_full_state_dict` (DTensor ↔ rank0 full).
+- `vrl/trainers/strategy.py` — `FSDPStrategy` (prepare_model wrap / backward /
+  DTensor-aware clip / export_trainable_state / export_rollout_state /
+  load_trainable_state / barrier) + `build_strategy(cfg, context)` factory + the
+  §10 config gates (fsdp + EMA, fsdp + optimizer resume → fail-fast).
+- `vrl/trainers/online/trainer.py` — routes its model through
+  `strategy.prepare_model` once (identity for single_process).
+- `vrl/config/schema.py` + `configs/base/distributed/training_fsdp.yaml` — the
+  `distributed.training.fsdp` knobs the strategy reads (mesh / mixed_precision /
+  reshard_after_forward).
+- `tests/trainers/test_fsdp.py` — real CPU `fully_shard` round-trips, the §9
+  rollout-key-space invariant (sharded export == single-process export), pure
+  helpers, and the gates.
+
+**Still NOT done (needs real multi-GPU + Ray, and is what keeps `fsdp` gated):**
+Phase 4 (online GRPO rank-split collect/train), §6.5 (torchrun↔Ray rollout
+coordination), Phase 7 (offline DPO distributed), DTensor-aware optimizer/EMA
+state, and Phase 6 real 2-GPU runs. `run_online_recipe` fail-fasts on `fsdp` via
+`_require_supported_online_strategy` pointing here.
 
 ## 0. Core Decision
 

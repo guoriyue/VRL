@@ -240,7 +240,6 @@ def _install_common_fakes(
     monkeypatch.setattr(online, "RayGenerationLauncher", lambda: _FakeLauncher(state))
     monkeypatch.setattr(online, "OnlineTrainer", lambda *args, **kwargs: _FakeTrainer(state, *args, **kwargs))
     monkeypatch.setattr(online, "build_runtime_weight_syncer", lambda *args, **kwargs: object())
-    monkeypatch.setattr(online, "build_trainable_state_sync_getter", lambda bundle: object())
     monkeypatch.setattr(online, "save_resolved_config", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         online,
@@ -271,6 +270,78 @@ async def test_run_online_recipe_shutdowns_owner_after_success(monkeypatch, tmp_
     assert state["runtime_shutdowns"] == 1
     assert state["reward_shutdowns"] == 1
     assert state["owner_shutdowns"] == 1
+
+
+def test_require_supported_online_strategy_blocks_fsdp() -> None:
+    """The online recipe fail-fasts on fsdp: the FSDP2 strategy layer exists, but
+    the multi-rank GRPO orchestration that drives it is not wired yet."""
+    from vrl.trainers.distributed import DistributedTrainingContext
+
+    ctx = DistributedTrainingContext(
+        strategy="fsdp",
+        distributed=True,
+        rank=0,
+        local_rank=0,
+        world_size=2,
+        is_primary=True,
+        device=torch.device("cpu"),
+    )
+    with pytest.raises(NotImplementedError, match="multi-rank"):
+        online._require_supported_online_strategy(ctx)
+
+
+def test_require_supported_online_strategy_allows_single_process() -> None:
+    from vrl.trainers.distributed import DistributedTrainingContext
+
+    ctx = DistributedTrainingContext(
+        strategy="single_process",
+        distributed=False,
+        rank=0,
+        local_rank=0,
+        world_size=1,
+        is_primary=True,
+        device=torch.device("cpu"),
+    )
+    online._require_supported_online_strategy(ctx)  # no raise
+
+
+@pytest.mark.asyncio
+async def test_rollout_sync_getter_routes_through_strategy(monkeypatch, tmp_path) -> None:
+    """The recipe binds the rollout sync getter to the strategy, not the raw helper.
+
+    Locks sprint P3 ownership: the strategy seam -- not a direct
+    ``build_trainable_state_sync_getter(bundle)`` call -- is what produces
+    rollout-facing weights, so the future FSDP strategy controls what leaves the
+    trainer without the recipe changing.
+    """
+    state = _state()
+    _install_common_fakes(monkeypatch, tmp_path, state)
+
+    captured: dict[str, Any] = {}
+
+    def _capture(*args: Any, **kwargs: Any) -> _FakeTrainer:
+        captured.update(kwargs)
+        return _FakeTrainer(state, *args, **kwargs)
+
+    monkeypatch.setattr(online, "OnlineTrainer", _capture)
+
+    await online.run_online_recipe(_cfg(), _definition())
+
+    from vrl.trainers.strategy import SingleProcessStrategy
+
+    assert isinstance(captured["strategy"], SingleProcessStrategy)
+
+    export_calls: list[Any] = []
+    sentinel = {"adapter.weight": torch.ones(1)}
+    monkeypatch.setattr(
+        captured["strategy"],
+        "export_rollout_state",
+        lambda bundle: export_calls.append(bundle) or sentinel,
+    )
+    # The getter must delegate to strategy.export_rollout_state on every call,
+    # re-reading live state rather than a value snapshotted at build time.
+    assert captured["sync_state_getter"]() is sentinel
+    assert len(export_calls) == 1
 
 
 @pytest.mark.asyncio

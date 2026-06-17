@@ -73,6 +73,10 @@ class OnlineRecipeStack:
     algorithm: Any
     evaluator: Any | None
     trainer: Any
+    # Training strategy seam (vrl/trainers/strategy.py): the owner of trainable
+    # -state export for both checkpointing and rollout weight sync. Typed Any to
+    # match the other wired runtime objects and avoid importing the protocol.
+    strategy: Any
     trainer_config: Any
     collector_config: Any
     family: str
