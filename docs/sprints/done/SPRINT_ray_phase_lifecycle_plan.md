@@ -1,6 +1,8 @@
 # SPRINT: Ray 阶段生命周期整理
 
-状态：**P0–P3 已实现(未提交,待 review)**;P4 / weight-sync / sleeping 仍为 follow-up。
+状态：**DONE — P0–P3 已提交 `e4864bf`「Implement Ray phase lifecycle plan (P0-P3)」**（wm-infra 与 `~/Desktop/VRL` 两个 checkout 同步在 `main`，blob 一致）。验收 §10 八条达成；P4（public YAML 兼容，刻意暂不动）/ weight-sync / sleeping 是 §3 与「後續」明确划出的**独立后续 sprint**，不属本 sprint 的未完工作。本 doc 移入 `done/`。
+
+> **关账复核（2026-06-16）**：旧 status 行「未提交,待 review」已 **stale**——代码非但没烂，早已落库。实测：`should_release_memory_before_reward` / `_ReleaseAfterCollectState` 已从 `vrl/` 消失；`RayLifecyclePlan`(`vrl/ray/resources.py:97`) / `ActorLeasePolicy`(:70) / `PhaseHandoffPolicy`(:83) 在位，旧 `rollout_release_* / reward_release_*` flag 作为兼容视图同处派生（:103-105 docstring）。测试：`tests/ray/test_resources.py` 44 passed、`tests/rollouts/collector/test_runtime.py` + `tests/rollouts/test_runtime_protocol_contract.py` 19 passed。
 
 > **实现状态(2026-06-16)**:P0–P3 全部落地,808 个非环境缺失测试全绿(`.venv` 缺 peft/transformers/vllm/ray
 > 的用例本就 skip/fail,与本改动无关),ruff 全过。落点:

@@ -1,6 +1,6 @@
 # SPRINT: Cross-model rollout smoke (2026-06-09)
 
-状态：done（一次性验证，结论已落档；原始产物 `outputs/model_smoke_20260609/` 已于
+状态：done（2026-06-09 一次性跨家族 smoke 测量归档；原始产物 outputs/model_smoke_20260609/ 与 data/external/model_smoke_20260609/ 已删除并经核实不存在）。本档发现的 P0 隐患 predict2 GRPO logprob parity 已修复（c66bf11，EDM→flow sigma 域转换，parity 13.9→5.3e-6，回归测试 tests/models/diffusion/test_scheduler_logprob_parity.py）；§4 gap#3 predict2 接 VAE tiling 也已修（3bb1a33，predict2/runtime.py 引入 vae_decode_memory）。注意：旧 SPRINT_predict2_logprob_parity.md 已在 3f417e0 删除，原 parity 取证现归档于本档 §2 + c66bf11 commit message。
 2026-06-10 删除 —— predict2 parity 取证数字保存在 SPRINT_predict2_logprob_parity.md）。
 
 ## 0. 问题与口径

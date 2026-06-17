@@ -1,8 +1,6 @@
 # SPRINT: Wan 2.2 双专家（A14B）RL 支持
 
-状态：implemented / proof run pending（2026-06-15）。A14B dual-stage 的模型加载、timestep 路由、
-replay runtime、默认 low-noise 专家训练、T2V/I2V A14B config 和 CPU 单测已落地；剩余工作是一次
-真实 Wan 2.2 GRPO proof run。Wan 2.2-5B `expand_timesteps` 仍是非目标。
+状态：implemented / proof run pending（2026-06-15）。A14B dual-stage 模型加载、timestep 路由（_uses_low_noise_transformer/_validate_wan_pipeline）、replay runtime（transformer_2）、默认 low-noise 专家训练（_normalize_trainable_transformers）、A14B config 与 23 项 CPU 单测均已落地（43dbb6e/d622406；config 已于 7e3e072 迁至 configs/model/diffusion/wan_2_2/）。剩余唯一工作 = 一次真实 Wan 2.2 A14B GRPO proof run（无 run 证据，无 configs/experiment/diffusion/wan_2_2/ 入口）。注：§6 引用的 configs/model/diffusion/wan_2_1/a14b.yaml 与 i2v_a14b.yaml 已随 7e3e072 移动失效，应改指 wan_2_2/。Wan 2.2-5B expand_timesteps 仍为非目标。
 
 > 排序澄清：MoE 决策文档（`reading/SPRINT_moe_support_decision.md`）= "要不要/为什么"；本文 =
 > "怎么做"。二者一对，不存在"先 Wan 2.2 再做别的 MoE"。

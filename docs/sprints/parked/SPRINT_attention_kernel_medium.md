@@ -1,7 +1,6 @@
 # SPRINT: Own the AR decoder driver while reusing HF submodules
 
-状态: proposed. 接续已落地的 name-based attention-backend dispatch
-(`vrl.nn.modules.ar_attention_backends.resolve_attention_backend`).
+状态：parked（仅设计稿，T1-T4 全部未落地）。事件门槛=出现第三个 attention backend 才动工（见 d570717 refile 说明）；当前 ar_attention_backends.py 仍只注册 vllm_paged / torch_native 两个 backend，_forward_paged_trunk/_forward_vllm_attention 仍内嵌在 VllmDecoderPagedAttentionBackend，未抽出 ARDecoderDriver/HFDecoderView/ARAttentionKernel。接续已落地的 resolve_attention_backend(family, name, model)。
 
 本 sprint 的真实目标不是“仍走 HF forward”。它是:
 **自己维护一个 Llama/Qwen2-compatible AR decoder forward driver,**

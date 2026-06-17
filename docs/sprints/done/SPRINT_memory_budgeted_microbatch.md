@@ -1,6 +1,6 @@
 # SPRINT: 内存预算驱动的 microbatch 切片(单根派生,不设两次)（planned）
 
-状态：**T1 + T2 已落地 VRL main**(`58e0c13` 旋钮+RSS guard);随后 4 个 commit 收尾(见落地记录)。T3 未做、T4 待真机。
+状态：**已完成**——T1 `microbatch_size` 旋钮 + T2 host-RAM `host_memory_budget_fraction` RSS fail-fast 均落地本仓 main(`58e0c13`),收尾 commit:`e55dcce`(no-streaming 时拒收 budget>0 footgun)、`3dc9755`(wan_2_1 视频 streaming)、`da4c293`(AR janus_pro/nextstep_1 streaming)、`b9c33aa`(`global_std=true`+streaming 构建期告警)。T3 auto-tune 为显式 opt-in 可选项(本 sprint 非必做,未做)、T4 为真机 GPU smoke(用户手跑)。注:doc 落地记录里引用的 `b89f8e2`/`34c32df`/`57755b0`/`39ead74` 是另一 clone(~/Desktop/VRL)的哈希,本仓对应 commit 见上。
 本 sprint 是 `SPRINT_streaming_rollout_accumulation.md`(流式累积,已落地 VRL
 main `4c85f3b`)的**收尾精炼**:把"切多少"从一个**手填的次数**改成一个**大小/内存预算**,派生其余,
 并用**真实 RSS** 而不是低估的字节公式来预测/自动定档。对标 slime 的"单根 + 派生 + 预算式切分"。

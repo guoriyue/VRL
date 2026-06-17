@@ -1,6 +1,6 @@
 # SPRINT: Cosmos + Kling fixed eval and learning-signal calibration（planned）
 
-状态：planned / correctness-first debug。这个 sprint 解决 Cosmos Predict2.5 + Kling
+状态：partial / 实现已落地（未提交，仍在 working tree）。T1-T5 全部完成：EvalConfig (vrl/trainers/core/types.py:58) + schema 接线 (vrl/config/schema.py:316)、load_eval_prompt_examples_from_config (vrl/trainers/data/prompts.py:109)、_run_fixed_eval/_prepare_eval_metrics_csv/_write_eval_metric_row (vrl/scripts/common/online.py:836/900/916) 以及 cosmos kling 实验 eval block 已开启；config load 27 passed。未完成：(1) 两个新单测 test_run_fixed_eval_uses_fixed_seed_grid_and_no_backward / test_eval_config_validation 因缺 import pytest 而 FAIL（"单测通过"验收未达），(2) T6 signal-calibration sweep (lr + advantage scale) 尚未跑、无 eval_metrics.csv 产出。代码尚未 commit（HEAD 中 EvalConfig/_run_fixed_eval count=0）。
 VideoReward 训练里最危险的误判：`reward_mean` 没涨不一定等于 RL 没学，因为当前在线指标混在
 “每个 epoch 换一批 prompt”与“小梯度更新”两件事里。先把学习曲线测准，再调更新强度；不要用更多
 epoch 或吞吐优化掩盖问题。

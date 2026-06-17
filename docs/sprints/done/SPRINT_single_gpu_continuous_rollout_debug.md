@@ -1,5 +1,7 @@
 # SPRINT: 单卡 continuous rollout debug harness
 
+状态：已完成 — 单卡 continuous rollout debug harness 全部落地于 061cfb2（main）：新增 config online_grpo_ocr_single_gpu_async_debug.yaml + persistent_colocated_workers flag（vrl/generation/ray/config.py、vrl/ray/resources.py 完整校验），5 项验证目标均有通过的测试覆盖。
+
 ## 结论
 
 要做一个能在 **1 张 GPU** 上验证 rollout/training 异步调度的例子，不能复用

@@ -1,5 +1,7 @@
 # SPRINT: Diffusion rollout stage pipeline
 
+状态：部分落地（设计 + 已建基座）。T1（DiffusionExecutor 内 typed stage payloads + 方法对齐）已随 b224383 "Add generation stage pipeline foundation" 落地——forward_chunk_plan 现以 DiffusionPromptStageInput→DiffusionPromptStageOutput→DiffusionPreparedStageOutput→DiffusionDenoisedStageOutput 串接 build_prompt_stage_input/run_prompt_encode_stage/run_prepare_stage/run_denoise_stage/run_decode_stage（executor.py:437-454），且同 commit 落地 vrl/generation/pipeline/ 契约层（PipelineTopology/PipelineStage/SerialPipelineRunner，tests/generation/pipeline 12 passed）；但 T0（唯一 immediate 项：model.memory.vae_decode.batch_size YAML 旋钮）仍未做——VaeDecodeMemory 仅有 tiling/slicing，batch_size 会被当 unknown key 拒绝，decode_batch_size 只走 getattr(pipe,...)（sd3_5/model.py:404）；T2–T6（stage_pipeline config / serial_staged / ray_staged 物理管线）未接入任何生产路径，仍待 profiling gate（§4，内部测量决策，非外部事件）。
+
 Status: discussion; gated by profiling. Only T0 is an immediate implementation
 candidate.
 

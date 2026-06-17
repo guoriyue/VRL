@@ -1,6 +1,6 @@
 # SPRINT: MoE 支持决策（cosmos-rl MoE / 图像模型是否需要 MoE / Wan 2.2 双专家）
 
-状态：reading / 方向讨论（**not an action item**）。回答"要不要给 visual-RL infra 加 MoE 支持"，
+状态：reading / 方向讨论（not an action item，按 KIND 归档，状态不迁移）。结论与决策框架仍成立；但 §4-5 关于 "Wan 2.2 训练/rollout 还没接、建议作为独立 sprint 做" 已在本文写就后执行落地（43dbb6e / d622406 / 7e3e072，2026-06-14~15），现归口于 docs/sprints/planned/SPRINT_wan_2_2_dual_expert.md（implemented / proof run pending）；model.py 旧的 boundary_ratio 拒绝点已被真实 timestep 路由替换。
 给出研究结论 + 决策框架 + 条件化建议。本地证据用 file:line，外部事实用 URL，均在 §6 标注。
 
 > 方法：本地读 cosmos-rl 源码笔记 + grep 现有模型族；外部用 3 个并行 web agent 核验

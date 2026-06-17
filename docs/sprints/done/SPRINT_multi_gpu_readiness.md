@@ -1,6 +1,6 @@
 # SPRINT: Multi-GPU Training Readiness
 
-状态：planned / prerequisite。本文是 `parked/SPRINT_multi_gpu_training.md` 的前置
+状态：已完成 / readiness landed。P1-P6 全部落在 main：schema+context d19faa2（TrainingSection.strategy=Literal[single_process|fsdp]、DistributedTrainingContext、resolve_training_context、assert_strategy_executable fail-fast），P2 资源校验 b0d7b57（_validate_trainer_device_count/_validate_fsdp_trainer_disjoint），P3 strategy seam 0d1b046/001ab41/1e6dc24（Strategy + SingleProcessStrategy，已 wire 进 trainer.py），P4 collect/train 拆分 f979cce（collect_training_batch/train_on_rollout_batch/TrainingBatch），P5 rollout state 去前缀 fea4ba9（flatten_trainable_module_state 剥离 _orig_mod/module.），P6 rank0<->Ray ownership spike e6facbd。78 个相关测试全绿；FSDP2 fully_shard 按 §2 non-goal 显式留给 parked/SPRINT_multi_gpu_training.md。
 sprint：在还没有真实 multi-GPU 硬件时，把配置、资源解析、trainer 边界、checkpoint /
 rollout weight sync 的契约先准备好。完成后，拿到多 GPU 时应该能直接进入 FSDP2 真实
 运行验证，而不是先处理 schema、resource resolver、rank0/Ray ownership 这些基础问题。

@@ -1,8 +1,6 @@
 # SPRINT: Reward execution —— 成本分层放置 + 异步打分
 
-状态：proposed / design（从 `docs/sprints/reading/` 的 slime + cosmos-rl 精读，叠加
-MR4 `ray/global-persistent-pg` 的 placement owner 落地，讨论收敛而来）。本 sprint
-只写设计与分阶段计划，不含实现。
+状态：design / not-started —— P1/P2/P3 全部未实现（P1 硬 barrier 仍在 collector/core.py:107-108 与 prompt_collection.py:23-26,74-80 的 collect-all→score-all；P2 `reward_cost` 全仓 0 命中、_resolve_reward_devices auto 仍只看 spare GPU（resources.py:814-823）；P3 无 ref 数据面）。注意 §4.1/§4.2/§6/§10 引用的 `inference_runtime: local|ray` 已被 8de3e63 改名为 `execution: inline|pool`，该核心抽象论证需按新 key 重写。
 
 关联：
 - [[SPRINT_global_ray_placement_owner]]（reward 的 GPU 怎么来：owner 的 bundle）

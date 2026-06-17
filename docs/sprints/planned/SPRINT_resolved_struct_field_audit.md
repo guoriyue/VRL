@@ -1,6 +1,10 @@
 # SPRINT: `ResolvedDistributedResources` 等"派生型胖结构体"字段必要性审计（planned）
 
-状态：proposed / planned。这是一次"派生结构体里的字段是否真有人消费、如何防止它继续膨胀"的审计。
+状态：**部分完成 —— 关账复核 2026-06-16**。这是一次"派生结构体里的字段是否真有人消费、如何防止它继续膨胀"的审计。
+
+> **已落地**：**P0** 三个死字段（`reward_num_gpus` stored 字段 / `total_gpu_slots` / `ray_total_bundles`）+ 7 行测试断言 + `ray_bundles=` 日志行已由 `eb5d421`「Remove redundant resource plan fields」删除——`reward_num_gpus` **局部变量**按 §4 设计保留（`vrl/ray/resources.py:238/240/248/251`），`tests/ray/test_resources.py` 44 passed。**P1** `visible_devices` 已加 display/provenance-only 注释（`resources.py:117-119`）。**§9** 8 个 config 死键已合入 main（`freeze_vq`/`freeze_vision_encoder`/`freeze_aligner`/`freeze_image_head`/`uncentralized_training` grep 归零）。
+>
+> **仍开放（本 doc 留在 `planned/` 的原因）**：**P3** AGENTS.md 防腐约定（"派生/解析型结构体每字段须有非日志消费方"）尚未写入；**§5 `FamilyCapability`** 死 flag follow-up 未做（`vrl/generation/capabilities.py:134/135/138` 的 `supports_kv_decode`/`supports_prefill_decode_split`/`supports_cuda_graph` 仍在，需逐 flag 对抗式复核后再删）。
 findings + 路径 + 整改逻辑都在本文。按 P0→P3 分批做，每批独立 PR，互不依赖。
 
 > 方法：用 1 个编排 workflow（23 个字段各 1 个审计 agent + 对每个"可删候选"再派 1 个**对抗式反驳

@@ -1,7 +1,6 @@
 # SPRINT: Physical stage runtime（future）
 
-状态：foundation landed for the contract layer; physical Ray stage scheduling
-still gated by cross-family profiling and relay measurements.
+状态：foundation contract layer 已落地（b224383，PipelineTopology / PipelineStagePayload / SerialPipelineRunner / RayPipelineStageWorker / RayPipelineRunner + 12 passing contract tests），但仅是未接线的 Level-1 actor-safe seam（无任何 rollout/trainer/config 引用）；physical Ray stage runtime（StageScheduler、bounded queues、tensor relay，§6 P0-P4）尚未开工，仍 parked 等待 multi-GPU + cross-family profiling gate（§3）。
 
 ## 0. Core Decision
 

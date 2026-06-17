@@ -1,6 +1,6 @@
 # SPRINT: generation memory policy
 
-状态：proposed。
+状态：done（第一阶段 build-time policy 已落地，commit 3bb1a33 在 main 上 — apply_generation_memory_policy + generation_memory_targets() 统一 5 个 family loader，架构/单元测试 19 passed；第二阶段 generation-wide report 已演进为独立 planned/SPRINT_generation_memory_system.md 的 L1，不计入本篇 scope）。
 
 目标：把 generation 期间的内存控制从“每个模型 family 手工维护一份”改成按生命周期分层的统一 policy。第一阶段只收敛 build-time diffusion component memory，解决 VAE tiling/slicing 在 SD3.5、Wan、Anima、Cosmos Predict2 / Predict2.5 loader 里重复接线的问题；第二阶段只做 generation-wide memory report 和配置边界梳理，不创建一个到处 mutate 的大 manager。
 

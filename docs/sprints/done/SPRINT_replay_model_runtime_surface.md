@@ -1,6 +1,6 @@
 # SPRINT: ReplayModel runtime surface（设计，未实施）
 
-状态：proposed。本文回答一个架构问题：每个 RL model family 是否要维护两份模型逻辑？
+状态：已落地（本设计提出的 ReplayModel runtime surface 在代码中已基本实现，文档落后于实现）。P0 build_replay_bundle 全 family 接入 + online.py:400 优先选择 + test_minimal_replay_runtime_wiring.py 断言；P1 frozen_offload/frozen_module.py/trainer_frozen_targets/apply_trainer_memory_policy 已从源码移除（仅剩 2 处过时测试名字符串）；P2 generation_only_modules/runtime_role/loads_full_generation_modules metadata 早于本文一个月落地（1472306, 2026-05-14）；P3 trainer.py first_step_logprob_parity→training_debug.jsonl + test_scheduler_logprob_parity.py；P4 diffusion_nft_prepare_transformer_input 落地（54623cb）并由 vrl/algorithms/diffusion_nft.py 消费。仅 P5（多卡 compile/FSDP）属显式未来工作。
 结论是：**要维护两个 runtime surface，但不要维护两份完整模型。**
 
 ```text

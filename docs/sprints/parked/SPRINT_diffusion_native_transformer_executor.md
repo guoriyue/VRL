@@ -1,6 +1,6 @@
 # SPRINT：Diffusion native transformer executor
 
-状态：proposed。
+状态：未开始 / parked。Phase 0-11 全部未落地（grep WanNativeTransformerExecutor / WanSelfAttention / load_wan_diffusers_transformer_weights / CosmosAttention2_0 在 vrl/ + tests/ 零命中；vrl/nn/layers/{dense,wan,mlp,norm,modulation}.py、vrl/nn/modules/diffusion/、vrl/models/diffusion/*/executor.py+weights.py 均不存在；backbone.py:88,153 仍 self.transformer = diffusers object）。唯一相关提交 0abb5fd 只是把本 doc 砍成 forward-looking plan，未写任何实现。触发事件：bf16 rollout dtype + torch.compile（31f6843）启用后，需重新 profiling 确认 attention 仍是瓶颈（见 SPRINT_rollout_performance：attention 34% 但全 fp32）才启动。
 
 ## 核心结论
 

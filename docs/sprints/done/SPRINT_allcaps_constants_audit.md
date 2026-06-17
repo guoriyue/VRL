@@ -1,6 +1,6 @@
 # SPRINT: vrl/ 模块级 ALL_CAPS 常量审计与整理（planned）
 
-状态：proposed / planned。这是一次"硬编码常量是否安全、如何更好组织"的全仓审计，
+状态：DONE（全部 P0–P3 + 附录 B 已落地 main）。P0/P2 danbooru 词表外置+空串全局改参 (1254093)；P1 DEFAULT_ARTIFACT_FIELDS 从 PromptExample field(metadata={"artifact":True}) 派生 (45084f9)；附录 B 改写为 source+derived+改名：_SAFETY_RATING_SPELLINGS→SAFETY_RATING_ALIASES、_CANONICAL_STRING→_DTYPE_NAME_BY_INPUT(_DTYPE_SPELLINGS)、_ARTIFACT_DIRS→_INIT_DIRS_BY_DATASET、R1 prompts KEEP+注释、DEFAULT_NEGATIVE_PROMPT→_DEFAULT_NEGATIVE_PROMPT (a819878, e833d95)。唯一余项 _resolve_lora_block 统一已被本文显式划为单独 follow-up。
 findings + 路径 + 整改逻辑都在本文。按 P0→P3 分批做，每批独立 PR，互不依赖。
 
 > 方法：用 8 个并行 agent 扫了 `vrl/` 下全部 **131 个**模块级 ALL_CAPS 赋值（含

@@ -1,6 +1,6 @@
 # SPRINT: GEMM 利用率 / 吞吐优化（planned）
 
-状态：proposed / planned。这份 sprint 回答一个具体问题——**rollout/train 前向里 GEMM 是最大切片（~48-51% kernel 时间），怎么把它做得更快**。结论先行：不是"写个更快的 matmul"（cuBLAS/CUTLASS 已接近峰值），而是**喂给 tensor core 形状更大、精度更省、更不碎片化的活**。所有数字来自本仓自己的 profiling（`docs/sprints/info/SPRINT_{rollout,cosmos,cross_model}_performance.md`）。
+状态：partial。P0 逐-projection GEMM profiler（f446776，gemm_projection_breakdown.py）+ P1 QKV 融合 A/B（实测低 ROI，--fuse-qkv 仅留 profiler、不落 runtime）+ P2 torch.compile（31f6843，predict2_2b.yaml torch_compile.enable:true，1.37×/1.25×）均已完成。剩 P1.5（LoRA 家族 sd3.5/wan use_lora:false 全参替换，待显存/多卡）+ P2 logprob drift guard 下次真实 run 复绿；P3 FP8 按用户 2026-06-14 决定暂缓。
 
 > 方法：对 3 份带 torch-profiler / Nsight / NCU trace 的 perf 文档做了交叉读取，并回到 `vrl/` 与已装 diffusers 0.37.1 逐条核实每个杠杆的代码现状（已做 / 一键开 / 真要写）。硬件经 `nvidia-smi` 实测确认。
 

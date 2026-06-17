@@ -1,6 +1,6 @@
 # SPRINT: Rollout Performance
 
-状态：proposed（基于 SD3.5 OCR GRPO fp32 profiling 数据，2026-06-06）。
+状态：profiling 结果归档 + 决定性优化已落地（2026-06-08~06-10）。D0 substage profiling（record_function ranges in executor.py）、D1 rollout-only transformer compile（rollout.denoise_compile，commit d3581ed，经 capability.supports_torch_compile + torch_compile_model_config 接线，非文中已不存在的 RolloutCompileMetadata 符号）、D2 recompile 观测（TORCH_LOGS=recompiles，commit bae13c0）、D5 sde_step_with_logprob 去 per-step host sync（step_index 参数，commit d3581ed）均已落地；GPM scale bump（vae_decode.tiling + sample_batch_size:16，commit d26dc75）取代旧 b8 默认。D3 clone cleanup（hygiene）、D4 staged rollout、P2 multi-GPU rollout（需第二张卡）按文档明确范围保留为可选/延后项，不计入完成。
 
 ## Profiling 结论
 

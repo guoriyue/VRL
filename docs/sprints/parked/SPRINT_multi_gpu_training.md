@@ -1,5 +1,7 @@
 # SPRINT: Multi-GPU Training
 
+状态：parked / blocked-on-event（等待真实 multi-GPU 硬件 → Phase 6 的 torchrun 2-GPU FSDP2 SD3 OCR 真实运行）。前置 readiness sprint 已落地（schema TrainingSection.strategy Literal["single_process","fsdp"]、DistributedTrainingContext/resolve_training_context、Strategy/SingleProcessStrategy 接缝、collect/train step split，commits d19faa2/b0d7b57/0d1b046/f979cce/fea4ba9/e6facbd/001ab41/1e6dc24），但本 sprint 的 FSDP2 主体（FSDPStrategy / fully_shard / DTensor / vrl/models/trainable.py / torchrun launcher）尚未实现，strategy=fsdp 当前由 assert_strategy_executable 主动 fail-fast（distributed.py:141-146）。
+
 ## 0. Core Decision
 
 本 sprint 的目标是让训练侧支持真正的 multi-GPU training，而不是只把 rollout worker 分到多张卡。
