@@ -70,8 +70,8 @@ def test_reward_runtime_kwargs_apply_to_any_active_ray_reward() -> None:
                         "num_workers": 1,
                     },
                 },
+                # release_after_score derives to true for a multi-reward pool.
                 "reward": {
-                    "release_after_score": True,
                     "cpus_per_worker": 0.5,
                     "max_inflight_batches": 2,
                     "placement_strategy": "STRICT_PACK",

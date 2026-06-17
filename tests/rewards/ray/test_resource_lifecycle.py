@@ -175,12 +175,16 @@ def test_reward_config_receives_resolved_resource_plan() -> None:
                 "resources": {
                     "visible_devices": [0],
                     "trainer": {"num_gpus": 0},
-                    "rollout": {"num_gpus": 0, "gpus_per_worker": 0},
-                    "reward": {"num_gpus": 1, "gpus_per_worker": 1, "num_workers": 1},
+                    "rollout": {"devices": [0], "gpus_per_worker": 1, "num_workers": 1},
+                    "reward": {
+                        "num_gpus": 1,
+                        "gpus_per_worker": 1,
+                        "num_workers": 1,
+                        "share_with_rollout": True,
+                    },
                 },
-                "rollout": {"release_after_collect": False},
+                # release_after_score derives to true for a shared reward pool.
                 "reward": {
-                    "release_after_score": True,
                     "cpus_per_worker": 0.5,
                     "max_inflight_batches": 1,
                     "placement_strategy": "STRICT_PACK",

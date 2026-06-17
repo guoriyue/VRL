@@ -16,35 +16,25 @@ from vrl.ray.resources import (
 def _cfg(
     resources: dict,
     *,
-    rollout_release_after_collect: bool | None = None,
-    rollout_release_before_reward_model: bool | None = None,
-    rollout_persistent_colocated_workers: bool = False,
-    rollout_gpu_memory_fraction: float | None = None,
-    reward_release_after_score: bool | None = None,
+    colocate_with_trainer: float | None = None,
+    rollout_runtime: dict | None = None,
     kling_video_reward: bool = False,
     reward_components: dict[str, float] | None = None,
     reward_kwargs: dict[str, dict] | None = None,
 ) -> object:
-    # None leaves the key unset so the resolver derives it from topology.
-    rollout_runtime_values = {
-        "release_after_collect": rollout_release_after_collect,
-        "release_before_reward_model": rollout_release_before_reward_model,
-        "gpu_memory_fraction": rollout_gpu_memory_fraction,
-    }
-    if rollout_persistent_colocated_workers:
-        rollout_runtime_values["persistent_colocated_workers"] = True
-    rollout_runtime = {
-        key: value for key, value in rollout_runtime_values.items() if value is not None
-    }
-    reward_runtime = (
-        {} if reward_release_after_score is None
-        else {"release_after_score": reward_release_after_score}
-    )
+    # Release scheduling is derived from topology, so the public rollout block only
+    # carries the colocate_with_trainer intent (memory_fraction cap). Tests that
+    # exercise the removed-key rejection pass a raw rollout_runtime instead.
+    if rollout_runtime is None:
+        rollout_runtime = {}
+        if colocate_with_trainer is not None:
+            rollout_runtime["colocate_with_trainer"] = {
+                "memory_fraction": colocate_with_trainer,
+            }
     data = {
         "distributed": {
             "resources": resources,
             "rollout": rollout_runtime,
-            "reward": reward_runtime,
         },
     }
     if kling_video_reward:
@@ -136,8 +126,8 @@ def test_explicit_overlap_marks_colocated_when_allowed() -> None:
     assert resolved.requires_trainer_reservation is False
 
 
-def test_single_gpu_persistent_colocated_rollout_debug_keeps_worker_resident() -> None:
-    """Checks explicit single-GPU async debug can keep rollout workers resident."""
+def test_single_gpu_colocate_with_trainer_keeps_worker_resident() -> None:
+    """Checks colocate_with_trainer keeps the single-GPU rollout worker resident."""
     resolved = resolve_distributed_resources(
         _cfg(
             {
@@ -146,9 +136,7 @@ def test_single_gpu_persistent_colocated_rollout_debug_keeps_worker_resident() -
                 "rollout": {"devices": [0], "gpus_per_worker": 1},
                 "allow_overlap": True,
             },
-            rollout_release_after_collect=False,
-            rollout_persistent_colocated_workers=True,
-            rollout_gpu_memory_fraction=0.45,
+            colocate_with_trainer=0.45,
         ),
     )
 
@@ -158,9 +146,43 @@ def test_single_gpu_persistent_colocated_rollout_debug_keeps_worker_resident() -
     assert resolved.rollout_gpu_memory_fraction == 0.45
 
 
-def test_persistent_colocated_rollout_requires_gpu_memory_fraction() -> None:
-    """Checks resident colocated workers must declare a GPU budget cap."""
-    with pytest.raises(ValueError, match="requires an explicit"):
+def test_colocate_with_trainer_implies_overlap_without_allow_overlap() -> None:
+    """colocate_with_trainer is itself the overlap permission; allow_overlap unset."""
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0],
+                "trainer": {"devices": [0]},
+                "rollout": {"devices": [0], "gpus_per_worker": 1},
+            },
+            colocate_with_trainer=0.45,
+        ),
+    )
+
+    assert resolved.colocated is True
+    assert resolved.rollout_persistent_colocated_workers is True
+
+
+def test_colocate_with_trainer_auto_pins_rollout_to_trainer_gpu() -> None:
+    """Auto rollout placement is forced onto the trainer GPU, not a spare one."""
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0, 1, 2],
+                "trainer": {"devices": [0]},
+                "rollout": {"num_gpus": "auto", "gpus_per_worker": 1},
+            },
+            colocate_with_trainer=0.4,
+        ),
+    )
+
+    assert resolved.rollout_devices == (0,)
+    assert resolved.colocated is True
+
+
+def test_colocate_with_trainer_requires_memory_fraction() -> None:
+    """Checks a colocate block without memory_fraction fails inside the block."""
+    with pytest.raises(ValueError, match="colocate_with_trainer requires memory_fraction"):
         resolve_distributed_resources(
             _cfg(
                 {
@@ -169,15 +191,14 @@ def test_persistent_colocated_rollout_requires_gpu_memory_fraction() -> None:
                     "rollout": {"devices": [0], "gpus_per_worker": 1},
                     "allow_overlap": True,
                 },
-                rollout_release_after_collect=False,
-                rollout_persistent_colocated_workers=True,
+                rollout_runtime={"colocate_with_trainer": {}},
             ),
         )
 
 
-def test_rollout_gpu_memory_fraction_rejects_out_of_range() -> None:
+def test_colocate_with_trainer_memory_fraction_rejects_out_of_range() -> None:
     """Checks the GPU budget cap is validated to the (0, 1] range."""
-    with pytest.raises(ValueError, match=r"gpu_memory_fraction must be in \(0, 1\]"):
+    with pytest.raises(ValueError, match=r"memory_fraction must be in \(0, 1\]"):
         resolve_distributed_resources(
             _cfg(
                 {
@@ -186,33 +207,44 @@ def test_rollout_gpu_memory_fraction_rejects_out_of_range() -> None:
                     "rollout": {"devices": [0], "gpus_per_worker": 1},
                     "allow_overlap": True,
                 },
-                rollout_release_after_collect=False,
-                rollout_persistent_colocated_workers=True,
-                rollout_gpu_memory_fraction=1.5,
+                colocate_with_trainer=1.5,
             ),
         )
 
 
-def test_persistent_colocated_rollout_requires_overlap() -> None:
-    """Checks persistent colocated debug flag cannot be used on split GPUs."""
-    with pytest.raises(ValueError, match="requires trainer and rollout devices to overlap"):
+def test_colocate_with_trainer_rejects_explicit_disjoint_rollout_devices() -> None:
+    """Checks colocate cannot be silently reinterpreted as split-GPU resident."""
+    with pytest.raises(ValueError, match="disjoint from trainer"):
         resolve_distributed_resources(
             _cfg(
                 {
                     "visible_devices": [0, 1],
                     "trainer": {"devices": [0]},
                     "rollout": {"devices": [1], "gpus_per_worker": 1},
-                    "allow_overlap": False,
                 },
-                rollout_release_after_collect=False,
-                rollout_persistent_colocated_workers=True,
+                colocate_with_trainer=0.45,
             ),
         )
 
 
-def test_persistent_colocated_rollout_requires_no_release_after_collect() -> None:
-    """Checks persistent colocated debug cannot also request lifecycle release."""
-    with pytest.raises(ValueError, match=r"requires .*release_after_collect=false"):
+@pytest.mark.parametrize(
+    ("rollout_runtime", "match"),
+    [
+        ({"release_after_collect": False}, "release_after_collect was removed"),
+        (
+            {"release_before_reward_model": True},
+            "release_before_reward_model was removed",
+        ),
+        (
+            {"persistent_colocated_workers": True},
+            "persistent_colocated_workers moved into",
+        ),
+        ({"gpu_memory_fraction": 0.45}, "gpu_memory_fraction moved into"),
+    ],
+)
+def test_removed_rollout_keys_are_rejected(rollout_runtime, match) -> None:
+    """Removed public rollout keys fail with a migration pointer, not silently."""
+    with pytest.raises(ValueError, match=match):
         resolve_distributed_resources(
             _cfg(
                 {
@@ -221,10 +253,27 @@ def test_persistent_colocated_rollout_requires_no_release_after_collect() -> Non
                     "rollout": {"devices": [0], "gpus_per_worker": 1},
                     "allow_overlap": True,
                 },
-                rollout_release_after_collect=True,
-                rollout_persistent_colocated_workers=True,
+                rollout_runtime=rollout_runtime,
             ),
         )
+
+
+def test_removed_reward_release_after_score_key_is_rejected() -> None:
+    """The public distributed.reward.release_after_score key is rejected."""
+    cfg = OmegaConf.create(
+        {
+            "distributed": {
+                "resources": {
+                    "visible_devices": [0, 1],
+                    "trainer": {"devices": [0]},
+                    "rollout": {"devices": [1], "gpus_per_worker": 1},
+                },
+                "reward": {"release_after_score": True},
+            },
+        },
+    )
+    with pytest.raises(ValueError, match="release_after_score was removed"):
+        resolve_distributed_resources(cfg)
 
 
 def test_devices_must_be_subset_of_visible_devices() -> None:
@@ -491,26 +540,6 @@ def test_ray_reward_requires_reward_gpu_budget_for_any_component() -> None:
         )
 
 
-def test_reward_rollout_overlap_rejects_explicit_resident_lifecycle() -> None:
-    """Checks explicit release=false contradicts a shared reward/rollout pool."""
-    with pytest.raises(ValueError, match="release_before_reward_model"):
-        resolve_distributed_resources(
-            _cfg(
-                {
-                    "visible_devices": [0, 1],
-                    "trainer": {"devices": [0]},
-                    "rollout": {"devices": [1], "gpus_per_worker": 1},
-                    "reward": {
-                        "devices": [1],
-                        "gpus_per_worker": 1,
-                        "share_with_rollout": True,
-                    },
-                },
-                rollout_release_before_reward_model=False,
-            ),
-        )
-
-
 def test_reward_shared_pool_derives_release_lifecycle_when_unset() -> None:
     """Checks unset release flags derive to true for a shared reward pool."""
     resolved = resolve_distributed_resources(
@@ -652,8 +681,8 @@ def test_lifecycle_plan_colocated_rollout_is_on_demand_before_train() -> None:
     assert plan.handoff.release_rollout_before_reward is False
 
 
-def test_lifecycle_plan_persistent_colocated_rollout_stays_resident() -> None:
-    """Persistent colocated debug worker overrides the colocated on_demand default."""
+def test_lifecycle_plan_colocate_with_trainer_stays_resident() -> None:
+    """colocate_with_trainer overrides the colocated on_demand default."""
     resolved = resolve_distributed_resources(
         _cfg(
             {
@@ -662,9 +691,7 @@ def test_lifecycle_plan_persistent_colocated_rollout_stays_resident() -> None:
                 "rollout": {"devices": [0], "gpus_per_worker": 1},
                 "allow_overlap": True,
             },
-            rollout_release_after_collect=False,
-            rollout_persistent_colocated_workers=True,
-            rollout_gpu_memory_fraction=0.45,
+            colocate_with_trainer=0.45,
         ),
     )
 
@@ -694,27 +721,6 @@ def test_resource_plan_formatter_includes_lifecycle() -> None:
     text = format_distributed_resource_plan(resolved)
     assert "lifecycle=rollout:on_demand/reward:on_demand" in text
     assert "before_reward:True" in text
-
-
-def test_multiple_ray_rewards_reject_resident_dedicated_gpu() -> None:
-    """Checks multiple Ray rewards cannot all stay resident on one role placement."""
-    with pytest.raises(ValueError, match="multiple active reward components"):
-        resolve_distributed_resources(
-            _cfg(
-                {
-                    "visible_devices": [0, 1, 2],
-                    "trainer": {"devices": [0]},
-                    "rollout": {"devices": [1], "gpus_per_worker": 1},
-                    "reward": {"devices": [2], "gpus_per_worker": 1, "num_workers": 1},
-                },
-                reward_release_after_score=False,
-                reward_components={"first_gpu_reward": 1.0, "second_gpu_reward": 1.0},
-                reward_kwargs={
-                    "first_gpu_reward": {"execution": "pool"},
-                    "second_gpu_reward": {"execution": "pool"},
-                },
-            ),
-        )
 
 
 def test_reward_auto_placement_prefers_dedicated_spare_gpu() -> None:
@@ -771,9 +777,6 @@ def test_reward_can_share_rollout_pool_when_phases_release() -> None:
                 },
                 "allow_overlap": False,
             },
-            rollout_release_after_collect=True,
-            rollout_release_before_reward_model=True,
-            reward_release_after_score=True,
         ),
     )
 
@@ -799,9 +802,6 @@ def test_reward_shared_pool_cannot_request_more_gpus_than_rollout_pool() -> None
                     },
                     "allow_overlap": False,
                 },
-                rollout_release_after_collect=True,
-                rollout_release_before_reward_model=True,
-                reward_release_after_score=True,
             ),
         )
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -189,11 +190,16 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
             f"0 or 1, got {rollout_gpus_per_worker}",
         )
 
+    # colocate_with_trainer (parsed into the persistent flag) pins rollout on the
+    # trainer GPU and is itself the overlap permission, so it doesn't also need
+    # distributed.resources.allow_overlap set.
+    colocate = config.rollout_persistent_colocated_workers
     rollout_devices = _resolve_rollout_devices(
         visible_devices=visible_devices,
         trainer_devices=trainer_devices,
         rollout_config=config.rollout,
         allow_overlap=config.allow_overlap,
+        colocate_with_trainer=colocate,
     )
     rollout_num_gpus = len(rollout_devices)
 
@@ -201,8 +207,8 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
         raise ValueError(
             "No rollout GPUs are available after reserving trainer devices "
             f"{list(trainer_devices)} with distributed.resources.allow_overlap=false. "
-            "Expose more GPUs or set distributed.resources.allow_overlap=true with "
-            "distributed.rollout.release_after_collect=true for single-GPU debug.",
+            "Expose more GPUs, or for resident single-GPU debug set "
+            "distributed.rollout.colocate_with_trainer: {memory_fraction: <0..1>}.",
         )
 
     rollout_num_workers = _resolve_rollout_num_workers(
@@ -212,7 +218,7 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
     )
 
     colocated = bool(set(trainer_devices) & set(rollout_devices))
-    if colocated and not config.allow_overlap:
+    if colocated and not config.allow_overlap and not colocate:
         raise ValueError(
             "Trainer and rollout devices overlap but "
             "distributed.resources.allow_overlap=false: "
@@ -498,6 +504,10 @@ def _distributed_resource_config_from_cfg(cfg: Any) -> DistributedResourceConfig
     reward_node = cfg_get(resources, "reward", _MISSING)
     rollout_runtime = cfg_get(distributed, "rollout", {})
     reward_runtime = cfg_get(distributed, "reward", {})
+    _reject_removed_distributed_keys(rollout_runtime, reward_runtime)
+    colocate_memory_fraction = _parse_colocate_with_trainer(
+        cfg_get(rollout_runtime, "colocate_with_trainer", None),
+    )
 
     trainer = RoleResourceConfig(
         num_gpus=cfg_get(trainer_node, "num_gpus", "auto"),
@@ -527,21 +537,11 @@ def _distributed_resource_config_from_cfg(cfg: Any) -> DistributedResourceConfig
         rollout=rollout,
         reward=reward,
         allow_overlap=bool(cfg_get(resources, "allow_overlap", False)),
-        rollout_release_after_collect=_parse_optional_bool(
-            cfg_get(rollout_runtime, "release_after_collect", None),
-        ),
-        rollout_release_before_reward_model=_parse_optional_bool(
-            cfg_get(rollout_runtime, "release_before_reward_model", None),
-        ),
-        rollout_persistent_colocated_workers=bool(
-            cfg_get(rollout_runtime, "persistent_colocated_workers", False),
-        ),
-        rollout_gpu_memory_fraction=_parse_optional_float(
-            cfg_get(rollout_runtime, "gpu_memory_fraction", None),
-        ),
-        reward_release_after_score=_parse_optional_bool(
-            cfg_get(reward_runtime, "release_after_score", None),
-        ),
+        # Release scheduling is derived from the GPU topology (left None here);
+        # colocate_with_trainer is the only public knob for resident colocation,
+        # carried internally by the persistent flag + memory-fraction cap.
+        rollout_persistent_colocated_workers=colocate_memory_fraction is not None,
+        rollout_gpu_memory_fraction=colocate_memory_fraction,
         reward_placement_strategy=str(
             cfg_get(reward_runtime, "placement_strategy", "SPREAD"),
         ),
@@ -646,6 +646,7 @@ def _resolve_rollout_devices(
     trainer_devices: tuple[int, ...],
     rollout_config: RolloutResourceConfig,
     allow_overlap: bool,
+    colocate_with_trainer: bool,
 ) -> tuple[int, ...]:
     explicit_devices = _parse_devices(rollout_config.devices)
     num_gpus = _parse_num_gpus(
@@ -667,7 +668,37 @@ def _resolve_rollout_devices(
                 "distributed.resources.rollout.num_gpus does not match "
                 f"len(distributed.resources.rollout.devices): {num_gpus} vs {len(devices)}",
             )
+        if colocate_with_trainer and not (set(devices) & set(trainer_devices)):
+            raise ValueError(
+                "distributed.rollout.colocate_with_trainer pins the rollout worker on "
+                "the trainer GPU, but distributed.resources.rollout.devices="
+                f"{list(devices)} is disjoint from trainer={list(trainer_devices)}. "
+                "Drop the explicit rollout devices (auto colocates on the trainer GPU) "
+                "or set them to overlap the trainer.",
+            )
         return devices
+
+    if colocate_with_trainer:
+        # Colocation forces the rollout worker onto the trainer GPU even when the
+        # box has spare GPUs auto-placement would otherwise prefer: the block
+        # declares "share the trainer card", not "find a free one".
+        requested = _requested_role_gpu_count(
+            role="rollout",
+            num_gpus=rollout_config.num_gpus,
+            num_workers=rollout_config.num_workers,
+            gpus_per_worker=rollout_config.gpus_per_worker,
+            available_count=len(trainer_devices),
+        )
+        if requested == 0:
+            return ()
+        if requested > len(trainer_devices):
+            raise ValueError(
+                "distributed.rollout.colocate_with_trainer shares the trainer GPU(s), "
+                f"but rollout needs {requested} GPU(s) and trainer owns "
+                f"{list(trainer_devices)}. Colocation is for tiny single-GPU debug; "
+                "expose dedicated rollout GPUs instead of colocating.",
+            )
+        return tuple(trainer_devices[:requested])
 
     excluded = set(trainer_devices)
     pool = tuple(device for device in visible_devices if device not in excluded)
@@ -688,8 +719,8 @@ def _resolve_rollout_devices(
             "Not enough non-overlapping rollout GPUs: "
             f"requested={requested}, available={len(pool)}, "
             f"trainer={list(trainer_devices)}, visible={list(visible_devices)}. "
-            "Expose more GPUs or set distributed.resources.allow_overlap=true with "
-            "distributed.rollout.release_after_collect=true for single-GPU debug."
+            "Expose more GPUs, or for resident single-GPU debug set "
+            "distributed.rollout.colocate_with_trainer: {memory_fraction: <0..1>}."
         ),
         not_enough_visible_error=(
             "Not enough visible GPUs for rollout even with overlap allowed: "
@@ -888,10 +919,10 @@ def _resolve_reward_devices(
             "Not enough non-overlapping reward GPUs: "
             f"requested={requested}, available={len(pool)}, "
             f"trainer={list(trainer_devices)}, rollout={list(rollout_devices)}, "
-            f"visible={list(visible_devices)}. Use "
-            "distributed.resources.reward.share_with_rollout=true with "
-            "release_after_collect/release_after_score for a shared inference pool, "
-            "or expose a separate reward GPU."
+            f"visible={list(visible_devices)}. Set "
+            "distributed.resources.reward.share_with_rollout=true for a shared "
+            "inference pool (release is derived automatically), or expose a "
+            "separate reward GPU."
         ),
         not_enough_visible_error=(
             "Not enough visible GPUs for reward even with overlap allowed: "
@@ -1131,16 +1162,84 @@ def _parse_optional_bool(value: Any) -> bool | None:
     return bool(value)
 
 
-def _parse_optional_float(value: Any) -> float | None:
+def _parse_colocate_with_trainer(value: Any) -> float | None:
+    """Parse ``distributed.rollout.colocate_with_trainer`` to its memory-fraction cap.
+
+    Returns the worker's GPU memory fraction when the block is present (which
+    means "pin the rollout worker resident on the trainer GPU"), or None when it
+    is absent. ``memory_fraction`` is required because the resident worker then
+    shares the trainer's card and must cap its allocator to leave the trainer room
+    (cf. vLLM/cosmos-rl gpu_memory_utilization on a colocated rollout backend).
+    """
+
     value = _to_plain(value)
     if value is None:
         return None
+    if not isinstance(value, Mapping):
+        raise ValueError(
+            "distributed.rollout.colocate_with_trainer must be a mapping with a "
+            "memory_fraction in (0, 1], e.g. {memory_fraction: 0.45}",
+        )
+    fraction = cfg_get(value, "memory_fraction", _MISSING)
+    if fraction is _MISSING or fraction is None:
+        raise ValueError(
+            "distributed.rollout.colocate_with_trainer requires memory_fraction in "
+            "(0, 1]: the resident rollout worker shares the trainer GPU, so cap its "
+            "allocator share to leave the trainer room",
+        )
     try:
-        return float(value)
+        fraction = float(fraction)
     except (TypeError, ValueError) as exc:
         raise ValueError(
-            f"distributed.rollout.gpu_memory_fraction must be a float or null, got {value!r}",
+            "distributed.rollout.colocate_with_trainer.memory_fraction must be a "
+            f"float in (0, 1], got {fraction!r}",
         ) from exc
+    if not 0.0 < fraction <= 1.0:
+        raise ValueError(
+            "distributed.rollout.colocate_with_trainer.memory_fraction must be in "
+            f"(0, 1], got {fraction}",
+        )
+    return fraction
+
+
+def _reject_removed_distributed_keys(rollout_runtime: Any, reward_runtime: Any) -> None:
+    """Hard-fail on the public release/colocation keys removed by the config sweep.
+
+    Release scheduling is now derived from the GPU topology; resident single-GPU
+    colocation moved into ``colocate_with_trainer``. A silent compatibility shim
+    would re-introduce the exact multi-knob surface that was removed, so point
+    migrators at the new shape instead of quietly ignoring a stale key.
+    """
+
+    if cfg_get(rollout_runtime, "release_after_collect", _MISSING) is not _MISSING:
+        raise ValueError(
+            "distributed.rollout.release_after_collect was removed: rollout release is "
+            "now derived from the GPU topology (shared GPU -> release, dedicated GPU -> "
+            "resident). Remove the key; for resident single-GPU colocation set "
+            "distributed.rollout.colocate_with_trainer: {memory_fraction: <0..1>}.",
+        )
+    if cfg_get(rollout_runtime, "release_before_reward_model", _MISSING) is not _MISSING:
+        raise ValueError(
+            "distributed.rollout.release_before_reward_model was removed: it is now "
+            "derived from the GPU topology (reward sharing the rollout GPU -> release). "
+            "Remove the key.",
+        )
+    if cfg_get(rollout_runtime, "persistent_colocated_workers", _MISSING) is not _MISSING:
+        raise ValueError(
+            "distributed.rollout.persistent_colocated_workers moved into "
+            "distributed.rollout.colocate_with_trainer: {memory_fraction: <0..1>}.",
+        )
+    if cfg_get(rollout_runtime, "gpu_memory_fraction", _MISSING) is not _MISSING:
+        raise ValueError(
+            "distributed.rollout.gpu_memory_fraction moved into "
+            "distributed.rollout.colocate_with_trainer: {memory_fraction: <0..1>}.",
+        )
+    if cfg_get(reward_runtime, "release_after_score", _MISSING) is not _MISSING:
+        raise ValueError(
+            "distributed.reward.release_after_score was removed: reward release is now "
+            "derived from the GPU topology (shared / multi-reward pool -> release, "
+            "dedicated reward GPU -> resident). Remove the key.",
+        )
 
 
 def _derived_release_flag(explicit: bool | None, *, derived: bool) -> bool:

@@ -16,7 +16,6 @@ from omegaconf.errors import MissingMandatoryValue
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from vrl.config.unknown_keys import OPEN, ConfigBlock
-from vrl.generation.ray.config import RayGenerationConfig
 from vrl.models.interfaces.runtime import MODEL_MEMORY_SECTIONS
 from vrl.ray.resources import (
     RewardResourceConfig,
@@ -389,13 +388,24 @@ class DistributedSection(ConfigBase):
             },
         ),
     ] = None
-    # RayGenerationConfig is the typed consumer of this block
-    rollout: Annotated[Any, ConfigBlock(RayGenerationConfig)] = None
-    # reader: vrl/ray/resources.py reward runtime block
+    # readers: vrl/generation/ray/config.py RayGenerationConfig.from_cfg (worker
+    # runtime knobs) + vrl/ray/resources.py (colocate_with_trainer). Release
+    # scheduling is derived from GPU topology, not declared here; the only public
+    # colocation knob is the colocate_with_trainer block (memory_fraction cap).
+    rollout: Annotated[
+        Any,
+        ConfigBlock(
+            ("cpus_per_worker", "placement_strategy",
+             "max_inflight_chunks_per_worker", "chunk_placement_strategy",
+             "sync_trainable_state", "colocate_with_trainer"),
+            {"colocate_with_trainer": ConfigBlock(("memory_fraction",))},
+        ),
+    ] = None
+    # reader: vrl/ray/resources.py reward runtime block (release derived from topology)
     reward: Annotated[
         Any,
         ConfigBlock(("cpus_per_worker", "placement_strategy",
-                     "max_inflight_batches", "release_after_score")),
+                     "max_inflight_batches")),
     ] = None
     # readers: vrl/trainers/distributed.py resolve_training_context (rank/device)
     # + vrl/ray/resources.py strategy-aware trainer GPU validation

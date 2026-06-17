@@ -17,32 +17,11 @@ from vrl.ray.resources import (
 )
 
 
-def _resolve(resources: dict, **runtime: object):
-    rollout_runtime = {
-        key: value
-        for key, value in {
-            "release_after_collect": runtime.get("rollout_release_after_collect"),
-            "release_before_reward_model": runtime.get(
-                "rollout_release_before_reward_model",
-            ),
-        }.items()
-        if value is not None
-    }
-    reward_runtime = (
-        {}
-        if runtime.get("reward_release_after_score") is None
-        else {"release_after_score": runtime["reward_release_after_score"]}
-    )
+def _resolve(resources: dict):
+    # Release scheduling is derived from topology, so only the resources block is
+    # needed to pin a placement plan.
     return resolve_distributed_resources(
-        OmegaConf.create(
-            {
-                "distributed": {
-                    "resources": resources,
-                    "rollout": rollout_runtime,
-                    "reward": reward_runtime,
-                },
-            },
-        ),
+        OmegaConf.create({"distributed": {"resources": resources}}),
     )
 
 
@@ -188,8 +167,8 @@ def test_bundle_plan_dedicated_reward_appends_fresh_bundle() -> None:
 # logic is verified deterministically without multi-GPU hardware.
 
 
-def _owner(resources: dict, **runtime: object) -> GlobalRayPlacementOwner:
-    return GlobalRayPlacementOwner(_resolve(resources, **runtime))
+def _owner(resources: dict) -> GlobalRayPlacementOwner:
+    return GlobalRayPlacementOwner(_resolve(resources))
 
 
 def test_assign_roles_matches_requested_ordinals_under_permuted_probe() -> None:

@@ -26,15 +26,15 @@ sampling:
 
 distributed:
   rollout:
-    # Keep the rollout worker resident instead of using the normal single-GPU
-    # release-after-collect path. This is what makes continuous overlap observable
-    # on one GPU, and it is only safe for tiny debug workloads.
-    release_after_collect: false
-    persistent_colocated_workers: true
-    # Hard-cap the resident rollout worker's GPU share so it cannot starve the
-    # trainer on the shared card (required by persistent_colocated_workers). The
-    # trainer gets the remaining ~0.55; both fit at the tiny 128x128/4-step shape.
-    gpu_memory_fraction: 0.45
+    # Pin the rollout worker resident on the trainer GPU instead of the normal
+    # single-GPU release-after-collect path. The block's presence IS the
+    # colocation intent; memory_fraction hard-caps the resident worker's GPU share
+    # so it cannot starve the trainer on the shared card (the trainer gets the
+    # remaining ~0.55; both fit at the tiny 128x128/4-step shape). This is what
+    # makes continuous overlap observable on one GPU, and it is only safe for tiny
+    # debug workloads.
+    colocate_with_trainer:
+      memory_fraction: 0.45
 
 actor:
   optim:

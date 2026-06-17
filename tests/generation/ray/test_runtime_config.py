@@ -132,9 +132,6 @@ def _cfg(
     *,
     num_workers: int = 1,
     overlap: bool = False,
-    release_after_collect: bool = False,
-    release_before_reward_model: bool = False,
-    persistent_colocated_workers: bool = False,
 ):
     rollout_devices = [0] if overlap else [1]
     visible_devices = [0] if overlap else [0, 1]
@@ -149,11 +146,8 @@ def _cfg(
             },
             "allow_overlap": overlap,
         },
-        "rollout": {
-            "release_after_collect": release_after_collect,
-            "release_before_reward_model": release_before_reward_model,
-            "persistent_colocated_workers": persistent_colocated_workers,
-        },
+        # Release scheduling is derived from topology; nothing to spell here.
+        "rollout": {},
     }
     return OmegaConf.create(
         {
@@ -167,19 +161,13 @@ def _resource_cfg(
     trainer_devices: list[int],
     rollout_devices: list[int],
     allow_overlap: bool = False,
-    release_after_collect: bool = False,
-    release_before_reward_model: bool = False,
-    persistent_colocated_workers: bool = False,
-    gpu_memory_fraction: float | None = None,
+    colocate_with_trainer: float | None = None,
 ):
-    rollout_runtime: dict[str, Any] = {
-        "cpus_per_worker": 1,
-        "release_after_collect": release_after_collect,
-        "release_before_reward_model": release_before_reward_model,
-        "persistent_colocated_workers": persistent_colocated_workers,
-    }
-    if gpu_memory_fraction is not None:
-        rollout_runtime["gpu_memory_fraction"] = gpu_memory_fraction
+    rollout_runtime: dict[str, Any] = {"cpus_per_worker": 1}
+    if colocate_with_trainer is not None:
+        rollout_runtime["colocate_with_trainer"] = {
+            "memory_fraction": colocate_with_trainer,
+        }
     return OmegaConf.create(
         {
             "distributed": {
@@ -278,9 +266,13 @@ def test_ray_build_inputs_applies_rollout_only_compile_override() -> None:
 
 
 def test_ray_build_inputs_carries_gpu_memory_fraction_to_worker_contract() -> None:
-    """Checks the rollout GPU budget reaches the worker via the launch contract."""
-    cfg = _build_inputs_cfg()
-    cfg.distributed.rollout = {"gpu_memory_fraction": 0.4}
+    """Checks the colocate_with_trainer GPU budget reaches the worker contract."""
+    cfg = _resource_cfg(
+        trainer_devices=[0],
+        rollout_devices=[0],
+        allow_overlap=True,
+        colocate_with_trainer=0.4,
+    )
 
     launch_inputs = RayGenerationLauncher.build_inputs(
         cfg,
@@ -371,17 +363,21 @@ def test_ray_backend_detects_cuda_trainable_module_when_policy_has_no_device() -
 
 
 def test_ray_backend_allows_driver_cuda_policy_with_explicit_overlap() -> None:
-    """Checks Ray backend allows driver cuda policy with explicit overlap."""
+    """Checks Ray backend allows driver cuda policy with explicit overlap.
+
+    A colocated single-GPU topology derives release-after-collect, so the driver
+    CUDA policy overlapping the rollout GPU is allowed.
+    """
     config = RayGenerationConfig.from_cfg(
         _resource_cfg(
             trainer_devices=[0],
             rollout_devices=[0],
             allow_overlap=True,
-            release_after_collect=True,
         ),
     ).validate_driver_state(driver_policy=_CudaPolicy())
 
     assert config.allow_driver_gpu_overlap is True
+    assert config.release_after_collect is True
 
 
 def test_ray_backend_allows_split_driver_cuda_when_devices_do_not_overlap() -> None:
@@ -396,29 +392,14 @@ def test_ray_backend_allows_split_driver_cuda_when_devices_do_not_overlap() -> N
     assert config.allow_driver_gpu_overlap is False
 
 
-def test_ray_backend_overlap_requires_release_after_collect() -> None:
-    """Checks Ray backend overlap requires release after collect."""
-    with pytest.raises(ValueError, match="release_after_collect=false"):
-        RayGenerationConfig.from_cfg(
-            _resource_cfg(
-                trainer_devices=[0],
-                rollout_devices=[0],
-                allow_overlap=True,
-                release_after_collect=False,
-            ),
-        ).validate_driver_state(driver_policy=_CudaPolicy())
-
-
-def test_ray_backend_allows_persistent_colocated_debug_without_release() -> None:
-    """Checks explicit tiny-workload debug can keep colocated rollout workers resident."""
+def test_ray_backend_colocate_with_trainer_keeps_worker_resident() -> None:
+    """Checks colocate_with_trainer keeps the colocated rollout worker resident."""
     config = RayGenerationConfig.from_cfg(
         _resource_cfg(
             trainer_devices=[0],
             rollout_devices=[0],
             allow_overlap=True,
-            release_after_collect=False,
-            persistent_colocated_workers=True,
-            gpu_memory_fraction=0.45,
+            colocate_with_trainer=0.45,
         ),
     ).validate_driver_state(driver_policy=_CudaPolicy())
 

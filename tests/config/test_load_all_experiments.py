@@ -299,14 +299,21 @@ def test_rollout_orchestration_group_override_uses_rollout_namespace() -> None:
 
 def test_sd35_single_gpu_async_debug_uses_persistent_colocated_rollout() -> None:
     """Checks the single-GPU async debug recipe opts into colocated continuous rollout."""
+    from vrl.ray.resources import resolve_distributed_resources
+
     cfg = load_config("experiment/diffusion/sd3_5/online_grpo_ocr_single_gpu_async_debug")
 
     assert cfg.trainer.rollout_orchestration.mode == "continuous"
     assert cfg.trainer.rollout_orchestration.require_separate_gpus is False
     assert cfg.trainer.rollout_orchestration.continuous.max_stale_policy_versions == 1
     assert cfg.distributed.resources.allow_overlap is True
-    assert cfg.distributed.rollout.release_after_collect is False
-    assert cfg.distributed.rollout.persistent_colocated_workers is True
+    # Colocation is expressed by the colocate_with_trainer block; release
+    # scheduling is derived from the resolved topology, not spelled in YAML.
+    assert cfg.distributed.rollout.colocate_with_trainer.memory_fraction == 0.45
+    resolved = resolve_distributed_resources(cfg)
+    assert resolved.rollout_persistent_colocated_workers is True
+    assert resolved.rollout_gpu_memory_fraction == 0.45
+    assert resolved.rollout_release_after_collect is False
     assert cfg.rollout.rollout_batch_size == 2
     assert cfg.rollout.sample_batch_size == 1
     assert cfg.sampling.height == 128

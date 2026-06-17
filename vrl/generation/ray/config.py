@@ -159,8 +159,9 @@ def _validate_driver_cuda_ownership(
         raise ValueError(
             "Driver loaded rollout policy on CUDA, but no distributed.resources "
             "plan is available to prove rollout devices do not overlap. "
-            "Use distributed.resources for split runs or enable overlap with "
-            "distributed.rollout.release_after_collect=true for single-GPU debug.",
+            "Provide distributed.resources for split runs, or for resident "
+            "single-GPU debug set distributed.rollout.colocate_with_trainer: "
+            "{memory_fraction: <0..1>}.",
         )
 
     overlap = driver_cuda_devices & set(resources.rollout_devices)
@@ -173,18 +174,19 @@ def _validate_driver_cuda_ownership(
         raise ValueError(
             f"Trainer device cuda:{overlap_list[0]} overlaps rollout devices "
             f"{rollout_devices}, but resources.allow_overlap=false. "
-            "Use CUDA_VISIBLE_DEVICES=0,1,2,3 with auto split for throughput, "
-            "or set allow_overlap=true with rollout.release_after_collect=true "
-            "for single-GPU debug.",
+            "Use CUDA_VISIBLE_DEVICES=0,1,2,3 with auto split for throughput, or "
+            "for resident single-GPU debug set "
+            "distributed.rollout.colocate_with_trainer: {memory_fraction: <0..1>}.",
         )
 
     if not config.release_after_collect and not config.persistent_colocated_workers:
         raise ValueError(
             f"Trainer device cuda:{overlap_list[0]} overlaps rollout devices "
-            f"{rollout_devices}, but distributed.rollout.release_after_collect=false. "
-            "Set release_after_collect=true for single-GPU Ray debug, or set "
-            "persistent_colocated_workers=true only for tiny continuous-rollout "
-            "debug runs that intentionally keep both policies resident.",
+            f"{rollout_devices}, but the rollout worker is neither released after "
+            "collect nor a resident colocated worker. Release is derived "
+            "automatically from a shared-GPU topology; for an intentionally "
+            "resident colocated debug worker set "
+            "distributed.rollout.colocate_with_trainer: {memory_fraction: <0..1>}.",
         )
 
 
