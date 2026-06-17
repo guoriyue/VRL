@@ -763,6 +763,46 @@ def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
     assert any("host RAM may hold up to 4 prompt groups" in msg for msg in legacy_messages)
 
 
+def test_global_std_streaming_divergence_warning(caplog) -> None:
+    """global_std=true + streaming with >1 group/microbatch warns; exempt cases don't."""
+    import logging
+
+    from omegaconf import OmegaConf
+
+    from vrl.scripts.common.online import _warn_global_std_streaming_divergence
+    from vrl.trainers.core.types import OptimConfig, TrainerConfig
+
+    def _tc(rbs: int, gas: int) -> TrainerConfig:
+        return TrainerConfig(
+            optim=OptimConfig(lr=1e-4),
+            n_samples_per_prompt=2,
+            rollout_batch_size=rbs,
+            timestep_fraction=0.5,
+            total_epochs=1,
+            output_dir="x",
+            drop_zero_advantage=False,
+            gradient_accumulation_steps=gas,
+        )
+
+    logger_name = "vrl.scripts.common.online"
+    cfg_true = OmegaConf.create({"algorithm": {"global_std": True}})
+
+    def _warns(cfg, tc) -> bool:
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger=logger_name):
+            _warn_global_std_streaming_divergence(cfg, tc)
+        return any("global_std=true with streaming" in r.getMessage() for r in caplog.records)
+
+    # global_std=true + 2 groups/microbatch (rbs=8, gas=4) -> warn (the sd3 case).
+    assert _warns(cfg_true, _tc(8, 4))
+    # Exempt: microbatch_size=1 (gas=8 -> 1 group/microbatch; per-group == global).
+    assert not _warns(cfg_true, _tc(8, 8))
+    # Exempt: global_std=false (per-group std is streaming-equivalent).
+    assert not _warns(OmegaConf.create({"algorithm": {"global_std": False}}), _tc(8, 4))
+    # Exempt: legacy full-batch (gas=0, no streaming).
+    assert not _warns(cfg_true, _tc(8, 0))
+
+
 def test_host_memory_budget_fail_fast(monkeypatch) -> None:
     """The host-RAM guard raises over budget and passes under it (injected RSS)."""
     import pytest

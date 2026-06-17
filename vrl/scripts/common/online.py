@@ -116,6 +116,41 @@ def _log_rollout_memory_plan(trainer_config: Any) -> None:
         )
 
 
+def _warn_global_std_streaming_divergence(cfg: Any, trainer_config: Any) -> None:
+    """Warn when global_std advantage normalization is silently per-microbatch.
+
+    GRPO ``global_std=true`` normalizes advantages by the std across ALL prompt
+    groups in the optimizer-target batch. Streaming accumulation computes
+    advantages per microbatch (collect_training_batch runs once per slice), so
+    with >1 group per microbatch the std is taken over the microbatch's groups
+    only -- not the full batch -- and the gradient diverges from the full-batch
+    global-std intent. ``microbatch_size=1`` is exempt: one group per microbatch
+    makes per-group and "global" std identical. Surfaced, not blocked, because
+    keeping global_std is an experiment-owner decision.
+    """
+    gas = int(getattr(trainer_config, "gradient_accumulation_steps", 0))
+    if gas <= 0:
+        return
+    if not bool(OmegaConf.select(cfg, "algorithm.global_std", default=False)):
+        return
+    rbs = int(trainer_config.rollout_batch_size)
+    groups_per_microbatch = rbs // gas
+    if groups_per_microbatch <= 1:
+        return
+    logger.warning(
+        "algorithm.global_std=true with streaming accumulation "
+        "(gradient_accumulation_steps=%d, %d prompt groups per microbatch): the "
+        "global-std advantage normalization is computed per microbatch, not over "
+        "the full %d-group batch, so the gradient differs from the full-batch "
+        "global-std intent. Set algorithm.global_std=false (per-group std, which "
+        "is streaming-equivalent), rollout.microbatch_size=1 (one group per "
+        "microbatch), or drop streaming to keep the full-batch global std.",
+        gas,
+        groups_per_microbatch,
+        rbs,
+    )
+
+
 def default_reference_model(bundle: Any, cfg: Any) -> Any | None:
     """Reference model for KL: the (LoRA) policy itself when use_lora and init_kl_coef>0, else None."""
 
@@ -319,6 +354,7 @@ async def run_online_recipe(
         definition.configure_trainer(cfg, trainer_config)
     _apply_precision_policy(cfg, trainer_config)
     _log_rollout_memory_plan(trainer_config)
+    _warn_global_std_streaming_divergence(cfg, trainer_config)
     gradient_accumulation_steps = int(getattr(trainer_config, "gradient_accumulation_steps", 0))
     if trainer_config.profile:
         os.environ["VRL_PROFILE_COLLECT"] = "1"
