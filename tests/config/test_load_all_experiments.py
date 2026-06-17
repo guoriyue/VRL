@@ -226,7 +226,9 @@ def test_cosmos_predict25_nft_uses_paper_timestep_budget(name: str) -> None:
     assert cfg.sampling.num_steps == 20
     assert cfg.sampling.cfg is False
     assert cfg.sampling.guidance_scale == 1.0
-    assert cfg.actor.optim.lr == pytest.approx(3.0e-5)
+    # Learning rate is a LoRA tuning knob, not part of the paper's denoise/
+    # timestep budget — the paper's 3e-5 is for full-param, LoRA needs a higher
+    # rate to move the policy. Don't pin a literal tuning value here.
     assert cfg.actor.timestep_fraction == 0.5
     assert cfg.model.use_lora is True
     assert set(cfg.model.lora.target_modules) == {

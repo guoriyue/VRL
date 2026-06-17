@@ -13,7 +13,12 @@ precision: bf16
 
 actor:
   optim:
-    lr: 3.0e-5
+    # Paper §4.2.2 trains full-param at 3e-5 (2B). This recipe is LoRA (full-param
+    # post-training needs a separate previous-policy path + multi-GPU), and LoRA
+    # adapters need a higher LR to move the policy — 1e-4 measured on the
+    # 2026-06-13 single-GPU cosmos+Kling run (3e-5 gave grad_norm ~0.05-0.12 and
+    # flat reward). Dial back toward 3e-5 if approx_kl / logprob_abs_diff drift.
+    lr: 1.0e-4
   ppo_epochs: 1
   timestep_fraction: 0.5
   ema:
@@ -42,8 +47,15 @@ rollout:
 trainer:
   entrypoint: vrl.scripts.diffusion.cosmos.train:train_cosmos_predict25_diffusion_nft
   output_dir: outputs/cosmos_predict2_5_2b_diffusionnft
-  total_epochs: 10
-  save_freq: 5
+  # Paper §4.2.2: "trained for 256 steps with a batch size of 32." Each epoch
+  # here = one optimizer update over the rollout_batch_size=32 target batch, so
+  # 256 epochs = the paper's 256 parameter updates. The 2026-06-13/06-16 runs
+  # stopped at 10-14 updates and saw only noise — far too few. Override to a
+  # smaller value for a quick smoke.
+  total_epochs: 256
+  # 8 checkpoints across the run (e32,e64,...,e256) for a fixed-prompt reward
+  # curve via vrl/scripts/eval/cosmos_predict25_kling_eval.py.
+  save_freq: 32
   log_freq: 1
 
 reward:
