@@ -387,6 +387,8 @@ def _normalize_task_variant(task_variant: str | None) -> str:
 
 
 def _boundary_ratio_from_spec(spec: RuntimeBuildSpec) -> float | None:
+    from vrl.models.diffusion.wan_2_1.model import _optional_float
+
     model_config = spec.model_config or {}
     if "boundary_ratio" in model_config:
         return _optional_float(model_config.get("boundary_ratio"), "model.boundary_ratio")
@@ -398,17 +400,10 @@ def _boundary_ratio_from_spec(spec: RuntimeBuildSpec) -> float | None:
 def _load_boundary_ratio_from_pipeline_config(spec: RuntimeBuildSpec) -> float | None:
     from diffusers import DiffusionPipeline
 
+    from vrl.models.diffusion.wan_2_1.model import _optional_float
+
     config = DiffusionPipeline.load_config(spec.model_name_or_path)
     return _optional_float(config.get("boundary_ratio"), "pipeline boundary_ratio")
-
-
-def _optional_float(value: Any, field_name: str) -> float | None:
-    if value is None or value == "":
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{field_name} must be a float or null") from exc
 
 
 __all__ = [
