@@ -11,6 +11,38 @@ Do not add Cosmos-Predict2.5 README recipe entries or gap docs until a real
 DiffusionNFT training run proves optimizer updates, non-flat rewards, generated
 artifacts, and changed LoRA weights.
 
+## Quickstart
+
+`pyproject.toml` is the single source of truth for dependencies. Install the base
+plus the extras for the backends you will run (they combine):
+
+| Extra | Adds | Needed for |
+| --- | --- | --- |
+| *(base)* | torch, ray, peft-free core, safetensors, pillow, imageio | every training run |
+| `cosmos` | diffusers, transformers, accelerate, peft, torchvision | SD3.5 / Cosmos / Wan diffusion |
+| `reward` | qwen-vl-utils, peft, torchvision, transformers | Kling VideoReward video scoring |
+| `data` | datasets, pyarrow, requests, av | dataset prep under `vrl/scripts/data` |
+| `ocr` | paddleocr, paddlepaddle, python-Levenshtein | OCR reward (canonical SD3.5 recipe) |
+| `dev` | pytest, ruff, … | running the test suite |
+
+```bash
+# uv (recommended — fast, reproducible via uv.lock)
+uv sync --extra cosmos --extra ocr --extra dev    # canonical SD3.5 OCR recipe
+
+# or classic pip
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[cosmos,ocr,dev]"
+```
+
+VideoCon-Physics scoring additionally needs its vendored model sources (a git
+submodule, not a pip package): `git submodule update --init --recursive`.
+
+Then run the canonical recipe:
+
+```bash
+python -m vrl.scripts.train --config experiment/diffusion/sd3_5/online_grpo_ocr
+```
+
 ## Current Canonical Recipe
 
 Legend:

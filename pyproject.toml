@@ -20,7 +20,12 @@ dependencies = [
     "huggingface-hub>=0.24.0",
     "imageio>=2.34.0",
     "imageio-ffmpeg>=0.5.0",
+    "pillow>=10.0.0",      # core image IO (vrl/utils/media.py + model/data paths)
     "pydantic>=2",
+    # Walked by every training path — declared explicitly instead of leaning on a
+    # pre-baked .venv.
+    "ray>=2.9.0",          # distributed rollout/reward backend
+    "safetensors>=0.4.0",  # weight loading (cosmos/anima, janus, FSDP save)
 ]
 
 [project.optional-dependencies]
@@ -39,6 +44,21 @@ cosmos = [
     "sentencepiece>=0.2.0",
     "peft>=0.11.0",          # LoRA adapters for diffusion/AR model families
     "torchvision>=0.17.0",   # diffusers cosmos transformer + preference data transforms
+]
+# Video reward scoring (Kling VideoReward / Qwen2-VL). qwen_vl_utils pulls
+# torchvision for its decode path; the backend loads a LoRA adapter via peft.
+reward = [
+    "transformers>=4.40.0,<5",
+    "peft>=0.11.0",
+    "qwen-vl-utils>=0.0.10",
+    "torchvision>=0.17.0",
+]
+# Dataset preparation / scraping under vrl/scripts/data.
+data = [
+    "datasets>=2.18.0",
+    "pyarrow>=15.0.0",
+    "requests>=2.31.0",
+    "av>=12.0.0",            # video-world parquet -> mp4 bridge
 ]
 ocr = [
     "paddleocr>=3.5.0",
