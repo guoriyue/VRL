@@ -12,14 +12,17 @@ from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.collector.artifacts import (
     RewardArtifactPolicy,
     release_reward_artifact_if_needed,
-    reward_artifact_bytes,
     reward_artifact_policy_from_cfg,
 )
 from vrl.rollouts.collector.config import RolloutConfig, build_rollout_config_from_cfg
 from vrl.rollouts.collector.core import RolloutCollector
 from vrl.rollouts.collector.requests import CollectorRequest
 from vrl.rollouts.collector.rewards import RewardScoringInput
-from vrl.trajectory import build_ar_continuous_trajectory, build_ar_discrete_trajectory
+from vrl.trajectory import (
+    build_ar_continuous_trajectory,
+    build_ar_discrete_trajectory,
+    trajectory_tensor_bytes,
+)
 
 
 class _RequestBuilder:
@@ -150,7 +153,7 @@ def test_release_policy_drops_plain_videos_without_mutating_context() -> None:
         videos=artifact,
     )
 
-    assert reward_artifact_bytes(batch.videos) == artifact.numel() * artifact.element_size()
+    assert trajectory_tensor_bytes(batch.videos) == artifact.numel() * artifact.element_size()
 
     release_reward_artifact_if_needed(batch, RewardArtifactPolicy(keep_after_reward=False))
 
@@ -173,7 +176,7 @@ def test_reward_artifact_policy_default_keeps_artifacts() -> None:
     release_reward_artifact_if_needed(batch, reward_artifact_policy_from_cfg(None))
 
     assert batch.videos is artifact
-    assert reward_artifact_bytes(artifact) == artifact.numel() * artifact.element_size()
+    assert trajectory_tensor_bytes(artifact) == artifact.numel() * artifact.element_size()
 
 
 def test_rollout_config_preserves_nested_storage_and_artifact_policy() -> None:

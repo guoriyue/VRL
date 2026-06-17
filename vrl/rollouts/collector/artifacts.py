@@ -9,7 +9,6 @@ from typing import Any
 
 from vrl.generation import GenerationOutput
 from vrl.rollouts.batch import RolloutBatch
-from vrl.trajectory.storage import trajectory_tensor_bytes
 from vrl.utils.config import cfg_get, to_builtin
 
 
@@ -41,12 +40,6 @@ def extract_reward_artifact(output: GenerationOutput) -> object:
     """Return the decoded artifact carried by a generation output."""
 
     return output.output
-
-
-def reward_artifact_bytes(artifact: object) -> int:
-    """Return an estimated byte count for decoded reward artifacts."""
-
-    return trajectory_tensor_bytes(artifact)
 
 
 def release_reward_artifact_if_needed(
@@ -107,6 +100,5 @@ __all__ = [
     "RewardArtifactPolicy",
     "extract_reward_artifact",
     "release_reward_artifact_if_needed",
-    "reward_artifact_bytes",
     "reward_artifact_policy_from_cfg",
 ]
