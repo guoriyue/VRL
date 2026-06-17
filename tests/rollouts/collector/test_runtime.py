@@ -8,6 +8,7 @@ import pytest
 import torch
 
 from vrl.generation import GenerationOutput, GenerationRequest, GenerationSampleRow
+from vrl.ray.resources import ActorLeasePolicy, PhaseHandoffPolicy, RayLifecyclePlan
 from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
     TrajectoryRolloutBatchBuilder,
@@ -45,22 +46,9 @@ class _RequestBuilder:
 
 
 class _Runtime:
-    def __init__(
-        self,
-        *,
-        reward_shared_with_rollout: bool = False,
-        release_before_reward_model: bool = False,
-    ) -> None:
+    def __init__(self) -> None:
         self.requests: list[GenerationRequest] = []
         self.events: list[str] = []
-        self._release_before_reward = (
-            release_before_reward_model and reward_shared_with_rollout
-        )
-
-    def should_release_memory_before_reward(self) -> bool:
-        # Fakes implement the GenerationRuntime protocol method directly
-        # instead of mimicking the runtime's internal config layout.
-        return self._release_before_reward
 
     async def generate(self, request: GenerationRequest) -> GenerationOutput:
         self.requests.append(request)
@@ -90,8 +78,8 @@ class _Runtime:
             trajectory=trajectory,
         )
 
-    async def release_memory(self) -> None:
-        self.events.append("release_memory")
+    async def release(self) -> None:
+        self.events.append("release")
 
 
 class _RewardScorer:
@@ -126,6 +114,7 @@ def _collector(
     *,
     runtime: _Runtime | None = None,
     reward_scorer: _RewardScorer | None = None,
+    lifecycle: RayLifecyclePlan | None = None,
 ) -> RolloutCollector:
     return RolloutCollector(
         model=None,
@@ -135,6 +124,7 @@ def _collector(
         request_builder=_RequestBuilder(),
         reward_scorer=reward_scorer or _RewardScorer(),
         runtime=runtime,
+        lifecycle=lifecycle,
     )
 
 
@@ -181,30 +171,51 @@ def test_collector_releases_runtime_memory_before_reward_scoring() -> None:
     """Checks collector releases runtime memory before reward scoring."""
     import asyncio
 
-    runtime = _Runtime(
-        reward_shared_with_rollout=True,
-        release_before_reward_model=True,
-    )
+    runtime = _Runtime()
     reward_scorer = _RewardScorer(runtime)
+    # Shared reward GPU: the lifecycle plan (not the runtime) tells the collector
+    # to drop rollout actors before the reward model scores.
+    lifecycle = RayLifecyclePlan(
+        rollout=ActorLeasePolicy(mode="on_demand"),
+        reward=ActorLeasePolicy(mode="on_demand"),
+        handoff=PhaseHandoffPolicy(
+            release_rollout_before_train=True,
+            release_rollout_before_reward=True,
+            release_reward_after_score=True,
+        ),
+    )
     collector = _collector(
         runtime=runtime,
         reward_scorer=reward_scorer,
+        lifecycle=lifecycle,
     )
 
     asyncio.run(collector.collect(["p0"], group_size=1))
 
-    assert runtime.events == ["generate", "release_memory", "score"]
+    assert runtime.events == ["generate", "release", "score"]
 
 
 def test_collector_does_not_release_runtime_memory_before_independent_reward() -> None:
     """Checks collector does not release runtime memory before independent reward."""
     import asyncio
 
-    runtime = _Runtime(reward_shared_with_rollout=False)
+    runtime = _Runtime()
     reward_scorer = _RewardScorer(runtime)
+    # Dedicated reward GPU: the plan keeps both roles resident, so the collector
+    # never releases before reward.
+    lifecycle = RayLifecyclePlan(
+        rollout=ActorLeasePolicy(mode="resident"),
+        reward=ActorLeasePolicy(mode="resident"),
+        handoff=PhaseHandoffPolicy(
+            release_rollout_before_train=False,
+            release_rollout_before_reward=False,
+            release_reward_after_score=False,
+        ),
+    )
     collector = _collector(
         runtime=runtime,
         reward_scorer=reward_scorer,
+        lifecycle=lifecycle,
     )
 
     asyncio.run(collector.collect(["p0"], group_size=1))

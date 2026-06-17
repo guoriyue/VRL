@@ -576,6 +576,126 @@ def test_multiple_ray_rewards_derive_release_after_score_on_dedicated_gpu() -> N
     assert resolved.reward_release_after_score is True
 
 
+def test_lifecycle_plan_resident_when_roles_disjoint() -> None:
+    """Fully disjoint trainer/rollout/reward GPUs -> every role resident, no handoff."""
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0, 1, 2],
+                "trainer": {"devices": [0]},
+                "rollout": {"devices": [1], "gpus_per_worker": 1},
+                "reward": {"devices": [2], "gpus_per_worker": 1, "num_workers": 1},
+            },
+        ),
+    )
+
+    plan = resolved.lifecycle
+    assert plan.rollout.mode == "resident"
+    assert plan.reward.mode == "resident"
+    assert plan.handoff.release_rollout_before_train is False
+    assert plan.handoff.release_rollout_before_reward is False
+    assert plan.handoff.release_reward_after_score is False
+    # Flat flags mirror the plan (one derivation, no divergence).
+    assert resolved.rollout_release_after_collect is False
+    assert resolved.reward_release_after_score is False
+
+
+def test_lifecycle_plan_on_demand_for_shared_reward() -> None:
+    """Shared reward GPU -> rollout/reward on_demand, but no trainer handoff."""
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0, 1],
+                "trainer": {"devices": [0]},
+                "rollout": {"devices": [1], "gpus_per_worker": 1},
+                "reward": {
+                    "num_gpus": 1,
+                    "gpus_per_worker": 1,
+                    "num_workers": 1,
+                    "share_with_rollout": True,
+                },
+            },
+        ),
+    )
+
+    plan = resolved.lifecycle
+    assert plan.rollout.mode == "on_demand"
+    assert plan.reward.mode == "on_demand"
+    assert plan.handoff.release_rollout_before_train is False
+    assert plan.handoff.release_rollout_before_reward is True
+    assert plan.handoff.release_reward_after_score is True
+    # Flat compatibility flags still request an on-demand rollout lease.
+    assert resolved.rollout_release_after_collect is True
+    assert resolved.rollout_release_before_reward_model is True
+    assert resolved.reward_release_after_score is True
+
+
+def test_lifecycle_plan_colocated_rollout_is_on_demand_before_train() -> None:
+    """Trainer/rollout share a GPU -> rollout on_demand, releases before train only."""
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0],
+                "trainer": {"devices": [0]},
+                "rollout": {"devices": [0], "gpus_per_worker": 1},
+                "allow_overlap": True,
+            },
+        ),
+    )
+
+    plan = resolved.lifecycle
+    assert resolved.colocated is True
+    assert plan.rollout.mode == "on_demand"
+    assert plan.handoff.release_rollout_before_train is True
+    # No reward role shares the rollout GPU, so reward stays resident.
+    assert plan.reward.mode == "resident"
+    assert plan.handoff.release_rollout_before_reward is False
+
+
+def test_lifecycle_plan_persistent_colocated_rollout_stays_resident() -> None:
+    """Persistent colocated debug worker overrides the colocated on_demand default."""
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0],
+                "trainer": {"devices": [0]},
+                "rollout": {"devices": [0], "gpus_per_worker": 1},
+                "allow_overlap": True,
+            },
+            rollout_release_after_collect=False,
+            rollout_persistent_colocated_workers=True,
+            rollout_gpu_memory_fraction=0.45,
+        ),
+    )
+
+    plan = resolved.lifecycle
+    assert plan.rollout.mode == "resident"
+    assert plan.handoff.release_rollout_before_train is False
+
+
+def test_resource_plan_formatter_includes_lifecycle() -> None:
+    """Acceptance #8: the resource plan log shows the lifecycle plan at a glance."""
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0, 1],
+                "trainer": {"devices": [0]},
+                "rollout": {"devices": [1], "gpus_per_worker": 1},
+                "reward": {
+                    "num_gpus": 1,
+                    "gpus_per_worker": 1,
+                    "num_workers": 1,
+                    "share_with_rollout": True,
+                },
+            },
+        ),
+    )
+
+    text = format_distributed_resource_plan(resolved)
+    assert "lifecycle=rollout:on_demand/reward:on_demand" in text
+    assert "before_reward:True" in text
+
+
 def test_multiple_ray_rewards_reject_resident_dedicated_gpu() -> None:
     """Checks multiple Ray rewards cannot all stay resident on one role placement."""
     with pytest.raises(ValueError, match="multiple active reward components"):

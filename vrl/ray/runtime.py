@@ -53,7 +53,15 @@ class RayActorMethodRuntime:
             )
         finally:
             if self.release_after_call:
-                await self.shutdown()
+                await self.release()
+
+    async def release(self) -> None:
+        """Drop the actor group (lease release); the next map() reacquires it.
+
+        Same vocabulary as RayGenerationRuntime.release(). The owner-managed
+        placement group is never touched here — only the actors are dropped.
+        """
+        await self.shutdown()
 
     async def shutdown(self) -> None:
         actor_group = self._actor_group

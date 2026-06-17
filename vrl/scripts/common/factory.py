@@ -280,12 +280,19 @@ def build_collector_from_cfg(
 
     entry = _entry_from_family(cfg, family)
     collector_config = collector_config or _rollout_config_for_entry(cfg, entry)
+    # Topology-derived release policy so the collector reads its own handoff
+    # rather than asking the runtime. Absent for in-process runs with no
+    # distributed.resources, where there is no shared GPU to hand off.
+    lifecycle = None
+    if OmegaConf.select(cfg, "distributed.resources", default=None) is not None:
+        lifecycle = resolve_distributed_resources(cfg).lifecycle
     return build_rollout_collector(
         entry.family,
         model=model,
         reward_fn=reward_fn,
         config=collector_config,
         runtime=runtime,
+        lifecycle=lifecycle,
     )
 
 

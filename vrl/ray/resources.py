@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from vrl.utils.config import cfg_get
 
@@ -67,6 +67,50 @@ class DistributedResourceConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class ActorLeasePolicy:
+    """How long a role's Ray actors stay alive across phases.
+
+    ``resident`` actors stay up across phases (the role owns a dedicated GPU,
+    or is the persistent colocated debug worker). ``on_demand`` actors are
+    released at a phase handoff and reacquired on next use, because the role
+    shares a GPU it must hand back.
+    """
+
+    mode: Literal["resident", "on_demand"]
+
+
+@dataclass(frozen=True, slots=True)
+class PhaseHandoffPolicy:
+    """Which resident-vs-shared actors must step off their GPU at each boundary.
+
+    A flag is True only when two roles share a GPU and the next phase needs the
+    first to release it. Derived once from topology so no runtime re-decides it
+    per call.
+    """
+
+    release_rollout_before_train: bool
+    release_rollout_before_reward: bool
+    release_reward_after_score: bool
+
+
+@dataclass(frozen=True, slots=True)
+class RayLifecyclePlan:
+    """Single topology-derived answer to "which Ray actors release when".
+
+    Built by :func:`resolve_distributed_resources` from GPU ownership so the
+    launcher, collector, and reward runtime read one declarative plan instead of
+    each re-deriving ``release_after_*`` from raw device sets. The flat
+    ``rollout_release_* / reward_release_*`` fields on
+    :class:`ResolvedDistributedResources` are compatibility views derived beside
+    this plan for existing consumers.
+    """
+
+    rollout: ActorLeasePolicy
+    reward: ActorLeasePolicy
+    handoff: PhaseHandoffPolicy
+
+
+@dataclass(frozen=True, slots=True)
 class ResolvedDistributedResources:
     """Concrete resource plan consumed by trainer and Ray role launchers."""
 
@@ -94,6 +138,11 @@ class ResolvedDistributedResources:
     requires_trainer_reservation: bool
     colocated: bool
     cross_node: bool
+    # Named view over the old release flags: lease mode per role plus the
+    # per-boundary handoff. The launcher/collector/reward read this instead of
+    # re-deriving release decisions from device sets (the flat flags stay as a
+    # compatibility view for existing consumers).
+    lifecycle: RayLifecyclePlan
 
 
 _MISSING = object()
@@ -257,11 +306,12 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
 
     # Unset release flags follow the resolved topology: roles that share a GPU
     # must hand it over between phases; roles with dedicated GPUs stay resident.
-    # The explicit single-GPU async debug path opts out for tiny workloads that
-    # intentionally keep trainer and rollout workers resident together.
-    rollout_release_after_collect = _derived_release_flag(
+    # Keep the old flat "release_after_collect" field as a compatibility view,
+    # but derive the named lifecycle handoffs per boundary so reward/rollout
+    # sharing is not mislabeled as a trainer handoff.
+    rollout_release_before_train = _derived_release_flag(
         config.rollout_release_after_collect,
-        derived=(colocated or reward_shared_with_rollout)
+        derived=colocated
         and not config.rollout_persistent_colocated_workers,
     )
     rollout_release_before_reward_model = _derived_release_flag(
@@ -283,6 +333,9 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
             "the reward role placement; set distributed.reward.release_after_score "
             "to true (or leave it unset) until per-reward placement is supported",
         )
+    rollout_release_after_collect = (
+        rollout_release_before_train or rollout_release_before_reward_model
+    )
 
     requires_trainer_reservation = (
         bool(trainer_devices)
@@ -290,6 +343,22 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
         and not colocated
         and rollout_num_workers > 0
         and not config.cross_node
+    )
+    # One derivation feeds both the named plan and the flat compatibility
+    # fields: a role is on_demand when any handoff can drop it, while the plan
+    # keeps the specific phase boundary explicit.
+    lifecycle = RayLifecyclePlan(
+        rollout=ActorLeasePolicy(
+            mode="on_demand" if rollout_release_after_collect else "resident",
+        ),
+        reward=ActorLeasePolicy(
+            mode="on_demand" if reward_release_after_score else "resident",
+        ),
+        handoff=PhaseHandoffPolicy(
+            release_rollout_before_train=rollout_release_before_train,
+            release_rollout_before_reward=rollout_release_before_reward_model,
+            release_reward_after_score=reward_release_after_score,
+        ),
     )
     return ResolvedDistributedResources(
         visible_devices=visible_devices,
@@ -313,6 +382,7 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
         requires_trainer_reservation=requires_trainer_reservation,
         colocated=colocated,
         cross_node=config.cross_node,
+        lifecycle=lifecycle,
     )
 
 
@@ -406,6 +476,14 @@ def format_distributed_resource_plan(
         f"colocated={resolved.colocated}",
         f"cross_node={resolved.cross_node}",
         f"trainer_reservation={resolved.requires_trainer_reservation}",
+        # Reading the plan at a glance: lease mode per role + which boundaries
+        # release. resident=stays up, on_demand=released at the handoff.
+        f"lifecycle=rollout:{resolved.lifecycle.rollout.mode}"
+        f"/reward:{resolved.lifecycle.reward.mode}",
+        "handoff="
+        f"before_train:{resolved.lifecycle.handoff.release_rollout_before_train}"
+        f",before_reward:{resolved.lifecycle.handoff.release_rollout_before_reward}"
+        f",reward_after_score:{resolved.lifecycle.handoff.release_reward_after_score}",
     ]
     if actual_placement is not None:
         parts.append(f"actual={actual_placement}")
@@ -953,7 +1031,9 @@ def reward_runtime_resource_kwargs(
         "gpus_per_worker": resolved.reward_gpus_per_worker,
         "cpus_per_worker": resolved.reward_cpus_per_worker,
         "max_inflight_batches": resolved.reward_max_inflight_batches,
-        "release_after_score": resolved.reward_release_after_score,
+        # Sourced from the lifecycle plan: an on_demand reward lease drops its
+        # actors after each score so a shared placement can be reused.
+        "release_after_score": resolved.lifecycle.reward.mode == "on_demand",
         "placement_strategy": resolved.reward_placement_strategy,
         "expected_gpu_ids": tuple(resolved.reward_devices),
     }
@@ -1202,8 +1282,11 @@ def _to_plain(value: Any) -> Any:
 
 
 __all__ = [
+    "ActorLeasePolicy",
     "BundleLayout",
     "DistributedResourceConfig",
+    "PhaseHandoffPolicy",
+    "RayLifecyclePlan",
     "ResolvedDistributedResources",
     "RewardResourceConfig",
     "RoleResourceConfig",

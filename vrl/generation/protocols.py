@@ -43,24 +43,31 @@ class PolicyVersionProvider(Protocol):
 
 
 class GenerationRuntime(Protocol):
-    """Generation runtime consumed by rollout collectors."""
+    """Generation runtime consumed by rollout collectors.
+
+    The runtime is a transport boundary: it generates and, on request, releases
+    its actor lease. Whether to release before reward scoring is no longer the
+    runtime's decision — that is derived once from GPU topology into the
+    ``RayLifecyclePlan`` and read by the collector (see vrl/ray/resources.py).
+    """
 
     current_policy_version: int | None
 
     async def generate(self, request: GenerationRequest) -> GenerationOutput: ...
 
-    def should_release_memory_before_reward(self) -> bool:
-        """Whether rollout memory must be dropped before reward-model scoring.
+    async def release(self) -> None:
+        """Release the runtime's actor lease when the lifecycle plan asks for it.
 
-        Owned by the runtime because only it knows its release mode and GPU
-        sharing; callers must not probe runtime internals for this decision.
+        Resident runtimes may implement this as a no-op; on-demand runtimes drop
+        their actors and reacquire them on the next generate().
         """
         ...
 
     def is_colocated(self) -> bool:
         """Whether the trainer and rollout share a GPU.
 
-        Owned by the runtime for the same reason as the release decision.
+        Still owned by the runtime: this drives whether the driver model is
+        offloaded to CPU during rollout, a different axis from the actor lease.
         """
         ...
 

@@ -5,7 +5,10 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from vrl.ray.resources import RayLifecyclePlan
 
 from vrl.generation import GenerationOutput, GenerationRuntime
 from vrl.rollouts.batch import RolloutBatch
@@ -54,6 +57,7 @@ class RolloutCollector:
         reward_scorer: RewardScorer,
         default_group_size: int = 1,
         runtime: GenerationRuntime | None = None,
+        lifecycle: RayLifecyclePlan | None = None,
     ) -> None:
         self.model = model
         self.config = config
@@ -63,6 +67,10 @@ class RolloutCollector:
         self.reward_scorer = reward_scorer
         self.default_group_size = max(1, int(default_group_size))
         self._runtime = runtime
+        # Topology-derived release policy (vrl/ray/resources.py). None means no
+        # shared GPU, so rollout never releases before reward. Read here instead
+        # of asking the runtime, which is now just transport.
+        self._lifecycle = lifecycle
 
     def set_runtime(self, runtime: GenerationRuntime) -> None:
         if not callable(getattr(runtime, "generate", None)):
@@ -87,7 +95,7 @@ class RolloutCollector:
         self._runtime = None
 
     async def release_runtime_memory(self) -> None:
-        release = getattr(self._runtime, "release_memory", None)
+        release = getattr(self._runtime, "release", None)
         if release is not None:
             await release()
 
@@ -204,12 +212,13 @@ class RolloutCollector:
         return batches
 
     def _should_release_runtime_before_reward_model(self) -> bool:
-        # Ask the runtime (GenerationRuntime protocol) instead of probing its
-        # config internals; the release decision is the runtime's own knowledge.
-        runtime = self._runtime
-        if runtime is None:
+        # The release decision is derived once from GPU topology into the
+        # lifecycle plan (vrl/ray/resources.py), not re-decided per call by the
+        # runtime. None plan = no shared GPU = never release before reward.
+        lifecycle = self._lifecycle
+        if lifecycle is None:
             return False
-        return bool(runtime.should_release_memory_before_reward())
+        return lifecycle.handoff.release_rollout_before_reward
 
 
 def build_rollout_collector(
@@ -219,6 +228,7 @@ def build_rollout_collector(
     reward_fn: Any | None,
     config: RolloutConfig | None = None,
     runtime: GenerationRuntime | None = None,
+    lifecycle: RayLifecyclePlan | None = None,
 ) -> RolloutCollector:
     """Build a rollout collector from the canonical family registry."""
 
@@ -251,6 +261,7 @@ def build_rollout_collector(
             1 if collector.kind == "diffusion" else int(config.require("n_samples_per_prompt"))
         ),
         runtime=runtime,
+        lifecycle=lifecycle,
     )
 
 

@@ -182,7 +182,17 @@ class RayGenerationLauncher:
                     "rollout workers schedule into the run-level placement group "
                     "built by a GlobalRayPlacementOwner.",
                 )
-            if config.release_after_collect:
+            # On-demand vs resident comes from the topology-derived lifecycle
+            # plan, not a standalone release flag (config.release_after_collect
+            # is the plan's mirror; fall back to it only when resources are
+            # absent, e.g. hand-built configs in tests).
+            resources = config.resources
+            rollout_on_demand = (
+                resources.lifecycle.rollout.mode == "on_demand"
+                if resources is not None
+                else config.release_after_collect
+            )
+            if rollout_on_demand:
                 return RayGenerationRuntime.with_release_after_collect(
                     config,
                     resolved_contract,

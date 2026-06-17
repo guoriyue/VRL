@@ -18,8 +18,9 @@ from vrl.ray.placement import RolePlacement
 
 
 @dataclass(slots=True)
-class _ReleaseAfterCollectState:
-    """State for the on-demand worker lifecycle."""
+class _RuntimeLease:
+    """On-demand worker lease: the inner runtime is acquired on generate and
+    dropped on release, so a shared GPU can be handed back between phases."""
 
     config: RayGenerationConfig
     launch_contract: Any
@@ -54,7 +55,7 @@ class RayGenerationRuntime(GenerationRuntime):
         self._owned_actors = list(owned_actors or [])
         self._placement_group = placement_group
         self._colocated = bool(colocated)
-        self._release_after_collect: _ReleaseAfterCollectState | None = None
+        self._release_after_collect: _RuntimeLease | None = None
         self.requires_driver_model_offload = False
         self.current_policy_version: int | None = None
 
@@ -77,7 +78,7 @@ class RayGenerationRuntime(GenerationRuntime):
         runtime._owned_actors = []
         runtime._placement_group = None
         runtime._colocated = False
-        runtime._release_after_collect = _ReleaseAfterCollectState(
+        runtime._release_after_collect = _RuntimeLease(
             config=config,
             launch_contract=launch_contract,
             gatherer=gatherer,
@@ -96,15 +97,6 @@ class RayGenerationRuntime(GenerationRuntime):
         if request.policy_version is None and self.current_policy_version is not None:
             request = replace(request, policy_version=self.current_policy_version)
         return await self.executor.execute(request)
-
-    def should_release_memory_before_reward(self) -> bool:
-        state = self._release_after_collect
-        if state is None:
-            return False
-        if not state.config.release_before_reward_model:
-            return False
-        resources = state.config.resources
-        return bool(resources is not None and resources.reward_shared_with_rollout)
 
     def is_colocated(self) -> bool:
         state = self._release_after_collect
@@ -130,7 +122,11 @@ class RayGenerationRuntime(GenerationRuntime):
         await self.weight_sync.push_to_rollout_workers(state_ref, policy_version)
         self.current_policy_version = int(policy_version)
 
-    async def release_memory(self) -> None:
+    async def release(self) -> None:
+        """Drop the on-demand workers (lease release); generate() reacquires them.
+
+        No-op for a resident runtime, whose actors stay up until shutdown().
+        """
         state = self._release_after_collect
         if state is None:
             return None
@@ -143,7 +139,7 @@ class RayGenerationRuntime(GenerationRuntime):
 
     async def shutdown(self) -> None:
         if self._release_after_collect is not None:
-            await self.release_memory()
+            await self.release()
             return None
         if not self._owned_workers and not self._owned_actors and self._placement_group is None:
             return None

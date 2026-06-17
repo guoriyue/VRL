@@ -421,13 +421,9 @@ class _DirectExecutorGenerationRuntime:
                 )
             return self.executor.forward_plan(request, rows, plan)
 
-    async def release_memory(self) -> None:
+    async def release(self) -> None:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-
-    def should_release_memory_before_reward(self) -> bool:
-        # In-process executor has no Ray release mode; never drop before reward.
-        return False
 
     def is_colocated(self) -> bool:
         return False

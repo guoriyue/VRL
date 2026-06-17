@@ -248,7 +248,7 @@ def test_launcher_marks_explicit_colocated_persistent_runtime() -> None:
         ray.shutdown()
 
 
-def test_release_after_collect_owner_placement_survives_release_memory() -> None:
+def test_release_after_collect_owner_placement_survives_release() -> None:
     """Release-after-collect runtime drops workers but never the owner-managed PG."""
     ray = pytest.importorskip("ray")
 
@@ -271,7 +271,7 @@ def test_release_after_collect_owner_placement_survives_release_memory() -> None
         # Acquire workers, then release: the underlying runtime is dropped...
         inner = asyncio.run(runtime._ensure_runtime())
         assert inner._placement_group is None  # inner never owned the PG
-        asyncio.run(runtime.release_memory())
+        asyncio.run(runtime.release())
         assert runtime._release_after_collect is not None
         assert runtime._release_after_collect.runtime is None
         # ...but the owner's placement group is untouched and reacquire works.

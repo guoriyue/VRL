@@ -1,5 +1,36 @@
 # SPRINT: Ray 阶段生命周期整理
 
+状态：**P0–P3 已实现(未提交,待 review)**;P4 / weight-sync / sleeping 仍为 follow-up。
+
+> **实现状态(2026-06-16)**:P0–P3 全部落地,808 个非环境缺失测试全绿(`.venv` 缺 peft/transformers/vllm/ray
+> 的用例本就 skip/fail,与本改动无关),ruff 全过。落点:
+> - **P1**:`vrl/ray/resources.py` 新增 `RayLifecyclePlan` / `ActorLeasePolicy` / `PhaseHandoffPolicy`,由
+>   `resolve_distributed_resources` 一次性从拓扑派生,挂在 `ResolvedDistributedResources.lifecycle`;旧三个 flag
+>   作为兼容视图保留(同一处派生,不分叉)。`format_distributed_resource_plan` 增加 `lifecycle=.../handoff=...` 行(验收 #8)。
+> - **P0**:`tests/ray/test_resources.py` 增 5 个计划派生锁测(disjoint→resident、shared→on_demand、colocated、
+>   persistent、formatter)。
+> - **P2**:`RayGenerationRuntime.release_memory → release`、`_ReleaseAfterCollectState → _RuntimeLease`;
+>   `RayActorMethodRuntime` 增 `release()`(与 generation runtime 同词汇)。`shutdown()` 仍是 final teardown。
+> - **P3**:从 `GenerationRuntime` protocol 和 runtime 删除 `should_release_memory_before_reward`;collector 改读
+>   自己的 `lifecycle.handoff.release_rollout_before_reward`(经 `build_collector_from_cfg` 从 cfg 派生注入,不再问
+>   runtime);launcher 按 `plan.rollout.mode` 选 resident/on_demand;reward kwargs 的 `release_after_score` 改由
+>   `plan.reward.mode` 派生。
+>
+> **三处刻意偏离(都有理由,见 §5/§7 对照)**:
+> 1. **不另起 `lifecycle.enter(phase)` 协调器对象**(§6 的"目标形状")。改成 collector/launcher/reward 各自读
+>    plan——plan 已是唯一权威,达成 #4/#5,且避免一个单调用者协调器 + 整条编排链改写。
+> 2. **不加投机性的 public `acquire()`**(会是 dead code;懒加载的 `_ensure_*` 本就是 acquire)。只加 `release()`
+>    做跨家族词汇一致。
+> 3. **`is_colocated()` 留在 runtime**:它驱动的是 driver model 的 CPU offload,与 actor lease 是两条轴,且不属于
+>    `release_after_*`;§5 的 ActorLeasePolicy/PhaseHandoffPolicy 也不含 colocation。
+>
+> 命名:`_ReleaseAfterCollectState` 只重命名了**类**,没动属性 `_release_after_collect`——因为公有工厂
+> `with_release_after_collect` 含子串 `_release_after_collect`,盲改会破坏 API。注意仓库里 `lifecycle` 已被占两次
+> (`vrl/ray/lifecycle.py` 的 kill/remove 工具、`vrl/rollouts/orchestration/lifecycle.py` 的 `RolloutLifecycle`),
+> 本 sprint 的 `RayLifecyclePlan` 是 `vrl/ray/resources.py` 里的独立类型,无标识符冲突。
+
+## 原始设计
+
 状态：提案 / 设计。
 
 ## 0. 结论
@@ -188,8 +219,8 @@ class PhaseHandoffPolicy:
 
 ```text
 rollout.release_after_collect=true
-  -> handoff.release_rollout_before_train
   -> rollout.mode = on_demand
+  -> 若 trainer/rollout 共卡或显式要求 train 前释放,则 handoff.release_rollout_before_train=true
 
 rollout.release_before_reward_model=true
   -> handoff.release_rollout_before_reward
@@ -318,7 +349,7 @@ rollout_release_before_reward_model
 reward_release_after_score
 ```
 
-但它们改成从 `lifecycle` 派生的兼容字段，避免两套 source of truth。
+但它们改成和 `lifecycle` 同处派生的兼容字段，避免两套 source of truth。
 
 ### P2. 统一 runtime lease API 命名
 

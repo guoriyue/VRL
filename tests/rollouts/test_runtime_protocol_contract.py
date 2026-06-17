@@ -20,18 +20,12 @@ from vrl.trainers.weight_sync import RayRuntimeWeightSyncer, WeightSyncer
 
 def _release_after_collect_runtime(
     *,
-    release_before_reward_model: bool = False,
-    reward_shared_with_rollout: bool = False,
     allow_driver_gpu_overlap: bool = False,
     colocated: bool = False,
 ) -> RayGenerationRuntime:
     config = RayGenerationConfig(
-        release_before_reward_model=release_before_reward_model,
         allow_driver_gpu_overlap=allow_driver_gpu_overlap,
-        resources=SimpleNamespace(
-            reward_shared_with_rollout=reward_shared_with_rollout,
-            colocated=colocated,
-        ),
+        resources=SimpleNamespace(colocated=colocated),
     )
     return RayGenerationRuntime.with_release_after_collect(
         config,
@@ -45,28 +39,10 @@ def _release_after_collect_runtime(
     )
 
 
-# --------------------------------------------------------------------------
-# should_release_memory_before_reward
-# --------------------------------------------------------------------------
-def test_persistent_runtime_never_releases_before_reward() -> None:
-    runtime = RayGenerationRuntime(executor=object())
-    assert runtime.should_release_memory_before_reward() is False
-
-
-@pytest.mark.parametrize(
-    ("release_flag", "shared", "expected"),
-    [
-        (True, True, True),    # release mode + shared GPU -> must release
-        (True, False, False),  # release mode but reward has its own GPU
-        (False, True, False),  # not in release mode
-    ],
-)
-def test_release_after_collect_runtime_release_decision(release_flag, shared, expected) -> None:
-    runtime = _release_after_collect_runtime(
-        release_before_reward_model=release_flag,
-        reward_shared_with_rollout=shared,
-    )
-    assert runtime.should_release_memory_before_reward() is expected
+# Note: the release-before-reward decision is no longer a runtime method; it is
+# derived from GPU topology into the RayLifecyclePlan and read by the collector.
+# See tests/ray/test_resources.py (plan derivation) and
+# tests/rollouts/collector/test_runtime.py (collector consumption).
 
 
 # --------------------------------------------------------------------------
