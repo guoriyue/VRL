@@ -26,8 +26,6 @@ class ARAttentionConfig:
     family: str
     model_key: str
     block_size: int = 16
-    dtype: str | None = None
-    device: str | None = None
     cache_layout_version: str = "vllm.v1"
     extra: Mapping[str, Any] = field(default_factory=dict)
 

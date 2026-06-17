@@ -33,9 +33,9 @@ def capture_host_memory() -> HostMemorySnapshot:
     """Capture Linux host memory without adding a psutil dependency."""
 
     return HostMemorySnapshot(
-        rss_mb=_read_proc_status_mb("VmRSS"),
-        available_mb=_read_meminfo_mb("MemAvailable"),
-        total_mb=_read_meminfo_mb("MemTotal"),
+        rss_mb=_read_proc_field_mb("/proc/self/status", "VmRSS"),
+        available_mb=_read_proc_field_mb("/proc/meminfo", "MemAvailable"),
+        total_mb=_read_proc_field_mb("/proc/meminfo", "MemTotal"),
     )
 
 
@@ -104,24 +104,8 @@ def _is_colocated_gpu_rollout(config: RayGenerationConfig) -> bool:
     )
 
 
-def _read_proc_status_mb(field: str) -> float | None:
-    path = "/proc/self/status"
-    try:
-        with open(path, encoding="utf-8") as handle:
-            for line in handle:
-                if not line.startswith(f"{field}:"):
-                    continue
-                parts = line.split()
-                if len(parts) < 2:
-                    return None
-                return float(parts[1]) / 1024.0
-    except OSError:
-        return None
-    return None
-
-
-def _read_meminfo_mb(field: str) -> float | None:
-    path = "/proc/meminfo"
+def _read_proc_field_mb(path: str, field: str) -> float | None:
+    """Read ``field:`` (kB) from a /proc table and return it in MiB."""
     try:
         with open(path, encoding="utf-8") as handle:
             for line in handle:

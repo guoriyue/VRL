@@ -140,23 +140,6 @@ class RayGenerationConfig:
             )
         return self
 
-    def to_dict(self) -> dict[str, Any]:
-        """Return the flat config shape accepted by Ray generation runtimes."""
-        return {
-            "num_workers": self.num_workers,
-            "gpus_per_worker": self.gpus_per_worker,
-            "cpus_per_worker": self.cpus_per_worker,
-            "placement_strategy": self.placement_strategy,
-            "allow_driver_gpu_overlap": self.allow_driver_gpu_overlap,
-            "max_inflight_chunks_per_worker": self.max_inflight_chunks_per_worker,
-            "sync_trainable_state": self.sync_trainable_state,
-            "chunk_placement_strategy": self.chunk_placement_strategy,
-            "release_after_collect": self.release_after_collect,
-            "release_before_reward_model": self.release_before_reward_model,
-            "persistent_colocated_workers": self.persistent_colocated_workers,
-            "gpu_memory_fraction": self.gpu_memory_fraction,
-        }
-
 
 def _validate_driver_cuda_ownership(
     config: RayGenerationConfig,

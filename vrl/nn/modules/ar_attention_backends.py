@@ -128,8 +128,6 @@ def _ar_config(
         family=family,
         model_key=_model_key(model, family),
         block_size=block_size,
-        dtype=_maybe_string(getattr(model, "dtype", "")),
-        device=_maybe_string(getattr(model, "device", "")),
         extra=extras,
     )
 
@@ -137,11 +135,6 @@ def _ar_config(
 def _model_key(model: Any, family: str) -> str:
     config = getattr(model, "config", None)
     return str(getattr(config, "model_path", family))
-
-
-def _maybe_string(value: Any) -> str | None:
-    text = str(value)
-    return text or None
 
 
 def _native_decode_fns(model: Any, *, backend_label: str) -> tuple[PrefillFn, StepFn]:

@@ -78,7 +78,7 @@ class StrictOnPolicyRolloutSchedule:
         return phase_times
 
     def reset(self) -> None:
-        self.state.initialized = False
+        """No-op reset; the schedule holds no resume-sensitive state."""
 
 
 __all__ = ["StrictOnPolicyRolloutSchedule"]

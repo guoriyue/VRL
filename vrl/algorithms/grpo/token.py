@@ -16,7 +16,6 @@ from vrl.algorithms.types import TrainStepMetrics
 class TokenGRPOConfig(GRPOConfig):
     """Token-level GRPO hyper-parameters."""
 
-    mask_key: str = "token_mask"
     kl_estimator: str = "k3"
 
 

@@ -147,7 +147,7 @@ def build_anima_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         scheduler.set_timesteps(int(num_steps), device=spec.device)
 
     model = AnimaReplayModel(
-        transformer=load_anima_transformer_component(spec),
+        transformer=load_anima_transformer(spec),
         scheduler=scheduler,
         device=spec.device,
         dtype=resolve_torch_dtype(spec.dtype),
@@ -248,7 +248,7 @@ def _resolve_artifact(
     )
 
 
-def load_anima_transformer_component(spec: RuntimeBuildSpec) -> Any:
+def load_anima_transformer(spec: RuntimeBuildSpec) -> Any:
     from safetensors.torch import load_file
 
     from vrl.models.diffusion.cosmos.anima.model import (
@@ -276,5 +276,5 @@ __all__ = [
     "build_anima_runtime_bundle",
     "extract_anima_replay_runtime_spec",
     "extract_anima_runtime_spec",
-    "load_anima_transformer_component",
+    "load_anima_transformer",
 ]

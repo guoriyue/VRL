@@ -23,7 +23,6 @@ class RolloutScheduleState:
     """Mutable state owned by one rollout schedule."""
 
     rollout_id: int = 0
-    initialized: bool = False
 
 
 @dataclass(slots=True)

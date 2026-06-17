@@ -130,7 +130,6 @@ class ContinuousRolloutSchedule:
         self.queue = None
         self.consumer = None
         self._prompt_key = None
-        self.state.initialized = False
 
     # -- internals ------------------------------------------------------
 
