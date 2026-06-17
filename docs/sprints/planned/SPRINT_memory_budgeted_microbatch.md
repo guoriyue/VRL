@@ -1,9 +1,21 @@
 # SPRINT: 内存预算驱动的 microbatch 切片(单根派生,不设两次)（planned）
 
-状态：**T1 + T2 已实现(未提交,VRL 分支 `trainer/microbatch-size-knob`,待 review)**;T3/T4 未做。
+状态：**T1 + T2 已落地 VRL main**(`58e0c13` 旋钮+RSS guard);随后 4 个 commit 收尾(见落地记录)。T3 未做、T4 待真机。
 本 sprint 是 `SPRINT_streaming_rollout_accumulation.md`(流式累积,已落地 VRL
 main `4c85f3b`)的**收尾精炼**:把"切多少"从一个**手填的次数**改成一个**大小/内存预算**,派生其余,
 并用**真实 RSS** 而不是低估的字节公式来预测/自动定档。对标 slime 的"单根 + 派生 + 预算式切分"。
+
+> **落地记录(2026-06-16,VRL main)**:
+> - `58e0c13` T1 `microbatch_size` 旋钮 + T2 host-RAM RSS fail-fast(cosmos predict2.5 启用)。
+> - `b89f8e2` 关 footgun:`host_memory_budget_fraction>0` 但没开 streaming → 直接报配置错(原本静默失效)。
+> - `34c32df` wan_2_1/online_grpo_ocr(唯一 rbs>1 的 legacy **视频**配置)采用 streaming。
+> - `57755b0` AR(janus_pro rbs=8、nextstep_1 rbs=4)采用 streaming。**更正前一轮误判**:AR 不需要改
+>   TokenGRPO loss——rollout 按 prompt-group 切批(`split_batch_by_group`),`compute_loss` 是**逐组**调用、
+>   `loss_scale` 是全局(`total_groups×timesteps`),`mask.sum()` 归一是**逐组**不是逐 microbatch;故 streaming
+>   只是把"逐组循环"分片,梯度等价(条件仅 `global_std=false`,两个 AR 配置都满足)。
+> - `39ead74` 加构建期告警:`global_std=true` + streaming 且每刀 >1 组时,advantage 的 global std 变成
+>   **逐 microbatch** 而非全批 → 梯度偏离。命中 sd3 的 `online_grpo_ocr/geneval/pickscore`(gas=4、8 组、
+>   global_std=true)。按 §6"不机械改 sd3"只**告警**,不改其配置、不硬失败;`microbatch_size=1` 豁免。
 
 > **进度(2026-06-15)**:T1 旋钮 + cosmos 迁移 + 配置 schema + T2 RSS fail-fast + 测试全绿(238 passed)。
 > **更正一处误判**:T2 曾被以"与 `SPRINT_generation_memory_system.md` 重叠"为由暂缓——经多 agent 对抗审计
