@@ -762,25 +762,23 @@ def write_prompt_report(
     report = {
         "train_count": len(train_rows),
         "eval_count": len(eval_rows),
-        "train_buckets": _bucket_counts(train_rows),
-        "eval_buckets": _bucket_counts(eval_rows),
-        "train_prompt_styles": _prompt_style_counts(train_rows),
-        "eval_prompt_styles": _prompt_style_counts(eval_rows),
+        "train_buckets": _metadata_counts(train_rows, key="bucket"),
+        "eval_buckets": _metadata_counts(eval_rows, key="bucket"),
+        "train_prompt_styles": _metadata_counts(train_rows, key="prompt_style"),
+        "eval_prompt_styles": _metadata_counts(eval_rows, key="prompt_style"),
     }
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def _bucket_counts(rows: Sequence[Mapping[str, Any]]) -> dict[str, int]:
-    counter = Counter(str((row.get("metadata") or {}).get("bucket", "unknown")) for row in rows)
-    return dict(sorted(counter.items()))
-
-
-def _prompt_style_counts(rows: Sequence[Mapping[str, Any]]) -> dict[str, int]:
-    counter = Counter(
-        (str((row.get("metadata") or {}).get("prompt_style", "unknown")) for row in rows),
-    )
+def _metadata_counts(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    key: str,
+    default: str = "unknown",
+) -> dict[str, int]:
+    counter = Counter(str((row.get("metadata") or {}).get(key, default)) for row in rows)
     return dict(sorted(counter.items()))
 
 
@@ -922,26 +920,16 @@ def write_safety_report(
     report = {
         "train_count": len(train_rows),
         "eval_count": len(eval_rows),
-        "train_categories": _category_counts(train_rows),
-        "eval_categories": _category_counts(eval_rows),
-        "train_ratings": _rating_counts(train_rows),
-        "eval_ratings": _rating_counts(eval_rows),
+        "train_categories": _metadata_counts(train_rows, key="category"),
+        "eval_categories": _metadata_counts(eval_rows, key="category"),
+        "train_ratings": _metadata_counts(train_rows, key="rating", default="unrated"),
+        "eval_ratings": _metadata_counts(eval_rows, key="rating", default="unrated"),
         "train_nsfw_tags_top": _nsfw_tag_counts(train_rows, limit=50),
         "eval_nsfw_tags_top": _nsfw_tag_counts(eval_rows, limit=50),
     }
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-def _category_counts(rows: Sequence[Mapping[str, Any]]) -> dict[str, int]:
-    counter = Counter(str((row.get("metadata") or {}).get("category", "unknown")) for row in rows)
-    return dict(sorted(counter.items()))
-
-
-def _rating_counts(rows: Sequence[Mapping[str, Any]]) -> dict[str, int]:
-    counter = Counter(str((row.get("metadata") or {}).get("rating", "unrated")) for row in rows)
-    return dict(sorted(counter.items()))
 
 
 def _nsfw_tag_counts(rows: Sequence[Mapping[str, Any]], *, limit: int) -> dict[str, int]:
