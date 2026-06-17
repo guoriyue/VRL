@@ -1,6 +1,6 @@
 # SPRINT: Streaming Rollout Accumulation
 
-状态：planned / architecture fix。这个 sprint 修复 Cosmos Predict2.5 + Kling reward
+状态：implemented（landed VRL main `4c85f3b`，2026-06-16；本文为完成记录）。这个 sprint 修复 Cosmos Predict2.5 + Kling reward
 paper-shaped RL batch 在单机上 OOM 的根因：当前 trainer 把 `rollout_batch_size` 个 prompt
 的全部 rollout/replay 数据一次性收齐后才训练，导致 `32 * 8 = 256` 个视频样本和 replay
 tensors 堆在 driver host RAM 里。

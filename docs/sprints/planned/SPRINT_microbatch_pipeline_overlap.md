@@ -362,6 +362,6 @@ ALL_CAPS / thin file 处理：
 - 配置校验：`vrl/trainers/core/types.py:TrainerConfig.__post_init__`
 - continuous 调度：`vrl/rollouts/orchestration/continuous/schedule.py`、`producer.py`、`consumer.py`、`queue.py`、`types.py`
 - 已有 sprint：
-  - `docs/sprints/planned/SPRINT_streaming_rollout_accumulation.md`
+  - `docs/sprints/done/SPRINT_streaming_rollout_accumulation.md`
   - `docs/sprints/planned/SPRINT_memory_budgeted_microbatch.md`
   - `docs/sprints/planned/SPRINT_continuous_scheduler_redesign.md`

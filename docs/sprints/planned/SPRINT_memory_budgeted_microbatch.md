@@ -202,7 +202,7 @@ optimizer 步数从 2 变 1。本 sprint **不引入新副作用**(只换壳),�
 
 ## 关键文件引用
 
-- 已落地基线:VRL main `4c85f3b`、`docs/sprints/planned/SPRINT_streaming_rollout_accumulation.md`;
+- 已落地基线:VRL main `4c85f3b`、`docs/sprints/done/SPRINT_streaming_rollout_accumulation.md`;
   `vrl/scripts/common/online.py:_run_streaming_optimizer_update`、`vrl/trainers/online/trainer.py`
   (`begin_optimizer_update`/`backward_on_training_batch`/`finish_optimizer_update`)、`vrl/trainers/core/types.py:__post_init__`
 - 内存:`vrl/rollouts/orchestration/continuous/types.py:15`(`estimate_batch_bytes`,**别用于预测**)、`vrl/utils/memory.py:log_host_memory`(RSS 真相源)
