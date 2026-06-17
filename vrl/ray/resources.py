@@ -49,18 +49,15 @@ class DistributedResourceConfig:
         default_factory=lambda: RewardResourceConfig(num_gpus=0, devices=[]),
     )
     allow_overlap: bool = False
-    # Release lifecycle flags are tri-state: None means "derive from the
-    # resolved GPU topology" (overlap -> release, dedicated GPUs -> resident).
-    # Explicit values that contradict a shared topology fail in validation.
-    rollout_release_after_collect: bool | None = None
-    rollout_release_before_reward_model: bool | None = None
+    # Resident single-GPU colocation, set from the colocate_with_trainer block.
+    # Release scheduling itself is always derived from the resolved GPU topology
+    # (no public override), so no release_* override fields live here.
     rollout_persistent_colocated_workers: bool = False
     # Hard cap on the rollout worker's share of its GPU, in (0, 1]. None means
-    # "no cap" (the worker owns its whole dedicated GPU). Required when
-    # persistent_colocated_workers is set: the worker then shares the trainer GPU,
-    # so its allocator must be bounded to leave the trainer room.
+    # "no cap" (the worker owns its whole dedicated GPU). Required (and set) by
+    # colocate_with_trainer: the resident worker then shares the trainer GPU, so
+    # its allocator must be bounded to leave the trainer room.
     rollout_gpu_memory_fraction: float | None = None
-    reward_release_after_score: bool | None = None
     reward_placement_strategy: str = "SPREAD"
     reward_cpus_per_worker: float = 0.5
     reward_max_inflight_batches: int = 1
@@ -237,9 +234,6 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
         rollout_devices=rollout_devices,
         reward_config=config.reward,
         allow_overlap=config.allow_overlap,
-        rollout_release_after_collect=config.rollout_release_after_collect,
-        rollout_release_before_reward_model=config.rollout_release_before_reward_model,
-        reward_release_after_score=config.reward_release_after_score,
     )
     reward_num_gpus = len(reward_devices)
     ray_reward_count = _count_ray_rewards(cfg)
@@ -285,14 +279,6 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
             "distributed.rollout.persistent_colocated_workers=true cannot share "
             "the rollout GPU with a Ray reward worker",
         )
-    if (
-        config.rollout_persistent_colocated_workers
-        and config.rollout_release_after_collect is True
-    ):
-        raise ValueError(
-            "distributed.rollout.persistent_colocated_workers=true requires "
-            "distributed.rollout.release_after_collect=false",
-        )
     gpu_memory_fraction = config.rollout_gpu_memory_fraction
     if gpu_memory_fraction is not None and not 0.0 < gpu_memory_fraction <= 1.0:
         raise ValueError(
@@ -310,35 +296,17 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
             "worker shares the trainer GPU, so cap its share to leave the trainer room",
         )
 
-    # Unset release flags follow the resolved topology: roles that share a GPU
-    # must hand it over between phases; roles with dedicated GPUs stay resident.
-    # Keep the old flat "release_after_collect" field as a compatibility view,
-    # but derive the named lifecycle handoffs per boundary so reward/rollout
-    # sharing is not mislabeled as a trainer handoff.
-    rollout_release_before_train = _derived_release_flag(
-        config.rollout_release_after_collect,
-        derived=colocated
-        and not config.rollout_persistent_colocated_workers,
+    # Release scheduling is derived entirely from the resolved GPU topology:
+    # roles that share a GPU hand it over between phases; roles with dedicated
+    # GPUs stay resident. The named per-boundary handoffs feed both the lifecycle
+    # plan and the flat compatibility fields on ResolvedDistributedResources.
+    rollout_release_before_train = (
+        colocated and not config.rollout_persistent_colocated_workers
     )
-    rollout_release_before_reward_model = _derived_release_flag(
-        config.rollout_release_before_reward_model,
-        derived=reward_shared_with_rollout,
+    rollout_release_before_reward_model = reward_shared_with_rollout
+    reward_release_after_score = reward_shared_with_rollout or (
+        ray_reward_count > 1 and reward_gpus_per_worker > 0
     )
-    reward_release_after_score = _derived_release_flag(
-        config.reward_release_after_score,
-        derived=reward_shared_with_rollout
-        or (ray_reward_count > 1 and reward_gpus_per_worker > 0),
-    )
-    if (
-        ray_reward_count > 1
-        and reward_gpus_per_worker > 0
-        and not reward_release_after_score
-    ):
-        raise ValueError(
-            "multiple active reward components with execution=pool share "
-            "the reward role placement; set distributed.reward.release_after_score "
-            "to true (or leave it unset) until per-reward placement is supported",
-        )
     rollout_release_after_collect = (
         rollout_release_before_train or rollout_release_before_reward_model
     )
@@ -806,9 +774,6 @@ def _resolve_reward_devices(
     rollout_devices: tuple[int, ...],
     reward_config: RewardResourceConfig,
     allow_overlap: bool,
-    rollout_release_after_collect: bool | None,
-    rollout_release_before_reward_model: bool | None,
-    reward_release_after_score: bool | None,
 ) -> tuple[int, ...]:
     explicit_devices = _parse_devices(reward_config.devices)
     num_gpus = _parse_num_gpus(
@@ -836,9 +801,6 @@ def _resolve_reward_devices(
             rollout_devices=rollout_devices,
             reward_config=reward_config,
             allow_overlap=allow_overlap,
-            rollout_release_after_collect=rollout_release_after_collect,
-            rollout_release_before_reward_model=rollout_release_before_reward_model,
-            reward_release_after_score=reward_release_after_score,
         )
         return devices
 
@@ -867,9 +829,6 @@ def _resolve_reward_devices(
                 rollout_devices=rollout_devices,
                 reward_config=reward_config,
                 allow_overlap=allow_overlap,
-                rollout_release_after_collect=rollout_release_after_collect,
-                rollout_release_before_reward_model=rollout_release_before_reward_model,
-                reward_release_after_score=reward_release_after_score,
             )
             return devices
         share = True
@@ -894,9 +853,6 @@ def _resolve_reward_devices(
             rollout_devices=rollout_devices,
             reward_config=reward_config,
             allow_overlap=allow_overlap,
-            rollout_release_after_collect=rollout_release_after_collect,
-            rollout_release_before_reward_model=rollout_release_before_reward_model,
-            reward_release_after_score=reward_release_after_score,
         )
         return devices
 
@@ -937,9 +893,6 @@ def _resolve_reward_devices(
         rollout_devices=rollout_devices,
         reward_config=reward_config,
         allow_overlap=allow_overlap,
-        rollout_release_after_collect=rollout_release_after_collect,
-        rollout_release_before_reward_model=rollout_release_before_reward_model,
-        reward_release_after_score=reward_release_after_score,
     )
     return devices
 
@@ -951,34 +904,17 @@ def _validate_reward_overlap(
     rollout_devices: tuple[int, ...],
     reward_config: RewardResourceConfig,
     allow_overlap: bool,
-    rollout_release_after_collect: bool | None,
-    rollout_release_before_reward_model: bool | None,
-    reward_release_after_score: bool | None,
 ) -> None:
     rollout_overlap = sorted(set(devices) & set(rollout_devices))
-    if rollout_overlap:
+    if rollout_overlap and reward_config.share_with_rollout is False:
         # None means auto placement chose sharing; only an explicit false
-        # contradicts an overlapping topology.
-        if reward_config.share_with_rollout is False:
-            raise ValueError(
-                "Reward and rollout devices overlap but "
-                "distributed.resources.reward.share_with_rollout=false: "
-                f"reward={list(devices)} rollout={list(rollout_devices)}",
-            )
-        # Unset flags derive to true for a shared pool; only an explicit
-        # false contradicts the topology.
-        if (
-            rollout_release_after_collect is False
-            or rollout_release_before_reward_model is False
-            or reward_release_after_score is False
-        ):
-            raise ValueError(
-                "Reward/rollout shared inference pool requires "
-                "distributed.rollout.release_after_collect, "
-                "distributed.rollout.release_before_reward_model, and "
-                "distributed.reward.release_after_score to be true (or unset, "
-                "in which case they derive to true)",
-            )
+        # contradicts an overlapping topology. (Release is derived, so a shared
+        # pool always releases between phases -- there is no flag to contradict.)
+        raise ValueError(
+            "Reward and rollout devices overlap but "
+            "distributed.resources.reward.share_with_rollout=false: "
+            f"reward={list(devices)} rollout={list(rollout_devices)}",
+        )
 
     trainer_overlap = sorted(set(devices) & set(trainer_devices))
     if trainer_overlap and not allow_overlap:
@@ -1240,12 +1176,6 @@ def _reject_removed_distributed_keys(rollout_runtime: Any, reward_runtime: Any) 
             "derived from the GPU topology (shared / multi-reward pool -> release, "
             "dedicated reward GPU -> resident). Remove the key.",
         )
-
-
-def _derived_release_flag(explicit: bool | None, *, derived: bool) -> bool:
-    if explicit is None:
-        return derived
-    return explicit
 
 
 def _parse_devices(value: Any) -> list[int] | str:
