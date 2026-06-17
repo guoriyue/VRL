@@ -13,7 +13,19 @@
 > （`reference_video` 没转发）。`pytest` 相关全套 318 + 85 passed，唯一失败是 `transformers` 未装进
 > `.venv` 的预存环境缺口（与改动无关，同 [[test_env_torchvision_gap]]）。未 commit（按规矩等指令）。
 >
-> **仍开放（本 doc 留在 `planned/` 的原因）**：约 30 条 findings 待你拍板（§4）——多数触及契约面 /
+> **Round 2（2026-06-17，用户授权"按 sprint 改代码"后）**：从 §4 backlog 又落地 3 个确证安全项——
+> (1) `_reward_modality_for_task` 补 `"i2v"`（§4.1，image-to-video 误归 "image"）；
+> (2) `_validate_data` 两个逐字节相同的 sampler.type 校验块合并为 `DataConfig._validate_sampler_type()`
+> （§4.2，文件内、2 调用方、错误串不变）；(3) Kling checkpoint 去硬编码 `checkpoint-11352` →
+> `any(root.glob("checkpoint-*"))`（§4.3，对齐 `_resolve_checkpoint_path` 的 glob，删 `_DEFAULT_MODEL_SUBDIR`）。
+> `tests/config`(112) + `tests/trajectory` + sampler 专项(45) 全绿，`ruff`/`py_compile` 清；kling 因
+> `transformers` 环境缺口只能 syntax-check，未跑模型测试。**两条原标"安全"的项经重新读码后撤回不做**：
+> `score_aggregation` guard fold（§4.3）——`RewardInferenceRequest.__post_init__` 是**构造期 fail-fast**，
+> 折叠会丢早期防御，非零行为；`backend_label` 直读（§4.1）——消费者的 `.get(..., fallback)` 是直构造测试
+> 依赖的防御默认，删了会 KeyError。另：§4.2 的 "algorithm.kind 三处 dispatch" 已被 schema 的 Pydantic 重写
+> **自动消解**（`kind`/`loader` 现为 `Literal[...]`，成员合法性由类型强制，无手维护集合可删）。
+>
+> **仍开放（本 doc 留在 `planned/` 的原因）**：其余 ~22 条 findings 待你拍板（§4）——多数触及契约面 /
 > public 导出 / "删 vs 接线"意图歧义 / 跨模块依赖边，按 north-star 排序、每条给 surface + 修法 +
 > 风险 + 为何 held。其中 release flag 残留（`reward_release_after_score` /
 > `rollout_release_before_reward_model` 影子化 `RayLifecyclePlan`）与
@@ -116,10 +128,10 @@
 - **P1 · `data.loader` 魔法字符串与 `task_type` 冗余**（`vrl/trainers/data/prompts.py:74-124`，9 个
   `configs/dataset/*.yaml`）。详见 §5.1 ——**不是干净 1:1**，安全修法很窄（loader 缺失时按 prompt-* 家族
   fallback，`loader` 仅保留区分 `pickapic_preference`）。需你拍板。
-- **P1 · `_reward_modality_for_task` 硬编码 video-task 集、漏了 `i2v`**（`vrl/trajectory/builders.py:594-597`）。
-  Wan i2v 任务串 `"i2v"` 不在集合里、被标成 "image" reward view。**当前无行为影响**（`RewardView.modality`
-  在打分路径无读取者，i2v GRPO 尚未跑），但是个埋雷。**加一行 `"i2v"` 是安全底线修复，强烈建议做**；
-  "从 registry `default_task_type` 派生"那版才彻底，但需逐家族验证。
+- **✅ 已落地 (Round 2) · `_reward_modality_for_task` 漏了 `i2v`**（`vrl/trajectory/builders.py:595`）。
+  `registry.py:161` 注册 `task="i2v"`，但该集合 `{t2v,v2w,t2w}` 漏它、image-to-video 被错标成 "image"。
+  已补 `"i2v"`（image-conditioned 但仍出 video frames）。当前 `RewardView.modality` 在打分路径无读取者 = 行为
+  inert，属正确性 future-proof。"从 registry `default_task_type` 派生"那版才彻底，仍待决策。
 - **P2 · `weight_sync_barrier` 由 `mode` 1:1 派生、无运行时读取者、只自校验**（`vrl/trainers/core/types.py:163-206`）。
   运行时全由 `mode` 决定（`strict_on_policy.py`/`continuous/schedule.py`），yaml 里已无人写。它是"矛盾
   override 时大声失败"的 guardrail，且测试用 `weight_sync_barrier=` 作 kwarg 构造。**建议**：`__post_init__`
@@ -136,17 +148,22 @@
 - **P3 · `require_separate_gpus` 是手动 flag、护着拓扑可派生的 colocation 检查**（`vrl/rollouts/orchestration/continuous/schedule.py:199-209`）。
   贴 north-star，但它是 single-GPU async-debug recipe 的正当逃生舱（`async_debug.yaml` + 测试走 false 路径）。
   最多加一条澄清注释。最低优先。
-- **P2 · `backend_label`/`cache_dtype` 经 untyped `extra` dict 路由、派生默认在每个消费者重抄**
-  （`vrl/nn/modules/ar_attention_backends.py:84-85,104-108` + `ar_decoder.py` + `torch_attention.py`）。
-  canonical 模板 `f"{family}_..._attention"` 出现在 4 处，`.get` fallback 正常流不可达。安全小修：消费者直接读
-  `config.extra["backend_label"]`、删重抄的 f-string fallback、保留 test override seam。升 typed 字段是更宽的口味选择。
+- **❌ 撤回不做 (Round 2 重新读码) · `backend_label` 派生默认在每个消费者重抄**
+  （`vrl/nn/modules/ar_attention_backends.py:84,104` + `ar_decoder.py:62` + `torch_attention.py:60`）。
+  canonical 模板 `f"{family}_..._attention"` 出现在 4 处。**但**消费者的 `.get(..., fallback)` 不是无用 dead
+  fallback——它是**直构造测试依赖的防御默认**（`test_ar_decoder_module_contract.py:79`/`test_torch_attention_backend.py:32`
+  用裸 `ARAttentionConfig(family=..., model_key=...)`、无 `extra`），删 fallback 改直读 `extra["backend_label"]`
+  会 KeyError。DRY 成共享 helper 只为省一个字符串模板、收益不抵新增 helper + 耦合 builder/consumer，**不做**。
 
 ### 4.2 duplicated-dispatch（含用户点名的 kind switch）
 
-- **P2 · `algorithm.kind` 在三文件分发、必须同步**（`vrl/config/builders.py:195-222` / `scripts/common/factory.py:171-267` /
-  `config/schema.py:427-462`）。三处职责真不同（建 config / 建 runtime+各异 evaluator / 校验 per-kind 必填），
-  **不是三份同表，不建议塞 `ALGORITHM_REGISTRY`、不统一 factory 的 evaluator wiring**。唯一安全窄赢：让
-  `schema._cross_field_validate` 的 allowed kinds 从 `get_args(...)` 派生（`resolve_algorithm_kind` 已示范）。
+- **✅ 已自动消解 (schema Pydantic 重写) · `algorithm.kind` 在三文件分发**（`vrl/config/builders.py` /
+  `scripts/common/factory.py` / `config/schema.py`）。三处职责真不同（建 config / 建 runtime+各异 evaluator /
+  校验 per-kind 必填），**不是三份同表，不建议塞 `ALGORITHM_REGISTRY`、不统一 factory 的 evaluator wiring**。
+  审计建议的"唯一安全窄赢"（schema 的 allowed kinds 从 `get_args` 派生）**已被 schema 重写实现**：
+  `AlgorithmConfig.kind` 现为 `Literal[...]`（`schema.py:88-90`），成员合法性由 Pydantic 类型强制，
+  `_cross_field_validate`（`:439`）只剩 per-kind 必填的真实跨字段规则，无手维护集合可删。builder/factory 的
+  kind 分发是各自的真实构造逻辑，保留。
 - **P3 · `(family, kind)` 兼容性硬编码在 schema + factory 两层**（`schema.py:438-456` / `factory.py:62-65,227-230`）。
   family 名以裸字面 `"janus_pro"`/`"nextstep_1"` 远离 `FAMILY_REGISTRY` 校验。安全窄步：family 名改经 registry
   常量引用（rename 才能被捕获）。**别**给 registry 加 `supported_kinds` 矩阵（改 guarded 结构）。
@@ -154,10 +171,10 @@
   `vrl/ray/resources.py:1211-1226`）。同一规则 `weight>0 AND execution=="pool"` 两份，但**数据形态不同**
   （factory 走 built dict 用 `float(weight)>0.0`；resources 走 raw cfg 用 try/except）——抽取须逐字节对齐否则
   引入微妙行为变化。`"pool"` 字面散在 9 处，但 `rewards/base.py`/`runtime.py` 是正当 runtime 边界，不要并入。
-- **P3 · sampler 类型合法集在 `config/schema.py` 手抄两遍**（`schema.py:153-162, 176-185`，真正 dispatch 在
-  `trainers/checkpointing.py:382-388`）。**安全的小赢**：把两个 prompt-loader 分支里逐字节相同的 sampler 校验块
-  合并成一处（**纯文件内**）。⚠️ **不要**从 `checkpointing.py` import frozenset——它引入 `torch`，会把 torch
-  拖进当前 torch-free 的 config 导入路径 = 真实回归。
+- **✅ 已落地 (Round 2) · sampler 类型合法集在 `config/schema.py` 手抄两遍**。把 `prompt_manifest` /
+  `prompt_image_manifest` 两分支里逐字节相同的 sampler.type 校验块合并为 `DataConfig._validate_sampler_type()`
+  （2 调用方、纯文件内、错误串不变、`test_schema.py` 45 passed）。⚠️ 遵守判据**未**从 `checkpointing.py`
+  import frozenset（它引入 `torch`，会把 torch 拖进当前 torch-free 的 config 导入路径 = 真实回归）——只做文件内合并。
 - **P2 · `reward_model_name@revision` HF-repo 解析在 kling/videocon 各自复制**（`rewards/models/kling_video_reward.py:629-634`
   与 `videocon_physics.py:257-262`，各带自己的 `_DEFAULT_REVISION="main"`）。`repo@rev` grammar 非家族特异，可抽
   `parse_reward_repo_spec` 进已存在的 `rewards/models/base.py`（守 "no new lean files"）。但用户刻意保持两家族
@@ -165,16 +182,21 @@
 
 ### 4.3 dead-field / dead-code（触及前瞻基建或 public 面）
 
-- **P1 · `hardcoded-constant`：Kling checkpoint 子目录硬编码 `checkpoint-11352`**（`rewards/models/kling_video_reward.py:31,671-675`）。
-  resolver 别处已 `glob("checkpoint-*")`，这里却硬钉一个具体目录 = 脆。改 `any(root.glob("checkpoint-*"))` 对齐。
-  **未自动改**：动的是 reward 模型加载路径，且本地 `.venv` 缺 `transformers` 跑不了该模型测试，无法验证。
+- **✅ 已落地 (Round 2) · Kling checkpoint 子目录硬编码 `checkpoint-11352`**（`rewards/models/kling_video_reward.py`）。
+  `_resolve_model_root`（`:617-678`）原硬钉 `root / "checkpoint-11352"` 必须存在，而真正选 checkpoint 的
+  `_resolve_checkpoint_path`（`:577`）早已 `glob("checkpoint-*")`——硬编码会拒绝任何别的 checkpoint-step 目录。
+  已改为 `any(root.glob("checkpoint-*"))` 对齐，删 `_DEFAULT_MODEL_SUBDIR`（仅此处用）。⚠️ 本地 `.venv` 缺
+  `transformers`，只 `py_compile` syntax-check、未跑模型测试（改动是隔离的 path-existence 断言、逻辑对齐 glob resolver）。
 - **P2 · `RayGenerationConfig.workload`/`EnginePlan.workload`（`WorkloadSignature`）每 plan 构造却从不读**
   （`generation/execution/planner.py:229-234` + `capabilities.py` 的 `batch_signature`）。整条 `workload→capability_key→batch_signature→supports_batched_*`
   死链。但 `WorkloadSignature` 是 public 导出、是 planned `ContinuousBatchingScheduler` 的前瞻 scaffolding
   （见 [[SPRINT_continuous_scheduler_redesign]]）。低风险替代：留类型、只删未读的 plumbing。**倾向不动**。
-- **P2 · `score_aggregation` 是 typed 字段但只接受 `"sum"`、三处 `__post_init__` 各 guard 一遍**（`rewards/inference.py:91-92,119-120,153`）。
-  多值假象。**安全子修复**：折叠重复 guard（零行为变化）。整字段删除触及被 `asdict()` 序列化进 manifest 的 frozen
-  public dataclass（wire 变更）。
+- **❌ 撤回不做 (Round 2 重新读码) · `score_aggregation` 三处 guard**（`rewards/inference.py:91-92,119-120,153`）。
+  原标"安全子修复：折叠重复 guard（零行为变化）"——**重新读码后证伪**：`RewardInferenceRequest.__post_init__`
+  的 guard（`:119-120`）是**构造期 fail-fast**，而 `_ScoreSelection.select_score` 的 guard（`:91`）只在事后
+  打分时触发（且作用在 Result 上，非 Request）。折叠会把"请求构造即报错"延后成"打分时才报错" = 丢早期防御，
+  **非零行为**。重复是 defense-in-depth，保留。整字段删除另触及 `asdict()` 序列化进 manifest 的 frozen public
+  dataclass（wire 变更），不做。
 - **P2 · `MEDIA_TYPES` 把存储格式 `"tensor"` 混进真实媒体种类 `"image"/"video"`**（`rewards/inference.py:14,39-42`）。
   `"tensor"` 全仓无人设置、`_validate_media_shape` 对它 no-op。但 `MEDIA_TYPES` 是 exported protocol 常量，移除
   已接受的值是 API 收窄。

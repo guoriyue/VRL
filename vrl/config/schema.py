@@ -149,16 +149,7 @@ class DataConfig(ConfigBase):
                 raise ValueError("config missing required field: data.manifest")
             if self.preprocessing is None:
                 raise ValueError("config missing required field: data.preprocessing")
-            sampler = self.sampler or {}
-            sampler_type = str(sampler.get("type", "")) if "type" in sampler else ""
-            if not sampler_type:
-                raise ValueError("config missing required field: data.sampler.type")
-            valid_samplers = {"random_without_replacement", "sequential_window"}
-            if sampler_type not in valid_samplers:
-                expected = " / ".join(sorted(valid_samplers))
-                raise ValueError(
-                    f"unknown data.sampler.type={sampler_type!r}; expected {expected}"
-                )
+            self._validate_sampler_type()
 
         if self.loader == "prompt_image_manifest":
             if not self.manifest:
@@ -172,16 +163,7 @@ class DataConfig(ConfigBase):
                     raise ValueError(
                         f"config missing required field: data.preprocessing.{field}"
                     )
-            sampler = self.sampler or {}
-            sampler_type = str(sampler.get("type", "")) if "type" in sampler else ""
-            if not sampler_type:
-                raise ValueError("config missing required field: data.sampler.type")
-            valid_samplers = {"random_without_replacement", "sequential_window"}
-            if sampler_type not in valid_samplers:
-                expected = " / ".join(sorted(valid_samplers))
-                raise ValueError(
-                    f"unknown data.sampler.type={sampler_type!r}; expected {expected}"
-                )
+            self._validate_sampler_type()
 
         if self.loader == "pickapic_preference":
             for field in ("dataset_name", "split", "cache_dir"):
@@ -203,6 +185,19 @@ class DataConfig(ConfigBase):
                     )
 
         return self
+
+    def _validate_sampler_type(self) -> None:
+        """Shared sampler.type check for the prompt-manifest loaders."""
+        sampler = self.sampler or {}
+        sampler_type = str(sampler.get("type", "")) if "type" in sampler else ""
+        if not sampler_type:
+            raise ValueError("config missing required field: data.sampler.type")
+        valid_samplers = {"random_without_replacement", "sequential_window"}
+        if sampler_type not in valid_samplers:
+            expected = " / ".join(sorted(valid_samplers))
+            raise ValueError(
+                f"unknown data.sampler.type={sampler_type!r}; expected {expected}"
+            )
 
 
 # ── Supporting sections for cross-field validation ────────────────────────────

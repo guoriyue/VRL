@@ -592,7 +592,8 @@ def _serializable_value(value: Any) -> Any:
 
 
 def _reward_modality_for_task(task: str) -> str:
-    if task in {"t2v", "v2w", "t2w"}:
+    # i2v is image-conditioned but still emits video frames, so it scores as video.
+    if task in {"t2v", "i2v", "v2w", "t2w"}:
         return "video"
     return "image"
 

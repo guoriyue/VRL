@@ -28,7 +28,6 @@ logger = init_logger(__name__)
 _SPECIAL_TOKENS = ["<|VQ_reward|>", "<|MQ_reward|>", "<|TA_reward|>"]
 _DEFAULT_REWARD_MODEL = "KlingTeam/VideoReward"
 _DEFAULT_REVISION = "main"
-_DEFAULT_MODEL_SUBDIR = "checkpoint-11352"
 _SCORE_KEY_MAP = {
     "overall_reward": "Overall",
     "visual_quality": "VQ",
@@ -668,10 +667,10 @@ def _resolve_model_root(worker_config: Mapping[str, Any]) -> Path:
             "Kling VideoReward model root must contain model_config.json: "
             f"{root}",
         )
-    if not (root / _DEFAULT_MODEL_SUBDIR).exists():
+    if not any(root.glob("checkpoint-*")):
         raise FileNotFoundError(
-            "Kling VideoReward model root must contain "
-            f"{_DEFAULT_MODEL_SUBDIR}: {root}",
+            "Kling VideoReward model root must contain a checkpoint-* subdir: "
+            f"{root}",
         )
     return root
 
