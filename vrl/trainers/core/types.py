@@ -55,6 +55,43 @@ class DebugConfig:
 
 
 @dataclass(slots=True)
+class EvalConfig:
+    """Fixed-prompt online eval — the learning signal.
+
+    Training ``reward_mean`` rotates prompts each epoch, so it reflects prompt
+    difficulty as much as policy change and cannot show learning. When
+    ``enabled``, the online loop scores a held-out eval prompt set on a FIXED
+    seed grid every ``freq`` epochs (no backward / optimizer / EMA) and writes
+    eval_metrics.csv — the only curve that judges whether reward truly improves
+    (SPRINT_cosmos_kling_fixed_eval_signal).
+    """
+
+    enabled: bool = field(default=False)
+    # Epochs between evals (1 = after every epoch). The baseline eval (epoch=-1)
+    # always runs once at startup when enabled.
+    freq: int = field(default=1)
+    # Videos generated per eval prompt. Kept small (eval cost) and independent of
+    # the training n_samples_per_prompt.
+    samples_per_prompt: int = field(default=2)
+    # Cap on eval prompts (0 = all of data.eval_manifest).
+    max_prompts: int = field(default=0)
+    # Base seed for the eval grid; must stay fixed across epochs and resumes.
+    seed: int = field(default=20260614)
+
+    def __post_init__(self) -> None:
+        if int(self.freq) < 1:
+            raise ValueError(f"trainer.eval.freq must be >= 1 (got {self.freq})")
+        if int(self.samples_per_prompt) < 1:
+            raise ValueError(
+                f"trainer.eval.samples_per_prompt must be >= 1 (got {self.samples_per_prompt})",
+            )
+        if int(self.max_prompts) < 0:
+            raise ValueError(f"trainer.eval.max_prompts must be >= 0 (got {self.max_prompts})")
+        if int(self.seed) < 0:
+            raise ValueError(f"trainer.eval.seed must be >= 0 (got {self.seed})")
+
+
+@dataclass(slots=True)
 class PrecisionDriftGuardConfig:
     """Rollout-vs-replay logprob parity guard (precision/backend drift).
 
@@ -203,6 +240,10 @@ class TrainerConfig:
 
     # --- nested groups ---
     ema: EMAConfig = field(default_factory=EMAConfig, metadata={"yaml": "actor.ema"})
+    eval: EvalConfig = field(
+        default_factory=EvalConfig,
+        metadata={"yaml": "trainer.eval"},
+    )
     debug: DebugConfig = field(
         default_factory=DebugConfig,
         metadata={"yaml": "trainer.debug"},

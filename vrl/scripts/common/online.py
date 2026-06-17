@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import gc
 import inspect
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -45,7 +47,10 @@ from vrl.trainers.checkpointing import (
     save_resolved_config,
     save_training_checkpoint,
 )
-from vrl.trainers.data import load_prompt_examples_from_config
+from vrl.trainers.data import (
+    load_eval_prompt_examples_from_config,
+    load_prompt_examples_from_config,
+)
 from vrl.trainers.distributed import DistributedTrainingContext, resolve_training_context
 from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.precision import torch_dtype_for_trainer_precision
@@ -403,9 +408,13 @@ async def run_online_recipe(
     context = RecipeDeviceContext(
         device=device,
         weight_dtype=weight_dtype,
-        distributed_resources=resources,
     )
     examples = load_prompt_examples_from_config(cfg.data)
+    eval_cfg = getattr(trainer_config, "eval", None)
+    eval_enabled = bool(getattr(eval_cfg, "enabled", False))
+    eval_examples = (
+        load_eval_prompt_examples_from_config(cfg.data) if eval_enabled else []
+    )
 
     bundle_builder = definition.build_replay_bundle or definition.build_bundle
     log_host_memory("before_trainer_bundle_build", log=logger)
@@ -539,6 +548,14 @@ async def run_online_recipe(
             component_names,
             resume=resume_checkpoint is not None,
         )
+        eval_csv_path = output_dir / "eval_metrics.csv"
+        if eval_enabled:
+            _prepare_eval_metrics_csv(
+                eval_csv_path,
+                component_names,
+                resume=resume_checkpoint is not None,
+                prepare_metrics_csv=prepare_metrics_csv,
+            )
 
         rng = torch.Generator().manual_seed(trainer_config.seed)
         start_epoch = resume_checkpoint.next_epoch if resume_checkpoint is not None else 0
@@ -575,6 +592,37 @@ async def run_online_recipe(
             len(examples),
             trainer_config.n_samples_per_prompt,
         )
+
+        async def _fixed_eval_and_log(eval_epoch: int) -> None:
+            """Run the fixed eval, append its row, log the signal. eval_epoch=-1 = baseline."""
+            result = await _run_fixed_eval(
+                collector,
+                components.reward_fn,
+                eval_examples,
+                samples_per_prompt=int(eval_cfg.samples_per_prompt),
+                base_seed=int(eval_cfg.seed),
+                max_prompts=int(eval_cfg.max_prompts),
+                component_names=component_names,
+            )
+            _write_eval_metric_row(
+                eval_csv_path,
+                eval_epoch,
+                result,
+                component_names=component_names,
+                global_step=int(trainer.state.global_step),
+            )
+            logger.info(
+                "fixed eval epoch=%d: eval_reward_mean=%.4f +/- %.4f (n=%d)",
+                eval_epoch,
+                result.reward_mean,
+                result.reward_stderr,
+                result.n,
+            )
+
+        # Pre-RL baseline on the fixed grid (fresh runs only; resume keeps its rows).
+        if eval_enabled and resume_checkpoint is None:
+            await _fixed_eval_and_log(-1)
+
         for epoch in range(start_epoch, trainer_config.total_epochs):
             idx = sample_prompt_indices(
                 rng,
@@ -621,6 +669,11 @@ async def run_online_recipe(
                 component_names=component_names,
                 metric_row_hook=definition.metric_row_hook,
             )
+
+            # Fixed eval AFTER the training row (eval overwrites reward_fn
+            # components; the next epoch's collect resets them).
+            if eval_enabled and (epoch + 1) % int(eval_cfg.freq) == 0:
+                await _fixed_eval_and_log(epoch)
 
             if definition.after_step is not None:
                 maybe_awaitable = definition.after_step(stack, epoch, example_batch)
@@ -762,6 +815,148 @@ def _write_metric_row(
             )
             + "\n",
         )
+
+
+@dataclass(frozen=True, slots=True)
+class _FixedEvalResult:
+    """Aggregated fixed-eval reward over the held-out prompt+seed grid."""
+
+    reward_mean: float
+    reward_std: float
+    reward_stderr: float
+    n: int
+    component_means: dict[str, float]
+
+
+def _fixed_eval_collect_kwargs(item: Any, *, group_size: int, seed: int) -> dict[str, Any]:
+    """Collect kwargs for one eval prompt group at a fixed seed.
+
+    Mirrors prompt_collection._prompt_example_kwargs so image/caption/reference
+    eval prompts carry their conditioning, and adds the deterministic ``seed``
+    the request builder threads into sampling (requests.py).
+    """
+
+    kwargs: dict[str, Any] = {"group_size": int(group_size), "seed": int(seed)}
+    if not isinstance(item, str):
+        for key, attr in (
+            ("target_text", "target_text"),
+            ("references", "references"),
+            ("task_type", "task_type"),
+            ("request_overrides", "request_overrides"),
+            ("sample_metadata", "metadata"),
+        ):
+            value = getattr(item, attr, None)
+            if value is not None:
+                kwargs[key] = value
+        reference_image = getattr(item, "reference_image", None)
+        if reference_image:
+            kwargs["reference_image"] = reference_image
+        reference_video = getattr(item, "reference_video", None)
+        if reference_video:
+            kwargs["reference_video"] = reference_video
+    return kwargs
+
+
+async def _run_fixed_eval(
+    collector: Any,
+    reward_fn: Any,
+    eval_examples: list[Any],
+    *,
+    samples_per_prompt: int,
+    base_seed: int,
+    max_prompts: int,
+    component_names: tuple[str, ...],
+) -> _FixedEvalResult:
+    """Score a held-out prompt set on a FIXED seed grid — the learning signal.
+
+    Reuses the training ``collector``/runtime/``reward_fn`` (same sampling path as
+    training) but does NOT touch the trainer: no collect_training_batch, no
+    backward, no optimizer/EMA/previous-policy sync, no trainer.prompts mutation.
+    Each prompt gets ``samples_per_prompt`` videos at a deterministic seed derived
+    from ``base_seed``, so the same grid reproduces across epochs and resumes.
+    Rollout/reward artifacts are released before returning to avoid host-RAM creep.
+    """
+
+    examples = list(eval_examples)
+    if max_prompts > 0:
+        examples = examples[:max_prompts]
+    if not examples:
+        raise ValueError(
+            "fixed eval has no prompts (check data.eval_manifest and trainer.eval.max_prompts)",
+        )
+
+    # Snapshot only this eval's reward components, not training's.
+    reward_fn.reset_components()
+    unscored: list[Any] = []
+    batches: list[Any] = []
+    try:
+        for prompt_index, item in enumerate(examples):
+            seed = int(base_seed) + prompt_index * int(samples_per_prompt)
+            prompt = str(getattr(item, "prompt", item))
+            unscored.append(
+                await collector.collect_unscored(
+                    [prompt],
+                    **_fixed_eval_collect_kwargs(item, group_size=samples_per_prompt, seed=seed),
+                ),
+            )
+        batches = await collector.score_rollouts(unscored)
+        rewards = torch.cat([b.rewards.detach().float().reshape(-1).cpu() for b in batches])
+        n = int(rewards.numel())
+        mean = float(rewards.mean().item()) if n else float("nan")
+        std = float(rewards.std(unbiased=False).item()) if n > 1 else 0.0
+        stderr = std / (n**0.5) if n > 0 else 0.0
+        last = getattr(reward_fn, "last_components", {}) or {}
+        component_means = {
+            name: (sum(last.get(name, [])) / len(last.get(name, [])))
+            if last.get(name)
+            else float("nan")
+            for name in component_names
+        }
+        return _FixedEvalResult(mean, std, stderr, n, component_means)
+    finally:
+        # Drop rollout/reward artifact refs before the next training epoch.
+        del batches, unscored
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+
+def _prepare_eval_metrics_csv(
+    path: Path,
+    component_names: tuple[str, ...],
+    *,
+    resume: bool,
+    prepare_metrics_csv: Any,
+) -> None:
+    """eval_metrics.csv header. ``epoch=-1`` is the pre-RL baseline row."""
+
+    component_cols = ",".join(f"r_{name}" for name in component_names)
+    header = "epoch,eval_reward_mean,eval_reward_std,eval_reward_stderr,eval_n,global_step"
+    if component_cols:
+        header = f"{header},{component_cols}"
+    prepare_metrics_csv(path, header + "\n", resume=resume)
+
+
+def _write_eval_metric_row(
+    path: Path,
+    epoch: int,
+    result: _FixedEvalResult,
+    *,
+    component_names: tuple[str, ...],
+    global_step: int,
+) -> None:
+    means = result.component_means
+    columns = [
+        str(epoch),
+        f"{result.reward_mean:.4f}",
+        f"{result.reward_std:.4f}",
+        f"{result.reward_stderr:.4f}",
+        str(result.n),
+        str(global_step),
+        *(f"{means.get(name, float('nan')):.4f}" for name in component_names),
+    ]
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(",".join(columns) + "\n")
 
 
 async def _shutdown_online_recipe_runtime(

@@ -453,21 +453,50 @@ rollout:
 
 在 T1-T5 全部通过后，再跑小范围 sweep。不要一次开太多变量。
 
-第一组：
+> **2026-06-16 证据修正（先读这条，决定 sweep 顺序）**：
+> 磁盘上 `outputs/_confirm_cosmos25_growth/` 的固定-seed eval **null 结果全部是 `lr=3e-5`**（每个
+> eval 目录名都带 `lr3e-5`；e4→e60 在 −3.0~−3.4 间晃，baseline −3.51，std≈1.0，n=4 → stderr≈0.5，
+> 非单调、无趋势 = 噪声）。但 memory 一直记着 “LoRA wants lr=1e-4 not paper's 1e-5”，而
+> `outputs/cosmos25_kling_probe_1e4_80ep/`（真的用 `lr=1e-4` 训了 80 epoch）**只有轮换 prompt 的
+> `metrics.csv`，没有任何 fixed-eval / summary.json**。
+> **结论：`lr=1e-4` 这档 LoRA 从未在固定 eval 下被判过——它才是又便宜（单卡能跑）、又真空白的首选实验。
+> 不要把 `lr=3e-5` 当 baseline 重跑（已知 null），从 `lr=1e-4` 开始。**
+
+第一组（按修正后的优先级，`lr=1e-4` 优先；`lr=3e-5` 已是磁盘上的已知 null，不重跑）：
 
 ```text
-baseline: lr=3e-5, advantage_high=5, advantage_low=-5
-trial_a:  lr=1e-4, advantage_high=5, advantage_low=-5
-trial_b:  lr=1e-4, advantage_high=1, advantage_low=-1
-trial_c:  lr=3e-4, advantage_high=1, advantage_low=-1
+trial_a:  lr=1e-4, advantage_high=1, advantage_low=-1   # memory 推荐档 + 收紧 advantage，先跑这个
+trial_b:  lr=1e-4, advantage_high=5, advantage_low=-5   # 仅改 lr，隔离 advantage 影响
+trial_c:  lr=3e-4, advantage_high=1, advantage_low=-1   # 更激进 lr，盯 grad_norm/崩溃
+trial_d:  lr=1e-4, advantage_high=1, lora rank↑          # 加 LoRA 容量（单卡仍可行）
 ```
 
 停止规则：
 
 - 如果 `eval_reward_mean` 相比 baseline eval 没有超过 `reward_stderr` 量级，不声明“reward 增长”。
 - 如果 `grad_norm` 暴涨、loss 非有限、reward 崩掉，回退到前一档。
-- 如果所有 LoRA + advantage scale sweep 都不涨，转入算法 sprint：full-param/previous-policy state、
-  streaming-compatible multi-epoch replay、或 paper diffusion regularization。不要继续加 epoch。
+- 如果所有 LoRA（含 `lr=1e-4` / advantage scale / rank↑）都不涨，转入**多卡**全参 sprint（见下方
+  “全参可行性”）。**不要在单卡上试全参，也不要继续加 epoch。**
+
+### T6.1 — 全参可行性（为什么单卡到不了，必须多卡）
+
+`enable_full_finetune()` 当前硬 raise（`model.py:239-243`）不是偷懒，是被 DiffusionNFT 的结构逼的。
+loss 每个 microbatch 要**三个完整策略态前向**（`diffusion_nft.py:228-233`）：
+
+```python
+previous_prediction = _forward_previous_policy_adapter(transformer, ...)  # set_adapter("previous")
+forward_prediction  = transformer(**inputs)[0]                            # default, 带梯度
+ref_prediction      = _forward_reference(transformer, ...)                # disable_adapters() = base 参考
+kl_loss = ((forward_prediction - ref_prediction) ** 2).mean()            # 论文防 reward-hacking 的 KL
+```
+
+LoRA 下三态 = 1 份冻结 base + 2 个小 adapter，靠 `set_adapter`/`disable_adapters` 切换，几乎免费。
+全参打穿这个假设：`previous` 要第二份完整 2B；全参原地改了 base，`disable_adapters→base` 失效，参考
+分支要**第三份**完整 2B 原始权重；再加 fused AdamW 两组 fp32 矩（2B → ~16GB），而 `_create_optimizer`
+（`trainer.py:51-72`）是纯 AdamW，**没有任何 CPU-offload / 8-bit / paged**。三份 2B + 16GB optimizer +
+49 帧激活，32GB 装不下，也没有 offload 基建可依赖。**全参 DiffusionNFT 是多卡实验，不是单卡能试塞的。**
+真要做，需要：(a) 第二张卡放 previous/base 或 optimizer state，或 (b) 先建 CPU-offload optimizer +
+streamed previous/base 前向（本身是独立 sprint）。在那之前，单卡只能在 LoRA regime 里判信号。
 
 验收：
 

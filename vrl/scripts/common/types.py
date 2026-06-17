@@ -36,7 +36,6 @@ class RecipeDeviceContext:
 
     device: Any
     weight_dtype: Any
-    distributed_resources: Any | None = None
 
 
 @dataclass(frozen=True, slots=True)

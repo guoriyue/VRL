@@ -71,13 +71,24 @@ def load_prompt_image_manifest(
     )
 
 
-def load_prompt_examples_from_config(data_cfg: Any) -> list[PromptExample]:
-    """Dispatch prompt example loading from a resolved ``data`` config section."""
+def _load_prompt_examples_from_config(
+    data_cfg: Any,
+    *,
+    manifest_key: str,
+    missing_message: str,
+) -> list[PromptExample]:
+    """Resolve ``data.loader`` and load examples from ``data.<manifest_key>``.
+
+    The train (``data.manifest``) and eval (``data.eval_manifest``) entry points
+    differ only in which manifest key they read and the message they fail with,
+    so the loader resolution, presence check, and dispatch live here once and the
+    two paths cannot drift apart.
+    """
 
     loader = str(cfg_get(data_cfg, "loader", "prompt_manifest"))
-    manifest = cfg_get(data_cfg, "manifest", None)
+    manifest = cfg_get(data_cfg, manifest_key, None)
     if not manifest:
-        raise ValueError("config missing required field: data.manifest")
+        raise ValueError(missing_message)
 
     if loader == "prompt_manifest":
         return load_prompt_manifest(manifest)
@@ -95,6 +106,34 @@ def load_prompt_examples_from_config(data_cfg: Any) -> list[PromptExample]:
         )
 
     raise ValueError(f"unknown data.loader={loader!r}")
+
+
+def load_prompt_examples_from_config(data_cfg: Any) -> list[PromptExample]:
+    """Dispatch prompt example loading from a resolved ``data`` config section."""
+
+    return _load_prompt_examples_from_config(
+        data_cfg,
+        manifest_key="manifest",
+        missing_message="config missing required field: data.manifest",
+    )
+
+
+def load_eval_prompt_examples_from_config(data_cfg: Any) -> list[PromptExample]:
+    """Load the fixed eval prompt set from ``data.eval_manifest``.
+
+    Held-out eval prompts come from ``data.eval_manifest`` (not ``data.manifest``)
+    so train and eval never share a prompt source; fail fast if eval is requested
+    without one. Same loader types as training.
+    """
+
+    return _load_prompt_examples_from_config(
+        data_cfg,
+        manifest_key="eval_manifest",
+        missing_message=(
+            "trainer.eval.enabled=true requires data.eval_manifest "
+            "(the fixed eval prompt set); none is configured"
+        ),
+    )
 
 
 class JsonlPromptDataset(Dataset):
@@ -227,6 +266,7 @@ __all__ = [
     "ImageCaptionPromptDataset",
     "JsonlPromptDataset",
     "PromptExample",
+    "load_eval_prompt_examples_from_config",
     "load_prompt_examples_from_config",
     "load_prompt_image_manifest",
     "load_prompt_manifest",

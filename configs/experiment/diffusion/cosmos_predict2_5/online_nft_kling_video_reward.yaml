@@ -57,6 +57,16 @@ trainer:
   # curve via vrl/scripts/eval/cosmos_predict25_kling_eval.py.
   save_freq: 32
   log_freq: 1
+  # Inline fixed eval = the learning signal. Training reward_mean rotates prompts
+  # each epoch (unreadable); this scores a held-out prompt+seed grid every `freq`
+  # epochs into eval_metrics.csv, no backward/EMA. Judge learning by
+  # eval_reward_mean only (SPRINT_cosmos_kling_fixed_eval_signal).
+  eval:
+    enabled: true
+    freq: 32                  # aligned with save_freq; baseline (epoch=-1) always runs
+    samples_per_prompt: 2
+    max_prompts: 35           # full VideoPhy eval manifest
+    seed: 20260614
 
 reward:
   kwargs:
