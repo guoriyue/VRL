@@ -126,15 +126,10 @@ def _ar_config(
     extras["backend_label"] = backend_label
     return ARAttentionConfig(
         family=family,
-        model_key=_model_key(model, family),
+        model_key=str(getattr(getattr(model, "config", None), "model_path", family)),
         block_size=block_size,
         extra=extras,
     )
-
-
-def _model_key(model: Any, family: str) -> str:
-    config = getattr(model, "config", None)
-    return str(getattr(config, "model_path", family))
 
 
 def _native_decode_fns(model: Any, *, backend_label: str) -> tuple[PrefillFn, StepFn]:
