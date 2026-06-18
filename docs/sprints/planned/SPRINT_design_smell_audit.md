@@ -11,7 +11,7 @@
 > `/proc` 读取器、改 1 个装饰性命名（`load_anima_transformer_component`→`load_anima_transformer`）、
 > 删 1 个假旋钮（`TokenGRPOConfig.mask_key`）、修 1 个 fixed-eval **丢条件 bug**
 > （`reference_video` 没转发）。`pytest` 相关全套 318 + 85 passed，唯一失败是 `transformers` 未装进
-> `.venv` 的预存环境缺口（与改动无关，同 [[test_env_torchvision_gap]]）。未 commit（按规矩等指令）。
+> `.venv` 的预存环境缺口（与改动无关，同 [[test_env_torchvision_gap]]）。（Round 1 后续已提交为 215c8a9。）
 >
 > **Round 2（2026-06-17，用户授权"按 sprint 改代码"后）**：从 §4 backlog 又落地 3 个确证安全项——
 > (1) `_reward_modality_for_task` 补 `"i2v"`（§4.1，image-to-video 误归 "image"）；
@@ -25,12 +25,34 @@
 > 依赖的防御默认，删了会 KeyError。另：§4.2 的 "algorithm.kind 三处 dispatch" 已被 schema 的 Pydantic 重写
 > **自动消解**（`kind`/`loader` 现为 `Literal[...]`，成员合法性由类型强制，无手维护集合可删）。
 >
-> **仍开放（本 doc 留在 `planned/` 的原因）**：其余 ~22 条 findings 待你拍板（§4）——多数触及契约面 /
-> public 导出 / "删 vs 接线"意图歧义 / 跨模块依赖边，按 north-star 排序、每条给 surface + 修法 +
-> 风险 + 为何 held。其中 release flag 残留（`reward_release_after_score` /
-> `rollout_release_before_reward_model` 影子化 `RayLifecyclePlan`）与
-> [[SPRINT_resolved_struct_field_audit]] §3 存在结论冲突，**归并到那个 sprint 复核**，不在此重复立项
-> （§5.2）。
+> **Round 3（2026-06-18，用户授权"do the rest 22" + 4 项决策后）**：再落地 5 组、撤回 1 项，
+> 在 VRL 分支 `design-smell-backlog`，逐项 per-item commit、每项 ruff + 受影响测试绿：
+> (1) **public 面收窄**（§4.3）：`MediaType` 删死值 `"tensor"`（与 live 的 `artifact_format="tensor"`
+>     是两回事）、DiffusionNFT prepare-input hook 双名 + 永不触发 fallback 收成单名、`reward_artifact_bytes`
+>     早已删（c71e3cf）。
+> (2) **安全内部**（§4.1/§4.3）：`_log_rollout_memory_plan` 改读 reconciled `microbatch_size`；
+>     `import_from_path` 去重搬进 leaf `vrl/utils/config.py`（worker 仍 Ray-agnostic，已验证）；
+>     `from_phase_dict` 去 "migration boundary" 措辞；`require_separate_gpus` 加 WHY 注释。
+> (3) **data.loader 派生**（§4.1 P1, north-star）：`loader` 改可选，缺省时由 `preprocessing.format`
+>     （`image_caption_jsonl` 是唯一 image-caption schema，经 9 个 dataset yaml 实证）在 runtime + schema
+>     两层派生；显式值与 pickapic_preference 不变，全向后兼容，加派生测试。
+> (4) **删弃用前瞻基建 WorkloadSignature**（§4.3）：整条 workload→capability_key→batch_signature 死链删除；
+>     **保留** runtime_caps 表里的 `supports_batched_*` 列（§6 + consistency 护栏的跨 family 表）。
+> (5) **collapse minimal-replay manifest**（§4.3）：只留唯一有 live 消费者的 `loads_full_generation_modules`
+>     （colocated-RAM guard 读它），删 `runtime_role`/`requires_minimal_replay_loader`/`replay_modules`/
+>     `generation_only_modules` + profile/校验层，剥 7 个 family runtime 的 kwargs，重写 2 个 wiring 测试
+>     （保所有真实行为断言）。**guard 行为零变化。**
+> 最终全仓回归 **625 passed / 2 skipped**（env-gap 的 imageio/transformers 测试除外，与改动无关）。
+> **撤回不做**：`(family,kind)` 改 registry 常量（§4.2 P3）——经核**无现成 FAMILY_* 常量**（registry 用裸串），
+> 要新建一整套常量 taxonomy，且高价值的 schema.py 侧受 import-boundary 阻挡无法用，P3 部分收益不抵 churn +
+> 违 consistency 护栏。
+>
+> **仍开放（本 doc 仍留 `planned/` 的原因）**：只剩需"政策/边界决策"的少数项——放松 fail-loud gate 的
+> `media_type` 由 `artifact_format` 派生（§4.1 P2）、`advantage_low` 非对称数学（§4.1 P2）、
+> `weight_sync_barrier` 改 derive-only（§4.1 P2，与 [[SPRINT_resolved_struct_field_audit]] §9.1 一并处理）、
+> `pool`-reward 双写逐字节对齐去重（§4.2 P2）、reward `repo@rev` 解析 shared-vs-parallel（§4.2 P2）。
+> 另：release flag 残留（`reward_release_after_score` / `rollout_release_before_reward_model` 影子化
+> `RayLifecyclePlan`）与 [[SPRINT_resolved_struct_field_audit]] §3 冲突，**归并到那个 sprint 复核**（§5.2）。
 
 > 方法：1 个编排 workflow，10 个子系统各 1 个 survey agent（逐文件真实 read/grep 找候选），每个子系统
 > 的候选再派 1 个**对抗式验证 agent**（专门去反证它其实是故意的/必要的，并把候选与用户已知偏好的护栏
