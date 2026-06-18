@@ -6,6 +6,7 @@ import pytest
 from omegaconf import OmegaConf
 
 from vrl.ray.resources import (
+    active_pool_reward_keys,
     build_bundle_layout,
     format_distributed_resource_plan,
     resolve_distributed_resources,
@@ -48,6 +49,30 @@ def _cfg(
     return OmegaConf.create(
         data,
     )
+
+
+def test_active_pool_reward_keys_match_raw_and_built_reward_shapes() -> None:
+    """Checks pool reward detection is shared across resource and factory inputs."""
+
+    raw_reward = OmegaConf.create(
+        {
+            "components": {"pool_a": 1.0, "disabled_pool": 0.0, "local": 1.0},
+            "kwargs": {
+                "pool_a": {"execution": "pool"},
+                "disabled_pool": {"execution": "pool"},
+                "local": {"debug_dir": "debug"},
+            },
+        },
+    )
+    built_components = {"pool_a": 1.0, "disabled_pool": 0.0, "local": 1.0}
+    built_kwargs = {
+        "pool_a": {"execution": "pool"},
+        "disabled_pool": {"execution": "pool"},
+        "local": {"debug_dir": "debug"},
+    }
+
+    assert active_pool_reward_keys(raw_reward.components, raw_reward.kwargs) == ("pool_a",)
+    assert active_pool_reward_keys(built_components, built_kwargs) == ("pool_a",)
 
 
 def test_auto_split_uses_remaining_visible_gpus_for_rollout() -> None:

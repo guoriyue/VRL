@@ -9,7 +9,6 @@ algorithm:
   nft_beta: 1.0
   kl_beta: 1.0
   advantage_high: 5.0
-  advantage_low: -5.0
   weight_copy_decay: 0.0
 
   # Kept for collector reward-shaping compatibility; DiffusionNFT loss-side KL

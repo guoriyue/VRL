@@ -22,7 +22,6 @@ class DiffusionNFTConfig:
     nft_beta: float = 1.0
     kl_beta: float = 1.0
     advantage_high: float = 5.0
-    advantage_low: float = -5.0
     weight_copy_decay: float = 0.0
 
 
@@ -137,6 +136,9 @@ class DiffusionNFT(Algorithm):
         from vrl.trajectory import TrajectoryResolver
 
         cfg = self.config
+        advantage_high = float(cfg.advantage_high)
+        if advantage_high <= 0:
+            raise RuntimeError("DiffusionNFTConfig.advantage_high must be > 0")
         replay_tensors = TrajectoryResolver.from_batch(batch).replay_tensor_dict("denoise")
         required_tensors = {}
         for key in ("latents_clean", "prompt_embeds", "timesteps"):
@@ -229,11 +231,11 @@ class DiffusionNFT(Algorithm):
         forward_prediction = transformer(**transformer_inputs)[0]
         ref_prediction = _forward_reference(transformer, transformer_inputs)
 
-        adv = torch.clamp(advantages, cfg.advantage_low, cfg.advantage_high)
+        adv = torch.clamp(advantages, -advantage_high, advantage_high)
         adv = adv.to(device=x0.device, dtype=forward_prediction.dtype)
         while adv.ndim < forward_prediction.ndim:
             adv = adv.unsqueeze(-1)
-        reward_mix = ((adv / cfg.advantage_high) / 2.0 + 0.5).clamp(0.0, 1.0)
+        reward_mix = ((adv / advantage_high) / 2.0 + 0.5).clamp(0.0, 1.0)
 
         beta = float(cfg.nft_beta)
         if beta <= 0:
@@ -252,7 +254,7 @@ class DiffusionNFT(Algorithm):
             flat_mix * positive_loss / beta
             + (1.0 - flat_mix) * negative_loss / beta
         )
-        policy_loss = original_policy_loss.mean() * float(cfg.advantage_high)
+        policy_loss = original_policy_loss.mean() * advantage_high
         kl_loss = ((forward_prediction.float() - ref_prediction.float()) ** 2).mean()
         kl_term = float(cfg.kl_beta) * kl_loss
         loss = policy_loss + kl_term

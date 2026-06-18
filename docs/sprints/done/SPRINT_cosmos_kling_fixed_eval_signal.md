@@ -66,7 +66,7 @@ rollout:
 DiffusionNFT loss 里 reward 信号被 `advantage_high` 缩放：
 
 ```python
-adv = torch.clamp(advantages, cfg.advantage_low, cfg.advantage_high)
+adv = torch.clamp(advantages, -cfg.advantage_high, cfg.advantage_high)
 reward_mix = ((adv / cfg.advantage_high) / 2.0 + 0.5).clamp(0.0, 1.0)
 policy_loss = original_policy_loss.mean() * float(cfg.advantage_high)
 ```
@@ -122,7 +122,6 @@ actor:
 
 algorithm:
   advantage_high: 1.0
-  advantage_low: -1.0
 ```
 
 第一批 sweep 只动：
@@ -466,9 +465,9 @@ rollout:
 第一组（按修正后的优先级，`lr=1e-4` 优先；`lr=3e-5` 已是磁盘上的已知 null，不重跑）：
 
 ```text
-trial_a:  lr=1e-4, advantage_high=1, advantage_low=-1   # memory 推荐档 + 收紧 advantage，先跑这个
-trial_b:  lr=1e-4, advantage_high=5, advantage_low=-5   # 仅改 lr，隔离 advantage 影响
-trial_c:  lr=3e-4, advantage_high=1, advantage_low=-1   # 更激进 lr，盯 grad_norm/崩溃
+trial_a:  lr=1e-4, advantage_high=1   # memory 推荐档 + 收紧 advantage，先跑这个
+trial_b:  lr=1e-4, advantage_high=5   # 仅改 lr，隔离 advantage 影响
+trial_c:  lr=3e-4, advantage_high=1   # 更激进 lr，盯 grad_norm/崩溃
 trial_d:  lr=1e-4, advantage_high=1, lora rank↑          # 加 LoRA 容量（单卡仍可行）
 ```
 
@@ -546,7 +545,7 @@ train reward mean may remain noisy
 实验成功：
 
 - 用 fixed eval 曲线判断 Cosmos + Kling 是否真的提升。
-- 如果默认 paper-shaped LoRA 配置 flat，至少完成 `lr` + `advantage_high/low` sweep。
+- 如果默认 paper-shaped LoRA 配置 flat，至少完成 `lr` + `advantage_high` sweep。
 - 只在 fixed eval reward 超过误差量级后，才报告“reward is growing”。
 
 ---

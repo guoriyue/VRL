@@ -93,7 +93,6 @@ class AlgorithmConfig(ConfigBase):
     # vrl/algorithms/* (build_algorithm_config), not here.
     adv_clip_max: Any = None
     advantage_high: Any = None
-    advantage_low: Any = None
     beta: Any = None
     eps: Any = None
     eps_clip: Any = None

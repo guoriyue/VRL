@@ -26,13 +26,14 @@ import torch.nn as nn
 
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
+from vrl.rewards.models.hub import DEFAULT_HF_REVISION, parse_hf_repo_revision
 from vrl.rewards.ray.model import RewardModel
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
 
 _DEFAULT_REWARD_MODEL = "videophysics/videocon_physics"
-_DEFAULT_REVISION = "main"
+_DEFAULT_REVISION = DEFAULT_HF_REVISION
 _DEFAULT_NUM_FRAMES = 32
 _DEFAULT_VIDEO_TOKEN = "<|video|>"
 
@@ -254,16 +255,16 @@ def _resolve_model_root(worker_config: Mapping[str, Any]) -> Path:
     if not reward_model_name:
         reward_model_name = _DEFAULT_REWARD_MODEL
 
-    repo_id, separator, revision = reward_model_name.rpartition("@")
-    if not separator:
-        repo_id = reward_model_name
-        revision = _DEFAULT_REVISION
-    else:
-        revision = revision or _DEFAULT_REVISION
+    model_ref = parse_hf_repo_revision(
+        reward_model_name,
+        default_revision=_DEFAULT_REVISION,
+    )
 
     from huggingface_hub import snapshot_download
 
-    return Path(snapshot_download(repo_id=repo_id, revision=revision)).resolve()
+    return Path(
+        snapshot_download(repo_id=model_ref.repo_id, revision=model_ref.revision),
+    ).resolve()
 
 
 __all__ = [

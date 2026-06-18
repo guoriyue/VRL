@@ -576,6 +576,23 @@ def test_unknown_algorithm_config_fields_fail_fast() -> None:
         build_algorithm_config(cfg)
 
 
+def test_diffusion_nft_rejects_removed_advantage_low() -> None:
+    """Checks DiffusionNFT derives the low clamp from advantage_high."""
+
+    cfg = OmegaConf.create(
+        {
+            "algorithm": {
+                "kind": "diffusion_nft",
+                "advantage_high": 5.0,
+                "advantage_low": -5.0,
+            },
+        },
+    )
+
+    with pytest.raises(ValueError, match=r"algorithm\.advantage_low"):
+        build_algorithm_config(cfg)
+
+
 def test_missing_drop_zero_advantage_fails_fast() -> None:
     """actor.drop_zero_advantage is required; removing it fails loudly."""
     cfg = load_config("experiment/diffusion/sd3_5/online_grpo_ocr")

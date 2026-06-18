@@ -20,6 +20,7 @@ import torch.nn as nn
 from transformers import Qwen2VLForConditionalGeneration
 
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
+from vrl.rewards.models.hub import DEFAULT_HF_REVISION, parse_hf_repo_revision
 from vrl.rewards.ray.model import RewardModel
 from vrl.utils.logging import init_logger, kv
 
@@ -27,7 +28,7 @@ logger = init_logger(__name__)
 
 _SPECIAL_TOKENS = ["<|VQ_reward|>", "<|MQ_reward|>", "<|TA_reward|>"]
 _DEFAULT_REWARD_MODEL = "KlingTeam/VideoReward"
-_DEFAULT_REVISION = "main"
+_DEFAULT_REVISION = DEFAULT_HF_REVISION
 _SCORE_KEY_MAP = {
     "overall_reward": "Overall",
     "visual_quality": "VQ",
@@ -625,16 +626,14 @@ def _resolve_model_root(worker_config: Mapping[str, Any]) -> Path:
         ).strip()
         if not reward_model_name:
             raise ValueError("Kling VideoReward requires worker_config.reward_model_name")
-        repo_id, separator, revision = reward_model_name.rpartition("@")
-        if not separator:
-            repo_id = reward_model_name
-            revision = _DEFAULT_REVISION
-        else:
-            revision = revision or _DEFAULT_REVISION
-        if repo_id != _DEFAULT_REWARD_MODEL:
+        model_ref = parse_hf_repo_revision(
+            reward_model_name,
+            default_revision=_DEFAULT_REVISION,
+        )
+        if model_ref.repo_id != _DEFAULT_REWARD_MODEL:
             raise ValueError(
                 "Kling VideoReward loader currently supports only "
-                f"{_DEFAULT_REWARD_MODEL!r}, got {repo_id!r}",
+                f"{_DEFAULT_REWARD_MODEL!r}, got {model_ref.repo_id!r}",
             )
         from huggingface_hub import snapshot_download
 
@@ -642,8 +641,8 @@ def _resolve_model_root(worker_config: Mapping[str, Any]) -> Path:
         try:
             root = Path(
                 snapshot_download(
-                    repo_id=repo_id,
-                    revision=revision,
+                    repo_id=model_ref.repo_id,
+                    revision=model_ref.revision,
                     local_files_only=local_files_only,
                 ),
             ).resolve()
@@ -651,7 +650,7 @@ def _resolve_model_root(worker_config: Mapping[str, Any]) -> Path:
             mode = "local cache" if local_files_only else "Hugging Face download"
             raise RuntimeError(
                 f"Failed to resolve Kling VideoReward model root from {mode}: "
-                f"repo_id={repo_id!r} revision={revision!r}. Set "
+                f"repo_id={model_ref.repo_id!r} revision={model_ref.revision!r}. Set "
                 "reward.kwargs.kling_video_reward.worker_config.model_path to a "
                 "local snapshot path, or pre-download the model cache before training.",
             ) from exc

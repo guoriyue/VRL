@@ -11,6 +11,7 @@ from vrl.config.builders import build_configs
 from vrl.config.precision import resolve_precision_policy
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.ray.resources import (
+    active_pool_reward_keys,
     resolve_distributed_resources,
     reward_runtime_resource_kwargs,
 )
@@ -129,12 +130,7 @@ def _with_resolved_reward_runtime_kwargs(
     *,
     reward_placement: Any | None = None,
 ) -> dict[str, dict]:
-    ray_reward_keys = [
-        name
-        for name, weight in reward_weights.items()
-        if float(weight) > 0.0
-        and str((reward_kwargs.get(name) or {}).get("execution", "")) == "pool"
-    ]
+    ray_reward_keys = active_pool_reward_keys(reward_weights, reward_kwargs)
     if not ray_reward_keys:
         return reward_kwargs
 

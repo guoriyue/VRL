@@ -161,12 +161,12 @@
 - **P2 · `runtime_role` 与 `loads_full_generation_modules` 1:1 耦合可派生**（`vrl/models/replay_loading.py:15-18,31-64`）。
   贴 north-star，但 `runtime_role` 是序列化 metadata 契约的 named key（被 `test_memory_guards.py` 等断言），
   属未完成的 minimal-replay 在制基建。collapse 是契约变更。**倾向不动**（见护栏 2.2）。
-- **P2 · `DiffusionNFTConfig.advantage_low` 恒为 `-advantage_high`**（`vrl/algorithms/diffusion_nft.py:24-25`，`schema.py:96`）。
-  loss 的 `reward_mix` 数学只在 `low==-high` 时良态，否则静默破坏 [0,1] 中心化 = footgun 冗余 spec。两个修法
-  （派生 `low=-high` / 修数学支持非对称）都动 public config 面。
+- **✅ 已落地 · `DiffusionNFTConfig.advantage_low` 恒为 `-advantage_high`**。
+  选择删 public knob：`advantage_high` 是唯一 scale，loss 内部派生 low=`-high`，并拒绝旧
+  `algorithm.advantage_low`，避免非对称配置静默破坏 `reward_mix` 中心化。
 - **P2 · `media_type` 可由 `artifact_format` 派生（mp4→video）**（`vrl/rewards/artifacts.py:28-33`，`config/validation.py:134-140`）。
   仅 mp4 情形冗余（tensor 格式仍需 image/video 独立轴）。修复会**放松一个生产 gate**（今天 `mp4+media_type=image`
-  会 raise，改后静默 coerce）——所以是决策项。
+  会 raise，改后静默 coerce）。**决策：不放松**，保留 fail-loud gate。
 - **P3 · `require_separate_gpus` 是手动 flag、护着拓扑可派生的 colocation 检查**（`vrl/rollouts/orchestration/continuous/schedule.py:199-209`）。
   贴 north-star，但它是 single-GPU async-debug recipe 的正当逃生舱（`async_debug.yaml` + 测试走 false 路径）。
   最多加一条澄清注释。最低优先。
@@ -189,18 +189,17 @@
 - **P3 · `(family, kind)` 兼容性硬编码在 schema + factory 两层**（`schema.py:438-456` / `factory.py:62-65,227-230`）。
   family 名以裸字面 `"janus_pro"`/`"nextstep_1"` 远离 `FAMILY_REGISTRY` 校验。安全窄步：family 名改经 registry
   常量引用（rename 才能被捕获）。**别**给 registry 加 `supported_kinds` 矩阵（改 guarded 结构）。
-- **P2 · "pool reward" 谓词在 factory 与 resources 双写**（`vrl/scripts/common/factory.py:132-137` 与
-  `vrl/ray/resources.py:1211-1226`）。同一规则 `weight>0 AND execution=="pool"` 两份，但**数据形态不同**
-  （factory 走 built dict 用 `float(weight)>0.0`；resources 走 raw cfg 用 try/except）——抽取须逐字节对齐否则
-  引入微妙行为变化。`"pool"` 字面散在 9 处，但 `rewards/base.py`/`runtime.py` 是正当 runtime 边界，不要并入。
+- **✅ 已落地 · "pool reward" 谓词在 factory 与 resources 双写**。
+  选择抽 `active_pool_reward_keys(reward_components, reward_kwargs)`：factory 的 built dict 和 resources 的 raw cfg
+  都调用同一 helper，规则仍是 `weight>0 AND execution=="pool"`。`rewards/base.py`/`runtime.py` 的 `"pool"`
+  字面保留，它们是 runtime protocol boundary，不并入资源谓词。
 - **✅ 已落地 (Round 2) · sampler 类型合法集在 `config/schema.py` 手抄两遍**。把 `prompt_manifest` /
   `prompt_image_manifest` 两分支里逐字节相同的 sampler.type 校验块合并为 `DataConfig._validate_sampler_type()`
   （2 调用方、纯文件内、错误串不变、`test_schema.py` 45 passed）。⚠️ 遵守判据**未**从 `checkpointing.py`
   import frozenset（它引入 `torch`，会把 torch 拖进当前 torch-free 的 config 导入路径 = 真实回归）——只做文件内合并。
-- **P2 · `reward_model_name@revision` HF-repo 解析在 kling/videocon 各自复制**（`rewards/models/kling_video_reward.py:629-634`
-  与 `videocon_physics.py:257-262`，各带自己的 `_DEFAULT_REVISION="main"`）。`repo@rev` grammar 非家族特异，可抽
-  `parse_reward_repo_spec` 进已存在的 `rewards/models/base.py`（守 "no new lean files"）。但用户刻意保持两家族
-  parallel，需确认 shared-vs-parallel。
+- **✅ 已落地 · `reward_model_name@revision` HF-repo 解析在 kling/videocon 各自复制**。
+  选择抽 `vrl.rewards.models.hub.parse_hf_repo_revision`，因为 `repo@revision` 是 Hugging Face model-reference
+  grammar，不是 Kling/VideoCon 家族逻辑。两个 loader 仍各自保留默认 repo、支持范围检查和错误文案。
 
 ### 4.3 dead-field / dead-code（触及前瞻基建或 public 面）
 

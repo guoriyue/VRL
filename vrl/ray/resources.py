@@ -1008,6 +1008,24 @@ def reward_runtime_resource_kwargs(
     }
 
 
+def active_pool_reward_keys(reward_components: Any, reward_kwargs: Any) -> tuple[str, ...]:
+    """Return active reward component keys backed by a Ray actor pool."""
+
+    keys: list[str] = []
+    for reward_key in reward_components or {}:
+        name = str(reward_key)
+        try:
+            reward_weight = float(cfg_get(reward_components, name, 0.0))
+        except (TypeError, ValueError):
+            reward_weight = 0.0
+        if reward_weight <= 0:
+            continue
+        component_kwargs = cfg_get(reward_kwargs, name, {})
+        if str(cfg_get(component_kwargs, "execution", "")) == "pool":
+            keys.append(name)
+    return tuple(keys)
+
+
 @dataclass(frozen=True, slots=True)
 class BundleLayout:
     """Run-level mapping of execution roles to placement-group bundle indices.
@@ -1293,18 +1311,7 @@ def _count_ray_rewards(cfg: Any) -> int:
     reward = cfg_get(cfg, "reward", {})
     components = cfg_get(reward, "components", {})
     kwargs = cfg_get(reward, "kwargs", {})
-    count = 0
-    for reward_key in components or {}:
-        try:
-            reward_weight = float(cfg_get(components, str(reward_key), 0.0))
-        except (TypeError, ValueError):
-            reward_weight = 0.0
-        if reward_weight <= 0:
-            continue
-        reward_kwargs = cfg_get(kwargs, str(reward_key), {})
-        if str(cfg_get(reward_kwargs, "execution", "")) == "pool":
-            count += 1
-    return count
+    return len(active_pool_reward_keys(components, kwargs))
 
 
 def _dedupe_ints(values: list[int], *, field_name: str) -> list[int]:
@@ -1372,6 +1379,7 @@ __all__ = [
     "RewardResourceConfig",
     "RoleResourceConfig",
     "RolloutResourceConfig",
+    "active_pool_reward_keys",
     "build_bundle_layout",
     "format_distributed_resource_plan",
     "resolve_distributed_resources",

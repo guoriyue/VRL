@@ -63,6 +63,13 @@ def test_video_artifact_store_writes_mp4_for_reward_models(tmp_path: Path) -> No
     assert rows[0]["metadata"]["artifact_format"] == "mp4"
 
 
+def test_video_artifact_store_rejects_mp4_for_non_video_media_type(tmp_path: Path) -> None:
+    """Checks mp4 artifacts require explicit video media type."""
+
+    with pytest.raises(ValueError, match="artifact_format=mp4 requires media_type=video"):
+        VideoRewardArtifactStore(tmp_path, media_type="image", artifact_format="mp4")
+
+
 def test_video_artifact_store_rejects_bad_shape(tmp_path: Path) -> None:
     """Checks video artifact store rejects bad shape."""
     store = VideoRewardArtifactStore(tmp_path, media_type="video")
