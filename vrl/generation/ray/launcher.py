@@ -183,14 +183,12 @@ class RayGenerationLauncher:
                     "built by a GlobalRayPlacementOwner.",
                 )
             # On-demand vs resident comes from the topology-derived lifecycle
-            # plan, not a standalone release flag (config.release_after_collect
-            # is the plan's mirror; fall back to it only when resources are
-            # absent, e.g. hand-built configs in tests).
+            # plan (resources.lifecycle), the single source of truth. Without a
+            # resolved plan (hand-built configs in tests) default to resident.
             resources = config.resources
             rollout_on_demand = (
-                resources.lifecycle.rollout.mode == "on_demand"
-                if resources is not None
-                else config.release_after_collect
+                resources is not None
+                and resources.lifecycle.rollout.mode == "on_demand"
             )
             if rollout_on_demand:
                 return RayGenerationRuntime.with_release_after_collect(
@@ -236,9 +234,10 @@ class RayGenerationLauncher:
         resolved_executor_kwargs.update(dict(executor_kwargs or {}))
         runtime_extra = _runtime_extra(cfg)
         runtime_extra["family_capability"] = entry.capability.to_dict()
-        if ray_config.gpu_memory_fraction is not None:
+        resources = ray_config.resources
+        if resources is not None and resources.rollout_gpu_memory_fraction is not None:
             # Worker-side allocator cap for colocated rollout (applied in load_policy).
-            runtime_extra["gpu_memory_fraction"] = ray_config.gpu_memory_fraction
+            runtime_extra["gpu_memory_fraction"] = resources.rollout_gpu_memory_fraction
         runtime_build_payload = _runtime_build_payload(runtime_build)
         _apply_rollout_compile_override(runtime_build_payload, cfg, entry)
 

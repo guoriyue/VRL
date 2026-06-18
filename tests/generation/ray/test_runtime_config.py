@@ -388,7 +388,7 @@ def test_ray_backend_allows_driver_cuda_policy_with_explicit_overlap() -> None:
     ).validate_driver_state(driver_policy=_CudaPolicy())
 
     assert config.allow_driver_gpu_overlap is True
-    assert config.release_after_collect is True
+    assert config.resources.rollout_release_after_collect is True
 
 
 def test_ray_backend_allows_split_driver_cuda_when_devices_do_not_overlap() -> None:
@@ -415,6 +415,6 @@ def test_ray_backend_colocate_with_trainer_keeps_worker_resident() -> None:
     ).validate_driver_state(driver_policy=_CudaPolicy())
 
     assert config.allow_driver_gpu_overlap is True
-    assert config.release_after_collect is False
-    assert config.persistent_colocated_workers is True
-    assert config.gpu_memory_fraction == 0.45
+    assert config.resources.rollout_release_after_collect is False
+    assert config.resources.rollout_persistent_colocated_workers is True
+    assert config.resources.rollout_gpu_memory_fraction == 0.45

@@ -307,9 +307,9 @@ def test_sd35_single_gpu_async_debug_uses_persistent_colocated_rollout() -> None
     assert cfg.trainer.rollout_orchestration.require_separate_gpus is False
     assert cfg.trainer.rollout_orchestration.continuous.max_stale_policy_versions == 1
     assert cfg.distributed.resources.allow_overlap is True
-    # Colocation is expressed by the colocate_with_trainer block; release
-    # scheduling is derived from the resolved topology, not spelled in YAML.
-    assert cfg.distributed.rollout.colocate_with_trainer.memory_fraction == 0.45
+    # Colocation is expressed by the rollout.colocate block; release scheduling
+    # is derived from the resolved topology, not spelled in YAML.
+    assert cfg.distributed.rollout.colocate.memory_fraction == 0.45
     resolved = resolve_distributed_resources(cfg)
     assert resolved.rollout_persistent_colocated_workers is True
     assert resolved.rollout_gpu_memory_fraction == 0.45

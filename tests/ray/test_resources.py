@@ -182,7 +182,7 @@ def test_colocate_with_trainer_auto_pins_rollout_to_trainer_gpu() -> None:
 
 def test_colocate_with_trainer_requires_memory_fraction() -> None:
     """Checks a colocate block without memory_fraction fails inside the block."""
-    with pytest.raises(ValueError, match="colocate_with_trainer requires memory_fraction"):
+    with pytest.raises(ValueError, match="colocate requires memory_fraction"):
         resolve_distributed_resources(
             _cfg(
                 {
@@ -949,5 +949,156 @@ def test_single_process_still_rejects_multi_gpu_trainer() -> None:
                     "rollout": {"num_gpus": 0, "gpus_per_worker": 0, "num_workers": 1},
                 },
                 {"strategy": "single_process"},
+            ),
+        )
+
+
+# --- P0 surface: rollout.colocate / reward.gpu_pool (new names + legacy compat) ---
+
+
+def test_rollout_colocate_new_key_keeps_worker_resident() -> None:
+    """The new rollout.colocate block pins the rollout worker on the trainer GPU."""
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0],
+                "trainer": {"num_gpus": 1},
+                "rollout": {"num_gpus": 1},
+            },
+            rollout_runtime={"colocate": {"memory_fraction": 0.4}},
+        ),
+    )
+    assert resolved.colocated is True
+    assert resolved.rollout_persistent_colocated_workers is True
+    assert resolved.rollout_gpu_memory_fraction == 0.4
+    assert resolved.rollout_release_after_collect is False
+
+
+def test_rollout_colocate_matches_legacy_colocate_with_trainer() -> None:
+    """colocate (new) and colocate_with_trainer (legacy) resolve identically."""
+    resources = {
+        "visible_devices": [0],
+        "trainer": {"num_gpus": 1},
+        "rollout": {"num_gpus": 1},
+    }
+    new = resolve_distributed_resources(
+        _cfg(dict(resources), rollout_runtime={"colocate": {"memory_fraction": 0.45}}),
+    )
+    legacy = resolve_distributed_resources(
+        _cfg(dict(resources), colocate_with_trainer=0.45),
+    )
+    assert new.rollout_persistent_colocated_workers == legacy.rollout_persistent_colocated_workers
+    assert new.rollout_gpu_memory_fraction == legacy.rollout_gpu_memory_fraction
+
+
+def test_rollout_colocate_both_keys_is_an_error() -> None:
+    """Setting colocate and colocate_with_trainer together is rejected."""
+    with pytest.raises(ValueError, match=r"either distributed\.rollout\.colocate or the legacy"):
+        resolve_distributed_resources(
+            _cfg(
+                {
+                    "visible_devices": [0],
+                    "trainer": {"num_gpus": 1},
+                    "rollout": {"num_gpus": 1},
+                },
+                rollout_runtime={
+                    "colocate": {"memory_fraction": 0.4},
+                    "colocate_with_trainer": {"memory_fraction": 0.4},
+                },
+            ),
+        )
+
+
+def test_reward_gpu_pool_rollout_shares_rollout_gpu() -> None:
+    """reward.gpu_pool=rollout forces the reward pool onto the rollout GPU."""
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0, 1],
+                "trainer": {"num_gpus": 1},
+                "rollout": {"num_gpus": 1},
+                "reward": {"num_gpus": 1, "gpu_pool": "rollout"},
+            },
+            reward_components={"r": 1.0},
+            reward_kwargs={"r": {"execution": "pool"}},
+        ),
+    )
+    assert resolved.reward_shared_with_rollout is True
+    assert resolved.reward_devices == resolved.rollout_devices
+
+
+def test_reward_gpu_pool_rollout_matches_legacy_share_with_rollout() -> None:
+    """gpu_pool=rollout (new) and share_with_rollout=true (legacy) resolve identically."""
+    base = {
+        "visible_devices": [0, 1],
+        "trainer": {"num_gpus": 1},
+        "rollout": {"num_gpus": 1},
+    }
+    new = resolve_distributed_resources(
+        _cfg(
+            {**base, "reward": {"num_gpus": 1, "gpu_pool": "rollout"}},
+            reward_components={"r": 1.0},
+            reward_kwargs={"r": {"execution": "pool"}},
+        ),
+    )
+    legacy = resolve_distributed_resources(
+        _cfg(
+            {**base, "reward": {"num_gpus": 1, "share_with_rollout": True}},
+            reward_components={"r": 1.0},
+            reward_kwargs={"r": {"execution": "pool"}},
+        ),
+    )
+    assert new.reward_devices == legacy.reward_devices
+    assert new.reward_shared_with_rollout == legacy.reward_shared_with_rollout
+
+
+def test_reward_gpu_pool_auto_prefers_spare_gpu() -> None:
+    """reward.gpu_pool=auto takes a dedicated spare GPU when one exists."""
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0, 1, 2],
+                "trainer": {"num_gpus": 1},
+                "rollout": {"num_gpus": 1},
+                "reward": {"num_gpus": 1, "gpu_pool": "auto"},
+            },
+            reward_components={"r": 1.0},
+            reward_kwargs={"r": {"execution": "pool"}},
+        ),
+    )
+    assert resolved.reward_devices == (2,)
+    assert resolved.reward_shared_with_rollout is False
+
+
+def test_reward_gpu_pool_both_keys_is_an_error() -> None:
+    """Setting gpu_pool and share_with_rollout together is rejected."""
+    with pytest.raises(ValueError, match=r"either distributed\.resources\.reward\.gpu_pool"):
+        resolve_distributed_resources(
+            _cfg(
+                {
+                    "visible_devices": [0, 1],
+                    "trainer": {"num_gpus": 1},
+                    "rollout": {"num_gpus": 1},
+                    "reward": {"num_gpus": 1, "gpu_pool": "rollout", "share_with_rollout": True},
+                },
+                reward_components={"r": 1.0},
+                reward_kwargs={"r": {"execution": "pool"}},
+            ),
+        )
+
+
+def test_reward_gpu_pool_rejects_unknown_value() -> None:
+    """reward.gpu_pool only accepts auto/rollout/dedicated."""
+    with pytest.raises(ValueError, match="gpu_pool must be 'auto', 'rollout', or 'dedicated'"):
+        resolve_distributed_resources(
+            _cfg(
+                {
+                    "visible_devices": [0, 1],
+                    "trainer": {"num_gpus": 1},
+                    "rollout": {"num_gpus": 1},
+                    "reward": {"num_gpus": 1, "gpu_pool": "nonsense"},
+                },
+                reward_components={"r": 1.0},
+                reward_kwargs={"r": {"execution": "pool"}},
             ),
         )

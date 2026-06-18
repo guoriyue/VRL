@@ -9,6 +9,7 @@ key all get the same treatment: one warning naming the dotted path.
 
 from __future__ import annotations
 
+from dataclasses import fields as dataclass_fields
 from typing import Annotated, Any, Literal
 
 from omegaconf import DictConfig, OmegaConf
@@ -400,21 +401,33 @@ class DistributedSection(ConfigBase):
             {
                 "trainer": ConfigBlock(RoleResourceConfig),
                 "rollout": ConfigBlock(RolloutResourceConfig),
-                "reward": ConfigBlock(RewardResourceConfig),
+                # gpu_pool is the field; share_with_rollout is the legacy compat
+                # key mapped to it at parse time (vrl/ray/resources.py
+                # _parse_reward_gpu_pool), so both are accepted here.
+                "reward": ConfigBlock(
+                    (
+                        *(f.name for f in dataclass_fields(RewardResourceConfig)),
+                        "share_with_rollout",
+                    ),
+                ),
             },
         ),
     ] = None
     # readers: vrl/generation/ray/config.py RayGenerationConfig.from_cfg (worker
-    # runtime knobs) + vrl/ray/resources.py (colocate_with_trainer). Release
-    # scheduling is derived from GPU topology, not declared here; the only public
-    # colocation knob is the colocate_with_trainer block (memory_fraction cap).
+    # runtime knobs) + vrl/ray/resources.py (rollout.colocate). Release scheduling
+    # is derived from GPU topology, not declared here; the only public colocation
+    # knob is the colocate block (memory_fraction cap). colocate_with_trainer is
+    # the legacy compat name for colocate.
     rollout: Annotated[
         Any,
         ConfigBlock(
             ("cpus_per_worker",
              "max_inflight_chunks_per_worker", "chunk_placement_strategy",
-             "sync_trainable_state", "colocate_with_trainer"),
-            {"colocate_with_trainer": ConfigBlock(("memory_fraction",))},
+             "sync_trainable_state", "colocate", "colocate_with_trainer"),
+            {
+                "colocate": ConfigBlock(("memory_fraction",)),
+                "colocate_with_trainer": ConfigBlock(("memory_fraction",)),
+            },
         ),
     ] = None
     # reader: vrl/ray/resources.py reward runtime block (release derived from topology)

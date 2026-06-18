@@ -33,7 +33,7 @@ distributed:
     # remaining ~0.55; both fit at the tiny 128x128/4-step shape). This is what
     # makes continuous overlap observable on one GPU, and it is only safe for tiny
     # debug workloads.
-    colocate_with_trainer:
+    colocate:
       memory_fraction: 0.45
 
 actor:

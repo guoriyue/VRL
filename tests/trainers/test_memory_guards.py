@@ -47,7 +47,6 @@ def test_colocated_full_generation_bundle_can_fail_strict_guard() -> None:
         gpus_per_worker=1.0,
         cpus_per_worker=1.0,
         allow_driver_gpu_overlap=True,
-        release_after_collect=True,
     )
 
     with pytest.raises(ValueError, match="loads_full_generation_modules=true"):
@@ -66,7 +65,6 @@ def test_non_colocated_full_generation_bundle_passes_memory_guard() -> None:
         gpus_per_worker=1.0,
         cpus_per_worker=1.0,
         allow_driver_gpu_overlap=False,
-        release_after_collect=False,
     )
 
     validate_colocated_replay_memory(

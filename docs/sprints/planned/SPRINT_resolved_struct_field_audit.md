@@ -4,7 +4,9 @@
 
 > **已落地**：**P0** 三个死字段（`reward_num_gpus` stored 字段 / `total_gpu_slots` / `ray_total_bundles`）+ 7 行测试断言 + `ray_bundles=` 日志行已由 `eb5d421`「Remove redundant resource plan fields」删除——`reward_num_gpus` **局部变量**按 §4 设计保留（`vrl/ray/resources.py:238/240/248/251`），`tests/ray/test_resources.py` 44 passed。**P1** `visible_devices` 已加 display/provenance-only 注释（`resources.py:117-119`）。**§9** 8 个 config 死键已合入 main（`freeze_vq`/`freeze_vision_encoder`/`freeze_aligner`/`freeze_image_head`/`uncentralized_training` grep 归零）。
 >
-> **仍开放（本 doc 留在 `planned/` 的原因）**：**P3** AGENTS.md 防腐约定（"派生/解析型结构体每字段须有非日志消费方"）尚未写入；**§5 `FamilyCapability`** 死 flag follow-up 未做（`vrl/generation/capabilities.py:134/135/138` 的 `supports_kv_decode`/`supports_prefill_decode_split`/`supports_cuda_graph` 仍在，需逐 flag 对抗式复核后再删）。
+> **仍开放（本 doc 留在 `planned/` 的原因）**：**P3** AGENTS.md 防腐约定（"派生/解析型结构体每字段须有非日志消费方"）尚未写入；**§5 `FamilyCapability`** 死 flag follow-up 未做（`vrl/generation/capabilities.py:134/135/138` 的 `supports_kv_decode`/`supports_prefill_decode_split`/`supports_cuda_graph` 仍在，需逐 flag 对抗式复核后再删）；**P2** 同源 follow-up —— `RayGenerationConfig` 上的扁平 release 镜像收敛进 `lifecycle` plan（单一真相），并把放置 surface 模式化（disaggregated 默认 + `colocate` opt-in、GPU ID 仅 debug），见 §4 P2 + [SPRINT_placement_surface_disaggregated_default.md]。
+>
+> **2026-06-17 复核**：P0 三个删除目标已确认不在 struct（`ResolvedDistributedResources` 现 22 字段，`reward_num_gpus`/`total_gpu_slots`/`ray_total_bundles` 均非字段；`reward_num_gpus` 仅存活为 resolver 局部变量，按 §4 设计预期；全仓零测试引用）—— §4 的 P0 小节为历史规划，已由 `eb5d421` 兑现。
 findings + 路径 + 整改逻辑都在本文。按 P0→P3 分批做，每批独立 PR，互不依赖。
 
 > 方法：用 1 个编排 workflow（23 个字段各 1 个审计 agent + 对每个"可删候选"再派 1 个**对抗式反驳
@@ -158,6 +160,30 @@ stored 字段），但它和 `ray_total_bundles` **本质不同，倾向保留**
 这与 §6 的防腐约定一致：日志-only 字段允许存在，但必须显式标注。
 
 若坚持极致精简，可删字段 + 日志行 `:292`（无测试断言挡路）—— 但这是**可选项**，不是 P0。
+
+### P2 (follow-up) — 扁平 release 镜像收敛进 lifecycle plan（单一真相）
+
+与本审计同源（"声明须有真实消费、不堆冗余预计算"），只是换一层：`RayGenerationConfig` 把
+`ResolvedDistributedResources.lifecycle` 的释放决策又镜像成扁平字段，真路径只读 lifecycle plan，扁平
+字段是冗余视图。
+
+- `release_before_reward_model` —— **populate-only，真路径无人读**（真决策走
+  `lifecycle.handoff.release_rollout_before_reward`，`vrl/rollouts/collector/core.py:221`）。**已在
+  `9c69deb`（2026-06-17）删除**——是本条 follow-up 的第一步、已完成。
+- `release_after_collect` —— 仍被 `RayGenerationConfig.validate_driver_state` 的 driver↔rollout 共卡
+  碰撞守卫读（`if not release_after_collect and not persistent_colocated_workers → raise`），以及
+  `__post_init__` 的 persistent↔release 互斥校验。这是该扁平字段**唯一**的存活理由（不是 launcher 读
+  路径——那读的是 lifecycle plan）。真路径上 `colocated ⟹ (persistent ∨ release)` 由 resolver 派生保证
+  恒一致，所以这条守卫**不可能在真路径触发**，纯属手搭 config / 派生 bug 的防呆。
+
+**收敛动作**：把那两处校验改读 `resources.lifecycle.rollout.mode`（resident/on_demand）而非扁平
+`config.release_after_collect`，然后删 `RayGenerationConfig.release_after_collect` 字段。注意 §3 表里
+`ResolvedDistributedResources.rollout_release_after_collect`（Resolved 层）仍 **NECESSARY、保留**——
+两层同名字段别混：要删的是 `RayGenerationConfig` 上的扁平镜像，不是 Resolved 层那份。
+
+并行的 surface 方向同源记在 [SPRINT_placement_surface_disaggregated_default.md]：**YAML 放置面保持
+模式化（disaggregated 默认 + `colocate` opt-in），GPU ID 仅 debug**——用户只声明"谁和谁共享卡"，
+框架派生"谁何时让位"，从不让用户手写 release 时机或枚举卡号。镜像收敛 + surface 模式化一起做最干净。
 
 ---
 

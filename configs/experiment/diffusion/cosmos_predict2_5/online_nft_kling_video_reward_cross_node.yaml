@@ -47,6 +47,7 @@ distributed:
       num_workers: 1
     reward:
       # Same token as rollout -> reward coalesces onto the rollout bundle and
-      # shares node B's card (this replaces the share_with_rollout flag). The
-      # resolver then makes rollout on_demand (release between collect and score).
+      # shares node B's card (equivalent to reward.gpu_pool: rollout, expressed
+      # here by token id). The resolver then makes rollout on_demand (release
+      # between collect and score).
       devices: [1]
