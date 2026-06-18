@@ -18,7 +18,7 @@ from vrl.config.precision import resolve_precision_policy
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces import require_runtime_model
-from vrl.ray.dependencies import require_ray
+from vrl.ray.dependencies import current_node_ip, require_ray
 from vrl.ray.placement import GlobalRayPlacementOwner
 from vrl.ray.resources import (
     format_distributed_resource_plan,
@@ -549,6 +549,61 @@ class OnlineRecipeRun:
         )
 
 
+def _cluster_has_non_driver_gpus(ray: Any) -> bool:
+    """True when the attached Ray cluster exposes GPUs on a node other than the
+    driver's -- i.e. this is a multi-node rollout topology."""
+
+    try:
+        driver_ip = current_node_ip()
+    except Exception:
+        driver_ip = None
+    non_driver_gpus = 0.0
+    for node in ray.nodes():
+        if not node.get("Alive"):
+            continue
+        node_ip = node.get("NodeManagerAddress")
+        if driver_ip is not None and node_ip == driver_ip:
+            continue
+        non_driver_gpus += float(node.get("Resources", {}).get("GPU", 0.0))
+    return non_driver_gpus > 0
+
+
+def _maybe_autodetect_cross_node(cfg: DictConfig, ray: Any) -> None:
+    """Enable distributed.resources.cross_node automatically on a multi-node cluster.
+
+    Mirrors slime/cosmos-rl, where the operator brings the cluster up first
+    (``ray start``) and the driver attaches to it. When ``cross_node`` is not set
+    explicitly we ATTACH to an already-running cluster (``address="auto"``) and, if
+    it exposes GPUs on non-driver nodes, set ``cross_node=true`` before resolving so
+    the user need not hand-set it. A single-node run with no external cluster raises
+    ``ConnectionError`` on attach and is left untouched -- the normal ``ray.init()``
+    later starts the local instance -- so single-node behaviour is unchanged. An
+    explicit ``cross_node`` (true or false) is an override and is always respected.
+    """
+
+    if OmegaConf.select(cfg, "distributed.resources.cross_node", default=None) is not None:
+        return
+    if not ray.is_initialized():
+        try:
+            ray.init(address="auto")
+        except ConnectionError:
+            return
+    try:
+        multinode = _cluster_has_non_driver_gpus(ray)
+    except Exception:
+        # Best-effort: if the live cluster cannot be inspected, leave cross_node
+        # unset (single-node default; the user can set it explicitly).
+        return
+    if not multinode:
+        return
+    OmegaConf.update(cfg, "distributed.resources.cross_node", True, force_add=True)
+    logger.info(
+        "Auto-detected a multi-node Ray cluster (GPUs on non-driver nodes); "
+        "enabling distributed.resources.cross_node=true. Set it explicitly to "
+        "override.",
+    )
+
+
 async def run_online_recipe(
     cfg: DictConfig,
     definition: OnlineRecipeDefinition,
@@ -574,6 +629,11 @@ async def run_online_recipe(
         strict=trainer_config.resume_strict,
     )
 
+    # Auto-enable cross_node when an already-running multi-node Ray cluster is
+    # detected, so the user need not hand-set it. Must run before resolve, since
+    # the resolver sizes the GPU budget differently under cross_node. No-op (and
+    # ordering unchanged) for single-node runs with no external cluster.
+    _maybe_autodetect_cross_node(cfg, require_ray())
     resources = resolve_distributed_resources(cfg)
     logger.info(format_distributed_resource_plan(resources))
     device = torch.device(trainer_torch_device(resources))
