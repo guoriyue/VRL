@@ -22,7 +22,12 @@ from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.models.dtypes import dtype_to_config_string
 from vrl.models.interfaces.runtime import torch_compile_model_config
 from vrl.ray.actor_group import RayActorGroup
-from vrl.ray.dependencies import current_node_ip, import_from_path, require_ray
+from vrl.ray.dependencies import (
+    current_node_ip,
+    import_from_path,
+    inspect_cluster,
+    require_ray,
+)
 from vrl.ray.placement import RolePlacement, validate_actor_gpu_ids
 from vrl.utils.config import cfg_path, to_builtin_deep
 
@@ -304,34 +309,19 @@ def _cross_node_preflight(ray: Any, resources: Any) -> None:
     drops the placement-group trainer reservation.
     """
 
-    try:
-        driver_node_ip = current_node_ip()
-    except Exception:
-        driver_node_ip = None
-
-    driver_gpus = 0.0
-    non_driver_gpus = 0.0
-    for node in ray.nodes():
-        if not node.get("Alive"):
-            continue
-        node_gpus = float(node.get("Resources", {}).get("GPU", 0.0))
-        node_ip = node.get("NodeManagerAddress")
-        if driver_node_ip is not None and node_ip == driver_node_ip:
-            driver_gpus += node_gpus
-        else:
-            non_driver_gpus += node_gpus
+    topology = inspect_cluster(ray)
 
     needed = resources.rollout_num_gpus
-    if non_driver_gpus < needed:
+    if topology.non_driver_gpus < needed:
         raise RuntimeError(
             f"cross_node rollout needs {needed} GPU(s) on non-driver Ray nodes, but "
-            f"only {non_driver_gpus:g} are available. Join more rollout workers, e.g. "
-            "`ray start --address=<head>:6379 --num-gpus=<n>`.",
+            f"only {topology.non_driver_gpus:g} are available. Join more rollout "
+            "workers, e.g. `ray start --address=<head>:6379 --num-gpus=<n>`.",
         )
-    if driver_gpus > 0:
+    if topology.driver_gpus > 0:
         raise RuntimeError(
-            f"cross_node rollout: the driver/head node exposes {driver_gpus:g} Ray "
-            "GPU(s), so rollout could be scheduled onto the trainer GPU. Start the "
+            f"cross_node rollout: the driver/head node exposes {topology.driver_gpus:g} "
+            "Ray GPU(s), so rollout could be scheduled onto the trainer GPU. Start the "
             "head with `ray start --head --num-gpus=0` so the trainer GPU stays out "
             "of Ray's scheduling pool.",
         )

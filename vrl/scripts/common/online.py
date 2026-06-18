@@ -18,7 +18,7 @@ from vrl.config.precision import resolve_precision_policy
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces import require_runtime_model
-from vrl.ray.dependencies import current_node_ip, require_ray
+from vrl.ray.dependencies import inspect_cluster, require_ray
 from vrl.ray.placement import GlobalRayPlacementOwner
 from vrl.ray.resources import (
     format_distributed_resource_plan,
@@ -549,25 +549,6 @@ class OnlineRecipeRun:
         )
 
 
-def _cluster_has_non_driver_gpus(ray: Any) -> bool:
-    """True when the attached Ray cluster exposes GPUs on a node other than the
-    driver's -- i.e. this is a multi-node rollout topology."""
-
-    try:
-        driver_ip = current_node_ip()
-    except Exception:
-        driver_ip = None
-    non_driver_gpus = 0.0
-    for node in ray.nodes():
-        if not node.get("Alive"):
-            continue
-        node_ip = node.get("NodeManagerAddress")
-        if driver_ip is not None and node_ip == driver_ip:
-            continue
-        non_driver_gpus += float(node.get("Resources", {}).get("GPU", 0.0))
-    return non_driver_gpus > 0
-
-
 def _maybe_autodetect_cross_node(cfg: DictConfig, ray: Any) -> None:
     """Enable distributed.resources.cross_node automatically on a multi-node cluster.
 
@@ -589,7 +570,7 @@ def _maybe_autodetect_cross_node(cfg: DictConfig, ray: Any) -> None:
         except ConnectionError:
             return
     try:
-        multinode = _cluster_has_non_driver_gpus(ray)
+        multinode = inspect_cluster(ray).has_non_driver_gpus
     except Exception:
         # Best-effort: if the live cluster cannot be inspected, leave cross_node
         # unset (single-node default; the user can set it explicitly).
