@@ -102,10 +102,7 @@ def build_anima_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         "transformer_path": model_config.get("transformer_path"),
         "text_encoder_path": model_config.get("text_encoder_path"),
         "vae_path": model_config.get("vae_path"),
-        **full_generation_bundle_metadata(
-            replay_modules=("transformer", "scheduler"),
-            generation_only_modules=("text_encoder", "llm_adapter", "vae"),
-        ),
+        **full_generation_bundle_metadata(),
     }
     metadata.update(apply_generation_memory_policy(
         model,
@@ -118,9 +115,6 @@ def build_anima_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         scheduler=model.scheduler,
         backend_handle=model.backend_handle,
         runtime_caps={
-            "supports_stepwise": True,
-            "supports_cfg": True,
-            "supports_batched_decode": True,
             "supports_reference_conditioning": False,
         },
         metadata=metadata,
@@ -172,9 +166,6 @@ def build_anima_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         scheduler=model.scheduler,
         backend_handle=None,
         runtime_caps={
-            "supports_stepwise": True,
-            "supports_cfg": True,
-            "supports_batched_decode": False,
             "supports_reference_conditioning": False,
         },
         metadata={
@@ -183,15 +174,7 @@ def build_anima_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
             "dtype": str(spec.dtype),
             "use_lora": use_lora,
             "transformer_path": model_config.get("transformer_path"),
-            **minimal_replay_bundle_metadata(
-                replay_modules=("transformer", "scheduler"),
-                generation_only_modules=(
-                    "text_encoder",
-                    "llm_adapter",
-                    "vae",
-                    "tokenizers",
-                ),
-            ),
+            **minimal_replay_bundle_metadata(),
         },
     )
 

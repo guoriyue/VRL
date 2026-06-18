@@ -29,11 +29,10 @@ attribute surface (``language_model`` / ``gen_head`` / ``gen_vision_model`` /
 ``gen_aligner`` / ``gen_embed`` / ``prepare_gen_img_embeds``) and the ``_StubVQ``
 frozen-decoder boundary. The production contract is
 ``JanusProModel.__init__`` (``model.py:194``) asserting
-``gen_head`` / ``gen_vision_model`` / ``language_model`` exist, the replay core
-listing ``replay_modules=("language_model", "gen_embed", "gen_aligner",
-"gen_head")`` (``runtime.py:108``), and ``prepare_gen_img_embeds`` being
-``gen_aligner(gen_embed(ids))`` (``model.py:1102``) — which is why
-``gen_aligner`` must be present and the embed must route through it.
+``gen_head`` / ``gen_vision_model`` / ``language_model`` exist, and
+``prepare_gen_img_embeds`` being ``gen_aligner(gen_embed(ids))``
+(``model.py:1102``) — which is why ``gen_aligner`` must be present and the
+embed must route through it.
 
 Each test's ``language_model.forward`` behavior is load-bearing, deterministic
 instrumentation that differs per file (scripted KV values, ``calls == []``,

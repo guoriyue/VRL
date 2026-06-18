@@ -136,9 +136,6 @@ def build_wan_2_1_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         scheduler=model.scheduler,
         backend_handle=model.backend_handle,
         runtime_caps={
-            "supports_stepwise": True,
-            "supports_cfg": True,
-            "supports_batched_decode": True,
             "supports_reference_conditioning": task_variant == "i2v",
         },
         metadata=metadata,
@@ -197,19 +194,12 @@ def build_wan_2_1_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle
     if compile_cfg.get("enable"):
         model.torch_compile_transformer(compile_cfg["mode"])
 
-    replay_modules = ["transformer", "scheduler"]
-    if boundary_ratio is not None:
-        replay_modules.insert(1, "transformer_2")
-
     return RuntimeBundle(
         model=model,
         trainable_modules=model.trainable_modules,
         scheduler=model.scheduler,
         backend_handle=None,
         runtime_caps={
-            "supports_stepwise": True,
-            "supports_cfg": True,
-            "supports_batched_decode": False,
             "supports_reference_conditioning": task_variant == "i2v",
         },
         metadata={
@@ -220,18 +210,7 @@ def build_wan_2_1_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle
             "reference_image": (spec.model_config or {}).get("reference_image"),
             "boundary_ratio": boundary_ratio,
             "trainable_transformers": tuple(model.trainable_modules),
-            **minimal_replay_bundle_metadata(
-                replay_modules=tuple(replay_modules),
-                generation_only_modules=(
-                    "text_encoder",
-                    "image_encoder",
-                    "image_processor",
-                    "vae",
-                    "pipeline",
-                )
-                if task_variant == "i2v"
-                else ("text_encoder", "vae", "pipeline"),
-            ),
+            **minimal_replay_bundle_metadata(),
         },
     )
 

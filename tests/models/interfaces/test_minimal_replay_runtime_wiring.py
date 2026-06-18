@@ -9,11 +9,7 @@ import torch
 import torch.nn as nn
 
 from vrl.models.interfaces.runtime import RuntimeBuildSpec
-from vrl.models.replay_loading import (
-    MINIMAL_REPLAY_RUNTIME_ROLE,
-    module_loading_profile_from_metadata,
-    require_minimal_replay_bundle,
-)
+from vrl.models.replay_loading import bundle_loads_full_generation_modules
 
 
 class _TinyTransformer(nn.Module):
@@ -129,14 +125,9 @@ def test_diffusion_replay_builders_return_minimal_bundles(
 
     bundle = getattr(module, builder_name)(_spec())
 
-    require_minimal_replay_bundle(bundle)
-    profile = module_loading_profile_from_metadata(bundle.metadata)
-    assert profile.runtime_role == MINIMAL_REPLAY_RUNTIME_ROLE
-    # The replay bundle declares the generation-only modules it deliberately
-    # never loads (text encoders, VAE) — this IS the trainer-side memory
-    # boundary: nothing to offload because nothing was loaded.
-    assert "text_encoder" in profile.generation_only_modules
-    assert "vae" in profile.generation_only_modules
+    # The replay bundle is the trainer-side memory boundary: it does not own the
+    # full generation modules (text encoders, VAE), so there is nothing to offload.
+    assert bundle_loads_full_generation_modules(bundle) is False
     assert bundle.backend_handle is None
     assert set(bundle.trainable_modules) == {"transformer"}
     assert "pipeline" not in vars(bundle.model)
@@ -191,10 +182,9 @@ def test_wan_i2v_replay_builder_uses_i2v_replay_model(
         _spec(task_variant="i2v"),
     )
 
-    require_minimal_replay_bundle(bundle)
+    assert bundle_loads_full_generation_modules(bundle) is False
     assert isinstance(bundle.model, WanI2VReplayModel)
     assert bundle.runtime_caps["supports_reference_conditioning"] is True
-    assert "image_encoder" in bundle.metadata["generation_only_modules"]
 
 
 def test_wan_dual_stage_replay_builder_loads_low_noise_transformer(
@@ -231,11 +221,10 @@ def test_wan_dual_stage_replay_builder_loads_low_noise_transformer(
         ),
     )
 
-    require_minimal_replay_bundle(bundle)
+    assert bundle_loads_full_generation_modules(bundle) is False
     assert loaded_subfolders == ["transformer_2", "transformer"]
     assert set(bundle.trainable_modules) == {"transformer_2"}
     assert bundle.metadata["boundary_ratio"] == 0.9
-    assert "transformer_2" in bundle.metadata["replay_modules"]
 
 
 def test_cosmos_predict25_replay_builder_keeps_diffusion_nft_surface(
@@ -269,7 +258,7 @@ def test_cosmos_predict25_replay_builder_keeps_diffusion_nft_surface(
         ),
     )
 
-    require_minimal_replay_bundle(bundle)
+    assert bundle_loads_full_generation_modules(bundle) is False
     assert bundle.backend_handle is None
     assert callable(bundle.model.diffusion_nft_prepare_transformer_input)
     with pytest.raises(RuntimeError, match="pipeline"):
@@ -298,15 +287,7 @@ def test_anima_replay_builder_uses_only_transformer_checkpoint(
         ),
     )
 
-    require_minimal_replay_bundle(bundle)
-    profile = module_loading_profile_from_metadata(bundle.metadata)
-    assert profile.runtime_role == MINIMAL_REPLAY_RUNTIME_ROLE
-    assert profile.generation_only_modules == (
-        "text_encoder",
-        "llm_adapter",
-        "vae",
-        "tokenizers",
-    )
+    assert bundle_loads_full_generation_modules(bundle) is False
     assert bundle.backend_handle is None
     assert set(bundle.trainable_modules) == {"transformer"}
     assert not hasattr(bundle.model, "text_encoder")
@@ -418,6 +399,6 @@ def test_ar_replay_builders_return_minimal_bundles(
 
     bundle = getattr(module, builder_name)(_spec(**spec_kwargs))
 
-    require_minimal_replay_bundle(bundle)
+    assert bundle_loads_full_generation_modules(bundle) is False
     assert bundle.backend_handle is None
     assert set(bundle.trainable_modules) == {"model"}

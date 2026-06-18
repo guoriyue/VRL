@@ -63,10 +63,6 @@ def build_janus_pro_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         runtime_caps={
             "family_capability": JANUS_PRO_FAMILY_CAPABILITY.to_dict(),
             "supports_chunked_execution": True,
-            "supports_token_logprobs": True,
-            "supports_cfg": True,
-            "supports_batched_decode": True,
-            "supports_kv_decode": True,
         },
         metadata={
             "model_path": spec.model_name_or_path,
@@ -95,24 +91,12 @@ def build_janus_pro_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBund
         runtime_caps={
             "family_capability": family_capability.to_dict(),
             "supports_chunked_execution": False,
-            "supports_token_logprobs": True,
-            "supports_cfg": True,
-            "supports_batched_decode": False,
-            "supports_kv_decode": False,
         },
         metadata={
             "model_path": spec.model_name_or_path,
             "task_variant": spec.task_variant,
             "use_lora": spec.use_lora,
-            **minimal_replay_bundle_metadata(
-                replay_modules=("language_model", "gen_embed", "gen_aligner", "gen_head"),
-                generation_only_modules=(
-                    "processor",
-                    "vision_model",
-                    "aligner",
-                    "gen_vision_model",
-                ),
-            ),
+            **minimal_replay_bundle_metadata(),
         },
     )
 

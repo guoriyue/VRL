@@ -38,7 +38,6 @@ def test_colocated_full_generation_bundle_can_fail_strict_guard() -> None:
     """Checks colocated full generation bundle can fail strict guard."""
     bundle = SimpleNamespace(
         metadata={
-            "runtime_role": "full_generation_model",
             "loads_full_generation_modules": True,
         },
     )

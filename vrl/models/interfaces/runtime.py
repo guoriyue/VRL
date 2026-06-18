@@ -143,16 +143,13 @@ class RuntimeBundle:
     trainable adapter/backbone needed for exact resume.
 
     ``metadata`` may include generic replay/runtime flags used by shared
-    trainer infrastructure. Build these fields through
-    ``vrl.models.replay_loading`` so family runtimes share one contract:
+    trainer infrastructure. Build these through ``vrl.models.replay_loading`` so
+    family runtimes share one contract:
 
-    - ``runtime_role``: e.g. ``"full_generation_model"`` or
-      ``"minimal_replay_model"``.
-    - ``loads_full_generation_modules``: true when the trainer bundle owns
+    - ``loads_full_generation_modules``: true when the bundle owns
       generation-only modules such as prompt encoders, VAE/VQ decoders, or a
-      full pipeline object.
-    - ``requires_minimal_replay_loader``: true when colocated Ray training is
-      known to benefit from a family-specific replay-only loader.
+      full pipeline object. Consumed by the colocated-RAM guard
+      (``validate_colocated_replay_memory``).
     """
 
     model: RuntimeModel

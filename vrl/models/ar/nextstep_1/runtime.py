@@ -55,9 +55,6 @@ def build_nextstep_1_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         runtime_caps={
             "family_capability": NEXTSTEP_1_FAMILY_CAPABILITY.to_dict(),
             "supports_chunked_execution": True,
-            "supports_token_logprobs": True,
-            "supports_cfg": True,
-            "supports_batched_decode": True,
         },
         metadata={
             "model_path": spec.model_name_or_path,
@@ -81,22 +78,12 @@ def build_nextstep_1_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBun
         runtime_caps={
             "family_capability": NEXTSTEP_1_FAMILY_CAPABILITY.to_dict(),
             "supports_chunked_execution": False,
-            "supports_token_logprobs": True,
-            "supports_cfg": True,
-            "supports_batched_decode": False,
         },
         metadata={
             "model_path": spec.model_name_or_path,
             "task_variant": spec.task_variant,
             "use_lora": spec.use_lora,
-            **minimal_replay_bundle_metadata(
-                replay_modules=(
-                    "language_model",
-                    "image_head",
-                    "image_in_projector",
-                ),
-                generation_only_modules=("vae", "tokenizer", "pipeline"),
-            ),
+            **minimal_replay_bundle_metadata(),
         },
     )
 

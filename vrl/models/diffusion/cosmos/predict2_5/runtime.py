@@ -87,9 +87,6 @@ def build_cosmos_predict25_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBund
         scheduler=model.scheduler,
         backend_handle=model.backend_handle,
         runtime_caps={
-            "supports_stepwise": True,
-            "supports_cfg": True,
-            "supports_batched_decode": True,
             "supports_diffusion_nft": True,
         },
         metadata={
@@ -145,9 +142,6 @@ def build_cosmos_predict25_replay_runtime_bundle(spec: RuntimeBuildSpec) -> Runt
         scheduler=model.scheduler,
         backend_handle=None,
         runtime_caps={
-            "supports_stepwise": True,
-            "supports_cfg": True,
-            "supports_batched_decode": False,
             "supports_diffusion_nft": True,
         },
         metadata={
@@ -157,10 +151,7 @@ def build_cosmos_predict25_replay_runtime_bundle(spec: RuntimeBuildSpec) -> Runt
             "use_lora": use_lora,
             "model_revision": _model_revision_from_spec(spec),
             "skip_text_encoder": _skip_text_encoder_from_spec(spec),
-            **minimal_replay_bundle_metadata(
-                replay_modules=("transformer", "scheduler"),
-                generation_only_modules=("text_encoder", "vae", "pipeline"),
-            ),
+            **minimal_replay_bundle_metadata(),
         },
     )
 

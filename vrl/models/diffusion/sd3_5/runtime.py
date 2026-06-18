@@ -89,9 +89,6 @@ def build_sd3_5_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         backend_handle=model.backend_handle,
         runtime_caps={
             "family_capability": SD3_5_FAMILY_CAPABILITY.to_dict(),
-            "supports_stepwise": True,
-            "supports_cfg": True,
-            "supports_batched_decode": True,
             "supports_reference_conditioning": False,
         },
         metadata={
@@ -144,9 +141,6 @@ def build_sd3_5_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         backend_handle=None,
         runtime_caps={
             "family_capability": SD3_5_FAMILY_CAPABILITY.to_dict(),
-            "supports_stepwise": True,
-            "supports_cfg": True,
-            "supports_batched_decode": False,
             "supports_reference_conditioning": False,
         },
         metadata={
@@ -154,16 +148,7 @@ def build_sd3_5_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
             "task_variant": spec.task_variant,
             "dtype": str(spec.dtype),
             "use_lora": use_lora,
-            **minimal_replay_bundle_metadata(
-                replay_modules=("transformer", "scheduler"),
-                generation_only_modules=(
-                    "text_encoder",
-                    "text_encoder_2",
-                    "text_encoder_3",
-                    "vae",
-                    "pipeline",
-                ),
-            ),
+            **minimal_replay_bundle_metadata(),
         },
     )
 

@@ -104,9 +104,6 @@ def build_cosmos_predict2_runtime_bundle(
         scheduler=model.scheduler,
         backend_handle=model.backend_handle,
         runtime_caps={
-            "supports_stepwise": True,
-            "supports_cfg": True,
-            "supports_batched_decode": True,
             "supports_reference_conditioning": True,
         },
         metadata={
@@ -161,9 +158,6 @@ def build_cosmos_predict2_replay_runtime_bundle(
         scheduler=model.scheduler,
         backend_handle=None,
         runtime_caps={
-            "supports_stepwise": True,
-            "supports_cfg": True,
-            "supports_batched_decode": False,
             "supports_reference_conditioning": True,
         },
         metadata={
@@ -172,15 +166,7 @@ def build_cosmos_predict2_replay_runtime_bundle(
             "dtype": str(spec.dtype),
             "use_lora": use_lora,
             "reference_image": _reference_image_from_spec(spec),
-            **minimal_replay_bundle_metadata(
-                replay_modules=("transformer", "scheduler"),
-                generation_only_modules=(
-                    "text_encoder",
-                    "vae",
-                    "safety_checker",
-                    "pipeline",
-                ),
-            ),
+            **minimal_replay_bundle_metadata(),
         },
     )
 
