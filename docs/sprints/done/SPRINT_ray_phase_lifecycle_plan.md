@@ -516,7 +516,7 @@ RayGenerationRuntime._ReleaseAfterCollectState
 
 - `docs/sprints/planned/SPRINT_slime_overlap_strategy.md`
 - `docs/sprints/planned/SPRINT_reward_execution.md`
-- `docs/sprints/planned/SPRINT_generation_memory_system.md`
+- `docs/sprints/planned/SPRINT_memory_plan_full.md`
 - `docs/sprints/reading/slime.md`
 - `docs/sprints/reading/cosmos-rl.md`
 - `docs/sprints/reading/SPRINT_cosmos_rl_scaling_learnings.md`

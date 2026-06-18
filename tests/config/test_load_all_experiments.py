@@ -545,6 +545,7 @@ def test_cli_overrides_reach_typed_trainer_config() -> None:
             "trainer.torch_profiler.enabled=true",
             "trainer.torch_profiler.activities=[cpu]",
             "actor.drop_zero_advantage=false",
+            "rollout.sample_batch_size=2",
         ],
     )
     trainer = build_configs(cfg)["trainer"]
@@ -553,6 +554,7 @@ def test_cli_overrides_reach_typed_trainer_config() -> None:
     assert trainer.torch_profiler.enabled is True
     assert trainer.torch_profiler.activities == ("cpu",)
     assert trainer.drop_zero_advantage is False
+    assert trainer.sample_batch_size == 2
 
 
 def test_invalid_algorithm_kind_fails_fast() -> None:

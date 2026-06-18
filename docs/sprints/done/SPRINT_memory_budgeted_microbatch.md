@@ -18,7 +18,7 @@ main `4c85f3b`)的**收尾精炼**:把"切多少"从一个**手填的次数**改
 >   global_std=true)。按 §6"不机械改 sd3"只**告警**,不改其配置、不硬失败;`microbatch_size=1` 豁免。
 
 > **进度(2026-06-15)**:T1 旋钮 + cosmos 迁移 + 配置 schema + T2 RSS fail-fast + 测试全绿(238 passed)。
-> **更正一处误判**:T2 曾被以"与 `SPRINT_generation_memory_system.md` 重叠"为由暂缓——经多 agent 对抗审计
+> **更正一处误判**:T2 曾被以"与 `SPRINT_generation_memory_system.md`（已并入 `SPRINT_memory_plan_full.md`）重叠"为由暂缓——经多 agent 对抗审计
 > 核实,该理由**不成立**:那个 sprint 管的是 **GPU 字节预算**(`MemoryContract` 按卡/角色派生),只在"已有机制"
 > 表里提过一次 host memory snapshot,并不拥有 **host RSS** 预算/fail-fast 这条轴;且 RSS fail-fast 在 vrl 里
 > 全无实现(6 处 `log_host_memory` 都是纯日志),所需原语 `capture_host_memory()`(rss/available/used_fraction)
@@ -32,16 +32,18 @@ main `4c85f3b`)的**收尾精炼**:把"切多少"从一个**手填的次数**改
 
 ## 0. Core Decision
 
-**不新增第二个切片旋钮。** 流式累积已经让**一个 microbatch 同时充当 host 采集切片和训练 backward 单元**
-(采完即 backward 再 release),GPU 那一轴由 `for j in train_indices` 逐去噪步**自动**变细。所以 vrl
-**本来就只切一次**,不需要像 slime 那样把 rollout 和 train 各设一个。
+**不新增第二个 prompt-microbatch 旋钮。** prompt 轴由 `rollout.microbatch_size` 切:一个 microbatch
+同时充当 host 采集切片和训练 backward 单元(采完即 backward 再 release)。同 prompt 内的样本轴复用
+`rollout.sample_batch_size`:生成按它 chunk,训练 replay/backward 也在 advantage 已按完整 group 算完后按
+同一个旋钮 chunk;每个 replay chunk 按 `chunk_size / group_size` 加权保持 full-group loss 等价。
 
 要改的只有两点,都向 slime 看齐:
 
 1. **把 `gradient_accumulation_steps`(次数)降级为派生量,新增 `microbatch_size`(大小)做唯一手填切片旋钮**——你设"一刀放得下几组",次数 = `rollout_batch_size ÷ microbatch_size` 自己掉出来。语义从"切几刀"变成"每刀多大",这才是你真正关心、且能直接对内存的量。
 2. **内存预测用真实 RSS,不用 `estimate_batch_bytes`**——后者是队列背压启发式,系统性低估(见 §2);改成在**第一个 microbatch** 上量 `log_host_memory` 的 RSS 增量,据此 fail-fast 或自动定档。
 
-非目标:不动已落地的梯度等价数学;不为 GPU 再加一个 micro-batch 旋钮(per-timestep 已经管住 GPU)。
+非目标:不动已落地的梯度等价数学;不为 prompt 轴再加一个 train-only micro-batch 旋钮。GPU 侧样本切片由
+`sample_batch_size × timestep × rollout_microbatch` 控制(生成与 replay 共用同一个 `sample_batch_size`)。
 
 ---
 

@@ -105,6 +105,14 @@ def _log_rollout_memory_plan(trainer_config: Any) -> None:
     rollout_batch_size = int(trainer_config.rollout_batch_size)
     samples_per_prompt = int(trainer_config.n_samples_per_prompt)
     target_samples = rollout_batch_size * samples_per_prompt
+    sample_batch_size = int(getattr(trainer_config, "sample_batch_size", 0) or 0)
+    # One knob bounds both the generation forward chunk and the train replay
+    # chunk, so this per-call sample count applies to generation and backward.
+    sample_chunk_size = (
+        samples_per_prompt
+        if sample_batch_size <= 0
+        else min(samples_per_prompt, sample_batch_size)
+    )
     gas = int(getattr(trainer_config, "gradient_accumulation_steps", 0))
     if gas > 0:
         microbatch_prompts = rollout_batch_size // gas
@@ -113,19 +121,23 @@ def _log_rollout_memory_plan(trainer_config: Any) -> None:
             "Rollout memory plan: streaming accumulation enabled "
             "(rollout_batch_size=%d, gradient_accumulation_steps=%d, "
             "microbatch_prompts=%d, microbatch_samples=%d, "
+            "sample_chunk_size_per_call=%d, "
             "target_samples_per_update=%d)",
             rollout_batch_size,
             gas,
             microbatch_prompts,
             microbatch_samples,
+            sample_chunk_size,
             target_samples,
         )
         return
 
     logger.info(
         "Rollout memory plan: legacy full-batch accumulation "
-        "(rollout_batch_size=%d, target_samples_per_update=%d)",
+        "(rollout_batch_size=%d, sample_chunk_size_per_call=%d, "
+        "target_samples_per_update=%d)",
         rollout_batch_size,
+        sample_chunk_size,
         target_samples,
     )
     if rollout_batch_size > 1:
@@ -731,6 +743,7 @@ def _prepare_metrics_csv(
     component_names: tuple[str, ...],
     *,
     resume: bool,
+    prepare_metrics_csv: Any = prepare_metrics_csv,
 ) -> None:
     component_cols = ",".join(f"r_{name}" for name in component_names)
     header = (

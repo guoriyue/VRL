@@ -277,6 +277,12 @@ class TrainerConfig:
     # knob: you declare how many groups fit in one slice, the microstep count
     # falls out (SPRINT_memory_budgeted_microbatch).
     microbatch_size: int = field(default=0, metadata={"yaml": "rollout"})
+    # Per-prompt sample chunk size for BOTH generation and training replay: the
+    # generation backend chunks its sample axis by this, and replay/backward
+    # splits each prompt group into chunks of this size (full-group loss math
+    # preserved via per-chunk loss weighting). One public knob bounds both the
+    # forward generation and the heavier backward pass. 0 = legacy full-group.
+    sample_batch_size: int = field(default=0, metadata={"yaml": "rollout"})
     # Fail-fast host-RAM guard for streaming accumulation: if, after collecting
     # one streamed microbatch, system memory used-fraction exceeds this, raise
     # immediately instead of OOMing minutes into the run. Streaming holds ~one
@@ -321,6 +327,7 @@ class TrainerConfig:
         rbs = int(self.rollout_batch_size)
         gas = int(self.gradient_accumulation_steps)
         mbs = int(self.microbatch_size)
+        sample_batch_size = int(self.sample_batch_size)
         if gas < 0:
             raise ValueError(
                 f"actor.gradient_accumulation_steps must be >= 0 (got {gas})",
@@ -329,6 +336,12 @@ class TrainerConfig:
             raise ValueError(
                 f"rollout.microbatch_size must be >= 0 (got {mbs})",
             )
+        if sample_batch_size < 0:
+            raise ValueError(
+                "rollout.sample_batch_size must be >= 0 "
+                f"(got {sample_batch_size})",
+            )
+        self.sample_batch_size = sample_batch_size
         if mbs > 0 and gas > 0:
             # Both declared: must agree (no drift). Tell the user to set one.
             if rbs != gas * mbs:

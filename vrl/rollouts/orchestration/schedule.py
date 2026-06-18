@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import Any, Protocol
 
@@ -12,6 +13,8 @@ from vrl.rollouts.orchestration.continuous import ContinuousRolloutSchedule
 from vrl.rollouts.orchestration.lifecycle import RolloutLifecycle
 from vrl.rollouts.orchestration.strict_on_policy import StrictOnPolicyRolloutSchedule
 from vrl.rollouts.orchestration.types import RolloutIteration, RolloutScheduleMode
+
+logger = logging.getLogger(__name__)
 
 
 class RolloutSchedule(Protocol):
@@ -86,13 +89,40 @@ def _build_continuous_schedule(
     def field(name: str, default: Any) -> Any:
         return getattr(cont, name, default) if cont is not None else default
 
+    max_inflight_groups = int(field("max_inflight_groups", 1))
+    max_ready_groups = int(field("max_ready_groups", 2))
+    max_stale_policy_versions = int(field("max_stale_policy_versions", 0))
+
+    # Make "is this actually async?" self-reporting at startup. With
+    # max_stale=0 the consumer rejects every prior-version group, so continuous
+    # silently degrades to strict_on_policy — no off-policy prefetch, no
+    # rollout/train overlap — despite the mode flag (see module docstring of
+    # continuous/schedule.py). Warn rather than let the run look async when it
+    # is serial.
+    if max_stale_policy_versions <= 0:
+        logger.warning(
+            "continuous rollout with max_stale_policy_versions=0 is "
+            "behavior-equivalent to strict_on_policy: off-policy prefetch is "
+            "OFF and rollout/train do not overlap. Set "
+            "rollout_orchestration.continuous.max_stale_policy_versions>=1 to "
+            "enable async prefetch.",
+        )
+    else:
+        logger.info(
+            "continuous async prefetch ENABLED: max_stale_policy_versions=%d, "
+            "max_ready_groups=%d, max_inflight_groups=%d",
+            max_stale_policy_versions,
+            max_ready_groups,
+            max_inflight_groups,
+        )
+
     return ContinuousRolloutSchedule(
         lifecycle=lifecycle,
         require_separate_gpus=bool(getattr(config, "require_separate_gpus", True)),
-        max_inflight_groups=int(field("max_inflight_groups", 1)),
-        max_ready_groups=int(field("max_ready_groups", 2)),
+        max_inflight_groups=max_inflight_groups,
+        max_ready_groups=max_ready_groups,
         max_ready_bytes_mb=int(field("max_ready_bytes_mb", 8192)),
-        max_stale_policy_versions=int(field("max_stale_policy_versions", 0)),
+        max_stale_policy_versions=max_stale_policy_versions,
         drop_policy=str(field("drop_policy", "drop_oldest_stale")),
         wait_timeout_s=float(field("wait_timeout_s", 300.0)),
         queue_poll_interval_s=float(field("queue_poll_interval_s", 0.05)),

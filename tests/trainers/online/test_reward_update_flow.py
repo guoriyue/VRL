@@ -651,6 +651,176 @@ class TestRewardUpdateFlow:
         )
 
 
+def test_sample_batch_size_splits_training_replay_and_preserves_gradient(monkeypatch) -> None:
+    """rollout.sample_batch_size bounds replay/backward calls without changing gradients."""
+    import asyncio
+
+    import pytest
+    import torch
+    import torch.nn as nn
+
+    from vrl.algorithms.types import TrainStepMetrics
+    from vrl.rollouts.batch import RolloutBatch
+    from vrl.scripts.common.online import _run_streaming_optimizer_update
+    from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
+    from vrl.trainers.online import OnlineTrainer
+    from vrl.trainers.online import trainer as trainer_module
+
+    device_move_sizes: list[int] = []
+    original_move_training_batch_to_device = trainer_module.move_training_batch_to_device
+
+    def _recording_move_training_batch_to_device(batch, *args, **kwargs):
+        device_move_sizes.append(int(batch.rewards.shape[0]))
+        return original_move_training_batch_to_device(batch, *args, **kwargs)
+
+    monkeypatch.setattr(
+        trainer_module,
+        "move_training_batch_to_device",
+        _recording_move_training_batch_to_device,
+    )
+
+    class _Algorithm:
+        class _Config:
+            global_std = False
+            eps = 1e-8
+            adv_clip_max = 5.0
+            init_kl_coef = 0.0
+
+        config = _Config()
+
+        def compute_advantages_from_tensors(self, rewards, group_ids):
+            del group_ids
+            return torch.ones_like(rewards)
+
+        def compute_loss(self, inputs):
+            signals, _advantages, _old_log_probs = _algorithm_inputs(inputs)
+            loss = signals.log_prob.mean()
+            return loss, TrainStepMetrics(loss=loss.item(), policy_loss=loss.item())
+
+    class _Collector:
+        async def score_rollouts(self, pendings):
+            return list(pendings)
+
+        async def collect_unscored(self, prompts, **kwargs):
+            prompts = list(prompts)
+            group_size = int(kwargs.get("group_size", 1))
+            batch_size = len(prompts) * group_size
+            return RolloutBatch(
+                observations=torch.zeros(batch_size, 1, 1),
+                actions=torch.zeros(batch_size, 1, 1),
+                rewards=torch.arange(batch_size, dtype=torch.float32),
+                dones=torch.ones(batch_size, dtype=torch.bool),
+                group_ids=torch.zeros(batch_size, dtype=torch.long),
+                prompts=[p for p in prompts for _ in range(group_size)],
+            )
+
+    class _Evaluator(Evaluator):
+        def __init__(self, calls: list[int]) -> None:
+            self.calls = calls
+
+        def evaluate(self, model, batch, timestep_idx, **kw):
+            del kw
+            self.calls.append(int(batch.rewards.shape[0]))
+            log_prob = model.weight.reshape(()) * batch.rewards
+            return _trajectory_signals(batch, log_prob, timestep_idx)
+
+    class _Reward:
+        def reset_components(self):
+            pass
+
+    def _make_trainer(
+        sample_batch_size: int,
+        *,
+        streaming: bool,
+    ) -> tuple[OnlineTrainer, list[int]]:
+        replay_calls: list[int] = []
+        model = nn.Linear(1, 1, bias=False)
+        with torch.no_grad():
+            model.weight.fill_(1.0)
+        trainer = OnlineTrainer(
+            algorithm=_Algorithm(),
+            collector=_Collector(),
+            evaluator=_Evaluator(replay_calls),
+            model=model,
+            config=TrainerConfig(
+                rollout_batch_size=1,
+                timestep_fraction=1.0,
+                total_epochs=1,
+                drop_zero_advantage=False,
+                output_dir="outputs/",
+                optim=OptimConfig(lr=0.0),
+                ema=EMAConfig(),
+                debug=DebugConfig(),
+                n_samples_per_prompt=4,
+                bf16=False,
+                gradient_accumulation_steps=1 if streaming else 0,
+                sample_batch_size=sample_batch_size,
+            ),
+            device="cpu",
+        )
+        return trainer, replay_calls
+
+    def _run(
+        sample_batch_size: int,
+        *,
+        streaming: bool,
+    ) -> tuple[float, list[int], list[int]]:
+        device_move_sizes.clear()
+        trainer, replay_calls = _make_trainer(
+            sample_batch_size,
+            streaming=streaming,
+        )
+        recorded_grads: list[float] = []
+        original_step = trainer._clip_and_step
+
+        def _recording_step(optimizer):
+            assert trainer.model.weight.grad is not None
+            recorded_grads.append(float(trainer.model.weight.grad.detach().item()))
+            return original_step(optimizer)
+
+        trainer._clip_and_step = _recording_step  # type: ignore[method-assign]
+
+        if streaming:
+            asyncio.run(
+                _run_streaming_optimizer_update(
+                    trainer,
+                    _Reward(),
+                    ["prompt"],
+                    gradient_accumulation_steps=1,
+                    rollout_batch_size=1,
+                    n_samples_per_prompt=4,
+                ),
+            )
+        else:
+            asyncio.run(trainer.step(["prompt"]))
+
+        assert len(recorded_grads) == 1
+        return recorded_grads[0], replay_calls, list(device_move_sizes)
+
+    full_grad, full_calls, full_device_moves = _run(
+        sample_batch_size=0,
+        streaming=False,
+    )
+    legacy_split_grad, legacy_split_calls, legacy_split_device_moves = _run(
+        sample_batch_size=2,
+        streaming=False,
+    )
+    streaming_split_grad, streaming_split_calls, streaming_split_device_moves = _run(
+        sample_batch_size=2,
+        streaming=True,
+    )
+
+    assert full_calls == [4]
+    assert 4 in full_device_moves
+    assert legacy_split_calls == [2, 2]
+    assert streaming_split_calls == [2, 2]
+    assert max(legacy_split_device_moves) == 2
+    assert max(streaming_split_device_moves) == 2
+    assert full_grad == pytest.approx(1.5)
+    assert legacy_split_grad == pytest.approx(full_grad)
+    assert streaming_split_grad == pytest.approx(full_grad)
+
+
 def test_gradient_accumulation_steps_validation() -> None:
     """gradient_accumulation_steps must evenly divide rollout_batch_size when > 0."""
     import pytest
@@ -726,6 +896,8 @@ def test_microbatch_size_reconciles_with_gradient_accumulation_steps() -> None:
         _cfg(microbatch_size=4, ppo_epochs=2)
     with pytest.raises(ValueError, match=">= 0"):
         _cfg(microbatch_size=-1)
+    with pytest.raises(ValueError, match="sample_batch_size"):
+        _cfg(sample_batch_size=-1)
 
 
 def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
@@ -745,6 +917,7 @@ def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
             output_dir="x",
             drop_zero_advantage=False,
             gradient_accumulation_steps=gas,
+            sample_batch_size=2,
         )
 
     logger_name = "vrl.scripts.common.online"
@@ -753,6 +926,7 @@ def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
     streaming_messages = [record.getMessage() for record in caplog.records]
     assert any("streaming accumulation enabled" in msg for msg in streaming_messages)
     assert any("microbatch_prompts=1" in msg for msg in streaming_messages)
+    assert any("sample_chunk_size_per_call=2" in msg for msg in streaming_messages)
     assert any("target_samples_per_update=8" in msg for msg in streaming_messages)
 
     caplog.clear()
@@ -760,6 +934,7 @@ def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
         _log_rollout_memory_plan(_cfg(4, 0))
     legacy_messages = [record.getMessage() for record in caplog.records]
     assert any("legacy full-batch accumulation" in msg for msg in legacy_messages)
+    assert any("sample_chunk_size_per_call=2" in msg for msg in legacy_messages)
     assert any("host RAM may hold up to 4 prompt groups" in msg for msg in legacy_messages)
 
 

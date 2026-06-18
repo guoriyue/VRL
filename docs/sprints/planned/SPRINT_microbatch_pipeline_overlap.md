@@ -52,18 +52,23 @@ rollout/reward microbatch 2  ||  train microbatch 1
 optimizer.step only after target batch is complete
 ```
 
-这和“再加一个 training microbatch knob”不是一回事。当前 diffusion replay 训练已经在 trainer 里按 timestep 切：
+这和“再加一个 prompt-level training microbatch knob”不是一回事。当前 diffusion replay 训练已经在
+trainer 里按 `rollout.sample_batch_size`（同一个旋钮，生成和 replay 共用）切同 prompt 内样本、
+再按 timestep 切：
 
 ```python
-for b, adv_b in zip(device_batches, device_advs, strict=True):
-    for j in train_indices:
-        ...
-        self._backward(loss)
-        await asyncio.sleep(0)
+for b, adv_b in zip(host_batches, host_advs, strict=True):
+    for sample_chunk in _training_sample_chunks(b, adv_b, cfg.sample_batch_size):
+        chunk_batch = move_training_batch_to_device(sample_chunk.batch, device)
+        for j in train_indices:
+            ...
+            self._backward(loss * sample_chunk.loss_weight / loss_scale)
+            await asyncio.sleep(0)
 ```
 
-GPU 侧已经有 `timestep × rollout_microbatch` 的天然切片。先不要再加第二个 train-only microbatch；只有当
-`microbatch_size=1` 且单 timestep 仍然 GPU OOM 时，才需要单独开新的 GPU 子切片 sprint。
+GPU 侧已经有 `sample_batch_size × timestep × rollout_microbatch` 的切片。先不要再加第二个
+prompt-level train-only microbatch；只有当 `microbatch_size=1`、`sample_batch_size=1` 且单
+sample/单 timestep 仍然 GPU OOM 时，才需要单独开新的 GPU 子切片 sprint。
 
 ---
 
@@ -127,14 +132,18 @@ self.producer.resume_admission()
 rollout.rollout_batch_size        # target prompt conditions per optimizer update
 rollout.microbatch_size   # pipeline item size: prompt conditions per collect/train item
 actor.gradient_accumulation_steps # derived = rollout_batch_size / microbatch_size
-rollout.sample_batch_size         # generation backend chunk size only
+rollout.sample_batch_size         # per-call samples for BOTH generation and train replay
 ```
 
-> 现状对齐（Evidence-First）：`microbatch_size` **目前还没落地**（由
-> `SPRINT_memory_budgeted_microbatch.md` 引入）。当前代码里手填的是 `actor.gradient_accumulation_steps`，
-> microbatch 大小 = `rollout_batch_size // gradient_accumulation_steps`（`vrl/trainers/core/types.py`
-> 强制整除，且 `gradient_accumulation_steps>0` 时强制 `ppo_epochs==1`）。本 sprint 与两种参数化都兼容；
-> 若 `microbatch_size` 尚未合入，应在依赖里标注它先行。
+> 现状对齐（Evidence-First）：`microbatch_size` 已由 `SPRINT_memory_budgeted_microbatch.md` 落地；
+> `actor.gradient_accumulation_steps` 仍作为派生/兼容视图存在。`rollout.sample_batch_size` 一个旋钮
+> 同时约束生成前向 chunk 和训练 replay/backward chunk（replay 按它切片、loss_weight 保 full-group
+> 等价）。advantage 仍先在完整 group 上计算。
+>
+> 注：曾设计过独立的 train-only replay sample chunk override（让生成 chunk 大于反向），但零 config
+> 使用、且每次跑都解析成 `= sample_batch_size`，是未被行使的孪生旋钮，已删除（2026-06-17）。
+> 真出现生成能开大、反向开不大的 config 时，先用 torch allocated/reserved 日志证明瓶颈，再加回
+> train-only override，并加 `replay <= sample_batch_size` 校验。
 
 示例：Cosmos Predict2.5 + Kling paper-shaped batch：
 
@@ -309,8 +318,10 @@ drain_for_microbatch(min_groups=microbatch_size)
 应该保持：
 
 - `rollout_batch_size` 仍表示 optimizer target prompt conditions。
-- `microbatch_size` 是唯一用户关心的切片大小；不新增 train-only microbatch knob。
-- `sample_batch_size` 仍只管 generation backend chunk，不表达 RL batch。
+- `microbatch_size` 仍是 prompt-level pipeline item size；不新增 train-only prompt microbatch knob。
+- `sample_batch_size` 是同 prompt 内样本轴 chunk，一个旋钮同时约束 generation 前向和训练 replay/backward；
+  它不表达 optimizer target batch,也不替代 `microbatch_size`。不为 replay 单独再加一个 override 旋钮，
+  除非出现生成能开大、反向开不大的真实 config。
 - `ContinuousRolloutItem` 继续代表单 prompt group。它是 group-level queue/staleness/backpressure 的协议边界，不要为了“少一层”改掉。
 - strict-on-policy 默认保持保守；staleness 放宽必须显式配置。
 
