@@ -43,6 +43,16 @@ rollout:
   sde:
     type: cps
   same_latent: false
+  # Compile the rollout denoise forward. Measured 1.37x per-step on this DiT
+  # (RTX 5090, SPRINT_compile_rollout_lifecycle.md §4.3). rollout-only one-way
+  # override (launcher _apply_rollout_compile_override); train replay stays eager
+  # for now (its +1.26x is a separate step — needs LoRA+grad-ckpt parity check).
+  # mode is a real torch.compile knob (kept explicit so it reads as a deliberate
+  # choice, not a stray key): default is the safe one — reduce-overhead/CUDA-graph
+  # collides with LoRA+grad-ckpt; max-autotune is an untried future option.
+  denoise_compile:
+    enable: true
+    mode: default   # 'default' | 'reduce-overhead' | 'max-autotune'
 
 trainer:
   entrypoint: vrl.scripts.diffusion.cosmos.train:train_cosmos_predict25_diffusion_nft
