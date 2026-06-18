@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from vrl.generation.capabilities import FamilyCapability
     from vrl.generation.execution.planner import EnginePlan
     from vrl.trajectory import TrajectoryBatch
 
@@ -77,63 +76,6 @@ class GenerationSampleRow:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass(frozen=True, slots=True)
-class WorkloadSignature:
-    """Batch grouping key for generation requests."""
-
-    family: str
-    task: str
-    height: int | None
-    width: int | None
-    num_frames: int | None
-    num_steps: int | None
-    artifact_mode: tuple[str, ...]
-    max_new_tokens: int | None = None
-    trajectory_kind: str | None = None
-    axis_kinds: tuple[tuple[str, str], ...] = ()
-    capability_key: tuple[Any, ...] = ()
-
-    @classmethod
-    def from_request(cls, request: GenerationRequest) -> WorkloadSignature:
-        sampling = request.sampling
-        height = sampling.get("height")
-        width = sampling.get("width")
-        num_frames = sampling.get("num_frames")
-        num_steps = sampling.get("num_steps")
-        max_new_tokens = sampling.get("image_token_num")
-        return cls(
-            family=request.family,
-            task=request.task,
-            height=None if height is None else int(height),
-            width=None if width is None else int(width),
-            num_frames=None if num_frames is None else int(num_frames),
-            num_steps=None if num_steps is None else int(num_steps),
-            artifact_mode=tuple(sorted(request.return_artifacts)),
-            max_new_tokens=None if max_new_tokens is None else int(max_new_tokens),
-        )
-
-    @classmethod
-    def from_request_and_capability(
-        cls,
-        request: GenerationRequest,
-        capability: FamilyCapability,
-    ) -> WorkloadSignature:
-        signature = cls.from_request(request)
-        return cls(
-            family=signature.family,
-            task=signature.task,
-            height=signature.height,
-            width=signature.width,
-            num_frames=signature.num_frames,
-            num_steps=signature.num_steps,
-            artifact_mode=signature.artifact_mode,
-            max_new_tokens=signature.max_new_tokens,
-            trajectory_kind=capability.trajectory_kind,
-            axis_kinds=tuple((axis.name, axis.kind) for axis in capability.expected_axes),
-            capability_key=capability.batch_signature(),
-        )
-
-
 @dataclass(slots=True)
 class GenerationOutput:
     """Engine runtime output batch.
@@ -161,5 +103,4 @@ __all__ = [
     "GenerationOutput",
     "GenerationRequest",
     "GenerationSampleRow",
-    "WorkloadSignature",
 ]

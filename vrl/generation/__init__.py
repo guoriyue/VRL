@@ -31,7 +31,6 @@ from vrl.generation.types import (
     GenerationOutput,
     GenerationRequest,
     GenerationSampleRow,
-    WorkloadSignature,
 )
 
 __all__ = [
@@ -53,7 +52,6 @@ __all__ = [
     "PipelineStageWorkerCore",
     "PipelineTopology",
     "SerialPipelineRunner",
-    "WorkloadSignature",
     "build_sample_rows",
     "family_capability_from_value",
 ]

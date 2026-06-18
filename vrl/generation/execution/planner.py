@@ -20,7 +20,6 @@ from vrl.generation.types import (
     GenerationOutput,
     GenerationRequest,
     GenerationSampleRow,
-    WorkloadSignature,
 )
 
 
@@ -104,7 +103,6 @@ class EnginePlan:
     family: str
     task: str
     sample_rows: tuple[GenerationSampleRow, ...]
-    workload: WorkloadSignature
     capability: FamilyCapability
     trajectory_kind: str
     expected_axes: dict[str, ResolvedAxis]
@@ -227,10 +225,6 @@ class EnginePlanner:
             family=self.request.family,
             task=self.request.task,
             sample_rows=self.sample_rows,
-            workload=WorkloadSignature.from_request_and_capability(
-                self.request,
-                self.capability,
-            ),
             capability=self.capability,
             trajectory_kind=self.capability.trajectory_kind,
             expected_axes=resolved_axes,

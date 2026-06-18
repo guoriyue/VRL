@@ -126,16 +126,8 @@ class FamilyCapability:
     supports_batched_requests: bool = True
     supports_chunked_execution: bool = True
     supports_batched_forward: bool = True
-    supports_stepwise: bool = False
-    supports_cfg: bool = False
-    supports_batched_decode: bool = False
     supports_reference_conditioning: bool = False
-    supports_token_logprobs: bool = False
-    supports_kv_decode: bool = False
-    supports_prefill_decode_split: bool = False
-    supports_resident_rollout_state: bool = False
     supports_torch_compile: bool = False
-    supports_cuda_graph: bool = False
     cache_kinds: tuple[str, ...] = ()
     default_max_samples_per_chunk: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -176,17 +168,6 @@ class FamilyCapability:
     def profiler_labels(self) -> tuple[str, ...]:
         return tuple(stage.profiler_label for stage in self.execution_stages)
 
-    def batch_signature(self) -> tuple[Any, ...]:
-        """Return the capability portion of a request batching key."""
-
-        return (
-            self.trajectory_kind,
-            self.axis_names,
-            self.batchable_axes,
-            self.supports_batched_requests,
-            self.supports_batched_forward,
-        )
-
     def with_runtime_caps(self, runtime_caps: Mapping[str, Any] | None) -> FamilyCapability:
         """Merge backend-loaded flags without changing static trajectory facts."""
 
@@ -197,16 +178,8 @@ class FamilyCapability:
             "supports_batched_requests",
             "supports_chunked_execution",
             "supports_batched_forward",
-            "supports_stepwise",
-            "supports_cfg",
-            "supports_batched_decode",
             "supports_reference_conditioning",
-            "supports_token_logprobs",
-            "supports_kv_decode",
-            "supports_prefill_decode_split",
-            "supports_resident_rollout_state",
             "supports_torch_compile",
-            "supports_cuda_graph",
         )
         for field_name in bool_fields:
             if field_name in runtime_caps:
@@ -246,16 +219,8 @@ class FamilyCapability:
             "supports_batched_requests": self.supports_batched_requests,
             "supports_chunked_execution": self.supports_chunked_execution,
             "supports_batched_forward": self.supports_batched_forward,
-            "supports_stepwise": self.supports_stepwise,
-            "supports_cfg": self.supports_cfg,
-            "supports_batched_decode": self.supports_batched_decode,
             "supports_reference_conditioning": self.supports_reference_conditioning,
-            "supports_token_logprobs": self.supports_token_logprobs,
-            "supports_kv_decode": self.supports_kv_decode,
-            "supports_prefill_decode_split": self.supports_prefill_decode_split,
-            "supports_resident_rollout_state": self.supports_resident_rollout_state,
             "supports_torch_compile": self.supports_torch_compile,
-            "supports_cuda_graph": self.supports_cuda_graph,
             "cache_kinds": list(self.cache_kinds),
             "default_max_samples_per_chunk": self.default_max_samples_per_chunk,
             "metadata": dict(self.metadata),
@@ -285,22 +250,10 @@ class FamilyCapability:
             supports_batched_requests=bool(value.get("supports_batched_requests", True)),
             supports_chunked_execution=bool(value.get("supports_chunked_execution", True)),
             supports_batched_forward=bool(value.get("supports_batched_forward", True)),
-            supports_stepwise=bool(value.get("supports_stepwise", False)),
-            supports_cfg=bool(value.get("supports_cfg", False)),
-            supports_batched_decode=bool(value.get("supports_batched_decode", False)),
             supports_reference_conditioning=bool(
                 value.get("supports_reference_conditioning", False)
             ),
-            supports_token_logprobs=bool(value.get("supports_token_logprobs", False)),
-            supports_kv_decode=bool(value.get("supports_kv_decode", False)),
-            supports_prefill_decode_split=bool(
-                value.get("supports_prefill_decode_split", False)
-            ),
-            supports_resident_rollout_state=bool(
-                value.get("supports_resident_rollout_state", False)
-            ),
             supports_torch_compile=bool(value.get("supports_torch_compile", False)),
-            supports_cuda_graph=bool(value.get("supports_cuda_graph", False)),
             cache_kinds=tuple(str(item) for item in value.get("cache_kinds", ())),
             default_max_samples_per_chunk=None if value.get("default_max_samples_per_chunk") is None else int(value.get("default_max_samples_per_chunk")),
             metadata=dict(value.get("metadata") or {}),
