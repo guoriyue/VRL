@@ -1,6 +1,9 @@
 # SPRINT: Helper pass-through & docstring hygiene (follow-on)
 
-状态：in-progress（2026-06-16 起；Phase 0 已落地并验证，Phase 1/2/3 待做）。
+状态：completed（Phase 0–3 全部落地并验证，2026-06-17 收口于 VRL 分支
+`helper-passthrough-hygiene`，每个 Phase 独立 commit：Phase 1 = f6813f9，
+Phase 0 补完 = d7ec895，Phase 3 = 5372ade；Phase 2 判定全 KEEP 无代码改动。
+全套 `pytest -q tests/scripts/` → 58 passed）。
 本 sprint 是 `done/SPRINT_small_function_consolidation.md`（2026-06-10 implemented，
 Phase A/B/D 已落地，Phase C/A5 未做）的**后续增量**，针对前一轮**明确排除在动作之外**
 的两类赘肉——前一轮口径是"只有 inline / merge / delete 三种动作，不做 rename / 文档化 /
@@ -35,24 +38,39 @@ AST 扫 vrl/ 全部 280 文件 →
 已剔除的假阳性见 §1 末尾。
 ```
 
-## 1. Phase 0 — online.py 样板（已落地，2026-06-16）
+## 1. Phase 0 — online.py 样板（_save_checkpoint + docstring 于 2026-06-16；_prepare_metrics_csv 于 2026-06-17 补完，commit d7ec895）
 
 用户选中的 `vrl/scripts/common/online.py` 作为三类赘肉的样板，已清并验证：
 
 ```text
 DI-by-arg 删除（3 处，参数甚至与 import 同名造成遮蔽）：
-  _prepare_metrics_csv(..., prepare_metrics_csv=)  → 删参数，函数内直接调顶层 import
-  _save_checkpoint(..., save_training_checkpoint=, capture_rng_state=)  → 同上（2 处调用点同步改）
+  _save_checkpoint(..., save_training_checkpoint=, capture_rng_state=)  → 删参数，直接调顶层 import（2 处调用点同步改）【2026-06-16 落地】
+  _prepare_metrics_csv(..., prepare_metrics_csv=) + 兄弟 _prepare_eval_metrics_csv + 调用点  → 同上【2026-06-17 补完，见下方修正】
 docstring 去重（1 处）：
   _require_supported_online_strategy 的 9 行 docstring 几乎逐句复述下面 NotImplementedError
-  的 message → 收成 6 行只讲 WHY，细节留在可 grep 的 error message（单一事实来源）
+  的 message → 收成 6 行只讲 WHY，细节留在可 grep 的 error message（单一事实来源）【2026-06-16 落地】
 ```
 
 验证：`pytest -q tests/scripts/test_online_lifecycle.py` → **11 passed**。
 测试用 `monkeypatch.setattr(online, "_save_checkpoint", ...)` 整体替换函数，不绑定参数签名，
-故删参数零风险。
+故删参数零风险（Phase 3 后该 patch 改为指向 `OnlineRecipeRun.save_checkpoint`）。
 
-## 2. Phase 1 — 剩余 DI-by-arg 分类 + 删除（最高确定性，但不全机械）
+> **2026-06-17 修正**：复核发现初版 Phase 0 实际只删了 `_save_checkpoint` 的 DI 参数与 docstring；
+> `_prepare_metrics_csv` / `_prepare_eval_metrics_csv` 的 `prepare_metrics_csv=`（默认值即顶层
+> import 自身，构成 self-shadow）当时**并未删除**，调用点 `prepare_metrics_csv=prepare_metrics_csv`
+> 也还在。绿测掩盖了这点：测试把 `_prepare_metrics_csv` 整体 monkeypatch 成 no-op，不绑定签名。
+> commit d7ec895 才真正删掉这两处参数与调用点，函数体直接调顶层 import，claim 至此为真。
+
+## 2. Phase 1 — 剩余 DI-by-arg 分类 + 删除（最高确定性，但不全机械）【已落地 2026-06-17，commit f6813f9】
+
+> **结果**：`cosmos_predict25_kling_eval.py` 顶层已 `import torch`，故按规则 A 删掉
+> `_resolve_device(..., torch_module)` 与 `_resolve_dtype(..., torch)` 的透传参数，函数体直接用
+> 顶层 `torch`，返回/参数类型从 `Any` 恢复为 `torch.device` / `torch.dtype`，调用点 (main) 同步改。
+> `anima/generate.py` 三个 helper 的 `torch` 参数**按规则 B 保留**：该文件顶层无 `import torch`，
+> torch 在 `main()` 内 `dry_run` 后才 lazy import 再传入，且 `tests/scripts/test_anima_generate.py:85`
+> 直接注入 fake `_Torch` 断言 CUDA fail-fast——是真实的 lazy-import / test-fake 边界，非 DI 噪音。
+> `placement.py:72 actor_scheduling_strategy(placement_group)` 仍为合法领域参数，未动。
+> 验证：`pytest -q tests/scripts/test_cosmos_predict25_kling_eval.py` → 8 passed；grep 无未解释 `torch_module` 残留。
 
 online.py 清完后，全仓 AST 复扫剩若干 torch-module 参数命中。这里必须先分类，不能把
 所有 `torch` 参数都当成噪音删掉：
@@ -99,7 +117,16 @@ C. 参数重命名（torch_module）-> 不靠 AST 名字规则下结论，打开
 grep 确认没有**未解释**的 `torch=torch` / `torch_module` 残留。anima lazy-import 边界若保留，
 应在 sprint closeout 里显式列为 intentional。
 
-## 3. Phase 2 — docstring 复述 error 去重（逐个判定，不批量）
+## 3. Phase 2 — docstring 复述 error 去重（逐个判定，不批量）【已完成 2026-06-17：5 个候选全部判定 KEEP，无代码改动】
+
+> **结果**：逐个打开 5 个候选，全部按"默认保留"裁定为 KEEP——每个 docstring 讲的都是领域 WHY /
+> contract，而非复述自己的 `raise`/`log`，故无一处改动：
+> - `vae_decode_memory.py apply_generation_memory_policy`：讲 target-keyed contract + 为什么 typo 必须 fail loud。
+> - `distributed.py resolve_training_context`：讲 single_process vs fsdp 语义 + 与 strategy.py/fsdp.py 的边界。
+> - `builders.py _validate_yaml_home`：讲 optional 字段 typo 的静默回退风险 + vocabulary 由 RootConfig 派生防漂移。
+> - `prompts.py load_prompt_manifest`：文档化 .jsonl / .txt 两种受支持格式（含 flow_grpo 约定）。
+> - `precision_guard.py resolve_guard_mode`：讲 auto/warn/fail 策略取舍；error 只覆盖非法 mode。
+> 各文件 `git diff` 为空。结论与文档原"当前倾向保留"一致，Phase 2 实质为 no-op done。
 
 §2 候选池 24 个 doc-heavy 小函数里，**默认保留**，只动 docstring 在复述本函数自己
 `raise`/`log` 文案的那一小撮。候选（既 doc-heavy 又含 `raise`，需逐个开看）：
@@ -137,7 +164,25 @@ vrl/trainers/online/precision_guard.py:34            resolve_guard_mode
 
 验收：改动文件 `pytest -q` 绿（纯文本改动，行为零变化）；人工确认每处 error message 仍自洽。
 
-## 4. Phase 3 — run_online_recipe 收成 OnlineRecipeRun（结构性，单独一轮）
+## 4. Phase 3 — run_online_recipe 收成 OnlineRecipeRun（结构性，单独一轮）【已落地 2026-06-17，commit 5372ade】
+
+> **结果**：新增 `OnlineRecipeRun`（`@dataclass(slots=True)`，定义在 online.py，紧邻 run_online_recipe，
+> 不进 types.py——它不是 family-hook payload）。持有 `stack` + 本 run 的执行状态
+> (`csv_path` / `eval_csv_path` / `rng` / `resume`)，把 5 个 IO 副作用收成方法：
+> `prepare_metrics_csv` / `write_metric_row` / `prepare_eval_metrics_csv` / `write_eval_metric_row` /
+> `save_checkpoint`。`run_online_recipe` 里 6 处调用点从"塞 2–6 个参数"降为"调方法"；stack 构造上移几行
+> 以便 controller 先包住它。`OnlineRecipeStack` 仍是唯一的 wired-runtime owner，仍是交给
+> before_step/after_step 的 payload，controller 只读 `self.stack.*`，不复制其字段。
+>
+> **相对 §4 原计划的两处取舍**（实现时决定，已在 commit message 记录）：
+> 1. 连 eval-CSV 两个 writer 一并收成方法（不止文档点名的 3 个 training helper）——否则 training CSV 走
+>    方法、eval CSV 仍是自由函数，正是本 sprint 要消的那种不对称。
+> 2. controller 存 `resume: bool`（两个 prepare 方法实际只需这个布尔），不存整个 `resume_checkpoint`，
+>    避免一个 derived-struct dead field。
+>
+> 测试：`tests/scripts/` 全套 **58 passed**。`test_online_lifecycle` 的 monkeypatch 从 patch 模块级
+> `_save_checkpoint`/`_prepare_metrics_csv`/`_write_metric_row` 改为 patch `OnlineRecipeRun` 的同名方法；
+> `test_online_precision_bridge` 那个 CSV 列格式测试改用一个最小 SimpleNamespace stack 驱动 controller。
 
 `vrl/scripts/common/online.py` 的 `run_online_recipe` 是 ~300 行过程，周围浮着一批
 single-use 私有 helper，反复在传同一批状态。注意：当前代码已经有 `OnlineRecipeStack`，
@@ -194,12 +239,14 @@ batch_builder.py，未含 online.py）。
 ## 6. 验收
 
 ```text
-每个 Phase 独立 commit：
-  Phase 0  已落地（online.py），tests/scripts/test_online_lifecycle.py 11 passed。
-  Phase 1  分类 torch-module 参数；只删无边界价值者；pytest -q 受影响脚本测试绿 +
-           grep 无未解释残留。
-  Phase 2  逐个判定 5 个候选；默认保留 WHY / contract docstring；pytest -q 绿。
-  Phase 3  单独一轮，OnlineRecipeRun 作为 execution controller（持有 stack，不取代 stack）
-           + tests/scripts/ 全套绿。
+每个 Phase 独立 commit（全部已完成，VRL 分支 helper-passthrough-hygiene）：
+  Phase 0  ✅ _save_checkpoint+docstring（2026-06-16）；_prepare_metrics_csv 补完 d7ec895；
+           tests/scripts/test_online_lifecycle.py 11 passed。
+  Phase 1  ✅ commit f6813f9；删 cosmos eval 两个 torch 透传参数、anima lazy 边界保留；
+           test_cosmos_predict25_kling_eval.py 8 passed；grep 无未解释残留。
+  Phase 2  ✅ 5 个候选全判 KEEP（WHY/contract，非 error 复述），无代码改动；pytest 绿。
+  Phase 3  ✅ commit 5372ade；OnlineRecipeRun 作为 execution controller（持有 stack，不取代 stack）；
+           tests/scripts/ 全套 58 passed。
 LOC 不设指标（指标驱动的 LOC 清理正是上上轮被回滚的模式）；目标是降低"读一段流程要跳几次"。
+实际净变化：online.py −15 行（192 insertions / 207 deletions），调用点参数从 2–6 个降为 0–1 个。
 ```
