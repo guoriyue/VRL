@@ -411,7 +411,7 @@ class DistributedSection(ConfigBase):
     rollout: Annotated[
         Any,
         ConfigBlock(
-            ("cpus_per_worker", "placement_strategy",
+            ("cpus_per_worker",
              "max_inflight_chunks_per_worker", "chunk_placement_strategy",
              "sync_trainable_state", "colocate_with_trainer"),
             {"colocate_with_trainer": ConfigBlock(("memory_fraction",))},

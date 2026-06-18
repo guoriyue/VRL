@@ -25,7 +25,6 @@ class RayGenerationConfig:
     num_workers: int = 1
     gpus_per_worker: float = 1.0
     cpus_per_worker: float = 1.0
-    placement_strategy: str = "SPREAD"
     allow_driver_gpu_overlap: bool = False
     max_inflight_chunks_per_worker: int = 1
     # Chunk->worker binding: "round_robin" binds at plan time (baseline);
@@ -38,7 +37,6 @@ class RayGenerationConfig:
     # syncer is only built on the online launch path, so this never affects eval.
     sync_trainable_state: str = "lora_only"
     release_after_collect: bool = False
-    release_before_reward_model: bool = False
     persistent_colocated_workers: bool = False
     # Hard cap on this worker's CUDA allocator share, in (0, 1]; None = no cap.
     # Applied in the worker process via torch.cuda.set_per_process_memory_fraction.
@@ -52,8 +50,6 @@ class RayGenerationConfig:
             raise ValueError("gpus_per_worker must be >= 0")
         if self.cpus_per_worker <= 0:
             raise ValueError("cpus_per_worker must be > 0")
-        if not self.placement_strategy:
-            raise ValueError("placement_strategy must be non-empty")
         if self.max_inflight_chunks_per_worker < 1:
             raise ValueError("max_inflight_chunks_per_worker must be >= 1")
         if self.sync_trainable_state not in {"disabled", "lora_only"}:
@@ -95,9 +91,6 @@ class RayGenerationConfig:
             cpus_per_worker=float(
                 cfg_get(rollout, "cpus_per_worker", 1.0),
             ),
-            placement_strategy=str(
-                cfg_get(rollout, "placement_strategy", "SPREAD"),
-            ),
             allow_driver_gpu_overlap=bool(resources.colocated),
             max_inflight_chunks_per_worker=int(
                 cfg_get(
@@ -115,7 +108,6 @@ class RayGenerationConfig:
             # Resolved values: unset YAML flags derive from the GPU topology
             # (resolve_distributed_resources is the single source of truth).
             release_after_collect=resources.rollout_release_after_collect,
-            release_before_reward_model=resources.rollout_release_before_reward_model,
             persistent_colocated_workers=resources.rollout_persistent_colocated_workers,
             gpu_memory_fraction=resources.rollout_gpu_memory_fraction,
             resources=resources,

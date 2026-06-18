@@ -12,7 +12,6 @@ distributed:
 
   rollout:
     cpus_per_worker: 4.0
-    placement_strategy: STRICT_PACK
     max_inflight_chunks_per_worker: 1
     # Chunk->worker binding: round_robin binds at plan time; dynamic binds at
     # dispatch time (pull + LPT by estimated cost). Equivalent for 1 worker.
