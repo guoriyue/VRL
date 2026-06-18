@@ -202,12 +202,20 @@ class DataConfig(ConfigBase):
 # ── Supporting sections for cross-field validation ────────────────────────────
 
 
+class SdeConfig(ConfigBase):
+    """Typed rollout.sde block. ``type`` is the user-facing allow-list, replacing
+    the hand-written {sde, cps} membership checks previously duplicated in the
+    schema cross-validator, layout, and flow_matching. The layout request-boundary
+    guard stays for over-the-wire request dicts; ``window_*`` stay permissive."""
+
+    type: Literal["sde", "cps"]
+    window_size: Any = None
+    window_range: Any = None
+
+
 class RolloutConfig(ConfigBase):
     # readers: math/diffusion flow_matching window + RootConfig check
-    sde: Annotated[
-        dict[str, Any] | None,
-        ConfigBlock(("type", "window_size", "window_range")),
-    ] = None
+    sde: SdeConfig | None = None
     noise_level: float | None = None
     # janus_pro R1 only; cross-checked against sampling.r1.final_image_policy in
     # RootConfig._cross_field_validate (which also enforces it is set for that kind).
@@ -459,11 +467,11 @@ class RootConfig(ConfigBase):
         rollout = self.rollout
 
         # grpo / diffusion_nft: SDE type must be sde or cps
-        if kind in {"grpo", "diffusion_nft"}:
-            sde = rollout.sde if rollout else None
-            sde_type = str(sde.get("type", "")) if isinstance(sde, dict) else ""
-            if sde_type not in {"sde", "cps"}:
-                raise ValueError("rollout.sde.type must be 'sde' or 'cps'")
+        # grpo / diffusion_nft require an sde block; sde.type membership is now
+        # enforced by the SdeConfig Literal (for every kind, not just these two —
+        # the runtime layout guard remains the wire-boundary check).
+        if kind in {"grpo", "diffusion_nft"} and (rollout is None or rollout.sde is None):
+            raise ValueError("config missing required field: rollout.sde.type")
 
         # token_grpo: nextstep_1 family requires rollout.noise_level
         if kind == "token_grpo":

@@ -31,7 +31,12 @@ class RayGenerationConfig:
     # Chunk->worker binding: "round_robin" binds at plan time (baseline);
     # "dynamic" binds at dispatch time (pull + LPT). Equivalent for 1 worker.
     chunk_placement_strategy: str = "round_robin"
-    sync_trainable_state: str = "disabled"
+    # Binary on/off (consumers only check != "disabled"; the "lora_only" name is
+    # legacy — the syncer flattens whatever trainable modules exist, lora or full).
+    # Defaults ON: online runs train the policy the rollout workers must resync, so
+    # an omitted value previously meant silent stale-policy training. The weight
+    # syncer is only built on the online launch path, so this never affects eval.
+    sync_trainable_state: str = "lora_only"
     release_after_collect: bool = False
     release_before_reward_model: bool = False
     persistent_colocated_workers: bool = False
@@ -102,7 +107,7 @@ class RayGenerationConfig:
                 ),
             ),
             sync_trainable_state=str(
-                cfg_get(rollout, "sync_trainable_state", "disabled"),
+                cfg_get(rollout, "sync_trainable_state", "lora_only"),
             ),
             chunk_placement_strategy=str(
                 cfg_get(rollout, "chunk_placement_strategy", "round_robin"),

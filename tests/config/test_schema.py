@@ -283,7 +283,7 @@ def test_grpo_requires_valid_sde_type() -> None:
     """Checks GRPO requires valid SDE type."""
     cfg = _minimal_grpo_cfg()
     cfg.rollout.sde.type = "euler"
-    with pytest.raises(ValueError, match=r"rollout\.sde\.type must be"):
+    with pytest.raises(ValueError, match=r"unknown rollout\.sde\.type"):
         parse_config(cfg)
 
 
@@ -309,7 +309,7 @@ def test_diffusion_nft_requires_valid_sde_type() -> None:
             "rollout": {"sde": {"type": "invalid"}},
         }
     )
-    with pytest.raises(ValueError, match=r"rollout\.sde\.type must be"):
+    with pytest.raises(ValueError, match=r"unknown rollout\.sde\.type"):
         parse_config(cfg)
 
 

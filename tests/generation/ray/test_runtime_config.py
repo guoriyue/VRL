@@ -226,6 +226,17 @@ def test_chunk_placement_strategy_switches_from_cfg() -> None:
         RayGenerationConfig.from_cfg(cfg)
 
 
+def test_sync_trainable_state_defaults_on_for_from_cfg() -> None:
+    """Online runs train the policy the rollout workers must resync, so an omitted
+    sync_trainable_state defaults ON ("lora_only"), not silently "disabled" (which
+    would train the rollout on stale policy weights). Explicit values are kept."""
+    assert RayGenerationConfig.from_cfg(_cfg()).sync_trainable_state == "lora_only"
+
+    cfg = _cfg()
+    cfg.distributed.rollout.sync_trainable_state = "disabled"
+    assert RayGenerationConfig.from_cfg(cfg).sync_trainable_state == "disabled"
+
+
 def test_ray_build_inputs_leaves_model_compile_config_without_rollout_override() -> None:
     """Checks build inputs keep model compile config when rollout override is absent."""
     launch_inputs = RayGenerationLauncher.build_inputs(
