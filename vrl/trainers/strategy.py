@@ -335,13 +335,22 @@ class DDPStrategy(Strategy):
         return float(nn.utils.clip_grad_norm_(parameters, max_norm))
 
     def _unwrapped_full_state(self, module: Any) -> tuple[Any, dict[str, Any]]:
-        from vrl.trainers.fsdp import gather_full_state_dict
         from vrl.trainers.weight_sync import unwrap_compile_and_ddp
 
         inner = unwrap_compile_and_ddp(module)
-        # DDP keeps full params: gather_full_state_dict just materializes the plain
-        # full state (no shards) in the same key space single-process would export.
-        return inner, gather_full_state_dict(inner)
+        # DDP replicates the full module on every rank (no sharding), so the plain
+        # unwrapped state_dict() IS the full policy-facing state — same key space as
+        # inner.named_parameters(), which select_trainable_state() checks against.
+        #
+        # Do NOT route this through the FSDP gather_full_state_dict (DCP
+        # get_model_state_dict full_state_dict=True): at world_size>1 its distributed
+        # all-gather path drops the PEFT LoRA keys for a *replicated* (non-sharded)
+        # module, so select_trainable_state() then reports every lora_A/lora_B param
+        # "missing" and the first weight sync raises. The ws=1 CPU test never hit that
+        # path (gather is a no-op at ws=1); the real 2x1 NCCL run did. cpu-offload to
+        # match the rollout payload contract (the FSDP path uses cpu_offload=True).
+        full = {key: value.detach().to("cpu") for key, value in inner.state_dict().items()}
+        return inner, full
 
     def export_trainable_state(self, bundle: Any) -> dict[str, dict[str, Any]]:
         from vrl.trainers.weight_sync import require_trainable_modules, to_cpu
