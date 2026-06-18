@@ -43,8 +43,19 @@ def build_rollout_schedule(
     sync_state_getter: Callable[[], dict[str, Any]] | None,
     weights_initialized: Callable[[], bool],
     set_weights_initialized: Callable[[bool], None],
+    algorithm_tolerates_off_policy_staleness: bool = True,
 ) -> RolloutSchedule:
-    """Build the RL rollout schedule selected by trainer config."""
+    """Build the RL rollout schedule selected by trainer config.
+
+    ``algorithm_tolerates_off_policy_staleness`` is the algorithm's soundness
+    capability (a plain bool, not the algorithm object, so the rollout layer
+    stays free of any ``vrl.algorithms`` import): GRPO-family algorithms carry an
+    importance-sampling correction and tolerate a bounded version lag, while
+    likelihood-free objectives (DiffusionNFT) do not and require max_stale=0. The
+    staleness *mechanism* is algorithm-agnostic; only this soundness bound is
+    per-algorithm, so it is validated here rather than special-cased in the
+    producer/consumer.
+    """
 
     mode = RolloutScheduleMode(
         getattr(config, "mode", RolloutScheduleMode.STRICT_ON_POLICY.value),
@@ -69,7 +80,13 @@ def build_rollout_schedule(
     if mode is RolloutScheduleMode.STRICT_ON_POLICY:
         return StrictOnPolicyRolloutSchedule(lifecycle=lifecycle)
     if mode is RolloutScheduleMode.CONTINUOUS:
-        return _build_continuous_schedule(config, lifecycle=lifecycle)
+        return _build_continuous_schedule(
+            config,
+            lifecycle=lifecycle,
+            algorithm_tolerates_off_policy_staleness=(
+                algorithm_tolerates_off_policy_staleness
+            ),
+        )
     raise AssertionError(f"unreachable rollout schedule mode: {mode}")
 
 
@@ -77,6 +94,7 @@ def _build_continuous_schedule(
     config: Any,
     *,
     lifecycle: RolloutLifecycle,
+    algorithm_tolerates_off_policy_staleness: bool,
 ) -> ContinuousRolloutSchedule:
     """Translate ``rollout_orchestration.continuous`` config into the schedule.
 
@@ -98,6 +116,20 @@ def _build_continuous_schedule(
     max_inflight_groups = int(cont.max_inflight_groups)
     max_ready_groups = int(cont.max_ready_groups)
     max_stale_policy_versions = int(cont.max_stale_policy_versions)
+
+    # Per-algorithm soundness gate. A likelihood-free algorithm has no way to
+    # reweight off-policy samples, so a non-zero staleness window does not just
+    # add variance — it silently biases the objective. Fail fast instead of
+    # producing a quietly-wrong run; GRPO-family algorithms pass through.
+    if max_stale_policy_versions > 0 and not algorithm_tolerates_off_policy_staleness:
+        raise ValueError(
+            "rollout_orchestration.continuous.max_stale_policy_versions="
+            f"{max_stale_policy_versions} is unsound for this algorithm: it is "
+            "likelihood-free (no importance-sampling correction), so it can only "
+            "train on strictly on-policy rollouts. Set max_stale_policy_versions=0 "
+            "(serial/on-policy), or use a GRPO-family algorithm for async "
+            "off-policy prefetch.",
+        )
 
     # Make "is this actually async?" self-reporting at startup. With
     # max_stale=0 the consumer rejects every prior-version group, so continuous

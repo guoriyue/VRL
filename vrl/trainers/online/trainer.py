@@ -360,6 +360,11 @@ class OnlineTrainer(Trainer):
             sync_state_getter=self.sync_state_getter,
             weights_initialized=lambda: self._rollout_weights_initialized,
             set_weights_initialized=self._set_rollout_weights_initialized,
+            # Default True: only likelihood-free objectives (DiffusionNFT) opt out,
+            # which makes a continuous max_stale>0 config fail fast as unsound.
+            algorithm_tolerates_off_policy_staleness=bool(
+                getattr(self.algorithm, "tolerates_off_policy_staleness", True),
+            ),
         )
 
         if self.config.optim.allow_tf32:

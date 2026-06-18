@@ -30,11 +30,16 @@ distributed:
     # single-GPU release-after-collect path. The block's presence IS the
     # colocation intent; memory_fraction hard-caps the resident worker's GPU share
     # so it cannot starve the trainer on the shared card (the trainer gets the
-    # remaining ~0.55; both fit at the tiny 128x128/4-step shape). This is what
-    # makes continuous overlap observable on one GPU, and it is only safe for tiny
-    # debug workloads.
+    # remaining ~0.45). This is what makes continuous overlap observable on one
+    # GPU, and it is only safe for tiny debug workloads.
+    #
+    # 0.55 (not 0.45): on a 32 GiB card the resident rollout worker must hold the
+    # FULL SD3.5-medium pipeline (transformer + VAE + 3 text encoders, the T5 alone
+    # ~4.7 GiB). 0.45 (~14.1 GiB) OOMs on worker load_policy; 0.55 (~17.2 GiB) was
+    # verified to run all 3 epochs with the trainer fitting in the remaining ~14
+    # GiB. Scale this with GPU VRAM if you change cards.
     colocate:
-      memory_fraction: 0.45
+      memory_fraction: 0.55
 
 actor:
   optim:

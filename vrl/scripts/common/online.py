@@ -415,9 +415,14 @@ class OnlineRecipeRun:
             # Continuous-rollout async diagnostics (0 in strict_on_policy mode). These
             # answer "is the run actually async?": observed staleness of consumed
             # samples, prefetched ready-queue depth, weight-sync barrier pause, and
-            # producer starvation. Sourced from TrainStepMetrics.phase_times.
+            # producer starvation. The two *_dropped/discarded columns quantify
+            # wasted generation: groups dropped past the staleness window at receipt
+            # (producer) and ready items purged right after a weight sync (schedule).
+            # Both stay ~0 on a single fast-refilling card and only grow under real
+            # disaggregated overlap. Sourced from TrainStepMetrics.phase_times.
             "continuous_stale_versions,continuous_ready_groups,"
-            "continuous_weight_sync_pause_s,continuous_producer_max_gap_s"
+            "continuous_weight_sync_pause_s,continuous_producer_max_gap_s,"
+            "continuous_producer_discarded_stale,continuous_post_sync_dropped_stale"
         )
         if component_cols:
             header = f"{header},{component_cols}"
@@ -461,6 +466,12 @@ class OnlineRecipeRun:
             "continuous_ready_groups": phases.get("continuous.queue_ready_groups", 0.0),
             "continuous_weight_sync_pause_s": phases.get("continuous.weight_sync_pause_s", 0.0),
             "continuous_producer_max_gap_s": phases.get("continuous.producer_max_tick_gap_s", 0.0),
+            "continuous_producer_discarded_stale": phases.get(
+                "continuous.producer_discarded_stale", 0.0,
+            ),
+            "continuous_post_sync_dropped_stale": phases.get(
+                "continuous.post_sync_dropped_stale", 0.0,
+            ),
             **{f"r_{name}": component_means[name] for name in component_names},
         }
         metric_row_hook = self.stack.definition.metric_row_hook
@@ -494,6 +505,8 @@ class OnlineRecipeRun:
                         f"{row['continuous_ready_groups']:.1f}",
                         f"{row['continuous_weight_sync_pause_s']:.4f}",
                         f"{row['continuous_producer_max_gap_s']:.4f}",
+                        f"{row['continuous_producer_discarded_stale']:.1f}",
+                        f"{row['continuous_post_sync_dropped_stale']:.1f}",
                         *(f"{row[f'r_{name}']:.4f}" for name in component_names),
                     ],
                 )

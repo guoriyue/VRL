@@ -32,6 +32,32 @@ microbatch 只由 `SPRINT_streaming_rollout_accumulation.md` 与
 >   overlap 解 park 于 ≥2 卡。
 > - **soundness 闸**:`max_stale=1` 对 GRPO sound(IS 比值补偿,`grpo/continuous.py:85`),对 DiffusionNFT
 >   不 sound(无比值,parked doc §1);DiffusionNFT 单卡只跑 `max_stale=0`。
+>
+> **更新(2026-06-18,算法无关 async 基础设施落地 —— 不依赖 ≥2 卡的 CPU 可测部分):**
+> - **GAP 1 落地:producer 侧 receipt-time freshness gate + schedule 侧 post-sync purge**(此前只在 consumer
+>   端事后丢弃,见 parked `SPRINT_async_rollout_train_overlap.md:79`)。`producer.py` `_enqueue_result`
+>   顶部用同一个 `StalenessPolicy.too_stale(result["version"], current_version)` 自检:如果在途期间
+>   `current_version` 已经越过窗口,该组在收货时直接丢弃,不入队。新增 `discarded_stale_count` 计数
+>   (`types.py` `ContinuousRolloutProducerState`)+ `continuous.producer_discarded_stale` metric
+>   (`schedule.py` `_attach_producer_metrics`)。同时补上真实 barrier 顺序下更常见的路径:标准
+>   `after_train_step` 是 `drain_inflight -> sync_weights_after_train`,所以训练期间已经入队的旧版本 item
+>   会在 **sync 之后** 才变 stale；`schedule.py` 在 sync 后立即调用 `queue.drop_too_stale(...)`,通过
+>   `continuous.post_sync_dropped_stale` 与 queue `dropped_stale` 记录,避免把旧 ready queue 拖到下一次
+>   consumer wait 才丢。**算法无关**:两处闸门都只读 `max_stale_policy_versions` 配置 —— NFT(=0)不训练跨版本
+>   item,GRPO(≥1)只丢真超窗的;`None` 版本与 future(staleness<0,bug)仍由 queue/consumer fail-fast。
+>   CPU 单测:`test_contracts.py` `test_producer_discards_group_too_stale_at_receipt` / `_past_stale_window`
+>   + `test_schedule.py` `test_after_train_step_purges_stale_ready_items_after_sync`。
+> - **soundness 闸从"概念"变成"代码 fail-fast"**:算法声明能力属性
+>   `tolerates_off_policy_staleness`(`diffusion_nft.py` 显式 `False`,GRPO 走安全默认 `True`,镜像现有
+>   `uses_evaluator` pattern)。`build_rollout_schedule` 收一个 **bool**(不 import 算法层,守住架构边界)
+>   传到 `_build_continuous_schedule`:`max_stale>0 且算法不容忍` → `ValueError` fail-fast,而非静默有偏跑。
+>   trainer 在 `__init__` 用 `getattr(self.algorithm, "tolerates_off_policy_staleness", True)` 接线。
+>   CPU 单测:`test_schedule.py` 三个(intolerant+窗口>0 拒绝 / tolerant+窗口>0 放行 / intolerant+窗口=0 放行)
+>   + `test_diffusion_nft.py` 能力声明断言。这把用户的"机制算法无关 + staleness soundness 是 per-algorithm
+>   config"两半都落实了:机制对所有算法一视同仁,soundness 由算法属性 × 配置共同判定。
+> - **仍 parked 于 ≥2 卡**:GAP 2(shadow-model de-drain,消除 barrier drain 气泡)是多卡优先、改动大的
+>   独立 PR(见 §5 P1 修正 + `SPRINT_shadow_model_weight_sync.md`)。本次只做单卡 CPU 可测、对所有算法
+>   自动就绪的那部分。
 
 ---
 

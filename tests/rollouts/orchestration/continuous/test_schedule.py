@@ -103,7 +103,13 @@ def _continuous_config(**continuous: Any) -> SimpleNamespace:
     )
 
 
-def _build(config: SimpleNamespace, collector: _Collector, syncer: _Syncer | None):
+def _build(
+    config: SimpleNamespace,
+    collector: _Collector,
+    syncer: _Syncer | None,
+    *,
+    algorithm_tolerates_off_policy_staleness: bool = True,
+):
     initialized = {"value": False}
 
     def _set(value: bool) -> None:
@@ -118,6 +124,9 @@ def _build(config: SimpleNamespace, collector: _Collector, syncer: _Syncer | Non
         sync_state_getter=(lambda: {"w": 1}) if syncer is not None else None,
         weights_initialized=lambda: initialized["value"],
         set_weights_initialized=_set,
+        algorithm_tolerates_off_policy_staleness=(
+            algorithm_tolerates_off_policy_staleness
+        ),
     )
 
 
@@ -127,6 +136,42 @@ def test_factory_builds_continuous_schedule() -> None:
     schedule = _build(_continuous_config(), _Collector(runtime), _Syncer(runtime))
     assert isinstance(schedule, ContinuousRolloutSchedule)
     assert schedule.mode is RolloutScheduleMode.CONTINUOUS
+
+
+def test_continuous_rejects_stale_window_for_intolerant_algorithm() -> None:
+    """A likelihood-free algorithm + max_stale>0 must fail fast as unsound."""
+    runtime = _Runtime()
+    with pytest.raises(ValueError, match="likelihood-free"):
+        _build(
+            _continuous_config(max_stale_policy_versions=1),
+            _Collector(runtime),
+            _Syncer(runtime),
+            algorithm_tolerates_off_policy_staleness=False,
+        )
+
+
+def test_continuous_allows_stale_window_for_tolerant_algorithm() -> None:
+    """A GRPO-family (tolerant) algorithm + max_stale>0 builds normally."""
+    runtime = _Runtime()
+    schedule = _build(
+        _continuous_config(max_stale_policy_versions=1),
+        _Collector(runtime),
+        _Syncer(runtime),
+        algorithm_tolerates_off_policy_staleness=True,
+    )
+    assert isinstance(schedule, ContinuousRolloutSchedule)
+
+
+def test_continuous_allows_intolerant_algorithm_with_zero_window() -> None:
+    """max_stale=0 is on-policy, so an intolerant algorithm is still allowed."""
+    runtime = _Runtime()
+    schedule = _build(
+        _continuous_config(max_stale_policy_versions=0),
+        _Collector(runtime),
+        _Syncer(runtime),
+        algorithm_tolerates_off_policy_staleness=False,
+    )
+    assert isinstance(schedule, ContinuousRolloutSchedule)
 
 
 @pytest.mark.asyncio
@@ -180,6 +225,48 @@ async def test_weight_sync_barrier_advances_version_and_resumes() -> None:
         assert second.rollout_id == 1
         assert second.metadata["consume_policy_version"] == 2
         assert second.metadata["stale_policy_versions"] == 0
+    finally:
+        await schedule.producer.stop()
+
+
+@pytest.mark.asyncio
+async def test_after_train_step_purges_stale_ready_items_after_sync() -> None:
+    """Ready items produced during training become stale after sync and are
+    purged by the schedule, not deferred to the next consumer wait."""
+    runtime = _Runtime()
+    collector = _Collector(runtime)
+    syncer = _Syncer(runtime)
+    schedule = _build(
+        _continuous_config(max_ready_groups=4, max_stale_policy_versions=0),
+        collector,
+        syncer,
+    )
+
+    try:
+        first = await schedule.next_iteration(["p0", "p1"], group_size=2)
+        assert first.policy_version == 1
+
+        # Simulate optimizer time: producer keeps filling the ready queue with
+        # v1 work while the trainer is still training that same v1 rollout.
+        await asyncio.sleep(0.05)
+        queued_before_sync = schedule.queue.stats()
+        assert queued_before_sync["ready_items"] > 0
+        assert queued_before_sync["dropped_stale"] == 0
+
+        sync_phases = await schedule.after_train_step()
+
+        queued_after_sync = schedule.queue.stats()
+        assert runtime.current_policy_version == 2
+        assert queued_after_sync["ready_items"] == 0
+        assert queued_after_sync["dropped_stale"] >= queued_before_sync["ready_items"]
+        assert (
+            sync_phases["continuous.post_sync_dropped_stale"]
+            == queued_after_sync["dropped_stale"]
+        )
+        # The receipt-time gate is a separate path: standard barrier order
+        # advances the policy version after drain, so the schedule-side purge
+        # owns this common stale-ready-queue case.
+        assert schedule.producer.state.discarded_stale_count == 0
     finally:
         await schedule.producer.stop()
 

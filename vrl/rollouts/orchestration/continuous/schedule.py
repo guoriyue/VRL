@@ -119,6 +119,9 @@ class ContinuousRolloutSchedule:
             self.producer.pause_admission()
             await self.producer.drain_inflight()
             await self.lifecycle.sync_weights_after_train(phase_times)
+            phase_times["continuous.post_sync_dropped_stale"] = float(
+                self._drop_stale_ready_items_after_sync(),
+            )
             self.producer.resume_admission()
         return phase_times
 
@@ -158,6 +161,7 @@ class ContinuousRolloutSchedule:
             lifecycle=self.lifecycle,
             prompts=list(prompts),
             queue=self.queue,
+            staleness=self.staleness,
             group_size=group_size,
             capacity=capacity,
             max_inflight_groups=self.max_inflight_groups,
@@ -181,6 +185,7 @@ class ContinuousRolloutSchedule:
                 "continuous.producer_max_tick_gap_s": float(state.max_tick_gap_s),
                 "continuous.producer_submitted": float(state.submitted_count),
                 "continuous.producer_completed": float(state.completed_count),
+                "continuous.producer_discarded_stale": float(state.discarded_stale_count),
                 "continuous.queue_ready_items": queue_stats["ready_items"],
                 "continuous.queue_ready_groups": queue_stats["ready_groups"],
                 "continuous.queue_ready_bytes": queue_stats["ready_bytes"],
@@ -196,6 +201,15 @@ class ContinuousRolloutSchedule:
                     metadata.get("stale_policy_versions") or 0,
                 ),
             },
+        )
+
+    def _drop_stale_ready_items_after_sync(self) -> int:
+        if self.queue is None:
+            return 0
+        current_version = self.lifecycle.current_policy_version()
+        return self.queue.drop_too_stale(
+            current_version=current_version,
+            staleness=self.staleness,
         )
 
     def _validate_allowed(self) -> None:

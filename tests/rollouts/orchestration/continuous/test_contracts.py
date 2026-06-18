@@ -91,11 +91,13 @@ def _producer(
     queue: ContinuousRolloutQueue,
     *,
     lifecycle: _Lifecycle | None = None,
+    max_stale: int = 0,
 ) -> ContinuousRolloutProducer:
     return ContinuousRolloutProducer(
         lifecycle=lifecycle or _Lifecycle(collector),
         prompts=["p0"],
         queue=queue,
+        staleness=StalenessPolicy(max_stale_policy_versions=max_stale),
         group_size=2,
         capacity=2,
         max_inflight_groups=1,
@@ -208,7 +210,10 @@ async def test_items_carry_policy_version_captured_at_submission() -> None:
     collector.allow_generate.clear()
     queue = ContinuousRolloutQueue(max_items=4)
     lifecycle = _Lifecycle(collector, version=1)
-    producer = _producer(collector, queue, lifecycle=lifecycle)
+    # max_stale=1 so the mid-flight bump to v2 keeps the group inside the
+    # freshness window (staleness 1 <= 1); this test pins version *stamping*,
+    # not the freshness gate, so the group must survive to be inspected.
+    producer = _producer(collector, queue, lifecycle=lifecycle, max_stale=1)
 
     await producer.start()
     try:
@@ -220,6 +225,63 @@ async def test_items_carry_policy_version_captured_at_submission() -> None:
 
         assert queue.size() == 1
         assert queue._items[0].rollout_policy_version == 1
+        assert producer.state.discarded_stale_count == 0
+    finally:
+        producer.resume_admission()
+        await producer.stop()
+
+
+# ----------------------------------------------- producer freshness gate
+
+
+@pytest.mark.asyncio
+async def test_producer_discards_group_too_stale_at_receipt() -> None:
+    """max_stale=0 (e.g. DiffusionNFT): a group whose policy was superseded mid
+    flight is dropped at receipt, not queued for the consumer to drop later."""
+    collector = _GatedCollector()
+    collector.allow_generate.clear()
+    queue = ContinuousRolloutQueue(max_items=4)
+    lifecycle = _Lifecycle(collector, version=1)
+    producer = _producer(collector, queue, lifecycle=lifecycle, max_stale=0)
+
+    await producer.start()
+    try:
+        await asyncio.wait_for(collector.generation_started.wait(), 5.0)
+        producer.pause_admission()
+        lifecycle.version = 2  # trainer advanced while the group was in flight
+        collector.allow_generate.set()
+        await producer.drain_inflight()
+
+        # Generation completed, but the v1 group is stale=1 > 0 at receipt.
+        assert queue.size() == 0
+        assert producer.state.discarded_stale_count == 1
+        # Still counted as completed work — discarded is a subset of completed.
+        assert producer.state.completed_count == 1
+    finally:
+        producer.resume_admission()
+        await producer.stop()
+
+
+@pytest.mark.asyncio
+async def test_producer_discards_group_past_stale_window() -> None:
+    """The gate respects the configured window, not any version change: with
+    max_stale=1 a two-version-old group is still dropped."""
+    collector = _GatedCollector()
+    collector.allow_generate.clear()
+    queue = ContinuousRolloutQueue(max_items=4)
+    lifecycle = _Lifecycle(collector, version=1)
+    producer = _producer(collector, queue, lifecycle=lifecycle, max_stale=1)
+
+    await producer.start()
+    try:
+        await asyncio.wait_for(collector.generation_started.wait(), 5.0)
+        producer.pause_admission()
+        lifecycle.version = 3  # two versions ahead: staleness 2 > 1
+        collector.allow_generate.set()
+        await producer.drain_inflight()
+
+        assert queue.size() == 0
+        assert producer.state.discarded_stale_count == 1
     finally:
         producer.resume_admission()
         await producer.stop()

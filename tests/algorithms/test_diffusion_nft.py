@@ -44,6 +44,17 @@ _TEXT_LEN = TINY_WAN_TEXT_LEN
 _TEXT_DIM = TINY_WAN_TEXT_DIM
 
 
+def test_diffusion_nft_does_not_tolerate_off_policy_staleness() -> None:
+    """The capability that makes a continuous max_stale>0 config fail fast.
+
+    NFT is likelihood-free, so it opts out explicitly; GRPO carries an IS
+    correction and relies on the safe default (no attribute = tolerant).
+    """
+
+    assert DiffusionNFT.tolerates_off_policy_staleness is False
+    assert getattr(GRPO, "tolerates_off_policy_staleness", True) is True
+
+
 @pytest.mark.parametrize(
     ("global_std", "expected"),
     [

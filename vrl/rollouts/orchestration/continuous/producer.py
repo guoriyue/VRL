@@ -22,6 +22,7 @@ import torch
 
 from vrl.rollouts.batch.ops import move_training_batch_to_device
 from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
+from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
 from vrl.rollouts.orchestration.continuous.types import (
     ContinuousRolloutItem,
     ContinuousRolloutProducerState,
@@ -47,6 +48,7 @@ class ContinuousRolloutProducer:
         lifecycle: RolloutLifecycle,
         prompts: list[Any],
         queue: ContinuousRolloutQueue,
+        staleness: StalenessPolicy,
         group_size: int,
         capacity: int,
         max_inflight_groups: int,
@@ -60,6 +62,7 @@ class ContinuousRolloutProducer:
                 "ContinuousRolloutProducer requires a non-empty prompt list",
             )
         self.queue = queue
+        self.staleness = staleness
         self.group_size = int(group_size)
         self.capacity = int(capacity)
         self.max_inflight_groups = max(1, int(max_inflight_groups))
@@ -232,6 +235,21 @@ class ContinuousRolloutProducer:
         self.state.inflight_count = len(self._inflight)
 
     def _enqueue_result(self, result: dict[str, Any]) -> None:
+        # Receipt-time freshness gate. A group can finish generation only after
+        # the trainer has already advanced past the staleness window — its
+        # version was stamped at submit time, but current_version moved while it
+        # was in flight. Dropping it here avoids queuing work the consumer would
+        # discard at admission anyway, and keeps the wasted generation visible
+        # via discarded_stale_count. This is algorithm-agnostic: max_stale=0
+        # (e.g. DiffusionNFT) drops every group whose policy was superseded mid
+        # flight; a wider window (GRPO) only drops groups past that window.
+        # too_stale() returns False for absent versions (no gating) and for
+        # future items (staleness < 0, a bug), so those still flow to the
+        # consumer, which fails fast on them.
+        current_version = self.lifecycle.current_policy_version()
+        if self.staleness.too_stale(result["version"], current_version):
+            self.state.discarded_stale_count += 1
+            return
         completed_at = time.time()
         for index, batch in enumerate(result["batches"]):
             stored = move_training_batch_to_device(batch, _CPU)

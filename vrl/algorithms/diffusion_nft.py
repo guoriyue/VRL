@@ -35,6 +35,15 @@ class DiffusionNFT(Algorithm):
     """
 
     uses_evaluator = False
+    # DiffusionNFT is likelihood-free: it computes no importance-sampling ratio
+    # to reweight off-policy samples, and its positive/negative decomposition is
+    # taken against a previous-policy adapter that ``after_optimizer_step``
+    # refreshes every step. Training on rollouts generated under a superseded
+    # policy is therefore silently biased, not just noisy. So unlike GRPO (whose
+    # IS ratio absorbs a bounded version lag), NFT requires strictly on-policy
+    # data — the continuous-rollout staleness window must be 0. Consumed by
+    # build_rollout_schedule to fail fast on an unsound max_stale>0 config.
+    tolerates_off_policy_staleness = False
 
     def __init__(self, config: DiffusionNFTConfig | None = None) -> None:
         self.config = config or DiffusionNFTConfig()

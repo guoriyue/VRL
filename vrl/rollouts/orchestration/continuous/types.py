@@ -81,6 +81,11 @@ class ContinuousRolloutProducerState:
     tick_count: int = 0
     submitted_count: int = 0
     completed_count: int = 0
+    # Groups that finished generation but were already past the staleness window
+    # by receipt time (current_version moved during their generation), so the
+    # producer dropped them instead of enqueuing dead work. Surfaces wasted
+    # generation; the consumer would drop the same items, just later/downstream.
+    discarded_stale_count: int = 0
     last_tick_gap_s: float = 0.0
     max_tick_gap_s: float = 0.0
     error_count: int = 0
