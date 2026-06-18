@@ -114,7 +114,7 @@ def test_generate_all_releases_model_before_rebuilding(monkeypatch, tmp_path) ->
     """Checks non-reused checkpoint eval does not keep old models alive."""
 
     class FakeModel:
-        def eval(self) -> "FakeModel":
+        def eval(self) -> FakeModel:
             return self
 
     class FakeBundle:

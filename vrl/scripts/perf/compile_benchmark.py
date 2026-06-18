@@ -143,7 +143,10 @@ def _run_cell(
         model.eval()
         runner = _maybe_compile(model, compiled=compiled, mode=mode)
 
-        def step_fn() -> None:
+        # Bind the closure vars as defaults (early binding): the enclosing scope
+        # `del`s them below, which makes ruff flag them as possibly-unbound inside
+        # the closure (F821). Defaults pin the same objects and read as defined.
+        def step_fn(runner=runner, kwargs=kwargs) -> None:
             with torch.no_grad():
                 runner(**kwargs)
 
@@ -157,7 +160,8 @@ def _run_cell(
         model.enable_gradient_checkpointing()
         runner = _maybe_compile(model, compiled=compiled, mode=mode)
 
-        def step_fn() -> None:
+        # Bind closure vars as defaults (early binding) — see rollout branch.
+        def step_fn(runner=runner, kwargs=kwargs, model=model) -> None:
             out = runner(**kwargs)
             sample = out[0] if isinstance(out, tuple) else out
             loss = sample.float().pow(2).mean()

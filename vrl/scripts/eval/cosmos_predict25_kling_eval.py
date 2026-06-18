@@ -19,11 +19,11 @@ from omegaconf import DictConfig, OmegaConf
 from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
 from vrl.generation.diffusion.layout import VideoGenerationRequest
+from vrl.math.diffusion.flow_matching import sde_step_with_logprob
 from vrl.models.diffusion.cosmos.predict2_5.runtime import (
     build_cosmos_predict25_runtime_bundle,
     extract_cosmos_predict25_runtime_spec,
 )
-from vrl.math.diffusion.flow_matching import sde_step_with_logprob
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
 from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
 from vrl.trainers.checkpointing import load_trainable_state, load_training_checkpoint
