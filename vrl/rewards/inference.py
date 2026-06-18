@@ -11,7 +11,7 @@ from typing import Any, Literal, Protocol, get_args
 # Valid artifact media kinds. ``MediaType`` is the single source of truth; the
 # disk artifact store (vrl.rewards.artifacts) imports MEDIA_TYPES, and both it
 # and the runtime check derive from this type instead of re-listing the literals.
-MediaType = Literal["image", "video", "tensor"]
+MediaType = Literal["image", "video"]
 MEDIA_TYPES = frozenset(get_args(MediaType))
 
 

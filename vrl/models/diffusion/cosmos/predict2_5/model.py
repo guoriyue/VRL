@@ -501,8 +501,6 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusionModelBase):
             "return_dict": False,
         }
 
-    nft_prepare_transformer_input = diffusion_nft_prepare_transformer_input
-
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
         pipe = self.pipeline
         latents_mean = pipe.latents_mean.to(latents.device, latents.dtype)
@@ -635,11 +633,6 @@ class CosmosPredict25ReplayModel(ReplayRolloutStubs, CosmosPredict25Model):
             "padding_mask": padding_mask,
             "return_dict": False,
         }
-
-    nft_prepare_transformer_input = diffusion_nft_prepare_transformer_input
-
-
-
 
 __all__ = [
     "CosmosPredict25Model",

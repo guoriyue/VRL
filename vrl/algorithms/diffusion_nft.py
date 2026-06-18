@@ -177,12 +177,9 @@ class DiffusionNFT(Algorithm):
             raise RuntimeError("DiffusionNFT model must expose a transformer module")
 
         prepare = getattr(model, "diffusion_nft_prepare_transformer_input", None)
-        if prepare is None:
-            prepare = getattr(model, "nft_prepare_transformer_input", None)
         if not callable(prepare):
             raise RuntimeError(
-                "DiffusionNFT model must expose diffusion_nft_prepare_transformer_input(...) "
-                "or nft_prepare_transformer_input(...)",
+                "DiffusionNFT model must expose diffusion_nft_prepare_transformer_input(...)",
             )
 
         t = t_raw.to(device=x0.device, dtype=torch.float32)

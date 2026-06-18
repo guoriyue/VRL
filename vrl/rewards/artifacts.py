@@ -26,7 +26,7 @@ class VideoRewardArtifactStore:
         manifest_name: str = "manifest.jsonl",
     ) -> None:
         if media_type not in MEDIA_TYPES:
-            raise ValueError("media_type must be image, video, or tensor")
+            raise ValueError("media_type must be image or video")
         if artifact_format not in {"tensor", "mp4"}:
             raise ValueError("artifact_format must be tensor or mp4")
         if artifact_format == "mp4" and media_type != "video":
