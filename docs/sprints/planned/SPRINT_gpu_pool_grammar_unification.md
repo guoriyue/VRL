@@ -1,7 +1,16 @@
 # SPRINT (planned): 把 rollout 共卡统一到 `gpu_pool` 语法
 
-状态：proposed / design（2026-06-18，命名讨论裁决）。**纯语法/命名统一 + 兼容垫片，零行为变化。** 动 public
-config key，故先文档、实现待 go。
+状态：**已实现 + 测试（2026-06-18）**。纯语法/命名统一 + 兼容垫片，零行为变化（旧 `colocate` 等价已单测验证）。
+ray+config+trainers+generation/ray+online-lifecycle 共 420 passed。
+
+实现要点：`RolloutResourceConfig` 加 `gpu_pool`(auto|trainer|dedicated) + `memory_fraction`（对标
+`reward.gpu_pool`）；`_parse_rollout_pool` 解析新键并把旧 `distributed.rollout.colocate` 映射成
+`gpu_pool=trainer`+fraction（both-set 报错）；`_resolve_rollout_devices` 按 gpu_pool 分支（trainer=共卡 /
+dedicated=严格分离 / auto=原行为，含 overlap fallback）；persistent = (gpu_pool==trainer ∧ memory_fraction)；
+gpu_pool=trainer 本身即 overlap 许可。schema 由 dataclass 字段自动识别新键，无需改。**共享 preset
+`ray_rollout_colocated_single_gpu` 不迁**（其 `auto` 在多卡上优先选空闲卡 = disaggregate，迁成 trainer 会变行为）——
+只更新注释文档化新语法；`ddp_2x1` 用 `gpu_pool: trainer` 做 showcase。新增 7 个 gpu_pool 测试 + 旧 colocate
+测试经垫片全过。
 
 ## 默认拓扑裁决（2026-06-18）
 

@@ -1170,3 +1170,133 @@ def test_single_gpu_colocate_without_cross_node_still_rejects_excess_rollout() -
                 rollout_runtime={"colocate": {"memory_fraction": 0.4}},
             ),
         )
+
+
+# ── rollout.gpu_pool grammar (SPRINT_gpu_pool_grammar_unification) ────────────
+
+
+def test_rollout_gpu_pool_trainer_colocates_on_demand() -> None:
+    """gpu_pool=trainer (no memory_fraction) = colocated, on-demand (released)."""
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0, 1],
+                "trainer": {"num_gpus": 1},
+                "rollout": {"num_gpus": 1, "gpu_pool": "trainer"},
+            },
+        ),
+    )
+    assert resolved.trainer_devices == (0,)
+    assert resolved.rollout_devices == (0,)  # pinned to the trainer GPU, not the spare
+    assert resolved.colocated is True
+    assert resolved.rollout_persistent_colocated_workers is False
+    assert resolved.rollout_release_after_collect is True  # on-demand
+
+
+def test_rollout_gpu_pool_trainer_with_memory_fraction_is_resident() -> None:
+    """gpu_pool=trainer + memory_fraction = resident, capped."""
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0],
+                "trainer": {"num_gpus": 1},
+                "rollout": {"num_gpus": 1, "gpu_pool": "trainer", "memory_fraction": 0.4},
+            },
+        ),
+    )
+    assert resolved.colocated is True
+    assert resolved.rollout_persistent_colocated_workers is True
+    assert resolved.rollout_gpu_memory_fraction == 0.4
+    assert resolved.rollout_release_after_collect is False
+
+
+def test_rollout_gpu_pool_trainer_matches_legacy_colocate_block() -> None:
+    """The new gpu_pool=trainer+memory_fraction resolves identically to the legacy
+    distributed.rollout.colocate block."""
+    resources = {"visible_devices": [0], "trainer": {"num_gpus": 1}}
+    new = resolve_distributed_resources(
+        _cfg(
+            {**resources, "rollout": {"num_gpus": 1, "gpu_pool": "trainer", "memory_fraction": 0.45}},
+        ),
+    )
+    legacy = resolve_distributed_resources(
+        _cfg(
+            {**resources, "rollout": {"num_gpus": 1}},
+            rollout_runtime={"colocate": {"memory_fraction": 0.45}},
+        ),
+    )
+    assert (new.rollout_devices, new.colocated, new.rollout_persistent_colocated_workers,
+            new.rollout_gpu_memory_fraction) == (
+        legacy.rollout_devices, legacy.colocated, legacy.rollout_persistent_colocated_workers,
+        legacy.rollout_gpu_memory_fraction,
+    )
+
+
+def test_rollout_gpu_pool_dedicated_takes_spare_and_rejects_when_none() -> None:
+    """gpu_pool=dedicated takes a disjoint spare GPU, and errors if there is none."""
+    ok = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0, 1],
+                "trainer": {"num_gpus": 1},
+                "rollout": {"num_gpus": 1, "gpu_pool": "dedicated"},
+            },
+        ),
+    )
+    assert ok.rollout_devices == (1,)
+    assert ok.colocated is False
+
+    with pytest.raises(ValueError, match="Not enough non-overlapping rollout GPUs"):
+        resolve_distributed_resources(
+            _cfg(
+                {
+                    "visible_devices": [0],  # no spare
+                    "trainer": {"num_gpus": 1},
+                    "rollout": {"num_gpus": 1, "gpu_pool": "dedicated"},
+                    "allow_overlap": True,  # dedicated forbids the overlap fallback
+                },
+            ),
+        )
+
+
+def test_rollout_gpu_pool_and_legacy_colocate_both_is_error() -> None:
+    """Setting the new gpu_pool/memory_fraction and the legacy colocate block is rejected."""
+    with pytest.raises(ValueError, match="not both"):
+        resolve_distributed_resources(
+            _cfg(
+                {
+                    "visible_devices": [0],
+                    "trainer": {"num_gpus": 1},
+                    "rollout": {"num_gpus": 1, "gpu_pool": "trainer"},
+                },
+                rollout_runtime={"colocate": {"memory_fraction": 0.4}},
+            ),
+        )
+
+
+def test_rollout_memory_fraction_requires_trainer_pool() -> None:
+    """memory_fraction only applies with gpu_pool=trainer."""
+    with pytest.raises(ValueError, match="only applies with"):
+        resolve_distributed_resources(
+            _cfg(
+                {
+                    "visible_devices": [0, 1],
+                    "trainer": {"num_gpus": 1},
+                    "rollout": {"num_gpus": 1, "gpu_pool": "dedicated", "memory_fraction": 0.4},
+                },
+            ),
+        )
+
+
+def test_rollout_gpu_pool_rejects_unknown_value() -> None:
+    """rollout.gpu_pool only accepts auto/trainer/dedicated."""
+    with pytest.raises(ValueError, match="must be 'auto', 'trainer', or 'dedicated'"):
+        resolve_distributed_resources(
+            _cfg(
+                {
+                    "visible_devices": [0],
+                    "trainer": {"num_gpus": 1},
+                    "rollout": {"num_gpus": 1, "gpu_pool": "nonsense"},
+                },
+            ),
+        )

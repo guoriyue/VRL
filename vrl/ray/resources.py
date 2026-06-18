@@ -24,6 +24,20 @@ class RolloutResourceConfig(RoleResourceConfig):
 
     gpus_per_worker: float = 1.0
     num_workers: int | str = "auto"
+    # Rollout GPU pool source (public key: distributed.resources.rollout.gpu_pool;
+    # the legacy distributed.rollout.colocate block maps here at parse time). Mirrors
+    # reward.gpu_pool so all roles share one "which pool do I borrow" grammar:
+    #   "auto"      derive from topology: a dedicated spare GPU when one exists,
+    #               else overlap the trainer GPU (single-GPU colocated fallback).
+    #   "trainer"   share the trainer GPU pool (colocated). memory_fraction (below)
+    #               makes the worker resident; absent = on-demand (released between
+    #               phases). It is itself the overlap permission (no allow_overlap).
+    #   "dedicated" require a dedicated spare rollout GPU; error if none exists.
+    gpu_pool: str = "auto"
+    # Resident colocated worker's GPU memory-fraction cap, in (0, 1]; only meaningful
+    # with gpu_pool=trainer. Present => resident/persistent (must cap to leave the
+    # trainer backward room); absent => on-demand.
+    memory_fraction: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,16 +204,16 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
             f"0 or 1, got {rollout_gpus_per_worker}",
         )
 
-    # rollout.colocate (parsed into the persistent flag) pins rollout on the
-    # trainer GPU and is itself the overlap permission, so it doesn't also need
-    # distributed.resources.allow_overlap set.
+    # rollout.gpu_pool=trainer borrows the trainer GPU (colocated) and is itself the
+    # overlap permission, so it doesn't also need distributed.resources.allow_overlap.
+    # `colocate` (resident) is the narrower case: gpu_pool=trainer AND memory_fraction.
     colocate = config.rollout_persistent_colocated_workers
     rollout_devices = _resolve_rollout_devices(
         visible_devices=visible_devices,
         trainer_devices=trainer_devices,
         rollout_config=config.rollout,
         allow_overlap=config.allow_overlap,
-        colocate_with_trainer=colocate,
+        gpu_pool=config.rollout.gpu_pool,
     )
     rollout_num_gpus = len(rollout_devices)
 
@@ -218,11 +232,13 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
     )
 
     colocated = bool(set(trainer_devices) & set(rollout_devices))
-    if colocated and not config.allow_overlap and not colocate:
+    if colocated and not config.allow_overlap and config.rollout.gpu_pool != "trainer":
         raise ValueError(
             "Trainer and rollout devices overlap but "
             "distributed.resources.allow_overlap=false: "
-            f"trainer={list(trainer_devices)} rollout={list(rollout_devices)}",
+            f"trainer={list(trainer_devices)} rollout={list(rollout_devices)}. "
+            "Set distributed.resources.rollout.gpu_pool=trainer to colocate, or "
+            "allow_overlap=true.",
         )
 
     reward_gpus_per_worker = float(config.reward.gpus_per_worker)
@@ -476,9 +492,10 @@ def _distributed_resource_config_from_cfg(cfg: Any) -> DistributedResourceConfig
     rollout_runtime = cfg_get(distributed, "rollout", {})
     reward_runtime = cfg_get(distributed, "reward", {})
     _reject_removed_distributed_keys(rollout_runtime, reward_runtime)
-    colocate_memory_fraction = _parse_colocate(
-        new=cfg_get(rollout_runtime, "colocate", _MISSING),
-        legacy=cfg_get(rollout_runtime, "colocate_with_trainer", _MISSING),
+    rollout_gpu_pool, rollout_memory_fraction = _parse_rollout_pool(
+        rollout_node=rollout_node,
+        legacy_colocate=cfg_get(rollout_runtime, "colocate", _MISSING),
+        legacy_colocate_with_trainer=cfg_get(rollout_runtime, "colocate_with_trainer", _MISSING),
     )
 
     trainer = RoleResourceConfig(
@@ -490,6 +507,8 @@ def _distributed_resource_config_from_cfg(cfg: Any) -> DistributedResourceConfig
         devices=_parse_devices(cfg_get(rollout_node, "devices", "auto")),
         gpus_per_worker=float(cfg_get(rollout_node, "gpus_per_worker", 1.0)),
         num_workers=cfg_get(rollout_node, "num_workers", "auto"),
+        gpu_pool=rollout_gpu_pool,
+        memory_fraction=rollout_memory_fraction,
     )
     if reward_node is _MISSING:
         reward = RewardResourceConfig(num_gpus=0, devices=[])
@@ -507,11 +526,13 @@ def _distributed_resource_config_from_cfg(cfg: Any) -> DistributedResourceConfig
         rollout=rollout,
         reward=reward,
         allow_overlap=bool(cfg_get(resources, "allow_overlap", False)),
-        # Release scheduling is derived from the GPU topology (left None here);
-        # rollout.colocate is the only public knob for resident colocation,
-        # carried internally by the persistent flag + memory-fraction cap.
-        rollout_persistent_colocated_workers=colocate_memory_fraction is not None,
-        rollout_gpu_memory_fraction=colocate_memory_fraction,
+        # Resident colocation = rollout borrows the trainer pool AND caps its share.
+        # Both come from rollout.gpu_pool=trainer + memory_fraction (or the legacy
+        # rollout.colocate block, mapped to the same by _parse_rollout_pool).
+        rollout_persistent_colocated_workers=(
+            rollout_gpu_pool == "trainer" and rollout_memory_fraction is not None
+        ),
+        rollout_gpu_memory_fraction=rollout_memory_fraction,
         reward_placement_strategy=str(
             cfg_get(reward_runtime, "placement_strategy", "SPREAD"),
         ),
@@ -616,7 +637,7 @@ def _resolve_rollout_devices(
     trainer_devices: tuple[int, ...],
     rollout_config: RolloutResourceConfig,
     allow_overlap: bool,
-    colocate_with_trainer: bool,
+    gpu_pool: str,
 ) -> tuple[int, ...]:
     explicit_devices = _parse_devices(rollout_config.devices)
     num_gpus = _parse_num_gpus(
@@ -638,20 +659,18 @@ def _resolve_rollout_devices(
                 "distributed.resources.rollout.num_gpus does not match "
                 f"len(distributed.resources.rollout.devices): {num_gpus} vs {len(devices)}",
             )
-        if colocate_with_trainer and not (set(devices) & set(trainer_devices)):
+        if gpu_pool == "trainer" and not (set(devices) & set(trainer_devices)):
             raise ValueError(
-                "distributed.rollout.colocate pins the rollout worker on "
-                "the trainer GPU, but distributed.resources.rollout.devices="
-                f"{list(devices)} is disjoint from trainer={list(trainer_devices)}. "
-                "Drop the explicit rollout devices (auto colocates on the trainer GPU) "
-                "or set them to overlap the trainer.",
+                "distributed.resources.rollout.gpu_pool=trainer colocates rollout on "
+                f"the trainer GPU, but rollout.devices={list(devices)} is disjoint from "
+                f"trainer={list(trainer_devices)}. Drop the explicit devices (auto pins "
+                "onto the trainer GPU) or set them to overlap the trainer.",
             )
         return devices
 
-    if colocate_with_trainer:
-        # Colocation forces the rollout worker onto the trainer GPU even when the
-        # box has spare GPUs auto-placement would otherwise prefer: the block
-        # declares "share the trainer card", not "find a free one".
+    if gpu_pool == "trainer":
+        # Borrow the trainer GPU(s): pin rollout onto them even when spare GPUs exist
+        # ("share the trainer card", not "find a free one").
         requested = _requested_role_gpu_count(
             role="rollout",
             num_gpus=rollout_config.num_gpus,
@@ -663,13 +682,15 @@ def _resolve_rollout_devices(
             return ()
         if requested > len(trainer_devices):
             raise ValueError(
-                "distributed.rollout.colocate shares the trainer GPU(s), "
-                f"but rollout needs {requested} GPU(s) and trainer owns "
-                f"{list(trainer_devices)}. Colocation is for tiny single-GPU debug; "
-                "expose dedicated rollout GPUs instead of colocating.",
+                "distributed.resources.rollout.gpu_pool=trainer shares the trainer "
+                f"GPU(s), but rollout needs {requested} GPU(s) and trainer owns "
+                f"{list(trainer_devices)}. Colocation is for tiny single-GPU debug; use "
+                "gpu_pool=dedicated (or expose more GPUs) for a separate rollout pool.",
             )
         return tuple(trainer_devices[:requested])
 
+    # auto / dedicated: a pool disjoint from the trainer GPU(s). `dedicated` forbids
+    # the overlap fallback (a spare GPU is required); `auto` allows it under allow_overlap.
     excluded = set(trainer_devices)
     pool = tuple(device for device in visible_devices if device not in excluded)
     requested = _requested_role_gpu_count(
@@ -684,13 +705,13 @@ def _resolve_rollout_devices(
         pool=pool,
         excluded=excluded,
         visible_devices=visible_devices,
-        allow_overlap=allow_overlap,
+        allow_overlap=allow_overlap and gpu_pool != "dedicated",
         not_enough_pool_error=(
             "Not enough non-overlapping rollout GPUs: "
             f"requested={requested}, available={len(pool)}, "
             f"trainer={list(trainer_devices)}, visible={list(visible_devices)}. "
-            "Expose more GPUs, or for resident single-GPU debug set "
-            "distributed.rollout.colocate: {memory_fraction: <0..1>}."
+            "Expose more GPUs, or set distributed.resources.rollout.gpu_pool=trainer "
+            "to colocate on the trainer GPU (add memory_fraction for a resident worker)."
         ),
         not_enough_visible_error=(
             "Not enough visible GPUs for rollout even with overlap allowed: "
@@ -1116,6 +1137,66 @@ def _parse_optional_bool(value: Any) -> bool | None:
     if value is None:
         return None
     return bool(value)
+
+
+def _parse_rollout_pool(
+    *,
+    rollout_node: Any,
+    legacy_colocate: Any,
+    legacy_colocate_with_trainer: Any,
+) -> tuple[str, float | None]:
+    """Resolve ``(gpu_pool, memory_fraction)`` for rollout.
+
+    New grammar (mirrors ``reward.gpu_pool``): ``distributed.resources.rollout.gpu_pool``
+    = ``auto|trainer|dedicated`` with an optional sibling ``memory_fraction`` (only with
+    ``gpu_pool=trainer``; present => resident colocation, absent => on-demand). The
+    legacy ``distributed.rollout.colocate`` block is accepted as compat input and maps
+    to ``gpu_pool=trainer`` + its (required) memory_fraction. Setting both the legacy
+    block and the new keys is an error so a migrated config carries one source of truth.
+    """
+
+    legacy_fraction = _parse_colocate(
+        new=legacy_colocate,
+        legacy=legacy_colocate_with_trainer,
+    )
+    new_pool = cfg_get(rollout_node, "gpu_pool", _MISSING)
+    new_fraction = cfg_get(rollout_node, "memory_fraction", _MISSING)
+    if legacy_fraction is not None and (new_pool is not _MISSING or new_fraction is not _MISSING):
+        raise ValueError(
+            "set either the legacy distributed.rollout.colocate block or the new "
+            "distributed.resources.rollout.{gpu_pool, memory_fraction}, not both",
+        )
+    if legacy_fraction is not None:
+        return ("trainer", legacy_fraction)
+
+    pool = "auto"
+    if new_pool is not _MISSING:
+        pool = str(_to_plain(new_pool)).strip().lower()
+        if pool not in {"auto", "trainer", "dedicated"}:
+            raise ValueError(
+                "distributed.resources.rollout.gpu_pool must be 'auto', 'trainer', "
+                f"or 'dedicated', got {new_pool!r}",
+            )
+    fraction: float | None = None
+    if new_fraction is not _MISSING and new_fraction is not None:
+        try:
+            fraction = float(new_fraction)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "distributed.resources.rollout.memory_fraction must be a float in "
+                f"(0, 1], got {new_fraction!r}",
+            ) from exc
+        if not 0.0 < fraction <= 1.0:
+            raise ValueError(
+                "distributed.resources.rollout.memory_fraction must be in (0, 1], "
+                f"got {fraction}",
+            )
+        if pool != "trainer":
+            raise ValueError(
+                "distributed.resources.rollout.memory_fraction only applies with "
+                f"gpu_pool: trainer (resident colocation), got gpu_pool={pool!r}",
+            )
+    return (pool, fraction)
 
 
 def _parse_colocate(*, new: Any, legacy: Any) -> float | None:
