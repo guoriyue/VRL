@@ -114,7 +114,7 @@ class AlgorithmConfig(ConfigBase):
 
 
 class DataConfig(ConfigBase):
-    loader: Literal["pickapic_preference", "prompt_manifest", "prompt_image_manifest"]
+    loader: Literal["pickapic_preference", "prompt_manifest", "prompt_image_manifest"] | None = None
     manifest: str | None = None
     eval_manifest: str | None = None
     # readers: _validate_data + loader tooling
@@ -143,7 +143,17 @@ class DataConfig(ConfigBase):
 
     @model_validator(mode="after")
     def _validate_data(self) -> DataConfig:
-        # loader validity already enforced by the Literal field type
+        # loader is optional for the prompt-* family: when omitted, derive it from
+        # preprocessing.format (image_caption_jsonl is the only image-caption
+        # schema; everything else is the plain prompt manifest). pickapic_preference
+        # cannot be derived and must be set explicitly. Keep this rule in sync with
+        # _load_prompt_examples_from_config in vrl/trainers/data/prompts.py.
+        # Explicit values (enforced by the Literal type) are unchanged.
+        if self.loader is None:
+            fmt = (self.preprocessing or {}).get("format", "")
+            self.loader = (
+                "prompt_image_manifest" if fmt == "image_caption_jsonl" else "prompt_manifest"
+            )
         if self.loader == "prompt_manifest":
             if not self.manifest:
                 raise ValueError("config missing required field: data.manifest")
@@ -316,7 +326,6 @@ class TrainerSection(ConfigBase):
     entrypoint: Any = None
     total_epochs: Any = None
     save_freq: Any = None
-    log_freq: Any = None
     output_dir: Any = None
     seed: Any = None
     profile: Any = None

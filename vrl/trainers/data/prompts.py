@@ -85,7 +85,18 @@ def _load_prompt_examples_from_config(
     two paths cannot drift apart.
     """
 
-    loader = str(cfg_get(data_cfg, "loader", "prompt_manifest"))
+    raw_loader = cfg_get(data_cfg, "loader", None)
+    if raw_loader is None:
+        # loader is optional for the prompt-* family: image-caption manifests are
+        # the only ones whose preprocessing.format == "image_caption_jsonl", so the
+        # plain prompt manifest is the default. pickapic_preference never reaches
+        # this dispatch (it is loaded in scripts/data/bootstrap.py). Keep this rule
+        # in sync with DataConfig._validate_data in vrl/config/schema.py.
+        preprocessing = cfg_get(data_cfg, "preprocessing", {}) or {}
+        fmt = str(cfg_get(preprocessing, "format", ""))
+        loader = "prompt_image_manifest" if fmt == "image_caption_jsonl" else "prompt_manifest"
+    else:
+        loader = str(raw_loader)
     manifest = cfg_get(data_cfg, manifest_key, None)
     if not manifest:
         raise ValueError(missing_message)

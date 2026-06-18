@@ -100,3 +100,48 @@ def test_prompt_examples_from_config_dispatches_image_caption_loader(tmp_path) -
 
     assert examples[0].prompt == "Water splashes into a bowl."
     assert examples[0].reference_image == "images/000.png"
+
+
+def test_prompt_examples_from_config_derives_image_caption_loader_when_omitted(tmp_path) -> None:
+    """Omitting loader with format=image_caption_jsonl derives the image-caption loader."""
+    from vrl.trainers.data import load_prompt_examples_from_config
+
+    manifest = tmp_path / "train.jsonl"
+    manifest.write_text(
+        '{"image":"images/000.png","caption":"Water splashes into a bowl."}\n',
+        encoding="utf-8",
+    )
+    cfg = OmegaConf.create(
+        {
+            "manifest": manifest.as_posix(),
+            "task_type": "image_to_video",
+            "preprocessing": {
+                "format": "image_caption_jsonl",
+                "image_field": "image",
+                "caption_field": "caption",
+            },
+        },
+    )
+
+    examples = load_prompt_examples_from_config(cfg)
+
+    assert examples[0].prompt == "Water splashes into a bowl."
+    assert examples[0].reference_image == "images/000.png"
+
+
+def test_prompt_examples_from_config_defaults_to_plain_manifest_when_omitted(tmp_path) -> None:
+    """Omitting loader with a non-image-caption format falls back to the plain prompt manifest."""
+    from vrl.trainers.data import load_prompt_examples_from_config
+
+    manifest = tmp_path / "train.txt"
+    manifest.write_text('a cat "cat"\n', encoding="utf-8")
+    cfg = OmegaConf.create(
+        {
+            "manifest": manifest.as_posix(),
+            "preprocessing": {"format": "text"},
+        },
+    )
+
+    examples = load_prompt_examples_from_config(cfg)
+
+    assert examples[0].prompt == 'a cat "cat"'

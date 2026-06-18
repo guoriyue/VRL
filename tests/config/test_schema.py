@@ -205,6 +205,38 @@ def test_unknown_data_loader_raises() -> None:
         parse_config(cfg)
 
 
+@pytest.mark.parametrize(
+    "fmt,expected",
+    [
+        ("image_caption_jsonl", "prompt_image_manifest"),
+        ("jsonl", "prompt_manifest"),
+        ("text", "prompt_manifest"),
+    ],
+)
+def test_omitted_loader_derives_from_preprocessing_format(fmt: str, expected: str) -> None:
+    """An omitted data.loader is derived from preprocessing.format for the prompt-* family."""
+    if expected == "prompt_image_manifest":
+        data = DataConfig(
+            manifest="data/external/videophy_i2v/manifests/train.jsonl",
+            eval_manifest="data/external/videophy_i2v/manifests/eval.jsonl",
+            preprocessing={
+                "format": fmt,
+                "image_field": "image",
+                "caption_field": "caption",
+                "media_type": "video",
+                "conditioning": "reference_image",
+            },
+            sampler={"type": "random_without_replacement"},
+        )
+    else:
+        data = DataConfig(
+            manifest="datasets/ocr/train.txt",
+            preprocessing={"format": fmt},
+            sampler={"type": "random_without_replacement"},
+        )
+    assert data.loader == expected
+
+
 def test_prompt_image_manifest_requires_image_caption_fields() -> None:
     """Checks prompt image manifest requires image caption fields."""
     with pytest.raises(ValueError, match=r"data\.preprocessing\.caption_field"):
