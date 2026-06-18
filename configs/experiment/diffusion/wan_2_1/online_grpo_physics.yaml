@@ -37,7 +37,6 @@ trainer:
   entrypoint: vrl.scripts.diffusion.wan_2_1.train:train_wan_2_1_grpo
   output_dir: outputs/wan_1_3b_physics
   save_freq: 20
-  log_freq: 1
 
 # Final weighted combination — overrides the per-reward defaults each
 # `/reward/...` import declared. Kling MQ at 0.7, VideoCon-Physics at 0.3.

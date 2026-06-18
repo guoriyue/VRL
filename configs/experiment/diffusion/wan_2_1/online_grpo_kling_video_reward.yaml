@@ -33,7 +33,6 @@ trainer:
   entrypoint: vrl.scripts.diffusion.wan_2_1.train:train_wan_2_1_grpo
   output_dir: outputs/wan_1_3b_kling_video_reward
   save_freq: 20
-  log_freq: 1
 
 reward:
   kwargs:

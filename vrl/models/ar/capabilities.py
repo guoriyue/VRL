@@ -50,11 +50,6 @@ def ar_discrete_family_capability(
         ),
         trainable_segments=trainable_segments,
         reward_views=("image",),
-        supports_stepwise=True,
-        supports_cfg=True,
-        supports_batched_decode=True,
-        supports_token_logprobs=True,
-        supports_resident_rollout_state=True,
         cache_kinds=("kv_cache", "prompt_embed_cache", "token_buffer"),
     )
 
@@ -96,11 +91,6 @@ def ar_continuous_family_capability(
         ),
         trainable_segments=(trainable_segment,),
         reward_views=("image",),
-        supports_stepwise=True,
-        supports_cfg=True,
-        supports_batched_decode=True,
-        supports_token_logprobs=True,
-        supports_resident_rollout_state=True,
         cache_kinds=("prompt_embed_cache", "token_buffer"),
     )
 

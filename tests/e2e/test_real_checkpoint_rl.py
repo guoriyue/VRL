@@ -600,7 +600,6 @@ def _common_training_overrides(tmp_path: Path) -> tuple[str, ...]:
     return (
         "trainer.total_epochs=1",
         "trainer.save_freq=0",
-        "trainer.log_freq=1",
         f"trainer.output_dir={tmp_path.as_posix()}",
         "trainer.debug.first_step=false",
         "trainer.profile=false",

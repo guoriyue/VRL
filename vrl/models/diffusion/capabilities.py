@@ -53,11 +53,7 @@ def diffusion_family_capability(
         ),
         trainable_segments=(trainable_segment,),
         reward_views=("image",),
-        supports_stepwise=True,
-        supports_cfg=True,
-        supports_batched_decode=True,
         supports_reference_conditioning=supports_reference_conditioning,
-        supports_resident_rollout_state=True,
         supports_torch_compile=True,
         cache_kinds=("prompt_embed_cache", "latent_cache"),
     )

@@ -34,7 +34,6 @@ trainer:
   total_epochs: 5
   output_dir: outputs/wan_i2v_14b_physics_smoke
   save_freq: 5
-  log_freq: 1
 
 reward:
   components:

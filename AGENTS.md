@@ -60,6 +60,7 @@
 - Keep thin functions/files only when they provide a protocol/interface boundary, public API facade, lazy import boundary, framework adapter, test fake/fixture, cross-family consistency, or a shared abstraction that removes real complexity.
 - Do not flatten or data-ize thin functions merely to save a few lines. Preserve uniform cross-family shapes when that consistency improves grepability, debugging, and readability.
 - When proposing cleanup, explicitly list what should change, what should stay unchanged, why each thin function or ALL_CAPS constant is necessary or not, and non-goals where consistency is more valuable than LOC reduction.
+- Every field of a **derived/resolved struct** ("compute once, read everywhere" — e.g. `Resolved*`, `*Capability`) must have a **non-logging consumer**: a control-flow branch, a value passed to a runtime/config/Ray call, or a validation that can raise. A field whose only readers are `format_*`/log builders or tests is a dead field — delete it, OR (if its log line carries genuinely un-derivable provenance, like the full visible-GPU pool) keep it and annotate the field at its definition as `display/provenance-only`. A field that is neither behavior-consumed nor explicitly marked display-only is dead and should be removed. This mirrors the ALL_CAPS rule above: the consumer is the source of truth — a field nobody reads silently rots, and for user-facing config keys it is worse (a no-op knob the user sets expecting an effect).
 
 ### Long-term Assets vs One-shot Validation
 

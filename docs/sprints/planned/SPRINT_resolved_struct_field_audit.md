@@ -1,13 +1,13 @@
 # SPRINT: `ResolvedDistributedResources` 等"派生型胖结构体"字段必要性审计（planned）
 
-状态：**部分完成 —— 关账复核 2026-06-16**。这是一次"派生结构体里的字段是否真有人消费、如何防止它继续膨胀"的审计。
+状态：**核心审计全部完成 —— 续做 2026-06-18**。P0/P1/§9 + **P3（防腐约定）+ §5（`FamilyCapability` 死 flag 删除）+ §9.3 `log_freq`（决策：删旋钮）现已全部落地**；仅剩 `VideoGenerationRequest` DTO 死字段（明确的独立 MR）。这是一次"派生结构体里的字段是否真有人消费、如何防止它继续膨胀"的审计。
 
-> **已落地**：**P0** 三个死字段（`reward_num_gpus` stored 字段 / `total_gpu_slots` / `ray_total_bundles`）+ 7 行测试断言 + `ray_bundles=` 日志行已由 `eb5d421`「Remove redundant resource plan fields」删除——`reward_num_gpus` **局部变量**按 §4 设计保留（`vrl/ray/resources.py:238/240/248/251`），`tests/ray/test_resources.py` 44 passed。**P1** `visible_devices` 已加 display/provenance-only 注释（`resources.py:117-119`）。**§9** 8 个 config 死键已合入 main（`freeze_vq`/`freeze_vision_encoder`/`freeze_aligner`/`freeze_image_head`/`uncentralized_training` grep 归零）。
+> **已落地**：**P0** 三个死字段（`reward_num_gpus` stored 字段 / `total_gpu_slots` / `ray_total_bundles`）+ 7 行测试断言 + `ray_bundles=` 日志行已由 `eb5d421`「Remove redundant resource plan fields」删除——`reward_num_gpus` **局部变量**按 §4 设计保留（`vrl/ray/resources.py:238/240/248/251`），`tests/ray/test_resources.py` 48 passed。**P1** `visible_devices` 已加 display/provenance-only 注释（`resources.py:115-118`）。**§9** 8 个 config 死键已合入 main（`freeze_vq`/`freeze_vision_encoder`/`freeze_aligner`/`freeze_image_head`/`uncentralized_training` grep 归零）。**P3** AGENTS.md 防腐约定已写入（"Architecture Hygiene" 末条：derived/resolved 结构体每字段须有非日志消费方，否则删除或显式标注 `display/provenance-only`）。**§5** `FamilyCapability` 经对抗式逐 flag 复核后删除 **8 个死 flag**（见 §5），改 `capabilities.py` + 2 个 factory + 7 个 runtime.py，**206 个相关测试全过**、ruff 干净。
 >
-> **仍开放（本 doc 留在 `planned/` 的原因）**：**P3** AGENTS.md 防腐约定（"派生/解析型结构体每字段须有非日志消费方"）尚未写入；**§5 `FamilyCapability`** 死 flag follow-up 未做（`vrl/generation/capabilities.py:134/135/138` 的 `supports_kv_decode`/`supports_prefill_decode_split`/`supports_cuda_graph` 仍在，需逐 flag 对抗式复核后再删）；**P2** 同源 follow-up —— `RayGenerationConfig` 上的扁平 release 镜像收敛进 `lifecycle` plan（单一真相），并把放置 surface 模式化（disaggregated 默认 + `colocate` opt-in、GPU ID 仅 debug），见 §4 P2 + [SPRINT_placement_surface_disaggregated_default.md]。
+> **`log_freq` 已删（2026-06-18，决策=删旋钮）**：从 `vrl/config/schema.py` + `vrl/trainers/core/types.py` 的字段、9 个 experiment YAML、base/trainer.yaml 注释、e2e override 全部移除；在线 loop 本就无条件每 epoch 记录，**零行为变化**；`tests/config/{test_load_all_experiments,test_schema,test_unknown_keys}.py` 72 passed。
 >
-> **2026-06-17 复核**：P0 三个删除目标已确认不在 struct（`ResolvedDistributedResources` 现 22 字段，`reward_num_gpus`/`total_gpu_slots`/`ray_total_bundles` 均非字段；`reward_num_gpus` 仅存活为 resolver 局部变量，按 §4 设计预期；全仓零测试引用）—— §4 的 P0 小节为历史规划，已由 `eb5d421` 兑现。
-findings + 路径 + 整改逻辑都在本文。按 P0→P3 分批做，每批独立 PR，互不依赖。
+> **仍开放（唯一）**：`VideoGenerationRequest.{prompt,references,task_type,model_name,shift,extra}`（DTO 死字段，明确的独立 MR）。
+findings + 路径 + 整改逻辑都在本文。
 
 > 方法：用 1 个编排 workflow（23 个字段各 1 个审计 agent + 对每个"可删候选"再派 1 个**对抗式反驳
 > agent** 去反证它其实被用 + 2 个并行扫描 agent 找同类胖结构体与测试改动面，共 29 个 agent）逐字段
@@ -192,17 +192,28 @@ stored 字段），但它和 `ray_total_bundles` **本质不同，倾向保留**
 并行扫描 agent 扫了 `vrl/` 下所有 ≥14 字段的 dataclass/config，结论：**"字段多"绝大多数是合理的，
 真正同类风险的只有 1 个。**
 
-**第二个 offender（需逐 flag 复核后再动）：**
+**第二个 offender —— 已完成（2026-06-18，对抗式逐 flag 复核后删除）：**
 
-- **`FamilyCapability`**（`vrl/generation/capabilities.py:116`，23 字段，**resolved_derived**）——
-  和 `ResolvedDistributedResources` 同种风险，且死字段密度更高。扫描 agent 报告多个 `supports_*` 旗标
-  被设置/序列化但**没有任何决策消费方**：`supports_prefill_decode_split`（全仓 0 引用）、
-  `supports_cuda_graph` / `supports_resident_rollout_state`（0 读）、`supports_kv_decode`（仅定义）、
-  `supports_batched_requests/forward`（仅在 `batch_signature` 内部）、`supports_token_logprobs`
-  （AR 上设 true 但从不分支）。
-  ⚠️ **这是 scan 级结论，置信度低于 §3**：未经本文对 `ResolvedDistributedResources` 那种逐字段
-  对抗式反驳。**列为 follow-up**：用同一套 workflow 方法（审计→反驳→测试影响）逐 flag 确认后再删，
-  不要凭这张表直接动手。
+- **`FamilyCapability`**（`vrl/generation/capabilities.py`，原 13 个 `supports_*` bool）——用同一套
+  workflow 方法（10 个候选各 1 个对抗式反驳 agent，并行）逐 flag 真实 grep/read 复核。结果：
+  - **删除 8 个死 flag**（write-only，或从不 set 且从不读；对抗复核均 `removable=true`）：
+    `supports_stepwise`、`supports_cfg`、`supports_batched_decode`、`supports_token_logprobs`、
+    `supports_kv_decode`、`supports_prefill_decode_split`、`supports_resident_rollout_state`、
+    `supports_cuda_graph`。删除面：`capabilities.py`（field + `with_runtime_caps` bool_fields +
+    `to_dict` + `from_value`）、2 个 factory（`models/{diffusion,ar}/capabilities.py` 的 kwargs）、
+    7 个 `runtime.py` 的 `runtime_caps` 死键。
+  - **对抗复核纠正了 scan 表的 2 处误判（保留，不可删）**：`supports_chunked_execution` 实为 LIVE
+    （`generation/execution/chunks.py:121` 按它改 `max_samples_per_chunk` → 影响 chunk schedule）；
+    `supports_batched_requests` / `supports_batched_forward` 实为 LIVE（`batch_signature()` →
+    `generation/types.py:133` 的 batching key）。scan 曾把这几个列为"仅在 batch_signature 内部"而疑似可删，
+    逐 flag 复核证明 `batch_signature` 本身被消费，故必须保留。
+  - **`supports_torch_compile` 保留**（LIVE，`ray/launcher.py:399` 的 compile gate）。
+  - **`supports_reference_conditioning` 保留 + 记一个 follow-up**：该 FamilyCapability 字段**本身无直接
+    读者**，真实消费走 registry 派生出的另一字段 `ExecutorKwargsMetadata.include_reference_image`
+    （`launcher.py:363`）。即它疑似 duplicate-derived，但删它要动 registry 的双路 threading，属
+    `ExecutorKwargsMetadata` 去重范畴而非本 `supports_*` 死 flag pattern —— 单列 follow-up，本次不动。
+  - 验证：`py_compile` + `ruff` 干净；capability/launcher/registry/execution/AR/diffusion/reference
+    共 **206 个测试全过**；round-trip `FamilyCapability.from_value(c.to_dict()) == c` 仍成立。
 
 **其余 14 个宽结构体 = 待同等审计（目前只到 scan 级，不是"免审/明确不碰"）**（按 kind 分桶）：
 
@@ -230,7 +241,7 @@ stored 字段），但它和 `ray_total_bundles` **本质不同，倾向保留**
 死字段能堆到 23 字段里有 2 个全死、2 个只进日志，根因是**没有任何机制对"加了字段却没人消费"形成
 反压**。两个层次的修法：
 
-1. **约定（首选，零风险）**：在 `AGENTS.md` 的"架构卫生（Architecture Hygiene）"补一条，与已有的
+1. ✅ **约定（已写入 2026-06-18）**：`AGENTS.md` 的"Architecture Hygiene"末尾已补一条，与已有的
    ALL_CAPS 派生条款对称：
    > 派生/解析型结构体（"算一次、到处读"，如 `Resolved*` / `*Capability`）的每个字段都必须有
    > **非日志的消费方**；只供 `format_*`/日志打印的字段必须在定义处显式注释为 `display/provenance-only`。
@@ -337,12 +348,13 @@ stored 字段），但它和 `ray_total_bundles` **本质不同，倾向保留**
   （`SimpleNamespace`），不是这个 config 字段——删字段不动红线行为。
 - surface：dpo.py:54（字段）、train_dpo.py:213（构造实参）。
 
-### 9.3 缓删的 7 个（DEFER，本 sprint 未动）
+### 9.3 `log_freq`（已删）+ VideoGenerationRequest（独立 MR）
 
-- **`TrainerConfig.log_freq`** —— 确属死键（schema.py:306 + 9 个 experiment YAML 都写 `log_freq: 1`，但
-  在线 loop 每 epoch 无条件记录、无人读它）。**缓删原因**：(1) surface 最宽（schema + 9 个实验配置 +
-  base 注释 + 1 个 e2e override），改动面大；(2) 它是**唯一"删 vs 接线"意图真歧义**的一个——可能团队
-  本就想让日志按 `log_freq` 节流。需你拍板：删旋钮，还是把日志节流接上（两者都对，现状是旋钮空转）。
+- **`TrainerConfig.log_freq` —— 已删除（2026-06-18，决策 = 删旋钮）。** 确属死键（`schema.py` +
+  `types.py` 字段、9 个 experiment YAML 都写 `log_freq: 1`、base 注释、1 个 e2e override，但在线 loop
+  每 epoch 无条件记录、无人读它）。曾因"删旋钮 vs 把日志节流接上"意图歧义而缓删；现决策**删旋钮**
+  （在线 loop 本就无条件记录 → 删除零行为变化，且消除面向用户的空操作旋钮）。改动面全清，
+  `tests/config/{test_load_all_experiments,test_schema,test_unknown_keys}.py` 72 passed。
 - **`VideoGenerationRequest.{prompt,references,task_type,model_name,shift,extra}`** —— 它是**代码构造的
   请求 DTO，不是 YAML 配置键**，不属本次"死配置键"范畴，**单独立项、独立 MR 复核，本 MR 不碰**。
   但我已用只读追踪**复核确认这 6 个确属死字段**（之前怀疑 `prompt` 判死是 agent 误判 —— 是我错了，

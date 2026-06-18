@@ -49,7 +49,6 @@ trainer:
   output_dir: outputs/cosmos_predict2_5_2b_motion_physics
   total_epochs: 1
   save_freq: 20
-  log_freq: 1
 
 # Final weighted combination — overrides the per-reward defaults each
 # `/reward/...` import declared. Kling Motion Quality at 0.7, VideoCon-Physics

@@ -315,7 +315,6 @@ class TrainerConfig:
 
     # --- lifecycle ---
     save_freq: int = field(default=50, metadata={"yaml": "trainer"})
-    log_freq: int = field(default=1, metadata={"yaml": "trainer"})
     seed: int = field(default=0, metadata={"yaml": "trainer"})
     resume_from: str = field(default="", metadata={"yaml": "trainer"})
     resume_strict: bool = field(default=True, metadata={"yaml": "trainer"})
