@@ -1,0 +1,52 @@
+# Cross-node (2 servers x 1 GPU each) variant of the Cosmos Predict2.5 + Kling
+# DiffusionNFT run. Splits the run across two hosts over a Ray cluster:
+#
+#   node A (head/driver) : the single_process trainer. Its GPU is held OUT of
+#                          Ray's scheduling pool (`ray start --head --num-gpus=0`)
+#                          so no actor can land on the trainer card.
+#   node B (worker)      : the rollout worker AND the Kling reward pool worker,
+#                          time-sharing node B's one GPU
+#                          (`ray start --address=<head>:6379 --num-gpus=1`).
+#
+# Setup + launch commands:
+#   docs/training_examples/online_nft_kling_video_reward_cross_node/README.md
+#
+# Accepted cost of the 2-GPU layout: the Kling reward is pool-only (it must own
+# a GPU slice on a Ray node, vrl/rewards/base.py), so with only 2 GPUs it has to
+# share node B's card with rollout. Sharing forces the rollout worker on_demand,
+# i.e. it RELOADS the cosmos 2B model every epoch (vrl/generation/ray/runtime.py
+# release -> kill_actors -> next generate() reloads). That is fine to validate
+# the cross-node mechanism; for a full 256-epoch training run give the reward its
+# own GPU (3-GPU topology) so rollout stays resident.
+defaults:
+  - /experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward
+
+distributed:
+  resources:
+    # The one switch that drives the whole 2-host topology. When true the run-
+    # level placement owner auto-uses SPREAD (bundles across nodes), validates
+    # GPUs by (node_ip, gpu_id) pairs instead of bare ordinals, and skips the
+    # head-local trainer reservation so the head can run with --num-gpus=0. No
+    # separate placement_strategy key is needed -- it is derived from this flag
+    # (vrl/ray/placement.py GlobalRayPlacementOwner._strategy).
+    cross_node: true
+    # Trainer (head GPU) and rollout (node B GPU) are physically disjoint hosts,
+    # so no same-card overlap permission is needed.
+    allow_overlap: false
+    # GPU "ids" here are budget TOKENS, not physical devices (cross_node): the
+    # real placement is by node (which host you `ray start` on). Sharing is
+    # expressed directly by the token id -- rollout and reward both sit on
+    # token 1, so they coalesce onto one bundle and share node B's single card.
+    #   token 0 -> head/driver node A's card (held out of Ray: --num-gpus=0)
+    #   token 1 -> worker node B's card, shared by rollout + reward (2 GPUs only)
+    trainer:
+      num_gpus: 1
+    rollout:
+      devices: [1]
+      gpus_per_worker: 1.0
+      num_workers: 1
+    reward:
+      # Same token as rollout -> reward coalesces onto the rollout bundle and
+      # shares node B's card (this replaces the share_with_rollout flag). The
+      # resolver then makes rollout on_demand (release between collect and score).
+      devices: [1]
