@@ -142,8 +142,8 @@ def main(argv: list[str] | None = None) -> None:
     checkpoints = [_parse_checkpoint_spec(value) for value in args.checkpoint]
     _validate_unique_labels(checkpoints)
 
-    device = _resolve_device(args.device, torch)
-    dtype = _resolve_dtype(args.dtype, cfg, device=device, torch=torch)
+    device = _resolve_device(args.device)
+    dtype = _resolve_dtype(args.dtype, cfg, device=device)
     sampling = _resolve_sampling(args, cfg)
     output_dir = Path(args.output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -232,16 +232,16 @@ def _safe_label(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value).strip()).strip("._-")
 
 
-def _resolve_device(device_arg: str, torch_module: Any) -> Any:
+def _resolve_device(device_arg: str) -> torch.device:
     if device_arg != "auto":
-        device = torch_module.device(device_arg)
-        if getattr(device, "type", str(device)) == "cuda" and not torch_module.cuda.is_available():
+        device = torch.device(device_arg)
+        if getattr(device, "type", str(device)) == "cuda" and not torch.cuda.is_available():
             raise RuntimeError(f"CUDA device was requested ({device_arg}), but CUDA is unavailable")
         return device
-    return torch_module.device("cuda:0" if torch_module.cuda.is_available() else "cpu")
+    return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
-def _resolve_dtype(dtype_arg: str, cfg: DictConfig, *, device: Any, torch: Any) -> Any:
+def _resolve_dtype(dtype_arg: str, cfg: DictConfig, *, device: torch.device) -> torch.dtype:
     if dtype_arg != "auto":
         return {
             "fp32": torch.float32,
