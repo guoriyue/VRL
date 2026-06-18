@@ -209,7 +209,9 @@ class RolloutConfig(ConfigBase):
         ConfigBlock(("type", "window_size", "window_range")),
     ] = None
     noise_level: float | None = None
-    final_image_policy: str | None = None
+    # janus_pro R1 only; cross-checked against sampling.r1.final_image_policy in
+    # RootConfig._cross_field_validate (which also enforces it is set for that kind).
+    final_image_policy: Literal["always_generate", "use_selfcheck"] | None = None
     n_samples_per_prompt: int | None = None
     rollout_batch_size: int | None = None
     # "Set the slice once" size knob: prompt groups per streamed microbatch.
@@ -222,7 +224,9 @@ class RolloutConfig(ConfigBase):
     # Key registry: validated by their reader layers (generation/trainers).
     # reader: generation/ray/launcher.py compile override
     denoise_compile: Annotated[Any, ConfigBlock(("enable", "mode"))] = None
-    denoise_mode: Any = None
+    # reader: vrl/generation/diffusion/layout.py _parse_denoise_mode (request boundary).
+    # Allowed set is the type; the layout guard stays for over-the-wire request dicts.
+    denoise_mode: Literal["native", "sde"] | None = None
     max_reflect_len: Any = None
     max_text_length: Any = None
     same_latent: Any = None
@@ -238,6 +242,10 @@ class SamplingConfig(ConfigBase):
         dict[str, Any] | None,
         ConfigBlock(("final_image_policy", "train_segments")),
     ] = None
+    # reader: vrl/nn/modules/ar_attention_backends.py attention_backend_name
+    # (read from the request dict; default "vllm_paged"). Declared here so the
+    # allowed set is the type and the key is registered (no false unknown-key warning).
+    attention_backend: Literal["vllm_paged", "torch_native"] = "vllm_paged"
     # Key registry: parsed by family layout/runtime-spec extractors.
     ar_scheduler_batch_size: Any = None
     cfg: Any = None

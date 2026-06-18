@@ -97,6 +97,9 @@ async def test_video_reward_materializes_artifacts_and_returns_runtime_scores(
         reward_name="kling_video_reward",
         score_key="overall_reward",
         media_type="video",
+        # codec-independent wiring test: tensor avoids the imageio mp4 writer
+        # (the production default is mp4; this test checks materialization wiring).
+        artifact_format="tensor",
         artifact_dir=str(tmp_path / "artifacts"),
         debug_dir=str(tmp_path / "debug"),
         actor_runtime=actor_runtime,
@@ -123,6 +126,7 @@ async def test_video_reward_rejects_missing_runtime_results(tmp_path: Path) -> N
         execution="pool",
         reward_name="kling_video_reward",
         score_key="overall_reward",
+        artifact_format="tensor",  # codec-independent wiring test (no imageio dep)
         artifact_dir=str(tmp_path / "artifacts"),
         actor_runtime=_EmptyActorRuntime(),
     )

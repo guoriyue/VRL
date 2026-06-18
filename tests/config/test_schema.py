@@ -79,6 +79,48 @@ def test_unknown_algorithm_keys_warn_and_load() -> None:
     assert "algorithm.future_field" in unknown
 
 
+# ── rollout / sampling string-setting Literals ────────────────────────────────
+
+
+@pytest.mark.parametrize("mode", ["native", "sde"])
+def test_valid_denoise_modes_accepted(mode: str) -> None:
+    """Both denoise modes validate; the Literal is the user-facing allow-list."""
+    cfg = _minimal_grpo_cfg()
+    cfg.rollout.denoise_mode = mode
+    assert parse_config(cfg).rollout.denoise_mode == mode
+
+
+def test_unknown_denoise_mode_raises() -> None:
+    """An out-of-set denoise_mode is rejected at parse with the dotted path."""
+    cfg = _minimal_grpo_cfg()
+    cfg.rollout.denoise_mode = "bogus"
+    with pytest.raises(ValueError, match=r"unknown rollout\.denoise_mode"):
+        parse_config(cfg)
+
+
+def test_attention_backend_defaults_to_vllm_paged() -> None:
+    """attention_backend is a registered, typed key (no false unknown-key warning)."""
+    cfg = _minimal_grpo_cfg()
+    cfg.sampling = {}
+    assert parse_config(cfg).sampling.attention_backend == "vllm_paged"
+
+
+def test_unknown_attention_backend_raises() -> None:
+    """An out-of-set attention_backend is rejected at parse with the dotted path."""
+    cfg = _minimal_grpo_cfg()
+    cfg.sampling = {"attention_backend": "bogus"}
+    with pytest.raises(ValueError, match=r"unknown sampling\.attention_backend"):
+        parse_config(cfg)
+
+
+def test_unknown_final_image_policy_raises() -> None:
+    """final_image_policy is Literal-typed regardless of algorithm kind."""
+    cfg = _minimal_grpo_cfg()
+    cfg.rollout.final_image_policy = "bogus"
+    with pytest.raises(ValueError, match=r"unknown rollout\.final_image_policy"):
+        parse_config(cfg)
+
+
 # ── distributed.training strategy ─────────────────────────────────────────────
 
 

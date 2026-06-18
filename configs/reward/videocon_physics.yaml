@@ -20,7 +20,6 @@ reward:
       execution: pool
       reward_name: videophysics/videocon_physics@main
       score_key: physical_commonsense
-      scheduling: sync
       media_type: video
       artifact_format: mp4
       artifact_dir: ${trainer.output_dir}/reward_artifacts

@@ -18,7 +18,6 @@ reward:
       execution: pool
       reward_name: KlingTeam/VideoReward@main
       score_key: overall_reward
-      scheduling: sync
       media_type: video
       artifact_format: mp4   # tensor (.pt) is unreadable by decord; every working run uses mp4
       artifact_dir: ${trainer.output_dir}/reward_artifacts

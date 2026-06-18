@@ -6,12 +6,13 @@ import math
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol, get_args
 
-# Protocol-level set of valid artifact media kinds. Single source of truth —
-# the disk artifact store (vrl.rewards.artifacts) imports this rather than
-# re-listing the literals.
-MEDIA_TYPES = frozenset({"image", "video", "tensor"})
+# Valid artifact media kinds. ``MediaType`` is the single source of truth; the
+# disk artifact store (vrl.rewards.artifacts) imports MEDIA_TYPES, and both it
+# and the runtime check derive from this type instead of re-listing the literals.
+MediaType = Literal["image", "video", "tensor"]
+MEDIA_TYPES = frozenset(get_args(MediaType))
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,7 +21,7 @@ class RewardInferenceArtifact:
 
     artifact_id: str
     path: str
-    media_type: str
+    media_type: MediaType
     prompt: str = ""
     sample_id: str | None = None
     policy_version: int | None = None
@@ -37,8 +38,10 @@ class RewardInferenceArtifact:
                 "RewardInferenceArtifact requires a materialized path or in-memory media",
             )
         if self.media_type not in MEDIA_TYPES:
+            allowed = ", ".join(get_args(MediaType))
             raise ValueError(
-                "RewardInferenceArtifact.media_type must be image, video, or tensor",
+                f"RewardInferenceArtifact.media_type must be one of {allowed}; "
+                f"got {self.media_type!r}",
             )
 
     def as_media(self) -> Any:

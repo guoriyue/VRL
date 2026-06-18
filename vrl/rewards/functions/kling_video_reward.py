@@ -27,7 +27,9 @@ class KlingVideoReward(RewardFunction):
             config_key="kling_video_reward",
             request_prefix="kling-video-reward",
             debug_basename="kling_video_reward",
-            default_artifact_format="tensor",
+            # mp4, not .pt: decord can't read torch.save tensors, so a video
+            # reward that omits artifact_format must still get a real container.
+            default_artifact_format="mp4",
             **kwargs,
         )
 
