@@ -1,7 +1,7 @@
 # SPRINT: Config as signatures (torch-style required args)
 
-状态：**P1 + P2 implemented（2026-06-12，G1-G4 全过）**；P3（per-family
-model config）/ P4（schema 派生或退役）未启动。本 sprint 触发了
+状态：**done（P1 + P2 已落地 main，594cba3，2026-06-12，G1-G4 全过；2026-06-17 归档至 done/）**；P3（per-family
+model config）/ P4（schema 派生或退役）作为未来扩展未启动（deferred，非本次交付门）。本 sprint 触发了
 `SPRINT_config_unknown_key_warning.md` §2 预留的重启条件之二（"正在系统性
 补全 schema 字段——为了类型化本身"），是该 parked follow-up 的正式继任。
 

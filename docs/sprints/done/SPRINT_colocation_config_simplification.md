@@ -1,6 +1,6 @@
 # SPRINT: 简化 colocation / release 公有配置
 
-状态：**实现完成（待 review/move 到 done/）**。落点：
+状态：**done（已落地 main，94dec03 "Simplify colocation/release public config surface"；2026-06-17 归档至 done/）**。落点：
 - **P2 解析/校验**：`vrl/ray/resources.py` — `_parse_colocate_with_trainer`（块在=resident colocation，`memory_fraction` 必填且校验 (0,1]）、`_reject_removed_distributed_keys`（5 个旧 public key 硬报错并指向新形状）；`_resolve_rollout_devices` 新增 `colocate_with_trainer` 强制 placement（auto→trainer GPU，显式 disjoint→报错），colocate 隐含 overlap 许可。删 `release_after_collect/release_before_reward_model/persistent_colocated_workers/gpu_memory_fraction` 与 `distributed.reward.release_after_score` 的 public 解析；内部派生 / 兼容视图字段 / runtime lease 零改动。
 - **public schema**：`vrl/config/schema.py` — `distributed.rollout` 不再以 `RayGenerationConfig` 作 public surface，改为显式 known-key 列表 + `colocate_with_trainer:{memory_fraction}` 子块；`distributed.reward` 去掉 `release_after_score`。
 - **错误信息**：`vrl/generation/ray/config.py` + `resources.py` 中指向旧 key 的提示改指 `colocate_with_trainer` / “derived automatically”。

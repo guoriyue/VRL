@@ -1,6 +1,6 @@
 # SPRINT: 减少引擎配置要手填的魔法字符串（Literal 化 + 派生默认）
 
-状态：proposed / 设计（待批）
+状态：partial（部分已落地 main）。已落地：P0 一批 string→Literal（denoise_mode / final_image_policy / attention_backend 等，17d96fd）、P1 `rollout.sde` typed block + `sync_trainable_state` 默认从 disabled 翻转为 lora_only（6871d23）。未完成：reward `execution`/`media_type` 的 Literal/派生、`sync_trainable_state` 本身 →Literal。（注：本文最初标"proposed/待批"已过时——work 已开始落地。）
 
 ## 0. 结论 (TL;DR)
 
