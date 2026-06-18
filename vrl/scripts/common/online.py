@@ -751,7 +751,13 @@ def _prepare_metrics_csv(
         "clip_fraction,approx_kl,logprob_abs_diff_mean,logprob_abs_diff_max,"
         "ratio_abs_dev_mean,ratio_abs_dev_max,mismatch_kl,mismatch_k3_kl,"
         "advantage_mean,grad_norm,adv_saturation,"
-        "adv_zero_rate,group_size,trained_prompt_num"
+        "adv_zero_rate,group_size,trained_prompt_num,"
+        # Continuous-rollout async diagnostics (0 in strict_on_policy mode). These
+        # answer "is the run actually async?": observed staleness of consumed
+        # samples, prefetched ready-queue depth, weight-sync barrier pause, and
+        # producer starvation. Sourced from TrainStepMetrics.phase_times.
+        "continuous_stale_versions,continuous_ready_groups,"
+        "continuous_weight_sync_pause_s,continuous_producer_max_gap_s"
     )
     if component_cols:
         header = f"{header},{component_cols}"
@@ -774,6 +780,9 @@ def _write_metric_row(
         else float("nan")
         for name in component_names
     }
+    # Continuous async diagnostics live in TrainStepMetrics.phase_times (attached
+    # per iteration by ContinuousRolloutSchedule); empty in strict_on_policy mode.
+    phases = getattr(metrics, "phase_times", None) or {}
     row = {
         "epoch": epoch,
         "loss": metrics.loss,
@@ -795,6 +804,10 @@ def _write_metric_row(
         "adv_zero_rate": metrics.adv_zero_rate,
         "group_size": metrics.group_size,
         "trained_prompt_num": metrics.trained_prompt_num,
+        "continuous_stale_versions": phases.get("continuous.stale_policy_versions", 0.0),
+        "continuous_ready_groups": phases.get("continuous.queue_ready_groups", 0.0),
+        "continuous_weight_sync_pause_s": phases.get("continuous.weight_sync_pause_s", 0.0),
+        "continuous_producer_max_gap_s": phases.get("continuous.producer_max_tick_gap_s", 0.0),
         **{f"r_{name}": component_means[name] for name in component_names},
     }
     if metric_row_hook is not None:
@@ -823,6 +836,10 @@ def _write_metric_row(
                     f"{row['adv_zero_rate']:.4f}",
                     f"{row['group_size']:.2f}",
                     str(row["trained_prompt_num"]),
+                    f"{row['continuous_stale_versions']:.1f}",
+                    f"{row['continuous_ready_groups']:.1f}",
+                    f"{row['continuous_weight_sync_pause_s']:.4f}",
+                    f"{row['continuous_producer_max_gap_s']:.4f}",
                     *(f"{row[f'r_{name}']:.4f}" for name in component_names),
                 ],
             )

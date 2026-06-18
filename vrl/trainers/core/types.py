@@ -140,6 +140,12 @@ class ContinuousRolloutConfig:
     drop_policy: str = field(default="drop_oldest_stale")
     wait_timeout_s: float = field(default=300.0)
     queue_poll_interval_s: float = field(default=0.05)
+    # Consecutive producer failures with ZERO completions the consumer tolerates
+    # before raising the producer's root cause, instead of hanging the full
+    # wait_timeout_s on an opaque timeout (0 disables the fast path). This is the
+    # single source of the default — build_rollout_schedule + the schedule and
+    # consumer read it from here rather than each keeping their own copy.
+    fail_fast_errors: int = field(default=3)
 
     def __post_init__(self) -> None:
         if int(self.max_inflight_groups) < 1:
@@ -148,6 +154,8 @@ class ContinuousRolloutConfig:
             raise ValueError("continuous.max_ready_groups must be >= 1")
         if int(self.max_stale_policy_versions) < 0:
             raise ValueError("continuous.max_stale_policy_versions must be >= 0")
+        if int(self.fail_fast_errors) < 0:
+            raise ValueError("continuous.fail_fast_errors must be >= 0")
         if self.drop_policy not in {"drop_oldest_stale", "drop_oldest"}:
             raise ValueError(
                 "continuous.drop_policy must be 'drop_oldest_stale' or 'drop_oldest'",

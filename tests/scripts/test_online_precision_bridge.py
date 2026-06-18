@@ -118,18 +118,13 @@ def test_precision_drift_guard_config_is_bridged_from_yaml():
 
 
 def test_online_metrics_csv_includes_logprob_mismatch_metrics(tmp_path):
-    """Checks rollout-vs-replay mismatch metrics are written as regular CSV columns."""
+    """Mismatch + continuous-async diagnostics are written as regular CSV columns."""
     from types import SimpleNamespace
 
     from vrl.algorithms.types import TrainStepMetrics
 
     csv_path = tmp_path / "metrics.csv"
-    _prepare_metrics_csv(
-        csv_path,
-        (),
-        resume=False,
-        prepare_metrics_csv=lambda path, header, *, resume: path.write_text(header),
-    )
+    _prepare_metrics_csv(csv_path, (), resume=False)
     _write_metric_row(
         csv_path,
         0,
@@ -142,6 +137,11 @@ def test_online_metrics_csv_includes_logprob_mismatch_metrics(tmp_path):
             ratio_abs_dev_max=0.4,
             mismatch_kl=-0.5,
             mismatch_k3_kl=0.6,
+            phase_times={
+                "continuous.stale_policy_versions": 1.0,
+                "continuous.queue_ready_groups": 3.0,
+                "continuous.weight_sync_pause_s": 0.25,
+            },
         ),
         reward_fn=SimpleNamespace(last_components={}),
         component_names=(),
@@ -152,10 +152,15 @@ def test_online_metrics_csv_includes_logprob_mismatch_metrics(tmp_path):
     assert "logprob_abs_diff_mean" in header
     assert "ratio_abs_dev_max" in header
     assert "mismatch_k3_kl" in header
+    assert "continuous_stale_versions" in header
     values = dict(zip(header.split(","), row.split(","), strict=True))
     assert values["logprob_abs_diff_mean"] == "0.100000"
     assert values["ratio_abs_dev_max"] == "0.400000"
     assert values["mismatch_kl"] == "-0.500000"
+    # Continuous-async diagnostics sourced from TrainStepMetrics.phase_times.
+    assert values["continuous_stale_versions"] == "1.0"
+    assert values["continuous_ready_groups"] == "3.0"
+    assert values["continuous_weight_sync_pause_s"] == "0.2500"
 
 
 @pytest.mark.parametrize(

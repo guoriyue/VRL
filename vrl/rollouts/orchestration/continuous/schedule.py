@@ -40,14 +40,17 @@ class ContinuousRolloutSchedule:
         *,
         lifecycle: RolloutLifecycle,
         require_separate_gpus: bool = True,
-        max_inflight_groups: int = 1,
-        max_ready_groups: int = 2,
-        max_ready_bytes_mb: int = 8192,
-        max_stale_policy_versions: int = 0,
-        drop_policy: str = "drop_oldest_stale",
-        wait_timeout_s: float = 300.0,
-        queue_poll_interval_s: float = 0.05,
-        fail_fast_errors: int = 3,
+        # No defaults below: build_rollout_schedule is the only constructor and
+        # always passes these from ContinuousRolloutConfig (the single source of
+        # the default values). Duplicating them here would let the two drift.
+        max_inflight_groups: int,
+        max_ready_groups: int,
+        max_ready_bytes_mb: int,
+        max_stale_policy_versions: int,
+        drop_policy: str,
+        wait_timeout_s: float,
+        queue_poll_interval_s: float,
+        fail_fast_errors: int,
     ) -> None:
         self.lifecycle = lifecycle
         self.require_separate_gpus = bool(require_separate_gpus)

@@ -91,6 +91,7 @@ def _continuous_config(**continuous: Any) -> SimpleNamespace:
         "drop_policy": "drop_oldest_stale",
         "wait_timeout_s": 5.0,
         "queue_poll_interval_s": 0.001,
+        "fail_fast_errors": 3,
     }
     defaults.update(continuous)
     return SimpleNamespace(

@@ -84,14 +84,20 @@ def _build_continuous_schedule(
     ``vrl.trainers`` import (architecture boundary).
     """
 
+    # ContinuousRolloutConfig (vrl.trainers.core.types) is the single source of
+    # these defaults; read its already-resolved fields via getattr so the rollout
+    # layer needs no vrl.trainers import (architecture boundary) and no second
+    # copy of the default values.
     cont = getattr(config, "continuous", None)
+    if cont is None:
+        raise RuntimeError(
+            "rollout_orchestration.mode='continuous' requires a continuous config "
+            "block (ContinuousRolloutConfig); none was provided",
+        )
 
-    def field(name: str, default: Any) -> Any:
-        return getattr(cont, name, default) if cont is not None else default
-
-    max_inflight_groups = int(field("max_inflight_groups", 1))
-    max_ready_groups = int(field("max_ready_groups", 2))
-    max_stale_policy_versions = int(field("max_stale_policy_versions", 0))
+    max_inflight_groups = int(cont.max_inflight_groups)
+    max_ready_groups = int(cont.max_ready_groups)
+    max_stale_policy_versions = int(cont.max_stale_policy_versions)
 
     # Make "is this actually async?" self-reporting at startup. With
     # max_stale=0 the consumer rejects every prior-version group, so continuous
@@ -121,12 +127,12 @@ def _build_continuous_schedule(
         require_separate_gpus=bool(getattr(config, "require_separate_gpus", True)),
         max_inflight_groups=max_inflight_groups,
         max_ready_groups=max_ready_groups,
-        max_ready_bytes_mb=int(field("max_ready_bytes_mb", 8192)),
+        max_ready_bytes_mb=int(cont.max_ready_bytes_mb),
         max_stale_policy_versions=max_stale_policy_versions,
-        drop_policy=str(field("drop_policy", "drop_oldest_stale")),
-        wait_timeout_s=float(field("wait_timeout_s", 300.0)),
-        queue_poll_interval_s=float(field("queue_poll_interval_s", 0.05)),
-        fail_fast_errors=int(field("fail_fast_errors", 3)),
+        drop_policy=str(cont.drop_policy),
+        wait_timeout_s=float(cont.wait_timeout_s),
+        queue_poll_interval_s=float(cont.queue_poll_interval_s),
+        fail_fast_errors=int(cont.fail_fast_errors),
     )
 
 

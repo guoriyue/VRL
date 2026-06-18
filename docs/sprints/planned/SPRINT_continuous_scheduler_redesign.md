@@ -7,6 +7,27 @@ findings 全部带证据(代码 path:line),对标 cosmos-rl 单控制器。**先
 > 方法:1 个 workflow(3 agent)逐项核实 overlap/drain/staleness + 结构对称性,对照 cosmos-rl 源码
 > (`/home/mingfeiguo/Desktop/cosmos-rl`)。我独立复核了 driver loop 时序(trainer.py)。
 
+> **更新(2026-06-17,P0 落地 + 单卡 A/B 实测):**
+> - **P0 已实现 + 验证**:启动告警 `continuous async prefetch ENABLED / max_stale=0 → no prefetch`
+>   (`schedule.py` `_build_continuous_schedule`);并把 4 个 async 诊断量 flush 进 `metrics.csv`
+>   (`online.py` `_prepare_metrics_csv`/`_write_metric_row`):`continuous_stale_versions / ready_groups /
+>   weight_sync_pause_s / producer_max_gap_s`(strict 模式自动写 0)。这让"是否真 async"per-step 可见。
+> - **单卡实测**(sd3_5 OCR GRPO,colocated resident,RTX 5090,`max_stale=1` vs `0` A/B,同 seed,
+>   `max_ready_groups=8`,6 步):`ready_groups` 在 `max_stale=1` 下 = 1(预取缓冲生效)、`max_stale=0` 下 = 0
+>   (无预取,strict-equiv)——**窗口开关有可观测效果**。但 **`stale_versions` 两组恒为 0**:即使开窗 + 加深
+>   队列,consumer 仍消费 fresh group。无崩溃、无 `policy_version mismatch`(barrier 不变量成立)。
+> - **§2.2/§2.3 经实测确认 = H1(结构性,非 smoke 太小)**:drain 在 version bump 前 await 全部在途
+>   (`producer.py:130-132` + bump 在 `lifecycle.py:67-70`)+ consumer "同版本最新优先"选择(`queue.py:149-159`),
+>   把消费围栏到 current 版本;单卡 colocated 下 producer 重填 fresh 太快,stale group 永远选不上。
+>   **`max_stale=1` 必要不充分**。
+> - **P1 真实形态修正(与 §5 P1 的乐观判断相左)**:"去掉/放松 drain" **不是单卡安全增量**——executor
+>   硬断言同请求同版本(`executor.py:127-137`),放松会让横跨版本的请求**崩溃**而非让 StalenessPolicy
+>   吸收尾巴。真 P1 = ≥2 卡 + shadow-model(cosmos `WeightSyncThread`)或 cancel-resubmit(producer/schedule
+>   层,取消在途剩余 chunk + 新版本重交),是独立研究 PR。单卡只能做到"机制可观测"(已做);真 staleness/
+>   overlap 解 park 于 ≥2 卡。
+> - **soundness 闸**:`max_stale=1` 对 GRPO sound(IS 比值补偿,`grpo/continuous.py:85`),对 DiffusionNFT
+>   不 sound(无比值,parked doc §1);DiffusionNFT 单卡只跑 `max_stale=0`。
+
 ---
 
 ## 1. 核心结论 (TL;DR)
