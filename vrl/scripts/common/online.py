@@ -376,6 +376,179 @@ async def _run_streaming_optimizer_update(
     )
 
 
+@dataclass(slots=True)
+class OnlineRecipeRun:
+    """Execution controller for one ``run_online_recipe`` invocation.
+
+    Holds the wired runtime (``stack``) plus the per-run execution state the
+    recipe loop mutates: the two metrics-CSV paths, the prompt-sampling RNG, and
+    whether this is a resume. The metrics-CSV and checkpoint side effects live
+    here as methods so the loop calls ``run.write_metric_row(epoch, metrics)``
+    instead of threading ``csv_path`` / ``reward_fn`` / ``component_names`` /
+    ``rng`` through free functions on every call.
+
+    This is NOT a second owner of ``stack``'s fields -- component_names,
+    reward_fn, trainer, definition, etc. are all read through ``self.stack``.
+    ``OnlineRecipeStack`` stays the family-hook payload (handed to ``before_step``
+    / ``after_step``); ``OnlineRecipeRun`` is the IO/execution controller and is
+    never exposed to family hooks.
+    """
+
+    stack: OnlineRecipeStack
+    csv_path: Path
+    eval_csv_path: Path
+    rng: Any
+    resume: bool
+
+    def prepare_metrics_csv(self) -> None:
+        component_cols = ",".join(f"r_{name}" for name in self.stack.component_names)
+        header = (
+            "epoch,loss,policy_loss,kl_penalty,reward_mean,reward_std,"
+            "clip_fraction,approx_kl,logprob_abs_diff_mean,logprob_abs_diff_max,"
+            "ratio_abs_dev_mean,ratio_abs_dev_max,mismatch_kl,mismatch_k3_kl,"
+            "advantage_mean,grad_norm,adv_saturation,"
+            "adv_zero_rate,group_size,trained_prompt_num,"
+            # Continuous-rollout async diagnostics (0 in strict_on_policy mode). These
+            # answer "is the run actually async?": observed staleness of consumed
+            # samples, prefetched ready-queue depth, weight-sync barrier pause, and
+            # producer starvation. Sourced from TrainStepMetrics.phase_times.
+            "continuous_stale_versions,continuous_ready_groups,"
+            "continuous_weight_sync_pause_s,continuous_producer_max_gap_s"
+        )
+        if component_cols:
+            header = f"{header},{component_cols}"
+        prepare_metrics_csv(self.csv_path, header + "\n", resume=self.resume)
+
+    def write_metric_row(self, epoch: int, metrics: Any) -> None:
+        reward_fn = self.stack.reward_fn
+        component_names = self.stack.component_names
+        last = getattr(reward_fn, "last_components", {}) or {}
+        component_means = {
+            name: (sum(last.get(name, [])) / len(last.get(name, [])))
+            if last.get(name)
+            else float("nan")
+            for name in component_names
+        }
+        # Continuous async diagnostics live in TrainStepMetrics.phase_times (attached
+        # per iteration by ContinuousRolloutSchedule); empty in strict_on_policy mode.
+        phases = getattr(metrics, "phase_times", None) or {}
+        row = {
+            "epoch": epoch,
+            "loss": metrics.loss,
+            "policy_loss": metrics.policy_loss,
+            "kl_penalty": metrics.kl_penalty,
+            "reward_mean": metrics.reward_mean,
+            "reward_std": metrics.reward_std,
+            "clip_fraction": metrics.clip_fraction,
+            "approx_kl": metrics.approx_kl,
+            "logprob_abs_diff_mean": metrics.logprob_abs_diff_mean,
+            "logprob_abs_diff_max": metrics.logprob_abs_diff_max,
+            "ratio_abs_dev_mean": metrics.ratio_abs_dev_mean,
+            "ratio_abs_dev_max": metrics.ratio_abs_dev_max,
+            "mismatch_kl": metrics.mismatch_kl,
+            "mismatch_k3_kl": metrics.mismatch_k3_kl,
+            "advantage_mean": metrics.advantage_mean,
+            "grad_norm": metrics.grad_norm,
+            "adv_saturation": metrics.adv_saturation,
+            "adv_zero_rate": metrics.adv_zero_rate,
+            "group_size": metrics.group_size,
+            "trained_prompt_num": metrics.trained_prompt_num,
+            "continuous_stale_versions": phases.get("continuous.stale_policy_versions", 0.0),
+            "continuous_ready_groups": phases.get("continuous.queue_ready_groups", 0.0),
+            "continuous_weight_sync_pause_s": phases.get("continuous.weight_sync_pause_s", 0.0),
+            "continuous_producer_max_gap_s": phases.get("continuous.producer_max_tick_gap_s", 0.0),
+            **{f"r_{name}": component_means[name] for name in component_names},
+        }
+        metric_row_hook = self.stack.definition.metric_row_hook
+        if metric_row_hook is not None:
+            metric_row_hook(row, metrics)
+        with self.csv_path.open("a", encoding="utf-8") as handle:
+            handle.write(
+                ",".join(
+                    [
+                        str(row["epoch"]),
+                        f"{row['loss']:.6f}",
+                        f"{row['policy_loss']:.6f}",
+                        f"{row['kl_penalty']:.6f}",
+                        f"{row['reward_mean']:.4f}",
+                        f"{row['reward_std']:.4f}",
+                        f"{row['clip_fraction']:.4f}",
+                        f"{row['approx_kl']:.6f}",
+                        f"{row['logprob_abs_diff_mean']:.6f}",
+                        f"{row['logprob_abs_diff_max']:.6f}",
+                        f"{row['ratio_abs_dev_mean']:.6f}",
+                        f"{row['ratio_abs_dev_max']:.6f}",
+                        f"{row['mismatch_kl']:.6f}",
+                        f"{row['mismatch_k3_kl']:.6f}",
+                        f"{row['advantage_mean']:.6f}",
+                        f"{row['grad_norm']:.6f}",
+                        f"{row['adv_saturation']:.4f}",
+                        f"{row['adv_zero_rate']:.4f}",
+                        f"{row['group_size']:.2f}",
+                        str(row["trained_prompt_num"]),
+                        f"{row['continuous_stale_versions']:.1f}",
+                        f"{row['continuous_ready_groups']:.1f}",
+                        f"{row['continuous_weight_sync_pause_s']:.4f}",
+                        f"{row['continuous_producer_max_gap_s']:.4f}",
+                        *(f"{row[f'r_{name}']:.4f}" for name in component_names),
+                    ],
+                )
+                + "\n",
+            )
+
+    def prepare_eval_metrics_csv(self) -> None:
+        """eval_metrics.csv header. ``epoch=-1`` is the pre-RL baseline row."""
+
+        component_cols = ",".join(f"r_{name}" for name in self.stack.component_names)
+        header = "epoch,eval_reward_mean,eval_reward_std,eval_reward_stderr,eval_n,global_step"
+        if component_cols:
+            header = f"{header},{component_cols}"
+        prepare_metrics_csv(self.eval_csv_path, header + "\n", resume=self.resume)
+
+    def write_eval_metric_row(
+        self,
+        epoch: int,
+        result: _FixedEvalResult,
+        *,
+        global_step: int,
+    ) -> None:
+        means = result.component_means
+        columns = [
+            str(epoch),
+            f"{result.reward_mean:.4f}",
+            f"{result.reward_std:.4f}",
+            f"{result.reward_stderr:.4f}",
+            str(result.n),
+            str(global_step),
+            *(f"{means.get(name, float('nan')):.4f}" for name in self.stack.component_names),
+        ]
+        with self.eval_csv_path.open("a", encoding="utf-8") as handle:
+            handle.write(",".join(columns) + "\n")
+
+    def save_checkpoint(self, path: Path, *, epoch: int) -> None:
+        stack = self.stack
+        export_modules = (
+            stack.definition.export_modules_getter(stack.bundle, stack.cfg)
+            if stack.definition.export_modules_getter is not None
+            else None
+        )
+        save_training_checkpoint(
+            path,
+            trainer=stack.trainer,
+            bundle=stack.bundle,
+            family=stack.family,
+            progress={
+                "completed_epoch": epoch,
+                "next_epoch": epoch,
+                "global_step": stack.trainer.state.global_step,
+            },
+            rng_state=capture_rng_state(prompt_generator=self.rng),
+            export_modules=export_modules,
+            export_ema=getattr(stack.trainer, "_ema", None),
+            strategy=stack.strategy,
+        )
+
+
 async def run_online_recipe(
     cfg: DictConfig,
     definition: OnlineRecipeDefinition,
@@ -554,19 +727,6 @@ async def run_online_recipe(
         save_resolved_config(cfg, output_dir, resumed=resume_checkpoint is not None)
 
         component_names = tuple(components.built["reward"][0].keys())
-        csv_path = output_dir / "metrics.csv"
-        _prepare_metrics_csv(
-            csv_path,
-            component_names,
-            resume=resume_checkpoint is not None,
-        )
-        eval_csv_path = output_dir / "eval_metrics.csv"
-        if eval_enabled:
-            _prepare_eval_metrics_csv(
-                eval_csv_path,
-                component_names,
-                resume=resume_checkpoint is not None,
-            )
 
         rng = torch.Generator().manual_seed(trainer_config.seed)
         start_epoch = resume_checkpoint.next_epoch if resume_checkpoint is not None else 0
@@ -595,6 +755,21 @@ async def run_online_recipe(
             output_dir=output_dir,
             component_names=component_names,
         )
+        # Execution controller for this run: owns the metrics-CSV paths, prompt
+        # RNG, and resume flag, and carries the metrics/checkpoint IO as methods so
+        # the loop below stops threading csv_path / reward_fn / component_names /
+        # rng through free helpers. Holds `stack` (single owner of the wired
+        # runtime); never handed to family hooks, which still receive `stack`.
+        run = OnlineRecipeRun(
+            stack=stack,
+            csv_path=output_dir / "metrics.csv",
+            eval_csv_path=output_dir / "eval_metrics.csv",
+            rng=rng,
+            resume=resume_checkpoint is not None,
+        )
+        run.prepare_metrics_csv()
+        if eval_enabled:
+            run.prepare_eval_metrics_csv()
 
         logger.info(
             "Starting %s online recipe: epochs=%d examples=%d n=%d",
@@ -615,11 +790,9 @@ async def run_online_recipe(
                 max_prompts=int(eval_cfg.max_prompts),
                 component_names=component_names,
             )
-            _write_eval_metric_row(
-                eval_csv_path,
+            run.write_eval_metric_row(
                 eval_epoch,
                 result,
-                component_names=component_names,
                 global_step=int(trainer.state.global_step),
             )
             logger.info(
@@ -672,14 +845,7 @@ async def run_online_recipe(
             else:
                 components.reward_fn.reset_components()
                 metrics = await trainer.step(example_batch)
-            _write_metric_row(
-                csv_path,
-                epoch,
-                metrics,
-                reward_fn=components.reward_fn,
-                component_names=component_names,
-                metric_row_hook=definition.metric_row_hook,
-            )
+            run.write_metric_row(epoch, metrics)
 
             # Fixed eval AFTER the training row (eval overwrites reward_fn
             # components; the next epoch's collect resets them).
@@ -692,18 +858,11 @@ async def run_online_recipe(
                     await maybe_awaitable
 
             if trainer_config.save_freq > 0 and (epoch + 1) % trainer_config.save_freq == 0:
-                _save_checkpoint(
-                    output_dir / f"checkpoint-{epoch + 1}",
-                    stack,
-                    epoch=epoch + 1,
-                    rng=rng,
-                )
+                run.save_checkpoint(output_dir / f"checkpoint-{epoch + 1}", epoch=epoch + 1)
 
-        _save_checkpoint(
+        run.save_checkpoint(
             output_dir / "checkpoint-final",
-            stack,
             epoch=trainer_config.total_epochs,
-            rng=rng,
         )
         logger.info("Training complete. Final checkpoint: %s", output_dir / "checkpoint-final")
     except BaseException as exc:
@@ -735,114 +894,6 @@ def _preflight_production_video_reward(cfg: DictConfig) -> None:
             "production.kling_video_reward requires the repo-owned Kling VideoReward "
             "inference backend under vrl/rewards/models/kling_video_reward.py.",
         ) from exc
-
-
-def _prepare_metrics_csv(
-    path: Path,
-    component_names: tuple[str, ...],
-    *,
-    resume: bool,
-) -> None:
-    component_cols = ",".join(f"r_{name}" for name in component_names)
-    header = (
-        "epoch,loss,policy_loss,kl_penalty,reward_mean,reward_std,"
-        "clip_fraction,approx_kl,logprob_abs_diff_mean,logprob_abs_diff_max,"
-        "ratio_abs_dev_mean,ratio_abs_dev_max,mismatch_kl,mismatch_k3_kl,"
-        "advantage_mean,grad_norm,adv_saturation,"
-        "adv_zero_rate,group_size,trained_prompt_num,"
-        # Continuous-rollout async diagnostics (0 in strict_on_policy mode). These
-        # answer "is the run actually async?": observed staleness of consumed
-        # samples, prefetched ready-queue depth, weight-sync barrier pause, and
-        # producer starvation. Sourced from TrainStepMetrics.phase_times.
-        "continuous_stale_versions,continuous_ready_groups,"
-        "continuous_weight_sync_pause_s,continuous_producer_max_gap_s"
-    )
-    if component_cols:
-        header = f"{header},{component_cols}"
-    prepare_metrics_csv(path, header + "\n", resume=resume)
-
-
-def _write_metric_row(
-    path: Path,
-    epoch: int,
-    metrics: Any,
-    *,
-    reward_fn: Any,
-    component_names: tuple[str, ...],
-    metric_row_hook: Any,
-) -> None:
-    last = getattr(reward_fn, "last_components", {}) or {}
-    component_means = {
-        name: (sum(last.get(name, [])) / len(last.get(name, [])))
-        if last.get(name)
-        else float("nan")
-        for name in component_names
-    }
-    # Continuous async diagnostics live in TrainStepMetrics.phase_times (attached
-    # per iteration by ContinuousRolloutSchedule); empty in strict_on_policy mode.
-    phases = getattr(metrics, "phase_times", None) or {}
-    row = {
-        "epoch": epoch,
-        "loss": metrics.loss,
-        "policy_loss": metrics.policy_loss,
-        "kl_penalty": metrics.kl_penalty,
-        "reward_mean": metrics.reward_mean,
-        "reward_std": metrics.reward_std,
-        "clip_fraction": metrics.clip_fraction,
-        "approx_kl": metrics.approx_kl,
-        "logprob_abs_diff_mean": metrics.logprob_abs_diff_mean,
-        "logprob_abs_diff_max": metrics.logprob_abs_diff_max,
-        "ratio_abs_dev_mean": metrics.ratio_abs_dev_mean,
-        "ratio_abs_dev_max": metrics.ratio_abs_dev_max,
-        "mismatch_kl": metrics.mismatch_kl,
-        "mismatch_k3_kl": metrics.mismatch_k3_kl,
-        "advantage_mean": metrics.advantage_mean,
-        "grad_norm": metrics.grad_norm,
-        "adv_saturation": metrics.adv_saturation,
-        "adv_zero_rate": metrics.adv_zero_rate,
-        "group_size": metrics.group_size,
-        "trained_prompt_num": metrics.trained_prompt_num,
-        "continuous_stale_versions": phases.get("continuous.stale_policy_versions", 0.0),
-        "continuous_ready_groups": phases.get("continuous.queue_ready_groups", 0.0),
-        "continuous_weight_sync_pause_s": phases.get("continuous.weight_sync_pause_s", 0.0),
-        "continuous_producer_max_gap_s": phases.get("continuous.producer_max_tick_gap_s", 0.0),
-        **{f"r_{name}": component_means[name] for name in component_names},
-    }
-    if metric_row_hook is not None:
-        metric_row_hook(row, metrics)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(
-            ",".join(
-                [
-                    str(row["epoch"]),
-                    f"{row['loss']:.6f}",
-                    f"{row['policy_loss']:.6f}",
-                    f"{row['kl_penalty']:.6f}",
-                    f"{row['reward_mean']:.4f}",
-                    f"{row['reward_std']:.4f}",
-                    f"{row['clip_fraction']:.4f}",
-                    f"{row['approx_kl']:.6f}",
-                    f"{row['logprob_abs_diff_mean']:.6f}",
-                    f"{row['logprob_abs_diff_max']:.6f}",
-                    f"{row['ratio_abs_dev_mean']:.6f}",
-                    f"{row['ratio_abs_dev_max']:.6f}",
-                    f"{row['mismatch_kl']:.6f}",
-                    f"{row['mismatch_k3_kl']:.6f}",
-                    f"{row['advantage_mean']:.6f}",
-                    f"{row['grad_norm']:.6f}",
-                    f"{row['adv_saturation']:.4f}",
-                    f"{row['adv_zero_rate']:.4f}",
-                    f"{row['group_size']:.2f}",
-                    str(row["trained_prompt_num"]),
-                    f"{row['continuous_stale_versions']:.1f}",
-                    f"{row['continuous_ready_groups']:.1f}",
-                    f"{row['continuous_weight_sync_pause_s']:.4f}",
-                    f"{row['continuous_producer_max_gap_s']:.4f}",
-                    *(f"{row[f'r_{name}']:.4f}" for name in component_names),
-                ],
-            )
-            + "\n",
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -949,43 +1000,6 @@ async def _run_fixed_eval(
             torch.cuda.empty_cache()
 
 
-def _prepare_eval_metrics_csv(
-    path: Path,
-    component_names: tuple[str, ...],
-    *,
-    resume: bool,
-) -> None:
-    """eval_metrics.csv header. ``epoch=-1`` is the pre-RL baseline row."""
-
-    component_cols = ",".join(f"r_{name}" for name in component_names)
-    header = "epoch,eval_reward_mean,eval_reward_std,eval_reward_stderr,eval_n,global_step"
-    if component_cols:
-        header = f"{header},{component_cols}"
-    prepare_metrics_csv(path, header + "\n", resume=resume)
-
-
-def _write_eval_metric_row(
-    path: Path,
-    epoch: int,
-    result: _FixedEvalResult,
-    *,
-    component_names: tuple[str, ...],
-    global_step: int,
-) -> None:
-    means = result.component_means
-    columns = [
-        str(epoch),
-        f"{result.reward_mean:.4f}",
-        f"{result.reward_std:.4f}",
-        f"{result.reward_stderr:.4f}",
-        str(result.n),
-        str(global_step),
-        *(f"{means.get(name, float('nan')):.4f}" for name in component_names),
-    ]
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(",".join(columns) + "\n")
-
-
 async def _shutdown_online_recipe_runtime(
     *,
     collector: Any | None,
@@ -1021,35 +1035,6 @@ async def _shutdown_online_recipe_runtime(
     if run_error is None:
         name, exc = shutdown_errors[0]
         raise RuntimeError(f"{name} shutdown failed during online recipe cleanup") from exc
-
-
-def _save_checkpoint(
-    path: Path,
-    stack: OnlineRecipeStack,
-    *,
-    epoch: int,
-    rng: Any,
-) -> None:
-    export_modules = (
-        stack.definition.export_modules_getter(stack.bundle, stack.cfg)
-        if stack.definition.export_modules_getter is not None
-        else None
-    )
-    save_training_checkpoint(
-        path,
-        trainer=stack.trainer,
-        bundle=stack.bundle,
-        family=stack.family,
-        progress={
-            "completed_epoch": epoch,
-            "next_epoch": epoch,
-            "global_step": stack.trainer.state.global_step,
-        },
-        rng_state=capture_rng_state(prompt_generator=rng),
-        export_modules=export_modules,
-        export_ema=getattr(stack.trainer, "_ema", None),
-        strategy=stack.strategy,
-    )
 
 
 __all__ = [

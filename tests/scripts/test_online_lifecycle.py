@@ -242,16 +242,16 @@ def _install_common_fakes(
     monkeypatch.setattr(online, "build_runtime_weight_syncer", lambda *args, **kwargs: object())
     monkeypatch.setattr(online, "save_resolved_config", lambda *args, **kwargs: None)
     monkeypatch.setattr(
-        online,
-        "_prepare_metrics_csv",
+        online.OnlineRecipeRun,
+        "prepare_metrics_csv",
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(online, "sample_prompt_indices", lambda *args, **kwargs: [0])
-    monkeypatch.setattr(online, "_write_metric_row", lambda *args, **kwargs: None)
+    monkeypatch.setattr(online.OnlineRecipeRun, "write_metric_row", lambda *args, **kwargs: None)
     monkeypatch.setattr(
-        online,
-        "_save_checkpoint",
-        lambda path, *args, **kwargs: state["checkpoint_paths"].append(path.name),
+        online.OnlineRecipeRun,
+        "save_checkpoint",
+        lambda self, path, *args, **kwargs: state["checkpoint_paths"].append(path.name),
     )
     return reward
 
@@ -420,11 +420,11 @@ async def test_run_online_recipe_shutdowns_owner_after_final_checkpoint_failure(
     state = _state()
     _install_common_fakes(monkeypatch, tmp_path, state)
 
-    def raise_checkpoint(path: Any, *args: Any, **kwargs: Any) -> None:
-        del path, args, kwargs
+    def raise_checkpoint(self: Any, path: Any, *args: Any, **kwargs: Any) -> None:
+        del self, path, args, kwargs
         raise RuntimeError("save boom")
 
-    monkeypatch.setattr(online, "_save_checkpoint", raise_checkpoint)
+    monkeypatch.setattr(online.OnlineRecipeRun, "save_checkpoint", raise_checkpoint)
 
     with pytest.raises(RuntimeError, match="save boom"):
         await online.run_online_recipe(_cfg(), _definition())

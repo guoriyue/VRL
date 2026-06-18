@@ -13,11 +13,7 @@ from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
 from vrl.config.precision import resolve_precision_policy
 from vrl.models.dtypes import resolve_torch_dtype
-from vrl.scripts.common.online import (
-    _apply_precision_policy,
-    _prepare_metrics_csv,
-    _write_metric_row,
-)
+from vrl.scripts.common.online import _apply_precision_policy
 from vrl.trainers.precision import torch_dtype_for_trainer_precision
 
 # Derive every online recipe from the experiment glob (the single source of
@@ -122,11 +118,25 @@ def test_online_metrics_csv_includes_logprob_mismatch_metrics(tmp_path):
     from types import SimpleNamespace
 
     from vrl.algorithms.types import TrainStepMetrics
+    from vrl.scripts.common.online import OnlineRecipeRun
 
     csv_path = tmp_path / "metrics.csv"
-    _prepare_metrics_csv(csv_path, (), resume=False)
-    _write_metric_row(
-        csv_path,
+    # The metrics-CSV side effects now live on OnlineRecipeRun; the controller
+    # reads component_names / reward_fn / metric_row_hook off its stack, so a
+    # minimal SimpleNamespace stack is enough to exercise the row formatting.
+    run = OnlineRecipeRun(
+        stack=SimpleNamespace(
+            component_names=(),
+            reward_fn=SimpleNamespace(last_components={}),
+            definition=SimpleNamespace(metric_row_hook=None),
+        ),
+        csv_path=csv_path,
+        eval_csv_path=tmp_path / "eval_metrics.csv",
+        rng=None,
+        resume=False,
+    )
+    run.prepare_metrics_csv()
+    run.write_metric_row(
         0,
         TrainStepMetrics(
             loss=1.0,
@@ -143,9 +153,6 @@ def test_online_metrics_csv_includes_logprob_mismatch_metrics(tmp_path):
                 "continuous.weight_sync_pause_s": 0.25,
             },
         ),
-        reward_fn=SimpleNamespace(last_components={}),
-        component_names=(),
-        metric_row_hook=None,
     )
 
     header, row = csv_path.read_text().splitlines()
