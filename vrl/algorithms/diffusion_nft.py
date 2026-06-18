@@ -310,8 +310,24 @@ class DiffusionNFT(Algorithm):
         sync(decay=float(self.config.weight_copy_decay))
 
 
+def _adapter_host(transformer: Any) -> Any:
+    """The PEFT-capable module behind any DDP / torch.compile wrapper.
+
+    Under DDP the trainable transformer is ``DDP(PeftModel)``, which does NOT proxy
+    PEFT's ``set_adapter`` / ``disable_adapters``, so the NFT previous-policy and
+    reference branches must switch adapters on the unwrapped ``PeftModel``. DDP wraps
+    that exact same module object, so a switch on the host is visible to the wrapped
+    grad forward too. Single-process (no wrapper) returns the module unchanged.
+    """
+
+    from vrl.trainers.weight_sync import unwrap_compile_and_ddp
+
+    return unwrap_compile_and_ddp(transformer)
+
+
 def _forward_previous_policy_adapter(transformer: Any, inputs: dict[str, Any]) -> Any:
-    set_adapter = getattr(transformer, "set_adapter", None)
+    host = _adapter_host(transformer)
+    set_adapter = getattr(host, "set_adapter", None)
     if not callable(set_adapter):
         raise RuntimeError(
             "DiffusionNFT requires transformer.set_adapter('previous') "
@@ -330,21 +346,22 @@ def _forward_previous_policy_adapter(transformer: Any, inputs: dict[str, Any]) -
 def _forward_reference(transformer: Any, inputs: dict[str, Any]) -> Any:
     import torch
 
-    disable_adapters = getattr(transformer, "disable_adapters", None)
+    host = _adapter_host(transformer)
+    disable_adapters = getattr(host, "disable_adapters", None)
     if callable(disable_adapters):
-        transformer.disable_adapters()
+        host.disable_adapters()
         try:
             with torch.no_grad():
                 return transformer(**inputs)[0].detach()
         finally:
-            enable = getattr(transformer, "enable_adapters", None)
+            enable = getattr(host, "enable_adapters", None)
             if callable(enable):
                 enable()
-            set_adapter = getattr(transformer, "set_adapter", None)
+            set_adapter = getattr(host, "set_adapter", None)
             if callable(set_adapter):
                 set_adapter("default")
 
-    disable_adapter = getattr(transformer, "disable_adapter", None)
+    disable_adapter = getattr(host, "disable_adapter", None)
     if callable(disable_adapter):
         with disable_adapter(), torch.no_grad():
             return transformer(**inputs)[0].detach()
