@@ -11,6 +11,10 @@ DiffusionNFT 没有"理论安全"版本,只有"实测不伤就用"的经验路;�
 1. **算法锁 DiffusionNFT**(论文用的,likelihood-free)。不换 flow-matching GRPO。
 2. **暂单卡、能搞到多卡** → 现在只做卡数无关的 prep + 本设计文档;决定性实验(Option A)等多卡。
 
+**Scope guard（2026-06-17）**：这里的 async 只指 **rollout actor / ready queue** 和 **trainer**
+的跨阶段重叠。sync mini/microbatch 是内存切片与梯度累积机制，不属于本 sprint，也不作为 async
+验收标准。
+
 来源:对 `~/Desktop/slime`、`~/Desktop/cosmos-rl`、本仓库逐文件读出的证据(2026-06-17 workflow,
 file:line 已核)。
 
@@ -119,12 +123,14 @@ flip 到 continuous 会撞下面的 gap:
   `requires_driver_model_offload` 硬编码 `False`(`runtime.py:59`;会翻 True 的 `gpus_per_worker>0` 只在
   on-demand 路径 `runtime.py:87`),所以 raise (a) 不触发;再加 `require_separate_gpus:false` 短路 raise (b),
   **单卡 continuous 可合法启动**(见顶部更新)。
-- **Gap 3(streaming × continuous 未验证,最深)**:cosmos 用 streaming microbatch(`microbatch_size=1` →
-  `gas = rollout_batch_size`)。`_run_streaming_optimizer_update`(`online.py:283`)每个 optimizer update 调
-  `collect_training_batch` `gas` 次,每次 → `rollout_schedule.next_iteration`(`trainer.py:439`)。而 continuous
-  queue 设计是"每 step 排一个 homogeneous-policy iteration"。**`gas` 次 next_iteration/update 与 continuous
-  producer/queue 是否正确组合(同版本横跨全部 microbatch、队深、逐 microbatch 准入)从未验证**——continuous
-  示例(sd3_5 OCR)是非 streaming(gas=0)。这是多卡到位后**第一个要查的代码 gap**。
+- **Gap 3(sync streaming × continuous 接线未验证)**:cosmos 用同步 streaming microbatch
+  (`microbatch_size=1` → `gas = rollout_batch_size`)。`_run_streaming_optimizer_update`(`online.py:283`)
+  每个 optimizer update 会多次调用 `collect_training_batch`，每次进入
+  `rollout_schedule.next_iteration`(`trainer.py:439`)。continuous queue 设计是 policy-versioned ready
+  rollout groups / iterations；需要验证这些重复 strict calls 是否都保持同一 optimizer target 的版本边界、
+  metrics 聚合和 weight-sync 时机正确。**这不是 microbatch async 计划**：不要把 consumer 边界降到
+  microbatch，也不要在 `_run_streaming_optimizer_update` 里加 prefetch。continuous 示例(sd3_5 OCR)
+  是非 streaming(gas=0)，所以这仍是多卡到位前要先 smoke 的接线 gap。
 - **Gap 4(DiffusionNFT × continuous 从未跑)**:continuous 只跑过 GRPO(sd3_5/AR,**有** IS 比值)。
   DiffusionNFT + continuous + `max_stale≥1` 正是 §1 的不安全组合;`max_stale=0` 才 behavior-equiv strict。
 - **Gap 5(weight-sync 模型不同)**:continuous 用 barrier + **常驻 worker** 的 `update_weights` 推送;
@@ -145,6 +151,8 @@ flip 到 continuous 会撞下面的 gap:
 - **不在单卡上追求真 overlap**(三家一致:显存墙,colocated 只能时间片;单卡能跑 continuous 机制 smoke,
   但只切显存不切时间,**不产生真 wall-clock overlap**)。注:`_validate_allowed` 禁的是 **offload 运行时** +
   **`require_separate_gpus AND colocated`** 两个条件,**不是"单卡"本身**;单卡机制 smoke 是被允许的(见顶部更新)。
+- **不做 microbatch/minibatch async**。sync streaming accumulation 保持 `collect -> backward -> release`;
+  本 sprint 只讨论 rollout actor 与 trainer 的跨阶段 overlap。
 - **不造假 logprob head 去复用 TIS**(那是 DiffusionNFT 刻意避开的 tractability 假设)。
 - **不在证明 on-policy 会学之前**引入不可证安全的 staleness。
 - **不换 flow-matching GRPO**(已与用户确认锁 DiffusionNFT;若改主意,整个 slime 修正菜单解锁,本 doc 重写)。

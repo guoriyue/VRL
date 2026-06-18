@@ -9,6 +9,9 @@
 **触发**：correctness 里程碑（无 mismatch + pause 下降）**单卡即可验**；真 wall-clock overlap 收益需
 **≥2 卡**（trainer 常驻一卡、rollout actor 常驻另一卡——单卡时间片下生成与训练抢同一批 SM,拿不到真重叠）。
 
+**Scope guard（2026-06-17）**：本 sprint 只处理 continuous rollout/train async 的 weight-sync
+barrier；不做 microbatch/minibatch prefetch。`microbatch_size` 仍只是同步内存切片和梯度累积旋钮。
+
 来源：本仓库 + `~/Desktop/cosmos-rl` 逐文件读出（2026-06-17 workflow,file:line 已核）+ 单卡去 drain 实测。
 
 ---
@@ -120,6 +123,8 @@ producer 用新 `live_version` 重交。
 **P2 — 真 overlap(≥2 卡,throughput 里程碑)**
 trainer 常驻 GPU0、rollout actor 常驻 GPU1;验收每步 wall-clock 下降、`weight_sync_pause_s` 被隐藏到接近
 0、rollout 与 train 时间真重叠。这是 parked doc(`SPRINT_async_rollout_train_overlap.md`)Option A 的 host。
+这里的 overlap 是 rollout actor 与 trainer 的跨阶段重叠，不是 `_run_streaming_optimizer_update` 内的
+microbatch prefetch。
 
 ## 6. 非目标
 
@@ -128,6 +133,7 @@ trainer 常驻 GPU0、rollout actor 常驻 GPU1;验收每步 wall-clock 下降�
 - 不照搬 cosmos 的独立 CUDA stream / NCCL(VRL 走 Ray object store);独立 stream 隐藏 copy 是后续。
 - **不给 DiffusionNFT 开 staleness**(无补偿,parked doc §1);DiffusionNFT 只用 shadow-model 去 pause。
 - P0/P1 不追求 wall-clock overlap(单卡时间片做不到,别把 stale=1 当吞吐赢)。
+- **不做 microbatch/minibatch async**；不改同步 streaming accumulation 的 collect/backward/release 边界。
 
 ## 7. 验收 metrics（复用已落地的 P0 4 列）
 

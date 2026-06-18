@@ -90,7 +90,8 @@ cd ~/Desktop/VRL && HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 CUDA_VISIBLE_DEVICES
 
 ## 关联
 
-- 本 run 验证了 `microbatch_size` streaming（见 `done/SPRINT_memory_budgeted_microbatch.md`、`planned/SPRINT_microbatch_pipeline_overlap.md`）在真实 cosmos 上端到端可用。
+- 本 run 验证了同步 `microbatch_size` streaming（见 `done/SPRINT_streaming_rollout_accumulation.md`、
+  `done/SPRINT_memory_budgeted_microbatch.md`）在真实 cosmos 上端到端可用；它不是 async overlap。
 - 复现 2026-06-13 "first trustworthy curve" 的持平结论。
 - 同类容量/配方坑点也记在个人 memory `project_cosmos_streaming_smoke.md`。
 

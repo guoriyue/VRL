@@ -4,6 +4,11 @@
 findings 全部带证据(代码 path:line),对标 cosmos-rl 单控制器。**先做 P0/P1 小杠杆,统一调度器(P2)
 是更大的可选步,不是从零重写。**
 
+**Scope guard（2026-06-17）**：本文里的 async 只指 **rollout producer / reward / ready queue** 与
+**trainer** 的跨阶段、跨 step wall-clock overlap；不再包含 microbatch/minibatch prefetch。同步
+microbatch 只由 `SPRINT_streaming_rollout_accumulation.md` 与
+`SPRINT_memory_budgeted_microbatch.md` 维护。
+
 > 方法:1 个 workflow(3 agent)逐项核实 overlap/drain/staleness + 结构对称性,对照 cosmos-rl 源码
 > (`/home/mingfeiguo/Desktop/cosmos-rl`)。我独立复核了 driver loop 时序(trainer.py)。
 
@@ -147,6 +152,9 @@ cosmos-rl 的单 `Controller` 就是 vrl 缺的那个"全局更大更准确的 s
 5. (更大)**真 wall-clock 重叠**要让生成编排不与训练共用同一线程/事件循环跑同步 backward——要么 producer
    loop 独立线程,要么走 cosmos-rl 的独立进程 rollout owner。这是最大的一步,放最后。
 
+调度 item 是 rollout group / ready rollout batch / policy-versioned producer work，不是 training
+microbatch。不要把 `_run_streaming_optimizer_update` 改成 microbatch prefetch 来冒充 continuous async。
+
 ---
 
 ## 5. 分阶段计划(先小杠杆,后大重构)
@@ -179,6 +187,8 @@ cosmos-rl 的单 `Controller` 就是 vrl 缺的那个"全局更大更准确的 s
   生成路径上放松。
 - **不照搬 sglang-omni 的 stage 流水**——那是 serving 内部一次前向的拆分,与 RL 生成/训练调度无关。
 - **不在没量出 staleness 容忍度前**就把 `max_stale` 拍一个大值。
+- **不做 microbatch/minibatch async。** `microbatch_size` 继续只表示同步内存切片和梯度累积；本 sprint 不在
+  `_run_streaming_optimizer_update` 内实现 prefetch，也不把 continuous consumer 边界降到 microbatch。
 
 ---
 

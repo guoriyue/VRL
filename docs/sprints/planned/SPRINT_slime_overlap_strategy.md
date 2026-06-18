@@ -6,6 +6,10 @@
 目标是把 slime 的 async rollout 经验吸收到 VRL continuous rollout，但不把 slime 的实现细节
 机械搬过来。
 
+**Scope guard（2026-06-17）**：这里只研究完整 rollout future / ready batch 与 trainer 的 overlap。
+不把 slime 的 async 经验解释成 microbatch/minibatch prefetch；sync microbatch 仍由 streaming
+accumulation 文档负责。
+
 ## 0. 一句话
 
 slime 的 async overlap 不是“裸 generation 和 training overlap”，而是：
@@ -27,6 +31,7 @@ actor_model.async_train(...)
 
 VRL continuous rollout 的正确方向相同：**ready queue 只放已经打分、可以训练的 batch**。
 trainer 不应该等待 reward，也不应该消费半成品 rollout。
+这里的 batch 边界是 rollout production 边界，不是 training microbatch async 边界。
 
 ## 1. Slime 代码事实
 
@@ -450,6 +455,7 @@ GRPO.compute_advantages_from_tensors algorithm-owned math boundary
   这些属于算法实验，不属于 overlap 架构。
 - 不把 slime 的 rollout-manager normalization 位置照搬到 VRL。
 - 不做 fully async / off-policy replay buffer；当前目标是 bounded ready queue。
+- 不做 microbatch/minibatch async；不在 `_run_streaming_optimizer_update` 内做 prefetch。
 - 不在没有 profiling 证据前拆 reward worker pipeline。
 - 不处理 unrelated reward model 配置或 Kling reward 改动。
 

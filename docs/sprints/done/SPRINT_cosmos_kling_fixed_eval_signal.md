@@ -12,7 +12,8 @@ epoch 或吞吐优化掩盖问题。
 - `SPRINT_memory_budgeted_microbatch.md`: `rollout.microbatch_size` 是唯一手填切片大小，
   `actor.gradient_accumulation_steps` 派生。
 
-不依赖 `SPRINT_microbatch_pipeline_overlap.md`。overlap 只会让实验更快，不能证明 reward 真的变好。
+不依赖 async overlap。`SPRINT_microbatch_pipeline_overlap.md` 已退役为 scope guard；microbatch 只保留
+同步内存切片语义，不能证明 reward 真的变好。
 
 ---
 
@@ -523,7 +524,8 @@ train reward mean may remain noisy
   ```
 
   支持 `ppo_epochs>1` 需要保存或重放已释放的 microbatch replay tensors，是另一个算法/内存设计。
-- **不先做 microbatch pipeline overlap。** overlap 是吞吐优化，不解决学习曲线不可读和梯度过小。
+- **不先做 rollout/train async。** 它是吞吐优化，不解决学习曲线不可读和梯度过小；microbatch async
+  已明确退役。
 - **不改 `rollout_batch_size` / `n_samples_per_prompt` / `microbatch_size` 的 paper-shaped 语义。**
 - **不新增 duplicated prompt list 常量。** `data.eval_manifest` 是唯一 eval prompt source of truth。
 - **不提前抽薄文件。** eval helper 先贴近 online recipe；只有成为共享协议边界时才抽文件。

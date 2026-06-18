@@ -110,7 +110,8 @@ cd ~/Desktop/VRL && HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 CUDA_VISIBLE_DEVICES
   1. **lr 再加**：`approx_kl` 才 ~0.002、headroom 很大，可试 `actor.optim.lr=2e-4`。
   2. **full-param 取代 LoRA**：需要第 2 张卡（previous-policy 单独状态路径）。
   3. **reward 信噪比**：eval `--samples-per-prompt` 调大；native-res（≥448p）打分需要 reward 第二张卡。
-  4. **才轮到** `SPRINT_microbatch_pipeline_overlap`：它只提吞吐、不改 RL 信号，确认会涨之前别做。
+  4. **吞吐优化另走 rollout/train async**：`SPRINT_microbatch_pipeline_overlap` 已退役为 scope guard；
+     不再做 microbatch async。确认会涨之后，再看多卡 rollout/train overlap。
 
 ---
 
