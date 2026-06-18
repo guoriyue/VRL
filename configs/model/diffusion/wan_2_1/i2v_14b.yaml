@@ -26,5 +26,8 @@ model:
       - to_v
 
   torch_compile:
+    # OFF until the I2V base GRPO run lands (multi-GPU-blocked). Compile itself is
+    # validated parity-safe + ~1.1x (compile_benchmark --family wan_2_1, shared DiT
+    # path model.py:217); flip enable:true once the I2V path is run-validated.
     enable: false
     mode: default

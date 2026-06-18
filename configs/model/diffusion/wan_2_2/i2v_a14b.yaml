@@ -30,5 +30,8 @@ model:
       - to_v
 
   torch_compile:
+    # OFF until the Wan2.2 dual-stage (transformer_2) base proof run lands
+    # (SPRINT_wan_2_2_dual_expert). Compile is the shared wan DiT path (validated
+    # parity-safe, ~1.1x); flip enable:true after the base run is validated.
     enable: false
     mode: default

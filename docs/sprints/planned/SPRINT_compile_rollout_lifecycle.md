@@ -150,6 +150,27 @@ fullgraph=False——与 runtime 的 `torch.compile` 调用一致(`base.py` / `p
 与 Predict2 的 1.37×/1.25× 一致(同 DiT 家族)。注:合成网格是"modest video latent",绝对延迟非
 512p/93f 真值,但 **speedup 比值是结构性的**(launch 融合),真分辨率下同样成立。
 
+### 4.4 compile parity(eager vs compiled,实测;P3 的合成前置证据)
+
+`compile_benchmark.py --parity`(本 sprint 新增):同权重、同输入,先 eager 再 compiled,比
+forward 输出(rollout 路)和 forward+backward 梯度(train 路,带 grad-ckpt)的最大 |Δ|。**fp32
+判定"compile 是否改变数学";bf16 给生产精度的漂移量级。**(grid 受单卡 32G 限,cosmos 实测用
+production depth,wan 用 8–12 层——parity 是逐层结构性的,深度足够即代表。)
+
+| family | dtype | rollout max\|Δ out\| | train max\|Δ out\| | train max\|Δ grad\| |
+|---|---|---|---|---|
+| cosmos-predict2.5 | fp32 | **2.2e-6** | 2.1e-6 | 4.7e-2 (570 params) |
+| cosmos-predict2.5 | bf16 | 4.7e-2 | 4.7e-2 | 量级随深度爆,abs 不可比 |
+| wan_2_1 | fp32 | **3.6e-6** | 4.1e-6 | 8.4e-9 (231 params) |
+| wan_2_1 | bf16 | 3.1e-2 | 2.7e-2 | 6.1e-5 |
+
+**读法:**
+- **fp32 forward = epsilon(2–4e-6)→ compile 不改前向数学。rollout logprob 由前向算出,所以
+  rollout-logprob parity 是结构性安全的。**
+- **bf16 forward 漂 ~3–5e-2 = kernel 重排的 bf16 舍入,且只在"一侧编、另一侧不编"时暴露。** 生产里
+  rollout 与 train 用同一张 compiled transformer(compile-both)→ 两侧走完全相同 kernel → 逐位一致
+  → compile 引入的 rollout/train logprob drift = 0。compile-neither 同样安全;**只编一侧最危险。**
+
 ---
 
 ## 5. 给 Cosmos Predict2.5 RL 的建议
@@ -165,9 +186,12 @@ resident 拿全额稳态加速;release-after-collect 的每周期重编译也因
 2. **release-after-collect(单卡 colocated、无 colocate 块)**:**也建议开**。worker 每周期重建,
    但首次前向命中 inductor 默认缓存(`/tmp/torchinductor_<user>`)→ 重编译是 **暖的(~0.6s)而非
    冷的**,P1 要量的只是"这个暖 stall vs 周期内 1.37× 省下的"净账(大概率正)。
-3. **净建议**:Cosmos Predict2.5 RL → **compile ON**(翻 `rollout.denoise_compile.enable: true`),
-   两种生命周期都开;**不加任何 cache 旋钮**(torch 默认缓存已覆盖重编译场景)。仅当 `/tmp` 易失
-   (云实例)时,启动脚本 `export TORCHINDUCTOR_CACHE_DIR=<持久路径>`(零代码)。
+3. **净建议(§4.4 parity 实测后已更新)**:Cosmos Predict2.5 RL → **compile-both**
+   (`model.torch_compile.enable: true`,rollout+train 都编)**优先于 rollout-only**。理由:前者额外
+   拿 train 1.33×,且 rollout/train 走同一 compiled kernel → 逐位一致(parity 最稳);**rollout-only
+   在 bf16 下让两侧差 ~5e-2,恰是最易触发 logprob drift 的配置(§4.4)**。train 侧 LoRA+grad-ckpt 的
+   现场 logprob drift 仍按 P3 复核。**不加任何 cache 旋钮**(torch 默认缓存已覆盖重编译场景);仅当
+   `/tmp` 易失(云实例)时启动脚本 `export TORCHINDUCTOR_CACHE_DIR=<持久路径>`(零代码)。
 
 > 稳态加速已实测为正(§4.3:rollout 1.37×、train 1.26×),所以 resident 下开 compile 是稳赚。
 > 真机跑时仍用 §4.1 的 first-vs-later hook 复核绝对值,并保持 `trainer.py` logprob drift guard 绿。
@@ -188,9 +212,10 @@ resident 拿全额稳态加速;release-after-collect 的每周期重编译也因
   原计划的"加 `inductor_cache_dir` 配置 + 注入 worker env"已**作废、并撤销**(过度设计)。
 - [ ] **P1 — 现场量 release-after-collect 的"每周期重建 + 首次前向(暖)重编译"净账。** 用 §4.1 的
   first-vs-later hook + worker build 计时,在单卡 colocated 跑 Predict2.5 Kling,确认净收益为正。
-- [ ] **P3 — parity 红线现场确认。** resident / release-after-collect 各跑一个真实 Predict2.5 run,
-  确认 logprob drift guard 均差 ≤ 0.01(compile 同时作用 rollout+train 同一张 transformer,
-  按构造等价,但要现场验)。
+- [~] **P3 — parity 红线确认(合成已做,现场待跑)。** **合成前置已完成(§4.4)**:fp32 前向
+  eager-vs-compiled 漂 2e-6(rollout logprob 结构安全),bf16 仅"一侧编"才暴露 ~5e-2 漂 →
+  结论用 **compile-both** 让两侧逐位一致。**现场仍待:** resident / release-after-collect 各跑一个真实
+  Predict2.5 run,在真 checkpoint + reward loop 上复核 logprob drift guard 均差 ≤ 0.01。
 
 ---
 

@@ -31,5 +31,8 @@ model:
       - to_add_out
 
   torch_compile:
+    # Cosmos DiT compile is validated here (compile_benchmark --family cosmos-predict2.5:
+    # 1.31x rollout / 1.33x train, fp32 fwd drift ~2e-6). OFF only because no recipe runs
+    # anima yet; flip enable:true when an anima experiment lands.
     enable: false
     mode: default
