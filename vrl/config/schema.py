@@ -380,21 +380,37 @@ class FSDPConfig(ConfigBase):
     reshard_after_forward: bool = True
 
 
+class DDPConfig(ConfigBase):
+    """distributed.training.ddp: the one DDP knob ``build_strategy`` reads.
+
+    DDP replicates the full module per rank (right when the model fits on one
+    card, e.g. a 2B transformer + LoRA), so unlike ``fsdp`` there are no shard/mesh
+    knobs. ``find_unused_parameters`` is the only DDP-specific lever a reader
+    consumes; declare nothing the strategy doesn't read.
+    """
+
+    # DDP's reducer expects every requires_grad param to get a grad each backward;
+    # set True only if a LoRA/grad-checkpoint forward conditionally skips a wrapped
+    # branch (slower — adds an extra graph traversal).
+    find_unused_parameters: bool = False
+
+
 class TrainingSection(ConfigBase):
     """distributed.training: how the trainer process maps onto GPUs.
 
     Only the fields a reader actually consumes are declared: ``strategy`` (the
     single source of truth for the allowed backends — resource validation and the
     training context dispatch on it; the Literal is the only allow-list), the
-    ``num_nodes``/``gpus_per_node`` topology the fsdp context cross-checks against
-    ``WORLD_SIZE``, and the ``fsdp`` knob block read by ``build_strategy`` when
-    strategy=fsdp.
+    ``num_nodes``/``gpus_per_node`` topology the fsdp/ddp context cross-checks
+    against ``WORLD_SIZE``, and the per-strategy knob block (``fsdp`` / ``ddp``)
+    read by ``build_strategy``.
     """
 
-    strategy: Literal["single_process", "fsdp"] = "single_process"
+    strategy: Literal["single_process", "fsdp", "ddp"] = "single_process"
     num_nodes: int = 1
     gpus_per_node: int = 1
     fsdp: FSDPConfig | None = None
+    ddp: DDPConfig | None = None
 
 
 class DistributedSection(ConfigBase):

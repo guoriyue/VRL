@@ -1,0 +1,44 @@
+# Symmetric colocated DDP (2 servers x 1 GPU) variant of the Cosmos Predict2.5 +
+# Kling DiffusionNFT run (SPRINT_symmetric_colocated_ddp.md).
+#
+# Every server runs ONE torchrun rank = 1 DDP train replica + the base recipe's
+# single-GPU colocated rollout (and Kling reward) time-sharing its local GPU, all
+# reading the SAME policy version. Only the gradient all-reduce crosses servers
+# (the torchrun process group); Ray and the rollout/reward workers are
+# per-rank-LOCAL (each rank does its own local ray.init() on its own card). There
+# is NO shared Ray cluster and NO cross-node Ray placement group.
+#
+# It inherits the base recipe's single-GPU colocated plan UNCHANGED (trainer +
+# on-demand rollout + Kling reward time-sharing one GPU, release between phases)
+# and only flips the trainer to DDP across the 2 ranks. The 2B transformer + LoRA
+# fits on one card, so DDP (replicate + all-reduce the small LoRA grads) is
+# simpler/cheaper than FSDP's shard/all-gather. Outputs (metrics / checkpoints /
+# eval) are written by rank0 only — i.e. server A's disk.
+#
+# Launch (run on BOTH servers; same --master_addr = server A's reachable IP):
+#   # server A (rank 0, the output node):
+#   HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+#     torchrun --nnodes=2 --node_rank=0 --nproc_per_node=1 \
+#       --master_addr=<A_IP> --master_port=29500 -m vrl.scripts.train \
+#       --config experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward_ddp_2x1
+#   # server B (rank 1): same command with --node_rank=1
+#
+# Do NOT `ray start` a shared cluster — each rank's local ray.init() must own its
+# own GPU. NCCL needs the two servers to reach each other on --master_port and the
+# NCCL ports (set NCCL_SOCKET_IFNAME / GLOO_SOCKET_IFNAME if multi-homed).
+defaults:
+  - /experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward
+
+distributed:
+  # Flip ONLY the trainer to DDP; inherit the base single-GPU colocated resource
+  # plan unchanged. world_size = num_nodes * gpus_per_node = 2 drives only the
+  # gradient all-reduce (each rank still resolves its own local 1-GPU plan).
+  training:
+    strategy: ddp
+    num_nodes: 2
+    gpus_per_node: 1
+    ddp:
+      # LoRA: the frozen base is excluded from DDP's reducer (requires_grad=False),
+      # so the default holds. Flip to true only if a conditional LoRA/grad-ckpt
+      # branch trips DDP's "expected every param to get a grad" reducer.
+      find_unused_parameters: false

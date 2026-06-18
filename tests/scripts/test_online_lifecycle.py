@@ -305,6 +305,23 @@ def test_require_supported_online_strategy_allows_single_process() -> None:
     online._require_supported_online_strategy(ctx)  # no raise
 
 
+def test_require_supported_online_strategy_allows_ddp() -> None:
+    """ddp is the supported per-rank-local symmetric-colocated path (each rank runs
+    its own local Ray + colocated rollout on its GPU; only grads all-reduce)."""
+    from vrl.trainers.distributed import DistributedTrainingContext
+
+    ctx = DistributedTrainingContext(
+        strategy="ddp",
+        distributed=True,
+        rank=1,
+        local_rank=0,
+        world_size=2,
+        is_primary=False,
+        device=torch.device("cuda:0"),
+    )
+    online._require_supported_online_strategy(ctx)  # no raise
+
+
 @pytest.mark.asyncio
 async def test_rollout_sync_getter_routes_through_strategy(monkeypatch, tmp_path) -> None:
     """The recipe binds the rollout sync getter to the strategy, not the raw helper.

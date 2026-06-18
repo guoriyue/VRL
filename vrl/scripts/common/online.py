@@ -64,21 +64,23 @@ logger = logging.getLogger(__name__)
 def _require_supported_online_strategy(context: DistributedTrainingContext) -> None:
     """Fail-fast when the online recipe cannot yet drive the resolved strategy.
 
-    The FSDP2 strategy layer exists and is unit-tested, but run_online_recipe has
-    no multi-rank GRPO orchestration to drive it yet, so any non-single_process
-    strategy would silently mis-drive Ray from every rank. The full rationale and
-    the user-facing remedy live in the raised message below (kept there, not
-    duplicated here, so the grep-able error stays the single source of truth).
+    ``ddp`` is supported via the per-rank-local symmetric-colocated path: each
+    torchrun rank runs its own local Ray + local colocated rollout on its 1 GPU
+    and trains a full DDP replica; only the gradient all-reduce crosses ranks
+    (SPRINT_symmetric_colocated_ddp.md). ``fsdp`` is still gated — its sharded
+    DTensor state needs the rank0-full-gather collect/checkpoint orchestration the
+    online recipe does not implement yet (SPRINT_multi_gpu_training.md Phase 4).
     """
 
-    if context.strategy != "single_process":
+    if context.strategy not in {"single_process", "ddp"}:
         raise NotImplementedError(
-            f"distributed.training.strategy={context.strategy!r}: the FSDP2 strategy "
-            "layer exists (vrl/trainers/fsdp.py + FSDPStrategy), but run_online_recipe "
-            "does not yet implement the multi-rank GRPO orchestration that drives it "
-            "(rank-split collect/train + torchrun↔Ray coordination, "
-            "SPRINT_multi_gpu_training.md Phase 4/§6.5). Use strategy=single_process "
-            "for online RL; FSDP2 is exercised in tests/trainers/test_fsdp.py.",
+            f"distributed.training.strategy={context.strategy!r}: the FSDPStrategy "
+            "layer exists (vrl/trainers/strategy.py) and is unit-tested, but "
+            "run_online_recipe does not yet implement the sharded multi-rank GRPO "
+            "orchestration that drives it (rank0-full-gather collect/checkpoint + "
+            "torchrun↔Ray coordination, SPRINT_multi_gpu_training.md Phase 4/§6.5). "
+            "Use strategy=single_process, or strategy=ddp for symmetric colocated "
+            "multi-GPU (SPRINT_symmetric_colocated_ddp.md).",
         )
 
 
@@ -625,6 +627,11 @@ async def run_online_recipe(
     # model / Ray runtime.
     training_context = resolve_training_context(cfg, device=device)
     _require_supported_online_strategy(training_context)
+    # Under ddp every torchrun rank owns a distinct GPU: resolve_training_context
+    # returns cuda:<local_rank>, which overrides the resolver's (rank-agnostic)
+    # trainer device so the trainer model, rollout, and weight sync all land on
+    # this rank's card. single_process passes the resolver device straight through.
+    device = training_context.device
     # Replay/training model storage follows ``compute`` (via trainer_config);
     # the generation (rollout) model can use a different ``rollout`` dtype.
     weight_dtype = (
@@ -765,9 +772,15 @@ async def run_online_recipe(
                 resume_checkpoint.next_epoch,
             )
 
+        # Under ddp only rank0 owns run IO (metrics/checkpoint/eval/resolved-config):
+        # each rank trains a full DDP replica and the grad all-reduce in trainer.step
+        # keeps ranks in lockstep, so rank0's checkpoint is complete and a single
+        # writer avoids N ranks racing the same files (on 2 servers, rank0's host).
+        is_primary = training_context.is_primary
         output_dir = Path(trainer_config.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-        save_resolved_config(cfg, output_dir, resumed=resume_checkpoint is not None)
+        if is_primary:
+            save_resolved_config(cfg, output_dir, resumed=resume_checkpoint is not None)
 
         component_names = tuple(components.built["reward"][0].keys())
 
@@ -810,9 +823,10 @@ async def run_online_recipe(
             rng=rng,
             resume=resume_checkpoint is not None,
         )
-        run.prepare_metrics_csv()
-        if eval_enabled:
-            run.prepare_eval_metrics_csv()
+        if is_primary:
+            run.prepare_metrics_csv()
+            if eval_enabled:
+                run.prepare_eval_metrics_csv()
 
         logger.info(
             "Starting %s online recipe: epochs=%d examples=%d n=%d",
@@ -847,24 +861,35 @@ async def run_online_recipe(
             )
 
         # Pre-RL baseline on the fixed grid (fresh runs only; resume keeps its rows).
-        if eval_enabled and resume_checkpoint is None:
+        # rank0-only under ddp: non-primary ranks block at the next trainer.step
+        # grad all-reduce until rank0 finishes, so this stays in lockstep.
+        if eval_enabled and resume_checkpoint is None and is_primary:
             await _fixed_eval_and_log(-1)
 
+        # DDP is data-parallel: every rank shares the prompt RNG (identical draw),
+        # so draw world_size * rollout_batch_size prompts and hand each rank a
+        # DISJOINT slice. The all-reduced gradient then covers world_size *
+        # rollout_batch_size DISTINCT prompts (the effective batch) instead of every
+        # rank redundantly training the SAME rollout_batch_size prompts and averaging
+        # identical gradients. single_process (world_size=1, rank=0) takes the whole
+        # draw unchanged. Requires the prompt manifest to hold >= world_size *
+        # rollout_batch_size prompts for a without-replacement sampler.
+        rank_batch = int(trainer_config.rollout_batch_size)
+        sampler_strategy = str(
+            OmegaConf.select(cfg, "data.sampler.type", default="random_without_replacement"),
+        )
         for epoch in range(start_epoch, trainer_config.total_epochs):
             idx = sample_prompt_indices(
                 rng,
                 num_examples=len(examples),
-                rollout_batch_size=trainer_config.rollout_batch_size,
-                strategy=str(
-                    OmegaConf.select(
-                        cfg,
-                        "data.sampler.type",
-                        default="random_without_replacement",
-                    ),
-                ),
+                rollout_batch_size=rank_batch * training_context.world_size,
+                strategy=sampler_strategy,
                 epoch=epoch,
             )
-            example_batch = [examples[i] for i in idx]
+            shard = idx[
+                training_context.rank * rank_batch : (training_context.rank + 1) * rank_batch
+            ]
+            example_batch = [examples[i] for i in shard]
             if definition.before_step is not None:
                 maybe_awaitable = definition.before_step(stack, epoch, example_batch)
                 if maybe_awaitable is not None:
@@ -888,11 +913,12 @@ async def run_online_recipe(
             else:
                 components.reward_fn.reset_components()
                 metrics = await trainer.step(example_batch)
-            run.write_metric_row(epoch, metrics)
+            if is_primary:
+                run.write_metric_row(epoch, metrics)
 
             # Fixed eval AFTER the training row (eval overwrites reward_fn
-            # components; the next epoch's collect resets them).
-            if eval_enabled and (epoch + 1) % int(eval_cfg.freq) == 0:
+            # components; the next epoch's collect resets them). rank0-only.
+            if eval_enabled and (epoch + 1) % int(eval_cfg.freq) == 0 and is_primary:
                 await _fixed_eval_and_log(epoch)
 
             if definition.after_step is not None:
@@ -900,14 +926,19 @@ async def run_online_recipe(
                 if maybe_awaitable is not None:
                     await maybe_awaitable
 
-            if trainer_config.save_freq > 0 and (epoch + 1) % trainer_config.save_freq == 0:
+            if (
+                is_primary
+                and trainer_config.save_freq > 0
+                and (epoch + 1) % trainer_config.save_freq == 0
+            ):
                 run.save_checkpoint(output_dir / f"checkpoint-{epoch + 1}", epoch=epoch + 1)
 
-        run.save_checkpoint(
-            output_dir / "checkpoint-final",
-            epoch=trainer_config.total_epochs,
-        )
-        logger.info("Training complete. Final checkpoint: %s", output_dir / "checkpoint-final")
+        if is_primary:
+            run.save_checkpoint(
+                output_dir / "checkpoint-final",
+                epoch=trainer_config.total_epochs,
+            )
+            logger.info("Training complete. Final checkpoint: %s", output_dir / "checkpoint-final")
     except BaseException as exc:
         run_error = exc
         raise

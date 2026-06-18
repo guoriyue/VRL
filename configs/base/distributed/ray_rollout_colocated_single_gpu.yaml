@@ -1,4 +1,28 @@
 # Single-GPU colocated Ray rollout preset for workstation validation runs.
+#
+# COLOCATED = trainer + rollout (+ a shared reward) live on the SAME GPU, turned on
+# by `allow_overlap: true` below (trainer and rollout both resolve to GPU 0). They
+# never run at the same instant — they TIME-SHARE the card in turn:
+#     collect (rollout generates) -> train (backward) -> weight sync -> repeat.
+#
+# There is NO literal `on_demand` / `persistent` key — those lifecycles are DERIVED
+# (vrl/ray/resources.py resolve_distributed_resources) from ONE knob:
+#
+#   on_demand  (DEFAULT — this preset, i.e. NO `colocate` block): between phases the
+#     rollout worker is released (killed) and the trainer model is offloaded to CPU
+#     during collect, so each phase owns ~the whole GPU and NO memory split is needed.
+#     Cost: the rollout worker reloads the model from disk every cycle.
+#
+#   persistent / resident  (opt in by adding the block — turns the worker resident):
+#       distributed:
+#         rollout:
+#           colocate: {memory_fraction: 0.4}   # rollout keeps <=40%, trainer the rest
+#     The rollout worker STAYS on the GPU (no per-cycle reload), but now it and the
+#     trainer hold memory at the SAME time, so memory_fraction is REQUIRED to cap the
+#     rollout's share and leave the trainer's backward room.
+#
+# Rule of thumb: keep the default on_demand; only go persistent if the per-cycle
+# model reload is too slow, and then pay the memory split.
 distributed:
   resources:
     visible_devices: auto
@@ -8,6 +32,8 @@ distributed:
       num_gpus: 1
       gpus_per_worker: 1.0
       num_workers: 1
+    # Trainer + rollout share GPU 0 (colocated). On its own this is the on_demand
+    # lifecycle; add distributed.rollout.colocate.memory_fraction to make it resident.
     allow_overlap: true
 
   rollout:

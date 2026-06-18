@@ -2,11 +2,21 @@
 
 状态：research/proposed（基于 `~/Desktop/cosmos-rl` 源码精读,2026-06-03)。本 sprint 是"学什么 + 怎么往 vrl 加"的路线图,不含实现。
 
+> **更新（2026-06-18，对照已落地的执行臂复核）**：本 roadmap 的 trainer-多卡那条（§0 #1 / §2.1）
+> 当时建议"先 FSDP2"。**之后 trainer 多卡的实际落点改成了 DDP（symmetric colocated）**——当前模型是
+> **2B + LoRA、单卡放得下**,DDP 每卡复制全量、只 all-reduce LoRA 梯度,比 FSDP 每次 forward all-gather
+> 冻结 base 更快更简单;**FSDP2 只在模型单卡塞不下（≥7-13B）时才需要**。DDP / FSDP2 两条策略层都已落地、
+> CPU 全绿、online 多-rank 编排都 gated 在硬件上（`online.py:_require_supported_online_strategy` 放行
+> single_process+ddp、fail-fast fsdp）。详见
+> [`SPRINT_symmetric_colocated_ddp.md`](../planned/SPRINT_symmetric_colocated_ddp.md)（DDP,Slice 1-4 已实现）
+> 与 [`SPRINT_multi_gpu_training.md`](../parked/SPRINT_multi_gpu_training.md)（FSDP2 策略层）。
+> **"怎么花每张卡"（throughput vs overlap）+ DiffusionNFT 的 async 约束见新增 §3a。**
+
 ## 0. Core Decision
 
 一句话:**vrl 的 continuous-rollout 编排在逻辑上已经等同 cosmos-rl 的异步设计(producer/queue/consumer + staleness bound + weight-sync barrier),差距是物理层面的——分离进程/GPU、NCCL 权重同步、FSDP 多卡。** cosmos-rl 教给我们的不是"换架构",而是几个可单独移植的能力,按"对当前单卡 diffusion RL 的价值 ÷ 移植成本"排序:
 
-1. **FSDP2 多卡**(最高价值、最可行)——cosmos-rl 的 `diffusers/parallelize.py` 是一份 ~40 行、**FSDP-only、可直接照抄**的模板,正好配你申请的多卡 + backward-efficiency sprint 的结论。
+1. **trainer 多卡**(最高价值、最可行;**当前 2B+LoRA 走 DDP,FSDP2 留给塞不下的模型**——见 §2.1 更新)——cosmos-rl 的 `diffusers/parallelize.py` 是一份 ~40 行、**FSDP-only、可直接照抄**的模板,模型变大要分片时直接用。
 2. **NCCL 权重同步**(替掉"Ray 推 CPU state_dict")——control plane 走 HTTP/Redis、data plane 走 GPU↔GPU NCCL。`pynccl.py` 几乎可整段搬。
 3. **分离 policy/rollout 进程**(真并行,而非单事件循环的交错)——vrl 已有逻辑骨架,缺的是物理分离。
 4. **FP8 训练**(建立在你刚落地的 precision config 上)——torchao 一行 module-swap,机械活小、数值调参尾巴长。
@@ -32,6 +42,15 @@ cosmos-rl = **一个中心 controller(FastAPI + 内嵌 Redis)+ 自注册的 Poli
 ## 2. 逐特性:cosmos-rl 怎么做 / vrl 怎么加
 
 ### 2.1 [Tier 1·最高价值] FSDP2 多卡
+
+> **现状更新（2026-06-18）**：trainer 多卡的实际落点是 **DDP（symmetric colocated），不是 FSDP2**——
+> 2B+LoRA 单卡放得下,DDP 拿的是**数据并行吞吐**（每卡全量、只 all-reduce LoRA 梯度,**不省显存**）,比
+> FSDP 每次 forward all-gather 冻结 base 更快更简单。`DDPStrategy` 已落、CPU 全绿
+> （`tests/trainers/test_ddp.py` 7 passed）;online 多-rank 编排 gated 在硬件上。FSDP2 策略层
+> （`FSDPStrategy`/fully_shard/DTensor）也已落、同样 online-gated,**仅在模型单卡塞不下时才是首选**。
+> 下面这套 cosmos `diffusers/parallelize.py` 模板**仍是模型变大要上 FSDP 时的照抄对象**,只是不是当前 2B
+> 的选择。详见 [`SPRINT_symmetric_colocated_ddp.md`](../planned/SPRINT_symmetric_colocated_ddp.md) /
+> [`SPRINT_multi_gpu_training.md`](../parked/SPRINT_multi_gpu_training.md)。
 
 **cosmos-rl 怎么做**:`ParallelDims`(`utils/parallelism.py`)持 5 个并行度,`init_device_mesh` 建 N-D mesh;每个模型暴露 `parallelize_fn`,在 **meta device** 上建模 → 应用并行 → 物化。**diffusion 走的是 FSDP-only 路径**(`policy/model/diffusers/parallelize.py`):按 `transformer_blocks` 逐块 `fully_shard(block, mesh, MixedPrecisionPolicy)`,根上再 `fully_shard`,明确 `assert pp_size==1`、无 TP。就 ~40 行。
 
@@ -97,7 +116,7 @@ cosmos-rl = **一个中心 controller(FastAPI + 内嵌 Redis)+ 自注册的 Poli
 
 ```
 Tier 1（直接服务"多卡"目标,和 AWS quota 同步推进）
-  1. FSDP2 多卡         ← 抄 diffusers/parallelize.py;接 precision config 的 MixedPrecisionPolicy
+  1. trainer 多卡       ← 当前 2B+LoRA=DDP（已落 Slice 1-4）;FSDP2 留给单卡塞不下的模型（抄 diffusers/parallelize.py + MixedPrecisionPolicy）
   2. NCCL 权重同步      ← lift pynccl.py;替掉 Ray CPU-state_dict push
 Tier 2（Tier 1 之上自然延伸）
   3. 分离 policy/rollout 进程（依赖 #2 的 NCCL 同步）
@@ -107,7 +126,35 @@ Tier 3（只有上多节点才做）
   6. elastic / 动态 NCCL group（HighAvailabilitylNccl 式 abort→rebuild）
 ```
 
-建议:**先 #1（FSDP2）**——它一条就解决 backward sprint 的 32GB 崩溃 + 是多卡的基础,且最可行(~一天 + checkpoint/LoRA 收尾)。#2 紧随(让多卡间权重同步不走 CPU)。#3/#4 看吞吐需求再上。#5/#6 等真要跨节点弹性时再说。
+建议:**trainer 多卡先用 DDP**——2B+LoRA 单卡放得下,DDP 拿的是**数据并行吞吐**(不省显存,每卡仍全量),已落 Slice 1-4、正在 2×1 首验;**FSDP2 等模型单卡塞不下(≥7-13B)再上**,那时分片才解决显存(~一天 + checkpoint/LoRA 收尾)。#2(NCCL 权重同步)紧随(让多卡间权重同步不走 CPU)。#3/#4 看吞吐需求再上。#5/#6 等真要跨节点弹性时再说。
+
+## 3a. "disaggregate 做对" 到底指什么:throughput vs overlap（DiffusionNFT 锁定下）
+
+"disaggregate" 在这里其实是**三件被混在一起的事**,对 DiffusionNFT 结论不同,必须拆开:
+
+| 维度 | 是什么 | 卡用来 | 对 DiffusionNFT | 执行臂 |
+|---|---|---|---|---|
+| **吞吐（数据并行）** | N 卡都训同一 policy,各 collect,一次同步 DDP/FSDP optimizer step。 | **并行训练** | ✅ sound、算法无关,直接拿。DDP 已落（2B+LoRA）;FSDP 等塞不下再上。 | [`SPRINT_symmetric_colocated_ddp.md`](../planned/SPRINT_symmetric_colocated_ddp.md) |
+| **物理分离 trainer/rollout（D1）** | trainer 常驻一卡、rollout actor 常驻另一卡,**同步/on-policy**。买:独立 scale、无 offload 抖动、更大 rollout batch、无显存争抢。 | 训练卡 + 生成卡（时间不重叠） | ✅ on-policy 下 sound;需 ≥2 卡;放置面已支持。 | [`SPRINT_placement_surface_disaggregated_default.md`](../planned/SPRINT_placement_surface_disaggregated_default.md) |
+| **async overlap（D2）** | 在 D1 之上让"训第 N 步"与"采第 N+1 步"真重叠 → rollout 必然 off-policy/stale。 | 两卡时间也重叠 | ❌ **不可证安全**:DiffusionNFT likelihood-free,无 `exp(logp_new−logp_old)` 比值,TIS/AIPO/PPO-clip 一个都搬不过来。需 ≥2 卡 + 实测"伤不伤"。 | [`SPRINT_async_rollout_train_overlap.md`](../parked/SPRINT_async_rollout_train_overlap.md)、[`SPRINT_shadow_model_weight_sync.md`](../planned/SPRINT_shadow_model_weight_sync.md) |
+
+**从 cosmos-rl 学到的最硬一条**:cosmos-rl 自己的 **LLM/GRPO 默认 `mode=disaggregated` + async**（D1+D2,靠
+IS 比值 + `allowed_outdated_steps`≈4 兜底）;但它**自己的 diffusion NFT 配方出厂是 `mode=colocated`
+（serial、on-policy by construction）**——**连 NVIDIA 都没把 diffusion NFT 做成 async overlap**。这正面
+印证 §1/§5:对 likelihood-free 的 DiffusionNFT,"disaggregate 做对" = 做 **吞吐 + D1（on-policy 物理分离）**,
+**不做 D2**;D2 只有换回有 IS 比值的 GRPO 才解锁（用户已锁 DiffusionNFT,不换）。
+
+**按 GPU 预算的落地决策**:
+
+| 卡数 | 做什么 | 为什么 |
+|---|---|---|
+| **1 卡** | 单卡 colocated 时分;先证明 **on-policy DiffusionNFT 真能学**（固定 eval / lr=1e-4,block-test 曲线） | 真 overlap 单卡做不到（显存墙,只切显存不切时间） |
+| **2 卡（你现在）** | **首选 DDP 吞吐**（2×1,已落,正在首验）;证明会学后再加 **D1 分卡 on-policy**（trainer 一卡 + rollout 一卡,`max_stale=0`） | DDP 是 sound 白捡的吞吐;D1 给独立 scale + 大 batch,不冒 off-policy 险 |
+| **≥2 卡 + 想要 overlap** | 才碰 **D2**:`max_stale=1` vs strict,同 seed/prompt/reward 实测偏差（parked doc Option A） | 纯 config、零算法改动,把"理论说没补偿"量成"实际伤不伤";伤了别开 |
+| **更大模型 / 更多卡** | FSDP2（塞不下才上,§2.1）+ NCCL 权重同步（替 Ray CPU-state_dict,§2.2） | 见 §2.1 / §2.2 / §3 |
+
+一句话:**先把卡花在吞吐（DDP）和 on-policy 物理分离（D1）上——这两样对 DiffusionNFT 都 sound;async
+overlap（D2）是最后、需多卡、且对 DiffusionNFT 要先实测才敢开的东西。**
 
 ## 4. Ray 去留与扩展性边界
 
@@ -179,3 +226,12 @@ vrl/trainers/weight_sync.py                # #2 NCCL 同步替 RayRuntimeWeightS
 vrl/generation/ray/weight_sync.py          # #2 生成侧 NCCL recv
 vrl/rollouts/orchestration/continuous/     # #3 物理化（已是逻辑等价骨架）
 ```
+
+## 8. 相关 VRL sprint（本 roadmap 的执行臂）
+
+本文是"学什么 + 怎么往 vrl 加"的总路线图;具体落地分散在这些 sprint:
+
+- **trainer 多卡吞吐** → [`planned/SPRINT_symmetric_colocated_ddp.md`](../planned/SPRINT_symmetric_colocated_ddp.md)（DDP,Slice 1-4 已落）、[`parked/SPRINT_multi_gpu_training.md`](../parked/SPRINT_multi_gpu_training.md)（FSDP2 策略层）、[`done/SPRINT_multi_gpu_readiness.md`](../done/SPRINT_multi_gpu_readiness.md)（地基已落）。
+- **物理分离放置面（D1）** → [`planned/SPRINT_placement_surface_disaggregated_default.md`](../planned/SPRINT_placement_surface_disaggregated_default.md)（disaggregated 默认,P0-P2 已落）、[`done/SPRINT_colocation_config_simplification.md`](../done/SPRINT_colocation_config_simplification.md)。
+- **async overlap（D2）裁决 + 安全权重同步** → [`parked/SPRINT_async_rollout_train_overlap.md`](../parked/SPRINT_async_rollout_train_overlap.md)（DiffusionNFT 约束 + Option A/B/C）、[`planned/SPRINT_shadow_model_weight_sync.md`](../planned/SPRINT_shadow_model_weight_sync.md)、[`planned/SPRINT_slime_overlap_strategy.md`](../planned/SPRINT_slime_overlap_strategy.md)。
+- **cosmos-rl 全架构精读** → [`reading/cosmos-rl.md`](./cosmos-rl.md)。

@@ -98,7 +98,10 @@ def resolve_training_context(
             device=device,
         )
 
-    if strategy == "fsdp":
+    if strategy in {"fsdp", "ddp"}:
+        # Both are torchrun multi-rank strategies: one process per GPU, identity +
+        # per-process cuda:<local_rank> device derived from the launcher env. No
+        # process group is created here (build_strategy's strategy does that).
         rank = _require_env_int(env, "RANK")
         local_rank = _require_env_int(env, "LOCAL_RANK")
         world_size = _require_env_int(env, "WORLD_SIZE")
@@ -130,5 +133,5 @@ def resolve_training_context(
     # here; this guards direct callers that bypass schema validation.
     raise ValueError(
         f"unknown distributed.training.strategy={strategy!r}; "
-        "expected 'single_process' or 'fsdp'"
+        "expected 'single_process', 'fsdp', or 'ddp'"
     )

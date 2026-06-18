@@ -113,6 +113,38 @@ class SingleProcessStrategy(Strategy):
         return None
 
 
+def _single_transformer_handle(model: Any) -> tuple[Any, Any]:
+    """The trainable ``transformer`` handle + its writer, shared by FSDP2 and DDP.
+
+    Diffusion policies expose the trainable root as a ``transformer`` handle plus
+    ``_set_transformer`` to write the wrapped module back (so the pipeline and
+    attention processors keep pointing at it). AR families do not yet expose
+    explicit trainable roots, and dual-stage Wan exposes a second trainable root
+    (whose DEFAULT trainable set is ``("transformer_2",)``), so both fail-fast here
+    — blindly wrapping ``transformer`` could wrap a frozen module and leave the real
+    trainable one unmanaged (SPRINT_multi_gpu_training.md §5).
+    """
+
+    handle = getattr(model, "transformer", None)
+    set_transformer = getattr(model, "_set_transformer", None)
+    if handle is None or not callable(set_transformer):
+        raise NotImplementedError(
+            "multi-GPU model wrapping needs a diffusion policy exposing a `transformer` "
+            f"handle and `_set_transformer`; {type(model).__name__} exposes neither. "
+            "AR families (janus_pro / nextstep_1) need explicit trainable roots first "
+            "(SPRINT_multi_gpu_training.md §5).",
+        )
+    trainable = getattr(model, "trainable_modules", None)
+    if isinstance(trainable, Mapping) and set(trainable) != {"transformer"}:
+        raise NotImplementedError(
+            f"multi-GPU wrapping wraps only the single 'transformer' handle, but "
+            f"{type(model).__name__}.trainable_modules = {sorted(trainable)}. "
+            "Multi-transformer wrapping (e.g. dual-stage Wan transformer_2) needs "
+            "per-handle writers and is not wired yet (SPRINT_multi_gpu_training.md §5).",
+        )
+    return handle, set_transformer
+
+
 class FSDPStrategy(Strategy):
     """FSDP2 (``fully_shard`` + DTensor) training behind the same seam.
 
@@ -151,37 +183,10 @@ class FSDPStrategy(Strategy):
         return self._mesh
 
     def prepare_model(self, model: Any) -> Any:
-        """Shard the policy's trainable transformer in place and return the policy.
-
-        Diffusion policies expose the trainable root as a ``transformer`` handle
-        plus ``_set_transformer`` to write the wrapped module back (so the pipeline
-        and attention processors keep pointing at it). AR families do not yet
-        expose explicit trainable roots, so they fail-fast here (sprint §5).
-        """
+        """Shard the policy's trainable transformer in place and return the policy."""
         from vrl.trainers.fsdp import apply_fsdp, mixed_precision_policy
 
-        handle = getattr(model, "transformer", None)
-        set_transformer = getattr(model, "_set_transformer", None)
-        if handle is None or not callable(set_transformer):
-            raise NotImplementedError(
-                "FSDP2 model wrapping needs a diffusion policy exposing a `transformer` "
-                f"handle and `_set_transformer`; {type(model).__name__} exposes neither. "
-                "AR families (janus_pro / nextstep_1) need explicit trainable roots first "
-                "(SPRINT_multi_gpu_training.md §5).",
-            )
-        # Only the single `transformer` handle is wired. Dual-stage Wan exposes a
-        # second trainable root (transformer_2) — and its DEFAULT trainable set is
-        # ("transformer_2",) — so blindly sharding `transformer` here could shard a
-        # frozen module and leave the actual trainable one replicated on every rank.
-        # Fail-fast until the multi-handle writer mapping lands (sprint §5 Phase 3).
-        trainable = getattr(model, "trainable_modules", None)
-        if isinstance(trainable, Mapping) and set(trainable) != {"transformer"}:
-            raise NotImplementedError(
-                f"FSDP2 wraps only the single 'transformer' handle, but "
-                f"{type(model).__name__}.trainable_modules = {sorted(trainable)}. "
-                "Multi-transformer wrapping (e.g. dual-stage Wan transformer_2) needs "
-                "per-handle writers and is not wired yet (SPRINT_multi_gpu_training.md §5).",
-            )
+        handle, set_transformer = _single_transformer_handle(model)
         wrapped = apply_fsdp(
             handle,
             mesh=self._ensure_mesh(),
@@ -262,6 +267,119 @@ class FSDPStrategy(Strategy):
             dist.barrier()
 
 
+class DDPStrategy(Strategy):
+    """DistributedDataParallel training behind the same seam.
+
+    For a model that fits on one card (a 2B diffusion transformer + LoRA does), DDP
+    replicates the full module on every rank and all-reduces gradients in the
+    backward hooks — simpler and cheaper than FSDP2's shard/all-gather, which only
+    earns its keep when the model does NOT fit. Because every rank keeps FULL
+    params, the checkpoint/rollout export is the same full-state path FSDP uses on
+    the unwrapped module (``unwrap_compile_and_ddp`` peels DDP's ``.module``; the
+    "gather" is a no-op at the plain-tensor level). Only ``prepare_model`` (wrap)
+    diverges from FSDPStrategy.
+
+    Symmetric half of ``SPRINT_symmetric_colocated_ddp.md``. The online multi-rank
+    loop that drives N ranks is a separate, not-yet-wired phase, so the online
+    recipe still gates non-single_process strategies (see ``run_online_recipe``);
+    the strategy itself is exercised on a single CPU rank in
+    ``tests/trainers/test_ddp.py``.
+    """
+
+    def __init__(
+        self,
+        context: DistributedTrainingContext,
+        *,
+        find_unused_parameters: bool = False,
+    ) -> None:
+        self.context = context
+        self._find_unused_parameters = find_unused_parameters
+
+    def prepare_model(self, model: Any) -> Any:
+        """Replicate the policy's trainable transformer with DDP and return the policy.
+
+        Wrap only the trainable ``transformer`` handle, not the whole policy: the
+        frozen base inside still has ``requires_grad=False`` so it stays out of
+        DDP's reducer buckets, whereas wrapping the top-level model would drag the
+        frozen VAE/text-encoder into DDP and force ``find_unused_parameters=True``.
+        """
+        from torch.nn.parallel import DistributedDataParallel
+
+        from vrl.trainers.fsdp import init_training_process_group
+
+        # Validate the trainable handle BEFORE touching the process group so a bad
+        # model fails fast (and the guard tests need no live PG).
+        handle, set_transformer = _single_transformer_handle(model)
+        backend = "gloo" if self.context.device.type == "cpu" else "nccl"
+        init_training_process_group(self.context, backend=backend)
+        device_ids = [self.context.local_rank] if self.context.device.type == "cuda" else None
+        wrapped = DistributedDataParallel(
+            handle,
+            device_ids=device_ids,
+            find_unused_parameters=self._find_unused_parameters,
+        )
+        set_transformer(wrapped)
+        return model
+
+    def backward(self, loss: torch.Tensor, *, grad_scaler: Any | None = None) -> None:
+        # DDP all-reduces gradients inside the backward hooks (this IS the
+        # synchronized step); the seam stays identical to single-process/FSDP.
+        if grad_scaler is not None:
+            grad_scaler.scale(loss).backward()
+        else:
+            loss.backward()
+
+    def clip_grad_norm(self, parameters: Iterable[nn.Parameter], max_norm: float) -> float:
+        # Grads are already all-reduced (identical on every rank), so a local clip
+        # is globally correct.
+        return float(nn.utils.clip_grad_norm_(parameters, max_norm))
+
+    def _unwrapped_full_state(self, module: Any) -> tuple[Any, dict[str, Any]]:
+        from vrl.trainers.fsdp import gather_full_state_dict
+        from vrl.trainers.weight_sync import unwrap_compile_and_ddp
+
+        inner = unwrap_compile_and_ddp(module)
+        # DDP keeps full params: gather_full_state_dict just materializes the plain
+        # full state (no shards) in the same key space single-process would export.
+        return inner, gather_full_state_dict(inner)
+
+    def export_trainable_state(self, bundle: Any) -> dict[str, dict[str, Any]]:
+        from vrl.trainers.weight_sync import require_trainable_modules, to_cpu
+
+        modules = require_trainable_modules(bundle)
+        return {
+            name: to_cpu(self._unwrapped_full_state(module)[1])
+            for name, module in modules.items()
+        }
+
+    def export_rollout_state(self, bundle: Any) -> dict[str, Any]:
+        from vrl.trainers.weight_sync import require_trainable_modules, select_trainable_state
+
+        modules = require_trainable_modules(bundle)
+        state: dict[str, Any] = {}
+        for module_name, module in modules.items():
+            inner, full = self._unwrapped_full_state(module)
+            state.update(select_trainable_state(inner, str(module_name), full))
+        if not state:
+            raise ValueError("trainable module state is empty")
+        return state
+
+    def load_trainable_state(self, bundle: Any, state: dict[str, Any]) -> None:
+        from vrl.trainers.fsdp import load_full_state_dict
+        from vrl.trainers.weight_sync import require_trainable_modules, unwrap_compile_and_ddp
+
+        modules = require_trainable_modules(bundle)
+        for name, module in modules.items():
+            if name in state:
+                load_full_state_dict(unwrap_compile_and_ddp(module), state[name])
+
+    def barrier(self) -> None:
+        import torch.distributed as dist
+
+        if dist.is_initialized():
+            dist.barrier()
+
+
 def build_strategy(cfg: Any, context: DistributedTrainingContext) -> Strategy:
     """Construct the training strategy named by the resolved context.
 
@@ -283,11 +401,18 @@ def build_strategy(cfg: Any, context: DistributedTrainingContext) -> Strategy:
                 cfg_path(cfg, "distributed.training.fsdp.reshard_after_forward", True),
             ),
         )
+    if context.strategy == "ddp":
+        return DDPStrategy(
+            context,
+            find_unused_parameters=bool(
+                cfg_path(cfg, "distributed.training.ddp.find_unused_parameters", False),
+            ),
+        )
     # resolve_training_context / the schema Literal reject other values upstream;
     # this guards direct callers.
     raise ValueError(
         f"unknown distributed.training.strategy={context.strategy!r}; "
-        "expected 'single_process' or 'fsdp'",
+        "expected 'single_process', 'fsdp', or 'ddp'",
     )
 
 
@@ -327,4 +452,4 @@ def _single_process_context() -> DistributedTrainingContext:
     )
 
 
-__all__ = ["FSDPStrategy", "SingleProcessStrategy", "Strategy", "build_strategy"]
+__all__ = ["DDPStrategy", "FSDPStrategy", "SingleProcessStrategy", "Strategy", "build_strategy"]

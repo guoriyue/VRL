@@ -11,6 +11,24 @@ defaults:
 
 precision: bf16
 
+# Compile-both: compile the DiT for BOTH train replay and rollout denoise. The
+# model block is read by the trainer AND inherited by the rollout worker, so this
+# one switch compiles both paths -- unlike a rollout-only `rollout.denoise_compile`
+# override (which leaves train eager and, in bf16, makes the two sides' velocity
+# differ by ~5e-2: the worst case for rollout/train logprob drift).
+# Why compile-both is the parity-safe choice: both paths run the SAME compiled
+# kernel -> bit-identical -> zero compile-induced drift. Measured fp32 forward
+# parity ~2e-6 and 1.31x rollout / 1.33x train (RTX 5090,
+# SPRINT_compile_defaults_and_parity_audit + SPRINT_compile_rollout_lifecycle.md
+# §4.3/§4.4). mode=default is the only LoRA+grad-ckpt-safe mode
+# (reduce-overhead/CUDA-graph collides). FINAL GATE: confirm the live logprob
+# drift guard <= 0.01 on the real run (lifecycle P3); if it drifts, fall back to
+# compile-neither (enable:false), NOT rollout-only.
+model:
+  torch_compile:
+    enable: true
+    mode: default
+
 actor:
   optim:
     # Paper §4.2.2 trains full-param at 3e-5 (2B). This recipe is LoRA (full-param
@@ -43,16 +61,9 @@ rollout:
   sde:
     type: cps
   same_latent: false
-  # Compile the rollout denoise forward. Measured 1.37x per-step on this DiT
-  # (RTX 5090, SPRINT_compile_rollout_lifecycle.md §4.3). rollout-only one-way
-  # override (launcher _apply_rollout_compile_override); train replay stays eager
-  # for now (its +1.26x is a separate step — needs LoRA+grad-ckpt parity check).
-  # mode is a real torch.compile knob (kept explicit so it reads as a deliberate
-  # choice, not a stray key): default is the safe one — reduce-overhead/CUDA-graph
-  # collides with LoRA+grad-ckpt; max-autotune is an untried future option.
-  denoise_compile:
-    enable: true
-    mode: default   # 'default' | 'reduce-overhead' | 'max-autotune'
+  # Rollout denoise compile is handled by the top-level `model.torch_compile`
+  # block (compile-both): the rollout worker inherits the model block, so no
+  # separate rollout-only `denoise_compile` override is needed here.
 
 trainer:
   entrypoint: vrl.scripts.diffusion.cosmos.train:train_cosmos_predict25_diffusion_nft
