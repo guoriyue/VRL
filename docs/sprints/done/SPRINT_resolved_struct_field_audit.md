@@ -1,6 +1,6 @@
-# SPRINT: `ResolvedDistributedResources` 等"派生型胖结构体"字段必要性审计（planned）
+# SPRINT: `ResolvedDistributedResources` 等"派生型胖结构体"字段必要性审计（done）
 
-状态：**核心审计全部完成 —— 续做 2026-06-18**。P0/P1/§9 + **P3（防腐约定）+ §5（`FamilyCapability` 死 flag 删除）+ §9.3 `log_freq`（决策：删旋钮）现已全部落地**；仅剩 `VideoGenerationRequest` DTO 死字段（明确的独立 MR）。这是一次"派生结构体里的字段是否真有人消费、如何防止它继续膨胀"的审计。
+状态：**done（核心审计全部落地，2026-06-18 归档至 done/）**。P0/P1/§9 + **P3（防腐约定）+ §5（`FamilyCapability` 死 flag 删除）+ §9.3 `log_freq`（决策：删旋钮）现已全部落地**；仅剩 `VideoGenerationRequest` DTO 死字段（明确的独立 MR）。这是一次"派生结构体里的字段是否真有人消费、如何防止它继续膨胀"的审计。
 
 > **已落地**：**P0** 三个死字段（`reward_num_gpus` stored 字段 / `total_gpu_slots` / `ray_total_bundles`）+ 7 行测试断言 + `ray_bundles=` 日志行已由 `eb5d421`「Remove redundant resource plan fields」删除——`reward_num_gpus` **局部变量**按 §4 设计保留（`vrl/ray/resources.py:238/240/248/251`），`tests/ray/test_resources.py` 48 passed。**P1** `visible_devices` 已加 display/provenance-only 注释（`resources.py:115-118`）。**§9** 8 个 config 死键已合入 main（`freeze_vq`/`freeze_vision_encoder`/`freeze_aligner`/`freeze_image_head`/`uncentralized_training` grep 归零）。**P3** AGENTS.md 防腐约定已写入（"Architecture Hygiene" 末条：derived/resolved 结构体每字段须有非日志消费方，否则删除或显式标注 `display/provenance-only`）。**§5** `FamilyCapability` 经对抗式逐 flag 复核后删除 **8 个死 flag**（见 §5），改 `capabilities.py` + 2 个 factory + 7 个 runtime.py，**206 个相关测试全过**、ruff 干净。
 >

@@ -1,6 +1,6 @@
 # SPRINT: Helper pass-through & docstring hygiene (follow-on)
 
-状态：completed（Phase 0–3 全部落地并验证，2026-06-17 收口于 VRL 分支
+状态：**done（2026-06-18 归档至 done/）**。Phase 0–3 全部落地并验证，2026-06-17 收口于 VRL 分支
 `helper-passthrough-hygiene`，每个 Phase 独立 commit：Phase 1 = f6813f9，
 Phase 0 补完 = d7ec895，Phase 3 = 5372ade；Phase 2 判定全 KEEP 无代码改动。
 全套 `pytest -q tests/scripts/` → 58 passed）。

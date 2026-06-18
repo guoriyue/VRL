@@ -1,6 +1,6 @@
 # SPRINT: Disaggregated-default placement surface
 
-状态：**P0 + P1 + P2 已落地（2026-06-18）；P3 deferred。** 全程保持向后兼容，182 个相关测试通过。实现细节见各 Work item 的「已落地」注。
+状态：**done（P0 + P1 + P2 已落地，2026-06-18 归档至 done/；P3 deferred）。** 全程保持向后兼容，182 个相关测试通过。实现细节见各 Work item 的「已落地」注。
 
 ## 目标
 
