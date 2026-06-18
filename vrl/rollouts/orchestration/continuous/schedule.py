@@ -204,6 +204,11 @@ class ContinuousRolloutSchedule:
                 "continuous rollout is disabled when rollout runtime requires "
                 "driver model offload",
             )
+        # require_separate_gpus is a deliberate escape hatch, not redundant with
+        # topology: single-GPU async-debug recipes intentionally colocate trainer
+        # and rollout on one GPU to exercise the continuous path, and set this
+        # False to opt out of the hard-fail. Whether colocation should fail is a
+        # policy choice the flag encodes, so it stays manual rather than derived.
         if self.require_separate_gpus and self.lifecycle.runtime_is_colocated():
             raise RuntimeError(
                 "continuous rollout requires separate trainer and rollout GPU "

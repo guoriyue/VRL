@@ -112,7 +112,7 @@ class RolloutStats:
 
     @classmethod
     def from_phase_dict(cls, phases: Mapping[str, float] | None) -> RolloutStats:
-        """Build from a legacy ``phase_times`` dict (migration boundary)."""
+        """Build a RolloutStats from a flat ``phase_times`` mapping."""
 
         stats = cls()
         if phases:

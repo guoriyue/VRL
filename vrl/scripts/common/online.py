@@ -115,7 +115,9 @@ def _log_rollout_memory_plan(trainer_config: Any) -> None:
     )
     gas = int(getattr(trainer_config, "gradient_accumulation_steps", 0))
     if gas > 0:
-        microbatch_prompts = rollout_batch_size // gas
+        # Read the reconciled microbatch_size (TrainerConfig.__post_init__ sets it
+        # to rollout_batch_size // gas) rather than recomputing the same quotient.
+        microbatch_prompts = int(trainer_config.microbatch_size)
         microbatch_samples = microbatch_prompts * samples_per_prompt
         logger.info(
             "Rollout memory plan: streaming accumulation enabled "

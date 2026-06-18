@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-import importlib
 from dataclasses import dataclass
 from typing import Any
+
+# import_from_path lives in the leaf vrl.utils.config (Ray-agnostic, also used by
+# the Ray-free generation worker); re-exported here for existing call sites.
+from vrl.utils.config import import_from_path
 
 
 def require_ray() -> Any:
@@ -15,19 +18,6 @@ def require_ray() -> Any:
     except ImportError as exc:  # pragma: no cover - exercised only without Ray
         raise ImportError("Ray runtime requires `ray`. Install Ray or disable Ray usage.") from exc
     return ray
-
-
-def import_from_path(path: str) -> Any:
-    """Load ``module:attribute`` or ``module.attribute`` import paths."""
-
-    if ":" in path:
-        module_name, attr_name = path.split(":", 1)
-    else:
-        module_name, _, attr_name = path.rpartition(".")
-    if not module_name or not attr_name:
-        raise ValueError(f"invalid import path: {path!r}")
-    module = importlib.import_module(module_name)
-    return getattr(module, attr_name)
 
 
 def current_node_ip() -> str:

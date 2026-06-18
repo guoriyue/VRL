@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -18,6 +17,7 @@ from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import GenerationChunkExecutor
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces import require_runtime_model
+from vrl.utils.config import import_from_path
 from vrl.utils.cuda_memory import release_cuda_memory
 from vrl.utils.logging import init_logger
 from vrl.utils.profiling import TorchProfilerConfig
@@ -262,8 +262,8 @@ class GenerationWorkerCore:
 
         from vrl.models.interfaces.runtime import RuntimeBuildSpec
 
-        build_runtime_bundle = _import_from_path(str(builder_path))
-        executor_cls = _import_from_path(str(executor_path))
+        build_runtime_bundle = import_from_path(str(builder_path))
+        executor_cls = import_from_path(str(executor_path))
         bundle = build_runtime_bundle(
             RuntimeBuildSpec(
                 **self._normalize_runtime_build_payload(
@@ -462,17 +462,6 @@ def _debug_metric_value(value: Any) -> Any:
         except Exception:
             pass
     return repr(value)
-
-
-def _import_from_path(path: str) -> Any:
-    if ":" in path:
-        module_name, attr_name = path.split(":", 1)
-    else:
-        module_name, _, attr_name = path.rpartition(".")
-    if not module_name or not attr_name:
-        raise ValueError(f"invalid import path: {path!r}")
-    module = importlib.import_module(module_name)
-    return getattr(module, attr_name)
 
 
 __all__ = ["GenerationWorkerCore"]
