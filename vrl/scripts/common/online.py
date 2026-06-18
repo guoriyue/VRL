@@ -566,7 +566,6 @@ async def run_online_recipe(
                 eval_csv_path,
                 component_names,
                 resume=resume_checkpoint is not None,
-                prepare_metrics_csv=prepare_metrics_csv,
             )
 
         rng = torch.Generator().manual_seed(trainer_config.seed)
@@ -743,7 +742,6 @@ def _prepare_metrics_csv(
     component_names: tuple[str, ...],
     *,
     resume: bool,
-    prepare_metrics_csv: Any = prepare_metrics_csv,
 ) -> None:
     component_cols = ",".join(f"r_{name}" for name in component_names)
     header = (
@@ -956,7 +954,6 @@ def _prepare_eval_metrics_csv(
     component_names: tuple[str, ...],
     *,
     resume: bool,
-    prepare_metrics_csv: Any,
 ) -> None:
     """eval_metrics.csv header. ``epoch=-1`` is the pre-RL baseline row."""
 
