@@ -59,22 +59,38 @@
 
 ## 3. 训练命令（单卡探针，~1 天）
 
+**抢占式 GPU 的正确跑法 = 频繁 checkpoint + 自动续跑。** GPU 被别的实验抢占时长跑会被 kill；被 kill 时
+epoch loop 的 `except BaseException`（`online.py:710`）**不补存 checkpoint**，所以 `save_freq` 必须小
+（一次 kill 最多丢一个 save_freq 的进度）。下面这个 wrapper **任何时候被打断后重跑都会自动从最新 checkpoint
+续跑**（`resume_from` + RNG 恢复 → prompt 采样可复现，`online.py:573-580`；resume 不重跑 baseline，
+`eval_metrics.csv` 累积，`online.py:635`），可以反复 `nohup`/再跑直到 64 步跑满：
+
 ```bash
-cd ~/Desktop/VRL && HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 CUDA_VISIBLE_DEVICES=0 \
+cd ~/Desktop/wm-infra          # 真正的 cosmos run 落在这个 clone 的 outputs/（不是 ~/Desktop/VRL，二者是同 repo 的两份独立 clone）
+OUT=outputs/cosmos25_kling_probe_1e4_64ep
+CKPT=$(ls -d "$OUT"/checkpoint-* 2>/dev/null | grep -oE 'checkpoint-[0-9]+' | sort -t- -k2 -n | tail -1)
+RESUME=${CKPT:+trainer.resume_from=$OUT/$CKPT}   # 空=全新跑；非空=从最新 checkpoint 续
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 CUDA_VISIBLE_DEVICES=0 \
   PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python -u -m vrl.scripts.train \
   --config experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward \
-  rollout.rollout_batch_size=16 trainer.total_epochs=64 trainer.save_freq=16 \
+  rollout.rollout_batch_size=16 trainer.total_epochs=64 \
+  trainer.save_freq=4 trainer.eval.freq=8 \
   sampling.width=256 sampling.height=256 sampling.num_frames=49 \
   rollout.host_memory_budget_fraction=0.95 production.kling_video_reward.enabled=false \
-  trainer.output_dir=outputs/cosmos25_kling_probe_1e4_64ep
+  trainer.output_dir="$OUT" $RESUME 2>&1 | tee -a "$OUT.log"
 ```
 
 - `lr=1e-4`、`timestep_fraction=0.5`、`n=8`、20 步 来自 config，不用再写。
 - 64 步 @ 1e-4 ≈ 持平那条 run（14 步 @3e-5）约 **15× 的累计权重位移**，够看出趋势。
-- `HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1` 必带：上次崩溃是 `release_after_collect` 每 cycle reload
-  Cosmos 时 ping HF `model_info` 的瞬时超时，不是 OOM/代码 bug（三个模型都已本地缓存）。
-- overnight 版：把 `rollout.rollout_batch_size=8 trainer.total_epochs=80 trainer.save_freq=20`。
-- 断点续跑：`trainer.resume_from=<output_dir>/checkpoint-N`（`vrl/trainers/checkpointing.py`）。
+- **eval 频率的 key 是嵌套的 `trainer.eval.freq`，不是扁平的 `trainer.eval_freq`**（后者会被忽略，
+  eval 回落到配方默认 32）。`save_freq=4`（LoRA ckpt 小、续跑便宜）+ `eval.freq=8`（64 步 ~8 个曲线点）；
+  每次 eval ≈ 70 段视频生成（`samples_per_prompt × max_prompts`，约 ~16 min），别设太密。
+- **死因订正**：`probe_1e4_80ep_eval`（2026-06-16）那次 **HF_HUB_OFFLINE 已开**（日志明写 "offline mode
+  is enabled… load from local cache"）、**无 traceback/OOM**，只训了 1 epoch 就停——是被人为 **kill**（很可能
+  为腾 GPU），不是崩。HF 瞬时超时是**更早**那次（还没加 offline）的死因。当前长跑的真瓶颈是 ① 被抢占 kill +
+  ② `release_after_collect` 每 epoch 把 cosmos-2B + Kling-2B 两个模型 kill 后从磁盘重载（日志 ~2 min/cycle），
+  不是 HF。offline 三件套仍要带（命中本地缓存、杜绝任何 hub ping）。
+- overnight 版：`rollout.rollout_batch_size=8 trainer.total_epochs=80 trainer.save_freq=4 trainer.eval.freq=8`。
 
 ---
 
@@ -107,10 +123,16 @@ cd ~/Desktop/VRL && HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 CUDA_VISIBLE_DEVICES
 - **summary mean 随 epoch 单调上升**（e16 < e32 < e48 < e64）→ recipe 成立。再决定是否上多卡跑满 256 步 / 512p
   native-res / full-param。
 - **还是平** → 按顺序加杠杆（都是"加大 per-step 信号"，不是加 epoch）：
-  1. **lr 再加**：`approx_kl` 才 ~0.002、headroom 很大，可试 `actor.optim.lr=2e-4`。
-  2. **full-param 取代 LoRA**：需要第 2 张卡（previous-policy 单独状态路径）。
-  3. **reward 信噪比**：eval `--samples-per-prompt` 调大；native-res（≥448p）打分需要 reward 第二张卡。
-  4. **吞吐优化另走 rollout/train async**：`SPRINT_microbatch_pipeline_overlap` 已退役为 scope guard；
+  1. **`advantage_high` + `adv_clip_max` 一起抬到 8**（config-only、零显存、单卡可做，最便宜）：
+     `advantage_high` 是 NFT loss 的全局梯度乘子（`diffusion_nft.py:258` `policy_loss *= advantage_high`）。
+     **关键陷阱**：优势在 `advantages.py:35` 先被 `adv_clip_max` 夹死（默认 5），所以**只抬 `advantage_high`
+     不抬 `adv_clip_max`** 时——乘子虽放大 1.6×，但 reward_mix 的正负对比（`diffusion_nft.py:239`
+     `adv/advantage_high`）反被缩小、**半抵消**。`algorithm.advantage_high=8 algorithm.adv_clip_max=8`
+     两个一起抬才是干净放大。`kl_beta` 是论文的抗-reward-hacking 项，**默认别降**。
+  2. **lr 再加**：`approx_kl` 才 ~0.002、headroom 很大，可试 `actor.optim.lr=2e-4`。
+  3. **full-param 取代 LoRA**：需要第 2 张卡（previous-policy 单独状态路径）。
+  4. **reward 信噪比**：eval `--samples-per-prompt` 调大；native-res（≥448p）打分需要 reward 第二张卡。
+  5. **吞吐优化另走 rollout/train async**：`SPRINT_microbatch_pipeline_overlap` 已退役为 scope guard；
      不再做 microbatch async。确认会涨之后，再看多卡 rollout/train overlap。
 
 ---

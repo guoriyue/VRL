@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 import torch
 
@@ -56,6 +57,23 @@ class CellResult:
     latency_ms: float
     launches_per_step: float
     peak_mem_mb: float
+
+
+@dataclass(slots=True)
+class ParityResult:
+    """One eager-vs-compiled numeric parity cell.
+
+    The launch-bound speedup says compile is *worth it*; this says compile is
+    *safe* -- fusing kernels reorders reductions, so the open question before
+    flipping ``torch_compile.enable`` is whether the forward (rollout) and
+    forward+backward under grad-ckpt (train) stay numerically faithful to eager.
+    """
+
+    path: str  # "rollout" | "train"
+    max_abs_out: float
+    max_rel_out: float
+    max_abs_grad: float | None  # train path only (None for rollout)
+    params_checked: int | None
 
 
 def _median_latency_ms(step_fn: Callable[[], None], *, warmup: int, iters: int) -> float:
@@ -183,6 +201,121 @@ def _run_cell(
     )
 
 
+def _extract_sample(out: Any) -> torch.Tensor:
+    """Pull the prediction tensor out of the transformer return (mirror _run_cell)."""
+
+    return out[0] if isinstance(out, tuple) else out
+
+
+def _abs_rel(eager: torch.Tensor, compiled: torch.Tensor) -> tuple[float, float]:
+    """Max absolute and max relative difference between two tensors (in fp32)."""
+
+    diff = (eager - compiled).abs()
+    return diff.max().item(), (diff / eager.abs().clamp_min(1e-8)).max().item()
+
+
+def _run_parity_cell(
+    *,
+    path: str,
+    family: str,
+    batch: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    layers: int | None,
+    mode: str,
+    concat_padding_mask: bool,
+) -> ParityResult:
+    """Run identical inputs through eager then compiled (same weights, same RNG)
+    and report the divergence. Compile wraps the *same* module, so any delta is
+    pure kernel-fusion/reduction-order, not a weight difference. Use --dtype fp32
+    for the faithfulness bound (epsilon-level == compile-safe); bf16 shows the
+    production drift the rollout/train logprob guard must absorb."""
+
+    torch._dynamo.reset()
+    torch.cuda.empty_cache()
+
+    model, kwargs = build_synthetic_inputs(
+        family, batch=batch, device=device, dtype=dtype, layers=layers,
+        concat_padding_mask=concat_padding_mask,
+    )
+
+    if path == "rollout":
+        model.eval()
+        torch.manual_seed(0)
+        with torch.no_grad():
+            out_eager = _extract_sample(model(**kwargs)).float().clone()
+        compiled = torch.compile(model, mode=mode, fullgraph=False)
+        torch.manual_seed(0)
+        with torch.no_grad():
+            out_comp = _extract_sample(compiled(**kwargs)).float().clone()
+        max_abs, max_rel = _abs_rel(out_eager, out_comp)
+        result = ParityResult(path, max_abs, max_rel, None, None)
+
+    elif path == "train":
+        # Full-param grads + grad-ckpt -- the exact train replay path (and the one
+        # the LoRA+grad-ckpt parity worry is about). Snapshot eager grads, then run
+        # the compiled module on the same inputs and diff both output and grads.
+        model.train()
+        model.requires_grad_(True)
+        model.enable_gradient_checkpointing()
+
+        torch.manual_seed(0)
+        out_eager = _extract_sample(model(**kwargs))
+        out_eager.float().pow(2).mean().backward()
+        # Offload the eager-grad snapshot to CPU so it does not co-reside on GPU
+        # with the compiled backward's activations+grads (heavy grids OOM otherwise).
+        eager_grads = {
+            name: p.grad.detach().float().cpu().clone()
+            for name, p in model.named_parameters()
+            if p.grad is not None
+        }
+        out_eager_t = out_eager.detach().float().cpu().clone()
+        model.zero_grad(set_to_none=True)
+
+        compiled = torch.compile(model, mode=mode, fullgraph=False)
+        torch.manual_seed(0)
+        out_comp = _extract_sample(compiled(**kwargs))
+        out_comp.float().pow(2).mean().backward()
+
+        max_abs_grad = 0.0
+        checked = 0
+        for name, p in model.named_parameters():
+            ref = eager_grads.get(name)
+            if p.grad is None or ref is None:
+                continue
+            max_abs_grad = max(
+                max_abs_grad, (p.grad.detach().float().cpu() - ref).abs().max().item()
+            )
+            checked += 1
+        max_abs, max_rel = _abs_rel(out_eager_t, out_comp.detach().float().cpu())
+        result = ParityResult(path, max_abs, max_rel, max_abs_grad, checked)
+
+    else:  # pragma: no cover - guarded by argparse choices
+        raise ValueError(f"unknown path {path!r}")
+
+    del model
+    torch.cuda.empty_cache()
+    return result
+
+
+def format_parity_report(results: list[ParityResult], *, dtype: str) -> str:
+    """Render eager-vs-compiled max |Δ| per path (output, and grad for train)."""
+
+    lines = [
+        f"torch.compile parity  (eager vs compiled, dtype={dtype}, fullgraph=False)",
+        f"{'path':<9}{'max|Δ out|':>14}{'max rel out':>14}{'max|Δ grad|':>14}{'params':>9}",
+        "-" * 60,
+    ]
+    for r in results:
+        grad = f"{r.max_abs_grad:.3e}" if r.max_abs_grad is not None else "n/a"
+        params = str(r.params_checked) if r.params_checked is not None else "n/a"
+        lines.append(
+            f"{r.path:<9}{r.max_abs_out:>14.3e}{r.max_rel_out:>14.3e}{grad:>14}{params:>9}"
+        )
+    lines.append("-" * 60)
+    return "\n".join(lines)
+
+
 def format_report(results: list[CellResult], *, mode: str) -> str:
     """Render cells grouped by path with the eager->compiled speedup per path."""
 
@@ -241,6 +374,10 @@ def main() -> None:
         "--no-concat-padding-mask", dest="concat_padding_mask", action="store_false",
         help="cosmos only: skip the torchvision padding-mask resize (no GEMM impact)",
     )
+    parser.add_argument(
+        "--parity", action="store_true",
+        help="numeric eager-vs-compiled parity (max |Δ| output/grad) instead of timing",
+    )
     args = parser.parse_args()
 
     device = torch.device(args.device)
@@ -253,6 +390,20 @@ def main() -> None:
         "compile A/B: family=%s device=%s dtype=%s batch=%d layers=%s mode=%s paths=%s",
         args.family, device, dtype, args.batch, args.layers, args.mode, paths,
     )
+
+    if args.parity:
+        parity: list[ParityResult] = []
+        for path in paths:
+            logger.info("running parity cell: path=%s", path)
+            parity.append(
+                _run_parity_cell(
+                    path=path, family=args.family, batch=args.batch, device=device,
+                    dtype=dtype, layers=args.layers, mode=args.mode,
+                    concat_padding_mask=args.concat_padding_mask,
+                )
+            )
+        print(format_parity_report(parity, dtype=args.dtype))
+        return
 
     results: list[CellResult] = []
     for path in paths:
