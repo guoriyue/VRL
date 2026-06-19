@@ -14,10 +14,17 @@ and is a drop-in replacement for ``nn.Linear`` in the forward.
 
 Recipe: a bf16 master weight is kept and quantized to the fp8 cache at
 construction and again after each weight-sync (full fine-tune overwrites it every
-step); the activation is quantized per forward. ``rowwise`` scales per token
-(activation) and per output channel (weight) — robust to the outlier channels real
-transformer activations carry; ``tensorwise`` uses one scalar scale per tensor
-(slightly cheaper, less accurate on outliers). Both accumulate in bf16.
+step); the activation is quantized per forward.
+
+- ``rowwise`` (default): per-token activation + per-output-channel weight scales,
+  torch ``_scaled_mm`` — dep-free, robust to activation outliers.
+- ``tensorwise``: one scalar scale per tensor, torch ``_scaled_mm`` — cheapest.
+- ``blockwise``: 1x128 activation + 128x128 weight scales (DeepSeek/slime recipe),
+  **delegated to vLLM's triton kernel** (``w8a8_triton_block_scaled_mm``) instead
+  of hand-rolling — best accuracy on outliers, and runs on CUDA 12.8 (the torch
+  ``_scaled_mm`` block path needs CUDA>=12.9). Requires vLLM installed.
+
+All accumulate in bf16.
 """
 
 from __future__ import annotations
@@ -27,6 +34,8 @@ from torch import nn
 
 # fp8-e4m3 max representable magnitude; the amax scale maps a tensor's peak onto it.
 FP8_E4M3_MAX = 448.0
+# Block size for the ``blockwise`` recipe (DeepSeek/slime/vLLM standard 128).
+FP8_BLOCK = 128
 
 # Module-path substrings whose nn.Linear must stay in bf16: the small,
 # numerically sensitive layers (embeddings, the final noise-pred head, anything
@@ -42,6 +51,13 @@ def _amax_scale(t: torch.Tensor, dim: int | None) -> torch.Tensor:
     return (amax / FP8_E4M3_MAX).clamp_min(1e-12).to(torch.float32)
 
 
+def vllm_block_fp8_available() -> bool:
+    """Whether the opt-in ``blockwise`` recipe (vLLM triton kernel) can be used."""
+    import importlib.util
+
+    return importlib.util.find_spec("vllm") is not None
+
+
 class Fp8Linear(nn.Module):
     """Drop-in ``nn.Linear`` replacement running the matmul in fp8-e4m3.
 
@@ -53,11 +69,17 @@ class Fp8Linear(nn.Module):
 
     def __init__(self, linear: nn.Linear, *, recipe: str = "rowwise") -> None:
         super().__init__()
-        if recipe not in ("rowwise", "tensorwise"):
-            raise ValueError(f"fp8 recipe must be rowwise/tensorwise; got {recipe!r}")
-        self.recipe = recipe
+        if recipe not in ("rowwise", "tensorwise", "blockwise"):
+            raise ValueError(f"fp8 recipe must be rowwise/tensorwise/blockwise; got {recipe!r}")
         self.in_features = linear.in_features
         self.out_features = linear.out_features
+        # blockwise needs 128-aligned dims (vLLM block kernel); fall back to rowwise
+        # for the rare non-aligned linear so the swap never breaks.
+        if recipe == "blockwise" and (
+            self.in_features % FP8_BLOCK or self.out_features % FP8_BLOCK
+        ):
+            recipe = "rowwise"
+        self.recipe = recipe
         # Keep the bf16 master weight under its original ``.weight`` key so RL
         # weight-sync (full fine-tune syncs the base weights every step) can load
         # updated weights normally; the fp8 cache is re-derived after each load
@@ -78,6 +100,13 @@ class Fp8Linear(nn.Module):
     def _requantize_weight(self) -> None:
         """Re-derive the fp8 weight + scale from the bf16 master (after a sync)."""
         w = self.weight.data
+        if self.recipe == "blockwise":
+            n, k = w.shape
+            wb = w.reshape(n // FP8_BLOCK, FP8_BLOCK, k // FP8_BLOCK, FP8_BLOCK)
+            scale = (wb.abs().amax(dim=(1, 3)) / FP8_E4M3_MAX).clamp_min(1e-12).float()
+            self.weight_fp8 = (wb / scale[:, None, :, None]).reshape(n, k).to(torch.float8_e4m3fn)
+            self.weight_scale = scale  # [N/128, K/128]
+            return
         scale = _amax_scale(w, dim=1 if self.recipe == "rowwise" else None)
         self.weight_fp8 = (w / scale).to(torch.float8_e4m3fn)
         self.weight_scale = scale
@@ -90,6 +119,12 @@ class Fp8Linear(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         shape = x.shape
         x_2d = x.reshape(-1, shape[-1])
+        if self.recipe == "blockwise":
+            out = self._blockwise_gemm(x_2d.to(torch.bfloat16))
+            out = out.reshape(*shape[:-1], self.out_features)
+            if out.dtype != x.dtype:
+                out = out.to(x.dtype)
+            return out if self.bias is None else out + self.bias
         if self.recipe == "rowwise":
             x_scale = _amax_scale(x_2d, dim=1)  # [M, 1] per token
             weight_scale = self.weight_scale.reshape(1, self.out_features)  # [1, N] per channel
@@ -115,6 +150,30 @@ class Fp8Linear(nn.Module):
             out = out + self.bias
         return out
 
+    def _blockwise_gemm(self, x_bf16: torch.Tensor) -> torch.Tensor:
+        """1x128 fp8 block GEMM via vLLM's triton kernel (not hand-rolled).
+
+        Reuses vLLM's ``per_token_group_quant_fp8`` (1x128 activation quant) +
+        ``w8a8_triton_block_scaled_mm`` (128x128 weight blocks), so we don't
+        reimplement DeepSeek-style block fp8 and it runs on CUDA 12.8.
+        """
+        try:
+            from vllm.model_executor.layers.quantization.utils.fp8_utils import (
+                per_token_group_quant_fp8,
+                w8a8_triton_block_scaled_mm,
+            )
+        except ImportError as exc:  # pragma: no cover - dep guard
+            raise RuntimeError(
+                "fp8 recipe='blockwise' reuses vLLM's block kernel but vLLM is not "
+                "installed. Install the vllm extra, or use recipe='rowwise' (torch, "
+                "dep-free).",
+            ) from exc
+        x_fp8, x_scale = per_token_group_quant_fp8(x_bf16, FP8_BLOCK)
+        return w8a8_triton_block_scaled_mm(
+            x_fp8, self.weight_fp8, x_scale, self.weight_scale,
+            [FP8_BLOCK, FP8_BLOCK], output_dtype=torch.bfloat16,
+        )
+
     def extra_repr(self) -> str:
         return f"in={self.in_features}, out={self.out_features}, recipe={self.recipe}, fp8=e4m3"
 
@@ -130,8 +189,10 @@ def swap_linears_to_fp8(
 
     Quantizes a Linear only when its dotted path matches no ``exclude`` substring
     AND both in/out features are ``>= min_features`` (small Linears are cheap and
-    quantizing them only adds drift). Returns the dotted paths swapped, so the
-    caller can log/inspect exactly which layers went fp8.
+    quantizing them only adds drift). Default ``rowwise`` (torch, dep-free, modest
+    memory — the validated path); pass ``recipe="blockwise"`` to opt into vLLM's
+    faster/more-accurate block kernel (needs more GPU headroom). Returns the dotted
+    paths swapped.
     """
 
     swapped: list[str] = []
@@ -149,4 +210,9 @@ def swap_linears_to_fp8(
     return swapped
 
 
-__all__ = ["DEFAULT_EXCLUDE", "Fp8Linear", "swap_linears_to_fp8"]
+__all__ = [
+    "DEFAULT_EXCLUDE",
+    "Fp8Linear",
+    "swap_linears_to_fp8",
+    "vllm_block_fp8_available",
+]

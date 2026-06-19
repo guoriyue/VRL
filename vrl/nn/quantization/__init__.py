@@ -3,7 +3,9 @@
 The home for low-precision linear kernels and the module-tree swap that installs
 them, mirroring vLLM's ``model_executor/layers/quantization`` and slime's fp8
 tooling. Today it holds the fp8-e4m3 dynamic-quantization linear used by the
-rollout DiT; fp4 / int8 / other schemes land here as siblings. The package
+rollout DiT — ``rowwise``/``tensorwise`` on torch ``_scaled_mm``, and a
+``blockwise`` recipe that **reuses vLLM's triton block kernel** rather than
+hand-rolling. fp4 / int8 / other schemes land here as siblings. The package
 ``__init__`` is the public facade — consumers import from ``vrl.nn.quantization``,
 not the per-scheme module.
 """
@@ -14,6 +16,12 @@ from vrl.nn.quantization.fp8 import (
     DEFAULT_EXCLUDE,
     Fp8Linear,
     swap_linears_to_fp8,
+    vllm_block_fp8_available,
 )
 
-__all__ = ["DEFAULT_EXCLUDE", "Fp8Linear", "swap_linears_to_fp8"]
+__all__ = [
+    "DEFAULT_EXCLUDE",
+    "Fp8Linear",
+    "swap_linears_to_fp8",
+    "vllm_block_fp8_available",
+]

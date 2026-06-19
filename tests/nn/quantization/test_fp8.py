@@ -34,6 +34,16 @@ def _fp8_capable() -> bool:
 requires_fp8 = pytest.mark.skipif(not _fp8_capable(), reason="needs CUDA fp8 _scaled_mm")
 
 
+def _vllm_available() -> bool:
+    import importlib.util
+    return importlib.util.find_spec("vllm") is not None
+
+
+requires_vllm_fp8 = pytest.mark.skipif(
+    not (_fp8_capable() and _vllm_available()), reason="needs CUDA fp8 + vLLM block kernel",
+)
+
+
 # --- a realistic DiT block with diffusers-like submodule names ----------------
 
 
@@ -135,6 +145,25 @@ def test_invalid_recipe_rejected():
 
 
 # --- numeric: per-GEMM and end-to-end drift (GPU) ----------------------------
+
+
+@requires_vllm_fp8
+def test_blockwise_recipe_matches_bf16_via_vllm():
+    """blockwise reuses vLLM's triton block kernel (not hand-rolled); 128-aligned."""
+    torch.manual_seed(0)
+    lin = nn.Linear(2048, 2048).cuda().to(torch.bfloat16)
+    fp8 = Fp8Linear(lin, recipe="blockwise").cuda()
+    assert fp8.recipe == "blockwise"
+    x = torch.randn(512, 2048, device="cuda", dtype=torch.bfloat16)
+    ref, got = lin(x), fp8(x)
+    rel = (got.float() - ref.float()).abs().mean() / ref.float().abs().mean()
+    assert rel < 0.06, f"blockwise drift {rel:.4f} too high"
+
+
+def test_blockwise_falls_back_to_rowwise_on_unaligned_dims():
+    """A non-128-aligned linear can't use the block kernel → silently uses rowwise."""
+    fp8 = Fp8Linear(nn.Linear(2000, 2048), recipe="blockwise")  # 2000 % 128 != 0
+    assert fp8.recipe == "rowwise"
 
 
 @requires_fp8

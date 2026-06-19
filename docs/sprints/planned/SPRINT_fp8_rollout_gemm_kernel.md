@@ -68,7 +68,7 @@ fp8 不是 drop-in dtype（bf16/fp16 有原生自动 dispatch 的 GEMM，fp8 没
 4. ✅ **scaling recipe + 精度 profile**：rowwise（默认）+ tensorwise 实现并验。`vrl/scripts/perf/fp8_recipe_accuracy.py`（fake-quant，对齐过真 `_scaled_mm`）量四档漂移：
    - **clean 激活**：四档≈ 3.7%（e4m3 floor，没 outlier 可吃）。
    - **outlier channels（真实情形）**：**block-1x128 最低 0.028** > rowwise 0.033 > tensorwise 0.036；block 比 tensorwise 少 ~22% 漂移。**MX-1x32 反而不帮**（e8m0 幂二 scale 丢 value 精度，抵消细粒度）。
-   - **结论**：rowwise（已发，cu128 上有真 kernel）已吃掉 tensor→block 改善的 ~60%；**block-1x128 是 slime 同款最优，但真 kernel 要 CUDA≥12.9**（本机 cu128=12.8 只能 fake-quant）。已查证的正确调用：`scale_a` 列优先 `(M,K//128)`、`scale_b` 行优先 `(K//128,N)`、`out_dtype=bf16`、K%128==0 —— CUDA 升级后直接接。
+   - **结论**：rowwise（默认，torch `_scaled_mm`，省显存、已验证）；**block-1x128 改为 reuse vLLM 的 triton kernel**（`per_token_group_quant_fp8` + `w8a8_triton_block_scaled_mm`）——不用手搓、**cu128 就能跑**（不用等 CUDA 12.9），实测比 rowwise 还快（1.46–1.57x vs 1.15–1.53x）且 outlier 上更准。代价：vLLM 依赖 + 更吃显存（在 32GB colocated 紧配置上会 OOM，所以 **blockwise 是 opt-in，默认仍 rowwise**）。代码在 `vrl/nn/quantization/fp8.py`（`recipe="blockwise"`）。
 5. ⏳ **torch.compile 交互**：swap 在 compile 前（已保证顺序）。`mode=default` + fp8 linear 的 inductor 行为要在 live run 验（已知坑：`reduce-overhead`/CUDAGraphs 撞 LoRA + grad-ckpt）。
 6. ⏳ **LoRA 交互（开放）**：当前 `apply_rollout_fp8` 在 LoRA/full-finetune 之后调；full-finetune（cosmos predict2）是首选验证路径。LoRA 下 swap 命中 PEFT `base_layer` 的正确性留 live 验。
 

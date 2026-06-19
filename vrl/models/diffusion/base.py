@@ -264,12 +264,13 @@ class DiffusionModelBase(nn.Module, ABC):
     def quantize_transformer_fp8(self, recipe: str = "rowwise") -> list[str]:
         """Swap the transformer's big policy GEMMs to fp8 in place (rollout only).
 
-        Replaces the large attention/MLP ``nn.Linear`` modules with ``Fp8Linear``
-        (``torch._scaled_mm``, bf16 master + bf16 accumulate), leaving embeddings /
-        the noise-pred head / norm-feeding linears in bf16. Returns the dotted
-        paths quantized. This is a generation/rollout-only optimization; the
-        trainer's replay forward keeps its bf16/fp32 master and is never quantized.
-        Call before ``torch_compile_transformer`` so inductor sees the fp8 modules.
+        Replaces the large attention/MLP ``nn.Linear`` modules with ``Fp8Linear``,
+        leaving embeddings / the noise-pred head / norm-feeding linears in bf16.
+        Default ``rowwise`` (torch, validated); ``blockwise`` opts into vLLM's
+        faster block kernel (more GPU memory). Returns the dotted paths quantized.
+        This is a generation/rollout-only optimization; the trainer's replay forward
+        keeps its bf16/fp32 master and is never quantized. Call before
+        ``torch_compile_transformer`` so inductor sees the fp8 modules.
         """
 
         from vrl.nn.quantization import swap_linears_to_fp8
