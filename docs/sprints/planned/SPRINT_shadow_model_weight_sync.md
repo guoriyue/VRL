@@ -1,13 +1,17 @@
 # SPRINT: Trainable-state shadow slots —— 安全去掉 continuous drain bubble（planned）
 
-状态：**P0 + P1 已实现 + CPU 测试（2026-06-18）；P2 多卡验证 + 运行时启用待做**。
+状态：**P0 + P1 + P2 全部完成 —— P2 多卡真机验证通过（2026-06-19）**。P0/P1 实现 + CPU 测试（2026-06-18）；P2 运行时启用 + executor stale-slot 路由 + CPU 测试（2026-06-19）；P2 多卡真机验证通过（2026-06-19，见 §11「P2 多卡验证结果」）。
 
 > **更新（2026-06-18，P0/P1 落地）：**
 > - **设计偏差（比 §3 的 PEFT 多 adapter 方案更简单、更低风险）**：slot 不用 PEFT 命名 adapter（要 key 重映射、易撞 NFT 的 `default`/`previous`、2× VRAM），而用 **state-dict 快照 slot**。`TrainableStateSlots`（`vrl/models/utils.py`）只存「版本→flat trainable payload dict」（host RAM，≈0 额外 VRAM）；`activate` 复用已有且测试过的 `load_trainable_state(slot[v])` 把那版参数 copy 进 live 模型，并用 `_active_slot_version` 跳过同版本重载。对所有 diffusion family 通用（含 wan 多 transformer），零 PEFT key 重映射风险。代价：切版本时一次 H2D copy（LoRA 很小；§8 的 CUDA-stream overlap 仍是后续优化）。
 > - **P0（已实现）**：`DiffusionModelBase` 加 `supports_versioned_trainable_state=True` + `install_trainable_state`/`activate_trainable_state`/`has_trainable_state`（getattr-dispatch，不入硬 `RuntimeModel` 契约，AR family 自动 fallback）。`ChunkExecutionResult.stale_slot` 区分 evict 与真错误。`GenerationWorkerCore.update_weights` 在支持时安装 slot 不覆盖旧版；`execute_chunk` 按 `request.policy_version` 激活 slot、success 返回 request version（过 executor 断言）、缺 slot 返回 typed stale-slot。worker 暴露 `supports_versioned_trainable_state()`（+ Ray actor forwarder）。
 > - **P1（机制已实现，默认 OFF）**：`RolloutLifecycle.supports_non_draining_weight_sync()`（getattr-default-False）；`after_train_step` 在支持时跳过 `drain_inflight`，并发 `continuous.weight_sync_barrier_mode`（0=draining/1=non-draining）metric（已进 metrics.csv）。
 > - **CPU 测试**：`tests/models/test_utils.py`（slot store）、`test_model_base.py`（install/activate/retain 旧版/skip-if-active）、`tests/generation/execution/test_worker_versioned_slots.py`（install 不覆盖、缺 slot stale-slot、激活 request 版本、plain-model 仍走 mismatch）、`test_schedule.py`（draining mode=0、non-draining 不等 in-flight + mode=1）。全套 366 passed。
-> - **P2 待做（多卡，无法单卡验证）**：`RayGenerationRuntime` 目前**不设** `supports_non_draining_weight_sync`（→ lifecycle 默认 False → 真实运行仍走 draining barrier，行为不变、安全）。启用 = 让 runtime 把该能力**派生自所有 worker 的 `supports_versioned_trainable_state()`（AND）**（见 §5 P2 / 下方 §4），然后在 2 卡分池上验收「无 policy_version mismatch + weight_sync_pause 不再含整条 clip + 每步 wall-clock 下降」。executor 对 stale-slot 的 graceful discard 路由（`executor.py:127-137/221-230`）也属 P2。
+> - **P2 运行时启用 + stale-slot 路由（已实现 + CPU 测试，2026-06-19）**：
+>   - **runtime capability 派生**：`RayGenerationLauncher.launch` 通过 `_all_workers_support_versioned_slots(ray, workers, weight_sync=...)` 把 `runtime.supports_non_draining_weight_sync` **派生为所有 worker `supports_versioned_trainable_state()` 的 AND**（worker core + `RayGenerationWorker` actor forwarder 已暴露）。`weight_sync is None`（sync 关闭）/ 无 worker / 任一 query 抛错 → False → 安全回退 draining barrier。`RayGenerationRuntime.__init__` 与 lease 模式默认 False，保持默认行为不变。
+>   - **executor stale-slot graceful discard**：新增 typed `StaleSlotDiscard`（`vrl/generation/execution/types.py`，**不是** `RuntimeError` 子类）。`RayGenerationExecutor.execute` 在 OOM-degrade（对非 OOM error 硬 raise）与 version assert **之前**检测 `ChunkExecutionResult.stale_slot`，raise `StaleSlotDiscard`（一个 evicted chunk 即丢整个 request，绝不拼混版本输出）。`ContinuousRolloutProducer._harvest_done` 捕获该类型 → `discarded_stale_count += 1`（不进 `error_count`、不触发 fail-fast），与 receipt-time staleness gate 同一 discard 语义。
+>   - **CPU 测试**：`test_runtime_config.py`（AND 派生 + 无 sync/无 worker/query 抛错 → False）、`test_oom_split.py`（stale-slot raise `StaleSlotDiscard` 且不重试、非 RuntimeError 子类）、`test_schedule.py`（StaleSlotDiscard → discarded_stale 而非 error_count + queue 保持空）。全相关套 47 passed；`tests/generation/` + `tests/rollouts/orchestration/` 137 passed / 2 skipped 无回归。
+> - **P2 仍待做（多卡，无法单卡验证）**：在 2 卡分池上验收「无 policy_version mismatch + weight_sync_pause 不再含整条 clip + 每步 wall-clock 下降」。
 
 状态（原文）：**proposed / design（2026-06-18, trainable-state-first 修订）**。
 
@@ -384,3 +388,33 @@ continuous.stale_policy_versions
 - algorithm soundness：
   - `vrl/algorithms/grpo/continuous.py`
   - `vrl/algorithms/diffusion_nft.py`
+
+---
+
+## 11. P2 多卡验证结果（2026-06-19，2 卡 cross-node 真机）
+
+**配置**：`experiment/diffusion/sd3_5/online_grpo_ocr_crossnode_debug`（SD3.5-medium LoRA、128×128、
+4 步、continuous + cross-node）+ `continuous.max_stale_policy_versions=1`。拓扑：Ray head 在 node A
+`--num-gpus=0`（trainer 直接用 head 卡）+ worker 在 node B `--num-gpus=1`（rollout）。3 epoch 跑完 ~2min。
+
+**验收（全部通过）**：
+
+| 验收项（§5 P2 / P1） | 实测 | 判定 |
+|---|---|---|
+| `continuous_weight_sync_barrier_mode` | **1.0**（ep0/1/2 全 1）| ✅ non-draining 真生效——runtime capability 从 SD3.5 LoRA worker 的 `supports_versioned_trainable_state` AND 派生成功 |
+| `policy_version mismatch` | **0** | ✅ versioned slots 防住混版本 |
+| `continuous_weight_sync_pause_s` | 0.87 / 0.35 / 0.69s | ✅ 亚秒级（= 权重推送/slot install 成本，不再等最慢 clip）|
+| stale admission（max_stale=1）| ep1 `continuous_stale_versions=1` | ✅ GRPO 可训练 stale item |
+| stale-slot graceful discard | ep2 `continuous_producer_discarded_stale=1`、`post_sync_dropped=0`、`error_count=0` | ✅ `StaleSlotDiscard` 路由生效，evicted slot 走 discard 不污染 error |
+| 端到端 | 3 epoch 跑完、0 Traceback | ✅ |
+
+注：reward=0 是 128×128/4 步 debug 配置的预期（验编排机制、非学习；图太小 OCR reward 恒 0）。
+
+**附带修复的预存 bug**：`vrl/rollouts/orchestration/lifecycle.py` `_collector_runtime()` 原只 catch
+`AttributeError`，但 collector 的 `runtime` property 在 `set_runtime()` 前抛 **`RuntimeError`**
+（cross-node/continuous 启动期会在 runtime attach 前查 policy version）——没被 catch → 没 fallback 到
+weight_syncer 就崩。已改为 catch `(AttributeError, RuntimeError)` 优雅返回 None。这是 cross-node
+continuous 路径启动即崩的根因，非 P2 改动引入，但 P2 多卡验证才暴露。
+
+**结论**：P2 完成。non-draining weight sync 在真实 2 卡 cross-node 拓扑上去掉了 drain bubble
+（barrier_mode=1、pause 亚秒、无 mismatch、stale-slot 优雅丢弃），全部硬指标达标。

@@ -20,6 +20,7 @@ from typing import Any
 
 import torch
 
+from vrl.generation.execution.types import StaleSlotDiscard
 from vrl.rollouts.batch.ops import move_training_batch_to_device
 from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
 from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
@@ -215,6 +216,20 @@ class ContinuousRolloutProducer:
             try:
                 result = task.result()
             except asyncio.CancelledError:  # pragma: no cover
+                continue
+            except StaleSlotDiscard as exc:
+                # A request outlived its worker's trainable-state slot window under
+                # a non-draining weight sync. That is an expected graceful discard,
+                # not a generation failure, so it must not inflate error_count (and
+                # trip fail-fast) — count it like the receipt-time staleness gate.
+                self.state.discarded_stale_count += 1
+                if self.runtime_debug:
+                    logger.info(
+                        "continuous rollout discarded stale slot "
+                        "(discarded_stale=%d): %s",
+                        self.state.discarded_stale_count,
+                        exc,
+                    )
                 continue
             except Exception as exc:
                 self.state.last_error = repr(exc)

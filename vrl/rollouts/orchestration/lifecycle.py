@@ -125,9 +125,15 @@ class RolloutLifecycle:
             empty_cuda_cache()
 
     def _collector_runtime(self) -> Any | None:
+        # The collector's `runtime` property raises RuntimeError before
+        # set_runtime() has run (the cross-node/continuous path queries the
+        # policy version during setup, before the runtime is attached), and
+        # AttributeError if the collector type exposes no runtime at all. Both
+        # mean "no collector-runtime provider yet" — fall through to the weight
+        # syncer rather than crashing.
         try:
             return self.collector.runtime
-        except AttributeError:
+        except (AttributeError, RuntimeError):
             return None
 
     def _runtime_policy_version(self, *, default: int | None) -> int | None:

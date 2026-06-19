@@ -15,7 +15,11 @@ from vrl.generation.ray.config import (
     DRIVER_CUDA_OWNERSHIP_ERROR,
     RayGenerationConfig,
 )
-from vrl.generation.ray.launcher import RayGenerationLauncher
+from vrl.generation.execution.types import DistributedWorkerHandle
+from vrl.generation.ray.launcher import (
+    RayGenerationLauncher,
+    _all_workers_support_versioned_slots,
+)
 from vrl.models.interfaces import RuntimeBuildSpec
 
 
@@ -210,6 +214,83 @@ def _build_inputs_cfg(*, denoise_compile: dict[str, Any] | None = None) -> Any:
     if denoise_compile is not None:
         cfg["rollout"]["denoise_compile"] = denoise_compile
     return OmegaConf.create(cfg)
+
+
+class _SlotActor:
+    """Stand-in Ray actor exposing the versioned-slot capability forwarder."""
+
+    def __init__(self, supports: bool | Exception) -> None:
+        self._supports = supports
+
+        class _Remote:
+            def remote(_self) -> bool:
+                if isinstance(supports, Exception):
+                    raise supports
+                return supports
+
+        self.supports_versioned_trainable_state = _Remote()
+
+
+class _FakeRay:
+    """Minimal ray.get that resolves each fake .remote() eagerly (or re-raises)."""
+
+    @staticmethod
+    def get(refs: Any) -> Any:
+        # refs is the list comprehension already evaluated by the helper; each
+        # fake .remote() returns a plain bool or raised before we got here.
+        return list(refs)
+
+
+def _handles(*supports: bool | Exception) -> list[DistributedWorkerHandle]:
+    return [
+        DistributedWorkerHandle(
+            worker_id=f"w{index}",
+            node_id="local",
+            actor=_SlotActor(value),
+        )
+        for index, value in enumerate(supports)
+    ]
+
+
+def test_runtime_capability_is_and_over_all_workers() -> None:
+    """supports_non_draining_weight_sync derives as the AND of every worker's
+    supports_versioned_trainable_state(): all True -> True; any False -> False."""
+    weight_sync = object()
+
+    assert _all_workers_support_versioned_slots(
+        _FakeRay(), _handles(True, True), weight_sync=weight_sync
+    ) is True
+    assert _all_workers_support_versioned_slots(
+        _FakeRay(), _handles(True, False), weight_sync=weight_sync
+    ) is False
+
+
+def test_runtime_capability_false_without_weight_sync_or_workers() -> None:
+    """No weight sync (sync_trainable_state off) or no workers -> safe draining
+    barrier (False), never a silent True."""
+    assert _all_workers_support_versioned_slots(
+        _FakeRay(), _handles(True, True), weight_sync=None
+    ) is False
+    assert _all_workers_support_versioned_slots(
+        _FakeRay(), [], weight_sync=object()
+    ) is False
+
+
+def test_runtime_capability_false_when_a_worker_query_raises() -> None:
+    """A failed capability query must fall back to the safe draining barrier,
+    not crash the launch or optimistically assume support."""
+
+    class _RaisingRay:
+        @staticmethod
+        def get(refs: Any) -> Any:
+            # Force evaluation so the raising .remote() actually fires.
+            return [ref for ref in refs]
+
+    assert _all_workers_support_versioned_slots(
+        _RaisingRay(),
+        _handles(True, RuntimeError("actor dead")),
+        weight_sync=object(),
+    ) is False
 
 
 def test_chunk_placement_strategy_switches_from_cfg() -> None:

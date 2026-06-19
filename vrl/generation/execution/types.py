@@ -11,6 +11,18 @@ from vrl.generation.protocols import ChunkResult
 from vrl.generation.types import GenerationRequest
 
 
+class StaleSlotDiscard(Exception):
+    """A generation request outlived its worker's trainable-state slot window.
+
+    Raised by the executor when a chunk comes back as a TYPED stale-slot result
+    (``ChunkExecutionResult.stale_slot``) — the request's policy version was
+    evicted under a non-draining weight sync, NOT a real generation failure. The
+    continuous producer catches this distinct type and counts the group as a
+    graceful stale discard (``discarded_stale_count``) instead of a collect error
+    (``error_count``). See SPRINT_shadow_model_weight_sync.md §3.1 / §4.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class DistributedWorkerHandle:
     """Scheduler-visible metadata for one generation worker actor."""
@@ -74,4 +86,5 @@ __all__ = [
     "ChunkExecutionEnvelope",
     "ChunkExecutionResult",
     "DistributedWorkerHandle",
+    "StaleSlotDiscard",
 ]

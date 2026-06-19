@@ -12,6 +12,7 @@ from vrl.generation.execution.planner import attach_engine_plan
 from vrl.generation.execution.types import (
     ChunkExecutionResult,
     DistributedWorkerHandle,
+    StaleSlotDiscard,
 )
 from vrl.generation.protocols import ChunkGatherer, ChunkResult
 from vrl.generation.types import GenerationOutput, GenerationRequest
@@ -113,6 +114,24 @@ class RayGenerationExecutor:
             raise RuntimeError(
                 "distributed rollout returned wrong number of chunks: "
                 f"{len(results)} != {len(assignments)}",
+            )
+
+        # A stale-slot result is a typed graceful discard, not a failure: the
+        # request's policy version was evicted from its worker's slot window under
+        # a non-draining weight sync. Route it BEFORE OOM-degrade (which hard-raises
+        # on any non-OOM error) and before the version assert (a stale slot stamps
+        # request.policy_version, so it would pass that check silently). Raising a
+        # distinct StaleSlotDiscard lets the producer count it as a stale discard
+        # instead of a collect error. One evicted chunk poisons the whole request,
+        # so the group is discarded — partial mixed-version output is never built.
+        stale = [result for result in results if result.stale_slot]
+        if stale:
+            evicted = stale[0]
+            raise StaleSlotDiscard(
+                "distributed rollout discarded a stale trainable-state slot "
+                f"(worker_id={evicted.worker_id}, "
+                f"policy_version={evicted.policy_version}, "
+                f"chunks={len(stale)}/{len(results)}): {evicted.error}",
             )
 
         results, oom_splits = await self._degrade_oom_chunks(

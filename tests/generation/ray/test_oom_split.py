@@ -22,6 +22,7 @@ from vrl.generation.execution.types import (
     ChunkExecutionEnvelope,
     ChunkExecutionResult,
     DistributedWorkerHandle,
+    StaleSlotDiscard,
 )
 from vrl.generation.ray.executor import RayGenerationExecutor, _is_oom_error
 from vrl.generation.types import GenerationOutput, GenerationRequest
@@ -222,6 +223,73 @@ async def test_healthy_chunks_skip_degradation_path() -> None:
 
     assert len(output.output) == 2
     assert "ray_chunk_oom_splits" not in output.extra
+
+
+@dataclass
+class _StaleSlotWorker:
+    """Worker that returns a typed stale-slot result (evicted version slot)."""
+
+    worker_id: str
+    executed: list[str] = field(default_factory=list)
+
+    def execute_chunk(self, envelope: ChunkExecutionEnvelope) -> ChunkExecutionResult:
+        chunk = envelope.chunk
+        self.executed.append(chunk.chunk_key)
+        version = envelope.request.policy_version
+        return ChunkExecutionResult(
+            request_id=envelope.request.request_id,
+            worker_id=self.worker_id,
+            chunk=chunk,
+            output=None,
+            # Slot mode stamps the REQUEST's version, so the version assert would
+            # pass — only the stale_slot flag distinguishes this from success.
+            policy_version=version,
+            error=f"trainable-state slot evicted for policy_version={version}",
+            stale_slot=True,
+        )
+
+
+def _versioned_request(num_samples: int, version: int) -> GenerationRequest:
+    return GenerationRequest(
+        request_id="req-stale",
+        family="test",
+        task="t2i",
+        prompts=["p"],
+        samples_per_prompt=num_samples,
+        policy_version=version,
+    )
+
+
+@pytest.mark.asyncio
+async def test_stale_slot_routes_to_graceful_discard_not_failure() -> None:
+    """A stale-slot chunk raises StaleSlotDiscard (a typed discard), NOT a generic
+    RuntimeError, so the producer counts it as a stale discard, not a collect error.
+    It must also skip OOM-split retries entirely (no second execute on the chunk)."""
+
+    chunk = SampleChunk(prompt_index=0, prompt="p", sample_start=0, sample_count=2)
+    worker = _StaleSlotWorker(worker_id="w0")
+    handles = [
+        DistributedWorkerHandle(worker_id=worker.worker_id, node_id="local", actor=worker),
+    ]
+    executor = RayGenerationExecutor(
+        planner=_StaticPlanner(chunks=[chunk]),
+        workers=handles,
+        gatherer=_CoverageGatherer(),
+    )
+
+    with pytest.raises(StaleSlotDiscard, match="policy_version=7"):
+        await executor.execute(_versioned_request(2, version=7))
+
+    # Routed before the OOM-degrade loop, so the chunk ran exactly once (no retry).
+    assert worker.executed == ["prompt:0:samples:0:2"]
+
+
+def test_stale_slot_discard_is_not_runtime_error() -> None:
+    """StaleSlotDiscard must be its OWN type, not a RuntimeError subclass — the
+    producer's generic ``except Exception`` (error_count) must not catch it first."""
+
+    assert not issubclass(StaleSlotDiscard, RuntimeError)
+    assert issubclass(StaleSlotDiscard, Exception)
 
 
 def test_is_oom_error_classifier() -> None:

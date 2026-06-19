@@ -11,6 +11,7 @@ import torch
 import torch.nn as nn
 
 from tests.rollouts.orchestration.continuous._helpers import _wait_until
+from vrl.generation.execution.types import StaleSlotDiscard
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.orchestration import (
     ContinuousRolloutSchedule,
@@ -477,6 +478,48 @@ async def test_non_draining_sync_skips_inflight_wait() -> None:
     finally:
         collector.allow_score.set()
         await schedule.producer.stop()
+
+
+class _StaleSlotCollector(_Collector):
+    """Generation always hits an evicted trainable-state slot (non-draining sync).
+
+    Mirrors what the Ray executor raises when a request outlives its worker's slot
+    window: a typed StaleSlotDiscard, NOT a generation failure.
+    """
+
+    async def collect_unscored(self, prompts: Any, **kwargs: Any) -> RolloutBatch:
+        raise StaleSlotDiscard("trainable-state slot evicted for policy_version=1")
+
+
+@pytest.mark.asyncio
+async def test_stale_slot_discard_counts_as_discard_not_error() -> None:
+    # A StaleSlotDiscard from generation is an expected graceful discard under a
+    # non-draining weight sync: the producer must count it as discarded_stale, not
+    # as a collect error (which would inflate error_count and trip fail-fast).
+    """Checks stale-slot discard increments discarded_stale_count, not error_count."""
+    runtime = _Runtime()
+    runtime.supports_non_draining_weight_sync = True
+    collector = _StaleSlotCollector(runtime)
+    syncer = _Syncer(runtime)
+    schedule = _build(
+        _continuous_config(wait_timeout_s=30.0, fail_fast_errors=2),
+        collector,
+        syncer,
+    )
+
+    try:
+        await schedule._start(["p0", "p1"], group_size=2, runtime_debug=False)
+        producer = schedule.producer
+        assert producer is not None
+        # Let the background loop submit + harvest several stale-slot groups.
+        await _wait_until(lambda: producer.state.discarded_stale_count >= 2)
+        # Discards never become errors, so fail-fast (2) is never tripped.
+        assert producer.state.error_count == 0
+        assert producer.state.last_error is None
+        assert schedule.queue is not None and schedule.queue.size() == 0
+    finally:
+        if schedule.producer is not None:
+            await schedule.producer.stop()
 
 
 @pytest.mark.asyncio

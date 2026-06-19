@@ -73,3 +73,43 @@
 - 显存：`done/SPRINT_generation_memory_policy.md`、`vrl/scripts/eval/wan_i2v_base_sample.py`（`--offload model`）
 - 测试兜底：`tests/models/diffusion/wan_2_1/{test_backbone_parity,test_model_loading}.py`、
   `tests/models/interfaces/test_minimal_replay_runtime_wiring.py`（23 passed）
+
+---
+
+## 8. Proof-run 尝试记录（2026-06-19，2 卡真机）
+
+### 已完成
+- **任务 1（recipe，code-only）✅**：建好 `configs/experiment/diffusion/wan_2_2/online_grpo_physics_i2v.yaml`
+  （镜像 wan_2_1 物理 I2V；`defaults` 指 `/model/diffusion/wan_2_2/i2v_a14b`，boundary_ratio=0.9；
+  显式 `model.trainable_transformers=['transformer_2']` 低噪专家；`total_epochs=2` smoke）。dry-load 干净，
+  dual-stage 模型 config 正常解析（family=wan_2_1_i2v、两专家 transformer/transformer_2）。
+- **模型**：`Wan-AI/Wan2.2-I2V-A14B-Diffusers` 已下载到 `/mnt/nvme/hf`（118GB，50 文件，transformer +
+  transformer_2 + vae + text_encoder 齐全）。
+
+### Proof run 在本 2 卡硬件上的阻塞（任务 3 未完成）
+真机 run 推进到「分布式资源解析 + 模型加载」阶段后，撞到与硬件/环境不匹配的硬阻塞：
+
+1. **拓扑需 3 个 GPU 角色，硬件只有 2 卡**：wan 物理 recipe 解析出
+   `trainer=[0] rollout=[1] reward=[2]`（reward=videocon_physics 视频奖励模型要独占 1 卡）。
+   本机是 2 节点×1 卡。cross_node 下 trainer 用 head 卡 + rollout 用 worker 卡已占满 2 卡，**reward 无处放**。
+   让 reward 与 rollout 共卡（`reward_devices ∩ rollout_devices`，见 `vrl/ray/resources.py:276`）理论可行，
+   但见第 3 点。
+2. **官方数据集 403**：`videophy_i2v` 需要从 `videophysics/videophy_test_public` 的官方视频 URL 解码 frame 0
+   作参考图，URL 返回 **HTTP 403 Forbidden**（外部访问权限缺失）。
+   *已绕过*：用 `third_party/videophy/examples/*.mp4`（7 个本地样例）解码 frame 0 → 832×480 PNG，
+   手工建最小 manifest（`data/external/videophy_i2v/manifests/{train,eval}.jsonl`，7+2 行）。数据加载已通过。
+3. **2×14B 显存（任务 2，本就标「未验证」）**：Wan I2V 14B 单卡唯一路径是 `enable_sequential_cpu_offload`
+   （per-layer 流式，极慢）。两专家（~56GB bf16）+ 若再把 reward 挤上同一张 46GB 卡 → 必然 OOM。
+   任务 2 的「非活跃专家 offload」内存策略仍未在真机验证，是 proof run 的真正前置缺口。
+4. **离线加载**：`HF_HUB_OFFLINE=1` 下加载 cached 模型报 `OfflineModeIsEnabled`（要够 HF API 元数据）；
+   需联网或修 offline 解析。
+
+### 完成 proof run 需要的条件
+- **≥3 张 GPU**（trainer / rollout / reward 各一），或 2 卡 + **已验证的非活跃专家 offload + reward 错时共卡**
+  策略（任务 2）——后者在 46GB 卡上对 14B×2 风险很高。
+- 数据集：官方 403 需另寻访问，或继续用本地样例 manifest（已可用，仅 7 样本、够 smoke 不够信号）。
+- 验收硬指标（`old_log_prob` rollout vs replay 跨 boundary 逐步一致）需 run 真正跑到 generate→replay 才能测，
+  当前阻塞在上述资源/显存，未触及该验证。
+
+**结论**：recipe（code）就绪、模型与数据（本地绕过）就位，但 **2×14B GRPO proof run 在本 2 卡硬件上是硬阻塞**
+（3 GPU 角色 + 未验证的 2×14B offload 显存策略）。需更多卡或先补任务 2 的显存策略真机验证。
