@@ -73,15 +73,21 @@ class Fp8Linear(nn.Module):
         else:
             x_scale = _amax_scale(x_2d, dim=None)  # scalar
             weight_scale = self.weight_scale
-        x_fp8 = (x_2d / x_scale).to(torch.float8_e4m3fn)
+        x_fp8 = (x_2d.to(torch.bfloat16) / x_scale).to(torch.float8_e4m3fn)
+        # _scaled_mm rowwise only emits bf16/fp16; DiT layers fed fp32 activations
+        # (adaLN / pooled-projection paths) would otherwise be rejected. Accumulate
+        # in bf16 and cast back to the input dtype so the swap is transparent.
+        gemm_dtype = x.dtype if x.dtype in (torch.bfloat16, torch.float16) else torch.bfloat16
         out = torch._scaled_mm(
             x_fp8,
             self.weight_fp8.t(),  # column-major [K, N] operand for _scaled_mm
             scale_a=x_scale,
             scale_b=weight_scale,
-            out_dtype=x.dtype,
+            out_dtype=gemm_dtype,
         )
         out = out.reshape(*shape[:-1], self.out_features)
+        if out.dtype != x.dtype:
+            out = out.to(x.dtype)
         if self.bias is not None:
             out = out + self.bias
         return out

@@ -151,6 +151,20 @@ def test_fp8_linear_matches_bf16_within_tolerance(recipe):
 
 
 @requires_fp8
+def test_fp8_linear_handles_fp32_activations():
+    """DiT adaLN / pooled-projection paths feed fp32 activations, and rowwise
+    _scaled_mm rejects an fp32 output. Fp8Linear must accumulate in bf16 and
+    return the input dtype (regression: a live SD3.5 rollout crashed here)."""
+    torch.manual_seed(0)
+    lin = nn.Linear(2048, 2048).cuda().to(torch.bfloat16)
+    fp8 = Fp8Linear(lin, recipe="rowwise").cuda()
+    x = torch.randn(512, 2048, device="cuda", dtype=torch.float32)
+    out = fp8(x)
+    assert out.dtype == torch.float32
+    assert torch.isfinite(out).all()
+
+
+@requires_fp8
 def test_fp8_linear_preserves_leading_dims_and_bias():
     torch.manual_seed(0)
     lin = nn.Linear(2048, 4096, bias=True).cuda().to(torch.bfloat16)
