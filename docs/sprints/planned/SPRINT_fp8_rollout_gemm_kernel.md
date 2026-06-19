@@ -46,7 +46,10 @@ fp8 不是 drop-in dtype（bf16/fp16 有原生自动 dispatch 的 GEMM，fp8 没
 1. ✅ **量化路径（自研 `Fp8Linear`）**：`vrl/models/quantization/fp8.py`。torch 原生 `_scaled_mm`、e4m3、bf16 master + bf16 累加、weight 构造时量化一次、activation 每步动态量化。`rowwise`（per-token / per-output-channel，抗激活 outlier）或 `tensorwise`。没引 torchao/TE（保持零依赖）。
 2. ✅ **swap 方法**：`base.py` `quantize_transformer_fp8(recipe)`（与 `torch_compile_transformer` 同级）→ `swap_linears_to_fp8` 遍历 module tree，按 exclude 子串 + `min_features` 只换大 attention/MLP linear。
 3. ✅ **拆 weight_dtype 语义 + ungate**：`online.py` fp8 时 storage = bf16 master（`policy.compute`）、删 `NotImplementedError`（fp4 仍 gated）；`rollout_quantization` 信号由 `extract_runtime_spec` 从 `precision.rollout` 派生进 `RuntimeBuildSpec`；三家 rollout builder（sd3_5/wan/cosmos）compile 前调 `loader.apply_rollout_fp8(model, spec)`，replay builder 不碰。
-4. ✅ **scaling recipe**：rowwise（默认）+ tensorwise 都实现并验。随机数据上两者≈（3.7%）；真实激活 outlier 下 rowwise 更稳。per-block(slime 式) 留作进一步 accuracy 杠杆。
+4. ✅ **scaling recipe + 精度 profile**：rowwise（默认）+ tensorwise 实现并验。`vrl/scripts/perf/fp8_recipe_accuracy.py`（fake-quant，对齐过真 `_scaled_mm`）量四档漂移：
+   - **clean 激活**：四档≈ 3.7%（e4m3 floor，没 outlier 可吃）。
+   - **outlier channels（真实情形）**：**block-1x128 最低 0.028** > rowwise 0.033 > tensorwise 0.036；block 比 tensorwise 少 ~22% 漂移。**MX-1x32 反而不帮**（e8m0 幂二 scale 丢 value 精度，抵消细粒度）。
+   - **结论**：rowwise（已发，cu128 上有真 kernel）已吃掉 tensor→block 改善的 ~60%；**block-1x128 是 slime 同款最优，但真 kernel 要 CUDA≥12.9**（本机 cu128=12.8 只能 fake-quant）。已查证的正确调用：`scale_a` 列优先 `(M,K//128)`、`scale_b` 行优先 `(K//128,N)`、`out_dtype=bf16`、K%128==0 —— CUDA 升级后直接接。
 5. ⏳ **torch.compile 交互**：swap 在 compile 前（已保证顺序）。`mode=default` + fp8 linear 的 inductor 行为要在 live run 验（已知坑：`reduce-overhead`/CUDAGraphs 撞 LoRA + grad-ckpt）。
 6. ⏳ **LoRA 交互（开放）**：当前 `apply_rollout_fp8` 在 LoRA/full-finetune 之后调；full-finetune（cosmos predict2）是首选验证路径。LoRA 下 swap 命中 PEFT `base_layer` 的正确性留 live 验。
 
