@@ -14,7 +14,7 @@
 - **附带清理（no-backward-compat）**：删掉 `colocate_with_trainer` 这个最老的 legacy 别名（`colocate` 保留为当前面）。删 schema 字段 + `_parse_colocate` 派发器 + `_parse_rollout_pool` 的 legacy 参数；无 experiment 配置用它，只动 schema/resources/tests。
 - 验收：受影响目录全跑 **373 passed**（2 个 fail 与本改动无关、clean tree 同样 fail：`imageio` 缺失的 mp4 写入 env gap + sd35 配置 `memory_fraction` 0.55 vs 测试断言 0.45 的旧 drift）。
 
-未完成：**§2.3 低优先 `final_image_policy` rollout/sampling.r1 去重**——janus_pro 单路、payoff 低，且触及 collector `_copy_first_present` + schema 相等校验，spec 评估为**建议 leave**（见 §2.3）。
+**§2.3 final_image_policy 去重（已完成 2026-06-19）**：`_cross_field_validate` 改成"rollout-first 解析、单边即可、两边都设才查相等"（不再强制 sampling.r1 重复且相等）；`configs/sampling/ar/r1_image_384_576tok.yaml` 删掉重复的 `final_image_policy`（canonical 留在 `rollout`，collector 已 rollout-first 解析）；新增 single-source 单测 + mismatch 单测保留。**至此本 sprint 全部落地，无剩余项。**
 
 ## 0. 结论 (TL;DR)
 

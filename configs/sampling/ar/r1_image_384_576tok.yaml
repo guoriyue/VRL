@@ -7,7 +7,8 @@ sampling:
   ar_scheduler_batch_size: null
   max_reflect_len: 80
   r1:
-    final_image_policy: always_generate  # always_generate | use_selfcheck
+    # final_image_policy is set once in rollout (configs/base/rollout/ar_r1.yaml);
+    # the collector resolves it rollout-first, so it is not duplicated here.
     train_segments:
       initial_image: true
       selfcheck_text: false

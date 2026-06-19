@@ -162,7 +162,7 @@ def _validate_driver_cuda_ownership(
     # after collect (on_demand) or is a resident colocated worker.
     if (
         resources.lifecycle.rollout.mode != "on_demand"
-        and not resources.rollout_persistent_colocated_workers
+        and resources.rollout_gpu_memory_fraction is None
     ):
         raise ValueError(
             f"Trainer device cuda:{overlap_list[0]} overlaps rollout devices "

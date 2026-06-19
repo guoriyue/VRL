@@ -169,9 +169,8 @@ class RolloutOrchestrationConfig:
     mode: str = field(default="strict_on_policy")
     max_pending_rollouts: int = field(default=1)
     require_separate_gpus: bool = field(default=True)
-    # None derives the only barrier each mode supports; an explicit value is
-    # still validated so a contradictory override fails loudly.
-    weight_sync_barrier: str | None = field(default=None)
+    # Derived from mode, not user-settable: each mode supports exactly one barrier.
+    weight_sync_barrier: str = field(default="", init=False)
     continuous: ContinuousRolloutConfig = field(default_factory=ContinuousRolloutConfig)
 
     def __post_init__(self) -> None:
@@ -179,12 +178,11 @@ class RolloutOrchestrationConfig:
             raise ValueError(
                 "rollout_orchestration.mode must be 'strict_on_policy' or 'continuous'",
             )
-        if self.weight_sync_barrier is None:
-            self.weight_sync_barrier = (
-                "pause_admission_and_drain_inflight"
-                if self.mode == "continuous"
-                else "before_sync"
-            )
+        self.weight_sync_barrier = (
+            "pause_admission_and_drain_inflight"
+            if self.mode == "continuous"
+            else "before_sync"
+        )
         if isinstance(self.continuous, dict):
             self.continuous = ContinuousRolloutConfig(**self.continuous)
         if self.mode == "continuous":
@@ -197,20 +195,11 @@ class RolloutOrchestrationConfig:
             raise ValueError(
                 "rollout_orchestration.max_pending_rollouts must be 1",
             )
-        if self.weight_sync_barrier != "before_sync":
-            raise ValueError(
-                "rollout_orchestration.weight_sync_barrier must be 'before_sync'",
-            )
 
     def _validate_continuous(self) -> None:
         if int(self.max_pending_rollouts) < 1:
             raise ValueError(
                 "rollout_orchestration.max_pending_rollouts must be >= 1",
-            )
-        if self.weight_sync_barrier != "pause_admission_and_drain_inflight":
-            raise ValueError(
-                "rollout_orchestration.weight_sync_barrier must be "
-                "'pause_admission_and_drain_inflight' for mode='continuous'",
             )
 
 

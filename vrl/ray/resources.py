@@ -114,10 +114,10 @@ class RayLifecyclePlan:
 
     Built by :func:`resolve_distributed_resources` from GPU ownership so the
     launcher, collector, and reward runtime read one declarative plan instead of
-    each re-deriving ``release_after_*`` from raw device sets. The flat
-    ``rollout_release_* / reward_release_*`` fields on
-    :class:`ResolvedDistributedResources` are compatibility views derived beside
-    this plan for existing consumers.
+    each re-deriving ``release_after_*`` from raw device sets. Real behavior reads
+    ``resolved.lifecycle.*``; the only flat mirror left on
+    :class:`ResolvedDistributedResources` is ``rollout_release_after_collect``
+    (logging-only, kept for the plan summary line).
     """
 
     rollout: ActorLeasePolicy
@@ -141,22 +141,16 @@ class ResolvedDistributedResources:
     rollout_gpus_per_worker: float
     reward_num_workers: int
     reward_gpus_per_worker: float
-    reward_shared_with_rollout: bool
-    rollout_release_after_collect: bool
-    rollout_release_before_reward_model: bool
-    rollout_persistent_colocated_workers: bool
     rollout_gpu_memory_fraction: float | None
-    reward_release_after_score: bool
     reward_placement_strategy: str
     reward_cpus_per_worker: float
     reward_max_inflight_batches: int
     requires_trainer_reservation: bool
     colocated: bool
     cross_node: bool
-    # Named view over the old release flags: lease mode per role plus the
-    # per-boundary handoff. The launcher/collector/reward read this instead of
-    # re-deriving release decisions from device sets (the flat flags stay as a
-    # compatibility view for existing consumers).
+    # Named view over release decisions: lease mode per role plus the per-boundary
+    # handoff. The launcher/collector/reward read this instead of re-deriving from
+    # device sets.
     lifecycle: RayLifecyclePlan
 
 
@@ -206,8 +200,6 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
 
     # rollout.gpu_pool=trainer borrows the trainer GPU (colocated) and is itself the
     # overlap permission, so it doesn't also need distributed.resources.allow_overlap.
-    # `colocate` (resident) is the narrower case: gpu_pool=trainer AND memory_fraction.
-    colocate = config.rollout_persistent_colocated_workers
     rollout_devices = _resolve_rollout_devices(
         visible_devices=visible_devices,
         trainer_devices=trainer_devices,
@@ -363,12 +355,7 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
         rollout_gpus_per_worker=rollout_gpus_per_worker,
         reward_num_workers=reward_num_workers,
         reward_gpus_per_worker=reward_gpus_per_worker,
-        reward_shared_with_rollout=reward_shared_with_rollout,
-        rollout_release_after_collect=rollout_release_after_collect,
-        rollout_release_before_reward_model=rollout_release_before_reward_model,
-        rollout_persistent_colocated_workers=config.rollout_persistent_colocated_workers,
         rollout_gpu_memory_fraction=gpu_memory_fraction,
-        reward_release_after_score=reward_release_after_score,
         reward_placement_strategy=config.reward_placement_strategy,
         reward_cpus_per_worker=config.reward_cpus_per_worker,
         reward_max_inflight_batches=config.reward_max_inflight_batches,
@@ -458,14 +445,7 @@ def format_distributed_resource_plan(
         f"rollout_gpus_per_worker={resolved.rollout_gpus_per_worker:g}",
         f"reward_workers={resolved.reward_num_workers}",
         f"reward_gpus_per_worker={resolved.reward_gpus_per_worker:g}",
-        f"reward_shared_with_rollout={resolved.reward_shared_with_rollout}",
-        f"rollout_release_after_collect={resolved.rollout_release_after_collect}",
-        "rollout_persistent_colocated_workers="
-        f"{resolved.rollout_persistent_colocated_workers}",
         f"rollout_gpu_memory_fraction={resolved.rollout_gpu_memory_fraction}",
-        "rollout_release_before_reward_model="
-        f"{resolved.rollout_release_before_reward_model}",
-        f"reward_release_after_score={resolved.reward_release_after_score}",
         f"colocated={resolved.colocated}",
         f"cross_node={resolved.cross_node}",
         f"trainer_reservation={resolved.requires_trainer_reservation}",

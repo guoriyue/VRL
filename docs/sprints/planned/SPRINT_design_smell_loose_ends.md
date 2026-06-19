@@ -1,6 +1,15 @@
 # SPRINT: design-smell loose ends（weight_sync_barrier + release-flag 影子字段）(planned)
 
-状态：**planned（2026-06-18 从 [[SPRINT_design_smell_audit]] 拆出）**。design_smell 审计的确证安全项已全部落地、那个 sprint 已归档 `done/`；这里只收它剩下的 2 个**架构卫生尾巴**。两者都不是"去实现一个已知安全的改动"，而是各带一个取舍，所以单列、低优先。
+状态：**done（2026-06-19，两个尾巴都拍板落地）**。
+
+- **§1 `weight_sync_barrier` → derive-only（拍板：收紧 public 构造面）**：`trainers/core/types.py` 字段改 `field(default="", init=False)`，`__post_init__` 一律按 mode 派生，`_validate_synchronous`/`_validate_continuous` 里两处变 tautological 的 barrier 校验删除。现在它不再是可设 kwarg（传它构造直接 `TypeError`）。`SimpleNamespace` 测试 fake 仍持有派生后的值（代表 resolved config），无需改；`test_load_all_experiments` 的 `**container` 构造不含该键，断言派生值仍绿。
+- **§2 release-flag 影子字段 → 删（拍板：单一真相源）**：删除 `ResolvedDistributedResources.rollout_release_before_reward_model` / `reward_release_after_score` 两个 stored 字段 + 其赋值；日志格式化器两行删掉（`lifecycle.handoff.*` 本就已打同样信息）；`test_resources.py` 断言 repoint 到 `resolved.lifecycle.handoff.release_rollout_before_reward` / `release_reward_after_score`。真实行为本就走 `resolved.lifecycle.*`，零行为变更。（注：`rollout_release_after_collect` 也是 logging-only，但 §5.2 只 scope 这 2 个，故保留并在 docstring 标注其为 logging-only。）
+
+验收：受影响目录 **505 passed**（唯一 fail 是 pre-existing 的 sd35 `memory_fraction` 0.55-vs-断言-0.45 旧 drift，与本改动无关、stash 后同样 fail）。
+
+---
+
+（原始 planned 说明，留档）design_smell 审计的确证安全项已全部落地、那个 sprint 已归档 `done/`；这里只收它剩下的 2 个**架构卫生尾巴**，各带一个取舍，故单列、低优先。
 
 ## 0. 来历
 

@@ -311,9 +311,9 @@ def test_sd35_single_gpu_async_debug_uses_persistent_colocated_rollout() -> None
     # is derived from the resolved topology, not spelled in YAML.
     assert cfg.distributed.rollout.colocate.memory_fraction == 0.45
     resolved = resolve_distributed_resources(cfg)
-    assert resolved.rollout_persistent_colocated_workers is True
+    assert resolved.rollout_gpu_memory_fraction is not None
     assert resolved.rollout_gpu_memory_fraction == 0.45
-    assert resolved.rollout_release_after_collect is False
+    assert resolved.lifecycle.rollout.mode == "resident"
     assert cfg.rollout.rollout_batch_size == 2
     assert cfg.rollout.sample_batch_size == 1
     assert cfg.sampling.height == 128

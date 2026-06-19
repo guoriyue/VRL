@@ -186,8 +186,8 @@ def test_single_gpu_colocate_keeps_worker_resident() -> None:
     )
 
     assert resolved.colocated is True
-    assert resolved.rollout_release_after_collect is False
-    assert resolved.rollout_persistent_colocated_workers is True
+    assert resolved.lifecycle.rollout.mode == "resident"
+    assert resolved.rollout_gpu_memory_fraction is not None
     assert resolved.rollout_gpu_memory_fraction == 0.45
 
 
@@ -205,7 +205,7 @@ def test_colocate_implies_overlap_without_allow_overlap() -> None:
     )
 
     assert resolved.colocated is True
-    assert resolved.rollout_persistent_colocated_workers is True
+    assert resolved.rollout_gpu_memory_fraction is not None
 
 
 def test_colocate_auto_pins_rollout_to_trainer_gpu() -> None:
@@ -433,7 +433,6 @@ def test_resource_plan_formatter_includes_key_fields() -> None:
     assert "trainer=[0]" in text
     assert "rollout=[1]" in text
     assert "reward=[]" in text
-    assert "rollout_persistent_colocated_workers=False" in text
     assert "rollout_gpu_memory_fraction=None" in text
     assert "trainer_reservation=True" in text
 
@@ -549,9 +548,9 @@ def test_reward_role_resolves_after_trainer_and_rollout_devices() -> None:
     assert resolved.reward_devices == (2,)
     assert resolved.reward_num_workers == 1
     assert resolved.reward_gpus_per_worker == 1.0
-    assert resolved.reward_shared_with_rollout is False
+    assert not (set(resolved.reward_devices) & set(resolved.rollout_devices))
     assert resolved.requires_trainer_reservation is True
-    assert resolved.rollout_release_before_reward_model is False
+    assert resolved.lifecycle.handoff.release_rollout_before_reward is False
 
 
 def test_ray_video_reward_requires_reward_gpu_budget() -> None:
@@ -603,10 +602,10 @@ def test_reward_shared_pool_derives_release_lifecycle_when_unset() -> None:
         ),
     )
 
-    assert resolved.reward_shared_with_rollout is True
-    assert resolved.rollout_release_after_collect is True
-    assert resolved.rollout_release_before_reward_model is True
-    assert resolved.reward_release_after_score is True
+    assert set(resolved.reward_devices) & set(resolved.rollout_devices)
+    assert resolved.lifecycle.rollout.mode == "on_demand"
+    assert resolved.lifecycle.handoff.release_rollout_before_reward is True
+    assert resolved.lifecycle.handoff.release_reward_after_score is True
 
 
 def test_dedicated_reward_gpu_derives_resident_lifecycle_when_unset() -> None:
@@ -622,10 +621,10 @@ def test_dedicated_reward_gpu_derives_resident_lifecycle_when_unset() -> None:
         ),
     )
 
-    assert resolved.reward_shared_with_rollout is False
-    assert resolved.rollout_release_after_collect is False
-    assert resolved.rollout_release_before_reward_model is False
-    assert resolved.reward_release_after_score is False
+    assert not (set(resolved.reward_devices) & set(resolved.rollout_devices))
+    assert resolved.lifecycle.rollout.mode == "resident"
+    assert resolved.lifecycle.handoff.release_rollout_before_reward is False
+    assert resolved.lifecycle.handoff.release_reward_after_score is False
 
 
 def test_multiple_ray_rewards_derive_release_after_score_on_dedicated_gpu() -> None:
@@ -646,8 +645,8 @@ def test_multiple_ray_rewards_derive_release_after_score_on_dedicated_gpu() -> N
         ),
     )
 
-    assert resolved.reward_shared_with_rollout is False
-    assert resolved.reward_release_after_score is True
+    assert not (set(resolved.reward_devices) & set(resolved.rollout_devices))
+    assert resolved.lifecycle.handoff.release_reward_after_score is True
 
 
 def test_lifecycle_plan_resident_when_roles_disjoint() -> None:
@@ -670,8 +669,8 @@ def test_lifecycle_plan_resident_when_roles_disjoint() -> None:
     assert plan.handoff.release_rollout_before_reward is False
     assert plan.handoff.release_reward_after_score is False
     # Flat flags mirror the plan (one derivation, no divergence).
-    assert resolved.rollout_release_after_collect is False
-    assert resolved.reward_release_after_score is False
+    assert resolved.lifecycle.rollout.mode == "resident"
+    assert resolved.lifecycle.handoff.release_reward_after_score is False
 
 
 def test_lifecycle_plan_on_demand_for_shared_reward() -> None:
@@ -699,9 +698,9 @@ def test_lifecycle_plan_on_demand_for_shared_reward() -> None:
     assert plan.handoff.release_rollout_before_reward is True
     assert plan.handoff.release_reward_after_score is True
     # Flat compatibility flags still request an on-demand rollout lease.
-    assert resolved.rollout_release_after_collect is True
-    assert resolved.rollout_release_before_reward_model is True
-    assert resolved.reward_release_after_score is True
+    assert resolved.lifecycle.rollout.mode == "on_demand"
+    assert resolved.lifecycle.handoff.release_rollout_before_reward is True
+    assert resolved.lifecycle.handoff.release_reward_after_score is True
 
 
 def test_lifecycle_plan_colocated_rollout_is_on_demand_before_train() -> None:
@@ -782,8 +781,8 @@ def test_reward_auto_placement_prefers_dedicated_spare_gpu() -> None:
     )
 
     assert resolved.reward_devices == (2,)
-    assert resolved.reward_shared_with_rollout is False
-    assert resolved.reward_release_after_score is False
+    assert not (set(resolved.reward_devices) & set(resolved.rollout_devices))
+    assert resolved.lifecycle.handoff.release_reward_after_score is False
 
 
 def test_reward_auto_placement_falls_back_to_shared_pool_on_single_gpu() -> None:
@@ -801,9 +800,9 @@ def test_reward_auto_placement_falls_back_to_shared_pool_on_single_gpu() -> None
     )
 
     assert resolved.reward_devices == (0,)
-    assert resolved.reward_shared_with_rollout is True
-    assert resolved.rollout_release_before_reward_model is True
-    assert resolved.reward_release_after_score is True
+    assert set(resolved.reward_devices) & set(resolved.rollout_devices)
+    assert resolved.lifecycle.handoff.release_rollout_before_reward is True
+    assert resolved.lifecycle.handoff.release_reward_after_score is True
 
 
 def test_reward_can_share_rollout_pool_when_phases_release() -> None:
@@ -826,9 +825,9 @@ def test_reward_can_share_rollout_pool_when_phases_release() -> None:
     )
 
     assert resolved.reward_devices == (1,)
-    assert resolved.reward_shared_with_rollout is True
-    assert resolved.rollout_release_before_reward_model is True
-    assert resolved.reward_release_after_score is True
+    assert set(resolved.reward_devices) & set(resolved.rollout_devices)
+    assert resolved.lifecycle.handoff.release_rollout_before_reward is True
+    assert resolved.lifecycle.handoff.release_reward_after_score is True
 
 
 def test_reward_shared_pool_cannot_request_more_gpus_than_rollout_pool() -> None:
@@ -884,7 +883,7 @@ def test_colocated_reward_on_dedicated_gpu_owns_its_own_bundle() -> None:
         ),
     )
     assert resolved.colocated is True
-    assert resolved.rollout_release_after_collect is True
+    assert resolved.lifecycle.rollout.mode == "on_demand"
 
     layout = build_bundle_layout(resolved)
     # Colocated trainer+rollout -> no reserved trainer bundle; reward owns a
@@ -1014,9 +1013,9 @@ def test_rollout_colocate_new_key_keeps_worker_resident() -> None:
         ),
     )
     assert resolved.colocated is True
-    assert resolved.rollout_persistent_colocated_workers is True
+    assert resolved.rollout_gpu_memory_fraction is not None
     assert resolved.rollout_gpu_memory_fraction == 0.4
-    assert resolved.rollout_release_after_collect is False
+    assert resolved.lifecycle.rollout.mode == "resident"
 
 
 def test_reward_gpu_pool_rollout_shares_rollout_gpu() -> None:
@@ -1033,7 +1032,7 @@ def test_reward_gpu_pool_rollout_shares_rollout_gpu() -> None:
             reward_kwargs={"r": {"execution": "pool"}},
         ),
     )
-    assert resolved.reward_shared_with_rollout is True
+    assert set(resolved.reward_devices) & set(resolved.rollout_devices)
     assert resolved.reward_devices == resolved.rollout_devices
 
 
@@ -1059,7 +1058,9 @@ def test_reward_gpu_pool_rollout_matches_legacy_share_with_rollout() -> None:
         ),
     )
     assert new.reward_devices == legacy.reward_devices
-    assert new.reward_shared_with_rollout == legacy.reward_shared_with_rollout
+    assert bool(set(new.reward_devices) & set(new.rollout_devices)) == bool(
+        set(legacy.reward_devices) & set(legacy.rollout_devices)
+    )
 
 
 def test_reward_gpu_pool_auto_prefers_spare_gpu() -> None:
@@ -1077,7 +1078,7 @@ def test_reward_gpu_pool_auto_prefers_spare_gpu() -> None:
         ),
     )
     assert resolved.reward_devices == (2,)
-    assert resolved.reward_shared_with_rollout is False
+    assert not (set(resolved.reward_devices) & set(resolved.rollout_devices))
 
 
 def test_reward_gpu_pool_both_keys_is_an_error() -> None:
@@ -1137,7 +1138,7 @@ def test_ddp_colocate_resolves_per_rank_local_single_gpu() -> None:
     assert resolved.trainer_devices == (0,)
     assert resolved.rollout_devices == (0,)  # colocated on the local GPU
     assert resolved.colocated is True
-    assert resolved.rollout_persistent_colocated_workers is True
+    assert resolved.rollout_gpu_memory_fraction is not None
     assert resolved.rollout_gpu_memory_fraction == 0.4
     assert resolved.cross_node is False  # per-rank-local: no shared Ray cluster
 
@@ -1174,8 +1175,8 @@ def test_rollout_gpu_pool_trainer_colocates_on_demand() -> None:
     assert resolved.trainer_devices == (0,)
     assert resolved.rollout_devices == (0,)  # pinned to the trainer GPU, not the spare
     assert resolved.colocated is True
-    assert resolved.rollout_persistent_colocated_workers is False
-    assert resolved.rollout_release_after_collect is True  # on-demand
+    assert resolved.rollout_gpu_memory_fraction is None
+    assert resolved.lifecycle.rollout.mode == "on_demand"  # on-demand
 
 
 def test_rollout_gpu_pool_trainer_with_memory_fraction_is_resident() -> None:
@@ -1190,9 +1191,9 @@ def test_rollout_gpu_pool_trainer_with_memory_fraction_is_resident() -> None:
         ),
     )
     assert resolved.colocated is True
-    assert resolved.rollout_persistent_colocated_workers is True
+    assert resolved.rollout_gpu_memory_fraction is not None
     assert resolved.rollout_gpu_memory_fraction == 0.4
-    assert resolved.rollout_release_after_collect is False
+    assert resolved.lifecycle.rollout.mode == "resident"
 
 
 def test_rollout_gpu_pool_trainer_matches_legacy_colocate_block() -> None:
@@ -1210,10 +1211,8 @@ def test_rollout_gpu_pool_trainer_matches_legacy_colocate_block() -> None:
             rollout_runtime={"colocate": {"memory_fraction": 0.45}},
         ),
     )
-    assert (new.rollout_devices, new.colocated, new.rollout_persistent_colocated_workers,
-            new.rollout_gpu_memory_fraction) == (
-        legacy.rollout_devices, legacy.colocated, legacy.rollout_persistent_colocated_workers,
-        legacy.rollout_gpu_memory_fraction,
+    assert (new.rollout_devices, new.colocated, new.rollout_gpu_memory_fraction) == (
+        legacy.rollout_devices, legacy.colocated, legacy.rollout_gpu_memory_fraction,
     )
 
 

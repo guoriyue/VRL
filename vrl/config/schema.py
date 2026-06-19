@@ -534,16 +534,19 @@ class RootConfig(ConfigBase):
                 raise ValueError(
                     "token_grpo_multisegment currently requires model.family=janus_pro"
                 )
-            final_image_policy = (rollout.final_image_policy or "") if rollout else ""
-            if final_image_policy not in {"always_generate", "use_selfcheck"}:
-                raise ValueError(
-                    "rollout.final_image_policy must be 'always_generate' or 'use_selfcheck'"
-                )
+            # Single source: set final_image_policy in ONE place. The collector
+            # resolves rollout-first then sampling.r1, so mirror that here. If both
+            # are set they must agree (a split config can't silently disagree).
+            rollout_policy = (rollout.final_image_policy or "") if rollout else ""
             sampling_r1 = (self.sampling.r1 or {}) if self.sampling else {}
-            sampling_final_policy = str(sampling_r1.get("final_image_policy", ""))
-            if sampling_final_policy != final_image_policy:
+            sampling_policy = str(sampling_r1.get("final_image_policy", "") or "")
+            if rollout_policy and sampling_policy and rollout_policy != sampling_policy:
                 raise ValueError(
                     "sampling.r1.final_image_policy must match rollout.final_image_policy"
+                )
+            if (rollout_policy or sampling_policy) not in {"always_generate", "use_selfcheck"}:
+                raise ValueError(
+                    "rollout.final_image_policy must be 'always_generate' or 'use_selfcheck'"
                 )
 
         return self

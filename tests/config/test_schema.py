@@ -428,6 +428,26 @@ def test_token_grpo_multisegment_policy_mismatch_raises() -> None:
         parse_config(cfg)
 
 
+def test_token_grpo_multisegment_final_image_policy_single_source() -> None:
+    """final_image_policy may be set in rollout alone; the sampling.r1 duplicate is
+    no longer required (the collector resolves it rollout-first)."""
+    cfg = OmegaConf.create(
+        {
+            "algorithm": {"kind": "token_grpo_multisegment"},
+            "data": {
+                "loader": "prompt_manifest",
+                "manifest": "x",
+                "preprocessing": {},
+                "sampler": {"type": "random_without_replacement"},
+            },
+            "model": {"family": "janus_pro"},
+            "rollout": {"final_image_policy": "always_generate"},
+            "sampling": {"r1": {"train_segments": {"initial_image": True}}},
+        }
+    )
+    assert parse_config(cfg).rollout.final_image_policy == "always_generate"
+
+
 def test_production_video_reward_structural_rules() -> None:
     """Checks production video reward structural rules."""
     cfg = OmegaConf.create(
