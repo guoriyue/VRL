@@ -110,8 +110,8 @@ def main() -> None:
         x = torch.randn(m, k, device=dev, dtype=torch.bfloat16)
         with torch.no_grad():
             ref, q = lin(x), fp8(x)
-            bf16_ms = _time_ms(lambda t: lin(t), x)
-            fp8_ms = _time_ms(lambda t: fp8(t), x)
+            bf16_ms = _time_ms(lin, x)
+            fp8_ms = _time_ms(fp8, x)
         sp, dr = bf16_ms / fp8_ms, _drift(q, ref)
         speedups.append(sp)
         drifts.append(dr)

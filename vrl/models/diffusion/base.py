@@ -261,6 +261,21 @@ class DiffusionModelBase(nn.Module, ABC):
             torch.compile(self.transformer, mode=mode, fullgraph=False),
         )
 
+    def quantize_transformer_fp8(self, recipe: str = "rowwise") -> list[str]:
+        """Swap the transformer's big policy GEMMs to fp8 in place (rollout only).
+
+        Replaces the large attention/MLP ``nn.Linear`` modules with ``Fp8Linear``
+        (``torch._scaled_mm``, bf16 master + bf16 accumulate), leaving embeddings /
+        the noise-pred head / norm-feeding linears in bf16. Returns the dotted
+        paths quantized. This is a generation/rollout-only optimization; the
+        trainer's replay forward keeps its bf16/fp32 master and is never quantized.
+        Call before ``torch_compile_transformer`` so inductor sees the fp8 modules.
+        """
+
+        from vrl.models.diffusion.fp8 import swap_linears_to_fp8
+
+        return swap_linears_to_fp8(self.transformer, recipe=recipe)
+
     def set_num_steps(self, n: int) -> None:  # pragma: no cover
         raise NotImplementedError
 
