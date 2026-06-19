@@ -58,6 +58,11 @@ class RayGenerationRuntime(GenerationRuntime):
         self._release_after_collect: _RuntimeLease | None = None
         self.requires_driver_model_offload = False
         self.current_policy_version: int | None = None
+        # Set True by the launcher when every resident worker retains versioned
+        # trainable-state slots, which lets the continuous schedule skip the drain
+        # bubble. Default False keeps the safe draining barrier. Read as a plain
+        # attribute (not a method) via RolloutLifecycle.supports_non_draining_weight_sync.
+        self.supports_non_draining_weight_sync = False
 
     @classmethod
     def with_release_after_collect(
@@ -86,6 +91,9 @@ class RayGenerationRuntime(GenerationRuntime):
         )
         runtime.requires_driver_model_offload = config.gpus_per_worker > 0
         runtime.current_policy_version = _launch_contract_policy_version(launch_contract)
+        # Lease mode requires driver-model offload, which already hard-fails the
+        # continuous schedule, so non-draining never applies here.
+        runtime.supports_non_draining_weight_sync = False
         return runtime
 
     async def generate(self, request: GenerationRequest) -> GenerationOutput:

@@ -422,7 +422,10 @@ class OnlineRecipeRun:
             # disaggregated overlap. Sourced from TrainStepMetrics.phase_times.
             "continuous_stale_versions,continuous_ready_groups,"
             "continuous_weight_sync_pause_s,continuous_producer_max_gap_s,"
-            "continuous_producer_discarded_stale,continuous_post_sync_dropped_stale"
+            "continuous_producer_discarded_stale,continuous_post_sync_dropped_stale,"
+            # 0 = draining weight-sync barrier (waited for in-flight generation),
+            # 1 = non-draining (versioned trainable-state slots let it skip the wait).
+            "continuous_weight_sync_barrier_mode"
         )
         if component_cols:
             header = f"{header},{component_cols}"
@@ -472,6 +475,9 @@ class OnlineRecipeRun:
             "continuous_post_sync_dropped_stale": phases.get(
                 "continuous.post_sync_dropped_stale", 0.0,
             ),
+            "continuous_weight_sync_barrier_mode": phases.get(
+                "continuous.weight_sync_barrier_mode", 0.0,
+            ),
             **{f"r_{name}": component_means[name] for name in component_names},
         }
         metric_row_hook = self.stack.definition.metric_row_hook
@@ -507,6 +513,7 @@ class OnlineRecipeRun:
                         f"{row['continuous_producer_max_gap_s']:.4f}",
                         f"{row['continuous_producer_discarded_stale']:.1f}",
                         f"{row['continuous_post_sync_dropped_stale']:.1f}",
+                        f"{row['continuous_weight_sync_barrier_mode']:.1f}",
                         *(f"{row[f'r_{name}']:.4f}" for name in component_names),
                     ],
                 )

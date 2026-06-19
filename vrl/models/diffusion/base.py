@@ -18,7 +18,11 @@ import torch.nn as nn
 
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
-from vrl.models.utils import disable_adapter_on, load_weights_into
+from vrl.models.utils import (
+    TrainableStateSlots,
+    disable_adapter_on,
+    load_weights_into,
+)
 from vrl.trajectory.device import move_value_to_device
 
 
@@ -181,6 +185,50 @@ class DiffusionModelBase(nn.Module, ABC):
             prefix="transformer",
             label=type(transformer).__name__,
         )
+
+    # -- versioned trainable-state slots (non-draining weight sync) ---------
+    # Diffusion families support versioned slots generically: activation reuses
+    # ``load_trainable_state`` to copy a retained version onto the live model, so
+    # the same flat ``transformer.*`` payload format works for single-transformer
+    # (sd3/cosmos) and multi-transformer (wan) families without per-family code.
+    # See SPRINT_shadow_model_weight_sync.md.
+    supports_versioned_trainable_state: bool = True
+
+    def _versioned_state_slots(self) -> TrainableStateSlots:
+        slots = getattr(self, "_trainable_state_slots", None)
+        if slots is None:
+            slots = TrainableStateSlots()
+            self._trainable_state_slots = slots
+        return slots
+
+    def install_trainable_state(
+        self,
+        version: int,
+        state_dict: Mapping[str, Any] | None,
+    ) -> None:
+        """Retain ``state_dict`` under ``version`` without touching live weights.
+
+        Unlike ``load_trainable_state`` (which overwrites the live model), this
+        only stashes the payload so an in-flight request stamped with an older
+        version can still be activated after the trainer advances.
+        """
+
+        self._versioned_state_slots().install(version, state_dict)
+
+    def has_trainable_state(self, version: int) -> bool:
+        return self._versioned_state_slots().has(version)
+
+    def activate_trainable_state(self, version: int) -> None:
+        """Make slot ``version`` the live trainable state (idempotent).
+
+        Skips the reload when ``version`` is already active so a request whose
+        chunks share one version pays the copy at most once.
+        """
+
+        if getattr(self, "_active_slot_version", None) == int(version):
+            return
+        self.load_trainable_state(self._versioned_state_slots().get(version))
+        self._active_slot_version = int(version)
 
     @classmethod
     def from_spec(cls, spec: Any) -> DiffusionModelBase:  # pragma: no cover (abstract)

@@ -115,13 +115,22 @@ class ContinuousRolloutSchedule:
         if self.producer is None:
             await self.lifecycle.sync_weights_after_train(phase_times)
             return phase_times
+        # Non-draining sync: when every rollout worker retains versioned
+        # trainable-state slots, an in-flight request keeps its own version's
+        # weights, so we can skip waiting for it to finish (the drain bubble) and
+        # let it complete concurrently with training. Otherwise keep the draining
+        # barrier, which is required when the worker has a single global version.
+        non_draining = self.lifecycle.supports_non_draining_weight_sync()
         with record_phase(phase_times, "continuous.weight_sync_pause_s"):
             self.producer.pause_admission()
-            await self.producer.drain_inflight()
+            if not non_draining:
+                await self.producer.drain_inflight()
             await self.lifecycle.sync_weights_after_train(phase_times)
             phase_times["continuous.post_sync_dropped_stale"] = float(
                 self._drop_stale_ready_items_after_sync(),
             )
+            # 0 = draining barrier (waited for in-flight), 1 = non-draining.
+            phase_times["continuous.weight_sync_barrier_mode"] = float(non_draining)
             self.producer.resume_admission()
         return phase_times
 

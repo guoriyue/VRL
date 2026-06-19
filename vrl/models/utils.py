@@ -64,6 +64,62 @@ def load_weights_into(
     return module.load_state_dict(stripped, strict=False)
 
 
+class TrainableStateSlots:
+    """Retain a few policy versions of a model's flat trainable-state payload.
+
+    The continuous rollout worker installs one slot per weight sync, keyed by
+    policy version, so a generation request that was stamped under an older
+    version can still find its weights after the trainer has advanced — the
+    prerequisite for a *non-draining* weight sync (no drain bubble; see
+    ``SPRINT_shadow_model_weight_sync.md``).
+
+    It holds ONLY the trainable-state payload dicts (whatever the sync sender
+    selected — LoRA/adapter params for the common case, or full-param), never the
+    frozen base model. So the extra footprint is ``retained * trainable_bytes``,
+    not a model copy. The payloads are the host-side dicts handed to the worker
+    (already CPU tensors), so retained slots cost host RAM, not VRAM; only the
+    active slot is copied onto the live model by ``activate``.
+    """
+
+    def __init__(self, *, max_retained: int = 8) -> None:
+        if int(max_retained) < 1:
+            raise ValueError("max_retained must be >= 1")
+        self.max_retained = int(max_retained)
+        self._slots: dict[int, Mapping[str, Any]] = {}
+
+    def install(self, version: int, state: Mapping[str, Any] | None) -> None:
+        """Retain ``state`` under ``version``; ``None`` aliases the newest slot.
+
+        A ``None`` payload is a version-only bump (no new weights): the new
+        version should resolve to the same live state as the previous version, so
+        we alias the most recent slot rather than create an empty one.
+        """
+
+        version = int(version)
+        if state is None:
+            if not self._slots:
+                return
+            state = self._slots[max(self._slots)]
+        self._slots[version] = state
+        self._evict()
+
+    def has(self, version: int) -> bool:
+        return int(version) in self._slots
+
+    def get(self, version: int) -> Mapping[str, Any]:
+        return self._slots[int(version)]
+
+    def versions(self) -> list[int]:
+        return sorted(self._slots)
+
+    def _evict(self) -> None:
+        # Keep the most recent ``max_retained`` versions. A request older than the
+        # window loses its slot and is reported as a stale-slot result rather than
+        # silently mixing weights.
+        while len(self._slots) > self.max_retained:
+            del self._slots[min(self._slots)]
+
+
 def count_trainable_params(module: Any) -> int:
     """Total number of trainable (``requires_grad``) parameters in ``module``."""
 

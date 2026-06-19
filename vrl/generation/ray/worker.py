@@ -48,6 +48,9 @@ class RayGenerationWorker:
     def current_policy_version(self) -> int | None:
         return self.core.current_policy_version()
 
+    def supports_versioned_trainable_state(self) -> bool:
+        return self.core.supports_versioned_trainable_state()
+
     def worker_metadata(self, *, runtime_debug: bool = False) -> dict[str, Any]:
         return self.core.worker_metadata(runtime_debug=runtime_debug)
 

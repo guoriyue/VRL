@@ -1,164 +1,386 @@
-# SPRINT: Shadow-model weight sync —— 安全去 drain barrier（planned）
+# SPRINT: Trainable-state shadow slots —— 安全去掉 continuous drain bubble（planned）
 
-状态：**proposed / design（2026-06-17）**。这是 `SPRINT_continuous_scheduler_redesign.md` §5 P1
-「async 双缓冲 weight sync」的落地设计 + 单卡实证。结论先行：**continuous 的每步全-drain barrier 是吞吐
-瓶颈（video 每步停数分钟），但裸去掉它会让在途请求横跨版本 bump → 撞 executor 同版本硬断言 → 请求失败
-丢样本（本 sprint 已实测确认）。唯一安全的去 drain 办法是 shadow-model：新权重先收进 buffer，在途请求继续
-用旧权重跑完,在请求边界才热切换。**
+状态：**P0 + P1 已实现 + CPU 测试（2026-06-18）；P2 多卡验证 + 运行时启用待做**。
 
-**触发**：correctness 里程碑（无 mismatch + pause 下降）**单卡即可验**；真 wall-clock overlap 收益需
-**≥2 卡**（trainer 常驻一卡、rollout actor 常驻另一卡——单卡时间片下生成与训练抢同一批 SM,拿不到真重叠）。
+> **更新（2026-06-18，P0/P1 落地）：**
+> - **设计偏差（比 §3 的 PEFT 多 adapter 方案更简单、更低风险）**：slot 不用 PEFT 命名 adapter（要 key 重映射、易撞 NFT 的 `default`/`previous`、2× VRAM），而用 **state-dict 快照 slot**。`TrainableStateSlots`（`vrl/models/utils.py`）只存「版本→flat trainable payload dict」（host RAM，≈0 额外 VRAM）；`activate` 复用已有且测试过的 `load_trainable_state(slot[v])` 把那版参数 copy 进 live 模型，并用 `_active_slot_version` 跳过同版本重载。对所有 diffusion family 通用（含 wan 多 transformer），零 PEFT key 重映射风险。代价：切版本时一次 H2D copy（LoRA 很小；§8 的 CUDA-stream overlap 仍是后续优化）。
+> - **P0（已实现）**：`DiffusionModelBase` 加 `supports_versioned_trainable_state=True` + `install_trainable_state`/`activate_trainable_state`/`has_trainable_state`（getattr-dispatch，不入硬 `RuntimeModel` 契约，AR family 自动 fallback）。`ChunkExecutionResult.stale_slot` 区分 evict 与真错误。`GenerationWorkerCore.update_weights` 在支持时安装 slot 不覆盖旧版；`execute_chunk` 按 `request.policy_version` 激活 slot、success 返回 request version（过 executor 断言）、缺 slot 返回 typed stale-slot。worker 暴露 `supports_versioned_trainable_state()`（+ Ray actor forwarder）。
+> - **P1（机制已实现，默认 OFF）**：`RolloutLifecycle.supports_non_draining_weight_sync()`（getattr-default-False）；`after_train_step` 在支持时跳过 `drain_inflight`，并发 `continuous.weight_sync_barrier_mode`（0=draining/1=non-draining）metric（已进 metrics.csv）。
+> - **CPU 测试**：`tests/models/test_utils.py`（slot store）、`test_model_base.py`（install/activate/retain 旧版/skip-if-active）、`tests/generation/execution/test_worker_versioned_slots.py`（install 不覆盖、缺 slot stale-slot、激活 request 版本、plain-model 仍走 mismatch）、`test_schedule.py`（draining mode=0、non-draining 不等 in-flight + mode=1）。全套 366 passed。
+> - **P2 待做（多卡，无法单卡验证）**：`RayGenerationRuntime` 目前**不设** `supports_non_draining_weight_sync`（→ lifecycle 默认 False → 真实运行仍走 draining barrier，行为不变、安全）。启用 = 让 runtime 把该能力**派生自所有 worker 的 `supports_versioned_trainable_state()`（AND）**（见 §5 P2 / 下方 §4），然后在 2 卡分池上验收「无 policy_version mismatch + weight_sync_pause 不再含整条 clip + 每步 wall-clock 下降」。executor 对 stale-slot 的 graceful discard 路由（`executor.py:127-137/221-230`）也属 P2。
 
-**Scope guard（2026-06-17）**：本 sprint 只处理 continuous rollout/train async 的 weight-sync
-barrier；不做 microbatch/minibatch prefetch。`microbatch_size` 仍只是同步内存切片和梯度累积旋钮。
+状态（原文）：**proposed / design（2026-06-18, trainable-state-first 修订）**。
 
-来源：本仓库 + `~/Desktop/cosmos-rl` 逐文件读出（2026-06-17 workflow,file:line 已核）+ 单卡去 drain 实测。
+这是 `SPRINT_continuous_scheduler_redesign.md` 里 GAP 2 的可落地版本：不要裸删
+`drain_inflight()`；先给 rollout worker 做 **trainable-state versioned slots**。旧请求继续按它提交时的
+policy version 找旧 trainable slot，新请求按新 version 找新 trainable slot。这个设计不是 LoRA-only：
+同步 payload 里有什么 trainable params，就 duplicate 那部分。LoRA/adapter 是最便宜、最适合首个验收的
+case；full-param 也符合语义，但额外显存接近一整份 transformer trainable state，必须由 capability /
+memory budget 决定是否启用。
 
 ---
 
-## 0. 结论（TL;DR）
+## 0. 结论
 
-- **现状**：`after_train_step` = pause → **drain 全部在途** → sync → resume
-  (`continuous/schedule.py:119-122`)。drain 等最慢一整条请求跑完才换权重,video clip ~5-6 分钟/条 →
-  每步停数分钟。
-- **为什么不能裸去 drain（已实测）**：删掉 `await drain_inflight()` 后跑单卡 GRPO smoke,每个 sync 步打
-  `policy_version mismatch: expected=N, actual=N+1`。进程不崩（mismatch 被当 collect failure 捕获）,但
-  **每步静默丢横跨 swap 的 rollout、`stale_versions` 仍 0、训练跑残缺集**。
-- **唯一安全解 = shadow-model**：worker 把新权重收进 buffer,**在途请求继续用 live（旧）权重跑完**,在
-  请求/生成边界把 buffer→live 热切换。请求全程不横跨版本 → 无 mismatch;完成的旧版本 group 留存 → 下一步
-  `max_stale≥1` 当 stale 训 → GRPO 的 IS 比值补偿。
-- **收益拆分（别混）**：① 去 drain-pause（correctness + `weight_sync_pause_s`↓,单卡可验）
-  ② 真 overlap（生成与训练 wall-clock 重叠,`pause`→~0,epoch 时间↓,**≥2 卡 only**)。
+- **现状**：continuous 的 `after_train_step` 是 `pause_admission -> drain_inflight -> sync_weights ->
+  post_sync_purge -> resume_admission`。`drain_inflight()` 会等所有在途视频生成完成；视频模型一条 clip
+  可能跑数分钟，所以这是最大的串行 bubble。
+- **为什么不能直接删 drain**：当前 worker 只有一个全局 `_policy_version`，`update_weights()` 会就地
+  改同一个 rollout model。旧请求后续 chunk 仍期望旧 version，但 worker 已经变成新 version，于是
+  `policy_version mismatch`。
+- **正确修法**：worker 不再只有一个 trainable state。它保留少量 versioned trainable slots：
+  `slot[v1]` 给旧请求，`slot[v2]` 给新请求。`execute_chunk()` 按 `request.policy_version` 激活对应 slot
+  再 forward。
+- **显存判断**：额外显存跟 trainable-state payload 成正比。LoRA / adapter-only sync 很便宜；full-param
+  sync 会接近整模型翻倍，但这只是预算问题，不是设计不适用。
+- **配置原则**：不要新增一堆用户参数。由 capability 派生：模型/worker 支持 versioned trainable slots 时
+  continuous 可以走 non-draining sync；不支持时继续用当前 draining barrier。
 
-## 1. 问题：drain 围栏 + 裸去 drain 的失败模式（实测）
+---
 
-drain barrier(`continuous/schedule.py:113-123` `after_train_step`):
+## 1. 问题拆清楚
+
+当前 barrier：
 
 ```python
 self.producer.pause_admission()
-await self.producer.drain_inflight()                 # 等所有在途请求跑完
-await self.lifecycle.sync_weights_after_train(...)   # 版本 bump（lifecycle.py:60-70）
+await self.producer.drain_inflight()
+await self.lifecycle.sync_weights_after_train(phase_times)
+phase_times["continuous.post_sync_dropped_stale"] = float(
+    self._drop_stale_ready_items_after_sync(),
+)
 self.producer.resume_admission()
 ```
 
-`drain_inflight`(`producer.py:122-132`)docstring 自陈其存在理由：
-> Mutating worker weights while a generation request is running could mix two policies inside one
-> request, so the barrier always drains rather than cancels.
+`drain_inflight()` 的含义是等所有已经提交的 generation task 完整结束：
 
-正确性闸（不可绕过）：executor 对每个返回 chunk 断言 `result.policy_version == request.policy_version`,
-否则 raise(`executor.py:127-137`);请求版本在 submit 时一次性钉死(`producer.py:167`),worker 在
-`execute_chunk` 入口再拒一次版本不符的 chunk(`worker.py:118-136`)。worker 是单线程 Ray actor →
-`update_weights`(`worker.py:73-84`,就地 `self._policy_version=...`)只在两次 `execute_chunk`
-(`worker.py:113`)之间跑,chunk 内部原子。
-
-**实测(2026-06-17,去 drain 单卡 GRPO smoke,6 步,RTX 5090)**:
-
-```
-policy_version mismatch: expected=1, actual=2   (sample_start=1 = group 的第 2 个 chunk)
-policy_version mismatch: expected=2, actual=3 / expected=3, actual=4 / ...（每步一条）
+```python
+await asyncio.gather(*self._inflight, return_exceptions=True)
+self._harvest_done()
 ```
 
-一个 group(`n_samples_per_prompt=2`,`sample_batch_size=1`)= 2 个 chunk;第 1 个 sample 在版本 N 跑完 →
-swap → 第 2 个在 N+1 跑 → 该请求触发断言失败。每步 ~1 个 `collect failed`(error_count 累加)、
-`stale_versions` 仍 0、`weight_sync_pause_s` 0.5→0.15s(跳过工作然后失败)。
+它保正确性，但太粗。正确性真正要避免的是：同一个请求的一部分 chunk 用 v1 权重，另一部分 chunk 用 v2
+权重。现在 worker 用一个全局 version 防这个问题：
 
-**根因 = "submit 时钉死版本 vs 执行时已 swap",与模型大小、chunk 粒度无关**:即使把 group 压成单 chunk
-(`sample_batch_size=2`),在途 group 只要在 swap 后才执行,照样 mismatch。所以 drain 不能裸去,也不能靠
-"小 rollout" 规避。
+```python
+expected_version = request.policy_version
+if expected_version is not None and self._policy_version != expected_version:
+    return ChunkExecutionResult(..., error="policy_version mismatch")
+```
 
-## 2. 设计：shadow-model 双缓冲
+所以如果裸删 drain，`update_weights()` 会把全局 `_policy_version` 从 v1 改成 v2，旧请求的后续 chunk
+到 worker 时就会 mismatch。这个 mismatch 是对的；它说明系统没有静默生成混合策略样本。
 
-核心：把"换权重"与"请求完成"解耦。
+关键结论：**chunk-level version check 不是 non-draining sync 的实现；它只是防止错误静默发生。**
 
-**worker 侧**(`vrl/generation/execution/worker.py`):
-1. `update_weights` 不再就地 `load_state_dict` 到 live model,而是把新权重收进一个 **shadow buffer**
-   (LoRA 只收 trainable adapter,buffer 小;`weight_sync.py:50-59` 已是 trainable-only flat state dict)。
-2. 维护 `pending_version`(buffer 里的)与 `live_version`(正在跑的,即现 `self._policy_version`)。
-3. 在**请求/生成边界**(两次 `execute_chunk` 之间,worker 单线程天然原子)检查:有 pending 且当前无在途
-   请求依赖 live → `live ← buffer` 热切换、`live_version = pending_version`。
-4. 请求全程按其 submit 版本在 live 上执行;executor 断言(`executor.py:127-137`)仍成立(请求执行期间
-   live_version 不变)。
+---
 
-**schedule 侧**(`continuous/schedule.py` `after_train_step`):
-- 去掉 `await self.producer.drain_inflight()`;改为非阻塞 `push_weights_to_shadow()`(推 buffer + bump
-  逻辑版本),`pause_admission/resume_admission` 仍保留(避免 admit 风暴)。
-- 在途请求不再被 drain;它们用旧 live 权重跑完,落 ready 队列时带旧版本戳 → 下一步 `staleness.admit`
-  (`staleness.py:38-44`)以 `max_stale≥1` 收。
+## 2. 不能做的假解法
 
-**producer/queue 侧**:基本无需改(版本戳 `producer.py:167`、StalenessPolicy 已就位);只需确认 resume 后
-producer 用新 `live_version` 重交。
+**假解法 A：只有一个 live slot + 一个 pending buffer，到边界把 pending 切成 live。**
 
-## 3. cosmos-rl 对标（最小可搬集）
+这仍然不够。Ray executor 会把一个 `GenerationRequest` 拆成多个 chunk；旧 request 的未来 chunk 可能还没
+执行。如果 worker 在两个 chunk 之间把全局 live 从 v1 切到 v2，旧 request 的下一个 chunk 仍然期望
+v1，还是 mismatch。
 
-- `WeightSyncThread`:独立 CUDA stream(`weight_sync.py:265-294`)、NCCL recv 进 buffer(`:371-413`)、
-  `sync_buffer_to_live` 在生成边界用 `inf_stream.wait_event` 跨流定序后 copy(`:178-234`)。
-- 生成中途抢占:patch `llm_engine.step` 每 N 步 `consume_command`(`vllm_rollout.py:93-119`),
-  `enable_prefix_caching=False`(`:319`)保证换权重后无依赖旧权重的 cache 残留。
-- **VRL 最小集**:**不必照搬独立 stream + NCCL**——VRL 走 Ray object store 推权重(非 NCCL),且单线程
-  actor 让"请求边界"天然存在(execute_chunk 之间),比 vLLM 的连续 batching 简单。只需 buffer + 边界热
-  切换;独立 stream 隐藏 copy 延迟是后续优化,不在首版。
+**假解法 B：裸删 drain，让 mismatch 失败后重试。**
 
-## 4. soundness 闸
+这会把失败变成调度路径的一部分：浪费生成、污染 error metrics，并且不是所有算法都能接受 stale tail。
+DiffusionNFT 尤其不能靠 stale 修正。
 
-- **GRPO sound**:stale=1 时 surrogate `ratio = exp(log_prob − old_log_prob)`(`grpo/continuous.py:85`),
-  `old_log_prob` = rollout 时 behavior 版本,PPO clip 兜底 → 跨版本偏差正是 IS 设计要纠正的。
-- **DiffusionNFT 不 sound**:likelihood-free,loss 是 normalized_mse on positive/negative x0 预测,无任何
-  `exp(log_prob − old_log_prob)`(`diffusion_nft.py`),无处安放 stale 修正。**DiffusionNFT 必须
-  `max_stale=0`**——shadow-model 仍可去 drain-pause(纯吞吐),但**不开 staleness 窗**。
+**假解法 C：不看 trainable payload，直接 full model 双缓冲。**
 
-## 5. 分阶段（先单卡 correctness,后多卡 throughput）
+这当然能做，但对视频 transformer 基本等于权重显存翻倍。正确抽象不是“先假设复制整模型”，而是复用当前
+weight-sync 的 source of truth：`flatten_trainable_module_state(...)` 产出的 trainable-state payload。
+payload 是 LoRA，就只 duplicate LoRA；payload 是全参 transformer，就 duplicate 全参 transformer。
 
-**P0 — shadow buffer + 边界切换(单卡,correctness 里程碑)**
-实现 buffer + `pending/live_version` + 边界热切换,`after_train_step` 去 drain 改推 buffer。
-验收:去 drain 后跑单卡 GRPO smoke,**`policy_version mismatch` 消失**、collect error=0、训练不丢样本、
-`weight_sync_pause_s` 下降。纯正确性,不依赖 overlap。
+---
 
-**P1 — 开 staleness 窗(单卡,staleness 里程碑)**
-`max_stale=1` + 让 producer 跑在 trainer 前面。验收:`continuous_stale_versions` 偶发 0→1(证明完成的旧
-版本 group 被当 stale 训)+ GRPO reward 不退化。
-**注意**(`SPRINT_continuous_scheduler_redesign.md` 实测):单卡 colocated 下 consumer "同版本最新优先"
-选择(`queue.py:149-159`)+ 快速重填会把 stale 压回 0;可能需要更深 `max_ready_groups` / 更慢生成才能稳定
-观察到 stale=1。若单卡始终压不出 stale>0,记录之并把 staleness 实测移到 P2。
+## 3. 正确设计：versioned trainable slots
 
-**P2 — 真 overlap(≥2 卡,throughput 里程碑)**
-trainer 常驻 GPU0、rollout actor 常驻 GPU1;验收每步 wall-clock 下降、`weight_sync_pause_s` 被隐藏到接近
-0、rollout 与 train 时间真重叠。这是 parked doc(`SPRINT_async_rollout_train_overlap.md`)Option A 的 host。
-这里的 overlap 是 rollout actor 与 trainer 的跨阶段重叠，不是 `_run_streaming_optimizer_update` 内的
-microbatch prefetch。
+worker 侧从这个模型：
 
-## 6. 非目标
+```text
+base + one active trainable state
+global _policy_version = v1
+```
 
-- **不裸去 drain**(实测每步丢样本);**不 cancel-resubmit**(取消在途重交同样丢部分工作、且不产生
-  staleness,是更差的中间方案)。
-- 不照搬 cosmos 的独立 CUDA stream / NCCL(VRL 走 Ray object store);独立 stream 隐藏 copy 是后续。
-- **不给 DiffusionNFT 开 staleness**(无补偿,parked doc §1);DiffusionNFT 只用 shadow-model 去 pause。
-- P0/P1 不追求 wall-clock overlap(单卡时间片做不到,别把 stale=1 当吞吐赢)。
-- **不做 microbatch/minibatch async**；不改同步 streaming accumulation 的 collect/backward/release 边界。
+改成：
 
-## 7. 验收 metrics（复用已落地的 P0 4 列）
+```text
+base transformer: one copy
+trainable slots:
+  v1 -> LoRA/adapter state for old requests
+  v2 -> LoRA/adapter state for new requests
+current_submit_version = v2
+```
 
-`metrics.csv` 的 `continuous_stale_versions / continuous_ready_groups / continuous_weight_sync_pause_s /
-continuous_producer_max_gap_s`(`online.py` `_write_metric_row` 已 flush)+ 日志 grep `policy_version
-mismatch`:
-- **P0**:mismatch=0、`weight_sync_pause_s`↓、collect error=0。
-- **P1**:`stale_versions` 偶发=1、reward 与 strict baseline 持平(同 seed/prompt/reward,block-test)。
-- **P2**:每步 wall-clock↓、`weight_sync_pause_s`→~0、producer 不饿。
+执行 chunk 时：
 
-## 8. 关键文件引用
+```python
+version = request.policy_version
+slot = trainable_slots.get(version)
+if slot is None:
+    return stale_or_missing_slot_result(...)
 
-- barrier / drain:`vrl/rollouts/orchestration/continuous/schedule.py:113-123`(after_train_step)、
-  `vrl/rollouts/orchestration/continuous/producer.py:122-132`(drain)、`:167`(submit 版本戳)
-- 正确性闸:`vrl/generation/ray/executor.py:127-137`(同版本断言)、
-  `vrl/generation/execution/worker.py:73-84`(update_weights + `_policy_version` 戳)、
-  `:113-136`(execute_chunk + chunk 拒绝)
-- 权重推送:`vrl/generation/ray/weight_sync.py:50-59`(CPU state_dict → ray.put → fan-out)
-- 版本 bump:`vrl/rollouts/orchestration/lifecycle.py:60-70`(sync_weights_after_train)
-- staleness:`vrl/rollouts/orchestration/continuous/staleness.py:38-44`(admit)、
-  `vrl/rollouts/orchestration/continuous/queue.py:149-159`(最新优先选择)
-- soundness:`vrl/algorithms/grpo/continuous.py:85`(IS 比值)、`vrl/algorithms/diffusion_nft.py`(无比值)
-- 可观测(P0,已落地):`vrl/scripts/common/online.py`(_write_metric_row / _prepare_metrics_csv 的 4 个
-  `continuous_*` 列)、`vrl/rollouts/orchestration/schedule.py`(`_build_continuous_schedule` 启动告警)
-- 上游:`SPRINT_continuous_scheduler_redesign.md` §5 P1、`SPRINT_async_rollout_train_overlap.md`
-  (parked,Option A / DiffusionNFT 约束)
-- cosmos:`~/Desktop/cosmos-rl/cosmos_rl/rollout/worker/weight_sync.py:178-234,265-294,371-413`、
-  `rollout/vllm_rollout/vllm_rollout.py:93-119,319`
+model.activate_trainable_state(version)
+output = forward_chunk_plan(request, chunk)
+return ChunkExecutionResult(..., policy_version=version)
+```
+
+更新权重时：
+
+```python
+def update_weights(state_ref, policy_version):
+    state = deref(state_ref)
+    trainable_slots.install(policy_version, state)
+    current_submit_version = policy_version
+```
+
+注意这里**不覆盖旧 slot**。旧 request 的后续 chunk 继续 `activate_trainable_state(v1)`；新 request 由
+producer 在 sync 后戳 `v2`，走 `activate_trainable_state(v2)`。
+
+### 3.1 slot 数量
+
+首版保留少量版本即可：
+
+- 至少保留 `current` + `previous` 两个 slot，即使 `max_stale=0` 也需要 previous，让已经在途的旧请求能
+  跑完并被丢弃，而不是 mismatch。
+- 如果 `max_stale_policy_versions=N`，保留 `N + 2` 个 slot：当前版本、允许训练的 stale 版本、以及一个
+  正在收尾但可能即将被丢弃的旧版本。
+- LoRA / adapter slot 小，保留 2-3 个通常可接受；full-param 也能走同一语义，但必须先通过 memory
+  budget / capability gate。
+
+如果 chunk 到达时版本 slot 已经被淘汰，worker 应返回 typed stale-slot error，producer 计入 discard，
+不能把它当普通 collect failure。
+
+### 3.2 为什么这不破坏旧请求
+
+旧请求不依赖“worker 当前全局版本”。它依赖自己提交时的 `request.policy_version`。只要对应 slot 还在，
+每个 chunk 都能显式激活同一个 trainable state：
+
+```text
+request_v1 chunk0 -> slot[v1]
+update installs slot[v2]
+request_v1 chunk1 -> slot[v1]
+request_v2 chunk0 -> slot[v2]
+```
+
+这才是“不破坏旧请求”的真实机制。
+
+---
+
+## 4. 和 StalenessPolicy 的关系
+
+versioned slots 只解决“旧请求还能不能完整生成出来”。它不决定“生成出来以后能不能训练”。
+
+训练 admission 仍由 `StalenessPolicy` 决定：
+
+```text
+rollout item version = v1
+trainer current version = v2
+staleness = 1
+```
+
+- GRPO：`max_stale=1` 可以训练，靠 log-prob ratio / PPO clip 修正。
+- DiffusionNFT：`max_stale=0`，旧版本结果必须丢；但 slot 仍然有价值，因为它让旧请求正常结束并被显式
+  丢弃，而不是撞 mismatch。
+
+也就是说：
+
+```text
+versioned slots: 让旧请求不炸
+StalenessPolicy: 决定旧结果能不能训练
+```
+
+---
+
+## 5. 实现计划
+
+### P0 — worker trainable-state slots（generic semantics, LoRA baseline）
+
+目标：不改用户配置，按现有 trainable-state sync payload 支持多版本。LoRA/adapter 是 P0 的低风险验收
+基线；full-param 不特殊化，只受内存预算和模型 capability 限制。
+
+工作项：
+
+- 新增 worker 内部 slot store，例如 `TrainableStateSlots`：
+  - `install(version, state_dict)`
+  - `has(version)`
+  - `activate(version)`
+  - `evict_older_than(cutoff)`
+- 给 runtime model 增加 capability/protocol：
+  - `supports_versioned_trainable_state: bool`
+  - `install_trainable_state(version, state)`
+  - `activate_trainable_state(version)`
+- 模型按自己的 trainable-state 结构实现该 protocol；PEFT/LoRA 先作为基线实现，full-param 可以复用同一
+  protocol 但需要明确 memory budget。
+- `GenerationWorkerCore.update_weights()`：
+  - 如果支持 slots：安装新 slot，更新 submit/current version，不覆盖旧 slot。
+  - 如果不支持：保留当前单版本 `load_trainable_state()` 行为。
+- `GenerationWorkerCore.execute_chunk()`：
+  - 如果支持 slots：按 `request.policy_version` 激活 slot；result policy version 等于 request version。
+  - 如果 slot 缺失：返回 typed stale-slot result，不能伪装成普通 model exception。
+- 单测：
+  - 旧 v1 request 第一个 chunk 跑完后 install v2，旧 v1 后续 chunk 仍成功。
+  - 新 v2 chunk 使用 v2 slot。
+  - 缺 slot 返回明确错误。
+  - slot store 只保存 trainable state，不复制 base model。
+
+验收：
+
+- 裸 non-draining sync 下不再出现 `policy_version mismatch`。
+- `collect error_count` 不因 version swap 增长。
+- GPU memory 增量接近 retained trainable-state slots 的大小。LoRA 情况应远小于 base model；full-param
+  情况会接近 base model，需要显式 memory/capability gate。
+
+### P1 — schedule non-draining sync（仍保持 strict fallback）
+
+目标：只有在 rollout runtime 全部 worker 支持 versioned trainable slots 时，continuous 才跳过 drain。
+
+工作项：
+
+- runtime/worker 暴露 capability：`supports_non_draining_weight_sync`。
+- `ContinuousRolloutSchedule.after_train_step()`：
+  - 支持 capability：`pause_admission -> sync_weights -> post_sync_purge -> resume_admission`。
+  - 不支持 capability：继续当前 `pause -> drain -> sync -> purge -> resume`。
+- producer 在 sync 后 resume，新提交请求自然戳新 version；旧 in-flight 仍按旧 version 完成。
+- metrics：
+  - `continuous.weight_sync_barrier_mode`: draining / non_draining（如果 metrics 只支持数字，写 0/1）
+  - `continuous.post_sync_dropped_stale`
+  - `continuous.producer_discarded_stale`
+  - `continuous.stale_policy_versions`
+- 测试：
+  - capability=false 时行为与当前一致。
+  - capability=true 时 `after_train_step` 不等待 in-flight 结束。
+  - in-flight v1 完成后，GRPO `max_stale=1` 可入队训练；NFT `max_stale=0` 被 post-sync/consumer 丢弃。
+
+验收：
+
+- P0 的 no-mismatch 仍成立。
+- `continuous.weight_sync_pause_s` 不再包含完整 generation request 时长。
+- max_stale=0 不训练旧版本；max_stale=1 可以观测到 stale item 被 admission。
+
+### P2 — 多卡 throughput 验证
+
+目标：证明这不是单卡自嗨，而是真正消掉 rollout/train overlap 的最大 bubble。
+
+配置形态：
+
+```yaml
+distributed:
+  resources:
+    trainer: {num_gpus: 1}
+    rollout: {num_gpus: 1}
+```
+
+验收：
+
+- trainer GPU 与 rollout GPU 分离。
+- `weight_sync_pause_s` 接近 weight push/slot install 成本，不再等最慢 clip。
+- 每步 wall-clock 下降。
+- 没有 `policy_version mismatch`。
+- stale/drop 指标和算法配置一致：GRPO 可 stale，DiffusionNFT 不训练 stale。
+
+---
+
+## 6. 内存预算
+
+首版只允许 trainable-state slots，不允许无脑复制整套 frozen base：
+
+```text
+extra_vram ~= (retained_slot_count - 1) * trainable_state_bytes
+```
+
+LoRA / adapter 情况：
+
+```text
+base transformer: 1 copy
+LoRA slot v1: retained
+LoRA slot v2: retained
+optional LoRA slot v0: retained until too stale / no longer referenced
+```
+
+full-param trainable 情况：
+
+```text
+base/transformer v1 + base/transformer v2
+```
+
+这是同一抽象下的高内存 case，不是单独设计。若模型没有 versioned trainable-state capability，或 memory
+budget 不允许保留足够 slots，默认保持 draining barrier。
+
+---
+
+## 7. 配置原则
+
+不要新增用户级开关。用户不应该理解 `persistent/drain/shadow/live` 这些内部细节。
+
+推荐内部派生：
+
+```text
+if schedule.mode == continuous
+and runtime.supports_non_draining_weight_sync
+and sync_trainable_state enabled:
+    use non-draining weight sync
+else:
+    use existing draining barrier
+```
+
+需要对用户暴露的是 diagnostics，不是 knobs：
+
+```text
+continuous.weight_sync_barrier_mode
+continuous.weight_sync_pause_s
+continuous.post_sync_dropped_stale
+continuous.producer_discarded_stale
+continuous.stale_policy_versions
+```
+
+---
+
+## 8. 非目标
+
+- 不做无条件 full-model double buffer；只 duplicate 当前 weight-sync payload 覆盖的 trainable state。
+- 不给 DiffusionNFT 开 `max_stale>0`。
+- 不把普通 collect failure 和 stale-slot eviction 混在一起。
+- 不引入 microbatch/minibatch async。
+- 不新增一组 YAML 参数让用户手动选择 drain/persistent/shadow。
+- 不照搬 cosmos-rl 的 NCCL/独立 CUDA stream 首版实现；VRL 先走 Ray object store + trainable-state slots。
+  CUDA stream 只作为后续优化，用来隐藏 slot install 的 copy 成本。
+
+---
+
+## 9. 风险
+
+- **模型接口风险**：不同 diffusion family 的 LoRA/adapter 激活方式不一定一致。先通过 protocol 收口，不在
+  `GenerationWorkerCore` 里硬编码 PEFT 细节。
+- **slot 淘汰风险**：过早 evict 会让旧 request 缺 slot。首版保守保留 `max_stale + 2`，并把缺 slot 作为
+  typed stale discard，而不是普通错误。
+- **并发风险**：worker 必须保证同一时刻只执行一个 chunk 或者 activation 是 chunk-local。当前 Ray actor
+  方法是同步执行；若以后打开真正并发 actor，需要加 per-slot executor 或锁。
+- **数值一致性风险**：slot activation 必须和 trainer/rollout logprob 路径一致。首步 drift guard 仍然是红线。
+
+---
+
+## 10. 代码引用
+
+- barrier / drain：
+  - `vrl/rollouts/orchestration/continuous/schedule.py`
+  - `vrl/rollouts/orchestration/continuous/producer.py`
+- request version stamp：
+  - `vrl/rollouts/orchestration/continuous/producer.py`
+  - `vrl/rollouts/orchestration/prompt_collection.py`
+- worker single-version behavior：
+  - `vrl/generation/execution/worker.py`
+- executor version assertion：
+  - `vrl/generation/ray/executor.py`
+- trainable-state sync payload：
+  - `vrl/trainers/weight_sync.py`
+  - `vrl/generation/ray/weight_sync.py`
+- staleness admission：
+  - `vrl/rollouts/orchestration/continuous/staleness.py`
+  - `vrl/rollouts/orchestration/continuous/queue.py`
+- algorithm soundness：
+  - `vrl/algorithms/grpo/continuous.py`
+  - `vrl/algorithms/diffusion_nft.py`

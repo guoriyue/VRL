@@ -62,6 +62,12 @@ class ChunkExecutionResult:
     chunk_key: str | None = None
     policy_version: int | None = None
     error: str | None = None
+    # Set when the chunk could not run because the worker no longer retains a
+    # trainable-state slot for ``request.policy_version`` (the request outlived
+    # the slot-retention window under a non-draining weight sync). Distinct from a
+    # real generation failure so the caller counts it as a stale discard, not an
+    # error — see SPRINT_shadow_model_weight_sync.md.
+    stale_slot: bool = False
 
 
 __all__ = [

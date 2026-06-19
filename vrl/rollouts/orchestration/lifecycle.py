@@ -84,6 +84,14 @@ class RolloutLifecycle:
             return False
         return bool(runtime.is_colocated())
 
+    def supports_non_draining_weight_sync(self) -> bool:
+        # True only when every rollout worker retains versioned trainable-state
+        # slots, so the weight-sync barrier can skip draining in-flight generation
+        # (old requests keep their slot). getattr-with-default keeps any runtime
+        # that does not advertise the capability on the safe draining barrier.
+        runtime = self._collector_runtime()
+        return bool(getattr(runtime, "supports_non_draining_weight_sync", False))
+
     def should_offload_driver_model_for_rollout(self) -> bool:
         return self.device.type == "cuda" and self.requires_driver_model_offload()
 

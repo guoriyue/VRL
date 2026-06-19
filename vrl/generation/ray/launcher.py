@@ -151,6 +151,15 @@ class RayGenerationLauncher:
         )
         if contract.policy_version is not None:
             runtime.current_policy_version = contract.policy_version
+        # Non-draining weight sync is safe only when EVERY worker retains versioned
+        # trainable-state slots (a chunk stamped v1 may land on any worker). Workers
+        # already loaded their model (startup_method="load_policy"), so query the
+        # AND once here; absence/error keeps the safe draining barrier.
+        runtime.supports_non_draining_weight_sync = _all_workers_support_versioned_slots(
+            ray,
+            workers,
+            weight_sync=weight_sync,
+        )
         return runtime
 
     def launch_from_cfg(
@@ -268,6 +277,33 @@ def _require_chunk_gatherer(gatherer: Any) -> ChunkGatherer:
             f"{type(gatherer).__name__} does not implement gather_chunks(...)",
         )
     return gatherer
+
+
+def _all_workers_support_versioned_slots(
+    ray: Any,
+    workers: list[DistributedWorkerHandle],
+    *,
+    weight_sync: Any | None,
+) -> bool:
+    """AND of every worker's versioned-trainable-state capability.
+
+    Non-draining weight sync needs slots on ALL workers because a chunk stamped
+    with an older policy version can be placed on any worker. Returns False (safe
+    draining barrier) when there is no weight sync, no workers, or any query fails.
+    """
+
+    if weight_sync is None:
+        return False
+    actors = [worker.actor for worker in workers if worker.actor is not None]
+    if not actors:
+        return False
+    try:
+        results = ray.get(
+            [actor.supports_versioned_trainable_state.remote() for actor in actors],
+        )
+    except Exception:
+        return False
+    return bool(results) and all(bool(result) for result in results)
 
 
 def _validate_worker_gpu_ids(

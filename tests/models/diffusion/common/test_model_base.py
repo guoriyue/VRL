@@ -289,3 +289,61 @@ def test_load_trainable_state_rejects_all_unmatched_keys() -> None:
 
     with pytest.raises(ValueError, match="trainable keys prefixed"):
         runtime.load_trainable_state({"unknown": torch.ones(1)})
+
+
+# -- versioned trainable-state slots ------------------------------------------
+
+
+def _slot_state(runtime: _ModelBaseStub, weight: float, bias: float) -> dict[str, Any]:
+    return {
+        "transformer.weight": torch.full_like(runtime.transformer.weight, weight),
+        "transformer.bias": torch.full_like(runtime.transformer.bias, bias),
+    }
+
+
+def test_diffusion_model_base_supports_versioned_slots() -> None:
+    """Diffusion families opt in generically (activation reuses load_trainable_state)."""
+    assert _ModelBaseStub().supports_versioned_trainable_state is True
+
+
+def test_install_retains_old_version_after_newer_install() -> None:
+    """The core non-draining invariant: an old version stays activatable after a
+    newer one is installed, and each activates to its OWN weights."""
+    runtime = _ModelBaseStub()
+    runtime.install_trainable_state(1, _slot_state(runtime, 1.0, 1.0))
+    runtime.install_trainable_state(2, _slot_state(runtime, 2.0, 2.0))
+
+    assert runtime.has_trainable_state(1)
+    assert runtime.has_trainable_state(2)
+
+    runtime.activate_trainable_state(2)
+    assert torch.equal(runtime.transformer.weight, torch.full_like(runtime.transformer.weight, 2.0))
+
+    # Old v1 still resolves to v1's weights even though v2 was installed after it.
+    runtime.activate_trainable_state(1)
+    assert torch.equal(runtime.transformer.weight, torch.full_like(runtime.transformer.weight, 1.0))
+    assert torch.equal(runtime.transformer.bias, torch.full_like(runtime.transformer.bias, 1.0))
+
+
+def test_install_does_not_mutate_live_weights() -> None:
+    """install only retains; only activate touches the live model."""
+    runtime = _ModelBaseStub()
+    before = runtime.transformer.weight.detach().clone()
+    runtime.install_trainable_state(7, _slot_state(runtime, 9.0, 9.0))
+
+    assert torch.equal(runtime.transformer.weight, before)  # unchanged until activate
+    runtime.activate_trainable_state(7)
+    assert torch.equal(runtime.transformer.weight, torch.full_like(before, 9.0))
+
+
+def test_activate_is_idempotent_for_active_version() -> None:
+    """Re-activating the live version is a no-op (skips the reload)."""
+    runtime = _ModelBaseStub()
+    runtime.install_trainable_state(1, _slot_state(runtime, 1.0, 1.0))
+    runtime.activate_trainable_state(1)
+    # Mutate live weights, then re-activate the SAME version: skip-if-active means
+    # the live (mutated) weights are NOT reloaded over.
+    with torch.no_grad():
+        runtime.transformer.weight.fill_(5.0)
+    runtime.activate_trainable_state(1)
+    assert torch.equal(runtime.transformer.weight, torch.full_like(runtime.transformer.weight, 5.0))

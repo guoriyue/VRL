@@ -40,6 +40,9 @@ class _Runtime:
         self.current_policy_version = 0
         self.requires_driver_model_offload = False
         self.colocated = False
+        # Default False keeps every existing test on the draining barrier; the
+        # non-draining tests flip it True to exercise the slot-backed path.
+        self.supports_non_draining_weight_sync = False
 
     def is_colocated(self) -> bool:
         # Fakes implement the GenerationRuntime protocol method directly
@@ -426,6 +429,53 @@ async def test_weight_sync_waits_for_inflight_reward() -> None:
             item.rollout_policy_version == 1 for item in schedule.queue._items
         )
     finally:
+        await schedule.producer.stop()
+
+
+@pytest.mark.asyncio
+async def test_draining_barrier_reports_mode_zero() -> None:
+    """Default (no versioned slots): the barrier mode metric is 0 (draining)."""
+    runtime = _Runtime()
+    schedule = _build(_continuous_config(), _Collector(runtime), _Syncer(runtime))
+
+    try:
+        await schedule.next_iteration(["p0", "p1"], group_size=2)
+        phases = await schedule.after_train_step()
+        assert phases["continuous.weight_sync_barrier_mode"] == 0.0
+    finally:
+        await schedule.producer.stop()
+
+
+@pytest.mark.asyncio
+async def test_non_draining_sync_skips_inflight_wait() -> None:
+    # The whole point of versioned slots: when the runtime advertises non-draining
+    # support, after_train_step must NOT wait for in-flight generation/reward — it
+    # syncs and returns while the gated reward is still blocked (the in-flight
+    # request keeps its own version's slot and finishes concurrently).
+    """Checks non-draining sync does not drain in-flight work."""
+    runtime = _Runtime()
+    runtime.supports_non_draining_weight_sync = True
+    collector = _GatedScoreCollector(runtime)
+    syncer = _Syncer(runtime)
+    schedule = _build(_continuous_config(), collector, syncer)
+
+    try:
+        await schedule.next_iteration(["p0", "p1"], group_size=2)
+
+        # Block reward and wait for the producer's next group to be in-flight.
+        collector.allow_score.clear()
+        await _wait_until(lambda: schedule.producer.state.inflight_count > 0)
+
+        sync_calls_before = len(syncer.calls)
+        # Must complete WITHOUT opening the reward gate (contrast with the draining
+        # canary test, where this would block until allow_score.set()).
+        phases = await asyncio.wait_for(schedule.after_train_step(), 5.0)
+
+        assert phases["continuous.weight_sync_barrier_mode"] == 1.0
+        assert len(syncer.calls) == sync_calls_before + 1
+        assert schedule.producer.state.paused_for_weight_sync is False
+    finally:
+        collector.allow_score.set()
         await schedule.producer.stop()
 
 

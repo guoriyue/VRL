@@ -40,6 +40,11 @@ class GenerationWorkerCore:
         self.family = self.launch_contract.family
         self.executor: GenerationChunkExecutor | None = None
         self._policy_version: int | None = self.launch_contract.policy_version
+        # Flipped on once a model that supports versioned trainable-state slots
+        # receives its first weight install; from then on execute_chunk activates
+        # the slot for each request's stamped version instead of comparing against
+        # one global version (which is what makes a non-draining sync safe).
+        self._uses_versioned_slots = False
         self._profiler_config = self._profiler_config_from_contract(self.launch_contract)
         self._profiler_output_dir = str(
             self.launch_contract.extra.get("profiler_output_dir", "outputs/"),
@@ -71,20 +76,49 @@ class GenerationWorkerCore:
         release_cuda_memory(gc_collect=True, ipc_collect=True)
 
     def update_weights(self, state_ref: Any, policy_version: int) -> None:
-        """Update generation weights, then record the active policy version."""
+        """Update generation weights, then record the active policy version.
+
+        When the model supports versioned trainable-state slots, install the new
+        version as a retained slot WITHOUT overwriting the slots older in-flight
+        requests still depend on (the non-draining-sync path); ``execute_chunk``
+        then activates the right slot per request. Otherwise keep the single
+        in-place overwrite (the draining-barrier path).
+        """
 
         self.load_policy()
         policy_obj = getattr(self.executor, "model", None)
-        if state_ref is not None:
+        if bool(getattr(policy_obj, "supports_versioned_trainable_state", False)):
+            model = require_runtime_model(
+                policy_obj,
+                owner=f"{type(self.executor).__name__}.model",
+            )
+            model.install_trainable_state(int(policy_version), state_ref)
+            self._uses_versioned_slots = True
+        elif state_ref is not None:
             model = require_runtime_model(
                 policy_obj,
                 owner=f"{type(self.executor).__name__}.model",
             )
             model.load_trainable_state(state_ref)
+        # The single scalar now means "current submit version": current_policy_version()
+        # is what the producer reads to stamp NEW requests, so it must track the
+        # latest installed version even in slot mode. Per-chunk results take their
+        # version from request.policy_version, not this field.
         self._policy_version = int(policy_version)
 
     def current_policy_version(self) -> int | None:
         return self._policy_version
+
+    def supports_versioned_trainable_state(self) -> bool:
+        """Whether the loaded model can retain versioned trainable-state slots.
+
+        Drives the runtime's non-draining-weight-sync capability. Requires the
+        model to be built, so callers query it after at least one weight sync.
+        """
+
+        self.load_policy()
+        model = getattr(self.executor, "model", None)
+        return bool(getattr(model, "supports_versioned_trainable_state", False))
 
     def worker_metadata(self, *, runtime_debug: bool = False) -> dict[str, Any]:
         try:
@@ -116,7 +150,31 @@ class GenerationWorkerCore:
         chunk = envelope.chunk
         runtime_debug = bool(request.metadata.get("_runtime_debug"))
         expected_version = request.policy_version
-        if expected_version is not None and self._policy_version != expected_version:
+        model = getattr(self.executor, "model", None)
+        if self._uses_versioned_slots and expected_version is not None:
+            # Slot mode: serve the request from the slot for ITS stamped version,
+            # not the worker's latest. A missing slot means the request outlived
+            # the retention window — a typed stale-slot result, not a mismatch.
+            if not model.has_trainable_state(expected_version):
+                return ChunkExecutionResult(
+                    request_id=request.request_id,
+                    worker_id=self.worker_id,
+                    chunk=chunk,
+                    output=None,
+                    metrics=self._chunk_metrics(envelope, runtime_debug=runtime_debug),
+                    plan_id=envelope.plan_id,
+                    stage_id=envelope.stage_id,
+                    stage_name=envelope.stage_name,
+                    profiler_label=envelope.profiler_label,
+                    chunk_key=envelope.chunk_key,
+                    policy_version=expected_version,
+                    error=(
+                        "trainable-state slot evicted for "
+                        f"policy_version={expected_version}"
+                    ),
+                    stale_slot=True,
+                )
+        elif expected_version is not None and self._policy_version != expected_version:
             return ChunkExecutionResult(
                 request_id=request.request_id,
                 worker_id=self.worker_id,
@@ -134,8 +192,14 @@ class GenerationWorkerCore:
                     f"expected={expected_version}, actual={self._policy_version}"
                 ),
             )
+        # In slot mode the result must carry the REQUEST's version (the executor
+        # asserts result.policy_version == request.policy_version), which is how an
+        # old in-flight request keeps passing after the worker installs a newer slot.
+        result_version = expected_version if expected_version is not None else self._policy_version
         try:
             assert self.executor is not None
+            if self._uses_versioned_slots and expected_version is not None:
+                model.activate_trainable_state(expected_version)
             output = self._profile_forward_chunk(envelope)
             return ChunkExecutionResult(
                 request_id=request.request_id,
@@ -153,7 +217,7 @@ class GenerationWorkerCore:
                 stage_name=envelope.stage_name,
                 profiler_label=envelope.profiler_label,
                 chunk_key=envelope.chunk_key,
-                policy_version=self._policy_version,
+                policy_version=result_version,
             )
         except Exception as exc:
             return ChunkExecutionResult(
@@ -167,7 +231,7 @@ class GenerationWorkerCore:
                 stage_name=envelope.stage_name,
                 profiler_label=envelope.profiler_label,
                 chunk_key=envelope.chunk_key,
-                policy_version=self._policy_version,
+                policy_version=result_version,
                 error=str(exc),
             )
 
