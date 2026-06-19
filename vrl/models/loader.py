@@ -124,8 +124,27 @@ def compile_transformer(model: Any, mode: str) -> None:
     )
 
 
+def apply_rollout_fp8(model: Any, spec: Any) -> None:
+    """Swap the rollout transformer's big GEMMs to fp8 when the spec requests it.
+
+    fp8 is rollout-only (``precision.rollout=fp8``): the model loads a bf16 master
+    and quantizes inside the GEMM (``Fp8Linear``). Call after LoRA/full-finetune
+    and before compile so inductor sees the fp8 modules. No-op otherwise.
+    """
+
+    import logging
+
+    if getattr(spec, "rollout_quantization", None) != "fp8":
+        return
+    swapped = model.quantize_transformer_fp8()
+    logging.getLogger(__name__).info(
+        "fp8 rollout: quantized %d transformer linears to e4m3", len(swapped),
+    )
+
+
 __all__ = [
     "apply_lora_to_transformer",
+    "apply_rollout_fp8",
     "compile_transformer",
     "enable_transformer_full_finetune",
     "load_diffusers_scheduler",

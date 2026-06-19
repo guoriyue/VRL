@@ -10,6 +10,7 @@ bounded relative error after depth accumulation.
 from __future__ import annotations
 
 import copy
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -157,6 +158,45 @@ def test_fp8_linear_preserves_leading_dims_and_bias():
     x = torch.randn(2, 64, 2048, device="cuda", dtype=torch.bfloat16)  # [B, N, K]
     out = fp8(x)
     assert out.shape == (2, 64, 4096)
+
+
+# --- runtime wiring: the swap reaches the rollout builder from precision (CPU) --
+
+
+class _FakeModel:
+    def __init__(self) -> None:
+        self.recipes: list[str] = []
+
+    def quantize_transformer_fp8(self, recipe: str = "rowwise") -> list[str]:
+        self.recipes.append(recipe)
+        return ["blocks.0.attn.to_q", "blocks.0.ff.net.0"]
+
+
+def test_apply_rollout_fp8_only_fires_for_fp8():
+    from vrl.models.loader import apply_rollout_fp8
+
+    model = _FakeModel()
+    apply_rollout_fp8(model, SimpleNamespace(rollout_quantization=None))
+    assert model.recipes == []  # bf16 rollout: no-op
+    apply_rollout_fp8(model, SimpleNamespace(rollout_quantization="fp4"))
+    assert model.recipes == []  # fp4 GEMM not built: no-op (online.py gates it)
+    apply_rollout_fp8(model, SimpleNamespace(rollout_quantization="fp8"))
+    assert model.recipes == ["rowwise"]  # fp8: swap fires
+
+
+def test_extract_runtime_spec_derives_fp8_from_precision_rollout():
+    from omegaconf import OmegaConf
+
+    from vrl.models.runtime_config import extract_runtime_spec
+
+    fp8_cfg = OmegaConf.create({"model": {"path": "x"}, "precision": {"forward": "bf16", "rollout": "fp8"}})
+    spec = extract_runtime_spec(fp8_cfg, "cuda", torch.bfloat16, task_variant="t2i")
+    assert spec.rollout_quantization == "fp8"
+    assert spec.dtype is torch.bfloat16  # storage stays the bf16 master
+
+    bf16_cfg = OmegaConf.create({"model": {"path": "x"}, "precision": "bf16"})
+    spec2 = extract_runtime_spec(bf16_cfg, "cuda", torch.bfloat16, task_variant="t2i")
+    assert spec2.rollout_quantization is None
 
 
 @requires_fp8

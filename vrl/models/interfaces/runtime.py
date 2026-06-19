@@ -64,6 +64,10 @@ class RuntimeBuildSpec:
     # across the Ray launch contract. None -> the family's historical derivation
     # (fp16 when the model runs fp32).
     frozen_dtype: Any = None
+    # Rollout-only quantized GEMM token derived from ``precision.rollout``
+    # ("fp8"/"fp4"), or None. The runtime builder swaps the transformer's big
+    # linears to fp8 when this is "fp8" (storage stays the bf16 master ``dtype``).
+    rollout_quantization: str | None = None
 
     @property
     def use_lora(self) -> bool:
