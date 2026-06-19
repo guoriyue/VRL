@@ -1,6 +1,15 @@
-# SPRINT: fp8 rollout GEMM kernel — 把 fp8 真正接进生成引擎前向 (planned)
+# SPRINT: fp8 rollout GEMM kernel — 把 fp8 真正接进生成引擎前向
 
-状态：**planned（2026-06-18 从 [[SPRINT_fullparam_and_fp8_precision]] §3 第 2 步拆出）**。
+状态：**kernel + swap + 全链路 wiring 已落地并在 5090 验证（2026-06-19）；剩真实 checkpoint 的 live 端到端 run**。从 [[SPRINT_fullparam_and_fp8_precision]] §3 第 2 步拆出。
+
+## 验证结论（5090，已落地）
+
+- **效率（确认 fp8 真的更快）**：`vrl/scripts/perf/fp8_linear_benchmark.py` 实测 DiT shapes，fp8 `_scaled_mm` linear（含每次激活动态量化开销）vs bf16 nn.Linear，**geomean 1.40x**（1.1–1.75x，hidden 越大越赢，4096 时 1.75x）。✅ 比 bf16 efficient。
+- **正确性**：`Fp8Linear` 单 GEMM 与 bf16 相对误差 <6%；形状/bias/leading-dim 保持。✅
+- **精度漂移（not much drift）**：24-block DiT 全 swap（144 个 linear）端到端输出漂移 **6.6%**——残差让单层 3.7% 不爆。✅ 落在 drift guard + TIS 能吸收的范围。
+- **门控**：`precision.rollout=fp8` live run 可起（fp8 ungate）；fp4 仍 gated（Fp8Linear 只做 e4m3）。
+
+剩：真实 cosmos/sd3.5 checkpoint 跑一遍 live rollout（需下载模型 + GPU run），按 §5 验收。
 
 ## 0. 来历
 
@@ -34,12 +43,12 @@ fp8 不是 drop-in dtype（bf16/fp16 有原生自动 dispatch 的 GEMM，fp8 没
 
 ## 3. 工作分解
 
-1. **选量化路径**：优先 **torchao `Float8Linear`**（module swap，和仓库已用的原生 `_scaled_mm` 一脉、维护成本低）；备选 TransformerEngine、或自研 `Fp8Linear`（直接复用 probe 的 `_fp8_matmul`）。先做一个 spike A/B：torchao swap vs 自研，比 sm_120 上的正确性 + 速度。
-2. **加 swap 方法**：在 `vrl/models/diffusion/base.py` 加 `quantize_transformer_fp8(self, recipe)`（与 `torch_compile_transformer` 同级，base.py:244 旁），遍历 `self.transformer` 的 module tree,按 §4 的 include/exclude 名单把目标 `nn.Linear` 替换成 fp8 linear。每家 runtime builder 在 `torch_compile` 前调用（`sd3_5/runtime.py:75` 之前）。
-3. **拆 weight_dtype 语义**：`online.py:662-683` —— fp8/fp4 时模型 **storage 仍 bf16**（master），不再 `resolve_torch_dtype(fp8)→float8` 把模型存成 float8;量化在 GEMM 内部做。把 fp8 意图作为**单独的 `rollout_quantization` 信号**经 `build_ray_generation_inputs_for_family` → runtime spec 传给 swap;**删掉 672 起的 `NotImplementedError`**，换成"runtime 报告支持 fp8 才放行"的能力检查。
-4. **scaling recipe**：先 per-tensor dynamic amax（probe 现成）;不够再 per-row 或 128×128 per-block（slime 式）。静态 vs 动态在这步定。
-5. **torch.compile 交互**：compile 在 swap **之后**（让 inductor 看到 fp8 linear）。已知坑（Wan LoRA 实测）：compile `mode=default` 与 PEFT 兼容，`reduce-overhead`/CUDAGraphs 撞 LoRA + grad-ckpt;fp8 linear + compile default 要单独验。
-6. **LoRA 交互（开放）**：`use_lora` 配置下,base 量化 fp8 + adapter 留 bf16 的顺序与正确性需验（先在 full-finetune cosmos 上做，绕开 LoRA）。
+1. ✅ **量化路径（自研 `Fp8Linear`）**：`vrl/models/diffusion/fp8.py`。torch 原生 `_scaled_mm`、e4m3、bf16 master + bf16 累加、weight 构造时量化一次、activation 每步动态量化。`rowwise`（per-token / per-output-channel，抗激活 outlier）或 `tensorwise`。没引 torchao/TE（保持零依赖）。
+2. ✅ **swap 方法**：`base.py` `quantize_transformer_fp8(recipe)`（与 `torch_compile_transformer` 同级）→ `swap_linears_to_fp8` 遍历 module tree，按 exclude 子串 + `min_features` 只换大 attention/MLP linear。
+3. ✅ **拆 weight_dtype 语义 + ungate**：`online.py` fp8 时 storage = bf16 master（`policy.compute`）、删 `NotImplementedError`（fp4 仍 gated）；`rollout_quantization` 信号由 `extract_runtime_spec` 从 `precision.rollout` 派生进 `RuntimeBuildSpec`；三家 rollout builder（sd3_5/wan/cosmos）compile 前调 `loader.apply_rollout_fp8(model, spec)`，replay builder 不碰。
+4. ✅ **scaling recipe**：rowwise（默认）+ tensorwise 都实现并验。随机数据上两者≈（3.7%）；真实激活 outlier 下 rowwise 更稳。per-block(slime 式) 留作进一步 accuracy 杠杆。
+5. ⏳ **torch.compile 交互**：swap 在 compile 前（已保证顺序）。`mode=default` + fp8 linear 的 inductor 行为要在 live run 验（已知坑：`reduce-overhead`/CUDAGraphs 撞 LoRA + grad-ckpt）。
+6. ⏳ **LoRA 交互（开放）**：当前 `apply_rollout_fp8` 在 LoRA/full-finetune 之后调；full-finetune（cosmos predict2）是首选验证路径。LoRA 下 swap 命中 PEFT `base_layer` 的正确性留 live 验。
 
 ## 4. include / exclude 名单（fp8 只碰大 GEMM）
 
