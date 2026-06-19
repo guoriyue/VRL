@@ -1,15 +1,21 @@
 # SPRINT: fp8 rollout GEMM kernel — 把 fp8 真正接进生成引擎前向
 
-状态：**kernel + swap + 全链路 wiring 已落地并在 5090 验证（2026-06-19）；剩真实 checkpoint 的 live 端到端 run**。从 [[SPRINT_fullparam_and_fp8_precision]] §3 第 2 步拆出。
+状态：**kernel + swap + 全链路 wiring 已落地，并在 5090 上真实 SD3.5 GRPO live run 验证通过（2026-06-19）**。从 [[SPRINT_fullparam_and_fp8_precision]] §3 第 2 步拆出。
 
 ## 验证结论（5090，已落地）
 
-- **效率（确认 fp8 真的更快）**：`vrl/scripts/perf/fp8_linear_benchmark.py` 实测 DiT shapes，fp8 `_scaled_mm` linear（含每次激活动态量化开销）vs bf16 nn.Linear，**geomean 1.40x**（1.1–1.75x，hidden 越大越赢，4096 时 1.75x）。✅ 比 bf16 efficient。
-- **正确性**：`Fp8Linear` 单 GEMM 与 bf16 相对误差 <6%；形状/bias/leading-dim 保持。✅
-- **精度漂移（not much drift）**：24-block DiT 全 swap（144 个 linear）端到端输出漂移 **6.6%**——残差让单层 3.7% 不爆。✅ 落在 drift guard + TIS 能吸收的范围。
-- **门控**：`precision.rollout=fp8` live run 可起（fp8 ungate）；fp4 仍 gated（Fp8Linear 只做 e4m3）。
+- **效率（确认 fp8 真的更快）**：`fp8_linear_benchmark.py` 实测 DiT shapes，fp8 `_scaled_mm` linear（含激活动态量化开销）vs bf16 nn.Linear，**geomean 1.40x**（1.1–1.75x）。✅
+- **正确性**：`Fp8Linear` 单 GEMM 与 bf16 <6%；真实 cosmos 权重量化漂移 **2.2%**（比合成随机的 3.7% 更低）；真实 arch 前向漂移 cosmos 3.6% / sd3.5 1.1%。✅
+- **LIVE RUN（关键，2026-06-19）**：真实 SD3.5-medium OCR GRPO，`precision={forward:bf16,rollout:fp8}` + TIS，跑满 3 epoch 无崩。**首次 live run 抓到并修了一个真 bug**：rowwise `_scaled_mm` 不收 fp32 输出，而 DiT adaLN/pooled 路径喂 fp32 → `Fp8Linear` 改成 bf16 累加再 cast 回（commit 01dd8e7）。fp8 还和 **LoRA 共存**（337 个 base linear 在 adapter 里被 swap）。
+- **RL 精度 go/no-go（这才是判据）**：3 epoch metrics（reward_std≈0.31–0.46，信号健康）：
+  | | ratio_abs_dev mean | ratio_abs_dev max | logprob_abs_diff mean | tis_clip_fraction |
+  |---|---|---|---|---|
+  | ep0–2 | **0.61–0.76%** | **4.8–5.7%** | 0.62–0.78% | 0（没触发）|
+  - **fp8 importance-ratio 漂移 ~0.68% mean / 5.4% max，而 advantage 量级 O(1)（reward_std≈0.36 归一化）→ fp8 噪声比信号小 ~100x。GO。**
+  - **TIS 根本没 engage**（max ratio≈1.05 ≪ cap 2.0）——fp8 漂移天然在容差内，TIS 是没用上的保险。
+- **门控**：fp8 ungate；fp4 仍 gated（e4m3 only）。
 
-剩：真实 cosmos/sd3.5 checkpoint 跑一遍 live rollout（需下载模型 + GPU run），按 §5 验收。
+注意 task 依赖：SD3.5 是 fp8-friendly（前向 1.1%）；cosmos 前向 3.6%，logprob 漂移会更大，且若信号弱（cosmos +0.026 那种）容差更紧 —— cosmos 上要单独按本节复测。
 
 ## 0. 来历
 
