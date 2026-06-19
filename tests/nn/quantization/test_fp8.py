@@ -16,7 +16,7 @@ import pytest
 import torch
 from torch import nn
 
-from vrl.models.quantization import Fp8Linear, swap_linears_to_fp8
+from vrl.nn.quantization import Fp8Linear, swap_linears_to_fp8
 
 
 def _fp8_capable() -> bool:
