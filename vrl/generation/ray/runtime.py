@@ -76,9 +76,7 @@ class RayGenerationRuntime(GenerationRuntime):
         """Build a runtime that recreates Ray workers between collect phases."""
         runtime = cls.__new__(cls)
         runtime.executor = None
-        runtime.weight_sync = (
-            object() if config.sync_trainable_state != "disabled" else None
-        )
+        runtime.weight_sync = object() if config.sync_trainable_state else None
         runtime._owned_workers = []
         runtime._owned_actors = []
         runtime._placement_group = None

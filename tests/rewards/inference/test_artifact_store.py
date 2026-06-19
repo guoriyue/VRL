@@ -76,3 +76,19 @@ def test_video_artifact_store_rejects_bad_shape(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="video reward artifact expects"):
         store.materialize([_rollout(torch.ones(2, 2))])
+
+
+def test_video_artifact_store_rejects_unknown_artifact_format(tmp_path: Path) -> None:
+    """An unknown artifact_format is rejected against the Literal-derived allow-list."""
+
+    with pytest.raises(ValueError, match="artifact_format must be one of"):
+        VideoRewardArtifactStore(tmp_path, media_type="video", artifact_format="webm")
+
+
+def test_artifact_formats_set_is_derived_from_literal() -> None:
+    """ARTIFACT_FORMATS is the single source of truth, derived from the Literal."""
+    from typing import get_args
+
+    from vrl.rewards.artifacts import ARTIFACT_FORMATS, ArtifactFormat
+
+    assert frozenset(get_args(ArtifactFormat)) == ARTIFACT_FORMATS

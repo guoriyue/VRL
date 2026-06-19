@@ -17,20 +17,20 @@ from vrl.ray.resources import (
 def _cfg(
     resources: dict,
     *,
-    colocate_with_trainer: float | None = None,
+    colocate: float | None = None,
     rollout_runtime: dict | None = None,
     kling_video_reward: bool = False,
     reward_components: dict[str, float] | None = None,
     reward_kwargs: dict[str, dict] | None = None,
 ) -> object:
     # Release scheduling is derived from topology, so the public rollout block only
-    # carries the colocate_with_trainer intent (memory_fraction cap). Tests that
+    # carries the colocate intent (memory_fraction cap). Tests that
     # exercise the removed-key rejection pass a raw rollout_runtime instead.
     if rollout_runtime is None:
         rollout_runtime = {}
-        if colocate_with_trainer is not None:
-            rollout_runtime["colocate_with_trainer"] = {
-                "memory_fraction": colocate_with_trainer,
+        if colocate is not None:
+            rollout_runtime["colocate"] = {
+                "memory_fraction": colocate,
             }
     data = {
         "distributed": {
@@ -73,6 +73,26 @@ def test_active_pool_reward_keys_match_raw_and_built_reward_shapes() -> None:
 
     assert active_pool_reward_keys(raw_reward.components, raw_reward.kwargs) == ("pool_a",)
     assert active_pool_reward_keys(built_components, built_kwargs) == ("pool_a",)
+
+
+def test_active_pool_reward_keys_derive_pool_from_disk_artifact_class() -> None:
+    """A disk-artifact reward is counted as pool even when the YAML omits execution,
+    so GPU allocation never misses it; an explicit execution is never overridden."""
+
+    # No execution kwarg -> derived from KlingVideoReward.default_execution == "pool".
+    assert active_pool_reward_keys({"kling_video_reward": 1.0}, {}) == (
+        "kling_video_reward",
+    )
+    # Explicit execution wins over the class default (UNSET-only derivation).
+    assert (
+        active_pool_reward_keys(
+            {"kling_video_reward": 1.0},
+            {"kling_video_reward": {"execution": "inline"}},
+        )
+        == ()
+    )
+    # An in-memory model reward defaults inline -> not a pool reward.
+    assert active_pool_reward_keys({"pickscore": 1.0}, {}) == ()
 
 
 def test_auto_split_uses_remaining_visible_gpus_for_rollout() -> None:
@@ -151,8 +171,8 @@ def test_explicit_overlap_marks_colocated_when_allowed() -> None:
     assert resolved.requires_trainer_reservation is False
 
 
-def test_single_gpu_colocate_with_trainer_keeps_worker_resident() -> None:
-    """Checks colocate_with_trainer keeps the single-GPU rollout worker resident."""
+def test_single_gpu_colocate_keeps_worker_resident() -> None:
+    """Checks colocate keeps the single-GPU rollout worker resident."""
     resolved = resolve_distributed_resources(
         _cfg(
             {
@@ -161,7 +181,7 @@ def test_single_gpu_colocate_with_trainer_keeps_worker_resident() -> None:
                 "rollout": {"devices": [0], "gpus_per_worker": 1},
                 "allow_overlap": True,
             },
-            colocate_with_trainer=0.45,
+            colocate=0.45,
         ),
     )
 
@@ -171,8 +191,8 @@ def test_single_gpu_colocate_with_trainer_keeps_worker_resident() -> None:
     assert resolved.rollout_gpu_memory_fraction == 0.45
 
 
-def test_colocate_with_trainer_implies_overlap_without_allow_overlap() -> None:
-    """colocate_with_trainer is itself the overlap permission; allow_overlap unset."""
+def test_colocate_implies_overlap_without_allow_overlap() -> None:
+    """colocate is itself the overlap permission; allow_overlap unset."""
     resolved = resolve_distributed_resources(
         _cfg(
             {
@@ -180,7 +200,7 @@ def test_colocate_with_trainer_implies_overlap_without_allow_overlap() -> None:
                 "trainer": {"devices": [0]},
                 "rollout": {"devices": [0], "gpus_per_worker": 1},
             },
-            colocate_with_trainer=0.45,
+            colocate=0.45,
         ),
     )
 
@@ -188,7 +208,7 @@ def test_colocate_with_trainer_implies_overlap_without_allow_overlap() -> None:
     assert resolved.rollout_persistent_colocated_workers is True
 
 
-def test_colocate_with_trainer_auto_pins_rollout_to_trainer_gpu() -> None:
+def test_colocate_auto_pins_rollout_to_trainer_gpu() -> None:
     """Auto rollout placement is forced onto the trainer GPU, not a spare one."""
     resolved = resolve_distributed_resources(
         _cfg(
@@ -197,7 +217,7 @@ def test_colocate_with_trainer_auto_pins_rollout_to_trainer_gpu() -> None:
                 "trainer": {"devices": [0]},
                 "rollout": {"num_gpus": "auto", "gpus_per_worker": 1},
             },
-            colocate_with_trainer=0.4,
+            colocate=0.4,
         ),
     )
 
@@ -205,7 +225,7 @@ def test_colocate_with_trainer_auto_pins_rollout_to_trainer_gpu() -> None:
     assert resolved.colocated is True
 
 
-def test_colocate_with_trainer_requires_memory_fraction() -> None:
+def test_colocate_requires_memory_fraction() -> None:
     """Checks a colocate block without memory_fraction fails inside the block."""
     with pytest.raises(ValueError, match="colocate requires memory_fraction"):
         resolve_distributed_resources(
@@ -216,12 +236,12 @@ def test_colocate_with_trainer_requires_memory_fraction() -> None:
                     "rollout": {"devices": [0], "gpus_per_worker": 1},
                     "allow_overlap": True,
                 },
-                rollout_runtime={"colocate_with_trainer": {}},
+                rollout_runtime={"colocate": {}},
             ),
         )
 
 
-def test_colocate_with_trainer_memory_fraction_rejects_out_of_range() -> None:
+def test_colocate_memory_fraction_rejects_out_of_range() -> None:
     """Checks the GPU budget cap is validated to the (0, 1] range."""
     with pytest.raises(ValueError, match=r"memory_fraction must be in \(0, 1\]"):
         resolve_distributed_resources(
@@ -232,12 +252,12 @@ def test_colocate_with_trainer_memory_fraction_rejects_out_of_range() -> None:
                     "rollout": {"devices": [0], "gpus_per_worker": 1},
                     "allow_overlap": True,
                 },
-                colocate_with_trainer=1.5,
+                colocate=1.5,
             ),
         )
 
 
-def test_colocate_with_trainer_rejects_explicit_disjoint_rollout_devices() -> None:
+def test_colocate_rejects_explicit_disjoint_rollout_devices() -> None:
     """Checks colocate cannot be silently reinterpreted as split-GPU resident."""
     with pytest.raises(ValueError, match="disjoint from trainer"):
         resolve_distributed_resources(
@@ -247,7 +267,7 @@ def test_colocate_with_trainer_rejects_explicit_disjoint_rollout_devices() -> No
                     "trainer": {"devices": [0]},
                     "rollout": {"devices": [1], "gpus_per_worker": 1},
                 },
-                colocate_with_trainer=0.45,
+                colocate=0.45,
             ),
         )
 
@@ -706,8 +726,8 @@ def test_lifecycle_plan_colocated_rollout_is_on_demand_before_train() -> None:
     assert plan.handoff.release_rollout_before_reward is False
 
 
-def test_lifecycle_plan_colocate_with_trainer_stays_resident() -> None:
-    """colocate_with_trainer overrides the colocated on_demand default."""
+def test_lifecycle_plan_colocate_stays_resident() -> None:
+    """colocate overrides the colocated on_demand default."""
     resolved = resolve_distributed_resources(
         _cfg(
             {
@@ -716,7 +736,7 @@ def test_lifecycle_plan_colocate_with_trainer_stays_resident() -> None:
                 "rollout": {"devices": [0], "gpus_per_worker": 1},
                 "allow_overlap": True,
             },
-            colocate_with_trainer=0.45,
+            colocate=0.45,
         ),
     )
 
@@ -997,41 +1017,6 @@ def test_rollout_colocate_new_key_keeps_worker_resident() -> None:
     assert resolved.rollout_persistent_colocated_workers is True
     assert resolved.rollout_gpu_memory_fraction == 0.4
     assert resolved.rollout_release_after_collect is False
-
-
-def test_rollout_colocate_matches_legacy_colocate_with_trainer() -> None:
-    """colocate (new) and colocate_with_trainer (legacy) resolve identically."""
-    resources = {
-        "visible_devices": [0],
-        "trainer": {"num_gpus": 1},
-        "rollout": {"num_gpus": 1},
-    }
-    new = resolve_distributed_resources(
-        _cfg(dict(resources), rollout_runtime={"colocate": {"memory_fraction": 0.45}}),
-    )
-    legacy = resolve_distributed_resources(
-        _cfg(dict(resources), colocate_with_trainer=0.45),
-    )
-    assert new.rollout_persistent_colocated_workers == legacy.rollout_persistent_colocated_workers
-    assert new.rollout_gpu_memory_fraction == legacy.rollout_gpu_memory_fraction
-
-
-def test_rollout_colocate_both_keys_is_an_error() -> None:
-    """Setting colocate and colocate_with_trainer together is rejected."""
-    with pytest.raises(ValueError, match=r"either distributed\.rollout\.colocate or the legacy"):
-        resolve_distributed_resources(
-            _cfg(
-                {
-                    "visible_devices": [0],
-                    "trainer": {"num_gpus": 1},
-                    "rollout": {"num_gpus": 1},
-                },
-                rollout_runtime={
-                    "colocate": {"memory_fraction": 0.4},
-                    "colocate_with_trainer": {"memory_fraction": 0.4},
-                },
-            ),
-        )
 
 
 def test_reward_gpu_pool_rollout_shares_rollout_gpu() -> None:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from vrl.rewards.base import RewardFunction
 
@@ -15,7 +15,7 @@ class AestheticReward(RewardFunction):
         device: str = "cuda",
         dtype: str = "float32",
         model_name: str = "openai/clip-vit-large-patch14",
-        execution: str = "inline",
+        execution: Literal["inline", "pool"] = "inline",
         **kwargs: Any,
     ) -> None:
         worker_config = {

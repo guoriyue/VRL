@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Literal
 
 from vrl.rewards.inference import (
     RewardInferenceRequest,
@@ -60,7 +60,7 @@ class LocalRewardRuntime:
 
 
 def make_reward_runtime(
-    execution: str,
+    execution: Literal["inline", "pool"],
     *,
     model_factory: str,
     worker_config: Mapping[str, Any] | None = None,

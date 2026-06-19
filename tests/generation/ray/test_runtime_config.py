@@ -161,12 +161,12 @@ def _resource_cfg(
     trainer_devices: list[int],
     rollout_devices: list[int],
     allow_overlap: bool = False,
-    colocate_with_trainer: float | None = None,
+    colocate: float | None = None,
 ):
     rollout_runtime: dict[str, Any] = {"cpus_per_worker": 1}
-    if colocate_with_trainer is not None:
-        rollout_runtime["colocate_with_trainer"] = {
-            "memory_fraction": colocate_with_trainer,
+    if colocate is not None:
+        rollout_runtime["colocate"] = {
+            "memory_fraction": colocate,
         }
     return OmegaConf.create(
         {
@@ -220,21 +220,20 @@ def test_chunk_placement_strategy_switches_from_cfg() -> None:
     cfg.distributed.rollout.chunk_placement_strategy = "dynamic"
     dynamic = RayGenerationConfig.from_cfg(cfg)
     assert dynamic.chunk_placement_strategy == "dynamic"
-
-    cfg.distributed.rollout.chunk_placement_strategy = "work_stealing"
-    with pytest.raises(ValueError, match="chunk_placement_strategy"):
-        RayGenerationConfig.from_cfg(cfg)
+    # Invalid values are now rejected at the typed schema boundary
+    # (RolloutWorkerSection Literal) at parse time, not in RayGenerationConfig —
+    # see tests/config/test_schema.py::test_unknown_chunk_placement_strategy_raises.
 
 
 def test_sync_trainable_state_defaults_on_for_from_cfg() -> None:
     """Online runs train the policy the rollout workers must resync, so an omitted
-    sync_trainable_state defaults ON ("lora_only"), not silently "disabled" (which
-    would train the rollout on stale policy weights). Explicit values are kept."""
-    assert RayGenerationConfig.from_cfg(_cfg()).sync_trainable_state == "lora_only"
+    sync_trainable_state defaults ON (True), not silently False (which would train
+    the rollout on stale policy weights). Explicit values are kept."""
+    assert RayGenerationConfig.from_cfg(_cfg()).sync_trainable_state is True
 
     cfg = _cfg()
-    cfg.distributed.rollout.sync_trainable_state = "disabled"
-    assert RayGenerationConfig.from_cfg(cfg).sync_trainable_state == "disabled"
+    cfg.distributed.rollout.sync_trainable_state = False
+    assert RayGenerationConfig.from_cfg(cfg).sync_trainable_state is False
 
 
 def test_ray_build_inputs_leaves_model_compile_config_without_rollout_override() -> None:
@@ -277,12 +276,12 @@ def test_ray_build_inputs_applies_rollout_only_compile_override() -> None:
 
 
 def test_ray_build_inputs_carries_gpu_memory_fraction_to_worker_contract() -> None:
-    """Checks the colocate_with_trainer GPU budget reaches the worker contract."""
+    """Checks the colocate GPU budget reaches the worker contract."""
     cfg = _resource_cfg(
         trainer_devices=[0],
         rollout_devices=[0],
         allow_overlap=True,
-        colocate_with_trainer=0.4,
+        colocate=0.4,
     )
 
     launch_inputs = RayGenerationLauncher.build_inputs(
@@ -403,14 +402,14 @@ def test_ray_backend_allows_split_driver_cuda_when_devices_do_not_overlap() -> N
     assert config.allow_driver_gpu_overlap is False
 
 
-def test_ray_backend_colocate_with_trainer_keeps_worker_resident() -> None:
-    """Checks colocate_with_trainer keeps the colocated rollout worker resident."""
+def test_ray_backend_colocate_keeps_worker_resident() -> None:
+    """Checks colocate keeps the colocated rollout worker resident."""
     config = RayGenerationConfig.from_cfg(
         _resource_cfg(
             trainer_devices=[0],
             rollout_devices=[0],
             allow_overlap=True,
-            colocate_with_trainer=0.45,
+            colocate=0.45,
         ),
     ).validate_driver_state(driver_policy=_CudaPolicy())
 

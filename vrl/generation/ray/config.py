@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from vrl.ray.resources import (
     ResolvedDistributedResources,
@@ -29,13 +29,15 @@ class RayGenerationConfig:
     max_inflight_chunks_per_worker: int = 1
     # Chunk->worker binding: "round_robin" binds at plan time (baseline);
     # "dynamic" binds at dispatch time (pull + LPT). Equivalent for 1 worker.
-    chunk_placement_strategy: str = "round_robin"
-    # Binary on/off (consumers only check != "disabled"; the "lora_only" name is
-    # legacy — the syncer flattens whatever trainable modules exist, lora or full).
+    # Allowed-set rejection is at the typed schema boundary (RolloutWorkerSection);
+    # the runtime ChunkPlacementPolicy guard is the wire-boundary backstop.
+    chunk_placement_strategy: Literal["round_robin", "dynamic"] = "round_robin"
+    # Plain on/off. True keeps rollout workers resynced to the trained policy (the
+    # syncer flattens whatever is trainable — lora or full-param); False disables it.
     # Defaults ON: online runs train the policy the rollout workers must resync, so
-    # an omitted value previously meant silent stale-policy training. The weight
-    # syncer is only built on the online launch path, so this never affects eval.
-    sync_trainable_state: str = "lora_only"
+    # an omitted value previously meant silent stale-policy training. The syncer is
+    # only built on the online launch path, so this never affects eval.
+    sync_trainable_state: bool = True
     # The full resolved plan. Lifecycle/memory details (resident colocation,
     # gpu_memory_fraction) are read from it directly -- not mirrored onto flat
     # fields, which the resolver already validates and this object already carries.
@@ -50,12 +52,6 @@ class RayGenerationConfig:
             raise ValueError("cpus_per_worker must be > 0")
         if self.max_inflight_chunks_per_worker < 1:
             raise ValueError("max_inflight_chunks_per_worker must be >= 1")
-        if self.sync_trainable_state not in {"disabled", "lora_only"}:
-            raise ValueError("sync_trainable_state must be 'disabled' or 'lora_only'")
-        if self.chunk_placement_strategy not in {"round_robin", "dynamic"}:
-            raise ValueError(
-                "chunk_placement_strategy must be 'round_robin' or 'dynamic'",
-            )
 
     @classmethod
     def from_cfg(cls, cfg: Any) -> RayGenerationConfig:
@@ -87,8 +83,8 @@ class RayGenerationConfig:
                     1,
                 ),
             ),
-            sync_trainable_state=str(
-                cfg_get(rollout, "sync_trainable_state", "lora_only"),
+            sync_trainable_state=bool(
+                cfg_get(rollout, "sync_trainable_state", True),
             ),
             chunk_placement_strategy=str(
                 cfg_get(rollout, "chunk_placement_strategy", "round_robin"),

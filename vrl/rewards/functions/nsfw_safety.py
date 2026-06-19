@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from vrl.rewards.base import RewardFunction
 from vrl.rewards.models.nsfw_safety import NSFWSafetyRewardModel
@@ -15,7 +15,7 @@ class NSFWSafetyReward(RewardFunction):
     def __init__(
         self,
         device: str = "cuda",
-        execution: str = "inline",
+        execution: Literal["inline", "pool"] = "inline",
         **kwargs: Any,
     ) -> None:
         if str(execution) != "inline":

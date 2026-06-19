@@ -138,7 +138,7 @@ class RayGenerationLauncher:
         )
         weight_sync = (
             RayGenerationWeightSync(workers)
-            if rollout_config.sync_trainable_state != "disabled"
+            if rollout_config.sync_trainable_state
             else None
         )
         runtime = RayGenerationRuntime(

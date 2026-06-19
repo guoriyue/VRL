@@ -494,8 +494,7 @@ def _distributed_resource_config_from_cfg(cfg: Any) -> DistributedResourceConfig
     _reject_removed_distributed_keys(rollout_runtime, reward_runtime)
     rollout_gpu_pool, rollout_memory_fraction = _parse_rollout_pool(
         rollout_node=rollout_node,
-        legacy_colocate=cfg_get(rollout_runtime, "colocate", _MISSING),
-        legacy_colocate_with_trainer=cfg_get(rollout_runtime, "colocate_with_trainer", _MISSING),
+        colocate=cfg_get(rollout_runtime, "colocate", _MISSING),
     )
 
     trainer = RoleResourceConfig(
@@ -1030,7 +1029,16 @@ def reward_runtime_resource_kwargs(
 
 
 def active_pool_reward_keys(reward_components: Any, reward_kwargs: Any) -> tuple[str, ...]:
-    """Return active reward component keys backed by a Ray actor pool."""
+    """Return active reward component keys backed by a Ray actor pool.
+
+    ``execution`` is the per-reward runtime selector. When a reward omits it, the
+    pool-ness is derived from the reward class's ``default_execution`` (disk-artifact
+    rewards default to ``pool``) so GPU allocation counts the reward even when the
+    YAML does not spell ``execution: pool``. Both counting sites (the factory
+    resolution layer and ``_count_ray_rewards``) funnel through here, so the
+    derivation lives in one place and the count can never disagree with what the
+    reward actually constructs.
+    """
 
     keys: list[str] = []
     for reward_key in reward_components or {}:
@@ -1042,9 +1050,30 @@ def active_pool_reward_keys(reward_components: Any, reward_kwargs: Any) -> tuple
         if reward_weight <= 0:
             continue
         component_kwargs = cfg_get(reward_kwargs, name, {})
-        if str(cfg_get(component_kwargs, "execution", "")) == "pool":
+        execution = cfg_get(component_kwargs, "execution", None)
+        if execution is None:
+            execution = _default_reward_execution(name)
+        if str(execution) == "pool":
             keys.append(name)
     return tuple(keys)
+
+
+def _default_reward_execution(name: str) -> str:
+    """The reward class's default execution runtime (``inline`` unless overridden).
+
+    Read off the class attribute without instantiating, so a disk-artifact reward
+    that omits ``execution`` in YAML is still counted as ``pool`` for GPU planning.
+    Unknown names (and any import hiccup) fall back to ``inline`` — the safe, no
+    reward-GPU default.
+    """
+
+    try:
+        from vrl.rewards.functions.registry import _register_builtins, get_reward
+
+        _register_builtins()
+        return str(getattr(get_reward(name), "default_execution", "inline"))
+    except Exception:
+        return "inline"
 
 
 @dataclass(frozen=True, slots=True)
@@ -1142,32 +1171,28 @@ def _parse_optional_bool(value: Any) -> bool | None:
 def _parse_rollout_pool(
     *,
     rollout_node: Any,
-    legacy_colocate: Any,
-    legacy_colocate_with_trainer: Any,
+    colocate: Any,
 ) -> tuple[str, float | None]:
     """Resolve ``(gpu_pool, memory_fraction)`` for rollout.
 
     New grammar (mirrors ``reward.gpu_pool``): ``distributed.resources.rollout.gpu_pool``
     = ``auto|trainer|dedicated`` with an optional sibling ``memory_fraction`` (only with
     ``gpu_pool=trainer``; present => resident colocation, absent => on-demand). The
-    legacy ``distributed.rollout.colocate`` block is accepted as compat input and maps
-    to ``gpu_pool=trainer`` + its (required) memory_fraction. Setting both the legacy
-    block and the new keys is an error so a migrated config carries one source of truth.
+    ``distributed.rollout.colocate`` block is an alternate surface that maps to
+    ``gpu_pool=trainer`` + its (required) memory_fraction. Setting both the colocate
+    block and the new keys is an error so a config carries one source of truth.
     """
 
-    legacy_fraction = _parse_colocate(
-        new=legacy_colocate,
-        legacy=legacy_colocate_with_trainer,
-    )
+    colocate_fraction = None if colocate is _MISSING else _parse_colocate_block(colocate)
     new_pool = cfg_get(rollout_node, "gpu_pool", _MISSING)
     new_fraction = cfg_get(rollout_node, "memory_fraction", _MISSING)
-    if legacy_fraction is not None and (new_pool is not _MISSING or new_fraction is not _MISSING):
+    if colocate_fraction is not None and (new_pool is not _MISSING or new_fraction is not _MISSING):
         raise ValueError(
-            "set either the legacy distributed.rollout.colocate block or the new "
+            "set either the distributed.rollout.colocate block or the new "
             "distributed.resources.rollout.{gpu_pool, memory_fraction}, not both",
         )
-    if legacy_fraction is not None:
-        return ("trainer", legacy_fraction)
+    if colocate_fraction is not None:
+        return ("trainer", colocate_fraction)
 
     pool = "auto"
     if new_pool is not _MISSING:
@@ -1197,29 +1222,6 @@ def _parse_rollout_pool(
                 f"gpu_pool: trainer (resident colocation), got gpu_pool={pool!r}",
             )
     return (pool, fraction)
-
-
-def _parse_colocate(*, new: Any, legacy: Any) -> float | None:
-    """Resolve ``rollout.colocate`` (new) or ``rollout.colocate_with_trainer``
-    (legacy compat) to the resident worker's memory-fraction cap, or None.
-
-    New configs and presets use ``distributed.rollout.colocate``;
-    ``colocate_with_trainer`` is accepted as compat input. Setting both is an
-    error so a migrated config does not silently carry two sources of truth.
-    """
-
-    new_set = new is not _MISSING
-    legacy_set = legacy is not _MISSING
-    if new_set and legacy_set:
-        raise ValueError(
-            "set either distributed.rollout.colocate or the legacy "
-            "distributed.rollout.colocate_with_trainer, not both",
-        )
-    if new_set:
-        return _parse_colocate_block(new)
-    if legacy_set:
-        return _parse_colocate_block(legacy)
-    return None
 
 
 def _parse_colocate_block(value: Any) -> float | None:

@@ -15,4 +15,4 @@ distributed:
     # Chunk->worker binding: round_robin binds at plan time; dynamic binds at
     # dispatch time (pull + LPT by estimated cost). Equivalent for 1 worker.
     chunk_placement_strategy: round_robin
-    sync_trainable_state: lora_only
+    sync_trainable_state: true

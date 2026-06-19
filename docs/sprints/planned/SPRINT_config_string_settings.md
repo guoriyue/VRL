@@ -1,6 +1,20 @@
 # SPRINT: 减少引擎配置要手填的魔法字符串（Literal 化 + 派生默认）
 
-状态：partial（部分已落地 main）。已落地：P0 一批 string→Literal（denoise_mode / final_image_policy / attention_backend 等，17d96fd）、P1 `rollout.sde` typed block + `sync_trainable_state` 默认从 disabled 翻转为 lora_only（6871d23）。未完成：reward `execution`/`media_type` 的 Literal/派生、`sync_trainable_state` 本身 →Literal。（注：本文最初标"proposed/待批"已过时——work 已开始落地。）
+状态：**基本完成**（仅 §2.3 低优先 final_image_policy 去重明确 deferred）。
+
+落地历史：
+- P0 一批标量 string→Literal（denoise_mode / final_image_policy / attention_backend，17d96fd）、P1 `rollout.sde` typed block + `sync_trainable_state` 默认从 disabled 翻转为 lora_only（6871d23）。
+- **本轮收尾（reward 一组 + 两个 rollout 旋钮 Literal）**：
+  - reward `execution` → `Literal["inline","pool"]`（落 `make_reward_runtime` / `_init_reward_model` / `_init_disk_artifact_reward` / 三个 in-memory reward 的 `__init__` 参数类型；4 个运行时 guard 全保留）。**派生 footgun 已修**：disk-artifact reward 即使 YAML 省了 `execution: pool` 也被计入 GPU 分配——`active_pool_reward_keys` 在 execution 缺省时从 reward 类的 `default_execution`（Kling/VideoCon = `"pool"`）派生，两个计数点（factory + `_count_ray_rewards`）共用此函数，一处修复两处生效；UNSET-only，显式值不被覆盖。
+  - reward `media_type` / `artifact_format` → `MediaType` / `ArtifactFormat` Literal 落 store + base `__init__` 参数；`ARTIFACT_FORMATS = frozenset(get_args(ArtifactFormat))` 单一真相源；`{"tensor","mp4"}` 手写 set 删除、改派生。**注：媒体类型只有 image/video 两值（`tensor` 已在 fbdeb46 正确移除，无任何 producer 用它，且 `_validate_media_shape` 只认 image/video）——§2.1 旧文"保留 tensor 第三值"已作废，勿再加回；`tensor` 是 `artifact_format` 的值（.pt 容器），不是 media_type。**
+  - `sync_trainable_state` 本身 → **`bool`（不是 Literal）**。它真实语义就是开关：消费者只判真假（`runtime.py` / `launcher.py`），syncer flatten 的是"当前 trainable 的那坨"——LoRA 或全参都行，`"lora_only"` 这名字是撒谎的历史遗留。**无 backward-compat**：旧字符串 `lora_only`/`disabled` 不再接受，3 个 base YAML 改成 `sync_trainable_state: true`，schema bool 直接在 parse 期拒绝旧字符串（"Input should be a valid boolean"）。
+  - `chunk_placement_strategy`（§2.2 P1）→ `Literal["round_robin","dynamic"]`。
+  - 两个 rollout 旋钮的 parse 期拒绝：把 `distributed.rollout` 从 `ConfigBlock` 提成 typed `RolloutWorkerSection`（仿 `TrainingSection`），删 `RayGenerationConfig.__post_init__` 两处手查；非法值现在在 `parse_config` 报 `unknown distributed.rollout.<key>=...; expected ...`，运行时 `ChunkPlacementPolicy` guard 仍作 wire-boundary 防线。
+  - `scheduling`（§2.4）— configs 里已无此 reward kwarg（早先随 17d96fd 清掉）；`base.py:169` guard 保留。
+- **附带清理（no-backward-compat）**：删掉 `colocate_with_trainer` 这个最老的 legacy 别名（`colocate` 保留为当前面）。删 schema 字段 + `_parse_colocate` 派发器 + `_parse_rollout_pool` 的 legacy 参数；无 experiment 配置用它，只动 schema/resources/tests。
+- 验收：受影响目录全跑 **373 passed**（2 个 fail 与本改动无关、clean tree 同样 fail：`imageio` 缺失的 mp4 写入 env gap + sd35 配置 `memory_fraction` 0.55 vs 测试断言 0.45 的旧 drift）。
+
+未完成：**§2.3 低优先 `final_image_policy` rollout/sampling.r1 去重**——janus_pro 单路、payoff 低，且触及 collector `_copy_first_present` + schema 相等校验，spec 评估为**建议 leave**（见 §2.3）。
 
 ## 0. 结论 (TL;DR)
 

@@ -413,6 +413,28 @@ class TrainingSection(ConfigBase):
     ddp: DDPConfig | None = None
 
 
+class RolloutWorkerSection(ConfigBase):
+    """distributed.rollout: per-worker runtime knobs + colocation.
+
+    readers: vrl/generation/ray/config.py RayGenerationConfig.from_cfg (worker
+    runtime knobs) + vrl/ray/resources.py (rollout.colocate). Release scheduling is
+    derived from GPU topology, not declared here; the only public colocation knob is
+    the colocate block (memory_fraction cap). chunk_placement_strategy is a
+    user-facing allow-list Literal: RayGenerationConfig is a plain dataclass whose
+    annotations do not enforce, so this typed boundary is where a bad value is
+    rejected (the runtime ChunkPlacementPolicy guard stays the wire-boundary check).
+    sync_trainable_state is a plain on/off: True keeps rollout workers resynced to
+    the trained policy (the syncer flattens whatever is trainable — lora or
+    full-param), False disables the weight syncer.
+    """
+
+    cpus_per_worker: float = 1.0
+    max_inflight_chunks_per_worker: int = 1
+    chunk_placement_strategy: Literal["round_robin", "dynamic"] = "round_robin"
+    sync_trainable_state: bool = True
+    colocate: Annotated[Any, ConfigBlock(("memory_fraction",))] = None
+
+
 class DistributedSection(ConfigBase):
     """Key registry for distributed.*; values validated by vrl.ray.resources."""
 
@@ -438,22 +460,9 @@ class DistributedSection(ConfigBase):
         ),
     ] = None
     # readers: vrl/generation/ray/config.py RayGenerationConfig.from_cfg (worker
-    # runtime knobs) + vrl/ray/resources.py (rollout.colocate). Release scheduling
-    # is derived from GPU topology, not declared here; the only public colocation
-    # knob is the colocate block (memory_fraction cap). colocate_with_trainer is
-    # the legacy compat name for colocate.
-    rollout: Annotated[
-        Any,
-        ConfigBlock(
-            ("cpus_per_worker",
-             "max_inflight_chunks_per_worker", "chunk_placement_strategy",
-             "sync_trainable_state", "colocate", "colocate_with_trainer"),
-            {
-                "colocate": ConfigBlock(("memory_fraction",)),
-                "colocate_with_trainer": ConfigBlock(("memory_fraction",)),
-            },
-        ),
-    ] = None
+    # runtime knobs) + vrl/ray/resources.py (rollout.colocate). chunk_placement_strategy
+    # / sync_trainable_state Literals reject bad values here at parse time.
+    rollout: RolloutWorkerSection | None = None
     # reader: vrl/ray/resources.py reward runtime block (release derived from topology)
     reward: Annotated[
         Any,

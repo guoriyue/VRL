@@ -8,9 +8,10 @@ import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from vrl.rewards.inference import (
+    MediaType,
     RewardInferenceArtifact,
     RewardInferenceRequest,
     RewardInferenceResult,
@@ -29,11 +30,17 @@ class RewardFunction:
     scoring path.
     """
 
+    # The reward's default execution runtime when the config omits ``execution``.
+    # Disk-artifact rewards override this to ``"pool"`` so GPU allocation counts
+    # them even when the YAML does not spell ``execution: pool`` (the counter in
+    # vrl.ray.resources reads this class attribute without instantiating).
+    default_execution: str = "inline"
+
     @staticmethod
     def build_inmemory_artifacts(
         rollouts: list[RewardRollout],
         *,
-        media_type: str = "image",
+        media_type: MediaType = "image",
     ) -> list[RewardInferenceArtifact]:
         """Build reward artifacts that carry media in-memory (no disk write)."""
 
@@ -108,8 +115,8 @@ class RewardFunction:
         score_key: str,
         model_factory: str,
         worker_config: Mapping[str, Any],
-        execution: str,
-        media_type: str = "image",
+        execution: Literal["inline", "pool"],
+        media_type: MediaType = "image",
     ) -> None:
         """Initialize a RewardFunction backed by a RewardModel factory."""
 
@@ -137,10 +144,10 @@ class RewardFunction:
         config_key: str,
         request_prefix: str,
         debug_basename: str,
-        execution: str = "pool",
+        execution: Literal["inline", "pool"] = "pool",
         reward_name: str | None = None,
         score_key: str | None = None,
-        media_type: str = "video",
+        media_type: MediaType = "video",
         artifact_dir: str = "outputs/reward_artifacts",
         artifact_format: str | None = None,
         default_reward_name: str = "",

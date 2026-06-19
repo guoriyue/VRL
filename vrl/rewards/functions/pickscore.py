@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from vrl.rewards.base import RewardFunction
 
@@ -16,7 +16,7 @@ class PickScoreReward(RewardFunction):
         dtype: str = "float32",
         processor_name: str = "laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
         model_name: str = "yuvalkirstain/PickScore_v1",
-        execution: str = "inline",
+        execution: Literal["inline", "pool"] = "inline",
         **kwargs: Any,
     ) -> None:
         worker_config = {

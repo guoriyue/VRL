@@ -155,6 +155,49 @@ def test_training_keys_are_registered_not_unknown() -> None:
     assert not [k for k in unknown if k.startswith("distributed.training")]
 
 
+# ── distributed.rollout knobs ─────────────────────────────────────────────────
+
+
+def test_unknown_chunk_placement_strategy_raises() -> None:
+    """A typo chunk placement strategy is rejected at parse time, not at launch."""
+    cfg = _minimal_grpo_cfg(
+        distributed={"rollout": {"chunk_placement_strategy": "work_stealing"}},
+    )
+    with pytest.raises(
+        ValueError, match=r"unknown distributed\.rollout\.chunk_placement_strategy",
+    ):
+        parse_config(cfg)
+
+
+def test_legacy_sync_trainable_state_string_rejected() -> None:
+    """sync_trainable_state is a plain bool now; the legacy "lora_only" string is
+    rejected at parse, not silently coerced (no backward-compat)."""
+    cfg = _minimal_grpo_cfg(
+        distributed={"rollout": {"sync_trainable_state": "lora_only"}},
+    )
+    with pytest.raises(ValueError, match=r"valid boolean"):
+        parse_config(cfg)
+
+
+def test_rollout_keys_are_registered_not_unknown() -> None:
+    """distributed.rollout.* keys (incl. nested colocate) are known to the walker."""
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg = _minimal_grpo_cfg(
+        distributed={
+            "rollout": {
+                "cpus_per_worker": 2.0,
+                "max_inflight_chunks_per_worker": 2,
+                "chunk_placement_strategy": "dynamic",
+                "sync_trainable_state": False,
+                "colocate": {"memory_fraction": 0.5},
+            }
+        }
+    )
+    unknown = find_unknown_keys(cfg)
+    assert not [k for k in unknown if k.startswith("distributed.rollout")]
+
+
 # ── Data loader discriminator ─────────────────────────────────────────────────
 
 

@@ -5,13 +5,19 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, get_args
 
 import torch
 
-from vrl.rewards.inference import MEDIA_TYPES, RewardInferenceArtifact
+from vrl.rewards.inference import MEDIA_TYPES, MediaType, RewardInferenceArtifact
 from vrl.rewards.types import RewardRollout
 from vrl.utils.media import write_mp4
+
+# On-disk artifact container. ``ArtifactFormat`` is the single source of truth;
+# ARTIFACT_FORMATS derives from it (mp4 = real video container decord can read,
+# tensor = torch.save .pt). media_type (image/video) is a separate axis.
+ArtifactFormat = Literal["tensor", "mp4"]
+ARTIFACT_FORMATS = frozenset(get_args(ArtifactFormat))
 
 
 class VideoRewardArtifactStore:
@@ -21,14 +27,18 @@ class VideoRewardArtifactStore:
         self,
         root: str | Path,
         *,
-        media_type: str = "video",
-        artifact_format: str = "tensor",
+        media_type: MediaType = "video",
+        artifact_format: ArtifactFormat = "tensor",
         manifest_name: str = "manifest.jsonl",
     ) -> None:
         if media_type not in MEDIA_TYPES:
-            raise ValueError("media_type must be image or video")
-        if artifact_format not in {"tensor", "mp4"}:
-            raise ValueError("artifact_format must be tensor or mp4")
+            raise ValueError(
+                f"media_type must be one of {', '.join(get_args(MediaType))}",
+            )
+        if artifact_format not in ARTIFACT_FORMATS:
+            raise ValueError(
+                f"artifact_format must be one of {', '.join(get_args(ArtifactFormat))}",
+            )
         if artifact_format == "mp4" and media_type != "video":
             raise ValueError("artifact_format=mp4 requires media_type=video")
         self.root = Path(root)
