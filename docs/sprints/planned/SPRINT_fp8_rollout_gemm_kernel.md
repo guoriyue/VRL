@@ -15,7 +15,20 @@
   - **TIS 根本没 engage**（max ratio≈1.05 ≪ cap 2.0）——fp8 漂移天然在容差内，TIS 是没用上的保险。
 - **门控**：fp8 ungate；fp4 仍 gated（e4m3 only）。
 
-注意 task 依赖：SD3.5 是 fp8-friendly（前向 1.1%）；cosmos 前向 3.6%，logprob 漂移会更大，且若信号弱（cosmos +0.026 那种）容差更紧 —— cosmos 上要单独按本节复测。
+### cosmos predict2 也跑了（full fine-tune，2026-06-19）
+
+真实 Cosmos-Predict2-2B-Video2World GRPO（240p_33f，kling reward），`rollout=fp8`+TIS。**第二个 live bug 抓到并修了**：cosmos 是**全参**，trainer 每步把 base 权重 sync 给 rollout（`load_trainable_state` 要 `.weight` key），而 swap 后只有 `weight_fp8` → `Fp8Linear` 改成**留 bf16 master `weight` + sync 后 requantize**（cosmos-rl 同款，commit 365c62c）。SD3.5 没撞到是因为 LoRA sync 的是 adapter。修完 8 个 fp8 视频正常生成、full-finetune sync 干净。
+
+cosmos go/no-go（step 0）：
+
+| | ratio_dev mean | ratio_dev max | mismatch_kl | reward_std | tis_clip |
+|---|---|---|---|---|---|
+| SD3.5 | 0.68% | 5.4% | 0.0069 | 0.36 | 0 |
+| **cosmos** | **0.30%** | **1.0%** | 0.0030 | 0.07 | 0 |
+
+**两个家族都 GO**：fp8 ratio 漂移 ≤1%，advantage 归一化后 O(1) → fp8 噪声比信号小 100–300x，TIS 都没触发。cosmos 漂移反而更小（35 步去噪 vs SD3.5 10 步，per-step 误差摊薄），尽管前向漂移更大。
+
+caveat：cosmos reward_std=0.07 是**弱信号 task**（advantage 归一仍 O(1)，所以 fp8 判据不变；但任务本身学不学得动是另一回事，与 fp8 无关）。结果存 `outputs/fp8_validation/{sd35,cosmos_pred2}_*_drift.csv`。
 
 ## 0. 来历
 
