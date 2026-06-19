@@ -1,6 +1,6 @@
-# SPRINT (planned): 把 rollout 共卡统一到 `gpu_pool` 语法
+# SPRINT (done): 把 rollout 共卡统一到 `gpu_pool` 语法
 
-状态：**已实现 + 测试（2026-06-18）**。纯语法/命名统一 + 兼容垫片，零行为变化（旧 `colocate` 等价已单测验证）。
+状态：**done（2026-06-18 归档至 done/）**。已实现 + 测试（2026-06-18），纯语法/命名统一 + 兼容垫片，零行为变化（旧 `colocate` 等价已单测验证）。
 ray+config+trainers+generation/ray+online-lifecycle 共 420 passed。
 
 实现要点：`RolloutResourceConfig` 加 `gpu_pool`(auto|trainer|dedicated) + `memory_fraction`（对标

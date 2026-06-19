@@ -1,6 +1,6 @@
 # SPRINT: Symmetric colocated DDP（cosmos-rl mode=colocated 风格）
 
-状态：**Slice 1–4 的代码已实现，CPU 可验证部分全绿（2026-06-18，trainers+config+ray+online-lifecycle 396
+状态：**done（Slice 1–4 全落地、CPU 全绿，2026-06-18 归档至 done/；真 2 机×1 卡跨机 NCCL proof run 已拆分到 [[SPRINT_ddp_2x1_multinode_proof_run]]）。Slice 1–4 的代码已实现，CPU 可验证部分全绿（2026-06-18，trainers+config+ray+online-lifecycle 396
 passed）。多节点执行（nccl all-reduce 跨服务器 / GPU 共卡显存 / DDP backward 跨 2 机）我无法在本机验证——
 用户的 2×1 跑就是首次真实验证。** 旧的 hybrid head/remote 方案已整套移除（用户决定走 DDP）。
 

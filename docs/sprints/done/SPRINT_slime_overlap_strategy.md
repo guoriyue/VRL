@@ -1,6 +1,6 @@
 # SPRINT: Slime overlap strategy 对齐
 
-状态：T1/T2/T3 已落地（contract tests + inflight-reward barrier in 8e3b3c9；phase-timing 收敛到 per-item stats in 1cf1bff，last_collect_phases 已删除）；T4（raw reward + advantage metrics）已基本被现有 pre_filter_reward_mean/std + advantage_mean/adv_zero_rate 覆盖但未作专项；T5（独立 reward stage）按 profiling gate 暂不做；T6（straggler control: over-sample/first-completed-wins/abort tail + wasted_groups telemetry）未动。
+状态：**done（T1–T4 已落地，2026-06-18 归档至 done/；T6 straggler control 拆分到 [[SPRINT_straggler_oversample_control]]、T5 按 profiling gate 暂不做）**。T1/T2/T3 已落地（contract tests + inflight-reward barrier in 8e3b3c9；phase-timing 收敛到 per-item stats in 1cf1bff，last_collect_phases 已删除）；T4（raw reward + advantage metrics）已基本被现有 pre_filter_reward_mean/std + advantage_mean/adv_zero_rate 覆盖但未作专项；T5（独立 reward stage）按 profiling gate 暂不做；T6（straggler control: over-sample/first-completed-wins/abort tail + wasted_groups telemetry）未动。
 （2026-06-12 读完 `docs/sprints/reading/slime.md` 后复核：主方向仍成立；
 补充 straggler control / 非 draining barrier 的后续边界，见 §3a / §4）。
 目标是把 slime 的 async rollout 经验吸收到 VRL continuous rollout，但不把 slime 的实现细节

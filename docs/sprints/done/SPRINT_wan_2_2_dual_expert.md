@@ -1,6 +1,6 @@
 # SPRINT: Wan 2.2 双专家（A14B）RL 支持
 
-状态：implemented / proof run pending（2026-06-15）。A14B dual-stage 模型加载、timestep 路由（_uses_low_noise_transformer/_validate_wan_pipeline）、replay runtime（transformer_2）、默认 low-noise 专家训练（_normalize_trainable_transformers）、A14B config 与 23 项 CPU 单测均已落地（43dbb6e/d622406；config 已于 7e3e072 迁至 configs/model/diffusion/wan_2_2/）。剩余唯一工作 = 一次真实 Wan 2.2 A14B GRPO proof run（无 run 证据，无 configs/experiment/diffusion/wan_2_2/ 入口）。注：§6 引用的 configs/model/diffusion/wan_2_1/a14b.yaml 与 i2v_a14b.yaml 已随 7e3e072 移动失效，应改指 wan_2_2/。Wan 2.2-5B expand_timesteps 仍为非目标。
+状态：**done（实现已落地 main：43dbb6e/d622406/7e3e072，23 项 CPU 单测全过；2026-06-18 归档至 done/）**。A14B dual-stage 模型加载、timestep 路由（`_uses_low_noise_transformer`/`_validate_wan_pipeline`）、replay runtime（`transformer_2`）、默认 low-noise 专家训练（`_normalize_trainable_transformers`）、A14B config（`configs/model/diffusion/wan_2_2/`）与 23 项 CPU 单测均已落地并经核实（`tests/models/diffusion/wan_2_1/{test_backbone_parity,test_model_loading}.py` + `tests/models/interfaces/test_minimal_replay_runtime_wiring.py` = 23 passed）。**剩余的真实 Wan 2.2 A14B GRPO proof run 已拆出独立 sprint：`planned/SPRINT_wan_2_2_proof_run.md`**（缺 `configs/experiment/diffusion/wan_2_2/` 入口 + 需多卡）。Wan 2.2-5B `expand_timesteps` 仍为非目标。
 
 > 排序澄清：MoE 决策文档（`reading/SPRINT_moe_support_decision.md`）= "要不要/为什么"；本文 =
 > "怎么做"。二者一对，不存在"先 Wan 2.2 再做别的 MoE"。
@@ -93,8 +93,8 @@ model.trainable_modules                  # weight-sync 下发的可训状态（L
   `expand_timesteps` 保持非目标）
 - `vrl/models/diffusion/wan_2_1/runtime.py`（minimal replay bundle 加载 `transformer_2`，
   复用模型自己的 LoRA/full-finetune/compile 逻辑）
-- `configs/model/diffusion/wan_2_1/a14b.yaml`、`configs/model/diffusion/wan_2_1/i2v_a14b.yaml`
-  （官方 Wan 2.2 A14B boundary ratio + 默认 low-noise 训练配置）
+- `configs/model/diffusion/wan_2_2/a14b.yaml`、`configs/model/diffusion/wan_2_2/i2v_a14b.yaml`
+  （官方 Wan 2.2 A14B boundary ratio + 默认 low-noise 训练配置；7e3e072 迁此）
 - `vrl/scripts/eval/wan_i2v_base_sample.py:14,102`（双专家事实 + `boundary_ratio`/`guidance_scale_2`）
 - `configs/experiment/diffusion/wan_2_1/online_grpo_physics_i2v.yaml`（现有 I2V GRPO 入口）
 - 决策依据：`reading/SPRINT_moe_support_decision.md`（Wan 2.2 = 唯一值得做的 MoE；机制与外部来源）

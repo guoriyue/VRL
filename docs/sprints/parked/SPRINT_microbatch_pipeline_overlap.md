@@ -1,6 +1,6 @@
 # SPRINT: microbatch pipeline overlap —— retired scope guard
 
-状态：**retired / do not implement（2026-06-17）**。
+状态：**retired / do not implement（2026-06-17；2026-06-18 迁至 parked/——废弃决策记录、非待办）**。
 
 本文件保留为防污染说明：**mini/microbatch 只表达同步的内存切片与梯度累积，不再承担 async 调度语义**。真正的 async 只指 rollout 生产侧和 trainer 消费侧的 wall-clock overlap，归 `SPRINT_continuous_scheduler_redesign.md`、`SPRINT_shadow_model_weight_sync.md` 和 parked 的 `SPRINT_async_rollout_train_overlap.md` 管。
 

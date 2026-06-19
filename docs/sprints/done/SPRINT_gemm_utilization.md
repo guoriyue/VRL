@@ -1,6 +1,6 @@
-# SPRINT: GEMM 利用率 / 吞吐优化（planned）
+# SPRINT: GEMM 利用率 / 吞吐优化（done）
 
-状态：partial。P0 逐-projection GEMM profiler（f446776，gemm_projection_breakdown.py）+ P1 QKV 融合 A/B（实测低 ROI，--fuse-qkv 仅留 profiler、不落 runtime）+ P2 torch.compile（31f6843，predict2_2b.yaml torch_compile.enable:true，1.37×/1.25×）均已完成。剩 P1.5（LoRA 家族 sd3.5/wan use_lora:false 全参替换，待显存/多卡）+ P2 logprob drift guard 下次真实 run 复绿；P3 FP8 按用户 2026-06-14 决定暂缓。
+状态：**done（profiler + QKV A/B + torch.compile 已落地，2026-06-18 归档至 done/；P1.5 全参替换 + P3 FP8 已拆分到 [[SPRINT_fullparam_and_fp8_precision]]）**。P0 逐-projection GEMM profiler（f446776，gemm_projection_breakdown.py）+ P1 QKV 融合 A/B（实测低 ROI，--fuse-qkv 仅留 profiler、不落 runtime）+ P2 torch.compile（31f6843，predict2_2b.yaml torch_compile.enable:true，1.37×/1.25×）均已完成。剩 P1.5（LoRA 家族 sd3.5/wan use_lora:false 全参替换，待显存/多卡）+ P2 logprob drift guard 下次真实 run 复绿；P3 FP8 按用户 2026-06-14 决定暂缓。
 
 > 方法：对 3 份带 torch-profiler / Nsight / NCU trace 的 perf 文档做了交叉读取，并回到 `vrl/` 与已装 diffusers 0.37.1 逐条核实每个杠杆的代码现状（已做 / 一键开 / 真要写）。硬件经 `nvidia-smi` 实测确认。
 

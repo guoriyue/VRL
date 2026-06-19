@@ -1,6 +1,6 @@
-# SPRINT: 全仓设计异味审计与清理（design-smell audit）(planned)
+# SPRINT: 全仓设计异味审计与清理（design-smell audit）(done)
 
-状态：**部分完成 —— 2026-06-16**。这是一次"全 `vrl/` 范围找丑设计 + 清掉确证安全项"的审计，
+状态：**done（2026-06-18 归档至 done/）**。审计 + 确证安全清理全部落地（Round 1–3，见正文）；唯二真正剩下的架构卫生尾巴（`weight_sync_barrier` derive-only、release-flag 影子字段处置）已拆分到 [[SPRINT_design_smell_loose_ends]] 追踪。这是一次"全 `vrl/` 范围找丑设计 + 清掉确证安全项"的审计，
 起因是用户点的两个例子：(a) `data.loader` 要手填一个魔法字符串名（`prompt_manifest` /
 `prompt_image_manifest`），(b) release 时机过去要手动指定、现已改为从 GPU 拓扑派生——用户想把"这类
 冗余手填 / 应从单一真相源派生"的味道在全仓系统找出来清掉。
@@ -47,12 +47,14 @@
 > 要新建一整套常量 taxonomy，且高价值的 schema.py 侧受 import-boundary 阻挡无法用，P3 部分收益不抵 churn +
 > 违 consistency 护栏。
 >
-> **仍开放（本 doc 仍留 `planned/` 的原因）**：只剩需"政策/边界决策"的少数项——放松 fail-loud gate 的
-> `media_type` 由 `artifact_format` 派生（§4.1 P2）、`advantage_low` 非对称数学（§4.1 P2）、
-> `weight_sync_barrier` 改 derive-only（§4.1 P2，与 [[SPRINT_resolved_struct_field_audit]] §9.1 一并处理）、
-> `pool`-reward 双写逐字节对齐去重（§4.2 P2）、reward `repo@rev` 解析 shared-vs-parallel（§4.2 P2）。
-> 另：release flag 残留（`reward_release_after_score` / `rollout_release_before_reward_model` 影子化
-> `RayLifecyclePlan`）与 [[SPRINT_resolved_struct_field_audit]] §3 冲突，**归并到那个 sprint 复核**（§5.2）。
+> **leftover → [[SPRINT_design_smell_loose_ends]]（2026-06-18 拆分）**：本 doc 自有的开放项只剩 2 个架构卫生尾巴，
+> 已移到那个 sprint 追踪，本 doc 收口归档 done/：
+> - `weight_sync_barrier` 改 derive-only（§4.1 P2，`vrl/trainers/core/types.py:174` 仍是可设字段，与 [[SPRINT_resolved_struct_field_audit]] §9.1 共担）。
+> - release-flag 影子字段处置（`reward_release_after_score` / `rollout_release_before_reward_model`，`vrl/ray/resources.py:146/149` 现仅被日志读、行为走 `resolved.lifecycle.*`）。
+>
+> **更正（曾在本节列为"开放"、实际已落地/已决策）**：`advantage_low` 非对称数学（§4.1，删 public knob、loss 内派生 `low=-high`）、
+> `pool`-reward 双写（§4.2，抽共享 `active_pool_reward_keys`，`00ec830`）、reward `repo@rev` 解析（§4.2，抽 `vrl/rewards/models/hub.py` `parse_hf_repo_revision`，`00ec830`）均**已落地**；
+> `media_type` 由 `artifact_format` 派生（§4.1）经复核**决策不放松**、保留 fail-loud gate（非目标）。
 
 > 方法：1 个编排 workflow，10 个子系统各 1 个 survey agent（逐文件真实 read/grep 找候选），每个子系统
 > 的候选再派 1 个**对抗式验证 agent**（专门去反证它其实是故意的/必要的，并把候选与用户已知偏好的护栏
