@@ -151,6 +151,25 @@ def test_fp8_linear_matches_bf16_within_tolerance(recipe):
 
 
 @requires_fp8
+def test_fp8_linear_exposes_master_weight_and_requantizes_on_sync():
+    """Full-finetune weight-sync loads the bf16 `weight` key; the fp8 cache must
+    re-derive from it (regression: cosmos full fine-tune sync failed because the
+    swapped module had weight_fp8, not weight)."""
+    torch.manual_seed(0)
+    fp8 = Fp8Linear(nn.Linear(2048, 2048).cuda().to(torch.bfloat16)).cuda()
+    sd = fp8.state_dict()
+    assert "weight" in sd  # the trainable key the sync expects
+    assert "weight_fp8" not in sd and "weight_scale" not in sd  # cache is derived
+    # simulate a weight sync: load a fresh weight, output must track it
+    new = nn.Linear(2048, 2048).cuda().to(torch.bfloat16)
+    fp8.load_state_dict(new.state_dict())
+    x = torch.randn(256, 2048, device="cuda", dtype=torch.bfloat16)
+    ref = new(x)
+    rel = (fp8(x).float() - ref.float()).abs().mean() / ref.float().abs().mean()
+    assert rel < 0.06, f"fp8 output should track the synced weight (drift {rel:.4f})"
+
+
+@requires_fp8
 def test_fp8_linear_handles_fp32_activations():
     """DiT adaLN / pooled-projection paths feed fp32 activations, and rowwise
     _scaled_mm rejects an fp32 output. Fp8Linear must accumulate in bf16 and
