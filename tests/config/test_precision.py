@@ -82,21 +82,21 @@ def test_scalar_fp32_keeps_frozen_fp16():
     assert p == PrecisionPolicy(compute="fp32", rollout="fp32", math="fp32", frozen="fp16")
 
 
-def test_unknown_precision_keys_are_flagged_and_cannot_split():
-    """Unknown precision keys (incl. old compute/rollout) are reported by the
-    whole-tree walker and ignored by the parser, so rollout/replay forward
-    precision stays coupled via `forward` only."""
+def test_rollout_split_is_honored_legacy_compute_still_flagged():
+    """`rollout` is the experimental split key: it overrides the forward dtype on
+    the rollout side (compute/replay stays on `forward`). The dropped legacy
+    `compute` key is still reported by the whole-tree walker; `rollout` is not."""
     from omegaconf import OmegaConf
 
     from vrl.config.unknown_keys import find_unknown_keys
 
     block = {"forward": "bf16", "rollout": "fp32", "compute": "fp16"}
     p = resolve_precision_policy(_cfg(precision=block))
-    assert p.compute == "bf16"
-    assert p.rollout == "bf16"  # still coupled to forward — split is impossible
+    assert p.compute == "bf16"  # replay/training forward follows `forward`
+    assert p.rollout == "fp32"  # explicit rollout override is honored (the split)
     unknown = find_unknown_keys(OmegaConf.create({"precision": block}))
-    assert "precision.compute" in unknown
-    assert "precision.rollout" in unknown
+    assert "precision.compute" in unknown  # dropped legacy key still flagged
+    assert "precision.rollout" not in unknown  # now a valid override
 
 
 def test_math_protected_unless_explicit():
@@ -114,6 +114,50 @@ def test_top_level_precision_is_required():
     """Checks missing top-level precision is rejected."""
     with pytest.raises(ValueError, match="top-level `precision` is required"):
         resolve_precision_policy(_cfg())
+
+
+# -- fp8/fp4 rollout split (the quantized-rollout precision axis) ------------
+
+
+def test_fp8_rollout_split_keeps_replay_bf16_and_frozen_fp16():
+    """{forward: bf16, rollout: fp8} → bf16 replay, fp8 rollout, fp16 frozen, fp32 math."""
+    p = resolve_precision_policy(_cfg(precision={"forward": "bf16", "rollout": "fp8"}))
+    assert p == PrecisionPolicy(compute="bf16", rollout="fp8", math="fp32", frozen="fp16")
+
+
+def test_fp4_rollout_split_allowed():
+    """fp4 is a valid rollout-axis token (Blackwell)."""
+    p = resolve_precision_policy(_cfg(precision={"forward": "bf16", "rollout": "fp4"}))
+    assert p.rollout == "fp4"
+    assert p.compute == "bf16"
+
+
+@pytest.mark.parametrize("token", ["fp8", "fp4"])
+def test_scalar_subbyte_precision_rejected(token):
+    """A scalar fp8/fp4 would set the replay forward sub-byte — rejected."""
+    with pytest.raises(ValueError, match="rollout-only"):
+        resolve_precision_policy(_cfg(precision=token))
+
+
+@pytest.mark.parametrize("axis", ["forward", "math"])
+def test_subbyte_on_forward_or_math_rejected(axis):
+    """fp8/fp4 is only valid on the rollout axis, never forward/math."""
+    with pytest.raises(ValueError, match="invalid"):
+        resolve_precision_policy(_cfg(precision={axis: "fp8", "rollout": "fp8"}))
+
+
+@pytest.mark.parametrize(
+    ("spelling", "torch_name"),
+    [
+        ("fp8", "float8_e4m3fn"),
+        ("e4m3", "float8_e4m3fn"),
+        ("e5m2", "float8_e5m2"),
+        ("fp4", "float4_e2m1fn_x2"),
+    ],
+)
+def test_resolve_torch_dtype_subbyte(spelling, torch_name):
+    """Sub-byte spellings resolve to the matching torch dtype (torch 2.11 has them)."""
+    assert resolve_torch_dtype(spelling) is getattr(torch, torch_name)
 
 
 def test_legacy_actor_precision_keys_warn_via_schema(caplog):

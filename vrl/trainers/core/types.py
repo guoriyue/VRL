@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
 from vrl.utils.profiling import TorchProfilerConfig
 
 
@@ -248,6 +249,13 @@ class TrainerConfig:
     precision_drift_guard: PrecisionDriftGuardConfig = field(
         default_factory=PrecisionDriftGuardConfig,
         metadata={"yaml": "trainer.precision_drift_guard"},
+    )
+    # Correction counterpart to the drift guard: truncated importance sampling
+    # knobs, injected into the algorithm so they live at the trainer (precision)
+    # level rather than in any algorithm's hyperparameters.
+    precision_correction: PrecisionCorrectionConfig = field(
+        default_factory=PrecisionCorrectionConfig,
+        metadata={"yaml": "trainer.precision_correction"},
     )
     rollout_orchestration: RolloutOrchestrationConfig = field(
         default_factory=RolloutOrchestrationConfig,

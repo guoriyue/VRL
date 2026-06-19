@@ -14,6 +14,7 @@ import pytest
 import torch
 
 from vrl.algorithms.grpo.token import TokenGRPO, TokenGRPOConfig
+from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
 
@@ -138,6 +139,42 @@ class TestMask:
         l_half, _ = algo.compute_loss(_inputs(new_lp, old_lp, adv, mask=mask_half))
         # half mask only counts the +0.5 tokens → mean is more negative
         assert l_half.item() < l_full.item()
+
+
+class TestTokenTIS:
+    """TIS folds into the per-token mask for the token GRPO path.
+
+    The TIS knobs live on the injected ``precision_correction`` slot, not in
+    TokenGRPOConfig (the trainer sets it from ``trainer.precision_correction``).
+    """
+
+    def test_mask_mode_rejects_high_drift_tokens(self) -> None:
+        """Tokens whose rollout->replay ratio exceeds the cap are dropped from the mean."""
+        # token0 ratio = e^2 (>cap), token1 ratio = 1 (kept)
+        old_lp = torch.zeros(1, 2)
+        new_lp = torch.tensor([[2.0, 0.0]])
+        adv = torch.tensor([5.0])
+        algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=0.0))
+        algo.precision_correction = PrecisionCorrectionConfig(
+            tis_mode="mask", tis_imp_weight_cap=2.0,
+        )
+        loss, metrics = algo.compute_loss(_inputs(new_lp, old_lp, adv))
+        # only token1 (ratio 1, adv 5) survives → -adv*1 = -5
+        assert loss.item() == pytest.approx(-5.0)
+        assert metrics.tis_clip_fraction == pytest.approx(0.5)
+
+    def test_off_mode_is_noop(self) -> None:
+        old_lp = torch.zeros(1, 4)
+        new_lp = old_lp + 0.3
+        adv = torch.ones(1)
+        base, _ = TokenGRPO(TokenGRPOConfig(init_kl_coef=0.0, eps_clip=1.0)).compute_loss(
+            _inputs(new_lp, old_lp, adv),
+        )
+        off_algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=0.0, eps_clip=1.0))
+        off_algo.precision_correction = PrecisionCorrectionConfig(tis_mode="off")
+        off, m = off_algo.compute_loss(_inputs(new_lp, old_lp, adv))
+        assert off.item() == pytest.approx(base.item())
+        assert m.tis_clip_fraction == 0.0
 
 
 # ---------------------------------------------------------------------------

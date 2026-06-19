@@ -7,7 +7,11 @@ from typing import Any
 
 from vrl.algorithms.advantages import group_relative_advantages
 from vrl.algorithms.base import Algorithm
-from vrl.algorithms.logprob_mismatch import compute_logprob_mismatch_stats
+from vrl.algorithms.logprob_mismatch import (
+    PrecisionCorrectionConfig,
+    apply_truncated_importance_weight,
+    compute_logprob_mismatch_stats,
+)
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.types import TrainStepMetrics
 
@@ -36,6 +40,10 @@ class GRPO(Algorithm):
 
     def __init__(self, config: GRPOConfig | None = None) -> None:
         self.config = config or GRPOConfig()
+        # Rollout->replay precision correction (TIS). Off by default; the trainer
+        # injects trainer.precision_correction here at construction so the knobs
+        # live at the trainer level, not in the algorithm's hyperparameters.
+        self.precision_correction = PrecisionCorrectionConfig()
         # Diagnostic stash: last call's policy_loss and (init_kl_coef * kl_loss)
         # tensors, kept alive (not detached) for grad-split diagnostics in
         # the trainer. Set to None when not applicable.
@@ -82,11 +90,26 @@ class GRPO(Algorithm):
         advantages = inputs.advantages
         old_log_probs = signals.old_log_prob
 
-        ratio = torch.exp(signals.log_prob - old_log_probs)
+        raw_ratio = torch.exp(signals.log_prob - old_log_probs)
+        # Truncated importance sampling on the rollout->replay weight before the PPO
+        # clip, so quantized-rollout (fp8/fp4) drift on a few samples cannot dominate
+        # the gradient via the unclipped negative-advantage branch.
+        pc = self.precision_correction
+        ratio, tis_keep = apply_truncated_importance_weight(raw_ratio, pc)
         clipped_ratio = torch.clamp(ratio, 1.0 - cfg.eps_clip, 1.0 + cfg.eps_clip)
         unclipped_loss = -advantages * ratio
         clipped_loss = -advantages * clipped_ratio
-        policy_loss = torch.mean(torch.maximum(unclipped_loss, clipped_loss))
+        per_sample_loss = torch.maximum(unclipped_loss, clipped_loss)
+        if tis_keep is not None:
+            policy_loss = (per_sample_loss * tis_keep).sum() / tis_keep.sum().clamp_min(1.0)
+            tis_clip_fraction = (1.0 - tis_keep.mean()).item()
+        else:
+            policy_loss = torch.mean(per_sample_loss)
+            tis_clip_fraction = (
+                0.0
+                if pc.tis_mode == "off"
+                else (ratio != raw_ratio).float().mean().item()
+            )
 
         if cfg.init_kl_coef > 0:
             if signals.ref_log_prob is None:
@@ -133,6 +156,7 @@ class GRPO(Algorithm):
             kl_penalty=kl_loss.item(),
             clip_fraction=clip_fraction,
             approx_kl=approx_kl,
+            tis_clip_fraction=tis_clip_fraction,
             logprob_abs_diff_mean=mismatch.logprob_abs_diff_mean,
             logprob_abs_diff_max=mismatch.logprob_abs_diff_max,
             ratio_abs_dev_mean=mismatch.ratio_abs_dev_mean,

@@ -24,6 +24,10 @@ class TrainStepMetrics:
     ratio_abs_dev_max: float = 0.0
     mismatch_kl: float = 0.0
     mismatch_k3_kl: float = 0.0
+    # Fraction of samples whose rollout->replay importance weight was truncated or
+    # rejected by truncated importance sampling (0 when tis_mode='off'). Rises with
+    # rollout-vs-replay precision drift (e.g. fp8 rollout vs bf16 replay).
+    tis_clip_fraction: float = 0.0
     grad_norm: float = 0.0
     adv_saturation: float = 0.0
     adv_zero_rate: float = 0.0

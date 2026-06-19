@@ -8,6 +8,7 @@ from typing import Any
 import torch
 
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
+from vrl.algorithms.logprob_mismatch import apply_truncated_importance_weight
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.types import TrainStepMetrics
 
@@ -53,14 +54,18 @@ class TokenGRPO(GRPO):
         else:
             adv_bL = advantages
 
-        ratio = torch.exp(new_lp - old_lp)
+        raw_ratio = torch.exp(new_lp - old_lp)
+        # TIS on the rollout->replay weight (old_lp is the rollout behavior logprob),
+        # folded into the per-token mask so 'mask' mode drops drift-rejected tokens.
+        ratio, tis_keep = apply_truncated_importance_weight(raw_ratio, self.precision_correction)
+        eff_mask = mask if tis_keep is None else mask * tis_keep
         clipped_ratio = torch.clamp(ratio, 1.0 - cfg.eps_clip, 1.0 + cfg.eps_clip)
         unclipped_loss = -adv_bL * ratio
         clipped_loss = -adv_bL * clipped_ratio
         per_token_loss = torch.maximum(unclipped_loss, clipped_loss)
 
-        denom = mask.sum().clamp_min(1.0)
-        policy_loss = (per_token_loss * mask).sum() / denom
+        denom = eff_mask.sum().clamp_min(1.0)
+        policy_loss = (per_token_loss * eff_mask).sum() / denom
 
         if cfg.init_kl_coef > 0:
             if signals.ref_log_prob is None:
@@ -75,7 +80,7 @@ class TokenGRPO(GRPO):
             ref_lp: torch.Tensor = signals.ref_log_prob
             log_ratio = new_lp - ref_lp
             kl_per_tok = _token_kl_per_token(log_ratio, cfg.kl_estimator)
-            kl_loss = (kl_per_tok * mask).sum() / denom
+            kl_loss = (kl_per_tok * eff_mask).sum() / denom
             loss = policy_loss + cfg.init_kl_coef * kl_loss
         else:
             kl_loss = torch.zeros((), device=new_lp.device)
@@ -87,9 +92,18 @@ class TokenGRPO(GRPO):
                 ratio_valid = ratio[valid]
                 clip_fraction = (torch.abs(ratio_valid - 1.0) > cfg.eps_clip).float().mean().item()
                 approx_kl = 0.5 * ((new_lp - old_lp) ** 2)[valid].mean().item()
+                if tis_keep is None:
+                    tis_clip_fraction = (
+                        0.0
+                        if self.precision_correction.tis_mode == "off"
+                        else (ratio[valid] != raw_ratio[valid]).float().mean().item()
+                    )
+                else:
+                    tis_clip_fraction = (1.0 - tis_keep[valid]).mean().item()
             else:
                 clip_fraction = 0.0
                 approx_kl = 0.0
+                tis_clip_fraction = 0.0
 
         metrics = TrainStepMetrics(
             loss=loss.item(),
@@ -97,6 +111,7 @@ class TokenGRPO(GRPO):
             kl_penalty=kl_loss.item(),
             clip_fraction=clip_fraction,
             approx_kl=approx_kl,
+            tis_clip_fraction=tis_clip_fraction,
         )
         return loss, metrics
 

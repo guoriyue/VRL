@@ -16,6 +16,7 @@ from omegaconf import DictConfig, OmegaConf
 from omegaconf.errors import MissingMandatoryValue
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
 from vrl.config.unknown_keys import OPEN, ConfigBlock
 from vrl.models.interfaces.runtime import MODEL_MEMORY_SECTIONS
 from vrl.ray.resources import (
@@ -333,6 +334,7 @@ class TrainerSection(ConfigBase):
     debug: Annotated[Any, ConfigBlock(DebugConfig)] = None
     eval: Annotated[Any, ConfigBlock(EvalConfig)] = None
     precision_drift_guard: Annotated[Any, ConfigBlock(PrecisionDriftGuardConfig)] = None
+    precision_correction: Annotated[Any, ConfigBlock(PrecisionCorrectionConfig)] = None
     # continuous sub-block nests automatically from the dataclass field type
     rollout_orchestration: Annotated[Any, ConfigBlock(RolloutOrchestrationConfig)] = None
     torch_profiler: Annotated[Any, ConfigBlock(TorchProfilerConfig)] = None
@@ -498,8 +500,9 @@ class RootConfig(ConfigBase):
     trainer: TrainerSection | None = None
     actor: ActorSection | None = None
     distributed: DistributedSection | None = None
-    # reader: vrl/config/precision.py (scalar form skips the block walk)
-    precision: Annotated[Any, ConfigBlock(("forward", "math", "frozen"))] = None
+    # reader: vrl/config/precision.py (scalar form skips the block walk).
+    # `rollout` is the experimental fp8/fp4-rollout split (rollout != forward).
+    precision: Annotated[Any, ConfigBlock(("forward", "rollout", "math", "frozen"))] = None
     # reader: vrl/scripts/diffusion/cosmos/train.py
     cosmos: Annotated[Any, ConfigBlock(("reference_mode",))] = None
 

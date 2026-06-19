@@ -659,7 +659,22 @@ async def run_online_recipe(
         if definition.weight_dtype_getter is not None
         else torch_dtype_for_trainer_precision(trainer_config, torch)
     )
-    rollout_weight_dtype = resolve_torch_dtype(resolve_precision_policy(cfg).rollout)
+    rollout_precision = resolve_precision_policy(cfg).rollout
+    if rollout_precision in ("fp8", "fp4"):
+        # The precision policy, drift guard, and GRPO TIS accept fp8/fp4 on the
+        # rollout axis for measurement, correction, and validation
+        # (vrl/scripts/perf/fp8_rollout_drift_probe.py). But a *live* rollout
+        # cannot execute it yet: the generation engine's diffusion forward does
+        # not route the policy GEMM through torch._scaled_mm, so loading the
+        # rollout model in float8 storage would crash at the first nn.Linear.
+        # Fail loudly here instead of deep in a run. See
+        # docs/sprints/planned/SPRINT_fullparam_and_fp8_precision.md §2 ("待接").
+        raise NotImplementedError(
+            f"precision.rollout={rollout_precision!r}: fp8/fp4 rollout is not yet "
+            "wired into the generation engine (no scaled_mm GEMM path). Use a bf16/"
+            "fp16/fp32 rollout for live runs; fp8/fp4 is currently measurement-only.",
+        )
+    rollout_weight_dtype = resolve_torch_dtype(rollout_precision)
     context = RecipeDeviceContext(
         device=device,
         weight_dtype=weight_dtype,

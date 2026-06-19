@@ -6,6 +6,7 @@ import pytest
 import torch
 
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
+from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
 
@@ -209,6 +210,88 @@ class TestGRPOClippedSurrogate:
         assert metrics.logprob_abs_diff_mean == 0.0
         assert metrics.ratio_abs_dev_max == 0.0
         assert metrics.mismatch_k3_kl == 0.0
+
+
+class TestGRPOTruncatedImportanceSampling:
+    """TIS bounds the rollout->replay importance weight (continuous.py).
+
+    These guard the fp8/fp4-rollout correction path: under a quantized rollout the
+    weight exp(replay - rollout) inflates on a few samples and, on negative
+    advantages, drives a large *unclipped* gradient. TIS caps/masks it. The TIS
+    knobs live on the algorithm's injected ``precision_correction`` (the trainer
+    sets it from ``trainer.precision_correction``), not in GRPOConfig.
+    """
+
+    @staticmethod
+    def _grpo(**pc_kwargs) -> GRPO:
+        grpo = GRPO(GRPOConfig(init_kl_coef=0.0))
+        if pc_kwargs:
+            grpo.precision_correction = PrecisionCorrectionConfig(**pc_kwargs)
+        return grpo
+
+    def test_off_mode_matches_legacy_and_reports_zero_clip(self) -> None:
+        """The default (off) precision correction is a pure no-op vs the legacy loss."""
+        adv = torch.tensor([2.0, -3.0, 1.0])
+
+        def _signals():
+            return _flow_signals(
+                log_prob=torch.tensor([1.0, 0.0, -0.5]), old_log_prob=torch.zeros(3),
+            )
+
+        base, _ = self._grpo().compute_loss(AlgorithmInput(signals=_signals(), advantages=adv))
+        off, off_m = self._grpo(tis_mode="off").compute_loss(
+            AlgorithmInput(signals=_signals(), advantages=adv),
+        )
+        assert off.item() == pytest.approx(base.item())
+        assert off_m.tis_clip_fraction == 0.0
+
+    def test_truncate_caps_unclipped_negative_advantage_gradient(self) -> None:
+        """truncate caps the ratio, so the dangerous adv<0 unclipped branch is bounded.
+
+        Without TIS, adv=-3 at ratio=e gives loss -adv*e ≈ 8.15. With cap=2.0 the
+        ratio is truncated to 2.0 → loss -adv*2.0 = 6.0.
+        """
+        cap = 2.0
+        grpo = self._grpo(tis_mode="truncate", tis_imp_weight_cap=cap)
+        signals = _flow_signals(log_prob=torch.full((1,), 1.0), old_log_prob=torch.zeros(1))
+        adv = torch.tensor([-3.0])
+        loss, metrics = grpo.compute_loss(AlgorithmInput(signals=signals, advantages=adv))
+        assert loss.item() == pytest.approx(-adv.item() * cap)
+        assert metrics.tis_clip_fraction == pytest.approx(1.0)
+
+    def test_truncate_leaves_in_range_samples_untouched(self) -> None:
+        """A ratio below the cap is unchanged; clip fraction reflects only altered ones."""
+        grpo = self._grpo(tis_mode="truncate", tis_imp_weight_cap=2.0)
+        # ratio: e (>cap, truncated) and 1.0 (untouched)
+        signals = _flow_signals(log_prob=torch.tensor([1.0, 0.0]), old_log_prob=torch.zeros(2))
+        _, metrics = grpo.compute_loss(
+            AlgorithmInput(signals=signals, advantages=torch.tensor([-3.0, 1.0])),
+        )
+        assert metrics.tis_clip_fraction == pytest.approx(0.5)
+
+    def test_mask_drops_out_of_range_samples_from_mean(self) -> None:
+        """mask mode rejects catastrophic-drift samples entirely (masked mean)."""
+        grpo = self._grpo(tis_mode="mask", tis_imp_weight_cap=2.0)
+        # sample0 ratio=e>cap rejected; sample1 ratio=1 kept → loss = -adv1*1 = -1.0
+        signals = _flow_signals(log_prob=torch.tensor([1.0, 0.0]), old_log_prob=torch.zeros(2))
+        loss, metrics = grpo.compute_loss(
+            AlgorithmInput(signals=signals, advantages=torch.tensor([5.0, 1.0])),
+        )
+        assert loss.item() == pytest.approx(-1.0)
+        assert metrics.tis_clip_fraction == pytest.approx(0.5)
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"tis_mode": "nope"},
+            {"tis_imp_weight_cap": 0.0},
+            {"tis_clip_low": -1.0},
+            {"tis_mode": "clip", "tis_clip_low": 2.0, "tis_imp_weight_cap": 2.0},
+        ],
+    )
+    def test_invalid_precision_correction_config_raises(self, kwargs) -> None:
+        with pytest.raises(ValueError):
+            PrecisionCorrectionConfig(**kwargs)
 
 
 def _flow_signals(

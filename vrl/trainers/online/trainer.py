@@ -327,6 +327,11 @@ class OnlineTrainer(Trainer):
             )
         self.sync_state_getter = sync_state_getter
         self.config = config
+        # Precision correction (TIS) is a trainer-level precision-drift concern, not
+        # an algorithm hyperparameter; inject it into algorithms that apply it
+        # (importance-ratio algorithms hold a `precision_correction` slot).
+        if hasattr(algorithm, "precision_correction"):
+            algorithm.precision_correction = config.precision_correction
         self.prompts = prompts or []
         self.device = torch.device(device) if isinstance(device, str) else device
         self.state = TrainState()
