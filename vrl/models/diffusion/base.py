@@ -272,7 +272,7 @@ class DiffusionModelBase(nn.Module, ABC):
         Call before ``torch_compile_transformer`` so inductor sees the fp8 modules.
         """
 
-        from vrl.models.diffusion.fp8 import swap_linears_to_fp8
+        from vrl.models.fp8 import swap_linears_to_fp8
 
         return swap_linears_to_fp8(self.transformer, recipe=recipe)
 

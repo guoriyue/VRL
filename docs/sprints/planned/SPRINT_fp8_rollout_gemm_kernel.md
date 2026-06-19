@@ -43,7 +43,7 @@ fp8 不是 drop-in dtype（bf16/fp16 有原生自动 dispatch 的 GEMM，fp8 没
 
 ## 3. 工作分解
 
-1. ✅ **量化路径（自研 `Fp8Linear`）**：`vrl/models/diffusion/fp8.py`。torch 原生 `_scaled_mm`、e4m3、bf16 master + bf16 累加、weight 构造时量化一次、activation 每步动态量化。`rowwise`（per-token / per-output-channel，抗激活 outlier）或 `tensorwise`。没引 torchao/TE（保持零依赖）。
+1. ✅ **量化路径（自研 `Fp8Linear`）**：`vrl/models/fp8.py`。torch 原生 `_scaled_mm`、e4m3、bf16 master + bf16 累加、weight 构造时量化一次、activation 每步动态量化。`rowwise`（per-token / per-output-channel，抗激活 outlier）或 `tensorwise`。没引 torchao/TE（保持零依赖）。
 2. ✅ **swap 方法**：`base.py` `quantize_transformer_fp8(recipe)`（与 `torch_compile_transformer` 同级）→ `swap_linears_to_fp8` 遍历 module tree，按 exclude 子串 + `min_features` 只换大 attention/MLP linear。
 3. ✅ **拆 weight_dtype 语义 + ungate**：`online.py` fp8 时 storage = bf16 master（`policy.compute`）、删 `NotImplementedError`（fp4 仍 gated）；`rollout_quantization` 信号由 `extract_runtime_spec` 从 `precision.rollout` 派生进 `RuntimeBuildSpec`；三家 rollout builder（sd3_5/wan/cosmos）compile 前调 `loader.apply_rollout_fp8(model, spec)`，replay builder 不碰。
 4. ✅ **scaling recipe**：rowwise（默认）+ tensorwise 都实现并验。随机数据上两者≈（3.7%）；真实激活 outlier 下 rowwise 更稳。per-block(slime 式) 留作进一步 accuracy 杠杆。

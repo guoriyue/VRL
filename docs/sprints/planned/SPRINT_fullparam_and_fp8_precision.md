@@ -22,7 +22,7 @@
   - **TIS**（truncated importance sampling）`tis_mode=off|truncate|clip|mask`，在 PPO clip 前截断 rollout→replay 重要性权重，防 fp8 漂移在负优势样本上撑爆未截断梯度。**配置和原语都在算法层漂移模块 `vrl/algorithms/logprob_mismatch.py`**（`PrecisionCorrectionConfig` + `apply_truncated_importance_weight`，与 `compute_logprob_mismatch_stats` 并排 = 测量+修正一处）；**旋钮不在 GRPOConfig**，而在 trainer 层 `trainer.precision_correction`（与 `precision_drift_guard` 并排），trainer `__init__` 注入算法的 `precision_correction` 槽。两个 GRPO 家族共用同一原语，`TrainStepMetrics.tis_clip_fraction` 上报。
   - 既有 drift guard（`vrl/trainers/online/precision_guard.py`，`auto` 在 rollout!=compute 时 →fail）对 fp8 直接复用，无需改动——guard 测量/拦，TIS 在 loss 端 bound，是它的对侧。
   - 验证资产：`vrl/scripts/perf/fp8_rollout_drift_probe.py`——真 `_scaled_mm` fp8 GEMM 测漂移 → 喂 `compute_logprob_mismatch_stats` → guard 触发 → TIS 在轨迹累积漂移的尾部 engage。实测：单步漂移温和（ratio_dev max ~0.14），沿 T=35 去噪步累积后 max ~0.87，cap=1.5 时 TIS 截断 ~1.2% 轨迹。
-- **kernel 已接（2026-06-19，见 [[SPRINT_fp8_rollout_gemm_kernel]]）**：`Fp8Linear`（`vrl/models/diffusion/fp8.py`，真 `_scaled_mm`）+ `base.quantize_transformer_fp8` + 三家 rollout builder 全链路 wiring 已落地。5090 实测：fp8 比 bf16 **快 1.40x**（geomean）、24-block DiT 端到端漂移 **6.6%**。`precision.rollout=fp8` live run 可起。剩真实 checkpoint 的端到端验证。
+- **kernel 已接（2026-06-19，见 [[SPRINT_fp8_rollout_gemm_kernel]]）**：`Fp8Linear`（`vrl/models/fp8.py`，真 `_scaled_mm`）+ `base.quantize_transformer_fp8` + 三家 rollout builder 全链路 wiring 已落地。5090 实测：fp8 比 bf16 **快 1.40x**（geomean）、24-block DiT 端到端漂移 **6.6%**。`precision.rollout=fp8` live run 可起。剩真实 checkpoint 的端到端验证。
 - **历史**：用户 2026-06-14 曾 park，分析保留在 [[SPRINT_gemm_utilization]]。
 
 ## 3. 下一步：让 fp8 rollout 真正 alive（kernel sprint）
