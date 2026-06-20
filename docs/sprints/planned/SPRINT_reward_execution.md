@@ -367,3 +367,129 @@ VRL 代码（落点）：
 - `vrl/rollouts/collector/core.py`（collect_unscored / score_rollouts —— G1 barrier）
 - `vrl/rollouts/orchestration/continuous/`（异步流水线落点）
 - `vrl/generation/ray/executor.py`（ref 数据面落点）
+
+## 12. verl-omni 证据：逐样本流式打分（P1 的实现参考）
+
+verl-omni 已经把本 sprint §6 的 P1（异步打分主线）跑成了产品代码：reward **不是**在 rollout 全收完后一次性打的，而是**每个 sample 一产出就立刻 fire 一个 per-sample reward task**，与后续样本的生成并发；同时 reward 拿到**自己独立的 resource pool**，trainer 主循环据此**跳过 colocated 打分**（因为分数已经随 rollout 流回来了）。这正好是本 sprint P1 想要的"group 一产出即异步丢 reward 打分"（§6:256-262）。关键区别要写清楚：**verl-omni 是复用上游 verl 的 reward-loop 机制**（`verl.experimental.reward_loop.RewardLoopManager` + `verl.experimental.agent_loop.AgentLoopManager`），而 **vrl 不引入这套，而是在已有的 `RayRewardRuntime` 里把"整批 `score_batch`"改写成"逐 group 流式 score"**——落点仍是 §6 P1 写的 `collector/core.py` + `orchestration/continuous/`，不新建 reward 服务。**on-policy 边界不变**：流式只改变"何时把分打出来"，policy 更新依旧等整批打完（见下文边界说明）。
+
+### 12.1 逐样本流式打分：per-sample `compute_score.remote`
+
+verl-omni 现在 在 agent loop 里对**单个样本**直接 `await ...compute_score.remote(data)`，且只在异步 reward 开启（拿到 worker handle）时才走这条路：
+
+```python
+# diffusion_agent_loop.py:273-277
+async def _compute_score(self, output, prompts, responses, kwargs):
+    """Compute reward score for single sample."""
+    enable_async_reward = self.reward_loop_worker_handles is not None
+    if output.reward_score is None and enable_async_reward:
+```
+```python
+# diffusion_agent_loop.py:297-300
+selected_reward_loop_worker_handle = random.choice(self.reward_loop_worker_handles)
+result = await selected_reward_loop_worker_handle.compute_score.remote(data)
+output.reward_score = result["reward_score"]
+output.extra_fields["reward_extra_info"] = result["reward_extra_info"]
+```
+注意打包给 reward 的 `batch` 是 `batch_size=1`（`diffusion_agent_loop.py:280-286`，`prompts [1, L]` / `responses [1, C, H, W]`），即**一个样本一个 task**、从一个 reward worker 池里随机挑 handle——天然把打分摊到 reward 池并和别的样本的生成重叠。这就是 P1 §6:257 "group 一产出即异步丢 reward 打分，与下一轮生成并发" 的具体机制。
+（verl_omni/agent_loop/diffusion_agent_loop.py:273-300）
+
+vrl 现状 是**整批、阻塞**：先 generate-all 再 score-all（本 sprint §0 已点名的 G1 barrier）：
+
+```python
+# prompt_collection.py:23-26
+"""Two phases: generate every prompt group first (the generation runtime stays
+resident throughout), then score all groups through one reward call."""
+```
+而 vrl 真正打分的入口是 `RayRewardRuntime.score_batch`，它接的是**整个 request**、内部按 worker 数 shard 后 `map`：
+```python
+# rewards/ray/runtime.py:53-64
+async def score_batch(self, request: RewardInferenceRequest) -> list[RewardInferenceResult]:
+    ...
+    shards = shard_reward_request(request, num_shards=self._actor.num_workers)
+    ...
+    nested = await self._actor.map(shards)
+```
+P1 的 vrl 落地 = **不改 transport seam，改驱动方式**：让 `orchestration/` 在每个 group `collect_unscored` 完成后立刻对该 group 调 `score_batch`（或新增一个 per-group 的 `score_group`），把结果 future 挂回流水线，而不是攒满 `unscored_groups` 后一次 score-all。`RayRewardRuntime` 已经是 actor 池 + `_actor.map`，**逐 group 喂正是它擅长的**——这对位 verl-omni 的 per-sample handle，只是 vrl 的粒度是 group 而非单样本（vrl 的 reward 模型按 group 算 GRPO 优势更自然）。
+（vrl/rollouts/orchestration/prompt_collection.py:23-26,74-80；vrl/rewards/ray/runtime.py:53-64）
+
+### 12.2 disjoint-pool gate：reward 有独立 pool 时 trainer 跳过 colocated 打分
+
+verl-omni 现在 用一个显式开关决定"流式 reward 是否生效"，条件就是**没有 RM、或 RM 拿到了独立 resource pool**：
+
+```python
+# ray_diffusion_trainer.py:670-674
+enable_agent_reward_loop = not self.use_rm or self.config.reward.reward_model.enable_resource_pool
+# if enable_agent_reward_loop, we directly pass reward_loop_workers to agent loop manager
+reward_loop_worker_handles = self.reward_loop_manager.reward_loop_workers if enable_agent_reward_loop else None
+```
+reward 的独立 pool 来自 `ResourcePoolManager` 按 `Role.RewardModel` 取：
+```python
+# ray_diffusion_trainer.py:646-650
+resource_pool = self.resource_pool_manager.get_resource_pool(Role.RewardModel) if self.use_rm else None
+self.reward_loop_manager = RewardLoopManager(config=self.config, rm_resource_pool=resource_pool)
+```
+handle 只在 `enable_agent_reward_loop` 时塞进 agent loop manager（`ray_diffusion_trainer.py:684` 的 `reward_loop_worker_handles=...`）。而 trainer 主循环里的 colocated 打分**带一个 short-circuit**：分数已经随 rollout 流回来（`rm_scores` 已在 batch 里）时就**不再** colocated 打：
+
+```python
+# ray_diffusion_trainer.py:1000-1005
+with marked_timer("reward", timing_raw, color="yellow"):
+    if self.use_rm and "rm_scores" not in batch.batch.keys():
+        batch_reward = self._compute_reward_colocate(batch)
+        batch = batch.union(batch_reward)
+    reward_tensor, reward_extra_infos_dict = extract_reward(batch)
+```
+读法：流式开启 → reward worker 在自己的 pool 上、和 rollout 并发把 `rm_scores` 填进 batch → trainer 看到 `rm_scores` 已存在 → **跳过** `_compute_reward_colocate`（不在 rollout 卡上分时打分）。这就是本 sprint §6:260 "让 dedicated reward 卡靠持续 backlog 喂满" 的对位：reward 占独立 pool 是流式打分能并发的前提，二者同一个开关。
+（verl_omni/trainer/diffusion/ray_diffusion_trainer.py:646-650,670-674,684,1000-1005）
+
+vrl 现状 已经有同样语义的 backend 开关，只是还没接到"流式"上：`make_reward_runtime` 按 `execution: inline|pool` 选 in-process 还是 Ray 池：
+
+```python
+# rewards/runtime.py:62-81
+def make_reward_runtime(execution: Literal["inline", "pool"], *, model_factory, worker_config=None):
+    ...
+    if runtime == "inline":
+        return LocalRewardRuntime(worker_cfg)
+    if runtime == "pool":
+        from vrl.rewards.ray.runtime import RayRewardRuntime
+        ...
+        return RayRewardRuntime(ray_cfg)
+```
+对位关系：verl-omni 的 `enable_agent_reward_loop`（要不要流式 + 要不要独立 pool）≈ vrl 的 `execution == "pool"`（reward 在独立 Ray actor 池）。**P1 在 vrl 不需要新开关**——`execution=pool` 已经把 reward 摆到独立池，P1 只要让 orchestration 在 pool 模式下逐 group 流式 `score_batch`；`execution=inline`（单卡 fallback，§7）保持整批阻塞即可。这与本 sprint §6 P2 "复用已有 execution(inline|pool) 当 backend switch" 是同一条线。
+（vrl/rewards/runtime.py:62-81）
+
+### 12.3 on-policy 边界：策略更新仍等整批打完
+
+流式打分**不**破坏 on-policy。verl-omni 里逐 sample 打的 `reward_score` 只是更早 ready；真正进训练前，`_postprocess`（`diffusion_agent_loop.py:303` 起）把所有样本 `torch.cat` 回一个 batch，trainer 在 `marked_timer("reward")` 块里统一 `extract_reward(batch)`（`ray_diffusion_trainer.py:1004-1005`）后才进 `old_log_prob`/优势/更新。也就是：**"何时打分"被异步化，"何时用分更新策略"没有**——policy step 依旧消费一个完整、已全部打分的 batch。
+
+对 vrl 的含义：P1 落在 `strict_on_policy`（默认 serial）下时，收益是**把 reward 的 wall-clock 藏到生成后续 group 背后**（§6 验收 §10:356 "reward 打分与下一轮生成 wall-clock 重叠"），但 OnlineTrainer.step 仍等整批 scored batch——on-policy 不变。只有切到 `continuous` 模式、允许版本错配时，才会引入额外 staleness，那由现有 `StalenessPolicy` 管，**不属于 P1 改的语义**。所以 P1 是纯吞吐优化，不是 on/off-policy 的语义切换——这点要在落地时写进 §9.1 的边界说明，避免被误读成"流式 = off-policy"。
+
+### 12.4 小结：抄什么、不抄什么
+
+| 维度 | verl-omni（参考） | vrl 的 P1 落地 |
+| --- | --- | --- |
+| 流式机制载体 | 复用上游 `verl.experimental.reward_loop` + `agent_loop`（`ray_diffusion_trainer.py:641,661`） | **在已有 `RayRewardRuntime.score_batch` 内重写流式**，不引入 verl reward-loop（`rewards/ray/runtime.py:53-64`） |
+| 打分粒度 | per-sample（`batch_size=1`，`diffusion_agent_loop.py:280-298`） | per-group（GRPO 按 group 算优势更自然），逐 group 调 `score_batch` |
+| 独立 pool 开关 | `enable_agent_reward_loop`（`ray_diffusion_trainer.py:670`） | 复用已有 `execution=pool`（`rewards/runtime.py:62`），不新增开关 |
+| colocated 跳过 | `if use_rm and "rm_scores" not in batch`（`ray_diffusion_trainer.py:1000`） | orchestration 在 pool 模式下不再走 generate-all→score-all（替换 `prompt_collection.py:23-26` 的两段式） |
+| on-policy | 更新前 `_postprocess` 把整批 cat 回（`diffusion_agent_loop.py:303`） | OnlineTrainer.step 仍等整批 scored batch，语义不变 |
+
+## Non-Goals（本节追加部分）
+
+- **不引入 verl 的 `RewardLoopManager` / `AgentLoopManager`**。verl-omni 复用上游那套是因为它本就建在 verl 之上；vrl 的 reward transport 已经是 `RayRewardRuntime` + `RayActorMethodRuntime`，P1 在这层内做流式即可，不为对齐 verl 而搬一套 manager 进来。
+- **不改打分粒度到 per-sample**。vrl 按 group 流式就够覆盖 P1 收益；per-sample task 数更多、调度开销更大，且与 GRPO group 优势计算的天然边界不符——未验证 per-sample 在 vrl 下更快，不做。
+- **不在本节改 on/off-policy 语义**。流式只动"何时打分"；continuous 模式的 staleness 由现有 `StalenessPolicy` 负责，不在 P1 范围。
+- **不新增放置/开关配置**。沿用 §6 既定结论：`execution=inline|pool` 就是 backend switch，P1 不加新 config key。
+
+## References（本节追加部分）
+
+读物（证据，本 run 实读）：
+- `verl_omni/agent_loop/diffusion_agent_loop.py:273-300`（per-sample `compute_score.remote`、`enable_async_reward` gate、`batch_size=1` 打包）
+- `verl_omni/agent_loop/diffusion_agent_loop.py:303-322`（`_postprocess` 整批 cat 回 —— on-policy 边界）
+- `verl_omni/trainer/diffusion/ray_diffusion_trainer.py:646-650`（reward 取 `Role.RewardModel` 独立 resource pool → `RewardLoopManager`）
+- `verl_omni/trainer/diffusion/ray_diffusion_trainer.py:670-674,684`（`enable_agent_reward_loop` gate、handle 仅在开启时传入 AgentLoopManager）
+- `verl_omni/trainer/diffusion/ray_diffusion_trainer.py:1000-1005`（colocated 打分的 `"rm_scores" not in batch` short-circuit）
+
+vrl 代码（落点，本 run 实读）：
+- `vrl/rollouts/orchestration/prompt_collection.py:23-26,74-80`（generate-all → score-all，P1 要替换的两段式）
+- `vrl/rewards/runtime.py:62-81`（`make_reward_runtime(execution: inline|pool)` —— 对位 `enable_agent_reward_loop`）
+- `vrl/rewards/ray/runtime.py:53-64`（`RayRewardRuntime.score_batch` → `shard_reward_request` → `_actor.map` —— P1 流式改写的载体）
