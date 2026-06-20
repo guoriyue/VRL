@@ -1,6 +1,6 @@
 # SPRINT: 减少引擎配置要手填的魔法字符串（Literal 化 + 派生默认）
 
-状态：**基本完成**（仅 §2.3 低优先 final_image_policy 去重明确 deferred）。
+状态：**完成**（§2.3 final_image_policy 去重已于 2026-06-19 落地，全部项无剩余；`placement_strategy` dead-knob 明确划归 design_smell_audit backlog，非本 sprint scope）。
 
 落地历史：
 - P0 一批标量 string→Literal（denoise_mode / final_image_policy / attention_backend，17d96fd）、P1 `rollout.sde` typed block + `sync_trainable_state` 默认从 disabled 翻转为 lora_only（6871d23）。
