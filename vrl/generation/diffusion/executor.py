@@ -17,6 +17,11 @@ from vrl.generation.diffusion.layout import (
     DiffusionSamplingParams,
     VideoGenerationRequest,
 )
+from vrl.generation.diffusion.teacache import (
+    TeaCacheConfig,
+    TeaCacheState,
+    teacache_signal,
+)
 from vrl.generation.execution.chunks import (
     SampleChunk,
     run_sample_chunks_with_oom_retry,
@@ -54,6 +59,9 @@ class DiffusionDenoiseConfig:
     noise_level: float = 1.0
     sde_type: str = "sde"
     denoise_mode: str = "sde"
+    # Opt-in rollout-only TeaCache (skip transformer forwards on low-change steps).
+    # None = off = the unchanged full-forward path, so the GRPO baseline is exact.
+    teacache: TeaCacheConfig | None = None
 
 
 @dataclass(slots=True)
@@ -403,6 +411,7 @@ class DiffusionChunkExecutorBase(
             noise_level=params.sde.noise_level,
             sde_type=params.sde.sde_type,
             denoise_mode=params.denoise_mode,
+            teacache=params.teacache,
         )
 
     def forward_plan(
@@ -654,6 +663,16 @@ class DiffusionChunkExecutorBase(
 
         buffers = preallocate_denoise_buffers(state=state, config=config)
 
+        # Rollout-only TeaCache: skip the transformer forward on low-change steps
+        # and reuse the cached noise_pred. None when disabled (baseline unchanged).
+        # The introduced rollout-vs-replay drift rides the same drift-guard/TIS
+        # correction as fp8 — see vrl/generation/diffusion/teacache.py.
+        teacache = (
+            TeaCacheState(config.teacache, len(state.timesteps))
+            if config.teacache is not None and config.teacache.enabled
+            else None
+        )
+
         prompt_embeds = encoded.get("prompt_embeds")
         transformer_dtype = (
             prompt_embeds.dtype
@@ -676,9 +695,17 @@ class DiffusionChunkExecutorBase(
                         latents_ori = state.latents.clone()
                         timestep = state.timesteps[step_idx]
 
-                    with record_function("generation.denoise_forward"):
-                        step_output = model.forward_step(state, step_idx)
-                    noise_pred = step_output["noise_pred"]
+                    if teacache is not None and not teacache.should_run(
+                        teacache_signal(latents_ori, config.teacache.signal),
+                        step_idx,
+                    ):
+                        noise_pred = teacache.cached_noise_pred
+                    else:
+                        with record_function("generation.denoise_forward"):
+                            step_output = model.forward_step(state, step_idx)
+                        noise_pred = step_output["noise_pred"]
+                        if teacache is not None:
+                            teacache.cache_noise_pred(noise_pred)
 
                     if config.denoise_mode == "native":
                         with record_function("generation.scheduler_step"):
@@ -774,6 +801,7 @@ class DiffusionChunkExecutorBase(
                 "diffusion_denoise_mode": config.denoise_mode,
                 "diffusion_rollout_transformer_dtype": _dtype_label(transformer_dtype),
                 "diffusion_rollout_autocast_enabled": rollout_autocast_enabled,
+                **(teacache.counters() if teacache is not None else {}),
             },
         )
 

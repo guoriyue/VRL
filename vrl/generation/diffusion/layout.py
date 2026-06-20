@@ -9,6 +9,7 @@ from typing import Any, TypeVar
 
 import torch
 
+from vrl.generation.diffusion.teacache import TeaCacheConfig
 from vrl.generation.execution.chunks import validate_chunk_range
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
 
@@ -70,6 +71,7 @@ class DiffusionSamplingParams:
     base: DiffusionBaseParams
     sde: DiffusionSDEParams | None
     denoise_mode: str
+    teacache: TeaCacheConfig | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,7 +136,12 @@ class DiffusionRequestLayout:
             same_latent=bool(sampling.get("same_latent", False)),
             return_kl=bool(sampling.get("return_kl", False)),
         )
-        return DiffusionSamplingParams(base=base, sde=sde, denoise_mode=denoise_mode)
+        return DiffusionSamplingParams(
+            base=base,
+            sde=sde,
+            denoise_mode=denoise_mode,
+            teacache=TeaCacheConfig.from_sampling(sampling.get("teacache")),
+        )
 
     def repeat_encoded_batch(self, encoded: dict[str, Any], count: int) -> dict[str, Any]:
         """Repeat singleton-batch encoded tensors for a chunk sample count."""

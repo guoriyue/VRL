@@ -31,6 +31,7 @@ from collections import defaultdict
 import torch
 
 from vrl.config.loading import load_config
+from vrl.config.precision import normalize_precision
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.math.diffusion.flow_matching import sde_step_with_logprob
 
@@ -94,15 +95,35 @@ def main(argv=None):
     p.add_argument("--device", default="cuda:0")
     p.add_argument("--compile", action="store_true",
                    help="torch.compile the transformer before profiling (measures fusion effect)")
+    # One precision axis, same canonical token names as the YAML `precision:` block
+    # (normalize_precision is that block's own parser — single source of truth). fp8
+    # is rollout-only: like YAML `{forward: bf16, rollout: fp8}` it resolves to a bf16
+    # storage dtype plus the GEMM swap, not a separate flag. (fp4 omitted here: the
+    # profiler has no fp4 kernel to swap in.)
+    p.add_argument("--precision", default="bf16", choices=["fp32", "fp16", "bf16", "fp8"],
+                   help="rollout precision; same names as the YAML `precision:` block")
+    p.add_argument("--fp8-recipe", default="rowwise", choices=["rowwise", "tensorwise", "blockwise"],
+                   help="fp8 quant recipe (only with --precision fp8); blockwise reuses vLLM's "
+                        "1x128 triton block GEMM")
     args = p.parse_args(argv)
 
     cfg = load_config(args.config)
     device = torch.device(args.device)
-    dtype = torch.bfloat16
+    precision = normalize_precision(args.precision)
+    fp8 = precision == "fp8"
+    # fp8 quantizes inside the GEMM off a bf16 master (the YAML split resolves the
+    # same way); every other token is a plain storage/compute dtype.
+    dtype = torch.bfloat16 if fp8 else {
+        "fp32": torch.float32, "fp16": torch.float16, "bf16": torch.bfloat16,
+    }[precision]
+    label = f"fp8/{args.fp8_recipe}(bf16 master)" if fp8 else precision
     print(f"shape {cfg.sampling.width}x{cfg.sampling.height}x{cfg.sampling.num_frames}, "
-          f"{cfg.sampling.num_steps} steps; profiling {args.steps} steps", flush=True)
+          f"{cfg.sampling.num_steps} steps; precision={label}; profiling {args.steps} steps", flush=True)
 
     model = build_model(cfg, device, dtype)
+    if fp8:
+        swapped = model.quantize_transformer_fp8(recipe=args.fp8_recipe)
+        print(f"fp8/{args.fp8_recipe}: swapped {len(swapped)} transformer linears", flush=True)
     if args.compile:
         # use the model's own helper so BOTH self.transformer and pipeline.transformer
         # (forward_step reads self.transformer) point at the compiled module.
