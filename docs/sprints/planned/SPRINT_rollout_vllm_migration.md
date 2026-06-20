@@ -77,18 +77,26 @@ Skip the transformer forward on low-change denoise steps, reuse cached
 - ⬜ Threshold > 0.25 buys more skips but the latent signal makes drift climb fast
   for little skip gain — the real lever is the signal, not the threshold (P0.2).
 
-### P0.2 — Per-family timestep-modulated signal  ⬜ NOW REQUIRED (was optional)
-- P0.1 proved the v1 raw-latent signal under-skips (~5% on a real denoise) → the
-  ~5% speedup is not worth the RL drift plumbing. **The signal, not the threshold,
-  is the lever.** TeaCache's published 40–50% safe skip comes from the
-  timestep-**modulated** input (cheap: the first AdaLN/timestep-embedding
-  modulation) + a per-model rescale polynomial mapping input-change → output-change.
-- Add a `signal="modulated"` extractor (vLLM-omni `extractors.py` approach) reading
-  the model's timestep modulation, with per-family rescale coeffs. Re-run the drift
-  probe: target a threshold that skips ~40% at drift still under the fp8 bar.
-- If the modulated signal also only skips ~5% safely on cosmos, record that
-  TeaCache is a marginal win HERE (short 20-step schedule, EDM dynamics) and
-  down-rank it — honest negative result beats shipping a 5% knob as a headline.
+### P0.2 — Per-family timestep-modulated signal  ❌ RESOLVED — NOT WORTH BUILDING
+- `teacache_drift_probe.py --diagnose` (exact cosmos denoise, rel-L1 between
+  CONSECUTIVE exact noise_preds = the model-intrinsic skip ceiling):
+
+  | criterion | skippable |
+  |---|---|
+  | consecutive noise_pred relL1 < 1% | 0/20 |
+  | < 2% | 0/20 |
+  | < 5% | 0/20 |
+  | < 10% | **0/20** |
+
+  Consecutive noise_preds move **34%–138% every step** (1.39 early → 0.34 last).
+- **→ STRUCTURAL, not a signal problem.** cosmos's 20-step EDM schedule has ZERO
+  step-to-step redundancy; a better signal cannot find redundancy that does not
+  exist. The h2 5% "skip" was a coincidence (last step's LATENT converged to 0.03
+  while its noise_pred still moved 34%, with low logp impact). **P0.2 dropped** —
+  building a modulated extractor cannot beat a 0% ceiling.
+- **TeaCache verdict for cosmos: correct + drift-safe but MARGINAL (~0% real win).**
+  The port stays (default-off, harmless, tested) as infra for longer-schedule
+  families where redundancy exists — see P2 (sd3/wan step counts).
 
 ### P1 — fp8 + TeaCache compose  ⬜
 - Confirm fp8 rollout + TeaCache stack (both rollout-only, both drift-corrected):
@@ -111,6 +119,13 @@ Skip the transformer forward on low-change denoise steps, reuse cached
 
 ## Journal (most recent first)
 
+- **2026-06-20 h3** — P0.2 RESOLVED as a negative result. `--diagnose` showed
+  cosmos's consecutive exact noise_preds move 34–138% EVERY step → **0/20 steps
+  skippable at any threshold**. The 5% wall is STRUCTURAL (20-step EDM schedule,
+  no redundancy), not a signal problem, so a modulated extractor (P0.2) is futile —
+  dropped. TeaCache = correct + drift-safe but ~0% real win on cosmos; port kept as
+  infra for longer-schedule families. A 1.5-min diagnostic saved building a useless
+  extractor. Pivot to P2 (do sd3/wan even use longer schedules?) and P3 (AR).
 - **2026-06-20 h2** — P0.1 DRIFT measured (`teacache_drift_probe.py`, real cosmos,
   two-pass). Drift SAFE at all thresholds (max 0.43% « fp8's 1%). BUT corrected the
   h1 number: profiler's 2.3x/50%-skip was a **measurement artifact** (state reuse +
@@ -128,17 +143,17 @@ Skip the transformer forward on low-change denoise steps, reuse cached
   blockwise 5.97 s/step = a TRAP, reverted as a recommendation).
 
 ## Next actions (cron picks the top unchecked)
-1. P0.2 (now the gating value question): add a `signal="modulated"` extractor
-   (timestep-modulation rel-L1, per-family) + rescale; re-run `teacache_drift_probe`
-   to find the threshold that skips ~40% at drift under the fp8 bar. If even the
-   modulated signal skips only ~5% safely on cosmos, record TeaCache as marginal
-   HERE and down-rank (honest negative result).
-2. P2: sd3 vLLM-omni `DiffusersPipelineLoader` forward-consistency spike (sd3 has a
-   longer schedule than cosmos's 20 steps — TeaCache may pay more there).
-3. P3: AR paged-decode vs vLLM-omni continuous-batching throughput spike (the real
-   "replace" candidate — likely the biggest win on this box).
-4. P1: fp8 + TeaCache combined profile (only worth it once P0.2 makes TeaCache
-   skip meaningfully; otherwise fp8's 1.1x stands alone).
+1. P2-cheap (non-GPU first): grep the sd3.5 / wan_2_1 / wan_2_2 configs for
+   `num_steps`. If they also use ~20 steps, TeaCache is marginal across ALL this
+   repo's diffusion configs → fully down-rank, keep port as dormant infra. If any
+   uses 50+ steps, run `--diagnose` on it to see if redundancy exists there.
+2. P3: AR paged-decode vs vLLM-omni continuous-batching throughput spike — the real
+   "replace" candidate and likely the biggest win on this box. Start non-GPU:
+   inventory what nextstep/janus rollout does today vs what vLLM-omni AR offers.
+3. P2-full: sd3 vLLM-omni `DiffusersPipelineLoader` forward-consistency spike (only
+   if step 1 shows a longer-schedule family where the engine bundle pays).
+4. fp8 stands as the one shipped diffusion rollout win (1.1x, drift-safe). TeaCache
+   stays default-off infra. Update the final summary table accordingly.
 
 ## Blockers
 (none)

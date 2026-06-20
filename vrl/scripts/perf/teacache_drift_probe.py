@@ -116,18 +116,78 @@ def _measure(model, cfg, device, dtype, threshold):
     )
 
 
+def _rel(cur: torch.Tensor, prev: torch.Tensor) -> float:
+    denom = prev.abs().sum()
+    if float(denom) <= 0.0:
+        return float("inf")
+    return float((cur - prev).abs().sum().div(denom).item())
+
+
+def _diagnose(model, cfg, device, dtype):
+    """Per-step exact-denoise change profile = the structural TeaCache ceiling.
+
+    Reports rel-L1 between consecutive EXACT noise_preds. A step whose noise_pred
+    barely moved vs the previous step is reusable (skippable) — independent of any
+    skip signal — so the fraction of small-change steps is the best TeaCache could
+    ever do here. If that fraction is tiny, the 5% wall is STRUCTURAL (cosmos's
+    short 20-step EDM schedule has little redundancy), not a signal problem, and a
+    better signal (P0.2) cannot help.
+    """
+
+    num_steps = int(cfg.sampling.num_steps)
+    state = _fresh_state(model, cfg)
+    gen = torch.Generator(device=device).manual_seed(0)
+    preds: list[torch.Tensor] = []
+    lat_rel: list[float] = []
+    prev_lat = None
+    with torch.no_grad(), torch.amp.autocast("cuda", dtype=dtype):
+        for step_idx in range(num_steps):
+            if prev_lat is not None:
+                lat_rel.append(_rel(state.latents, prev_lat))
+            else:
+                lat_rel.append(float("nan"))
+            prev_lat = state.latents.clone()
+            timestep = state.timesteps[step_idx]
+            np_ = model.forward_step(state, step_idx)["noise_pred"].float()
+            preds.append(np_.clone())
+            sde = sde_step_with_logprob(
+                state.scheduler, np_, timestep.unsqueeze(0), state.latents.float(),
+                generator=gen, deterministic=False, sde_type=_SDE_TYPE, step_index=step_idx,
+            )
+            state.latents = sde.prev_sample
+    np_rel = [float("nan")] + [_rel(preds[t], preds[t - 1]) for t in range(1, num_steps)]
+
+    print(f"\n{'step':>4} | {'latent relL1':>12} | {'noise_pred relL1 vs prev':>24}")
+    print("-" * 50)
+    for t in range(num_steps):
+        print(f"{t:>4} | {lat_rel[t]:12.4f} | {np_rel[t]:24.4f}")
+    print("\nideal skip ceiling = steps whose noise_pred barely moved vs prev:")
+    valid = [v for v in np_rel if v == v]  # drop nan
+    for eps in (0.01, 0.02, 0.05, 0.10):
+        n = sum(1 for v in valid if v < eps)
+        print(f"  noise_pred relL1 < {eps:.0%}: {n}/{num_steps} steps "
+              f"({n / num_steps:.0%} skippable)")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument("--config", required=True)
     p.add_argument("--device", default="cuda:0")
     p.add_argument("--thresholds", default="0.1,0.15,0.25",
                    help="comma-separated teacache thresholds to probe")
+    p.add_argument("--diagnose", action="store_true",
+                   help="report per-step exact noise_pred change = the structural "
+                        "skip ceiling (is the 5% wall a signal or a redundancy problem?)")
     args = p.parse_args(argv)
 
     cfg = load_config(args.config)
     device = torch.device(args.device)
     dtype = torch.bfloat16
     model = build_model(cfg, device, dtype)
+
+    if args.diagnose:
+        _diagnose(model, cfg, device, dtype)
+        return
 
     thresholds = [None] + [float(x) for x in args.thresholds.split(",") if x.strip()]
     print(f"\n{'config':>22} | {'skip%':>6} | {'ratio_dev_mean':>14} | "
