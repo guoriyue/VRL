@@ -100,17 +100,24 @@ DDP correctness verified: rank0 and rank1 each draw a **disjoint** 16-prompt sli
 
 **What's unresolved:** **no learning signal in 6 epochs.** Reward sits in a noise band around the baseline.
 
-**ROOT CAUSE FOUND (2026-06-20, #7 de-risk):** the **Kling VideoReward cannot discriminate quality at 480p_33f.** A controlled probe (`vrl/scripts/eval/kling_480p_discrimination_probe.py`) scored each real rollout against a heavily-degraded copy (heavy gaussian noise + shuffled + dropped frames) through the exact reward model. Across n=8 pairs:
+**ROOT CAUSE FOUND (2026-06-20) — the trained reward target is MIS-WEIGHTED at 480p_33f, not the policy.** Two de-risk probes (run on **both** L40S in parallel), all scores deterministic (rescore gap = 0.0000, so the spreads below are real model behavior):
 
-| dim | good mean | bad (degraded) mean | gap | vs eval noise ±0.0339 |
+*Probe 1* (`kling_480p_discrimination_probe.py`) — real rollout vs a heavily-degraded copy (noise + shuffle + dropped frames): Overall did **not** drop (gap −0.24, degraded scored *higher*).
+
+*Probe 2* (`kling_reward_diagnosis_probe.py`) — a clean gaussian-noise ladder (σ=0,20,40,80,160) on 32 real rollouts, isolating one axis:
+
+| dim | σ=0 | σ=160 | drop (s0−s160) | reading |
 |---|---|---|---|---|
-| VQ (visual) | −1.3883 | −1.3829 | **−0.0053** | within noise — blind to the noise |
-| MQ (motion) | −0.3782 | −0.1171 | **−0.2611** | **inverted** — shuffled frames score *higher* |
-| Overall | −4.3959 | −4.1582 | **−0.2376** | **inverted** — degraded clip scores *higher* |
+| VQ (visual) | −1.3916 | −1.4894 | **+0.0978** | RESPONDS — noise lowers it (correct) |
+| MQ (motion) | −0.3962 | −0.0434 | **−0.3528** | **INVERTED** — noise monotonically *raises* it (flicker read as "motion") |
+| Overall | −4.3965 | −4.2039 | **−0.1926** | **INVERTED** — MQ corruption flips the trained target |
 
-VQ/MQ are prompt-independent, so this is not a prompt artifact: the reward is **blind on visual quality and inverted on motion** at this resolution. With no usable signal, the flat training reward is the **reward model at 480p_33f**, NOT too-few-epochs. So of the four hypotheses above, **"resolution mismatch" is confirmed**; "too few epochs" / "weak advantage" are moot until the reward discriminates.
+The training reward is `score_key: overall_reward` (`configs/reward/kling_video_reward.yaml`). So the policy optimizes **Overall**, whose **MQ sub-score is inverted at 33 frames** — high-frequency noise/flicker is scored as good motion, so a *worse* video can score *higher*. That is why training was flat/gameable, **not** too-few-epochs. (VQ alone is correctly signed and real rollouts have a genuine quality spread — Overall std **0.18** across rollouts — so usable signal exists; it is the Overall/MQ combination that is broken.)
 
-**Implication:** a longer run (≥30–50 epochs) at 480p_33f is **pointless** — there is nothing to learn from. **Fix the reward signal first:** raise resolution toward the paper's 512p/93f (the reward model's in-distribution range), or rescale/clip-length-match before scoring, then re-run this probe and require VQ **and** MQ to separate (gap > +0.0339) before investing GPU-days. Re-enabling torch.compile (~1.37×) and the longer sweep only matter *after* the reward is shown to discriminate.
+**Implication & cheap fix (test before any longer run):**
+1. **Switch `score_key` `overall_reward` → `visual_quality`** — VQ is correctly signed and discriminating at 480p_33f. One-line config change, no resolution change.
+2. The MQ inversion is most likely a **too-few-frames artifact (33f)**; restoring frames toward the paper's 93f should let MQ work — but that is expensive, so try (1) first.
+3. **Re-run `kling_reward_diagnosis_probe.py` and require the *trained* key to RESPOND** (drop > +0.0339, not INVERTED) before investing GPU-days. A ≥30–50 epoch sweep on the current `overall_reward` would optimize a gameable target.
 
 ---
 
