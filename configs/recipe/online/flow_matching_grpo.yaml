@@ -7,3 +7,9 @@ defaults:
   - /base/rollout/orchestration/strict
   - /base/trainer
 
+algorithm:
+  # flow_grpo SD3 clip_range: flow-matching per-step log-prob ratios are tiny,
+  # so the diffusion family needs a far tighter trust region than the AR-safe
+  # 0.2 in /base/algorithm/grpo. Set at the family boundary so every diffusion
+  # GRPO config inherits it (and a new one can't silently get the AR default).
+  clip_ratio: 1.0e-4

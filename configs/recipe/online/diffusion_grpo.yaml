@@ -7,3 +7,9 @@ defaults:
   - /base/rollout/orchestration/strict
   - /base/trainer
 
+algorithm:
+  # flow_grpo clip_range for flow-matching diffusion — far tighter than the
+  # AR-safe 0.2 in /base/algorithm/grpo. Set at the family boundary so every
+  # diffusion GRPO config inherits it (and a new one can't silently get the AR
+  # default). Experiment configs may still override (e.g. cosmos/wan use 1e-3).
+  clip_ratio: 1.0e-4

@@ -7,7 +7,7 @@ defaults:
   - /dataset/ocr
 
 algorithm:
-  clip_ratio: 0.2
+  # clip_ratio inherits the AR-safe 0.2 from /base/algorithm/grpo.
   kl_coef: 0.01
   kl_estimator: k2
 

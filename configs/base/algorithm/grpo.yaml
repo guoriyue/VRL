@@ -1,7 +1,12 @@
 # GRPO algorithm hyper-parameters
 algorithm:
   kind: grpo
-  clip_ratio: 1.0e-4
+  # Family-neutral, AR-safe trust region (matches GRPOConfig's dataclass
+  # default). Flow-matching diffusion needs the much tighter flow_grpo
+  # clip_range=1e-4, which the diffusion recipes set explicitly — shipping that
+  # flow value in this shared base silently froze every AR policy that inherited
+  # it via token_grpo.yaml.
+  clip_ratio: 0.2
   kl_coef: 0.0
   eps: 1.0e-8                   # numerical stability for advantage division
   adv_clip_max: 5.0
