@@ -38,9 +38,12 @@ distributed:
     num_nodes: 2
     gpus_per_node: 1
     ddp:
-      # LoRA: the frozen base is excluded from DDP's reducer (requires_grad=False),
-      # so the default holds. Flip to true only if a conditional LoRA/grad-ckpt
-      # branch trips DDP's "expected every param to get a grad" reducer.
+      # Correct because both the frozen base AND NFT's forward-only "previous"
+      # adapter are requires_grad=False (the latter is frozen in Cosmos apply_lora
+      # via _freeze_adapter_params), so the only params the reducer tracks are the
+      # trainable "default" adapter — which always gets a grad. (Before that freeze
+      # this had to be true, or the first backward died on the "previous" params
+      # getting no gradient under their no_grad replay.)
       find_unused_parameters: false
   resources:
     rollout:
