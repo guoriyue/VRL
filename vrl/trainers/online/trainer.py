@@ -43,6 +43,42 @@ from vrl.utils.stats import LoggingStatsSink, RolloutStats, StatsSink
 logger = logging.getLogger(__name__)
 
 
+def _global_reward_stats(rewards: Any) -> tuple[float, float]:
+    """Population (mean, std) of ``rewards`` over **all DDP ranks**.
+
+    The logged reward curve is written by rank0 only (online.py is_primary), and
+    each rank holds just its own prompt slice (16 of the 32 global prompts for
+    rbs=16), so a plain ``rewards.mean()`` reports a per-rank metric — half the
+    true optimization objective. All-reduce the sufficient statistics (sum,
+    sum-of-squares, count) so the logged mean/std reflect the full cross-rank
+    batch. Falls back to local stats with no process group or world_size==1
+    (single-GPU), where local already equals global. Unconditional on every rank
+    (the writer-gating happens upstream), so the collective stays balanced.
+    """
+
+    n = rewards.numel()
+    dist = torch.distributed
+    distributed = (
+        dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1
+    )
+    if not distributed:
+        mean = rewards.mean().item() if n else 0.0
+        std = rewards.std().item() if n > 1 else 0.0
+        return mean, std
+    stats = torch.stack(
+        [rewards.sum(), rewards.mul(rewards).sum(), rewards.new_tensor(float(n))],
+    )
+    dist.all_reduce(stats, op=dist.ReduceOp.SUM)
+    g_sum, g_sumsq, g_count = stats[0], stats[1], stats[2]
+    g_mean = g_sum / g_count
+    mean = float(g_mean.item())
+    if g_count <= 1:
+        return mean, 0.0
+    g_var = (g_sumsq / g_count) - g_mean * g_mean
+    std = float(torch.sqrt(torch.clamp(g_var, min=0.0)).item())
+    return mean, std
+
+
 # ---------------------------------------------------------------------------
 # Optimizer factory
 # ---------------------------------------------------------------------------
@@ -522,8 +558,9 @@ class OnlineTrainer(Trainer):
             else 0.0
         )
 
-        pre_filter_reward_mean = all_rewards.mean().item()
-        pre_filter_reward_std = all_rewards.std().item() if all_rewards.numel() > 1 else 0.0
+        # Cross-rank so the logged curve is the full 32-prompt objective, not
+        # rank0's local 16-prompt slice (see _global_reward_stats).
+        pre_filter_reward_mean, pre_filter_reward_std = _global_reward_stats(all_rewards)
         pre_filter_adv_mean = advantages_all.mean().item()
 
         # Split advantages back per-batch for the gradient-accumulation loop.
