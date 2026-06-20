@@ -33,6 +33,8 @@ Usage:  python -m vrl.scripts.perf.fp8_rollout_drift_probe
 
 from __future__ import annotations
 
+import math
+
 import torch
 
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
@@ -108,11 +110,13 @@ def _policy_grad_norm(
     actions: torch.Tensor,
     old_log_prob: torch.Tensor,
     advantages: torch.Tensor,
-    tis_mode: str,
-    cap: float,
-) -> tuple[float, float]:
-    """Backprop the GRPO loss into `weight`; return (grad_norm, tis_clip_fraction).
+    tis_mode: str = "off",
+    cap: float = 2.0,
+    rs_mode: str = "off",
+) -> tuple[float, float, float]:
+    """Backprop the GRPO loss into `weight`.
 
+    Returns ``(grad_norm, tis_clip_fraction, rs_seq_masked_fraction)``.
     ``activations`` is [samples, T, hidden]; the fresh (bf16 replay) trajectory
     logprob is differentiable w.r.t. ``weight`` while ``old_log_prob`` (the fp8
     rollout trajectory logprob) is a detached constant.
@@ -122,13 +126,13 @@ def _policy_grad_norm(
     fresh_logprob = _trajectory_logprob(fresh_logits, actions)
     grpo = GRPO(GRPOConfig(init_kl_coef=0.0))
     grpo.precision_correction = PrecisionCorrectionConfig(
-        tis_mode=tis_mode, tis_imp_weight_cap=cap,
+        tis_mode=tis_mode, tis_imp_weight_cap=cap, rs_mode=rs_mode,
     )
     loss, metrics = grpo.compute_loss(
         AlgorithmInput(signals=_signals(fresh_logprob, old_log_prob), advantages=advantages),
     )
     loss.backward()
-    return float(w.grad.norm()), metrics.tis_clip_fraction
+    return float(w.grad.norm()), metrics.tis_clip_fraction, metrics.rs_seq_masked_fraction
 
 
 def main() -> None:
@@ -219,7 +223,7 @@ def main() -> None:
     print(f"-- policy-gradient norm into the head weight (tis cap={cap}) --")
     base_norm = None
     for mode in ("off", "truncate", "mask"):
-        norm, clip_frac = _policy_grad_norm(
+        norm, clip_frac, _ = _policy_grad_norm(
             weight=weight, activations=traj_acts, actions=traj_actions,
             old_log_prob=traj_rollout_logprob, advantages=advantages, tis_mode=mode, cap=cap,
         )
@@ -228,6 +232,23 @@ def main() -> None:
         ratio = norm / base_norm if base_norm else float("nan")
         print(f"  tis_mode={mode:8s}  grad_norm={norm:.4e}  (x{ratio:.3f} vs off)  "
               f"tis_clip_fraction={clip_frac:.3f}")
+
+    # -- RS: whole-trajectory reject-sampling on the log-ratio, orthogonal to TIS --
+    # The diffusion regime: each trajectory's logprob is one per-sample scalar, so
+    # seq_mean_k1 / seq_max_k1 coincide and RS rejects out-of-band TRAJECTORIES
+    # (not single steps). The default band ln(0.5)/ln(2.0) is the verl-omni preset;
+    # rs_seq_masked_fraction sustained >~5% means rollout drift is too large for
+    # bypass (tighten the band or fall back to recompute).
+    band_lo, band_hi = math.log(0.5), math.log(2.0)
+    print(f"-- reject-sampling (seq_mean_k1, band [ln0.5, ln2.0]=[{band_lo:.3f}, {band_hi:.3f}]) --")
+    rs_norm, _, rs_frac = _policy_grad_norm(
+        weight=weight, activations=traj_acts, actions=traj_actions,
+        old_log_prob=traj_rollout_logprob, advantages=advantages, rs_mode="seq_mean_k1",
+    )
+    ratio = rs_norm / base_norm if base_norm else float("nan")
+    print(f"  rs_mode=seq_mean_k1  grad_norm={rs_norm:.4e}  (x{ratio:.3f} vs off)  "
+          f"rs_seq_masked_fraction={rs_frac:.3f}  "
+          f"({'OK <5%' if rs_frac < 0.05 else 'HIGH >=5% — tighten band / recompute'})")
 
     print("-- verdict --")
     print("  fp8 GEMM runs on this Blackwell GPU and produces real, measurable logprob")

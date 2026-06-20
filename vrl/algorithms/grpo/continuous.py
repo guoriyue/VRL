@@ -9,7 +9,9 @@ from vrl.algorithms.advantages import group_relative_advantages
 from vrl.algorithms.base import Algorithm
 from vrl.algorithms.logprob_mismatch import (
     PrecisionCorrectionConfig,
+    apply_rejection_sample_mask,
     apply_truncated_importance_weight,
+    combine_keep_masks,
     compute_logprob_mismatch_stats,
 )
 from vrl.algorithms.trajectory import AlgorithmInput
@@ -102,20 +104,31 @@ class GRPO(Algorithm):
         # the gradient via the unclipped negative-advantage branch.
         pc = self.precision_correction
         ratio, tis_keep = apply_truncated_importance_weight(raw_ratio, pc)
+        # RS rejects whole samples whose rollout->replay log-ratio drift is out of
+        # band — orthogonal to TIS (which clamps the per-element weight). Both feed
+        # the masked-mean denominator below (true off-policy rejection, not a
+        # gradient-magnitude dilution).
+        rs_keep = apply_rejection_sample_mask(signals.log_prob - old_log_probs, pc)
         clipped_ratio = torch.clamp(ratio, 1.0 - cfg.eps_clip, 1.0 + cfg.eps_clip)
         unclipped_loss = -advantages * ratio
         clipped_loss = -advantages * clipped_ratio
         per_sample_loss = torch.maximum(unclipped_loss, clipped_loss)
-        if tis_keep is not None:
-            policy_loss = (per_sample_loss * tis_keep).sum() / tis_keep.sum().clamp_min(1.0)
-            tis_clip_fraction = (1.0 - tis_keep.mean()).item()
+        keep = combine_keep_masks(tis_keep, rs_keep)
+        if keep is not None:
+            policy_loss = (per_sample_loss * keep).sum() / keep.sum().clamp_min(1.0)
         else:
             policy_loss = torch.mean(per_sample_loss)
+        if tis_keep is not None:
+            tis_clip_fraction = (1.0 - tis_keep.mean()).item()
+        else:
             tis_clip_fraction = (
                 0.0
                 if pc.tis_mode == "off"
                 else (ratio != raw_ratio).float().mean().item()
             )
+        rs_seq_masked_fraction = (
+            0.0 if rs_keep is None else (1.0 - rs_keep.mean()).item()
+        )
 
         if cfg.init_kl_coef > 0:
             if signals.ref_log_prob is None:
@@ -163,6 +176,7 @@ class GRPO(Algorithm):
             clip_fraction=clip_fraction,
             approx_kl=approx_kl,
             tis_clip_fraction=tis_clip_fraction,
+            rs_seq_masked_fraction=rs_seq_masked_fraction,
             logprob_abs_diff_mean=mismatch.logprob_abs_diff_mean,
             logprob_abs_diff_max=mismatch.logprob_abs_diff_max,
             ratio_abs_dev_mean=mismatch.ratio_abs_dev_mean,

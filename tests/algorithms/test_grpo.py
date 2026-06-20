@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
 import torch
 
@@ -292,6 +294,66 @@ class TestGRPOTruncatedImportanceSampling:
     def test_invalid_precision_correction_config_raises(self, kwargs) -> None:
         with pytest.raises(ValueError):
             PrecisionCorrectionConfig(**kwargs)
+
+
+class TestGRPORejectSampling:
+    """RS rejects whole samples on log-ratio drift, orthogonal to TIS (continuous).
+
+    For continuous GRPO the log-prob is per-sample, so RS judges each sample's
+    trajectory log-ratio against the band and drops rejected ones from the mean
+    denominator (true off-policy rejection, not gradient dilution).
+    """
+
+    @staticmethod
+    def _grpo(**pc_kwargs) -> GRPO:
+        grpo = GRPO(GRPOConfig(init_kl_coef=0.0))
+        if pc_kwargs:
+            grpo.precision_correction = PrecisionCorrectionConfig(**pc_kwargs)
+        return grpo
+
+    def test_off_mode_is_noop(self) -> None:
+        adv = torch.tensor([2.0, -3.0, 1.0])
+
+        def _sig():
+            return _flow_signals(
+                log_prob=torch.tensor([1.0, 0.0, -0.5]), old_log_prob=torch.zeros(3),
+            )
+
+        base, _ = self._grpo().compute_loss(AlgorithmInput(signals=_sig(), advantages=adv))
+        off, off_m = self._grpo(rs_mode="off").compute_loss(
+            AlgorithmInput(signals=_sig(), advantages=adv),
+        )
+        assert off.item() == pytest.approx(base.item())
+        assert off_m.rs_seq_masked_fraction == 0.0
+
+    def test_out_of_band_sample_dropped_from_mean(self) -> None:
+        # sample0 log-ratio=ln3 (ratio 3) above high=ln2 → rejected; sample1 ratio 1 kept.
+        grpo = self._grpo(rs_mode="seq_mean_k1")
+        signals = _flow_signals(
+            log_prob=torch.tensor([math.log(3.0), 0.0]), old_log_prob=torch.zeros(2),
+        )
+        loss, metrics = grpo.compute_loss(
+            AlgorithmInput(signals=signals, advantages=torch.tensor([5.0, 1.0])),
+        )
+        assert loss.item() == pytest.approx(-1.0)  # only kept sample1: -adv1*1
+        assert metrics.rs_seq_masked_fraction == pytest.approx(0.5)
+
+    def test_rs_and_tis_combine_in_denominator(self) -> None:
+        # ratios [3, 1.5, 1]; TIS(mask,cap=2) drops s0; RS(band) also drops s0.
+        # kept = {s1, s2}; loss = mean over the two kept per-sample losses.
+        grpo = self._grpo(tis_mode="mask", tis_imp_weight_cap=2.0, rs_mode="seq_mean_k1")
+        signals = _flow_signals(
+            log_prob=torch.tensor([math.log(3.0), math.log(1.5), 0.0]),
+            old_log_prob=torch.zeros(3),
+        )
+        loss, metrics = grpo.compute_loss(
+            AlgorithmInput(signals=signals, advantages=torch.tensor([5.0, 2.0, 1.0])),
+        )
+        # s1: ratio 1.5 clipped to 1.2 at eps_clip 0.2 → max(-2*1.5, -2*1.2) = -2.4
+        # s2: ratio 1 → -1.0 ; mean over the 2 kept = -1.7
+        assert loss.item() == pytest.approx(-1.7)
+        assert metrics.tis_clip_fraction == pytest.approx(1 / 3)
+        assert metrics.rs_seq_masked_fraction == pytest.approx(1 / 3)
 
 
 def _flow_signals(

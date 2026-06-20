@@ -10,6 +10,8 @@ Validates:
 
 from __future__ import annotations
 
+import math
+
 import pytest
 import torch
 
@@ -175,6 +177,60 @@ class TestTokenTIS:
         off, m = off_algo.compute_loss(_inputs(new_lp, old_lp, adv))
         assert off.item() == pytest.approx(base.item())
         assert m.tis_clip_fraction == 0.0
+
+
+class TestTokenRejectSampling:
+    """RS rejects whole sequences on log-ratio drift (token GRPO, (B,L) path).
+
+    seq_max rejects a sequence if any single step is out of band; seq_mean judges
+    the per-sequence mean. RS is a per-sequence (B,1) keep mask that broadcasts
+    over the token axis and folds into eff_mask alongside the token mask + TIS.
+    """
+
+    @staticmethod
+    def _algo(**pc_kwargs) -> TokenGRPO:
+        algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=0.0))
+        algo.precision_correction = PrecisionCorrectionConfig(**pc_kwargs)
+        return algo
+
+    def test_seq_max_single_outlier_rejects_whole_sequence(self) -> None:
+        # token0 log-ratio=ln3 (out of band), token1=0; seq_max rejects the seq.
+        new_lp = torch.tensor([[math.log(3.0), 0.0]])
+        old_lp = torch.zeros(1, 2)
+        algo = self._algo(rs_mode="seq_max_k1")
+        loss, m = algo.compute_loss(_inputs(new_lp, old_lp, torch.tensor([5.0])))
+        assert loss.item() == pytest.approx(0.0)  # whole sequence masked out
+        assert m.rs_seq_masked_fraction == pytest.approx(1.0)
+
+    def test_seq_mean_keeps_offsetting_steps(self) -> None:
+        # steps ln3 and ln(1/3): mean 0 in band → kept under seq_mean (rejected under max).
+        new_lp = torch.tensor([[math.log(3.0), math.log(1 / 3)]])
+        old_lp = torch.zeros(1, 2)
+        _, m = self._algo(rs_mode="seq_mean_k1").compute_loss(
+            _inputs(new_lp, old_lp, torch.tensor([5.0])),
+        )
+        assert m.rs_seq_masked_fraction == pytest.approx(0.0)
+
+    def test_rs_and_tis_fold_into_eff_mask(self) -> None:
+        # token0 ratio e^ln3=3 → TIS(mask,cap2) drops token0; seq mean=ln3/2<ln2 keeps seq.
+        new_lp = torch.tensor([[math.log(3.0), 0.0]])
+        old_lp = torch.zeros(1, 2)
+        algo = self._algo(tis_mode="mask", tis_imp_weight_cap=2.0, rs_mode="seq_mean_k1")
+        loss, m = algo.compute_loss(_inputs(new_lp, old_lp, torch.tensor([5.0])))
+        # only token1 survives (TIS dropped token0; RS kept the sequence) → -adv*1 = -5
+        assert loss.item() == pytest.approx(-5.0)
+        assert m.tis_clip_fraction == pytest.approx(0.5)
+        assert m.rs_seq_masked_fraction == pytest.approx(0.0)
+
+    def test_rs_reduction_respects_token_mask(self) -> None:
+        # padded token (mask 0) carries a huge log-ratio; seq_mean must ignore it.
+        new_lp = torch.tensor([[0.0, 0.0, math.log(9.0)]])
+        old_lp = torch.zeros(1, 3)
+        valid = torch.tensor([[1.0, 1.0, 0.0]])
+        _, m = self._algo(rs_mode="seq_mean_k1").compute_loss(
+            _inputs(new_lp, old_lp, torch.tensor([5.0]), mask=valid),
+        )
+        assert m.rs_seq_masked_fraction == pytest.approx(0.0)  # padding excluded → kept
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,14 @@
 # SPRINT: Rollout-Correction —— RS reject-sampling + bypass-vs-recompute（在已落地的 TIS/drift 之上扩展）
 
-状态：planned（2026-06-20）—— 范围限定：只在 `logprob_mismatch.py` 与 importance-ratio 算法（`grpo/token.py`、`grpo/continuous.py`）这条已有缝里加两个正交机制（RS 拒绝采样 + bypass 复用 rollout log-prob 省掉 replay forward），不重写 trainer 主循环、不动 evaluator 协议。
+状态：**done（2026-06-20 落地，66 个 RS/GRPO 单测全绿；250 个 algorithms+config+precision-bridge 测试通过，仅 2 个与本 sprint 无关的 Wan2.2/SD3.5 配置预存失败；ruff clean）**。范围限定：只在 `logprob_mismatch.py` 与 importance-ratio 算法（`grpo/token.py`、`grpo/continuous.py`）这条已有缝里加两个正交机制（RS 拒绝采样 + bypass 复用 rollout log-prob 省掉 replay forward），不重写 trainer 主循环、不动 evaluator 协议。
+
+## 落地记录（2026-06-20）
+
+- `PrecisionCorrectionConfig` 扩了 RS 三字段 + bypass 开关（`logprob_mismatch.py`）：`rs_mode`（off/seq_mean_k1/seq_max_k1，`token_*` 在 `__post_init__` 直接拒绝并指向 seq 模式）、`rs_log_ratio_low/high`（默认 ln0.5/ln2.0 log-ratio 数值，非 string）、`recompute_old_logprob`（off=bypass 唯一实现；on 在构造时 `NotImplementedError`，不做静默 no-op）。schema/builder 全自动从 dataclass 字段派生，无需改 `schema.py`/`builders.py`。
+- 新增 `apply_rejection_sample_mask(log_ratio, config, *, mask=None)` 与 `combine_keep_masks(*masks)`（同文件，与 `apply_truncated_importance_weight` 并列）。per-sample（1D，连续扩散）下 seq_mean/seq_max 退化同判据；token（B,L）下按序列轴聚合，返回 (B,1) 广播掩码，`mask` 把聚合限制在有效 token。
+- `continuous.py` / `token.py` 各加 RS 消费：`keep = combine_keep_masks(tis_keep, rs_keep)`（token 再乘 token mask），分母真实剔除（非梯度稀释）；新增 `rs_seq_masked_fraction` 标量，挂进 `TrainStepMetrics`（与 `tis_clip_fraction` 同作用域——只在 per-step 算法 metrics，不进 trainer 聚合/CSV）。`MultiSegmentTokenGRPO` 经 `super().compute_loss()` 自动覆盖。
+- `fp8_rollout_drift_probe.py` 加 RS 分支（seq_mean_k1 + 默认带），报 `rs_seq_masked_fraction` 并标注 <5% OK / ≥5% 收紧带或退 recompute。
+- 测试：`test_logprob_mismatch.py`（RS config 校验 + mask 函数 + combine）、`test_grpo.py::TestGRPORejectSampling`（连续：越界剔除 + RS/TIS 合并分母）、`test_grpo_token.py::TestTokenRejectSampling`（seq_max 单步 outlier 拒整段、seq_mean 抵消保留、RS+TIS 折进 eff_mask、mask 感知聚合）。
 
 关联：
 - [[SPRINT_fullparam_and_fp8_precision]] —— TIS（`apply_truncated_importance_weight`）与 drift guard（`precision_guard.py`）的归属 sprint；本 sprint 是它的直接延伸，复用同一个 `PrecisionCorrectionConfig` 槽位与同一套 `compute_logprob_mismatch_stats` 度量。

@@ -19,6 +19,7 @@ toolkit for that drift:
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 import torch
@@ -72,23 +73,59 @@ def compute_logprob_mismatch_stats(
 
 @dataclass(slots=True)
 class PrecisionCorrectionConfig:
-    """Truncated importance sampling (TIS) knobs for rollout->replay drift.
+    """Rollout->replay drift correction knobs (TIS + RS), all at the trainer level.
 
     The correction counterpart to ``PrecisionDriftGuardConfig``: the guard
     measures/fails on drift; this bounds it in the loss. ``old_log_prob`` IS the
     rollout (behavior) logprob in this codebase, so the surrogate ratio
-    ``exp(replay - rollout)`` is exactly the importance weight TIS truncates.
-    A quantized rollout (fp8/fp4 vs bf16 replay) inflates that weight on a few
-    samples and, on negative advantages, drives a large unclipped PPO gradient.
+    ``exp(replay - rollout)`` is exactly the importance weight TIS truncates and
+    its log is what RS rejects on. Two orthogonal axes:
 
-    Modes: ``off`` keeps legacy behavior; ``truncate`` = one-sided upper cap (keep
-    the gradient, bound it); ``clip`` = two-sided; ``mask`` = drop out-of-range
-    samples entirely (catastrophic-drift rejection).
+    **TIS** (per-element weight magnitude). ``off`` keeps legacy behavior;
+    ``truncate`` = one-sided upper cap (keep the gradient, bound it); ``clip`` =
+    two-sided; ``mask`` = drop out-of-range elements entirely. Judges the IS
+    *weight* ``exp(replay - rollout)``: catches a single inflated weight.
+
+    **RS** (whole-sequence off-policy rejection). Judges the *log-ratio*
+    ``replay - rollout`` aggregated over the sequence and rejects the entire
+    sample (weight 0) when its trajectory drift is out of band — the complement
+    to TIS's "keep but clamp". Modes are ``seq_mean_k1`` / ``seq_max_k1`` only:
+    on diffusion the SDE window is short (``sde_window_size`` is usually 2), so a
+    per-token statistic has near-zero power (each per-step stat is already a mean
+    over thousands of latent dims). ``token_*`` RS is intentionally *not*
+    offered; it would only invite misuse. For per-sample (continuous diffusion)
+    log-probs the two seq modes coincide (there is no sequence axis to reduce).
+
+    **Bypass vs recompute** (``recompute_old_logprob``). This codebase already
+    uses the rollout-recorded ``old_log_prob`` directly as the PPO "old" (bypass:
+    the PPO ratio ``exp(replay - rollout)`` itself acts as the importance
+    weight), skipping a separate full-precision old-recompute forward. ``off``
+    (default) is that bypass and is the only implemented path. ``on`` is a
+    reserved interface for a decoupled recompute that this codebase does not
+    implement; constructing it raises rather than silently behaving like a no-op.
+
+    **Combination contract.** Under fp8/bf16 rollout + bypass, drift must be
+    bounded: run the drift guard (``auto``/``fail``, which checks parity before
+    the first step) together with RS (``seq_mean_k1``), so the guard fail-stops
+    on a catastrophic precision split while RS keeps out-of-band trajectories out
+    of the per-step gradient. Both read the same ``compute_logprob_mismatch_stats``
+    so their drift judgement cannot diverge. TIS and RS are orthogonal and may be
+    enabled together.
     """
 
     tis_mode: str = field(default="off")  # "off" | "truncate" | "clip" | "mask"
     tis_imp_weight_cap: float = field(default=2.0)  # upper bound C on the weight
     tis_clip_low: float = field(default=0.0)  # lower bound (clip/mask modes)
+    # RS axis (orthogonal to TIS). Whole-sequence rejection on the log-ratio.
+    rs_mode: str = field(default="off")  # "off" | "seq_mean_k1" | "seq_max_k1"
+    # Log-ratio acceptance band [low, high]. Stored as log-ratio numbers (not the
+    # verl-omni "low_high" string), defaulting to ln(0.5)/ln(2.0) ~= [-0.69, 0.69]
+    # to match verl-omni's recommended LLM preset.
+    rs_log_ratio_low: float = field(default=math.log(0.5))
+    rs_log_ratio_high: float = field(default=math.log(2.0))
+    # Bypass (off, the only implemented path) vs a reserved decoupled-recompute
+    # interface (on, unimplemented — raises on construction, never a no-op knob).
+    recompute_old_logprob: str = field(default="off")  # "off" | "on"
 
     def __post_init__(self) -> None:
         if self.tis_mode not in ("off", "truncate", "clip", "mask"):
@@ -104,6 +141,35 @@ class PrecisionCorrectionConfig:
             raise ValueError(
                 "precision_correction.tis_clip_low must be < tis_imp_weight_cap "
                 f"(got low={self.tis_clip_low}, cap={self.tis_imp_weight_cap})",
+            )
+        if self.rs_mode not in ("off", "seq_mean_k1", "seq_max_k1"):
+            if str(self.rs_mode).startswith("token"):
+                raise ValueError(
+                    "precision_correction.rs_mode does not support token-level RS: "
+                    "on a short SDE window (usually 2 steps) a per-token statistic "
+                    "has near-zero power. Use 'seq_mean_k1' or 'seq_max_k1' "
+                    f"(got {self.rs_mode!r}).",
+                )
+            raise ValueError(
+                "precision_correction.rs_mode must be off/seq_mean_k1/seq_max_k1; "
+                f"got {self.rs_mode!r}",
+            )
+        if self.rs_mode != "off" and float(self.rs_log_ratio_low) >= float(self.rs_log_ratio_high):
+            raise ValueError(
+                "precision_correction.rs_log_ratio_low must be < rs_log_ratio_high "
+                f"(got low={self.rs_log_ratio_low}, high={self.rs_log_ratio_high})",
+            )
+        if self.recompute_old_logprob not in ("off", "on"):
+            raise ValueError(
+                "precision_correction.recompute_old_logprob must be off/on; "
+                f"got {self.recompute_old_logprob!r}",
+            )
+        if self.recompute_old_logprob == "on":
+            raise NotImplementedError(
+                "precision_correction.recompute_old_logprob='on' (decoupled "
+                "full-precision old-recompute) is not implemented in this codebase: "
+                "old_log_prob is the rollout-recorded behavior logprob (bypass). "
+                "Keep 'off' (bypass) and bound drift with the drift guard + RS.",
             )
 
 
@@ -133,9 +199,84 @@ def apply_truncated_importance_weight(
     raise ValueError(f"unknown tis_mode: {mode!r}")
 
 
+def apply_rejection_sample_mask(
+    log_ratio: torch.Tensor,
+    config: PrecisionCorrectionConfig,
+    *,
+    mask: torch.Tensor | None = None,
+) -> torch.Tensor | None:
+    """Whole-sequence reject-sampling (RS) mask on the rollout->replay log-ratio.
+
+    ``log_ratio = replay_logprob - rollout_logprob`` (NOT the IS weight: RS judges
+    the log-ratio, TIS judges ``exp(log_ratio)``). Returns a 0/1 keep mask whose
+    rejected entries the caller drops from the loss denominator, or ``None`` when
+    ``rs_mode == 'off'``. An entire sample is kept or rejected as one unit:
+
+    - ``seq_mean_k1``: the mean log-ratio over the sequence axis must lie in
+      ``[low, high]``.
+    - ``seq_max_k1``: every step must lie in band (a single out-of-band step
+      rejects the whole sequence) — the strictest mode.
+
+    Shapes: per-sample log-ratio ``(B,)`` (continuous diffusion) has no sequence
+    axis, so both modes reduce to the same per-sample band check and the returned
+    mask is ``(B,)``. Per-token log-ratio ``(B, L)`` reduces over ``L`` and the
+    returned mask is ``(B, 1)`` so it broadcasts over the token axis. ``mask``
+    (token validity) restricts the reduction to real tokens when given.
+    """
+
+    mode = config.rs_mode
+    if mode == "off":
+        return None
+    low, high = config.rs_log_ratio_low, config.rs_log_ratio_high
+
+    if log_ratio.dim() <= 1:
+        # Per-sample: the log-ratio is already a whole-trajectory scalar, so
+        # seq_mean and seq_max coincide — judge each sample's band directly.
+        keep = (log_ratio >= low) & (log_ratio <= high)
+        return keep.to(log_ratio.dtype)
+
+    if mode == "seq_mean_k1":
+        if mask is not None:
+            m = mask.to(log_ratio.dtype)
+            denom = m.sum(dim=-1).clamp_min(1.0)
+            agg = (log_ratio * m).sum(dim=-1) / denom
+        else:
+            agg = log_ratio.mean(dim=-1)
+        keep = (agg >= low) & (agg <= high)
+    else:  # seq_max_k1: reject if ANY in-band step is violated
+        if mask is not None:
+            valid = mask.to(torch.bool)
+            # Neutralize padding: fill with an in-band value so it never drives
+            # the min below low or the max above high.
+            for_min = torch.where(valid, log_ratio, torch.full_like(log_ratio, high))
+            for_max = torch.where(valid, log_ratio, torch.full_like(log_ratio, low))
+        else:
+            for_min = for_max = log_ratio
+        keep = (for_min.min(dim=-1).values >= low) & (for_max.max(dim=-1).values <= high)
+
+    return keep.unsqueeze(-1).to(log_ratio.dtype)
+
+
+def combine_keep_masks(*masks: torch.Tensor | None) -> torch.Tensor | None:
+    """Intersect optional 0/1 keep masks by multiplication; ``None`` entries skip.
+
+    Returns ``None`` only if every input is ``None``. Shapes may broadcast (e.g.
+    a per-token ``(B, L)`` validity mask times a per-sequence ``(B, 1)`` RS mask).
+    """
+
+    result: torch.Tensor | None = None
+    for m in masks:
+        if m is None:
+            continue
+        result = m if result is None else result * m
+    return result
+
+
 __all__ = [
     "LogprobMismatchStats",
     "PrecisionCorrectionConfig",
+    "apply_rejection_sample_mask",
     "apply_truncated_importance_weight",
+    "combine_keep_masks",
     "compute_logprob_mismatch_stats",
 ]

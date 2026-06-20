@@ -8,7 +8,11 @@ from typing import Any
 import torch
 
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
-from vrl.algorithms.logprob_mismatch import apply_truncated_importance_weight
+from vrl.algorithms.logprob_mismatch import (
+    apply_rejection_sample_mask,
+    apply_truncated_importance_weight,
+    combine_keep_masks,
+)
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.types import TrainStepMetrics
 
@@ -57,8 +61,13 @@ class TokenGRPO(GRPO):
         raw_ratio = torch.exp(new_lp - old_lp)
         # TIS on the rollout->replay weight (old_lp is the rollout behavior logprob),
         # folded into the per-token mask so 'mask' mode drops drift-rejected tokens.
-        ratio, tis_keep = apply_truncated_importance_weight(raw_ratio, self.precision_correction)
-        eff_mask = mask if tis_keep is None else mask * tis_keep
+        # RS rejects whole sequences whose log-ratio drift is out of band (a per-
+        # sequence (B,1) mask that broadcasts over the token axis); restrict its
+        # sequence reduction to valid tokens via the token mask.
+        pc = self.precision_correction
+        ratio, tis_keep = apply_truncated_importance_weight(raw_ratio, pc)
+        rs_keep = apply_rejection_sample_mask(new_lp - old_lp, pc, mask=mask)
+        eff_mask = combine_keep_masks(mask, tis_keep, rs_keep)
         clipped_ratio = torch.clamp(ratio, 1.0 - cfg.eps_clip, 1.0 + cfg.eps_clip)
         unclipped_loss = -adv_bL * ratio
         clipped_loss = -adv_bL * clipped_ratio
@@ -95,7 +104,7 @@ class TokenGRPO(GRPO):
                 if tis_keep is None:
                     tis_clip_fraction = (
                         0.0
-                        if self.precision_correction.tis_mode == "off"
+                        if pc.tis_mode == "off"
                         else (ratio[valid] != raw_ratio[valid]).float().mean().item()
                     )
                 else:
@@ -104,6 +113,11 @@ class TokenGRPO(GRPO):
                 clip_fraction = 0.0
                 approx_kl = 0.0
                 tis_clip_fraction = 0.0
+            # RS keep is per-sequence (B,1); its rejected fraction is over whole
+            # sequences, independent of the per-token valid count above.
+            rs_seq_masked_fraction = (
+                0.0 if rs_keep is None else (1.0 - rs_keep.mean()).item()
+            )
 
         metrics = TrainStepMetrics(
             loss=loss.item(),
@@ -112,6 +126,7 @@ class TokenGRPO(GRPO):
             clip_fraction=clip_fraction,
             approx_kl=approx_kl,
             tis_clip_fraction=tis_clip_fraction,
+            rs_seq_masked_fraction=rs_seq_masked_fraction,
         )
         return loss, metrics
 
