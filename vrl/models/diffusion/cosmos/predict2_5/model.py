@@ -219,6 +219,7 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusionModelBase):
             )
             transformer.add_adapter("previous", previous_cfg)
         _copy_adapter_weights(transformer, src="default", dst="previous")
+        _freeze_adapter_params(transformer, "previous")
         transformer.set_adapter("default")
         self._set_transformer(transformer)
 
@@ -591,6 +592,7 @@ class CosmosPredict25ReplayModel(ReplayRolloutStubs, CosmosPredict25Model):
             )
             transformer.add_adapter("previous", previous_cfg)
         _copy_adapter_weights(transformer, src="default", dst="previous")
+        _freeze_adapter_params(transformer, "previous")
         transformer.set_adapter("default")
         self._set_transformer(transformer)
 
@@ -670,4 +672,28 @@ def _copy_adapter_weights(
         raise RuntimeError(
             f"failed to copy adapter weights from {src!r} to {dst!r}; "
             "no matching adapter parameters were found",
+        )
+
+
+def _freeze_adapter_params(module: Any, adapter: str) -> None:
+    """Set ``requires_grad=False`` on every parameter of the named PEFT adapter.
+
+    Used for NFT's ``previous`` adapter: it is only forward-evaluated under
+    no_grad and refreshed by weight copy (``sync_previous_policy_adapter``),
+    never optimized. PEFT creates adapter params with ``requires_grad=True``, so
+    without this DDP's reducer expects a gradient for them that the no_grad
+    replay never produces — failing the first backward unless the more expensive
+    ``find_unused_parameters=true`` is forced. Freezing it keeps the cheaper
+    ``find_unused_parameters=false`` correct.
+    """
+
+    marker = f".{adapter}."
+    frozen = 0
+    for name, param in module.named_parameters():
+        if marker in name:
+            param.requires_grad_(False)
+            frozen += 1
+    if frozen == 0:
+        raise RuntimeError(
+            f"no parameters found for adapter {adapter!r} to freeze",
         )
