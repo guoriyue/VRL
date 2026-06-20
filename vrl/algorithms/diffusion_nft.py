@@ -233,10 +233,8 @@ class DiffusionNFT(Algorithm):
             width=int(batch.context.get("width", 0)),
         )
 
-        previous_prediction = _forward_previous_policy_adapter(
-            transformer,
-            transformer_inputs,
-        )
+        with model.activate_adapter("previous"), torch.no_grad():
+            previous_prediction = transformer(**transformer_inputs)[0].detach()
         forward_prediction = transformer(**transformer_inputs)[0]
         ref_prediction = _forward_reference(transformer, transformer_inputs)
 
@@ -323,24 +321,6 @@ def _adapter_host(transformer: Any) -> Any:
     from vrl.trainers.weight_sync import unwrap_compile_and_ddp
 
     return unwrap_compile_and_ddp(transformer)
-
-
-def _forward_previous_policy_adapter(transformer: Any, inputs: dict[str, Any]) -> Any:
-    host = _adapter_host(transformer)
-    set_adapter = getattr(host, "set_adapter", None)
-    if not callable(set_adapter):
-        raise RuntimeError(
-            "DiffusionNFT requires transformer.set_adapter('previous') "
-            "for the previous-policy branch",
-        )
-    set_adapter("previous")
-    import torch
-
-    try:
-        with torch.no_grad():
-            return transformer(**inputs)[0].detach()
-    finally:
-        set_adapter("default")
 
 
 def _forward_reference(transformer: Any, inputs: dict[str, Any]) -> Any:

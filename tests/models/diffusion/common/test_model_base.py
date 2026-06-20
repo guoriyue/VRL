@@ -25,6 +25,10 @@ class _AdapterTransformer(nn.Linear):
     def __init__(self) -> None:
         super().__init__(2, 2)
         self.disabled = False
+        self.active_adapter = "default"
+
+    def set_adapter(self, name: str) -> None:
+        self.active_adapter = name
 
     @contextlib.contextmanager
     def disable_adapter(self):
@@ -249,6 +253,26 @@ def test_disable_adapter_without_transformer_adapter_is_noop() -> None:
 
     with runtime.disable_adapter():
         assert runtime.transformer.training is True
+
+
+def test_activate_adapter_sets_named_adapter_and_restores_default() -> None:
+    """activate_adapter routes to transformer.set_adapter and restores 'default'."""
+    runtime = _ModelBaseStub()
+
+    with runtime.activate_adapter("previous"):
+        assert runtime.transformer.active_adapter == "previous"
+
+    assert runtime.transformer.active_adapter == "default"
+
+
+def test_activate_adapter_without_set_adapter_raises() -> None:
+    """Activating a named adapter on a module that cannot is a loud misconfig."""
+    runtime = _ModelBaseStub()
+    runtime._set_transformer(nn.Linear(2, 2))  # plain module, no set_adapter
+
+    with pytest.raises(RuntimeError, match="set_adapter"):
+        with runtime.activate_adapter("previous"):
+            pass
 
 
 def test_load_trainable_state_accepts_trainable_keys() -> None:

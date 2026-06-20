@@ -35,6 +35,7 @@ from vrl.algorithms.diffusion_nft import DiffusionNFT, DiffusionNFTConfig
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
 from vrl.models.diffusion.cosmos.predict2_5.model import _copy_adapter_weights
+from vrl.models.utils import activate_adapter_on
 from vrl.rollouts.batch import RolloutBatch
 from vrl.trajectory.builders import build_diffusion_trajectory
 
@@ -101,6 +102,11 @@ class _NFTModel:
 
     def __init__(self, transformer: torch.nn.Module) -> None:
         self.transformer = transformer
+
+    def activate_adapter(self, name: str) -> object:
+        # Mirrors DiffusionModelBase.activate_adapter: route named-adapter
+        # activation through the same boundary helper the real model uses.
+        return activate_adapter_on(self.transformer, name)
 
     def diffusion_nft_prepare_transformer_input(
         self,

@@ -9,7 +9,7 @@ a payload back into the module.
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from typing import Any
 
 
@@ -137,3 +137,38 @@ def disable_adapter_on(module: Any) -> contextlib.AbstractContextManager[None]:
     if not callable(disable):
         return contextlib.nullcontext()
     return disable()
+
+
+def activate_adapter_on(module: Any, name: str) -> contextlib.AbstractContextManager[None]:
+    """Context manager activating PEFT adapter ``name``, restoring ``"default"`` on exit.
+
+    The named-adapter sibling of :func:`disable_adapter_on`, used for the
+    previous-policy forward pass. The adapter is switched on the module *behind*
+    any DDP / ``torch.compile`` wrapper: those wrappers do not proxy PEFT's
+    ``set_adapter``, but they wrap the same underlying module, so the switch is
+    visible to the wrapped grad forward too. ``set_adapter`` exists on both the
+    PEFT ``PeftModel`` and the diffusers ``PeftAdapterMixin`` surfaces. Unlike
+    *disabling* — a sensible no-op on an adapter-less module — activating a
+    *named* adapter requires one, so a module without ``set_adapter`` raises
+    rather than silently forwarding the wrong weights.
+    """
+
+    from vrl.trainers.weight_sync import unwrap_compile_and_ddp
+
+    host = unwrap_compile_and_ddp(module)
+    set_adapter = getattr(host, "set_adapter", None)
+    if not callable(set_adapter):
+        raise RuntimeError(
+            f"cannot activate adapter {name!r}: {type(host).__name__} has no "
+            "set_adapter(); attach a PEFT adapter before requesting it",
+        )
+
+    @contextlib.contextmanager
+    def _activated() -> Iterator[None]:
+        set_adapter(name)
+        try:
+            yield
+        finally:
+            set_adapter("default")
+
+    return _activated()

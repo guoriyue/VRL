@@ -20,6 +20,7 @@ from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
 from vrl.models.utils import (
     TrainableStateSlots,
+    activate_adapter_on,
     disable_adapter_on,
     load_weights_into,
 )
@@ -174,6 +175,18 @@ class DiffusionModelBase(nn.Module, ABC):
         """Disable LoRA/adapters, or return a no-op context when absent."""
 
         return disable_adapter_on(self._require_transformer())
+
+    def activate_adapter(self, name: str) -> contextlib.AbstractContextManager[None]:
+        """Activate the named LoRA/PEFT adapter for a forward pass.
+
+        The named-adapter counterpart to :meth:`disable_adapter`; restores the
+        ``"default"`` adapter on exit and switches on the module behind any
+        DDP / compile wrapper. Centralizing it here keeps algorithms (e.g. the
+        DiffusionNFT previous-policy branch) off ``transformer.set_adapter``
+        directly, so adapter control has one boundary that owns the model.
+        """
+
+        return activate_adapter_on(self._require_transformer(), name)
 
     def load_trainable_state(self, state_dict: Mapping[str, Any]) -> Any:
         """Load trainable transformer weights from ``transformer.*`` sync keys."""
