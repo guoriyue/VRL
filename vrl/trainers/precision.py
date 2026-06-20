@@ -40,12 +40,6 @@ def normalize_mixed_precision(mixed_precision: Any) -> str:
     return precision
 
 
-def trainer_mixed_precision(config: Any) -> str:
-    """Normalize precision from a TrainerConfig-like object."""
-
-    return normalize_mixed_precision(getattr(config, "mixed_precision", ""))
-
-
 def torch_dtype_for_mixed_precision(
     mixed_precision: Any,
     *,
@@ -67,7 +61,7 @@ def torch_dtype_for_trainer_precision(config: Any, torch: Any) -> Any:
     """Return the model weight dtype for a TrainerConfig-like object."""
 
     return torch_dtype_for_mixed_precision(
-        getattr(config, "mixed_precision", ""),
+        getattr(config, "train_precision", ""),
         torch=torch,
     )
 
@@ -76,5 +70,4 @@ __all__ = [
     "normalize_mixed_precision",
     "torch_dtype_for_mixed_precision",
     "torch_dtype_for_trainer_precision",
-    "trainer_mixed_precision",
 ]

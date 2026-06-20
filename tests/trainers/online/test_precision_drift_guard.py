@@ -32,10 +32,10 @@ def _eval_with_drift(delta: float):
     return lambda _timestep: _signals(delta)
 
 
-def _run(config, *, compute, rollout, evaluate_fn, **kw):
+def _run(config, *, train, rollout, evaluate_fn, **kw):
     return run_precision_drift_guard(
         config,
-        compute_precision=compute,
+        train_precision=train,
         rollout_precision=rollout,
         math_precision="fp32",
         timestep_indices=[0, 1, 2],
@@ -49,32 +49,32 @@ def _run(config, *, compute, rollout, evaluate_fn, **kw):
 
 def test_auto_enables_fail_for_rollout_compute_mismatch() -> None:
     assert (
-        resolve_guard_mode("auto", compute_precision="fp32", rollout_precision="bf16")
+        resolve_guard_mode("auto", train_precision="fp32", rollout_precision="bf16")
         == "fail"
     )
     assert (
-        resolve_guard_mode("auto", compute_precision="fp32", rollout_precision="fp16")
+        resolve_guard_mode("auto", train_precision="fp32", rollout_precision="fp16")
         == "fail"
     )
 
 
 def test_auto_is_off_for_same_dtype() -> None:
-    assert resolve_guard_mode("auto", compute_precision="fp32", rollout_precision="fp32") == "off"
+    assert resolve_guard_mode("auto", train_precision="fp32", rollout_precision="fp32") == "off"
 
 
 def test_auto_normalizes_legacy_no_to_fp32() -> None:
     # "no" (legacy fp32 spelling) == "fp32" → same dtype → off.
-    assert resolve_guard_mode("auto", compute_precision="no", rollout_precision="fp32") == "off"
+    assert resolve_guard_mode("auto", train_precision="no", rollout_precision="fp32") == "off"
 
 
 def test_explicit_modes_pass_through_regardless_of_precision() -> None:
     for mode in ("off", "warn", "fail"):
-        assert resolve_guard_mode(mode, compute_precision="fp32", rollout_precision="fp32") == mode
+        assert resolve_guard_mode(mode, train_precision="fp32", rollout_precision="fp32") == mode
 
 
 def test_unknown_mode_rejected() -> None:
     with pytest.raises(ValueError, match="auto/off/warn/fail"):
-        resolve_guard_mode("loud", compute_precision="fp32", rollout_precision="bf16")
+        resolve_guard_mode("loud", train_precision="fp32", rollout_precision="bf16")
 
 
 # -- run_precision_drift_guard ---------------------------------------------
@@ -82,7 +82,7 @@ def test_unknown_mode_rejected() -> None:
 
 def test_precision_drift_guard_passes_when_within_threshold() -> None:
     cfg = PrecisionDriftGuardConfig(mode="fail")
-    record = _run(cfg, compute="fp32", rollout="bf16", evaluate_fn=_eval_with_drift(0.0))
+    record = _run(cfg, train="fp32", rollout="bf16", evaluate_fn=_eval_with_drift(0.0))
     assert record is not None
     assert record["violated"] is False
 
@@ -91,7 +91,7 @@ def test_precision_drift_guard_checks_fp16_same_forward_precision() -> None:
     cfg = PrecisionDriftGuardConfig(mode="fail")
     record = _run(
         cfg,
-        compute="fp16",
+        train="fp16",
         rollout="fp16",
         evaluate_fn=_eval_with_drift(0.0),
         metadata={
@@ -102,7 +102,7 @@ def test_precision_drift_guard_checks_fp16_same_forward_precision() -> None:
     )
     assert record is not None
     assert record["mode"] == "fail"
-    assert record["forward_precision_match"] is True
+    assert record["train_rollout_precision_match"] is True
     assert record["violated"] is False
     assert record["trainer_autocast_enabled"] is True
     assert record["rollout_transformer_dtype"] == "float16"
@@ -116,20 +116,20 @@ def test_precision_drift_guard_fails_before_optimizer_when_ratio_drifts() -> Non
         max_ratio_abs_dev=1e-3,
     )
     with pytest.raises(PrecisionDriftError, match="precision drift guard"):
-        _run(cfg, compute="fp32", rollout="bf16", evaluate_fn=_eval_with_drift(0.05))
+        _run(cfg, train="fp32", rollout="bf16", evaluate_fn=_eval_with_drift(0.05))
 
 
 def test_precision_drift_guard_warns_without_failing(caplog) -> None:
     cfg = PrecisionDriftGuardConfig(mode="warn")
     with caplog.at_level(logging.WARNING):
-        record = _run(cfg, compute="fp32", rollout="bf16", evaluate_fn=_eval_with_drift(0.05))
+        record = _run(cfg, train="fp32", rollout="bf16", evaluate_fn=_eval_with_drift(0.05))
     assert record["violated"] is True
     assert any("precision drift guard" in r.getMessage() for r in caplog.records)
 
 
 def test_precision_drift_guard_auto_enables_for_rollout_compute_mismatch() -> None:
     cfg = PrecisionDriftGuardConfig(mode="auto")
-    record = _run(cfg, compute="fp32", rollout="bf16", evaluate_fn=_eval_with_drift(0.0))
+    record = _run(cfg, train="fp32", rollout="bf16", evaluate_fn=_eval_with_drift(0.0))
     assert record is not None
     assert record["mode"] == "fail"
     assert record["violated"] is False
@@ -142,7 +142,7 @@ def test_precision_drift_guard_auto_fails_on_rollout_compute_mismatch_drift() ->
         max_ratio_abs_dev=1e-3,
     )
     with pytest.raises(PrecisionDriftError, match="precision drift guard"):
-        _run(cfg, compute="fp32", rollout="bf16", evaluate_fn=_eval_with_drift(0.05))
+        _run(cfg, train="fp32", rollout="bf16", evaluate_fn=_eval_with_drift(0.05))
 
 
 def test_precision_drift_guard_auto_is_off_for_same_dtype_without_running_eval() -> None:
@@ -150,7 +150,7 @@ def test_precision_drift_guard_auto_is_off_for_same_dtype_without_running_eval()
         raise AssertionError("evaluate_fn must not be called when the guard is off")
 
     cfg = PrecisionDriftGuardConfig(mode="auto")
-    record = _run(cfg, compute="fp32", rollout="fp32", evaluate_fn=_must_not_run)
+    record = _run(cfg, train="fp32", rollout="fp32", evaluate_fn=_must_not_run)
     assert record is None
 
 
@@ -166,7 +166,7 @@ def test_precision_drift_guard_flags_nonfinite() -> None:
         )
 
     with pytest.raises(PrecisionDriftError):
-        _run(cfg, compute="fp32", rollout="bf16", evaluate_fn=_inf)
+        _run(cfg, train="fp32", rollout="bf16", evaluate_fn=_inf)
 
 
 # -- select_guard_timesteps ------------------------------------------------
@@ -262,7 +262,7 @@ def test_online_trainer_precision_guard_fails_before_optimizer_when_ratio_drifts
             optim=OptimConfig(lr=0.01),
             ema=EMAConfig(),
             n_samples_per_prompt=2,
-            mixed_precision="no",
+            train_precision="no",
             rollout_precision="bf16",
         ),
         device="cpu",

@@ -166,7 +166,7 @@ class GRPO(Algorithm):
         approx_kl = 0.5 * torch.mean((signals.log_prob - old_log_probs) ** 2).item()
 
         # Rollout-vs-replay logprob drift: with a same-dtype on-policy first step this
-        # is ~0; under rollout!=compute precision it surfaces the backend mismatch.
+        # is ~0; under rollout!=train precision it surfaces the backend mismatch.
         mismatch = compute_logprob_mismatch_stats(signals.log_prob, old_log_probs)
 
         metrics = TrainStepMetrics(

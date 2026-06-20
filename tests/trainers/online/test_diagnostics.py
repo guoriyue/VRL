@@ -97,7 +97,7 @@ class TestDiagnostics:
                 ema=EMAConfig(),
                 debug=DebugConfig(first_step=True),
                 n_samples_per_prompt=2,
-                mixed_precision="no",
+                train_precision="no",
                 output_dir=str(tmp_path),
             ),
             device="cpu",
@@ -111,7 +111,7 @@ class TestDiagnostics:
         record = records[0]
         assert record["event"] == "first_step_logprob_parity"
         assert record["mixed_precision"] == "no"
-        assert record["precision_policy"]["compute_precision"] == "fp32"
+        assert record["precision_policy"]["train_precision"] == "fp32"
         assert record["precision_policy"]["rollout_precision"] == "fp32"
         assert record["precision_policy"]["math_precision"] == "fp32"
         assert record["precision_policy"]["trainer_autocast_enabled"] is False

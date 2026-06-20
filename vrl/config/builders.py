@@ -31,7 +31,7 @@ def _apply_rollout_precision_defaults(
     guard. Explicit expert blocks are still respected.
     """
 
-    if precision.rollout == precision.compute:
+    if precision.rollout == precision.train:
         return
 
     from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig

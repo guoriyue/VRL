@@ -90,7 +90,7 @@ class TestOnlineTrainerResumeState:
         if not torch.cuda.is_available():
             pytest.skip("CUDA is required for fp16 GradScaler")
 
-        source = _make_resume_trainer(device="cuda", mixed_precision="fp16")
+        source = _make_resume_trainer(device="cuda", train_precision="fp16")
         assert source._grad_scaler is not None
 
         optimizer = source._ensure_optimizer()
@@ -102,7 +102,7 @@ class TestOnlineTrainerResumeState:
 
         assert "grad_scaler" in state
 
-        restored = _make_resume_trainer(device="cuda", mixed_precision="fp16")
+        restored = _make_resume_trainer(device="cuda", train_precision="fp16")
         restored.load_state_dict(state, strict=True)
 
         assert restored._grad_scaler is not None
@@ -207,7 +207,7 @@ def _make_resume_trainer(
     weight_syncer=None,
     collector=None,
     device: str = "cpu",
-    mixed_precision: str = "",
+    train_precision: str = "",
 ):
     import torch
     import torch.nn as nn
@@ -240,7 +240,7 @@ def _make_resume_trainer(
             ema=EMAConfig(enable=ema),
             debug=DebugConfig(),
             n_samples_per_prompt=2,
-            mixed_precision=mixed_precision,
+            train_precision=train_precision,
         ),
         device=device,
     )

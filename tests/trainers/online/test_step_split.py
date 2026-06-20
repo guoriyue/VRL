@@ -86,7 +86,7 @@ def _build_trainer(tmp_path) -> OnlineTrainer:
             optim=OptimConfig(lr=0.01),
             ema=EMAConfig(),
             n_samples_per_prompt=2,
-            mixed_precision="no",
+            train_precision="no",
             output_dir=str(tmp_path),
         ),
         device="cpu",

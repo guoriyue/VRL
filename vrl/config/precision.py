@@ -1,8 +1,10 @@
 """Unified precision policy: one config surface for all dtype axes.
 
-A run's public precision is one forward dtype plus protected math/frozen defaults:
+A run's public precision is one training-forward dtype plus protected math/frozen
+defaults:
 
-- ``forward``  : generation rollout + trainer replay transformer forward dtype
+- ``train``    : trainer replay transformer forward dtype; the generation rollout
+                 forward follows it unless ``rollout`` overrides it
 - ``math``     : the numerically-sensitive algorithm math *outside* the
                  transformer (the SDE step / log-probability / loss reductions,
                  e.g. ``sde_step_with_logprob``). torch autocast keeps such ops
@@ -12,16 +14,16 @@ A run's public precision is one forward dtype plus protected math/frozen default
 
 Users normally set a scalar (``precision: fp16`` → rollout/replay forward both
 use fp16, ``math`` stays fp32). A mapping may override ``math`` or ``frozen``, and
-it must still set one shared ``forward`` dtype.
+it must still set one shared ``train`` dtype.
 
 A mapping may also set an explicit ``rollout`` dtype that differs from
-``forward``. This is the **experimental** split: it is the only way to express an
+``train``. This is the **experimental** split: it is the only way to express an
 fp8/fp4 rollout against a bf16/fp32 replay, which is inherently a rollout-vs-replay
 precision-correction problem (the collection-time logprob no longer equals the
 replay logprob). fp8/fp4 are rollout-only: the scalar form (``precision: fp8``)
-and the ``forward``/``math`` axes reject them, because a sub-byte replay/training
+and the ``train``/``math`` axes reject them, because a sub-byte replay/training
 forward has no stable gradient path. The split is reachable only by deliberately
-writing ``{forward: bf16, rollout: fp8}``. The trainer config builder then derives
+writing ``{train: bf16, rollout: fp8}``. The trainer config builder then derives
 the correction path automatically: rollout-recorded logprobs are used as the old
 policy anchor, drift metrics are reported, TIS/RS are enabled, and the guard
 fails only on catastrophic/non-finite drift unless the user provides an explicit
@@ -68,13 +70,13 @@ def normalize_precision(value: Any, *, default: str = "fp32") -> str:
 class PrecisionPolicy:
     """Resolved precision for the four dtype axes (canonical string names)."""
 
-    compute: str
+    train: str
     rollout: str
     math: str
     frozen: str
 
     def __post_init__(self) -> None:
-        for axis in (self.compute, self.rollout, self.math, self.frozen):
+        for axis in (self.train, self.rollout, self.math, self.frozen):
             if axis not in _CANONICAL:
                 raise ValueError(f"invalid precision axis value: {axis!r}")
 
@@ -84,12 +86,12 @@ def precision_bridge_fields(policy: PrecisionPolicy) -> dict[str, str]:
 
     Single source for the policy -> derived-fields expansion so the trainer
     builder (dict payload) and the online recipe (TrainerConfig attrs) cannot
-    drift. ``mixed_precision`` is the replay/forward compute dtype; rollout and
+    drift. ``train_precision`` is the replay/training forward dtype; rollout and
     math are exposed separately so the precision drift guard can prove both
     sides stayed aligned.
     """
     return {
-        "mixed_precision": policy.compute,
+        "train_precision": policy.train,
         "rollout_precision": policy.rollout,
         "math_precision": policy.math,
     }
@@ -106,23 +108,23 @@ def _frozen_default(rollout: str) -> str:
     return "fp16" if rollout == "fp32" else rollout
 
 
-def _policy_from_compute(
-    compute: str,
+def _policy_from_train(
+    train: str,
     *,
     rollout: str | None = None,
     math: str = "fp32",
     frozen: str | None = None,
 ) -> PrecisionPolicy:
-    rollout = rollout or compute
+    rollout = rollout or train
     frozen = frozen or _frozen_default(rollout)
-    return PrecisionPolicy(compute=compute, rollout=rollout, math=math, frozen=frozen)
+    return PrecisionPolicy(train=train, rollout=rollout, math=math, frozen=frozen)
 
 
 def resolve_precision_policy(cfg: Any) -> PrecisionPolicy:
     """Resolve the precision policy from a run config.
 
     A public config must use the top-level ``precision`` block. The returned
-    policy still exposes ``compute`` and ``rollout`` internally so trainer/debug
+    policy still exposes ``train`` and ``rollout`` internally so trainer/debug
     code can report both sides, but they are deliberately derived from the same
     forward dtype.
     """
@@ -146,19 +148,19 @@ def _from_precision_block(block: Any) -> PrecisionPolicy:
                 f"precision: {scalar!r} is invalid as a scalar: fp8/fp4 is a "
                 "rollout-only quantized GEMM dtype and a scalar would set the "
                 "replay forward to it too. Use the mapping form "
-                f"`precision: {{forward: bf16, rollout: {scalar}}}`.",
+                f"`precision: {{train: bf16, rollout: {scalar}}}`.",
             )
-        return _policy_from_compute(scalar)
-    forward = normalize_precision(_select(block, "forward", "fp32"))
+        return _policy_from_train(scalar)
+    train = normalize_precision(_select(block, "train", "fp32"))
     # `rollout` is the experimental split (fp8/fp4 rollout vs bf16/fp32 replay);
-    # absent, it follows `forward` so the common path stays single-dtype.
+    # absent, it follows `train` so the common path stays single-dtype.
     rollout_raw = _select(block, "rollout", None)
-    rollout = normalize_precision(rollout_raw) if rollout_raw is not None else forward
-    if forward in ("fp8", "fp4"):
+    rollout = normalize_precision(rollout_raw) if rollout_raw is not None else train
+    if train in ("fp8", "fp4"):
         raise ValueError(
-            f"precision.forward={forward!r} is invalid: fp8/fp4 is a rollout-only "
+            f"precision.train={train!r} is invalid: fp8/fp4 is a rollout-only "
             "quantized GEMM dtype. The replay/training forward must stay fp32/bf16/"
-            "fp16 for stable gradients. Use `{forward: bf16, rollout: fp8}`.",
+            "fp16 for stable gradients. Use `{train: bf16, rollout: fp8}`.",
         )
     math = normalize_precision(_select(block, "math", "fp32"))
     if math in ("fp8", "fp4"):
@@ -168,7 +170,7 @@ def _from_precision_block(block: Any) -> PrecisionPolicy:
         )
     frozen_raw = _select(block, "frozen", None)
     frozen = normalize_precision(frozen_raw) if frozen_raw is not None else _frozen_default(rollout)
-    return PrecisionPolicy(compute=forward, rollout=rollout, math=math, frozen=frozen)
+    return PrecisionPolicy(train=train, rollout=rollout, math=math, frozen=frozen)
 
 
 def _select(obj: Any, path: str, default: Any = None) -> Any:

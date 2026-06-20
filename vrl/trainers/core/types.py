@@ -102,7 +102,7 @@ class PrecisionDriftGuardConfig:
     first step.
 
     ``mode``: ``"off"``/``"warn"``/``"fail"`` are explicit; ``"auto"`` enables the guard
-    only when rollout!=compute precision and resolves to ``"fail"``. Use explicit
+    only when rollout!=train precision and resolves to ``"fail"``. Use explicit
     ``"warn"``/``"fail"`` for same-forward-precision acceptance runs, such as
     SD3.5 FP16 rollout/replay parity checks.
     """
@@ -298,9 +298,11 @@ class TrainerConfig:
     host_memory_budget_fraction: float = field(default=0.0, metadata={"yaml": "rollout"})
 
     # --- precision (bridged from the unified precision policy) ---
-    # Empty -> fp32 ("no"). Production always bridges this from precision.compute;
+    # The replay/training forward dtype (canonical fp32/bf16/fp16); the trainer
+    # autocasts to it (AMP), so the forward is mixed, not uniformly this dtype.
+    # Empty -> fp32 ("no"). Production always bridges this from precision.train;
     # bare construction (tests) defaults to fp32.
-    mixed_precision: str = field(default="", metadata={"yaml": "bridged"})
+    train_precision: str = field(default="", metadata={"yaml": "bridged"})
     gradient_checkpointing: bool = field(default=True, metadata={"yaml": "actor"})
     # Rollout (generation) compute precision. Empty -> treated as same as
     # compute. The drift guard compares this against the compute precision to

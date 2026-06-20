@@ -35,11 +35,11 @@ def test_bridge_uses_aligned_public_precision(experiment):
     trainer_config = build_configs(cfg)["trainer"]
     _apply_precision_policy(cfg, trainer_config)
     policy = resolve_precision_policy(cfg)
-    assert trainer_config.mixed_precision == policy.compute
+    assert trainer_config.train_precision == policy.train
     assert trainer_config.rollout_precision == policy.rollout
-    assert policy.compute == policy.rollout
+    assert policy.train == policy.rollout
     assert torch_dtype_for_trainer_precision(trainer_config, torch) is resolve_torch_dtype(
-        policy.compute,
+        policy.train,
     )
 
 
@@ -52,7 +52,7 @@ def test_precision_block_drives_trainer():
     cfg = OmegaConf.merge(cfg, OmegaConf.create({"precision": "bf16"}))
     trainer_config = build_configs(cfg)["trainer"]
     _apply_precision_policy(cfg, trainer_config)
-    assert trainer_config.mixed_precision == "bf16"
+    assert trainer_config.train_precision == "bf16"
     assert torch_dtype_for_trainer_precision(trainer_config, torch) is torch.bfloat16
 
 
@@ -64,7 +64,7 @@ def test_fp16_precision_block_drives_trainer_and_rollout():
     trainer_config = build_configs(cfg)["trainer"]
     _apply_precision_policy(cfg, trainer_config)
 
-    assert trainer_config.mixed_precision == "fp16"
+    assert trainer_config.train_precision == "fp16"
     assert trainer_config.rollout_precision == "fp16"
     assert trainer_config.math_precision == "fp32"
     assert torch_dtype_for_trainer_precision(trainer_config, torch) is torch.float16
@@ -74,12 +74,12 @@ def test_rollout_precision_split_auto_derives_correction_policy():
     """A low-precision rollout split is a user intent; correction is derived."""
     cfg = _with_precision(
         "diffusion/sd3_5/online_grpo_ocr",
-        {"forward": "bf16", "rollout": "fp8"},
+        {"train": "bf16", "rollout": "fp8"},
     )
 
     trainer_config = build_configs(cfg)["trainer"]
 
-    assert trainer_config.mixed_precision == "bf16"
+    assert trainer_config.train_precision == "bf16"
     assert trainer_config.rollout_precision == "fp8"
     assert trainer_config.precision_correction.tis_mode == "truncate"
     assert trainer_config.precision_correction.rs_mode == "seq_mean_k1"
@@ -95,7 +95,7 @@ def test_explicit_precision_correction_is_respected_on_rollout_split():
     """Expert correction blocks override the auto split-precision defaults."""
     cfg = _with_precision(
         "diffusion/sd3_5/online_grpo_ocr",
-        {"forward": "bf16", "rollout": "fp8"},
+        {"train": "bf16", "rollout": "fp8"},
     )
     cfg = OmegaConf.merge(
         cfg,
@@ -129,7 +129,7 @@ def test_math_axis_resolves_to_dtype(math, expected):
     from vrl.config.precision import resolve_precision_policy
     from vrl.models.dtypes import resolve_torch_dtype
 
-    cfg = _with_precision("diffusion/sd3_5/online_grpo_ocr", {"forward": "fp32", "math": math})
+    cfg = _with_precision("diffusion/sd3_5/online_grpo_ocr", {"train": "fp32", "math": math})
     assert resolve_torch_dtype(resolve_precision_policy(cfg).math) is expected
     trainer_config = build_configs(cfg)["trainer"]
     _apply_precision_policy(cfg, trainer_config)
@@ -231,6 +231,6 @@ def test_frozen_axis_in_runtime_spec(frozen, expected):
     """Checks frozen axis in runtime spec."""
     from vrl.models.diffusion.sd3_5.runtime import extract_sd3_5_runtime_spec
 
-    cfg = _with_precision("diffusion/sd3_5/online_grpo_ocr", {"forward": "fp32", "frozen": frozen})
+    cfg = _with_precision("diffusion/sd3_5/online_grpo_ocr", {"train": "fp32", "frozen": frozen})
     spec = extract_sd3_5_runtime_spec(cfg, torch.device("cpu"), torch.float32)
     assert spec.frozen_dtype is expected

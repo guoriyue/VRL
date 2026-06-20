@@ -38,7 +38,7 @@ from vrl.trainers.strategy import SingleProcessStrategy
     ],
 )
 def test_needs_grad_scaler_matrix(mixed_precision, device, accelerator, expected) -> None:
-    config = SimpleNamespace(mixed_precision=mixed_precision)
+    config = SimpleNamespace(train_precision=mixed_precision)
     assert (
         _needs_grad_scaler(config, torch.device(device), model=None, accelerator=accelerator)
         is expected
@@ -210,7 +210,7 @@ def _build_trainer(tmp_path):
             optim=OptimConfig(lr=0.01),
             ema=EMAConfig(enable=True, update_interval=1),
             n_samples_per_prompt=2,
-            mixed_precision="no",
+            train_precision="no",
             output_dir=str(tmp_path),
         ),
         device="cpu",

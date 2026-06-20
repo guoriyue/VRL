@@ -14,7 +14,7 @@ WHAT it does, all on the GPU, through the ACTUAL codebase code paths:
      behavior ``old_log_prob``; the bf16 logprob is the fresh replay ``log_prob``.
   2. Measure the drift with ``compute_logprob_mismatch_stats`` (the one shared
      stats helper used by metrics + guard) -- abs diff, ratio dev, mismatch KL.
-  3. Arm ``run_precision_drift_guard`` in 'auto' (rollout=fp8 != compute=bf16 ->
+  3. Arm ``run_precision_drift_guard`` in 'auto' (rollout=fp8 != train=bf16 ->
      resolves to 'fail') and in 'warn' to show it fires on real fp8 drift.
   4. Feed the same signals into the real continuous-GRPO loss and compare the
      policy-gradient norm with ``tis_mode`` off vs truncate vs mask, proving TIS
@@ -171,7 +171,7 @@ def main() -> None:
     armed = False
     try:
         run_precision_drift_guard(
-            guard_cfg, compute_precision="bf16", rollout_precision="fp8",
+            guard_cfg, train_precision="bf16", rollout_precision="fp8",
             math_precision="fp32", timestep_indices=[0], evaluate_fn=_eval,
         )
     except PrecisionDriftError as exc:
@@ -183,7 +183,7 @@ def main() -> None:
 
     warn_rec = run_precision_drift_guard(
         PrecisionDriftGuardConfig(mode="warn"),
-        compute_precision="bf16", rollout_precision="fp8", math_precision="fp32",
+        train_precision="bf16", rollout_precision="fp8", math_precision="fp32",
         timestep_indices=[0], evaluate_fn=_eval,
     )
     print(f"  warn-mode record: violated={warn_rec['violated']} worst_ratio_abs_dev="

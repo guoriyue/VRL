@@ -34,12 +34,12 @@ class PrecisionDriftError(RuntimeError):
 def resolve_guard_mode(
     mode: str,
     *,
-    compute_precision: str,
+    train_precision: str,
     rollout_precision: str,
 ) -> str:
     """Resolve ``auto`` into an effective ``off``/``warn``/``fail`` mode.
 
-    ``auto`` enables the guard only when rollout/compute precision differ — same-dtype
+    ``auto`` enables the guard only when rollout/train precision differ — same-dtype
     first-step parity is already the debug probe's job, so ``auto`` stays off there to
     avoid a redundant replay forward. On a mismatch it resolves to ``fail``: explicit
     ``warn`` is the measurement escape hatch for calibration runs, not the default.
@@ -52,7 +52,7 @@ def resolve_guard_mode(
         raise ValueError(
             f"precision drift guard mode must be auto/off/warn/fail; got {mode!r}",
         )
-    if _normalize(rollout_precision) != _normalize(compute_precision):
+    if _normalize(rollout_precision) != _normalize(train_precision):
         return "fail"
     return "off"
 
@@ -75,7 +75,7 @@ def select_guard_timesteps(timestep_indices: Sequence[int], max_checks: int) -> 
 def run_precision_drift_guard(
     config: PrecisionDriftGuardConfig,
     *,
-    compute_precision: str,
+    train_precision: str,
     rollout_precision: str,
     math_precision: str,
     timestep_indices: Sequence[int],
@@ -92,13 +92,13 @@ def run_precision_drift_guard(
 
     mode = resolve_guard_mode(
         config.mode,
-        compute_precision=compute_precision,
+        train_precision=train_precision,
         rollout_precision=rollout_precision,
     )
     if mode == "off":
         return None
 
-    compute_label = _normalize(compute_precision)
+    train_label = _normalize(train_precision)
     rollout_label = _normalize(rollout_precision)
     math_label = _normalize(math_precision)
     log = logger or _logger
@@ -121,10 +121,10 @@ def run_precision_drift_guard(
         "event": "precision_drift_guard",
         "mode": mode,
         "violated": violated,
-        "compute_precision": compute_label,
+        "train_precision": train_label,
         "rollout_precision": rollout_label,
         "math_precision": math_label,
-        "forward_precision_match": rollout_label == compute_label,
+        "train_rollout_precision_match": rollout_label == train_label,
         "worst_timestep": worst_timestep,
         "max_abs_log_ratio": config.max_abs_log_ratio,
         "max_ratio_abs_dev": config.max_ratio_abs_dev,
@@ -137,14 +137,14 @@ def run_precision_drift_guard(
         # set from the payload itself so new precision fields added by the
         # trainer's metadata producer surface automatically, instead of silently
         # dropping out of a stale hand-maintained key list. setdefault keeps the
-        # normalized compute/rollout/math labels already set above.
+        # normalized train/rollout/math labels already set above.
         for key, value in metadata_dict.items():
             if isinstance(value, (str, bool, int, float)) or value is None:
                 record.setdefault(key, value)
     if violated:
         message = (
             "precision drift guard: rollout-vs-replay logprob parity exceeded "
-            f"threshold (compute={compute_label}, rollout={rollout_label}, "
+            f"threshold (train={train_label}, rollout={rollout_label}, "
             f"math={math_label}); worst timestep={worst_timestep} "
             f"abs_log_diff_max={worst.logprob_abs_diff_max:.3e} "
             f"ratio_abs_dev_max={worst.ratio_abs_dev_max:.3e} "

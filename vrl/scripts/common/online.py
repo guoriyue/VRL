@@ -87,9 +87,9 @@ def _require_supported_online_strategy(context: DistributedTrainingContext) -> N
 def _apply_precision_policy(cfg: DictConfig, trainer_config: Any) -> None:
     """Bridge public ``precision:`` onto trainer fields.
 
-    Public config exposes one forward dtype. Internally we still report compute
-    and rollout separately so the precision guard can prove both sides stayed
-    aligned.
+    Public config exposes one training-forward dtype. Internally we still report
+    train and rollout separately so the precision guard can prove both sides
+    stayed aligned.
     """
 
     policy = resolve_precision_policy(cfg)
@@ -661,7 +661,7 @@ async def run_online_recipe(
     # trainer device so the trainer model, rollout, and weight sync all land on
     # this rank's card. single_process passes the resolver device straight through.
     device = training_context.device
-    # Replay/training model storage follows ``compute`` (via trainer_config);
+    # Replay/training model storage follows ``train`` (via trainer_config);
     # the generation (rollout) model can use a different ``rollout`` dtype.
     weight_dtype = (
         definition.weight_dtype_getter(cfg, trainer_config, torch)
@@ -682,7 +682,7 @@ async def run_online_recipe(
         # loads its bf16 master and the runtime builder swaps the big linears to
         # Fp8Linear (torch._scaled_mm). So storage stays the compute (bf16) dtype;
         # the swap is driven by spec.rollout_quantization (extract_runtime_spec).
-        rollout_weight_dtype = resolve_torch_dtype(policy.compute)
+        rollout_weight_dtype = resolve_torch_dtype(policy.train)
     else:
         rollout_weight_dtype = resolve_torch_dtype(rollout_precision)
     context = RecipeDeviceContext(

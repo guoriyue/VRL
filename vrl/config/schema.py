@@ -505,7 +505,8 @@ class FSDPConfig(ConfigBase):
     mesh: list[str] = Field(default_factory=lambda: ["dp_shard"])
     # actor -> MixedPrecisionPolicy(param=bf16, reduce=fp32); none -> full precision.
     # Named precision_policy (not mixed_precision) to avoid colliding with the
-    # compute-dtype `mixed_precision` (fp32/bf16/fp16); this is a param/reduce policy.
+    # training-forward dtype `train_precision` (fp32/bf16/fp16); this is a
+    # param/reduce policy, not a dtype.
     precision_policy: Literal["actor", "none"] = "actor"
     # True = re-gather params after forward (ZeRO-3, lowest memory).
     reshard_after_forward: bool = True
@@ -637,8 +638,8 @@ class RootConfig(ConfigBase):
     actor: ActorSection | None = None
     distributed: DistributedSection | None = None
     # reader: vrl/config/precision.py (scalar form skips the block walk).
-    # `rollout` is the experimental fp8/fp4-rollout split (rollout != forward).
-    precision: Annotated[Any, ConfigBlock(("forward", "rollout", "math", "frozen"))] = None
+    # `rollout` is the experimental fp8/fp4-rollout split (rollout != train).
+    precision: Annotated[Any, ConfigBlock(("train", "rollout", "math", "frozen"))] = None
     # reader: vrl/scripts/diffusion/cosmos/train.py
     cosmos: Annotated[Any, ConfigBlock(("reference_mode",))] = None
 

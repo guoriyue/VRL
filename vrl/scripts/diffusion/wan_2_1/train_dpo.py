@@ -124,7 +124,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         )
 
     precision = resolve_precision_policy(cfg)
-    mixed_precision = _trainer_precision_label(precision.compute)
+    mixed_precision = _trainer_precision_label(precision.train)
     # Optional knobs: base yaml no longer restates dataclass defaults, so an
     # absent key falls back to the typed default — derived, never copied.
     _trainer_fields = TrainerConfig.__dataclass_fields__
@@ -142,7 +142,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     resources = resolve_distributed_resources(cfg)
     logger.info(format_distributed_resource_plan(resources))
     device = torch.device(trainer_torch_device(resources))
-    weight_dtype = resolve_torch_dtype(precision.compute)
+    weight_dtype = resolve_torch_dtype(precision.train)
 
     # 1. Runtime via family runtime (no diffusers import here)
     bundle = build_wan_2_1_runtime_bundle_from_cfg(cfg, device, weight_dtype)

@@ -113,7 +113,7 @@ def main(argv=None):
                    help="torch.compile the transformer before profiling (measures fusion effect)")
     # One precision axis, same canonical token names as the YAML `precision:` block
     # (normalize_precision is that block's own parser — single source of truth). fp8
-    # is rollout-only: like YAML `{forward: bf16, rollout: fp8}` it resolves to a bf16
+    # is rollout-only: like YAML `{train: bf16, rollout: fp8}` it resolves to a bf16
     # storage dtype plus the GEMM swap, not a separate flag. (fp4 omitted here: the
     # profiler has no fp4 kernel to swap in.)
     p.add_argument("--precision", default="bf16", choices=["fp32", "fp16", "bf16", "fp8"],

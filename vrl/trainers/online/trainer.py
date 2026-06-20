@@ -29,7 +29,7 @@ from vrl.trainers.core.base import Trainer
 from vrl.trainers.core.types import TrainerConfig, TrainState
 from vrl.trainers.online.ema import EMAModuleWrapper
 from vrl.trainers.online.precision_guard import run_precision_drift_guard
-from vrl.trainers.precision import trainer_mixed_precision
+from vrl.trainers.precision import normalize_mixed_precision
 from vrl.trainers.strategy import SingleProcessStrategy, Strategy
 from vrl.trainers.weight_sync import TrainableStateGetter, WeightSyncer
 from vrl.utils.model_diagnostics import (
@@ -117,7 +117,7 @@ class PhaseTimer:
 
 
 def _resolve_mixed_precision(config: TrainerConfig) -> str:
-    return trainer_mixed_precision(config)
+    return normalize_mixed_precision(getattr(config, "train_precision", ""))
 
 
 def _get_autocast(
@@ -196,11 +196,11 @@ def _trainer_precision_metadata(
     device: torch.device,
     model: Any,
 ) -> dict[str, Any]:
-    compute_precision = _precision_label(_resolve_mixed_precision(config))
-    rollout_precision = _precision_label(config.rollout_precision or compute_precision)
+    train_precision = _precision_label(_resolve_mixed_precision(config))
+    rollout_precision = _precision_label(config.rollout_precision or train_precision)
     autocast_dtype = _trainer_autocast_dtype(config, device, model=model)
     return {
-        "compute_precision": compute_precision,
+        "train_precision": train_precision,
         "rollout_precision": rollout_precision,
         "math_precision": _precision_label(config.math_precision),
         "mixed_precision": _resolve_mixed_precision(config),
@@ -1024,7 +1024,7 @@ class OnlineTrainer(Trainer):
 
             _guard_record = run_precision_drift_guard(
                 cfg.precision_drift_guard,
-                compute_precision=_resolve_mixed_precision(cfg),
+                train_precision=_resolve_mixed_precision(cfg),
                 rollout_precision=cfg.rollout_precision or _resolve_mixed_precision(cfg),
                 math_precision=cfg.math_precision,
                 timestep_indices=train_indices,
