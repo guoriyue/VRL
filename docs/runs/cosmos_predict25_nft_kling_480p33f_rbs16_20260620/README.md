@@ -98,13 +98,26 @@ DDP correctness verified: rank0 and rank1 each draw a **disjoint** 16-prompt sli
 
 **What works:** the full DiffusionNFT video-RL pipeline on Cosmos-Predict2.5, DDP 2×1 cross-node, end-to-end, no crashes, real rollouts, healthy gradients, checkpointing. The infra is validated.
 
-**What's unresolved:** **no learning signal in 6 epochs.** Reward sits in a noise band around the baseline. Possible reasons (untested):
-- **Too few epochs** — paper does 256 updates; 6 is far too few to distinguish from noise.
-- **Weak advantage signal** — rbs=16/n=8 group-relative advantage on the Kling reward may be too noisy (the paper-parity sprint flagged this risk).
-- **Resolution mismatch** — trained at 480p_33f but the reward model + paper expect 512p/93f-quality videos; the reward may not discriminate well on the shorter/smaller clips.
-- **Reward model** — Kling VideoReward variance (±0.28 on eval) is large relative to the per-epoch deltas (~0.05).
+**What's unresolved:** **no learning signal in 6 epochs.** Reward sits in a noise band around the baseline.
 
-**Suggested next experiments:** (a) run far longer (≥30–50 epochs) to see if an envelope emerges; (b) re-enable torch.compile at 480p for ~1.37× more throughput; (c) sanity-check the reward model discriminates good vs bad 480p_33f clips; (d) if signal stays flat, revisit advantage normalization / reward scaling before committing GPU-months at 512p.
+**ROOT CAUSE FOUND (2026-06-20) — the trained reward target is MIS-WEIGHTED at 480p_33f, not the policy.** Two de-risk probes (run on **both** L40S in parallel), all scores deterministic (rescore gap = 0.0000, so the spreads below are real model behavior):
+
+*Probe 1* (`kling_480p_discrimination_probe.py`) — real rollout vs a heavily-degraded copy (noise + shuffle + dropped frames): Overall did **not** drop (gap −0.24, degraded scored *higher*).
+
+*Probe 2* (`kling_reward_diagnosis_probe.py`) — a clean gaussian-noise ladder (σ=0,20,40,80,160) on 32 real rollouts, isolating one axis:
+
+| dim | σ=0 | σ=160 | drop (s0−s160) | reading |
+|---|---|---|---|---|
+| VQ (visual) | −1.3916 | −1.4894 | **+0.0978** | RESPONDS — noise lowers it (correct) |
+| MQ (motion) | −0.3962 | −0.0434 | **−0.3528** | **INVERTED** — noise monotonically *raises* it (flicker read as "motion") |
+| Overall | −4.3965 | −4.2039 | **−0.1926** | **INVERTED** — MQ corruption flips the trained target |
+
+The training reward is `score_key: overall_reward` (`configs/reward/kling_video_reward.yaml`). So the policy optimizes **Overall**, whose **MQ sub-score is inverted at 33 frames** — high-frequency noise/flicker is scored as good motion, so a *worse* video can score *higher*. That is why training was flat/gameable, **not** too-few-epochs. (VQ alone is correctly signed and real rollouts have a genuine quality spread — Overall std **0.18** across rollouts — so usable signal exists; it is the Overall/MQ combination that is broken.)
+
+**Implication & cheap fix (test before any longer run):**
+1. **Switch `score_key` `overall_reward` → `visual_quality`** — VQ is correctly signed and discriminating at 480p_33f. One-line config change, no resolution change.
+2. The MQ inversion is most likely a **too-few-frames artifact (33f)**; restoring frames toward the paper's 93f should let MQ work — but that is expensive, so try (1) first.
+3. **Re-run `kling_reward_diagnosis_probe.py` and require the *trained* key to RESPOND** (drop > +0.0339, not INVERTED) before investing GPU-days. A ≥30–50 epoch sweep on the current `overall_reward` would optimize a gameable target.
 
 ---
 
