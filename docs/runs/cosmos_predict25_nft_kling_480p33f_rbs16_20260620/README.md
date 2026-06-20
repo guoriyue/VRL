@@ -98,13 +98,19 @@ DDP correctness verified: rank0 and rank1 each draw a **disjoint** 16-prompt sli
 
 **What works:** the full DiffusionNFT video-RL pipeline on Cosmos-Predict2.5, DDP 2×1 cross-node, end-to-end, no crashes, real rollouts, healthy gradients, checkpointing. The infra is validated.
 
-**What's unresolved:** **no learning signal in 6 epochs.** Reward sits in a noise band around the baseline. Possible reasons (untested):
-- **Too few epochs** — paper does 256 updates; 6 is far too few to distinguish from noise.
-- **Weak advantage signal** — rbs=16/n=8 group-relative advantage on the Kling reward may be too noisy (the paper-parity sprint flagged this risk).
-- **Resolution mismatch** — trained at 480p_33f but the reward model + paper expect 512p/93f-quality videos; the reward may not discriminate well on the shorter/smaller clips.
-- **Reward model** — Kling VideoReward variance (±0.28 on eval) is large relative to the per-epoch deltas (~0.05).
+**What's unresolved:** **no learning signal in 6 epochs.** Reward sits in a noise band around the baseline.
 
-**Suggested next experiments:** (a) run far longer (≥30–50 epochs) to see if an envelope emerges; (b) re-enable torch.compile at 480p for ~1.37× more throughput; (c) sanity-check the reward model discriminates good vs bad 480p_33f clips; (d) if signal stays flat, revisit advantage normalization / reward scaling before committing GPU-months at 512p.
+**ROOT CAUSE FOUND (2026-06-20, #7 de-risk):** the **Kling VideoReward cannot discriminate quality at 480p_33f.** A controlled probe (`vrl/scripts/eval/kling_480p_discrimination_probe.py`) scored each real rollout against a heavily-degraded copy (heavy gaussian noise + shuffled + dropped frames) through the exact reward model. Across n=8 pairs:
+
+| dim | good mean | bad (degraded) mean | gap | vs eval noise ±0.0339 |
+|---|---|---|---|---|
+| VQ (visual) | −1.3883 | −1.3829 | **−0.0053** | within noise — blind to the noise |
+| MQ (motion) | −0.3782 | −0.1171 | **−0.2611** | **inverted** — shuffled frames score *higher* |
+| Overall | −4.3959 | −4.1582 | **−0.2376** | **inverted** — degraded clip scores *higher* |
+
+VQ/MQ are prompt-independent, so this is not a prompt artifact: the reward is **blind on visual quality and inverted on motion** at this resolution. With no usable signal, the flat training reward is the **reward model at 480p_33f**, NOT too-few-epochs. So of the four hypotheses above, **"resolution mismatch" is confirmed**; "too few epochs" / "weak advantage" are moot until the reward discriminates.
+
+**Implication:** a longer run (≥30–50 epochs) at 480p_33f is **pointless** — there is nothing to learn from. **Fix the reward signal first:** raise resolution toward the paper's 512p/93f (the reward model's in-distribution range), or rescale/clip-length-match before scoring, then re-run this probe and require VQ **and** MQ to separate (gap > +0.0339) before investing GPU-days. Re-enabling torch.compile (~1.37×) and the longer sweep only matter *after* the reward is shown to discriminate.
 
 ---
 
