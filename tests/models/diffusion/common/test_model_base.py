@@ -10,6 +10,7 @@ import pytest
 import torch
 import torch.nn as nn
 
+from tests.models.diffusion.fixtures import add_lora_adapters, build_tiny_wan_transformer
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.diffusion import DiffusionModelBase
@@ -37,6 +38,25 @@ class _AdapterTransformer(nn.Linear):
             yield
         finally:
             self.disabled = False
+
+
+class _PluralAdapterTransformer(nn.Linear):
+    """A diffusers ``PeftAdapterMixin``-style module: only the plural surface.
+
+    Cosmos/Wan transformers expose ``disable_adapters``/``enable_adapters`` (and
+    no singular ``disable_adapter`` context manager), so this pins that the
+    boundary disables via the plural pair rather than silently no-op'ing.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(2, 2)
+        self.adapters_enabled = True
+
+    def disable_adapters(self) -> None:
+        self.adapters_enabled = False
+
+    def enable_adapters(self) -> None:
+        self.adapters_enabled = True
 
 
 class _CompiledWrapper(nn.Module):
@@ -123,6 +143,15 @@ class _BackendPipelineStub(nn.Module):
         self.vae = nn.Linear(2, 2)
         self.text_encoder = nn.Linear(2, 2)
         self.device = torch.device("cpu")
+
+
+def _peft_disable_flags(module: nn.Module) -> list[bool]:
+    flags: list[bool] = []
+    for child in module.modules():
+        disabled = getattr(child, "disable_adapters", None)
+        if isinstance(disabled, bool):
+            flags.append(disabled)
+    return flags
 
 
 def test_diffusion_model_base_registers_only_transformer_child() -> None:
@@ -255,6 +284,57 @@ def test_disable_adapter_without_transformer_adapter_is_noop() -> None:
         assert runtime.transformer.training is True
 
 
+def test_disable_adapter_uses_plural_diffusers_surface() -> None:
+    """A diffusers PeftAdapterMixin module (plural disable/enable only) is disabled.
+
+    Regression: checking only the singular ``disable_adapter`` left cosmos/wan
+    adapters ON during the reference forward (silent no-op).
+    """
+    runtime = _ModelBaseStub()
+    runtime._set_transformer(_PluralAdapterTransformer())
+    transformer = runtime.transformer
+
+    with runtime.disable_adapter():
+        assert transformer.adapters_enabled is False
+    assert transformer.adapters_enabled is True
+
+
+def test_disable_adapter_noops_for_diffusers_transformer_without_lora() -> None:
+    """A plain diffusers PeftAdapterMixin transformer has plural methods but no LoRA."""
+    runtime = _ModelBaseStub()
+    runtime._set_transformer(build_tiny_wan_transformer())
+
+    with runtime.disable_adapter():
+        assert getattr(runtime.transformer, "_hf_peft_config_loaded", False) is False
+
+
+def test_disable_adapter_disables_real_diffusers_lora_layers() -> None:
+    """A real diffusers-native LoRA transformer is disabled through the plural API."""
+    runtime = _ModelBaseStub()
+    runtime._set_transformer(add_lora_adapters(build_tiny_wan_transformer()))
+    flags = _peft_disable_flags(runtime.transformer)
+    assert flags and not any(flags)
+
+    with runtime.disable_adapter():
+        assert all(_peft_disable_flags(runtime.transformer))
+
+    assert not any(_peft_disable_flags(runtime.transformer))
+
+
+def test_disable_adapter_preserves_already_disabled_diffusers_lora_state() -> None:
+    """Nested plural disable contexts must not re-enable an already-disabled model."""
+    runtime = _ModelBaseStub()
+    runtime._set_transformer(add_lora_adapters(build_tiny_wan_transformer()))
+    runtime.transformer.disable_adapters()
+    assert all(_peft_disable_flags(runtime.transformer))
+
+    with runtime.disable_adapter():
+        assert all(_peft_disable_flags(runtime.transformer))
+
+    assert all(_peft_disable_flags(runtime.transformer))
+    runtime.transformer.enable_adapters()
+
+
 def test_activate_adapter_sets_named_adapter_and_restores_default() -> None:
     """activate_adapter routes to transformer.set_adapter and restores 'default'."""
     runtime = _ModelBaseStub()
@@ -270,9 +350,8 @@ def test_activate_adapter_without_set_adapter_raises() -> None:
     runtime = _ModelBaseStub()
     runtime._set_transformer(nn.Linear(2, 2))  # plain module, no set_adapter
 
-    with pytest.raises(RuntimeError, match="set_adapter"):
-        with runtime.activate_adapter("previous"):
-            pass
+    with pytest.raises(RuntimeError, match="set_adapter"), runtime.activate_adapter("previous"):
+        pass
 
 
 def test_load_trainable_state_accepts_trainable_keys() -> None:

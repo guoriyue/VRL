@@ -129,14 +129,82 @@ def count_trainable_params(module: Any) -> int:
 def disable_adapter_on(module: Any) -> contextlib.AbstractContextManager[None]:
     """Context manager disabling ``module``'s LoRA/PEFT adapter, or a no-op when absent.
 
-    Used for the reference (adapter-off) forward pass; a module with no attachable
-    adapter still satisfies the contract by returning a null context.
+    Used for the reference (adapter-off) forward pass. Switches on the module
+    behind any DDP/``torch.compile`` wrapper (same reason as
+    :func:`activate_adapter_on`) and covers both adapter-disable surfaces:
+
+    - PEFT ``PeftModel.disable_adapter()`` — already a context manager;
+    - diffusers ``PeftAdapterMixin`` ``disable_adapters()`` / ``enable_adapters()``.
+
+    The plural surface matters: ``WanTransformer3DModel`` / cosmos-predict2 carry
+    LoRA via ``PeftAdapterMixin.add_adapter`` and expose ONLY the plural pair, so
+    checking the singular method alone silently failed to disable the adapter —
+    the reference forward (e.g. the diffusion GRPO KL term in
+    ``evaluators/diffusion/sde_logprob.py``) then ran with the policy adapter
+    still on. A module exposing neither surface is genuinely adapter-less and
+    returns a null context.
     """
 
-    disable = getattr(module, "disable_adapter", None)
-    if not callable(disable):
-        return contextlib.nullcontext()
-    return disable()
+    from vrl.trainers.weight_sync import unwrap_compile_and_ddp
+
+    host = unwrap_compile_and_ddp(module)
+
+    disable = getattr(host, "disable_adapter", None)
+    if callable(disable):
+        return disable()
+
+    disable_adapters = getattr(host, "disable_adapters", None)
+    enable_adapters = getattr(host, "enable_adapters", None)
+    if callable(disable_adapters) and callable(enable_adapters):
+        if not _has_plural_adapter_loaded(host):
+            return contextlib.nullcontext()
+
+        @contextlib.contextmanager
+        def _disabled() -> Iterator[None]:
+            disabled_before = _plural_adapter_disable_flags(host)
+            restore_enabled = (
+                any(not disabled for disabled in disabled_before)
+                if disabled_before
+                else True
+            )
+            disable_adapters()
+            try:
+                yield
+            finally:
+                if restore_enabled:
+                    enable_adapters()
+
+        return _disabled()
+
+    return contextlib.nullcontext()
+
+
+def _has_plural_adapter_loaded(module: Any) -> bool:
+    """Whether a diffusers-style plural adapter surface has real adapters loaded."""
+
+    loaded = getattr(module, "_hf_peft_config_loaded", None)
+    if loaded is False:
+        return False
+    peft_config = getattr(module, "peft_config", None)
+    return not (isinstance(peft_config, Mapping) and not peft_config)
+
+
+def _plural_adapter_disable_flags(module: Any) -> tuple[bool, ...]:
+    """Return per-layer disable flags for PEFT tuner layers when exposed."""
+
+    named_modules = getattr(module, "named_modules", None)
+    if not callable(named_modules):
+        return ()
+    flags: list[bool] = []
+    for _name, child in named_modules():
+        disabled = getattr(child, "disable_adapters", None)
+        if isinstance(disabled, bool):
+            flags.append(disabled)
+            continue
+        disabled = getattr(child, "_disable_adapters", None)
+        if isinstance(disabled, bool):
+            flags.append(disabled)
+    return tuple(flags)
 
 
 def activate_adapter_on(module: Any, name: str) -> contextlib.AbstractContextManager[None]:
