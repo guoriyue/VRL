@@ -36,7 +36,9 @@ def build_sd3(cfg, device, dtype):
         build_sd3_5_runtime_bundle,
         extract_sd3_5_runtime_spec,
     )
-    cfg.model.use_lora = True
+    # Base weights (no LoRA) to match the vLLM-omni side (no active adapter) and to
+    # allow torch.compile (PEFT-wrapped transformers reject the compiled-module swap).
+    cfg.model.use_lora = False
     spec = extract_sd3_5_runtime_spec(cfg, device, dtype)
     return build_sd3_5_runtime_bundle(spec).model
 
@@ -56,6 +58,8 @@ def main(argv=None):
     p.add_argument("--config", required=True)
     p.add_argument("--device", default="cuda:0")
     p.add_argument("--warmup", type=int, default=2)
+    p.add_argument("--compile", action="store_true",
+                   help="torch.compile the transformer (fair compare vs vllm-omni's auto-compile)")
     p.add_argument("--out", default="outputs/perf/sd3_native.json")
     args = p.parse_args(argv)
 
@@ -64,6 +68,8 @@ def main(argv=None):
     dtype = torch.bfloat16
     s = cfg.sampling
     model = build_sd3(cfg, device, dtype)
+    if args.compile:
+        model.torch_compile_transformer("default")
 
     enc = model.encode_prompt([_PROMPT], None, guidance_scale=float(s.guidance_scale),
                               max_sequence_length=int(s.max_sequence_length))

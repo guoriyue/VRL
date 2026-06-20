@@ -48,15 +48,32 @@ from cosmos-rl."
    (the verl-omni pattern). If not: that's the measured answer the prior sprint
    only reasoned.
 
-## Results
+## Results — MEASURED (sd3.5-medium, 512×512, 10 steps, bf16)
 
-| backend | sd3.5 512×512, 10 steps | s/step | env |
+| backend | s/step | scope | notes |
 |---|---|---|---|
-| **native (vrl)** | 0.54s | **0.054** | main env (vllm 0.21) |
-| vLLM-omni | ⏳ pending venv install | — | `.venv-vllm-omni` (vllm 0.22) |
+| native (vrl) + LoRA | 0.054 | denoise-only | PEFT wrap overhead |
+| **native (vrl) base** | **0.043** | denoise-only | no LoRA |
+| **vLLM-omni base** | **0.045** | **full forward (incl. text encode)** | auto torch.compile + CUDNN_ATTN |
+| vLLM-omni + TeaCache | N/A | — | **SD3 unsupported** (coeffs only for Flux/Qwen/Bagel/…) |
 
-`outputs/perf/sd3_native.json` holds per-step noise_pred summaries + final latent
-for the consistency diff once the vLLM-omni side runs.
+**Verdict: vLLM-omni gives NO meaningful throughput win for sd3 on this box.** The
+two numbers are the same ballpark (~0.043–0.045 s/step), and they even measure
+slightly DIFFERENT scopes in vLLM-omni's favor — native 0.043 is denoise-only,
+while vLLM-omni's 0.045 already includes the 3-text-encoder prompt encode. vLLM-omni
+auto-applies torch.compile + cuDNN attention, yet does not beat our plain native
+denoise — its engine/TP/forward-context wrapping eats the gains at single-GPU sd3
+scale. And its TeaCache doesn't even support SD3.
+
+**This empirically confirms the prior sprint's reasoned conclusion** (diffusion-side
+vLLM-omni adoption = low-ROI) — now with a real number, not analysis. The
+optimizations vLLM-omni bundles (compile, cuDNN attn) are IMPORT-portable to our
+native rollout; adopting its engine is not warranted for diffusion.
+
+Side finding: native `DiffusionModelBase.torch_compile_transformer` fails on sd3
+(`cannot assign SD3Transformer2DModel.forward as child module 'transformer'`) — a
+real bug in the compile-swap for the diffusers sd3 transformer; filed for follow-up
+(doesn't affect the verdict, native is already at-or-faster uncompiled).
 
 ## Journal (most recent first)
 
