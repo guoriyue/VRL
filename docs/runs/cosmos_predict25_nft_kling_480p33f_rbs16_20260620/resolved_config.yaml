@@ -1,0 +1,148 @@
+algorithm:
+  kind: diffusion_nft
+  eps: 1.0e-08
+  adv_clip_max: 5.0
+  global_std: false
+  nft_beta: 1.0
+  kl_beta: 1.0
+  advantage_high: 5.0
+  weight_copy_decay: 0.0
+  kl_reward: 0.0
+precision: bf16
+actor:
+  optim:
+    lr: 0.0001
+  drop_zero_advantage: true
+  timestep_fraction: 0.5
+  ema:
+    enable: true
+    decay: 0.9
+    update_interval: 1
+  ppo_epochs: 1
+rollout:
+  n_samples_per_prompt: 8
+  rollout_batch_size: 16
+  denoise_mode: sde
+  noise_level: 0.7
+  sample_batch_size: 4
+  sde:
+    type: cps
+    window_size: 0
+    window_range:
+    - 0
+    - 10
+  same_latent: false
+  denoise_compile:
+    enable: false
+    mode: default
+  trajectory_storage:
+    device: cpu
+    dtype: bfloat16
+  microbatch_size: 1
+  host_memory_budget_fraction: 0.9
+distributed:
+  resources:
+    visible_devices: auto
+    trainer:
+      num_gpus: 1
+    rollout:
+      num_gpus: 1
+      gpus_per_worker: 1.0
+      num_workers: 1
+      gpu_pool: trainer
+    allow_overlap: true
+    reward:
+      num_gpus: 1
+      gpus_per_worker: 1.0
+      num_workers: 1
+  rollout:
+    cpus_per_worker: 4.0
+    max_inflight_chunks_per_worker: 1
+    chunk_placement_strategy: round_robin
+    sync_trainable_state: true
+  reward:
+    cpus_per_worker: 4.0
+    placement_strategy: STRICT_PACK
+    max_inflight_batches: 1
+  training:
+    strategy: ddp
+    num_nodes: 2
+    gpus_per_node: 1
+    ddp:
+      find_unused_parameters: true
+trainer:
+  rollout_orchestration:
+    mode: strict_on_policy
+  entrypoint: vrl.scripts.diffusion.cosmos.train:train_cosmos_predict25_diffusion_nft
+  total_epochs: 256
+  output_dir: outputs/cosmos_ddp_paper
+  save_freq: 3
+  eval:
+    enabled: true
+    freq: 32
+    samples_per_prompt: 2
+    max_prompts: 35
+    seed: 20260614
+model:
+  family: cosmos-predict2.5
+  path: nvidia/Cosmos-Predict2.5-2B
+  revision: diffusers/base/post-trained
+  skip_text_encoder: false
+  use_lora: true
+  lora:
+    rank: 32
+    alpha: 64
+    target_modules:
+    - to_k
+    - to_out.0
+    - to_q
+    - to_v
+    - ff.net.0.proj
+    - ff.net.2
+  memory:
+    vae_decode:
+      tiling: true
+  torch_compile:
+    enable: false
+    mode: default
+sampling:
+  width: 832
+  height: 480
+  num_frames: 33
+  fps: 16
+  max_sequence_length: 512
+  num_steps: 20
+  guidance_scale: 1.0
+  cfg: false
+reward:
+  components:
+    kling_video_reward: 1.0
+  kwargs:
+    kling_video_reward:
+      execution: pool
+      reward_name: KlingTeam/VideoReward@main
+      score_key: overall_reward
+      media_type: video
+      artifact_format: mp4
+      artifact_dir: outputs/cosmos_ddp_paper/reward_artifacts
+      debug_dir: outputs/cosmos_ddp_paper/reward_debug
+      worker_config:
+        dtype: bfloat16
+        local_files_only: true
+        min_frame_pixels: 200704
+data:
+  loader: prompt_manifest
+  manifest: datasets/videophy/train.txt
+  eval_manifest: datasets/videophy/eval.txt
+  source_report: datasets/videophy/report.json
+  task_type: text_to_video
+  preprocessing:
+    format: text
+    target_text: none
+    media_type: video
+  sampler:
+    type: random_without_replacement
+production:
+  kling_video_reward:
+    enabled: true
+    report_path: outputs/cosmos_world_model_production_report.md

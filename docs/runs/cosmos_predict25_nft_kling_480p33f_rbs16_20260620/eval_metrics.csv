@@ -1,0 +1,2 @@
+epoch,eval_reward_mean,eval_reward_std,eval_reward_stderr,eval_n,global_step,r_kling_video_reward
+-1,-4.4847,0.2834,0.0339,70,0,-4.4847
