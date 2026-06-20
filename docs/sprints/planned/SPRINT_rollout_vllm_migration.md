@@ -51,30 +51,44 @@ Skip the transformer forward on low-change denoise steps, reuse cached
 - **RL note:** TeaCache adds rollout↔replay drift (skipped steps reuse an
   approximate noise_pred) — same class as fp8; rides the same drift-guard / TIS.
 
-### P0.1 — Profile TeaCache speed + drift  ⏳ SPEED DONE, DRIFT NEXT
-- ✅ Profiler `--teacache THRESHOLD` knob added (drives the real `TeaCacheState`
-  skip machine + prints skip ratio). **cosmos predict2.5 512p×93f, 16 steps:**
+### P0.1 — Profile TeaCache speed + drift  ✅ DONE (with a correction)
+- ✅ **DRIFT measured (gating) — `teacache_drift_probe.py`, real cosmos denoise,
+  two-pass rollout-with-teacache vs exact replay logprob:**
 
-  | precision | s/step | vs bf16 | skip ratio |
-  |---|---|---|---|
-  | bf16 (baseline) | 1.28 | — | — |
-  | bf16 + teacache(0.15) | **0.56** | **2.3x** | 50% |
+  | config | skip% | ratio_dev_mean | ratio_dev_max | mismatch_kl |
+  |---|---|---|---|---|
+  | baseline (no teacache) | 0% | 0.0000% | 0.0000% | 0.00000 |
+  | teacache(thr=0.1) | 5% | 0.0018% | 0.036% | 0.00002 |
+  | teacache(thr=0.15) | 5% | 0.0018% | 0.036% | 0.00002 |
+  | teacache(thr=0.25) | 5% | 0.022% | 0.43% | 0.00022 |
 
-  → TeaCache is a much bigger diffusion win than fp8 (1.1x). Confirmed end-to-end.
-- ⬜ Threshold sweep 0.1 / 0.25 (Pareto vs skip ratio).
-- ⬜ **DRIFT (gating):** quantify the rollout↔replay drift TeaCache induces at each
-  threshold (reuse the fp8 drift probe: rollout logprob WITH teacache skips vs the
-  exact replay logprob WITHOUT). go/no-go per threshold — 50% skip at 0.15 may be
-  too aggressive; the safe operating threshold is whichever keeps drift well under
-  the advantage signal (same bar fp8 passed).
-- ⬜ The current profiler measurement reuses one state with idx%num_steps (approx);
-  a rigorous number runs through the executor `run_denoise_steps` on a real chunk.
+  → **drift is SAFE at every tested threshold** (max 0.43% « fp8's 1% bar).
+  baseline=0 validates the two-pass logprob math.
 
-### P0.2 — TeaCache accuracy refinement (per-family modulated signal)  ⬜
-- v1 uses raw-latent rel-L1. Add per-family "timestep-modulated input" extractor
-  (vLLM-omni's `extractors.py` approach) + optional rescale polynomial as new
-  `signal` kinds. Only if P0.1 shows the latent signal skips too aggressively /
-  inaccurately.
+- 🔴 **CORRECTION — the earlier "2.3x / 50% skip" profiler number was a measurement
+  artifact, NOT real.** `generation_bottleneck_profile.py --teacache` reuses ONE
+  state and steps `idx % num_steps`, so consecutive profiled "steps" are nearly
+  identical → the skip machine fires far too often. On a REAL 20-step denoise
+  (fresh latents, large early-step change) the v1 raw-latent signal skips only
+  **~5%** at thr 0.1–0.25 → real speedup is **~5%, not 2.3x**. The profiler
+  `--teacache` knob is therefore drift-blind AND skip-inflating; the drift probe /
+  executor path is authoritative. (Left the knob for quick smoke, doc-flagged.)
+
+- ⬜ Threshold > 0.25 buys more skips but the latent signal makes drift climb fast
+  for little skip gain — the real lever is the signal, not the threshold (P0.2).
+
+### P0.2 — Per-family timestep-modulated signal  ⬜ NOW REQUIRED (was optional)
+- P0.1 proved the v1 raw-latent signal under-skips (~5% on a real denoise) → the
+  ~5% speedup is not worth the RL drift plumbing. **The signal, not the threshold,
+  is the lever.** TeaCache's published 40–50% safe skip comes from the
+  timestep-**modulated** input (cheap: the first AdaLN/timestep-embedding
+  modulation) + a per-model rescale polynomial mapping input-change → output-change.
+- Add a `signal="modulated"` extractor (vLLM-omni `extractors.py` approach) reading
+  the model's timestep modulation, with per-family rescale coeffs. Re-run the drift
+  probe: target a threshold that skips ~40% at drift still under the fp8 bar.
+- If the modulated signal also only skips ~5% safely on cosmos, record that
+  TeaCache is a marginal win HERE (short 20-step schedule, EDM dynamics) and
+  down-rank it — honest negative result beats shipping a 5% knob as a headline.
 
 ### P1 — fp8 + TeaCache compose  ⬜
 - Confirm fp8 rollout + TeaCache stack (both rollout-only, both drift-corrected):
@@ -97,10 +111,15 @@ Skip the transformer forward on low-change denoise steps, reuse cached
 
 ## Journal (most recent first)
 
-- **2026-06-20 h1 (cont.)** — P0.1 speed measured: profiler `--teacache` knob +
-  cosmos bf16 ±teacache run. **0.56 vs 1.28 s/step = 2.3x at thr=0.15, 50% skip.**
-  TeaCache >> fp8 for diffusion, end-to-end confirmed. DRIFT not yet measured =
-  the gating next step (50% skip may be too aggressive for RL).
+- **2026-06-20 h2** — P0.1 DRIFT measured (`teacache_drift_probe.py`, real cosmos,
+  two-pass). Drift SAFE at all thresholds (max 0.43% « fp8's 1%). BUT corrected the
+  h1 number: profiler's 2.3x/50%-skip was a **measurement artifact** (state reuse +
+  idx%num_steps). Real 20-step denoise skips only **~5%** with the v1 raw-latent
+  signal → real speedup ~5%, not 2.3x. ⇒ P0.2 (timestep-modulated signal) promoted
+  from optional to REQUIRED; it's the lever, not the threshold. Drift dimension is
+  done & green either way.
+- **2026-06-20 h1 (cont.)** — [SUPERSEDED by h2] profiler `--teacache` showed
+  0.56 vs 1.28 s/step "2.3x" — later found to be a state-reuse artifact.
 - **2026-06-20 h1** — P0 core landed: TeaCache module + layout/executor wiring +
   9 unit tests (green), lint clean, default-OFF. Branch `rollout-vllm-teacache`
   cut from `fp8-rollout-precision-tis`. Profiler already has `--precision
@@ -109,14 +128,17 @@ Skip the transformer forward on low-change denoise steps, reuse cached
   blockwise 5.97 s/step = a TRAP, reverted as a recommendation).
 
 ## Next actions (cron picks the top unchecked)
-1. P0.1 DRIFT (gating): measure TeaCache rollout↔replay logprob drift at
-   thr=0.1/0.15/0.25 (reuse the fp8 drift probe under vrl/scripts/perf or the
-   drift-guard stats). Pick the safe operating threshold (drift << advantage).
-2. P0.1: threshold sweep 0.1/0.25 speed (s/step + skip ratio) → Pareto table.
-3. P1: fp8 + TeaCache combined profile (both rollout-only, additive speedup?).
-4. P2: sd3 vLLM-omni `DiffusersPipelineLoader` forward-consistency spike.
-5. P3: AR paged-decode vs vLLM-omni continuous-batching throughput spike.
-6. P0.2: per-family timestep-modulated signal if latent-rel-L1 skips too coarsely.
+1. P0.2 (now the gating value question): add a `signal="modulated"` extractor
+   (timestep-modulation rel-L1, per-family) + rescale; re-run `teacache_drift_probe`
+   to find the threshold that skips ~40% at drift under the fp8 bar. If even the
+   modulated signal skips only ~5% safely on cosmos, record TeaCache as marginal
+   HERE and down-rank (honest negative result).
+2. P2: sd3 vLLM-omni `DiffusersPipelineLoader` forward-consistency spike (sd3 has a
+   longer schedule than cosmos's 20 steps — TeaCache may pay more there).
+3. P3: AR paged-decode vs vLLM-omni continuous-batching throughput spike (the real
+   "replace" candidate — likely the biggest win on this box).
+4. P1: fp8 + TeaCache combined profile (only worth it once P0.2 makes TeaCache
+   skip meaningfully; otherwise fp8's 1.1x stands alone).
 
 ## Blockers
 (none)

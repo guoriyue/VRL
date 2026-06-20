@@ -1,0 +1,147 @@
+"""TeaCache rollout-vs-replay logprob drift probe (real cosmos denoise, on GPU).
+
+WHY (gating): TeaCache skips the transformer forward on low-change denoise steps
+and reuses a cached ``noise_pred``. In RL that makes the rollout (collection-time)
+logprob approximate, while the trainer's replay forward is exact — the SAME
+rollout-vs-replay drift fp8 introduces. fp8's drift is a property of the GEMM, so
+its probe uses a synthetic head; TeaCache's drift depends on how fast the real
+``noise_pred`` changes between steps and on the diverging skipped trajectory, so
+it MUST be measured on the real model along the real teacache-generated path.
+
+WHAT (two passes per threshold, through the actual code paths):
+  Pass 1 (rollout WITH teacache at threshold T): generate the trajectory with the
+    real ``TeaCacheState`` skip machine; record per step the input latents, the
+    sampled action (``prev_sample``), and the rollout logprob (under the cached or
+    real ``noise_pred`` actually used).
+  Pass 2 (replay, exact): at each recorded input latent run the FULL forward
+    (no skip) and score the SAME action's logprob under the exact ``noise_pred``.
+  Drift = ``compute_logprob_mismatch_stats(fresh=replay, old=rollout)`` — ratio
+    abs-dev (mean/max) + mismatch KL, the exact stats the drift guard / TIS read.
+
+A ``threshold=None`` baseline (no skips) must read ~0 drift — it validates the
+two-pass logprob math (rollout == replay when nothing is cached).
+
+GO/NO-GO: a threshold is safe if its ratio drift sits well under the advantage
+signal magnitude (O(1)) — the same bar fp8 passed (cosmos fp8 ~0.3% mean / 1% max).
+
+Usage:
+    HF_HUB_OFFLINE=1 CUDA_VISIBLE_DEVICES=0 python -m vrl.scripts.perf.teacache_drift_probe \
+        --config experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward
+"""
+
+from __future__ import annotations
+
+import argparse
+
+import torch
+
+from vrl.algorithms.logprob_mismatch import compute_logprob_mismatch_stats
+from vrl.config.loading import load_config
+from vrl.generation.diffusion.layout import VideoGenerationRequest
+from vrl.generation.diffusion.teacache import TeaCacheConfig, TeaCacheState
+from vrl.math.diffusion.flow_matching import sde_step_with_logprob
+from vrl.scripts.perf.generation_bottleneck_profile import build_model
+
+_SDE_TYPE = "cps"
+
+
+def _fresh_state(model, cfg):
+    s = cfg.sampling
+    enc = model.encode_prompt(["a physical scene, high quality"], None,
+                              guidance_scale=float(s.guidance_scale),
+                              max_sequence_length=int(s.max_sequence_length))
+    req = VideoGenerationRequest(prompt="a physical scene, high quality", negative_prompt=None,
+            width=int(s.width), height=int(s.height), frame_count=int(s.num_frames),
+            num_steps=int(s.num_steps), guidance_scale=float(s.guidance_scale), seed=0,
+            extra={"max_sequence_length": int(s.max_sequence_length)})
+    return model.prepare_sampling(req, enc)
+
+
+def _measure(model, cfg, device, dtype, threshold):
+    """Return (rollout_logp, replay_logp, skip_ratio) for one threshold (None=off)."""
+
+    num_steps = int(cfg.sampling.num_steps)
+    state = _fresh_state(model, cfg)
+    teacache = (
+        TeaCacheState(TeaCacheConfig.from_sampling({"threshold": threshold}), num_steps)
+        if threshold is not None
+        else None
+    )
+    gen = torch.Generator(device=device).manual_seed(0)
+
+    latents_in: list[torch.Tensor] = []
+    actions: list[torch.Tensor] = []
+    rollout_logp: list[torch.Tensor] = []
+
+    # -- Pass 1: rollout WITH teacache, generating the (diverging) trajectory ----
+    with torch.no_grad(), torch.amp.autocast("cuda", dtype=dtype):
+        for step_idx in range(num_steps):
+            cur = state.latents.clone()
+            timestep = state.timesteps[step_idx]
+            if teacache is not None and not teacache.should_run(state.latents, step_idx):
+                noise_pred = teacache.cached_noise_pred
+            else:
+                noise_pred = model.forward_step(state, step_idx)["noise_pred"]
+                if teacache is not None:
+                    teacache.cache_noise_pred(noise_pred)
+            sde = sde_step_with_logprob(
+                state.scheduler, noise_pred.float(), timestep.unsqueeze(0),
+                state.latents.float(), generator=gen, deterministic=False,
+                sde_type=_SDE_TYPE, step_index=step_idx,
+            )
+            latents_in.append(cur)
+            actions.append(sde.prev_sample.detach())
+            rollout_logp.append(sde.log_prob.detach())
+            state.latents = sde.prev_sample
+
+        # -- Pass 2: exact replay — full forward at each recorded latent, score the
+        #    same action under the exact noise_pred -----------------------------
+        replay_logp: list[torch.Tensor] = []
+        for step_idx in range(num_steps):
+            state.latents = latents_in[step_idx].clone()
+            timestep = state.timesteps[step_idx]
+            noise_pred = model.forward_step(state, step_idx)["noise_pred"]
+            sde = sde_step_with_logprob(
+                state.scheduler, noise_pred.float(), timestep.unsqueeze(0),
+                latents_in[step_idx].float(), prev_sample=actions[step_idx].float(),
+                deterministic=False, sde_type=_SDE_TYPE, step_index=step_idx,
+            )
+            replay_logp.append(sde.log_prob.detach())
+
+    skip_ratio = teacache.skip_ratio if teacache is not None else 0.0
+    return (
+        torch.cat([t.reshape(-1) for t in rollout_logp]),
+        torch.cat([t.reshape(-1) for t in replay_logp]),
+        skip_ratio,
+    )
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser()
+    p.add_argument("--config", required=True)
+    p.add_argument("--device", default="cuda:0")
+    p.add_argument("--thresholds", default="0.1,0.15,0.25",
+                   help="comma-separated teacache thresholds to probe")
+    args = p.parse_args(argv)
+
+    cfg = load_config(args.config)
+    device = torch.device(args.device)
+    dtype = torch.bfloat16
+    model = build_model(cfg, device, dtype)
+
+    thresholds = [None] + [float(x) for x in args.thresholds.split(",") if x.strip()]
+    print(f"\n{'config':>22} | {'skip%':>6} | {'ratio_dev_mean':>14} | "
+          f"{'ratio_dev_max':>13} | {'mismatch_kl':>11}")
+    print("-" * 80)
+    for thr in thresholds:
+        rollout_lp, replay_lp, skip = _measure(model, cfg, device, dtype, thr)
+        stats = compute_logprob_mismatch_stats(fresh_log_prob=replay_lp, old_log_prob=rollout_lp)
+        name = "baseline(no teacache)" if thr is None else f"teacache(thr={thr})"
+        print(f"{name:>22} | {skip*100:5.0f}% | {stats.ratio_abs_dev_mean:14.4%} | "
+              f"{stats.ratio_abs_dev_max:13.4%} | {stats.mismatch_kl:11.5f}", flush=True)
+    print("\nGO/NO-GO: ratio_dev should sit well under the O(1) advantage signal "
+          "(fp8 passed at ~0.3% mean / 1% max).")
+
+
+if __name__ == "__main__":
+    main()
