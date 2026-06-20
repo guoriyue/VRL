@@ -132,7 +132,7 @@ def _dataclass_payload(cls: type[Any], node: DictConfig) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise ValueError(f"{cls.__name__} config must be a mapping")
     allowed = _dataclass_field_names(cls)
-    ignored_keys = {"kind", "kl_reward"}
+    ignored_keys = {"kind", "kl_reward_coef"}
     unknown = sorted(set(raw) - allowed - ignored_keys)
     if unknown:
         fields_text = ", ".join(f"algorithm.{key}" for key in unknown)

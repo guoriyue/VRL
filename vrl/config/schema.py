@@ -102,7 +102,7 @@ class AlgorithmConfig(ConfigBase):
     global_std: Any = None
     kl_coef: Any = None
     kl_estimator: Any = None
-    kl_reward: Any = None
+    kl_reward_coef: Any = None
     nft_beta: Any = None
     segment_weights: Any = None
     sft_weight: Any = None

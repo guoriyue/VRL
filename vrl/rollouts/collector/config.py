@@ -54,7 +54,7 @@ def build_rollout_config_from_cfg(
     _merge_flat_section_values(values, cfg, "rollout")
     _merge_sde_values(values, cfg)
     _merge_flat_section_values(values, cfg, "sampling")
-    _copy_first_present(values, cfg, "kl_reward", ("algorithm.kl_reward",))
+    _copy_first_present(values, cfg, "kl_reward_coef", ("algorithm.kl_reward_coef",))
     _copy_first_present(
         values,
         cfg,
@@ -120,8 +120,8 @@ def _copy_first_present(
 
 
 def _add_derived_values(values: dict[str, Any]) -> None:
-    if "kl_reward" in values and _has_sde_sampling(values):
-        values["return_kl"] = float(values.get("kl_reward", 0.0)) > 0.0
+    if "kl_reward_coef" in values and _has_sde_sampling(values):
+        values["return_kl"] = float(values.get("kl_reward_coef", 0.0)) > 0.0
 
 
 def _has_sde_sampling(values: dict[str, Any]) -> bool:
@@ -162,7 +162,7 @@ def _cfg_select(cfg: Any, path: str, default: Any) -> Any:
 _MISSING = object()
 
 _REQUEST_SAMPLING_EXCLUDES = {
-    "kl_reward",
+    "kl_reward_coef",
     "n_samples_per_prompt",
     "reward_view",
     "rollout_batch_size",

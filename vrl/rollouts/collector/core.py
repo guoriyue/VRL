@@ -164,7 +164,7 @@ class RolloutCollector:
             context = RolloutBatchBuildContext(
                 metadata=dict(rollout.collector_request.metadata),
                 device=getattr(self.model, "device", None),
-                kl_reward=float(cfg_get(self.config, "kl_reward", 0.0)),
+                kl_reward_coef=float(cfg_get(self.config, "kl_reward_coef", 0.0)),
                 reward_view_name=_reward_view_name(self.config),
                 trajectory_storage_policy=trajectory_storage_policy_from_cfg(
                     cfg_get(self.config, "trajectory_storage", None),

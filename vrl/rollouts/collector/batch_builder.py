@@ -34,7 +34,7 @@ class RolloutBatchBuildContext:
 
     metadata: dict[str, Any]
     device: Any | None = None
-    kl_reward: float = 0.0
+    kl_reward_coef: float = 0.0
     reward_view_name: str | None = None
     trajectory_storage_policy: TrajectoryStoragePolicy = field(
         default_factory=TrajectoryStoragePolicy,
@@ -113,10 +113,10 @@ class TrajectoryRolloutBatchBuilder:
         kl_tensor = self._named_tensor(segment, "kl").value
         device = observations.device
 
-        if self.context.kl_reward > 0:
+        if self.context.kl_reward_coef > 0:
             rewards_adjusted = (
                 rewards_raw.to(device)
-                - self.context.kl_reward * kl_tensor.sum(dim=1)
+                - self.context.kl_reward_coef * kl_tensor.sum(dim=1)
             )
         else:
             rewards_adjusted = rewards_raw.to(device)

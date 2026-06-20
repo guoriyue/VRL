@@ -88,7 +88,7 @@ def test_rollout_config_is_projected_from_yaml() -> None:
                     "window_range": [0, 10],
                 },
             },
-            "algorithm": {"kl_reward": 0.25},
+            "algorithm": {"kl_reward_coef": 0.25},
         },
     )
 
@@ -127,7 +127,7 @@ def test_request_sampling_is_projected_from_resolved_yaml_config() -> None:
                     "window_range": [0, 10],
                 },
             },
-            "algorithm": {"kl_reward": 0.0},
+            "algorithm": {"kl_reward_coef": 0.0},
         },
     )
 
@@ -143,7 +143,7 @@ def test_request_sampling_is_projected_from_resolved_yaml_config() -> None:
     assert sampling["sde_type"] == "sde"
     assert sampling["sde_window_range"] == (0, 10)
     assert sampling["return_kl"] is False
-    assert "kl_reward" not in sampling
+    assert "kl_reward_coef" not in sampling
     assert "n" not in sampling
     assert "reward_view" not in sampling
     assert "rollout_batch_size" not in sampling

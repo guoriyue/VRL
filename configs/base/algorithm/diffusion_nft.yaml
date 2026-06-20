@@ -13,4 +13,4 @@ algorithm:
 
   # Kept for collector reward-shaping compatibility; DiffusionNFT loss-side KL
   # is controlled by kl_coef above.
-  kl_reward: 0.0
+  kl_reward_coef: 0.0
