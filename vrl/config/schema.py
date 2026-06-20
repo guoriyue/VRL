@@ -94,7 +94,7 @@ class AlgorithmConfig(ConfigBase):
     # Key registry: values are validated by the algorithm dataclasses in
     # vrl/algorithms/* (build_algorithm_config), not here.
     adv_clip_max: Any = None
-    advantage_high: Any = None
+    advantage_scale: Any = None
     beta: Any = None
     eps: Any = None
     clip_ratio: Any = None

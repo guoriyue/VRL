@@ -238,7 +238,7 @@ def _step_distances(*, advantage: float) -> tuple[float, float, torch.Tensor]:
     pulled toward, independent of the loss's algebra.
     """
 
-    cfg = DiffusionNFTConfig(nft_beta=1.0, kl_coef=0.0, advantage_high=5.0)
+    cfg = DiffusionNFTConfig(nft_beta=1.0, kl_coef=0.0, advantage_scale=5.0)
     torch.manual_seed(1234)  # fix x0/noise so the gradient-direction check is reproducible
     x0 = torch.randn(_LATENT_SHAPE)
     noise = torch.randn(_LATENT_SHAPE)
@@ -299,17 +299,17 @@ def test_nft_beta_must_be_positive() -> None:
         DiffusionNFT(cfg).compute_batch_timestep_loss(model, batch, 0, torch.tensor([1.0]))
 
 
-def test_advantage_high_is_the_only_nft_advantage_scale() -> None:
+def test_advantage_scale_is_the_only_nft_advantage_scale() -> None:
     """Checks DiffusionNFT exposes one symmetric advantage scale."""
 
-    assert "advantage_high" in {field.name for field in fields(DiffusionNFTConfig)}
+    assert "advantage_scale" in {field.name for field in fields(DiffusionNFTConfig)}
     assert "advantage_low" not in {field.name for field in fields(DiffusionNFTConfig)}
 
 
-def test_advantage_high_must_be_positive() -> None:
+def test_advantage_scale_must_be_positive() -> None:
     """Checks NFT advantage scale must be positive."""
 
-    cfg = DiffusionNFTConfig(advantage_high=0.0)
+    cfg = DiffusionNFTConfig(advantage_scale=0.0)
     model = _build_model()
     batch = _build_batch(
         x0=torch.randn(_LATENT_SHAPE),
@@ -317,7 +317,7 @@ def test_advantage_high_must_be_positive() -> None:
         prompt_embeds=torch.randn(_BATCH, _TEXT_LEN, _TEXT_DIM),
         timestep=500.0,
     )
-    with pytest.raises(RuntimeError, match="advantage_high must be > 0"):
+    with pytest.raises(RuntimeError, match="advantage_scale must be > 0"):
         DiffusionNFT(cfg).compute_batch_timestep_loss(model, batch, 0, torch.tensor([1.0]))
 
 

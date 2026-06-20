@@ -21,7 +21,7 @@ class DiffusionNFTConfig:
     global_std: bool = False
     nft_beta: float = 1.0
     kl_coef: float = 1.0
-    advantage_high: float = 5.0
+    advantage_scale: float = 5.0
     weight_copy_decay: float = 0.0
 
 
@@ -150,9 +150,9 @@ class DiffusionNFT(Algorithm):
         from vrl.trajectory import TrajectoryResolver
 
         cfg = self.config
-        advantage_high = float(cfg.advantage_high)
-        if advantage_high <= 0:
-            raise RuntimeError("DiffusionNFTConfig.advantage_high must be > 0")
+        advantage_scale = float(cfg.advantage_scale)
+        if advantage_scale <= 0:
+            raise RuntimeError("DiffusionNFTConfig.advantage_scale must be > 0")
         replay_tensors = TrajectoryResolver.from_batch(batch).replay_tensor_dict("denoise")
         # Presence + tensor-type of these keys is enforced upstream by
         # AlgorithmAdapter.validate_inputs (declared in required_data_keys);
@@ -238,11 +238,11 @@ class DiffusionNFT(Algorithm):
         with model.disable_adapter(), torch.no_grad():
             ref_prediction = transformer(**transformer_inputs)[0].detach()
 
-        adv = torch.clamp(advantages, -advantage_high, advantage_high)
+        adv = torch.clamp(advantages, -advantage_scale, advantage_scale)
         adv = adv.to(device=x0.device, dtype=forward_prediction.dtype)
         while adv.ndim < forward_prediction.ndim:
             adv = adv.unsqueeze(-1)
-        reward_mix = ((adv / advantage_high) / 2.0 + 0.5).clamp(0.0, 1.0)
+        reward_mix = ((adv / advantage_scale) / 2.0 + 0.5).clamp(0.0, 1.0)
 
         beta = float(cfg.nft_beta)
         if beta <= 0:
@@ -261,7 +261,7 @@ class DiffusionNFT(Algorithm):
             flat_mix * positive_loss / beta
             + (1.0 - flat_mix) * negative_loss / beta
         )
-        policy_loss = original_policy_loss.mean() * advantage_high
+        policy_loss = original_policy_loss.mean() * advantage_scale
         kl_loss = ((forward_prediction.float() - ref_prediction.float()) ** 2).mean()
         kl_term = float(cfg.kl_coef) * kl_loss
         loss = policy_loss + kl_term

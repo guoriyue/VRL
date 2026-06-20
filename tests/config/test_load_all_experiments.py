@@ -577,13 +577,13 @@ def test_unknown_algorithm_config_fields_fail_fast() -> None:
 
 
 def test_diffusion_nft_rejects_removed_advantage_low() -> None:
-    """Checks DiffusionNFT derives the low clamp from advantage_high."""
+    """Checks DiffusionNFT derives the low clamp from advantage_scale."""
 
     cfg = OmegaConf.create(
         {
             "algorithm": {
                 "kind": "diffusion_nft",
-                "advantage_high": 5.0,
+                "advantage_scale": 5.0,
                 "advantage_low": -5.0,
             },
         },
