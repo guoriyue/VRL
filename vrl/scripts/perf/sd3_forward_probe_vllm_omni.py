@@ -61,6 +61,21 @@ def main():
     print(f"building vllm-omni SD3 worker (cache={args.cache}) ...", flush=True)
     worker = DiffusionWorker(local_rank=0, rank=0, od_config=od)
 
+    # --- precision introspection (is vllm-omni running the SAME precision as native bf16?) ---
+    tf = worker.model_runner.pipeline.transformer
+    dtypes = {}
+    cls_names = set()
+    for n, p in tf.named_parameters():
+        dtypes[str(p.dtype)] = dtypes.get(str(p.dtype), 0) + 1
+    for m in tf.modules():
+        cn = type(m).__name__
+        if any(k in cn.lower() for k in ("fp8", "quant", "int8", "linear")):
+            cls_names.add(cn)
+    print(f"[precision] od.dtype={od.dtype} quantization_config={getattr(od, 'quantization_config', None)}",
+          flush=True)
+    print(f"[precision] transformer param dtypes={dtypes}", flush=True)
+    print(f"[precision] linear/quant module classes={sorted(cls_names)}", flush=True)
+
     def build_req():
         sp = OmniDiffusionSamplingParams(
             height=_H, width=_W, num_inference_steps=_STEPS,

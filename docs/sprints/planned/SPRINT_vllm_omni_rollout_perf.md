@@ -57,6 +57,13 @@ from cosmos-rl."
 | **vLLM-omni base** | **0.045** | **full forward (incl. text encode)** | auto torch.compile + CUDNN_ATTN |
 | vLLM-omni + TeaCache | N/A | — | **SD3 unsupported** (coeffs only for Flux/Qwen/Bagel/…) |
 
+**Precision is verified-matched (both pure bf16, no quantization)** — introspection
+on the loaded vLLM-omni transformer: `od.dtype=bf16`, `quantization_config=None`,
+all 664 params `torch.bfloat16`, linear classes are vLLM TP layers (Column/Row/QKV/
+Replicated) but UNquantized → bf16 GEMMs. Native is `dtype=bf16` + bf16 autocast.
+So the comparison is apples-to-apples on precision; the only non-precision delta is
+the attention kernel (native diffusers SDPA vs vLLM-omni CUDNN_ATTN, both bf16 I/O).
+
 **Verdict: vLLM-omni gives NO meaningful throughput win for sd3 on this box.** The
 two numbers are the same ballpark (~0.043–0.045 s/step), and they even measure
 slightly DIFFERENT scopes in vLLM-omni's favor — native 0.043 is denoise-only,
