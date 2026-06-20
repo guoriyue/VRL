@@ -82,7 +82,7 @@ class DiffusionRequestLayout:
     default_num_frames: int = 1
     default_fps: int | None = None
     default_max_sequence_length: int = 512
-    sde_type: str = "sde"
+    sde_type: str = "flow_grpo"
 
     def parse_sampling_params(self, request: GenerationRequest) -> DiffusionSamplingParams:
         """Parse shared diffusion sampling fields from GenerationRequest."""
@@ -267,8 +267,8 @@ class DiffusionRequestLayout:
     @staticmethod
     def _parse_sde_type(value: Any) -> str:
         sde_type = str(value)
-        if sde_type not in {"sde", "cps"}:
-            raise ValueError("sampling.sde_type must be 'sde' or 'cps'")
+        if sde_type not in {"flow_grpo", "cps"}:
+            raise ValueError("sampling.sde_type must be 'flow_grpo' or 'cps'")
         return sde_type
 
     @staticmethod

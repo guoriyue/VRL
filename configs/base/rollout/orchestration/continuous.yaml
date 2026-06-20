@@ -29,5 +29,5 @@
 # vrl/trainers/core/types.py — set them via dotlist as in the recipe above.
 trainer:
   rollout_orchestration:
-    mode: continuous
+    schedule_mode: continuous
     max_pending_rollouts: 2

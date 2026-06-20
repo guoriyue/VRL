@@ -167,26 +167,26 @@ class ContinuousRolloutConfig:
 class RolloutOrchestrationConfig:
     """RL rollout schedule configuration."""
 
-    mode: str = field(default="strict_on_policy")
+    schedule_mode: str = field(default="strict_on_policy")
     max_pending_rollouts: int = field(default=1)
     require_separate_gpus: bool = field(default=True)
-    # Derived from mode, not user-settable: each mode supports exactly one barrier.
+    # Derived from schedule_mode, not user-settable: each mode has one barrier.
     weight_sync_barrier: str = field(default="", init=False)
     continuous: ContinuousRolloutConfig = field(default_factory=ContinuousRolloutConfig)
 
     def __post_init__(self) -> None:
-        if self.mode not in {"strict_on_policy", "continuous"}:
+        if self.schedule_mode not in {"strict_on_policy", "continuous"}:
             raise ValueError(
-                "rollout_orchestration.mode must be 'strict_on_policy' or 'continuous'",
+                "rollout_orchestration.schedule_mode must be 'strict_on_policy' or 'continuous'",
             )
         self.weight_sync_barrier = (
             "pause_admission_and_drain_inflight"
-            if self.mode == "continuous"
+            if self.schedule_mode == "continuous"
             else "before_sync"
         )
         if isinstance(self.continuous, dict):
             self.continuous = ContinuousRolloutConfig(**self.continuous)
-        if self.mode == "continuous":
+        if self.schedule_mode == "continuous":
             self._validate_continuous()
         else:
             self._validate_synchronous()

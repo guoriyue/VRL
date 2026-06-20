@@ -189,7 +189,7 @@ def build_algorithm_and_evaluator_from_cfg(
                     cfg_get(collector_config, "noise_level", 1.0),
                 ),
                 sde_type=str(
-                    cfg_get(collector_config, "sde_type", "sde"),
+                    cfg_get(collector_config, "sde_type", "flow_grpo"),
                 ),
                 math_dtype=math_dtype,
             ),

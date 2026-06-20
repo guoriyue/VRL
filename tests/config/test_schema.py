@@ -25,7 +25,7 @@ def _minimal_grpo_cfg(**overrides):
             "preprocessing": {"format": "text"},
             "sampler": {"type": "random_without_replacement"},
         },
-        "rollout": {"sde": {"type": "sde"}},
+        "rollout": {"sde": {"type": "flow_grpo"}},
     }
     base.update(overrides)
     return OmegaConf.create(base)
@@ -662,7 +662,7 @@ def test_production_video_reward_forbidden_worker_key_raises() -> None:
 def test_missing_mandatory_value_produces_repo_standard_message() -> None:
     """Checks missing mandatory value produces repo standard message."""
     cfg = _minimal_grpo_cfg()
-    cfg.rollout.sde.type = "sde"
+    cfg.rollout.sde.type = "flow_grpo"
     # Inject an OmegaConf mandatory-missing marker
     OmegaConf.update(cfg, "algorithm.kind", "???")
     with pytest.raises(ValueError, match="config missing required field"):
@@ -692,7 +692,7 @@ def test_unknown_reward_component_with_unknown_kwargs_is_accepted() -> None:
                 "preprocessing": {},
                 "sampler": {"type": "random_without_replacement"},
             },
-            "rollout": {"sde": {"type": "sde"}},
+            "rollout": {"sde": {"type": "flow_grpo"}},
             "reward": {
                 "components": {"custom_reward": 1.0},
                 "kwargs": {"custom_reward": {"model_repo": "org/model"}},

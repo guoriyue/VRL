@@ -265,7 +265,7 @@ def _resolve_sampling(args: argparse.Namespace, cfg: DictConfig) -> dict[str, An
         "same_latent": False,
         "return_kl": False,
         "noise_level": 1.0,
-        "sde_type": "sde",
+        "sde_type": "flow_grpo",
     }
 
 

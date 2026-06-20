@@ -3,4 +3,4 @@
 # (1 / before_sync) — strict_on_policy supports no other values.
 trainer:
   rollout_orchestration:
-    mode: strict_on_policy
+    schedule_mode: strict_on_policy

@@ -28,7 +28,7 @@ rollout:
   rollout_batch_size: 4   # amortize fixed per-cycle cost; sbs=4 GPM still shows ~20% SM occupancy.
   sample_batch_size: 8
   sde:
-    type: sde
+    type: flow_grpo
 
 trainer:
   entrypoint: vrl.scripts.diffusion.cosmos.train:train_anima_grpo

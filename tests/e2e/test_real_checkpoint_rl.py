@@ -774,7 +774,7 @@ def _synthetic_diffusion_replay_batch(
     timesteps = model.scheduler.timesteps[:num_steps].to(device)
     timesteps = timesteps.unsqueeze(0).expand(batch_size, -1).clone()
     noise_level = float(cfg.rollout.noise_level)
-    sde_type = str(getattr(getattr(cfg.rollout, "sde", None), "type", "sde"))
+    sde_type = str(getattr(getattr(cfg.rollout, "sde", None), "type", "flow_grpo"))
 
     action_steps: list[torch.Tensor] = []
     old_log_prob_steps: list[torch.Tensor] = []

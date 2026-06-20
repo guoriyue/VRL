@@ -10,7 +10,7 @@ rollout:
 
   # Stochastic SDE sampling window (0 = SDE all steps; >0 = SDE only inside window).
   sde:
-    type: sde
+    type: flow_grpo
     window_size: 0
     window_range: [0, 10]
 

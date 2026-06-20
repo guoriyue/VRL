@@ -286,7 +286,7 @@ def test_rollout_orchestration_group_override_uses_rollout_namespace() -> None:
     )
 
     orchestration = cfg.trainer.rollout_orchestration
-    assert orchestration.mode == "continuous"
+    assert orchestration.schedule_mode == "continuous"
     # weight_sync_barrier is no longer spelled in YAML; the typed config
     # derives the only barrier the mode supports.
     from vrl.trainers.core.types import RolloutOrchestrationConfig
@@ -303,7 +303,7 @@ def test_sd35_single_gpu_async_debug_uses_persistent_colocated_rollout() -> None
 
     cfg = load_config("experiment/diffusion/sd3_5/online_grpo_ocr_single_gpu_async_debug")
 
-    assert cfg.trainer.rollout_orchestration.mode == "continuous"
+    assert cfg.trainer.rollout_orchestration.schedule_mode == "continuous"
     assert cfg.trainer.rollout_orchestration.require_separate_gpus is False
     assert cfg.trainer.rollout_orchestration.continuous.max_stale_policy_versions == 1
     assert cfg.distributed.resources.allow_overlap is True

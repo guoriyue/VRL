@@ -91,7 +91,7 @@ def _timestep(scheduler, step_index: int) -> torch.Tensor:
     return torch.full((_BATCH,), float(scheduler.timesteps[step_index]))
 
 
-@pytest.mark.parametrize("sde_type", ["sde", "cps"])
+@pytest.mark.parametrize("sde_type", ["flow_grpo", "cps"])
 @pytest.mark.parametrize("family", sorted(_FAMILY_SCHEDULERS))
 def test_family_scheduler_sample_replay_parity(family: str, sde_type: str) -> None:
     """Checks the GRPO ratio==1 invariant on each family's real sigma table."""

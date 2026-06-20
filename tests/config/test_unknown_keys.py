@@ -15,7 +15,7 @@ def test_unknown_keys_are_found_at_every_depth() -> None:
         {
             "samplng": {"num_steps": 10},
             "sampling": {"num_stps": 5},
-            "rollout": {"sde": {"type": "sde", "window_sze": 3}},
+            "rollout": {"sde": {"type": "flow_grpo", "window_sze": 3}},
             "distributed": {
                 "resources": {"reward": {"num_gpus": 1, "share_with_rolout": True}},
             },

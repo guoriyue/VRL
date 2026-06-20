@@ -215,11 +215,14 @@ class DataConfig(ConfigBase):
 
 class SdeConfig(ConfigBase):
     """Typed rollout.sde block. ``type`` is the user-facing allow-list, replacing
-    the hand-written {sde, cps} membership checks previously duplicated in the
+    the hand-written {flow_grpo, cps} membership checks previously duplicated in the
     schema cross-validator, layout, and flow_matching. The layout request-boundary
-    guard stays for over-the-wire request dicts; ``window_*`` stay permissive."""
+    guard stays for over-the-wire request dicts; ``window_*`` stay permissive.
 
-    type: Literal["sde", "cps"]
+    ``type`` names the reverse-SDE log-prob distribution (flow_grpo vs cps); it is
+    orthogonal to ``denoise_mode`` (native/sde), which owns the word ``sde``."""
+
+    type: Literal["flow_grpo", "cps"]
     window_size: Any = None
     window_range: Any = None
 

@@ -277,7 +277,7 @@ def _resolve_sampling(args: argparse.Namespace, cfg: DictConfig) -> dict[str, An
         ),
         "denoise_mode": str(OmegaConf.select(cfg, "rollout.denoise_mode", default="sde")),
         "noise_level": float(OmegaConf.select(cfg, "rollout.noise_level", default=1.0)),
-        "sde_type": str(OmegaConf.select(cfg, "rollout.sde.type", default="sde")),
+        "sde_type": str(OmegaConf.select(cfg, "rollout.sde.type", default="flow_grpo")),
     }
 
 

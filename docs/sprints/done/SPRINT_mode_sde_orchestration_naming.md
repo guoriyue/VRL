@@ -1,6 +1,11 @@
 # SPRINT: 消歧 overloaded 的 `mode` / `sde` 配置 token (planned)
 
-状态：planned（2026-06-20）。范围：把同一个单词在不同正交轴上各表一意的两个 user-facing 配置 token 改成自描述名——rollout 调度的 `mode` → `schedule_mode`，以及 diffusion 采样里 `sde` 既是 `denoise_mode` 的值又是 `sde.type` 的值的同形冲突。**只做命名消歧，不动行为、不动派生字段处置（那部分已有别的 sprint 拍板，见 §0）。**
+状态：DONE（2026-06-20）。范围：把同一个单词在不同正交轴上各表一意的两个 user-facing 配置 token 改成自描述名——rollout 调度的 `mode` → `schedule_mode`，以及 diffusion 采样里 `sde` 既是 `denoise_mode` 的值又是 `sde.type` 的值的同形冲突。**只做命名消歧，不动行为、不动派生字段处置（那部分已有别的 sprint 拍板，见 §0）。**
+
+落地：
+- PART A `mode` → `schedule_mode`：`RolloutOrchestrationConfig.schedule_mode`（types.py 字段 + __post_init__ + 报错）、`schedule.py` reader/报错、`orchestration/{strict,continuous}.yaml`、3 个测试 fake/断言。不碰 lease `mode`、`precision_drift_guard.mode`、`denoise_mode`（不同状态机）。
+- PART B `sde.type` 的值 `sde` → `flow_grpo`（`denoise_mode` 仍独占 `sde` 一词）：`SdeConfig.type` Literal、layout `_parse_sde_type` 守卫 + 默认、executor/flow_matching/sde_logprob 默认、3 个脚本默认、4 个 YAML（`diffusion/flow_matching_sde/anima_preview3 ×2`）。**只改 `sde.type` 的值**，`denoise_mode=sde`、`sde_type` 形参名、`rollout.sde` 块名、SDE 概念一律不动。dispatch 是 `if cps … else <flow_grpo>`，无 `== "sde"` 比较，行为不变。修了 workflow 漏掉的 5 处（sde_logprob 默认 + 4 个测试 fixture/断言/parametrize）。
+- 验证：tests/config + tests/rollouts + tests/generation + tests/math + scheduler-logprob-parity 397 passed。
 
 ## 0. Core Decision（先看这一段）
 

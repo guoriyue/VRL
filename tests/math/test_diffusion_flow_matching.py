@@ -36,7 +36,7 @@ def _timestep(batch: int, value: float = 123.0) -> torch.Tensor:
     return torch.full((batch,), value)
 
 
-@pytest.mark.parametrize("sde_type", ["sde", "cps"])
+@pytest.mark.parametrize("sde_type", ["flow_grpo", "cps"])
 def test_edm_call_equals_flow_call_under_domain_isomorphism(sde_type: str) -> None:
     """Checks the EDM path is exactly the flow path conjugated by t=s/(1+s)."""
     step = 1
@@ -81,7 +81,7 @@ def test_edm_call_equals_flow_call_under_domain_isomorphism(sde_type: str) -> No
     )
 
 
-@pytest.mark.parametrize("sde_type", ["sde", "cps"])
+@pytest.mark.parametrize("sde_type", ["flow_grpo", "cps"])
 def test_edm_sampling_then_replay_logprob_parity(sde_type: str) -> None:
     """Checks replaying the recorded prev_sample reproduces the exact log-prob.
 
@@ -137,7 +137,7 @@ def test_flow_scheduler_keeps_legacy_path() -> None:
         sample,
         deterministic=True,
         noise_level=1.0,
-        sde_type="sde",
+        sde_type="flow_grpo",
         step_index=step,
     )
 

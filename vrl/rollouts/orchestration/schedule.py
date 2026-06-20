@@ -58,7 +58,7 @@ def build_rollout_schedule(
     """
 
     mode = RolloutScheduleMode(
-        getattr(config, "mode", RolloutScheduleMode.STRICT_ON_POLICY.value),
+        getattr(config, "schedule_mode", RolloutScheduleMode.STRICT_ON_POLICY.value),
     )
     max_pending = int(getattr(config, "max_pending_rollouts", 1))
     if mode is not RolloutScheduleMode.CONTINUOUS and max_pending != 1:
@@ -109,7 +109,7 @@ def _build_continuous_schedule(
     cont = getattr(config, "continuous", None)
     if cont is None:
         raise RuntimeError(
-            "rollout_orchestration.mode='continuous' requires a continuous config "
+            "rollout_orchestration.schedule_mode='continuous' requires a continuous config "
             "block (ContinuousRolloutConfig); none was provided",
         )
 

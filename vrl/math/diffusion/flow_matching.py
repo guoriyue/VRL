@@ -28,7 +28,7 @@ def sde_step_with_logprob(
     deterministic: bool = False,
     return_dt: bool = False,
     noise_level: float = 1.0,
-    sde_type: str = "sde",
+    sde_type: str = "flow_grpo",
     math_dtype: Any = None,
     step_index: Any = None,
 ) -> SDEStepResult:

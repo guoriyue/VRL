@@ -26,7 +26,7 @@ class DiffusionSDELogProbEvaluator(Evaluator):
         self,
         scheduler: object,
         noise_level: float = 1.0,
-        sde_type: str = "sde",
+        sde_type: str = "flow_grpo",
         math_dtype: object = None,
     ) -> None:
         self.scheduler = scheduler

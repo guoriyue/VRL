@@ -99,7 +99,7 @@ def _continuous_config(**continuous: Any) -> SimpleNamespace:
     }
     defaults.update(continuous)
     return SimpleNamespace(
-        mode="continuous",
+        schedule_mode="continuous",
         max_pending_rollouts=2,
         require_separate_gpus=True,
         weight_sync_barrier="pause_admission_and_drain_inflight",

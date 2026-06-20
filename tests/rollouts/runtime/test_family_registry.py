@@ -83,7 +83,7 @@ def test_rollout_config_is_projected_from_yaml() -> None:
                 "noise_level": 1.0,
                 "same_latent": False,
                 "sde": {
-                    "type": "sde",
+                    "type": "flow_grpo",
                     "window_size": 0,
                     "window_range": [0, 10],
                 },
@@ -122,7 +122,7 @@ def test_request_sampling_is_projected_from_resolved_yaml_config() -> None:
                 "noise_level": 1.0,
                 "same_latent": False,
                 "sde": {
-                    "type": "sde",
+                    "type": "flow_grpo",
                     "window_size": 0,
                     "window_range": [0, 10],
                 },
@@ -140,7 +140,7 @@ def test_request_sampling_is_projected_from_resolved_yaml_config() -> None:
     assert sampling["num_frames"] == 93
     assert sampling["fps"] == 16
     assert sampling["sample_batch_size"] == 8
-    assert sampling["sde_type"] == "sde"
+    assert sampling["sde_type"] == "flow_grpo"
     assert sampling["sde_window_range"] == (0, 10)
     assert sampling["return_kl"] is False
     assert "kl_reward_coef" not in sampling

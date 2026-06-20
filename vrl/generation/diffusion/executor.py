@@ -57,7 +57,7 @@ class DiffusionDenoiseConfig:
     sde_window: tuple[int, int] | None
     return_kl: bool
     noise_level: float = 1.0
-    sde_type: str = "sde"
+    sde_type: str = "flow_grpo"
     denoise_mode: str = "sde"
     # Opt-in rollout-only TeaCache (skip transformer forwards on low-change steps).
     # None = off = the unchanged full-forward path, so the GRPO baseline is exact.
@@ -308,7 +308,7 @@ class DiffusionChunkExecutorBase(
     default_num_frames: int = 1
     default_fps: int | None = None
     default_max_sequence_length: int = 512
-    sde_type: str = "sde"
+    sde_type: str = "flow_grpo"
     include_max_sequence_length_extra: bool = True
     family_capability: FamilyCapability | None = None
 

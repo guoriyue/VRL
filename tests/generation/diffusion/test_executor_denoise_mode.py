@@ -34,7 +34,7 @@ def test_native_denoise_mode_uses_scheduler_step() -> None:
             sde_window=None,
             return_kl=False,
             noise_level=0.7,
-            sde_type="sde",
+            sde_type="flow_grpo",
             denoise_mode="native",
         ),
     )
