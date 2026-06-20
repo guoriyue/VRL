@@ -103,11 +103,27 @@ Skip the transformer forward on low-change denoise steps, reuse cached
   profile fp8+TeaCache, confirm no crash + additive speedup, combined drift still
   under advantage signal.
 
-### P2 — vLLM-omni diffusion spike (sd3, the clean native model)  ⬜
-- Load sd3 through vLLM-omni `DiffusersPipelineLoader`, run one forward, compare
-  `noise_pred` consistency + throughput vs our native sd3.5 path. Decide
-  data-driven whether diffusion should EVER move to vLLM-omni (prediction: no for
-  cosmos; sd3 maybe for TeaCache+VAE-parallel bundle). Document, do not migrate.
+### P2 — TeaCache viability across the repo + vLLM-omni diffusion spike
+- ✅ **P2-cheap (schedule survey) — every diffusion config's `num_steps`:**
+
+  | family / config | num_steps |
+  |---|---|
+  | sd3_5 (ocr/pickscore/geneval), anima_preview3 | 10 |
+  | wan_2_1, wan_2_2, cosmos_predict2_5 | 20 |
+  | cosmos_predict2 (kling/v2w) | 35 |
+  | sd3_5 *_debug | 4 |
+
+  TeaCache targets 50–100-step schedules. The whole repo runs **10–35 steps**, and
+  20 steps already proved 0% redundancy (h3). 10-step configs have even less. →
+  **TeaCache is marginal across the entire repo's diffusion configs.** The only
+  schedule that *might* hold redundancy is cosmos_predict2 @ 35 steps.
+- ⬜ (optional, low priority) generalize `teacache_drift_probe` build to the
+  predict2 family and `--diagnose` the 35-step schedule — confirm whether 35 steps
+  finally exposes any skippable steps. Even a positive there only helps ONE
+  non-default config, so this is a confirm, not a blocker.
+- ⬜ (deferred) vLLM-omni `DiffusersPipelineLoader` sd3 forward-consistency spike —
+  only worth it if a longer-schedule family makes the TeaCache+VAE-parallel bundle
+  pay. Given the survey, diffusion-side vLLM-omni adoption looks low-ROI here.
 
 ### P3 — AR continuous-batching evaluation (the real "replace" candidate)  ⬜
 - Measure our `nextstep`/`janus` paged decode throughput vs vLLM-omni AR
@@ -119,6 +135,12 @@ Skip the transformer forward on low-change denoise steps, reuse cached
 
 ## Journal (most recent first)
 
+- **2026-06-20 h4** — P2-cheap (schedule survey, non-GPU): every diffusion config
+  runs 10–35 steps (sd3/anima 10, wan/cosmos2.5 20, cosmos_predict2 35). TeaCache
+  targets 50–100; with 20-step redundancy already proven 0%, **TeaCache is marginal
+  repo-wide**. Only cosmos_predict2@35 might hold redundancy (optional confirm,
+  helps one non-default config). Diffusion-side vLLM-omni adoption looks low-ROI.
+  Pivot firmly to P3 (AR continuous batching) = the real win on this box.
 - **2026-06-20 h3** — P0.2 RESOLVED as a negative result. `--diagnose` showed
   cosmos's consecutive exact noise_preds move 34–138% EVERY step → **0/20 steps
   skippable at any threshold**. The 5% wall is STRUCTURAL (20-step EDM schedule,
@@ -143,17 +165,19 @@ Skip the transformer forward on low-change denoise steps, reuse cached
   blockwise 5.97 s/step = a TRAP, reverted as a recommendation).
 
 ## Next actions (cron picks the top unchecked)
-1. P2-cheap (non-GPU first): grep the sd3.5 / wan_2_1 / wan_2_2 configs for
-   `num_steps`. If they also use ~20 steps, TeaCache is marginal across ALL this
-   repo's diffusion configs → fully down-rank, keep port as dormant infra. If any
-   uses 50+ steps, run `--diagnose` on it to see if redundancy exists there.
-2. P3: AR paged-decode vs vLLM-omni continuous-batching throughput spike — the real
-   "replace" candidate and likely the biggest win on this box. Start non-GPU:
-   inventory what nextstep/janus rollout does today vs what vLLM-omni AR offers.
-3. P2-full: sd3 vLLM-omni `DiffusersPipelineLoader` forward-consistency spike (only
-   if step 1 shows a longer-schedule family where the engine bundle pays).
-4. fp8 stands as the one shipped diffusion rollout win (1.1x, drift-safe). TeaCache
-   stays default-off infra. Update the final summary table accordingly.
+1. P3 (non-GPU start): inventory the AR rollout. Read `vrl/generation/ar/`
+   (ARChunkExecutorBase) + `vrl/models/ar/{nextstep_1,janus_pro}` +
+   `vrl/nn/.../vllm_paged.py` / `paged_attention_helpers.py`. Map what our AR rollout
+   does today (per-request decode? batching? KV cache?) vs what vLLM-omni AR offers
+   (continuous batching). Identify the concrete throughput gap + whether nextstep/
+   janus are vLLM-omni-loadable. This decides if the AR "replace" is worth scoping.
+2. P3 (GPU, if step 1 shows promise): measure our AR decode throughput on a batch of
+   rollout prompts vs the theoretical continuous-batching ceiling.
+3. P2 optional: generalize the drift probe to cosmos_predict2 and `--diagnose` the
+   35-step schedule (confirm-only, one non-default config).
+4. FINAL: write the summary table — fp8 (1.1x, shipped) is the diffusion win;
+   TeaCache is correct/drift-safe but ~0% on these short schedules (dormant infra);
+   AR is where the real headroom is (P3 verdict).
 
 ## Blockers
 (none)
