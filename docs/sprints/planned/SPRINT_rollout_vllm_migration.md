@@ -51,15 +51,24 @@ Skip the transformer forward on low-change denoise steps, reuse cached
 - **RL note:** TeaCache adds rollout↔replay drift (skipped steps reuse an
   approximate noise_pred) — same class as fp8; rides the same drift-guard / TIS.
 
-### P0.1 — Profile TeaCache speed + drift  ⏳ NEXT
-- Profile cosmos predict2.5 with `--precision bf16` and TeaCache on
-  (threshold sweep 0.1/0.15/0.25) vs off: s/step, skip ratio, kernel buckets.
-  Extend `vrl/scripts/perf/generation_bottleneck_profile.py` with a `--teacache`
-  knob (it drives `model.forward_step` directly, so add the same skip machine, or
-  better: profile through the executor `run_denoise_steps`).
-- Quantify the rollout↔replay drift TeaCache induces (reuse the fp8 drift probe:
-  rollout logprob with TeaCache vs exact replay logprob) → go/no-go per threshold.
-- Record the speed/drift Pareto here.
+### P0.1 — Profile TeaCache speed + drift  ⏳ SPEED DONE, DRIFT NEXT
+- ✅ Profiler `--teacache THRESHOLD` knob added (drives the real `TeaCacheState`
+  skip machine + prints skip ratio). **cosmos predict2.5 512p×93f, 16 steps:**
+
+  | precision | s/step | vs bf16 | skip ratio |
+  |---|---|---|---|
+  | bf16 (baseline) | 1.28 | — | — |
+  | bf16 + teacache(0.15) | **0.56** | **2.3x** | 50% |
+
+  → TeaCache is a much bigger diffusion win than fp8 (1.1x). Confirmed end-to-end.
+- ⬜ Threshold sweep 0.1 / 0.25 (Pareto vs skip ratio).
+- ⬜ **DRIFT (gating):** quantify the rollout↔replay drift TeaCache induces at each
+  threshold (reuse the fp8 drift probe: rollout logprob WITH teacache skips vs the
+  exact replay logprob WITHOUT). go/no-go per threshold — 50% skip at 0.15 may be
+  too aggressive; the safe operating threshold is whichever keeps drift well under
+  the advantage signal (same bar fp8 passed).
+- ⬜ The current profiler measurement reuses one state with idx%num_steps (approx);
+  a rigorous number runs through the executor `run_denoise_steps` on a real chunk.
 
 ### P0.2 — TeaCache accuracy refinement (per-family modulated signal)  ⬜
 - v1 uses raw-latent rel-L1. Add per-family "timestep-modulated input" extractor
@@ -88,7 +97,11 @@ Skip the transformer forward on low-change denoise steps, reuse cached
 
 ## Journal (most recent first)
 
-- **2026-06-20 hN** — P0 core landed: TeaCache module + layout/executor wiring +
+- **2026-06-20 h1 (cont.)** — P0.1 speed measured: profiler `--teacache` knob +
+  cosmos bf16 ±teacache run. **0.56 vs 1.28 s/step = 2.3x at thr=0.15, 50% skip.**
+  TeaCache >> fp8 for diffusion, end-to-end confirmed. DRIFT not yet measured =
+  the gating next step (50% skip may be too aggressive for RL).
+- **2026-06-20 h1** — P0 core landed: TeaCache module + layout/executor wiring +
   9 unit tests (green), lint clean, default-OFF. Branch `rollout-vllm-teacache`
   cut from `fp8-rollout-precision-tis`. Profiler already has `--precision
   {fp32,fp16,bf16,fp8}` + `--fp8-recipe`. Earlier this session: cosmos precision
@@ -96,12 +109,14 @@ Skip the transformer forward on low-change denoise steps, reuse cached
   blockwise 5.97 s/step = a TRAP, reverted as a recommendation).
 
 ## Next actions (cron picks the top unchecked)
-1. P0.1: add TeaCache to the profiler (or profile via the executor path) and run
-   the cosmos bf16 ± TeaCache threshold sweep; dump the table into this file.
-2. P0.1: measure TeaCache rollout↔replay drift; go/no-go per threshold.
-3. P1: fp8 + TeaCache combined profile.
+1. P0.1 DRIFT (gating): measure TeaCache rollout↔replay logprob drift at
+   thr=0.1/0.15/0.25 (reuse the fp8 drift probe under vrl/scripts/perf or the
+   drift-guard stats). Pick the safe operating threshold (drift << advantage).
+2. P0.1: threshold sweep 0.1/0.25 speed (s/step + skip ratio) → Pareto table.
+3. P1: fp8 + TeaCache combined profile (both rollout-only, additive speedup?).
 4. P2: sd3 vLLM-omni `DiffusersPipelineLoader` forward-consistency spike.
 5. P3: AR paged-decode vs vLLM-omni continuous-batching throughput spike.
+6. P0.2: per-family timestep-modulated signal if latent-rel-L1 skips too coarsely.
 
 ## Blockers
 (none)

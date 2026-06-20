@@ -33,6 +33,11 @@ import torch
 from vrl.config.loading import load_config
 from vrl.config.precision import normalize_precision
 from vrl.generation.diffusion.layout import VideoGenerationRequest
+from vrl.generation.diffusion.teacache import (
+    TeaCacheConfig,
+    TeaCacheState,
+    teacache_signal,
+)
 from vrl.math.diffusion.flow_matching import sde_step_with_logprob
 
 # Kernel-name -> bucket. First substring match wins; lowercased CUDA kernel name.
@@ -65,7 +70,7 @@ def build_model(cfg, device, dtype):
     return build_cosmos_predict25_runtime_bundle(spec).model
 
 
-def make_step_fn(model, cfg, device, dtype):
+def make_step_fn(model, cfg, device, dtype, teacache=None):
     s = cfg.sampling
     enc = model.encode_prompt(["a physical scene, high quality"], None,
                               guidance_scale=float(s.guidance_scale),
@@ -75,15 +80,26 @@ def make_step_fn(model, cfg, device, dtype):
             num_steps=int(s.num_steps), guidance_scale=float(s.guidance_scale), seed=0,
             extra={"max_sequence_length": int(s.max_sequence_length)})
     state = model.prepare_sampling(req, enc)
+    # Drive the same TeaCache skip machine the executor uses, so the profiled
+    # s/step reflects the real skip behavior (cached noise_pred on low-change steps).
+    tc = TeaCacheState(teacache, int(s.num_steps)) if teacache is not None else None
 
     def one_step(idx: int):
+        step_idx = idx % int(s.num_steps)
         with torch.no_grad(), torch.amp.autocast("cuda", dtype=dtype):
-            out = model.forward_step(state, idx % int(s.num_steps))
-            r = sde_step_with_logprob(state.scheduler, out["noise_pred"].float(),
-                    state.timesteps[idx % int(s.num_steps)].unsqueeze(0), state.latents.float(),
+            if tc is not None and not tc.should_run(
+                teacache_signal(state.latents, teacache.signal), step_idx
+            ):
+                noise_pred = tc.cached_noise_pred
+            else:
+                noise_pred = model.forward_step(state, step_idx)["noise_pred"]
+                if tc is not None:
+                    tc.cache_noise_pred(noise_pred)
+            r = sde_step_with_logprob(state.scheduler, noise_pred.float(),
+                    state.timesteps[step_idx].unsqueeze(0), state.latents.float(),
                     generator=None, deterministic=True, sde_type="cps")
             state.latents = r.prev_sample
-    return one_step
+    return one_step, tc
 
 
 def main(argv=None):
@@ -105,6 +121,9 @@ def main(argv=None):
     p.add_argument("--fp8-recipe", default="rowwise", choices=["rowwise", "tensorwise", "blockwise"],
                    help="fp8 quant recipe (only with --precision fp8); blockwise reuses vLLM's "
                         "1x128 triton block GEMM")
+    p.add_argument("--teacache", type=float, default=None,
+                   help="enable rollout TeaCache at this rel-L1 threshold (e.g. 0.15); "
+                        "measures the skip speedup vs the full-forward baseline")
     args = p.parse_args(argv)
 
     cfg = load_config(args.config)
@@ -117,6 +136,13 @@ def main(argv=None):
         "fp32": torch.float32, "fp16": torch.float16, "bf16": torch.bfloat16,
     }[precision]
     label = f"fp8/{args.fp8_recipe}(bf16 master)" if fp8 else precision
+    teacache_cfg = (
+        TeaCacheConfig.from_sampling({"threshold": args.teacache})
+        if args.teacache is not None
+        else None
+    )
+    if teacache_cfg is not None:
+        label = f"{label}+teacache(thr={args.teacache})"
     print(f"shape {cfg.sampling.width}x{cfg.sampling.height}x{cfg.sampling.num_frames}, "
           f"{cfg.sampling.num_steps} steps; precision={label}; profiling {args.steps} steps", flush=True)
 
@@ -129,7 +155,7 @@ def main(argv=None):
         # (forward_step reads self.transformer) point at the compiled module.
         print("torch.compile(default) the transformer ...", flush=True)
         model.torch_compile_transformer("default")
-    step_fn = make_step_fn(model, cfg, device, dtype)
+    step_fn, teacache_state = make_step_fn(model, cfg, device, dtype, teacache=teacache_cfg)
 
     # extra warmup when compiling so the (slow) first compiled call is excluded
     for i in range(args.warmup + (3 if args.compile else 0)):
@@ -187,6 +213,10 @@ def main(argv=None):
     print(f"\n=== wall {wall:.1f}s for {args.steps} steps ({wall/args.steps:.2f}s/step), "
           f"device-kernel time {total/1e6:.2f}s, {n_launches} kernel launches "
           f"({n_launches/args.steps:.0f}/step) ===")
+    if teacache_state is not None:
+        c = teacache_state.counters()
+        print(f"  teacache: {c['teacache_skips']} skips / {c['teacache_runs']} runs "
+              f"(skip ratio {c['teacache_skip_ratio']:.0%}, incl. warmup) ===")
     print("\n--- device time by bucket (compute = gemm+attention; bandwidth = norm/copy/reduction) ---")
     comp = bucket_us.get("gemm", 0) + bucket_us.get("attention", 0)
     band = bucket_us.get("norm/elementwise", 0) + bucket_us.get("copy/memset", 0) + bucket_us.get("reduction", 0)
