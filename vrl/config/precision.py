@@ -79,6 +79,22 @@ class PrecisionPolicy:
                 raise ValueError(f"invalid precision axis value: {axis!r}")
 
 
+def precision_bridge_fields(policy: PrecisionPolicy) -> dict[str, str]:
+    """The TrainerConfig fields bridged from a resolved precision policy.
+
+    Single source for the policy -> derived-fields expansion so the trainer
+    builder (dict payload) and the online recipe (TrainerConfig attrs) cannot
+    drift. ``mixed_precision`` is the replay/forward compute dtype; rollout and
+    math are exposed separately so the precision drift guard can prove both
+    sides stayed aligned.
+    """
+    return {
+        "mixed_precision": policy.compute,
+        "rollout_precision": policy.rollout,
+        "math_precision": policy.math,
+    }
+
+
 def _frozen_default(rollout: str) -> str:
     # Frozen modules (encoders/VAE) live on the rollout/generation side; keep the
     # historical "fp32 run -> fp16 frozen (save memory)" behavior, otherwise
@@ -177,5 +193,6 @@ def _select(obj: Any, path: str, default: Any = None) -> Any:
 __all__ = [
     "PrecisionPolicy",
     "normalize_precision",
+    "precision_bridge_fields",
     "resolve_precision_policy",
 ]

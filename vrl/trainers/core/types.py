@@ -298,10 +298,9 @@ class TrainerConfig:
     host_memory_budget_fraction: float = field(default=0.0, metadata={"yaml": "rollout"})
 
     # --- precision (bridged from the unified precision policy) ---
-    # Empty means "derive from bf16" for direct test construction/backward
-    # compatibility. YAML configs should set this explicitly.
+    # Empty -> fp32 ("no"). Production always bridges this from precision.compute;
+    # bare construction (tests) defaults to fp32.
     mixed_precision: str = field(default="", metadata={"yaml": "bridged"})
-    bf16: bool = field(default=True, metadata={"yaml": "bridged"})
     gradient_checkpointing: bool = field(default=True, metadata={"yaml": "actor"})
     # Rollout (generation) compute precision. Empty -> treated as same as
     # compute. The drift guard compares this against the compute precision to

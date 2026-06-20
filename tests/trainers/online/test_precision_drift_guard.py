@@ -262,7 +262,6 @@ def test_online_trainer_precision_guard_fails_before_optimizer_when_ratio_drifts
             optim=OptimConfig(lr=0.01),
             ema=EMAConfig(),
             n_samples_per_prompt=2,
-            bf16=False,
             mixed_precision="no",
             rollout_precision="bf16",
         ),

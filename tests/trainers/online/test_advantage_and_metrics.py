@@ -107,7 +107,6 @@ class TestAdvantageAndMetrics:
                 ema=EMAConfig(),
                 debug=DebugConfig(),
                 n_samples_per_prompt=2,
-                bf16=False,
             ),
             device="cpu",
         )
@@ -244,7 +243,6 @@ class TestAdvantageAndMetrics:
                 ema=EMAConfig(),
                 debug=DebugConfig(),
                 n_samples_per_prompt=2,
-                bf16=False,
                 drop_zero_advantage=True,
             ),
             device="cpu",

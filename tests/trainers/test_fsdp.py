@@ -188,7 +188,7 @@ def test_mixed_precision_policy_actor_uses_bf16_params_fp32_reduce() -> None:
 
 
 def test_mixed_precision_policy_rejects_unknown() -> None:
-    with pytest.raises(ValueError, match="mixed_precision"):
+    with pytest.raises(ValueError, match="precision_policy"):
         mixed_precision_policy("fp8")
 
 
@@ -257,7 +257,7 @@ def test_fsdp_clip_grad_norm_returns_global_norm_and_actually_clips(cpu_process_
     net(torch.randn(3, 4)).mul(5.0).sum().backward()  # large grads so clipping bites
 
     pre = _full_grad_norm(net)
-    returned = FSDPStrategy(_cpu_fsdp_context(), mixed_precision="none").clip_grad_norm(
+    returned = FSDPStrategy(_cpu_fsdp_context(), precision_policy="none").clip_grad_norm(
         net.parameters(),
         max_norm=0.1,
     )
@@ -281,7 +281,7 @@ def test_fsdp_rollout_export_matches_single_process_key_space(cpu_process_group)
     sharded.load_state_dict(snapshot)
     _shard(sharded)
 
-    got = FSDPStrategy(_cpu_fsdp_context(), mixed_precision="none").export_rollout_state(
+    got = FSDPStrategy(_cpu_fsdp_context(), precision_policy="none").export_rollout_state(
         _Bundle(sharded),
     )
     expected = SingleProcessStrategy().export_rollout_state(_Bundle(ref))
@@ -307,7 +307,7 @@ def test_fsdp_rollout_export_unwraps_torch_compile_to_clean_keys(cpu_process_gro
     compiled = torch.compile(inner)  # OptimizedModule with _orig_mod, like production
     _shard(compiled)
 
-    got = FSDPStrategy(_cpu_fsdp_context(), mixed_precision="none").export_rollout_state(
+    got = FSDPStrategy(_cpu_fsdp_context(), precision_policy="none").export_rollout_state(
         _Bundle(compiled),
     )
     expected = SingleProcessStrategy().export_rollout_state(_Bundle(torch.compile(ref)))
@@ -324,7 +324,7 @@ def test_fsdp_rollout_export_filters_frozen_params(cpu_process_group) -> None:
     net = _ToyTransformer()
     net.head.requires_grad_(False)  # freeze the non-block head
     _shard(net)
-    strategy = FSDPStrategy(_cpu_fsdp_context(), mixed_precision="none")
+    strategy = FSDPStrategy(_cpu_fsdp_context(), precision_policy="none")
 
     rollout = strategy.export_rollout_state(_Bundle(net))
     assert rollout  # blocks are still trainable
@@ -339,11 +339,11 @@ def test_fsdp_prepare_model_rejects_multi_transformer_model(cpu_process_group) -
     shard one handle and leave the other replicated."""
     policy = _DualStagePolicy(_ToyTransformer())
     with pytest.raises(NotImplementedError, match="Multi-transformer"):
-        FSDPStrategy(_cpu_fsdp_context(), mixed_precision="none").prepare_model(policy)
+        FSDPStrategy(_cpu_fsdp_context(), precision_policy="none").prepare_model(policy)
 
 
 def test_fsdp_export_then_load_trainable_state_round_trip(cpu_process_group) -> None:
-    strategy = FSDPStrategy(_cpu_fsdp_context(), mixed_precision="none")
+    strategy = FSDPStrategy(_cpu_fsdp_context(), precision_policy="none")
     src = _shard(_ToyTransformer())
     with torch.no_grad():
         load_full_state_dict(src, {k: torch.full_like(v, 3.0) for k, v in gather_full_state_dict(src).items()})
@@ -361,7 +361,7 @@ def test_fsdp_prepare_model_wraps_diffusion_handle(cpu_process_group) -> None:
     from torch.distributed.tensor import DTensor
 
     policy = _FakePolicy(_ToyTransformer())
-    out = FSDPStrategy(_cpu_fsdp_context(), mixed_precision="none").prepare_model(policy)
+    out = FSDPStrategy(_cpu_fsdp_context(), precision_policy="none").prepare_model(policy)
 
     assert out is policy
     assert policy.set_calls == 1
@@ -376,7 +376,7 @@ def test_fsdp_prepare_model_rejects_model_without_transformer_handle() -> None:
         pass
 
     with pytest.raises(NotImplementedError, match="trainable roots"):
-        FSDPStrategy(_cpu_fsdp_context(), mixed_precision="none").prepare_model(_ARLikePolicy())
+        FSDPStrategy(_cpu_fsdp_context(), precision_policy="none").prepare_model(_ARLikePolicy())
 
 
 def test_build_strategy_single_process_returns_single_process() -> None:
@@ -398,7 +398,7 @@ def test_build_strategy_fsdp_reads_knobs() -> None:
             "training": {
                 "fsdp": {
                     "mesh": ["dp_shard"],
-                    "mixed_precision": "none",
+                    "precision_policy": "none",
                     "reshard_after_forward": False,
                 },
             },
@@ -406,7 +406,7 @@ def test_build_strategy_fsdp_reads_knobs() -> None:
     }
     strategy = build_strategy(cfg, _cpu_fsdp_context())
     assert isinstance(strategy, FSDPStrategy)
-    assert strategy._mixed_precision == "none"
+    assert strategy._precision_policy == "none"
     assert strategy._reshard_after_forward is False
 
 

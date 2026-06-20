@@ -8,7 +8,7 @@ from typing import Any, get_type_hints
 
 from omegaconf import DictConfig, OmegaConf
 
-from vrl.config.precision import resolve_precision_policy
+from vrl.config.precision import precision_bridge_fields, resolve_precision_policy
 from vrl.config.validation import (
     path_exists,
     require,
@@ -211,10 +211,7 @@ def build_trainer_config(cfg: DictConfig):
 
     # The unified precision policy expands into four fields.
     precision = resolve_precision_policy(cfg)
-    payload["mixed_precision"] = precision.compute
-    payload["bf16"] = precision.compute == "bf16"
-    payload["rollout_precision"] = precision.rollout
-    payload["math_precision"] = precision.math
+    payload.update(precision_bridge_fields(precision))
     _apply_rollout_precision_defaults(cfg, precision, payload)
 
     return TrainerConfig(**payload)

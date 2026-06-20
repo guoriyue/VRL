@@ -53,7 +53,6 @@ def test_precision_block_drives_trainer():
     trainer_config = build_configs(cfg)["trainer"]
     _apply_precision_policy(cfg, trainer_config)
     assert trainer_config.mixed_precision == "bf16"
-    assert trainer_config.bf16 is True
     assert torch_dtype_for_trainer_precision(trainer_config, torch) is torch.bfloat16
 
 
@@ -66,7 +65,6 @@ def test_fp16_precision_block_drives_trainer_and_rollout():
     _apply_precision_policy(cfg, trainer_config)
 
     assert trainer_config.mixed_precision == "fp16"
-    assert trainer_config.bf16 is False
     assert trainer_config.rollout_precision == "fp16"
     assert trainer_config.math_precision == "fp32"
     assert torch_dtype_for_trainer_precision(trainer_config, torch) is torch.float16

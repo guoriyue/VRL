@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 
-def normalize_mixed_precision(mixed_precision: Any, *, bf16: bool = False) -> str:
+def normalize_mixed_precision(mixed_precision: Any) -> str:
     """Normalize user precision config to ``"no"``, ``"fp16"``, or ``"bf16"``."""
 
     if isinstance(mixed_precision, bool):
@@ -17,7 +17,7 @@ def normalize_mixed_precision(mixed_precision: Any, *, bf16: bool = False) -> st
 
     precision = str(mixed_precision or "").lower().strip()
     if not precision:
-        return "bf16" if bf16 else "no"
+        return "no"
 
     aliases = {
         "none": "no",
@@ -43,21 +43,17 @@ def normalize_mixed_precision(mixed_precision: Any, *, bf16: bool = False) -> st
 def trainer_mixed_precision(config: Any) -> str:
     """Normalize precision from a TrainerConfig-like object."""
 
-    return normalize_mixed_precision(
-        getattr(config, "mixed_precision", ""),
-        bf16=bool(getattr(config, "bf16", False)),
-    )
+    return normalize_mixed_precision(getattr(config, "mixed_precision", ""))
 
 
 def torch_dtype_for_mixed_precision(
     mixed_precision: Any,
     *,
-    bf16: bool,
     torch: Any,
 ) -> Any:
     """Return the model weight dtype implied by normalized precision config."""
 
-    precision = normalize_mixed_precision(mixed_precision, bf16=bf16)
+    precision = normalize_mixed_precision(mixed_precision)
     if precision == "no":
         return torch.float32
     if precision == "bf16":
@@ -72,7 +68,6 @@ def torch_dtype_for_trainer_precision(config: Any, torch: Any) -> Any:
 
     return torch_dtype_for_mixed_precision(
         getattr(config, "mixed_precision", ""),
-        bf16=bool(getattr(config, "bf16", False)),
         torch=torch,
     )
 

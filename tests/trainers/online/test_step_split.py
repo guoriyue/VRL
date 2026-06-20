@@ -86,7 +86,6 @@ def _build_trainer(tmp_path) -> OnlineTrainer:
             optim=OptimConfig(lr=0.01),
             ema=EMAConfig(),
             n_samples_per_prompt=2,
-            bf16=False,
             mixed_precision="no",
             output_dir=str(tmp_path),
         ),

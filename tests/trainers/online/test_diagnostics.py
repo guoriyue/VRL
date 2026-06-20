@@ -97,7 +97,6 @@ class TestDiagnostics:
                 ema=EMAConfig(),
                 debug=DebugConfig(first_step=True),
                 n_samples_per_prompt=2,
-                bf16=False,
                 mixed_precision="no",
                 output_dir=str(tmp_path),
             ),
@@ -207,7 +206,6 @@ class TestDiagnostics:
                 ema=EMAConfig(),
                 debug=DebugConfig(),
                 n_samples_per_prompt=2,
-                bf16=False,
             ),
             device="cpu",
         )

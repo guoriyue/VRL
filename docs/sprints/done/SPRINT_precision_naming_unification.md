@@ -1,6 +1,12 @@
 # SPRINT: 精度命名统一 —— 一个概念三套拼写 + 一个撞名 (planned)
 
-状态：planned（2026-06-20）。范围：收口「compute 用什么精度」这一个概念在仓库里的**三套拼写 + 一个同名异义**，让 `precision:` 成为唯一可填真源，删冗余派生布尔、改撞名的 FSDP key。不动统一 `precision` policy 的语义、不动 fp8/fp4 rollout 劈叉路径。
+状态：DONE（2026-06-20）。范围：收口「compute 用什么精度」这一个概念在仓库里的**三套拼写 + 一个同名异义**，让 `precision:` 成为唯一可填真源，删冗余派生布尔、改撞名的 FSDP key。不动统一 `precision` policy 的语义、不动 fp8/fp4 rollout 劈叉路径。
+
+落地（§3.1/§3.2/§3.4 全部完成；§3.3 按本 sprint 定为「仅判定」—— 评估结论：保留 Accelerate 拼写层，`normalize_mixed_precision` 仍是 dpo.py + dtype helper 的共享真源，不删）：
+- §3.1 删冗余派生 `bf16` 布尔：`TrainerConfig.bf16` 字段、`builders.py`/`online.py` 两处赋值、`trainers/precision.py` 四个函数的 `bf16` 形参与空串 fallback 全部删除。空 `mixed_precision` → fp32（生产恒桥接，行为不变）。修了 ~15 个测试构造点（`bf16=False` 与 `bf16=` 形参，皆与 `mixed_precision` 同义，删除行为中性）。
+- §3.2 FSDP 撞名 key 改名：`distributed.training.fsdp.mixed_precision: actor|none` → `precision_policy`（schema 字段 + YAML + `strategy.py` ctor/cfg_path/`_precision_policy` + `fsdp.py` 报错串 + test_fsdp 全部 call site）。`mixed_precision_policy()` 函数名保留（它构造的是 torch `MixedPrecisionPolicy`，名副其实）。
+- §3.4 去重两处 expand：新增 `vrl/config/precision.py:precision_bridge_fields(policy)` 单点，`builders.py`（dict payload）与 `online.py`（trainer_config attrs）各自经它派生，消除「改一处忘另一处」漂移（本次删 `bf16` 正撞上这个漂移面）。
+- 验证：tests/config/test_precision + test_load_all_experiments + test_unknown_keys + test_schema + tests/trainers/test_precision + test_fsdp + tests/scripts/test_online_precision_bridge + tests/trainers/online 共 256 passed。
 
 关联：
 - [[SPRINT_fullparam_and_fp8_precision]] —— 统一 `precision` policy（`forward`/`rollout`/`math`/`frozen` 四轴）与 fp8 rollout 劈叉的归属 sprint；本 sprint 是它的命名收尾。

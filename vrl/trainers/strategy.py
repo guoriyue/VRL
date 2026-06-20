@@ -166,12 +166,12 @@ class FSDPStrategy(Strategy):
         context: DistributedTrainingContext,
         *,
         mesh_dims: list[str] | None = None,
-        mixed_precision: str = "actor",
+        precision_policy: str = "actor",
         reshard_after_forward: bool = True,
     ) -> None:
         self.context = context
         self._mesh_dims = mesh_dims or ["dp_shard"]
-        self._mixed_precision = mixed_precision
+        self._precision_policy = precision_policy
         self._reshard_after_forward = reshard_after_forward
         self._mesh: Any | None = None  # built on first prepare_model (needs a live PG)
 
@@ -190,7 +190,7 @@ class FSDPStrategy(Strategy):
         wrapped = apply_fsdp(
             handle,
             mesh=self._ensure_mesh(),
-            mp_policy=mixed_precision_policy(self._mixed_precision),
+            mp_policy=mixed_precision_policy(self._precision_policy),
             reshard_after_forward=self._reshard_after_forward,
         )
         set_transformer(wrapped)
@@ -405,7 +405,7 @@ def build_strategy(cfg: Any, context: DistributedTrainingContext) -> Strategy:
         return FSDPStrategy(
             context,
             mesh_dims=list(cfg_path(cfg, "distributed.training.fsdp.mesh", ["dp_shard"]) or ["dp_shard"]),
-            mixed_precision=str(cfg_path(cfg, "distributed.training.fsdp.mixed_precision", "actor")),
+            precision_policy=str(cfg_path(cfg, "distributed.training.fsdp.precision_policy", "actor")),
             reshard_after_forward=bool(
                 cfg_path(cfg, "distributed.training.fsdp.reshard_after_forward", True),
             ),

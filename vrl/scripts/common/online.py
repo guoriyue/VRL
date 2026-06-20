@@ -14,7 +14,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from vrl.config.builders import build_configs
-from vrl.config.precision import resolve_precision_policy
+from vrl.config.precision import precision_bridge_fields, resolve_precision_policy
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces import require_runtime_model
@@ -93,12 +93,8 @@ def _apply_precision_policy(cfg: DictConfig, trainer_config: Any) -> None:
     """
 
     policy = resolve_precision_policy(cfg)
-    trainer_config.mixed_precision = policy.compute
-    trainer_config.bf16 = policy.compute == "bf16"
-    # Expose rollout separately for debug/guard records even though public config
-    # derives it from the same forward precision as replay compute.
-    trainer_config.rollout_precision = policy.rollout
-    trainer_config.math_precision = policy.math
+    for field_name, value in precision_bridge_fields(policy).items():
+        setattr(trainer_config, field_name, value)
 
 
 def _log_rollout_memory_plan(trainer_config: Any) -> None:

@@ -240,7 +240,6 @@ def _make_resume_trainer(
             ema=EMAConfig(enable=ema),
             debug=DebugConfig(),
             n_samples_per_prompt=2,
-            bf16=False,
             mixed_precision=mixed_precision,
         ),
         device=device,

@@ -108,7 +108,7 @@ def mixed_precision_policy(name: str) -> Any:
             reduce_dtype=torch.float32,
         )
     raise ValueError(
-        f"distributed.training.fsdp.mixed_precision must be 'actor' or 'none', got {name!r}",
+        f"distributed.training.fsdp.precision_policy must be 'actor' or 'none', got {name!r}",
     )
 
 
