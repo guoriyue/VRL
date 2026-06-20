@@ -20,6 +20,7 @@ it away. That catches a sign flip independently of how the loss is written.
 from __future__ import annotations
 
 from dataclasses import fields
+from typing import Any
 
 import pytest
 import torch
@@ -33,9 +34,10 @@ from tests.models.diffusion.fixtures import (
 )
 from vrl.algorithms.diffusion_nft import DiffusionNFT, DiffusionNFTConfig
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
+from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.types import GenerationRequest, GenerationSampleRow
+from vrl.models.diffusion import DiffusionModelBase
 from vrl.models.diffusion.cosmos.predict2_5.model import _copy_adapter_weights
-from vrl.models.utils import activate_adapter_on, disable_adapter_on
 from vrl.rollouts.batch import RolloutBatch
 from vrl.trajectory.builders import build_diffusion_trajectory
 
@@ -91,8 +93,8 @@ def test_diffusion_nft_advantages_match_grpo_contract(
     assert torch.allclose(nft_advantages, grpo_advantages, atol=0.0, rtol=0.0)
 
 
-class _NFTModel:
-    """Holds a real PEFT-wrapped Wan DiT and the two methods NFT calls on a model.
+class _NFTModel(DiffusionModelBase):
+    """Holds a real PEFT-wrapped Wan DiT behind the production adapter boundary.
 
     ``transformer`` is a genuine ``WanTransformer3DModel`` carrying real
     ``default`` and ``previous`` LoRA adapters, so ``set_adapter`` /
@@ -101,16 +103,34 @@ class _NFTModel:
     """
 
     def __init__(self, transformer: torch.nn.Module) -> None:
+        super().__init__()
         self.transformer = transformer
 
-    def activate_adapter(self, name: str) -> object:
-        # Mirrors DiffusionModelBase.activate_adapter: route named-adapter
-        # activation through the same boundary helper the real model uses.
-        return activate_adapter_on(self.transformer, name)
+    def encode_prompt(
+        self,
+        prompt: str | list[str],
+        negative_prompt: str | list[str] | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        raise NotImplementedError
 
-    def disable_adapter(self) -> object:
-        # Mirrors DiffusionModelBase.disable_adapter for the reference forward.
-        return disable_adapter_on(self.transformer)
+    def prepare_sampling(
+        self,
+        request: VideoGenerationRequest,
+        encoded: dict[str, Any],
+        **kwargs: Any,
+    ) -> Any:
+        raise NotImplementedError
+
+    def forward_step(
+        self,
+        state: Any,
+        step_idx: int,
+    ) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def decode_latents(self, latents: Any) -> Any:
+        raise NotImplementedError
 
     def diffusion_nft_prepare_transformer_input(
         self,
