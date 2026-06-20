@@ -238,8 +238,12 @@ class DiffusionNFT(Algorithm):
         with model.disable_adapter(), torch.no_grad():
             ref_prediction = transformer(**transformer_inputs)[0].detach()
 
-        adv = torch.clamp(advantages, -advantage_scale, advantage_scale)
-        adv = adv.to(device=x0.device, dtype=forward_prediction.dtype)
+        # Advantages are already clamped to ±adv_clip_max upstream in
+        # compute_advantages_from_tensors (group_relative_advantages). The final
+        # .clamp(0.0, 1.0) on reward_mix makes any second ±advantage_scale clamp
+        # on `adv` provably redundant — clamp(clamp(a,-s,s)/s/2+0.5, 0, 1) equals
+        # clamp(a/s/2+0.5, 0, 1) for all a — so read advantages directly.
+        adv = advantages.to(device=x0.device, dtype=forward_prediction.dtype)
         while adv.ndim < forward_prediction.ndim:
             adv = adv.unsqueeze(-1)
         reward_mix = ((adv / advantage_scale) / 2.0 + 0.5).clamp(0.0, 1.0)
