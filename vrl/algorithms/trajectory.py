@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Any
 
 from vrl.algorithms.types import TrainStepMetrics
@@ -29,6 +29,62 @@ class AlgorithmInput:
 class AlgorithmAdapter:
     """Dispatch strict AlgorithmInput to objective-specific native APIs."""
 
+    def validate_inputs(self, algorithm: Any, inputs: AlgorithmInput) -> None:
+        """Fail fast — with available-vs-missing diagnostics — when the rollout
+        payload lacks a tensor the algorithm's loss declares it needs.
+
+        One declarative gate replacing the per-loss inline checks each objective
+        used to hand-roll (NFT's per-key ``isinstance`` loop, GRPO's
+        ``signals is None`` guard). An algorithm declares ``required_signal_keys``
+        (``SegmentSignal`` fields, signal branch) and/or ``required_data_keys``
+        (replay-tensor names, replay branch); this validates them against what
+        actually arrived. Mirrors verl-omni's ``DiffusionLossFn.validate_inputs``.
+        """
+        required_signal_keys = tuple(getattr(algorithm, "required_signal_keys", ()))
+        required_data_keys = tuple(getattr(algorithm, "required_data_keys", ()))
+        algo = type(algorithm).__name__
+
+        if required_signal_keys:
+            if inputs.signals is None:
+                raise RuntimeError(
+                    f"{algo} requires evaluator signals {list(required_signal_keys)} "
+                    "but AlgorithmInput.signals is None.",
+                )
+            signal = inputs.signals.primary
+            available = sorted(
+                f.name for f in fields(signal) if getattr(signal, f.name) is not None
+            )
+            missing = [key for key in required_signal_keys if key not in available]
+            if missing:
+                raise KeyError(
+                    f"Algorithm `{algo}` is missing required signal fields. "
+                    f"Missing signal keys: {missing}. "
+                    f"Available signal keys: [{', '.join(available)}].",
+                )
+
+        if required_data_keys:
+            batch = inputs.metadata.get("rollout_batch")
+            if batch is None:
+                raise RuntimeError(
+                    f"{algo} requires replay tensors {list(required_data_keys)} but "
+                    "AlgorithmInput.metadata['rollout_batch'] is missing.",
+                )
+            import torch
+
+            from vrl.trajectory import TrajectoryResolver
+
+            replay_tensors = TrajectoryResolver.from_batch(batch).replay_tensor_dict()
+            available = sorted(
+                key for key, value in replay_tensors.items() if isinstance(value, torch.Tensor)
+            )
+            missing = [key for key in required_data_keys if key not in available]
+            if missing:
+                raise KeyError(
+                    f"Algorithm `{algo}` is missing required replay tensors. "
+                    f"Missing data keys: {missing}. "
+                    f"Available data keys: [{', '.join(available)}].",
+                )
+
     def compute_advantages(self, algorithm: Any, inputs: AlgorithmInput) -> Any:
         if inputs.advantages is not None:
             return inputs.advantages
@@ -51,6 +107,8 @@ class AlgorithmAdapter:
             raise TypeError(
                 f"{type(algorithm).__name__} must expose compute_loss(AlgorithmInput)",
             )
+
+        self.validate_inputs(algorithm, inputs)
 
         if inputs.advantages is None:
             inputs = AlgorithmInput(

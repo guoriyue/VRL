@@ -35,6 +35,11 @@ class DiffusionNFT(Algorithm):
     """
 
     uses_evaluator = False
+    # Replay-branch contract (AlgorithmAdapter.validate_inputs): NFT trains the
+    # forward process from these rollout tensors only — no reverse-SDE
+    # trajectory, no log-probs. Declaring them lets the adapter fail fast with
+    # available-vs-missing diagnostics, replacing the old inline per-key check.
+    required_data_keys = ("latents_clean", "prompt_embeds", "timesteps")
     # DiffusionNFT is likelihood-free: it computes no importance-sampling ratio
     # to reweight off-policy samples, and its positive/negative decomposition is
     # taken against a previous-policy adapter that ``after_optimizer_step``
@@ -149,18 +154,12 @@ class DiffusionNFT(Algorithm):
         if advantage_high <= 0:
             raise RuntimeError("DiffusionNFTConfig.advantage_high must be > 0")
         replay_tensors = TrajectoryResolver.from_batch(batch).replay_tensor_dict("denoise")
-        required_tensors = {}
-        for key in ("latents_clean", "prompt_embeds", "timesteps"):
-            value = replay_tensors.get(key)
-            if not isinstance(value, torch.Tensor):
-                raise RuntimeError(
-                    f"DiffusionNFT requires trajectory replay tensor {key!r}; "
-                    f"got {type(value).__name__}",
-                )
-            required_tensors[key] = value
-        x0 = required_tensors["latents_clean"]
-        prompt_embeds = required_tensors["prompt_embeds"]
-        timesteps = required_tensors["timesteps"]
+        # Presence + tensor-type of these keys is enforced upstream by
+        # AlgorithmAdapter.validate_inputs (declared in required_data_keys);
+        # read them directly here.
+        x0 = replay_tensors["latents_clean"]
+        prompt_embeds = replay_tensors["prompt_embeds"]
+        timesteps = replay_tensors["timesteps"]
         if timesteps.ndim == 1:
             t_raw = timesteps
         else:

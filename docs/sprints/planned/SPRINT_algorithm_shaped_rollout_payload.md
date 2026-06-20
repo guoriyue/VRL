@@ -1,6 +1,21 @@
 # SPRINT: algorithm-shaped rollout payload + loss-validates-its-inputs 契约
 
-状态：planned（2026-06-20）— 低优先、结构性。让"rollout 携带哪些张量"由 **algorithm** 选择（NFT 只带 `latents_clean`，flow-GRPO 带完整 SDE trajectory），并补一个 verl-omni 有、vrl 缺的 `required_data_keys` fail-fast 契约。**非重写**：vrl 已大半到位（per-family capability + per-segment ReplayInput + `uses_evaluator` 分叉），本 sprint 只把"携带张量的选择键"从 family 收紧到 algorithm，再加一层声明式入参校验。
+状态：**声明 + 校验契约 DONE / 携带集 generation 侧物理裁剪 deferred**（2026-06-20，分支 `spike/vllm-omni-rollout`）。让"rollout 携带哪些张量"由 **algorithm** 选择（NFT 只带 `latents_clean`，flow-GRPO 带完整 SDE trajectory），并补一个 verl-omni 有、vrl 缺的 `required_data_keys` fail-fast 契约。**非重写**：vrl 已大半到位（per-family capability + per-segment ReplayInput + `uses_evaluator` 分叉），本 sprint 只把"携带张量的选择键"从 family 收紧到 algorithm，再加一层声明式入参校验。
+
+## 实现状态（2026-06-20）
+
+**已实现（§1 声明 + §2 校验契约，完整落地）：**
+- `vrl/algorithms/base.py` — `Algorithm` Protocol 新增 `required_signal_keys` / `required_data_keys`（默认空 tuple，算法显式声明才参与校验），与 `uses_evaluator`/`tolerates_off_policy_staleness` 同位（Protocol 默认值被各算法子类继承）。
+- `vrl/algorithms/grpo/continuous.py` — `GRPO.required_signal_keys = ("log_prob","old_log_prob")`（TokenGRPO / MultiSegmentTokenGRPO 继承）。`ref_log_prob` 仍由 KL 分支按 `init_kl_coef>0` **条件**校验，不进硬契约（保留其详尽报错，见 non-goal）。
+- `vrl/algorithms/diffusion_nft.py` — `DiffusionNFT.required_data_keys = ("latents_clean","prompt_embeds","timesteps")`；删除内联逐键 `isinstance` 检查（原 :152-160），改为直接读取（presence/type 由中心 gate 保证）。
+- `vrl/algorithms/trajectory.py` — 新增 `AlgorithmAdapter.validate_inputs`：单一声明式 gate，signal 分支查 `SegmentSignal` 非 None 字段、replay 分支查 `replay_tensor_dict()` 的 tensor key，缺则 raise 并打印 **missing + available**（照搬 verl-omni `_format_available_keys` 语义）；在 `compute_loss` 入口调用。吃掉 GRPO/TokenGRPO/MultiSegment 的 `signals is None` 内联 guard 与 NFT 的逐键 raise。
+- 保留（non-goal）：token-GRPO `ref_log_prob is None` 详尽报错、`log_prob/old_log_prob` shape-mismatch、multisegment missing-segment 报错。
+- 测试：新增 `tests/algorithms/test_input_contract.py`（signal 缺 `old_log_prob`、replay 缺 `latents_clean` 各断言 missing+available；happy-path 静默）。`tests/algorithms/` **67 passed**。
+
+**Deferred（§1 第 3 点"携带集由 algorithm 选择"的 generation 侧物理裁剪）—— 架构所限，据实记录：**
+- 验收 #3「NFT rollout payload 不再携带 SDE per-step `observations/log_prob`」需要 generation 路径知道算法。但 `vrl/generation/diffusion/gather.py:44-109` **无条件**把完整 SDE 超集（observations/actions/log_probs/kl）拼进 trajectory，`build_diffusion_trajectory` 处于 generation 路径，且 `GenerationRequest`（`vrl/generation/types.py:35-47`）不携带 recipe/algorithm 名——generation 路径全程**零算法引用**（grep 实证）。
+- 让 builder 读 `required_*_keys` 做物理裁剪，必须把算法穿过 rollout↔train 边界（改 `GenerationRequest` + executor），这与本 sprint 自己的 non-goal「不动 planner 的 chunk/stage 逻辑、不碰 SDE evaluator replay 路径」**直接冲突**，也违背 generation 与 algorithm 解耦的既有设计。
+- 现状：`required_data_keys` 已是该"携带集"的**权威声明**，且由 `validate_inputs` 强制；物理裁剪应作为后续独立 sprint（先决定是否把 algorithm/recipe 注入 `GenerationRequest`）。当前隐式链**功能正确**，裁剪仅为省去未用 per-step 张量的 CPU↔object-store 搬运（本 sprint §3.4 已自评为低优先）。
 
 关联：
 - [[SPRINT_nft_invariant]]（`done/`，NFT 的 advantage-flip 不变量；本 sprint 的校验契约与它互补：一个查"数值是否中立"，一个查"输入是否齐全"）

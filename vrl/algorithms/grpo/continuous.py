@@ -38,6 +38,12 @@ class GRPO(Algorithm):
     per-sample log-probabilities produced by the evaluator.
     """
 
+    # Signal-branch contract (AlgorithmAdapter.validate_inputs): the clipped
+    # surrogate reads these from the evaluator replay. ref_log_prob is
+    # conditional on init_kl_coef>0, so it is NOT a hard requirement here — the
+    # KL branch validates it with its own detailed diagnostic.
+    required_signal_keys = ("log_prob", "old_log_prob")
+
     def __init__(self, config: GRPOConfig | None = None) -> None:
         self.config = config or GRPOConfig()
         # Rollout->replay precision correction (TIS). Off by default; the trainer
@@ -82,8 +88,8 @@ class GRPO(Algorithm):
         from vrl.math.diffusion.flow_matching import compute_kl_divergence
 
         cfg = self.config
-        if inputs.signals is None:
-            raise RuntimeError("AlgorithmInput.signals is required for GRPO")
+        # Presence of signals + required_signal_keys is enforced upstream by
+        # AlgorithmAdapter.validate_inputs (one declarative gate).
         if inputs.advantages is None:
             raise RuntimeError("AlgorithmInput.advantages is required for GRPO")
         signals = inputs.signals.primary

@@ -34,8 +34,8 @@ class TokenGRPO(GRPO):
     ) -> tuple[Any, TrainStepMetrics]:
         cfg = self.config
 
-        if inputs.signals is None:
-            raise RuntimeError("AlgorithmInput.signals is required for TokenGRPO")
+        # signals presence + required_signal_keys are enforced upstream by
+        # AlgorithmAdapter.validate_inputs (inherited ("log_prob","old_log_prob")).
         if inputs.advantages is None:
             raise RuntimeError("AlgorithmInput.advantages is required for TokenGRPO")
         signals = inputs.signals.primary

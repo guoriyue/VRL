@@ -46,8 +46,8 @@ class MultiSegmentTokenGRPO(TokenGRPO):
         self,
         inputs: AlgorithmInput,
     ) -> tuple[Any, TrainStepMetrics]:
-        if inputs.signals is None:
-            raise RuntimeError("AlgorithmInput.signals is required for MultiSegmentTokenGRPO")
+        # signals presence + required_signal_keys are enforced upstream by
+        # AlgorithmAdapter.validate_inputs (inherited from GRPO).
         if inputs.advantages is None:
             raise RuntimeError("AlgorithmInput.advantages is required for MultiSegmentTokenGRPO")
         signals = inputs.signals
