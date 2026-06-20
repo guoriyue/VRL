@@ -146,5 +146,5 @@ cd ~/Desktop/VRL && HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 CUDA_VISIBLE_DEVICES
 - 固定 eval：`vrl/scripts/eval/cosmos_predict25_kling_eval.py`（同 prompt+seed、Kling 打分、per-ckpt summary）
 - DiffusionNFT 双 adapter（= 论文的 diffusion-loss 正则）：`vrl/algorithms/diffusion_nft.py`、
   `configs/model/diffusion/cosmos/predict2_5_2b.yaml`
-- 论文：`docs/papers/cosmos_predict2_5_world_simulation_with_video_foundation_models_for_physical_ai_2511.00062v2.pdf` §4.2.2
+- 论文：`docs/papers/world-models/cosmos-predict2-5-world-foundation-models.pdf` §4.2.2
 - 上一次观测（持平）：`docs/sprints/info/SPRINT_cosmos25_kling_reward_curve.md`

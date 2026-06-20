@@ -49,3 +49,13 @@ distributed:
       # preset's allow_overlap fallback. On-demand (no memory_fraction); add one to
       # make the worker resident (skips the per-cycle model reload, caps its share).
       gpu_pool: trainer
+    reward:
+      # 2 GPUs total (1 per rank), so there is no spare card to dedicate: the Kling
+      # reward time-shares the same card as rollout/trainer. State that intent
+      # explicitly (share the rollout pool) instead of leaning on the `auto`
+      # default — auto would also pick share here, but only because no spare
+      # happens to exist, which makes the placement unauditable from the config and
+      # silently topology-dependent. Explicit `rollout` is fail-loud: if the box
+      # ever gains a spare GPU, this stays shared by intent rather than auto
+      # quietly grabbing the spare and changing throughput characteristics.
+      gpu_pool: rollout

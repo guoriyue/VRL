@@ -1,0 +1,65 @@
+# Janus-Pro-1B + Janus-Pro-R1-style aesthetic GRPO.
+#
+# Reproduces the Janus-Pro-R1 *mechanism* (arXiv 2506.01480) — token-level MDP
+# GRPO over the 3-segment generate -> self-check -> regenerate trajectory — at
+# 1B/LoRA scale so it fits a single 32GB GPU. Deliberate deviations from the
+# paper, all to make a first, honest reward curve cheap and runnable here:
+#   - 1B + LoRA, not 7B full-finetune (7B full-param GRPO OOMs at 32GB).
+#   - Aesthetic image reward, not the paper's bi-level QA reward (generation +
+#     comprehension). The /reward/aesthetic scorer is the LAION Aesthetic
+#     Predictor v2 (CLIP ViT-L/14 + MLP, sac+logos+ava1-l14-linearMSE.pth),
+#     ported verbatim from Flow-GRPO (arXiv 2505.05470) — i.e. a validated,
+#     dense, local (no-API) reward. It is the cleanest signal to first prove the
+#     R1 pipeline can learn; the paper-faithful next step is a comprehension/QA
+#     reward *plus* training the selfcheck_text segment (left untrained here).
+#   - No SFT cold-start (the paper is two-stage SFT -> GRPO); SFT is a separate
+#     entrypoint, not a config knob.
+defaults:
+  - /recipe/online/ar_multisegment_token_grpo
+  - /model/ar/janus_pro/1b
+  - /sampling/ar/r1_image_384_576tok
+  - /reward/aesthetic
+  - /dataset/drawbench_train_192
+
+algorithm:
+  # The base grpo.yaml ships eps_clip=1e-4 — a near-zero trust region that
+  # freezes the policy. The proven non-R1 AR baseline (online_grpo_ocr) uses
+  # 0.2; match it so updates are real. init_kl_coef mirrors that baseline.
+  eps_clip: 0.2
+  init_kl_coef: 0.01
+
+actor:
+  optim:
+    lr: 1.0e-4   # LoRA needs ~1e-4; the paper's 1e-5 is for full-finetune.
+
+trainer:
+  entrypoint: vrl.scripts.ar.janus_pro.train:train_janus_pro_r1_ocr_grpo
+  output_dir: outputs/janus_pro_1b_r1_aesthetic_grpo
+  total_epochs: 80
+  save_freq: 10
+  debug:
+    # Multi-segment old log-probs are kept per segment; the legacy first-step
+    # scalar parity check is for single-trajectory token GRPO only.
+    first_step: false
+
+rollout:
+  # Two distinct batch knobs — keep them straight:
+  #  * n_samples_per_prompt = GRPO group size. Advantage is normalized within
+  #    one prompt's group (global_std=false), so it must be big enough for a
+  #    stable baseline; the whole group is held during replay, so it costs GPU
+  #    memory. flow_grpo (2505.05470) uses 24, but on a single 32GB card with
+  #    1B R1 (3 segments) 8 is the safe ceiling (matches the proven non-R1 run).
+  #    Drop to 4-6 if replay OOMs.
+  #  * rollout_batch_size = prompt groups per optimizer step (= gas, since
+  #    microbatch_size=1). With streaming this is GPU-memory-FREE: groups are
+  #    collected/trained/released one at a time, only wall-clock grows. The
+  #    ar_r1 base default rbs=1 means each update sees ONE prompt -> a very
+  #    noisy gradient. 8 gives a real multi-prompt batch; raise toward the
+  #    cosmos recipe's 32 / flow_grpo's ~48 prompts-per-update if step time
+  #    allows (no extra GPU memory).
+  n_samples_per_prompt: 8
+  rollout_batch_size: 8
+  # microbatch_size=1 -> gas=rollout_batch_size; host RAM holds ~1 group's AR
+  # replay tensors at a time (host_memory_budget_fraction guards it).
+  microbatch_size: 1
+  host_memory_budget_fraction: 0.9

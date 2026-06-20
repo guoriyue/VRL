@@ -1,7 +1,7 @@
 # SPRINT (done): 让 Cosmos+Kling RL 的 reward 真正动起来（且看得见）
 
 状态：**done（核心工程全落地，2026-06-18 归档至 done/；256 步真实跑 + P1 梯度旋钮属实验，见 info/ [[SPRINT_cosmos25_kling_paper_recipe_runbook]]）**。P0/P1 的两项配置已落 main（526f405：total_epochs 10→256、actor.optim.lr 3e-5→1e-4）；P0 "固定 eval 让学习可见" 已落地 main（b00c373，采用姊妹 sprint SPRINT_cosmos_kling_fixed_eval_signal 的设计——EvalConfig/_run_fixed_eval/eval_metrics.csv，而非本文提议的 cosmos NFT after_step 钩子）；P1 的 advantage_high/kl_beta 按文档条件门控未动；256 步真实跑 + 结论属实验，记录在 info/。
-所有 RL 配方参数都对照过 **Cosmos Predict2.5 论文 §4.2.2**（`docs/papers/cosmos_predict2_5_..._2511.00062v2.pdf`，wm-infra clone）和 VRL 真实代码。
+所有 RL 配方参数都对照过 **Cosmos Predict2.5 论文 §4.2.2**（`docs/papers/world-models/cosmos-predict2-5-world-foundation-models.pdf`，wm-infra clone）和 VRL 真实代码。
 
 ## 核心结论（被论文改写过的优先级）
 
@@ -92,7 +92,7 @@ cd ~/Desktop/VRL && HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 CUDA_VISIBLE_DEVICES
 
 ## 引用
 
-论文（`docs/papers/cosmos_predict2_5_..._2511.00062v2.pdf`）：
+论文（`docs/papers/world-models/cosmos-predict2-5-world-foundation-models.pdf`）：
 - §4.2.2 Reinforcement Learning (p13)：VideoAlign、8 输出、20 步、GRPO 组内归一化、256 步 batch 32、diffusion-loss 正则防 hacking、EMA、1 更新/batch。
 - §4.1 (p11)：AdamW β1=0.9/β2=0.999、2B lr 3e-5、wd 0.001、2000 warmup。
 - §3.2 (p9) + Table 3：2B 架构;93 帧/24 latent/16fps/~5.8s;WAN2.1 VAE 4×8×8。

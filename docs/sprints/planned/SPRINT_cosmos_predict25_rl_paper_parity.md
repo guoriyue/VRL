@@ -4,7 +4,7 @@
 RL 必须用 **paper-shaped 配置**（够显存才跑得起），**不要**沿用 field-notes 那次单卡
 L40S 的缩水 override——那次只采了论文 **千分之二** 的 rollout 量，学不出东西。
 
-> 来源：本篇核对了论文 PDF（`docs/papers/cosmos_predict2_5_..._2511.00062v2.pdf` 第 13 页
+> 来源：本篇核对了论文 PDF（`docs/papers/world-models/cosmos-predict2-5-world-foundation-models.pdf` 第 13 页
 > §4.2.2 Reinforcement Learning）、仓库 config（`configs/experiment/diffusion/cosmos_predict2_5/`）、
 > 以及 field-notes（`info/SPRINT_cosmos_training_field_notes.md`）。
 
@@ -82,7 +82,7 @@ rbs=1、n=3 时组内只有 3 个样本、每步只有 1 个 prompt——advanta
 
 ## 6. 参考
 
-- 论文:`docs/papers/cosmos_predict2_5_world_simulation_with_video_foundation_models_for_physical_ai_2511.00062v2.pdf` §4.2.2(p13)
+- 论文:`docs/papers/world-models/cosmos-predict2-5-world-foundation-models.pdf` §4.2.2(p13)
 - paper-shaped config:`configs/experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward.yaml`
 - GRPO 变体:`configs/experiment/diffusion/cosmos_predict2/online_grpo_kling_video_reward.yaml`
 - 单卡实跑记录:`docs/sprints/info/SPRINT_cosmos_training_field_notes.md`
