@@ -1,8 +1,16 @@
 # SPRINT: Async rollout/train overlap for DiffusionNFT（parked）
 
-状态：**parked / design-decided（2026-06-17）**。这是"小 rollout 吃不满 GPU → 能不能边采边训"
+状态：**parked / design-decided（2026-06-17；2026-06-20 复核仍 parked）**。这是"小 rollout 吃不满 GPU → 能不能边采边训"
 这个问题的设计裁决 + continuous-for-cosmos 接线排查。结论先行:**async overlap 对我们当前的
 DiffusionNFT 没有"理论安全"版本,只有"实测不伤就用"的经验路;且任何真 overlap 都需要 ≥2 卡。**
+
+> **复核更新（2026-06-20）**：本 doc 的 §1 核心裁决「DiffusionNFT 无理论安全 async」**现已被代码强制**——
+> `vrl/algorithms/diffusion_nft.py:51 tolerates_off_policy_staleness = False` + `vrl/rollouts/orchestration/schedule.py:124`
+> 的 `max_stale>0 且不容忍 → ValueError` fail-fast。相关基础设施也已落地并归档 `done/`：非-drain 权重同步
+> （`lifecycle.py:87 supports_non_draining_weight_sync` + versioned trainable-state slots）、`SPRINT_continuous_scheduler_redesign`、
+> `SPRINT_shadow_model_weight_sync`。**但本 sprint 自己的交付物**（NFT-specific async overlap 的 Option A/B/C 菜单：
+> mask-offpolicy-prefix / collect_rollout_logprobs / v_old / WeightSyncThread —— `vrl/` 全部零命中）**仍未开工、仍卡 ≥2 卡**。
+> 即：相关工作落地反而**强化**了这个 park（裁决已成 code-enforced），而非取代它。保持 parked。
 
 **触发事件(满足才解 park)**:**有 ≥2 张可用 GPU**(trainer 常驻一张、rollout actor 常驻另一张)。
 单卡到此为止——三家(slime / cosmos-rl / 我们)一致,单卡没有真 overlap(显存墙)。

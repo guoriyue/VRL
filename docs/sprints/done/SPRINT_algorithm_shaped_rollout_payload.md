@@ -1,6 +1,6 @@
-# SPRINT: algorithm-shaped rollout payload + loss-validates-its-inputs 契约
+# SPRINT: algorithm-shaped rollout payload + loss-validates-its-inputs 契约（done）
 
-状态：**声明 + 校验契约 DONE / 携带集 generation 侧物理裁剪 deferred**（2026-06-20，分支 `spike/vllm-omni-rollout`）。让"rollout 携带哪些张量"由 **algorithm** 选择（NFT 只带 `latents_clean`，flow-GRPO 带完整 SDE trajectory），并补一个 verl-omni 有、vrl 缺的 `required_data_keys` fail-fast 契约。**非重写**：vrl 已大半到位（per-family capability + per-segment ReplayInput + `uses_evaluator` 分叉），本 sprint 只把"携带张量的选择键"从 family 收紧到 algorithm，再加一层声明式入参校验。
+状态：**核心交付完成 → done**。声明 + 校验契约 DONE（`required_data_keys` + `validate_inputs` 已落地，代码佐证见「实现状态」段）；唯一 deferred 的「携带集 generation 侧物理裁剪」因架构解耦受限、明确划为独立后续 sprint。**声明 + 校验契约 DONE / 携带集 generation 侧物理裁剪 deferred**（2026-06-20，分支 `spike/vllm-omni-rollout`）。让"rollout 携带哪些张量"由 **algorithm** 选择（NFT 只带 `latents_clean`，flow-GRPO 带完整 SDE trajectory），并补一个 verl-omni 有、vrl 缺的 `required_data_keys` fail-fast 契约。**非重写**：vrl 已大半到位（per-family capability + per-segment ReplayInput + `uses_evaluator` 分叉），本 sprint 只把"携带张量的选择键"从 family 收紧到 algorithm，再加一层声明式入参校验。
 
 ## 实现状态（2026-06-20）
 

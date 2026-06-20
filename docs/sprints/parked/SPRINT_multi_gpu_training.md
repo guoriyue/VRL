@@ -2,7 +2,11 @@
 
 状态：parked / blocked-on-event（等待真实 multi-GPU 硬件 → Phase 6 的 torchrun 2-GPU FSDP2 SD3 OCR 真实运行）。前置 readiness sprint 已落地（schema TrainingSection.strategy Literal["single_process","fsdp"]、DistributedTrainingContext/resolve_training_context、Strategy/SingleProcessStrategy 接缝、collect/train step split，commits d19faa2/b0d7b57/0d1b046/f979cce/fea4ba9/e6facbd/001ab41/1e6dc24）。FSDP2 **strategy 层**（FSDPStrategy / fully_shard / DTensor export）也已落地（见下方 Implementation status），但多卡编排（Phase 4 rank-split collect/train、§6.5 torchrun↔Ray、Phase 6 真实 2-GPU 运行）尚未实现，strategy=fsdp 当前由 run_online_recipe 的 _require_supported_online_strategy 主动 fail-fast。
 
-## Implementation status (2026-06-16) — strategy layer landed
+> **复核更新（2026-06-20）**：本 doc「无真实 2-GPU run」一句**已 stale**——一条 **DDP** 多卡路径其后独立落地并归档
+> `done/`（`vrl/trainers/strategy.py:464 DDPStrategy`、`SPRINT_symmetric_colocated_ddp` + `SPRINT_ddp_2x1_first_run_findings`，
+> 配方 `online_nft_kling_video_reward_ddp_2x1.yaml` 已端到端跑通真实 2×L40S）。`_require_supported_online_strategy`
+> 现放行 `{single_process, ddp}`、仍 fail-fast `fsdp`（`vrl/scripts/common/online.py:75`）。**本 sprint 的 FSDP2 rank-split
+> 多卡编排（Phase 4/6.5/6）仍未实现、仍卡硬件**，故保持 parked；只是「2-GPU 从未跑过」不再成立。
 
 The FSDP2 **strategy layer** (Phase 2 + the FSDP2 core of Phases 3/5) is now
 implemented and unit-tested on a single CPU rank (gloo, `world_size=1`), where

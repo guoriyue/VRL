@@ -1,6 +1,12 @@
-# SPRINT：Runtime block policies
+# SPRINT：Runtime block policies（done — resolved, negative result）
 
-状态：paused / implementation reverted（T0-T3 曾做一版实验实现；T4 smoke + b8 control 证明当前 eager/no-compile 路径没有性能收益，代码已撤回，只保留 sprint 记录）。
+状态：**DONE / 已结案（negative result，2026-06-20 核实）**。这是一次 feasibility/perf spike，已得出并记录答案：
+**当前 eager/no-compile 路径上 runtime block policies 没有性能收益**（T4 smoke：b16 比 b8 control 慢 ~3.9%），
+故实验实现已**完整撤回**、零残留。核实证据：`vrl/generation/block.py` / `vrl/models/diffusion/common/block.py`
+及对应 test 均不存在；`RuntimeBlockPolicy`/`TorchCompileBlockPolicy`/`runtime_blocks`/`block_policy`/
+`decode_batch_size` 在 `vrl/`+`tests/` 零命中；各 family `decode_latents` 已回到无 batch 签名
+（如 `vrl/models/diffusion/sd3_5/model.py:384`）。按 AGENTS.md「one-shot validation artifact」——价值是它产出的
+答案（已记录），不是代码的继续存在，故归 `done/`。
 
 目标：给 rollout 里的逻辑运行块提供统一配置面，让不同模型 family 可以声明并消费自己的 block policy。第一阶段只做 **serial executor 内的策略下发**，不做物理 stage pipeline、不加 Ray stage worker、不改 collector/reward 边界。
 

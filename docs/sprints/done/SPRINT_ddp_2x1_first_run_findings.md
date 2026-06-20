@@ -1,8 +1,11 @@
-# SPRINT: DDP 2x1 首次真机验证 — bug 修复、wrap/unwrap 边界设计、perf 画像
+# SPRINT: DDP 2x1 首次真机验证 — bug 修复、wrap/unwrap 边界设计、perf 画像（done）
 
-状态：**双卡 2x1 DDP 已端到端跑通**（首次真机验证 SPRINT_symmetric_colocated_ddp.md
-预告的"用户的 2x1 跑就是首次真实验证"）。两个首跑 bug 已修并验证；一个 principled
-重构待定（见 §3）。分支 `fix/ddp-2x1-lora-nft-first-run`，修复 commit `ab7cab1`。
+状态：**done**。双卡 2x1 DDP 已端到端跑通（首次真机验证 SPRINT_symmetric_colocated_ddp.md
+预告的"用户的 2x1 跑就是首次真实验证"）。两个首跑 bug 已修并验证（Bug A 在
+`vrl/trainers/strategy.py` DDPStrategy `_unwrapped_full_state`、Bug B 在 NFT adapter 边界，均在 main）；
+**§3 的 principled wrap/unwrap 重构其后亦已落地**——NFT 现走 model-owned `model.activate_adapter("previous")` /
+`disable_adapter()` 边界（`vrl/algorithms/diffusion_nft.py:235,238`），即 §3 主张的「通用机制下沉到 base
+diffusion model」。分支 `fix/ddp-2x1-lora-nft-first-run`，修复 commit `ab7cab1`。
 
 配方：`configs/experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward_ddp_2x1.yaml`
 首验覆盖：`/sampling/video=480p_33f sampling.guidance_scale=7.0 rollout.rollout_batch_size=4
