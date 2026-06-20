@@ -4,15 +4,16 @@ Mirrors ``tests/models/diffusion/sd3_5/test_model_loading.py``: monkeypatch the
 diffusers pipeline ``from_pretrained`` to return a fake pipeline (no Hub fetch,
 no real weights) and assert the loader-constructed state, NOT literal YAML
 config values. The Wan I2V wrapper has a load-time branch the sd3 test does not
-exercise: single-GPU offload mode is selected from the ``model.*`` config block
+exercise: single-GPU offload mode is selected from the ``model.offload_mode`` config
+key
 (``WanI2VDiffusersModel.from_spec`` in ``vrl/models/diffusion/wan_2_1/model.py``):
 
-  * ``enable_sequential_cpu_offload`` -> ``pipeline.enable_sequential_cpu_offload(gpu_id=...)``
+  * ``offload_mode: sequential`` -> ``pipeline.enable_sequential_cpu_offload(gpu_id=...)``
     and frozen modules are NOT eagerly staged to the device (accelerate streams
     them per layer);
-  * ``enable_model_cpu_offload`` -> ``pipeline.enable_model_cpu_offload(gpu_id=...)``,
+  * ``offload_mode: model`` -> ``pipeline.enable_model_cpu_offload(gpu_id=...)``,
     likewise no eager staging;
-  * neither flag -> vae fp32 + text_encoder/image_encoder spec-dtype staged to
+  * ``offload_mode: none`` -> vae fp32 + text_encoder/image_encoder spec-dtype staged to
     the spec device.
 
 In every branch the generation-only modules (vae / text_encoder / image_encoder)
@@ -111,7 +112,7 @@ def test_wan_i2v_from_spec_sequential_cpu_offload(monkeypatch) -> None:
         model_name_or_path="Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
         dtype=torch.bfloat16,
         device=torch.device("cuda:3"),
-        model_config={"enable_sequential_cpu_offload": True},
+        model_config={"offload_mode": "sequential"},
     )
 
     model = WanI2VDiffusersModel.from_spec(spec)
@@ -137,7 +138,7 @@ def test_wan_i2v_from_spec_model_cpu_offload(monkeypatch) -> None:
         model_name_or_path="Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
         dtype=torch.bfloat16,
         device=torch.device("cuda:2"),
-        model_config={"enable_model_cpu_offload": True},
+        model_config={"offload_mode": "model"},
     )
 
     model = WanI2VDiffusersModel.from_spec(spec)
@@ -174,6 +175,23 @@ def test_wan_i2v_from_spec_no_offload_stages_frozen_modules(monkeypatch) -> None
     assert pipeline.vae.to_calls == [(spec.device, torch.float32)]
     assert pipeline.text_encoder.to_calls == [(spec.device, torch.bfloat16)]
     assert pipeline.image_encoder.to_calls == [(spec.device, torch.bfloat16)]
+
+
+def test_wan_i2v_from_spec_rejects_legacy_offload_keys(monkeypatch) -> None:
+    """Legacy offload bools fail loud instead of becoming no-op runtime keys."""
+    from vrl.models.diffusion.wan_2_1.model import WanI2VDiffusersModel
+
+    _patch_from_pretrained(monkeypatch)
+
+    spec = SimpleNamespace(
+        model_name_or_path="Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
+        dtype=torch.bfloat16,
+        device=torch.device("cuda:0"),
+        model_config={"enable_model_cpu_offload": True},
+    )
+
+    with pytest.raises(ValueError, match="model.enable_model_cpu_offload"):
+        WanI2VDiffusersModel.from_spec(spec)
 
 
 def test_wan_i2v_from_spec_accepts_dual_stage_pipeline(monkeypatch) -> None:

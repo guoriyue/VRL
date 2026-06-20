@@ -7,8 +7,7 @@ model:
   trainable_transformers:
     - transformer_2
   reference_image: ""
-  enable_model_cpu_offload: false
-  enable_sequential_cpu_offload: false
+  offload_mode: none
 
   memory:
     vae_decode:

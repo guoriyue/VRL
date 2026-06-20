@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import MISSING, fields, is_dataclass
 from typing import Any, get_type_hints
 
@@ -15,6 +16,39 @@ from vrl.config.validation import (
     validate_reward_config,
     validate_training_config,
 )
+
+
+def _apply_rollout_precision_defaults(
+    cfg: DictConfig,
+    precision: Any,
+    payload: dict[str, Any],
+) -> None:
+    """Derive safe rollout/replay precision policy from the public precision intent.
+
+    Users should only have to say that rollout is lower precision or a different
+    backend. The correction mechanism is an implementation detail: on a split,
+    default to bypass old-logprob plus TIS/RS correction and a catastrophic-drift
+    guard. Explicit expert blocks are still respected.
+    """
+
+    if precision.rollout == precision.compute:
+        return
+
+    from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
+    from vrl.trainers.core.types import PrecisionDriftGuardConfig
+
+    if not path_exists(cfg, "trainer.precision_correction"):
+        payload["precision_correction"] = PrecisionCorrectionConfig(
+            tis_mode="truncate",
+            rs_mode="seq_mean_k1",
+        )
+    if not path_exists(cfg, "trainer.precision_drift_guard"):
+        payload["precision_drift_guard"] = PrecisionDriftGuardConfig(
+            mode="fail",
+            max_abs_log_ratio=math.log(10.0),
+            max_ratio_abs_dev=9.0,
+            fail_on_nonfinite=True,
+        )
 
 
 def _dataclass_field_names(cls: type[Any]) -> set[str]:
@@ -181,6 +215,7 @@ def build_trainer_config(cfg: DictConfig):
     payload["bf16"] = precision.compute == "bf16"
     payload["rollout_precision"] = precision.rollout
     payload["math_precision"] = precision.math
+    _apply_rollout_precision_defaults(cfg, precision, payload)
 
     return TrainerConfig(**payload)
 

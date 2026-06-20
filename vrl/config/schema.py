@@ -9,6 +9,7 @@ key all get the same treatment: one warning naming the dotted path.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import fields as dataclass_fields
 from typing import Annotated, Any, Literal
 
@@ -286,11 +287,12 @@ class SamplingConfig(ConfigBase):
 
 
 class ModelConfig(ConfigBase):
+    """Shared model keys; family-owned keys are validated by model.family."""
+
+    model_config = ConfigDict(extra="allow")
+
     family: str | None = None
-    # Key registry: consumed by family runtime loaders.
     dtype: Any = None
-    enable_model_cpu_offload: Any = None
-    freeze_vae: Any = None
     # readers: models/interfaces/runtime.py + family runtime.py lora blocks
     lora: Annotated[
         Any,
@@ -302,19 +304,142 @@ class ModelConfig(ConfigBase):
     # model.memory sections (today only vae_decode, which self-validates strictly)
     memory: Annotated[Any, ConfigBlock(MODEL_MEMORY_SECTIONS)] = None
     path: Any = None
-    qwen_tokenizer_path: Any = None
-    reference_image: Any = None
-    revision: Any = None
-    scheduler_shift: Any = None
-    skip_text_encoder: Any = None
-    t5_tokenizer_path: Any = None
-    task_variant: Any = None
-    text_encoder_file: Any = None
     torch_compile: Annotated[Any, ConfigBlock(("enable", "mode"))] = None
-    transformer_file: Any = None
     use_lora: Any = None
+
+
+class SD3ModelConfig(ModelConfig):
+    """SD3.5 uses only the shared model keys."""
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class WanModelConfig(ModelConfig):
+    """Wan-specific model keys consumed by wan_2_1 runtime/model loaders."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    boundary_ratio: Any = None
+    offload_mode: Literal["none", "model", "sequential"] = "none"
+    reference_image: Any = None
+    task_variant: Any = None
+    trainable_transformers: Any = None
+
+
+class CosmosPredict2ModelConfig(ModelConfig):
+    """Cosmos Predict2 Video2World model keys."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    reference_image: Any = None
+
+
+class CosmosPredict25ModelConfig(ModelConfig):
+    """Cosmos Predict2.5 model keys."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    revision: Any = None
+    skip_text_encoder: Any = None
+
+
+class CosmosAnimaModelConfig(ModelConfig):
+    """Cosmos Anima single-file artifact paths and scheduler key."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    qwen_tokenizer_path: Any = None
+    scheduler_shift: Any = None
+    t5_tokenizer_path: Any = None
+    text_encoder_file: Any = None
+    text_encoder_path: Any = None
+    transformer_file: Any = None
+    transformer_path: Any = None
     vae_file: Any = None
     vae_path: Any = None
+
+
+class JanusProModelConfig(ModelConfig):
+    """Janus-Pro optional model wrapper keys."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    trust_remote_code: Any = None
+    vq_latent_channels: Any = None
+
+
+class NextStep1ModelConfig(ModelConfig):
+    """NextStep-1 tokenizer and frozen-module keys."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    freeze_vae: Any = None
+    vae_path: Any = None
+
+
+_model_config_classes_by_family: dict[str, type[ModelConfig]] = {
+    "sd3_5": SD3ModelConfig,
+    "wan": WanModelConfig,
+    "wan_2_1": WanModelConfig,
+    "wan_2_1_i2v": WanModelConfig,
+    "wan_i2v": WanModelConfig,
+    "cosmos": CosmosPredict2ModelConfig,
+    "cosmos-predict2": CosmosPredict2ModelConfig,
+    "cosmos_predict2": CosmosPredict2ModelConfig,
+    "cosmos-predict2.5": CosmosPredict25ModelConfig,
+    "cosmos_predict2_5": CosmosPredict25ModelConfig,
+    "anima": CosmosAnimaModelConfig,
+    "cosmos_anima": CosmosAnimaModelConfig,
+    "cosmos-predict2-anima": CosmosAnimaModelConfig,
+    "janus": JanusProModelConfig,
+    "janus_pro": JanusProModelConfig,
+    "janus_r1": JanusProModelConfig,
+    "janus_pro_r1": JanusProModelConfig,
+    "nextstep": NextStep1ModelConfig,
+    "nextstep_1": NextStep1ModelConfig,
+}
+
+_model_config_variant_classes: tuple[type[ModelConfig], ...] = tuple(
+    dict.fromkeys(_model_config_classes_by_family.values())
+)
+
+_model_config_blocks_by_family: dict[type[ModelConfig], ConfigBlock] = {}
+
+
+def _model_config_class_for_family(family: Any) -> type[ModelConfig]:
+    return _model_config_classes_by_family.get(str(family or ""), ModelConfig)
+
+
+def _model_config_block_for_unknown_keys(mapping: Mapping[str, Any]) -> ConfigBlock:
+    cls = _model_config_class_for_family(mapping.get("family"))
+    block = _model_config_blocks_by_family.get(cls)
+    if block is None:
+        block = ConfigBlock(cls)
+        _model_config_blocks_by_family[cls] = block
+    return block
+
+
+def _validate_model_config_for_family(model: ModelConfig | None) -> None:
+    if model is None:
+        return
+    payload = model.model_dump()
+    cls = _model_config_class_for_family(payload.get("family"))
+    try:
+        cls.model_validate(payload)
+    except ValidationError as exc:
+        raise ValueError(_prefix_model_error(_extract_error_message(exc))) from exc
+
+
+def _prefix_model_error(message: str) -> str:
+    if message.startswith("unknown "):
+        rest = message[len("unknown "):]
+        if rest.startswith("model."):
+            return message
+        return f"unknown model.{rest}"
+    if message.startswith("config missing required field: "):
+        rest = message[len("config missing required field: "):]
+        return f"config missing required field: model.{rest}"
+    return message
 
 
 # ── Section key registries (values validated by their own layers) ────────────
@@ -492,7 +617,14 @@ class RootConfig(ConfigBase):
     data: DataConfig | None = None
     reward: RewardConfig | None = None
     rollout: RolloutConfig | None = None
-    model: ModelConfig | None = None
+    model: Annotated[
+        ModelConfig | None,
+        ConfigBlock(
+            ModelConfig,
+            select=_model_config_block_for_unknown_keys,
+            variants=_model_config_variant_classes,
+        ),
+    ] = None
     sampling: SamplingConfig | None = None
     # per-component production gates; contract checks live in
     # vrl/config/validation.py validate_production_* (raw-cfg checks)
@@ -508,6 +640,8 @@ class RootConfig(ConfigBase):
 
     @model_validator(mode="after")
     def _cross_field_validate(self) -> RootConfig:
+        _validate_model_config_for_family(self.model)
+
         algo = self.algorithm
         if algo is None:
             return self

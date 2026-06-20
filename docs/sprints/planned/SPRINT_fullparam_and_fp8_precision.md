@@ -19,8 +19,8 @@
 - **已落地（精度-修正地基，全部单测 + 5090 实测过）**：
   - `vrl/config/precision.py`：`_CANONICAL` 加 `fp8`/`fp4`；重开**受控的 `rollout` 轴**（scalar 形式仍禁止 split，只有显式 `{forward: bf16, rollout: fp8}` 可达；fp8/fp4 仅 rollout 轴合法，forward/math 拒绝）。
   - `vrl/models/dtypes.py`：fp8/fp4/e4m3/e5m2 → torch dtype（缺失 dtype 的 torch build 显式报错，不静默退化）。
-  - **TIS**（truncated importance sampling）`tis_mode=off|truncate|clip|mask`，在 PPO clip 前截断 rollout→replay 重要性权重，防 fp8 漂移在负优势样本上撑爆未截断梯度。**配置和原语都在算法层漂移模块 `vrl/algorithms/logprob_mismatch.py`**（`PrecisionCorrectionConfig` + `apply_truncated_importance_weight`，与 `compute_logprob_mismatch_stats` 并排 = 测量+修正一处）；**旋钮不在 GRPOConfig**，而在 trainer 层 `trainer.precision_correction`（与 `precision_drift_guard` 并排），trainer `__init__` 注入算法的 `precision_correction` 槽。两个 GRPO 家族共用同一原语，`TrainStepMetrics.tis_clip_fraction` 上报。
-  - 既有 drift guard（`vrl/trainers/online/precision_guard.py`，`auto` 在 rollout!=compute 时 →fail）对 fp8 直接复用，无需改动——guard 测量/拦，TIS 在 loss 端 bound，是它的对侧。
+  - **TIS/RS 自动派生**：用户只写 `precision: {forward: bf16, rollout: fp8}` 表达意图；`build_trainer_config` 在 rollout!=compute 且没有显式 expert block 时自动注入 `PrecisionCorrectionConfig(tis_mode="truncate", rs_mode="seq_mean_k1")`。TIS 在 PPO clip 前截断 rollout→replay 重要性权重，RS 丢弃整段 out-of-band 轨迹；两个 GRPO 家族共用 `vrl/algorithms/logprob_mismatch.py` 的原语，`tis_clip_fraction` / `rs_seq_masked_fraction` 作为健康指标上报，不是普通用户调参面。
+  - drift guard 也随 split 自动派生为 catastrophic gate：非 split 仍保留逐位 parity 语义；fp8/fp4 rollout split 下默认只对非有限或极端 log-ratio fail-fast，让 TIS/RS 处理正常低精度漂移。显式 `trainer.precision_drift_guard` / `trainer.precision_correction` 仍作为 expert override 保留。
   - 验证资产：`vrl/scripts/perf/fp8_rollout_drift_probe.py`——真 `_scaled_mm` fp8 GEMM 测漂移 → 喂 `compute_logprob_mismatch_stats` → guard 触发 → TIS 在轨迹累积漂移的尾部 engage。实测：单步漂移温和（ratio_dev max ~0.14），沿 T=35 去噪步累积后 max ~0.87，cap=1.5 时 TIS 截断 ~1.2% 轨迹。
 - **kernel 已接（2026-06-19，见 [[SPRINT_fp8_rollout_gemm_kernel]]）**：`Fp8Linear`（`vrl/nn/quantization/fp8.py`，真 `_scaled_mm`）+ `base.quantize_transformer_fp8` + 三家 rollout builder（sd3_5 / wan / cosmos predict2）全链路 wiring 已落地。5090 实测：fp8 比 bf16 **快 1.40x**（geomean）、24-block DiT 端到端漂移 **6.6%**。`precision.rollout=fp8` live run 可起。predict2_5/anima wiring + 假旋钮 backstop guard 已落地（2026-06-19，[[SPRINT_rollout_optimization_layer]] P0）。
 - **历史**：用户 2026-06-14 曾 park，分析保留在 [[SPRINT_gemm_utilization]]。
@@ -33,7 +33,7 @@
 2. **改前向**：在 `vrl/generation/` 的 diffusion DiT 前向里，把**策略 GEMM**（QKV / MLP 投影）的 `nn.Linear` swap 成 fp8 linear；**跳过** embedding / 最后投影 / norm / SDE-logprob 数学（这些留 bf16 master，绝不 fp8）。这一步是 per-架构的。
 3. **scaling recipe**：先 per-tensor dynamic amax（最简）；不够再上 per-row 或 128×128 per-block（slime 式）。静态 vs 动态量化也在这步定。
 4. **拆 guard**：`vrl/scripts/common/online.py` 已经删掉 fp8 `NotImplementedError`（fp4 仍 gated）；fp8 时 `rollout_weight_dtype` 使用 compute dtype 作为 bf16/fp16 master，量化在 GEMM 内部做，而不是把模型存成 float8。剩余 guard 要下沉到 family/bundle 层：`precision.rollout=fp8` 时必须证明 builder 实际 swap 了 linears，否则启动失败。
-5. **数值验证**：把 `vrl/scripts/perf/fp8_rollout_drift_probe.py` 换成真实 DiT 跑一遍，量 `ratio_dev` 分布，据此校准 `trainer.precision_correction` 的 cap；drift guard 设 `warn` 先跑一轮观察。
+5. **数值验证**：把 `vrl/scripts/perf/fp8_rollout_drift_probe.py` 换成真实 DiT 跑一遍，量 `ratio_dev` / `rs_seq_masked_fraction` 分布。默认 auto correction 应可直接跑；只有当实测长期大面积截断/拒绝时，才进入 expert override 校准。
 6. **吞吐验证**：用 `gemm_projection_breakdown.py` / `compile_benchmark.py` 量 rollout 段实际加速，再按 colocated 串行的 Amdahl 折算端到端收益（rollout 占比是关键，先测）。
 
 地基（本 sprint 落地的 precision policy / drift guard / TIS / probe）就是给这一步用来**测量+修正+验证**漂移的；kernel 接上后它们零改动直接生效。

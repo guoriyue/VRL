@@ -150,8 +150,14 @@ class WanT2VDiffusersModel(LoraModelMixin, DiffusionModelBase):
         _validate_wan_pipeline(pipeline, task="Wan T2V")
         pipeline.vae.requires_grad_(False)
         pipeline.text_encoder.requires_grad_(False)
-        pipeline.vae.to(spec.device, dtype=torch.float32)
-        pipeline.text_encoder.to(spec.device, dtype=spec.dtype)
+        _apply_offload_mode(
+            pipeline,
+            spec,
+            eager_module_dtypes={
+                "vae": torch.float32,
+                "text_encoder": spec.dtype,
+            },
+        )
         return cls(
             pipeline=pipeline,
             device=spec.device,
@@ -585,30 +591,15 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
             if module is not None:
                 module.requires_grad_(False)
 
-        # Offload flags ride in model_config (the whole cfg.model block) now,
-        # not a curated spec.extra.
-        extra = spec.model_config or {}
-        # Two offload modes for single-GPU inference (Stage 1):
-        #   * enable_sequential_cpu_offload — per-layer streaming,
-        #     required when the transformer alone (~28 GB bf16) exceeds
-        #     the card. Slow per step but fits on 32 GB GPUs.
-        #   * enable_model_cpu_offload — per-module staging; only viable
-        #     when transformer + activations + accelerate hooks comfortably
-        #     fit, otherwise the .to(execution_device) call in pre_forward
-        #     itself OOMs (observed on 32 GB GPUs).
-        # Stage 0.5 spike (outputs/wan_i2v_spike/result_v2.json) confirms
-        # sequential offload is the only single-card path for Wan I2V 14B
-        # at 32 GB; multi-GPU sharding is the production fix.
-        gpu_id = getattr(spec.device, "index", None) or 0
-        if bool(extra.get("enable_sequential_cpu_offload", False)):
-            pipeline.enable_sequential_cpu_offload(gpu_id=gpu_id)
-        elif bool(extra.get("enable_model_cpu_offload", False)):
-            pipeline.enable_model_cpu_offload(gpu_id=gpu_id)
-        else:
-            pipeline.vae.to(spec.device, dtype=torch.float32)
-            pipeline.text_encoder.to(spec.device, dtype=spec.dtype)
-            if getattr(pipeline, "image_encoder", None) is not None:
-                pipeline.image_encoder.to(spec.device, dtype=spec.dtype)
+        _apply_offload_mode(
+            pipeline,
+            spec,
+            eager_module_dtypes={
+                "vae": torch.float32,
+                "text_encoder": spec.dtype,
+                "image_encoder": spec.dtype,
+            },
+        )
         return cls(
             pipeline=pipeline,
             device=spec.device,
@@ -911,6 +902,52 @@ def _validate_wan_pipeline(pipeline: Any, *, task: str) -> None:
         and getattr(pipeline, "transformer_2", None) is None
     ):
         raise ValueError(f"{task} dual-stage pipeline is missing transformer_2")
+
+
+def _apply_offload_mode(
+    pipeline: Any,
+    spec: Any,
+    *,
+    eager_module_dtypes: Mapping[str, torch.dtype],
+) -> None:
+    """Apply model.offload_mode inside the Wan Diffusers loaders."""
+
+    extra = spec.model_config or {}
+    legacy = sorted(
+        key
+        for key in ("enable_model_cpu_offload", "enable_sequential_cpu_offload")
+        if key in extra
+    )
+    if legacy:
+        raise ValueError(
+            f"removed Wan model config key(s): {', '.join('model.' + key for key in legacy)}; "
+            "use model.offload_mode='none', 'model', or 'sequential'",
+        )
+
+    mode = extra.get("offload_mode", "none")
+    if mode is None or mode == "":
+        mode = "none"
+    mode = str(mode)
+    if mode not in {"none", "model", "sequential"}:
+        raise ValueError(
+            f"model.offload_mode must be one of ['none', 'model', 'sequential'], got {mode!r}",
+        )
+
+    # Diffusers exposes two mutually exclusive accelerate hooks here:
+    # sequential streams per layer and is the 32 GB Wan I2V escape hatch; model
+    # offload stages full modules and only works when the transformer fits.
+    gpu_id = getattr(spec.device, "index", None) or 0
+    if mode == "sequential":
+        pipeline.enable_sequential_cpu_offload(gpu_id=gpu_id)
+        return
+    if mode == "model":
+        pipeline.enable_model_cpu_offload(gpu_id=gpu_id)
+        return
+
+    for module_name, dtype in eager_module_dtypes.items():
+        module = getattr(pipeline, module_name, None)
+        if module is not None:
+            module.to(spec.device, dtype=dtype)
 
 
 def _resolve_guidance_scale_2(

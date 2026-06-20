@@ -155,6 +155,87 @@ def test_training_keys_are_registered_not_unknown() -> None:
     assert not [k for k in unknown if k.startswith("distributed.training")]
 
 
+# ── model family scoped keys ──────────────────────────────────────────────────
+
+
+def test_wan_model_keys_are_scoped_to_wan_family() -> None:
+    """Wan dual-stage/offload keys are accepted only for Wan model families."""
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    wan_cfg = OmegaConf.create(
+        {
+            "model": {
+                "family": "wan_2_1_i2v",
+                "path": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
+                "boundary_ratio": 0.9,
+                "trainable_transformers": ["transformer_2"],
+                "offload_mode": "sequential",
+            },
+        },
+    )
+    assert find_unknown_keys(wan_cfg) == []
+
+    sd3_cfg = OmegaConf.create(
+        {
+            "model": {
+                "family": "sd3_5",
+                "path": "stabilityai/stable-diffusion-3.5-medium",
+                "boundary_ratio": 0.9,
+                "trainable_transformers": ["transformer_2"],
+                "offload_mode": "sequential",
+            },
+        },
+    )
+    assert find_unknown_keys(sd3_cfg) == [
+        "model.boundary_ratio",
+        "model.offload_mode",
+        "model.trainable_transformers",
+    ]
+
+
+def test_nextstep_freeze_vae_is_scoped_to_nextstep_family() -> None:
+    """freeze_vae is a NextStep model key, not a global model knob."""
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    nextstep_cfg = OmegaConf.create(
+        {
+            "model": {
+                "family": "nextstep_1",
+                "path": "stepfun-ai/NextStep-1.1",
+                "vae_path": "stepfun-ai/NextStep-1-f8ch16-Tokenizer",
+                "freeze_vae": True,
+            },
+        },
+    )
+    assert find_unknown_keys(nextstep_cfg) == []
+
+    sd3_cfg = OmegaConf.create(
+        {
+            "model": {
+                "family": "sd3_5",
+                "path": "stabilityai/stable-diffusion-3.5-medium",
+                "freeze_vae": True,
+            },
+        },
+    )
+    assert find_unknown_keys(sd3_cfg) == ["model.freeze_vae"]
+
+
+def test_unknown_wan_offload_mode_raises() -> None:
+    """Wan offload mode is a typed three-state enum, not two independent bools."""
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "family": "wan_2_1_i2v",
+                "path": "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
+                "offload_mode": "stream",
+            },
+        },
+    )
+    with pytest.raises(ValueError, match=r"unknown model\.offload_mode"):
+        parse_config(cfg)
+
+
 # ── distributed.rollout knobs ─────────────────────────────────────────────────
 
 

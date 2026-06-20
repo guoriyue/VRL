@@ -45,30 +45,29 @@ def config_reads_in_code(root: Path | None = None) -> tuple[set[str], set[str]]:
     return bare, dotted
 
 
-def path_is_known(path: str) -> bool:
-    """Walk a dotted path through the known-key tree."""
+def _path_is_known(block: object, segments: tuple[str, ...]) -> bool:
+    if not segments:
+        return True
+    if block is OPEN:
+        return True
+    if not isinstance(block, ConfigBlock):
+        return True  # descended past spec depth through a known key
 
-    block: object = _root_block()
-    for segment in path.split("."):
-        if block is OPEN:
-            return True
-        if not isinstance(block, ConfigBlock):
-            return True  # descended past spec depth through a known key
-        if (
-            not block.open_keys
-            and segment not in block.known
-            and segment not in block.children
-        ):
-            return False
-        block = block.children.get(segment, None) or (OPEN if block.open_keys else None)
-    return True
+    segment = segments[0]
+    if segment in block.known or segment in block.children:
+        child = block.children.get(segment, None) or (OPEN if block.open_keys else None)
+        return _path_is_known(child, segments[1:])
+    if any(_path_is_known(variant, segments) for variant in block.variants):
+        return True
+    return bool(block.open_keys)
 
 
 def unregistered_code_paths() -> list[str]:
     """Code sweep: dotted config paths read by code but absent from the tree."""
 
     _, dotted = config_reads_in_code()
-    return sorted(p for p in dotted if not path_is_known(p))
+    root = _root_block()
+    return sorted(p for p in dotted if not _path_is_known(root, tuple(p.split("."))))
 
 
 def unknown_yaml_keys() -> dict[str, list[str]]:

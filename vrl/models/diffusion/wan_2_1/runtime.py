@@ -70,8 +70,8 @@ def _resolve_model_cls(task_variant: str | None) -> type:
 def extract_wan_2_1_runtime_spec(cfg: Any, device: Any, weight_dtype: Any) -> RuntimeBuildSpec:
     """Slice the runtime-relevant subset out of a whole RL cfg."""
     # task_variant (t2v vs i2v) is the one runtime field that varies per cfg;
-    # enable_model_cpu_offload / reference_image now ride in model_config and are
-    # read by the consumer, so no per-field extra building here.
+    # offload_mode / reference_image ride in model_config and are read by the
+    # consumer, so no per-field extra building here.
     return extract_runtime_spec(
         cfg,
         device,

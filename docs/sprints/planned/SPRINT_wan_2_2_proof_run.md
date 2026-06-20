@@ -98,7 +98,7 @@
    作参考图，URL 返回 **HTTP 403 Forbidden**（外部访问权限缺失）。
    *已绕过*：用 `third_party/videophy/examples/*.mp4`（7 个本地样例）解码 frame 0 → 832×480 PNG，
    手工建最小 manifest（`data/external/videophy_i2v/manifests/{train,eval}.jsonl`，7+2 行）。数据加载已通过。
-3. **2×14B 显存（任务 2，本就标「未验证」）**：Wan I2V 14B 单卡唯一路径是 `enable_sequential_cpu_offload`
+3. **2×14B 显存（任务 2，本就标「未验证」）**：Wan I2V 14B 单卡唯一路径是 `model.offload_mode: sequential`
    （per-layer 流式，极慢）。两专家（~56GB bf16）+ 若再把 reward 挤上同一张 46GB 卡 → 必然 OOM。
    任务 2 的「非活跃专家 offload」内存策略仍未在真机验证，是 proof run 的真正前置缺口。
 4. **离线加载**：`HF_HUB_OFFLINE=1` 下加载 cached 模型报 `OfflineModeIsEnabled`（要够 HF API 元数据）；

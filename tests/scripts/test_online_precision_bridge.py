@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import pytest
@@ -69,6 +70,53 @@ def test_fp16_precision_block_drives_trainer_and_rollout():
     assert trainer_config.rollout_precision == "fp16"
     assert trainer_config.math_precision == "fp32"
     assert torch_dtype_for_trainer_precision(trainer_config, torch) is torch.float16
+
+
+def test_rollout_precision_split_auto_derives_correction_policy():
+    """A low-precision rollout split is a user intent; correction is derived."""
+    cfg = _with_precision(
+        "diffusion/sd3_5/online_grpo_ocr",
+        {"forward": "bf16", "rollout": "fp8"},
+    )
+
+    trainer_config = build_configs(cfg)["trainer"]
+
+    assert trainer_config.mixed_precision == "bf16"
+    assert trainer_config.rollout_precision == "fp8"
+    assert trainer_config.precision_correction.tis_mode == "truncate"
+    assert trainer_config.precision_correction.rs_mode == "seq_mean_k1"
+    assert trainer_config.precision_correction.recompute_old_logprob == "off"
+    assert trainer_config.precision_drift_guard.mode == "fail"
+    assert trainer_config.precision_drift_guard.max_abs_log_ratio == pytest.approx(
+        math.log(10.0),
+    )
+    assert trainer_config.precision_drift_guard.max_ratio_abs_dev == pytest.approx(9.0)
+
+
+def test_explicit_precision_correction_is_respected_on_rollout_split():
+    """Expert correction blocks override the auto split-precision defaults."""
+    cfg = _with_precision(
+        "diffusion/sd3_5/online_grpo_ocr",
+        {"forward": "bf16", "rollout": "fp8"},
+    )
+    cfg = OmegaConf.merge(
+        cfg,
+        OmegaConf.create(
+            {
+                "trainer": {
+                    "precision_correction": {"tis_mode": "off", "rs_mode": "off"},
+                    "precision_drift_guard": {"mode": "warn", "max_abs_log_ratio": 0.25},
+                },
+            },
+        ),
+    )
+
+    trainer_config = build_configs(cfg)["trainer"]
+
+    assert trainer_config.precision_correction.tis_mode == "off"
+    assert trainer_config.precision_correction.rs_mode == "off"
+    assert trainer_config.precision_drift_guard.mode == "warn"
+    assert trainer_config.precision_drift_guard.max_abs_log_ratio == pytest.approx(0.25)
 
 
 def _with_precision(experiment, block):

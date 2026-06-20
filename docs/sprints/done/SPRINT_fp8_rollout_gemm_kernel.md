@@ -80,8 +80,8 @@ fp8 不是 drop-in dtype（bf16/fp16 有原生自动 dispatch 的 GEMM，fp8 没
 
 ## 5. 验收
 
-1. **正确性**：`fp8_rollout_drift_probe.py` 换真实 DiT 跑,`ratio_dev` 分布落在可控范围;drift guard 设 `warn` 一轮不报灾难。
-2. **修正联动**：据实测 `ratio_dev` 校准 `trainer.precision_correction` 的 cap,确认 TIS `tis_clip_fraction` 合理（不是大面积截）。
+1. **正确性**：`fp8_rollout_drift_probe.py` 换真实 DiT 跑,`ratio_dev` 分布落在 auto correction 可控范围;默认 catastrophic drift guard 不报灾难。
+2. **修正联动**：确认 auto 派生的 TIS/RS 指标合理（`tis_clip_fraction` / `rs_seq_masked_fraction` 不是大面积截）。只有长期异常时才用 expert `trainer.precision_correction` override 校准。
 3. **吞吐**：`vrl/scripts/perf/gemm_projection_breakdown.py` / `compile_benchmark.py` 量 rollout 段实际加速,再按 colocated 串行 Amdahl 折端到端（先测 rollout 占 cycle 比例）。
 4. **门控**：`online.py` 的 fp8 `NotImplementedError` 已删，`precision.rollout=fp8` live run 能起；仍需补 family-level swapped-count/capability guard，避免某个 builder 漏接 `apply_rollout_quantization` 时静默 bf16。
 

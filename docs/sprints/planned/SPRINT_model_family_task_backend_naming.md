@@ -152,7 +152,13 @@ metadata={
 
 ### 1.7 ModelConfig 扁平 key 注册表，家族专属键泄漏全局
 
-`ModelConfig` 是个全 `Any`-typed 的扁平 key 白名单，注释自承"key registry, 值由 family loader 校验"（`vrl/config/schema.py:288-294`）：
+> 状态更新（2026-06-20）：本节已在当前 patch 采用 family-aware model schema 落地。
+> `ModelConfig` 只保留 shared keys；Wan / Cosmos / Janus / NextStep 各自有
+> family-specific schema；unknown-key walker 通过 `model.family` 选择对应 key
+> set。Wan 的两个互斥 CPU offload bool 同步收敛成
+> `model.offload_mode: none|model|sequential`，旧 bool 在 Wan runtime 直接报错。
+
+迁移前，`ModelConfig` 是个全 `Any`-typed 的扁平 key 白名单，注释自承"key registry, 值由 family loader 校验"（`vrl/config/schema.py:288-294`）：
 
 ```python
 class ModelConfig(ConfigBase):
@@ -160,15 +166,15 @@ class ModelConfig(ConfigBase):
     # Key registry: consumed by family runtime loaders.
     boundary_ratio: Any = None          # Wan 2.2 双专家专属
     dtype: Any = None
-    enable_model_cpu_offload: Any = None        # diffusers pipeline 专属
-    enable_sequential_cpu_offload: Any = None   # diffusers pipeline 专属
+    enable_model_cpu_offload: Any = None        # diffusers pipeline 专属（已迁移）
+    enable_sequential_cpu_offload: Any = None   # diffusers pipeline 专属（已迁移）
     ...
     trainable_transformers: Any = None   # Wan 2.2 双专家专属（schema.py:317）
 ```
 
-family-专属键的真实消费面（确认只 Wan 2.2 读）：`boundary_ratio` 仅 `vrl/models/diffusion/wan_2_1/runtime.py:158-181` + eval 用 `getattr(pipe.config,"boundary_ratio",None) is None` 判是不是双专家（`vrl/scripts/eval/wan_i2v_base_sample.py:112`，2.1 单塔无此键）；`trainable_transformers` 仅 `runtime.py:168` + `vrl/models/diffusion/wan_2_1/model.py:101-113`；两个 `*_cpu_offload` 仅 `model.py:603-606`（`if sequential ... elif model ...` 互斥）。
+family-专属键的真实消费面（确认只 Wan 2.2 读）：`boundary_ratio` 仅 `vrl/models/diffusion/wan_2_1/runtime.py:158-181` + eval 用 `getattr(pipe.config,"boundary_ratio",None) is None` 判是不是双专家（`vrl/scripts/eval/wan_i2v_base_sample.py:112`，2.1 单塔无此键）；`trainable_transformers` 仅 `runtime.py:168` + `vrl/models/diffusion/wan_2_1/model.py:101-113`；旧的两个 `*_cpu_offload` 已收敛为 `model.offload_mode`，由 Wan runtime 统一分派到 Diffusers 的互斥 accelerate API。
 
-问题：这些键对**所有** family 都"合法"，但只有部分 family 读。错放（如 SD3.5 config 设 `boundary_ratio`）走到对应 loader 的 `.get()` 时被静默丢弃——既不报错也不生效。且每加一个 family 专属旋钮，都得手改这个中央注册表（user 此轮注册 wan_2_2 三键正是这条 churn：`git diff` 显示 `boundary_ratio`/`enable_sequential_cpu_offload`/`trainable_transformers` 是新加的working-tree 行）。设计意图（key 白名单 + family 校验 value）本身合理，缺的是**按 family 分域**。
+原问题：这些键对**所有** family 都"合法"，但只有部分 family 读。错放（如 SD3.5 config 设 `boundary_ratio`）走到对应 loader 的 `.get()` 时被静默丢弃——既不报错也不生效。且每加一个 family 专属旋钮，都得手改这个中央注册表。设计意图（key 白名单 + family 校验 value）本身合理，缺的是**按 family 分域**。
 
 ### 1.8 落地取舍（需拍板）
 
@@ -217,9 +223,16 @@ family-专属键的真实消费面（确认只 Wan 2.2 读）：`boundary_ratio`
 
 ### G. ModelConfig 家族键分域（§1.7-1.8，先拍板再动）
 
-- 先按 §1.8 三选一定调。推荐 #1（family loader fail-loud）：在各 family runtime 的 model_config 读取处，把"只 `.get` 自己要的、其余无视"改为"校验整个 model_config 键集 ⊆ 本 family 已知键"，未知键 raise（复用 `_dataclass_payload` 同款 unknown-key 报错风格）。
-- 无论选哪条，先给 `schema.py:291,293-294,317` 的 family-专属键补注释（`# Wan 2.2 dual-expert only` / `# diffusers pipeline only`），这步零风险、独立可落。
-- 验证：构造一个 SD3.5/cosmos config 显式设 `boundary_ratio`，断言（#1）启动 raise 或（#3）至少注释已标明它无效。
+- 已落地：采用 family-aware schema，而不是 loader-local fail-loud。`RootConfig.model`
+  的 unknown-key block 通过 `model.family` 选择 family-specific key set；静态 lint
+  通过 variants 识别 family-owned code reads。
+- 已落地：`boundary_ratio` / `trainable_transformers` 只在 Wan schema 合法；
+  `freeze_vae` 只在 NextStep schema 合法；`reference_image` 只在 Wan/Cosmos Predict2
+  schema 合法。
+- 已落地：两个 Wan CPU offload bool 合并为 `offload_mode` enum；旧 bool 在 Wan loader
+  层 fail loud，避免绕过 schema 时变成 no-op。
+- 非目标：不拆 per-checkpoint config class；不把 family runtime 逻辑搬进 schema；
+  `RuntimeBuildSpec.model_config` 继续作为 plain dict 传给 family runtime。
 
 ## 验证（finishing criteria）
 

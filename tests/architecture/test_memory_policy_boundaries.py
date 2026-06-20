@@ -12,9 +12,9 @@ def test_diffusion_model_loaders_use_vae_decode_memory_boundary() -> None:
     """VAE tiling/slicing must go through vrl.models.diffusion.common.vae_decode_memory."""
 
     # Only VAE tiling/slicing has a policy boundary (vae_decode_memory). Diffusers
-    # pipeline-level offload (enable_model_cpu_offload / enable_sequential_cpu_offload)
-    # is a legitimate single-GPU inference strategy with no boundary abstraction —
-    # e.g. Wan I2V 14B on a 32 GB card — so it is intentionally not forbidden here.
+    # pipeline-level offload through model.offload_mode is a legitimate single-GPU
+    # inference strategy — e.g. Wan I2V 14B on a 32 GB card — so the underlying
+    # accelerate calls are intentionally not forbidden here.
     violations = _forbidden_text(
         VRL_ROOT / "models" / "diffusion",
         filename="model.py",
@@ -32,7 +32,7 @@ def test_diffusion_train_scripts_do_not_inline_cpu_offload_policy() -> None:
     The trainer never loads the generation-only modules (text encoders, VAE):
     each family builds a minimal ReplayModel that omits them, so there is
     nothing to offload. A train.py reaching for ``.to("cpu")`` or
-    ``enable_model_cpu_offload`` is reintroducing a problem the ReplayModel
+    Diffusers CPU offload is reintroducing a problem the ReplayModel
     boundary already removed.
     """
 
@@ -41,6 +41,7 @@ def test_diffusion_train_scripts_do_not_inline_cpu_offload_policy() -> None:
         filename="train.py",
         forbidden=(
             "enable_model_cpu_offload(",
+            "enable_sequential_cpu_offload(",
             '.to("cpu")',
             ".to('cpu')",
         ),

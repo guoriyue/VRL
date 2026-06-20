@@ -27,7 +27,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import typing
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from vrl.utils.logging import init_logger
@@ -109,10 +109,17 @@ class ConfigBlock:
         children: dict[str, Any] | None = None,
         *,
         open_keys: bool = False,
+        select: Callable[[Mapping[str, Any]], Any] | None = None,
+        variants: tuple[Any, ...] = (),
     ) -> None:
         self.known = _field_names(source)
         self.children = {**_model_children(source), **(children or {})}
         self.open_keys = open_keys
+        self.select = select
+        self.variants = tuple(
+            variant if isinstance(variant, ConfigBlock) else ConfigBlock(variant)
+            for variant in variants
+        )
 
 
 @functools.lru_cache(maxsize=1)
@@ -151,6 +158,11 @@ def _collect_unknown(value: Any, block: Any, path: str, out: list[str]) -> None:
         return
     if not isinstance(block, ConfigBlock):
         return
+    if block.select is not None:
+        selected = block.select(mapping)
+        if selected is not None and selected is not block:
+            _collect_unknown(value, selected, path, out)
+            return
     for key in mapping:
         key = str(key)
         child_path = f"{path}.{key}" if path else key

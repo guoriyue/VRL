@@ -21,10 +21,11 @@ precision-correction problem (the collection-time logprob no longer equals the
 replay logprob). fp8/fp4 are rollout-only: the scalar form (``precision: fp8``)
 and the ``forward``/``math`` axes reject them, because a sub-byte replay/training
 forward has no stable gradient path. The split is reachable only by deliberately
-writing ``{forward: bf16, rollout: fp8}``, and a run that uses it must arm the
-precision drift guard (``trainer.precision_drift_guard``) and/or truncated
-importance sampling (``GRPOConfig.tis_mode``) so the resulting drift is measured
-and bounded rather than silently biasing the gradient.
+writing ``{forward: bf16, rollout: fp8}``. The trainer config builder then derives
+the correction path automatically: rollout-recorded logprobs are used as the old
+policy anchor, drift metrics are reported, TIS/RS are enabled, and the guard
+fails only on catastrophic/non-finite drift unless the user provides an explicit
+expert ``trainer.precision_*`` block.
 
 This module is torch-free (config layer): it resolves precision *policy* only.
 Consumers materialize a canonical axis name into a ``torch.dtype`` via

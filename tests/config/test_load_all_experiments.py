@@ -309,10 +309,10 @@ def test_sd35_single_gpu_async_debug_uses_persistent_colocated_rollout() -> None
     assert cfg.distributed.resources.allow_overlap is True
     # Colocation is expressed by the rollout.colocate block; release scheduling
     # is derived from the resolved topology, not spelled in YAML.
-    assert cfg.distributed.rollout.colocate.memory_fraction == 0.45
+    assert cfg.distributed.rollout.colocate.memory_fraction == 0.55
     resolved = resolve_distributed_resources(cfg)
     assert resolved.rollout_gpu_memory_fraction is not None
-    assert resolved.rollout_gpu_memory_fraction == 0.45
+    assert resolved.rollout_gpu_memory_fraction == 0.55
     assert resolved.lifecycle.rollout.mode == "resident"
     assert cfg.rollout.rollout_batch_size == 2
     assert cfg.rollout.sample_batch_size == 1
