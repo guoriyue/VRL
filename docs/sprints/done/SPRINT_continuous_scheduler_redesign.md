@@ -1,6 +1,8 @@
-# SPRINT: continuous rollout scheduler —— 真重叠 + 统一调度器（planned）
+# SPRINT: continuous rollout scheduler —— 真重叠 + 统一调度器（done）
 
-状态：proposed / design。这是对 `vrl/rollouts/orchestration/continuous/` 异步调度的诊断 + 重设计方案。
+状态：P0 / P1(GAP1+GAP2) / P2 统一调度器均已落地(见下方 2026-06-17 / -18 / -20 更新);唯一 parked 的是 P2
+更大子步「真 wall-clock 重叠(独立线程/进程 rollout owner)」,需 ≥2 卡验证、作为独立 PR。这是对
+`vrl/rollouts/orchestration/continuous/` 异步调度的诊断 + 重设计方案。
 findings 全部带证据(代码 path:line),对标 cosmos-rl 单控制器。**先做 P0/P1 小杠杆,统一调度器(P2)
 是更大的可选步,不是从零重写。**
 
@@ -58,6 +60,59 @@ microbatch 只由 `SPRINT_streaming_rollout_accumulation.md` 与
 > - **仍 parked 于 ≥2 卡**:GAP 2(shadow-model de-drain,消除 barrier drain 气泡)是多卡优先、改动大的
 >   独立 PR(见 §5 P1 修正 + `SPRINT_shadow_model_weight_sync.md`)。本次只做单卡 CPU 可测、对所有算法
 >   自动就绪的那部分。
+>
+> **更新(2026-06-20,P2 统一调度器落地 —— `RolloutScheduler` 收编 admission/budget/staleness):**
+> - **新 `RolloutScheduler`(`continuous/scheduler.py`)= §4 目标里的「单一 owner」**。把此前散在 producer 的
+>   双计数器(`len(inflight)<max_inflight` 且 `queue.size()+inflight<capacity`)与 queue 独立 caps 的 admission
+>   决策收进**一个 `can_admit()`**:in-flight 上限 + 跨 in-flight/ready 的单一条目预算 + ready 字节预算 +
+>   admit 时预测版本节流。producer/queue/consumer 仍保留各自的 *mechanism*(Ray dispatch / 容器 / iteration
+>   build),`RolloutScheduler` 持有 *decision*。
+> - **真正的单一 owner(第二轮收编)**:第一版只搬了 admit 一处决策,显得薄。复核后把**全部 5 处 policy-version
+>   决策**都路由进 scheduler —— 除 `can_admit` 外再加 `discard_at_receipt`(producer receipt 闸)、`drop_stale`
+>   (post-sync purge + select 前置)、`select_iteration`(同版本选择,含 `_candidate_versions`/`_take_distinct`)。
+>   `queue.py` 因此**彻底不再 import `StalenessPolicy`**,退化成纯容器(deque + 字节/条目安全网),只对外暴露
+>   `snapshot`/`remove`/`note_dropped_stale` 三个 mechanism 接口;`consumer.py` 也不再持 `StalenessPolicy`,改持
+>   scheduler 并驱动 `scheduler.select_iteration`。eviction(`_pick_victim`/`drop_policy`)经核查**不涉及
+>   policy-version**(按 `completed_at` 墙钟挑最旧的字节安全网 tiebreak),故合理留在 queue。现在「什么算 stale /
+>   选哪个版本 / 收货丢不丢」只有一个答案出处。
+> - **修掉诊断出的两个真漏洞**(详见诊断):
+>   (1) **字节维度「两 owner 打架」**——producer 的 `_admit` 此前只看条目数,queue 的 `_enforce_caps` 却按
+>   `max_bytes` 静默 evict 掉 producer 自以为已收下的新条目;现在 `can_admit` 的字节预算让 admission 看见
+>   字节,queue 字节驱逐降级成罕见安全网(in-flight 字节未知,仅作 burst 兜底)。
+>   (2) **staleness 全是事后丢、缺事前节流**——新增 admit 时预测落点版本
+>   `predicted = (inflight+ready)//groups_per_iteration`(cosmos `controller.py:273-303` 的 per-iteration 改写,
+>   一个被消费的 iteration = 一次 version bump):若现在发出的组会落在窗口外就**不发**(主动硬节流),取代纯
+>   reactive 的 receipt/select 丢弃。证明无回归且不饿死:`predicted==0` 直到攒满一整个 iteration,所以
+>   admission 总能到达恰好 `(max_stale+1)` 个 iteration 的预取深度再停;不减少被训练的数据,只消除注定被
+>   receipt-gate 丢弃的浪费生成。**`max_ready_groups` 超过 `(max_stale+1)×一个iteration` 的部分被 staleness
+>   capped**(印证 §2.3「单独调大 max_ready_groups 没用」)。
+> - **可观测**:producer state 新增 `predicted_admit_staleness` + `admit_blocked_reason`("inflight_full" /
+>   "item_budget_full" / "byte_budget_full" / "would_land_too_stale"),flush 进 `continuous.predicted_admit_staleness`
+>   与 `continuous.admit_blocked_on_staleness` metric —— 「串行假象」现在 per-step 可诊断,无需附 debugger。
+> - **测试**:新 `test_scheduler.py`(20 例,覆盖三类预算 + 预测节流窗口缩放 + 不饿死一个 iteration + reason
+>   优先级 + prompt-swap,以及从 `test_queue.py` 迁来的 drop-stale / 同版本 select / future fail-fast /
+>   receipt 闸);`test_queue.py` 瘦身为纯容器测试(backpressure/stats/snapshot-remove);`test_contracts.py` 的
+>   `_producer`/`_consumer` 改为注入 scheduler。`continuous/` + soundness 全套 66 例通过、`tests/rollouts/` +
+>   schema 186 例通过、`ruff` 干净(1 例 pre-existing 失败与本次无关:
+>   `test_sd35_single_gpu_async_debug_uses_persistent_colocated_rollout`,断 colocate.memory_fraction,属
+>   distributed 配置漂移)。
+> - **Review 修复(2 项)**:
+>   - **[High] prompt-set ownership**:select 此前只按 `rollout_policy_version` 分组,而 `group_key` 只是 slot 序号,
+>     两个 prompt set 都从 0 编号 —— prompt 换批时,上一批同版本的 ready items 会被当成新批 iteration 训练(reviewer
+>     用 fake schedule 复现:`['p0','p1']` 后调 `next_iteration(['p2','p3'])` 实际返回旧队列的 `[['p0'],['p1']]`)。
+>     根因修:`ContinuousRolloutItem` 新增 submit 时刻戳的 `prompt_set_id`;`ContinuousRolloutSchedule` 持有单调
+>     generation id,prompt 换批时 +1 并经 `update_prompts(prompts, prompt_set_id=...)` 下发;
+>     `RolloutScheduler.select_iteration(..., prompt_set_id)` **只选当前 set** 的 items(同时不混版本、不混 prompt
+>     set)。复核后补上第二个死锁边界:旧 set ready items 如果留在队列里会占满 capacity,让新 set admission
+>     因 `item_budget_full` 卡死;现在 prompt swap 时 scheduler purge obsolete ready items,in-flight 旧 set 结果
+>     receipt 时丢弃。回归测试 `test_select_only_serves_the_requested_prompt_set` /
+>     `test_prompt_set_update_purges_old_ready_items_before_wait`。
+>   - **[Med] admit observability 未进 metrics.csv**:`continuous.predicted_admit_staleness` /
+>     `continuous.admit_blocked_on_staleness` 此前只在 phase_times,固定列 CSV writer 没写。补 `online.py`
+>     header + row 映射 + 写列,并扩 `test_online_metrics_csv_includes_logprob_mismatch_metrics` 断言两列。
+> - **仍 parked(§5 P2 的更大子步)**:真 wall-clock 重叠 —— 让生成编排不与训练共用同一线程/事件循环跑同步
+>   backward(独立线程 / cosmos 形状的独立进程 rollout owner)。文档原文「单列评估,不在本轮」,本次未做:它需要
+>   ≥2 卡验证收益且改动最大,作为独立 PR。统一调度器(P2 主体)已落地。
 
 ---
 

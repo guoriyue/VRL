@@ -23,7 +23,7 @@ import torch
 from vrl.generation.execution.types import StaleSlotDiscard
 from vrl.rollouts.batch.ops import move_training_batch_to_device
 from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
-from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
+from vrl.rollouts.orchestration.continuous.scheduler import RolloutScheduler
 from vrl.rollouts.orchestration.continuous.types import (
     ContinuousRolloutItem,
     ContinuousRolloutProducerState,
@@ -49,11 +49,10 @@ class ContinuousRolloutProducer:
         lifecycle: RolloutLifecycle,
         prompts: list[Any],
         queue: ContinuousRolloutQueue,
-        staleness: StalenessPolicy,
+        scheduler: RolloutScheduler,
         group_size: int,
-        capacity: int,
-        max_inflight_groups: int,
         poll_interval_s: float,
+        prompt_set_id: int = 0,
         runtime_debug: bool = False,
     ) -> None:
         self.lifecycle = lifecycle
@@ -63,10 +62,14 @@ class ContinuousRolloutProducer:
                 "ContinuousRolloutProducer requires a non-empty prompt list",
             )
         self.queue = queue
-        self.staleness = staleness
+        # The scheduler is the single admission/budget/staleness-decision owner;
+        # the producer only executes its verdict and runs the Ray dispatch loop.
+        self.scheduler = scheduler
+        # Identifies the current prompt set; stamped on each submitted group so a
+        # prompt swap cannot mislabel the previous set's items (the schedule
+        # bumps this on swap).
+        self._prompt_set_id = int(prompt_set_id)
         self.group_size = int(group_size)
-        self.capacity = int(capacity)
-        self.max_inflight_groups = max(1, int(max_inflight_groups))
         self.poll_interval_s = float(poll_interval_s)
         self.runtime_debug = bool(runtime_debug)
 
@@ -87,16 +90,21 @@ class ContinuousRolloutProducer:
         self._loop_task = asyncio.create_task(self._run())
         return phase_times
 
-    def update_prompts(self, prompts: list[Any]) -> None:
+    def update_prompts(self, prompts: list[Any], *, prompt_set_id: int) -> None:
         # Producer swaps its prompt source for future submissions. In-flight
-        # tasks and already-queued items keep their original prompts and are
-        # still drained FIFO by the consumer.
+        # tasks keep their original prompt_set_id and are discarded at receipt if
+        # they finish after the swap; already-ready old-set items are purged by the
+        # schedule before it waits for the new set.
         if not prompts:
             raise ValueError(
                 "ContinuousRolloutProducer requires a non-empty prompt list",
             )
         self.prompts = list(prompts)
         self._prompt_cursor = 0
+        self._prompt_set_id = int(prompt_set_id)
+        # One iteration is still "all prompts", so the predicted-version throttle
+        # must track the new count or it would misjudge how far ahead a submit is.
+        self.scheduler.set_groups_per_iteration(len(self.prompts))
 
     async def stop(self) -> None:
         self.cancel()
@@ -154,10 +162,23 @@ class ContinuousRolloutProducer:
             raise
 
     def _admit(self) -> None:
-        while (
-            len(self._inflight) < self.max_inflight_groups
-            and self.queue.size() + len(self._inflight) < self.capacity
-        ):
+        while True:
+            inflight = len(self._inflight)
+            ready_items = self.queue.size()
+            self.state.predicted_admit_staleness = (
+                self.scheduler.predicted_landing_staleness(
+                    inflight_count=inflight,
+                    ready_items=ready_items,
+                )
+            )
+            decision = self.scheduler.can_admit(
+                inflight_count=inflight,
+                ready_items=ready_items,
+                ready_bytes=self.queue.ready_bytes(),
+            )
+            self.state.admit_blocked_reason = "" if decision.admit else decision.reason
+            if not decision.admit:
+                return
             slot, prompt = self._next_prompt_group()
             self._submit(slot, prompt)
 
@@ -175,6 +196,7 @@ class ContinuousRolloutProducer:
                 slot=slot,
                 prompt=prompt,
                 version=version,
+                prompt_set_id=self._prompt_set_id,
                 submitted_at=submitted_at,
             ),
         )
@@ -188,6 +210,7 @@ class ContinuousRolloutProducer:
         slot: int,
         prompt: Any,
         version: int | None,
+        prompt_set_id: int,
         submitted_at: float,
     ) -> dict[str, Any]:
         stats = RolloutStats()
@@ -202,6 +225,7 @@ class ContinuousRolloutProducer:
         return {
             "slot": slot,
             "version": version,
+            "prompt_set_id": prompt_set_id,
             "submitted_at": submitted_at,
             "batches": batches,
             "stats": stats,
@@ -262,7 +286,13 @@ class ContinuousRolloutProducer:
         # future items (staleness < 0, a bug), so those still flow to the
         # consumer, which fails fast on them.
         current_version = self.lifecycle.current_policy_version()
-        if self.staleness.too_stale(result["version"], current_version):
+        if self.scheduler.discard_prompt_set_at_receipt(
+            int(result["prompt_set_id"]),
+            self._prompt_set_id,
+        ):
+            self.state.discarded_prompt_set_count += 1
+            return
+        if self.scheduler.discard_at_receipt(result["version"], current_version):
             self.state.discarded_stale_count += 1
             return
         completed_at = time.time()
@@ -272,6 +302,7 @@ class ContinuousRolloutProducer:
                 item_id=self._item_counter,
                 group_key=int(result["slot"]),
                 rollout_policy_version=result["version"],
+                prompt_set_id=int(result["prompt_set_id"]),
                 batch=stored,
                 submitted_at=float(result["submitted_at"]),
                 completed_at=completed_at,

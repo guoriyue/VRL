@@ -534,3 +534,33 @@ async def test_prompt_set_update_swaps_producer_source() -> None:
         assert schedule.producer.prompts == ["p0", "p2"]
     finally:
         await schedule.producer.stop()
+
+
+@pytest.mark.asyncio
+async def test_prompt_set_update_purges_old_ready_items_before_wait() -> None:
+    """Old prompt-set ready items must not block admission for the new set."""
+    runtime = _Runtime()
+    schedule = _build(
+        _continuous_config(
+            max_stale_policy_versions=1,
+            max_ready_groups=4,
+            max_inflight_groups=2,
+            wait_timeout_s=1.0,
+        ),
+        _Collector(runtime),
+        _Syncer(runtime),
+    )
+
+    try:
+        await schedule.next_iteration(["p0", "p1"], group_size=1)
+        await _wait_until(lambda: schedule.queue.size() >= 4)
+        await schedule.after_train_step()
+        assert schedule.queue.size() >= 4
+
+        second = await schedule.next_iteration(["p2", "p3"], group_size=1)
+
+        assert sorted(batch.prompts[0] for batch in second.batches) == ["p2", "p3"]
+        assert second.phase_times["continuous.prompt_set_dropped"] >= 4.0
+        assert schedule.queue.stats()["dropped_prompt_set"] >= 4.0
+    finally:
+        await schedule.producer.stop()

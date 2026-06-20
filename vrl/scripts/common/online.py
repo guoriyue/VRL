@@ -425,7 +425,12 @@ class OnlineRecipeRun:
             "continuous_producer_discarded_stale,continuous_post_sync_dropped_stale,"
             # 0 = draining weight-sync barrier (waited for in-flight generation),
             # 1 = non-draining (versioned trainable-state slots let it skip the wait).
-            "continuous_weight_sync_barrier_mode"
+            "continuous_weight_sync_barrier_mode,"
+            # Admit-time predicted-version throttle (RolloutScheduler): how many
+            # versions a group submitted now would trail by when consumed, and 1
+            # when that staleness throttle is what stopped admission (proactive
+            # backpressure, vs the reactive *_dropped/discarded columns above).
+            "continuous_predicted_admit_staleness,continuous_admit_blocked_on_staleness"
         )
         if component_cols:
             header = f"{header},{component_cols}"
@@ -478,6 +483,12 @@ class OnlineRecipeRun:
             "continuous_weight_sync_barrier_mode": phases.get(
                 "continuous.weight_sync_barrier_mode", 0.0,
             ),
+            "continuous_predicted_admit_staleness": phases.get(
+                "continuous.predicted_admit_staleness", 0.0,
+            ),
+            "continuous_admit_blocked_on_staleness": phases.get(
+                "continuous.admit_blocked_on_staleness", 0.0,
+            ),
             **{f"r_{name}": component_means[name] for name in component_names},
         }
         metric_row_hook = self.stack.definition.metric_row_hook
@@ -514,6 +525,8 @@ class OnlineRecipeRun:
                         f"{row['continuous_producer_discarded_stale']:.1f}",
                         f"{row['continuous_post_sync_dropped_stale']:.1f}",
                         f"{row['continuous_weight_sync_barrier_mode']:.1f}",
+                        f"{row['continuous_predicted_admit_staleness']:.1f}",
+                        f"{row['continuous_admit_blocked_on_staleness']:.1f}",
                         *(f"{row[f'r_{name}']:.4f}" for name in component_names),
                     ],
                 )

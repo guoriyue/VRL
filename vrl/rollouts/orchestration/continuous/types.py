@@ -51,6 +51,12 @@ class ContinuousRolloutItem:
     group_key: int
     rollout_policy_version: int | None
     batch: RolloutBatch
+    # Generation of the prompt set this group was produced for, captured at
+    # submit time. ``group_key`` is only a slot index, so two different prompt
+    # sets both number their groups 0..n-1; without this id a prompt swap would
+    # let an iteration mix (or train) the previous set's ready items. The
+    # scheduler selects only items matching the current prompt set.
+    prompt_set_id: int = 0
     submitted_at: float = 0.0
     completed_at: float = field(default_factory=time.time)
     nbytes: int = 0
@@ -86,6 +92,18 @@ class ContinuousRolloutProducerState:
     # producer dropped them instead of enqueuing dead work. Surfaces wasted
     # generation; the consumer would drop the same items, just later/downstream.
     discarded_stale_count: int = 0
+    # Groups completed for an older prompt set after the trainer has already
+    # swapped prompts. They are correct rollouts, but no longer belong to the
+    # requested iteration and would otherwise block admission for the new set.
+    discarded_prompt_set_count: int = 0
+    # Admission observability (set by the producer from the RolloutScheduler each
+    # admit pass). predicted_admit_staleness is how many versions a group
+    # submitted now would trail by when consumed; admit_blocked_reason is "" when
+    # admitting and otherwise the binding constraint ("inflight_full" /
+    # "item_budget_full" / "byte_budget_full" / "would_land_too_stale"), so a
+    # serial-looking run is diagnosable without a debugger.
+    predicted_admit_staleness: int = 0
+    admit_blocked_reason: str = ""
     last_tick_gap_s: float = 0.0
     max_tick_gap_s: float = 0.0
     error_count: int = 0

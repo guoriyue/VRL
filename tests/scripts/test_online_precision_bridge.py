@@ -199,6 +199,8 @@ def test_online_metrics_csv_includes_logprob_mismatch_metrics(tmp_path):
                 "continuous.stale_policy_versions": 1.0,
                 "continuous.queue_ready_groups": 3.0,
                 "continuous.weight_sync_pause_s": 0.25,
+                "continuous.predicted_admit_staleness": 2.0,
+                "continuous.admit_blocked_on_staleness": 1.0,
             },
         ),
     )
@@ -208,6 +210,8 @@ def test_online_metrics_csv_includes_logprob_mismatch_metrics(tmp_path):
     assert "ratio_abs_dev_max" in header
     assert "mismatch_k3_kl" in header
     assert "continuous_stale_versions" in header
+    assert "continuous_predicted_admit_staleness" in header
+    assert "continuous_admit_blocked_on_staleness" in header
     values = dict(zip(header.split(","), row.split(","), strict=True))
     assert values["logprob_abs_diff_mean"] == "0.100000"
     assert values["ratio_abs_dev_max"] == "0.400000"
@@ -216,6 +220,9 @@ def test_online_metrics_csv_includes_logprob_mismatch_metrics(tmp_path):
     assert values["continuous_stale_versions"] == "1.0"
     assert values["continuous_ready_groups"] == "3.0"
     assert values["continuous_weight_sync_pause_s"] == "0.2500"
+    # Admit-time predicted-version throttle observability.
+    assert values["continuous_predicted_admit_staleness"] == "2.0"
+    assert values["continuous_admit_blocked_on_staleness"] == "1.0"
 
 
 @pytest.mark.parametrize(

@@ -15,7 +15,7 @@ import torch
 
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
-from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
+from vrl.rollouts.orchestration.continuous.scheduler import RolloutScheduler
 from vrl.rollouts.orchestration.continuous.types import (
     ContinuousRolloutItem,
     ContinuousRolloutProducerState,
@@ -36,11 +36,13 @@ class ContinuousRolloutConsumer:
         self,
         *,
         queue: ContinuousRolloutQueue,
-        staleness: StalenessPolicy,
+        scheduler: RolloutScheduler,
         fail_fast_errors: int = 3,
     ) -> None:
         self.queue = queue
-        self.staleness = staleness
+        # The scheduler owns the version/staleness decisions; the consumer drives
+        # its select and reuses its policy only to report the staleness number.
+        self.scheduler = scheduler
         # Fresh-error count (with zero fresh completions) that ends the wait
         # early with the producer's root cause. 0 disables fail-fast.
         self.fail_fast_errors = max(0, int(fail_fast_errors))
@@ -54,6 +56,7 @@ class ContinuousRolloutConsumer:
         mode: RolloutScheduleMode,
         wait_timeout_s: float,
         poll_interval_s: float,
+        prompt_set_id: int = 0,
         producer_state: ContinuousRolloutProducerState | None = None,
     ) -> RolloutIteration:
         """Block until a homogeneous-version iteration is ready, then build it.
@@ -69,10 +72,11 @@ class ContinuousRolloutConsumer:
         start_completed = producer_state.completed_count if producer_state else 0
         start_errors = producer_state.error_count if producer_state else 0
         while True:
-            selected = self.queue.select_iteration(
+            selected = self.scheduler.select_iteration(
+                self.queue,
                 min_groups=min_groups,
                 current_version=current_version,
-                staleness=self.staleness,
+                prompt_set_id=prompt_set_id,
             )
             if selected is not None:
                 version, items = selected
@@ -163,7 +167,7 @@ class ContinuousRolloutConsumer:
             _assign_group_index(item.batch, index)
             batches.append(item.batch)
 
-        staleness = self.staleness.staleness(version, current_version)
+        staleness = self.scheduler.staleness.staleness(version, current_version)
         item_age_s = max((item.age_s for item in items), default=0.0)
         stats = RolloutStats()
         stats.add_phase("continuous.queue_wait_s", float(queue_wait_s))

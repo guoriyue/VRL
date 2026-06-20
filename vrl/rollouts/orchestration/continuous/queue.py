@@ -1,22 +1,23 @@
 """Bounded ready queue for completed continuous rollout items.
 
-The queue is a plain in-process FIFO of completed prompt groups. It is bounded
-by item count and an approximate byte budget; admission cadence is gated by the
-producer, so ``put`` only enforces the hard caps as a safety net. Selection is
-the off-policy-critical part: ``select_iteration`` returns a *single
-homogeneous policy version*, never a mix.
+A plain in-process FIFO container of completed prompt groups, bounded by item
+count and an approximate byte budget. It is pure *mechanism*: it holds the
+deque, tracks bytes, and enforces a hard cap as a backpressure safety net. It
+deliberately knows nothing about policy versions or staleness — the
+``RolloutScheduler`` owns every version decision (drop-stale, select a
+homogeneous iteration) and drives this container through ``snapshot`` /
+``remove`` / ``note_dropped_stale``.
 """
 
 from __future__ import annotations
 
 from collections import deque
 
-from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
 from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutItem
 
 
 class ContinuousRolloutQueue:
-    """Bounded FIFO of ready rollout items with same-policy drain."""
+    """Bounded FIFO container of ready rollout items (no version logic)."""
 
     def __init__(
         self,
@@ -35,6 +36,7 @@ class ContinuousRolloutQueue:
         self._items: deque[ContinuousRolloutItem] = deque()
         self._bytes = 0
         self.dropped_stale = 0
+        self.dropped_prompt_set = 0
         self.dropped_backpressure = 0
 
     # -- size / stats ---------------------------------------------------
@@ -67,6 +69,7 @@ class ContinuousRolloutQueue:
             "ready_versions": float(len(versions)),
             "oldest_item_age_s": float(oldest_age),
             "dropped_stale": float(self.dropped_stale),
+            "dropped_prompt_set": float(self.dropped_prompt_set),
             "dropped_backpressure": float(self.dropped_backpressure),
         }
 
@@ -77,104 +80,14 @@ class ContinuousRolloutQueue:
         self._bytes += int(item.nbytes)
         self._enforce_caps()
 
-    def drop_too_stale(
-        self,
-        *,
-        current_version: int | None,
-        staleness: StalenessPolicy,
-    ) -> int:
-        """Drop items beyond the staleness bound; fail fast on future items."""
+    def snapshot(self) -> list[ContinuousRolloutItem]:
+        """FIFO-ordered view of the current items for the scheduler to inspect."""
 
-        if current_version is None:
-            return 0
-        kept: deque[ContinuousRolloutItem] = deque()
-        dropped = 0
-        for item in self._items:
-            version = item.rollout_policy_version
-            if staleness.is_future(version, current_version):
-                raise RuntimeError(
-                    "continuous queue item is newer than the trainer policy "
-                    f"(item={version}, trainer={current_version}); weight-sync "
-                    "barrier invariant violated",
-                )
-            if staleness.too_stale(version, current_version):
-                self._bytes -= int(item.nbytes)
-                dropped += 1
-                continue
-            kept.append(item)
-        self._items = kept
-        self.dropped_stale += dropped
-        return dropped
+        return list(self._items)
 
-    def select_iteration(
-        self,
-        *,
-        min_groups: int,
-        current_version: int | None,
-        staleness: StalenessPolicy,
-    ) -> tuple[int | None, list[ContinuousRolloutItem]] | None:
-        """Pop ``min_groups`` distinct-group items at one homogeneous version.
+    def remove(self, items: list[ContinuousRolloutItem]) -> None:
+        """Drop the given items (by identity) and fix the byte accounting."""
 
-        Drops too-stale items first, then prefers the newest version that is
-        within the staleness bound and has enough distinct groups. Returns
-        ``None`` when no single version can fill an iteration yet.
-        """
-
-        self.drop_too_stale(current_version=current_version, staleness=staleness)
-
-        # Group items by version, preserving FIFO order within each version.
-        by_version: dict[int | None, list[ContinuousRolloutItem]] = {}
-        for item in self._items:
-            by_version.setdefault(item.rollout_policy_version, []).append(item)
-
-        for version in self._candidate_versions(by_version, current_version, staleness):
-            chosen = self._take_distinct(by_version[version], min_groups)
-            if chosen is not None:
-                self._remove(chosen)
-                return version, chosen
-        return None
-
-    def close(self) -> None:
-        self._items.clear()
-        self._bytes = 0
-
-    # -- internals ------------------------------------------------------
-
-    def _candidate_versions(
-        self,
-        by_version: dict[int | None, list[ContinuousRolloutItem]],
-        current_version: int | None,
-        staleness: StalenessPolicy,
-    ) -> list[int | None]:
-        # Newest first so an in-bound fresh version always wins over a stale one.
-        versions = sorted(
-            by_version.keys(),
-            key=lambda v: (-1 if v is None else int(v)),
-            reverse=True,
-        )
-        return [
-            version
-            for version in versions
-            if staleness.admit(version, current_version)
-        ]
-
-    @staticmethod
-    def _take_distinct(
-        items: list[ContinuousRolloutItem],
-        min_groups: int,
-    ) -> list[ContinuousRolloutItem] | None:
-        chosen: list[ContinuousRolloutItem] = []
-        seen: set[int] = set()
-        for item in items:
-            if item.group_key in seen:
-                continue
-            seen.add(item.group_key)
-            chosen.append(item)
-            if len(chosen) >= min_groups:
-                return chosen
-        return None
-
-    def _remove(self, items: list[ContinuousRolloutItem]) -> None:
         remove_ids = {id(item) for item in items}
         kept: deque[ContinuousRolloutItem] = deque()
         for item in self._items:
@@ -183,6 +96,22 @@ class ContinuousRolloutQueue:
             else:
                 kept.append(item)
         self._items = kept
+
+    def note_dropped_stale(self, count: int) -> None:
+        """Record that the scheduler dropped ``count`` too-stale items."""
+
+        self.dropped_stale += int(count)
+
+    def note_dropped_prompt_set(self, count: int) -> None:
+        """Record that the scheduler dropped ``count`` obsolete prompt-set items."""
+
+        self.dropped_prompt_set += int(count)
+
+    def close(self) -> None:
+        self._items.clear()
+        self._bytes = 0
+
+    # -- internals ------------------------------------------------------
 
     def _enforce_caps(self) -> None:
         while self._over_capacity():

@@ -19,6 +19,7 @@ from typing import Any
 from vrl.rollouts.orchestration.continuous.consumer import ContinuousRolloutConsumer
 from vrl.rollouts.orchestration.continuous.producer import ContinuousRolloutProducer
 from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
+from vrl.rollouts.orchestration.continuous.scheduler import RolloutScheduler
 from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
 from vrl.rollouts.orchestration.lifecycle import RolloutLifecycle, record_phase
 from vrl.rollouts.orchestration.types import (
@@ -69,7 +70,12 @@ class ContinuousRolloutSchedule:
         self.queue: ContinuousRolloutQueue | None = None
         self.consumer: ContinuousRolloutConsumer | None = None
         self.producer: ContinuousRolloutProducer | None = None
+        self.scheduler: RolloutScheduler | None = None
         self._prompt_key: tuple[str, ...] | None = None
+        # Monotonic generation of the current prompt set. Bumped on every prompt
+        # swap and stamped on produced items so the scheduler never trains the
+        # previous set's leftover ready items as the new iteration.
+        self._prompt_set_id = 0
 
     async def next_iteration(
         self,
@@ -88,7 +94,11 @@ class ContinuousRolloutSchedule:
             )
             self._prompt_key = prompt_key
         elif prompt_key != self._prompt_key:
-            self.producer.update_prompts(prompts)
+            self._prompt_set_id += 1
+            self.producer.update_prompts(prompts, prompt_set_id=self._prompt_set_id)
+            phase_times["continuous.prompt_set_dropped"] = float(
+                self._drop_obsolete_prompt_set_items(),
+            )
             self._prompt_key = prompt_key
 
         assert self.consumer is not None
@@ -104,6 +114,7 @@ class ContinuousRolloutSchedule:
             mode=self.mode,
             wait_timeout_s=self.wait_timeout_s,
             poll_interval_s=self.queue_poll_interval_s,
+            prompt_set_id=self._prompt_set_id,
             producer_state=self.producer.state,
         )
         iteration.stats.add_phases(phase_times)
@@ -144,7 +155,9 @@ class ContinuousRolloutSchedule:
         self.producer = None
         self.queue = None
         self.consumer = None
+        self.scheduler = None
         self._prompt_key = None
+        self._prompt_set_id = 0
 
     # -- internals ------------------------------------------------------
 
@@ -161,20 +174,30 @@ class ContinuousRolloutSchedule:
             max_bytes=self.max_ready_bytes_mb * _MB,
             drop_policy=self.drop_policy,
         )
+        # Single owner of every policy-version decision: admission (workload/byte
+        # budget + admit-time predicted-version throttle), the receipt gate,
+        # drop-stale, and homogeneous-version select. groups_per_iteration is one
+        # prompt set; the producer refreshes it on a prompt swap.
+        self.scheduler = RolloutScheduler(
+            staleness=self.staleness,
+            max_inflight_groups=self.max_inflight_groups,
+            capacity=capacity,
+            max_bytes=self.max_ready_bytes_mb * _MB,
+            groups_per_iteration=len(prompts),
+        )
         self.consumer = ContinuousRolloutConsumer(
             queue=self.queue,
-            staleness=self.staleness,
+            scheduler=self.scheduler,
             fail_fast_errors=self.fail_fast_errors,
         )
         self.producer = ContinuousRolloutProducer(
             lifecycle=self.lifecycle,
             prompts=list(prompts),
             queue=self.queue,
-            staleness=self.staleness,
+            scheduler=self.scheduler,
             group_size=group_size,
-            capacity=capacity,
-            max_inflight_groups=self.max_inflight_groups,
             poll_interval_s=self.queue_poll_interval_s,
+            prompt_set_id=self._prompt_set_id,
             runtime_debug=runtime_debug,
         )
         return await self.producer.start()
@@ -195,11 +218,26 @@ class ContinuousRolloutSchedule:
                 "continuous.producer_submitted": float(state.submitted_count),
                 "continuous.producer_completed": float(state.completed_count),
                 "continuous.producer_discarded_stale": float(state.discarded_stale_count),
+                "continuous.producer_discarded_prompt_set": float(
+                    state.discarded_prompt_set_count,
+                ),
+                # Admit-time throttle observability: how far ahead admission is
+                # running and which budget is binding (1 = the predicted-version
+                # staleness throttle is what stops admission — the proactive
+                # backpressure cosmos-rl's Controller does and vrl previously
+                # lacked).
+                "continuous.predicted_admit_staleness": float(
+                    state.predicted_admit_staleness,
+                ),
+                "continuous.admit_blocked_on_staleness": float(
+                    state.admit_blocked_reason == "would_land_too_stale",
+                ),
                 "continuous.queue_ready_items": queue_stats["ready_items"],
                 "continuous.queue_ready_groups": queue_stats["ready_groups"],
                 "continuous.queue_ready_bytes": queue_stats["ready_bytes"],
                 "continuous.item_age_s": float(metadata.get("continuous_item_age_s", 0.0)),
                 "continuous.dropped_stale": queue_stats["dropped_stale"],
+                "continuous.dropped_prompt_set": queue_stats["dropped_prompt_set"],
                 "continuous.dropped_backpressure": queue_stats["dropped_backpressure"],
                 "continuous.producer_errors": float(state.error_count),
                 "continuous.consume_policy_version": float(
@@ -213,12 +251,20 @@ class ContinuousRolloutSchedule:
         )
 
     def _drop_stale_ready_items_after_sync(self) -> int:
-        if self.queue is None:
+        if self.queue is None or self.scheduler is None:
             return 0
         current_version = self.lifecycle.current_policy_version()
-        return self.queue.drop_too_stale(
+        return self.scheduler.drop_stale(
+            self.queue,
             current_version=current_version,
-            staleness=self.staleness,
+        )
+
+    def _drop_obsolete_prompt_set_items(self) -> int:
+        if self.queue is None or self.scheduler is None:
+            return 0
+        return self.scheduler.drop_obsolete_prompt_sets(
+            self.queue,
+            prompt_set_id=self._prompt_set_id,
         )
 
     def _validate_allowed(self) -> None:

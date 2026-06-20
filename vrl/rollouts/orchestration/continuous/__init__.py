@@ -4,6 +4,10 @@ from vrl.rollouts.orchestration.continuous.consumer import ContinuousRolloutCons
 from vrl.rollouts.orchestration.continuous.producer import ContinuousRolloutProducer
 from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
 from vrl.rollouts.orchestration.continuous.schedule import ContinuousRolloutSchedule
+from vrl.rollouts.orchestration.continuous.scheduler import (
+    AdmitDecision,
+    RolloutScheduler,
+)
 from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
 from vrl.rollouts.orchestration.continuous.types import (
     ContinuousRolloutItem,
@@ -11,11 +15,13 @@ from vrl.rollouts.orchestration.continuous.types import (
 )
 
 __all__ = [
+    "AdmitDecision",
     "ContinuousRolloutConsumer",
     "ContinuousRolloutItem",
     "ContinuousRolloutProducer",
     "ContinuousRolloutProducerState",
     "ContinuousRolloutQueue",
     "ContinuousRolloutSchedule",
+    "RolloutScheduler",
     "StalenessPolicy",
 ]

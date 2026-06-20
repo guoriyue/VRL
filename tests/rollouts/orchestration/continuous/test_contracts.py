@@ -22,6 +22,7 @@ from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.orchestration.continuous.consumer import ContinuousRolloutConsumer
 from vrl.rollouts.orchestration.continuous.producer import ContinuousRolloutProducer
 from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
+from vrl.rollouts.orchestration.continuous.scheduler import RolloutScheduler
 from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
 from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutItem
 from vrl.rollouts.orchestration.types import RolloutScheduleMode
@@ -93,14 +94,19 @@ def _producer(
     lifecycle: _Lifecycle | None = None,
     max_stale: int = 0,
 ) -> ContinuousRolloutProducer:
+    scheduler = RolloutScheduler(
+        staleness=StalenessPolicy(max_stale_policy_versions=max_stale),
+        max_inflight_groups=1,
+        capacity=2,
+        max_bytes=0,
+        groups_per_iteration=1,
+    )
     return ContinuousRolloutProducer(
         lifecycle=lifecycle or _Lifecycle(collector),
         prompts=["p0"],
         queue=queue,
-        staleness=StalenessPolicy(max_stale_policy_versions=max_stale),
+        scheduler=scheduler,
         group_size=2,
-        capacity=2,
-        max_inflight_groups=1,
         poll_interval_s=0.001,
     )
 
@@ -308,10 +314,14 @@ def _item(
 
 
 def _consumer(queue: ContinuousRolloutQueue, max_stale: int) -> ContinuousRolloutConsumer:
-    return ContinuousRolloutConsumer(
-        queue=queue,
+    scheduler = RolloutScheduler(
         staleness=StalenessPolicy(max_stale_policy_versions=max_stale),
+        max_inflight_groups=1,
+        capacity=max(1, queue.max_items),
+        max_bytes=0,
+        groups_per_iteration=1,
     )
+    return ContinuousRolloutConsumer(queue=queue, scheduler=scheduler)
 
 
 async def _drain(
