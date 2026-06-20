@@ -72,4 +72,4 @@ outputs/
 # stray content placed under third_party/ that isn't a tracked submodule.
 third_party/*
 !third_party/videophy
-.venv-vllm-omni/
+.venvs/

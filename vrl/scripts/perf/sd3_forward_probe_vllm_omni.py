@@ -1,13 +1,13 @@
 """SD3.5 vLLM-omni denoise forward probe — the vLLM-omni half of the compare.
 
-STANDALONE (no vrl imports): runs ONLY in the isolated `.venv-vllm-omni`
+STANDALONE (no vrl imports): runs ONLY in the isolated `.venvs/vllm-omni`
 (vllm 0.22 + vllm-omni 0.22). Loads sd3.5 through vLLM-omni's own
 `StableDiffusion3Pipeline` and times a denoise forward, dumping the SAME JSON
 shape as `sd3_forward_probe.py` (native) so `compare` can diff throughput.
 
 Usage (in the venv):
     HF_HUB_OFFLINE=1 CUDA_VISIBLE_DEVICES=0 \
-      .venv-vllm-omni/bin/python vrl/scripts/perf/sd3_forward_probe_vllm_omni.py \
+      .venvs/vllm-omni/bin/python vrl/scripts/perf/sd3_forward_probe_vllm_omni.py \
       --cache none --out outputs/perf/sd3_vllm_omni.json
 """
 

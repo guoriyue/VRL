@@ -2,7 +2,7 @@
 
 Runs our native sd3.5 rollout denoise (the `vrl` path) on a fixed prompt+seed and
 dumps per-step noise_pred summaries + s/step to JSON. The vLLM-omni half
-(`sd3_forward_probe_vllm_omni.py`, run in the isolated `.venv-vllm-omni`) produces
+(`sd3_forward_probe_vllm_omni.py`, run in the isolated `.venvs/vllm-omni`) produces
 the SAME JSON shape; `compare` diffs them for throughput + noise_pred consistency.
 
 WHY a separate vLLM-omni script + venv: vllm-omni 0.22 needs vllm 0.22 (CUDA 13),

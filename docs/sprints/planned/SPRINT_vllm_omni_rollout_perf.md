@@ -35,7 +35,7 @@ from cosmos-rl."
 
 ## Plan
 
-1. ⏳ Build isolated venv `.venv-vllm-omni` with `vllm==0.22.0 vllm-omni==0.22.0
+1. ⏳ Build isolated venv `.venvs/vllm-omni` with `vllm==0.22.0 vllm-omni==0.22.0
    diffusers transformers torchsde`. (heavy install, background.)
 2. ⬜ Smoke: import `vllm_omni.diffusion.models.sd3.pipeline_sd3` in that venv.
 3. ⬜ Load sd3.5 via vLLM-omni (its SD3 pipeline / `DiffusersPipelineLoader`), run
