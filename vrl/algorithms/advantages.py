@@ -42,13 +42,17 @@ def _population_std_across_ranks(rewards: Any) -> Any:
             rewards.new_tensor(float(n)),
         ],
     )
+    # NCCL collectives require GPU tensors; rewards may live on CPU (gloo handles
+    # CPU directly). Move to the rank's GPU for nccl, return std on rewards' device.
+    if dist.get_backend() == "nccl":
+        stats = stats.cuda()
     dist.all_reduce(stats, op=dist.ReduceOp.SUM)
     g_sum, g_sumsq, g_count = stats[0], stats[1], stats[2]
     if g_count <= 1:
         return rewards.new_tensor(0.0)
     g_mean = g_sum / g_count
     g_var = (g_sumsq / g_count) - g_mean * g_mean
-    return torch.sqrt(torch.clamp(g_var, min=0.0))
+    return torch.sqrt(torch.clamp(g_var, min=0.0)).to(rewards.device)
 
 
 def group_relative_advantages(

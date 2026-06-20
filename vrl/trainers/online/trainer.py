@@ -68,6 +68,10 @@ def _global_reward_stats(rewards: Any) -> tuple[float, float]:
     stats = torch.stack(
         [rewards.sum(), rewards.mul(rewards).sum(), rewards.new_tensor(float(n))],
     )
+    # NCCL collectives require GPU tensors, but rewards live on CPU; move stats to
+    # the rank's GPU for nccl (gloo handles CPU directly, e.g. in tests).
+    if dist.get_backend() == "nccl":
+        stats = stats.cuda()
     dist.all_reduce(stats, op=dist.ReduceOp.SUM)
     g_sum, g_sumsq, g_count = stats[0], stats[1], stats[2]
     g_mean = g_sum / g_count
