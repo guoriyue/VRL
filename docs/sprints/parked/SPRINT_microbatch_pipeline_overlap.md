@@ -110,7 +110,7 @@ next rollout generation continues under explicit staleness rules
 
 - `docs/sprints/planned/SPRINT_continuous_scheduler_redesign.md`
   - 统一 rollout producer / in-flight / ready queue / staleness / admission。
-- `docs/sprints/planned/SPRINT_shadow_model_weight_sync.md`
+- `docs/sprints/done/SPRINT_shadow_model_weight_sync.md`
   - 去掉全 drain barrier 的安全前提：shadow-model / request-boundary weight swap。
 - `docs/sprints/parked/SPRINT_async_rollout_train_overlap.md`
   - DiffusionNFT 专门裁决：真 overlap 需要多 GPU，stale rollout 没有理论安全版本，只能实测。
@@ -137,4 +137,4 @@ next rollout generation continues under explicit staleness rules
 - 同步 microbatch 基线：`vrl/scripts/common/online.py:_run_streaming_optimizer_update`
 - 同步 backward/step 边界：`vrl/trainers/online/trainer.py:begin_optimizer_update`、`backward_on_training_batch`、`finish_optimizer_update`
 - 已完成同步 sprint：`docs/sprints/done/SPRINT_streaming_rollout_accumulation.md`、`docs/sprints/done/SPRINT_memory_budgeted_microbatch.md`
-- 真 async sprint：`docs/sprints/planned/SPRINT_continuous_scheduler_redesign.md`、`docs/sprints/planned/SPRINT_shadow_model_weight_sync.md`、`docs/sprints/parked/SPRINT_async_rollout_train_overlap.md`
+- 真 async sprint：`docs/sprints/planned/SPRINT_continuous_scheduler_redesign.md`、`docs/sprints/done/SPRINT_shadow_model_weight_sync.md`、`docs/sprints/parked/SPRINT_async_rollout_train_overlap.md`

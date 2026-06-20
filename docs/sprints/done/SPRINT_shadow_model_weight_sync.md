@@ -1,4 +1,4 @@
-# SPRINT: Trainable-state shadow slots —— 安全去掉 continuous drain bubble（planned）
+# SPRINT: Trainable-state shadow slots —— 安全去掉 continuous drain bubble
 
 状态：**P0 + P1 + P2 全部完成 —— P2 多卡真机验证通过（2026-06-19）**。P0/P1 实现 + CPU 测试（2026-06-18）；P2 运行时启用 + executor stale-slot 路由 + CPU 测试（2026-06-19）；P2 多卡真机验证通过（2026-06-19，见 §11「P2 多卡验证结果」）。
 

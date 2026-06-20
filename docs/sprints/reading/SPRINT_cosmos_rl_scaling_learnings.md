@@ -136,7 +136,7 @@ Tier 3（只有上多节点才做）
 |---|---|---|---|---|
 | **吞吐（数据并行）** | N 卡都训同一 policy,各 collect,一次同步 DDP/FSDP optimizer step。 | **并行训练** | ✅ sound、算法无关,直接拿。DDP 已落（2B+LoRA）;FSDP 等塞不下再上。 | [`SPRINT_symmetric_colocated_ddp.md`](../planned/SPRINT_symmetric_colocated_ddp.md) |
 | **物理分离 trainer/rollout（D1）** | trainer 常驻一卡、rollout actor 常驻另一卡,**同步/on-policy**。买:独立 scale、无 offload 抖动、更大 rollout batch、无显存争抢。 | 训练卡 + 生成卡（时间不重叠） | ✅ on-policy 下 sound;需 ≥2 卡;放置面已支持。 | [`SPRINT_placement_surface_disaggregated_default.md`](../planned/SPRINT_placement_surface_disaggregated_default.md) |
-| **async overlap（D2）** | 在 D1 之上让"训第 N 步"与"采第 N+1 步"真重叠 → rollout 必然 off-policy/stale。 | 两卡时间也重叠 | ❌ **不可证安全**:DiffusionNFT likelihood-free,无 `exp(logp_new−logp_old)` 比值,TIS/AIPO/PPO-clip 一个都搬不过来。需 ≥2 卡 + 实测"伤不伤"。 | [`SPRINT_async_rollout_train_overlap.md`](../parked/SPRINT_async_rollout_train_overlap.md)、[`SPRINT_shadow_model_weight_sync.md`](../planned/SPRINT_shadow_model_weight_sync.md) |
+| **async overlap（D2）** | 在 D1 之上让"训第 N 步"与"采第 N+1 步"真重叠 → rollout 必然 off-policy/stale。 | 两卡时间也重叠 | ❌ **不可证安全**:DiffusionNFT likelihood-free,无 `exp(logp_new−logp_old)` 比值,TIS/AIPO/PPO-clip 一个都搬不过来。需 ≥2 卡 + 实测"伤不伤"。 | [`SPRINT_async_rollout_train_overlap.md`](../parked/SPRINT_async_rollout_train_overlap.md)、[`SPRINT_shadow_model_weight_sync.md`](../done/SPRINT_shadow_model_weight_sync.md) |
 
 **从 cosmos-rl 学到的最硬一条**:cosmos-rl 自己的 **LLM/GRPO 默认 `mode=disaggregated` + async**（D1+D2,靠
 IS 比值 + `allowed_outdated_steps`≈4 兜底）;但它**自己的 diffusion NFT 配方出厂是 `mode=colocated`
@@ -233,5 +233,5 @@ vrl/rollouts/orchestration/continuous/     # #3 物理化（已是逻辑等价�
 
 - **trainer 多卡吞吐** → [`planned/SPRINT_symmetric_colocated_ddp.md`](../planned/SPRINT_symmetric_colocated_ddp.md)（DDP,Slice 1-4 已落）、[`parked/SPRINT_multi_gpu_training.md`](../parked/SPRINT_multi_gpu_training.md)（FSDP2 策略层）、[`done/SPRINT_multi_gpu_readiness.md`](../done/SPRINT_multi_gpu_readiness.md)（地基已落）。
 - **物理分离放置面（D1）** → [`planned/SPRINT_placement_surface_disaggregated_default.md`](../planned/SPRINT_placement_surface_disaggregated_default.md)（disaggregated 默认,P0-P2 已落）、[`done/SPRINT_colocation_config_simplification.md`](../done/SPRINT_colocation_config_simplification.md)。
-- **async overlap（D2）裁决 + 安全权重同步** → [`parked/SPRINT_async_rollout_train_overlap.md`](../parked/SPRINT_async_rollout_train_overlap.md)（DiffusionNFT 约束 + Option A/B/C）、[`planned/SPRINT_shadow_model_weight_sync.md`](../planned/SPRINT_shadow_model_weight_sync.md)、[`planned/SPRINT_slime_overlap_strategy.md`](../planned/SPRINT_slime_overlap_strategy.md)。
+- **async overlap（D2）裁决 + 安全权重同步** → [`parked/SPRINT_async_rollout_train_overlap.md`](../parked/SPRINT_async_rollout_train_overlap.md)（DiffusionNFT 约束 + Option A/B/C）、[`done/SPRINT_shadow_model_weight_sync.md`](../done/SPRINT_shadow_model_weight_sync.md)、[`planned/SPRINT_slime_overlap_strategy.md`](../planned/SPRINT_slime_overlap_strategy.md)。
 - **cosmos-rl 全架构精读** → [`reading/cosmos-rl.md`](./cosmos-rl.md)。

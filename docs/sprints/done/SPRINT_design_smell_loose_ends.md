@@ -1,4 +1,4 @@
-# SPRINT: design-smell loose ends（weight_sync_barrier + release-flag 影子字段）(planned)
+# SPRINT: design-smell loose ends（weight_sync_barrier + release-flag 影子字段）
 
 状态：**done（2026-06-19，两个尾巴都拍板落地）**。
 
