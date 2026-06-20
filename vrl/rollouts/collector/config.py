@@ -59,14 +59,13 @@ def build_rollout_config_from_cfg(
         values,
         cfg,
         "final_image_policy",
-        ("rollout.final_image_policy", "sampling.r1.final_image_policy"),
+        ("rollout.final_image_policy",),
     )
     _copy_first_present(
         values,
         cfg,
         "train_segments",
         (
-            "rollout.train_segments",
             "algorithm.train_segments",
             "sampling.r1.train_segments",
         ),

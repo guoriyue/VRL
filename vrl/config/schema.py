@@ -228,8 +228,8 @@ class RolloutConfig(ConfigBase):
     # readers: math/diffusion flow_matching window + RootConfig check
     sde: SdeConfig | None = None
     noise_level: float | None = None
-    # janus_pro R1 only; cross-checked against sampling.r1.final_image_policy in
-    # RootConfig._cross_field_validate (which also enforces it is set for that kind).
+    # janus_pro R1 only; the sole source for final_image_policy. Validated for
+    # legality in RootConfig._cross_field_validate (which requires it for that kind).
     final_image_policy: Literal["always_generate", "use_selfcheck"] | None = None
     n_samples_per_prompt: int | None = None
     rollout_batch_size: int | None = None
@@ -259,7 +259,7 @@ class SamplingConfig(ConfigBase):
     # reader: rollouts/collector/config.py + RootConfig cross-field check
     r1: Annotated[
         dict[str, Any] | None,
-        ConfigBlock(("final_image_policy", "train_segments")),
+        ConfigBlock(("train_segments",)),
     ] = None
     # reader: vrl/nn/modules/ar_attention_backends.py attention_backend_name
     # (read from the request dict; default "vllm_paged"). Declared here so the
@@ -663,24 +663,17 @@ class RootConfig(ConfigBase):
             ):
                 raise ValueError("config missing required field: rollout.noise_level")
 
-        # token_grpo_multisegment: janus_pro only, final_image_policy must match sampling
+        # token_grpo_multisegment: janus_pro only; final_image_policy from rollout
         if kind == "token_grpo_multisegment":
             model_family = (self.model.family or "") if self.model else ""
             if model_family != "janus_pro":
                 raise ValueError(
                     "token_grpo_multisegment currently requires model.family=janus_pro"
                 )
-            # Single source: set final_image_policy in ONE place. The collector
-            # resolves rollout-first then sampling.r1, so mirror that here. If both
-            # are set they must agree (a split config can't silently disagree).
-            rollout_policy = (rollout.final_image_policy or "") if rollout else ""
-            sampling_r1 = (self.sampling.r1 or {}) if self.sampling else {}
-            sampling_policy = str(sampling_r1.get("final_image_policy", "") or "")
-            if rollout_policy and sampling_policy and rollout_policy != sampling_policy:
-                raise ValueError(
-                    "sampling.r1.final_image_policy must match rollout.final_image_policy"
-                )
-            if (rollout_policy or sampling_policy) not in {"always_generate", "use_selfcheck"}:
+            # Single source: final_image_policy lives on rollout only. Validate it
+            # here as a legality check (the collector reads rollout.final_image_policy).
+            policy = (rollout.final_image_policy or "") if rollout else ""
+            if policy not in {"always_generate", "use_selfcheck"}:
                 raise ValueError(
                     "rollout.final_image_policy must be 'always_generate' or 'use_selfcheck'"
                 )
