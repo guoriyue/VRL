@@ -48,8 +48,23 @@ from cosmos-rl."
    (the verl-omni pattern). If not: that's the measured answer the prior sprint
    only reasoned.
 
+## Results
+
+| backend | sd3.5 512×512, 10 steps | s/step | env |
+|---|---|---|---|
+| **native (vrl)** | 0.54s | **0.054** | main env (vllm 0.21) |
+| vLLM-omni | ⏳ pending venv install | — | `.venv-vllm-omni` (vllm 0.22) |
+
+`outputs/perf/sd3_native.json` holds per-step noise_pred summaries + final latent
+for the consistency diff once the vLLM-omni side runs.
+
 ## Journal (most recent first)
 
+- **2026-06-20 (cont.)** — Native half DONE: `sd3_forward_probe.py` runs our sd3.5
+  denoise (0.054 s/step, sd3.5-medium local weights, geneval config) and dumps the
+  comparison JSON. Driver is 580/CUDA 13.0 → vllm 0.22 (CUDA 13) WILL run. Isolated
+  venv install grinding at ~1 MB/s (vllm 261MB done, now flashinfer 360MB + torch
+  cu13 ~2-3GB → ~1hr more). vLLM-omni probe waits on that.
 - **2026-06-20** — Root-caused why vLLM-omni never ran: 0.21/0.18 version mismatch
   (hard import wall, not laziness). Found verl-omni's known-good combo (0.22/0.22).
   Branch `spike/vllm-omni-rollout` cut from the just-pushed main. Starting isolated
