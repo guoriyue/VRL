@@ -75,6 +75,25 @@ Side finding: native `DiffusionModelBase.torch_compile_transformer` fails on sd3
 real bug in the compile-swap for the diffusers sd3 transformer; filed for follow-up
 (doesn't affect the verdict, native is already at-or-faster uncompiled).
 
+## AR side — head-to-head NOT measurable on this box (hardware + coverage, evidenced)
+
+| AR model | local | size | fits 32GB | in vLLM-omni? |
+|---|---|---|---|---|
+| **Janus-Pro-1B** (our actual AR run, `model/ar/janus_pro/1b`) | ✓ | 1B | ✅ | ❌ not in vLLM-omni NOR vLLM archs (the `janus` grep hits are the async-queue lib) |
+| **NextStep-1.1** (`nextstep_1_1` in vLLM-omni) | ✓ | ~14B (hidden 5120 × 48) | ❌ OOM | ✓ |
+
+**No AR model both fits this 32GB box AND is covered by both stacks**, so a real
+throughput diff can't be produced here:
+- Janus-Pro-1B fits but vLLM-omni doesn't support the Janus architecture → nothing
+  to compare against; native is the only path (and our AR rollout is already a
+  lockstep paged decode — see SPRINT_rollout_vllm_migration.md P3).
+- NextStep-1.1 is in vLLM-omni but 14B → OOMs 32GB on BOTH sides → needs a larger /
+  multi-GPU box to measure.
+
+So for the AR model actually runnable here (Janus-Pro-1B), vLLM-omni isn't even an
+option — the "replace AR rollout with vLLM-omni" question is moot on this hardware.
+A NextStep vLLM-omni-vs-native measurement is a multi-GPU follow-up, not a 32GB task.
+
 ## Journal (most recent first)
 
 - **2026-06-20 (cont.)** — Native half DONE: `sd3_forward_probe.py` runs our sd3.5
