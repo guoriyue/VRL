@@ -25,7 +25,7 @@ from vrl.models.interfaces.runtime import (
 )
 from vrl.models.loader import (
     apply_lora_to_transformer,
-    apply_rollout_fp8,
+    apply_rollout_quantization,
     compile_transformer,
     enable_transformer_full_finetune,
     load_diffusers_transformer,
@@ -73,7 +73,7 @@ def build_sd3_5_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
     else:
         model.enable_full_finetune()
 
-    apply_rollout_fp8(model, spec)
+    apply_rollout_quantization(model, spec)
 
     compile_cfg = spec.torch_compile or {}
     if compile_cfg.get("enable"):

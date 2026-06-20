@@ -17,6 +17,7 @@ from vrl.models.diffusion.common.vae_decode_memory import (
 )
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.loader import (
+    apply_rollout_quantization,
     load_diffusers_scheduler,
     load_diffusers_transformer,
 )
@@ -72,6 +73,8 @@ def build_cosmos_predict25_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBund
         model.apply_lora(spec)
     else:
         model.enable_full_finetune()
+
+    apply_rollout_quantization(model, spec)
 
     compile_cfg = spec.torch_compile or {}
     if compile_cfg.get("enable"):

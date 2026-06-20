@@ -32,7 +32,7 @@ caveat：cosmos reward_std=0.07 是**弱信号 task**（advantage 归一仍 O(1)
 
 ## 0. 来历
 
-[[SPRINT_fullparam_and_fp8_precision]] 落地了 fp8 的**精度-修正地基**（precision policy 的 fp8/fp4 token + `rollout` 轴、drift guard 复用、TIS、验证 probe），但 fp8 rollout **不能 live 跑**——`vrl/scripts/common/online.py` 里对 `precision.rollout=fp8/fp4` 直接 `NotImplementedError`。本 sprint 收剩下唯一的活：**让生成引擎的 diffusion 前向真正用 fp8 GEMM**。地基零改动，接上即生效。
+[[SPRINT_fullparam_and_fp8_precision]] 落地了 fp8 的**精度-修正地基**（precision policy 的 fp8/fp4 token + `rollout` 轴、drift guard 复用、TIS、验证 probe）。当时 fp8 rollout 还不能 live 跑；本 sprint 已把生成引擎 diffusion 前向接到真正的 fp8 GEMM，并把 `precision.rollout=fp8` ungate。当前状态：fp8 可 live，fp4 仍 gated；剩余风险不是 online.py 的全局 gate，而是 family builder 漏接 fp8 swap 会形成假旋钮（由 [[SPRINT_rollout_optimization_layer]] P0 收）。
 
 ## 1. 根因（实测）
 
@@ -52,7 +52,7 @@ fp8 不是 drop-in dtype（bf16/fp16 有原生自动 dispatch 的 GEMM，fp8 没
 
 | 环节 | 文件:行 | 说明 |
 |---|---|---|
-| weight_dtype 入口 | `vrl/scripts/common/online.py:662-683` | `rollout_precision` 解析（662）；fp8/fp4 时**当前是 `NotImplementedError` 拦截**（672 起）|
+| weight_dtype 入口 | `vrl/scripts/common/online.py:662-683` | `rollout_precision` 解析；fp4 仍 `NotImplementedError` 拦截，fp8 使用 compute dtype 作为 bf16/fp16 master，量化由 `RuntimeBuildSpec.rollout_quantization` 驱动 |
 | 模型加载（按 dtype） | `vrl/models/diffusion/sd3_5/model.py:110-143`（`from_spec`）、`wan_2_1/model.py:142-149`、`cosmos/predict2/model.py:109-143` | 三家都 `Pipeline.from_pretrained(torch_dtype=spec.dtype)` 加载 **diffusers transformer** |
 | **swap 缝（核心）** | `vrl/models/diffusion/base.py:244-249` `torch_compile_transformer` | in-place 包 transformer 的现成位;fp8 swap 做成**同级方法** `quantize_transformer_fp8(recipe)` |
 | 调用点（每家） | `sd3_5/runtime.py:56-78`、`wan_2_1/runtime.py`、`cosmos/predict2/runtime.py` | `from_spec` → LoRA/full-finetune → `torch_compile`;fp8 swap 插在 **compile 之前**（LoRA 之后）|
@@ -64,13 +64,13 @@ fp8 不是 drop-in dtype（bf16/fp16 有原生自动 dispatch 的 GEMM，fp8 没
 
 1. ✅ **量化路径（自研 `Fp8Linear`）**：`vrl/nn/quantization/fp8.py`。torch 原生 `_scaled_mm`、e4m3、bf16 master + bf16 累加、weight 构造时量化一次、activation 每步动态量化。`rowwise`（per-token / per-output-channel，抗激活 outlier）或 `tensorwise`。没引 torchao/TE（保持零依赖）。
 2. ✅ **swap 方法**：`base.py` `quantize_transformer_fp8(recipe)`（与 `torch_compile_transformer` 同级）→ `swap_linears_to_fp8` 遍历 module tree，按 exclude 子串 + `min_features` 只换大 attention/MLP linear。
-3. ✅ **拆 weight_dtype 语义 + ungate**：`online.py` fp8 时 storage = bf16 master（`policy.compute`）、删 `NotImplementedError`（fp4 仍 gated）；`rollout_quantization` 信号由 `extract_runtime_spec` 从 `precision.rollout` 派生进 `RuntimeBuildSpec`；三家 rollout builder（sd3_5/wan/cosmos）compile 前调 `loader.apply_rollout_fp8(model, spec)`，replay builder 不碰。
+3. ✅ **拆 weight_dtype 语义 + ungate**：`online.py` fp8 时 storage = bf16 master（`policy.compute`）、删 fp8 `NotImplementedError`（fp4 仍 gated）；`rollout_quantization` 信号由 `extract_runtime_spec` 从 `precision.rollout` 派生进 `RuntimeBuildSpec`；三家 rollout builder（sd3_5/wan/cosmos predict2）compile 前调 `loader.apply_rollout_quantization(model, spec)`，replay builder 不碰。注意：predict2_5/anima 还没接 swap，假旋钮 guard 归 [[SPRINT_rollout_optimization_layer]]。
 4. ✅ **scaling recipe + 精度 profile**：rowwise（默认）+ tensorwise 实现并验。`vrl/scripts/perf/fp8_recipe_accuracy.py`（fake-quant，对齐过真 `_scaled_mm`）量四档漂移：
    - **clean 激活**：四档≈ 3.7%（e4m3 floor，没 outlier 可吃）。
    - **outlier channels（真实情形）**：**block-1x128 最低 0.028** > rowwise 0.033 > tensorwise 0.036；block 比 tensorwise 少 ~22% 漂移。**MX-1x32 反而不帮**（e8m0 幂二 scale 丢 value 精度，抵消细粒度）。
    - **结论**：rowwise（默认，torch `_scaled_mm`，省显存、已验证）；**block-1x128 改为 reuse vLLM 的 triton kernel**（`per_token_group_quant_fp8` + `w8a8_triton_block_scaled_mm`）——不用手搓、**cu128 就能跑**（不用等 CUDA 12.9），实测比 rowwise 还快（1.46–1.57x vs 1.15–1.53x）且 outlier 上更准。代价：vLLM 依赖 + 更吃显存（在 32GB colocated 紧配置上会 OOM，所以 **blockwise 是 opt-in，默认仍 rowwise**）。代码在 `vrl/nn/quantization/fp8.py`（`recipe="blockwise"`）。
 5. ⏳ **torch.compile 交互**：swap 在 compile 前（已保证顺序）。`mode=default` + fp8 linear 的 inductor 行为要在 live run 验（已知坑：`reduce-overhead`/CUDAGraphs 撞 LoRA + grad-ckpt）。
-6. ⏳ **LoRA 交互（开放）**：当前 `apply_rollout_fp8` 在 LoRA/full-finetune 之后调；full-finetune（cosmos predict2）是首选验证路径。LoRA 下 swap 命中 PEFT `base_layer` 的正确性留 live 验。
+6. ⏳ **LoRA 交互（开放）**：当前 `apply_rollout_quantization` 在 LoRA/full-finetune 之后调；full-finetune（cosmos predict2）是首选验证路径。LoRA 下 swap 命中 PEFT `base_layer` 的正确性留 live 验。
 
 ## 4. include / exclude 名单（fp8 只碰大 GEMM）
 
@@ -83,7 +83,7 @@ fp8 不是 drop-in dtype（bf16/fp16 有原生自动 dispatch 的 GEMM，fp8 没
 1. **正确性**：`fp8_rollout_drift_probe.py` 换真实 DiT 跑,`ratio_dev` 分布落在可控范围;drift guard 设 `warn` 一轮不报灾难。
 2. **修正联动**：据实测 `ratio_dev` 校准 `trainer.precision_correction` 的 cap,确认 TIS `tis_clip_fraction` 合理（不是大面积截）。
 3. **吞吐**：`vrl/scripts/perf/gemm_projection_breakdown.py` / `compile_benchmark.py` 量 rollout 段实际加速,再按 colocated 串行 Amdahl 折端到端（先测 rollout 占 cycle 比例）。
-4. **门控**：`online.py` 的 `NotImplementedError` 已换成能力检查,`precision.rollout=fp8` live run 能起。
+4. **门控**：`online.py` 的 fp8 `NotImplementedError` 已删，`precision.rollout=fp8` live run 能起；仍需补 family-level swapped-count/capability guard，避免某个 builder 漏接 `apply_rollout_quantization` 时静默 bf16。
 
 ## 6. 非目标
 

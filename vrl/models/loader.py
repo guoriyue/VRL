@@ -124,27 +124,80 @@ def compile_transformer(model: Any, mode: str) -> None:
     )
 
 
-def apply_rollout_fp8(model: Any, spec: Any) -> None:
-    """Swap the rollout transformer's big GEMMs to fp8 when the spec requests it.
+def apply_rollout_quantization(model: Any, spec: Any) -> int:
+    """Swap the rollout transformer's big GEMMs to the configured low-precision scheme.
 
-    fp8 is rollout-only (``precision.rollout=fp8``): the model loads a bf16 master
-    and quantizes inside the GEMM (``Fp8Linear``). Call after LoRA/full-finetune
-    and before compile so inductor sees the fp8 modules. No-op otherwise.
+    Reads the scheme off ``precision.rollout`` (``spec.rollout_quantization``) and
+    dispatches to its swap — fp8 today, fp4/int8 as siblings. Quantization is
+    rollout-only and is a *module swap*, not a storage dtype: a bf16/fp16/fp32
+    rollout is a plain dtype set at model load, so it has nothing to apply here and
+    returns 0. Raises when a scheme is requested but the swap matched no linear (a
+    silent no-op would otherwise run the rollout in bf16). Call after LoRA/full-
+    finetune and before compile so inductor sees the quantized modules.
     """
 
     import logging
 
-    if getattr(spec, "rollout_quantization", None) != "fp8":
-        return
-    swapped = model.quantize_transformer_fp8()
+    scheme = getattr(spec, "rollout_quantization", None)
+    if not scheme:  # bf16/fp16/fp32 rollout — a load-time dtype, not a swap
+        return 0
+    if scheme == "fp8":
+        swapped = model.quantize_transformer_fp8()
+    else:
+        raise NotImplementedError(
+            f"precision.rollout={scheme!r} has no rollout swap yet (only fp8); add a "
+            "quantize_transformer_* method + dispatch branch for the new scheme.",
+        )
+    if not swapped:
+        raise RuntimeError(
+            f"precision.rollout={scheme!r} but the swap matched 0 linears — the "
+            "transformer has no quantizable attention/MLP linears (check the exclude "
+            "list / min_features). It would be a no-op.",
+        )
     logging.getLogger(__name__).info(
-        "fp8 rollout: quantized %d transformer linears to e4m3", len(swapped),
+        "%s rollout: quantized %d transformer linears", scheme, len(swapped),
     )
+    return len(swapped)
+
+
+def assert_rollout_quantization_applied(model: Any, spec: Any) -> None:
+    """Backstop guard: a rollout quantization was requested but no quantized module.
+
+    Family- and scheme-agnostic — called once at rollout-worker policy load, after
+    the family builder ran. If the builder forgot to apply the swap (e.g. a newly
+    added family), the model would silently run bf16 despite ``precision.rollout``
+    asking for fp8/fp4/etc.; this turns that into a loud startup failure instead of
+    a fake knob. Counts *any* ``QuantizedLinear`` (fp8 today, fp4/int8 as they
+    land) so new schemes are covered without editing this guard. Unwraps a
+    ``torch.compile`` wrapper to count the real modules.
+    """
+
+    scheme = getattr(spec, "rollout_quantization", None)
+    if not scheme:  # None / bf16 / fp16 / fp32 rollout — nothing to verify
+        return
+    from vrl.nn.quantization import QuantizedLinear
+
+    transformer = getattr(model, "transformer", None)
+    transformer = getattr(transformer, "_orig_mod", transformer)  # unwrap torch.compile
+    count = (
+        sum(1 for m in transformer.modules() if isinstance(m, QuantizedLinear))
+        if transformer is not None
+        else 0
+    )
+    if count == 0:
+        raise RuntimeError(
+            f"precision.rollout={scheme!r} requested but the rollout transformer has "
+            f"0 quantized linear modules (family={getattr(spec, 'task_variant', None)!r}). "
+            "The family runtime builder did not apply the rollout quantization swap "
+            f"(e.g. apply_rollout_quantization), so {scheme} would silently run in bf16. Wire "
+            "the swap into that builder (after LoRA/full-finetune, before compile).",
+        )
 
 
 __all__ = [
     "apply_lora_to_transformer",
-    "apply_rollout_fp8",
+    "apply_rollout_quantization",
+    "assert_rollout_quantization_applied",
     "compile_transformer",
     "enable_transformer_full_finetune",
     "load_diffusers_scheduler",

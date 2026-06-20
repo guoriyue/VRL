@@ -328,14 +328,19 @@ class GenerationWorkerCore:
 
         build_runtime_bundle = import_from_path(str(builder_path))
         executor_cls = import_from_path(str(executor_path))
-        bundle = build_runtime_bundle(
-            RuntimeBuildSpec(
-                **self._normalize_runtime_build_payload(
-                    launch_contract.model_build_payload(),
-                ),
+        spec = RuntimeBuildSpec(
+            **self._normalize_runtime_build_payload(
+                launch_contract.model_build_payload(),
             ),
         )
+        bundle = build_runtime_bundle(spec)
         model = require_runtime_model(bundle.model, owner="RuntimeBundle.model")
+        # Family- and scheme-agnostic backstop: if precision.rollout asks for a
+        # quantized rollout (fp8/fp4/...) but this family's builder forgot to swap,
+        # the model would silently run bf16 — fail loudly instead.
+        from vrl.models.loader import assert_rollout_quantization_applied
+
+        assert_rollout_quantization_applied(model, spec)
         built = executor_cls(model, **dict(launch_contract.executor_kwargs))
         if getattr(bundle, "runtime_caps", None) is not None:
             built.runtime_caps = dict(bundle.runtime_caps)

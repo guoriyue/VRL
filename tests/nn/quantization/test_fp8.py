@@ -222,6 +222,60 @@ def test_fp8_linear_preserves_leading_dims_and_bias():
     assert out.shape == (2, 64, 4096)
 
 
+# --- fp8 rollout guards: no silent bf16 when precision.rollout=fp8 (CPU) ---------
+
+
+class _SwapModel:
+    def __init__(self, swapped: list[str]) -> None:
+        self._swapped = swapped
+
+    def quantize_transformer_fp8(self, recipe: str = "rowwise") -> list[str]:
+        return self._swapped
+
+
+def test_apply_rollout_quantization_raises_when_swap_matches_nothing():
+    from vrl.models.loader import apply_rollout_quantization
+
+    with pytest.raises(RuntimeError, match="matched 0 linears"):
+        apply_rollout_quantization(_SwapModel([]), SimpleNamespace(rollout_quantization="fp8"))
+
+
+def test_apply_rollout_quantization_noop_and_count_when_not_fp8_or_swapped():
+    from vrl.models.loader import apply_rollout_quantization
+
+    assert apply_rollout_quantization(_SwapModel([]), SimpleNamespace(rollout_quantization=None)) == 0
+    assert apply_rollout_quantization(_SwapModel(["a", "b"]), SimpleNamespace(rollout_quantization="fp8")) == 2
+
+
+@pytest.mark.parametrize("scheme", ["fp8", "fp4"])
+def test_backstop_raises_for_any_requested_scheme_when_unquantized(scheme):
+    """Scheme-agnostic: any requested rollout quantization with no QuantizedLinear
+    → loud fail, not silent bf16 (covers future fp4/int8 without a guard edit)."""
+    from vrl.models.loader import assert_rollout_quantization_applied
+
+    model = SimpleNamespace(transformer=nn.Sequential(nn.Linear(16, 16)))  # plain, no QuantizedLinear
+    with pytest.raises(RuntimeError, match="0 quantized linear"):
+        assert_rollout_quantization_applied(model, SimpleNamespace(rollout_quantization=scheme, task_variant="t2i"))
+
+
+def test_backstop_ok_when_quantized_module_present_incl_compiled():
+    from vrl.models.loader import assert_rollout_quantization_applied
+    from vrl.nn.quantization import QuantizedLinear
+
+    assert isinstance(Fp8Linear(nn.Linear(16, 16)), QuantizedLinear)  # scheme subclasses the marker
+    real = nn.Sequential(Fp8Linear(nn.Linear(16, 16)))  # CPU construct is fine
+    assert_rollout_quantization_applied(SimpleNamespace(transformer=real), SimpleNamespace(rollout_quantization="fp8"))
+    # torch.compile wrapper exposes _orig_mod — the guard must unwrap it
+    compiled = SimpleNamespace(_orig_mod=real)
+    assert_rollout_quantization_applied(SimpleNamespace(transformer=compiled), SimpleNamespace(rollout_quantization="fp8"))
+
+
+def test_backstop_noop_when_no_quantization_requested():
+    from vrl.models.loader import assert_rollout_quantization_applied
+
+    assert_rollout_quantization_applied(SimpleNamespace(transformer=None), SimpleNamespace(rollout_quantization=None))
+
+
 # --- runtime wiring: the swap reaches the rollout builder from precision (CPU) --
 
 
@@ -234,16 +288,20 @@ class _FakeModel:
         return ["blocks.0.attn.to_q", "blocks.0.ff.net.0"]
 
 
-def test_apply_rollout_fp8_only_fires_for_fp8():
-    from vrl.models.loader import apply_rollout_fp8
+def test_apply_rollout_quantization_dispatches_by_scheme():
+    from vrl.models.loader import apply_rollout_quantization
 
     model = _FakeModel()
-    apply_rollout_fp8(model, SimpleNamespace(rollout_quantization=None))
-    assert model.recipes == []  # bf16 rollout: no-op
-    apply_rollout_fp8(model, SimpleNamespace(rollout_quantization="fp4"))
-    assert model.recipes == []  # fp4 GEMM not built: no-op (online.py gates it)
-    apply_rollout_fp8(model, SimpleNamespace(rollout_quantization="fp8"))
-    assert model.recipes == ["rowwise"]  # fp8: swap fires
+    # bf16/fp16/fp32 rollout: a load-time dtype, nothing to swap
+    apply_rollout_quantization(model, SimpleNamespace(rollout_quantization=None))
+    assert model.recipes == []
+    # an unimplemented scheme must NOT silently no-op (that was the old footgun) — raise
+    with pytest.raises(NotImplementedError, match="no rollout swap"):
+        apply_rollout_quantization(model, SimpleNamespace(rollout_quantization="fp4"))
+    assert model.recipes == []
+    # fp8: the swap fires
+    apply_rollout_quantization(model, SimpleNamespace(rollout_quantization="fp8"))
+    assert model.recipes == ["rowwise"]
 
 
 def test_extract_runtime_spec_derives_fp8_from_precision_rollout():

@@ -15,6 +15,7 @@ from vrl.models.interfaces.runtime import (
     RuntimeBuildSpec,
     RuntimeBundle,
 )
+from vrl.models.loader import apply_rollout_quantization
 from vrl.models.replay_loading import (
     full_generation_bundle_metadata,
     minimal_replay_bundle_metadata,
@@ -85,6 +86,8 @@ def build_anima_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         model.apply_lora(spec)
     else:
         model.enable_full_finetune()
+
+    apply_rollout_quantization(model, spec)
 
     compile_cfg = spec.torch_compile or {}
     if compile_cfg.get("enable"):

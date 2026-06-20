@@ -32,6 +32,8 @@ from __future__ import annotations
 import torch
 from torch import nn
 
+from vrl.nn.quantization.base import QuantizedLinear
+
 # fp8-e4m3 max representable magnitude; the amax scale maps a tensor's peak onto it.
 FP8_E4M3_MAX = 448.0
 # Block size for the ``blockwise`` recipe (DeepSeek/slime/vLLM standard 128).
@@ -58,7 +60,7 @@ def vllm_block_fp8_available() -> bool:
     return importlib.util.find_spec("vllm") is not None
 
 
-class Fp8Linear(nn.Module):
+class Fp8Linear(QuantizedLinear):
     """Drop-in ``nn.Linear`` replacement running the matmul in fp8-e4m3.
 
     Keeps a bf16 master ``weight`` (so RL weight-sync loads normally) plus a
