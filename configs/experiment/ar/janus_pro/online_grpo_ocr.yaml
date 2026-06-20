@@ -8,7 +8,7 @@ defaults:
 
 algorithm:
   clip_ratio: 0.2
-  init_kl_coef: 0.01
+  kl_coef: 0.01
   kl_estimator: k2
 
 actor:

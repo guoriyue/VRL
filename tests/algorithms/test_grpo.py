@@ -58,7 +58,7 @@ class TestGRPOFlowMatchingKL:
     """Groups tests for grpoflow matching KL."""
     def test_flow_kl_ignores_dt_by_default_to_match_flow_grpo(self) -> None:
         """Checks flow KL ignores dt by default to match flow GRPO."""
-        grpo = GRPO(GRPOConfig(init_kl_coef=1.0))
+        grpo = GRPO(GRPOConfig(kl_coef=1.0))
         signals = _flow_signals(
             log_prob=torch.zeros(2),
             old_log_prob=torch.zeros(2),
@@ -81,7 +81,7 @@ class TestGRPOFlowMatchingKL:
 
     def test_flow_kl_can_use_dt_when_explicitly_configured(self) -> None:
         """Checks flow KL can use dt when explicitly configured."""
-        grpo = GRPO(GRPOConfig(init_kl_coef=1.0, flow_kl_use_dt=True))
+        grpo = GRPO(GRPOConfig(kl_coef=1.0, flow_kl_use_dt=True))
         signals = _flow_signals(
             log_prob=torch.zeros(2),
             old_log_prob=torch.zeros(2),
@@ -112,7 +112,7 @@ class TestGRPOClippedSurrogate:
 
     def test_ratio_one_gives_negative_mean_advantage(self) -> None:
         """log_prob == old_log_prob → ratio 1 → loss == -mean(advantage)."""
-        grpo = GRPO(GRPOConfig(init_kl_coef=0.0))
+        grpo = GRPO(GRPOConfig(kl_coef=0.0))
         signals = _flow_signals(
             log_prob=torch.zeros(2),
             old_log_prob=torch.zeros(2),
@@ -135,7 +135,7 @@ class TestGRPOClippedSurrogate:
         ``-adv*(1+clip_ratio)``, not ``-adv*ratio``.
         """
         clip_ratio = 0.2
-        grpo = GRPO(GRPOConfig(init_kl_coef=0.0, clip_ratio=clip_ratio))
+        grpo = GRPO(GRPOConfig(kl_coef=0.0, clip_ratio=clip_ratio))
         log_ratio = 1.0  # ratio = e ≈ 2.718, well above 1+clip_ratio
         signals = _flow_signals(
             log_prob=torch.full((1,), log_ratio),
@@ -156,7 +156,7 @@ class TestGRPOClippedSurrogate:
         the side where a naive ``min``/``max`` mix-up silently flips training.
         """
         clip_ratio = 0.2
-        grpo = GRPO(GRPOConfig(init_kl_coef=0.0, clip_ratio=clip_ratio))
+        grpo = GRPO(GRPOConfig(kl_coef=0.0, clip_ratio=clip_ratio))
         log_ratio = 1.0
         signals = _flow_signals(
             log_prob=torch.full((1,), log_ratio),
@@ -172,7 +172,7 @@ class TestGRPOClippedSurrogate:
     def test_clip_fraction_and_approx_kl_match_formula(self) -> None:
         """clip_fraction = mean(|ratio-1|>clip_ratio); approx_kl = 0.5*mean(d^2)."""
         clip_ratio = 0.2
-        grpo = GRPO(GRPOConfig(init_kl_coef=0.0, clip_ratio=clip_ratio))
+        grpo = GRPO(GRPOConfig(kl_coef=0.0, clip_ratio=clip_ratio))
         # One sample drifts hard (clipped), one stays put (not clipped).
         log_prob = torch.tensor([1.0, 0.0])
         old_log_prob = torch.zeros(2)
@@ -189,7 +189,7 @@ class TestGRPOClippedSurrogate:
 
     def test_reports_logprob_mismatch_metrics(self) -> None:
         """GRPO surfaces rollout-vs-replay (fresh vs old) drift in TrainStepMetrics."""
-        grpo = GRPO(GRPOConfig(init_kl_coef=0.0))
+        grpo = GRPO(GRPOConfig(kl_coef=0.0))
         signals = _flow_signals(
             log_prob=torch.full((2,), 0.1),  # replay logprob
             old_log_prob=torch.zeros(2),  # rollout behavior logprob
@@ -204,7 +204,7 @@ class TestGRPOClippedSurrogate:
 
     def test_mismatch_metrics_zero_when_on_policy(self) -> None:
         """fresh == old → all mismatch metrics are zero."""
-        grpo = GRPO(GRPOConfig(init_kl_coef=0.0))
+        grpo = GRPO(GRPOConfig(kl_coef=0.0))
         signals = _flow_signals(log_prob=torch.zeros(3), old_log_prob=torch.zeros(3))
         _, metrics = grpo.compute_loss(
             AlgorithmInput(signals=signals, advantages=torch.ones(3)),
@@ -226,7 +226,7 @@ class TestGRPOTruncatedImportanceSampling:
 
     @staticmethod
     def _grpo(**pc_kwargs) -> GRPO:
-        grpo = GRPO(GRPOConfig(init_kl_coef=0.0))
+        grpo = GRPO(GRPOConfig(kl_coef=0.0))
         if pc_kwargs:
             grpo.precision_correction = PrecisionCorrectionConfig(**pc_kwargs)
         return grpo
@@ -306,7 +306,7 @@ class TestGRPORejectSampling:
 
     @staticmethod
     def _grpo(**pc_kwargs) -> GRPO:
-        grpo = GRPO(GRPOConfig(init_kl_coef=0.0))
+        grpo = GRPO(GRPOConfig(kl_coef=0.0))
         if pc_kwargs:
             grpo.precision_correction = PrecisionCorrectionConfig(**pc_kwargs)
         return grpo

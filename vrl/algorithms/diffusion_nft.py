@@ -20,7 +20,7 @@ class DiffusionNFTConfig:
     adv_clip_max: float = 5.0
     global_std: bool = False
     nft_beta: float = 1.0
-    kl_beta: float = 1.0
+    kl_coef: float = 1.0
     advantage_high: float = 5.0
     weight_copy_decay: float = 0.0
 
@@ -263,7 +263,7 @@ class DiffusionNFT(Algorithm):
         )
         policy_loss = original_policy_loss.mean() * advantage_high
         kl_loss = ((forward_prediction.float() - ref_prediction.float()) ** 2).mean()
-        kl_term = float(cfg.kl_beta) * kl_loss
+        kl_term = float(cfg.kl_coef) * kl_loss
         loss = policy_loss + kl_term
 
         self._last_policy_loss_tensor = policy_loss

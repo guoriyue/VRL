@@ -100,8 +100,7 @@ class AlgorithmConfig(ConfigBase):
     clip_ratio: Any = None
     flow_kl_use_dt: Any = None
     global_std: Any = None
-    init_kl_coef: Any = None
-    kl_beta: Any = None
+    kl_coef: Any = None
     kl_estimator: Any = None
     kl_reward: Any = None
     nft_beta: Any = None

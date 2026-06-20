@@ -18,7 +18,7 @@ actor:
   gradient_accumulation_steps: 4
 
 algorithm:
-  init_kl_coef: 0.01
+  kl_coef: 0.01
   global_std: true
 
 rollout:

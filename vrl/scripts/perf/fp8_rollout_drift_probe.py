@@ -124,7 +124,7 @@ def _policy_grad_norm(
     w = weight.detach().clone().requires_grad_(True)
     fresh_logits = activations @ w.t()  # [samples, T, vocab] bf16 replay forward
     fresh_logprob = _trajectory_logprob(fresh_logits, actions)
-    grpo = GRPO(GRPOConfig(init_kl_coef=0.0))
+    grpo = GRPO(GRPOConfig(kl_coef=0.0))
     grpo.precision_correction = PrecisionCorrectionConfig(
         tis_mode=tis_mode, tis_imp_weight_cap=cap, rs_mode=rs_mode,
     )

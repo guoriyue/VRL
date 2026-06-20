@@ -663,8 +663,8 @@ class OnlineTrainer(Trainer):
                                 raise RuntimeError(
                                     f"{type(self.algorithm).__name__} requires an evaluator",
                                 )
-                            init_kl_coef = float(
-                                getattr(self.algorithm.config, "init_kl_coef", 0.0),
+                            kl_coef = float(
+                                getattr(self.algorithm.config, "kl_coef", 0.0),
                             )
                             with record_function("trainer.replay"):
                                 signals = self.evaluator.evaluate(
@@ -673,8 +673,8 @@ class OnlineTrainer(Trainer):
                                     j,
                                     ref_model=self.ref_model,
                                     signal_request=SignalRequest(
-                                        need_ref=init_kl_coef > 0,
-                                        need_kl_intermediates=init_kl_coef > 0,
+                                        need_ref=kl_coef > 0,
+                                        need_kl_intermediates=kl_coef > 0,
                                     ),
                                 )
                             with record_function("trainer.loss"):
@@ -1082,8 +1082,8 @@ class OnlineTrainer(Trainer):
                                         raise RuntimeError(
                                             f"{type(self.algorithm).__name__} requires an evaluator",
                                         )
-                                    init_kl_coef = float(
-                                        getattr(self.algorithm.config, "init_kl_coef", 0.0),
+                                    kl_coef = float(
+                                        getattr(self.algorithm.config, "kl_coef", 0.0),
                                     )
                                     with record_function("trainer.replay"):
                                         signals = self.evaluator.evaluate(
@@ -1092,8 +1092,8 @@ class OnlineTrainer(Trainer):
                                             j,
                                             ref_model=self.ref_model,
                                             signal_request=SignalRequest(
-                                                need_ref=init_kl_coef > 0,
-                                                need_kl_intermediates=init_kl_coef > 0,
+                                                need_ref=kl_coef > 0,
+                                                need_kl_intermediates=kl_coef > 0,
                                             ),
                                         )
                                     with record_function("trainer.loss"):

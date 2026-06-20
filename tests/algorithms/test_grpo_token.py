@@ -87,7 +87,7 @@ class TestPerTokenLoss:
         old_lp = torch.zeros(2, 4)
         new_lp = old_lp.clone()
         adv = torch.zeros(2)
-        algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=0.0))
+        algo = TokenGRPO(TokenGRPOConfig(kl_coef=0.0))
         loss, _ = algo.compute_loss(_inputs(new_lp, old_lp, adv))
         assert loss.abs().item() < 1e-6
 
@@ -96,7 +96,7 @@ class TestPerTokenLoss:
         old_lp = torch.zeros(2, 4)
         new_lp = old_lp + 0.1     # log-prob went up
         adv = torch.ones(2)        # positive advantage
-        algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=0.0, clip_ratio=1.0))  # disable clip
+        algo = TokenGRPO(TokenGRPOConfig(kl_coef=0.0, clip_ratio=1.0))  # disable clip
         loss, _ = algo.compute_loss(_inputs(new_lp, old_lp, adv))
         # ratio = exp(0.1) > 1; -adv * ratio < -1
         assert loss.item() < -1.0
@@ -106,7 +106,7 @@ class TestPerTokenLoss:
         old_lp = torch.zeros(1, 4)
         new_lp = old_lp + 5.0     # huge ratio
         adv = torch.ones(1)
-        algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=0.0, clip_ratio=0.2))
+        algo = TokenGRPO(TokenGRPOConfig(kl_coef=0.0, clip_ratio=0.2))
         _loss, metrics = algo.compute_loss(_inputs(new_lp, old_lp, adv))
         assert metrics.clip_fraction == 1.0   # all 4 tokens clipped
 
@@ -124,7 +124,7 @@ class TestMask:
         new_lp = old_lp + 1.0
         adv = torch.ones(2)
         mask = torch.zeros_like(new_lp)        # mask everything out
-        algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=0.0))
+        algo = TokenGRPO(TokenGRPOConfig(kl_coef=0.0))
         loss, _ = algo.compute_loss(_inputs(new_lp, old_lp, adv, mask=mask))
         # mask sum is clamped to 1.0 to avoid NaN, but per_token_loss * 0 = 0
         assert loss.abs().item() < 1e-6
@@ -136,7 +136,7 @@ class TestMask:
         adv = torch.ones(1)
         mask_full = torch.ones_like(new_lp)
         mask_half = torch.tensor([[0.0, 1.0, 1.0, 0.0]])
-        algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=0.0, clip_ratio=10.0))
+        algo = TokenGRPO(TokenGRPOConfig(kl_coef=0.0, clip_ratio=10.0))
         l_full, _ = algo.compute_loss(_inputs(new_lp, old_lp, adv, mask=mask_full))
         l_half, _ = algo.compute_loss(_inputs(new_lp, old_lp, adv, mask=mask_half))
         # half mask only counts the +0.5 tokens → mean is more negative
@@ -156,7 +156,7 @@ class TestTokenTIS:
         old_lp = torch.zeros(1, 2)
         new_lp = torch.tensor([[2.0, 0.0]])
         adv = torch.tensor([5.0])
-        algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=0.0))
+        algo = TokenGRPO(TokenGRPOConfig(kl_coef=0.0))
         algo.precision_correction = PrecisionCorrectionConfig(
             tis_mode="mask", tis_imp_weight_cap=2.0,
         )
@@ -169,10 +169,10 @@ class TestTokenTIS:
         old_lp = torch.zeros(1, 4)
         new_lp = old_lp + 0.3
         adv = torch.ones(1)
-        base, _ = TokenGRPO(TokenGRPOConfig(init_kl_coef=0.0, clip_ratio=1.0)).compute_loss(
+        base, _ = TokenGRPO(TokenGRPOConfig(kl_coef=0.0, clip_ratio=1.0)).compute_loss(
             _inputs(new_lp, old_lp, adv),
         )
-        off_algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=0.0, clip_ratio=1.0))
+        off_algo = TokenGRPO(TokenGRPOConfig(kl_coef=0.0, clip_ratio=1.0))
         off_algo.precision_correction = PrecisionCorrectionConfig(tis_mode="off")
         off, m = off_algo.compute_loss(_inputs(new_lp, old_lp, adv))
         assert off.item() == pytest.approx(base.item())
@@ -189,7 +189,7 @@ class TestTokenRejectSampling:
 
     @staticmethod
     def _algo(**pc_kwargs) -> TokenGRPO:
-        algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=0.0))
+        algo = TokenGRPO(TokenGRPOConfig(kl_coef=0.0))
         algo.precision_correction = PrecisionCorrectionConfig(**pc_kwargs)
         return algo
 
@@ -243,7 +243,7 @@ class TestKL:
     def test_kl_enabled_requires_ref_logprob(self) -> None:
         """Checks KL enabled requires ref logprob."""
         new_lp = torch.zeros(1, 2)
-        algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=1.0))
+        algo = TokenGRPO(TokenGRPOConfig(kl_coef=1.0))
 
         with pytest.raises(RuntimeError, match="ref_log_prob is None"):
             algo.compute_loss(_inputs(new_lp, new_lp, torch.zeros(1), ref_lp=None))
@@ -254,7 +254,7 @@ class TestKL:
         ref_lp = torch.zeros(1, 4)
         old_lp = torch.zeros(1, 4)
         adv = torch.zeros(1)
-        algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=1.0, kl_estimator="k1"))
+        algo = TokenGRPO(TokenGRPOConfig(kl_coef=1.0, kl_estimator="k1"))
         _, m = algo.compute_loss(_inputs(new_lp, old_lp, adv, ref_lp=ref_lp))
         # k1 = log_ratio = 0.5
         assert m.kl_penalty == pytest.approx(0.5, abs=1e-5)
@@ -266,7 +266,7 @@ class TestKL:
         ref_lp = torch.randn(2, 4)
         old_lp = new_lp.clone()
         adv = torch.zeros(2)
-        algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=1.0, kl_estimator="k3"))
+        algo = TokenGRPO(TokenGRPOConfig(kl_coef=1.0, kl_estimator="k3"))
         _, m = algo.compute_loss(_inputs(new_lp, old_lp, adv, ref_lp=ref_lp))
         assert m.kl_penalty >= 0.0
 
@@ -276,7 +276,7 @@ class TestKL:
         ref_lp = torch.zeros(1, 4)
         old_lp = torch.zeros(1, 4)
         adv = torch.zeros(1)
-        algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=1.0, kl_estimator="k2"))
+        algo = TokenGRPO(TokenGRPOConfig(kl_coef=1.0, kl_estimator="k2"))
         _, m = algo.compute_loss(_inputs(new_lp, old_lp, adv, ref_lp=ref_lp))
 
         expected = 0.5 * (new_lp - ref_lp).square().mean()
@@ -288,7 +288,7 @@ class TestKL:
         ref_lp = torch.zeros(1, 2)
         old_lp = torch.zeros(1, 2)
         adv = torch.zeros(1)
-        algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=1.0, kl_estimator="k2"))
+        algo = TokenGRPO(TokenGRPOConfig(kl_coef=1.0, kl_estimator="k2"))
         _, m = algo.compute_loss(_inputs(new_lp, old_lp, adv, ref_lp=ref_lp))
 
         assert m.kl_penalty == pytest.approx(50.0, abs=1e-6)
@@ -297,7 +297,7 @@ class TestKL:
         """Checks unknown estimator raises."""
         new_lp = torch.zeros(1, 2)
         ref_lp = torch.zeros(1, 2)
-        algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=1.0, kl_estimator="bogus"))
+        algo = TokenGRPO(TokenGRPOConfig(kl_coef=1.0, kl_estimator="bogus"))
         with pytest.raises(ValueError, match="kl_estimator"):
             algo.compute_loss(_inputs(new_lp, new_lp, torch.zeros(1), ref_lp=ref_lp))
 
@@ -314,6 +314,6 @@ class TestShapeValidation:
         new_lp = torch.zeros(2, 4)
         old_lp = torch.zeros(2, 5)
         adv = torch.zeros(2)
-        algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=0.0))
+        algo = TokenGRPO(TokenGRPOConfig(kl_coef=0.0))
         with pytest.raises(ValueError, match="log_prob/old_log_prob"):
             algo.compute_loss(_inputs(new_lp, old_lp, adv))

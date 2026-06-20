@@ -59,7 +59,7 @@ def test_weighted_mean_matches_token_grpo_per_segment() -> None:
     inputs = _inputs({"initial_image": initial, "final_image": final}, adv)
 
     cfg = MultiSegmentTokenGRPOConfig(
-        init_kl_coef=0.0,
+        kl_coef=0.0,
         clip_ratio=10.0,
         segment_weights={
             "initial_image": 1.0,
@@ -70,7 +70,7 @@ def test_weighted_mean_matches_token_grpo_per_segment() -> None:
     algo = MultiSegmentTokenGRPO(cfg)
     loss, metrics = algo.compute_loss(inputs)
 
-    base = TokenGRPO(TokenGRPOConfig(init_kl_coef=0.0, clip_ratio=10.0))
+    base = TokenGRPO(TokenGRPOConfig(kl_coef=0.0, clip_ratio=10.0))
     initial_loss, initial_metrics = base.compute_loss(
         _inputs({"initial_image": initial}, adv),
     )
@@ -105,7 +105,7 @@ def test_default_selfcheck_weight_zero_does_not_affect_loss() -> None:
         adv,
     )
 
-    algo = MultiSegmentTokenGRPO(MultiSegmentTokenGRPOConfig(init_kl_coef=0.0))
+    algo = MultiSegmentTokenGRPO(MultiSegmentTokenGRPOConfig(kl_coef=0.0))
     loss, _ = algo.compute_loss(inputs)
 
     assert loss.item() == pytest.approx(-1.0)

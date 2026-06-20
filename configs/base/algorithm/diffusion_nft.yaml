@@ -7,10 +7,10 @@ algorithm:
 
   # Cosmos-RL DiffusionNFT parity knobs.
   nft_beta: 1.0
-  kl_beta: 1.0
+  kl_coef: 1.0
   advantage_high: 5.0
   weight_copy_decay: 0.0
 
   # Kept for collector reward-shaping compatibility; DiffusionNFT loss-side KL
-  # is controlled by kl_beta above.
+  # is controlled by kl_coef above.
   kl_reward: 0.0

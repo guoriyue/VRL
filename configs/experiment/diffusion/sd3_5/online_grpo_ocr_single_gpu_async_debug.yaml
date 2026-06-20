@@ -48,7 +48,7 @@ actor:
   gradient_checkpointing: false
 
 algorithm:
-  init_kl_coef: 0.04
+  kl_coef: 0.04
   global_std: true
 
 rollout:

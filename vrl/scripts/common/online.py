@@ -191,7 +191,7 @@ def _warn_global_std_streaming_divergence(cfg: Any, trainer_config: Any) -> None
 
 
 def default_reference_model(bundle: Any, cfg: Any) -> Any | None:
-    """Reference model for KL: the (LoRA) policy itself when use_lora and init_kl_coef>0, else None."""
+    """Reference model for KL: the (LoRA) policy itself when use_lora and kl_coef>0, else None."""
 
     # Convention for config reads in this module: keys that family configs
     # legitimately omit (e.g. cosmos full-param dropped use_lora from its model
@@ -199,8 +199,8 @@ def default_reference_model(bundle: Any, cfg: Any) -> Any | None:
     # tolerates a missing parent section. Required keys keep raw attribute
     # access on purpose — a missing required key must fail loudly at startup,
     # not silently default.
-    init_kl_coef = float(OmegaConf.select(cfg, "algorithm.init_kl_coef", default=0.0) or 0.0)
-    if bool(OmegaConf.select(cfg, "model.use_lora", default=False)) and init_kl_coef > 0:
+    kl_coef = float(OmegaConf.select(cfg, "algorithm.kl_coef", default=0.0) or 0.0)
+    if bool(OmegaConf.select(cfg, "model.use_lora", default=False)) and kl_coef > 0:
         return bundle.model
     return None
 

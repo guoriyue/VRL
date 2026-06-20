@@ -238,7 +238,7 @@ def _step_distances(*, advantage: float) -> tuple[float, float, torch.Tensor]:
     pulled toward, independent of the loss's algebra.
     """
 
-    cfg = DiffusionNFTConfig(nft_beta=1.0, kl_beta=0.0, advantage_high=5.0)
+    cfg = DiffusionNFTConfig(nft_beta=1.0, kl_coef=0.0, advantage_high=5.0)
     torch.manual_seed(1234)  # fix x0/noise so the gradient-direction check is reproducible
     x0 = torch.randn(_LATENT_SHAPE)
     noise = torch.randn(_LATENT_SHAPE)
@@ -400,7 +400,7 @@ def test_lr_zero_reward_channel_is_inert() -> None:
     prompt_embeds = torch.randn(_BATCH, _TEXT_LEN, _TEXT_DIM)
     model = _build_model()
     # Sync previous <- default exactly (decay=0), as after_optimizer_step does.
-    nft = DiffusionNFT(DiffusionNFTConfig(weight_copy_decay=0.0, kl_beta=0.0))
+    nft = DiffusionNFT(DiffusionNFTConfig(weight_copy_decay=0.0, kl_coef=0.0))
     nft.after_optimizer_step(model, global_step=0)
     batch = _build_batch(x0=x0, noise=noise, prompt_embeds=prompt_embeds, timestep=500.0)
 

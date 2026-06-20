@@ -15,7 +15,7 @@ actor:
   ppo_epochs: 1
 
 algorithm:
-  init_kl_coef: 0.004
+  kl_coef: 0.004
 
 rollout:
   n_samples_per_prompt: 8

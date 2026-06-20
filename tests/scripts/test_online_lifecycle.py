@@ -153,7 +153,7 @@ def _cfg() -> Any:
         {
             "data": {"sampler": {"type": "random_without_replacement"}},
             "distributed": {"rollout": {"cpus_per_worker": 0.5}},
-            "algorithm": {"init_kl_coef": 0.0},
+            "algorithm": {"kl_coef": 0.0},
             "model": {"use_lora": False},
         },
     )

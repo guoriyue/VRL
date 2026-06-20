@@ -24,7 +24,7 @@ class TestAdvantageAndMetrics:
                 global_std = False
                 eps = 1e-8
                 adv_clip_max = 5.0
-                init_kl_coef = 0.0
+                kl_coef = 0.0
 
             config = _Config()
 
@@ -154,7 +154,7 @@ class TestAdvantageAndMetrics:
                 global_std = True
                 eps = 1e-8
                 adv_clip_max = 5.0
-                init_kl_coef = 0.0
+                kl_coef = 0.0
 
             config = _Config()
 

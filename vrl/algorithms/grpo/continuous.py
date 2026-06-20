@@ -23,7 +23,7 @@ class GRPOConfig:
     """Hyper-parameters for continuous GRPO."""
 
     clip_ratio: float = 0.2
-    init_kl_coef: float = 0.0
+    kl_coef: float = 0.0
     eps: float = 1e-4
     adv_clip_max: float = 5.0
     global_std: bool = False
@@ -42,7 +42,7 @@ class GRPO(Algorithm):
 
     # Signal-branch contract (AlgorithmAdapter.validate_inputs): the clipped
     # surrogate reads these from the evaluator replay. ref_log_prob is
-    # conditional on init_kl_coef>0, so it is NOT a hard requirement here — the
+    # conditional on kl_coef>0, so it is NOT a hard requirement here — the
     # KL branch validates it with its own detailed diagnostic.
     required_signal_keys = ("log_prob", "old_log_prob")
 
@@ -52,7 +52,7 @@ class GRPO(Algorithm):
         # injects trainer.precision_correction here at construction so the knobs
         # live at the trainer level, not in the algorithm's hyperparameters.
         self.precision_correction = PrecisionCorrectionConfig()
-        # Diagnostic stash: last call's policy_loss and (init_kl_coef * kl_loss)
+        # Diagnostic stash: last call's policy_loss and (kl_coef * kl_loss)
         # tensors, kept alive (not detached) for grad-split diagnostics in
         # the trainer. Set to None when not applicable.
         self._last_policy_loss_tensor: Any = None
@@ -130,10 +130,10 @@ class GRPO(Algorithm):
             0.0 if rs_keep is None else (1.0 - rs_keep.mean()).item()
         )
 
-        if cfg.init_kl_coef > 0:
+        if cfg.kl_coef > 0:
             if signals.ref_log_prob is None:
                 raise RuntimeError(
-                    f"GRPOConfig.init_kl_coef={cfg.init_kl_coef} > 0 but "
+                    f"GRPOConfig.kl_coef={cfg.kl_coef} > 0 but "
                     "signals.ref_log_prob is None. Check: (1) ref_model "
                     "passed to OnlineTrainer, (2) SignalRequest(need_ref=True) "
                     "in the evaluator call."
@@ -152,7 +152,7 @@ class GRPO(Algorithm):
                 kl_loss = torch.mean(kl)
             else:
                 kl_loss = torch.mean(signals.log_prob - signals.ref_log_prob)
-            kl_term = cfg.init_kl_coef * kl_loss
+            kl_term = cfg.kl_coef * kl_loss
             loss = policy_loss + kl_term
             self._last_kl_term_tensor = kl_term
         else:
