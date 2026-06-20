@@ -142,6 +142,25 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusionModelBase):
         self.transformer = transformer
         self.pipeline.transformer = transformer
 
+    def move_frozen_components(self, device: Any) -> None:
+        """Move the pipeline's frozen non-transformer components to ``device``.
+
+        The VAE (and text encoder, when present) live on ``_pipeline`` via
+        ``object.__setattr__``, so they are NOT registered submodules — a plain
+        ``self.to(...)`` only walks the registered transformer and leaves them
+        behind. During colocated rollout the driver model is parked on CPU to free
+        the shared GPU, but that left the fp32 VAE (~0.5-1 GB) resident; this moves
+        the frozen components with it (and back on restore). The reverse direction
+        (device = the GPU) restores them. Called via getattr from the lifecycle,
+        so backends without hidden frozen components are unaffected.
+        """
+
+        pipeline = self._pipeline
+        for _name in ("vae", "text_encoder"):
+            component = getattr(pipeline, _name, None)
+            if component is not None and hasattr(component, "to"):
+                component.to(device)
+
     @classmethod
     def from_spec(cls, spec: Any) -> CosmosPredict25Model:
         import diffusers.pipelines.cosmos.pipeline_cosmos2_5_predict as _predict_mod
