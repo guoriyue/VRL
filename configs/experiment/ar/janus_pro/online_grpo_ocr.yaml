@@ -7,7 +7,7 @@ defaults:
   - /dataset/ocr
 
 algorithm:
-  eps_clip: 0.2
+  clip_ratio: 0.2
   init_kl_coef: 0.01
   kl_estimator: k2
 

@@ -97,7 +97,7 @@ class AlgorithmConfig(ConfigBase):
     advantage_high: Any = None
     beta: Any = None
     eps: Any = None
-    eps_clip: Any = None
+    clip_ratio: Any = None
     flow_kl_use_dt: Any = None
     global_std: Any = None
     init_kl_coef: Any = None

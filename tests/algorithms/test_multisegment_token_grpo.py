@@ -60,7 +60,7 @@ def test_weighted_mean_matches_token_grpo_per_segment() -> None:
 
     cfg = MultiSegmentTokenGRPOConfig(
         init_kl_coef=0.0,
-        eps_clip=10.0,
+        clip_ratio=10.0,
         segment_weights={
             "initial_image": 1.0,
             "selfcheck_text": 0.0,
@@ -70,7 +70,7 @@ def test_weighted_mean_matches_token_grpo_per_segment() -> None:
     algo = MultiSegmentTokenGRPO(cfg)
     loss, metrics = algo.compute_loss(inputs)
 
-    base = TokenGRPO(TokenGRPOConfig(init_kl_coef=0.0, eps_clip=10.0))
+    base = TokenGRPO(TokenGRPOConfig(init_kl_coef=0.0, clip_ratio=10.0))
     initial_loss, initial_metrics = base.compute_loss(
         _inputs({"initial_image": initial}, adv),
     )

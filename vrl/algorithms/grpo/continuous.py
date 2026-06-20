@@ -22,7 +22,7 @@ from vrl.algorithms.types import TrainStepMetrics
 class GRPOConfig:
     """Hyper-parameters for continuous GRPO."""
 
-    eps_clip: float = 0.2
+    clip_ratio: float = 0.2
     init_kl_coef: float = 0.0
     eps: float = 1e-4
     adv_clip_max: float = 5.0
@@ -109,7 +109,7 @@ class GRPO(Algorithm):
         # the masked-mean denominator below (true off-policy rejection, not a
         # gradient-magnitude dilution).
         rs_keep = apply_rejection_sample_mask(signals.log_prob - old_log_probs, pc)
-        clipped_ratio = torch.clamp(ratio, 1.0 - cfg.eps_clip, 1.0 + cfg.eps_clip)
+        clipped_ratio = torch.clamp(ratio, 1.0 - cfg.clip_ratio, 1.0 + cfg.clip_ratio)
         unclipped_loss = -advantages * ratio
         clipped_loss = -advantages * clipped_ratio
         per_sample_loss = torch.maximum(unclipped_loss, clipped_loss)
@@ -162,7 +162,7 @@ class GRPO(Algorithm):
 
         self._last_policy_loss_tensor = policy_loss
 
-        clip_fraction = torch.mean((torch.abs(ratio - 1.0) > cfg.eps_clip).float()).item()
+        clip_fraction = torch.mean((torch.abs(ratio - 1.0) > cfg.clip_ratio).float()).item()
         approx_kl = 0.5 * torch.mean((signals.log_prob - old_log_probs) ** 2).item()
 
         # Rollout-vs-replay logprob drift: with a same-dtype on-policy first step this

@@ -68,7 +68,7 @@ class TokenGRPO(GRPO):
         ratio, tis_keep = apply_truncated_importance_weight(raw_ratio, pc)
         rs_keep = apply_rejection_sample_mask(new_lp - old_lp, pc, mask=mask)
         eff_mask = combine_keep_masks(mask, tis_keep, rs_keep)
-        clipped_ratio = torch.clamp(ratio, 1.0 - cfg.eps_clip, 1.0 + cfg.eps_clip)
+        clipped_ratio = torch.clamp(ratio, 1.0 - cfg.clip_ratio, 1.0 + cfg.clip_ratio)
         unclipped_loss = -adv_bL * ratio
         clipped_loss = -adv_bL * clipped_ratio
         per_token_loss = torch.maximum(unclipped_loss, clipped_loss)
@@ -99,7 +99,7 @@ class TokenGRPO(GRPO):
             valid = mask > 0
             if valid.any():
                 ratio_valid = ratio[valid]
-                clip_fraction = (torch.abs(ratio_valid - 1.0) > cfg.eps_clip).float().mean().item()
+                clip_fraction = (torch.abs(ratio_valid - 1.0) > cfg.clip_ratio).float().mean().item()
                 approx_kl = 0.5 * ((new_lp - old_lp) ** 2)[valid].mean().item()
                 if tis_keep is None:
                     tis_clip_fraction = (

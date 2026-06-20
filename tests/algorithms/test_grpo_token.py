@@ -96,7 +96,7 @@ class TestPerTokenLoss:
         old_lp = torch.zeros(2, 4)
         new_lp = old_lp + 0.1     # log-prob went up
         adv = torch.ones(2)        # positive advantage
-        algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=0.0, eps_clip=1.0))  # disable clip
+        algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=0.0, clip_ratio=1.0))  # disable clip
         loss, _ = algo.compute_loss(_inputs(new_lp, old_lp, adv))
         # ratio = exp(0.1) > 1; -adv * ratio < -1
         assert loss.item() < -1.0
@@ -106,7 +106,7 @@ class TestPerTokenLoss:
         old_lp = torch.zeros(1, 4)
         new_lp = old_lp + 5.0     # huge ratio
         adv = torch.ones(1)
-        algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=0.0, eps_clip=0.2))
+        algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=0.0, clip_ratio=0.2))
         _loss, metrics = algo.compute_loss(_inputs(new_lp, old_lp, adv))
         assert metrics.clip_fraction == 1.0   # all 4 tokens clipped
 
@@ -136,7 +136,7 @@ class TestMask:
         adv = torch.ones(1)
         mask_full = torch.ones_like(new_lp)
         mask_half = torch.tensor([[0.0, 1.0, 1.0, 0.0]])
-        algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=0.0, eps_clip=10.0))
+        algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=0.0, clip_ratio=10.0))
         l_full, _ = algo.compute_loss(_inputs(new_lp, old_lp, adv, mask=mask_full))
         l_half, _ = algo.compute_loss(_inputs(new_lp, old_lp, adv, mask=mask_half))
         # half mask only counts the +0.5 tokens → mean is more negative
@@ -169,10 +169,10 @@ class TestTokenTIS:
         old_lp = torch.zeros(1, 4)
         new_lp = old_lp + 0.3
         adv = torch.ones(1)
-        base, _ = TokenGRPO(TokenGRPOConfig(init_kl_coef=0.0, eps_clip=1.0)).compute_loss(
+        base, _ = TokenGRPO(TokenGRPOConfig(init_kl_coef=0.0, clip_ratio=1.0)).compute_loss(
             _inputs(new_lp, old_lp, adv),
         )
-        off_algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=0.0, eps_clip=1.0))
+        off_algo = TokenGRPO(TokenGRPOConfig(init_kl_coef=0.0, clip_ratio=1.0))
         off_algo.precision_correction = PrecisionCorrectionConfig(tis_mode="off")
         off, m = off_algo.compute_loss(_inputs(new_lp, old_lp, adv))
         assert off.item() == pytest.approx(base.item())

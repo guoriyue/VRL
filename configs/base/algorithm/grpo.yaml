@@ -1,7 +1,7 @@
 # GRPO algorithm hyper-parameters
 algorithm:
   kind: grpo
-  eps_clip: 1.0e-4
+  clip_ratio: 1.0e-4
   init_kl_coef: 0.0
   eps: 1.0e-8                   # numerical stability for advantage division
   adv_clip_max: 5.0

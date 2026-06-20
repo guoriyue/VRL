@@ -128,15 +128,15 @@ class TestGRPOClippedSurrogate:
         assert metrics.approx_kl == pytest.approx(0.0)
 
     def test_positive_advantage_uses_clipped_ratio_when_ratio_high(self) -> None:
-        """Positive advantage + ratio above 1+eps_clip → loss uses clipped ratio.
+        """Positive advantage + ratio above 1+clip_ratio → loss uses clipped ratio.
 
         ``maximum(-adv*ratio, -adv*clipped)`` with adv>0 picks the larger
         (less negative) term, i.e. the clipped one. So the surrogate is
-        ``-adv*(1+eps_clip)``, not ``-adv*ratio``.
+        ``-adv*(1+clip_ratio)``, not ``-adv*ratio``.
         """
-        eps_clip = 0.2
-        grpo = GRPO(GRPOConfig(init_kl_coef=0.0, eps_clip=eps_clip))
-        log_ratio = 1.0  # ratio = e ≈ 2.718, well above 1+eps_clip
+        clip_ratio = 0.2
+        grpo = GRPO(GRPOConfig(init_kl_coef=0.0, clip_ratio=clip_ratio))
+        log_ratio = 1.0  # ratio = e ≈ 2.718, well above 1+clip_ratio
         signals = _flow_signals(
             log_prob=torch.full((1,), log_ratio),
             old_log_prob=torch.zeros(1),
@@ -145,18 +145,18 @@ class TestGRPOClippedSurrogate:
         loss, metrics = grpo.compute_loss(
             AlgorithmInput(signals=signals, advantages=adv),
         )
-        assert loss.item() == pytest.approx(-adv.item() * (1.0 + eps_clip))
+        assert loss.item() == pytest.approx(-adv.item() * (1.0 + clip_ratio))
         assert metrics.clip_fraction == pytest.approx(1.0)
 
     def test_negative_advantage_uses_unclipped_ratio_when_ratio_high(self) -> None:
-        """Negative advantage + ratio above 1+eps_clip → unclipped term wins.
+        """Negative advantage + ratio above 1+clip_ratio → unclipped term wins.
 
         With adv<0, ``-adv*ratio`` is positive and larger than
         ``-adv*clipped``; ``maximum`` selects the unclipped surrogate. This is
         the side where a naive ``min``/``max`` mix-up silently flips training.
         """
-        eps_clip = 0.2
-        grpo = GRPO(GRPOConfig(init_kl_coef=0.0, eps_clip=eps_clip))
+        clip_ratio = 0.2
+        grpo = GRPO(GRPOConfig(init_kl_coef=0.0, clip_ratio=clip_ratio))
         log_ratio = 1.0
         signals = _flow_signals(
             log_prob=torch.full((1,), log_ratio),
@@ -170,9 +170,9 @@ class TestGRPOClippedSurrogate:
         assert loss.item() == pytest.approx(-adv.item() * ratio)
 
     def test_clip_fraction_and_approx_kl_match_formula(self) -> None:
-        """clip_fraction = mean(|ratio-1|>eps_clip); approx_kl = 0.5*mean(d^2)."""
-        eps_clip = 0.2
-        grpo = GRPO(GRPOConfig(init_kl_coef=0.0, eps_clip=eps_clip))
+        """clip_fraction = mean(|ratio-1|>clip_ratio); approx_kl = 0.5*mean(d^2)."""
+        clip_ratio = 0.2
+        grpo = GRPO(GRPOConfig(init_kl_coef=0.0, clip_ratio=clip_ratio))
         # One sample drifts hard (clipped), one stays put (not clipped).
         log_prob = torch.tensor([1.0, 0.0])
         old_log_prob = torch.zeros(2)
@@ -181,7 +181,7 @@ class TestGRPOClippedSurrogate:
             AlgorithmInput(signals=signals, advantages=torch.ones(2)),
         )
         ratio = torch.exp(log_prob - old_log_prob)
-        expected_clip = torch.mean((torch.abs(ratio - 1.0) > eps_clip).float()).item()
+        expected_clip = torch.mean((torch.abs(ratio - 1.0) > clip_ratio).float()).item()
         expected_kl = 0.5 * torch.mean((log_prob - old_log_prob) ** 2).item()
         assert metrics.clip_fraction == pytest.approx(expected_clip)
         assert metrics.clip_fraction == pytest.approx(0.5)
@@ -349,7 +349,7 @@ class TestGRPORejectSampling:
         loss, metrics = grpo.compute_loss(
             AlgorithmInput(signals=signals, advantages=torch.tensor([5.0, 2.0, 1.0])),
         )
-        # s1: ratio 1.5 clipped to 1.2 at eps_clip 0.2 → max(-2*1.5, -2*1.2) = -2.4
+        # s1: ratio 1.5 clipped to 1.2 at clip_ratio 0.2 → max(-2*1.5, -2*1.2) = -2.4
         # s2: ratio 1 → -1.0 ; mean over the 2 kept = -1.7
         assert loss.item() == pytest.approx(-1.7)
         assert metrics.tis_clip_fraction == pytest.approx(1 / 3)

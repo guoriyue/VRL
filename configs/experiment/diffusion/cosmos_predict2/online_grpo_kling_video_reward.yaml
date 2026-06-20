@@ -27,7 +27,7 @@ actor:
   ppo_epochs: 1
 
 algorithm:
-  eps_clip: 1.0e-3
+  clip_ratio: 1.0e-3
   init_kl_coef: 0.0
 
 rollout:

@@ -22,10 +22,10 @@ defaults:
   - /dataset/drawbench_train_192
 
 algorithm:
-  # The base grpo.yaml ships eps_clip=1e-4 — a near-zero trust region that
+  # The base grpo.yaml ships clip_ratio=1e-4 — a near-zero trust region that
   # freezes the policy. The proven non-R1 AR baseline (online_grpo_ocr) uses
   # 0.2; match it so updates are real. init_kl_coef mirrors that baseline.
-  eps_clip: 0.2
+  clip_ratio: 0.2
   init_kl_coef: 0.01
 
 actor:
