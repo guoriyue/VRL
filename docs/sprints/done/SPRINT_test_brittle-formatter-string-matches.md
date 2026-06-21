@@ -1,6 +1,6 @@
-# SPRINT: 测试断言诊断 formatter 的渲染子串（去脆化）（planned）
+# SPRINT: 测试断言诊断 formatter 的渲染子串（去脆化）（done）
 
-状态：未开始（2026-06-21）。
+状态：done（落地 commit `3f6fe05`；2026-06-21 归档）。
 范围：把三处「冻结渲染串」的 formatter/log 测试改成「从已解析对象派生」的断言。涉及两个测试文件：`tests/ray/test_resources.py`（`format_distributed_resource_plan` 的 2 个断言块）、`tests/generation/test_capabilities.py`（`profiler_label` / `profiler_labels` 的 fallback 断言）。优先级 low —— 这些测试当前全绿，只是耦合了人类可读输出的标点/键名/前缀模板，会在任何 cosmetic 重排版时假性失败。**不**删除这些 formatter 单测本身（它们覆盖了真实的渲染路径），只把「冻结串匹配」换成「从 `Resolved*` 字段 / `f"engine.{name}"` 派生 expected」。
 
 > 本 sprint 承接同批 test-brittleness 审计中「brittle_string_match」一类（与 frozen_snapshot、duplicated_constant 分列不同 sprint）。判定标准：被断言的渲染值，其底层结构化值是否已在别处（或同对象上）可派生 —— 若可派生，冻结串就是 bug。
