@@ -68,12 +68,7 @@ class _DeterministicARContractRunner:
             )
         )
         return ARStepOutput(
-            result=ARStepResult(
-                sequence_ids=batch.sequence_ids,
-                positions=batch.positions,
-                token=[0 for _ in batch.row_indices],
-                log_prob=[0.0 for _ in batch.row_indices],
-            ),
+            result=ARStepResult(),
             updated_cache_lanes={"kv": kv + 10.0},
             updated_row_lanes={"hidden": hidden + 1.0},
         )

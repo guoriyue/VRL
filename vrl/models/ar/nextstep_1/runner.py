@@ -147,18 +147,13 @@ class NextStep1ARModelRunner:
         *,
         generator: torch.Generator | None = None,
     ) -> ARStepOutput:
-        token, log_prob, replay_noise, cache_updates, row_updates = self._sample_ar_step(
+        cache_updates, row_updates = self._sample_ar_step(
             state,
             batch,
             generator=generator,
         )
         return ARStepOutput(
             result=ARStepResult(
-                sequence_ids=batch.sequence_ids,
-                positions=batch.positions,
-                token=token,
-                log_prob=log_prob.float(),
-                replay_extras={"saved_noise": replay_noise},
                 debug_counters={
                     "ar_kv_cache_enabled": True,
                     "ar_paged_attention_enabled": state.paged_cond_states is not None,
@@ -183,13 +178,7 @@ class NextStep1ARModelRunner:
         state: NextStep1ARState,
         batch: ARStepBatch,
         generator: torch.Generator | None = None,
-    ) -> tuple[
-        torch.Tensor,
-        torch.Tensor,
-        torch.Tensor,
-        dict[str, Any],
-        dict[str, Any],
-    ]:
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         row_indices = batch.row_indices
         if not row_indices:
             raise ValueError("row_indices must be non-empty")
@@ -234,7 +223,7 @@ class NextStep1ARModelRunner:
             token=token,
         )
         state.decode_tokens += batch_size
-        return token, log_prob, replay_noise, cache_updates, row_updates
+        return cache_updates, row_updates
 
     def _prefill_paged(
         self,

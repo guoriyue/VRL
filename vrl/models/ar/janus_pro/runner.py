@@ -132,13 +132,9 @@ class JanusProARModelRunner:
         generator: torch.Generator | None = None,
     ) -> ARStepOutput:
         del generator
-        token, log_prob, cache_updates, row_updates = self._sample_ar_step(state, batch)
+        cache_updates, row_updates = self._sample_ar_step(state, batch)
         return ARStepOutput(
             result=ARStepResult(
-                sequence_ids=batch.sequence_ids,
-                positions=batch.positions,
-                token=token,
-                log_prob=log_prob,
                 debug_counters={
                     "ar_kv_cache_enabled": True,
                     "ar_paged_attention_enabled": state.paged_cond_states is not None,
@@ -176,7 +172,7 @@ class JanusProARModelRunner:
         self,
         state: JanusProARState,
         batch: ARStepBatch,
-    ) -> tuple[torch.Tensor, torch.Tensor, dict[str, Any], dict[str, Any]]:
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         self._validate_ar_step_batch(state, batch)
         return self._sample_ar_step_kv(state, batch)
 
@@ -199,7 +195,7 @@ class JanusProARModelRunner:
         self,
         state: JanusProARState,
         batch: ARStepBatch,
-    ) -> tuple[torch.Tensor, torch.Tensor, dict[str, Any], dict[str, Any]]:
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         row_indices = batch.row_indices
         position = batch.position
         batch_size = len(row_indices)
@@ -221,7 +217,7 @@ class JanusProARModelRunner:
             )
 
         state.decode_tokens += batch_size
-        return sampled, lp, cache_updates, row_updates
+        return cache_updates, row_updates
 
     def _sample_cfg_image_token(
         self,
