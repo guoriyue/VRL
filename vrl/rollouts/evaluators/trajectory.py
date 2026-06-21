@@ -131,7 +131,6 @@ class TrajectorySignalBuilder:
 
         return SegmentSignal(
             name=name,
-            segment=name,
             axis=resolved_axis,
             axes=self._axes_from_value(resolved_old, axis=resolved_axis),
             distribution=segment.distribution if segment is not None else distribution,

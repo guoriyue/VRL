@@ -24,7 +24,6 @@ def _segment_signal(
         mask = torch.ones_like(new_lp)
     return SegmentSignal(
         name=name,
-        segment=name,
         axis="token",
         axes=("sample", "token"),
         distribution="categorical",

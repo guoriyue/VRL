@@ -77,7 +77,6 @@ def _signals(log_prob: torch.Tensor, old_log_prob: torch.Tensor) -> TrajectorySi
         segments={
             "denoise": SegmentSignal(
                 name="denoise",
-                segment="denoise",
                 axis="timestep",
                 axes=("sample",),
                 distribution="flow_matching",

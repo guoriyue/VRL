@@ -11,7 +11,6 @@ class SegmentSignal:
     """Trajectory-native training signals for one logical segment."""
 
     name: str
-    segment: str
     axis: str
     axes: tuple[str, ...]
     distribution: str
@@ -48,9 +47,9 @@ class TrajectorySignalBatch:
                 raise TypeError(f"trajectory signal {name!r} must be a SegmentSignal")
             if not segment.name:
                 raise ValueError(f"trajectory signal {name!r} must have a non-empty name")
-            if segment.segment != name:
+            if segment.name != name:
                 raise ValueError(
-                    f"trajectory signal key {name!r} must match segment={segment.segment!r}",
+                    f"trajectory signal key {name!r} must match segment name {segment.name!r}",
                 )
             if not segment.axis:
                 raise ValueError(f"trajectory signal {name!r} must have a non-empty axis")

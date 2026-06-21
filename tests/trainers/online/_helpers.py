@@ -22,7 +22,6 @@ def _trajectory_signals(batch, log_prob, timestep_idx: int = 0):
         segments={
             "default": SegmentSignal(
                 name="default",
-                segment="default",
                 axis="timestep",
                 axes=axes,
                 distribution="flow_matching",
