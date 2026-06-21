@@ -55,7 +55,6 @@ class RolloutCollector:
         task: str,
         request_builder: Any,
         reward_scorer: RewardScorer,
-        default_group_size: int = 1,
         runtime: GenerationRuntime | None = None,
         lifecycle: RayLifecyclePlan | None = None,
     ) -> None:
@@ -65,7 +64,6 @@ class RolloutCollector:
         self.task = task
         self.request_builder = request_builder
         self.reward_scorer = reward_scorer
-        self.default_group_size = max(1, int(default_group_size))
         self._runtime = runtime
         # Topology-derived release policy (vrl/ray/resources.py). None means no
         # shared GPU, so rollout never releases before reward. Read here instead
@@ -120,7 +118,9 @@ class RolloutCollector:
         score_rollouts().
         """
 
-        group_size = int(kwargs.get("group_size", self.default_group_size))
+        if "group_size" not in kwargs:
+            raise TypeError(f"{self.family}/{self.task} collect_unscored requires a group_size kwarg")
+        group_size = int(kwargs["group_size"])
         collector_request = self.request_builder.build(prompts, group_size, dict(kwargs))
 
         profile = os.environ.get("VRL_PROFILE_COLLECT") == "1"
@@ -257,9 +257,6 @@ def build_rollout_collector(
             metadata_key=collector.metadata_key,
         ),
         reward_scorer=RewardScorer(reward_fn),
-        default_group_size=(
-            1 if collector.kind == "diffusion" else int(config.require("n_samples_per_prompt"))
-        ),
         runtime=runtime,
         lifecycle=lifecycle,
     )
