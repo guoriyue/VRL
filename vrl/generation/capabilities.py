@@ -13,8 +13,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
-from vrl.utils.validation import require_string_tuple
-
 TrajectoryKind = Literal[
     "diffusion",
     "ar_discrete",
@@ -69,7 +67,6 @@ class ExecutionStageCapability:
     cache_read: bool = False
     cache_write: bool = False
     profiler_name: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -87,7 +84,6 @@ class ExecutionStageCapability:
             "cache_read": self.cache_read,
             "cache_write": self.cache_write,
             "profiler_name": self.profiler_name,
-            "metadata": dict(self.metadata),
         }
 
     @property
@@ -108,7 +104,6 @@ class ExecutionStageCapability:
             cache_read=bool(value.get("cache_read", False)),
             cache_write=bool(value.get("cache_write", False)),
             profiler_name=None if value.get("profiler_name") is None else str(value.get("profiler_name")),
-            metadata=dict(value.get("metadata") or {}),
         )
 
 
@@ -121,14 +116,9 @@ class FamilyCapability:
     trajectory_kind: TrajectoryKind
     expected_axes: tuple[AxisCapability, ...]
     execution_stages: tuple[ExecutionStageCapability, ...]
-    trainable_segments: tuple[str, ...] = ()
-    reward_views: tuple[str, ...] = ()
-    supports_batched_requests: bool = True
     supports_chunked_execution: bool = True
-    supports_batched_forward: bool = True
     supports_reference_conditioning: bool = False
     supports_torch_compile: bool = False
-    cache_kinds: tuple[str, ...] = ()
     default_max_samples_per_chunk: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -141,9 +131,6 @@ class FamilyCapability:
             raise ValueError("FamilyCapability.expected_axes must be non-empty")
         if not self.execution_stages:
             raise ValueError("FamilyCapability.execution_stages must be non-empty")
-        require_string_tuple("FamilyCapability.trainable_segments", self.trainable_segments)
-        require_string_tuple("FamilyCapability.reward_views", self.reward_views)
-        require_string_tuple("FamilyCapability.cache_kinds", self.cache_kinds)
         if (
             self.default_max_samples_per_chunk is not None
             and self.default_max_samples_per_chunk < 1
@@ -175,17 +162,13 @@ class FamilyCapability:
             return self
         updates: dict[str, Any] = {}
         bool_fields = (
-            "supports_batched_requests",
             "supports_chunked_execution",
-            "supports_batched_forward",
             "supports_reference_conditioning",
             "supports_torch_compile",
         )
         for field_name in bool_fields:
             if field_name in runtime_caps:
                 updates[field_name] = bool(runtime_caps[field_name])
-        if "cache_kinds" in runtime_caps:
-            updates["cache_kinds"] = tuple(str(item) for item in runtime_caps["cache_kinds"])
         if "default_max_samples_per_chunk" in runtime_caps:
             value = runtime_caps["default_max_samples_per_chunk"]
             updates["default_max_samples_per_chunk"] = (
@@ -199,8 +182,6 @@ class FamilyCapability:
                         "trajectory_kind": dynamic.trajectory_kind,
                         "expected_axes": dynamic.expected_axes,
                         "execution_stages": dynamic.execution_stages,
-                        "trainable_segments": dynamic.trainable_segments,
-                        "reward_views": dynamic.reward_views,
                     }
                 )
         if not updates:
@@ -214,14 +195,9 @@ class FamilyCapability:
             "trajectory_kind": self.trajectory_kind,
             "expected_axes": [axis.to_dict() for axis in self.expected_axes],
             "execution_stages": [stage.to_dict() for stage in self.execution_stages],
-            "trainable_segments": list(self.trainable_segments),
-            "reward_views": list(self.reward_views),
-            "supports_batched_requests": self.supports_batched_requests,
             "supports_chunked_execution": self.supports_chunked_execution,
-            "supports_batched_forward": self.supports_batched_forward,
             "supports_reference_conditioning": self.supports_reference_conditioning,
             "supports_torch_compile": self.supports_torch_compile,
-            "cache_kinds": list(self.cache_kinds),
             "default_max_samples_per_chunk": self.default_max_samples_per_chunk,
             "metadata": dict(self.metadata),
         }
@@ -245,16 +221,11 @@ class FamilyCapability:
                 ExecutionStageCapability.from_value(stage)
                 for stage in value.get("execution_stages", ())
             ),
-            trainable_segments=tuple(str(item) for item in value.get("trainable_segments", ())),
-            reward_views=tuple(str(item) for item in value.get("reward_views", ())),
-            supports_batched_requests=bool(value.get("supports_batched_requests", True)),
             supports_chunked_execution=bool(value.get("supports_chunked_execution", True)),
-            supports_batched_forward=bool(value.get("supports_batched_forward", True)),
             supports_reference_conditioning=bool(
                 value.get("supports_reference_conditioning", False)
             ),
             supports_torch_compile=bool(value.get("supports_torch_compile", False)),
-            cache_kinds=tuple(str(item) for item in value.get("cache_kinds", ())),
             default_max_samples_per_chunk=None if value.get("default_max_samples_per_chunk") is None else int(value.get("default_max_samples_per_chunk")),
             metadata=dict(value.get("metadata") or {}),
         )

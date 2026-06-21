@@ -51,11 +51,8 @@ def diffusion_family_capability(
                 profiler_name="collector.reward_score",
             ),
         ),
-        trainable_segments=(trainable_segment,),
-        reward_views=("image",),
         supports_reference_conditioning=supports_reference_conditioning,
         supports_torch_compile=True,
-        cache_kinds=("prompt_embed_cache", "latent_cache"),
     )
 
 

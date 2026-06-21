@@ -299,7 +299,6 @@ class EnginePlanner:
                     cache_read=stage.cache_read,
                     cache_write=stage.cache_write,
                     profiler_name=stage.profiler_label,
-                    metadata=dict(stage.metadata),
                 )
             )
             if stage.cache_read:

@@ -48,9 +48,6 @@ def ar_discrete_family_capability(
                 profiler_name="collector.reward_score",
             ),
         ),
-        trainable_segments=trainable_segments,
-        reward_views=("image",),
-        cache_kinds=("kv_cache", "prompt_embed_cache", "token_buffer"),
     )
 
 
@@ -89,9 +86,6 @@ def ar_continuous_family_capability(
                 profiler_name="collector.reward_score",
             ),
         ),
-        trainable_segments=(trainable_segment,),
-        reward_views=("image",),
-        cache_kinds=("prompt_embed_cache", "token_buffer"),
     )
 
 

@@ -15,7 +15,6 @@ def test_execution_stage_capability_round_trip_preserves_default_profiler_name()
         name="denoise_step",
         segment="denoise",
         axis="denoise",
-        metadata={"phase": "sample"},
     )
 
     data = stage.to_dict()
@@ -48,9 +47,6 @@ def test_family_capability_round_trip_preserves_stage_profiler_names() -> None:
                 profiler_name="generation.decode_latents",
             ),
         ),
-        trainable_segments=("denoise",),
-        reward_views=("video",),
-        cache_kinds=("kv",),
         metadata={"source": "unit"},
     )
 
