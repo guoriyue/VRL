@@ -190,14 +190,12 @@ class ContinuousRolloutProducer:
 
     def _submit(self, slot: int, prompt: Any) -> None:
         version = self.lifecycle.current_policy_version()
-        submitted_at = time.time()
         task = asyncio.create_task(
             self._collect_group(
                 slot=slot,
                 prompt=prompt,
                 version=version,
                 prompt_set_id=self._prompt_set_id,
-                submitted_at=submitted_at,
             ),
         )
         self._inflight.add(task)
@@ -211,7 +209,6 @@ class ContinuousRolloutProducer:
         prompt: Any,
         version: int | None,
         prompt_set_id: int,
-        submitted_at: float,
     ) -> dict[str, Any]:
         stats = RolloutStats()
         batches = await collect_prompt_batches(
@@ -226,7 +223,6 @@ class ContinuousRolloutProducer:
             "slot": slot,
             "version": version,
             "prompt_set_id": prompt_set_id,
-            "submitted_at": submitted_at,
             "batches": batches,
             "stats": stats,
         }
@@ -304,7 +300,6 @@ class ContinuousRolloutProducer:
                 rollout_policy_version=result["version"],
                 prompt_set_id=int(result["prompt_set_id"]),
                 batch=stored,
-                submitted_at=float(result["submitted_at"]),
                 completed_at=completed_at,
                 nbytes=estimate_batch_bytes(stored),
                 # Stats cover the whole collect call; attach them to the first

@@ -79,7 +79,6 @@ class ReplayResult:
     """Current replay result for a rollout batch."""
 
     segments: dict[str, ReplaySegmentResult]
-    context: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.segments:

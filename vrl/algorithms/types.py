@@ -35,7 +35,6 @@ class TrainStepMetrics:
     grad_norm: float = 0.0
     adv_saturation: float = 0.0
     adv_zero_rate: float = 0.0
-    lr: float = 0.0
     # Per-prompt grouping diagnostics, derived from the batch group_ids.
     group_size: float = 0.0          # avg samples per unique prompt in batch
     trained_prompt_num: int = 0      # unique prompts in this batch

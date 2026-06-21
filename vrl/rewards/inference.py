@@ -161,7 +161,6 @@ class RewardInferenceResult(_ScoreSelection):
     inference_ms: float | None = None
     worker_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
-    raw_response: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
 
     def __post_init__(self) -> None:

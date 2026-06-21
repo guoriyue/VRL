@@ -57,7 +57,6 @@ class ContinuousRolloutItem:
     # let an iteration mix (or train) the previous set's ready items. The
     # scheduler selects only items matching the current prompt set.
     prompt_set_id: int = 0
-    submitted_at: float = 0.0
     completed_at: float = field(default_factory=time.time)
     nbytes: int = 0
     # Per-item typed stats (collect.engine_generate / reward_score / batch_build
