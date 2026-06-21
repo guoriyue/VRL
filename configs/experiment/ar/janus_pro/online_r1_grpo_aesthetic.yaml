@@ -31,7 +31,7 @@ actor:
     lr: 1.0e-4   # LoRA needs ~1e-4; the paper's 1e-5 is for full-finetune.
 
 trainer:
-  entrypoint: vrl.scripts.ar.janus_pro.train:train_janus_pro_r1_ocr_grpo
+  entrypoint: vrl.scripts.ar.janus_pro.train:train_janus_pro_r1_grpo
   output_dir: outputs/janus_pro_1b_r1_aesthetic_grpo
   total_epochs: 80
   save_freq: 10

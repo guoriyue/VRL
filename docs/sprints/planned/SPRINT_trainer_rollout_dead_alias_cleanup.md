@@ -1,6 +1,6 @@
 # SPRINT: Prune trainer/rollout/trajectory dead aliases and duplicated single-source-of-truth logic (planned)
 
-状态：部分落地（2026-06-20）。已完成 #1 #5 #6 与 #4 的一半；#8 #9 经核实为「活代码的一致性重命名」而非死代码删除，暂缓；#2 #3 #7 未动。
+状态：部分落地（2026-06-20）。已完成 #1 #5 #6 #9 与 #4 的一半；#8 经核实为「活结构轴的一致性重命名」而非死代码删除，暂缓；#2 #3 #7 未动。
 范围：清理 trainer / rollout / trajectory / scripts 四层里残留的死别名（legacy alias、back-compat shim）以及重复实现的“单一真相”逻辑（同一概念多处复制、同一标识符存三份）。不动外部 wire 协议，不重做精度命名（已由 [[SPRINT_precision_naming_unification]] 覆盖）。
 
 ## 落地状态（2026-06-20，分支 sprint/trainer-rollout-dead-alias）
@@ -9,11 +9,11 @@
 - ✅ **#5 SegmentSignal 三份标识符** → 删 `segment` 字段，`__post_init__` 改校验 `name == dict key`（7 个构造点 `name==segment`，等价）。
 - ✅ **#6 phase_times back-compat 属性** → 删 `RolloutIteration` / `ContinuousRolloutItem` 两处属性，~7 处测试改读 `stats.as_phase_dict()`。
 - ◐ **#4 每-prompt 采样数（部分）** → 删 vestigial `default_group_size`（对 diffusion 默认值是错的且从不被用），并把 `group_size` 提为 `collect` / `collect_unscored` 的 **keyword-only 必填参数**（不再藏在 `**kwargs`）。**尚未**做 `samples_per_prompt` 的全链路命名收敛。
+- ✅ **#9 AR 入口去 `ocr` 词** → `train_janus_pro_ocr_grpo` / `train_janus_pro_r1_ocr_grpo` / `train_nextstep_1_ocr_grpo` → `train_*_grpo`（函数名 + `__all__` + docstring），同步迁移 4 个 experiment config 的 `trainer.entrypoint`，**不留旧别名**（repo cleanup，直接迁移 shipped config）。run 输出目录名 `outputs/*_ocr_grpo` 保持不动（描述真实 OCR 运行，改了会孤立已有 run）。lint + 142 tests passed。
 - ⏸ **#8 轴名 `"timestep"`→`"denoise"`** → **不是死代码**，是结构轴的一致性重命名，暂缓（按用户决定）。
-- ⏸ **#9 AR 入口去 `ocr` 词** → **不是死代码**，`train_*_ocr_grpo` 被 4 个 experiment config 的 `trainer.entrypoint` 引用，仅命名误导，暂缓（按用户决定）。
 - ☐ **#2** `_train_timestep_indices` 重复、**#3** DPO legacy `step` key、**#7** `role_tensor` 双份 → 未动。
 
-> ⚠️ 下一轮接手注意：#8 / #9 是**重命名**，不是删除。轴 `"timestep"` 是 trajectory schema 的活结构轴；`train_*_ocr_grpo` 是被 config 引用的活 family 适配器。误删会破坏配置解析与生成。
+> ⚠️ 下一轮接手注意：#8 是**重命名**，不是删除。轴 `"timestep"` 是 trajectory schema 的活结构轴，误删会破坏 trajectory 装配。
 
 ## 0. Core Decision（先看这一段）
 

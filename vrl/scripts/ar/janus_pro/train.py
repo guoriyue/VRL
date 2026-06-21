@@ -13,14 +13,14 @@ from vrl.scripts.common.online import (
 from vrl.scripts.common.types import OnlineRecipeDefinition
 
 
-async def train_janus_pro_ocr_grpo(cfg: DictConfig) -> None:
-    """Run Janus-Pro OCR token GRPO."""
+async def train_janus_pro_grpo(cfg: DictConfig) -> None:
+    """Run Janus-Pro token GRPO (reward chosen by config, not this entrypoint)."""
 
     await _run_janus_recipe(cfg, family="janus_pro")
 
 
-async def train_janus_pro_r1_ocr_grpo(cfg: DictConfig) -> None:
-    """Run Janus-Pro-R1 multi-segment OCR GRPO."""
+async def train_janus_pro_r1_grpo(cfg: DictConfig) -> None:
+    """Run Janus-Pro-R1 multi-segment token GRPO (reward chosen by config)."""
 
     await _run_janus_recipe(cfg, family="janus_pro_r1")
 
@@ -78,6 +78,6 @@ def _build_replay_bundle(
 
 
 __all__ = [
-    "train_janus_pro_ocr_grpo",
-    "train_janus_pro_r1_ocr_grpo",
+    "train_janus_pro_grpo",
+    "train_janus_pro_r1_grpo",
 ]

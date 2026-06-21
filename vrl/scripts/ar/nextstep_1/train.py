@@ -13,8 +13,8 @@ from vrl.scripts.common.online import (
 from vrl.scripts.common.types import OnlineRecipeDefinition
 
 
-async def train_nextstep_1_ocr_grpo(cfg: DictConfig) -> None:
-    """Run NextStep-1 OCR GRPO through the common online recipe."""
+async def train_nextstep_1_grpo(cfg: DictConfig) -> None:
+    """Run NextStep-1 token GRPO through the common online recipe (reward via config)."""
 
     await run_online_recipe(
         cfg,
@@ -49,4 +49,4 @@ def _build_replay_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any
     )
 
 
-__all__ = ["train_nextstep_1_ocr_grpo"]
+__all__ = ["train_nextstep_1_grpo"]
