@@ -46,7 +46,6 @@ class GenEvalRewardModel:
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
         cfg = dict(worker_config)
         self.device = str(cfg.get("device", "cuda"))
-        self.evaluator = str(cfg.get("evaluator", "import_path"))
         self.import_path = str(cfg.get("import_path", ""))
         self.debug_dir = str(cfg.get("debug_dir", ""))
         self.artifact_dir = str(cfg.get("artifact_dir", ""))
@@ -58,9 +57,8 @@ class GenEvalRewardModel:
         artifact: RewardInferenceArtifact,
         request: RewardInferenceRequest,
     ) -> dict[str, float]:
-        if self.evaluator != "import_path":
-            raise ValueError(f"unsupported GenEval evaluator: {self.evaluator!r}")
-
+        # Backend is decided by what is wired, not a knob: use the injected
+        # scorer if present, otherwise resolve the import_path callable.
         scorer = self._scorer or self._load_import_path()
         result = scorer(
             prompt=artifact.prompt,
@@ -78,7 +76,8 @@ class GenEvalRewardModel:
     def _load_import_path(self) -> Callable[..., Any]:
         if not self.import_path:
             raise RuntimeError(
-                "GenEvalReward evaluator='import_path' requires reward.kwargs.geneval.import_path",
+                "GenEvalReward requires an injected scorer or "
+                "reward.kwargs.geneval.import_path",
             )
         module_name, sep, attr_name = self.import_path.partition(":")
         if not sep or not module_name or not attr_name:

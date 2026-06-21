@@ -11,6 +11,10 @@ Do not treat every video reward's default score as an orthogonal training
 signal. In particular, Kling VideoReward's `overall_reward` is
 `VQ + MQ + TA`, so it already includes prompt/text alignment.
 
+The aggregate score key differs per reward: it is `overall_reward` in Kling
+VideoReward and `overall` in VideoCon-Physics (each reward keeps its own
+deliberate vocabulary — see the per-reward score-key table below).
+
 Use these conventions for compound video recipes:
 
 | Scenario | Component | Score key | Reason |

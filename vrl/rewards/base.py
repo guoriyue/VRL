@@ -206,10 +206,19 @@ class RewardFunction:
                 has_model_factory = bool(
                     str(worker_config.get("model_factory", "")).strip(),
                 )
+                # Normalize the model-id key ONCE here so the disk loaders
+                # (kling/videocon) read only worker_config["reward_model_name"].
+                # Precedence: an explicit worker_config.reward_model_name wins;
+                # otherwise fold worker_config.model_name (deprecated alias) or a
+                # top-level reward_name that looks like a HF repo (contains "/")
+                # — a bare reward_name stays a logical tag, not a model id.
+                reward_name_repo = (
+                    resolved_reward_name if "/" in resolved_reward_name else ""
+                )
                 reward_model_name = str(
                     worker_config.get("reward_model_name")
-                    or worker_config.get("model_name")
-                    or resolved_reward_name
+                    or worker_config.get("model_name")  # deprecated alias
+                    or reward_name_repo
                     or "",
                 ).strip()
                 model_path = str(worker_config.get("model_path", "")).strip()

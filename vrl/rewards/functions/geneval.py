@@ -29,24 +29,25 @@ class GenEvalReward(RewardFunction):
     def __init__(
         self,
         device: str = "cuda",
-        evaluator: str = "import_path",
         import_path: str = "",
         timeout_s: float = 120.0,
         debug_dir: str = "",
         artifact_dir: str = "",
         scorer: Callable[..., Any] | None = None,
+        **_unused: Any,
     ) -> None:
+        # ``_unused`` absorbs stray reward.kwargs keys (e.g. a legacy
+        # ``evaluator: import_path``); the backend is decided by whether a
+        # scorer is injected, otherwise the import_path — there is no knob.
         self.device = device
-        self.evaluator = evaluator
         self.import_path = import_path
         self.timeout_s = float(timeout_s)
         self.artifact_dir = artifact_dir
-        # Build eagerly so an injected scorer and construction-time validation
-        # (evaluator/import_path) are wired before the first score call.
+        # Build eagerly so an injected scorer and the import_path are wired
+        # before the first score call.
         model = GenEvalRewardModel(
             {
                 "device": device,
-                "evaluator": evaluator,
                 "import_path": import_path,
                 "debug_dir": debug_dir,
                 "artifact_dir": artifact_dir,

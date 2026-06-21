@@ -16,7 +16,7 @@ reward:
   kwargs:
     kling_video_reward:
       execution: pool
-      reward_name: KlingTeam/VideoReward@main
+      reward_name: kling_video_reward   # logical tag (request label)
       score_key: overall_reward
       media_type: video
       artifact_format: mp4   # tensor (.pt) is unreadable by decord; every working run uses mp4
@@ -25,6 +25,7 @@ reward:
       # Omit model_path to resolve reward_model_name from the local HF
       # cache; set worker_config.model_path to load a local checkpoint dir.
       worker_config:
+        reward_model_name: KlingTeam/VideoReward@main   # which HF checkpoint to load
         dtype: bfloat16
         local_files_only: true
         # Upscale low-res rollout videos to the reward model's training frame

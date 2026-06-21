@@ -301,3 +301,21 @@ def test_kling_video_reward_remaps_qwen2vl_checkpoint_keys() -> None:
     assert _remap_qwen2vl_key(
         "base_model.model.lm_head.weight",
     ) == "base_model.model.lm_head.weight"
+
+
+def test_kling_normalize_scores_emits_only_public_keys() -> None:
+    """_normalize_scores returns only the public aliases, never raw VQ/MQ/TA/Overall."""
+    from vrl.rewards.models.kling_video_reward import _normalize_scores
+
+    scores = _normalize_scores(
+        {"VQ": 1.0, "MQ": 2.0, "TA": 3.0, "Overall": 6.0},
+    )
+
+    assert scores == {
+        "visual_quality": 1.0,
+        "motion_quality": 2.0,
+        "text_alignment": 3.0,
+        "overall_reward": 6.0,
+    }
+    # The raw model keys must not leak into the public scoring contract.
+    assert not ({"VQ", "MQ", "TA", "Overall"} & set(scores))

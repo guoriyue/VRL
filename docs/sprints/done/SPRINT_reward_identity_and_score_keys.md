@@ -1,6 +1,10 @@
-# SPRINT: Unify reward-model identity keys 与 Kling 分数词汇 (planned)
+# SPRINT: Unify reward-model identity keys 与 Kling 分数词汇 (done)
 
-状态：planned（2026-06-20）
+状态：done（2026-06-20）。A–D 全部落地：disk-artifact/Ray-pool 路径 model-id 统一为 `reward_model_name`
+（`base._init_disk_artifact_reward` 一次归一，删 kling/videocon 各自复制的 `or model_name` 链，kling/videocon
+YAML 迁移为逻辑标签 + `worker_config.reward_model_name`）；Kling `_normalize_scores` 只输出 public 别名；
+删 `_DEFAULT_REVISION` 别名；删 GenEval 单值 `evaluator` 死旋钮（容忍 stray key）。保留 image reward `model_name`、
+videocon `overall`、`score_key` typing（非目标）。验证：tests/rewards 70 passed、ruff 全过。
 范围：统一 reward 模型「装载哪个 checkpoint」的三种拼法（`reward_name` / `reward_model_name` / `model_name`），拆开 `reward_name` 的「请求标签 vs HF repo id」二义，并清理 Kling 分数 dict 的原始键 dual-write、`_DEFAULT_REVISION` 冗余别名、GenEval 单值 `evaluator` 占位旋钮。
 
 ## 0. Core Decision（先看这一段）

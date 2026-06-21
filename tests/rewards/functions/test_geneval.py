@@ -74,21 +74,22 @@ async def test_geneval_reward_requires_metadata() -> None:
 
 
 @pytest.mark.asyncio
-async def test_geneval_reward_rejects_unsupported_evaluator() -> None:
-    """Checks GenEval reward rejects unsupported evaluator."""
+async def test_geneval_reward_ignores_stray_evaluator_key() -> None:
+    """A legacy ``evaluator`` key in reward.kwargs is tolerated, not a knob."""
     reward = GenEvalReward(device="cpu", evaluator="constant", scorer=lambda **_: 0.25)
 
-    with pytest.raises(ValueError, match="unsupported GenEval evaluator"):
-        await reward.score(
-            _rollout(
-                {
-                    "geneval": {
-                        "tag": "colors",
-                        "include": [{"class": "bus", "count": 1, "color": "yellow"}],
-                    },
+    score = await reward.score(
+        _rollout(
+            {
+                "geneval": {
+                    "tag": "colors",
+                    "include": [{"class": "bus", "count": 1, "color": "yellow"}],
                 },
-            ),
-        )
+            },
+        ),
+    )
+
+    assert score == pytest.approx(0.25)
 
 
 @pytest.mark.asyncio

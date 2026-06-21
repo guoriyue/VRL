@@ -18,7 +18,7 @@ reward:
   kwargs:
     videocon_physics:
       execution: pool
-      reward_name: videophysics/videocon_physics@main
+      reward_name: videocon_physics   # logical tag (request label)
       score_key: physical_commonsense
       media_type: video
       artifact_format: mp4
@@ -27,5 +27,6 @@ reward:
       # Omit model_path to resolve reward_model_name from the local HF
       # cache; set worker_config.model_path to load a local checkpoint dir.
       worker_config:
+        reward_model_name: videophysics/videocon_physics@main   # which HF checkpoint to load
         dtype: bfloat16
         num_frames: 32

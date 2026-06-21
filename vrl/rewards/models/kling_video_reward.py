@@ -20,7 +20,7 @@ import torch.nn as nn
 from transformers import Qwen2VLForConditionalGeneration
 
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
-from vrl.rewards.models.hub import DEFAULT_HF_REVISION, parse_hf_repo_revision
+from vrl.rewards.models.hub import parse_hf_repo_revision
 from vrl.rewards.ray.model import RewardModel
 from vrl.utils.logging import init_logger, kv
 
@@ -28,7 +28,6 @@ logger = init_logger(__name__)
 
 _SPECIAL_TOKENS = ["<|VQ_reward|>", "<|MQ_reward|>", "<|TA_reward|>"]
 _DEFAULT_REWARD_MODEL = "KlingTeam/VideoReward"
-_DEFAULT_REVISION = DEFAULT_HF_REVISION
 _SCORE_KEY_MAP = {
     "overall_reward": "Overall",
     "visual_quality": "VQ",
@@ -184,9 +183,7 @@ class KlingVideoRewardModel(RewardModel):
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
         self.worker_config = dict(worker_config)
         self.reward_model_name = str(
-            self.worker_config.get("reward_model_name")
-            or self.worker_config.get("model_name")
-            or "",
+            self.worker_config.get("reward_model_name", ""),
         ).strip()
         self.local_files_only = bool(self.worker_config.get("local_files_only", False))
         logger.info(
@@ -620,16 +617,11 @@ def _resolve_model_root(worker_config: Mapping[str, Any]) -> Path:
         root = Path(model_path).expanduser().resolve()
     else:
         reward_model_name = str(
-            worker_config.get("reward_model_name")
-            or worker_config.get("model_name")
-            or "",
+            worker_config.get("reward_model_name", ""),
         ).strip()
         if not reward_model_name:
             raise ValueError("Kling VideoReward requires worker_config.reward_model_name")
-        model_ref = parse_hf_repo_revision(
-            reward_model_name,
-            default_revision=_DEFAULT_REVISION,
-        )
+        model_ref = parse_hf_repo_revision(reward_model_name)
         if model_ref.repo_id != _DEFAULT_REWARD_MODEL:
             raise ValueError(
                 "Kling VideoReward loader currently supports only "
@@ -675,12 +667,20 @@ def _resolve_model_root(worker_config: Mapping[str, Any]) -> Path:
 
 
 def _normalize_scores(raw_scores: Mapping[str, Any]) -> dict[str, float]:
+    """Map the model's raw VQ/MQ/TA/Overall to the public score keys only.
+
+    The returned dict is the public scoring contract — it carries solely the
+    aliases in ``_SCORE_KEY_MAP`` (``overall_reward``/``visual_quality``/...),
+    never the raw model keys, so a reader cannot accidentally select an
+    undocumented key as ``score_key``.
+    """
+
     raw = {str(key): float(value) for key, value in raw_scores.items()}
-    scores = dict(raw)
-    for public_key, model_key in _SCORE_KEY_MAP.items():
-        if model_key in raw:
-            scores[public_key] = float(raw[model_key])
-    return scores
+    return {
+        public_key: raw[model_key]
+        for public_key, model_key in _SCORE_KEY_MAP.items()
+        if model_key in raw
+    }
 
 
 def _create_model_and_processor(
