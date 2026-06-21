@@ -386,8 +386,6 @@ class JanusProChunkExecutor(ARChunkExecutorBase):
         engine_counters["ar_scheduler_enabled"] = bool(params.use_ar_scheduler)
         engine_counters["ar_scheduler_batch_size"] = params.ar_scheduler_batch_size
         metrics = GenerationMetrics(
-            num_prompts=len(prompts),
-            num_samples=len(sample_rows),
             num_steps=params.image_token_num,
             chunks=1,
             peak_memory_mb=peak_mem_mb,
@@ -619,8 +617,6 @@ class JanusProChunkGatherer:
         image_token_num = self.layout.parse_sampling_params(request).image_token_num
         chunk_context = dict(ordered_ar_chunks[0].context)
         metrics = GenerationMetrics(
-            num_prompts=len(request.prompts),
-            num_samples=len(sample_rows),
             num_steps=image_token_num,
             chunks=len(ordered_ar_chunks),
             peak_memory_mb=peak_mem_mb,
@@ -767,8 +763,6 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
             context=result["context"],
         )
         metrics = GenerationMetrics(
-            num_prompts=len(prompts),
-            num_samples=len(sample_rows),
             num_steps=_segment_token_steps(segment_extra),
             chunks=1,
             peak_memory_mb=peak_mem_mb,
@@ -976,8 +970,6 @@ class JanusProR1ChunkGatherer:
         peak_mem_mb = self.layout.max_peak_memory_mb(ordered)
         num_steps = _segment_token_steps(segment_extra)
         metrics = GenerationMetrics(
-            num_prompts=len(request.prompts),
-            num_samples=len(sample_rows),
             num_steps=num_steps,
             chunks=len(ordered),
             peak_memory_mb=peak_mem_mb,

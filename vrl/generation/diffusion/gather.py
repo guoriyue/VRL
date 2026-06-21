@@ -89,8 +89,6 @@ class DiffusionChunkGatherer:
         if len(denoise_modes) == 1:
             engine_counters["diffusion_denoise_mode"] = denoise_modes.pop()
         metrics = GenerationMetrics(
-            num_prompts=len(prompts),
-            num_samples=len(rows),
             num_steps=int(sampling["num_steps"]),
             chunks=len(ordered_chunks),
             peak_memory_mb=peak_mem_mb,

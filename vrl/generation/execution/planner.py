@@ -411,10 +411,7 @@ def attach_engine_plan(output: GenerationOutput, plan: EnginePlan) -> Generation
 
     output.engine_plan = plan
     if output.metrics is None:
-        output.metrics = GenerationMetrics(
-            num_prompts=len(output.prompts),
-            num_samples=len(output.sample_rows),
-        )
+        output.metrics = GenerationMetrics()
     if output.metrics is not None:
         output.metrics.trajectory_kind = plan.trajectory_kind
         output.metrics.execution_stages = plan.profiler_labels

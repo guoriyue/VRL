@@ -327,8 +327,6 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
         engine_counters["ar_scheduler_enabled"] = bool(params.use_ar_scheduler)
         engine_counters["ar_scheduler_batch_size"] = params.ar_scheduler_batch_size
         metrics = GenerationMetrics(
-            num_prompts=len(prompts),
-            num_samples=len(sample_rows),
             num_steps=params.image_token_num,
             chunks=1,
             peak_memory_mb=peak_mem_mb,
@@ -550,8 +548,6 @@ class NextStep1ChunkGatherer:
         image_token_num = int(request.sampling["image_token_num"])
         trajectory_context = dict(ordered_ar_chunks[0].context)
         metrics = GenerationMetrics(
-            num_prompts=len(request.prompts),
-            num_samples=len(sample_rows),
             num_steps=image_token_num,
             chunks=len(ordered_ar_chunks),
             peak_memory_mb=peak_mem_mb,

@@ -19,8 +19,6 @@ class GenerationMetrics:
     """
 
     peak_memory_mb: float | None = None
-    num_prompts: int = 0
-    num_samples: int = 0
     num_steps: int | None = None
     chunks: int = 0
     trajectory_kind: str | None = None
