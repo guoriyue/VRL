@@ -42,7 +42,6 @@ class ChunkExecutionEnvelope:
     plan_id: str
     execution_stage: ExecutionStage | None = None
     profiler_label: str | None = None
-    capability_summary: dict[str, Any] = field(default_factory=dict)
 
     @property
     def stage_id(self) -> str | None:

@@ -295,7 +295,6 @@ class GenerationWorkerCore:
                 "stage_name": envelope.stage_name,
                 "profiler_label": envelope.profiler_label,
                 "chunk_key": envelope.chunk_key,
-                "capability": dict(envelope.capability_summary),
             },
         )
         if plan_aware_chunk is not None:

@@ -117,7 +117,6 @@ class DistributedExecutionPlanner:
             capability=capability,
             max_samples_per_chunk=max(1, max_samples),
         )
-        capability_summary = engine_plan.capability.to_dict()
         bind_at_plan_time = self.policy.strategy == "round_robin"
         assignments: list[DeviceAssignment] = []
         for idx, chunk in enumerate(engine_plan.chunks):
@@ -129,7 +128,6 @@ class DistributedExecutionPlanner:
                 plan_id=engine_plan.request_id,
                 execution_stage=chunk_stage,
                 profiler_label=chunk_stage.profiler_name,
-                capability_summary=capability_summary,
             )
             assignments.append(
                 DeviceAssignment(
