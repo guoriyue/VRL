@@ -306,6 +306,41 @@ class DiffusionModelBase(nn.Module, ABC):
             vae = getattr(self, "vae", None)
         return {} if vae is None else {"vae_decode": vae}
 
+    def move_frozen_components(self, device: Any) -> None:
+        """Move frozen pipeline components (VAE / text encoders) onto ``device``.
+
+        ``nn.Module.to`` moves only *registered* submodules — for these families
+        just the transformer — but the diffusers pipeline is attached
+        unregistered (``object.__setattr__``), so its frozen VAE / text encoders
+        stay resident unless moved explicitly. This is the offload-and-restore
+        discipline for non-trainable components: parking them on CPU during the
+        rollout window frees GPU without discarding and reloading them from disk.
+        Device-only — dtype is preserved (frozen VAE stays fp32, encoders keep
+        their frozen dtype).
+
+        The set is derived from the diffusers pipeline — every nn.Module
+        component except the trainable transformer — so it tracks whatever
+        ``from_spec`` froze instead of a hand-kept name list. Families that attach
+        no diffusers pipeline (single-file checkpoints, replay models) move
+        nothing.
+        """
+
+        try:
+            pipeline = self.pipeline
+        except (AttributeError, RuntimeError):
+            return
+        components = getattr(pipeline, "components", None)
+        if not isinstance(components, Mapping):
+            return
+        transformer = getattr(self, "transformer", None)
+        moved: set[int] = set()
+        for module in components.values():
+            if not isinstance(module, nn.Module) or module is transformer:
+                continue
+            if id(module) not in moved:
+                moved.add(id(module))
+                module.to(device)
+
 
 class ReplayRolloutStubs:
     """Rollout-only surface stubs shared by replay models.

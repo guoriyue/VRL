@@ -1,6 +1,17 @@
 # SPRINT: rollout 内存释放时保留冻结的 VAE / text-encoder（offload-and-restore，不要 discard+reload）
 
-状态：planned（2026-06-20）。范围：让 rollout 每周期的内存释放对**冻结的非可训练组件**（VAE、3× text-encoder）采用 offload-and-restore（类似 vLLM `sleep_level=1` / wake-up），而不是当前的 discard + 冷重载；不动调度架构、不动 weight-sync 语义。
+状态：**缺陷 B DONE（2026-06-20，分支 sprint/frozen-component-preservation）/ 缺陷 A deferred（依赖未定的 actor 生命周期架构，见 §1.D）**。范围：让 rollout 每周期的内存释放对**冻结的非可训练组件**（VAE、3× text-encoder）采用 offload-and-restore（类似 vLLM `sleep_level=1` / wake-up），而不是当前的 discard + 冷重载；不动调度架构、不动 weight-sync 语义。
+
+## 实现状态（2026-06-20）
+
+**✅ 缺陷 B（in-process driver-offload，sprint 指定"先做、风险最低"）已落地：**
+- 复核确认缺陷仍在：`offload_driver_model_for_rollout` 仍是 `self.model.to("cpu")`（`lifecycle.py:108`），而 SD3.5/cosmos/wan 把 pipeline 经 `object.__setattr__` 旁挂、只注册 transformer（`sd3_5/model.py:83-84`），故 `nn.Module.to` 漏搬冻结 VAE/text-encoder。（注：nextstep 做 `self.vae = pipeline.vae` 已注册，无此缺陷。）
+- `DiffusionModelBase` 新增 `move_frozen_components(device)` + `_frozen_pipeline_modules()`：从 `pipeline.components` **派生**冻结子模块集合（nn.Module 且 ≠ trainable transformer），**单一真源**、不手维护名单；families 无 pipeline（anima 单文件 / replay model）则返回空、no-op。device-only 搬运，dtype 保留（VAE fp32、encoder frozen_dtype 不变 → 生成逐 bit 不变）。
+- `RolloutLifecycle.offload/restore_driver_model_*` 在 `self.model.to(...)` 旁补 `self._move_frozen_components(...)`（getattr 守卫，AR family 无 hook 时跳过）。
+- 测试：`tests/models/diffusion/test_frozen_offload.py`（派生集合排除 transformer/非 module；只搬冻结；无 pipeline no-op）+ `tests/rollouts/orchestration/test_driver_frozen_offload.py`（offload/restore 调用 + AR 无 hook 不崩）。`tests/models/diffusion` + `tests/rollouts/orchestration` 共 172 passed。
+- 验收口径：本机无 GPU，§3 的 nvidia-smi/逐 bit/计时探针留作 GPU 跑测；CPU 侧用「记录 `.to` 目标」的 fake 证明搬运范围正确（冻结组件被搬、transformer 不被本 hook 重复搬）。
+
+**⏸ 缺陷 A（lease 模式 kill→sleep，sprint 标的"主目标"）暂缓：** 它要求把 `release_after_collect` 的 `kill_actors`（进程级销毁）改成"sleep actor 保活 + offload 冻结组件 + wake 时搬回不重读磁盘"，前提是 §1.D 未定的架构选型（actor 是否每周期保活，触及 [[SPRINT_framework_lessons_vrl]] P1-2 与 [[SPRINT_compile_rollout_lifecycle]] 的常驻-vs-重建轴）。这不是单文件机械改动，需先拍板 actor 生命周期，故不在本次随手做，doc 留 planned/。
 
 关联：[[SPRINT_compile_rollout_lifecycle]]（同一条 worker 生命周期上的常驻-vs-每周期重建权衡，编译产物的摊销与本 sprint 的冻结权重摊销是同一根轴）、[[SPRINT_framework_lessons_vrl]]（P1-2：sleep/wake vs actor teardown —— 本 sprint 是该课的具体落点）。
 

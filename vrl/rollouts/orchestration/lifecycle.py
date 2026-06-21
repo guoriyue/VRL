@@ -106,12 +106,22 @@ class RolloutLifecycle:
             # model.memory setting. A future non-CPU offload target would belong
             # to distributed/topology config, not to a model backend policy.
             self.model.to("cpu")
+            # nn.Module.to moves only registered submodules (the transformer);
+            # diffusion families keep frozen VAE/text-encoders on the unregistered
+            # pipeline, so park those too. getattr-guarded: AR families register
+            # their VAE directly and expose no such hook.
+            offload_frozen = getattr(self.model, "move_frozen_components", None)
+            if callable(offload_frozen):
+                offload_frozen("cpu")
             empty_cuda_cache()
         return True
 
     def restore_driver_model_after_rollout(self, phase_times: dict[str, float]) -> None:
         with record_phase(phase_times, "rollout.restore_driver_s"):
             self.model.to(self.device)
+            restore_frozen = getattr(self.model, "move_frozen_components", None)
+            if callable(restore_frozen):
+                restore_frozen(self.device)
             empty_cuda_cache()
 
     async def release_rollout_runtime_memory(
