@@ -70,12 +70,6 @@ class ContinuousRolloutItem:
     def age_s(self) -> float:
         return max(0.0, time.time() - self.completed_at)
 
-    @property
-    def phase_times(self) -> dict[str, float]:
-        """Read-only back-compat view of this item's phase timings."""
-
-        return self.stats.as_phase_dict()
-
 
 @dataclass(slots=True)
 class ContinuousRolloutProducerState:

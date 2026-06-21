@@ -136,8 +136,8 @@ async def test_ready_queue_gets_items_only_after_reward_scoring() -> None:
         assert item.batch.rewards is not None
         assert item.batch.rewards.numel() == 2
         # Collect phase timings rode along on the item, not on shared state.
-        assert item.phase_times["collect.engine_generate"] == 1.0
-        assert item.phase_times["collect.reward_score"] == 0.5
+        assert item.stats.as_phase_dict()["collect.engine_generate"] == 1.0
+        assert item.stats.as_phase_dict()["collect.reward_score"] == 0.5
     finally:
         await producer.stop()
 
@@ -377,7 +377,7 @@ async def test_consumer_drops_too_stale_items_and_times_out() -> None:
 
 @pytest.mark.asyncio
 async def test_consumer_aggregates_item_phase_times() -> None:
-    """Per-item collect timings sum into iteration.phase_times."""
+    """Per-item collect timings sum into iteration.stats.as_phase_dict()."""
     queue = ContinuousRolloutQueue(max_items=8)
     queue.put(
         _item(
@@ -400,6 +400,6 @@ async def test_consumer_aggregates_item_phase_times() -> None:
         _consumer(queue, max_stale=0), min_groups=2, current_version=1,
     )
 
-    assert iteration.phase_times["collect.engine_generate"] == 4.0
-    assert iteration.phase_times["collect.reward_score"] == 0.5
-    assert "continuous.queue_wait_s" in iteration.phase_times
+    assert iteration.stats.as_phase_dict()["collect.engine_generate"] == 4.0
+    assert iteration.stats.as_phase_dict()["collect.reward_score"] == 0.5
+    assert "continuous.queue_wait_s" in iteration.stats.as_phase_dict()

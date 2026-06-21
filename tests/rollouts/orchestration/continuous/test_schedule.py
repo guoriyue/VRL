@@ -200,7 +200,7 @@ async def test_continuous_drains_full_homogeneous_iteration() -> None:
         assert all(
             b.context["rollout_policy_version"] == 1 for b in iteration.batches
         )
-        assert "continuous.queue_wait_s" in iteration.phase_times
+        assert "continuous.queue_wait_s" in iteration.stats.as_phase_dict()
     finally:
         await schedule.producer.stop()
 
@@ -560,7 +560,7 @@ async def test_prompt_set_update_purges_old_ready_items_before_wait() -> None:
         second = await schedule.next_iteration(["p2", "p3"], group_size=1)
 
         assert sorted(batch.prompts[0] for batch in second.batches) == ["p2", "p3"]
-        assert second.phase_times["continuous.prompt_set_dropped"] >= 4.0
+        assert second.stats.as_phase_dict()["continuous.prompt_set_dropped"] >= 4.0
         assert schedule.queue.stats()["dropped_prompt_set"] >= 4.0
     finally:
         await schedule.producer.stop()

@@ -46,12 +46,6 @@ class RolloutIteration:
         if self.sample_count < 0:
             raise ValueError("RolloutIteration.sample_count must be >= 0")
 
-    @property
-    def phase_times(self) -> dict[str, float]:
-        """Read-only back-compat view of this iteration's phase timings."""
-
-        return self.stats.as_phase_dict()
-
 
 def build_rollout_iteration(
     *,
