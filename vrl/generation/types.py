@@ -18,8 +18,6 @@ class GenerationMetrics:
     outside this module.
     """
 
-    queue_wait_s: float = 0.0
-    execution_s: float = 0.0
     peak_memory_mb: float | None = None
     num_prompts: int = 0
     num_samples: int = 0
