@@ -20,7 +20,6 @@ class RayPipelineStageHandle:
 
     stage: str
     actor: Any
-    worker_id: str | None = None
 
 
 class RayPipelineRunner:

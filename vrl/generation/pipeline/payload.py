@@ -14,7 +14,6 @@ class PipelineStagePayload:
     stage: str
     data: Any
     policy_version: int | None = None
-    sample_identity: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def for_stage(
@@ -34,7 +33,6 @@ class PipelineStagePayload:
             stage=stage,
             data=self.data if data is None else data,
             policy_version=self.policy_version,
-            sample_identity=dict(self.sample_identity),
             metadata=next_metadata,
         )
 

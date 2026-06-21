@@ -158,7 +158,6 @@ def test_serial_pipeline_runner_preserves_actor_payload_contract() -> None:
             stage="denoise",
             data=[],
             policy_version=7,
-            sample_identity={"chunk": "prompt:0:samples:0:4"},
         )
     )
 
@@ -168,7 +167,6 @@ def test_serial_pipeline_runner_preserves_actor_payload_contract() -> None:
     assert result.payload.stage == "decode_latents"
     assert result.payload.data == ["denoise", "decode"]
     assert result.payload.policy_version == 7
-    assert result.payload.sample_identity == {"chunk": "prompt:0:samples:0:4"}
     assert [stage["stage"] for stage in result.metrics["stages"]] == [
         "denoise",
         "decode_latents",

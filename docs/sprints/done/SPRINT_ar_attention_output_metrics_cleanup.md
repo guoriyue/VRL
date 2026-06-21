@@ -1,10 +1,18 @@
-# SPRINT: `ARAttention*Output.metrics` display 字段清理（planned）
+# SPRINT: `ARAttention*Output.metrics` display 字段清理（done）
 
-状态：未开始（2026-06-20）。**整体 needs owner sign-off**（唯一读者是 backend 回归测试断言）。
+状态：done（2026-06-20）。owner 签字采纳「非守卫」默认路径：两个断言经查为**附带断言**而非有意 backend-selection 守卫——遂删字段 + 构造 + 两断言。验证：`ruff` 全绿，`pytest tests/nn/ tests/models/ar/ tests/generation/ar/ -q` **71 passed**。
 范围：`vrl/nn/layers/attention/paged.py` 两个 attention output struct 的 `metrics` 字段。
 来源：dead-dataclass-hunt + 手动验证（非测试读者为零）。承接 [[SPRINT_segment_signal_dead_field_cleanup]]。
 
-## 0. Core Decision
+## 0. 签字依据（为何断言非守卫）
+
+消歧后确认两断言（`test_janus/nextstep_vllm_paged_attention_backend.py`）**不是**有意的 backend-selection 回归守卫：
+1. 两测试**直接** `build_vllm_attention_backend(...)` 构造 vLLM 后端，无 torch_native fallback 路径——断言的字符串 `"<family>_vllm_paged_attention"` 是 `backend_label` 硬编码常量，恒成立，抓不到 fallback。
+2. 真正的 backend-selection 守卫另有其人：`test_nextstep_runtime_uses_vllm_paged_attention_by_default`（同文件 `:76-116`）直接断言 `runner.attention_backend is backend`，不读 `.metrics`。
+3. `attention_backend` 标签另有独立出口 `ar_decoder.py:135` `debug_info()["attention_backend"]`，删 `metrics` 不丢该信号。
+4. 删断言后两测试仍保留有意义的 shape + 数值逼近断言（`<= 3e-3`/`5e-3`），测试本意（paged 输出对齐 HF 参考）不受损。
+
+## 0b. 原 Core Decision
 
 `ARAttentionPrefillOutput.metrics`（`paged.py:62-71`）和 `ARAttentionStepOutput.metrics`（`paged.py:97-106`）在构造时算了值（attention backend 名等），但所有 behavior 代码只读 `.last_hidden` / `.sequence_states`——`grep` 证实 `vrl/models/ar/`、`vrl/generation/ar/` 内**零** `.metrics` 读取。唯一读者是两个 vLLM backend 测试断言：
 
