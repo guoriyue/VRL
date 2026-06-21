@@ -348,7 +348,6 @@ def test_reward_view_selection_fails_fast_when_ambiguous() -> None:
     assert output.trajectory is not None
     output.trajectory.reward_views["alternate"] = RewardView(
         name="alternate",
-        modality="image",
         metadata={"output_ref": "GenerationOutput.output"},
     )
 

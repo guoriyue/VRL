@@ -43,7 +43,6 @@ DistributionKind = Literal[
     "custom",
 ]
 AdvantageScope = Literal["sample", "segment", "axis"]
-ReplaySignalKind = Literal["logprob", "kl_intermediates", "prediction", "custom"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,7 +84,6 @@ class ReplayInput:
 
     name: str
     tensor_refs: tuple[str, ...] = ()
-    signal_kind: ReplaySignalKind = "logprob"
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -162,7 +160,6 @@ __all__ = [
     "AxisKind",
     "DistributionKind",
     "ReplayInput",
-    "ReplaySignalKind",
     "SegmentModality",
     "TensorRole",
     "TrajectoryAxis",

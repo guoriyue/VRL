@@ -34,8 +34,6 @@ def _signals(
         segments={
             "denoise": SegmentSignal(
                 name="denoise",
-                axis="timestep",
-                axes=("sample",),
                 distribution="flow_matching",
                 log_prob=log_prob,
                 old_log_prob=old_log_prob,

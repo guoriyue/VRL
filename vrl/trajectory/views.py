@@ -13,9 +13,7 @@ from vrl.trajectory.types import (
 )
 from vrl.utils.validation import require_string_tuple
 
-RewardModality = Literal["image", "video", "text", "mixed"]
 RewardValueRange = Literal["unit", "tanh"]
-AlgorithmFamily = Literal["policy_gradient", "supervised", "preference", "custom"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,10 +21,7 @@ class RewardView:
     """Names the trajectory facts a reward function should read."""
 
     name: str
-    modality: RewardModality
     tensor_refs: tuple[str, ...] = ()
-    prompt_refs: tuple[str, ...] = ()
-    target_refs: tuple[str, ...] = ()
     # Declared pixel value range of the reward media. The collector normalizes
     # to "unit" [0, 1] for scoring; "tanh" [-1, 1] sources (VQ decode) get
     # rescaled. This is a model fact owned by the producer, not an operator knob.
@@ -41,8 +36,6 @@ class RewardView:
                 f"RewardView.value_range must be 'unit' or 'tanh', got {self.value_range!r}",
             )
         require_string_tuple("RewardView.tensor_refs", self.tensor_refs)
-        require_string_tuple("RewardView.prompt_refs", self.prompt_refs)
-        require_string_tuple("RewardView.target_refs", self.target_refs)
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,7 +49,6 @@ class LossUnit:
     mask_ref: str
     advantage_scope: AdvantageScope = "sample"
     replay_input_refs: tuple[str, ...] = ()
-    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for name, value in (
@@ -77,7 +69,6 @@ class TrainingView:
 
     loss_units: tuple[LossUnit, ...]
     primary_segment: str | None = None
-    algorithm_family: AlgorithmFamily = "policy_gradient"
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -146,9 +137,7 @@ def _loss_axis(axes: tuple[str, ...]) -> str:
 
 
 __all__ = [
-    "AlgorithmFamily",
     "LossUnit",
-    "RewardModality",
     "RewardValueRange",
     "RewardView",
     "TrainingView",

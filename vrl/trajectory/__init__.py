@@ -21,7 +21,6 @@ from vrl.trajectory.types import (
     AxisKind,
     DistributionKind,
     ReplayInput,
-    ReplaySignalKind,
     SegmentModality,
     TensorRole,
     TrajectoryAxis,
@@ -37,9 +36,7 @@ from vrl.trajectory.validation import (
     tensor_ref,
 )
 from vrl.trajectory.views import (
-    AlgorithmFamily,
     LossUnit,
-    RewardModality,
     RewardView,
     TrainingView,
     build_training_view,
@@ -48,13 +45,10 @@ from vrl.trajectory.views import (
 
 __all__ = [
     "AdvantageScope",
-    "AlgorithmFamily",
     "AxisKind",
     "DistributionKind",
     "LossUnit",
     "ReplayInput",
-    "ReplaySignalKind",
-    "RewardModality",
     "RewardView",
     "SegmentModality",
     "TensorRole",
