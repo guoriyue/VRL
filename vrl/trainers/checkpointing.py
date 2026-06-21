@@ -95,6 +95,7 @@ def save_training_checkpoint(
     export_modules: dict[str, Any] | None = None,
     export_ema: Any | None = None,
     strategy: Any | None = None,
+    is_primary: bool = True,
 ) -> dict[str, Any]:
     """Save a generic Torch training checkpoint.
 
@@ -109,20 +110,33 @@ def save_training_checkpoint(
     full-state export later). ``export_trainable_state`` below is that
     single_process implementation -- the strategy delegates to it -- and stays
     the default for callers without a strategy (e.g. the Wan DPO trainer).
+
+    ``is_primary`` MUST be passed under a multi-rank strategy. The trainable-state
+    export is a COLLECTIVE under FSDP2 (``get_model_state_dict`` all-gathers across
+    every rank), so it runs on all ranks below; only the primary rank then writes
+    the files. Gating the whole call to rank0 (the natural "only rank0 owns IO"
+    instinct) deadlocks FSDP: rank0 waits at the all-gather for peers that never
+    join. single_process / ddp gather locally, so for them this is a no-op.
     """
 
-    path = Path(checkpoint_dir)
-    path.mkdir(parents=True, exist_ok=True)
     export_trainable = (
         strategy.export_trainable_state if strategy is not None else export_trainable_state
     )
+    # Collective on ALL ranks (FSDP all-gather) — before the is_primary gate.
+    trainable_modules = export_trainable(bundle)
+    if not is_primary:
+        # Non-primary ranks joined the gather above; only rank0 writes the files.
+        return {}
+
+    path = Path(checkpoint_dir)
+    path.mkdir(parents=True, exist_ok=True)
     trainer_state = trainer.state_dict()
     payload = {
         "schema_version": CHECKPOINT_SCHEMA_VERSION,
         "family": family,
         "trainer": trainer_state,
         "model": {
-            "trainable_modules": export_trainable(bundle),
+            "trainable_modules": trainable_modules,
         },
         "progress": dict(progress),
         "rng": rng_state or capture_rng_state(),

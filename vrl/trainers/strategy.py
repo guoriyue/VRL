@@ -184,9 +184,24 @@ class FSDPStrategy(Strategy):
 
     def prepare_model(self, model: Any) -> Any:
         """Shard the policy's trainable transformer in place and return the policy."""
-        from vrl.trainers.fsdp import apply_fsdp, mixed_precision_policy
+        from vrl.trainers.fsdp import (
+            apply_fsdp,
+            init_training_process_group,
+            mixed_precision_policy,
+        )
 
+        # Validate the trainable handle BEFORE touching the process group so a bad
+        # model fails fast (mirrors DDPStrategy; the guard tests need no live PG).
         handle, set_transformer = _single_transformer_handle(model)
+        # Create the process group + bind this rank's cuda device up front, exactly
+        # like DDPStrategy. init_device_mesh would lazily auto-init a default group,
+        # but it would NOT call torch.cuda.set_device(local_rank) first, so the NCCL
+        # group and the per-block fully_shard could bind the wrong card on a
+        # single-node multi-GPU box. Doing it here keeps the two strategies
+        # symmetric and the device choice explicit. No-op for single_process and
+        # when a group already exists (the CPU gloo test fixture pre-inits one).
+        backend = "gloo" if self.context.device.type == "cpu" else "nccl"
+        init_training_process_group(self.context, backend=backend)
         wrapped = apply_fsdp(
             handle,
             mesh=self._ensure_mesh(),

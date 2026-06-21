@@ -117,6 +117,43 @@ def test_save_training_checkpoint_routes_export_through_strategy(tmp_path) -> No
     assert checkpoint.trainable_state["module"]["weight"].item() == pytest.approx(9.0)
 
 
+def test_save_training_checkpoint_non_primary_gathers_but_writes_nothing(tmp_path) -> None:
+    """Multi-rank contract: the trainable-state export (a COLLECTIVE under FSDP2)
+    runs on every rank, but only the primary rank writes files.
+
+    Gating the whole save to rank0 would deadlock FSDP — rank0 waits at the
+    all-gather for peers that never call it. So save_training_checkpoint(is_primary
+    =False) MUST still invoke the strategy export (joining the collective) yet
+    create no checkpoint directory/files. The spy proves the export ran; the empty
+    tmp_path proves nothing was written."""
+
+    class _SpyStrategy:
+        def __init__(self) -> None:
+            self.calls: list[object] = []
+
+        def export_trainable_state(self, bundle):
+            self.calls.append(bundle)
+            return {"module": {"weight": torch.full((1, 1), 9.0)}}
+
+    strategy = _SpyStrategy()
+    bundle = _Bundle()
+    ckpt_dir = tmp_path / "checkpoint-nonprimary"
+    out = save_training_checkpoint(
+        ckpt_dir,
+        trainer=_Trainer(),
+        bundle=bundle,
+        family="unit",
+        progress={"next_epoch": 1},
+        rng_state={},
+        strategy=strategy,
+        is_primary=False,
+    )
+
+    assert strategy.calls == [bundle]  # joined the collective gather
+    assert out == {}  # no meta returned
+    assert not ckpt_dir.exists()  # rank0-only IO: nothing written on a non-primary rank
+
+
 def test_training_checkpoint_writes_optional_lora_export(tmp_path) -> None:
     """Checks training checkpoint writes optional LoRA export."""
     class _ExportModule:

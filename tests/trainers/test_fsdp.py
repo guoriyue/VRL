@@ -368,6 +368,34 @@ def test_fsdp_prepare_model_wraps_diffusion_handle(cpu_process_group) -> None:
     assert any(isinstance(p, DTensor) for p in policy.transformer.parameters())
 
 
+def test_fsdp_prepare_model_initializes_process_group(cpu_process_group, monkeypatch) -> None:
+    """prepare_model explicitly owns PG init + device bind, symmetric with DDP.
+
+    init_device_mesh would lazily auto-init a default group, but it would NOT call
+    torch.cuda.set_device(local_rank) first, so the NCCL group and per-block
+    fully_shard could bind the wrong card on a single-node multi-GPU box.
+    FSDPStrategy.prepare_model therefore calls init_training_process_group up front.
+    Spy on it to lock the wiring in (the gloo PG already exists here, so the real
+    init is a no-op — we assert the call, with the cpu-context gloo backend).
+    """
+
+    import vrl.trainers.fsdp as fsdp_mod
+
+    calls: list[tuple] = []
+    real = fsdp_mod.init_training_process_group
+
+    def _spy(context, *, backend):
+        calls.append((context.strategy, backend))
+        return real(context, backend=backend)
+
+    monkeypatch.setattr(fsdp_mod, "init_training_process_group", _spy)
+
+    policy = _FakePolicy(_ToyTransformer())
+    FSDPStrategy(_cpu_fsdp_context(), precision_policy="none").prepare_model(policy)
+
+    assert calls == [("fsdp", "gloo")]
+
+
 # ── prepare_model family gate / build_strategy §10 gates (no process group) ──
 
 

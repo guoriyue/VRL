@@ -64,23 +64,24 @@ logger = logging.getLogger(__name__)
 def _require_supported_online_strategy(context: DistributedTrainingContext) -> None:
     """Fail-fast when the online recipe cannot yet drive the resolved strategy.
 
-    ``ddp`` is supported via the per-rank-local symmetric-colocated path: each
-    torchrun rank runs its own local Ray + local colocated rollout on its 1 GPU
-    and trains a full DDP replica; only the gradient all-reduce crosses ranks
-    (SPRINT_symmetric_colocated_ddp.md). ``fsdp`` is still gated — its sharded
-    DTensor state needs the rank0-full-gather collect/checkpoint orchestration the
-    online recipe does not implement yet (SPRINT_multi_gpu_training.md Phase 4).
+    Both multi-rank strategies ride the same per-rank-local symmetric-colocated
+    path (SPRINT_symmetric_colocated_ddp.md / SPRINT_multi_gpu_training.md Phase 4):
+    each torchrun rank runs its own local Ray + local colocated rollout on its 1
+    GPU, draws a DISJOINT prompt slice, and the recipe writes IO from rank0 only.
+    ``ddp`` replicates the full module and all-reduces gradients; ``fsdp`` shards
+    params/grads/optimizer as DTensor and the per-layer all-gather / reduce-scatter
+    crosses ranks instead. The export seam already gathers a full, unwrapped,
+    policy-facing state on every rank (FSDPStrategy.export_rollout_state /
+    gather_full_state_dict), so rollout weight sync and checkpointing are identical
+    to single-process from the recipe's point of view. Only a genuinely unsupported
+    strategy reaches the raise below.
     """
 
-    if context.strategy not in {"single_process", "ddp"}:
+    if context.strategy not in {"single_process", "ddp", "fsdp"}:
         raise NotImplementedError(
-            f"distributed.training.strategy={context.strategy!r}: the FSDPStrategy "
-            "layer exists (vrl/trainers/strategy.py) and is unit-tested, but "
-            "run_online_recipe does not yet implement the sharded multi-rank GRPO "
-            "orchestration that drives it (rank0-full-gather collect/checkpoint + "
-            "torchrun↔Ray coordination, SPRINT_multi_gpu_training.md Phase 4/§6.5). "
-            "Use strategy=single_process, or strategy=ddp for symmetric colocated "
-            "multi-GPU (SPRINT_symmetric_colocated_ddp.md).",
+            f"distributed.training.strategy={context.strategy!r} is not supported by "
+            "run_online_recipe. Use single_process, ddp, or fsdp "
+            "(SPRINT_multi_gpu_training.md / SPRINT_symmetric_colocated_ddp.md).",
         )
 
 
@@ -560,9 +561,18 @@ class OnlineRecipeRun:
 
     def save_checkpoint(self, path: Path, *, epoch: int) -> None:
         stack = self.stack
+        # Called on EVERY rank: save_training_checkpoint runs the trainable-state
+        # gather (a collective under FSDP2) on all ranks and writes files on the
+        # primary only. The save_pretrained HF-adapter artifact (export_modules) is
+        # skipped under fsdp: the trainable transformer is sharded (DTensor) there,
+        # so save_pretrained can't serialize a clean adapter — the torch.save
+        # payload already carries the full gathered trainable state (the loadable
+        # checkpoint). A gathered HF-adapter export under fsdp is a follow-up.
+        context = stack.strategy.context
         export_modules = (
             stack.definition.export_modules_getter(stack.bundle, stack.cfg)
             if stack.definition.export_modules_getter is not None
+            and context.strategy != "fsdp"
             else None
         )
         save_training_checkpoint(
@@ -579,6 +589,7 @@ class OnlineRecipeRun:
             export_modules=export_modules,
             export_ema=getattr(stack.trainer, "_ema", None),
             strategy=stack.strategy,
+            is_primary=context.is_primary,
         )
 
 
@@ -778,11 +789,11 @@ async def run_online_recipe(
         )
         # The strategy is the single owner of trainable-state export for both
         # rollout weight sync and checkpointing. build_strategy maps the resolved
-        # context to a concrete strategy; fsdp is fail-fasted by
-        # _require_supported_online_strategy above, so this is single_process in
-        # the live online path. The FSDPStrategy slots in here once the online
-        # rank-split orchestration lands, without the recipe changing how state
-        # leaves the trainer.
+        # context to the concrete strategy (single_process / ddp / fsdp); each
+        # gathers a full, unwrapped, policy-facing state so the recipe below never
+        # changes shape with the strategy. prepare_model (called once in the
+        # trainer) creates the process group, binds this rank's device, and wraps
+        # the trainable transformer (DDP replicate / FSDP2 fully_shard).
         strategy = build_strategy(cfg, training_context)
         trainer = OnlineTrainer(
             algorithm=components.algorithm,
@@ -817,9 +828,10 @@ async def run_online_recipe(
                 resume_checkpoint.next_epoch,
             )
 
-        # Under ddp only rank0 owns run IO (metrics/checkpoint/eval/resolved-config):
-        # each rank trains a full DDP replica and the grad all-reduce in trainer.step
-        # keeps ranks in lockstep, so rank0's checkpoint is complete and a single
+        # Under any multi-rank strategy (ddp/fsdp) only rank0 owns run IO
+        # (metrics/checkpoint/eval/resolved-config): the cross-rank collectives in
+        # trainer.step (DDP grad all-reduce / FSDP all-gather+reduce-scatter) keep
+        # ranks in lockstep, so rank0's gathered checkpoint is complete and a single
         # writer avoids N ranks racing the same files (on 2 servers, rank0's host).
         is_primary = training_context.is_primary
         output_dir = Path(trainer_config.output_dir)
@@ -906,19 +918,22 @@ async def run_online_recipe(
             )
 
         # Pre-RL baseline on the fixed grid (fresh runs only; resume keeps its rows).
-        # rank0-only under ddp: non-primary ranks block at the next trainer.step
-        # grad all-reduce until rank0 finishes, so this stays in lockstep.
+        # rank0-only under multi-rank: non-primary ranks block at the next
+        # trainer.step cross-rank collective until rank0 finishes, so this stays in
+        # lockstep.
         if eval_enabled and resume_checkpoint is None and is_primary:
             await _fixed_eval_and_log(-1)
 
-        # DDP is data-parallel: every rank shares the prompt RNG (identical draw),
-        # so draw world_size * rollout_batch_size prompts and hand each rank a
-        # DISJOINT slice. The all-reduced gradient then covers world_size *
-        # rollout_batch_size DISTINCT prompts (the effective batch) instead of every
-        # rank redundantly training the SAME rollout_batch_size prompts and averaging
-        # identical gradients. single_process (world_size=1, rank=0) takes the whole
-        # draw unchanged. Requires the prompt manifest to hold >= world_size *
-        # rollout_batch_size prompts for a without-replacement sampler.
+        # Both ddp and fsdp are data-parallel (fsdp shards the MODEL, not the data):
+        # every rank shares the prompt RNG (identical draw), so draw world_size *
+        # rollout_batch_size prompts and hand each rank a DISJOINT slice. The
+        # cross-rank gradient (DDP all-reduce / FSDP reduce-scatter) then covers
+        # world_size * rollout_batch_size DISTINCT prompts (the effective batch)
+        # instead of every rank redundantly training the SAME rollout_batch_size
+        # prompts and averaging identical gradients. single_process (world_size=1,
+        # rank=0) takes the whole draw unchanged. Requires the prompt manifest to
+        # hold >= world_size * rollout_batch_size prompts for a without-replacement
+        # sampler.
         rank_batch = int(trainer_config.rollout_batch_size)
         sampler_strategy = str(
             OmegaConf.select(cfg, "data.sampler.type", default="random_without_replacement"),
@@ -971,18 +986,19 @@ async def run_online_recipe(
                 if maybe_awaitable is not None:
                     await maybe_awaitable
 
-            if (
-                is_primary
-                and trainer_config.save_freq > 0
-                and (epoch + 1) % trainer_config.save_freq == 0
-            ):
+            # Checkpoint on EVERY rank (NOT gated by is_primary): the trainable-state
+            # export inside is a collective under FSDP2 (all ranks all-gather), and
+            # save_checkpoint writes files on the primary only. Gating the call to
+            # rank0 deadlocks FSDP (rank0 waits at the gather for peers that skipped).
+            if trainer_config.save_freq > 0 and (epoch + 1) % trainer_config.save_freq == 0:
                 run.save_checkpoint(output_dir / f"checkpoint-{epoch + 1}", epoch=epoch + 1)
 
+        # Final checkpoint on EVERY rank too (collective gather inside; rank0 writes).
+        run.save_checkpoint(
+            output_dir / "checkpoint-final",
+            epoch=trainer_config.total_epochs,
+        )
         if is_primary:
-            run.save_checkpoint(
-                output_dir / "checkpoint-final",
-                epoch=trainer_config.total_epochs,
-            )
             logger.info("Training complete. Final checkpoint: %s", output_dir / "checkpoint-final")
     except BaseException as exc:
         run_error = exc

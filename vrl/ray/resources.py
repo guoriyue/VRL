@@ -178,12 +178,19 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
     else:
         visible_devices = _resolve_visible_devices(config.visible_devices)
 
-    # fsdp runs one torchrun process per GPU, so an unset trainer GPU count
-    # defaults to the whole training world; single_process stays one device.
+    # fsdp has two topologies. ASYMMETRIC: one resolver owns the whole training
+    # world (trainer = num_nodes*gpus_per_node GPUs, rollout/reward on separate
+    # cards) — the single-node multi-GPU model. SYMMETRIC COLOCATED: one torchrun
+    # rank per node, each owning its 1 local GPU with a colocated rollout — the same
+    # per-rank-local model ddp uses (SPRINT_symmetric_colocated_ddp), signaled by
+    # rollout.gpu_pool=trainer. Only asymmetric fsdp sizes the trainer to the whole
+    # world; symmetric fsdp follows the per-rank single-GPU rule like ddp.
+    fsdp_symmetric_colocated = (
+        training_strategy == "fsdp" and config.rollout.gpu_pool == "trainer"
+    )
+    fsdp_asymmetric = training_strategy == "fsdp" and not fsdp_symmetric_colocated
     trainer_default_auto = (
-        training_world_size
-        if training_strategy == "fsdp"
-        else (1 if visible_devices else 0)
+        training_world_size if fsdp_asymmetric else (1 if visible_devices else 0)
     )
     trainer_devices = _resolve_role_devices(
         role="trainer",
@@ -191,7 +198,12 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
         role_config=config.trainer,
         default_auto_count=trainer_default_auto,
     )
-    _validate_trainer_device_count(training_strategy, trainer_devices, training_world_size)
+    _validate_trainer_device_count(
+        training_strategy,
+        trainer_devices,
+        training_world_size,
+        symmetric_colocated=fsdp_symmetric_colocated,
+    )
 
     rollout_gpus_per_worker = float(config.rollout.gpus_per_worker)
     if rollout_gpus_per_worker not in {0.0, 1.0}:
@@ -276,10 +288,12 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
             f"trainer={list(trainer_devices)} reward={list(reward_devices)}",
         )
 
-    # Under fsdp every rank owns its GPU; rollout/reward run as separate Ray
-    # actors. The trainer GPU set must be disjoint from both regardless of
-    # allow_overlap (the single-GPU colocated debug path is single_process only).
-    if training_strategy == "fsdp":
+    # Asymmetric fsdp owns the whole training world with rollout/reward on separate
+    # cards, so the trainer set must be disjoint from both regardless of
+    # allow_overlap. Symmetric colocated fsdp (rollout.gpu_pool=trainer) is the
+    # opposite by design — each rank's rollout shares its trainer GPU, exactly like
+    # ddp — so the disjoint rule does not apply to it.
+    if fsdp_asymmetric:
         _validate_fsdp_trainer_disjoint(trainer_devices, rollout_devices, reward_devices)
 
     if persistent_colocated and not colocated:
@@ -366,15 +380,20 @@ def _validate_trainer_device_count(
     strategy: str,
     trainer_devices: tuple[int, ...],
     world_size: int,
+    *,
+    symmetric_colocated: bool = False,
 ) -> None:
     """Trainer GPU-count rule, gated by ``distributed.training.strategy``.
 
     ``single_process`` is one process on one device (0 or 1 GPU).
-    ``fsdp`` runs one torchrun process per GPU, so the trainer device set must
-    cover the whole training world (``num_nodes * gpus_per_node``).
+    ASYMMETRIC ``fsdp`` runs one torchrun process per GPU under a single resolver,
+    so the trainer device set must cover the whole training world
+    (``num_nodes * gpus_per_node``). SYMMETRIC COLOCATED ``fsdp`` (and ``ddp``)
+    resolve per-rank-local: each rank owns its 1 GPU, so they follow the
+    single-device rule below, not the world-covering one.
     """
 
-    if strategy == "fsdp":
+    if strategy == "fsdp" and not symmetric_colocated:
         if len(trainer_devices) != world_size:
             raise ValueError(
                 "distributed.training.strategy=fsdp: trainer must own "

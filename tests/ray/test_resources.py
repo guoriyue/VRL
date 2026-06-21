@@ -1144,6 +1144,32 @@ def test_ddp_colocate_resolves_per_rank_local_single_gpu() -> None:
     assert resolved.cross_node is False  # per-rank-local: no shared Ray cluster
 
 
+def test_fsdp_colocate_resolves_per_rank_local_single_gpu() -> None:
+    """Symmetric colocated FSDP (SPRINT_multi_gpu_training Phase 4): like ddp, each
+    rank resolves only its LOCAL single GPU (trainer + colocated rollout on it),
+    NOT fsdp's world-covering asymmetric plan. Signaled by rollout.gpu_pool=trainer,
+    so the world-size trainer rule and the disjoint rule do not apply."""
+    resolved = resolve_distributed_resources(
+        OmegaConf.create(
+            {
+                "distributed": {
+                    "training": {"strategy": "fsdp", "num_nodes": 2, "gpus_per_node": 1},
+                    "resources": {
+                        "visible_devices": [0],
+                        "trainer": {"num_gpus": 1},
+                        "rollout": {"gpu_pool": "trainer", "memory_fraction": 0.4},
+                    },
+                },
+            },
+        ),
+    )
+
+    assert resolved.trainer_devices == (0,)
+    assert resolved.rollout_devices == (0,)  # colocated on the local GPU
+    assert resolved.colocated is True
+    assert resolved.cross_node is False  # per-rank-local: no shared Ray cluster
+
+
 def test_single_gpu_colocate_without_cross_node_still_rejects_excess_rollout() -> None:
     """Hybrid split is cross-node only: single-node colocate with rollout>trainer raises."""
     with pytest.raises(ValueError, match="tiny single-GPU debug"):

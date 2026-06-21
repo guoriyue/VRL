@@ -83,6 +83,38 @@ def _global_reward_stats(rewards: Any) -> tuple[float, float]:
     return mean, std
 
 
+def _all_ranks_have_work(has_work: bool, device: torch.device) -> bool:
+    """True iff EVERY training rank has a non-empty (post-filter) microbatch.
+
+    A backward pass fires cross-rank collectives — FSDP2 per-layer all-gather +
+    reduce-scatter, or DDP's gradient all-reduce. If one rank skips backward on an
+    all-filtered (zero-advantage) microbatch while another rank runs it, those
+    collectives mismatch and the job DEADLOCKS: an unrecoverable NCCL hang, not an
+    exception. So the skip decision must be unanimous. All-reduce the local
+    ``has_work`` flag with MIN, so every rank takes the SAME branch — the
+    microbatch runs only when all ranks have work, otherwise all ranks skip it
+    together (matched: no rank issues backward collectives). Dropping a microbatch
+    because one rank's slice came back empty wastes the other ranks' work for that
+    slice, but empty slices are rare (reward spread) and a dropped slice beats a
+    hung run.
+
+    No process group / world_size==1 (single-GPU) returns the local value
+    unchanged. Must be called UNCONDITIONALLY on every rank, the same number of
+    times, so this collective itself stays balanced (the recipe runs a fixed
+    microbatch/step count per rank regardless of filtering).
+    """
+
+    dist = torch.distributed
+    if not (dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1):
+        return has_work
+    flag = torch.tensor([1 if has_work else 0], dtype=torch.int64)
+    # NCCL collectives require GPU tensors; gloo (tests) handles CPU directly.
+    if dist.get_backend() == "nccl":
+        flag = flag.to(device)
+    dist.all_reduce(flag, op=dist.ReduceOp.MIN)
+    return bool(flag.item() > 0)
+
+
 # ---------------------------------------------------------------------------
 # Optimizer factory
 # ---------------------------------------------------------------------------
@@ -675,7 +707,12 @@ class OnlineTrainer(Trainer):
         from vrl.utils.profiling import record_function
 
         cfg = self.config
-        if not batch.batches:
+        # Unanimous skip across ranks: a backward fires cross-rank collectives, so
+        # one rank skipping an empty microbatch while another runs it deadlocks
+        # (see _all_ranks_have_work). Called once per microbatch on every rank, in
+        # lockstep with the fixed gradient-accumulation count, so this collective
+        # is balanced.
+        if not _all_ranks_have_work(bool(batch.batches), self.device):
             return
         autocast_ctx = _get_autocast(cfg, self.device, model=self.model)
         uses_evaluator = bool(getattr(self.algorithm, "uses_evaluator", True))
@@ -884,9 +921,13 @@ class OnlineTrainer(Trainer):
             )
 
         # If every batch was filtered out (all dead), skip training this step.
-        if not filtered_batches:
+        # Unanimous across ranks (see _all_ranks_have_work): a backward fires
+        # cross-rank collectives, so the skip must be agreed or the ranks that did
+        # vs. did not run backward deadlock. Called once per step on every rank.
+        if not _all_ranks_have_work(bool(filtered_batches), self.device):
             logger.info(
-                "step %d: all batches filtered (zero advantages); skipping backward",
+                "step %d: all batches filtered (zero advantages) on this or a peer "
+                "rank; skipping backward",
                 self.state.step,
             )
             # Early exit — still advance state + return metrics with zeros.
