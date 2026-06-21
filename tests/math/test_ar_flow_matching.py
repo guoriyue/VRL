@@ -43,7 +43,7 @@ def test_sample_and_replay_go_through_net_and_agree() -> None:
     gen = torch.Generator().manual_seed(0)
 
     token, log_prob, x0 = flow_sample_with_logprob(
-        head, cond, num_flow_steps=5, generator=gen
+        head, cond, num_steps=5, generator=gen
     )
 
     assert token.shape == (b, token_dim)
@@ -55,7 +55,7 @@ def test_sample_and_replay_go_through_net_and_agree() -> None:
     # velocity field must reproduce the exact collection-time log-prob — this is
     # the GRPO ratio == 1 invariant the divergent velocity resolver would break.
     replay_log_prob = flow_logprob_at(
-        head, cond, token, saved_noise=x0, num_flow_steps=5
+        head, cond, token, saved_noise=x0, num_steps=5
     )
 
     assert replay_log_prob.shape == (b,)

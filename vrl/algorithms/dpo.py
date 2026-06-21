@@ -113,6 +113,11 @@ def diffusion_sft_loss(
 
     Pass ``model_pred[:B]`` and ``target[:B]`` (the winner halves).
     """
+    # WHY keep this thin wrapper exported: it is a deliberately exposed
+    # auxiliary-loss API paired with diffusion_dpo_loss (see module docstring
+    # and __all__) to mirror the reference DPO loss surface for the offline DPO
+    # trainer (trainers/offline/dpo.py, gated on sft_weight>0). Not an
+    # incidental F.mse_loss alias — do not inline.
     return F.mse_loss(model_pred_winner.float(), target_winner.float(), reduction="mean")
 
 

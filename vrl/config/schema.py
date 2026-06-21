@@ -282,6 +282,9 @@ class SamplingConfig(ConfigBase):
     attention_backend: Literal["vllm_paged", "torch_native"] = "vllm_paged"
     # Key registry: parsed by family layout/runtime-spec extractors.
     ar_scheduler_batch_size: Any = None
+    # do-CFG boolean switch (whether to apply classifier-free guidance at all);
+    # distinct from guidance_scale (the float strength). Diffusion models AND it
+    # with guidance_scale > 1.0 to derive their internal do_cfg flag.
     cfg: Any = None
     fps: Any = None
     guidance_scale: Any = None
@@ -290,8 +293,10 @@ class SamplingConfig(ConfigBase):
     image_token_num: Any = None
     max_reflect_len: Any = None
     max_sequence_length: Any = None
+    # AR families declare noise_level under sampling; the collector flat-merges
+    # it into rollout values. Same knob as rollout.noise_level (the canonical
+    # owner the cross-field validator enforces for token_grpo + nextstep_1).
     noise_level: Any = None
-    num_flow_steps: Any = None
     num_frames: Any = None
     num_steps: Any = None
     temperature: Any = None

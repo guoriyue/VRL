@@ -155,7 +155,7 @@ def _nextstep_1_config_from_runtime_spec(spec: RuntimeBuildSpec) -> dict[str, An
 
     for key in (
         "guidance_scale",
-        "num_flow_steps",
+        "num_steps",
         "noise_level",
         "image_token_num",
         "token_dim",
@@ -198,7 +198,7 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
     dict holds:
 
     - ``guidance_scale``: float
-    - ``num_flow_steps``: int
+    - ``num_steps``: int
     - ``noise_level``: float
     - ``image_token_num``: int (L_img — number of continuous image tokens)
     - ``image_size``: int (passed to ``decode_image_tokens``)
@@ -245,7 +245,7 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
         prompts = list(request.prompts)
 
         guidance_scale = float(sampling["guidance_scale"])
-        num_flow_steps = int(sampling["num_flow_steps"])
+        num_steps = int(sampling["num_steps"])
         noise_level = float(sampling["noise_level"])
 
         # Repeat each prompt ``samples_per_prompt`` times so the AR loop
@@ -281,7 +281,7 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
 
         sample_kwargs: dict[str, Any] = {
             "guidance_scale": guidance_scale,
-            "num_flow_steps": num_flow_steps,
+            "num_steps": num_steps,
             "noise_level": noise_level,
             "image_token_num": params.image_token_num,
         }
@@ -335,7 +335,7 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
 
         trajectory_context: dict[str, Any] = {
             "guidance_scale": guidance_scale,
-            "num_flow_steps": num_flow_steps,
+            "num_steps": num_steps,
             "noise_level": noise_level,
             "image_token_num": params.image_token_num,
             "image_size": params.image_size,
@@ -384,7 +384,7 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
         params: ARSamplingParams = self.layout.parse_sampling_params(request)
 
         guidance_scale = float(sampling["guidance_scale"])
-        num_flow_steps = int(sampling["num_flow_steps"])
+        num_steps = int(sampling["num_steps"])
         noise_level = float(sampling["noise_level"])
 
         repeated_prompts = [chunk.prompt] * chunk.sample_count
@@ -415,7 +415,7 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
 
         sample_kwargs: dict[str, Any] = {
             "guidance_scale": guidance_scale,
-            "num_flow_steps": num_flow_steps,
+            "num_steps": num_steps,
             "noise_level": noise_level,
             "image_token_num": params.image_token_num,
         }
@@ -455,7 +455,7 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
             uncond_attention_mask=uncond_mask,
             context={
                 "guidance_scale": guidance_scale,
-                "num_flow_steps": num_flow_steps,
+                "num_steps": num_steps,
                 "noise_level": noise_level,
                 "image_token_num": params.image_token_num,
                 "image_size": params.image_size,

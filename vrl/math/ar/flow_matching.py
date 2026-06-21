@@ -30,7 +30,7 @@ def flow_sample_with_logprob(
     image_head: Any,
     cond: torch.Tensor,         # [B, D_hidden] — LLM last hidden state
     *,
-    num_flow_steps: int = 20,
+    num_steps: int = 20,
     noise_level: float = 1.0,
     cfg_uncond: torch.Tensor | None = None,
     guidance_scale: float = 1.0,
@@ -43,7 +43,7 @@ def flow_sample_with_logprob(
     Algorithm (matching the diffusion side's SDE-with-logprob convention):
 
         1. Initialise ``x_0 ~ N(0, I)`` (or use the head's prescribed prior).
-        2. Run ``num_flow_steps - 1`` deterministic Euler steps on the
+        2. Run ``num_steps - 1`` deterministic Euler steps on the
            flow ODE: ``x_{k+1} = x_k + dt * v(x_k, t_k, cond)``.
         3. At the final step, inject Gaussian noise of scale ``std``:
            ``token = x_{K-1} + dt * v(x_{K-1}, t_{K-1}, cond) + std * eps``.
@@ -58,7 +58,7 @@ def flow_sample_with_logprob(
               - ``image_head(x, t, cond)`` (forward) returning v(x,t).
             We call ``velocity_fn`` if provided, else fall back to forward.
         cond: ``[B, D_hidden]`` LLM hidden state at this AR position.
-        num_flow_steps: Number of Euler steps inside the flow ODE.
+        num_steps: Number of Euler steps inside the flow ODE.
         noise_level: Scales the final-step Gaussian std (analogue of the
             ``a`` knob in flow_grpo's SDE-from-ODE conversion). 0 → fully
             deterministic (zero log-prob mass), 1 → unit-variance noise.
@@ -117,8 +117,8 @@ def flow_sample_with_logprob(
     x0 = x
 
     # Linear time grid t in [0, 1]
-    t_grid = torch.linspace(0.0, 1.0, num_flow_steps + 1, device=device, dtype=dtype)
-    dt = 1.0 / num_flow_steps
+    t_grid = torch.linspace(0.0, 1.0, num_steps + 1, device=device, dtype=dtype)
+    dt = 1.0 / num_steps
 
     def _velocity(xk: torch.Tensor, tk: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
         # Upstream FlowMatchingHead exposes its velocity predictor as
@@ -128,7 +128,7 @@ def flow_sample_with_logprob(
         return image_head.net(xk, tk, c)
 
     # K-1 deterministic Euler steps
-    for k in range(num_flow_steps - 1):
+    for k in range(num_steps - 1):
         tk = t_grid[k].expand(B)
         v_cond = _velocity(x, tk, cond)
         if cfg_uncond is not None and abs(guidance_scale - 1.0) > 1e-6:
@@ -139,7 +139,7 @@ def flow_sample_with_logprob(
         x = x + dt * v
 
     # Final step with Gaussian noise injection (the source of the log-prob)
-    tk = t_grid[num_flow_steps - 1].expand(B)
+    tk = t_grid[num_steps - 1].expand(B)
     v_cond = _velocity(x, tk, cond)
     if cfg_uncond is not None and abs(guidance_scale - 1.0) > 1e-6:
         v_uncond = _velocity(x, tk, cfg_uncond)
@@ -179,7 +179,7 @@ def flow_logprob_at(
     target_token: torch.Tensor, # [B, D_token]
     saved_noise: torch.Tensor | None = None,
     *,
-    num_flow_steps: int = 20,
+    num_steps: int = 20,
     noise_level: float = 1.0,
     cfg_uncond: torch.Tensor | None = None,
     guidance_scale: float = 1.0,
@@ -217,8 +217,8 @@ def flow_logprob_at(
         # collection-time noise verbatim).
         x = torch.randn(B, D, device=device, dtype=dtype)
 
-    t_grid = torch.linspace(0.0, 1.0, num_flow_steps + 1, device=device, dtype=dtype)
-    dt = 1.0 / num_flow_steps
+    t_grid = torch.linspace(0.0, 1.0, num_steps + 1, device=device, dtype=dtype)
+    dt = 1.0 / num_steps
 
     def _velocity(xk: torch.Tensor, tk: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
         # Same velocity contract as the sample path: NextStep-1's
@@ -230,7 +230,7 @@ def flow_logprob_at(
             return velocity_fn(xk, tk, c)
         return image_head.net(xk, tk, c)
 
-    for k in range(num_flow_steps - 1):
+    for k in range(num_steps - 1):
         tk = t_grid[k].expand(B)
         v_cond = _velocity(x, tk, cond)
         if cfg_uncond is not None and abs(guidance_scale - 1.0) > 1e-6:
@@ -240,7 +240,7 @@ def flow_logprob_at(
             v = v_cond
         x = x + dt * v
 
-    tk = t_grid[num_flow_steps - 1].expand(B)
+    tk = t_grid[num_steps - 1].expand(B)
     v_cond = _velocity(x, tk, cond)
     if cfg_uncond is not None and abs(guidance_scale - 1.0) > 1e-6:
         v_uncond = _velocity(x, tk, cfg_uncond)

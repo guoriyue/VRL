@@ -1,6 +1,6 @@
 # SPRINT: 语义级公开 API 透传门面（`__all__` 导出）—— 标注而非内联（planned）
 
-状态：未开始（2026-06-20）。
+状态：已完成（2026-06-21）。Phase A/B/C 全部落地：`extract_anima_replay_runtime_spec`（anima/runtime.py）与 `diffusion_sft_loss`（dpo.py）各补一行 WHY 注释，固化「公开 API 门面 / 命名契约」意图；本 doc 即 keep-decision 记录。纯注释改动，无逻辑/签名/`__all__` 变更。验证：`pytest tests/algorithms/test_dpo.py`（含在 315 passed）全绿；两处符号/字符串引用未动。
 
 范围：给两个**机械上是纯透传、但经核实是承重的公开 API 门面**的函数补一行 WHY 注释，把「这是有意设计的 API 边界」这一意图显式写在定义处，让未来的审计/读者不再把它们重新 flag 成「透传 wrapper 异味」。**不内联、不删除、不缩 `__all__`、不动有真实逻辑的兄弟函数。** 交付物是注释 + 一条「经审计、决定保留」的记录，不是代码删除。
 

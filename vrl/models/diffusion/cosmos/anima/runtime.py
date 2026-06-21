@@ -57,6 +57,12 @@ def extract_anima_replay_runtime_spec(
     remaining fields ride along inertly, so no trimming is required.
     """
 
+    # WHY keep this thin pass-through: it is the *named* replay-path contract,
+    # referenced by symbol in train.py and by "module:function" string in the
+    # e2e replay test (test_real_checkpoint_rl.py). It intentionally diverges
+    # from full-generation extraction — it previously trimmed fields
+    # (commit 571277787) and may diverge again; the stable entry point lets the
+    # replay spec change without touching callers/tests. Do not inline.
     return extract_anima_runtime_spec(cfg, device, weight_dtype)
 
 

@@ -78,7 +78,7 @@ class NextStep1Config:
     lora_init: str = "gaussian"
 
     # Flow-head sampling — used by the AR runtime runner.
-    num_flow_steps: int = 20             # K Euler steps inside the flow ODE
+    num_steps: int = 20             # K Euler steps inside the flow ODE
     noise_level: float = 1.0             # final-step Gaussian std multiplier
     guidance_scale: float = 4.5               # CFG strength on the velocity field
 
@@ -213,7 +213,7 @@ class NextStep1Model(nn.Module):
         saved_noise: torch.Tensor,           # [B, L_img, D_token]
         *,
         guidance_scale: float | None = None,
-        num_flow_steps: int | None = None,
+        num_steps: int | None = None,
         noise_level: float | None = None,
     ) -> torch.Tensor:
         """Re-compute fresh per-token log-probs under the current model.
@@ -223,7 +223,7 @@ class NextStep1Model(nn.Module):
         """
         cfg = self.config
         guidance_scale = guidance_scale if guidance_scale is not None else cfg.guidance_scale
-        num_flow_steps = num_flow_steps if num_flow_steps is not None else cfg.num_flow_steps
+        num_steps = num_steps if num_steps is not None else cfg.num_steps
         noise_level = noise_level if noise_level is not None else cfg.noise_level
 
         B, L_img, _ = tokens.shape
@@ -245,7 +245,7 @@ class NextStep1Model(nn.Module):
                 cond=c_cond,
                 target_token=tokens[:, j],
                 saved_noise=saved_noise[:, j],
-                num_flow_steps=num_flow_steps,
+                num_steps=num_steps,
                 noise_level=noise_level,
                 cfg_uncond=c_uncond,
                 guidance_scale=guidance_scale,
@@ -306,7 +306,7 @@ class NextStep1Model(nn.Module):
             prompt_embeds, uncond_embeds, prompt_mask, uncond_mask,
             tokens=tokens, saved_noise=saved_noise,
             guidance_scale=batch.context.get("guidance_scale"),
-            num_flow_steps=batch.context.get("num_flow_steps"),
+            num_steps=batch.context.get("num_steps"),
             noise_level=batch.context.get("noise_level"),
         )
         return ReplayResult(

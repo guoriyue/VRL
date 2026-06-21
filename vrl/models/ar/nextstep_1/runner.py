@@ -35,7 +35,7 @@ class NextStep1ARState:
     saved_noise: torch.Tensor
     logprobs: torch.Tensor
     guidance_scale: float
-    num_flow_steps: int
+    num_steps: int
     noise_level: float
     image_token_num: int
     generator: torch.Generator | None = None
@@ -67,14 +67,14 @@ class NextStep1ARModelRunner:
         uncond_mask: torch.Tensor | None,
         *,
         guidance_scale: float | None = None,
-        num_flow_steps: int | None = None,
+        num_steps: int | None = None,
         noise_level: float | None = None,
         image_token_num: int | None = None,
         generator: torch.Generator | None = None,
     ) -> ARTokenLoopInit:
         cfg = self.model.config
         guidance_scale = guidance_scale if guidance_scale is not None else cfg.guidance_scale
-        num_flow_steps = num_flow_steps if num_flow_steps is not None else cfg.num_flow_steps
+        num_steps = num_steps if num_steps is not None else cfg.num_steps
         noise_level = noise_level if noise_level is not None else cfg.noise_level
         image_token_num = image_token_num if image_token_num is not None else cfg.image_token_num
 
@@ -125,7 +125,7 @@ class NextStep1ARModelRunner:
                 saved_noise=saved_noise,
                 logprobs=logprobs,
                 guidance_scale=float(guidance_scale),
-                num_flow_steps=int(num_flow_steps),
+                num_steps=int(num_steps),
                 noise_level=float(noise_level),
                 image_token_num=int(image_token_num),
                 generator=generator,
@@ -205,7 +205,7 @@ class NextStep1ARModelRunner:
         token, log_prob, replay_noise = flow_sample_with_logprob(
             self.model.image_head,
             cond=batch.row_lanes["c_cond"],
-            num_flow_steps=state.num_flow_steps,
+            num_steps=state.num_steps,
             noise_level=state.noise_level,
             cfg_uncond=batch.row_lanes.get("c_uncond"),
             guidance_scale=state.guidance_scale,
