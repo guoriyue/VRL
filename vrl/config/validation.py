@@ -128,11 +128,7 @@ def validate_production_reward_contract(cfg: DictConfig) -> None:
     not live in the schema (rewards own their contracts at construction; this
     gate exists because production misconfiguration is unrecoverable mid-run).
     """
-    vr_kwargs = (
-        OmegaConf.select(cfg, "reward.kwargs.kling_video_reward")
-        or OmegaConf.select(cfg, "reward.kwargs.video_reward")
-        or {}
-    )
+    vr_kwargs = OmegaConf.select(cfg, "reward.kwargs.kling_video_reward") or {}
     if str(vr_kwargs.get("media_type", "")) != "video":
         raise ValueError(
             "production.kling_video_reward requires "
@@ -339,14 +335,8 @@ def validate_training_config(cfg: DictConfig) -> None:
     from vrl.config.precision import resolve_precision_policy
 
     resolve_precision_policy(cfg)
-    if bool(
-        OmegaConf.select(cfg, "production.kling_video_reward.enabled", default=False)
-        or OmegaConf.select(cfg, "production.video_reward.enabled", default=False)
-    ):
+    if bool(OmegaConf.select(cfg, "production.kling_video_reward.enabled", default=False)):
         validate_production_kling_video_reward_config(cfg)
-
-
-validate_production_video_reward_config = validate_production_kling_video_reward_config
 
 
 __all__ = [
@@ -356,7 +346,6 @@ __all__ = [
     "resolve_algorithm_kind",
     "validate_production_kling_video_reward_config",
     "validate_production_reward_contract",
-    "validate_production_video_reward_config",
     "validate_reward_config",
     "validate_training_config",
 ]
