@@ -3,10 +3,31 @@
 状态：parked / blocked-on-event（等待真实 multi-GPU 硬件 → Phase 6 的 torchrun 2-GPU FSDP2 SD3 OCR 真实运行）。前置 readiness sprint 已落地（schema TrainingSection.strategy Literal["single_process","fsdp"]、DistributedTrainingContext/resolve_training_context、Strategy/SingleProcessStrategy 接缝、collect/train step split，commits d19faa2/b0d7b57/0d1b046/f979cce/fea4ba9/e6facbd/001ab41/1e6dc24）。FSDP2 **strategy 层**（FSDPStrategy / fully_shard / DTensor export）也已落地（见下方 Implementation status），但多卡编排（Phase 4 rank-split collect/train、§6.5 torchrun↔Ray、Phase 6 真实 2-GPU 运行）尚未实现，strategy=fsdp 当前由 run_online_recipe 的 _require_supported_online_strategy 主动 fail-fast。
 
 > **复核更新（2026-06-20）**：本 doc「无真实 2-GPU run」一句**已 stale**——一条 **DDP** 多卡路径其后独立落地并归档
-> `done/`（`vrl/trainers/strategy.py:464 DDPStrategy`、`SPRINT_symmetric_colocated_ddp` + `SPRINT_ddp_2x1_first_run_findings`，
+> `done/`（`vrl/trainers/strategy.py:464 DDPStrategy`、`SPRINT_symmetric_colocated_ddp` + `SPRINT_ddp_2x1_first_run_findings`,
 > 配方 `online_nft_kling_video_reward_ddp_2x1.yaml` 已端到端跑通真实 2×L40S）。`_require_supported_online_strategy`
 > 现放行 `{single_process, ddp}`、仍 fail-fast `fsdp`（`vrl/scripts/common/online.py:75`）。**本 sprint 的 FSDP2 rank-split
 > 多卡编排（Phase 4/6.5/6）仍未实现、仍卡硬件**，故保持 parked；只是「2-GPU 从未跑过」不再成立。
+>
+> **复核更新（2026-06-21）：Phase 4 + §6.5 编排已落地，gate 放行 `fsdp`。** 关键架构决定：
+> **复用 DDP 那条对称 colocated 编排，不实现 §6 的非对称 rank0-collect/broadcast 设计。** 依据——
+> `run_online_recipe` 的多 rank 脚手架（per-rank disjoint prompt 分片、`is_primary` gate 全部 IO、
+> per-rank 本地 `ray.init()` + colocated rollout、跨 rank reward stats all-reduce）DDP 已做完并跑通真实 2×1；
+> FSDP 与 DDP 仅差 `prepare_model`（wrap）与 state gather，两者皆已实现+测试；collective 匹配粒度
+> （每次 `backward()`）两者相同。落地清单：
+> 1. `FSDPStrategy.prepare_model` 现显式 `init_training_process_group`（建 PG + `set_device`，与 DDPStrategy 对称）——
+>    `init_device_mesh` 虽会兜底建 PG 但不 set device。
+> 2. `_require_supported_online_strategy` 放行 `{single_process, ddp, fsdp}`（`vrl/scripts/common/online.py`）。
+> 3. **跨 rank skip-backward 一致性**（`vrl/trainers/online/trainer.py:_all_ranks_have_work`）：某 rank microbatch
+>    全过滤跳 backward、另一 rank 不跳 → FSDP per-layer all-gather/reduce-scatter 错配 → NCCL 死锁。新增
+>    `all_reduce(MIN)` 使「跳过」全 rank 一致（DDP 同样受益）。
+> 4. 配方 `online_nft_kling_video_reward_fsdp_2x1.yaml` + `docs/training_examples/.../fsdp_2x1_launch.sh`
+>    （`num_nodes=2/gpus_per_node=1`、EMA off、torch_compile off、无 resume——皆 §10 gate 所限）。
+> 验证：CPU/gloo 单测 + gloo 2-rank skip 一致性单测 + **真实 L40S world_size=1 GPU 冒烟**（nccl PG / cuda DTensor /
+> bf16 fwd-bwd / DTensor clip / cpu_offload gather 干净 keys / export-load round-trip）全过；config→FSDPStrategy
+> 解析通过。**Phase 6 真实跨机 2-node run 已于 2026-06-21 跑通**（A=172.31.36.21 / B=172.31.32.107，2 epochs，
+> reward 上升、3 个非空 checkpoint），现场又抓出并修掉 5 个仅在真机 NCCL 暴露的 bug——详见本文件顶部「Done
+> (2026-06-21)」清单。注：本模型 LoRA 放得下单卡，cross-node FSDP 每层 all-gather 走网络比 DDP 慢；FSDP 的价值
+> 在「放不下单卡 / full-param」场景。
 
 The FSDP2 **strategy layer** (Phase 2 + the FSDP2 core of Phases 3/5) is now
 implemented and unit-tested on a single CPU rank (gloo, `world_size=1`), where
@@ -30,11 +51,43 @@ implemented and unit-tested on a single CPU rank (gloo, `world_size=1`), where
   rollout-key-space invariant (sharded export == single-process export), pure
   helpers, and the gates.
 
-**Still NOT done (needs real multi-GPU + Ray, and is what keeps `fsdp` gated):**
-Phase 4 (online GRPO rank-split collect/train), §6.5 (torchrun↔Ray rollout
-coordination), Phase 7 (offline DPO distributed), DTensor-aware optimizer/EMA
-state, and Phase 6 real 2-GPU runs. `run_online_recipe` fail-fasts on `fsdp` via
-`_require_supported_online_strategy` pointing here.
+**Done (2026-06-21):** Phase 4 (online GRPO rank split — reused the symmetric
+colocated path), §6.5 (torchrun↔Ray coordination via the per-rank-local Ray
+model), AND **Phase 6 real cross-node 2×1 run** — `online_nft_kling_video_reward_fsdp_2x1`
+ran 2 epochs on two L40S nodes (A=172.31.36.21 / B=172.31.32.107), reward improved
+-3.97→-3.11 (r_kling -4.05→-3.46), grad_norm non-zero/changing (0.13→1.31),
+rank0-only metrics, 3 non-empty 4.4G checkpoints (gathered full state incl. 1120
+LoRA keys), clean finish. Five real-multi-rank bugs surfaced ONLY on the live
+2-node run (every one invisible to the world_size=1 CPU tests — the §"validate on
+real NCCL" lesson), each now fixed with a regression test:
+
+1. **resources.py treated fsdp as asymmetric** (trainer must own all `world_size`
+   GPUs, disjoint rollout) → added the symmetric-colocated branch (rollout.gpu_pool
+   =trainer ⇒ per-rank-local 1-GPU resolution like ddp). `test_fsdp_colocate_resolves_per_rank_local_single_gpu`.
+2. **`gather_full_state_dict` dropped LoRA on non-rank0**: `cpu_offload=True` makes
+   `get_model_state_dict(full_state_dict=True)` rank0-only (empty elsewhere) → every
+   rank's colocated rollout sync raised "missing trainable". Fixed to `cpu_offload=False`
+   (full on every rank). `test_fsdp_gather_distributed.py`.
+3. **skip-backward divergence** would deadlock FSDP collectives → `_all_ranks_have_work`
+   all-reduce(MIN). `test_skip_backward_agreement_distributed.py`.
+4. **FSDP MixedPrecisionPolicy(bf16) × activation checkpointing**: the GC recompute
+   bypasses FSDP's pre-forward param-cast hook → forward bf16 vs recompute fp32
+   CheckpointError. Config uses `precision_policy=none` (fp32 sharded master + bf16
+   via the trainer's autocast, consistent across forward/recompute). GC is required
+   (no-GC OOMs a 44GB L40S at 480p/33f).
+5. **checkpoint gather deadlock**: the trainable-state gather is a collective but the
+   recipe gated the whole save to rank0 → rank0 hung at the all-gather. Fixed: the
+   gather runs on every rank, only rank0 writes; sharded LoRA `save_pretrained` is
+   skipped under fsdp (payload carries the gathered state). `test_save_training_checkpoint_non_primary_gathers_but_writes_nothing`.
+
+**Still NOT done (deferred, not blocking):** Phase 7 (offline DPO distributed);
+DTensor-aware optimizer/EMA state and `resume_from` (still §10 fail-fast for fsdp);
+keeping bf16 FSDP params *with* GC (would need the MP cast re-applied during
+recompute — see bug 4); HF-format LoRA `save_pretrained` artifact under fsdp (the
+torch.save payload already holds the full gathered state — see bug 5); bf16 NCCL
+weight-sync perf (§10.5). For a model that fits on one card, DDP remains faster
+(cross-node FSDP all-gathers params over the network each forward); FSDP's value is
+the model-doesn't-fit / full-param case.
 
 ## 0. Core Decision
 
