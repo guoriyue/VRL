@@ -1,7 +1,8 @@
 # SPRINT: SamplingConfig 旋钮词汇统一（CFG 强度 / 步数 / noise_level / cfg 布尔 / train_segments / final_image_policy 归属）(planned)
 
-状态：第一档 DONE（2026-06-20，死分支删除）/ 第二档（CFG 名统一 + AR YAML 迁移）与低优先（cfg 布尔改名）仍 planned。
-- 已落地：删 `rollout.train_segments`（collector first-present 链）、`sampling.r1.final_image_policy`（first-present 链 + SamplingConfig.r1 ConfigBlock + RootConfig 等值交叉校验），final_image_policy 收敛为 rollout 单一真源（保留 legality 校验）。删除随之失效的 `test_token_grpo_multisegment_policy_mismatch_raises`。tests/config + collector + factory 111 passed。
+状态：第一档 DONE（2026-06-20，死分支删除）/ 第二档 CFG 名统一 **DONE（2026-06-20，分支 sprint/trainer-rollout-dead-alias）** / 低优先（cfg 布尔改名）仍 planned。
+- 已落地（第一档）：删 `rollout.train_segments`（collector first-present 链）、`sampling.r1.final_image_policy`（first-present 链 + SamplingConfig.r1 ConfigBlock + RootConfig 等值交叉校验），final_image_policy 收敛为 rollout 单一真源（保留 legality 校验）。删除随之失效的 `test_token_grpo_multisegment_policy_mismatch_raises`。tests/config + collector + factory 111 passed。
+- 已落地（第二档，CFG 强度）：`cfg_scale`（NextStep）/ `cfg_weight`（Janus）→ **`guidance_scale` 全链路改名**，而非原计划的「YAML 表面统一 + adapter 内部保留上游名」。核实后两家的 CFG 都只流经**自有代码**（Janus 自写 `guided = uncond + s*(cond-uncond)`；NextStep 自有 `vrl/math/ar/flow_matching.flow_sample_with_logprob`），`cfg_scale`/`cfg_weight` **不是上游 `generate()` 的关键字**，所谓「上游 API parity」只是命名识别度，无硬绑定 → 故选内部一致的彻底改名（单一词汇、无翻译层）。schema 删 `cfg_scale`/`cfg_weight` 两 registry key（`guidance_scale` 已注册）。anima eval CLI 保留 `--cfg-scale` 作 `--guidance-scale` 的兼容别名。AR 配置解析 `sampling.guidance_scale`（nextstep 4.5 / janus 5.0）零 unknown-key 告警；models/rollouts/config/trainers/algorithms 全量 595 passed。`cfg` 布尔开关与 wan `guidance_scale_2` 未动。
 范围：`SamplingConfig` / `RolloutConfig` 里一组「一个概念、多个拼写或多个归属」的采样旋钮 —— 同一个量在不同 model family 下用不同 key 名，或者同一个 key 在两三个 section 里各有一份；其中已确认存在**完全没有 live config 使用者的死分支**（`rollout.train_segments`、`sampling.r1.final_image_policy`）。
 
 ## 0. Core Decision（先看这一段）
