@@ -1,6 +1,10 @@
-# SPRINT: 修正算法超参旋钮命名碰撞与重复 clamp（eps_clip / advantage-bound / KL 系数）(planned)
+# SPRINT: 修正算法超参旋钮命名碰撞与重复 clamp（eps_clip / advantage-bound / KL 系数）(done)
 
-状态：planned（2026-06-20）
+状态：done（2026-06-20）。四项落地方案全部实锤，旧名在 `vrl/` 与 `configs/` 零残留：
+`eps_clip → clip_ratio` + 修 base 错值（commit d1547df，按 family boundary 拆分）；
+统一 advantage clamp 到 `adv_clip_max` + `advantage_high → advantage_scale`（11ba09c 改名、8dd639f 删第二次 clamp）；
+`init_kl_coef`/`kl_beta → kl_coef`（d9701c6）；`kl_reward → kl_reward_coef`（25901a1）。
+非目标遵守（未引入自适应 KL 控制器、未改 DPO `beta`、`adv_clip_max` 语义不变）。验证：370 passed。
 范围：消除 GRPO/TokenGRPO/DiffusionNFT 三族算法在 `eps` vs `eps_clip`、`adv_clip_max` vs `advantage_high`、`init_kl_coef` vs `kl_beta`、以及 `algorithm.kl_reward` 四处旋钮上的命名碰撞、重复 clamp 与错位归属，并修复 base grpo.yaml 中冻结策略的错值。
 
 ## 0. Core Decision（先看这一段）
