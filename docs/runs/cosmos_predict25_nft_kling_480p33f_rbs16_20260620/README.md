@@ -119,7 +119,7 @@ The training reward is `score_key: overall_reward` (`configs/reward/kling_video_
 2. The MQ inversion is most likely a **too-few-frames artifact (33f)**; restoring frames toward the paper's 93f should let MQ work — but that is expensive, so try (1) first.
 3. **Re-run `kling_reward_diagnosis_probe.py` and require the *trained* key to RESPOND** (drop > +0.0339, not INVERTED) before investing GPU-days. A ≥30–50 epoch sweep on the current `overall_reward` would optimize a gameable target.
 
-**Follow-up — is VQ's gradient *policy-improvable*? (2026-06-21, steps-ladder probe).** The diagnosis probe proves VQ responds to *artificial* noise; this asks the sharper question behind "we never improve regardless of reward": does VQ reward the kind of quality the policy could actually climb? Held the policy fixed (checkpoint-4) and the prompts/seed fixed, varied only denoise steps (more steps = objectively more-converged generation) via `cosmos_predict25_kling_eval --steps {8,16,32,64} --score-key visual_quality`:
+**Follow-up — is VQ's gradient *policy-improvable*? (2026-06-21, steps-ladder probe).** The diagnosis probe proves VQ responds to *artificial* noise; this asks the sharper question behind "we never improve regardless of reward": does VQ reward the kind of quality the policy could actually climb? Held the policy checkpoint, prompts, and seed fixed for every row, varied only denoise steps (more steps = objectively more-converged generation) via `cosmos_predict25_kling_eval --steps {8,16,32,64} --score-key visual_quality`:
 
 | steps | 8 | 16 | 32 | 64 |
 |---|---|---|---|---|
