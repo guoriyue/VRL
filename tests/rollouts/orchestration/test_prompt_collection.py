@@ -54,7 +54,7 @@ class _DeferredCollector:
     async def collect_unscored(self, prompts: list[str], **kwargs: Any) -> Any:
         prompts = list(prompts)
         self.events.append(f"generate:{','.join(prompts)}")
-        return _batch(prompts, int(kwargs.get("group_size", 1)))
+        return _batch(prompts, int(kwargs["group_size"]))
 
     async def score_rollouts(self, pendings: list[Any]) -> list[RolloutBatch]:
         names = [",".join(dict.fromkeys(pending.prompts)) for pending in pendings]
@@ -126,7 +126,7 @@ class _PhasedCollector:
     async def collect_unscored(self, prompts: list[str], **kwargs: Any) -> _Unscored:
         prompts = list(prompts)
         return _Unscored(
-            batch=_batch(prompts, int(kwargs.get("group_size", 1))),
+            batch=_batch(prompts, int(kwargs["group_size"])),
             phases={"collect.engine_generate": 1.0},
         )
 

@@ -452,7 +452,7 @@ class _SyntheticDiffusionReplayCollector:
             case=self.case,
             cfg=self.cfg,
             prompts=prompts,
-            group_size=int(kwargs.get("group_size", 2)),
+            group_size=int(kwargs["group_size"]),
             policy_version=kwargs.get("policy_version"),
             device=self.device,
         )

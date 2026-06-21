@@ -62,7 +62,7 @@ class _GatedCollector:
         await self.allow_generate.wait()
         self.events.append("generate_end")
         return _Unscored(
-            batch=_batch(str(prompts[0]), int(kwargs.get("group_size", 1))),
+            batch=_batch(str(prompts[0]), int(kwargs["group_size"])),
             phases={"collect.engine_generate": 1.0},
         )
 

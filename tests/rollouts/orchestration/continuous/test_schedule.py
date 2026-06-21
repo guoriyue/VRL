@@ -77,7 +77,7 @@ class _Collector:
     async def collect_unscored(self, prompts: Any, **kwargs: Any) -> RolloutBatch:
         prompts = list(prompts)
         self.calls.append({"prompts": prompts, **dict(kwargs)})
-        return _batch(prompts, int(kwargs.get("group_size", 1)))
+        return _batch(prompts, int(kwargs["group_size"]))
 
     async def score_rollouts(self, pendings: Any) -> list[RolloutBatch]:
         return list(pendings)

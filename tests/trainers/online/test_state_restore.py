@@ -160,7 +160,7 @@ class _ResumeCollector:
 
         from vrl.rollouts.batch import RolloutBatch
 
-        group_size = int(kwargs.get("group_size", 1))
+        group_size = int(kwargs["group_size"])
         return RolloutBatch(
             observations=torch.zeros(group_size, 2, 1),
             actions=torch.zeros(group_size, 2, 1),

@@ -58,7 +58,7 @@ class TestRewardUpdateFlow:
 
             async def collect_unscored(self, prompts, **kwargs):
                 captured_kwargs.append(dict(kwargs))
-                group_size = int(kwargs.get("group_size", 1))
+                group_size = int(kwargs["group_size"])
                 return RolloutBatch(
                     observations=torch.zeros(group_size, 2, 1),
                     actions=torch.zeros(group_size, 2, 1),
@@ -165,7 +165,7 @@ class TestRewardUpdateFlow:
             async def collect_unscored(self, prompts, **kwargs):
                 prompts = list(prompts)
                 collect_calls.append(prompts)
-                group_size = int(kwargs.get("group_size", 1))
+                group_size = int(kwargs["group_size"])
                 batch_size = len(prompts) * group_size
                 group_ids = torch.tensor(
                     [prompt_idx for prompt_idx in range(len(prompts)) for _ in range(group_size)],
@@ -268,7 +268,7 @@ class TestRewardUpdateFlow:
             async def collect_unscored(self, prompts, **kwargs):
                 prompts = list(prompts)
                 collect_calls.append(list(prompts))
-                group_size = int(kwargs.get("group_size", 1))
+                group_size = int(kwargs["group_size"])
                 batch_size = len(prompts) * group_size
                 group_ids = torch.tensor(
                     [prompt_idx for prompt_idx in range(len(prompts)) for _ in range(group_size)],
@@ -463,7 +463,7 @@ class TestRewardUpdateFlow:
 
             async def collect_unscored(self, prompts, **kwargs):
                 prompts = list(prompts)
-                group_size = int(kwargs.get("group_size", 1))
+                group_size = int(kwargs["group_size"])
                 batch_size = len(prompts) * group_size
                 group_ids = torch.tensor(
                     [prompt_idx for prompt_idx in range(len(prompts)) for _ in range(group_size)],
@@ -574,7 +574,7 @@ class TestRewardUpdateFlow:
 
             async def collect_unscored(self, prompts, **kwargs):
                 prompts = list(prompts)
-                group_size = int(kwargs.get("group_size", 1))
+                group_size = int(kwargs["group_size"])
                 batch_size = len(prompts) * group_size
                 group_ids = torch.tensor(
                     [i for i in range(len(prompts)) for _ in range(group_size)],
@@ -698,7 +698,7 @@ def test_sample_batch_size_splits_training_replay_and_preserves_gradient(monkeyp
 
         async def collect_unscored(self, prompts, **kwargs):
             prompts = list(prompts)
-            group_size = int(kwargs.get("group_size", 1))
+            group_size = int(kwargs["group_size"])
             batch_size = len(prompts) * group_size
             return RolloutBatch(
                 observations=torch.zeros(batch_size, 1, 1),

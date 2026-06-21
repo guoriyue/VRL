@@ -61,7 +61,7 @@ class TestAdvantageAndMetrics:
 
 
             async def collect_unscored(self, prompts, **kwargs):
-                group_size = int(kwargs.get("group_size", 1))
+                group_size = int(kwargs["group_size"])
                 rewards = []
                 for _ in range(group_size):
                     rewards.append(self._reward_values[self._cursor])
@@ -175,7 +175,7 @@ class TestAdvantageAndMetrics:
                 return list(pendings)
 
             async def collect_unscored(self, prompts, **kwargs):
-                group_size = int(kwargs.get("group_size", 1))
+                group_size = int(kwargs["group_size"])
                 prompts = list(prompts)
                 request = GenerationRequest(
                     request_id="zero-adv",

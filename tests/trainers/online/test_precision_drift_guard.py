@@ -227,7 +227,7 @@ def test_online_trainer_precision_guard_fails_before_optimizer_when_ratio_drifts
             return list(pendings)
 
         async def collect_unscored(self, prompts, **kwargs):
-            group_size = int(kwargs.get("group_size", 1))
+            group_size = int(kwargs["group_size"])
             return RolloutBatch(
                 observations=torch.zeros(group_size, 2, 1),
                 actions=torch.zeros(group_size, 2, 1),

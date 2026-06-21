@@ -100,14 +100,18 @@ class RolloutCollector:
     async def collect(
         self,
         prompts: list[str],
+        *,
+        group_size: int,
         **kwargs: Any,
     ) -> RolloutBatch:
-        unscored = await self.collect_unscored(prompts, **kwargs)
+        unscored = await self.collect_unscored(prompts, group_size=group_size, **kwargs)
         return (await self.score_rollouts([unscored]))[0]
 
     async def collect_unscored(
         self,
         prompts: list[str],
+        *,
+        group_size: int,
         **kwargs: Any,
     ) -> UnscoredRollout:
         """Generate one prompt group without scoring it.
@@ -118,10 +122,7 @@ class RolloutCollector:
         score_rollouts().
         """
 
-        if "group_size" not in kwargs:
-            raise TypeError(f"{self.family}/{self.task} collect_unscored requires a group_size kwarg")
-        group_size = int(kwargs["group_size"])
-        collector_request = self.request_builder.build(prompts, group_size, dict(kwargs))
+        collector_request = self.request_builder.build(prompts, int(group_size), dict(kwargs))
 
         profile = os.environ.get("VRL_PROFILE_COLLECT") == "1"
         phase_t = _sync_time() if profile else None
