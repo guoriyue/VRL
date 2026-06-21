@@ -10,7 +10,6 @@ import torch
 from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
 from vrl.trajectory import TrainingView, TrajectoryBatch, role_tensor
 from vrl.trajectory.device import move_value_to_device
-from vrl.trajectory.views import LossUnit
 
 
 @dataclass(slots=True)
@@ -41,7 +40,6 @@ class TrajectorySignalBuilder:
         old_prev_sample_mean: Any | None = None,
         std_dev_t: Any | None = None,
         dt: Any | None = None,
-        axis: str | None = None,
         aux: dict[str, Any] | None = None,
         mask_key: str = "token_mask",
     ) -> TrajectorySignalBatch:
@@ -61,7 +59,6 @@ class TrajectorySignalBuilder:
             old_prev_sample_mean=old_prev_sample_mean,
             std_dev_t=std_dev_t,
             dt=dt,
-            axis=axis,
             aux=aux,
             mask_key=mask_key,
         )
@@ -88,7 +85,6 @@ class TrajectorySignalBuilder:
         old_prev_sample_mean: Any | None = None,
         std_dev_t: Any | None = None,
         dt: Any | None = None,
-        axis: str | None = None,
         aux: dict[str, Any] | None = None,
         mask_key: str = "token_mask",
     ) -> SegmentSignal:
@@ -96,7 +92,6 @@ class TrajectorySignalBuilder:
 
         name = self._primary_segment_name(segment_name)
         segment = self.trajectory.segments.get(name) if self.trajectory is not None else None
-        unit = self._loss_unit(name)
 
         resolved_old = old_log_prob
         if resolved_old is None:
@@ -128,14 +123,8 @@ class TrajectorySignalBuilder:
             mask=resolved_mask,
             segment=name,
         )
-        resolved_axis = axis or (unit.axis if unit is not None else None)
-        if resolved_axis is None:
-            resolved_axis = self._axis_from_segment_or_signal(segment, resolved_old)
-
         return SegmentSignal(
             name=name,
-            axis=resolved_axis,
-            axes=self._axes_from_value(resolved_old, axis=resolved_axis),
             distribution=segment.distribution if segment is not None else distribution,
             log_prob=log_prob,
             old_log_prob=resolved_old,
@@ -173,14 +162,6 @@ class TrajectorySignalBuilder:
                 if segment.trainable:
                     return name
         return "default"
-
-    def _loss_unit(self, segment_name: str) -> LossUnit | None:
-        if self.training_view is None:
-            return None
-        for unit in self.training_view.loss_units:
-            if unit.segment == segment_name:
-                return unit
-        return None
 
     def _old_log_prob_from_trajectory(
         self,
@@ -288,23 +269,6 @@ class TrajectorySignalBuilder:
         if shape is None:
             return "<unknown>"
         return tuple(int(dim) for dim in shape)
-
-    @staticmethod
-    def _axis_from_segment_or_signal(segment: Any | None, value: Any) -> str:
-        if segment is not None:
-            for tensor in segment.tensors.values():
-                if tensor.role == "old_log_prob":
-                    for axis in tensor.axes:
-                        if axis != "sample":
-                            return axis
-        return "step" if getattr(value, "ndim", 1) <= 1 else "token"
-
-    @staticmethod
-    def _axes_from_value(value: Any, *, axis: str) -> tuple[str, ...]:
-        ndim = int(getattr(value, "ndim", 1))
-        if ndim <= 1:
-            return ("sample",)
-        return ("sample", axis)
 
 
 __all__ = ["TrajectorySignalBuilder"]

@@ -24,8 +24,6 @@ def _segment_signal(
         mask = torch.ones_like(new_lp)
     return SegmentSignal(
         name=name,
-        axis="token",
-        axes=("sample", "token"),
         distribution="categorical",
         log_prob=new_lp,
         old_log_prob=old_lp,

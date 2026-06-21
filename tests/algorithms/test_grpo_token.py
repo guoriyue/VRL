@@ -63,8 +63,6 @@ def _inputs(
             segments={
                 "image_tokens": SegmentSignal(
                     name="image_tokens",
-                    axis="token",
-                    axes=("sample", "token"),
                     distribution="categorical",
                     log_prob=new_lp,
                     old_log_prob=old_lp,

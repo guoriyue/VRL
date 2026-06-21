@@ -370,8 +370,6 @@ def _flow_signals(
         segments={
             "denoise": SegmentSignal(
                 name="denoise",
-                axis="denoise",
-                axes=("sample",),
                 distribution="flow_matching",
                 log_prob=log_prob,
                 old_log_prob=old_log_prob,

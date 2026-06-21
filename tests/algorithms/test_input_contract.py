@@ -36,8 +36,6 @@ def _grpo_signals(*, old_log_prob: torch.Tensor | None) -> TrajectorySignalBatch
         segments={
             "denoise": SegmentSignal(
                 name="denoise",
-                axis="denoise",
-                axes=("sample",),
                 distribution="flow_matching",
                 log_prob=torch.zeros(_BATCH),
                 old_log_prob=old_log_prob,
