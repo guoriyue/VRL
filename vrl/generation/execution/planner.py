@@ -61,7 +61,6 @@ class ExecutionStage:
     prompt_index: int | None = None
     sample_start: int | None = None
     sample_count: int | None = None
-    batch_group_key: tuple[Any, ...] = ()
     cache_read: bool = False
     cache_write: bool = False
     profiler_name: str = ""
@@ -217,7 +216,6 @@ class EnginePlanner:
         )
         resolved_axes = self._resolved_axes()
         execution_stages = self._execution_stages(
-            resolved_axes,
             chunk_schedule.chunks,
         )
         return EnginePlan(
@@ -280,7 +278,6 @@ class EnginePlanner:
 
     def _execution_stages(
         self,
-        resolved_axes: dict[str, ResolvedAxis],
         sample_chunks: tuple[SampleChunk, ...],
     ) -> tuple[ExecutionStage, ...]:
         units = [
@@ -288,16 +285,10 @@ class EnginePlanner:
                 name="plan",
                 stage_id=f"{self.request.request_id}:stage:plan",
                 profiler_name="engine.plan",
-                batch_group_key=(
-                    self.request.family,
-                    self.request.task,
-                    self.capability.trajectory_kind,
-                ),
             ),
         ]
         units.extend(self._chunk_stages(sample_chunks))
         for stage in self.capability.execution_stages:
-            axis = resolved_axes.get(stage.axis or "")
             units.append(
                 ExecutionStage(
                     name=stage.name,
@@ -305,7 +296,6 @@ class EnginePlanner:
                     segment=stage.segment,
                     axis=stage.axis,
                     axis_index=None,
-                    batch_group_key=self._batch_group_key(axis),
                     cache_read=stage.cache_read,
                     cache_write=stage.cache_write,
                     profiler_name=stage.profiler_label,
@@ -358,11 +348,6 @@ class EnginePlanner:
                     prompt_index=sample_chunk.prompt_index,
                     sample_start=sample_chunk.sample_start,
                     sample_count=sample_chunk.sample_count,
-                    batch_group_key=(
-                        self.request.family,
-                        self.request.task,
-                        self.capability.trajectory_kind,
-                    ),
                     profiler_name="engine.forward_chunk",
                     metadata={
                         "stage_kind": "chunk",
@@ -372,15 +357,6 @@ class EnginePlanner:
                 )
             )
         return units
-
-    def _batch_group_key(self, axis: ResolvedAxis | None) -> tuple[Any, ...]:
-        return (
-            self.request.family,
-            self.request.task,
-            self.capability.trajectory_kind,
-            None if axis is None else axis.name,
-            None if axis is None else axis.kind,
-        )
 
 
 def build_engine_plan(
