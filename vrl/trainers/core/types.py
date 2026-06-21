@@ -269,6 +269,12 @@ class TrainerConfig:
     # --- gradient ---
     max_norm: float = field(default=1.0, metadata={"yaml": "actor"})
 
+    # How the timestep_fraction subset is chosen each update: "strided" (fixed
+    # evenly-spaced steps, default) or "random" (DanceGRPO — a fresh random
+    # subset per update, decorrelating denoise-step gradient coverage). No effect
+    # when timestep_fraction == 1 (all steps trained either way).
+    timestep_selection: str = field(default="strided", metadata={"yaml": "actor"})
+
     # --- PPO/GRPO loop ---
     ppo_epochs: int = field(default=1, metadata={"yaml": "actor"})
     # 0 preserves the legacy behavior: accumulate every collected rollout
@@ -321,6 +327,11 @@ class TrainerConfig:
     profile: bool = field(default=False, metadata={"yaml": "trainer"})
 
     def __post_init__(self) -> None:
+        if self.timestep_selection not in ("strided", "random"):
+            raise ValueError(
+                "actor.timestep_selection must be 'strided' or 'random' "
+                f"(got {self.timestep_selection!r})",
+            )
         # Streaming-accumulation slice (SPRINT_streaming_rollout_accumulation +
         # SPRINT_memory_budgeted_microbatch). The optimizer-target batch
         # (rollout_batch_size groups) is collected/trained/released in

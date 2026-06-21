@@ -1,0 +1,16 @@
+# DanceGRPO — FlowGRPO loss + random denoise-timestep selection.
+#
+# Same objective and hyper-parameters as GRPO (verl-omni registers dance_grpo to
+# the same FlowGRPOLoss); the only difference is the trainer's random per-update
+# timestep subset, set via actor.timestep_selection=random in the recipe. Mirrors
+# /base/algorithm/grpo so a diffusion recipe can inherit the AR-safe clip and
+# override it at the family boundary.
+algorithm:
+  kind: dance_grpo
+  clip_ratio: 0.2
+  kl_coef: 0.0
+  eps: 1.0e-8
+  adv_clip_max: 5.0
+  global_std: false
+  flow_kl_use_dt: false
+  kl_reward_coef: 0.0

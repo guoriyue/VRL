@@ -62,6 +62,11 @@ class DiffusionSDEParams:
     sde_window_range: tuple[int, int]
     same_latent: bool
     return_kl: bool
+    # Store each denoise step's rollout proposal mean (old_prev_sample_mean) into
+    # the trajectory for trust-region replay losses (Flow-DPPO / GRPO-Guard).
+    # Off by default — it adds a full-latent-per-step tensor, so only the recipes
+    # that need it pay the memory.
+    return_prev_sample_mean: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +140,9 @@ class DiffusionRequestLayout:
             sde_window_range=sde_window_range,
             same_latent=bool(sampling.get("same_latent", False)),
             return_kl=bool(sampling.get("return_kl", False)),
+            return_prev_sample_mean=bool(
+                sampling.get("return_prev_sample_mean", False),
+            ),
         )
         return DiffusionSamplingParams(
             base=base,

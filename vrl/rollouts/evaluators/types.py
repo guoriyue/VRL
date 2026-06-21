@@ -21,6 +21,12 @@ class SegmentSignal:
     entropy: Any | None = None
     prev_sample_mean: Any | None = None
     ref_prev_sample_mean: Any | None = None
+    # Rollout-time (behavior policy) reverse-SDE proposal mean, captured at
+    # generation and replayed back unchanged. Distinct from prev_sample_mean
+    # (current replay policy) and ref_prev_sample_mean (frozen ref): trust-region
+    # algorithms (Flow-DPPO / GRPO-Guard) measure the current-vs-rollout drift,
+    # so they need this third mean. None unless generation stored it.
+    old_prev_sample_mean: Any | None = None
     std_dev_t: Any | None = None
     dt: Any | None = None
     aux: dict[str, Any] = field(default_factory=dict)

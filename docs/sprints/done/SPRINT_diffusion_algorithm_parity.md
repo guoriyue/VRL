@@ -1,8 +1,58 @@
-# SPRINT: 与 verl-omni 的 diffusion-RL 算法对齐（补齐缺失算法）
+# SPRINT: 与 verl-omni 的 diffusion-RL 算法对齐（补齐缺失算法）（done）
 
-状态：planned（2026-06-20）。范围：盘点 verl-omni `diffusion_algos.py` 的六个 diffusion-RL 目标，对照 vrl `algorithms/` 现状做诚实差距分析，并为真正缺失的算法（DanceGRPO / Flow-DPPO / GRPO-Guard）给出落点、loss 数学、config kind 与验收。
+状态：**DONE（2026-06-20 落地，§5 全顺序）**。三个缺失算法已实现 + 注册 + CPU 测试（658 tests pass、ruff clean）。
 
-关联：[[SPRINT_reward_execution]]、[[SPRINT_memory_plan_full]]、[[SPRINT_resolved_struct_field_audit]]
+> **实现纪要（2026-06-20）**：
+> - **DanceGRPO（kind `dance_grpo`）**：核实推翻了文档两个「未验证」假设——`timestep_fraction` **不是 dead**（trainer
+>   `_train_timestep_indices`/`core/types.py:232` 真消费，确定性 strided）、multi-reward 加权聚合**已存在**
+>   （`vrl/rewards/functions/registry.py` `MultiReward`）。所以 DanceGRPO 唯一真 delta = **per-update 随机选步**。
+>   落点修正：**不**给 `DanceGRPOConfig` 加 `timestep_fraction`（会复制 trainer 现有 live 字段，违 AGENTS.md
+>   source-of-truth），改为 trainer 新增 `actor.timestep_selection: strided|random` 单一源；`dance_grpo` 注册为
+>   GRPO alias（镜像 verl-omni 把 dance/flow 双注册到同一 FlowGRPOLoss）。
+> - **§3 `old_prev_sample_mean` 数据链路**：它是 full-latent-per-step 张量，生成侧从未存，且无法反推。落地为生成侧
+>   **`sampling.return_prev_sample_mean` 布尔旗**（不透传算法身份，避开 `SPRINT_algorithm_shaped_rollout_payload`
+>   deferred 的 generation↔algorithm 边界）：opt-in 时存进 buffer→`DiffusionDenoiseResult`→注入 `replay_tensors`
+>   bag（gather 通用 concat、无需改）→evaluator 经 `replay_tensor_dict("denoise")` 读回切片→`SegmentSignal.old_prev_sample_mean`。
+>   **默认 off，非 DPPO/Guard run 零内存成本**。
+> - **Flow-DPPO（`flow_dppo`）+ GRPO-Guard（`grpo_guard`）**：均为 `vrl/algorithms/grpo/continuous.py` 的 `GRPO` 子类。
+>   DPPO = 精确高斯 KL 信任域 **非对称 mask**（复用 `compute_kl_divergence`，只 mask gap-widening 样本）；Guard =
+>   ratio-mean-bias 软校正 + `1/sqrt_dt²` 跨步幅度归一。新增算法能力 `needs_kl_intermediates`（trainer 两条 loss 路径
+>   据此在 kl_coef=0 也请求 dt）。loss 正确性测试按 §2.2/§2.3 验收（threshold=+inf 退化 vanilla PG、mask 命中计数、
+>   零漂移全保留、无 old_prev_sample_mean 时 fail-fast 提示改 recipe）。
+> - **三处 kind 分发**（schema Literal + SDE 必需集、builders、factory）按 §5 同步；factory 的 grpo 分支扩成四 kind 共享
+>   SDE evaluator。
+> - **Non-goals 遵守**：未重实现 FlowGRPO/NFT/DPO；未补 NFT `adv_mode`/online-DPO 配对；未引入 verl-omni 的
+>   `DiffusionLossFn` 注册表（沿用 vrl 的 `Algorithm` Protocol + factory）。**未做 per-trajectory randperm**（vrl 选步是
+>   全 batch 共享，per-trajectory 需重构 loss loop，收益边际，记为后续可选）。
+>
+> **Review 修复（2026-06-20，3 项 + 测试缺口）：**
+> - **[F1] Flow-DPPO `add_kl_coefficient=False` 的 KL 分母**：原走 `compute_kl_divergence(..., sqrt_neg_dt=None)`，
+>   但该 helper 仍除以 `2*std_dev_t²`；verl-omni 的 false 分支是 `mean_diff_sq/2`（**无 std_dev_t**）。改为该分支直接
+>   `mean_diff_sq.mean(非batch)/2`。新增 `std_dev_t=3` 的回归测试（确定性命中/不命中区分两种分母）。
+> - **[F2] 新 config key 未注册**：`AlgorithmConfig` 补 `add_kl_coefficient`/`kl_mask_threshold`，`RolloutConfig` 补
+>   `return_prev_sample_mean`（同 `same_latent` 的 rollout-block 归属）；否则真实 config 报这三个 key unknown。
+>   （`return_kl` 不需注册——它由 `collector/config.py` 从 `kl_reward_coef` 派生、从不是 raw YAML key。）
+> - **[F3] dt/sqrt_dt 提升为硬契约**：`_require_trust_region_signals`（原 `_require_old_prev_sample_mean`）现一并校验
+>   `dt`；GRPOGuard 删掉 `dt is None → 1` 的静默回退。缺 dt 两个算法都 fail-fast（dt 由 `needs_kl_intermediates` 保证）。
+> - **测试缺口**：`test_schema.py` 补 `flow_dppo`/`grpo_guard` 参数化；`EXPECTED_ALGO_TYPE` 补两 kind；新增
+>   `add_kl_coefficient=False` + `std_dev_t≠1` loss 测试、两算法缺 dt fail-fast 测试、`return_prev_sample_mean`
+>   buffer 分配 opt-in/off 测试。**部分覆盖**：store→gather→replay 全 e2e 需 tiny 扩散模型
+>   fixture，本次只单测了 allocate 端 + loss 消费端 + 既有 generation/rollout 套件透传，完整 e2e 记为后续。
+>
+> **配置接线（2026-06-20，base + recipe 层）**：原 §5 只做了代码 dispatch，三个新 kind **无 YAML、无法经正常 config
+> 组合选中/运行**（且 flow_dppo/grpo_guard 缺 `return_prev_sample_mean` 会 fail-fast）。补齐：
+> - `configs/base/algorithm/{dance_grpo,flow_dppo,grpo_guard}.yaml`（声明 `kind:` + 默认超参，镜像 grpo/nft 约定）；
+>   flow_dppo 带 `kl_mask_threshold`/`add_kl_coefficient`。
+> - `configs/recipe/online/{flow_matching_dance_grpo,flow_matching_dppo,flow_matching_grpo_guard}.yaml`（镜像
+>   `flow_matching_grpo`）：dance recipe 设 `actor.timestep_selection: random`；dppo/guard recipe 设
+>   `rollout.return_prev_sample_mean: true`（+ guard 的 `clip_ratio: 1e-4`）。
+> - schema 补两个先前漏注册的 key：`ActorSection.timestep_selection`（DanceGRPO Part 1 只加了 dataclass 字段、漏了
+>   schema → 触发 unknown-key warning）。
+> - 回归测试 `tests/config/test_new_algorithm_recipes.py`：把每个 recipe 经 `/recipe/online=` default-override 换进真实
+>   sd3_5 OCR experiment，断言 kind/config 类型/`return_prev_sample_mean`/`timestep_selection` 落位且无 unknown-key。
+> - **未做**：各算法的 experiment recipe（绑具体数据集），按用户范围决定留作真要跑某实验时再加。**739 tests pass、ruff clean。**
+
+关联：[[SPRINT_reward_execution]]、[[SPRINT_memory_plan_full]]、[[SPRINT_resolved_struct_field_audit]]、[[SPRINT_algorithm_shaped_rollout_payload]]
 
 ## 0. Core Decision（先看这一段）
 

@@ -224,10 +224,24 @@ def build_algorithm_config(cfg: DictConfig):
         raise ValueError("config missing `algorithm` section")
     kind = resolve_algorithm_kind(cfg.algorithm)
 
-    if kind == "grpo":
+    if kind in ("grpo", "dance_grpo"):
+        # DanceGRPO shares FlowGRPO's loss and config (verl-omni registers both to
+        # the same FlowGRPOLoss); its difference is the trainer's random
+        # timestep selection (actor.timestep_selection) + multi-reward, not a new
+        # loss or hyper-parameter set.
         from vrl.algorithms.grpo.continuous import GRPOConfig
 
         return GRPOConfig(**_dataclass_payload(GRPOConfig, cfg.algorithm))
+
+    if kind == "flow_dppo":
+        from vrl.algorithms.grpo.continuous import FlowDPPOConfig
+
+        return FlowDPPOConfig(**_dataclass_payload(FlowDPPOConfig, cfg.algorithm))
+
+    if kind == "grpo_guard":
+        from vrl.algorithms.grpo.continuous import GRPOGuardConfig
+
+        return GRPOGuardConfig(**_dataclass_payload(GRPOGuardConfig, cfg.algorithm))
 
     if kind == "token_grpo":
         from vrl.algorithms.grpo.token import TokenGRPOConfig

@@ -1,0 +1,16 @@
+# Online flow-matching Flow-DPPO recipe: exact-Gaussian-KL trust region.
+# Mirrors flow_matching_grpo with the flow_dppo algorithm base. Flow-DPPO reads
+# the rollout proposal mean, so generation must store it.
+defaults:
+  - /base/algorithm/flow_dppo
+  - /base/actor
+  - /base/rollout/flow_matching_sde
+  - /base/distributed/ray_rollout_colocated_single_gpu
+  - /base/rollout/orchestration/strict
+  - /base/trainer
+
+rollout:
+  # Required for Flow-DPPO: store each denoise step's rollout proposal mean into
+  # the trajectory so the trust-region KL can be computed at replay. Without it
+  # the loss fails fast on a missing old_prev_sample_mean.
+  return_prev_sample_mean: true

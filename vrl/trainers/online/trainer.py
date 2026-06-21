@@ -611,13 +611,31 @@ class OnlineTrainer(Trainer):
         )
 
     @staticmethod
-    def _train_timestep_indices(num_timesteps: int, timestep_fraction: float) -> list[int]:
-        """Denoise timesteps that receive loss (single source of truth)."""
+    def _train_timestep_indices(
+        num_timesteps: int,
+        timestep_fraction: float,
+        selection: str = "strided",
+    ) -> list[int]:
+        """Denoise timesteps that receive loss (single source of truth).
+
+        ``selection`` controls which subset gets gradient when
+        ``timestep_fraction < 1``:
+        - ``"strided"`` — a fixed evenly-spaced subset, identical every update.
+        - ``"random"`` (DanceGRPO) — a fresh random subset resampled each call,
+          so gradient coverage of the denoise trajectory decorrelates across
+          updates instead of always landing on the same strided steps. Returned
+          sorted; the loss loop sums over the indices, so order is irrelevant.
+        """
         train_timestep_count = max(1, int(num_timesteps * timestep_fraction))
-        if train_timestep_count < num_timesteps:
-            step_size = num_timesteps / train_timestep_count
-            return [int(i * step_size) for i in range(train_timestep_count)]
-        return list(range(num_timesteps))
+        if train_timestep_count >= num_timesteps:
+            return list(range(num_timesteps))
+        if selection == "random":
+            import torch
+
+            picks = torch.randperm(num_timesteps)[:train_timestep_count].tolist()
+            return sorted(int(i) for i in picks)
+        step_size = num_timesteps / train_timestep_count
+        return [int(i * step_size) for i in range(train_timestep_count)]
 
     # ------------------------------------------------------------------
     # Streaming accumulation boundary (gradient_accumulation_steps>0):
@@ -666,7 +684,9 @@ class OnlineTrainer(Trainer):
             getattr(self.evaluator, "supports_deferred_replay_tensor_move", False),
         )
         num_timesteps = batch.batches[0].observations.shape[1]
-        train_indices = self._train_timestep_indices(num_timesteps, cfg.timestep_fraction)
+        train_indices = self._train_timestep_indices(
+            num_timesteps, cfg.timestep_fraction, cfg.timestep_selection,
+        )
         loss_scale = int(total_groups) * len(train_indices)
         sample_batch_size = int(getattr(cfg, "sample_batch_size", 0))
         agg = self._update_agg_metrics
@@ -707,6 +727,11 @@ class OnlineTrainer(Trainer):
                             kl_coef = float(
                                 getattr(self.algorithm.config, "kl_coef", 0.0),
                             )
+                            # Trust-region SDE algorithms (Flow-DPPO / GRPO-Guard)
+                            # read latent KL intermediates (dt) even at kl_coef=0.
+                            need_kl_intermediates = kl_coef > 0 or bool(
+                                getattr(self.algorithm, "needs_kl_intermediates", False),
+                            )
                             with record_function("trainer.replay"):
                                 signals = self.evaluator.evaluate(
                                     self.model,
@@ -715,7 +740,7 @@ class OnlineTrainer(Trainer):
                                     ref_model=self.ref_model,
                                     signal_request=SignalRequest(
                                         need_ref=kl_coef > 0,
-                                        need_kl_intermediates=kl_coef > 0,
+                                        need_kl_intermediates=need_kl_intermediates,
                                     ),
                                 )
                             with record_function("trainer.loss"):
@@ -890,9 +915,12 @@ class OnlineTrainer(Trainer):
         )
 
         # Timestep schedule — same num_timesteps across all batches (collector
-        # uses the same scheduler), so pick from first filtered batch.
+        # uses the same scheduler), so pick from first filtered batch. Shares the
+        # single-source selection helper with the streaming path.
         num_timesteps = filtered_batches[0].observations.shape[1]
-        train_indices = self._train_timestep_indices(num_timesteps, cfg.timestep_fraction)
+        train_indices = self._train_timestep_indices(
+            num_timesteps, cfg.timestep_fraction, cfg.timestep_selection,
+        )
 
         # Number of rollout micro-batches per optimizer update. ``0`` preserves
         # legacy VRL behavior: one optimizer update after all collected batches.
@@ -1121,6 +1149,13 @@ class OnlineTrainer(Trainer):
                                     kl_coef = float(
                                         getattr(self.algorithm.config, "kl_coef", 0.0),
                                     )
+                                    need_kl_intermediates = kl_coef > 0 or bool(
+                                        getattr(
+                                            self.algorithm,
+                                            "needs_kl_intermediates",
+                                            False,
+                                        ),
+                                    )
                                     with record_function("trainer.replay"):
                                         signals = self.evaluator.evaluate(
                                             self.model,
@@ -1129,7 +1164,7 @@ class OnlineTrainer(Trainer):
                                             ref_model=self.ref_model,
                                             signal_request=SignalRequest(
                                                 need_ref=kl_coef > 0,
-                                                need_kl_intermediates=kl_coef > 0,
+                                                need_kl_intermediates=need_kl_intermediates,
                                             ),
                                         )
                                     with record_function("trainer.loss"):

@@ -1,0 +1,16 @@
+# GRPO-Guard — FlowGRPO + ratio-mean-bias correction + per-step scale norm.
+#
+# Keeps every sample (unlike Flow-DPPO) but folds the current-vs-rollout mean
+# drift into the ratio exponent and normalizes loss magnitude across denoise
+# steps. Reuses GRPO's clipped surrogate (clip_ratio / adv_clip_max); the guard
+# terms are derived from the per-step diffusion scale, not new knobs. Reads the
+# rollout proposal mean, so the recipe MUST set rollout.return_prev_sample_mean=true.
+algorithm:
+  kind: grpo_guard
+  clip_ratio: 0.2
+  kl_coef: 0.0
+  eps: 1.0e-8
+  adv_clip_max: 5.0
+  global_std: false
+  flow_kl_use_dt: false
+  kl_reward_coef: 0.0

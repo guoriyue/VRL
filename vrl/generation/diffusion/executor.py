@@ -62,6 +62,8 @@ class DiffusionDenoiseConfig:
     # Opt-in rollout-only TeaCache (skip transformer forwards on low-change steps).
     # None = off = the unchanged full-forward path, so the GRPO baseline is exact.
     teacache: TeaCacheConfig | None = None
+    # Store each step's rollout proposal mean for trust-region replay losses.
+    return_prev_sample_mean: bool = False
 
 
 @dataclass(slots=True)
@@ -74,6 +76,7 @@ class DiffusionDenoiseResult:
     log_probs: Any
     timesteps: Any
     kl: Any
+    prev_sample_means: Any | None = None
     peak_memory_mb: float | None = None
     engine_counters: dict[str, Any] = field(default_factory=dict)
 
@@ -87,6 +90,9 @@ class DiffusionDenoiseBuffers:
     log_probs: torch.Tensor
     timesteps: torch.Tensor
     kl: torch.Tensor
+    # Rollout proposal mean per step (full latent shape); None unless the denoise
+    # config opts in via return_prev_sample_mean.
+    prev_sample_means: torch.Tensor | None = None
 
 
 @dataclass(slots=True)
@@ -194,6 +200,15 @@ def preallocate_denoise_buffers(
             device=device,
         ),
         kl=torch.empty((chunk_batch, num_steps), dtype=torch.float32, device=device),
+        prev_sample_means=(
+            torch.empty(
+                (chunk_batch, num_steps, *latent_shape),
+                dtype=latents.dtype,
+                device=device,
+            )
+            if config.return_prev_sample_mean
+            else None
+        ),
     )
 
 
@@ -408,6 +423,7 @@ class DiffusionChunkExecutorBase(
                 params.sde.sde_window_range,
             ),
             return_kl=params.sde.return_kl,
+            return_prev_sample_mean=params.sde.return_prev_sample_mean,
             noise_level=params.sde.noise_level,
             sde_type=params.sde.sde_type,
             denoise_mode=params.denoise_mode,
@@ -771,6 +787,12 @@ class DiffusionChunkExecutorBase(
                         )
                     else:
                         buffers.kl[:, step_idx].zero_()
+                    if buffers.prev_sample_means is not None:
+                        buffers.prev_sample_means[:, step_idx].copy_(
+                            sde_result.prev_sample_mean.detach().to(
+                                dtype=buffers.prev_sample_means.dtype,
+                            ),
+                        )
         peak_memory_mb = None
         if torch.cuda.is_available():
             try:
@@ -785,6 +807,7 @@ class DiffusionChunkExecutorBase(
             log_probs=buffers.log_probs,
             timesteps=buffers.timesteps,
             kl=buffers.kl,
+            prev_sample_means=buffers.prev_sample_means,
             peak_memory_mb=peak_memory_mb,
             engine_counters={
                 "diffusion_num_denoise_steps": int(buffers.timesteps.shape[1]),
@@ -830,6 +853,15 @@ class DiffusionChunkExecutorBase(
         if isinstance(video, torch.Tensor) and video.is_floating_point():
             video = to_uint8(video)
         replay_tensors = model.export_replay_tensors(state)
+        # Carry the rollout proposal mean alongside the model's replay tensors so
+        # it concatenates + lands under the denoise segment like old_log_prob,
+        # readable at replay via replay_tensor_dict("denoise"). Only present when
+        # a trust-region recipe opted in (return_prev_sample_mean).
+        if denoise_result.prev_sample_means is not None:
+            replay_tensors = {
+                **replay_tensors,
+                "old_prev_sample_mean": denoise_result.prev_sample_means,
+            }
         context = dict(model.export_batch_context(state))
         context.setdefault("denoise_mode", config.denoise_mode)
         context.setdefault(

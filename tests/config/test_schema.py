@@ -47,7 +47,16 @@ def _kling_video_reward_kwargs(**overrides) -> dict:
 
 @pytest.mark.parametrize(
     "kind",
-    ["grpo", "token_grpo", "token_grpo_multisegment", "diffusion_dpo", "diffusion_nft"],
+    [
+        "grpo",
+        "dance_grpo",
+        "flow_dppo",
+        "grpo_guard",
+        "token_grpo",
+        "token_grpo_multisegment",
+        "diffusion_dpo",
+        "diffusion_nft",
+    ],
 )
 def test_valid_algorithm_kinds_are_accepted(kind: str) -> None:
     """Checks valid algorithm kinds are accepted."""

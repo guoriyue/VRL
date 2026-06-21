@@ -138,6 +138,58 @@ CASES: tuple[RealCheckpointCase, ...] = (
         ),
         min_cuda_memory_gib=24.0,
     ),
+    # New diffusion-RL algorithms (SPRINT_diffusion_algorithm_parity), each run
+    # on SD3.5 by swapping only the /recipe/online group. flow_dppo / grpo_guard
+    # exercise the §3 old_prev_sample_mean store->replay path on the real
+    # executor; on the first step rollout==replay so the trust-region KL is ~0
+    # (no masking / ratio_mean_bias), which keeps a live gradient. Their losses
+    # report no sample->replay logprob diff, so parity is checked permissively.
+    *(
+        RealCheckpointCase(
+            case_id=f"sd3_5_{_algo}",
+            config="experiment/diffusion/sd3_5/online_grpo_ocr",
+            family="sd3_5",
+            prompt="A square poster that says RL",
+            checkpoints=(
+                CheckpointField(
+                    cfg_path="model.path",
+                    repo_id="stabilityai/stable-diffusion-3.5-medium",
+                    required_files=("model_index.json",),
+                ),
+            ),
+            overrides=(
+                f"/recipe/online=flow_matching_{_recipe}",
+                "model.torch_compile.enable=false",
+                "precision=bf16",
+                "actor.gradient_accumulation_steps=0",
+                # No ref model in this harness; dance_grpo uses GRPO's loss, so a
+                # leaked experiment kl_coef>0 would demand one. (flow_dppo /
+                # grpo_guard ignore kl_coef in their own loss.)
+                "algorithm.kl_coef=0.0",
+                "algorithm.kl_reward_coef=0.0",
+                "actor.drop_zero_advantage=false",
+                "rollout.n_samples_per_prompt=2",
+                "rollout.rollout_batch_size=1",
+                "rollout.sample_batch_size=1",
+                "rollout.noise_level=0.7",
+                "rollout.sde.window_size=0",
+                "rollout.sde.window_range=[0,1]",
+                "sampling.num_steps=1",
+                "sampling.guidance_scale=1.0",
+                "sampling.cfg=false",
+                "sampling.height=128",
+                "sampling.width=128",
+                "sampling.max_sequence_length=64",
+            ),
+            min_cuda_memory_gib=24.0,
+            logprob_parity_tol=1.0,  # DPPO/Guard/Dance don't report a logprob diff
+        )
+        for _algo, _recipe in (
+            ("dance_grpo", "dance_grpo"),
+            ("flow_dppo", "dppo"),
+            ("grpo_guard", "grpo_guard"),
+        )
+    ),
     RealCheckpointCase(
         case_id="janus_pro",
         config="experiment/ar/janus_pro/online_grpo_ocr",

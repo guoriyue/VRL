@@ -1,0 +1,20 @@
+# Online flow-matching GRPO-Guard recipe: ratio-mean-bias + per-step scale norm.
+# Mirrors flow_matching_grpo with the grpo_guard algorithm base. GRPO-Guard reads
+# the rollout proposal mean, so generation must store it.
+defaults:
+  - /base/algorithm/grpo_guard
+  - /base/actor
+  - /base/rollout/flow_matching_sde
+  - /base/distributed/ray_rollout_colocated_single_gpu
+  - /base/rollout/orchestration/strict
+  - /base/trainer
+
+algorithm:
+  # flow_grpo SD3 clip_range: GRPO-Guard keeps the clipped surrogate, so the
+  # diffusion family's tight trust region applies (vs the AR-safe 0.2).
+  clip_ratio: 1.0e-4
+
+rollout:
+  # Required for GRPO-Guard: store each denoise step's rollout proposal mean so
+  # the ratio-mean-bias / step-scale terms can be computed at replay.
+  return_prev_sample_mean: true

@@ -164,8 +164,18 @@ def build_algorithm_and_evaluator_from_cfg(
     algorithm_config = built["algorithm"]
     kind = str(OmegaConf.select(cfg, "algorithm.kind", default=""))
 
-    if kind == "grpo":
-        from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
+    if kind in ("grpo", "dance_grpo", "flow_dppo", "grpo_guard"):
+        # All four are flow-matching GRPO-family algorithms on the same SDE
+        # evaluator. dance_grpo reuses FlowGRPO unchanged (its delta is the
+        # trainer's random timestep selection + multi-reward); flow_dppo /
+        # grpo_guard are trust-region variants whose loss reads the rollout
+        # proposal mean (sampling.return_prev_sample_mean).
+        from vrl.algorithms.grpo.continuous import (
+            GRPO,
+            FlowDPPO,
+            GRPOConfig,
+            GRPOGuard,
+        )
         from vrl.algorithms.grpo.token import TokenGRPOConfig
         from vrl.rollouts.evaluators.diffusion.sde_logprob import (
             DiffusionSDELogProbEvaluator,
@@ -179,10 +189,16 @@ def build_algorithm_and_evaluator_from_cfg(
                 f"{entry.family} GRPO expects GRPOConfig, got "
                 f"{type(algorithm_config).__name__}",
             )
+        if kind == "flow_dppo":
+            algorithm: object = FlowDPPO(algorithm_config)
+        elif kind == "grpo_guard":
+            algorithm = GRPOGuard(algorithm_config)
+        else:
+            algorithm = GRPO(algorithm_config)
         collector_config = collector_config or _rollout_config_for_entry(cfg, entry)
         math_dtype = resolve_torch_dtype(resolve_precision_policy(cfg).math)
         return AlgorithmEvaluatorPair(
-            algorithm=GRPO(algorithm_config),
+            algorithm=algorithm,
             evaluator=DiffusionSDELogProbEvaluator(
                 scheduler,
                 noise_level=float(

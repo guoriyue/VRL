@@ -1,0 +1,20 @@
+# Online flow-matching DanceGRPO recipe: FlowGRPO + random timestep selection.
+# Identical wiring to flow_matching_grpo, with the dance_grpo algorithm base and
+# the random per-update denoise-step subset turned on.
+defaults:
+  - /base/algorithm/dance_grpo
+  - /base/actor
+  - /base/rollout/flow_matching_sde
+  - /base/distributed/ray_rollout_colocated_single_gpu
+  - /base/rollout/orchestration/strict
+  - /base/trainer
+
+algorithm:
+  # flow_grpo SD3 clip_range: flow-matching per-step ratios are tiny, so the
+  # diffusion family needs a far tighter trust region than the AR-safe 0.2.
+  clip_ratio: 1.0e-4
+
+actor:
+  # DanceGRPO's defining technique: resample which denoise steps get gradient
+  # each update instead of the fixed strided subset.
+  timestep_selection: random

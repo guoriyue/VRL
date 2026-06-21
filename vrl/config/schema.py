@@ -88,12 +88,20 @@ class RewardConfig(ConfigBase):
 
 class AlgorithmConfig(ConfigBase):
     kind: Literal[
-        "grpo", "token_grpo", "token_grpo_multisegment", "diffusion_dpo", "diffusion_nft"
+        "grpo",
+        "dance_grpo",
+        "flow_dppo",
+        "grpo_guard",
+        "token_grpo",
+        "token_grpo_multisegment",
+        "diffusion_dpo",
+        "diffusion_nft",
     ]
 
     # Key registry: values are validated by the algorithm dataclasses in
     # vrl/algorithms/* (build_algorithm_config), not here.
     adv_clip_max: Any = None
+    add_kl_coefficient: Any = None  # flow_dppo
     advantage_scale: Any = None
     beta: Any = None
     eps: Any = None
@@ -102,6 +110,7 @@ class AlgorithmConfig(ConfigBase):
     global_std: Any = None
     kl_coef: Any = None
     kl_estimator: Any = None
+    kl_mask_threshold: Any = None  # flow_dppo
     kl_reward_coef: Any = None
     nft_beta: Any = None
     segment_weights: Any = None
@@ -251,6 +260,9 @@ class RolloutConfig(ConfigBase):
     denoise_mode: Literal["native", "sde"] | None = None
     max_reflect_len: Any = None
     max_text_length: Any = None
+    # reader: vrl/generation/diffusion/layout.py — opt-in to storing each denoise
+    # step's rollout proposal mean for trust-region replay (flow_dppo/grpo_guard).
+    return_prev_sample_mean: Any = None
     same_latent: Any = None
     sample_batch_size: Any = None
     temperature: Any = None
@@ -480,6 +492,7 @@ class ActorSection(ConfigBase):
     drop_zero_advantage: Any = None
     gradient_checkpointing: Any = None
     timestep_fraction: Any = None
+    timestep_selection: Any = None  # strided | random (DanceGRPO)
     # offline DPO entrypoint (vrl/scripts/diffusion/wan_2_1/train_dpo.py)
     prediction_type: Any = None
     scale_lr: Any = None
@@ -665,7 +678,13 @@ class RootConfig(ConfigBase):
         # grpo / diffusion_nft require an sde block; sde.type membership is now
         # enforced by the SdeConfig Literal (for every kind, not just these two —
         # the runtime layout guard remains the wire-boundary check).
-        if kind in {"grpo", "diffusion_nft"} and (rollout is None or rollout.sde is None):
+        if kind in {
+            "grpo",
+            "dance_grpo",
+            "flow_dppo",
+            "grpo_guard",
+            "diffusion_nft",
+        } and (rollout is None or rollout.sde is None):
             raise ValueError("config missing required field: rollout.sde.type")
 
         # token_grpo: nextstep_1 family requires rollout.noise_level

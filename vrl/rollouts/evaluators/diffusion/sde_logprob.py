@@ -129,15 +129,40 @@ class DiffusionSDELogProbEvaluator(Evaluator):
                     ref_prev_sample_mean = ref_result.prev_sample_mean
                     ref_sqrt_neg_dt = ref_result.sqrt_neg_dt
 
+        # Rollout-time proposal mean for this step, captured at generation
+        # (return_prev_sample_mean) and replayed back unchanged. Trust-region
+        # losses (Flow-DPPO / GRPO-Guard) read it; None for recipes that did not
+        # opt in. Sliced to this step to match result.prev_sample_mean's shape.
+        old_prev_sample_mean = self._old_prev_sample_mean(batch, timestep_idx, device)
+
         return TrajectorySignalBuilder(batch).single_segment(
             segment_name="denoise",
             log_prob=result.log_prob,
             ref_log_prob=ref_log_prob,
             prev_sample_mean=result.prev_sample_mean,
             ref_prev_sample_mean=ref_prev_sample_mean,
+            old_prev_sample_mean=old_prev_sample_mean,
             std_dev_t=result.std_dev_t,
             dt=result.sqrt_neg_dt if result.sqrt_neg_dt is not None else ref_sqrt_neg_dt,
             distribution="flow_matching",
             timestep_idx=timestep_idx,
             mask_key="mask",
         )
+
+    @staticmethod
+    def _old_prev_sample_mean(batch: RolloutBatch, timestep_idx: int, device: object) -> object:
+        """Rollout proposal mean for ``timestep_idx`` from the trajectory, or None.
+
+        Stored as a denoise replay tensor at generation; absent unless the recipe
+        set return_prev_sample_mean. Shaped ``[B, num_steps, *latent]`` -> sliced
+        to ``[B, *latent]`` so it lines up with the replayed prev_sample_mean.
+        """
+
+        from vrl.trajectory import TrajectoryResolver
+
+        replay = TrajectoryResolver.from_batch(batch).replay_tensor_dict("denoise")
+        stored = replay.get("old_prev_sample_mean")
+        if stored is None:
+            return None
+        step = stored[:, timestep_idx] if getattr(stored, "ndim", 0) > 1 else stored
+        return move_value_to_device(step, device)

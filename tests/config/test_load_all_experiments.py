@@ -14,7 +14,7 @@ from omegaconf import OmegaConf
 
 from vrl.algorithms.diffusion_nft import DiffusionNFTConfig
 from vrl.algorithms.dpo import DiffusionDPOConfig
-from vrl.algorithms.grpo.continuous import GRPOConfig
+from vrl.algorithms.grpo.continuous import FlowDPPOConfig, GRPOConfig, GRPOGuardConfig
 from vrl.algorithms.grpo.multisegment import MultiSegmentTokenGRPOConfig
 from vrl.algorithms.grpo.token import TokenGRPOConfig
 from vrl.config.builders import build_algorithm_config, build_configs
@@ -31,6 +31,11 @@ CONFIGS_ROOT = REPO_ROOT / "configs"
 
 EXPECTED_ALGO_TYPE = {
     "grpo": GRPOConfig,
+    # DanceGRPO reuses FlowGRPO's loss + config (the delta is the trainer's
+    # random timestep selection, not a new config type).
+    "dance_grpo": GRPOConfig,
+    "flow_dppo": FlowDPPOConfig,
+    "grpo_guard": GRPOGuardConfig,
     "token_grpo": TokenGRPOConfig,
     "token_grpo_multisegment": MultiSegmentTokenGRPOConfig,
     "diffusion_dpo": DiffusionDPOConfig,

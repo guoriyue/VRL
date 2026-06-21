@@ -46,6 +46,10 @@ class GRPO(Algorithm):
     # KL branch validates it with its own detailed diagnostic.
     required_signal_keys = ("log_prob", "old_log_prob")
 
+    # Trust-region subclasses (Flow-DPPO / GRPO-Guard) flip this True so the
+    # trainer requests the SDE KL intermediates (dt) even when kl_coef == 0.
+    needs_kl_intermediates = False
+
     def __init__(self, config: GRPOConfig | None = None) -> None:
         self.config = config or GRPOConfig()
         # Rollout->replay precision correction (TIS). Off by default; the trainer
@@ -186,3 +190,187 @@ class GRPO(Algorithm):
         )
 
         return loss, metrics
+
+
+def _require_trust_region_signals(signals: Any, algorithm: str) -> Any:
+    """Validate the SDE signals trust-region losses need; return the rollout mean.
+
+    Both Flow-DPPO and GRPO-Guard read the rollout proposal mean plus the per-step
+    diffusion intermediates (std_dev_t, sqrt_dt). dt is a hard requirement, not an
+    optional input: a missing dt would silently drop the diffusion coefficient
+    (Flow-DPPO) or collapse the step-scale to 1 (GRPO-Guard), quietly changing the
+    objective — so fail fast instead.
+    """
+
+    value = signals.old_prev_sample_mean
+    if value is None:
+        raise RuntimeError(
+            f"{algorithm} needs signals.old_prev_sample_mean (the rollout-time "
+            "reverse-SDE proposal mean), but it is None. Set "
+            "sampling.return_prev_sample_mean=true so generation stores it into "
+            "the trajectory.",
+        )
+    if (
+        signals.prev_sample_mean is None
+        or signals.std_dev_t is None
+        or signals.dt is None
+    ):
+        raise RuntimeError(
+            f"{algorithm} requires flow-matching SDE signals "
+            "(prev_sample_mean / std_dev_t / dt). dt comes from the evaluator's "
+            "KL intermediates; needs_kl_intermediates=True must drive "
+            "SignalRequest(need_kl_intermediates=True).",
+        )
+    return value
+
+
+@dataclass(slots=True)
+class FlowDPPOConfig(GRPOConfig):
+    """Flow-DPPO: exact-Gaussian-KL trust region instead of the PPO ratio clip."""
+
+    # Per-sample latent KL above which an update that *widens* the gap from the
+    # rollout policy is dropped (the trust-region boundary).
+    kl_mask_threshold: float = 1.0
+    # Fold the per-step diffusion coefficient sqrt(-dt) into the KL sigma
+    # (sigma_t = std_dev_t * sqrt_dt) rather than std_dev_t alone.
+    add_kl_coefficient: bool = True
+
+
+class FlowDPPO(GRPO):
+    """Trust-region GRPO: mask high-KL, gap-widening samples (no ratio clip).
+
+    Asymmetric by construction — only updates that *increase* the divergence from
+    the rollout policy are dropped (positive advantage pushing ratio up, or
+    negative advantage pushing ratio down). Updates that pull back toward the old
+    policy are always kept. This is the key difference from PPO's symmetric clip.
+    """
+
+    needs_kl_intermediates = True
+
+    def __init__(self, config: FlowDPPOConfig | None = None) -> None:
+        cfg = config or FlowDPPOConfig()
+        super().__init__(cfg)
+        self.config: FlowDPPOConfig = cfg
+
+    def compute_loss(self, inputs: AlgorithmInput) -> tuple[Any, TrainStepMetrics]:
+        import torch
+
+        from vrl.math.diffusion.flow_matching import compute_kl_divergence
+
+        cfg = self.config
+        if inputs.advantages is None:
+            raise RuntimeError("AlgorithmInput.advantages is required for FlowDPPO")
+        signals = inputs.signals.primary
+        old_prev_sample_mean = _require_trust_region_signals(signals, "FlowDPPO")
+        advantages = inputs.advantages
+
+        ratio = torch.exp(signals.log_prob - signals.old_log_prob)
+        # Gaussian KL between the current and rollout proposal means (the
+        # current-vs-rollout drift). With add_kl_coefficient the sigma folds in the
+        # per-step diffusion coefficient (sigma_t = std_dev_t * sqrt_dt, the closed
+        # form compute_kl_divergence uses); without it the trust region is
+        # unit-variance — mean_diff_sq / 2, with NO std_dev_t in the denominator
+        # (matches verl-omni's add_kl_coefficient=False branch).
+        if cfg.add_kl_coefficient:
+            kl_per_sample = compute_kl_divergence(
+                signals.prev_sample_mean,
+                old_prev_sample_mean,
+                signals.std_dev_t,
+                sqrt_neg_dt=signals.dt,
+            )
+        else:
+            non_batch = tuple(range(1, signals.prev_sample_mean.ndim))
+            kl_per_sample = (
+                (signals.prev_sample_mean - old_prev_sample_mean).pow(2).mean(dim=non_batch)
+                / 2.0
+            )
+        high_kl = kl_per_sample >= cfg.kl_mask_threshold
+        pos_rm = high_kl & (ratio > 1.0) & (advantages > 0)
+        neg_rm = high_kl & (ratio < 1.0) & (advantages < 0)
+        keep = (~(pos_rm | neg_rm)).detach()
+        unclipped_loss = -advantages * ratio
+        per_sample_loss = torch.where(keep, unclipped_loss, torch.zeros_like(unclipped_loss))
+        policy_loss = per_sample_loss.mean()
+
+        self._last_policy_loss_tensor = policy_loss
+        self._last_kl_term_tensor = None
+
+        masked_fraction = (1.0 - keep.float().mean()).item()
+        approx_kl = 0.5 * torch.mean(
+            (signals.log_prob - signals.old_log_prob) ** 2,
+        ).item()
+        metrics = TrainStepMetrics(
+            loss=policy_loss.item(),
+            policy_loss=policy_loss.item(),
+            kl_penalty=kl_per_sample.mean().item(),
+            clip_fraction=masked_fraction,
+            approx_kl=approx_kl,
+        )
+        return policy_loss, metrics
+
+
+@dataclass(slots=True)
+class GRPOGuardConfig(GRPOConfig):
+    """GRPO-Guard: ratio-mean-bias correction + per-step magnitude normalization.
+
+    Reuses ``clip_ratio`` / ``adv_clip_max``; the guard terms are derived from
+    the per-step diffusion scale, not from new hyper-parameters.
+    """
+
+
+class GRPOGuard(GRPO):
+    """FlowGRPO with an additive ratio-mean-bias and 1/sqrt_dt**2 step-scale norm.
+
+    Unlike Flow-DPPO (which *drops* high-KL samples), GRPO-Guard keeps every
+    sample but folds the current-vs-rollout mean drift into the ratio exponent
+    (a soft correction) and normalizes the loss magnitude across denoise steps so
+    early and late timesteps contribute comparably.
+    """
+
+    needs_kl_intermediates = True
+
+    def __init__(self, config: GRPOGuardConfig | None = None) -> None:
+        cfg = config or GRPOGuardConfig()
+        super().__init__(cfg)
+        self.config: GRPOGuardConfig = cfg
+
+    def compute_loss(self, inputs: AlgorithmInput) -> tuple[Any, TrainStepMetrics]:
+        import torch
+
+        cfg = self.config
+        if inputs.advantages is None:
+            raise RuntimeError("AlgorithmInput.advantages is required for GRPOGuard")
+        signals = inputs.signals.primary
+        old_prev_sample_mean = _require_trust_region_signals(signals, "GRPOGuard")
+        advantages = inputs.advantages
+
+        log_ratio = signals.log_prob - signals.old_log_prob
+        # dt is guaranteed present by _require_trust_region_signals (no silent
+        # fallback-to-1, which would erase the per-step scale normalization).
+        sqrt_dt_mean = signals.dt.mean()
+        scale = sqrt_dt_mean * signals.std_dev_t.mean()
+        non_batch = tuple(range(1, signals.prev_sample_mean.ndim))
+        mean_diff_sq = (signals.prev_sample_mean - old_prev_sample_mean).pow(2).mean(dim=non_batch)
+        ratio_mean_bias = mean_diff_sq / (2 * scale.pow(2))
+        # Project the mean drift onto the log-ratio scale, then exponentiate.
+        ratio = torch.exp((log_ratio + ratio_mean_bias) * scale)
+        clipped_ratio = torch.clamp(ratio, 1.0 - cfg.clip_ratio, 1.0 + cfg.clip_ratio)
+        per_sample_loss = torch.maximum(-advantages * ratio, -advantages * clipped_ratio)
+        # Per-step magnitude normalization (cross-timestep consistent gradients).
+        policy_loss = per_sample_loss.mean() / sqrt_dt_mean.pow(2).clamp_min(1e-12)
+
+        self._last_policy_loss_tensor = policy_loss
+        self._last_kl_term_tensor = None
+
+        clip_fraction = torch.mean(
+            (torch.abs(ratio - 1.0) > cfg.clip_ratio).float(),
+        ).item()
+        approx_kl = 0.5 * torch.mean(log_ratio**2).item()
+        metrics = TrainStepMetrics(
+            loss=policy_loss.item(),
+            policy_loss=policy_loss.item(),
+            kl_penalty=ratio_mean_bias.mean().item(),
+            clip_fraction=clip_fraction,
+            approx_kl=approx_kl,
+        )
+        return policy_loss, metrics
