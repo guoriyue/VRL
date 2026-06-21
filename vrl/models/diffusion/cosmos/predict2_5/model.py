@@ -181,41 +181,42 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusionModelBase):
         )
 
     def apply_lora(self, spec: Any) -> None:
+        # Single attach path for BOTH the driver and the replay subclass: at
+        # entry self.transformer is the raw, unwrapped transformer in either case
+        # (the replay model has no pipeline), so this is defined once and
+        # inherited — there is no per-class copy to drift.
+        #
         # Deliberately NOT LoraModelMixin: this family also manages a second
-        # "previous" adapter for NFT previous-policy replay (different shape,
-        # not a copy of the shared attach logic).
-        from peft import LoraConfig, PeftModel, get_peft_model
+        # "previous" adapter for NFT previous-policy replay (different shape, not
+        # a copy of the shared attach logic).
+        from peft import PeftModel, get_peft_model
 
-        self.pipeline.transformer.requires_grad_(False)
-        self.pipeline.transformer.to(self.device)
-        lora_path = spec.lora_path
+        base = self.transformer
+        base.requires_grad_(False)
+        base.to(self.device)
         lora_config = spec.lora
-        if lora_path:
+        if spec.lora_path:
             transformer = PeftModel.from_pretrained(
-                self.pipeline.transformer,
-                lora_path,
+                base,
+                spec.lora_path,
                 is_trainable=True,
                 adapter_name="default",
             )
         else:
-            assert lora_config is not None
-            cfg = LoraConfig(
-                r=lora_config["rank"],
-                lora_alpha=lora_config["alpha"],
-                init_lora_weights="gaussian",
-                target_modules=lora_config["target_modules"],
+            if lora_config is None:
+                raise ValueError("Cosmos Predict2.5 requires lora_config when no lora_path is set")
+            transformer = get_peft_model(
+                base, _build_lora_config(lora_config), adapter_name="default",
             )
-            transformer = get_peft_model(self.pipeline.transformer, cfg, adapter_name="default")
 
+        # NFT's forward-only "previous" mirror: seed it from default and freeze
+        # it (so DDP find_unused_parameters=false stays correct). Freezing is a
+        # one-time setup step; the per-step refresh (sync_previous_policy_adapter)
+        # re-runs only the copy, which is why these stay separate primitives.
         if "previous" not in getattr(transformer, "peft_config", {}):
-            assert lora_config is not None
-            previous_cfg = LoraConfig(
-                r=lora_config["rank"],
-                lora_alpha=lora_config["alpha"],
-                init_lora_weights="gaussian",
-                target_modules=lora_config["target_modules"],
-            )
-            transformer.add_adapter("previous", previous_cfg)
+            if lora_config is None:
+                raise ValueError("Cosmos Predict2.5 requires lora_config to build the `previous` adapter")
+            transformer.add_adapter("previous", _build_lora_config(lora_config))
         _copy_adapter_weights(transformer, src="default", dst="previous")
         _freeze_adapter_params(transformer, "previous")
         transformer.set_adapter("default")
@@ -553,45 +554,9 @@ class CosmosPredict25ReplayModel(ReplayRolloutStubs, CosmosPredict25Model):
     def _set_transformer(self, transformer: Any) -> None:
         self.transformer = transformer
 
-    def apply_lora(self, spec: Any) -> None:
-        from peft import LoraConfig, PeftModel, get_peft_model
-
-        self.transformer.requires_grad_(False)
-        self.transformer.to(self.device)
-        lora_path = spec.lora_path
-        lora_config = spec.lora
-        if lora_path:
-            transformer = PeftModel.from_pretrained(
-                self.transformer,
-                lora_path,
-                is_trainable=True,
-                adapter_name="default",
-            )
-        else:
-            if lora_config is None:
-                raise ValueError("Cosmos Predict2.5 replay requires lora_config")
-            cfg = LoraConfig(
-                r=lora_config["rank"],
-                lora_alpha=lora_config["alpha"],
-                init_lora_weights="gaussian",
-                target_modules=lora_config["target_modules"],
-            )
-            transformer = get_peft_model(self.transformer, cfg, adapter_name="default")
-
-        if "previous" not in getattr(transformer, "peft_config", {}):
-            if lora_config is None:
-                raise ValueError("Cosmos Predict2.5 replay requires lora_config")
-            previous_cfg = LoraConfig(
-                r=lora_config["rank"],
-                lora_alpha=lora_config["alpha"],
-                init_lora_weights="gaussian",
-                target_modules=lora_config["target_modules"],
-            )
-            transformer.add_adapter("previous", previous_cfg)
-        _copy_adapter_weights(transformer, src="default", dst="previous")
-        _freeze_adapter_params(transformer, "previous")
-        transformer.set_adapter("default")
-        self._set_transformer(transformer)
+    # apply_lora is inherited from CosmosPredict25Model: it attaches to
+    # self.transformer, which this replay model owns directly (no pipeline), so
+    # the parent's single implementation already does the right thing.
 
     def torch_compile_transformer(self, mode: str) -> None:
         self._set_transformer(torch.compile(self.transformer, mode=mode, fullgraph=False))
@@ -638,6 +603,21 @@ __all__ = [
     "CosmosPredict25ReplayModel",
     "CosmosPredict25SamplingState",
 ]
+
+
+def _build_lora_config(lora_config: Any) -> Any:
+    """Build the LoRA config for this family's adapters from one ``model.lora``
+    block. Both the ``default`` and the frozen ``previous`` mirror use identical
+    settings, so this names that single shape instead of repeating the literal."""
+
+    from peft import LoraConfig
+
+    return LoraConfig(
+        r=lora_config["rank"],
+        lora_alpha=lora_config["alpha"],
+        init_lora_weights="gaussian",
+        target_modules=lora_config["target_modules"],
+    )
 
 
 def _copy_adapter_weights(
