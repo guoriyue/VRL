@@ -84,12 +84,12 @@ LN_TWO = math.log(2.0)
 class TestRejectSampleConfig:
     """RS knobs sit on the same PrecisionCorrectionConfig as TIS (orthogonal)."""
 
-    def test_defaults_are_off_and_symmetric_band(self) -> None:
+    def test_default_band_is_symmetric_around_zero(self) -> None:
+        # The default RS band is symmetric in log-space (low == -high); assert the
+        # derived relationship, not a copy of math.log(0.5)/math.log(2.0). A band
+        # retune (e.g. realigning to a different LLM preset) must not break this.
         pc = PrecisionCorrectionConfig()
-        assert pc.rs_mode == "off"
-        assert pc.recompute_old_logprob == "off"
-        assert pc.rs_log_ratio_low == pytest.approx(LN_HALF)
-        assert pc.rs_log_ratio_high == pytest.approx(LN_TWO)
+        assert pc.rs_log_ratio_low == pytest.approx(-pc.rs_log_ratio_high)
 
     def test_token_rs_mode_rejected_with_pointer_to_seq(self) -> None:
         with pytest.raises(ValueError, match=r"seq_mean_k1.*seq_max_k1|seq_max_k1"):

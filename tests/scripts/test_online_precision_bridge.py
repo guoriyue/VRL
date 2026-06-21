@@ -10,11 +10,13 @@ import torch
 from omegaconf import OmegaConf
 
 from tests.config.test_load_all_experiments import _experiment_names
+from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
 from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
 from vrl.config.precision import resolve_precision_policy
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.scripts.common.online import _apply_precision_policy
+from vrl.trainers.core.types import PrecisionDriftGuardConfig
 from vrl.trainers.precision import torch_dtype_for_trainer_precision
 
 # Derive every online recipe from the experiment glob (the single source of
@@ -81,14 +83,34 @@ def test_rollout_precision_split_auto_derives_correction_policy():
 
     assert trainer_config.train_precision == "bf16"
     assert trainer_config.rollout_precision == "fp8"
-    assert trainer_config.precision_correction.tis_mode == "truncate"
-    assert trainer_config.precision_correction.rs_mode == "seq_mean_k1"
-    assert trainer_config.precision_correction.recompute_old_logprob == "off"
-    assert trainer_config.precision_drift_guard.mode == "fail"
-    assert trainer_config.precision_drift_guard.max_abs_log_ratio == pytest.approx(
-        math.log(10.0),
+    # The auto split-precision policy is whatever the builder helper installs;
+    # assert the whole struct equals that single source, not a per-field copy of
+    # its constants (which would falsely fail on any retune of the policy).
+    assert trainer_config.precision_correction == PrecisionCorrectionConfig(
+        tis_mode="truncate",
+        rs_mode="seq_mean_k1",
     )
-    assert trainer_config.precision_drift_guard.max_ratio_abs_dev == pytest.approx(9.0)
+    assert trainer_config.precision_drift_guard == PrecisionDriftGuardConfig(
+        mode="fail",
+        max_abs_log_ratio=math.log(10.0),
+        max_ratio_abs_dev=9.0,
+        fail_on_nonfinite=True,
+    )
+
+
+def test_no_split_means_no_auto_correction_policy() -> None:
+    """rollout == train: the builder early-returns and installs no auto policy."""
+    cfg = _with_precision(
+        "diffusion/sd3_5/online_grpo_ocr",
+        {"train": "bf16", "rollout": "bf16"},
+    )
+
+    trainer_config = build_configs(cfg)["trainer"]
+
+    # No split -> the correction/guard fields keep their dataclass defaults; the
+    # split-only policy (TIS truncate / drift_guard mode="fail") is NOT installed.
+    assert trainer_config.precision_correction == PrecisionCorrectionConfig()
+    assert trainer_config.precision_drift_guard == PrecisionDriftGuardConfig()
 
 
 def test_explicit_precision_correction_is_respected_on_rollout_split():

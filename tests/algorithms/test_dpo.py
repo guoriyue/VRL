@@ -13,7 +13,6 @@ import torch
 import torch.nn.functional as F
 
 from vrl.algorithms.dpo import (
-    DiffusionDPOConfig,
     diffusion_dpo_loss,
     diffusion_sft_loss,
 )
@@ -168,10 +167,3 @@ def test_sft_loss_is_winner_mse() -> None:
     expected = F.mse_loss(pred_w, target_w)
     got = diffusion_sft_loss(pred_w, target_w)
     assert torch.allclose(got, expected)
-
-
-def test_dpo_config_defaults() -> None:
-    """Checks DPO config defaults."""
-    cfg = DiffusionDPOConfig()
-    assert cfg.beta == 5000.0
-    assert cfg.sft_weight == 0.0

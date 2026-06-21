@@ -14,7 +14,7 @@ from omegaconf import OmegaConf
 
 from vrl.algorithms.diffusion_nft import DiffusionNFTConfig
 from vrl.algorithms.dpo import DiffusionDPOConfig
-from vrl.algorithms.grpo.continuous import FlowDPPOConfig, GRPOConfig, GRPOGuardConfig
+from vrl.algorithms.grpo.continuous import GRPOConfig
 from vrl.algorithms.grpo.multisegment import MultiSegmentTokenGRPOConfig
 from vrl.algorithms.grpo.token import TokenGRPOConfig
 from vrl.config.builders import build_algorithm_config, build_configs
@@ -28,19 +28,6 @@ from vrl.config.validation import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXPERIMENT_DIR = REPO_ROOT / "configs" / "experiment"
 CONFIGS_ROOT = REPO_ROOT / "configs"
-
-EXPECTED_ALGO_TYPE = {
-    "grpo": GRPOConfig,
-    # DanceGRPO reuses FlowGRPO's loss + config (the delta is the trainer's
-    # random timestep selection, not a new config type).
-    "dance_grpo": GRPOConfig,
-    "flow_dppo": FlowDPPOConfig,
-    "grpo_guard": GRPOGuardConfig,
-    "token_grpo": TokenGRPOConfig,
-    "token_grpo_multisegment": MultiSegmentTokenGRPOConfig,
-    "diffusion_dpo": DiffusionDPOConfig,
-    "diffusion_nft": DiffusionNFTConfig,
-}
 
 
 def _experiment_names() -> list[str]:
@@ -340,7 +327,6 @@ def test_algorithm_config_dispatches_representative_kinds() -> None:
         cfg = load_config(f"experiment/{name}")
         algo_cfg = build_algorithm_config(cfg)
         assert isinstance(algo_cfg, expected_type)
-        assert isinstance(algo_cfg, EXPECTED_ALGO_TYPE[str(cfg.algorithm.kind)])
         if name == "ar/janus_pro/online_r1_grpo_ocr":
             # Segment *names* are the structural contract compute_loss reads to
             # gate per-segment loss; the True/False values are tuning knobs, not
@@ -350,6 +336,25 @@ def test_algorithm_config_dispatches_representative_kinds() -> None:
                 "selfcheck_text",
                 "final_image",
             }
+
+
+def test_algorithm_dispatch_is_stable_per_kind() -> None:
+    """build_algorithm_config is the single dispatch: same recipe -> same type.
+
+    Replaces the old mirror dict that re-copied the builder's own kind->class
+    map and only asserted "dispatch == a copy of dispatch". The
+    representative-kind correctness anchor lives in
+    test_algorithm_config_dispatches_representative_kinds.
+    """
+    for name in (
+        "diffusion/sd3_5/online_grpo_ocr",
+        "ar/janus_pro/online_grpo_ocr",
+        "diffusion/wan_2_1/offline_dpo_pickapic",
+    ):
+        cfg = load_config(f"experiment/{name}")
+        first = build_algorithm_config(cfg)
+        second = build_algorithm_config(cfg)
+        assert type(first) is type(second)
 
 
 def test_cosmos_v2w_production_validation_accepts_source_backed_data(
