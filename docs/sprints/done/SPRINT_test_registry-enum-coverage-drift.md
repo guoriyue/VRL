@@ -1,6 +1,12 @@
-# SPRINT: 测试硬抄 family/enum/alias 清单与注册表源头漂移（planned）
+# SPRINT: 测试硬抄 family/enum/alias 清单与注册表源头漂移（done）
 
-状态：未开始（2026-06-21）。优先级：high。
+状态：done（2026-06-21）。优先级：high。六处硬抄清单全部改为从源头派生，落地实锤：
+strategy 漂移补回 `ddp`（从 `Literal` 派生）；scheduler-parity 改为迭代注册表 diffusion family +
+从 model config 读 path/revision，修正 `cosmos-anima`→`cosmos-predict2-anima` key 漂移、补回
+`flux`/`qwen_image`（新覆盖的 flux/qwen 动态 shift scheduler 需传 `mu`，已在测试体处理）、
+`wan_2_1_i2v` 无映射时显式 skip；alias 表改迭代 `entry.aliases`；`EXPECTED_ALGO_TYPE` 镜像 dict
+删除、改断言 builder 派发稳定。六个测试文件 ruff 全绿、pytest 全绿（缓存缺失家族走 skip）。
+逆向验证：临时改注册表/源头成员，派生断言随之跟进。
 范围：把若干测试里**手抄的「合法成员集合」**（`Literal` 注解、`FAMILY_REGISTRY`、alias 表、kind→config-class 派发表）改成**从源头派生**。这些测试把一个 typed allow-list 的成员逐个重新打字进 `parametrize` 列表或 expected dict，然后断言「它们自己重抄的成员」。因为这份拷贝从不来自源头，所以源头新增一个成员时该成员**完全不被测试**，而一份已经走样的拷贝要么静默腐烂、要么因非行为原因报错。本 sprint 处理的就是 `registered_rollout_families() == tuple(FAMILY_REGISTRY)` 这个 canonical 例子的同类问题 —— 一个硬写 key-list 的测试本身就是 bug。**已有两处确认漂移**：strategy 测试漏了 `ddp`（`Literal` 里有），scheduler-parity 字典漏了 `flux`/`qwen_image`/`wan_2_1_i2v` 且把 key 写成 `cosmos-anima`（注册表实为 `cosmos-predict2-anima`）。
 
 > 影响 6 个测试文件、6 条 finding。所有「可派生 / 已漂移」判定均已逐条打开测试文件取真实行号 + 打开 `vrl/` 源头核实派生路径（`typing.get_args` / `FAMILY_REGISTRY` 迭代 / `entry.aliases`），下文给出 BEFORE 冻结断言与 AFTER 派生断言的对照代码。

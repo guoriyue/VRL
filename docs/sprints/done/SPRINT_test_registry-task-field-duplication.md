@@ -1,6 +1,10 @@
-# SPRINT: Rollout-wiring 测试冻结 registry `entry.task` 字面量清理（planned）
+# SPRINT: Rollout-wiring 测试冻结 registry `entry.task` 字面量清理（done）
 
-状态：未开始（2026-06-21）。
+状态：done（2026-06-21）。优先级：medium。两个测试文件的手抄 task 字面量全部改为 `== entry.task`：
+`test_runtime_inputs.py` 主参数化删掉 `expected_task` 列与形参、`test_wan_i2v_...` 单测取 entry 派生；
+`test_janus_pro_r1_wiring.py` 补 `get_rollout_family_entry` import、collector/request 双断言改派生。
+逆向验证已做：临时把 `registry.py` 的 `task="ar_t2i_r1"` 改名，两测试仍全绿（被测代码与断言同随
+registry 走）。`expected_gatherer` / `family` 字面量按非目标保留。pytest 全绿、ruff 全绿。
 范围：把 rollout runtime 接线测试里**手抄的 canonical task 字面量**（`t2i` / `ar_t2i` / `ar_t2i_r1` 等）改成从已绑定的 `RolloutFamilyEntry.task` 派生。这些测试已经把 entry 取在手里（`get_rollout_family_entry(family)`），且 `runtime_builder` / `executor_cls` 已经是对着 `entry.*` 比的 —— 唯独 `task` 还在断言一份冻结副本。registry 是 task 词表的唯一真源，registry 里改名一个家族的 canonical task，这些字面量就得手改、否则假性 fail。优先级：medium。
 
 > 这是 `tests/` 反 frozen-snapshot 系列的一员：与 [[SPRINT_test_registry-family-list-snapshot]]（`registered_rollout_families()` 字面 key 列表 = `tuple(FAMILY_REGISTRY)`，wan_2_2-missing 那一类）、[[SPRINT_test_literal-config-assertions]] 同源。本 sprint 只收口 `task` 字段这一条主题，**两个**测试文件。
