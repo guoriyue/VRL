@@ -1,6 +1,12 @@
-# SPRINT: 测试硬抄 YAML 声明值，而非测加载/派生行为（planned）
+# SPRINT: 测试硬抄 YAML 声明值，而非测加载/派生行为（done）
 
-状态：未开始（2026-06-21）。
+状态：done（2026-06-21）。两个文件 4 处声明字面已清理:`test_load_all_experiments.py` 的 Cosmos
+denoise/LoRA(§A,改留 `use_lora` + 非空 `target_modules` 真不变量)、rollout batch 几何(§B,改断
+`rollout_batch_size % n_samples_per_prompt == 0` + 派生 `gradient_accumulation_steps` 公式)、async debug
+recipe(§C,`memory_fraction==0.55` 改断 resolver 区间 `0<x<=1`);`test_setup.py` 的 videophy loader/path
+(§D,从 `load_config(...).data` 派生 + step 结构不变量)。所有派生/resolver/行为断言(gradient_accumulation_steps、
+`lifecycle.rollout.mode`、`schedule_mode`、`gpu_pool` 等)保留。抽验:改 YAML `num_steps 20→16` 不再 red。
+pytest:35 passed,`tests/config+data` 177 passed 零回归。ruff 全绿。未动任何 `vrl/` 源码或 config YAML。
 范围：清理一簇 experiment / data 测试里**逐字复刻 YAML 声明值**的字面相等断言（`num_steps=20`、`guidance_scale=1.0`、batch 几何 `8/32/1`、`memory_fraction=0.55`、`height/width=128`、loader `prompt_manifest`、dataset path `datasets/videophy/train.txt`、LoRA `target_modules` 集合）。按本仓库已记录的 **no exact-config tests** 规则：config 是「声明」，不是「行为契约」；把声明值钉进断言只会让测试在每次调参编辑时无故变红，且不覆盖任何 loader / resolver 逻辑。**保留**这些文件里真正派生/解析的断言（`TrainerConfig` 计算出的 `gradient_accumulation_steps`、resolver 的结构化字段），它们测的是行为，不是声明。
 
 > 优先级：medium。本 sprint 只动断言，不动任何 `vrl/` 源码、不动任何 config YAML —— YAML 永远是 single source of truth，可以自由重调。

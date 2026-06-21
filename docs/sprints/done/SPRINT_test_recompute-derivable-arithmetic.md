@@ -1,6 +1,12 @@
-# SPRINT: 测试里冻结手算结果，应改为从输入重算（planned）
+# SPRINT: 测试里冻结手算结果，应改为从输入重算（done）
 
-状态：未开始（2026-06-21）。
+状态：done（2026-06-21）。四个文件的手算冻结结果改为从 source 公式/模板重算:
+`test_chunk_dispatch.py` 两处 `20.0` → `estimate_chunk_cost(...)` / `row sample_count*num_steps`(并把
+request 提为局部变量);`test_oom_split.py` chunk_key 字面串 → `SampleChunk(...).chunk_key`(新增 `_key` helper);
+`test_cosmos_predict25_kling_eval.py` `== 26` → `first == second` + 输入算术锚 `17+2*4+1`;
+`test_diffusion_nft.py` 冻结优势张量 → `nft==grpo` 契约 + `group_relative_advantages(...)` 闭式重算(已数值
+核验 atol=1e-6 重现旧 `-1.2247449`/`-0.5855400`)。真不变量(`sample_start==[0,2,4,6]`、split 递归顺序、
+`first==second`、`nft_adv==grpo_adv`)全保留。pytest 四文件 39 passed,ruff 全绿,未改任何 `vrl/` source。
 范围：清理一类**低优先级**测试坏味道 —— 测试把某个公式/格式的输出**手算成一个字面量钉死**，而那个公式/格式本身就活在 source（`estimate_chunk_cost`、`SampleChunk.chunk_key`、`_seed_for`、`group_relative_advantages`）。测试真正想守的不变量（成本被透传、seed 与 checkpoint 无关、nft==grpo 优势、split 递归顺序）另有断言；冻结的字面量只是把同一段算术再抄一遍 —— 公式/格式一改，字面量就因**与被测行为无关的原因**而报错。本 sprint 只把这些字面量改成**从 source 的同一个函数/模板重算**，不改任何被测行为，不动算法/调度/seed 逻辑本身。
 
 > 与 [[SPRINT_segment_signal_dead_field_cleanup]] 删死字段不同：这里没有死代码，被测行为全是对的；要消灭的是「测试自带一份 source 公式的手算快照」这一**冗余 + 易腐**模式。判定一个字面量是否该改的唯一标准：**它是不是 source 里某个函数/f-string 模板在该测试输入下的输出**？是 → 改成调用那个函数/模板重算；否（是测试自己选的输入、或外部固定契约）→ 保留。

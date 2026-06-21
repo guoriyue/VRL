@@ -1,6 +1,12 @@
-# SPRINT: 测试重抄模块级常量/协议面，应改为 import 派生（planned）
+# SPRINT: 测试重抄模块级常量/协议面，应改为 import 派生（done）
 
-状态：未开始（2026-06-21）。
+状态：done（2026-06-21）。10 条 finding（§2 A–H）全部改为「import 源头符号 + 派生期望」:协议面
+`__protocol_attrs__`(ReplayModel/RuntimeModel)、kling `_SCORE_KEY_MAP`+`_normalize_scores`、kling factory
+`_KLING_VIDEO_REWARD_MODEL`、JANUS `JANUS_R1_SEGMENTS`(4 处含 stub 与 `[1:]` 切片)、`JANUS_IMAGE_PATCH_SIZE`、
+danbooru `DOMAIN`/`TEMPLATE_ID`、videophy `DECODE_METHOD`、registry `_default_return_artifacts`、AR
+`cache_dtype` 默认(经 `inspect.signature(build_vllm_attention_backend)` 派生)。同处真实行为断言
+(leak-check、`block_size==32` override、逐段 shape、`require_*` 报错)全保留。pytest 三批合计 129 passed
+(0 fail/0 error/0 skip,本机 torch/diffusers/vllm/ray 齐全),11 文件 ruff 全绿,未动任何 `vrl/` source。
 范围：把一批**已经是可 import 的模块常量 / 协议 `__protocol_attrs__` / registry 默认值**、却被测试用字面量手抄一遍的断言，改成「import 源头符号 + 从它派生期望值」。源头是 single source of truth，手抄副本会在任何 rename/新增字段时静默漂移：源头一处更新，冻结的副本要么对新值误报失败、要么继续验证陈旧的接口面。优先级 medium。**不**改动与字面量同处的真实行为断言（leak-check、override pass-through、shape 校验等），那些是契约本体。
 
 > 与已落地的 canonical 反例对齐：`registered_rollout_families() == tuple(FAMILY_REGISTRY)` —— registry 是源头，任何「手写一份 family/alias/常量清单再 `==` 比对」的测试就是 wan_2_2-missing 那类 bug 的同构体。本 sprint 是把这类「重抄」逐条收口到 import-and-derive。

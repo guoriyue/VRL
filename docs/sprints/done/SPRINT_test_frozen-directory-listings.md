@@ -1,6 +1,13 @@
-# SPRINT: 干掉穷举式冻结目录清单断言（planned）
+# SPRINT: 干掉穷举式冻结目录清单断言（done）
 
-状态：未开始（2026-06-21）。
+状态：done（2026-06-21）。仅改 `tests/architecture/test_generation_rollout_boundaries.py`：四处穷举
+`_module_filenames(dir) == {手抄全集}` 全部消除。新增 `_registered_reward_modules()` 从
+`_REWARD_REGISTRY` 派生；`rewards/models/` 与 `rewards/functions/` 改「派生 ⊆ present + 脚手架白名单
++ extras 守卫」（修复 `hub.py` LIVE FAILURE,`hub.py` 走脚手架白名单未手抄）；`rewards/` 根、
+`rewards/ray/`、`generation/ray/` 改 subset。forbidden-text / forbidden-import / not-exists 断言原样保留。
+反向验证:往 `models/` 丢无关文件仍会因 extras 转红。pytest:4 目标测试全绿、`tests/architecture+rewards`
+仅余 1 个**既有、范围外**失败 `test_shared_ray_substrate_stays_domain_neutral`(生产代码
+`vrl/ray/resources.py` import 越界,clean HEAD 同样红,非本 sprint 范围)。ruff 全绿。
 范围：清理 `tests/architecture/test_generation_rollout_boundaries.py` 里 **4 处** `_module_filenames(dir) == {手敲全集}` 的穷举冻结目录清单断言。这类断言把「目录里有哪些文件」当成一份手抄的 `ls` 快照来 pin，文件系统一旦新增/重命名一个模块就立刻红，且红的原因与行为无关。已经发生 **一次 LIVE FAILURE**（详见 §1.1）。本 sprint 只动这一个测试文件，把穷举 `==` 换成它真正想表达的结构不变量（forbidden imports / not-exists 守卫 / 从 `_REWARD_REGISTRY` 派生的 reward 模块集），**不**改任何 `vrl/` 生产代码、**不**动该文件里已经正确的 forbidden-text / not-exists 断言。
 
 > 本 sprint 的核心反模式与 `registered_rollout_families()` 一致：`vrl/rollouts/families/registry.py:364` 是 `return tuple(FAMILY_REGISTRY)` —— 注册表本身就是来源。任何「手敲一份 key 全集再断言 ==」的测试，都是把来源抄了一份副本，副本必然 rot（新增 family 不更新就红，或更新了也只是机械同步、抓不到真 bug）。目录清单是同一个 bug 的文件系统版本：**文件系统是来源**，断言要么从更上游的来源（注册表）派生，要么只断言「该在的在 / 不该在的不在」，绝不穷举抄一遍 `ls`。
