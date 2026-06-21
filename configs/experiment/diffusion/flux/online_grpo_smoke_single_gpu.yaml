@@ -1,0 +1,61 @@
+# FLUX.1-dev OCR GRPO — single-GPU smoke recipe (validation + naive profiling).
+#
+# Smallest end-to-end probe: tiny resolution, few denoise steps, 1 sample/chunk,
+# LoRA-only. Proves the family runs encode -> prepare -> denoise -> decode ->
+# reward -> LoRA grad on one card. FLUX.1-dev is ~12B; fp16/fp32 are expected to
+# exceed 32 GB (record peak + the budget, do not fake a pass).
+#
+# Usage:
+#   CUDA_VISIBLE_DEVICES=0 vrl-train \
+#     --config experiment/diffusion/flux/online_grpo_smoke_single_gpu
+defaults:
+  - /recipe/online/flow_matching_grpo
+  - /model/diffusion/flux/dev
+  - /sampling/image/512
+  - /sampling/denoise/10_step_cfg_4_5
+  - /reward/ocr
+  - /dataset/ocr
+  - _self_
+
+precision: bf16
+
+sampling:
+  height: 256
+  width: 256
+  num_steps: 4
+  max_sequence_length: 64
+
+actor:
+  optim:
+    lr: 1.0e-4
+  gradient_accumulation_steps: 1
+  gradient_checkpointing: true
+
+algorithm:
+  kl_coef: 0.04
+  global_std: true
+
+rollout:
+  n_samples_per_prompt: 2
+  rollout_batch_size: 2
+  sample_batch_size: 1
+  # num_steps shrunk to 4, but base diffusion rollout sets sde.window_range=[0,10]
+  # for the 10-step preset; _parse_sde_window_range validates hi <= num_steps, so
+  # clamp the window to the 4-step budget (must live under rollout.sde, not sampling).
+  sde:
+    window_range: [0, 4]
+
+trainer:
+  entrypoint: vrl.scripts.diffusion.flux.train:train_flux_grpo
+  output_dir: outputs/flux_ocr_grpo_smoke_single_gpu
+  total_epochs: 1
+  save_freq: 9999
+  profile: true
+  debug:
+    first_step: true
+
+# torch.compile off for the smoke run: the first-forward shape probe should not
+# pay an inductor compile, and compile is profiled separately.
+model:
+  torch_compile:
+    enable: false

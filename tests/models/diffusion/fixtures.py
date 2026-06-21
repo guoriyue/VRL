@@ -135,6 +135,61 @@ def build_tiny_sd3_transformer(*, seed: int = 0) -> Any:
     )
 
 
+# Tiny real FLUX geometry (CPU): PACKED latents [B, seq, C*4] with C=4 -> 16
+# in_channels (patch_size=1 in packed token space). axes_dims_rope must sum to
+# attention_head_dim (8). guidance_embeds=True mirrors FLUX.1-dev.
+TINY_FLUX_IN_CHANNELS = 16
+TINY_FLUX_JOINT_DIM = 16
+TINY_FLUX_POOLED_DIM = 16
+
+
+def build_tiny_flux_transformer(*, seed: int = 0, guidance_embeds: bool = True) -> Any:
+    """Tiny real ``FluxTransformer2DModel`` on CPU, cache-free (config-init)."""
+
+    from diffusers import FluxTransformer2DModel
+
+    torch.manual_seed(seed)
+    return FluxTransformer2DModel(
+        patch_size=1,
+        in_channels=TINY_FLUX_IN_CHANNELS,
+        num_layers=1,
+        num_single_layers=1,
+        attention_head_dim=8,
+        num_attention_heads=2,
+        joint_attention_dim=TINY_FLUX_JOINT_DIM,
+        pooled_projection_dim=TINY_FLUX_POOLED_DIM,
+        guidance_embeds=guidance_embeds,
+        axes_dims_rope=(2, 2, 4),
+    )
+
+
+# Tiny real Qwen-Image geometry (CPU): PACKED latents [B, seq, C*4] with C=4 ->
+# 16 in_channels. out_channels(4) * patch_size**2(4) == in_channels(16) so the
+# noise_pred matches the packed latent for the SDE step. axes_dims_rope sums to
+# attention_head_dim (16).
+TINY_QWEN_IN_CHANNELS = 16
+TINY_QWEN_JOINT_DIM = 16
+
+
+def build_tiny_qwen_image_transformer(*, seed: int = 0) -> Any:
+    """Tiny real ``QwenImageTransformer2DModel`` on CPU, cache-free (config-init)."""
+
+    from diffusers import QwenImageTransformer2DModel
+
+    torch.manual_seed(seed)
+    return QwenImageTransformer2DModel(
+        patch_size=2,
+        in_channels=TINY_QWEN_IN_CHANNELS,
+        out_channels=TINY_QWEN_IN_CHANNELS // 4,
+        num_layers=1,
+        attention_head_dim=16,
+        num_attention_heads=2,
+        joint_attention_dim=TINY_QWEN_JOINT_DIM,
+        guidance_embeds=False,
+        axes_dims_rope=(8, 4, 4),
+    )
+
+
 def build_tiny_wan_i2v_transformer(*, seed: int = 0) -> Any:
     """Tiny real Wan I2V ``WanTransformer3DModel`` on CPU, cache-free.
 

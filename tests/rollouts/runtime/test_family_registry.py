@@ -19,6 +19,8 @@ def test_family_registry_covers_current_rollout_families() -> None:
     """Checks family registry covers current rollout families."""
     assert registered_rollout_families() == (
         "sd3_5",
+        "flux",
+        "qwen_image",
         "wan_2_1",
         "wan_2_1_i2v",
         "cosmos-predict2",
@@ -48,6 +50,8 @@ def test_family_registry_covers_current_rollout_families() -> None:
 def test_family_aliases_resolve_to_canonical_entries() -> None:
     """Checks family aliases resolve to canonical entries."""
     expected_aliases = {
+        "flux_1_dev": "flux",
+        "qwen-image": "qwen_image",
         "wan": "wan_2_1",
         "wan_i2v": "wan_2_1_i2v",
         "cosmos": "cosmos-predict2",

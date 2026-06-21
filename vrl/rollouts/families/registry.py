@@ -144,6 +144,36 @@ register_rollout_family(
 
 register_rollout_family(
     _diffusion_entry(
+        family="flux",
+        task="t2i",
+        aliases=("flux_1_dev",),
+        executor_cls="vrl.models.diffusion.flux.runtime:FluxChunkExecutor",
+        runtime_builder="vrl.models.diffusion.flux.runtime:build_flux_runtime_bundle",
+        runtime_spec_extractor="vrl.models.diffusion.flux.runtime:extract_flux_runtime_spec",
+        request_prefix="flux",
+        default_task_type="text_to_image",
+    ),
+)
+
+register_rollout_family(
+    _diffusion_entry(
+        family="qwen_image",
+        task="t2i",
+        aliases=("qwen-image",),
+        executor_cls="vrl.models.diffusion.qwen_image.runtime:QwenImageChunkExecutor",
+        runtime_builder=(
+            "vrl.models.diffusion.qwen_image.runtime:build_qwen_image_runtime_bundle"
+        ),
+        runtime_spec_extractor=(
+            "vrl.models.diffusion.qwen_image.runtime:extract_qwen_image_runtime_spec"
+        ),
+        request_prefix="qwen_image",
+        default_task_type="text_to_image",
+    ),
+)
+
+register_rollout_family(
+    _diffusion_entry(
         family="wan_2_1",
         task="t2v",
         aliases=("wan",),
