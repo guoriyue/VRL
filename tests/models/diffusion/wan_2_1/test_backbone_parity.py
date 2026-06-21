@@ -69,7 +69,6 @@ def test_wan_t2v_forward_step_runs_real_batched_cfg() -> None:
         negative_prompt_embeds=torch.randn(2, _TEXT_LEN, _TEXT_DIM),
         guidance_scale=3.0,
         do_cfg=True,
-        seed=0,
     )
 
     out = model.forward_step(state, 0)
@@ -98,7 +97,6 @@ def test_wan_t2v_forward_step_casts_replay_tensors_to_transformer_dtype() -> Non
         negative_prompt_embeds=None,
         guidance_scale=1.0,
         do_cfg=False,
-        seed=0,
     )
 
     out = model.forward_step(state, 0)
@@ -124,7 +122,6 @@ def test_wan_i2v_forward_step_threads_condition_and_image_embeds() -> None:
         condition=torch.randn(_LATENT_SHAPE),
         guidance_scale=2.0,
         do_cfg=True,
-        seed=0,
     )
 
     out = model.forward_step(state, 0)
@@ -163,7 +160,6 @@ def test_wan_i2v_dual_stage_routes_by_diffusers_boundary() -> None:
         condition=torch.randn(_LATENT_SHAPE),
         guidance_scale=1.0,
         do_cfg=False,
-        seed=0,
         guidance_scale_2=1.0,
         boundary_ratio=0.5,
         num_train_timesteps=1000,
@@ -195,7 +191,6 @@ def test_wan_i2v_replay_state_roundtrip_keeps_conditioning_tensors() -> None:
         condition=torch.full(_LATENT_SHAPE, 10.0),
         guidance_scale=2.0,
         do_cfg=True,
-        seed=0,
         guidance_scale_2=3.0,
         boundary_ratio=0.5,
         num_train_timesteps=1000,

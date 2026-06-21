@@ -46,7 +46,6 @@ def _state() -> CosmosPredict2SamplingState:
         cond_indicator=no_cond,
         uncond_indicator=no_cond,
         fps=16,
-        seed=0,
         sigma_conditioning=0.125,
     )
 

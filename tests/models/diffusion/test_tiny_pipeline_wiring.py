@@ -64,7 +64,6 @@ def test_wan_wrapper_runs_on_real_loaded_pipeline() -> None:
         negative_prompt_embeds=torch.randn(2, 3, dim),
         guidance_scale=3.0,
         do_cfg=True,
-        seed=0,
     )
 
     out = model.forward_step(state, 0)
@@ -98,7 +97,6 @@ def test_sd3_wrapper_runs_on_real_loaded_pipeline() -> None:
         negative_pooled_prompt_embeds=torch.randn(2, pooled),
         guidance_scale=3.0,
         do_cfg=True,
-        seed=0,
     )
 
     out = model.forward_step(state, 0)

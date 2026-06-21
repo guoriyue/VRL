@@ -63,7 +63,6 @@ class WanT2VSamplingState:
     negative_prompt_embeds: torch.Tensor | None
     guidance_scale: float
     do_cfg: bool
-    seed: int
     guidance_scale_2: float | None = None
     boundary_ratio: float | None = None
     num_train_timesteps: int | None = None
@@ -82,7 +81,6 @@ class WanI2VSamplingState:
     condition: torch.Tensor
     guidance_scale: float
     do_cfg: bool
-    seed: int
     guidance_scale_2: float | None = None
     boundary_ratio: float | None = None
     num_train_timesteps: int | None = None
@@ -384,7 +382,6 @@ class WanT2VDiffusersModel(LoraModelMixin, DiffusionModelBase):
             negative_prompt_embeds=negative_prompt_embeds,
             guidance_scale=guidance_scale,
             do_cfg=do_cfg,
-            seed=seed,
             guidance_scale_2=guidance_scale_2,
             boundary_ratio=self._boundary_ratio,
             num_train_timesteps=_scheduler_num_train_timesteps(pipe.scheduler),
@@ -475,7 +472,6 @@ class WanT2VDiffusersModel(LoraModelMixin, DiffusionModelBase):
                 batch_context["guidance_scale"],
                 batch_context.get("guidance_scale_2"),
             ),
-            seed=0,
             guidance_scale_2=batch_context.get("guidance_scale_2"),
             boundary_ratio=batch_context.get("boundary_ratio"),
             num_train_timesteps=batch_context.get("num_train_timesteps"),
@@ -706,7 +702,6 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
             condition=condition,
             guidance_scale=guidance_scale,
             do_cfg=do_cfg,
-            seed=seed,
             guidance_scale_2=guidance_scale_2,
             boundary_ratio=self._boundary_ratio,
             num_train_timesteps=_scheduler_num_train_timesteps(pipe.scheduler),
@@ -796,7 +791,6 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
                 batch_context["guidance_scale"],
                 batch_context.get("guidance_scale_2"),
             ),
-            seed=0,
             guidance_scale_2=batch_context.get("guidance_scale_2"),
             boundary_ratio=batch_context.get("boundary_ratio"),
             num_train_timesteps=batch_context.get("num_train_timesteps"),

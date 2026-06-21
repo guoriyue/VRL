@@ -41,7 +41,6 @@ class AnimaSamplingState:
     guidance_scale: float
     do_cfg: bool
     padding_mask: torch.Tensor
-    seed: int
 
 
 class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
@@ -286,7 +285,6 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
             guidance_scale=guidance_scale,
             do_cfg=do_cfg,
             padding_mask=padding_mask,
-            seed=seed,
         )
 
     def forward_step(
@@ -362,7 +360,6 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
             guidance_scale=batch_context["guidance_scale"],
             do_cfg=batch_context["cfg"] and batch_context["guidance_scale"] > 1.0,
             padding_mask=_shared_replay_tensor(replay_tensors, "padding_mask"),
-            seed=0,
         )
 
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:

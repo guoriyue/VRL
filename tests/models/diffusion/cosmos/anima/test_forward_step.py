@@ -60,7 +60,6 @@ def test_anima_forward_step_uses_const_flow_derivative_contract() -> None:
         guidance_scale=2.0,
         do_cfg=True,
         padding_mask=torch.zeros(1, 1, 8, 8),
-        seed=0,
     )
 
     out = model.forward_step(state, 0)

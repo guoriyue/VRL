@@ -92,7 +92,6 @@ class CosmosPredict25SamplingState:
     cond_mask: torch.Tensor
     cond_indicator: torch.Tensor
     padding_mask: torch.Tensor
-    seed: int
     height: int
     width: int
     num_frames: int
@@ -360,7 +359,6 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusionModelBase):
             cond_mask=cond_mask,
             cond_indicator=cond_indicator,
             padding_mask=padding_mask,
-            seed=seed,
             height=request.height,
             width=request.width,
             num_frames=request.frame_count,
@@ -459,7 +457,6 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusionModelBase):
                 batch_context,
                 "padding_mask",
             ),
-            seed=0,
             height=batch_context["height"],
             width=batch_context["width"],
             num_frames=batch_context["num_frames"],

@@ -67,7 +67,6 @@ class SD3SamplingState:
     negative_pooled_prompt_embeds: torch.Tensor | None
     guidance_scale: float
     do_cfg: bool
-    seed: int
 
 
 class SD3_5Model(LoraModelMixin, DiffusionModelBase):
@@ -275,7 +274,6 @@ class SD3_5Model(LoraModelMixin, DiffusionModelBase):
             negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
             guidance_scale=request.guidance_scale,
             do_cfg=do_cfg,
-            seed=seed,
         )
 
     # -- forward_step --------------------------------------------------
@@ -373,7 +371,6 @@ class SD3_5Model(LoraModelMixin, DiffusionModelBase):
             ),
             guidance_scale=batch_context["guidance_scale"],
             do_cfg=batch_context["cfg"] and batch_context["guidance_scale"] > 1.0,
-            seed=0,
         )
 
     # -- decode_latents ------------------------------------------------

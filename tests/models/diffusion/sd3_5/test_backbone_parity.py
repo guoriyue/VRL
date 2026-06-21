@@ -45,7 +45,6 @@ def test_sd3_forward_step_runs_real_batched_cfg() -> None:
         negative_pooled_prompt_embeds=torch.randn(2, TINY_SD3_POOLED_DIM),
         guidance_scale=3.0,
         do_cfg=True,
-        seed=0,
     )
 
     out = model.forward_step(state, 0)
@@ -73,7 +72,6 @@ def test_sd3_forward_step_single_branch_skips_cfg() -> None:
         negative_pooled_prompt_embeds=None,
         guidance_scale=1.0,
         do_cfg=False,
-        seed=0,
     )
 
     out = model.forward_step(state, 0)
@@ -103,7 +101,6 @@ def test_sd3_forward_step_casts_replay_tensors_to_transformer_dtype() -> None:
         negative_pooled_prompt_embeds=None,
         guidance_scale=1.0,
         do_cfg=False,
-        seed=0,
     )
 
     out = model.forward_step(state, 0)

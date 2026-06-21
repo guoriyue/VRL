@@ -50,7 +50,6 @@ def _state() -> AnimaSamplingState:
         guidance_scale=_GUIDANCE,
         do_cfg=True,
         padding_mask=torch.zeros(1, 1, h, w),
-        seed=0,
     )
 
 

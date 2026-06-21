@@ -57,7 +57,6 @@ def _predict2_state(batch_size: int) -> CosmosPredict2SamplingState:
         cond_indicator=torch.ones(1, 1, 3, 1, 1),
         uncond_indicator=torch.zeros(1, 1, 3, 1, 1),
         fps=16,
-        seed=0,
     )
 
 
@@ -75,7 +74,6 @@ def _predict25_state(batch_size: int) -> CosmosPredict25SamplingState:
         cond_mask=torch.ones(1, 1, 3, 4, 4),
         cond_indicator=torch.ones(1, 1, 3, 1, 1),
         padding_mask=torch.zeros(1, 1, 4, 4),
-        seed=0,
         height=32,
         width=32,
         num_frames=3,
@@ -94,7 +92,6 @@ def _anima_state(batch_size: int) -> AnimaSamplingState:
         do_cfg=True,
         # Shared conditioning carries a leading-1 dim, aligned lazily at export.
         padding_mask=torch.zeros(1, 1, 4, 4),
-        seed=0,
     )
 
 

@@ -69,7 +69,6 @@ class CosmosPredict2SamplingState:
     cond_indicator: Any
     uncond_indicator: Any
     fps: int
-    seed: int
     sigma_conditioning: float = 0.0001
 
 
@@ -298,7 +297,6 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusionModelBas
             cond_indicator=cond_indicator,
             uncond_indicator=uncond_indicator,
             fps=request.fps or 16,
-            seed=seed,
             sigma_conditioning=0.0001,
         )
 
@@ -475,7 +473,6 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusionModelBas
                 "uncond_indicator",
             ),
             fps=batch_context["fps"],
-            seed=0,
             sigma_conditioning=batch_context.get("sigma_conditioning", 0.0001),
         )
 

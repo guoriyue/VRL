@@ -45,7 +45,6 @@ def _state() -> CosmosPredict25SamplingState:
         cond_mask=cond_mask,
         cond_indicator=torch.zeros(b, 1, 1, 1, 1),
         padding_mask=torch.zeros(1, 1, 4, 4),
-        seed=0,
         height=4,
         width=4,
         num_frames=1,
