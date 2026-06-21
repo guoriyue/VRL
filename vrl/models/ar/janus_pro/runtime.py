@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -431,13 +431,12 @@ class JanusProChunkExecutor(ARChunkExecutorBase):
         request: GenerationRequest,
         chunk: SampleChunk,
         execution_stage: Any,
-        plan_summary: Mapping[str, object],
     ) -> JanusProARChunkResult:
         """Run one prompt-major AR chunk through the black-box sampling path."""
 
         from vrl.utils.profiling import record_function
 
-        del execution_stage, plan_summary
+        del execution_stage
         self.require_native_ar_engine(request)
         self.layout.validate_chunk(request, chunk)
         sampling = request.sampling
@@ -794,11 +793,10 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
         request: GenerationRequest,
         chunk: SampleChunk,
         execution_stage: Any,
-        plan_summary: Mapping[str, object],
     ) -> JanusProR1ChunkResult:
         from vrl.utils.profiling import record_function
 
-        del execution_stage, plan_summary
+        del execution_stage
         self.require_native_ar_engine(request)
         self.layout.validate_chunk(request, chunk)
         sampling = request.sampling

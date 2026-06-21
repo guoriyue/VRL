@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -374,11 +374,10 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
         request: GenerationRequest,
         chunk: SampleChunk,
         execution_stage: Any,
-        plan_summary: Mapping[str, object],
     ) -> NextStep1ARChunkResult:
         """Run one prompt-major AR chunk through the black-box sampling path."""
 
-        del execution_stage, plan_summary
+        del execution_stage
         self.require_native_ar_engine(request)
         self.layout.validate_chunk(request, chunk)
         sampling = request.sampling

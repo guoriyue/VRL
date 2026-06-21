@@ -129,7 +129,6 @@ def test_forward_chunk_plan_routes_through_stage_boundary_methods() -> None:
         request,
         chunk,
         execution_stage=None,
-        plan_summary={},
     )
 
     assert result == {"decoded": True, "stage_durations": {"encode": 1.0, "denoise": 2.0}}

@@ -273,7 +273,6 @@ class GenerationWorkerCore:
                     request,
                     chunk,
                     envelope.execution_stage,
-                    envelope.plan_summary,
                 )
         except Exception:
             logger.exception("generation chunk execution failed")

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Any
@@ -452,9 +452,8 @@ class DiffusionChunkExecutorBase(
         request: GenerationRequest,
         chunk: SampleChunk,
         execution_stage: Any,
-        plan_summary: Mapping[str, object],
     ) -> DiffusionChunkResult:
-        del execution_stage, plan_summary
+        del execution_stage
 
         from vrl.utils.profiling import record_function
 

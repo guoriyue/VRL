@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -84,7 +84,6 @@ class GenerationChunkExecutor(Protocol):
         request: GenerationRequest,
         chunk: SampleChunk,
         execution_stage: ExecutionStage,
-        plan_summary: Mapping[str, object],
     ) -> ChunkResult: ...
 
     def gather_chunks(
