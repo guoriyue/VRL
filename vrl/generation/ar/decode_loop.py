@@ -178,16 +178,11 @@ class ARTokenLoopInit:
 class ARStepBatch:
     """One scheduled token step built from an engine-owned envelope."""
 
-    sequences: list[ActiveSequence]
     row_indices: list[int]
     positions: list[int]
     position: int
     cache_lanes: dict[str, Any]
     row_lanes: dict[str, Any]
-
-    @property
-    def sequence_ids(self) -> list[str]:
-        return [str(sequence.sample_id) for sequence in self.sequences]
 
 
 @dataclass(slots=True)
@@ -242,7 +237,6 @@ class ARTokenLoopEnvelope:
         if len(set(positions)) != 1:
             raise ValueError("scheduled AR sequences must share one token position")
         return ARStepBatch(
-            sequences=list(sequences),
             row_indices=row_indices,
             positions=positions,
             position=positions[0],
