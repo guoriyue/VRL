@@ -418,3 +418,12 @@ def test_build_strategy_fsdp_rejects_ema() -> None:
 def test_build_strategy_fsdp_rejects_optimizer_resume() -> None:
     with pytest.raises(NotImplementedError, match="resume"):
         build_strategy({"trainer": {"resume_from": "/ckpt/checkpoint-10"}}, _cpu_fsdp_context())
+
+
+def test_build_strategy_fsdp_rejects_train_compile() -> None:
+    # torch.compile (inductor) is unsound with FSDP2 reshard-after-forward all-gathers
+    # (cosmos-rl asserts the same); the build_strategy §10 gate must reject it.
+    with pytest.raises(NotImplementedError, match="torch_compile"):
+        build_strategy(
+            {"model": {"torch_compile": {"enable": True}}}, _cpu_fsdp_context()
+        )

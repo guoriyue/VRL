@@ -447,6 +447,14 @@ def _assert_fsdp_config_supported(cfg: Any) -> None:
             "supported until FSDP2 optimizer state export/load is implemented "
             "(SPRINT_multi_gpu_training.md §8/§10).",
         )
+    if bool(cfg_path(cfg, "model.torch_compile.enable", False)):
+        raise NotImplementedError(
+            "distributed.training.strategy=fsdp with model.torch_compile.enable=true "
+            "is not supported: torch.compile (inductor graph capture) is unsound with "
+            "FSDP2 fully_shard's reshard-after-forward all-gathers — cosmos-rl asserts "
+            "the same for its diffusion FSDP2 path. Set model.torch_compile.enable=false "
+            "to run FSDP2.",
+        )
 
 
 def _single_process_context() -> DistributedTrainingContext:
