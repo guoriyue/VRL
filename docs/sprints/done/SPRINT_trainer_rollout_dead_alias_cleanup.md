@@ -1,6 +1,6 @@
-# SPRINT: Prune trainer/rollout/trajectory dead aliases and duplicated single-source-of-truth logic (planned)
+# SPRINT: Prune trainer/rollout/trajectory dead aliases and duplicated single-source-of-truth logic (done)
 
-状态：全部落地（2026-06-20）。#1–#9 全部完成。
+状态：done（2026-06-20）。#1–#9 全部完成；2026-06-21 从 `planned/` 归档到 `done/`。
 范围：清理 trainer / rollout / trajectory / scripts 四层里残留的死别名（legacy alias、back-compat shim）以及重复实现的“单一真相”逻辑（同一概念多处复制、同一标识符存三份）。不动外部 wire 协议，不重做精度命名（已由 [[SPRINT_precision_naming_unification]] 覆盖）。
 
 ## 落地状态（2026-06-20，分支 sprint/trainer-rollout-dead-alias）
