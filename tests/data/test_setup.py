@@ -166,10 +166,18 @@ def test_for_experiment_plan_flags_missing_manifest_with_command(tmp_path: Path)
 
 def test_for_experiment_resolves_real_wan_experiment(capsys) -> None:
     """Checks for experiment resolves real Wan experiment."""
-    setup.main(["for-experiment", "diffusion/wan_2_1/online_grpo_kling_video_reward"])
+    from vrl.config.loading import load_config
+
+    experiment = "diffusion/wan_2_1/online_grpo_kling_video_reward"
+    setup.main(["for-experiment", experiment])
     out = json.loads(capsys.readouterr().out)
 
-    assert out["experiment"] == "diffusion/wan_2_1/online_grpo_kling_video_reward"
-    assert out["loader"] == "prompt_manifest"
+    # Derive expected loader/manifest from the same config the resolver loads, so the
+    # test tracks the dataset group instead of re-typing its YAML strings.
+    data = load_config(f"experiment/{experiment}").data
+    assert out["experiment"] == experiment
+    assert out["loader"] == data.loader
+    # Resolver behavior contract (the real point of the test), not a config literal:
     assert out["ready"] is True
-    assert any(step["path"] == "datasets/videophy/train.txt" for step in out["steps"])
+    assert all(step["present"] and step["complete"] and step["get"] == "" for step in out["steps"])
+    assert any(step["path"] == data.manifest for step in out["steps"])

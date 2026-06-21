@@ -4,6 +4,7 @@ import json
 import tarfile
 from pathlib import Path
 
+from vrl.scripts.data import danbooru
 from vrl.scripts.data.danbooru import (
     build_danbooru_safety_prompt_rows,
     build_positive_images,
@@ -55,8 +56,8 @@ def test_build_prompt_rows_tracks_provenance_and_buckets(tmp_path: Path) -> None
     assert len(rows) == 2
     assert len(train_rows) == 1
     assert len(eval_rows) == 1
-    assert {row["metadata"]["domain"] for row in rows} == {"anime"}
-    assert {row["metadata"]["template_id"] for row in rows} == {"anime_anatomy_v1"}
+    assert {row["metadata"]["domain"] for row in rows} == {danbooru.DOMAIN}
+    assert {row["metadata"]["template_id"] for row in rows} == {danbooru.TEMPLATE_ID}
     assert {row["metadata"]["prompt_style"] for row in rows} == {"tag", "language"}
     assert any(row["prompt"].startswith("1girl, solo") for row in rows)
     assert any(row["prompt"].startswith("single anime boy") for row in rows)

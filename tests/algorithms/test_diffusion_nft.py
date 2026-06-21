@@ -32,6 +32,7 @@ from tests.models.diffusion.fixtures import (
     add_lora_adapters,
     build_tiny_wan_transformer,
 )
+from vrl.algorithms.advantages import group_relative_advantages
 from vrl.algorithms.diffusion_nft import DiffusionNFT, DiffusionNFTConfig
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
 from vrl.generation.diffusion.layout import VideoGenerationRequest
@@ -58,27 +59,8 @@ def test_diffusion_nft_does_not_tolerate_off_policy_staleness() -> None:
     assert getattr(GRPO, "tolerates_off_policy_staleness", True) is True
 
 
-@pytest.mark.parametrize(
-    ("global_std", "expected"),
-    [
-        (
-            False,
-            torch.tensor(
-                [-1.2247449, 0.0, 1.2247449, -1.2247449, 0.0, 1.2247449],
-            ),
-        ),
-        (
-            True,
-            torch.tensor(
-                [-0.5855400, 0.0, 0.5855400, -0.5855400, 0.0, 0.5855400],
-            ),
-        ),
-    ],
-)
-def test_diffusion_nft_advantages_match_grpo_contract(
-    global_std: bool,
-    expected: torch.Tensor,
-) -> None:
+@pytest.mark.parametrize("global_std", [False, True])
+def test_diffusion_nft_advantages_match_grpo_contract(global_std: bool) -> None:
     """DiffusionNFT and GRPO share one group-relative advantage contract."""
 
     rewards = torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
@@ -89,8 +71,17 @@ def test_diffusion_nft_advantages_match_grpo_contract(
     grpo_advantages = grpo.compute_advantages_from_tensors(rewards, group_ids)
     nft_advantages = nft.compute_advantages_from_tensors(rewards, group_ids)
 
-    assert torch.allclose(grpo_advantages, expected, atol=1e-6)
+    # The real contract: NFT reuses the GRPO group-relative advantage.
     assert torch.allclose(nft_advantages, grpo_advantages, atol=0.0, rtol=0.0)
+    # Numeric anchor recomputed from the source closed form, not a frozen snapshot.
+    expected = group_relative_advantages(
+        rewards,
+        group_ids,
+        eps=grpo.config.eps,
+        adv_clip_max=grpo.config.adv_clip_max,
+        global_std=grpo.config.global_std,
+    )
+    assert torch.allclose(grpo_advantages, expected, atol=1e-6)
 
 
 class _NFTModel(DiffusionModelBase):

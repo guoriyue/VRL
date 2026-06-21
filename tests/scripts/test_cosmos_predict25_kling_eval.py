@@ -39,7 +39,10 @@ def test_seed_grid_is_identical_across_checkpoints() -> None:
         samples_per_prompt=4,
     )
 
-    assert first == second == 26
+    # Seed is checkpoint-independent: same (prompt, sample) -> same draw.
+    assert first == second
+    # Numeric anchor recomputed from the _seed_for formula, not a frozen literal.
+    assert first == 17 + 2 * 4 + 1  # base_seed + prompt_index*samples_per_prompt + sample_index
 
 
 def test_video_to_cthw_accepts_btchw_layout() -> None:

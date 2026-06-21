@@ -13,6 +13,7 @@ from vrl.rollouts.families import (
     normalize_rollout_family,
     registered_rollout_families,
 )
+from vrl.rollouts.families.registry import _default_return_artifacts
 
 
 def test_family_registry_covers_current_rollout_families() -> None:
@@ -152,9 +153,9 @@ def test_request_sampling_is_projected_from_resolved_yaml_config() -> None:
 def test_registry_keeps_return_artifacts_as_wiring_metadata() -> None:
     """Checks registry keeps return artifacts as wiring metadata."""
     for family in FAMILY_REGISTRY:
-        assert FAMILY_REGISTRY[family].collector.return_artifacts == (
-            "output",
-            "trajectory",
+        assert (
+            FAMILY_REGISTRY[family].collector.return_artifacts
+            == _default_return_artifacts
         )
 
 

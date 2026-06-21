@@ -7,6 +7,7 @@ from PIL import Image
 
 from vrl.scripts.data import bootstrap
 from vrl.scripts.data.videophy_i2v import (
+    DECODE_METHOD,
     VideoPhyVideoRow,
     prepare_videophy_i2v_dataset,
     select_videos_for_prompts,
@@ -104,7 +105,7 @@ def test_prepare_videophy_i2v_dataset_writes_source_backed_manifest(tmp_path: Pa
     assert train_rows[0]["caption"] == "A wheel rolls."
     assert train_rows[0]["task_type"] == "image_to_video"
     assert train_rows[0]["metadata"]["source_video_url"] == "https://example.test/train.mp4"
-    assert train_rows[0]["metadata"]["decode_method"] == "imageio_ffmpeg_first_frame"
+    assert train_rows[0]["metadata"]["decode_method"] == DECODE_METHOD
     assert train_rows[0]["metadata"]["source_frame_size"] == {"width": 4, "height": 4}
     assert train_rows[0]["metadata"]["image_size"] == {"width": 832, "height": 480}
     assert eval_rows[0]["image"] == "images/eval/000.png"

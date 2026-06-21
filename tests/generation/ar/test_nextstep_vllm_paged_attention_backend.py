@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from types import SimpleNamespace
 
 import pytest
@@ -19,6 +20,12 @@ from vrl.nn.layers.attention.paged import (
     ARAttentionUnavailable,
 )
 from vrl.nn.modules.ar_attention_backends import build_vllm_attention_backend
+
+# Default cache dtype resolved from the source signature, so a default change
+# (e.g. "auto" -> a concrete dtype) auto-flows into this assertion.
+_DEFAULT_CACHE_DTYPE = (
+    inspect.signature(build_vllm_attention_backend).parameters["cache_dtype"].default
+)
 
 
 @pytest.mark.gpu
@@ -91,7 +98,7 @@ def test_nextstep_runtime_uses_vllm_paged_attention_by_default(monkeypatch) -> N
         assert passed_model is model
         assert family == "nextstep_1"
         assert block_size == 32
-        assert cache_dtype == "auto"
+        assert cache_dtype == _DEFAULT_CACHE_DTYPE
         return backend
 
     monkeypatch.setattr(

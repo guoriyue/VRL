@@ -50,7 +50,11 @@ import torch
 import torch.nn as nn
 
 from tests.models.diffusion.fixtures import record_forward_calls
-from vrl.models.ar.janus_pro.model import JanusProConfig, JanusProModel
+from vrl.models.ar.janus_pro.model import (
+    JANUS_IMAGE_PATCH_SIZE,
+    JanusProConfig,
+    JanusProModel,
+)
 
 __all__ = [
     "RecordingHead",
@@ -64,7 +68,8 @@ __all__ = [
 class StubVQ(nn.Module):
     """Frozen VQ-decoder boundary: wrappers only read the decoded shape.
 
-    ``decode_code`` returns zeros at the upsampled ``H*16 x W*16`` geometry. When
+    ``decode_code`` returns zeros at the upsampled
+    ``H*JANUS_IMAGE_PATCH_SIZE x W*JANUS_IMAGE_PATCH_SIZE`` geometry. When
     ``latent_channels`` is given, also carries ``quantize.embedding`` so
     ``_resolve_vq_latent_channels`` can read the per-token latent width (the R1
     path needs this; the decode/replay paths never touch it).
@@ -84,7 +89,12 @@ class StubVQ(nn.Module):
     def decode_code(self, ids: torch.Tensor, shape: list[int]) -> torch.Tensor:
         del ids
         batch, _, height, width = shape
-        return torch.zeros(batch, 3, height * 16, width * 16)
+        return torch.zeros(
+            batch,
+            3,
+            height * JANUS_IMAGE_PATCH_SIZE,
+            width * JANUS_IMAGE_PATCH_SIZE,
+        )
 
 
 class RecordingHead(nn.Module):

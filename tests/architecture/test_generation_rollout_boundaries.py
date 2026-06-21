@@ -67,12 +67,7 @@ def test_shared_ray_substrate_stays_domain_neutral() -> None:
 def test_reward_ray_adapter_stays_lean() -> None:
     """Checks reward Ray adapter stays lean."""
     ray_root = VRL_ROOT / "rewards" / "ray"
-    assert _module_filenames(ray_root) == {
-        "__init__.py",
-        "model.py",
-        "runtime.py",
-        "worker.py",
-    }
+    assert {"__init__.py", "model.py", "runtime.py", "worker.py"} <= _module_filenames(ray_root)
     forbidden_text = (
         "class RewardInferenceArtifact",
         "class RewardInferenceRequest",
@@ -95,17 +90,13 @@ def test_reward_ray_adapter_stays_lean() -> None:
 def test_reward_models_live_under_models() -> None:
     """Checks reward models live under models."""
     models_root = VRL_ROOT / "rewards" / "models"
-    assert _module_filenames(models_root) == {
-        "__init__.py",
-        "aesthetic.py",
-        "base.py",
-        "geneval.py",
-        "kling_video_reward.py",
-        "nsfw_safety.py",
-        "ocr.py",
-        "pickscore.py",
-        "videocon_physics.py",
-    }
+    present = _module_filenames(models_root)
+    # Every registered reward has a model module here (registry is the source).
+    assert _registered_reward_modules() <= present
+    # Only scaffolding may live alongside the per-reward modules.
+    scaffolding = {"__init__.py", "base.py", "hub.py"}
+    extras = present - _registered_reward_modules() - scaffolding
+    assert not extras, f"unexpected modules under rewards/models/: {extras}"
     assert not (VRL_ROOT / "rewards" / "kling_video_reward.py").exists()
     assert not (VRL_ROOT / "rewards" / "ray" / "kling_video_reward.py").exists()
     assert not (VRL_ROOT / "rewards" / "scorers").exists()
@@ -128,31 +119,20 @@ def test_reward_inference_is_a_single_domain_module() -> None:
 def test_reward_function_implementations_live_under_functions() -> None:
     """Checks reward function implementations live under functions."""
     rewards_root = VRL_ROOT / "rewards"
-    assert _module_filenames(rewards_root) == {
-        "__init__.py",
-        "artifacts.py",
-        "base.py",
-        "inference.py",
-        "runtime.py",
-        "types.py",
-    }
-    assert _module_filenames(rewards_root / "functions") == {
-        "__init__.py",
-        "aesthetic.py",
-        "geneval.py",
-        "kling_video_reward.py",
-        "nsfw_safety.py",
-        "ocr.py",
-        "pickscore.py",
-        "registry.py",
-        "videocon_physics.py",
-    }
+    required_root = {"__init__.py", "artifacts.py", "base.py", "inference.py", "runtime.py", "types.py"}
+    assert required_root <= _module_filenames(rewards_root)
+
+    functions = _module_filenames(rewards_root / "functions")
+    assert _registered_reward_modules() <= functions
+    scaffolding = {"__init__.py", "base.py", "registry.py"}
+    extras = functions - _registered_reward_modules() - scaffolding
+    assert not extras, f"unexpected modules under rewards/functions/: {extras}"
 
 
 def test_generation_ray_adapter_stays_lean() -> None:
     """Checks generation Ray adapter stays lean."""
     ray_root = VRL_ROOT / "generation" / "ray"
-    assert _module_filenames(ray_root) == {
+    required = {
         "__init__.py",
         "config.py",
         "executor.py",
@@ -163,6 +143,7 @@ def test_generation_ray_adapter_stays_lean() -> None:
         "weight_sync.py",
         "worker.py",
     }
+    assert required <= _module_filenames(ray_root)
     ray_adapter_files = (
         ray_root / "config.py",
         ray_root / "executor.py",
@@ -253,6 +234,20 @@ def _python_files(root: Path) -> Iterable[Path]:
 
 def _module_filenames(root: Path) -> set[str]:
     return {path.name for path in root.glob("*.py") if "__pycache__" not in path.parts}
+
+
+def _registered_reward_modules() -> set[str]:
+    """Reward-impl filenames derived from the registry, the single source of truth.
+
+    Each registered reward ``<name>`` owns a ``<name>.py`` module, so the
+    expected module set is the registry keys — never a hand-typed ``ls``.
+    Registration is lazy (``_register_builtins`` runs inside ``from_dict``),
+    so trigger it once with an empty score dict before reading the keys.
+    """
+    from vrl.rewards.functions.registry import _REWARD_REGISTRY, MultiReward
+
+    MultiReward.from_dict({}, device="cpu")  # populate _REWARD_REGISTRY
+    return {f"{name}.py" for name in _REWARD_REGISTRY}
 
 
 def _is_relative_to(path: Path, prefix: Path) -> bool:

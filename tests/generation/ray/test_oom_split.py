@@ -30,6 +30,14 @@ from vrl.generation.types import GenerationOutput, GenerationRequest
 _OOM_MESSAGE = "CUDA out of memory. Tried to allocate 4.00 GiB"
 
 
+def _key(start: int, count: int) -> str:
+    """Derive a chunk_key from the source template, not a hand-copied f-string."""
+
+    return SampleChunk(
+        prompt_index=0, prompt="p", sample_start=start, sample_count=count
+    ).chunk_key
+
+
 @dataclass
 class _CapacityWorker:
     """Synchronous worker that OOMs on chunks above ``max_samples``."""
@@ -165,17 +173,14 @@ async def test_oom_chunk_splits_until_it_fits() -> None:
         (entry["chunk_key"], entry["samples"]) for entry in output.output
     )
     assert covered == [
-        ("prompt:0:samples:0:2", 2),
-        ("prompt:0:samples:2:4", 2),
-        ("prompt:0:samples:4:6", 2),
-        ("prompt:0:samples:6:8", 2),
+        (_key(0, 2), 2),
+        (_key(2, 2), 2),
+        (_key(4, 2), 2),
+        (_key(6, 2), 2),
     ]
     splits = output.extra["ray_chunk_oom_splits"]
-    assert [row["chunk_key"] for row in splits] == [
-        "prompt:0:samples:0:8",
-        "prompt:0:samples:0:4",
-        "prompt:0:samples:4:8",
-    ]
+    # Recursion order: 8 -> [0:4] + [4:8] -> 2-sample leaves.
+    assert [row["chunk_key"] for row in splits] == [_key(0, 8), _key(0, 4), _key(4, 4)]
     assert all(row["worker_id"] == "w0" for row in splits)
 
 
@@ -205,7 +210,7 @@ async def test_non_oom_error_is_not_retried() -> None:
 
     with pytest.raises(RuntimeError, match="bad scheduler state"):
         await executor.execute(_request(4))
-    assert worker.executed == ["prompt:0:samples:0:4"]
+    assert worker.executed == [chunk.chunk_key]
 
 
 @pytest.mark.asyncio
@@ -281,7 +286,7 @@ async def test_stale_slot_routes_to_graceful_discard_not_failure() -> None:
         await executor.execute(_versioned_request(2, version=7))
 
     # Routed before the OOM-degrade loop, so the chunk ran exactly once (no retry).
-    assert worker.executed == ["prompt:0:samples:0:2"]
+    assert worker.executed == [chunk.chunk_key]
 
 
 def test_stale_slot_discard_is_not_runtime_error() -> None:

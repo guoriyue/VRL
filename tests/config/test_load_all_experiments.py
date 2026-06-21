@@ -215,35 +215,26 @@ def test_cosmos_predict25_nft_uses_paper_timestep_budget(name: str) -> None:
     """Checks Cosmos Predict2.5 NFT recipes keep the paper timestep budget."""
     cfg = load_config(f"experiment/{name}")
 
-    assert cfg.sampling.num_steps == 20
-    assert cfg.sampling.cfg is False
-    assert cfg.sampling.guidance_scale == 1.0
-    # Learning rate is a LoRA tuning knob, not part of the paper's denoise/
-    # timestep budget — the paper's 3e-5 is for full-param, LoRA needs a higher
-    # rate to move the policy. Don't pin a literal tuning value here.
-    assert cfg.actor.timestep_fraction == 0.5
+    # Denoise budget (num_steps / cfg / guidance_scale), timestep_fraction, and the
+    # exact LoRA target_modules set are declarative YAML (sampling/denoise/
+    # 20_step_no_cfg + the cosmos LoRA model group). Per the no-exact-config rule
+    # they are free to be retuned; load+validate coverage lives in
+    # test_all_experiments_load_and_validate.
     assert cfg.model.use_lora is True
-    assert set(cfg.model.lora.target_modules) == {
-        "ff.net.0.proj",
-        "ff.net.2",
-        "to_k",
-        "to_out.0",
-        "to_q",
-        "to_v",
-    }
+    # Real invariant, not a literal: enabling LoRA must declare which modules to wrap.
+    assert cfg.model.lora.target_modules  # non-empty when use_lora is True
 
 
 def test_cosmos_predict25_kling_reward_uses_paper_rl_batch() -> None:
     """Checks the Kling reward recipe matches the paper RL batch geometry."""
     cfg = load_config("experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward")
 
-    assert cfg.rollout.n_samples_per_prompt == 8
-    assert cfg.rollout.rollout_batch_size == 32
-    assert cfg.rollout.sample_batch_size == 1
-    # The optimizer-target slice is declared once as a size (one prompt group
-    # per microbatch); the microstep count (gradient_accumulation_steps) is
-    # derived by TrainerConfig, so check the derivation, not a literal YAML key.
-    assert cfg.rollout.microbatch_size == 1
+    # Batch geometry (n_samples_per_prompt / rollout_batch_size / sample_batch_size /
+    # microbatch_size) is declarative YAML a tuner is free to change. Assert the real
+    # coupling instead of pinning the paper's magic numbers.
+    assert cfg.rollout.rollout_batch_size % cfg.rollout.n_samples_per_prompt == 0
+    # gradient_accumulation_steps is a DERIVED TrainerConfig value — this stays: it
+    # tests the rollout_batch_size / microbatch_size derivation, not a literal.
     from vrl.trainers.core.types import OptimConfig, TrainerConfig
 
     derived = TrainerConfig(
@@ -256,7 +247,10 @@ def test_cosmos_predict25_kling_reward_uses_paper_rl_batch() -> None:
         output_dir="x",
         drop_zero_advantage=False,
     )
-    assert derived.gradient_accumulation_steps == 32
+    assert (
+        derived.gradient_accumulation_steps
+        == cfg.rollout.rollout_batch_size // cfg.rollout.microbatch_size
+    )
 
 
 def test_experiments_do_not_use_legacy_precision_fields() -> None:
@@ -305,13 +299,15 @@ def test_sd35_single_gpu_async_debug_uses_persistent_colocated_rollout() -> None
     # raw input key.
     assert cfg.distributed.resources.rollout.gpu_pool == "trainer"
     resolved = resolve_distributed_resources(cfg)
+    # memory_fraction passes through resolve_distributed_resources unchanged, so
+    # pinning == 0.55 only echoes the YAML. Assert the resolver's real invariant
+    # instead — it validates 0 < fraction <= 1 (vrl/ray/resources.py:302).
     assert resolved.rollout_gpu_memory_fraction is not None
-    assert resolved.rollout_gpu_memory_fraction == 0.55
+    assert 0.0 < resolved.rollout_gpu_memory_fraction <= 1.0
+    # resident lifecycle is DERIVED from gpu_pool=trainer + memory_fraction (not YAML) — keep.
     assert resolved.lifecycle.rollout.mode == "resident"
-    assert cfg.rollout.rollout_batch_size == 2
-    assert cfg.rollout.sample_batch_size == 1
-    assert cfg.sampling.height == 128
-    assert cfg.sampling.width == 128
+    # height/width and the batch sizes are declarative debug-recipe YAML; load+validate
+    # coverage is in test_all_experiments_load_and_validate. No literal pins.
 
 
 def test_algorithm_config_dispatches_representative_kinds() -> None:

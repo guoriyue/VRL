@@ -21,9 +21,9 @@ from vrl.models.interfaces import (
     require_runtime_model,
 )
 
-# RuntimeModel's required surface. Mirrors ``require_runtime_model`` so a method
-# rename in the protocol guard surfaces here too.
-_RUNTIME_MODEL_METHODS = ("replay_forward", "disable_adapter", "load_trainable_state")
+# RuntimeModel's required surface. Derived from the protocol's
+# ``__protocol_attrs__``, so a method add/rename auto-widens the contract check.
+_RUNTIME_MODEL_METHODS = tuple(sorted(RuntimeModel.__protocol_attrs__))
 
 
 class _MinimalRuntimeModel:

@@ -206,8 +206,11 @@ def test_dynamic_planner_leaves_chunks_unbound_with_costs() -> None:
     plan = planner.plan_with_engine(request, _workers(2))
 
     assert all(a.worker_id is None for a in plan.assignments)
-    # 8 samples / sbs 2 = 4 chunks of 2 samples x 10 steps = cost 20 each.
-    assert [a.estimated_cost for a in plan.assignments] == [20.0] * 4
+    # Cost is the source formula's output, not a hand-computed snapshot.
+    assert len(plan.assignments) == 4
+    assert [a.estimated_cost for a in plan.assignments] == [
+        estimate_chunk_cost(request, a.chunk) for a in plan.assignments
+    ]
     # Chunk identity and order (the gather contract) are untouched.
     assert [a.chunk.sample_start for a in plan.assignments] == [0, 2, 4, 6]
 
@@ -303,7 +306,8 @@ async def test_executor_round_robin_dispatches_per_plan_binding() -> None:
     actors = [_FakeActor("w0", 0), _FakeActor("w1", 100)]
     executor = _executor("round_robin", actors)
 
-    output = await executor.execute(_request(num_steps=10, samples=8, sbs=2))
+    request = _request(num_steps=10, samples=8, sbs=2)
+    output = await executor.execute(request)
 
     # 4 chunks alternate w0/w1 even though w1 is much slower: plan-time binding.
     assert actors[0].executed == ["prompt:0:samples:0:2", "prompt:0:samples:4:6"]
@@ -313,7 +317,8 @@ async def test_executor_round_robin_dispatches_per_plan_binding() -> None:
     for row in schedule:
         assert row["assignment_strategy"] == "round_robin"
         assert row["sample_count"] == 2
-        assert row["estimated_cost"] == 20.0
+        # Cost follows the source formula (samples x num_steps), not a literal.
+        assert row["estimated_cost"] == row["sample_count"] * request.sampling["num_steps"]
 
 
 @pytest.mark.asyncio

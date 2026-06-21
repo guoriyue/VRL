@@ -9,6 +9,7 @@ import torch.nn as nn
 
 from tests.models.ar.fixtures import StubVQ, build_stub_janus_model
 from vrl.generation import GenerationRequest, GenerationSampleRow, build_sample_rows
+from vrl.models.ar.janus_pro import JANUS_R1_SEGMENTS
 from vrl.models.ar.janus_pro.model import (
     JanusProModel,
 )
@@ -267,7 +268,7 @@ def test_generate_with_refine_returns_three_segments_and_selects_final_image() -
     )
 
     assert sample_calls == [10, 20]
-    assert set(out["segments"]) == {"initial_image", "selfcheck_text", "final_image"}
+    assert set(out["segments"]) == set(JANUS_R1_SEGMENTS)
     assert out["segments"]["initial_image"]["token_ids"].shape == (2, 4)
     assert out["segments"]["selfcheck_text"]["token_ids"].shape == (2, 3)
     assert out["segments"]["final_image"]["token_ids"].shape == (2, 4)
@@ -294,7 +295,7 @@ def test_r1_model_replay_forward_returns_requested_replay_segments() -> None:
     )
 
     assert isinstance(result, ReplayResult)
-    assert set(result.segments) == {"selfcheck_text", "final_image"}
+    assert set(result.segments) == set(JANUS_R1_SEGMENTS[1:])
     assert result.segments["selfcheck_text"].values["logits"].shape == (2, 2, TEXT_VOCAB)
     assert result.segments["final_image"].values["logits"].shape == (2, 3, IMAGE_VOCAB)
     assert torch.equal(
@@ -354,10 +355,7 @@ class _ExecutorModel:
                 "visual": name != "selfcheck_text",
                 "cfg": name != "selfcheck_text",
             }
-            for idx, name in enumerate(
-                ("initial_image", "selfcheck_text", "final_image"),
-                start=1,
-            )
+            for idx, name in enumerate(JANUS_R1_SEGMENTS, start=1)
         }
         return {
             "initial_image": image * 1,
@@ -396,11 +394,7 @@ def test_r1_executor_forward_emits_canonical_family_and_segment_schema() -> None
     assert "segments" not in out.extra
     assert "selfcheck_text" not in out.extra
     assert out.trajectory is not None
-    assert set(out.trajectory.segments) >= {
-        "initial_image",
-        "selfcheck_text",
-        "final_image",
-    }
+    assert set(out.trajectory.segments) >= set(JANUS_R1_SEGMENTS)
     assert (
         out.trajectory.segments["final_image"].tensors["token_ids"].value.shape
         == (2, 4)

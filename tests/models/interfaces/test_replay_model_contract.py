@@ -16,9 +16,9 @@ from vrl.models.interfaces import (
     require_replay_model,
 )
 
-# ReplayModel's required surface. Mirrors ``require_replay_model`` so a method
-# rename in the protocol guard surfaces here too.
-_REPLAY_MODEL_METHODS = ("replay_forward", "disable_adapter")
+# ReplayModel's required surface. Derived from the protocol's
+# ``__protocol_attrs__``, so a method add/rename auto-widens the contract check.
+_REPLAY_MODEL_METHODS = tuple(sorted(ReplayModel.__protocol_attrs__))
 
 
 class _MinimalReplayModel:
