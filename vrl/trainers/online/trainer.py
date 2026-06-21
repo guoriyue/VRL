@@ -892,12 +892,7 @@ class OnlineTrainer(Trainer):
         # Timestep schedule — same num_timesteps across all batches (collector
         # uses the same scheduler), so pick from first filtered batch.
         num_timesteps = filtered_batches[0].observations.shape[1]
-        train_timestep_count = max(1, int(num_timesteps * cfg.timestep_fraction))
-        if train_timestep_count < num_timesteps:
-            step_size = num_timesteps / train_timestep_count
-            train_indices = [int(i * step_size) for i in range(train_timestep_count)]
-        else:
-            train_indices = list(range(num_timesteps))
+        train_indices = self._train_timestep_indices(num_timesteps, cfg.timestep_fraction)
 
         # Number of rollout micro-batches per optimizer update. ``0`` preserves
         # legacy VRL behavior: one optimizer update after all collected batches.
