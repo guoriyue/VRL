@@ -25,20 +25,21 @@ sampling:
   max_sequence_length: 64
 
 distributed:
-  rollout:
-    # Pin the rollout worker resident on the trainer GPU instead of the normal
-    # single-GPU release-after-collect path. The block's presence IS the
-    # colocation intent; memory_fraction hard-caps the resident worker's GPU share
-    # so it cannot starve the trainer on the shared card (the trainer gets the
-    # remaining ~0.45). This is what makes continuous overlap observable on one
-    # GPU, and it is only safe for tiny debug workloads.
-    #
-    # 0.55 (not 0.45): on a 32 GiB card the resident rollout worker must hold the
-    # FULL SD3.5-medium pipeline (transformer + VAE + 3 text encoders, the T5 alone
-    # ~4.7 GiB). 0.45 (~14.1 GiB) OOMs on worker load_policy; 0.55 (~17.2 GiB) was
-    # verified to run all 3 epochs with the trainer fitting in the remaining ~14
-    # GiB. Scale this with GPU VRAM if you change cards.
-    colocate:
+  resources:
+    rollout:
+      # Pin the rollout worker resident on the trainer GPU instead of the normal
+      # single-GPU release-after-collect path. gpu_pool: trainer borrows the
+      # trainer GPU (colocated); memory_fraction makes the worker resident and
+      # hard-caps its GPU share so it cannot starve the trainer on the shared card
+      # (the trainer gets the remaining ~0.45). This is what makes continuous
+      # overlap observable on one GPU, and it is only safe for tiny debug workloads.
+      #
+      # 0.55 (not 0.45): on a 32 GiB card the resident rollout worker must hold the
+      # FULL SD3.5-medium pipeline (transformer + VAE + 3 text encoders, the T5
+      # alone ~4.7 GiB). 0.45 (~14.1 GiB) OOMs on worker load_policy; 0.55
+      # (~17.2 GiB) was verified to run all 3 epochs with the trainer fitting in
+      # the remaining ~14 GiB. Scale this with GPU VRAM if you change cards.
+      gpu_pool: trainer
       memory_fraction: 0.55
 
 actor:

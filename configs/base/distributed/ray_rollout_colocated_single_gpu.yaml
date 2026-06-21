@@ -22,9 +22,7 @@
 #     GPU and NO memory split is needed. Cost: the worker reloads the model each cycle.
 #   persistent/resident (memory_fraction set): the worker STAYS on the GPU (no reload)
 #     but shares memory with the trainer, so memory_fraction caps its share.
-# The legacy `distributed.rollout.colocate: {memory_fraction: X}` block still works
-# (maps to gpu_pool: trainer + memory_fraction). Rule of thumb: keep on_demand; go
-# resident only if the per-cycle reload is too slow.
+# Rule of thumb: keep on_demand; go resident only if the per-cycle reload is too slow.
 distributed:
   resources:
     visible_devices: auto

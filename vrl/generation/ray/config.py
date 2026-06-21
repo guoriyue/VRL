@@ -138,8 +138,8 @@ def _validate_driver_cuda_ownership(
             "Driver loaded rollout policy on CUDA, but no distributed.resources "
             "plan is available to prove rollout devices do not overlap. "
             "Provide distributed.resources for split runs, or for resident "
-            "single-GPU debug set distributed.rollout.colocate: "
-            "{memory_fraction: <0..1>}.",
+            "single-GPU debug set distributed.resources.rollout.gpu_pool=trainer "
+            "+ memory_fraction: <0..1>.",
         )
 
     overlap = driver_cuda_devices & set(resources.rollout_devices)
@@ -154,7 +154,7 @@ def _validate_driver_cuda_ownership(
             f"{rollout_devices}, but resources.allow_overlap=false. "
             "Use CUDA_VISIBLE_DEVICES=0,1,2,3 with auto split for throughput, or "
             "for resident single-GPU debug set "
-            "distributed.rollout.colocate: {memory_fraction: <0..1>}.",
+            "distributed.resources.rollout.gpu_pool=trainer + memory_fraction: <0..1>.",
         )
 
     # Read the topology-derived lifecycle plan directly, not a flat config mirror:
@@ -170,7 +170,7 @@ def _validate_driver_cuda_ownership(
             "collect nor a resident colocated worker. Release is derived "
             "automatically from a shared-GPU topology; for an intentionally "
             "resident colocated debug worker set "
-            "distributed.rollout.colocate: {memory_fraction: <0..1>}.",
+            "distributed.resources.rollout.gpu_pool=trainer + memory_fraction: <0..1>.",
         )
 
 

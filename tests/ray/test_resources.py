@@ -23,15 +23,17 @@ def _cfg(
     reward_components: dict[str, float] | None = None,
     reward_kwargs: dict[str, dict] | None = None,
 ) -> object:
-    # Release scheduling is derived from topology, so the public rollout block only
-    # carries the colocate intent (memory_fraction cap). Tests that
-    # exercise the removed-key rejection pass a raw rollout_runtime instead.
+    # Resident colocation = gpu_pool=trainer + memory_fraction on the resources
+    # rollout node (the single authoritative grammar). The colocate=<frac> shorthand
+    # writes those two keys onto resources["rollout"]. Tests that exercise the
+    # removed-key rejection pass a raw rollout_runtime (distributed.rollout) instead.
+    if colocate is not None:
+        rollout_node = dict(resources.get("rollout", {}))
+        rollout_node["gpu_pool"] = "trainer"
+        rollout_node["memory_fraction"] = colocate
+        resources = {**resources, "rollout": rollout_node}
     if rollout_runtime is None:
         rollout_runtime = {}
-        if colocate is not None:
-            rollout_runtime["colocate"] = {
-                "memory_fraction": colocate,
-            }
     data = {
         "distributed": {
             "resources": resources,
@@ -225,22 +227,6 @@ def test_colocate_auto_pins_rollout_to_trainer_gpu() -> None:
     assert resolved.colocated is True
 
 
-def test_colocate_requires_memory_fraction() -> None:
-    """Checks a colocate block without memory_fraction fails inside the block."""
-    with pytest.raises(ValueError, match="colocate requires memory_fraction"):
-        resolve_distributed_resources(
-            _cfg(
-                {
-                    "visible_devices": [0],
-                    "trainer": {"devices": [0]},
-                    "rollout": {"devices": [0], "gpus_per_worker": 1},
-                    "allow_overlap": True,
-                },
-                rollout_runtime={"colocate": {}},
-            ),
-        )
-
-
 def test_colocate_memory_fraction_rejects_out_of_range() -> None:
     """Checks the GPU budget cap is validated to the (0, 1] range."""
     with pytest.raises(ValueError, match=r"memory_fraction must be in \(0, 1\]"):
@@ -285,6 +271,7 @@ def test_colocate_rejects_explicit_disjoint_rollout_devices() -> None:
             "persistent_colocated_workers moved into",
         ),
         ({"gpu_memory_fraction": 0.45}, "gpu_memory_fraction moved into"),
+        ({"colocate": {"memory_fraction": 0.45}}, "colocate was removed"),
     ],
 )
 def test_removed_rollout_keys_are_rejected(rollout_runtime, match) -> None:
@@ -997,19 +984,19 @@ def test_single_process_still_rejects_multi_gpu_trainer() -> None:
         )
 
 
-# --- P0 surface: rollout.colocate / reward.gpu_pool (new names + legacy compat) ---
+# --- P0 surface: rollout.gpu_pool / reward.gpu_pool (single authoritative grammar) ---
 
 
-def test_rollout_colocate_new_key_keeps_worker_resident() -> None:
-    """The new rollout.colocate block pins the rollout worker on the trainer GPU."""
+def test_rollout_gpu_pool_trainer_memory_fraction_pins_resident_worker() -> None:
+    """gpu_pool=trainer + memory_fraction pins the rollout worker resident on the
+    trainer GPU (the single authoritative grammar; the legacy colocate block is gone)."""
     resolved = resolve_distributed_resources(
         _cfg(
             {
                 "visible_devices": [0],
                 "trainer": {"num_gpus": 1},
-                "rollout": {"num_gpus": 1},
+                "rollout": {"num_gpus": 1, "gpu_pool": "trainer", "memory_fraction": 0.4},
             },
-            rollout_runtime={"colocate": {"memory_fraction": 0.4}},
         ),
     )
     assert resolved.colocated is True
@@ -1128,8 +1115,11 @@ def test_ddp_colocate_resolves_per_rank_local_single_gpu() -> None:
             {
                 "distributed": {
                     "training": {"strategy": "ddp", "num_nodes": 2, "gpus_per_node": 1},
-                    "resources": {"visible_devices": [0], "trainer": {"num_gpus": 1}},
-                    "rollout": {"colocate": {"memory_fraction": 0.4}},
+                    "resources": {
+                        "visible_devices": [0],
+                        "trainer": {"num_gpus": 1},
+                        "rollout": {"gpu_pool": "trainer", "memory_fraction": 0.4},
+                    },
                 },
             },
         ),
@@ -1151,9 +1141,14 @@ def test_single_gpu_colocate_without_cross_node_still_rejects_excess_rollout() -
                 {
                     "visible_devices": [0],
                     "trainer": {"num_gpus": 1},
-                    "rollout": {"num_gpus": 2, "gpus_per_worker": 1, "num_workers": 2},
+                    "rollout": {
+                        "num_gpus": 2,
+                        "gpus_per_worker": 1,
+                        "num_workers": 2,
+                        "gpu_pool": "trainer",
+                        "memory_fraction": 0.4,
+                    },
                 },
-                rollout_runtime={"colocate": {"memory_fraction": 0.4}},
             ),
         )
 
@@ -1196,24 +1191,24 @@ def test_rollout_gpu_pool_trainer_with_memory_fraction_is_resident() -> None:
     assert resolved.lifecycle.rollout.mode == "resident"
 
 
-def test_rollout_gpu_pool_trainer_matches_legacy_colocate_block() -> None:
-    """The new gpu_pool=trainer+memory_fraction resolves identically to the legacy
-    distributed.rollout.colocate block."""
-    resources = {"visible_devices": [0], "trainer": {"num_gpus": 1}}
-    new = resolve_distributed_resources(
+def test_rollout_gpu_pool_trainer_mf_locks_former_colocate_derivation() -> None:
+    """P0 lock: gpu_pool=trainer + memory_fraction=0.45 derives the SAME resident
+    plan the removed distributed.rollout.colocate block used to (pinned on the
+    trainer GPU, colocated, capped at 0.45, lease mode=resident)."""
+    resolved = resolve_distributed_resources(
         _cfg(
-            {**resources, "rollout": {"num_gpus": 1, "gpu_pool": "trainer", "memory_fraction": 0.45}},
+            {
+                "visible_devices": [0],
+                "trainer": {"num_gpus": 1},
+                "rollout": {"num_gpus": 1, "gpu_pool": "trainer", "memory_fraction": 0.45},
+            },
         ),
     )
-    legacy = resolve_distributed_resources(
-        _cfg(
-            {**resources, "rollout": {"num_gpus": 1}},
-            rollout_runtime={"colocate": {"memory_fraction": 0.45}},
-        ),
-    )
-    assert (new.rollout_devices, new.colocated, new.rollout_gpu_memory_fraction) == (
-        legacy.rollout_devices, legacy.colocated, legacy.rollout_gpu_memory_fraction,
-    )
+    assert resolved.rollout_devices == (0,)
+    assert resolved.colocated is True
+    assert resolved.rollout_gpu_memory_fraction == 0.45
+    assert resolved.lifecycle.rollout.mode == "resident"
+    assert resolved.lifecycle.handoff.release_rollout_before_train is False
 
 
 def test_rollout_gpu_pool_dedicated_takes_spare_and_rejects_when_none() -> None:
@@ -1243,15 +1238,16 @@ def test_rollout_gpu_pool_dedicated_takes_spare_and_rejects_when_none() -> None:
         )
 
 
-def test_rollout_gpu_pool_and_legacy_colocate_both_is_error() -> None:
-    """Setting the new gpu_pool/memory_fraction and the legacy colocate block is rejected."""
-    with pytest.raises(ValueError, match="not both"):
+def test_legacy_colocate_block_points_to_gpu_pool_grammar() -> None:
+    """The removed distributed.rollout.colocate block hard-rejects with a pointer to
+    the new gpu_pool=trainer + memory_fraction grammar (never silently accepted)."""
+    with pytest.raises(ValueError, match=r"colocate was removed.*gpu_pool=trainer"):
         resolve_distributed_resources(
             _cfg(
                 {
                     "visible_devices": [0],
                     "trainer": {"num_gpus": 1},
-                    "rollout": {"num_gpus": 1, "gpu_pool": "trainer"},
+                    "rollout": {"num_gpus": 1},
                 },
                 rollout_runtime={"colocate": {"memory_fraction": 0.4}},
             ),

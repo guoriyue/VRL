@@ -546,25 +546,25 @@ class TrainingSection(ConfigBase):
 
 
 class RolloutWorkerSection(ConfigBase):
-    """distributed.rollout: per-worker runtime knobs + colocation.
+    """distributed.rollout: per-worker runtime knobs.
 
-    readers: vrl/generation/ray/config.py RayGenerationConfig.from_cfg (worker
-    runtime knobs) + vrl/ray/resources.py (rollout.colocate). Release scheduling is
-    derived from GPU topology, not declared here; the only public colocation knob is
-    the colocate block (memory_fraction cap). chunk_placement_strategy is a
-    user-facing allow-list Literal: RayGenerationConfig is a plain dataclass whose
-    annotations do not enforce, so this typed boundary is where a bad value is
-    rejected (the runtime ChunkPlacementPolicy guard stays the wire-boundary check).
-    sync_trainable_state is a plain on/off: True keeps rollout workers resynced to
-    the trained policy (the syncer flattens whatever is trainable — lora or
-    full-param), False disables the weight syncer.
+    reader: vrl/generation/ray/config.py RayGenerationConfig.from_cfg (worker
+    runtime knobs). Release scheduling and colocation are NOT declared here:
+    colocation lives in distributed.resources.rollout.gpu_pool=trainer +
+    memory_fraction (mirrors reward.gpu_pool), and release scheduling is derived
+    from GPU topology. chunk_placement_strategy is a user-facing allow-list
+    Literal: RayGenerationConfig is a plain dataclass whose annotations do not
+    enforce, so this typed boundary is where a bad value is rejected (the runtime
+    ChunkPlacementPolicy guard stays the wire-boundary check). sync_trainable_state
+    is a plain on/off: True keeps rollout workers resynced to the trained policy
+    (the syncer flattens whatever is trainable — lora or full-param), False
+    disables the weight syncer.
     """
 
     cpus_per_worker: float = 1.0
     max_inflight_chunks_per_worker: int = 1
     chunk_placement_strategy: Literal["round_robin", "dynamic"] = "round_robin"
     sync_trainable_state: bool = True
-    colocate: Annotated[Any, ConfigBlock(("memory_fraction",))] = None
 
 
 class DistributedSection(ConfigBase):
@@ -578,7 +578,16 @@ class DistributedSection(ConfigBase):
              "allow_overlap", "cross_node"),
             {
                 "trainer": ConfigBlock(RoleResourceConfig),
-                "rollout": ConfigBlock(RolloutResourceConfig),
+                # memory_fraction is a public input key (resident-colocation GPU cap)
+                # parsed in vrl/ray/resources.py _parse_rollout_pool into the flat
+                # rollout_gpu_memory_fraction; it is not a stored field on
+                # RolloutResourceConfig, so name it here alongside the derived keys.
+                "rollout": ConfigBlock(
+                    (
+                        *(f.name for f in dataclass_fields(RolloutResourceConfig)),
+                        "memory_fraction",
+                    ),
+                ),
                 # gpu_pool is the field; share_with_rollout is the legacy compat
                 # key mapped to it at parse time (vrl/ray/resources.py
                 # _parse_reward_gpu_pool), so both are accepted here.
@@ -591,9 +600,9 @@ class DistributedSection(ConfigBase):
             },
         ),
     ] = None
-    # readers: vrl/generation/ray/config.py RayGenerationConfig.from_cfg (worker
-    # runtime knobs) + vrl/ray/resources.py (rollout.colocate). chunk_placement_strategy
-    # / sync_trainable_state Literals reject bad values here at parse time.
+    # reader: vrl/generation/ray/config.py RayGenerationConfig.from_cfg (worker
+    # runtime knobs). chunk_placement_strategy / sync_trainable_state Literals reject
+    # bad values here at parse time. Colocation lives in resources.rollout.gpu_pool.
     rollout: RolloutWorkerSection | None = None
     # reader: vrl/ray/resources.py reward runtime block (release derived from topology)
     reward: Annotated[

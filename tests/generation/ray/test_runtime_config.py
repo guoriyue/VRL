@@ -168,21 +168,24 @@ def _resource_cfg(
     colocate: float | None = None,
 ):
     rollout_runtime: dict[str, Any] = {"cpus_per_worker": 1}
+    rollout_resource: dict[str, Any] = {
+        "devices": rollout_devices,
+        "gpus_per_worker": 1,
+        "num_workers": len(rollout_devices),
+    }
+    # Resident colocation: the single authoritative grammar is gpu_pool=trainer +
+    # memory_fraction on the resources rollout node (the legacy
+    # distributed.rollout.colocate block was removed).
     if colocate is not None:
-        rollout_runtime["colocate"] = {
-            "memory_fraction": colocate,
-        }
+        rollout_resource["gpu_pool"] = "trainer"
+        rollout_resource["memory_fraction"] = colocate
     return OmegaConf.create(
         {
             "distributed": {
                 "resources": {
                     "visible_devices": sorted(set(trainer_devices) | set(rollout_devices)),
                     "trainer": {"devices": trainer_devices},
-                    "rollout": {
-                        "devices": rollout_devices,
-                        "gpus_per_worker": 1,
-                        "num_workers": len(rollout_devices),
-                    },
+                    "rollout": rollout_resource,
                     "allow_overlap": allow_overlap,
                 },
                 "rollout": rollout_runtime,

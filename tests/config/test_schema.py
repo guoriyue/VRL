@@ -261,7 +261,11 @@ def test_legacy_sync_trainable_state_string_rejected() -> None:
 
 
 def test_rollout_keys_are_registered_not_unknown() -> None:
-    """distributed.rollout.* keys (incl. nested colocate) are known to the walker."""
+    """distributed.rollout.* per-worker runtime keys are known to the walker.
+
+    Colocation no longer lives here: it moved to
+    distributed.resources.rollout.gpu_pool=trainer + memory_fraction, so the removed
+    distributed.rollout.colocate block is now (correctly) an unknown key."""
     from vrl.config.unknown_keys import find_unknown_keys
 
     cfg = _minimal_grpo_cfg(
@@ -271,7 +275,6 @@ def test_rollout_keys_are_registered_not_unknown() -> None:
                 "max_inflight_chunks_per_worker": 2,
                 "chunk_placement_strategy": "dynamic",
                 "sync_trainable_state": False,
-                "colocate": {"memory_fraction": 0.5},
             }
         }
     )

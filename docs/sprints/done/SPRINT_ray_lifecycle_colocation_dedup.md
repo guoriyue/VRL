@@ -1,6 +1,12 @@
-# SPRINT: rollout colocation 输入面收口到 gpu_pool 单一源 (planned)
+# SPRINT: rollout colocation 输入面收口到 gpu_pool 单一源 (done)
 
-状态：planned（2026-06-20）。范围：把 `vrl/ray/resources.py` 里 rollout「共卡 + 显存帽」这一个意图的**输入侧三套存储/三套语法**——遗留 `distributed.rollout.colocate` 块、`RolloutResourceConfig.memory_fraction` 死镜像字段、`DistributedResourceConfig.rollout_persistent_colocated_workers` 派生缓存布尔——收成 `distributed.resources.rollout.{gpu_pool, memory_fraction}` 这一个权威语法 + 内部就地派生。**不碰** runtime lease 词汇、`allow_driver_gpu_overlap`、`RayLifecyclePlan` 派生规则（那几项已被 [[SPRINT_ray_phase_lifecycle_plan]] 与 [[SPRINT_colocation_config_simplification]] 刻意定案）。
+状态：done（2026-06-20）。P0–P3 全部落地：删 `RolloutResourceConfig.memory_fraction` 死镜像、
+`DistributedResourceConfig.rollout_persistent_colocated_workers` 改 `resolve_distributed_resources`
+顶部就地派生、删遗留 `colocate` 块语法（`_parse_colocate_block` + schema 字段 + 唯一在用 config 迁移到
+`gpu_pool: trainer`）、所有指回 `rollout.colocate` 的报错（含 `vrl/generation/ray/config.py` 三处）改指
+`distributed.resources.rollout.gpu_pool=trainer + memory_fraction`，旧 `colocate:` 块改 hard-reject。
+验证：tests/ray+config+generation/ray 339 passed、ruff 全过、config lint 全过。
+范围：把 `vrl/ray/resources.py` 里 rollout「共卡 + 显存帽」这一个意图的**输入侧三套存储/三套语法**——遗留 `distributed.rollout.colocate` 块、`RolloutResourceConfig.memory_fraction` 死镜像字段、`DistributedResourceConfig.rollout_persistent_colocated_workers` 派生缓存布尔——收成 `distributed.resources.rollout.{gpu_pool, memory_fraction}` 这一个权威语法 + 内部就地派生。**不碰** runtime lease 词汇、`allow_driver_gpu_overlap`、`RayLifecyclePlan` 派生规则（那几项已被 [[SPRINT_ray_phase_lifecycle_plan]] 与 [[SPRINT_colocation_config_simplification]] 刻意定案）。
 
 ## 0. Core Decision（先看这一段）
 
