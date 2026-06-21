@@ -16,6 +16,7 @@ from vrl.trajectory.validation import (
     tensor_ref,
 )
 from vrl.trajectory.views import TrainingView
+from vrl.trajectory.views import role_tensor as _role_tensor_of_segment
 
 
 class TrajectoryResolverError(ValueError):
@@ -79,13 +80,7 @@ class TrajectoryResolver:
         segment = self.trajectory.segments.get(segment_name)
         if segment is None:
             _fail(f"unknown trajectory segment {segment_name!r}")
-        matches = [tensor for tensor in segment.tensors.values() if tensor.role == role]
-        if len(matches) != 1:
-            _fail(
-                f"segment {segment_name!r} requires exactly one role {role!r}, "
-                f"found {len(matches)}",
-            )
-        return matches[0]
+        return _role_tensor_of_segment(segment, role)
 
     def role_value(self, segment_name: str, role: TensorRole) -> Any:
         """Read the unique tensor value with ``role`` from a trajectory segment."""
