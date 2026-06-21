@@ -34,11 +34,11 @@ class GenEvalReward(RewardFunction):
         debug_dir: str = "",
         artifact_dir: str = "",
         scorer: Callable[..., Any] | None = None,
-        **_unused: Any,
     ) -> None:
-        # ``_unused`` absorbs stray reward.kwargs keys (e.g. a legacy
-        # ``evaluator: import_path``); the backend is decided by whether a
-        # scorer is injected, otherwise the import_path — there is no knob.
+        # No backend knob: the model uses the injected ``scorer`` if given,
+        # otherwise resolves the ``import_path`` callable. An unknown reward.kwargs
+        # key is a typo and fails loud here (the __init__ is the per-reward
+        # validation boundary), same as ocr.py's explicit signature.
         self.device = device
         self.import_path = import_path
         self.timeout_s = float(timeout_s)

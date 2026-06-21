@@ -74,22 +74,15 @@ async def test_geneval_reward_requires_metadata() -> None:
 
 
 @pytest.mark.asyncio
-async def test_geneval_reward_ignores_stray_evaluator_key() -> None:
-    """A legacy ``evaluator`` key in reward.kwargs is tolerated, not a knob."""
-    reward = GenEvalReward(device="cpu", evaluator="constant", scorer=lambda **_: 0.25)
+async def test_geneval_reward_rejects_unknown_kwarg() -> None:
+    """The removed ``evaluator`` knob (and any typo) fails loud, not silently.
 
-    score = await reward.score(
-        _rollout(
-            {
-                "geneval": {
-                    "tag": "colors",
-                    "include": [{"class": "bus", "count": 1, "color": "yellow"}],
-                },
-            },
-        ),
-    )
-
-    assert score == pytest.approx(0.25)
+    GenEvalReward has an explicit signature (no catch-all): an unknown
+    reward.kwargs key is a config typo and must raise at construction rather
+    than be silently swallowed.
+    """
+    with pytest.raises(TypeError):
+        GenEvalReward(device="cpu", evaluator="constant", scorer=lambda **_: 0.25)
 
 
 @pytest.mark.asyncio

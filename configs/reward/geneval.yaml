@@ -4,7 +4,6 @@ reward:
     geneval: 1.0
   kwargs:
     geneval:
-      evaluator: import_path
       import_path: ""
       timeout_s: 120.0
       artifact_dir: ${trainer.output_dir}/geneval_artifacts
