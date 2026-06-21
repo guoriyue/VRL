@@ -132,7 +132,7 @@ class _ModelBaseStub(DiffusionModelBase):
         return None
 
     @property
-    def backend_handle(self) -> Any:
+    def raw_handle(self) -> Any:
         return self.pipeline
 
 

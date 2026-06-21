@@ -82,8 +82,6 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusionModelBas
     directly.
     """
 
-    family = "cosmos-predict2-diffusers-v2w"
-
     def __init__(
         self,
         *,
@@ -163,7 +161,7 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusionModelBas
         return self.pipeline.scheduler
 
     @property
-    def backend_handle(self) -> Any:
+    def raw_handle(self) -> Any:
         return self.pipeline
 
     @property
@@ -392,7 +390,6 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusionModelBas
         return {
             "guidance_scale": state.guidance_scale,
             "cfg": state.do_cfg,
-            "model_family": self.family,
             "fps": state.fps,
             "sigma_conditioning": state.sigma_conditioning,
         }
@@ -548,7 +545,7 @@ class CosmosPredict2ReplayModel(ReplayRolloutStubs, CosmosPredict2Model):
         return self._scheduler
 
     @property
-    def backend_handle(self) -> Any:
+    def raw_handle(self) -> Any:
         return None
 
     # restore_eval_state is inherited from CosmosPredict2Model: it reads

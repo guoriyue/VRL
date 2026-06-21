@@ -118,6 +118,11 @@ def build_wan_2_1_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
 
     metadata = {
         "model_path": spec.model_name_or_path,
+        "family": (
+            WAN_2_1_I2V_FAMILY_CAPABILITY.family
+            if task_variant == "i2v"
+            else WAN_2_1_FAMILY_CAPABILITY.family
+        ),
         "task_variant": task_variant,
         "dtype": str(spec.dtype),
         "use_lora": use_lora,
@@ -137,7 +142,7 @@ def build_wan_2_1_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         model=model,
         trainable_modules=model.trainable_modules,
         scheduler=model.scheduler,
-        backend_handle=model.backend_handle,
+        raw_handle=model.raw_handle,
         runtime_caps={
             "supports_reference_conditioning": task_variant == "i2v",
         },
@@ -201,12 +206,17 @@ def build_wan_2_1_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle
         model=model,
         trainable_modules=model.trainable_modules,
         scheduler=model.scheduler,
-        backend_handle=None,
+        raw_handle=None,
         runtime_caps={
             "supports_reference_conditioning": task_variant == "i2v",
         },
         metadata={
             "model_path": spec.model_name_or_path,
+            "family": (
+                WAN_2_1_I2V_FAMILY_CAPABILITY.family
+                if task_variant == "i2v"
+                else WAN_2_1_FAMILY_CAPABILITY.family
+            ),
             "task_variant": task_variant,
             "dtype": str(spec.dtype),
             "use_lora": use_lora,
@@ -348,9 +358,6 @@ def _task_variant_from_cfg(cfg: Any) -> str:
     explicit = cfg_get(cfg.model, "task_variant", None)
     if explicit:
         return _normalize_task_variant(str(explicit))
-    task = cfg_get(cfg.model, "task", None)
-    if task:
-        return _normalize_task_variant(str(task))
     family = str(cfg_get(cfg.model, "family", ""))
     if "i2v" in family or "image" in family:
         return "i2v"

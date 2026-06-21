@@ -120,7 +120,7 @@ class _DiffusionModelBaseStub(DiffusionModelBase):
         return None
 
     @property
-    def backend_handle(self) -> Any:
+    def raw_handle(self) -> Any:
         return None
 
     @contextlib.contextmanager
@@ -163,7 +163,7 @@ def test_runtime_bundle_exposes_model_contract() -> None:
         model=model,
         trainable_modules={},
         scheduler=None,
-        backend_handle=None,
+        raw_handle=None,
     )
 
     assert bundle.model is model

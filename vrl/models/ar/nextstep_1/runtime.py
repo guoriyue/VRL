@@ -51,14 +51,15 @@ def build_nextstep_1_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         model=model,
         trainable_modules={"model": model},
         scheduler=None,
-        backend_handle=model,
+        raw_handle=model,
         runtime_caps={
             "family_capability": NEXTSTEP_1_FAMILY_CAPABILITY.to_dict(),
             "supports_chunked_execution": True,
         },
         metadata={
             "model_path": spec.model_name_or_path,
-            "task_variant": spec.task_variant,
+            "family": NEXTSTEP_1_FAMILY_CAPABILITY.family,
+            "ar_task": spec.ar_task,
             "use_lora": spec.use_lora,
             **full_generation_bundle_metadata(),
         },
@@ -74,14 +75,15 @@ def build_nextstep_1_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBun
         model=model,
         trainable_modules={"model": model},
         scheduler=None,
-        backend_handle=None,
+        raw_handle=None,
         runtime_caps={
             "family_capability": NEXTSTEP_1_FAMILY_CAPABILITY.to_dict(),
             "supports_chunked_execution": False,
         },
         metadata={
             "model_path": spec.model_name_or_path,
-            "task_variant": spec.task_variant,
+            "family": NEXTSTEP_1_FAMILY_CAPABILITY.family,
+            "ar_task": spec.ar_task,
             "use_lora": spec.use_lora,
             **minimal_replay_bundle_metadata(),
         },
@@ -102,7 +104,7 @@ def extract_nextstep_1_runtime_spec(
         cfg,
         device,
         dtype_to_config_string(dtype if dtype is not None else (weight_dtype or "bfloat16")),
-        task_variant="ar_t2i",
+        ar_task="ar_t2i",
         model_name_or_path=model_path or "stepfun-ai/NextStep-1.1",
     )
     # gradient_checkpointing lives under cfg.actor (outside the model block the

@@ -62,7 +62,7 @@ def test_nextstep_vllm_paged_attention_matches_hf_qwen_one_step() -> None:
             )
         )
 
-    assert paged_prefill.metrics["backend"] == "nextstep_1_vllm_paged_attention"
+    assert paged_prefill.metrics["attention_backend"] == "nextstep_1_vllm_paged_attention"
     assert paged_prefill.last_hidden.shape == (1, 512)
     assert paged_step.last_hidden.shape == (1, 512)
     assert (

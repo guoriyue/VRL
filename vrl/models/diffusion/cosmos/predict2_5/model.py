@@ -103,8 +103,6 @@ class CosmosPredict25SamplingState:
 class CosmosPredict25Model(CosmosReplayForward, DiffusionModelBase):
     """Cosmos-Predict2.5 PredictBase model with DiffusionNFT training extras."""
 
-    family = "cosmos-predict2.5-diffusers"
-
     def __init__(
         self,
         *,
@@ -127,7 +125,7 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusionModelBase):
         return self.pipeline.scheduler
 
     @property
-    def backend_handle(self) -> Any:
+    def raw_handle(self) -> Any:
         return self.pipeline
 
     @property
@@ -410,7 +408,6 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusionModelBase):
         return {
             "guidance_scale": state.guidance_scale,
             "cfg": state.do_cfg,
-            "model_family": self.family,
             "height": state.height,
             "width": state.width,
             "num_frames": state.num_frames,
@@ -550,7 +547,7 @@ class CosmosPredict25ReplayModel(ReplayRolloutStubs, CosmosPredict25Model):
         return self._scheduler
 
     @property
-    def backend_handle(self) -> Any:
+    def raw_handle(self) -> Any:
         return None
 
     def _set_transformer(self, transformer: Any) -> None:

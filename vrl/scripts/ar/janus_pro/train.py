@@ -55,7 +55,7 @@ def _build_bundle(cfg: DictConfig, device: Any, weight_dtype: Any, *, family: st
 
     spec = extract_janus_pro_runtime_spec(cfg, device, weight_dtype)
     if family == "janus_pro_r1":
-        spec.task_variant = "ar_t2i_r1"
+        spec.ar_task = "ar_t2i_r1"
     return build_janus_pro_runtime_bundle(spec)
 
 
@@ -73,7 +73,7 @@ def _build_replay_bundle(
 
     spec = extract_janus_pro_runtime_spec(cfg, device, weight_dtype)
     if family == "janus_pro_r1":
-        spec.task_variant = "ar_t2i_r1"
+        spec.ar_task = "ar_t2i_r1"
     return build_janus_pro_replay_runtime_bundle(spec)
 
 

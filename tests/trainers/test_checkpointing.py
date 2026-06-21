@@ -51,6 +51,38 @@ def test_training_checkpoint_round_trips_trainer_and_trainable_modules(tmp_path)
     assert restored.module.weight.item() == pytest.approx(3.0)
 
 
+def test_restore_training_checkpoint_rejects_family_mismatch(tmp_path) -> None:
+    """The family guard fires when a checkpoint is resumed into a foreign bundle.
+
+    Regression for the previously-dead guard: family builders now write
+    ``family`` into ``RuntimeBundle.metadata`` (same value space as the
+    checkpoint payload), so loading e.g. a Janus checkpoint into a Wan bundle
+    raises instead of silently short-circuiting because ``bundle_family`` was
+    always ``None``.
+    """
+    trainer = _Trainer()
+    source = _Bundle()
+    save_training_checkpoint(
+        tmp_path / "checkpoint-janus",
+        trainer=trainer,
+        bundle=source,
+        family="janus_pro",
+        progress={"next_epoch": 1, "global_step": 1},
+        rng_state={},
+    )
+
+    checkpoint = load_training_checkpoint(tmp_path / "checkpoint-janus")
+    foreign = _Bundle()
+    foreign.metadata = {"family": "wan_2_1"}
+    with pytest.raises(ValueError, match="family mismatch"):
+        restore_training_checkpoint(
+            checkpoint,
+            trainer=trainer,
+            bundle=foreign,
+            strict=True,
+        )
+
+
 def test_save_training_checkpoint_routes_export_through_strategy(tmp_path) -> None:
     """When a strategy is wired, checkpoint trainable state comes from its export.
 

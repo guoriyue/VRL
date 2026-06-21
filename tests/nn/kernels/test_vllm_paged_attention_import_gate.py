@@ -55,7 +55,7 @@ def test_vllm_paged_attention_kernels_call_real_internal_api_boundary() -> None:
     )
 
     assert "vllm.v1.attention.ops.paged_attn" in kernels.modules
-    assert kernels.debug_info()["backend"] == "vllm_paged_attention_kernels"
+    assert kernels.debug_info()["attention_kernels"] == "vllm_paged_attention_kernels"
     assert kernels.get_kv_cache_shape(
         num_blocks=3,
         num_kv_heads=2,

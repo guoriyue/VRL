@@ -122,7 +122,7 @@ def test_wan_runtime_bundle_records_model_build_memory_metadata(
             self.vae = _FakeVAE()
             self.trainable_modules: dict[str, Any] = {}
             self.scheduler = object()
-            self.backend_handle = object()
+            self.raw_handle = object()
 
         @classmethod
         def from_spec(cls, _spec: Any) -> _FakeModel:
@@ -193,7 +193,7 @@ def test_full_generation_runtime_bundles_record_model_build_memory_metadata(
             self.vae = _FakeVAE()
             self.trainable_modules: dict[str, Any] = {}
             self.scheduler = object()
-            self.backend_handle = object()
+            self.raw_handle = object()
 
         def generation_memory_targets(self) -> dict[str, Any]:
             return {"vae_decode": self.vae}

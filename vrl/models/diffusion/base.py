@@ -30,7 +30,6 @@ from vrl.trajectory.device import move_value_to_device
 class DiffusionModelBase(nn.Module, ABC):
     """Shared model base for diffusion families on the RL path."""
 
-    family: str = "diffusion"
     # Some upstream diffusion-RL recipes intentionally keep LoRA replay outside
     # autocast. The trainer reads this flag when choosing the replay context.
     disable_train_autocast: bool = False
@@ -289,7 +288,7 @@ class DiffusionModelBase(nn.Module, ABC):
         raise NotImplementedError
 
     @property
-    def backend_handle(self) -> Any:  # pragma: no cover
+    def raw_handle(self) -> Any:  # pragma: no cover
         raise NotImplementedError
 
     def generation_memory_targets(self) -> dict[str, Any]:

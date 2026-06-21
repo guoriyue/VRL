@@ -99,6 +99,7 @@ def build_anima_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
 
     metadata = {
         "model_path": spec.model_name_or_path,
+        "family": ANIMA_FAMILY,
         "task_variant": spec.task_variant,
         "dtype": str(spec.dtype),
         "use_lora": use_lora,
@@ -116,7 +117,7 @@ def build_anima_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         model=model,
         trainable_modules=model.trainable_modules,
         scheduler=model.scheduler,
-        backend_handle=model.backend_handle,
+        raw_handle=model.raw_handle,
         runtime_caps={
             "supports_reference_conditioning": False,
         },
@@ -167,12 +168,13 @@ def build_anima_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         model=model,
         trainable_modules=model.trainable_modules,
         scheduler=model.scheduler,
-        backend_handle=None,
+        raw_handle=None,
         runtime_caps={
             "supports_reference_conditioning": False,
         },
         metadata={
             "model_path": spec.model_name_or_path,
+            "family": ANIMA_FAMILY,
             "task_variant": spec.task_variant,
             "dtype": str(spec.dtype),
             "use_lora": use_lora,

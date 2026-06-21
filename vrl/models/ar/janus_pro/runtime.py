@@ -59,14 +59,15 @@ def build_janus_pro_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         model=model,
         trainable_modules={"model": model},
         scheduler=None,
-        backend_handle=model,
+        raw_handle=model,
         runtime_caps={
             "family_capability": JANUS_PRO_FAMILY_CAPABILITY.to_dict(),
             "supports_chunked_execution": True,
         },
         metadata={
             "model_path": spec.model_name_or_path,
-            "task_variant": spec.task_variant,
+            "family": JANUS_PRO_FAMILY_CAPABILITY.family,
+            "ar_task": spec.ar_task,
             "use_lora": spec.use_lora,
             **full_generation_bundle_metadata(),
         },
@@ -80,21 +81,22 @@ def build_janus_pro_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBund
     model = JanusProReplayModel(JanusProConfig(**config))
     family_capability = (
         JANUS_PRO_R1_FAMILY_CAPABILITY
-        if spec.task_variant == "ar_t2i_r1"
+        if spec.ar_task == "ar_t2i_r1"
         else JANUS_PRO_FAMILY_CAPABILITY
     )
     return RuntimeBundle(
         model=model,
         trainable_modules={"model": model},
         scheduler=None,
-        backend_handle=None,
+        raw_handle=None,
         runtime_caps={
             "family_capability": family_capability.to_dict(),
             "supports_chunked_execution": False,
         },
         metadata={
             "model_path": spec.model_name_or_path,
-            "task_variant": spec.task_variant,
+            "family": family_capability.family,
+            "ar_task": spec.ar_task,
             "use_lora": spec.use_lora,
             **minimal_replay_bundle_metadata(),
         },
@@ -115,7 +117,7 @@ def extract_janus_pro_runtime_spec(
         cfg,
         device,
         dtype_to_config_string(dtype if dtype is not None else (weight_dtype or "bfloat16")),
-        task_variant="ar_t2i",
+        ar_task="ar_t2i",
         model_name_or_path=model_path or "deepseek-ai/Janus-Pro-1B",
     )
 
@@ -395,7 +397,6 @@ class JanusProChunkExecutor(ARChunkExecutorBase):
         trajectory_context: dict[str, Any] = {
             "cfg_weight": cfg_weight,
             "image_token_num": params.image_token_num,
-            "model_family": getattr(self.model, "model_family", "janus_pro"),
             "ar_decode_loop_enabled": True,
         }
         trajectory = build_ar_discrete_trajectory(
@@ -517,7 +518,6 @@ class JanusProChunkExecutor(ARChunkExecutorBase):
             context={
                 "cfg_weight": cfg_weight,
                 "image_token_num": params.image_token_num,
-                "model_family": getattr(self.model, "model_family", "janus_pro"),
                 "ar_decode_loop_enabled": True,
             },
             peak_memory_mb=peak_mem_mb,

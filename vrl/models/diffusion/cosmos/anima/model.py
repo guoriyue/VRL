@@ -47,8 +47,6 @@ class AnimaSamplingState:
 class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
     """Single-file Anima model on the shared diffusion RL path."""
 
-    family = "cosmos-predict2-anima-t2i"
-
     def __init__(
         self,
         *,
@@ -170,7 +168,7 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
         return self._scheduler
 
     @property
-    def backend_handle(self) -> Any:
+    def raw_handle(self) -> Any:
         return self
 
     @property
@@ -335,7 +333,6 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
         return {
             "guidance_scale": state.guidance_scale,
             "cfg": state.do_cfg,
-            "model_family": self.family,
         }
 
     def export_replay_tensors(self, state: AnimaSamplingState) -> dict[str, Any]:
@@ -463,7 +460,7 @@ class AnimaReplayModel(ReplayRolloutStubs, AnimaModel):
         raise RuntimeError("AnimaReplayModel does not own a full generation pipeline")
 
     @property
-    def backend_handle(self) -> Any:
+    def raw_handle(self) -> Any:
         return None
 
 

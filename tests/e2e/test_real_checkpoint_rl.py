@@ -668,7 +668,7 @@ def _build_runtime_bundle(
     builder = import_from_path(builder_path)
     spec = extractor(cfg, device, dtype)
     if entry.family == "janus_pro_r1":
-        spec.task_variant = "ar_t2i_r1"
+        spec.ar_task = "ar_t2i_r1"
     return builder(spec)
 
 

@@ -1,6 +1,35 @@
-# SPRINT: 消除 model/nn 层 family / task_variant / backend 身份串的同名歧义 (planned)
+# SPRINT: 消除 model/nn 层 family / task_variant / backend 身份串的同名歧义 (done)
 
-状态：planned（2026-06-20）
+状态：done（2026-06-20）
+
+## 落地结果（2026-06-20）
+
+七项全部收敛，`pytest tests/models tests/nn tests/rollouts tests/generation
+tests/trainers tests/config tests/trajectory` 全绿（751 passed）。grep 净化：
+`"model_family"` / `cfg.model,"task"` / `backend_handle` / model 类 `.family`·
+`.model_family` 定义 / nn 层裸 `"backend"` metric 键，在 `vrl/` 全部 0 命中。
+
+- **A** 拆 `task_variant`：新增 `RuntimeBuildSpec.ar_task`，AR（janus/nextstep）改读写
+  `ar_task`，diffusion 独占 `task_variant`。`ar_task` 随 `asdict` 走 Ray launch 契约
+  序列化往返（worker 端 `RuntimeBuildSpec(**payload)` 不白名单字段，自动透传）。
+- **B**（**改为删除，非改名**）：model 类的 `.family`（diffusion，"wan-diffusers-i2v"
+  等）/ `model_family`（janus）属性在 **D** 删掉其唯一消费者（context 死写）后已**无任何
+  读者**——按 AGENTS.md derived-struct 规则「既不被行为消费、也非 display-only 的字段即死字段，
+  删除」，故直接删 8 处定义（base + 6 个 diffusion override + 2 个 janus），而不是改名为
+  `model_label` 再留一个谁都不读的字段。sprint 目标「收敛 family 取值空间」由删除更彻底地达成。
+- **C** 删 Wan `model.task` 死读分支。
+- **D** 删 9 处 `"model_family"` context 死写 + 改 `test_batch.py` 用中性键测透传。
+- **E** 修活 checkpoint family 守卫：14 个 builder 的 `RuntimeBundle.metadata` 写
+  `"family"`，值取 **variant-aware 的 `family_capability.family`**（= 注册表 canonical key，
+  含 `janus_pro_r1` / `wan_2_1_i2v`，与 checkpoint payload 的 `entry.family` 同空间，避免
+  variant 误报）。新增 `test_restore_training_checkpoint_rejects_family_mismatch` 回归。
+- **F** `backend_handle` → `raw_handle`（全仓 40 处，含 model property + bundle 字段 +
+  `train_dpo` 读 + wiring 测试）；metric 键 `"backend"` 拆 `attention_backend`（per-family
+  label）vs `attention_kernels`（kernel 类串）+ 同步 2 处测试；docstring「backend classes」→
+  「family model classes」。保留 `attention_backend` kernel 选择器名。
+- **G** family-aware model schema：本就已并行落地，确认无需改动。
+
+
 范围：把 model+nn 层里"哪个 model family / 哪个 task 变体 / 哪个 backend"三个身份串的命名与读写歧义收敛——同一字段不再扛两套枚举，死读/死写/死守卫清掉，并给"backend"这个被 AGENTS.md 点名的过载词划清边界。不动 reward / algorithm / trainer 算法逻辑。
 
 ## 0. Core Decision（先看这一段）

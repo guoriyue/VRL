@@ -152,8 +152,6 @@ class JanusProModel(nn.Module):
     in a single ``nn.Module`` so it integrates cleanly with FSDP / EMA.
     """
 
-    model_family: str = "janus-pro-t2i"
-
     def __init__(
         self,
         config: JanusProConfig | None = None,
@@ -825,7 +823,6 @@ class JanusProModel(nn.Module):
                 "prompt_attention_mask": prompt_attention_mask,
                 "uncond_input_ids": uncond_input_ids,
                 "uncond_attention_mask": uncond_attention_mask,
-                "model_family": getattr(self, "model_family", "janus_pro"),
                 "ar_kv_cache_enabled": True,
             },
         }
@@ -1102,8 +1099,6 @@ class JanusProReplayCore(nn.Module):
 
 class JanusProReplayModel(JanusProModel):
     """Replay-only Janus wrapper without processor, vision tower, or VQ decoder."""
-
-    model_family: str = "janus-pro-t2i"
 
     def __init__(
         self,

@@ -91,8 +91,6 @@ class WanI2VSamplingState:
 class WanT2VDiffusersModel(LoraModelMixin, DiffusionModelBase):
     """Diffusers-backed Wan 2.1 T2V model (1.3B variant)."""
 
-    family = "wan-diffusers-t2v"
-
     def __init__(
         self,
         *,
@@ -268,7 +266,7 @@ class WanT2VDiffusersModel(LoraModelMixin, DiffusionModelBase):
         return self.pipeline.scheduler
 
     @property
-    def backend_handle(self) -> Any:
+    def raw_handle(self) -> Any:
         return self.pipeline
 
     def _set_wan_transformer(self, name: str, transformer: Any) -> None:
@@ -443,7 +441,6 @@ class WanT2VDiffusersModel(LoraModelMixin, DiffusionModelBase):
             "guidance_scale": state.guidance_scale,
             "guidance_scale_2": state.guidance_scale_2,
             "cfg": state.do_cfg,
-            "model_family": self.family,
             "boundary_ratio": state.boundary_ratio,
             "num_train_timesteps": state.num_train_timesteps,
         }
@@ -565,14 +562,12 @@ class WanT2VReplayModel(ReplayRolloutStubs, WanT2VDiffusersModel):
         return self._scheduler
 
     @property
-    def backend_handle(self) -> Any:
+    def raw_handle(self) -> Any:
         return None
 
 
 class WanI2VDiffusersModel(WanT2VDiffusersModel):
     """Diffusers-backed Wan 2.1 I2V model (14B 480P variant)."""
-
-    family = "wan-diffusers-i2v"
 
     @classmethod
     def from_spec(cls, spec: Any) -> WanI2VDiffusersModel:
@@ -763,7 +758,6 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
             "guidance_scale": state.guidance_scale,
             "guidance_scale_2": state.guidance_scale_2,
             "cfg": state.do_cfg,
-            "model_family": self.family,
             "conditioning": "reference_image",
             "boundary_ratio": state.boundary_ratio,
             "num_train_timesteps": state.num_train_timesteps,
@@ -854,7 +848,7 @@ class WanI2VReplayModel(ReplayRolloutStubs, WanI2VDiffusersModel):
         return self._scheduler
 
     @property
-    def backend_handle(self) -> Any:
+    def raw_handle(self) -> Any:
         return None
 
 

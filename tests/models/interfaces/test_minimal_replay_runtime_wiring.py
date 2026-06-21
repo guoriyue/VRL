@@ -128,7 +128,7 @@ def test_diffusion_replay_builders_return_minimal_bundles(
     # The replay bundle is the trainer-side memory boundary: it does not own the
     # full generation modules (text encoders, VAE), so there is nothing to offload.
     assert bundle_loads_full_generation_modules(bundle) is False
-    assert bundle.backend_handle is None
+    assert bundle.raw_handle is None
     assert set(bundle.trainable_modules) == {"transformer"}
     assert "pipeline" not in vars(bundle.model)
     with pytest.raises(RuntimeError, match="pipeline"):
@@ -259,7 +259,7 @@ def test_cosmos_predict25_replay_builder_keeps_diffusion_nft_surface(
     )
 
     assert bundle_loads_full_generation_modules(bundle) is False
-    assert bundle.backend_handle is None
+    assert bundle.raw_handle is None
     assert callable(bundle.model.diffusion_nft_prepare_transformer_input)
     with pytest.raises(RuntimeError, match="pipeline"):
         _ = bundle.model.pipeline
@@ -288,7 +288,7 @@ def test_anima_replay_builder_uses_only_transformer_checkpoint(
     )
 
     assert bundle_loads_full_generation_modules(bundle) is False
-    assert bundle.backend_handle is None
+    assert bundle.raw_handle is None
     assert set(bundle.trainable_modules) == {"transformer"}
     assert not hasattr(bundle.model, "text_encoder")
     assert not hasattr(bundle.model, "vae")
@@ -376,13 +376,13 @@ def test_anima_runtime_spec_rejects_hf_repo_id_without_cached_artifacts(
             "vrl.models.ar.janus_pro.runtime",
             "build_janus_pro_replay_runtime_bundle",
             "JanusProReplayModel",
-            {"task_variant": "ar_t2i"},
+            {"ar_task": "ar_t2i"},
         ),
         (
             "vrl.models.ar.nextstep_1.runtime",
             "build_nextstep_1_replay_runtime_bundle",
             "NextStep1ReplayModel",
-            {"task_variant": "ar_t2i"},
+            {"ar_task": "ar_t2i"},
         ),
     ],
 )
@@ -400,5 +400,5 @@ def test_ar_replay_builders_return_minimal_bundles(
     bundle = getattr(module, builder_name)(_spec(**spec_kwargs))
 
     assert bundle_loads_full_generation_modules(bundle) is False
-    assert bundle.backend_handle is None
+    assert bundle.raw_handle is None
     assert set(bundle.trainable_modules) == {"model"}

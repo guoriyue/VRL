@@ -308,7 +308,6 @@ class _ExecutorModel:
     device = torch.device("cpu")
     config = SimpleNamespace(r1_refine_mode="selfcheck")
     language_model = _LM()
-    model_family = "janus_pro"
 
     def generate_with_refine(
         self,

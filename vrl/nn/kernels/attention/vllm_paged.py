@@ -276,7 +276,7 @@ class VllmPagedAttentionKernels:
         return {
             "family": self.config.family,
             "model_key": self.config.model_key,
-            "backend": "vllm_paged_attention_kernels",
+            "attention_kernels": "vllm_paged_attention_kernels",
             "cache_layout_version": self.config.cache_layout_version,
             "vllm_version": getattr(vllm, "__version__", None),
             "required_modules": self._REQUIRED_MODULES,

@@ -73,8 +73,6 @@ class SD3SamplingState:
 class SD3_5Model(LoraModelMixin, DiffusionModelBase):
     """Diffusers-backed SD 3.5 t2i model."""
 
-    family = "sd3_5-diffusers-t2i"
-
     def __init__(
         self,
         *,
@@ -170,7 +168,7 @@ class SD3_5Model(LoraModelMixin, DiffusionModelBase):
         return self.pipeline.scheduler
 
     @property
-    def backend_handle(self) -> Any:
+    def raw_handle(self) -> Any:
         return self.pipeline
 
     # -- encode_prompt -------------------------------------------------
@@ -338,7 +336,6 @@ class SD3_5Model(LoraModelMixin, DiffusionModelBase):
         return {
             "guidance_scale": state.guidance_scale,
             "cfg": state.do_cfg,
-            "model_family": self.family,
         }
 
     def export_replay_tensors(self, state: SD3SamplingState) -> dict[str, Any]:
@@ -434,7 +431,7 @@ class SD3_5ReplayModel(ReplayRolloutStubs, SD3_5Model):
         return self._scheduler
 
     @property
-    def backend_handle(self) -> Any:
+    def raw_handle(self) -> Any:
         return None
 
 

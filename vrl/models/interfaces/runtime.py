@@ -1,8 +1,8 @@
 """Runtime build spec and runtime bundle (CONTRACT.md, SPRINT_model_refactor.md §5.1, §5.3.E).
 
 These two dataclasses are the only sanctioned interface between training scripts
-and family-adjacent builders. Scripts must not import backend classes directly;
-builders consume a ``RuntimeBuildSpec`` and return a ``RuntimeBundle``.
+and family-adjacent builders. Scripts must not import family model classes
+directly; builders consume a ``RuntimeBuildSpec`` and return a ``RuntimeBundle``.
 """
 
 from __future__ import annotations
@@ -56,7 +56,14 @@ class RuntimeBuildSpec:
     model_name_or_path: str
     device: Any
     dtype: Any
+    # Diffusion t2v/i2v axis only. AR families must NOT reuse this field; they
+    # carry their trajectory variant in ``ar_task`` so a single field never holds
+    # two disjoint enums (t2v/i2v vs ar_t2i/ar_t2i_r1).
     task_variant: str | None = None
+    # AR trajectory variant (``ar_t2i`` / ``ar_t2i_r1``). Selects the AR family
+    # capability and replay shape; serialized across the Ray launch contract
+    # alongside ``task_variant`` (both ride through ``asdict``).
+    ar_task: str | None = None
     model_config: dict[str, Any] | None = None
     sampling_config: dict[str, Any] | None = None
     # ``frozen`` precision axis as a ``torch.dtype`` (encoders / VAE). Like
@@ -130,7 +137,7 @@ class RuntimeBuildSpec:
 class RuntimeBundle:
     """Sole output of a family builder. Consumed by scripts / collectors / trainers.
 
-    ``backend_handle`` carries the raw backend object (e.g. diffusers pipeline
+    ``raw_handle`` carries the raw family object (e.g. the diffusers pipeline
     or AR upstream wrapper) and must be treated as builder-internal — scripts
     and trainers must not reach into it.
 
@@ -159,7 +166,7 @@ class RuntimeBundle:
     model: RuntimeModel
     trainable_modules: dict[str, Any]
     scheduler: Any
-    backend_handle: Any
+    raw_handle: Any
     ref_modules: dict[str, Any] | None = None
     runtime_caps: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)

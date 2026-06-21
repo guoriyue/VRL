@@ -90,7 +90,7 @@ class TestStackBatches:
 
         from vrl.rollouts.batch import RolloutBatch, stack_batches
 
-        ctx = {"guidance_scale": 7.0, "model_family": "cosmos"}
+        ctx = {"guidance_scale": 7.0, "cfg": False}
         b1 = RolloutBatch(
             observations=torch.randn(1, 2, 4),
             actions=torch.randn(1, 2, 4),
@@ -105,11 +105,11 @@ class TestStackBatches:
             rewards=torch.tensor([2.0]),
             dones=torch.tensor([True]),
             group_ids=torch.tensor([1]),
-            context={"guidance_scale": 7.0, "model_family": "cosmos"},
+            context={"guidance_scale": 7.0, "cfg": True},
         )
         combined = stack_batches([b1, b2])
         assert combined.context["guidance_scale"] == 7.0
-        assert combined.context["model_family"] == "cosmos"
+        assert combined.context["cfg"] is False
 
     def test_context_defaults_to_empty(self) -> None:
         """Without context, field defaults to empty dict."""
