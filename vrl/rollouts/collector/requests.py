@@ -65,6 +65,11 @@ class GenerationRequestBuilder:
             family=self.family,
             task=self.task,
             prompts=prompts,
+            # GenerationRequest names this `samples_per_prompt` (generation-domain
+            # wording); the value is the collector's `group_size` — the GRPO group,
+            # sourced from rollout.n_samples_per_prompt. Same number, three domain
+            # names (config / GRPO collector / generation request), each accurate to
+            # its layer; distinct from the eval-only trainer.eval.samples_per_prompt.
             samples_per_prompt=group_size,
             sampling=sampling,
             return_artifacts=set(self.return_artifacts),
