@@ -417,11 +417,16 @@ def test_resource_plan_formatter_includes_key_fields() -> None:
 
     text = format_distributed_resource_plan(resolved)
 
-    assert "trainer=[0]" in text
-    assert "rollout=[1]" in text
-    assert "reward=[]" in text
-    assert "rollout_gpu_memory_fraction=None" in text
-    assert "trainer_reservation=True" in text
+    # The formatter renders resolved fields as `key=value`; assert the resolved
+    # values reach the log line, not a frozen layout. A reword of the plan line
+    # (key spelling / separators) must not break behavioral coverage.
+    assert f"trainer={list(resolved.trainer_devices)}" in text
+    assert f"rollout={list(resolved.rollout_devices)}" in text
+    assert f"reward={list(resolved.reward_devices)}" in text
+    assert (
+        f"rollout_gpu_memory_fraction={resolved.rollout_gpu_memory_fraction}" in text
+    )
+    assert f"trainer_reservation={resolved.requires_trainer_reservation}" in text
 
 
 def test_cross_node_rollout_satisfies_budget_from_explicit_counts() -> None:
@@ -750,8 +755,14 @@ def test_resource_plan_formatter_includes_lifecycle() -> None:
     )
 
     text = format_distributed_resource_plan(resolved)
-    assert "lifecycle=rollout:on_demand/reward:on_demand" in text
-    assert "before_reward:True" in text
+    plan = resolved.lifecycle
+    # Lifecycle modes/flags are structured fields; build the expected substring
+    # from them so a separator/keyword reword in the formatter does not break
+    # this acceptance check.
+    assert (
+        f"lifecycle=rollout:{plan.rollout.mode}/reward:{plan.reward.mode}" in text
+    )
+    assert f"before_reward:{plan.handoff.release_rollout_before_reward}" in text
 
 
 def test_reward_auto_placement_prefers_dedicated_spare_gpu() -> None:

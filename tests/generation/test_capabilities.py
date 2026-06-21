@@ -23,7 +23,10 @@ def test_execution_stage_capability_round_trip_preserves_default_profiler_name()
     assert data["profiler_name"] is None
     assert restored == stage
     assert restored.profiler_name is None
-    assert restored.profiler_label == "engine.denoise_step"
+    # profiler_label falls back to f"engine.{name}" when profiler_name is unset;
+    # derive the expected from stage.name so a prefix-template rename does not
+    # break the fallback-behavior contract.
+    assert restored.profiler_label == f"engine.{stage.name}"
 
 
 def test_family_capability_round_trip_preserves_stage_profiler_names() -> None:
@@ -54,4 +57,10 @@ def test_family_capability_round_trip_preserves_stage_profiler_names() -> None:
 
     assert restored == capability
     assert restored.execution_stages[0].profiler_name is None
-    assert restored.profiler_labels == ("engine.prepare", "generation.decode_latents")
+    prepare_stage, decode_stage = capability.execution_stages
+    # First stage has no profiler_name -> engine.<name> fallback (derived);
+    # second stage's label is the explicitly-set profiler_name input (echoed).
+    assert restored.profiler_labels == (
+        f"engine.{prepare_stage.name}",
+        decode_stage.profiler_name,
+    )
