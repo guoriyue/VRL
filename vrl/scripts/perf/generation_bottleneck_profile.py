@@ -61,13 +61,24 @@ def _bucket(name: str) -> str:
 
 
 def build_model(cfg, device, dtype):
-    from vrl.models.diffusion.cosmos.predict2_5.runtime import (
-        build_cosmos_predict25_runtime_bundle,
-        extract_cosmos_predict25_runtime_spec,
+    """Build any registered diffusion family's rollout model from its cfg.
+
+    Dispatches through the rollout family registry (the single source of truth for
+    runtime builder/extractor import paths) instead of hardcoding one family, so
+    the profiler runs sd3_5 / flux / qwen_image / cosmos / wan uniformly.
+    """
+    from vrl.ray.dependencies import import_from_path
+    from vrl.rollouts.families import (
+        get_rollout_family_entry,
+        normalize_rollout_family,
     )
+
     cfg.model.use_lora = True
-    spec = extract_cosmos_predict25_runtime_spec(cfg, device, dtype)
-    return build_cosmos_predict25_runtime_bundle(spec).model
+    entry = get_rollout_family_entry(normalize_rollout_family(cfg.model.family))
+    extract_spec = import_from_path(entry.runtime_spec_extractor)
+    build_bundle = import_from_path(entry.runtime_builder)
+    spec = extract_spec(cfg, device, dtype)
+    return build_bundle(spec).model
 
 
 def make_step_fn(model, cfg, device, dtype, teacache=None):
@@ -75,11 +86,22 @@ def make_step_fn(model, cfg, device, dtype, teacache=None):
     enc = model.encode_prompt(["a physical scene, high quality"], None,
                               guidance_scale=float(s.guidance_scale),
                               max_sequence_length=int(s.max_sequence_length))
+    # t2i image families have no frame axis; default to 1 frame.
+    num_frames = int(s.get("num_frames", s.get("frame_count", 1)))
     req = VideoGenerationRequest(prompt="a physical scene, high quality", negative_prompt=None,
-            width=int(s.width), height=int(s.height), frame_count=int(s.num_frames),
+            width=int(s.width), height=int(s.height), frame_count=num_frames,
             num_steps=int(s.num_steps), guidance_scale=float(s.guidance_scale), seed=0,
             extra={"max_sequence_length": int(s.max_sequence_length)})
     state = model.prepare_sampling(req, enc)
+    # The denoise forward being profiled needs only the transformer. Park the frozen
+    # prompt encoders / VAE on CPU (the real rollout's offload discipline, see
+    # DiffusionModelBase.move_frozen_components) so the profiled window measures the
+    # transformer in isolation and big-encoder families (FLUX T5, Qwen2.5-VL) leave
+    # VRAM for the denoiser instead of OOMing on a resident full pipeline.
+    move_frozen = getattr(model, "move_frozen_components", None)
+    if callable(move_frozen):
+        move_frozen(torch.device("cpu"))
+        torch.cuda.empty_cache()
     # Drive the same TeaCache skip machine the executor uses, so the profiled
     # s/step reflects the real skip behavior (cached noise_pred on low-change steps).
     tc = TeaCacheState(teacache, int(s.num_steps)) if teacache is not None else None
@@ -102,9 +124,59 @@ def make_step_fn(model, cfg, device, dtype, teacache=None):
     return one_step, tc
 
 
+def _e2e_once(model, s, device, dtype):
+    """One full image: encode -> prepare -> N denoise steps -> VAE decode.
+
+    Matches what an inference engine's `generate(one image)` measures (NOT just the
+    per-step transformer forward), so naive and vLLM-Omni can be compared at the
+    same scope.
+    """
+    enc = model.encode_prompt(["a physical scene, high quality"], None,
+                              guidance_scale=float(s.guidance_scale),
+                              max_sequence_length=int(s.max_sequence_length))
+    num_frames = int(s.get("num_frames", s.get("frame_count", 1)))
+    req = VideoGenerationRequest(prompt="a physical scene, high quality", negative_prompt=None,
+            width=int(s.width), height=int(s.height), frame_count=num_frames,
+            num_steps=int(s.num_steps), guidance_scale=float(s.guidance_scale), seed=0,
+            extra={"max_sequence_length": int(s.max_sequence_length)})
+    state = model.prepare_sampling(req, enc)
+    with torch.no_grad(), torch.amp.autocast("cuda", dtype=dtype):
+        for step_idx in range(int(s.num_steps)):
+            noise_pred = model.forward_step(state, step_idx)["noise_pred"]
+            r = sde_step_with_logprob(state.scheduler, noise_pred.float(),
+                    state.timesteps[step_idx].unsqueeze(0), state.latents.float(),
+                    generator=None, deterministic=True, sde_type="cps")
+            state.latents = r.prev_sample
+        return model.decode_latents(state.latents)
+
+
+def run_e2e(model, cfg, device, dtype, iters=3, warmup=2):
+    """Time full end-to-end image latency (encode+denoise+decode), median of `iters`."""
+    s = cfg.sampling
+    for _ in range(warmup):
+        _e2e_once(model, s, device, dtype)
+    torch.cuda.synchronize(device)
+    torch.cuda.reset_peak_memory_stats(device)
+    times = []
+    for _ in range(iters):
+        torch.cuda.synchronize(device)
+        t0 = time.time()
+        _e2e_once(model, s, device, dtype)
+        torch.cuda.synchronize(device)
+        times.append((time.time() - t0) * 1000.0)
+    times.sort()
+    peak = torch.cuda.max_memory_allocated(device) / (1024 * 1024)
+    print(f"\n=== E2E one image (encode+{int(s.num_steps)} denoise+decode): "
+          f"{times[len(times) // 2]:.0f} ms/img (median of {iters}), peak {peak:.0f} MiB ===",
+          flush=True)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument("--config", required=True)
+    p.add_argument("--e2e", action="store_true",
+                   help="measure full end-to-end image latency (encode+denoise+decode), "
+                        "matched scope to an inference engine's generate(); skips kernel profiling")
     p.add_argument("--steps", type=int, default=6, help="profiled denoise steps")
     p.add_argument("--warmup", type=int, default=2)
     p.add_argument("--trace", default="outputs/perf/gen_trace.json")
@@ -143,7 +215,8 @@ def main(argv=None):
     )
     if teacache_cfg is not None:
         label = f"{label}+teacache(thr={args.teacache})"
-    print(f"shape {cfg.sampling.width}x{cfg.sampling.height}x{cfg.sampling.num_frames}, "
+    _nf = cfg.sampling.get("num_frames", cfg.sampling.get("frame_count", 1))
+    print(f"shape {cfg.sampling.width}x{cfg.sampling.height}x{_nf}, "
           f"{cfg.sampling.num_steps} steps; precision={label}; profiling {args.steps} steps", flush=True)
 
     model = build_model(cfg, device, dtype)
@@ -155,12 +228,18 @@ def main(argv=None):
         # (forward_step reads self.transformer) point at the compiled module.
         print("torch.compile(default) the transformer ...", flush=True)
         model.torch_compile_transformer("default")
+    if args.e2e:
+        run_e2e(model, cfg, device, dtype)
+        return
     step_fn, teacache_state = make_step_fn(model, cfg, device, dtype, teacache=teacache_cfg)
 
     # extra warmup when compiling so the (slow) first compiled call is excluded
     for i in range(args.warmup + (3 if args.compile else 0)):
         step_fn(i)
     torch.cuda.synchronize(device)
+    # Reset peak after warmup so the reported peak reflects the profiled window's
+    # steady-state forward, not the (larger) one-time load/warmup allocations.
+    torch.cuda.reset_peak_memory_stats(device)
 
     # Sample SM% vs MEM% hardware counters during the profiled window (compute vs bandwidth).
     dmon = subprocess.Popen(
@@ -176,6 +255,7 @@ def main(argv=None):
             step_fn(i)
         torch.cuda.synchronize(device)
     wall = time.time() - t0
+    peak_mb = torch.cuda.max_memory_allocated(device) / (1024 * 1024)
     dmon_out, _ = dmon.communicate(timeout=30)
 
     # Per-kernel device self time, bucketed. Count ONLY raw device kernels: skip the
@@ -213,6 +293,7 @@ def main(argv=None):
     print(f"\n=== wall {wall:.1f}s for {args.steps} steps ({wall/args.steps:.2f}s/step), "
           f"device-kernel time {total/1e6:.2f}s, {n_launches} kernel launches "
           f"({n_launches/args.steps:.0f}/step) ===")
+    print(f"  peak GPU memory (profiled window): {peak_mb:.0f} MiB", flush=True)
     if teacache_state is not None:
         c = teacache_state.counters()
         print(f"  teacache: {c['teacache_skips']} skips / {c['teacache_runs']} runs "
