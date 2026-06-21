@@ -139,7 +139,7 @@ class DiffusionModelBase(nn.Module, ABC):
             device = None
         replay_tensors = TrajectoryResolver.from_batch(batch).replay_tensor_dict(
             "denoise",
-            axis="timestep",
+            axis="denoise",
             axis_index=timestep_idx,
             device=device,
         )

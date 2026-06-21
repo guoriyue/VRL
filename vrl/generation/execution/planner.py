@@ -268,7 +268,7 @@ class EnginePlanner:
                 if self.sample_rows
                 else len(self.request.prompts) * self.request.samples_per_prompt
             )
-        if axis_name == "timestep":
+        if axis_name == "denoise":
             value = sampling.get("num_steps")
             return None if value is None else int(value)
         if axis_name == "token":

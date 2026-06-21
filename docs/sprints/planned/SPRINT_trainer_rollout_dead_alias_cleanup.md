@@ -1,6 +1,6 @@
 # SPRINT: Prune trainer/rollout/trajectory dead aliases and duplicated single-source-of-truth logic (planned)
 
-状态：基本落地（2026-06-20）。已完成 #1 #2 #3 #4 #5 #6 #7 #9；仅 #8 暂缓（活结构轴一致性重命名，按用户决定）。
+状态：全部落地（2026-06-20）。#1–#9 全部完成。
 范围：清理 trainer / rollout / trajectory / scripts 四层里残留的死别名（legacy alias、back-compat shim）以及重复实现的“单一真相”逻辑（同一概念多处复制、同一标识符存三份）。不动外部 wire 协议，不重做精度命名（已由 [[SPRINT_precision_naming_unification]] 覆盖）。
 
 ## 落地状态（2026-06-20，分支 sprint/trainer-rollout-dead-alias）
@@ -13,9 +13,7 @@
 - ✅ **#7 `role_tensor` 双份** → resolver 方法保留 segment-name 解析（`_fail` 未知段），role 匹配委托给 views 的唯一实现。
 - ✅ **#4 每-prompt 采样数收敛** → 删 vestigial `default_group_size`（对 diffusion 默认值是错的且从不被用）+ `group_size` 提为 `collect`/`collect_unscored` 的 keyword-only 必填参数。`samples_per_prompt`（GenerationRequest 字段，生成域深嵌 20+ 处）与 `group_size`（GRPO 域）**各自是其领域的准确名字，不是重复 → 不抹平**（按 doc §D「keep + 注释」）；在 `requests.py` 边界加注释点明三个域名指同一数；public key `n_samples_per_prompt` / `eval.samples_per_prompt` 按设计保留（需独立弃用路径）。`EvalConfig.samples_per_prompt` 已有 eval-only 区分注释。
 - ✅ **#9 AR 入口去 `ocr` 词** → `train_janus_pro_ocr_grpo` / `train_janus_pro_r1_ocr_grpo` / `train_nextstep_1_ocr_grpo` → `train_*_grpo`（函数名 + `__all__` + docstring），同步迁移 4 个 experiment config 的 `trainer.entrypoint`，**不留旧别名**（repo cleanup，直接迁移 shipped config）。run 输出目录名 `outputs/*_ocr_grpo` 保持不动（描述真实 OCR 运行，改了会孤立已有 run）。lint + 142 tests passed。
-- ⏸ **#8 轴名 `"timestep"`→`"denoise"`** → **不是死代码**，是结构轴的一致性重命名，暂缓（按用户决定）。
-
-> ⚠️ 下一轮接手注意：#8 是**重命名**，不是删除。轴 `"timestep"` 是 trajectory schema 的活结构轴，误删会破坏 trajectory 装配。
+- ✅ **#8 轴名 `"timestep"`→`"denoise"`** → diffusion 轨迹的去噪步轴名与其 kind `"denoise_step"` / 段名 `"denoise"` 对齐。**外科式重命名**：只改轴名引用（`builders.py` 轴定义 + `("sample","timestep")` 张量轴元组 + `axis_lengths` + `capabilities.py` 的 `AxisCapability`/`ExecutionStageCapability` + `base.py` replay axis= + `planner.py` `_axis_length` 判断 + 测试），**保留**张量名 `"timesteps"`（复数）、`tensor_ref` 段名、以及所有 transformer-input 标量值键 `"timestep": <value>`（cosmos model / cfg.py）与 `gather.py` byte_values 的 wire 键。trajectory/generation/diffusion/algorithms/trainers 508 tests + config lint passed。
 
 ## 0. Core Decision（先看这一段）
 

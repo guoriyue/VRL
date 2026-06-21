@@ -24,7 +24,7 @@ def diffusion_family_capability(
         trajectory_kind="diffusion",
         expected_axes=(
             AxisCapability("sample", "sample", batchable=True, chunkable=True),
-            AxisCapability("timestep", "denoise_step", batchable=True, chunkable=False),
+            AxisCapability("denoise", "denoise_step", batchable=True, chunkable=False),
         ),
         execution_stages=(
             ExecutionStageCapability(
@@ -38,7 +38,7 @@ def diffusion_family_capability(
             ExecutionStageCapability(
                 "denoise_step",
                 segment=trainable_segment,
-                axis="timestep",
+                axis="denoise",
                 profiler_name="generation.denoise_step",
             ),
             ExecutionStageCapability(

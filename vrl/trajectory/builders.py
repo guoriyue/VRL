@@ -43,37 +43,37 @@ def build_diffusion_trajectory(
         "observations": TrajectoryTensor(
             "observations",
             observations,
-            ("sample", "timestep"),
+            ("sample", "denoise"),
             "observation",
         ),
         "actions": TrajectoryTensor(
             "actions",
             actions,
-            ("sample", "timestep"),
+            ("sample", "denoise"),
             "action",
         ),
         "old_log_prob": TrajectoryTensor(
             "old_log_prob",
             old_log_prob,
-            ("sample", "timestep"),
+            ("sample", "denoise"),
             "old_log_prob",
         ),
         "mask": TrajectoryTensor(
             "mask",
             torch.ones_like(old_log_prob),
-            ("sample", "timestep"),
+            ("sample", "denoise"),
             "mask",
         ),
         "timesteps": TrajectoryTensor(
             "timesteps",
             timesteps,
-            ("sample", "timestep"),
+            ("sample", "denoise"),
             "replay_input",
         ),
         "kl": TrajectoryTensor(
             "kl",
             kl,
-            ("sample", "timestep"),
+            ("sample", "denoise"),
             "replay_input",
         ),
     }
@@ -101,7 +101,7 @@ def build_diffusion_trajectory(
         group_ids=_prompt_group_ids(sample_rows, device=device),
         axes={
             "sample": TrajectoryAxis("sample", "sample", batch_size),
-            "timestep": TrajectoryAxis("timestep", "denoise_step", timestep_count),
+            "denoise": TrajectoryAxis("denoise", "denoise_step", timestep_count),
         },
         segments={
             "denoise": TrajectorySegment(
@@ -129,7 +129,7 @@ def build_diffusion_trajectory(
         },
         metrics=TrajectoryMetrics(
             num_samples=batch_size,
-            axis_lengths={"sample": batch_size, "timestep": timestep_count},
+            axis_lengths={"sample": batch_size, "denoise": timestep_count},
             values={"num_steps": timestep_count},
         ),
         context=_serializable_context(context),

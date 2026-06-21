@@ -14,7 +14,7 @@ def test_execution_stage_capability_round_trip_preserves_default_profiler_name()
     stage = ExecutionStageCapability(
         name="denoise_step",
         segment="denoise",
-        axis="timestep",
+        axis="denoise",
         metadata={"phase": "sample"},
     )
 

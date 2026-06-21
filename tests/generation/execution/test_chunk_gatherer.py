@@ -71,7 +71,7 @@ def test_diffusion_chunk_gatherer_gathers_without_model_object() -> None:
     )
     assert output.trajectory.segments["denoise"].distribution == "flow_matching"
     assert output.trajectory.axes["sample"].length == 2
-    assert output.trajectory.axes["timestep"].length == 2
+    assert output.trajectory.axes["denoise"].length == 2
     assert torch.equal(output.output[:, 0, 0, 0], torch.tensor([1.0, 2.0]))
     assert output.metrics.peak_memory_mb == 20.0
 
