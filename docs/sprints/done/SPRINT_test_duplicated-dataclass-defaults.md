@@ -1,6 +1,6 @@
-# SPRINT: 测试重打 dataclass/builder 默认值，而非断言行为（planned）
+# SPRINT: 测试重打 dataclass/builder 默认值，而非断言行为（done）
 
-状态：未开始（2026-06-21）。
+状态：done（落地 commit `777642f`；2026-06-21 归档）。
 范围：清理一类测试坏味道 —— 测试把 config dataclass 的字段默认值、或 builder 注入的结构体常量**手抄一份**，再断言「源码的值 == 我自己抄的那份」。这类断言不验证任何行为：默认值一旦被合理重调（换 paper 取值、调漂移阈值、改 dispatch），测试就为「无行为回归」的理由而红；dispatch 镜像 dict 还会 `KeyError` 或静默断言陈旧类型。优先级 medium。涉及 **4 个测试文件**（`test_dpo.py` / `test_logprob_mismatch.py` / `test_online_precision_bridge.py` / `test_load_all_experiments.py`）。**不**改任何被测源码、**不**删真正的行为型 no-op 测试与显式 override 测试。
 
 > 与 [[SPRINT_test_frozen_registry_snapshots]] 同源 —— 那条收口「手抄目录/registry 清单」的 frozen snapshot；本条收口「手抄单个默认值/dispatch 映射」的 duplicated-default。规则同一条：typed structure 是唯一 source of truth，重复的常量在源类新增字段那一刻就开始烂。
