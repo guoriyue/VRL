@@ -1,6 +1,6 @@
 # SPRINT: `ARStepResult` 死字段清理 + 传递链评估（planned）
 
-状态：未开始（2026-06-20）。
+状态：已完成（commits `2aa0254` drop dead ARStepResult fields + `f5ff639` drop transitive-dead ARStepBatch.sequences/sequence_ids）。A、B 两步均落地，`ARStepResult` 仅余 `debug_counters`。
 范围：清理 `ARStepResult` 上「两个 runner 构造、decode_loop 只读 `debug_counters`」的死字段，并评估随之失活的 `ARStepBatch.sequences → sequence_ids property → ARStepResult` 传递链。
 来源：dead-dataclass-hunt confirmed（4 字段 dead + 1 display-only），但含一条**传递链**，落地非纯机械。承接 [[SPRINT_segment_signal_dead_field_cleanup]]。
 

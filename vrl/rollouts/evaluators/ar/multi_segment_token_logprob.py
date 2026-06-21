@@ -88,12 +88,7 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
                     device=new_lp.device,
                 ),
                 ref_log_prob=ref_lp,
-                entropy=None,
                 distribution="categorical",
-                aux={
-                    "segment_name": name,
-                    "segment_modality": _segment_modality(name, segment),
-                },
                 mask_key=self.mask_key,
             )
 
@@ -195,18 +190,6 @@ def _segment_tensor(segment: dict[str, Any], key: str) -> torch.Tensor:
         name = segment.get("name", "<unknown>")
         raise RuntimeError(f"R1 segment {name!r} field {key!r} must be a tensor")
     return value
-
-
-def _segment_modality(name: str, segment: dict[str, Any]) -> str:
-    modality = segment.get("modality")
-    if modality is not None:
-        return str(modality)
-    visual = segment.get("visual")
-    if visual is not None:
-        return "image" if bool(visual) else "text"
-    if name.endswith("_text"):
-        return "text"
-    return "image"
 
 
 def _primary_segment_name(batch: RolloutBatch, enabled_names: list[str]) -> str:

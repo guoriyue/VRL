@@ -1,6 +1,6 @@
 # SPRINT: SegmentSignal 死字段清理 + 派生结构体字段审计（planned）
 
-状态：未开始（2026-06-20）。
+状态：已完成（2026-06-21）。删除 `entropy` / `need_entropy` / `aux`（含 builder 形参穿透与三个 AR evaluator 构造点）+ 附录 3.1 的 `RuntimeBundle.ref_modules`，连带删除随 `aux` 失活的 `_segment_modality` helper。`axis` / `axes` 在更早的清理轮次已移除，本轮无需再动。验证：`pytest tests/algorithms/ tests/rollouts/`（267 passed）、`tests/models/`（162 passed）全绿；`old_prev_sample_mean` 经核实为活字段（`sde_logprob.py` 读取），保留。
 范围：清理 `SegmentSignal` / `SignalRequest` 上**有人构造、无人按行为读取**的死字段（字段级，承接 [[SPRINT_trainer_rollout_dead_alias_cleanup]] #5 已落地的标识符级清理 —— 那次删的是三份重复的 `segment` 标识符，这次删的是字段本身）。附带把一轮派生/已解析结构体（`Resolved*` / `*Bundle` / `*Capability`）的字段扫描结果一并收口。**不**重构 evaluator→algorithm 契约，**不**删 `SegmentSignal` 结构体本身（经核实是活契约）。
 
 > 本 sprint 由一次 dynamic workflow 审计产出（21 agents：5 路并行 map → 15 条死/冗余 claim 对抗验证 → 综合）。所有「死」判定都过了对抗复核，下文逐条标注是 confirmed-dead 还是 needs-design-intent。

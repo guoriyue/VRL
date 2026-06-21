@@ -16,7 +16,6 @@ class SegmentSignal:
     old_log_prob: Any
     mask: Any
     ref_log_prob: Any | None = None
-    entropy: Any | None = None
     prev_sample_mean: Any | None = None
     ref_prev_sample_mean: Any | None = None
     # Rollout-time (behavior policy) reverse-SDE proposal mean, captured at
@@ -27,7 +26,7 @@ class SegmentSignal:
     old_prev_sample_mean: Any | None = None
     std_dev_t: Any | None = None
     dt: Any | None = None
-    aux: dict[str, Any] = field(default_factory=dict)
+
 
 @dataclass
 class TrajectorySignalBatch:
@@ -86,7 +85,6 @@ class SignalRequest:
     """What the algorithm needs the evaluator to compute."""
 
     need_ref: bool = False
-    need_entropy: bool = False
     need_kl_intermediates: bool = False  # for latent-space KL
 
 

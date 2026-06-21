@@ -1,6 +1,6 @@
 # SPRINT: `GenerationMetrics` 死字段清理（planned）
 
-状态：未开始（2026-06-20）。
+状态：已完成（commits `f2790b2` queue_wait_s/execution_s + `2468829` num_prompts/num_samples）。A/B 两步全部落地，四字段均已删除。
 范围：清理 `vrl/generation/types.py` 的 `GenerationMetrics` 上无 behavior 读者的字段。两个纯死、两个 test-only（需签字）。
 来源：dead-dataclass-hunt + 我手动 receiver 消歧验证。承接 [[SPRINT_segment_signal_dead_field_cleanup]]。
 

@@ -1,6 +1,6 @@
 # SPRINT: `vrl/generation/execution/` envelope/stage 死字段清理（planned）
 
-状态：未开始（2026-06-20）。
+状态：已完成（commits `902f54e` batch_group_key + `7844568` plan_summary protocol param + `f75d2be` capability_summary）。A/B/C 三步全部落地，三字段均已删除。
 范围：`ExecutionStage.batch_group_key`（纯死）+ `ChunkExecutionEnvelope.plan_summary` / `capability_summary`（protocol/telemetry，需签字）。
 来源：dead-dataclass-hunt + 手动验证。承接 [[SPRINT_segment_signal_dead_field_cleanup]]。
 

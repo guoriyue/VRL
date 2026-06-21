@@ -34,13 +34,11 @@ class TrajectorySignalBuilder:
         old_log_prob: Any | None = None,
         mask: Any | None = None,
         ref_log_prob: Any | None = None,
-        entropy: Any | None = None,
         prev_sample_mean: Any | None = None,
         ref_prev_sample_mean: Any | None = None,
         old_prev_sample_mean: Any | None = None,
         std_dev_t: Any | None = None,
         dt: Any | None = None,
-        aux: dict[str, Any] | None = None,
         mask_key: str = "token_mask",
     ) -> TrajectorySignalBatch:
         """Build a one-segment ``TrajectorySignalBatch`` for concrete evaluators."""
@@ -53,13 +51,11 @@ class TrajectorySignalBuilder:
             old_log_prob=old_log_prob,
             mask=mask,
             ref_log_prob=ref_log_prob,
-            entropy=entropy,
             prev_sample_mean=prev_sample_mean,
             ref_prev_sample_mean=ref_prev_sample_mean,
             old_prev_sample_mean=old_prev_sample_mean,
             std_dev_t=std_dev_t,
             dt=dt,
-            aux=aux,
             mask_key=mask_key,
         )
         return TrajectorySignalBatch(
@@ -79,13 +75,11 @@ class TrajectorySignalBuilder:
         old_log_prob: Any | None = None,
         mask: Any | None = None,
         ref_log_prob: Any | None = None,
-        entropy: Any | None = None,
         prev_sample_mean: Any | None = None,
         ref_prev_sample_mean: Any | None = None,
         old_prev_sample_mean: Any | None = None,
         std_dev_t: Any | None = None,
         dt: Any | None = None,
-        aux: dict[str, Any] | None = None,
         mask_key: str = "token_mask",
     ) -> SegmentSignal:
         """Build one signal segment from first-class trajectory facts."""
@@ -130,13 +124,11 @@ class TrajectorySignalBuilder:
             old_log_prob=resolved_old,
             mask=resolved_mask,
             ref_log_prob=ref_log_prob,
-            entropy=entropy,
             prev_sample_mean=prev_sample_mean,
             ref_prev_sample_mean=ref_prev_sample_mean,
             old_prev_sample_mean=old_prev_sample_mean,
             std_dev_t=std_dev_t,
             dt=dt,
-            aux=dict(aux or {}),
         )
 
     @property

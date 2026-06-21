@@ -167,6 +167,5 @@ class RuntimeBundle:
     trainable_modules: dict[str, Any]
     scheduler: Any
     raw_handle: Any
-    ref_modules: dict[str, Any] | None = None
     runtime_caps: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
