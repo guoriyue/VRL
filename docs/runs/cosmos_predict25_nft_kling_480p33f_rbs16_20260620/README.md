@@ -119,6 +119,14 @@ The training reward is `score_key: overall_reward` (`configs/reward/kling_video_
 2. The MQ inversion is most likely a **too-few-frames artifact (33f)**; restoring frames toward the paper's 93f should let MQ work — but that is expensive, so try (1) first.
 3. **Re-run `kling_reward_diagnosis_probe.py` and require the *trained* key to RESPOND** (drop > +0.0339, not INVERTED) before investing GPU-days. A ≥30–50 epoch sweep on the current `overall_reward` would optimize a gameable target.
 
+**Follow-up — is VQ's gradient *policy-improvable*? (2026-06-21, steps-ladder probe).** The diagnosis probe proves VQ responds to *artificial* noise; this asks the sharper question behind "we never improve regardless of reward": does VQ reward the kind of quality the policy could actually climb? Held the policy fixed (checkpoint-4) and the prompts/seed fixed, varied only denoise steps (more steps = objectively more-converged generation) via `cosmos_predict25_kling_eval --steps {8,16,32,64} --score-key visual_quality`:
+
+| steps | 8 | 16 | 32 | 64 |
+|---|---|---|---|---|
+| VQ_mean | −1.5008 | −1.4718 | −1.4184 | −1.3100 |
+
+**Monotone, +0.191 over 8→64, well above the ±0.034 eval noise.** So VQ rewards real generation quality (convergence) — it is **not** dead or inverted; there is a climbable gradient. Conclusion: the flat training reward is **not** a reward-deadness problem for VQ — the remaining suspect is **undersampling** (this run did 6 optimizer updates, the VQ fast run 2, vs the paper's 256). Caveat: this proves the reward landscape has a correctly-signed quality direction; it does not by itself prove RL will climb it at a fixed step count — only a long-enough run on `score_key=visual_quality` settles that. This de-risks the long run: VQ is worth GPU-days, `overall_reward` was not.
+
 ---
 
 ## 7. How to resume
