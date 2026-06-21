@@ -411,7 +411,7 @@ class OfflineDPOTrainer:
 
         if not isinstance(state, dict):
             raise TypeError("OfflineDPOTrainer.load_state_dict expects a dict")
-        self.global_step = int(state.get("global_step", state.get("step", 0)))
+        self.global_step = int(state.get("global_step", 0))
         # Parameter .grad buffers are not checkpointed, so resume must start a
         # fresh accumulation window instead of deriving the boundary from
         # global_step.
