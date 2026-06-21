@@ -1,5 +1,5 @@
 # Janus-Pro-1B — autoregressive image-token generator (DeepSeek).
-# Sampling defaults (image_token_num / image_size / cfg_weight / temperature)
+# Sampling defaults (image_token_num / image_size / guidance_scale / temperature)
 # live in configs/sampling/ar/*.yaml.
 model:
   family: janus_pro

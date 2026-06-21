@@ -200,7 +200,7 @@ def test_generate_with_refine_returns_three_segments_and_selects_final_image() -
         cond_attention_mask: torch.Tensor,
         uncond_attention_mask: torch.Tensor,
         *,
-        cfg_weight: float | None = None,
+        guidance_scale: float | None = None,
         temperature: float | None = None,
         image_token_num: int | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -209,7 +209,7 @@ def test_generate_with_refine_returns_three_segments_and_selects_final_image() -
             uncond_inputs_embeds,
             cond_attention_mask,
             uncond_attention_mask,
-            cfg_weight,
+            guidance_scale,
             temperature,
         )
         value = 10 if not sample_calls else 20
@@ -258,7 +258,7 @@ def test_generate_with_refine_returns_three_segments_and_selects_final_image() -
     out = model.generate_with_refine(
         prompt_ids,
         prompt_mask,
-        cfg_weight=5.0,
+        guidance_scale=5.0,
         temperature=0.9,
         image_token_num=4,
         max_reflect_len=3,
@@ -314,7 +314,7 @@ class _ExecutorModel:
         prompt_input_ids: torch.Tensor,
         prompt_attention_mask: torch.Tensor,
         *,
-        cfg_weight: float,
+        guidance_scale: float,
         temperature: float,
         image_token_num: int,
         max_reflect_len: int,
@@ -325,7 +325,7 @@ class _ExecutorModel:
         refine_mode: str,
     ) -> dict[str, object]:
         del (
-            cfg_weight,
+            guidance_scale,
             temperature,
             max_reflect_len,
             task_stages,

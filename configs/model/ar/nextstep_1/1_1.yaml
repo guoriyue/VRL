@@ -1,6 +1,6 @@
 # NextStep-1.1 — 14B continuous-token AR transformer + 157M flow-matching head.
 # Paired with the f8ch16 VAE tokenizer (32×32 patches @ 16 channels).
-# Sampling defaults (image_token_num / image_size / num_flow_steps / cfg_scale)
+# Sampling defaults (image_token_num / image_size / num_flow_steps / guidance_scale)
 # live in configs/sampling/ar/*.yaml.
 model:
   family: nextstep_1

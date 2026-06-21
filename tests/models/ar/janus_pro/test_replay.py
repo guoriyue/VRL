@@ -128,7 +128,7 @@ def test_janus_collector_has_no_forward_step() -> None:
             family="janus_pro",
             values={
                 "n_samples_per_prompt": 1,
-                "cfg_weight": 5.0,
+                "guidance_scale": 5.0,
                 "temperature": 1.0,
                 "image_token_num": 4,
                 "image_size": 64,

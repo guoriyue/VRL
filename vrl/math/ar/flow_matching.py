@@ -33,7 +33,7 @@ def flow_sample_with_logprob(
     num_flow_steps: int = 20,
     noise_level: float = 1.0,
     cfg_uncond: torch.Tensor | None = None,
-    cfg_scale: float = 1.0,
+    guidance_scale: float = 1.0,
     generator: torch.Generator | None = None,
     initial_noise: torch.Tensor | None = None,
     velocity_fn: Callable[..., torch.Tensor] | None = None,
@@ -65,8 +65,8 @@ def flow_sample_with_logprob(
         cfg_uncond: ``[B, D_hidden]`` unconditional hidden state for CFG.
             When provided, velocity is computed as
                 v_guided = (1 + s) * v(x, cond) - s * v(x, uncond)
-            with ``s = cfg_scale``. Skip if cfg_scale ≈ 1.
-        cfg_scale: CFG strength on the velocity.
+            with ``s = guidance_scale``. Skip if guidance_scale ≈ 1.
+        guidance_scale: CFG strength on the velocity.
         generator: Optional torch.Generator for reproducibility.
         initial_noise: Optional explicit ``x_0`` prior. When provided, this
             exact tensor is used as the deterministic flow prefix and returned
@@ -131,9 +131,9 @@ def flow_sample_with_logprob(
     for k in range(num_flow_steps - 1):
         tk = t_grid[k].expand(B)
         v_cond = _velocity(x, tk, cond)
-        if cfg_uncond is not None and abs(cfg_scale - 1.0) > 1e-6:
+        if cfg_uncond is not None and abs(guidance_scale - 1.0) > 1e-6:
             v_uncond = _velocity(x, tk, cfg_uncond)
-            v = (1.0 + cfg_scale) * v_cond - cfg_scale * v_uncond
+            v = (1.0 + guidance_scale) * v_cond - guidance_scale * v_uncond
         else:
             v = v_cond
         x = x + dt * v
@@ -141,9 +141,9 @@ def flow_sample_with_logprob(
     # Final step with Gaussian noise injection (the source of the log-prob)
     tk = t_grid[num_flow_steps - 1].expand(B)
     v_cond = _velocity(x, tk, cond)
-    if cfg_uncond is not None and abs(cfg_scale - 1.0) > 1e-6:
+    if cfg_uncond is not None and abs(guidance_scale - 1.0) > 1e-6:
         v_uncond = _velocity(x, tk, cfg_uncond)
-        v = (1.0 + cfg_scale) * v_cond - cfg_scale * v_uncond
+        v = (1.0 + guidance_scale) * v_cond - guidance_scale * v_uncond
     else:
         v = v_cond
 
@@ -182,7 +182,7 @@ def flow_logprob_at(
     num_flow_steps: int = 20,
     noise_level: float = 1.0,
     cfg_uncond: torch.Tensor | None = None,
-    cfg_scale: float = 1.0,
+    guidance_scale: float = 1.0,
     velocity_fn: Callable[..., torch.Tensor] | None = None,
 ) -> torch.Tensor:
     """Recompute log-prob of a previously-sampled continuous token.
@@ -233,18 +233,18 @@ def flow_logprob_at(
     for k in range(num_flow_steps - 1):
         tk = t_grid[k].expand(B)
         v_cond = _velocity(x, tk, cond)
-        if cfg_uncond is not None and abs(cfg_scale - 1.0) > 1e-6:
+        if cfg_uncond is not None and abs(guidance_scale - 1.0) > 1e-6:
             v_uncond = _velocity(x, tk, cfg_uncond)
-            v = (1.0 + cfg_scale) * v_cond - cfg_scale * v_uncond
+            v = (1.0 + guidance_scale) * v_cond - guidance_scale * v_uncond
         else:
             v = v_cond
         x = x + dt * v
 
     tk = t_grid[num_flow_steps - 1].expand(B)
     v_cond = _velocity(x, tk, cond)
-    if cfg_uncond is not None and abs(cfg_scale - 1.0) > 1e-6:
+    if cfg_uncond is not None and abs(guidance_scale - 1.0) > 1e-6:
         v_uncond = _velocity(x, tk, cfg_uncond)
-        v = (1.0 + cfg_scale) * v_cond - cfg_scale * v_uncond
+        v = (1.0 + guidance_scale) * v_cond - guidance_scale * v_uncond
     else:
         v = v_cond
 

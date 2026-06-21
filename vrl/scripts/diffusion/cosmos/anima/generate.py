@@ -72,7 +72,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--width", type=int, default=0)
     parser.add_argument("--height", type=int, default=0)
     parser.add_argument("--steps", type=int, default=0)
-    parser.add_argument("--cfg-scale", type=float, default=0.0)
+    parser.add_argument(
+        "--guidance-scale", "--cfg-scale", dest="guidance_scale", type=float, default=0.0,
+    )
     parser.add_argument("--samples-per-prompt", type=int, default=1)
     parser.add_argument("--max-sequence-length", type=int, default=0)
     parser.add_argument(
@@ -253,7 +255,7 @@ def _resolve_sampling(args: argparse.Namespace, cfg: DictConfig) -> dict[str, An
         "height": int(args.height or OmegaConf.select(cfg, "sampling.height", default=512)),
         "num_steps": num_steps,
         "guidance_scale": float(
-            args.cfg_scale or OmegaConf.select(cfg, "sampling.guidance_scale", default=4.5),
+            args.guidance_scale or OmegaConf.select(cfg, "sampling.guidance_scale", default=4.5),
         ),
         "max_sequence_length": int(
             args.max_sequence_length

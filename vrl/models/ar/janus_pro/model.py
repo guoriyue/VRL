@@ -95,7 +95,7 @@ class JanusProConfig:
     lora_init: str = "gaussian"       # PEFT ``init_lora_weights``
 
     # Generation defaults — used by the AR runtime runner.
-    cfg_weight: float = 5.0
+    guidance_scale: float = 5.0
     temperature: float = 1.0
     image_token_num: int = JANUS_IMAGE_TOKEN_NUM
     r1_refine_mode: str = "selfcheck"  # "selfcheck" | "always" | "never"
@@ -525,7 +525,7 @@ class JanusProModel(nn.Module):
         prompt_input_ids: torch.Tensor,
         prompt_attention_mask: torch.Tensor,
         *,
-        cfg_weight: float,
+        guidance_scale: float,
         temperature: float,
         image_token_num: int,
         max_reflect_len: int,
@@ -592,7 +592,7 @@ class JanusProModel(nn.Module):
             uncond_embeds,
             prompt_attention_mask,
             uncond_attention_mask,
-            cfg_weight=cfg_weight,
+            guidance_scale=guidance_scale,
             temperature=temperature,
             image_token_num=image_token_num,
         )
@@ -710,7 +710,7 @@ class JanusProModel(nn.Module):
                 final_uncond_embeds,
                 final_cond_mask,
                 final_uncond_mask,
-                cfg_weight=cfg_weight,
+                guidance_scale=guidance_scale,
                 temperature=temperature,
                 image_token_num=image_token_num,
             )
@@ -805,7 +805,7 @@ class JanusProModel(nn.Module):
             "selfcheck": selfcheck,
             "segments": segments,
             "context": {
-                "cfg_weight": float(cfg_weight),
+                "guidance_scale": float(guidance_scale),
                 "temperature": float(temperature),
                 "image_token_num": int(image_token_num),
                 "image_size": int(image_size),

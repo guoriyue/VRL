@@ -271,8 +271,6 @@ class SamplingConfig(ConfigBase):
     # Key registry: parsed by family layout/runtime-spec extractors.
     ar_scheduler_batch_size: Any = None
     cfg: Any = None
-    cfg_scale: Any = None
-    cfg_weight: Any = None
     fps: Any = None
     guidance_scale: Any = None
     height: Any = None

@@ -59,7 +59,7 @@ def test_r1_collector_uses_r1_task_request_and_trajectory_batch() -> None:
         family="janus_pro_r1",
         values={
             "n_samples_per_prompt": 2,
-            "cfg_weight": 5.0,
+            "guidance_scale": 5.0,
             "temperature": 0.9,
             "image_token_num": 576,
             "image_size": 384,

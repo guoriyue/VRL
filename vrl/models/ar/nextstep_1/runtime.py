@@ -154,7 +154,7 @@ def _nextstep_1_config_from_runtime_spec(spec: RuntimeBuildSpec) -> dict[str, An
         )
 
     for key in (
-        "cfg_scale",
+        "guidance_scale",
         "num_flow_steps",
         "noise_level",
         "image_token_num",
@@ -197,7 +197,7 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
     The collector constructs a ``GenerationRequest`` whose ``sampling``
     dict holds:
 
-    - ``cfg_scale``: float
+    - ``guidance_scale``: float
     - ``num_flow_steps``: int
     - ``noise_level``: float
     - ``image_token_num``: int (L_img — number of continuous image tokens)
@@ -244,7 +244,7 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
         params: ARSamplingParams = self.layout.parse_sampling_params(request)
         prompts = list(request.prompts)
 
-        cfg_scale = float(sampling["cfg_scale"])
+        guidance_scale = float(sampling["guidance_scale"])
         num_flow_steps = int(sampling["num_flow_steps"])
         noise_level = float(sampling["noise_level"])
 
@@ -280,7 +280,7 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
             generator.manual_seed(params.seed)
 
         sample_kwargs: dict[str, Any] = {
-            "cfg_scale": cfg_scale,
+            "guidance_scale": guidance_scale,
             "num_flow_steps": num_flow_steps,
             "noise_level": noise_level,
             "image_token_num": params.image_token_num,
@@ -336,7 +336,7 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
         )
 
         trajectory_context: dict[str, Any] = {
-            "cfg_scale": cfg_scale,
+            "guidance_scale": guidance_scale,
             "num_flow_steps": num_flow_steps,
             "noise_level": noise_level,
             "image_token_num": params.image_token_num,
@@ -386,7 +386,7 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
         sampling = request.sampling
         params: ARSamplingParams = self.layout.parse_sampling_params(request)
 
-        cfg_scale = float(sampling["cfg_scale"])
+        guidance_scale = float(sampling["guidance_scale"])
         num_flow_steps = int(sampling["num_flow_steps"])
         noise_level = float(sampling["noise_level"])
 
@@ -417,7 +417,7 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
             generator.manual_seed(params.seed + self.layout.chunk_seed_offset(request, chunk))
 
         sample_kwargs: dict[str, Any] = {
-            "cfg_scale": cfg_scale,
+            "guidance_scale": guidance_scale,
             "num_flow_steps": num_flow_steps,
             "noise_level": noise_level,
             "image_token_num": params.image_token_num,
@@ -457,7 +457,7 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
             uncond_input_ids=uncond_ids,
             uncond_attention_mask=uncond_mask,
             context={
-                "cfg_scale": cfg_scale,
+                "guidance_scale": guidance_scale,
                 "num_flow_steps": num_flow_steps,
                 "noise_level": noise_level,
                 "image_token_num": params.image_token_num,

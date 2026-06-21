@@ -21,7 +21,7 @@ def test_janus_runtime_spec_does_not_expose_decode_strategy() -> None:
             },
             "precision": "fp32",
             "sampling": {
-                "cfg_weight": 5.0,
+                "guidance_scale": 5.0,
                 "temperature": 1.0,
                 "image_token_num": 4,
                 "ar_scheduler_batch_size": 2,

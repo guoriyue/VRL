@@ -80,7 +80,7 @@ class NextStep1Config:
     # Flow-head sampling — used by the AR runtime runner.
     num_flow_steps: int = 20             # K Euler steps inside the flow ODE
     noise_level: float = 1.0             # final-step Gaussian std multiplier
-    cfg_scale: float = 4.5               # CFG strength on the velocity field
+    guidance_scale: float = 4.5               # CFG strength on the velocity field
 
     # AR loop
     image_token_num: int = NEXTSTEP_DEFAULT_TOKEN_NUM
@@ -212,7 +212,7 @@ class NextStep1Model(nn.Module):
         tokens: torch.Tensor,                # [B, L_img, D_token]
         saved_noise: torch.Tensor,           # [B, L_img, D_token]
         *,
-        cfg_scale: float | None = None,
+        guidance_scale: float | None = None,
         num_flow_steps: int | None = None,
         noise_level: float | None = None,
     ) -> torch.Tensor:
@@ -222,7 +222,7 @@ class NextStep1Model(nn.Module):
         and (if LoRA is attached) through the LLM as well.
         """
         cfg = self.config
-        cfg_scale = cfg_scale if cfg_scale is not None else cfg.cfg_scale
+        guidance_scale = guidance_scale if guidance_scale is not None else cfg.guidance_scale
         num_flow_steps = num_flow_steps if num_flow_steps is not None else cfg.num_flow_steps
         noise_level = noise_level if noise_level is not None else cfg.noise_level
 
@@ -248,7 +248,7 @@ class NextStep1Model(nn.Module):
                 num_flow_steps=num_flow_steps,
                 noise_level=noise_level,
                 cfg_uncond=c_uncond,
-                cfg_scale=cfg_scale,
+                guidance_scale=guidance_scale,
             )
             out[:, j] = lp.float()
 
@@ -305,7 +305,7 @@ class NextStep1Model(nn.Module):
         log_probs = self.recompute_logprobs(
             prompt_embeds, uncond_embeds, prompt_mask, uncond_mask,
             tokens=tokens, saved_noise=saved_noise,
-            cfg_scale=batch.context.get("cfg_scale"),
+            guidance_scale=batch.context.get("guidance_scale"),
             num_flow_steps=batch.context.get("num_flow_steps"),
             noise_level=batch.context.get("noise_level"),
         )

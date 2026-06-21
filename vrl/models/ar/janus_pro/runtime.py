@@ -156,7 +156,7 @@ def _janus_config_from_runtime_spec(spec: RuntimeBuildSpec) -> dict[str, Any]:
             },
         )
 
-    for key in ("cfg_weight", "temperature", "image_token_num"):
+    for key in ("guidance_scale", "temperature", "image_token_num"):
         if key in sampling_config:
             config[key] = sampling_config[key]
 
@@ -225,7 +225,7 @@ class JanusProChunkExecutor(ARChunkExecutorBase):
     The collector constructs a ``GenerationRequest`` whose ``sampling``
     dict holds:
 
-    - ``cfg_weight``: float — classifier-free guidance scale.
+    - ``guidance_scale``: float — classifier-free guidance scale.
     - ``temperature``: float — sampling temperature.
     - ``image_token_num``: int — number of AR image tokens to generate.
     - ``image_size``: int — VQ decoder output side length (pixels).
@@ -298,7 +298,7 @@ class JanusProChunkExecutor(ARChunkExecutorBase):
         params: ARSamplingParams = self.layout.parse_sampling_params(request)
         prompts = list(request.prompts)
 
-        cfg_weight = float(sampling.get("cfg_weight", 5.0))
+        guidance_scale = float(sampling.get("guidance_scale", 5.0))
         temperature = float(sampling.get("temperature", 1.0))
 
         if params.seed is not None:
@@ -337,7 +337,7 @@ class JanusProChunkExecutor(ARChunkExecutorBase):
 
         # 3. Run the AR sampling loop.
         sample_kwargs = {
-            "cfg_weight": cfg_weight,
+            "guidance_scale": guidance_scale,
             "temperature": temperature,
             "image_token_num": params.image_token_num,
             "ar_scheduler_batch_size": params.ar_scheduler_batch_size,
@@ -395,7 +395,7 @@ class JanusProChunkExecutor(ARChunkExecutorBase):
         )
 
         trajectory_context: dict[str, Any] = {
-            "cfg_weight": cfg_weight,
+            "guidance_scale": guidance_scale,
             "image_token_num": params.image_token_num,
             "ar_decode_loop_enabled": True,
         }
@@ -445,7 +445,7 @@ class JanusProChunkExecutor(ARChunkExecutorBase):
         sampling = request.sampling
         params: ARSamplingParams = self.layout.parse_sampling_params(request)
 
-        cfg_weight = float(sampling.get("cfg_weight", 5.0))
+        guidance_scale = float(sampling.get("guidance_scale", 5.0))
         temperature = float(sampling.get("temperature", 1.0))
 
         if params.seed is not None:
@@ -489,7 +489,7 @@ class JanusProChunkExecutor(ARChunkExecutorBase):
                 scheduler_batch_size=chunk.sample_count,
                 init_args=(cond_embeds, uncond_embeds, prompt_mask, uncond_mask),
                 init_kwargs={
-                    "cfg_weight": cfg_weight,
+                    "guidance_scale": guidance_scale,
                     "temperature": temperature,
                     "image_token_num": params.image_token_num,
                 },
@@ -516,7 +516,7 @@ class JanusProChunkExecutor(ARChunkExecutorBase):
             uncond_input_ids=uncond_ids,
             uncond_attention_mask=uncond_mask,
             context={
-                "cfg_weight": cfg_weight,
+                "guidance_scale": guidance_scale,
                 "image_token_num": params.image_token_num,
                 "ar_decode_loop_enabled": True,
             },
@@ -735,7 +735,7 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
                 self.model.generate_with_refine,
                 prompt_ids,
                 prompt_mask,
-                cfg_weight=float(sampling.get("cfg_weight", 5.0)),
+                guidance_scale=float(sampling.get("guidance_scale", 5.0)),
                 temperature=float(sampling.get("temperature", 1.0)),
                 image_token_num=params.image_token_num,
                 max_reflect_len=int(sampling.get("max_reflect_len", 80)),
@@ -831,7 +831,7 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
                 self.model.generate_with_refine,
                 prompt_ids,
                 prompt_mask,
-                cfg_weight=float(sampling.get("cfg_weight", 5.0)),
+                guidance_scale=float(sampling.get("guidance_scale", 5.0)),
                 temperature=float(sampling.get("temperature", 1.0)),
                 image_token_num=params.image_token_num,
                 max_reflect_len=int(sampling.get("max_reflect_len", 80)),

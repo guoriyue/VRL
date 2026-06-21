@@ -5,5 +5,5 @@ sampling:
   image_token_num: 1024
   num_flow_steps: 20
   noise_level: 1.0
-  cfg_scale: 4.5
+  guidance_scale: 4.5
   ar_scheduler_batch_size: null

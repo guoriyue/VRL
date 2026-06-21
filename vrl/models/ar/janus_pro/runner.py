@@ -34,7 +34,7 @@ class JanusProARState:
 
     token_ids: torch.Tensor
     logprobs: torch.Tensor
-    cfg_weight: float
+    guidance_scale: float
     temperature: float
     image_token_num: int
     paged_cond_states: list[Any] | None = None
@@ -64,11 +64,11 @@ class JanusProARModelRunner:
         cond_attention_mask: torch.Tensor,
         uncond_attention_mask: torch.Tensor,
         *,
-        cfg_weight: float | None = None,
+        guidance_scale: float | None = None,
         temperature: float | None = None,
         image_token_num: int | None = None,
     ) -> ARTokenLoopInit:
-        cfg = cfg_weight if cfg_weight is not None else self.model.config.cfg_weight
+        cfg = guidance_scale if guidance_scale is not None else self.model.config.guidance_scale
         temp = temperature if temperature is not None else self.model.config.temperature
         image_token_num = image_token_num or self.model.config.image_token_num
         batch_size = cond_inputs_embeds.shape[0]
@@ -100,7 +100,7 @@ class JanusProARModelRunner:
                 logprobs=torch.empty(
                     batch_size, image_token_num, dtype=torch.float32, device=device
                 ),
-                cfg_weight=float(cfg),
+                guidance_scale=float(cfg),
                 temperature=float(temp),
                 image_token_num=int(image_token_num),
                 paged_cond_states=paged_cond_states,
@@ -232,7 +232,7 @@ class JanusProARModelRunner:
         cond_logits, uncond_logits = logits.chunk(2, dim=0)
         cond_logits = cond_logits.float()
         uncond_logits = uncond_logits.float()
-        guided = uncond_logits + state.cfg_weight * (cond_logits - uncond_logits)
+        guided = uncond_logits + state.guidance_scale * (cond_logits - uncond_logits)
 
         probs = F.softmax(guided / state.temperature, dim=-1)
         sampled = torch.multinomial(probs, num_samples=1).squeeze(-1)
