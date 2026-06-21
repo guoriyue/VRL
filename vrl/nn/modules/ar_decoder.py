@@ -93,15 +93,6 @@ class VllmDecoderPagedAttentionBackend(ARAttentionBackend):
         return ARAttentionPrefillOutput(
             last_hidden=last_hidden_states.index_select(0, last_token_offsets),
             sequence_states=states,
-            metrics={
-                # ``attention_backend`` = the resolved per-family backend label
-                # (e.g. ``janus_pro_vllm_paged_attention``). Distinct from the
-                # kernel-class string reported under ``attention_kernels`` by the
-                # vllm_paged kernels; one metric key never carries both spaces.
-                "attention_backend": self.backend_label,
-                "prefill_tokens": int(inputs_embeds.shape[0]),
-                "allocated_blocks": self._next_block_id,
-            },
         )
 
     @torch.no_grad()
@@ -125,11 +116,6 @@ class VllmDecoderPagedAttentionBackend(ARAttentionBackend):
         return ARAttentionStepOutput(
             last_hidden=last_hidden_states,
             sequence_states=states,
-            metrics={
-                "attention_backend": self.backend_label,
-                "decode_tokens": int(inputs_embeds.shape[0]),
-                "allocated_blocks": self._next_block_id,
-            },
         )
 
     def debug_info(self) -> dict[str, Any]:

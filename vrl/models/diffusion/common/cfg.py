@@ -7,7 +7,6 @@ from typing import Any, Literal
 
 import torch
 
-DiffusionBranchName = Literal["cond", "uncond"]
 DiffusionCFGBase = Literal["uncond", "cond"]
 
 
@@ -15,7 +14,6 @@ DiffusionCFGBase = Literal["uncond", "cond"]
 class DiffusionBranch:
     """One diffusion transformer branch call."""
 
-    name: DiffusionBranchName
     hidden_states: torch.Tensor
     timestep: torch.Tensor
     encoder_hidden_states: torch.Tensor

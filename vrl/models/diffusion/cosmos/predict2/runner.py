@@ -48,7 +48,6 @@ class CosmosPredict2DiffusionBackboneRunner:
             timestep=request.timestep,
         )
         return DiffusionBranch(
-            name=branch,
             hidden_states=hidden_states.to(extra["transformer_dtype"]),
             timestep=timestep.to(extra["transformer_dtype"]),
             encoder_hidden_states=embeds,

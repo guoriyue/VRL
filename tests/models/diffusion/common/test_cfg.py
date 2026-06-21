@@ -14,14 +14,12 @@ from vrl.models.diffusion.common import (
 def test_pack_and_split_batched_cfg_preserves_uncond_cond_order() -> None:
     """Checks pack and split batched CFG preserves uncond cond order."""
     cond = DiffusionBranch(
-        name="cond",
         hidden_states=torch.full((2, 1), 2.0),
         timestep=torch.tensor([10.0, 11.0]),
         encoder_hidden_states=torch.full((2, 3), 20.0),
         extra_kwargs={"pooled_projections": torch.full((2, 4), 200.0)},
     )
     uncond = DiffusionBranch(
-        name="uncond",
         hidden_states=torch.full((2, 1), -2.0),
         timestep=torch.tensor([1.0, 2.0]),
         encoder_hidden_states=torch.full((2, 3), -20.0),

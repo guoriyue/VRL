@@ -41,7 +41,6 @@ class _Adapter:
             embeds = request.negative_prompt_embeds
         assert embeds is not None
         return DiffusionBranch(
-            name=branch,
             hidden_states=request.hidden_states,
             timestep=request.timestep,
             encoder_hidden_states=embeds,

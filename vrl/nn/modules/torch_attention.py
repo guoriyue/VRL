@@ -67,7 +67,6 @@ class TorchNativeDecoderAttentionBackend(ARAttentionBackend):
         return ARAttentionPrefillOutput(
             last_hidden=last_hidden,
             sequence_states=tuple(states),
-            metrics={"attention_backend": self.backend_label},
         )
 
     @torch.no_grad()
@@ -79,7 +78,6 @@ class TorchNativeDecoderAttentionBackend(ARAttentionBackend):
         return ARAttentionStepOutput(
             last_hidden=last_hidden,
             sequence_states=tuple(states),
-            metrics={"attention_backend": self.backend_label},
         )
 
 

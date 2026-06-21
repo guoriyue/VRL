@@ -22,7 +22,6 @@ class VideoGenerationRequest:
 
     prompt: str = ""
     negative_prompt: str = ""
-    references: list[str] = field(default_factory=list)
     task_type: str = "text_to_video"
     width: int = 1024
     height: int = 640
@@ -30,9 +29,7 @@ class VideoGenerationRequest:
     num_steps: int = 35
     guidance_scale: float = 5.0
     seed: int | None = None
-    model_name: str = ""
     fps: int = 16
-    shift: float = 1.0
     extra: dict[str, Any] = field(default_factory=dict)
 
 

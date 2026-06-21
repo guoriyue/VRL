@@ -64,7 +64,6 @@ class ARAttentionPrefillOutput:
 
     last_hidden: torch.Tensor
     sequence_states: tuple[Any, ...]
-    metrics: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _require_last_hidden_batch(self.last_hidden, len(self.sequence_states))
@@ -99,7 +98,6 @@ class ARAttentionStepOutput:
 
     last_hidden: torch.Tensor
     sequence_states: tuple[Any, ...]
-    metrics: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _require_last_hidden_batch(self.last_hidden, len(self.sequence_states))

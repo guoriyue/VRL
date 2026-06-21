@@ -38,7 +38,6 @@ class WanDiffusionBackboneRunner:
         if branch == "uncond":
             embeds = require_tensor(request.negative_prompt_embeds, "Wan negative_prompt_embeds")
         return DiffusionBranch(
-            name=branch,
             hidden_states=request.hidden_states,
             timestep=request.timestep,
             encoder_hidden_states=embeds,
@@ -119,7 +118,6 @@ class WanI2VDiffusionBackboneRunner:
             )
 
         return DiffusionBranch(
-            name=branch,
             hidden_states=hidden_states,
             timestep=request.timestep,
             encoder_hidden_states=embeds,

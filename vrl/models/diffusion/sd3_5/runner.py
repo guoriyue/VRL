@@ -64,7 +64,6 @@ class SD3DiffusionBackboneRunner:
                 "negative_pooled_prompt_embeds",
             )
         return DiffusionBranch(
-            name=branch,
             hidden_states=request.hidden_states,
             timestep=request.timestep,
             encoder_hidden_states=embeds,

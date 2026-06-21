@@ -57,7 +57,6 @@ def test_janus_vllm_paged_attention_matches_hf_llama_one_step() -> None:
             )
         )
 
-    assert paged_prefill.metrics["attention_backend"] == "janus_pro_vllm_paged_attention"
     assert paged_prefill.last_hidden.shape == (1, 512)
     assert paged_step.last_hidden.shape == (1, 512)
     assert (
