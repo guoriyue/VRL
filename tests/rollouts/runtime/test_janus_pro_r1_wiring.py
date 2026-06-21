@@ -9,6 +9,7 @@ from vrl.rollouts.collector.batch_builder import (
     TrajectoryRolloutBatchBuilder,
 )
 from vrl.rollouts.collector.config import RolloutConfig
+from vrl.rollouts.families import get_rollout_family_entry
 from vrl.trajectory import build_ar_multisegment_trajectory
 
 
@@ -81,10 +82,11 @@ def test_r1_collector_uses_r1_task_request_and_trajectory_batch() -> None:
     )
     plan = collector.request_builder.build(["draw text"], 2, {})
 
+    entry = get_rollout_family_entry("janus_pro_r1")
     assert collector.family == "janus_pro_r1"
-    assert collector.task == "ar_t2i_r1"
+    assert collector.task == entry.task
     assert plan.request.family == "janus_pro_r1"
-    assert plan.request.task == "ar_t2i_r1"
+    assert plan.request.task == entry.task
     assert plan.request.sampling["max_reflect_len"] == 32
     assert "trajectory" in plan.request.return_artifacts
 

@@ -48,24 +48,20 @@ def test_family_registry_covers_current_rollout_families() -> None:
 
 
 def test_family_aliases_resolve_to_canonical_entries() -> None:
-    """Checks family aliases resolve to canonical entries."""
-    expected_aliases = {
-        "flux_1_dev": "flux",
-        "qwen-image": "qwen_image",
-        "wan": "wan_2_1",
-        "wan_i2v": "wan_2_1_i2v",
-        "cosmos": "cosmos-predict2",
-        "cosmos_predict2": "cosmos-predict2",
-        "cosmos_predict2_5": "cosmos-predict2.5",
-        "anima": "cosmos-predict2-anima",
-        "cosmos_anima": "cosmos-predict2-anima",
-        "janus": "janus_pro",
-        "janus_r1": "janus_pro_r1",
-        "nextstep": "nextstep_1",
-    }
-    for alias, expected in expected_aliases.items():
-        assert normalize_rollout_family(alias) == expected
-        assert get_rollout_family_entry(alias) is FAMILY_REGISTRY[expected]
+    """Every alias declared on a registry entry resolves back to that entry.
+
+    Derived from ``entry.aliases`` so a new family/alias is covered automatically
+    and no hand-copied alias map can drift from the registry source of truth.
+    """
+    seen = 0
+    for family, entry in FAMILY_REGISTRY.items():
+        # The canonical name itself must resolve to its own entry.
+        assert normalize_rollout_family(family) == family
+        for alias in entry.aliases:
+            assert normalize_rollout_family(alias) == family
+            assert get_rollout_family_entry(alias) is entry
+            seen += 1
+    assert seen > 0  # guard: the registry must actually declare aliases
 
 
 def test_rollout_config_is_projected_from_yaml() -> None:

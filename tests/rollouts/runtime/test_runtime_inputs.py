@@ -20,56 +20,48 @@ from vrl.rollouts.families import (
 
 
 @pytest.mark.parametrize(
-    ("experiment", "family", "expected_task", "expected_gatherer"),
+    ("experiment", "family", "expected_gatherer"),
     [
-        ("diffusion/sd3_5/online_grpo_ocr", "sd3_5", "t2i", DiffusionChunkGatherer),
-        ("diffusion/wan_2_1/online_grpo_ocr", "wan_2_1", "t2v", DiffusionChunkGatherer),
+        ("diffusion/sd3_5/online_grpo_ocr", "sd3_5", DiffusionChunkGatherer),
+        ("diffusion/wan_2_1/online_grpo_ocr", "wan_2_1", DiffusionChunkGatherer),
         (
             "diffusion/wan_2_1/online_grpo_kling_video_reward",
             "wan_2_1",
-            "t2v",
             DiffusionChunkGatherer,
         ),
         (
             "diffusion/wan_2_1/online_grpo_physics_i2v",
             "wan_2_1_i2v",
-            "i2v",
             DiffusionChunkGatherer,
         ),
         (
             "diffusion/cosmos_predict2/online_grpo_kling_video_reward",
             "cosmos-predict2",
-            "v2w",
             DiffusionChunkGatherer,
         ),
         (
             "diffusion/anima_preview3/online_grpo_aesthetic",
             "cosmos-predict2-anima",
-            "t2i",
             DiffusionChunkGatherer,
         ),
         (
             "diffusion/anima_preview3/online_grpo_aesthetic_nsfw_safety",
             "cosmos-predict2-anima",
-            "t2i",
             DiffusionChunkGatherer,
         ),
         (
             "ar/janus_pro/online_grpo_ocr",
             "janus_pro",
-            "ar_t2i",
             JanusProChunkGatherer,
         ),
         (
             "ar/janus_pro/online_r1_grpo_ocr",
             "janus_pro_r1",
-            "ar_t2i_r1",
             JanusProR1ChunkGatherer,
         ),
         (
             "ar/nextstep_1/online_grpo_ocr",
             "nextstep_1",
-            "ar_t2i",
             NextStep1ChunkGatherer,
         ),
     ],
@@ -77,7 +69,6 @@ from vrl.rollouts.families import (
 def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
     experiment: str,
     family: str,
-    expected_task: str,
     expected_gatherer: type,
 ) -> None:
     """Checks rollout runtime inputs are serializable and registry-backed."""
@@ -106,7 +97,8 @@ def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
     assert isinstance(inputs, RayGenerationLaunchInputs)
     assert pickle.loads(pickle.dumps(inputs.launch_contract)) == inputs.launch_contract
     assert inputs.launch_contract.family == family
-    assert inputs.launch_contract.task == expected_task
+    # registry is the single source of truth for the canonical task string
+    assert inputs.launch_contract.task == entry.task
     assert inputs.launch_contract.policy_version == 0
     assert inputs.launch_contract.runtime_builder == entry.runtime_builder
     assert inputs.launch_contract.executor_cls == entry.executor_cls
@@ -243,9 +235,10 @@ def test_wan_i2v_runtime_inputs_include_reference_image_from_cfg() -> None:
         weight_dtype=torch.bfloat16,
     )
 
+    entry = get_rollout_family_entry("wan_2_1_i2v")
     assert isinstance(inputs, RayGenerationLaunchInputs)
-    assert inputs.launch_contract.family == "wan_2_1_i2v"
-    assert inputs.launch_contract.task == "i2v"
+    assert inputs.launch_contract.family == entry.family
+    assert inputs.launch_contract.task == entry.task
     assert inputs.launch_contract.executor_kwargs["reference_image"] == "/tmp/reference.png"
     assert inputs.launch_contract.model_build is not None
     assert inputs.launch_contract.model_build["task_variant"] == "i2v"

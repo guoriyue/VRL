@@ -39,16 +39,22 @@ from __future__ import annotations
 
 import pytest
 import torch
+from omegaconf import OmegaConf
 
+from vrl.config.loading import CONFIGS_ROOT, load_config
 from vrl.math.diffusion.flow_matching import sde_step_with_logprob
+from vrl.rollouts.families import FAMILY_REGISTRY, normalize_rollout_family
 
 _NUM_STEPS = 10
 _BATCH = 2
 
 
-def _hf_scheduler(repo: str, revision: str | None = None):
+def _load_hf_scheduler(repo: str, revision: str | None = None):
+    """Build a real scheduler from its cached ``scheduler_config.json``, or return
+    None on a cache miss (clean/offline CI) so the caller can try the next config
+    or skip. The conversion-math itself stays covered cache-free by
+    tests/math/test_diffusion_flow_matching.py; see the module docstring."""
     diffusers = pytest.importorskip("diffusers")
-
     try:
         # load_config is class-agnostic for schedulers (they all read
         # scheduler_config.json); dispatch the real class via _class_name.
@@ -58,12 +64,8 @@ def _hf_scheduler(repo: str, revision: str | None = None):
             revision=revision,
             local_files_only=True,
         )
-    except Exception as exc:  # cache miss / offline CI
-        # Silent no-op on clean CI: the cache-loaded families skip here. The
-        # conversion-math itself stays covered cache-free by
-        # tests/math/test_diffusion_flow_matching.py; see module docstring +
-        # the TODO(option-a) tiny-scheduler-repo plan to run the real tables.
-        pytest.skip(f"scheduler config for {repo} not in local HF cache: {exc}")
+    except Exception:  # cache miss / offline CI
+        return None
     scheduler_cls = getattr(diffusers, config["_class_name"])
     return scheduler_cls.from_config(config)
 
@@ -75,16 +77,63 @@ def _anima_scheduler():
     return scheduler
 
 
-_FAMILY_SCHEDULERS = {
-    "sd3_5": lambda: _hf_scheduler("stabilityai/stable-diffusion-3.5-medium"),
-    "wan_2_1": lambda: _hf_scheduler("Wan-AI/Wan2.1-T2V-1.3B-Diffusers"),
-    "cosmos-predict2": lambda: _hf_scheduler("nvidia/Cosmos-Predict2-2B-Video2World"),
-    "cosmos-predict2.5": lambda: _hf_scheduler(
-        "nvidia/Cosmos-Predict2.5-2B",
-        revision="diffusers/base/post-trained",
-    ),
-    "cosmos-anima": _anima_scheduler,
-}
+def _diffusion_families() -> list[str]:
+    return [f for f, e in FAMILY_REGISTRY.items() if e.collector.kind == "diffusion"]
+
+
+def _model_configs_by_family() -> dict[str, list[str]]:
+    """Discover ``family -> [model config, ...]`` by reading the declared
+    ``model.family`` from every diffusion model config.
+
+    The config files are the single source of truth, so a newly added family
+    config is picked up automatically — there is no hand-maintained family->path
+    table to drift. Declared aliases (e.g. ``family: wan``) normalize to their
+    canonical registry key; configs sort so the smaller, more likely-cached
+    checkpoint is tried first.
+    """
+    out: dict[str, list[str]] = {}
+    for path in sorted((CONFIGS_ROOT / "model" / "diffusion").rglob("*.yaml")):
+        declared = OmegaConf.load(path).get("model", {}).get("family")
+        if declared is None:
+            continue
+        family = normalize_rollout_family(str(declared))
+        rel = path.relative_to(CONFIGS_ROOT).with_suffix("").as_posix()
+        out.setdefault(family, []).append(rel)
+    return out
+
+
+_MODEL_CONFIGS_BY_FAMILY = _model_configs_by_family()
+
+# anima is the lone diffusion family whose scheduler is built in code
+# (vrl/.../cosmos/anima/runtime.py), not downloaded — mirror that construction.
+# Keyed off a registry family so a rename/typo fails the guard below instead of
+# silently dropping anima's cache-free coverage.
+_MANUAL_SCHEDULERS = {"cosmos-predict2-anima": _anima_scheduler}
+assert set(_MANUAL_SCHEDULERS) <= set(_diffusion_families())
+
+
+def _scheduler_for(family: str):
+    if family in _MANUAL_SCHEDULERS:
+        return _MANUAL_SCHEDULERS[family]()
+    # Try the family's configs in order; the first with a cached scheduler wins.
+    # path/revision come from the YAML, never re-typed here.
+    for cfg_name in _MODEL_CONFIGS_BY_FAMILY.get(family, ()):
+        model = load_config(cfg_name).model
+        scheduler = _load_hf_scheduler(model.path, revision=model.get("revision"))
+        if scheduler is not None:
+            return scheduler
+    pytest.skip(f"no cached scheduler for diffusion family {family!r}")
+
+
+def _set_timesteps(scheduler) -> None:
+    # Flow-match schedulers with dynamic shifting (flux, qwen_image) require a
+    # resolution-derived ``mu`` at set_timesteps; the sample<->replay parity
+    # invariant is independent of the shift, so pin mu=0 (identity shift) for a
+    # deterministic, valid sigma table. Fixed-schedule schedulers ignore mu.
+    if getattr(scheduler.config, "use_dynamic_shifting", False):
+        scheduler.set_timesteps(_NUM_STEPS, mu=0.0)
+    else:
+        scheduler.set_timesteps(_NUM_STEPS)
 
 
 def _timestep(scheduler, step_index: int) -> torch.Tensor:
@@ -92,11 +141,11 @@ def _timestep(scheduler, step_index: int) -> torch.Tensor:
 
 
 @pytest.mark.parametrize("sde_type", ["flow_grpo", "cps"])
-@pytest.mark.parametrize("family", sorted(_FAMILY_SCHEDULERS))
+@pytest.mark.parametrize("family", sorted(_diffusion_families()))
 def test_family_scheduler_sample_replay_parity(family: str, sde_type: str) -> None:
     """Checks the GRPO ratio==1 invariant on each family's real sigma table."""
-    scheduler = _FAMILY_SCHEDULERS[family]()
-    scheduler.set_timesteps(_NUM_STEPS)
+    scheduler = _scheduler_for(family)
+    _set_timesteps(scheduler)
     assert scheduler.sigmas is not None
 
     # First, middle, and last-but-one step; the final row's sigma_prev is 0 and
@@ -148,6 +197,6 @@ def test_predict2_scheduler_exercises_edm_conversion() -> None:
     this test documents that the EDM branch lost its only real-family coverage
     (rather than silently passing through the legacy path).
     """
-    scheduler = _FAMILY_SCHEDULERS["cosmos-predict2"]()
-    scheduler.set_timesteps(_NUM_STEPS)
+    scheduler = _scheduler_for("cosmos-predict2")
+    _set_timesteps(scheduler)
     assert float(scheduler.sigmas.max()) > 1.0

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import typing
+
 import pytest
 from omegaconf import OmegaConf
 
@@ -14,6 +16,20 @@ from vrl.config.schema import (
 )
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def _literal_args(annotation) -> tuple[str, ...]:
+    """Flatten a ``Literal[...]`` or ``Literal[...] | None`` annotation into its
+    members, so the allow-list tests derive their cases from the schema's single
+    source of truth instead of hand-copying the Literal members (a copy never
+    sees a newly added member, leaving it silently untested)."""
+    members = typing.get_args(annotation)
+    # Optional[Literal[...]]: unwrap each non-None union member's Literal args.
+    if any(m is type(None) for m in members):
+        return tuple(
+            a for m in members if m is not type(None) for a in typing.get_args(m)
+        )
+    return members
 
 
 def _minimal_grpo_cfg(**overrides):
@@ -46,20 +62,10 @@ def _kling_video_reward_kwargs(**overrides) -> dict:
 
 
 @pytest.mark.parametrize(
-    "kind",
-    [
-        "grpo",
-        "dance_grpo",
-        "flow_dppo",
-        "grpo_guard",
-        "token_grpo",
-        "token_grpo_multisegment",
-        "diffusion_dpo",
-        "diffusion_nft",
-    ],
+    "kind", _literal_args(AlgorithmConfig.model_fields["kind"].annotation)
 )
 def test_valid_algorithm_kinds_are_accepted(kind: str) -> None:
-    """Checks valid algorithm kinds are accepted."""
+    """Every kind in the AlgorithmConfig.kind Literal allow-list is accepted."""
     algo = AlgorithmConfig(kind=kind)
     assert algo.kind == kind
 
@@ -133,9 +139,12 @@ def test_unknown_final_image_policy_raises() -> None:
 # ── distributed.training strategy ─────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("strategy", ["single_process", "fsdp"])
+@pytest.mark.parametrize(
+    "strategy", _literal_args(TrainingSection.model_fields["strategy"].annotation)
+)
 def test_valid_training_strategies_are_accepted(strategy: str) -> None:
-    """Both readiness strategies validate; the Literal is the only allow-list."""
+    """Every strategy in the Literal allow-list validates (the Literal is the
+    only allow-list; deriving the cases keeps a newly added backend covered)."""
     section = TrainingSection(strategy=strategy)
     assert section.strategy == strategy
 
@@ -295,11 +304,11 @@ def test_rollout_keys_are_registered_not_unknown() -> None:
 
 
 @pytest.mark.parametrize(
-    "loader",
-    ["prompt_manifest", "prompt_image_manifest", "pickapic_preference"],
+    "loader", _literal_args(DataConfig.model_fields["loader"].annotation)
 )
 def test_valid_data_loaders_are_accepted(loader: str) -> None:
-    """Checks valid data loaders are accepted."""
+    """Every loader in the DataConfig.loader Literal allow-list is accepted; the
+    per-loader construction branches below stay as real behavior coverage."""
     if loader == "prompt_manifest":
         data = DataConfig(
             loader=loader,
