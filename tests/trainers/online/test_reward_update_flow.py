@@ -1043,14 +1043,19 @@ def test_host_memory_budget_fraction_bounds() -> None:
 
 
 def test_run_fixed_eval_uses_fixed_seed_grid_and_no_backward() -> None:
-    """Fixed eval scores a fixed seed grid via the collector, never touching the trainer."""
+    """Fixed eval scores a fixed seed grid via the collector, never touching the trainer.
+
+    Single-process path (world_size=1): the distributed entrypoint must reproduce
+    the old rank0-only output exactly — same seed grid, mean, component means (P3).
+    """
     import asyncio
 
     import pytest
     import torch
 
-    from vrl.scripts.common.online import _FixedEvalResult, _run_fixed_eval
+    from vrl.scripts.common.online import _FixedEvalResult, _run_distributed_fixed_eval
     from vrl.trainers.data.prompts import PromptExample
+    from vrl.trainers.distributed import resolve_training_context
 
     seen_seeds: list[int] = []
 
@@ -1076,10 +1081,11 @@ def test_run_fixed_eval_uses_fixed_seed_grid_and_no_backward() -> None:
             self.last_components = {"kling": [1.0, 3.0]}
 
     examples = [PromptExample(prompt="p0"), PromptExample(prompt="p1")]
+    context = resolve_training_context({}, device=torch.device("cpu"))
 
     def _eval() -> _FixedEvalResult:
         return asyncio.run(
-            _run_fixed_eval(
+            _run_distributed_fixed_eval(
                 _Collector(),
                 _Reward(),
                 examples,
@@ -1087,11 +1093,12 @@ def test_run_fixed_eval_uses_fixed_seed_grid_and_no_backward() -> None:
                 base_seed=100,
                 max_prompts=0,
                 component_names=("kling",),
+                training_context=context,
             ),
         )
 
     result = _eval()
-    # Deterministic per-prompt seeds: 100 + prompt_index*samples_per_prompt.
+    # Deterministic per-prompt seeds: 100 + global_index*samples_per_prompt.
     assert seen_seeds == [100, 102]
     assert isinstance(result, _FixedEvalResult)
     assert result.n == 4  # 2 prompts x 2 samples

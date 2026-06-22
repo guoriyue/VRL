@@ -1,19 +1,20 @@
-"""Rank0 ↔ Ray ownership spike (readiness P6).
+"""Per-rank ownership contract for the multi-rank online loop.
 
-Not a real distributed run: monkeypatched torchrun env + a fake Ray runtime that
-counts calls. This locks the ownership contract a future FSDP driver must follow
-so N ranks never all open a Ray client, double-sample, or write duplicate
-outputs:
+The training rollout is data-parallel: every rank drives its OWN colocated Ray
+runtime over a disjoint prompt shard (``run_online_recipe`` hands each rank
+``idx[rank*rbs:(rank+1)*rbs]``), so the old "only rank0 touches Ray" spike is no
+longer the shape. The contract the loop actually keeps now is:
 
-    primary rank      -> drives the Ray rollout runtime (generate / update_weights)
-                         and writes metrics / checkpoints / eval
-    non-primary rank  -> touches neither; waits at the strategy barrier
+    training rollout  -> EVERY rank generates its local prompt shard
+    fixed eval        -> EVERY rank generates its local eval shard,
+                         rank0 ALONE writes eval_metrics.csv
+    checkpoint        -> EVERY rank runs the trainable-state gather (a collective),
+                         rank0 ALONE writes the files
 
-The gate is ``context.is_primary``, resolved from env by
-``resolve_training_context``. These tests prove that flag is right per rank under
-the exact env a torchrun launch sets, and that gating on it yields the intended
-call pattern. The barrier seam already exists (no-op in single_process, real in
-the future FSDP strategy).
+The single writer is always ``context.is_primary``; the work that precedes the
+write (Ray generation, the FSDP gather) runs on all ranks so no collective
+mismatches. The barrier seam exists on every rank (no-op single_process, real
+under FSDP).
 """
 
 from __future__ import annotations
@@ -29,24 +30,32 @@ _FSDP_CFG = {
 
 
 class _FakeRayRuntime:
-    """Records how often each Ray-facing rollout entry point is hit."""
+    """Records how often each rank hits the Ray-facing rollout entry points."""
 
     def __init__(self) -> None:
-        self.generate_calls = 0
+        self.train_generate_calls = 0
+        self.eval_generate_calls = 0
         self.update_weights_calls = 0
 
-    def generate(self) -> None:
-        self.generate_calls += 1
+    def train_generate(self) -> None:
+        self.train_generate_calls += 1
+
+    def eval_generate(self) -> None:
+        self.eval_generate_calls += 1
 
     def update_weights(self) -> None:
         self.update_weights_calls += 1
 
 
 class _FakeOutputSink:
-    """Records metric/checkpoint/eval writes."""
+    """Records output writes (metrics / eval rows / checkpoint files) and gathers."""
 
     def __init__(self) -> None:
         self.writes = 0
+        self.gathers = 0
+
+    def gather(self) -> None:
+        self.gathers += 1
 
     def write(self) -> None:
         self.writes += 1
@@ -60,47 +69,64 @@ def _fsdp_context(rank: int):
     )
 
 
-def _drive_one_step(context, runtime: _FakeRayRuntime, sink: _FakeOutputSink) -> None:
-    """The ownership rule a multi-rank driver must follow.
+def _drive_training_rollout(context, runtime: _FakeRayRuntime) -> None:
+    """Every rank collects+trains its own prompt shard; rank0 writes the metric row.
 
-    Only the primary rank owns Ray I/O and output writes; this is the shape the
-    FSDP loop has to keep so non-primary ranks never re-drive Ray or double-write.
+    Generation and weight sync run on ALL ranks (each rank owns a disjoint shard
+    and pushes its trained state); only the metric write is rank0-gated.
     """
+    runtime.train_generate()
+    runtime.update_weights()
+
+
+def _drive_fixed_eval(context, runtime: _FakeRayRuntime, sink: _FakeOutputSink) -> None:
+    """Every rank evaluates its eval shard; the stats all-reduce is implied; rank0 writes."""
+    runtime.eval_generate()
     if context.is_primary:
-        runtime.generate()
-        runtime.update_weights()
         sink.write()
 
 
-def test_primary_rank_drives_ray_and_writes() -> None:
-    ctx = _fsdp_context(0)
-    assert ctx.is_primary is True
-
-    runtime, sink = _FakeRayRuntime(), _FakeOutputSink()
-    _drive_one_step(ctx, runtime, sink)
-
-    assert (runtime.generate_calls, runtime.update_weights_calls, sink.writes) == (1, 1, 1)
+def _drive_checkpoint(context, sink: _FakeOutputSink) -> None:
+    """Every rank runs the trainable-state gather (collective); rank0 writes files."""
+    sink.gather()
+    if context.is_primary:
+        sink.write()
 
 
-def test_non_primary_rank_never_touches_ray_or_writes() -> None:
-    ctx = _fsdp_context(1)
-    assert ctx.is_primary is False
+def test_every_rank_drives_its_own_training_rollout() -> None:
+    """Training rollout is data-parallel: each rank generates its local shard."""
+    runtime = _FakeRayRuntime()
+    for rank in range(2):
+        _drive_training_rollout(_fsdp_context(rank), runtime)
 
-    runtime, sink = _FakeRayRuntime(), _FakeOutputSink()
-    _drive_one_step(ctx, runtime, sink)
+    # Both ranks generate + sync (disjoint shards), not rank0 alone.
+    assert runtime.train_generate_calls == 2
+    assert runtime.update_weights_calls == 2
 
-    assert (runtime.generate_calls, runtime.update_weights_calls, sink.writes) == (0, 0, 0)
 
-
-def test_only_one_rank_generates_across_the_world() -> None:
-    """Summed across every rank of the world, Ray generate fires exactly once."""
+def test_fixed_eval_runs_on_every_rank_but_only_rank0_writes() -> None:
+    """Every rank evaluates a disjoint eval shard; rank0 alone appends the row."""
     runtime, sink = _FakeRayRuntime(), _FakeOutputSink()
     for rank in range(2):
-        _drive_one_step(_fsdp_context(rank), runtime, sink)
+        _drive_fixed_eval(_fsdp_context(rank), runtime, sink)
 
-    assert runtime.generate_calls == 1  # no double-sampling
-    assert runtime.update_weights_calls == 1  # no duplicate weight push
-    assert sink.writes == 1  # no duplicate metrics/checkpoint/eval
+    assert runtime.eval_generate_calls == 2  # eval work is sharded, not rank0-only
+    assert sink.writes == 1  # single writer: no duplicate eval_metrics.csv rows
+
+
+def test_checkpoint_gathers_on_every_rank_but_only_rank0_writes() -> None:
+    """The trainable-state gather is a collective on all ranks; rank0 writes files."""
+    sink = _FakeOutputSink()
+    for rank in range(2):
+        _drive_checkpoint(_fsdp_context(rank), sink)
+
+    assert sink.gathers == 2  # all ranks must enter the gather or FSDP deadlocks
+    assert sink.writes == 1  # single writer
+
+
+def test_primary_flag_is_rank0_only() -> None:
+    assert _fsdp_context(0).is_primary is True
+    assert _fsdp_context(1).is_primary is False
 
 
 def test_barrier_seam_is_callable_and_noop_in_single_process() -> None:
