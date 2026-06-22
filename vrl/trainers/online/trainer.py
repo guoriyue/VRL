@@ -330,6 +330,7 @@ class _TrainingSampleChunk:
     batch: RolloutBatch
     advantages: torch.Tensor
     loss_weight: float
+    is_dummy: bool = False
 
 
 def _training_sample_chunks(
@@ -362,6 +363,62 @@ def _training_sample_chunks(
                 loss_weight=float(stop - start) / float(batch_size),
             ),
         )
+    return chunks
+
+
+def _distributed_max_int(value: int, device: torch.device) -> int:
+    """Return the maximum integer value across training ranks."""
+
+    dist = torch.distributed
+    if not (dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1):
+        return int(value)
+    tensor = torch.tensor([int(value)], dtype=torch.int64)
+    if dist.get_backend() == "nccl":
+        tensor = tensor.to(device)
+    dist.all_reduce(tensor, op=dist.ReduceOp.MAX)
+    return int(tensor.item())
+
+
+def _balanced_training_sample_chunks(
+    batches: list[RolloutBatch],
+    advantages: list[torch.Tensor],
+    sample_batch_size: int,
+    device: torch.device,
+) -> list[_TrainingSampleChunk]:
+    """Plan replay execution slots with equal slot counts across ranks.
+
+    Local zero-advantage filtering can leave different ranks with different
+    numbers of prompt groups or sample chunks. DDP/FSDP forward/backward issue
+    collectives, so the number of replay slots must be globally balanced even
+    when only some slots carry training signal.
+    """
+
+    chunks: list[_TrainingSampleChunk] = []
+    for batch, adv in zip(batches, advantages, strict=True):
+        chunks.extend(_training_sample_chunks(batch, adv, sample_batch_size))
+
+    target_count = _distributed_max_int(len(chunks), device)
+    if target_count == len(chunks):
+        return chunks
+    if target_count <= 0:
+        return []
+    if not chunks:
+        raise RuntimeError(
+            "distributed replay planner cannot synthesize dummy slots without a "
+            "local real chunk; call _all_ranks_have_work before planning replay chunks",
+        )
+    # Use the smallest available local chunk as the dummy template to minimize
+    # the extra zero-loss forward/backward work needed for collective balance.
+    template = min(chunks, key=lambda chunk: int(chunk.batch.rewards.shape[0]))
+    chunks.extend(
+        _TrainingSampleChunk(
+            batch=template.batch,
+            advantages=torch.zeros_like(template.advantages),
+            loss_weight=0.0,
+            is_dummy=True,
+        )
+        for _ in range(target_count - len(chunks))
+    )
     return chunks
 
 
@@ -727,76 +784,77 @@ class OnlineTrainer(Trainer):
         loss_scale = int(total_groups) * len(train_indices)
         sample_batch_size = int(getattr(cfg, "sample_batch_size", 0))
         agg = self._update_agg_metrics
-        for b, adv_b in zip(batch.batches, batch.advantages, strict=True):
-            for sample_chunk in _training_sample_chunks(
-                b,
-                adv_b,
-                sample_batch_size,
-            ):
-                chunk_batch = move_training_batch_to_device(
-                    sample_chunk.batch,
-                    self.device,
-                    defer_replay_tensors=defer,
-                )
-                chunk_adv = sample_chunk.advantages.to(self.device)
-                for j in train_indices:
-                    with autocast_ctx:
-                        if not uses_evaluator:
-                            with record_function("trainer.loss"):
-                                loss, metrics = algorithm_adapter.compute_loss(
-                                    self.algorithm,
-                                    AlgorithmInput(
-                                        rewards=chunk_batch.rewards,
-                                        group_ids=chunk_batch.group_ids,
-                                        advantages=chunk_adv,
-                                        metadata={
-                                            "model": self.model,
-                                            "rollout_batch": chunk_batch,
-                                            "timestep_index": j,
-                                        },
-                                    ),
-                                )
-                        else:
-                            if self.evaluator is None:
-                                raise RuntimeError(
-                                    f"{type(self.algorithm).__name__} requires an evaluator",
-                                )
-                            kl_coef = float(
-                                getattr(self.algorithm.config, "kl_coef", 0.0),
+        for sample_chunk in _balanced_training_sample_chunks(
+            batch.batches,
+            batch.advantages,
+            sample_batch_size,
+            self.device,
+        ):
+            chunk_batch = move_training_batch_to_device(
+                sample_chunk.batch,
+                self.device,
+                defer_replay_tensors=defer,
+            )
+            chunk_adv = sample_chunk.advantages.to(self.device)
+            for j in train_indices:
+                with autocast_ctx:
+                    if not uses_evaluator:
+                        with record_function("trainer.loss"):
+                            loss, metrics = algorithm_adapter.compute_loss(
+                                self.algorithm,
+                                AlgorithmInput(
+                                    rewards=chunk_batch.rewards,
+                                    group_ids=chunk_batch.group_ids,
+                                    advantages=chunk_adv,
+                                    metadata={
+                                        "model": self.model,
+                                        "rollout_batch": chunk_batch,
+                                        "timestep_index": j,
+                                    },
+                                ),
                             )
-                            # Trust-region SDE algorithms (Flow-DPPO / GRPO-Guard)
-                            # read latent KL intermediates (dt) even at kl_coef=0.
-                            need_kl_intermediates = kl_coef > 0 or bool(
-                                getattr(self.algorithm, "needs_kl_intermediates", False),
+                    else:
+                        if self.evaluator is None:
+                            raise RuntimeError(
+                                f"{type(self.algorithm).__name__} requires an evaluator",
                             )
-                            with record_function("trainer.replay"):
-                                signals = self.evaluator.evaluate(
-                                    self.model,
-                                    chunk_batch,
-                                    j,
-                                    ref_model=self.ref_model,
-                                    signal_request=SignalRequest(
-                                        need_ref=kl_coef > 0,
-                                        need_kl_intermediates=need_kl_intermediates,
-                                    ),
+                        kl_coef = float(
+                            getattr(self.algorithm.config, "kl_coef", 0.0),
+                        )
+                        # Trust-region SDE algorithms (Flow-DPPO / GRPO-Guard)
+                        # read latent KL intermediates (dt) even at kl_coef=0.
+                        need_kl_intermediates = kl_coef > 0 or bool(
+                            getattr(self.algorithm, "needs_kl_intermediates", False),
+                        )
+                        with record_function("trainer.replay"):
+                            signals = self.evaluator.evaluate(
+                                self.model,
+                                chunk_batch,
+                                j,
+                                ref_model=self.ref_model,
+                                signal_request=SignalRequest(
+                                    need_ref=kl_coef > 0,
+                                    need_kl_intermediates=need_kl_intermediates,
+                                ),
+                            )
+                        with record_function("trainer.loss"):
+                            if not isinstance(signals, TrajectorySignalBatch):
+                                raise TypeError(
+                                    "evaluator output must be TrajectorySignalBatch; "
+                                    f"got {type(signals).__name__}",
                                 )
-                            with record_function("trainer.loss"):
-                                if not isinstance(signals, TrajectorySignalBatch):
-                                    raise TypeError(
-                                        "evaluator output must be TrajectorySignalBatch; "
-                                        f"got {type(signals).__name__}",
-                                    )
-                                loss, metrics = algorithm_adapter.compute_loss(
-                                    self.algorithm,
-                                    AlgorithmInput(
-                                        signals=signals,
-                                        advantages=chunk_adv,
-                                        group_ids=chunk_batch.group_ids,
-                                    ),
-                                )
-                        loss = loss * sample_chunk.loss_weight / loss_scale
-                    self._backward(loss)
-                    self._clear_algorithm_diagnostics()
+                            loss, metrics = algorithm_adapter.compute_loss(
+                                self.algorithm,
+                                AlgorithmInput(
+                                    signals=signals,
+                                    advantages=chunk_adv,
+                                    group_ids=chunk_batch.group_ids,
+                                ),
+                            )
+                    loss = loss * sample_chunk.loss_weight / loss_scale
+                self._backward(loss)
+                self._clear_algorithm_diagnostics()
+                if not sample_chunk.is_dummy:
                     agg["loss"].append(metrics.loss)
                     agg["policy_loss"].append(metrics.policy_loss)
                     agg["kl_penalty"].append(metrics.kl_penalty)
@@ -808,7 +866,7 @@ class OnlineTrainer(Trainer):
                     agg["ratio_abs_dev_max"].append(metrics.ratio_abs_dev_max)
                     agg["mismatch_kl"].append(metrics.mismatch_kl)
                     agg["mismatch_k3_kl"].append(metrics.mismatch_k3_kl)
-                    await asyncio.sleep(0)
+                await asyncio.sleep(0)
 
     async def finish_optimizer_update(
         self,
@@ -1153,86 +1211,87 @@ class OnlineTrainer(Trainer):
                 # Mirror that normalization explicitly in the native trainer.
                 loss_scale = len(chunk_batches) * len(train_indices)
 
-                for b, adv_b in zip(chunk_batches, chunk_advs, strict=True):
-                    for sample_chunk in _training_sample_chunks(
-                        b,
-                        adv_b,
-                        sample_batch_size,
-                    ):
-                        chunk_batch = move_training_batch_to_device(
-                            sample_chunk.batch,
-                            self.device,
-                            defer_replay_tensors=defer_replay_tensor_move,
-                        )
-                        chunk_adv = sample_chunk.advantages.to(self.device)
-                        for j in train_indices:
-                            with timer.time("evaluate"), autocast_ctx:
-                                if not uses_evaluator:
-                                    with record_function("trainer.loss"):
-                                        loss, metrics = algorithm_adapter.compute_loss(
-                                            self.algorithm,
-                                            AlgorithmInput(
-                                                rewards=chunk_batch.rewards,
-                                                group_ids=chunk_batch.group_ids,
-                                                advantages=chunk_adv,
-                                                metadata={
-                                                    "model": self.model,
-                                                    "rollout_batch": chunk_batch,
-                                                    "timestep_index": j,
-                                                },
-                                            ),
-                                        )
-                                else:
-                                    if self.evaluator is None:
-                                        raise RuntimeError(
-                                            f"{type(self.algorithm).__name__} requires an evaluator",
-                                        )
-                                    kl_coef = float(
-                                        getattr(self.algorithm.config, "kl_coef", 0.0),
-                                    )
-                                    need_kl_intermediates = kl_coef > 0 or bool(
-                                        getattr(
-                                            self.algorithm,
-                                            "needs_kl_intermediates",
-                                            False,
+                for sample_chunk in _balanced_training_sample_chunks(
+                    chunk_batches,
+                    chunk_advs,
+                    sample_batch_size,
+                    self.device,
+                ):
+                    chunk_batch = move_training_batch_to_device(
+                        sample_chunk.batch,
+                        self.device,
+                        defer_replay_tensors=defer_replay_tensor_move,
+                    )
+                    chunk_adv = sample_chunk.advantages.to(self.device)
+                    for j in train_indices:
+                        with timer.time("evaluate"), autocast_ctx:
+                            if not uses_evaluator:
+                                with record_function("trainer.loss"):
+                                    loss, metrics = algorithm_adapter.compute_loss(
+                                        self.algorithm,
+                                        AlgorithmInput(
+                                            rewards=chunk_batch.rewards,
+                                            group_ids=chunk_batch.group_ids,
+                                            advantages=chunk_adv,
+                                            metadata={
+                                                "model": self.model,
+                                                "rollout_batch": chunk_batch,
+                                                "timestep_index": j,
+                                            },
                                         ),
                                     )
-                                    with record_function("trainer.replay"):
-                                        signals = self.evaluator.evaluate(
-                                            self.model,
-                                            chunk_batch,
-                                            j,
-                                            ref_model=self.ref_model,
-                                            signal_request=SignalRequest(
-                                                need_ref=kl_coef > 0,
-                                                need_kl_intermediates=need_kl_intermediates,
-                                            ),
+                            else:
+                                if self.evaluator is None:
+                                    raise RuntimeError(
+                                        f"{type(self.algorithm).__name__} requires an evaluator",
+                                    )
+                                kl_coef = float(
+                                    getattr(self.algorithm.config, "kl_coef", 0.0),
+                                )
+                                need_kl_intermediates = kl_coef > 0 or bool(
+                                    getattr(
+                                        self.algorithm,
+                                        "needs_kl_intermediates",
+                                        False,
+                                    ),
+                                )
+                                with record_function("trainer.replay"):
+                                    signals = self.evaluator.evaluate(
+                                        self.model,
+                                        chunk_batch,
+                                        j,
+                                        ref_model=self.ref_model,
+                                        signal_request=SignalRequest(
+                                            need_ref=kl_coef > 0,
+                                            need_kl_intermediates=need_kl_intermediates,
+                                        ),
+                                    )
+                                with record_function("trainer.loss"):
+                                    if not isinstance(signals, TrajectorySignalBatch):
+                                        raise TypeError(
+                                            "evaluator output must be TrajectorySignalBatch; "
+                                            f"got {type(signals).__name__}",
                                         )
-                                    with record_function("trainer.loss"):
-                                        if not isinstance(signals, TrajectorySignalBatch):
-                                            raise TypeError(
-                                                "evaluator output must be TrajectorySignalBatch; "
-                                                f"got {type(signals).__name__}",
-                                            )
-                                        trajectory_signals = signals
-                                        loss, metrics = algorithm_adapter.compute_loss(
-                                            self.algorithm,
-                                            AlgorithmInput(
-                                                signals=trajectory_signals,
-                                                advantages=chunk_adv,
-                                                group_ids=chunk_batch.group_ids,
-                                            ),
-                                        )
-                                # Average across rollout micro-batches inside this
-                                # optimizer update; timestep accumulation follows
-                                # Flow-GRPO's per-denoise-step surrogate structure.
-                                loss = loss * sample_chunk.loss_weight / loss_scale
+                                    trajectory_signals = signals
+                                    loss, metrics = algorithm_adapter.compute_loss(
+                                        self.algorithm,
+                                        AlgorithmInput(
+                                            signals=trajectory_signals,
+                                            advantages=chunk_adv,
+                                            group_ids=chunk_batch.group_ids,
+                                        ),
+                                    )
+                            # Average across rollout micro-batches inside this
+                            # optimizer update; timestep accumulation follows
+                            # Flow-GRPO's per-denoise-step surrogate structure.
+                            loss = loss * sample_chunk.loss_weight / loss_scale
 
-                            with timer.time("backward"):
-                                self._backward(loss)
+                        with timer.time("backward"):
+                            self._backward(loss)
 
-                            self._clear_algorithm_diagnostics()
+                        self._clear_algorithm_diagnostics()
 
+                        if not sample_chunk.is_dummy:
                             agg_metrics["loss"].append(metrics.loss)
                             agg_metrics["policy_loss"].append(metrics.policy_loss)
                             agg_metrics["kl_penalty"].append(metrics.kl_penalty)
@@ -1253,11 +1312,11 @@ class OnlineTrainer(Trainer):
                             agg_metrics["mismatch_kl"].append(metrics.mismatch_kl)
                             agg_metrics["mismatch_k3_kl"].append(metrics.mismatch_k3_kl)
 
-                            # Continuous rollout production runs on the same asyncio
-                            # loop as training orchestration. Yield once per
-                            # timestep so producer admit/harvest can progress while
-                            # this synchronous CUDA-heavy loop is still computing.
-                            await asyncio.sleep(0)
+                        # Continuous rollout production runs on the same asyncio
+                        # loop as training orchestration. Yield once per
+                        # timestep so producer admit/harvest can progress while
+                        # this synchronous CUDA-heavy loop is still computing.
+                        await asyncio.sleep(0)
 
                 with timer.time("optim_step"):
                     _gn, _stepped = self._clip_and_step(optimizer)

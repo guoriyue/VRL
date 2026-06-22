@@ -19,8 +19,20 @@ import pytest
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
+from torch import nn
 
-from vrl.trainers.online.trainer import _all_ranks_have_work
+from tests.trainers.online._helpers import _trajectory_signals
+from vrl.algorithms.types import TrainStepMetrics
+from vrl.rollouts.batch import RolloutBatch
+from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
+from vrl.trainers.online import trainer as trainer_module
+from vrl.trainers.online.trainer import (
+    OnlineTrainer,
+    PhaseTimer,
+    TrainingBatch,
+    _all_ranks_have_work,
+    _balanced_training_sample_chunks,
+)
 
 # (rank0_has_work, rank1_has_work) -> the agreed result both ranks must return.
 _CASES = {
@@ -36,6 +48,16 @@ def _free_port() -> int:
     port = probe.getsockname()[1]
     probe.close()
     return port
+
+
+def _rollout_batch(sample_count: int) -> RolloutBatch:
+    return RolloutBatch(
+        observations=torch.zeros(sample_count, 1, 1),
+        actions=torch.zeros(sample_count, 1, 1),
+        rewards=torch.arange(sample_count, dtype=torch.float32),
+        dones=torch.ones(sample_count, dtype=torch.bool),
+        group_ids=torch.zeros(sample_count, dtype=torch.long),
+    )
 
 
 def _run_rank(rank: int, world_size: int, port: int, local_flags: list[bool], q: mp.Queue) -> None:
@@ -76,3 +98,212 @@ def test_skip_backward_decision_is_unanimous(local_flags: list[bool], expected: 
 def test_falls_back_to_local_without_process_group() -> None:
     assert _all_ranks_have_work(True, torch.device("cpu")) is True
     assert _all_ranks_have_work(False, torch.device("cpu")) is False
+
+
+def test_replay_planner_pads_to_global_slot_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        trainer_module,
+        "_distributed_max_int",
+        lambda value, device: 8,
+    )
+
+    rank0_chunks = _balanced_training_sample_chunks(
+        [_rollout_batch(8)],
+        [torch.ones(8)],
+        sample_batch_size=1,
+        device=torch.device("cpu"),
+    )
+    rank1_chunks = _balanced_training_sample_chunks(
+        [_rollout_batch(3)],
+        [torch.ones(3)],
+        sample_batch_size=1,
+        device=torch.device("cpu"),
+    )
+
+    assert len(rank0_chunks) == 8
+    assert len(rank1_chunks) == 8
+    assert sum(chunk.is_dummy for chunk in rank0_chunks) == 0
+    assert sum(chunk.is_dummy for chunk in rank1_chunks) == 5
+    assert sum(chunk.loss_weight for chunk in rank0_chunks) == pytest.approx(1.0)
+    assert sum(chunk.loss_weight for chunk in rank1_chunks) == pytest.approx(1.0)
+    assert all(chunk.loss_weight == 0.0 for chunk in rank1_chunks[3:])
+    assert all(torch.count_nonzero(chunk.advantages) == 0 for chunk in rank1_chunks[3:])
+
+
+def _run_replay_planner_rank(
+    rank: int,
+    world_size: int,
+    port: int,
+    local_counts: list[int],
+    q: mp.Queue,
+) -> None:
+    os.environ["MASTER_ADDR"] = "127.0.0.1"
+    os.environ["MASTER_PORT"] = str(port)
+    dist.init_process_group(backend="gloo", rank=rank, world_size=world_size)
+    try:
+        sample_count = local_counts[rank]
+        chunks = _balanced_training_sample_chunks(
+            [_rollout_batch(sample_count)],
+            [torch.ones(sample_count)],
+            sample_batch_size=1,
+            device=torch.device("cpu"),
+        )
+        q.put(
+            (
+                rank,
+                len(chunks),
+                sum(chunk.is_dummy for chunk in chunks),
+                sum(chunk.loss_weight for chunk in chunks),
+            )
+        )
+    finally:
+        dist.destroy_process_group()
+
+
+def test_replay_planner_slot_count_is_unanimous_under_gloo() -> None:
+    ctx = mp.get_context("spawn")
+    q: mp.Queue = ctx.Queue()
+    port = _free_port()
+    procs = [
+        ctx.Process(target=_run_replay_planner_rank, args=(r, 2, port, [8, 3], q))
+        for r in range(2)
+    ]
+    for p in procs:
+        p.start()
+    results = {}
+    for _ in range(2):
+        rank, slot_count, dummy_count, weight_sum = q.get(timeout=50)
+        results[rank] = (slot_count, dummy_count, weight_sum)
+    for p in procs:
+        p.join(timeout=10)
+        assert p.exitcode == 0
+
+    assert results[0] == pytest.approx((8, 0, 1.0))
+    assert results[1] == pytest.approx((8, 5, 1.0))
+
+
+def _run_replay_loop_rank(
+    rank: int,
+    world_size: int,
+    port: int,
+    local_counts: list[int],
+    q: mp.Queue,
+) -> None:
+    import asyncio
+
+    os.environ["MASTER_ADDR"] = "127.0.0.1"
+    os.environ["MASTER_PORT"] = str(port)
+    dist.init_process_group(backend="gloo", rank=rank, world_size=world_size)
+    try:
+        evaluate_calls: list[int] = []
+        backward_calls: list[float] = []
+
+        class _Algorithm:
+            class _Config:
+                global_std = False
+                eps = 1e-8
+                adv_clip_max = 5.0
+                kl_coef = 0.0
+
+            config = _Config()
+
+            def compute_loss(self, inputs):
+                signals = inputs.signals.primary
+                loss = signals.log_prob.mean()
+                return loss, TrainStepMetrics(
+                    loss=float(loss.detach().item()),
+                    policy_loss=float(loss.detach().item()),
+                )
+
+        class _Evaluator:
+            def evaluate(self, model, batch, timestep_idx, **kw):
+                del kw
+                evaluate_calls.append(int(batch.rewards.shape[0]))
+                log_prob = model.weight.reshape(()) * batch.rewards
+                return _trajectory_signals(batch, log_prob, timestep_idx)
+
+        model = nn.Linear(1, 1, bias=False)
+        with torch.no_grad():
+            model.weight.fill_(1.0)
+        trainer = OnlineTrainer(
+            algorithm=_Algorithm(),
+            collector=object(),
+            evaluator=_Evaluator(),
+            model=model,
+            config=TrainerConfig(
+                rollout_batch_size=1,
+                timestep_fraction=1.0,
+                total_epochs=1,
+                drop_zero_advantage=False,
+                output_dir="outputs/",
+                optim=OptimConfig(lr=0.0),
+                ema=EMAConfig(),
+                debug=DebugConfig(),
+                n_samples_per_prompt=8,
+                sample_batch_size=1,
+            ),
+            device="cpu",
+        )
+
+        def _record_backward(loss: torch.Tensor) -> None:
+            backward_calls.append(float(loss.detach().item()))
+
+        trainer._backward = _record_backward  # type: ignore[method-assign]
+        trainer.begin_optimizer_update()
+        sample_count = local_counts[rank]
+        rollout_batch = _rollout_batch(sample_count)
+        rollout_batch.rewards = rollout_batch.rewards + 1.0
+        batch = TrainingBatch(
+            iteration=object(),
+            timer=PhaseTimer(enabled=False),
+            batches=[rollout_batch],
+            advantages=[torch.ones(sample_count)],
+            group_size=float(sample_count),
+            trained_prompt_num=1,
+            adv_zero_rate=0.0,
+            adv_saturation=0.0,
+            pre_filter_reward_mean=0.0,
+            pre_filter_reward_std=0.0,
+            pre_filter_adv_mean=1.0,
+        )
+        asyncio.run(trainer.backward_on_training_batch(batch, total_groups=1))
+        q.put(
+            (
+                rank,
+                len(evaluate_calls),
+                len(backward_calls),
+                len(trainer._update_agg_metrics["loss"]),
+                sum(1 for value in backward_calls if value == 0.0),
+            )
+        )
+    finally:
+        dist.destroy_process_group()
+
+
+def test_replay_loop_balances_evaluate_and_backward_counts_under_gloo() -> None:
+    ctx = mp.get_context("spawn")
+    q: mp.Queue = ctx.Queue()
+    port = _free_port()
+    procs = [
+        ctx.Process(target=_run_replay_loop_rank, args=(r, 2, port, [8, 3], q))
+        for r in range(2)
+    ]
+    for p in procs:
+        p.start()
+    results = {}
+    for _ in range(2):
+        rank, evaluate_count, backward_count, metric_count, zero_backward_count = q.get(
+            timeout=50,
+        )
+        results[rank] = (
+            evaluate_count,
+            backward_count,
+            metric_count,
+            zero_backward_count,
+        )
+    for p in procs:
+        p.join(timeout=10)
+        assert p.exitcode == 0
+
+    assert results[0] == (8, 8, 8, 0)
+    assert results[1] == (8, 8, 3, 5)
