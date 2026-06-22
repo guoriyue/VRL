@@ -166,8 +166,11 @@ class FluxModel(PreviousPolicyAdapterMixin, LoraModelMixin, DiffusionModelBase):
         schedule depends on a resolution-derived ``mu`` (image sequence length),
         which is unknown at build time. Defer the real set to ``prepare_sampling``
         for such schedulers; only eager-set the static ones.
+
+        Reads ``self.scheduler`` (not ``self.pipeline.scheduler``) so the
+        pipeline-less ``FluxReplayModel`` can set its replay scheduler too.
         """
-        scheduler = self.pipeline.scheduler
+        scheduler = self.scheduler
         if getattr(scheduler.config, "use_dynamic_shifting", False):
             return
         scheduler.set_timesteps(n, device=self.device)
@@ -176,7 +179,7 @@ class FluxModel(PreviousPolicyAdapterMixin, LoraModelMixin, DiffusionModelBase):
         """Set FLUX timesteps with the resolution-derived ``mu`` (diffusers parity)."""
         from diffusers.pipelines.flux.pipeline_flux import calculate_shift
 
-        scheduler = self.pipeline.scheduler
+        scheduler = self.scheduler
         config = scheduler.config
         if getattr(config, "use_dynamic_shifting", False):
             mu = calculate_shift(

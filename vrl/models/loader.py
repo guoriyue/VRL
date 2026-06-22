@@ -52,7 +52,13 @@ def load_diffusers_scheduler(
         **load_kwargs,
     )
     num_steps = spec.num_steps
-    if num_steps is not None:
+    # Dynamic-shifting schedulers (e.g. FLUX's FlowMatchEulerDiscreteScheduler)
+    # derive their timestep/sigma schedule from a resolution-dependent ``mu`` that
+    # is unknown here. Eager-setting without ``mu`` raises; defer to the family,
+    # which sets the dynamic timesteps once the resolution is known (rollout:
+    # prepare_sampling; replay: build_*_replay_runtime_bundle). Only eager-set the
+    # static schedules (SD3.5 / Wan), whose sigmas depend solely on num_steps.
+    if num_steps is not None and not getattr(scheduler.config, "use_dynamic_shifting", False):
         scheduler.set_timesteps(int(num_steps), device=getattr(spec, "device", None))
     return scheduler
 
