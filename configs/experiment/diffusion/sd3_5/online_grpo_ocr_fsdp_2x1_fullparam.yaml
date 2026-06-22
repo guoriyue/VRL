@@ -1,0 +1,74 @@
+# FULL-PARAMETER FSDP2 (2 servers x 1 GPU) — SD3.5 GRPO OCR.
+#
+# This is the case FSDP2 actually earns its keep: training the WHOLE transformer
+# (model.use_lora=false), not a LoRA adapter. A ~2.5B SD3.5-medium full-param +
+# AdamW needs params+grads+optimizer ≈ 20 GB; sharded across 2 ranks (ZeRO-3) that
+# is ~10 GB/rank, which fits a 44 GB L40S alongside the colocated rollout — where a
+# single card would not hold the full optimizer state. GRPO is used (not NFT)
+# because GRPO is adapter-free: the old-policy ratio comes from rollout-time
+# logprobs, so there is no PEFT "previous"/"reference" adapter to switch — which is
+# exactly what makes full-param viable here (NFT's previous-policy snapshot is an
+# adapter and has no full-param path yet).
+#
+# Same symmetric colocated topology as the LoRA fsdp_2x1 variant (per-rank-local
+# Ray + colocated rollout/reward; only training collectives cross the network).
+#
+# Launch (run on BOTH servers; same --master_addr = server A's reachable IP):
+#   OUT=outputs/grpo_ocr_fsdp_fullparam CONFIG=experiment/diffusion/sd3_5/online_grpo_ocr_fsdp_2x1_fullparam \
+#     bash docs/training_examples/online_nft_kling_video_reward_fsdp_2x1/fsdp_2x1_launch.sh 0   # node A
+#   ... 1  # node B
+#
+# NOTE: full-param weight sync pushes the WHOLE model to the rollout worker each
+# step (not a small LoRA adapter), so over the Ray object store this is a multi-GB
+# per-step cost — functionally correct but the §10.5 NCCL weight-sync upgrade is the
+# real fix for throughput. Fine for validation.
+defaults:
+  - /experiment/diffusion/sd3_5/online_grpo_ocr
+
+algorithm:
+  # No KL penalty under full-param. The LoRA recipe's KL reference is "the policy
+  # with the LoRA adapter disabled" (default_reference_model returns bundle.model
+  # only when use_lora=true); full-param has no adapter to disable, so a KL term
+  # would need a separate frozen reference copy (another ~2.5B model). kl_coef=0 is
+  # a standard GRPO setting (pure advantage-weighted PG, reward still drives it) and
+  # is what this FSDP full-param validation needs — not a second resident model.
+  kl_coef: 0.0
+
+model:
+  use_lora: false               # FULL-PARAM: shard + train the whole transformer
+  torch_compile:
+    enable: false               # fsdp gate: unsound with reshard-after-forward all-gathers
+
+distributed:
+  training:
+    strategy: fsdp
+    num_nodes: 2
+    gpus_per_node: 1
+    fsdp:
+      mesh: ["dp_shard"]          # 1D ZeRO-3 across the 2 ranks
+      precision_policy: none      # fp32 sharded master params; bf16 compute via trainer autocast
+                                  # (actor/bf16 params are unsound with activation checkpointing — see
+                                  #  the LoRA fsdp_2x1 config for the full CheckpointError rationale)
+      reshard_after_forward: true # ZeRO-3
+  resources:
+    rollout:
+      gpu_pool: trainer           # each rank colocates its rollout on its own GPU
+    reward:
+      gpu_pool: rollout           # paddleocr reward time-shares the same card
+
+actor:
+  ema:
+    enable: false                 # fsdp gate: DTensor-aware EMA not implemented
+  # rollout_batch_size=1 below, so gradient_accumulation_steps must divide 1: use 1
+  # (the base GRPO OCR recipe streams over 4 microbatches for its rbs=8; with a
+  # single-prompt validation batch there is nothing to split).
+  gradient_accumulation_steps: 1
+  optim:
+    lr: 3.0e-5                    # full-param LR (paper §4.2.2 trains 2B full-param at 3e-5);
+                                  # the LoRA recipe's 3e-4 is too hot for full-param
+
+# Small batch so the full-param optimizer state + colocated rollout fit one card.
+rollout:
+  rollout_batch_size: 1
+  n_samples_per_prompt: 8
+  sample_batch_size: 4

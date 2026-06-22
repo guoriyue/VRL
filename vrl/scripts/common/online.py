@@ -591,6 +591,15 @@ class OnlineRecipeRun:
             strategy=stack.strategy,
             is_primary=context.is_primary,
         )
+        # Barrier so non-primary ranks wait for rank0 to FINISH writing before any
+        # rank moves on. The gather above is collective (all ranks), but the file
+        # write is rank0-only and can take tens of seconds for a full-param payload;
+        # without this, after the FINAL checkpoint a non-primary rank returns, hits
+        # shutdown and exits, and torchrun tears down rank0 mid-write -> a truncated,
+        # unloadable checkpoint. In-loop saves happened to survive only because the
+        # next epoch's collective implicitly synced the ranks; the final save has no
+        # such follow-on, so make the wait explicit for every save.
+        stack.strategy.barrier()
 
 
 def _maybe_autodetect_cross_node(cfg: DictConfig, ray: Any) -> None:

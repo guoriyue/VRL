@@ -80,6 +80,27 @@ real NCCL" lesson), each now fixed with a regression test:
    gather runs on every rank, only rank0 writes; sharded LoRA `save_pretrained` is
    skipped under fsdp (payload carries the gathered state). `test_save_training_checkpoint_non_primary_gathers_but_writes_nothing`.
 
+**Done (2026-06-22) — FULL-PARAM FSDP validated:** the case FSDP actually earns its
+keep. `online_grpo_ocr_fsdp_2x1_fullparam` (SD3.5 GRPO OCR, `model.use_lora=false`)
+ran 2 epochs on the same 2×1 rig: the WHOLE ~2.47B transformer is sharded (ZeRO-3),
+grad_norm non-zero both epochs (0.11/0.13), r_ocr rose 0.45→0.56/0.75, and the
+gathered full-param checkpoint (909 tensors, 2.47B params, 0 LoRA keys, optimizer
+state present) loads. GRPO is required, not NFT: NFT's previous-policy snapshot is a
+PEFT adapter with no full-param path. Two recipe-level (not FSDP) deltas vs the LoRA
+config: `kl_coef=0` (the LoRA KL reference is "policy with adapter disabled"; no
+adapter ⇒ would need a separate frozen copy) and `gradient_accumulation_steps=1`
+(rbs=1 divisibility). Two findings:
+
+6. Full-param checkpoints are ~8.8 GB each (full params + fp32 Adam). The first
+   `checkpoint-final` truncated — root cause was DISK FULL (root fs at 95%), not a
+   code bug; the in-loop `checkpoint-2` is the same complete epoch-2 artifact and
+   loads fine. Mitigation: enough disk, fewer saves, or save model-only (no
+   optimizer) under fsdp since resume is gated anyway.
+7. Added a `strategy.barrier()` after every checkpoint save (online.py): the gather
+   is collective but the rank0 write is solo and slow for an 8.8 GB payload, so a
+   non-primary rank could otherwise return, hit shutdown, and let torchrun tear down
+   rank0 mid-write. Defensive against that race (independent of the disk issue).
+
 **Still NOT done (deferred, not blocking):** Phase 7 (offline DPO distributed);
 DTensor-aware optimizer/EMA state and `resume_from` (still §10 fail-fast for fsdp);
 keeping bf16 FSDP params *with* GC (would need the MP cast re-applied during
