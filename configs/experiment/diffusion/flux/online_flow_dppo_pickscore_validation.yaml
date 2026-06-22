@@ -1,0 +1,63 @@
+# Flow-DPPO correctness-validation run: Gaussian-KL trust region (no ratio clip).
+#
+# Flow-DPPO replaces PPO's symmetric ratio clip with an asymmetric Gaussian-KL
+# trust region: it drops whole samples whose current-vs-rollout proposal-mean KL
+# is high AND that widen the gap, keeping every "pull back" update
+# (SPRINT_flow_dppo_validation). Judge:
+#   1. it learns reward with NO ratio clip (trust region didn't mask the signal),
+#   2. masked_fraction (reported as clip_fraction) sits in ~5-40%, and
+#   3. sweeping kl_mask_threshold monotonically moves the mask fraction + drift.
+#
+# Reward = pickscore, NOT the sprint's first-choice geneval. geneval is NOT
+# runnable in this env: no scorer implementation exists, the detector stack
+# (mmdet / detectron2 / clip_benchmark) is absent, and the Mask2Former COCO
+# checkpoint is not on disk — wiring it is reward infra, explicitly out of the
+# sprint's scope. pickscore is the sprint's documented runnable-today fallback
+# (a learned preference reward, all-local CLIP-H + PickScore_v1), so it still
+# validates the trust-region MECHANISM (the point of this run). Swap back to
+# /reward/geneval + /dataset/geneval once a geneval scorer is wired.
+#
+# Short-probe run (the chosen validation depth):
+#   CUDA_VISIBLE_DEVICES=0 vrl-train \
+#     --config experiment/diffusion/flux/online_flow_dppo_pickscore_validation \
+#     trainer.total_epochs=30 trainer.eval.freq=5 trainer.save_freq=9999
+# Threshold-controllability sweep: re-run with algorithm.kl_mask_threshold in
+# {0.3, 1.0, 3.0} (mask fraction should fall, approx_kl rise, as it relaxes).
+defaults:
+  - /recipe/online/flow_matching_dppo        # sets return_prev_sample_mean: true
+  - /model/diffusion/flux/dev
+  - /sampling/image/512
+  - /sampling/denoise/10_step_cfg_4_5
+  - /reward/pickscore          # geneval fallback (see header): local CLIP-H + PickScore_v1
+  - /dataset/pickscore_sfw
+  - _self_
+
+precision: bf16
+sampling: { height: 256, width: 256, num_steps: 10, max_sequence_length: 64 }
+
+actor:
+  optim: { lr: 1.0e-4 }
+  gradient_checkpointing: true
+
+algorithm:
+  kl_mask_threshold: 1.0       # trust-region boundary (the one knob to sweep)
+  add_kl_coefficient: true     # fold sqrt(-dt) diffusion coeff into the KL sigma
+  global_std: true
+
+rollout:
+  n_samples_per_prompt: 16     # Flow-GRPO GenEval uses 24; <12 collapses. 16 = single-GPU floor
+  rollout_batch_size: 8
+  sample_batch_size: 1
+  noise_level: 0.7
+  return_prev_sample_mean: true        # REQUIRED (recipe default; explicit here)
+  sde: { window_range: [0, 10] }
+
+trainer:
+  entrypoint: vrl.scripts.diffusion.flux.train:train_flux_grpo
+  output_dir: outputs/flux_flow_dppo_pickscore_validation
+  total_epochs: 300
+  save_freq: 50
+  debug: { first_step: true }
+  eval: { enabled: true, freq: 25, samples_per_prompt: 2, max_prompts: 32, seed: 20260621 }
+
+model: { torch_compile: { enable: false } }

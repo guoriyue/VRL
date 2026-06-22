@@ -1,0 +1,54 @@
+# GRPO-Guard correctness-validation run: ratio-mean-bias + per-step scale norm.
+#
+# GRPO-Guard keeps every sample (unlike Flow-DPPO's masking): it folds the
+# current-vs-rollout mean drift softly into the ratio exponent and normalizes the
+# loss magnitude across denoise steps (SPRINT_grpo_guard_validation). Judge:
+#   1. it learns reward (the correction does not break the gradient),
+#   2. kl_penalty (= ratio_mean_bias.mean()) stays finite/small, and
+#   3. it is steadier than plain GRPO under drift (high lr / all-timestep training).
+# Reward = pickscore (the Flow-GRPO human-preference task; all-local CLIP-H + PickScore_v1).
+#
+# Short-probe run (the chosen validation depth):
+#   CUDA_VISIBLE_DEVICES=0 vrl-train \
+#     --config experiment/diffusion/flux/online_grpo_guard_pickscore_validation \
+#     trainer.total_epochs=30 trainer.eval.freq=5 trainer.save_freq=9999
+# Stability control: a paired plain flow_matching_grpo run at the same lr +
+# timestep_fraction=1.0 (GRPO-Guard should stay steadier / not collapse).
+defaults:
+  - /recipe/online/flow_matching_grpo_guard   # sets return_prev_sample_mean: true
+  - /model/diffusion/flux/dev
+  - /sampling/image/512
+  - /sampling/denoise/10_step_cfg_4_5
+  - /reward/pickscore          # Flow-GRPO human-preference task (local CLIP-H + PickScore_v1)
+  - /dataset/pickscore_sfw
+  - _self_
+
+precision: bf16
+sampling: { height: 256, width: 256, num_steps: 10, max_sequence_length: 64 }
+
+actor:
+  optim: { lr: 1.0e-4 }
+  gradient_checkpointing: true
+  timestep_fraction: 1.0       # train across all denoise steps -> exercises the per-step norm
+
+algorithm:
+  clip_ratio: 1.0e-4
+  global_std: true
+
+rollout:
+  n_samples_per_prompt: 16     # Flow-GRPO uses 24; 16 = single-GPU floor (watch zero_std_ratio)
+  rollout_batch_size: 8
+  sample_batch_size: 1
+  noise_level: 0.7
+  return_prev_sample_mean: true        # REQUIRED (recipe default; explicit here)
+  sde: { window_range: [0, 10] }
+
+trainer:
+  entrypoint: vrl.scripts.diffusion.flux.train:train_flux_grpo
+  output_dir: outputs/flux_grpo_guard_pickscore_validation
+  total_epochs: 300
+  save_freq: 50
+  debug: { first_step: true }
+  eval: { enabled: true, freq: 25, samples_per_prompt: 2, max_prompts: 32, seed: 20260621 }
+
+model: { torch_compile: { enable: false } }

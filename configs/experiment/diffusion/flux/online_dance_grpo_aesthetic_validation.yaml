@@ -1,0 +1,50 @@
+# DanceGRPO correctness-validation run: FlowGRPO loss + random timestep selection.
+#
+# DanceGRPO is not a new loss here — it is GRPO's clipped surrogate plus the
+# trainer's random (vs strided) timestep subset (SPRINT_dance_grpo_validation).
+# Two independent correctness judgements:
+#   1. it learns reward like GRPO (shared loss path), and
+#   2. timestep_selection=random does not break learning (paper §3.6 ablation).
+# Reward = aesthetic (the local HPS analog; the paper optimizes HPS-v2.1).
+#
+# Short-probe run (the chosen validation depth) — override for a card-sharing slot:
+#   CUDA_VISIBLE_DEVICES=0 vrl-train \
+#     --config experiment/diffusion/flux/online_dance_grpo_aesthetic_validation \
+#     trainer.total_epochs=30 trainer.eval.freq=5 trainer.save_freq=9999
+# Strided control (the §3.6 comparison): add
+#   defaults override /recipe/online: flow_matching_grpo  (or) actor.timestep_selection=strided
+defaults:
+  - /recipe/online/flow_matching_dance_grpo   # was flow_matching_grpo; sets timestep_selection=random
+  - /model/diffusion/flux/dev
+  - /sampling/image/512
+  - /sampling/denoise/10_step_cfg_4_5
+  - /reward/aesthetic            # HPS analog (paper optimizes HPS-v2.1); all-local CLIP-L
+  - /dataset/drawbench_train_192 # diverse quality-probe prompts
+  - _self_
+
+precision: bf16
+sampling: { height: 256, width: 256, num_steps: 10, max_sequence_length: 64 }
+
+actor:
+  optim: { lr: 1.0e-4 }              # LoRA wants higher LR than the paper's full-param 1e-5
+  gradient_checkpointing: true
+  timestep_selection: random         # the DanceGRPO knob (recipe default; explicit here)
+
+algorithm: { kl_coef: 0.0, global_std: true }   # no-KL per DanceGRPO
+
+rollout:
+  n_samples_per_prompt: 12           # group size (paper DanceGRPO uses 12)
+  rollout_batch_size: 8
+  sample_batch_size: 1
+  noise_level: 0.7
+  sde: { window_range: [0, 10] }
+
+trainer:
+  entrypoint: vrl.scripts.diffusion.flux.train:train_flux_grpo
+  output_dir: outputs/flux_dance_grpo_aesthetic_validation
+  total_epochs: 300
+  save_freq: 50
+  debug: { first_step: true }
+  eval: { enabled: true, freq: 25, samples_per_prompt: 2, max_prompts: 32, seed: 20260621 }
+
+model: { torch_compile: { enable: false } }
