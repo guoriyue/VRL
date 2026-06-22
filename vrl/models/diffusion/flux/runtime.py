@@ -54,8 +54,17 @@ def extract_flux_runtime_spec(cfg: Any, device: Any, weight_dtype: Any) -> Runti
     )
 
 
-def build_flux_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    """Generic build: dispatch the backend model by runtime spec."""
+def build_flux_runtime_bundle(
+    spec: RuntimeBuildSpec,
+    *,
+    attach_previous_adapter: bool = False,
+) -> RuntimeBundle:
+    """Generic build: dispatch the backend model by runtime spec.
+
+    ``attach_previous_adapter`` is the DiffusionNFT-only switch: when set, build a
+    frozen ``previous`` LoRA adapter mirroring ``default`` (the NFT previous-policy
+    forward). Left False for GRPO so its build path is bit-for-bit unchanged.
+    """
     from vrl.models.diffusion.flux.model import FluxModel
 
     logger.info("Building flux runtime bundle")
@@ -70,6 +79,9 @@ def build_flux_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
                 "Applied LoRA (rank=%d, alpha=%d)",
                 lora_config["rank"], lora_config["alpha"],
             )
+        if attach_previous_adapter:
+            model.attach_previous_policy_adapter(spec)
+            logger.info("Attached frozen DiffusionNFT `previous` LoRA adapter")
     else:
         model.enable_full_finetune()
 
@@ -110,8 +122,17 @@ def build_flux_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
     )
 
 
-def build_flux_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    """Build the trainer replay bundle without loading FLUX prompt/VAE modules."""
+def build_flux_replay_runtime_bundle(
+    spec: RuntimeBuildSpec,
+    *,
+    attach_previous_adapter: bool = False,
+) -> RuntimeBundle:
+    """Build the trainer replay bundle without loading FLUX prompt/VAE modules.
+
+    This is the model that actually runs the DiffusionNFT loss (the trainer
+    optimizes it), so ``attach_previous_adapter`` must be set here too — it builds
+    the frozen ``previous`` adapter the NFT forward activates. GRPO leaves it off.
+    """
 
     from vrl.models.diffusion.flux.model import FluxReplayModel
 
@@ -131,6 +152,9 @@ def build_flux_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
     use_lora = spec.use_lora
     if use_lora:
         apply_lora_to_transformer(model, spec)
+        if attach_previous_adapter:
+            model.attach_previous_policy_adapter(spec)
+            logger.info("Attached frozen DiffusionNFT `previous` LoRA adapter (replay)")
     else:
         enable_transformer_full_finetune(model)
 

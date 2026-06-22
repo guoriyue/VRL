@@ -21,6 +21,15 @@ from vrl.models.diffusion.common import (
     replay_tensor,
     shared_replay_tensor,
 )
+from vrl.models.diffusion.common.lora import (
+    build_lora_config as _build_lora_config,
+)
+from vrl.models.diffusion.common.lora import (
+    copy_adapter_weights as _copy_adapter_weights,
+)
+from vrl.models.diffusion.common.lora import (
+    freeze_adapter_params as _freeze_adapter_params,
+)
 from vrl.models.diffusion.cosmos import CosmosReplayForward
 from vrl.models.diffusion.cosmos.predict2_5.runner import (
     CosmosPredict25DiffusionBackboneRunner,
@@ -600,74 +609,3 @@ __all__ = [
     "CosmosPredict25ReplayModel",
     "CosmosPredict25SamplingState",
 ]
-
-
-def _build_lora_config(lora_config: Any) -> Any:
-    """Build the LoRA config for this family's adapters from one ``model.lora``
-    block. Both the ``default`` and the frozen ``previous`` mirror use identical
-    settings, so this names that single shape instead of repeating the literal."""
-
-    from peft import LoraConfig
-
-    return LoraConfig(
-        r=lora_config["rank"],
-        lora_alpha=lora_config["alpha"],
-        init_lora_weights="gaussian",
-        target_modules=lora_config["target_modules"],
-    )
-
-
-def _copy_adapter_weights(
-    module: Any,
-    *,
-    src: str,
-    dst: str,
-    decay: float = 0.0,
-) -> None:
-    named = dict(module.named_parameters())
-    copied = 0
-    decay = float(decay)
-    if not 0.0 <= decay <= 1.0:
-        raise ValueError(f"adapter weight copy decay must be in [0, 1], got {decay}")
-    for name, param in named.items():
-        src_marker = f".{src}."
-        if src_marker not in name:
-            continue
-        dst_name = name.replace(src_marker, f".{dst}.")
-        dst_param = named.get(dst_name)
-        if dst_param is None:
-            continue
-        if decay == 0.0:
-            dst_param.data.copy_(param.data)
-        else:
-            dst_param.data.mul_(decay).add_(param.data, alpha=1.0 - decay)
-        copied += 1
-    if copied == 0:
-        raise RuntimeError(
-            f"failed to copy adapter weights from {src!r} to {dst!r}; "
-            "no matching adapter parameters were found",
-        )
-
-
-def _freeze_adapter_params(module: Any, adapter: str) -> None:
-    """Set ``requires_grad=False`` on every parameter of the named PEFT adapter.
-
-    Used for NFT's ``previous`` adapter: it is only forward-evaluated under
-    no_grad and refreshed by weight copy (``sync_previous_policy_adapter``),
-    never optimized. PEFT creates adapter params with ``requires_grad=True``, so
-    without this DDP's reducer expects a gradient for them that the no_grad
-    replay never produces — failing the first backward unless the more expensive
-    ``find_unused_parameters=true`` is forced. Freezing it keeps the cheaper
-    ``find_unused_parameters=false`` correct.
-    """
-
-    marker = f".{adapter}."
-    frozen = 0
-    for name, param in module.named_parameters():
-        if marker in name:
-            param.requires_grad_(False)
-            frozen += 1
-    if frozen == 0:
-        raise RuntimeError(
-            f"no parameters found for adapter {adapter!r} to freeze",
-        )

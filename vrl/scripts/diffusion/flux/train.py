@@ -33,6 +33,28 @@ async def train_flux_grpo(cfg: DictConfig) -> None:
     )
 
 
+async def train_flux_diffusion_nft(cfg: DictConfig) -> None:
+    """Run FLUX.1 DiffusionNFT training driven by the common online recipe.
+
+    Differs from GRPO in two ways: (1) the rollout AND replay bundles attach a
+    frozen ``previous`` LoRA adapter (the NFT previous-policy forward), and (2) no
+    ``reference_model_getter`` — NFT's KL reference is the base model behind
+    ``model.disable_adapter()``, not a separately built frozen reference model.
+    """
+
+    await run_online_recipe(
+        cfg,
+        OnlineRecipeDefinition(
+            family="flux",
+            build_bundle=_build_nft_bundle,
+            build_replay_bundle=_build_nft_replay_bundle,
+            after_bundle_built=_after_bundle_built,
+            export_modules_getter=export_transformer_lora,
+            weight_dtype_getter=_resolve_weight_dtype,
+        ),
+    )
+
+
 def _build_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
     from vrl.models.diffusion.flux.runtime import build_flux_runtime_bundle_from_cfg
 
@@ -47,6 +69,26 @@ def _build_replay_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any
     return build_flux_replay_runtime_bundle_from_cfg(cfg, device, weight_dtype)
 
 
+def _build_nft_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
+    from vrl.models.diffusion.flux.runtime import (
+        build_flux_runtime_bundle,
+        extract_flux_runtime_spec,
+    )
+
+    spec = extract_flux_runtime_spec(cfg, device, weight_dtype)
+    return build_flux_runtime_bundle(spec, attach_previous_adapter=True)
+
+
+def _build_nft_replay_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
+    from vrl.models.diffusion.flux.runtime import (
+        build_flux_replay_runtime_bundle,
+        extract_flux_runtime_spec,
+    )
+
+    spec = extract_flux_runtime_spec(cfg, device, weight_dtype)
+    return build_flux_replay_runtime_bundle(spec, attach_previous_adapter=True)
+
+
 def _after_bundle_built(bundle: Any, cfg: DictConfig) -> None:
     enable_transformer_gradient_checkpointing(bundle, cfg)
 
@@ -56,4 +98,4 @@ def _resolve_weight_dtype(cfg: DictConfig, trainer_config: Any, torch: Any) -> A
     return torch_dtype_for_trainer_precision(trainer_config, torch)
 
 
-__all__ = ["train_flux_grpo"]
+__all__ = ["train_flux_diffusion_nft", "train_flux_grpo"]

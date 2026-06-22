@@ -230,6 +230,11 @@ class DiffusionNFT(Algorithm):
             ),
             height=int(batch.context.get("height", 0)),
             width=int(batch.context.get("width", 0)),
+            # Guidance-distilled families (FLUX.1-dev) need the rollout guidance
+            # scalar to rebuild the conditioning. Passed generically from
+            # batch.context; families that don't embed guidance (cosmos) absorb it
+            # via **kwargs.
+            guidance_scale=batch.context.get("guidance_scale"),
         )
 
         with model.activate_adapter("previous"), torch.no_grad():
