@@ -32,7 +32,6 @@ from tests.models.diffusion.fixtures import (
     add_lora_adapters,
     build_tiny_wan_transformer,
 )
-from vrl.algorithms.advantages import group_relative_advantages
 from vrl.algorithms.diffusion_nft import DiffusionNFT, DiffusionNFTConfig
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
 from vrl.generation.diffusion.layout import VideoGenerationRequest
@@ -73,13 +72,18 @@ def test_diffusion_nft_advantages_match_grpo_contract(global_std: bool) -> None:
 
     # The real contract: NFT reuses the GRPO group-relative advantage.
     assert torch.allclose(nft_advantages, grpo_advantages, atol=0.0, rtol=0.0)
-    # Numeric anchor recomputed from the source closed form, not a frozen snapshot.
-    expected = group_relative_advantages(
-        rewards,
-        group_ids,
-        eps=grpo.config.eps,
-        adv_clip_max=grpo.config.adv_clip_max,
-        global_std=grpo.config.global_std,
+    # Independent numeric oracle: the closed-form group-relative advantage for
+    # this exact input, hand-derived (NOT via group_relative_advantages, which
+    # is the function under test — re-calling it would be a tautology). Both
+    # groups have mean-centered rewards [-1, 0, +1] over a population std.
+    #   global_std=False: per-group std = sqrt(2/3) = 0.8164966 -> +-1.2247449
+    #   global_std=True:  std over [1..6] = sqrt(35/12) = 1.7078251 -> +-0.5855400
+    # adv_clip_max=5.0 does not bind. A change to eps placement, the unbiased
+    # flag, or the clamp would move these and fail here.
+    expected = (
+        torch.tensor([-0.5855400, 0.0, 0.5855400, -0.5855400, 0.0, 0.5855400])
+        if global_std
+        else torch.tensor([-1.2247449, 0.0, 1.2247449, -1.2247449, 0.0, 1.2247449])
     )
     assert torch.allclose(grpo_advantages, expected, atol=1e-6)
 

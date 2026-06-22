@@ -1,12 +1,14 @@
 # SPRINT: 测试里冻结手算结果，应改为从输入重算（done）
 
-状态：done（2026-06-21）。四个文件的手算冻结结果改为从 source 公式/模板重算:
+状态：done（2026-06-21）。**三个**文件的手算冻结结果改为从 source 公式/模板重算:
 `test_chunk_dispatch.py` 两处 `20.0` → `estimate_chunk_cost(...)` / `row sample_count*num_steps`(并把
 request 提为局部变量);`test_oom_split.py` chunk_key 字面串 → `SampleChunk(...).chunk_key`(新增 `_key` helper);
-`test_cosmos_predict25_kling_eval.py` `== 26` → `first == second` + 输入算术锚 `17+2*4+1`;
-`test_diffusion_nft.py` 冻结优势张量 → `nft==grpo` 契约 + `group_relative_advantages(...)` 闭式重算(已数值
-核验 atol=1e-6 重现旧 `-1.2247449`/`-0.5855400`)。真不变量(`sample_start==[0,2,4,6]`、split 递归顺序、
-`first==second`、`nft_adv==grpo_adv`)全保留。pytest 四文件 39 passed,ruff 全绿,未改任何 `vrl/` source。
+`test_cosmos_predict25_kling_eval.py` `== 26` → `first == second` + 输入算术锚 `17+2*4+1`。
+第四个文件 `test_diffusion_nft.py` 经复核**不在此列**:其冻结优势张量是 `group_relative_advantages` 闭式输出的
+**唯一独立 oracle**(全 tests/ 无别处钉该数值),保留 golden 小数(hand-derive,不 import source)+ `nft==grpo`
+契约两条断言;若改成转调 source 会退化成 `f(x)==f(x)` 恒真(详见 §1.4/§D,已负向验证)。真不变量
+(`sample_start==[0,2,4,6]`、split 递归顺序、`first==second`、`nft_adv==grpo_adv`、NFT golden)全保留。
+pytest 四文件 39 passed,ruff 全绿,未改任何 `vrl/` source。
 范围：清理一类**低优先级**测试坏味道 —— 测试把某个公式/格式的输出**手算成一个字面量钉死**，而那个公式/格式本身就活在 source（`estimate_chunk_cost`、`SampleChunk.chunk_key`、`_seed_for`、`group_relative_advantages`）。测试真正想守的不变量（成本被透传、seed 与 checkpoint 无关、nft==grpo 优势、split 递归顺序）另有断言；冻结的字面量只是把同一段算术再抄一遍 —— 公式/格式一改，字面量就因**与被测行为无关的原因**而报错。本 sprint 只把这些字面量改成**从 source 的同一个函数/模板重算**，不改任何被测行为，不动算法/调度/seed 逻辑本身。
 
 > 与 [[SPRINT_segment_signal_dead_field_cleanup]] 删死字段不同：这里没有死代码，被测行为全是对的；要消灭的是「测试自带一份 source 公式的手算快照」这一**冗余 + 易腐**模式。判定一个字面量是否该改的唯一标准：**它是不是 source 里某个函数/f-string 模板在该测试输入下的输出**？是 → 改成调用那个函数/模板重算；否（是测试自己选的输入、或外部固定契约）→ 保留。
@@ -17,9 +19,9 @@ request 提为局部变量);`test_oom_split.py` chunk_key 字面串 → `SampleC
 
 判定三档：
 
-1. **是 source 公式/模板在测试输入下的输出** → 改成调用 source 重算（`estimated_cost == 20.0`、`chunk_key` 字面串、`== 26`、NFT `expected` 张量）。**这是本 sprint 的全部目标。**
+1. **是 source 公式/模板在测试输入下的输出，且别处另有独立断言守该公式** → 改成调用 source 重算（`estimated_cost == 20.0`、`chunk_key` 字面串、`== 26`）。**这是本 sprint 的目标。**
 2. **是测试自己选的输入回显**（如 `_request(num_steps=10)` 里的 `10`、`SampleChunk(..., sample_count=8)` 里的 `8`、`sample_start == [0,2,4,6]` 的偏移序列）→ **保留**，这是测试控制的量，不是 source 的输出。
-3. **是外部固定契约**（HF repo id、vLLM cache layout 的 `2`）→ **保留**。
+3. **是外部固定契约，或某公式的唯一独立数值 oracle**（HF repo id、vLLM cache layout 的 `2`、NFT golden 小数）→ **保留**。关键鉴别：若「从 source 重算」会因为被测函数自身就是该 source 而退化成 `f(x)==f(x)` 恒真（NFT 即此例 —— `GRPO.compute_advantages_from_tensors` 内部就是 `group_relative_advantages`），则手算 golden 是唯一能独立守住的形态，不可改。
 
 关键护栏：每个被改的断言旁边，**真正的不变量必须仍然独立存在**。例如 chunk_dispatch 的 `sample_start == [0,2,4,6]`（gather 契约）、oom_split 的递归顺序、seed 的 `first == second`、NFT 的 `nft==grpo` —— 这些是测试存在的理由，**一行都不删**；只把它们旁边那条「再抄一遍算术」的冗余断言换成派生。
 
@@ -113,7 +115,11 @@ def test_diffusion_nft_advantages_match_grpo_contract(global_std, expected):
     assert torch.allclose(nft_advantages, grpo_advantages, atol=0.0, rtol=0.0)
 ```
 
-**真正的契约是 `:93` 的 `nft_advantages == grpo_advantages`**（NFT 与 GRPO 共享同一组相对优势）—— 已完整捕获。`expected` 张量是 `group_relative_advantages` 已可派生的闭式输出的冗余重钉，把 std 约定（`unbiased=False`、eps 位置）冻结成魔法小数；归一化方式的正当改动会逼着手改这堆常量而非改一个公式。
+**修正裁决（2026-06-21 复核）：这条不是「该改的冗余重钉」，而是「该保留的唯一独立数值 oracle」。** 初版把它归到「改成从 source 重算」一档是错的 —— 全 `tests/` grep 下来，没有任何别的断言钉这串绝对数值，那么这串手算小数就是 `group_relative_advantages` 闭式输出**唯一的独立回归网**。它属于第 0 节裁决里「外部固定/数值契约 → 保留」那一档，与 chunk_cost / chunk_key / seed 三条（确实是 source 模板的输出回声）**不同类**。
+
+关键反例：若改成「调用 `group_relative_advantages(...)` 算 `expected` 再跟 `grpo_advantages` 比」，由于 `GRPO.compute_advantages_from_tensors`（`vrl/algorithms/grpo/continuous.py:65-82`）内部**就是**用同一组 `cfg.eps/adv_clip_max/global_std` 调 `group_relative_advantages`，`expected` 与 `grpo_advantages` 成了 `f(x) == f(x)` —— **恒真，零保护**。`unbiased=False→True`、eps 位置挪动、clip 改动全部静默放过。这恰恰说明：这里的「派生」会退化成自比，唯一能独立守住闭式的就是冻结的 golden 小数。
+
+正确做法：**保留** parametrize 的 golden 小数张量作为独立 oracle（在测试内 hand-derive、不 import source 函数），同时保留真契约 `nft_advantages == grpo_advantages`。两条断言各守一面：前者守「闭式数值对不对」，后者守「NFT 复用 GRPO 优势」。
 
 > 备注（不在本 sprint 范围）：JSON 同主题清单里还有一批「重抄 dataclass 默认值 / 目录清单 / Literal 成员 / 协议方法名」的发现（如 `test_schema.py` 的 algorithm-kind 列表、`test_generation_rollout_boundaries.py` 的 `hub.py` 已腐烂目录快照、`test_family_registry.py` 的 alias dict）。它们与本 sprint 同根（抄 source 而非派生），但**不是「手算算术输出」**这一窄主题，属于「冻结 registry/目录/Literal 快照」的另一类，留给同族但独立的 sprint，本 sprint 不混入。
 
@@ -172,7 +178,7 @@ def _key(start: int, count: int) -> str:
     return SampleChunk(prompt_index=0, prompt="p", sample_start=start, sample_count=count).chunk_key
 
 splits = output.extra["ray_chunk_oom_splits"]
-assert [row["chunk_key"] for row in splits] == [_key(0, 8), _key(0, 4), _key(4, 8)]
+assert [row["chunk_key"] for row in splits] == [_key(0, 8), _key(0, 4), _key(4, 4)]
 ```
 
 `covered`（`:167-172`）同样从 `_key(...)` 派生其四个叶子 key，保留 `samples` 计数（`2`）这个测试自选的容量输入。递归顺序与叶子集合（真不变量）一字不动，只是格式不再手抄。
@@ -195,35 +201,31 @@ assert first == 17 + 2 * 4 + 1  # base_seed + prompt_index*samples_per_prompt + 
 
 > 数值锚用「输入算术表达式」而非 magic `26`，使 seeding 方案若加全局 offset 时，这条仍跟随公式（或直接删数值锚，只留 `first == second` —— 二选一，本 sprint 取「保留可读的输入表达式」）。
 
-### D. `test_diffusion_nft.py` —— `expected` 张量改为 `nft==grpo` + 从公式算锚
+### D. `test_diffusion_nft.py` —— **不改**：golden 小数是唯一独立 oracle，保留
 
-BEFORE（`:61-93`）：parametrize 的 `expected` 是手钉小数张量。
+初版方案（「`expected` 改为转调 `group_relative_advantages` 现算」）经 §1.4 复核**作废** —— 那会把数值锚变成 `f(x) == f(x)` 恒真。本案的正确处置是**保留** golden 小数（在测试内 hand-derive，不 import source 函数）+ 真契约 `nft == grpo`，两条断言各守一面。
 
-AFTER（真契约 `nft == grpo` 保留；若要数值锚，从 `(r - group_mean)/std` 现算，而非粘 `-1.2247449`）：
+已落地形态（`tests/algorithms/test_diffusion_nft.py`）：
 
 ```python
-def test_diffusion_nft_advantages_match_grpo_contract() -> None:
-    """DiffusionNFT and GRPO share one group-relative advantage contract."""
-    rewards = torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
-    group_ids = torch.tensor([0, 0, 0, 1, 1, 1])
-    for global_std in (False, True):
-        grpo = GRPO(GRPOConfig(eps=1e-4, global_std=global_std))
-        nft = DiffusionNFT(DiffusionNFTConfig(eps=1e-4, global_std=global_std))
-        grpo_adv = grpo.compute_advantages_from_tensors(rewards, group_ids)
-        nft_adv = nft.compute_advantages_from_tensors(rewards, group_ids)
-        # The real contract: NFT reuses the GRPO group-relative advantage.
-        assert torch.allclose(nft_adv, grpo_adv, atol=0.0, rtol=0.0)
-        # Numeric anchor recomputed from the closed form, not a frozen snapshot.
-        expected = _group_relative(rewards, group_ids, eps=1e-4, global_std=global_std)
-        assert torch.allclose(grpo_adv, expected, atol=1e-6)
+grpo_advantages = grpo.compute_advantages_from_tensors(rewards, group_ids)
+nft_advantages = nft.compute_advantages_from_tensors(rewards, group_ids)
+
+# The real contract: NFT reuses the GRPO group-relative advantage.
+assert torch.allclose(nft_advantages, grpo_advantages, atol=0.0, rtol=0.0)
+# Independent numeric oracle: closed-form group-relative advantage, hand-derived
+# (NOT via group_relative_advantages, which is the function under test).
+#   global_std=False: per-group std = sqrt(2/3) = 0.8164966 -> +-1.2247449
+#   global_std=True:  std over [1..6] = sqrt(35/12) = 1.7078251 -> +-0.5855400
+expected = (
+    torch.tensor([-0.5855400, 0.0, 0.5855400, -0.5855400, 0.0, 0.5855400])
+    if global_std
+    else torch.tensor([-1.2247449, 0.0, 1.2247449, -1.2247449, 0.0, 1.2247449])
+)
+assert torch.allclose(grpo_advantages, expected, atol=1e-6)
 ```
 
-数值锚有两种等效实现，取其一：
-
-- 直接调用 source 闭式：`from vrl.algorithms.advantages import group_relative_advantages`，`_group_relative` 即转调 `group_relative_advantages(rewards, group_ids, eps=eps, adv_clip_max=..., global_std=global_std)`（最贴近「source 是唯一事实源」）；
-- 或在测试内按 `(r - group_mean) / clamp(std, eps)` 现算（`std` 按 `global_std` 取每组 / 跨population，`unbiased=False`）。
-
-两者都让 std 约定只活在一处，归一化改动只需改公式不需改小数。
+负向验证（已实测）：把 source 的 `group_rewards.std(unbiased=False)` 改成 `unbiased=True`，该断言**立即失败**（golden `-1.2247` vs 被破坏的 `-1.0`）；还原后两分支复绿 —— 证明它不再恒真、真守闭式。
 
 ## 3. 验证（finishing criteria）
 
