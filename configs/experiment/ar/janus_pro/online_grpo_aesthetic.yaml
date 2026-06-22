@@ -1,0 +1,38 @@
+# Janus-Pro-1B aesthetic GRPO — single-segment AR image RL scored by the LAION
+# Aesthetic Predictor v2 (CLIP ViT-L/14 + MLP).
+#
+# Mirrors online_grpo_ocr.yaml exactly except for the reward (ocr -> aesthetic)
+# and the dataset (ocr text-rendering prompts -> drawbench general prompts), so
+# it is a one-variable change from the validated non-R1 pipeline: a dense,
+# every-image-scored reward where OCR was a sparse, text-rendering reward the 1B
+# model could not move. Same single-segment token GRPO + LoRA, same entrypoint.
+defaults:
+  - /recipe/online/ar_discrete_token_grpo
+  - /model/ar/janus_pro/1b
+  - /sampling/ar/discrete_image_384_576tok
+  - /reward/aesthetic
+  - /dataset/drawbench_train_192
+
+algorithm:
+  # clip_ratio inherits the AR-safe 0.2 from /base/algorithm/grpo.
+  kl_coef: 0.01
+  kl_estimator: k2
+
+actor:
+  optim:
+    lr: 1.0e-4
+
+rollout:
+  # Stream one prompt group at a time (rbs=8 -> gradient_accumulation_steps=8)
+  # so host RAM holds ~1 group's AR replay tensors instead of all 8 before
+  # backward. Gradient-identical to full-batch (advantages are per-group,
+  # global_std=false; loss reduced per prompt group; ppo_epochs=1).
+  microbatch_size: 1
+  # Fail fast if one streamed group already uses >90% of host RAM (0.0 disables).
+  host_memory_budget_fraction: 0.9
+
+trainer:
+  entrypoint: vrl.scripts.ar.janus_pro.train:train_janus_pro_grpo
+  output_dir: outputs/janus_pro_1b_aesthetic_grpo
+  debug:
+    first_step: false
