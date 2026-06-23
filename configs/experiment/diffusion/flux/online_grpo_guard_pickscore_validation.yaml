@@ -30,6 +30,12 @@ actor:
   optim: { lr: 1.0e-4 }
   gradient_checkpointing: true
   timestep_fraction: 1.0       # train across all denoise steps -> exercises the per-step norm
+  # Reuse each rollout batch for several optimizer steps. With ppo_epochs=1 the
+  # gradient step sees old_log_prob == current policy -> ratio==1 -> ratio_mean_bias
+  # is identically 0 and the Guard correction never engages. >1 lets the policy
+  # drift from the rollout WITHIN the batch -- the only thing that exercises the
+  # ratio-mean-bias correction (now visible from epoch 0, not just in long runs).
+  ppo_epochs: 4
 
 algorithm:
   clip_ratio: 1.0e-4

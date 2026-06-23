@@ -29,6 +29,12 @@ actor:
   optim: { lr: 1.0e-4 }              # LoRA wants higher LR than the paper's full-param 1e-5
   gradient_checkpointing: true
   timestep_selection: random         # the DanceGRPO knob (recipe default; explicit here)
+  # Reuse each rollout batch for several optimizer steps: ppo_epochs=1 gives one
+  # tiny REINFORCE step/epoch (grad_norm ~3e-3, reward flat). >1 produces a real
+  # learning signal, without which the random-vs-strided ablation is vacuous (both
+  # would be flat). The strided control runs the SAME config with the CLI override
+  # actor.timestep_selection=strided (no separate file).
+  ppo_epochs: 4
 
 algorithm: { kl_coef: 0.0, global_std: true }   # no-KL per DanceGRPO
 

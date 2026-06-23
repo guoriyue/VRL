@@ -38,6 +38,13 @@ sampling: { height: 256, width: 256, num_steps: 10, max_sequence_length: 64 }
 actor:
   optim: { lr: 1.0e-4 }
   gradient_checkpointing: true
+  # Reuse each rollout batch for several optimizer steps. With ppo_epochs=1 the
+  # gradient step sees old_log_prob == current policy -> ratio==1 and zero
+  # proposal-mean drift -> the trust region never masks anything (masked_fraction,
+  # reported as clip_fraction, is identically 0). >1 lets the policy drift from the
+  # rollout WITHIN the batch so the KL trust region actually drops samples (visible
+  # from epoch 0). kl_mask_threshold then becomes a meaningful sweep knob.
+  ppo_epochs: 4
 
 algorithm:
   kl_mask_threshold: 1.0       # trust-region boundary (the one knob to sweep)
