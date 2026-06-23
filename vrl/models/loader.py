@@ -77,40 +77,6 @@ def load_flow_match_scheduler(
     )
 
 
-def apply_lora_to_transformer(model: Any, spec: Any) -> None:
-    """Attach or load a PEFT LoRA adapter on ``model.transformer``."""
-
-    from peft import LoraConfig, PeftModel, get_peft_model
-
-    transformer = model.transformer
-    transformer.requires_grad_(False)
-    to = getattr(transformer, "to", None)
-    if callable(to):
-        to(model.device, dtype=resolve_torch_dtype(spec.dtype))
-
-    lora_path = spec.lora_path
-    if lora_path:
-        wrapped = PeftModel.from_pretrained(
-            transformer,
-            lora_path,
-            is_trainable=True,
-        )
-        wrapped.set_adapter("default")
-        model._set_transformer(wrapped)
-        return
-
-    lora_config = spec.lora
-    if lora_config is None:
-        raise ValueError("LoRA runtime spec requires lora_config when lora_path is empty")
-    cfg = LoraConfig(
-        r=lora_config["rank"],
-        lora_alpha=lora_config["alpha"],
-        init_lora_weights=lora_config.get("init_lora_weights", "gaussian"),
-        target_modules=lora_config["target_modules"],
-    )
-    model._set_transformer(get_peft_model(transformer, cfg))
-
-
 def enable_transformer_full_finetune(model: Any) -> None:
     """Mark the replay transformer fully trainable."""
 
@@ -201,7 +167,6 @@ def assert_rollout_quantization_applied(model: Any, spec: Any) -> None:
 
 
 __all__ = [
-    "apply_lora_to_transformer",
     "apply_rollout_quantization",
     "assert_rollout_quantization_applied",
     "compile_transformer",

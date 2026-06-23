@@ -24,7 +24,6 @@ from vrl.models.interfaces.runtime import (
     RuntimeBundle,
 )
 from vrl.models.loader import (
-    apply_lora_to_transformer,
     apply_rollout_quantization,
     compile_transformer,
     enable_transformer_full_finetune,
@@ -166,7 +165,7 @@ def build_flux_replay_runtime_bundle(
 
     use_lora = spec.use_lora
     if use_lora:
-        apply_lora_to_transformer(model, spec)
+        model.apply_lora(spec)
         if attach_previous_adapter:
             model.attach_previous_policy_adapter(spec)
             logger.info("Attached frozen DiffusionNFT `previous` LoRA adapter (replay)")

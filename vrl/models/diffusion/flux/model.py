@@ -46,7 +46,9 @@ from vrl.models.diffusion.common import (
 )
 from vrl.models.diffusion.common.lora import (
     LoraModelMixin,
-    PreviousPolicyAdapterMixin,
+    build_lora_config,
+    copy_adapter_weights,
+    freeze_adapter_params,
 )
 from vrl.models.diffusion.flux.runner import FluxDiffusionBackboneRunner
 from vrl.models.dtypes import resolve_torch_dtype
@@ -69,12 +71,15 @@ class FluxSamplingState:
     width: int
 
 
-class FluxModel(PreviousPolicyAdapterMixin, LoraModelMixin, DiffusionModelBase):
+class FluxModel(LoraModelMixin, DiffusionModelBase):
     """Diffusers-backed FLUX.1 t2i model.
 
-    Composes ``PreviousPolicyAdapterMixin`` so DiffusionNFT can drive a frozen
-    ``previous`` LoRA adapter (built on demand by the NFT runtime path via
-    ``attach_previous_policy_adapter``); plain GRPO runs never attach it.
+    Owns the DiffusionNFT previous-policy adapter methods directly
+    (``attach_previous_policy_adapter`` / ``sync_previous_policy_adapter``) so the
+    NFT runtime path can drive a frozen ``previous`` LoRA mirror; plain GRPO runs
+    never attach it. The PEFT primitives they build on
+    (``build_lora_config`` / ``copy_adapter_weights`` / ``freeze_adapter_params``)
+    stay shared with cosmos/predict2.5 in ``common/lora.py``.
     """
 
     def __init__(
@@ -153,6 +158,42 @@ class FluxModel(PreviousPolicyAdapterMixin, LoraModelMixin, DiffusionModelBase):
 
     def _lora_dtype(self, spec: Any) -> Any:
         return resolve_torch_dtype(spec.dtype)
+
+    # -- DiffusionNFT previous-policy adapter -----------------------------
+    # NFT parametrizes its negative branch against a frozen ``previous`` copy of
+    # the trainable adapter, forward-evaluated under no_grad and refreshed by
+    # weight copy each optimizer step (never optimized). Call ``attach_*`` after
+    # the normal LoRA attach (``self.transformer`` must already carry ``default``).
+
+    def attach_previous_policy_adapter(self, spec: Any) -> None:
+        """Build the frozen ``previous`` adapter, seeded from ``default``.
+
+        Idempotent on the adapter slot: only adds it once, then (re)seeds it from
+        the current ``default`` so ``previous == default`` at attach time (the
+        lr=0 NFT invariant). Leaves ``default`` active for the next forward.
+        """
+
+        transformer = self.transformer
+        lora_config = getattr(spec, "lora", None)
+        if lora_config is None:
+            raise ValueError(
+                "attach_previous_policy_adapter requires spec.lora (LoRA NFT only)",
+            )
+        if "previous" not in getattr(transformer, "peft_config", {}):
+            transformer.add_adapter("previous", build_lora_config(lora_config))
+        copy_adapter_weights(transformer, src="default", dst="previous")
+        freeze_adapter_params(transformer, "previous")
+        transformer.set_adapter("default")
+
+    def sync_previous_policy_adapter(self, *, decay: float = 0.0) -> None:
+        """Refresh the ``previous`` adapter from the trainable ``default`` adapter.
+
+        Reached via getattr dispatch in vrl/algorithms/diffusion_nft.py
+        (``after_optimizer_step``), not a direct call — keep even though textual
+        call-site searches miss it.
+        """
+
+        copy_adapter_weights(self.transformer, src="default", dst="previous", decay=decay)
 
     def enable_full_finetune(self) -> None:
         """Mark transformer fully trainable (no-LoRA path)."""

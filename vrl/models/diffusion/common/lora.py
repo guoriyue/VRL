@@ -6,10 +6,10 @@ for fresh adapters) is family-agnostic, so it lives here once. Families only
 override the small hooks that actually differ.
 
 The DiffusionNFT previous-policy adapter primitives (``build_lora_config`` /
-``copy_adapter_weights`` / ``freeze_adapter_params`` + ``PreviousPolicyAdapterMixin``)
-also live here: they are pure PEFT operations with no family specifics, and are
-now shared by both cosmos/predict2.5 (its custom ``apply_lora``) and flux (the
-``PreviousPolicyAdapterMixin`` it composes). Keeping one copy here is the same
+``copy_adapter_weights`` / ``freeze_adapter_params``) also live here: they are
+pure PEFT operations with no family specifics, shared by both cosmos/predict2.5
+(its custom ``apply_lora``) and flux (its ``attach_previous_policy_adapter`` /
+``sync_previous_policy_adapter`` methods). Keeping one copy here is the same
 de-duplication rationale as the attach logic above — a second copy would rot the
 moment the PEFT param-naming convention shifts under one family but not the other.
 """
@@ -28,8 +28,14 @@ class LoraModelMixin:
     _lora_default_init_weights: Any = "gaussian"
 
     def _lora_transformer(self) -> Any:
-        """The transformer module to wrap (anima keeps it off-pipeline)."""
-        return self.pipeline.transformer
+        """The trainable transformer to wrap.
+
+        Reads ``self.transformer`` — kept in sync with ``pipeline.transformer`` by
+        every family's ``_set_transformer`` — instead of ``pipeline.transformer``,
+        so this one attach path also serves the pipeline-less replay models (which
+        set ``self.transformer`` directly and raise on ``pipeline``).
+        """
+        return self.transformer
 
     def _lora_dtype(self, spec: Any) -> Any | None:
         """Optional dtype for the pre-wrap device move (sd3_5/anima cast)."""
@@ -155,58 +161,8 @@ def freeze_adapter_params(module: Any, adapter: str) -> None:
         )
 
 
-class PreviousPolicyAdapterMixin:
-    """DiffusionNFT previous-policy ``previous`` adapter management for any family.
-
-    NFT parametrizes its negative branch against a frozen previous-policy copy of
-    the trainable adapter, forward-evaluated under no_grad and refreshed by weight
-    copy each optimizer step (never optimized). A family composes this mixin to
-    gain both methods the ``DiffusionNFT`` algorithm dispatches to via getattr:
-    ``sync_previous_policy_adapter`` (per-step refresh) and the one-time
-    ``attach_previous_policy_adapter`` build step. Requires ``self.transformer``
-    to already carry the ``default`` adapter (PEFT-wrapped); call ``attach_*``
-    after the family's normal LoRA attach. Cosmos/predict2.5 inlines the same
-    primitives in its bespoke ``apply_lora`` instead of composing this mixin
-    (its attach path also handles a resume ``lora_path``), but shares the
-    underlying ``copy_adapter_weights`` / ``freeze_adapter_params`` helpers.
-    """
-
-    transformer: Any
-
-    def attach_previous_policy_adapter(self, spec: Any) -> None:
-        """Build the frozen ``previous`` adapter, seeded from ``default``.
-
-        Idempotent on the adapter slot: only adds it once, then (re)seeds it from
-        the current ``default`` so ``previous == default`` at attach time (the
-        lr=0 NFT invariant). Leaves ``default`` active for the next forward.
-        """
-
-        transformer = self.transformer
-        lora_config = getattr(spec, "lora", None)
-        if lora_config is None:
-            raise ValueError(
-                "attach_previous_policy_adapter requires spec.lora (LoRA NFT only)",
-            )
-        if "previous" not in getattr(transformer, "peft_config", {}):
-            transformer.add_adapter("previous", build_lora_config(lora_config))
-        copy_adapter_weights(transformer, src="default", dst="previous")
-        freeze_adapter_params(transformer, "previous")
-        transformer.set_adapter("default")
-
-    def sync_previous_policy_adapter(self, *, decay: float = 0.0) -> None:
-        """Refresh the ``previous`` adapter from the trainable ``default`` adapter.
-
-        Reached via getattr dispatch in vrl/algorithms/diffusion_nft.py
-        (``after_optimizer_step``), not a direct call — keep even though textual
-        call-site searches miss it.
-        """
-
-        copy_adapter_weights(self.transformer, src="default", dst="previous", decay=decay)
-
-
 __all__ = [
     "LoraModelMixin",
-    "PreviousPolicyAdapterMixin",
     "build_lora_config",
     "copy_adapter_weights",
     "freeze_adapter_params",

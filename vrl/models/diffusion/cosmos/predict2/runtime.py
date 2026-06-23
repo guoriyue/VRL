@@ -22,7 +22,6 @@ from vrl.models.diffusion.common.vae_decode_memory import (
 )
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.loader import (
-    apply_lora_to_transformer,
     apply_rollout_quantization,
     compile_transformer,
     enable_transformer_full_finetune,
@@ -148,7 +147,7 @@ def build_cosmos_predict2_replay_runtime_bundle(
 
     use_lora = spec.use_lora
     if use_lora:
-        apply_lora_to_transformer(model, spec)
+        model.apply_lora(spec)
     else:
         enable_transformer_full_finetune(model)
 

@@ -144,9 +144,6 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
             dtype=dtype,
         )
 
-    def _lora_transformer(self) -> Any:
-        return self.transformer
-
     def _lora_dtype(self, spec: Any) -> Any:
         del spec
         return self._dtype
