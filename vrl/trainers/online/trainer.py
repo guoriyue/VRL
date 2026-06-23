@@ -1198,7 +1198,7 @@ class OnlineTrainer(Trainer):
             if _guard_record is not None and first_step_debug_record is not None:
                 first_step_debug_record["precision_drift_guard"] = _guard_record
 
-        for _inner_epoch in range(cfg.ppo_epochs):
+        for _ppo_epoch in range(cfg.ppo_epochs):
             # Accumulate a configurable number of rollout micro-batches per
             # optimizer update. Flow-GRPO sets this to num_batches_per_epoch//2,
             # so an epoch can intentionally contain multiple optimizer updates.
