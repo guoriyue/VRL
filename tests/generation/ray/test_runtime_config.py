@@ -10,12 +10,12 @@ import pytest
 from omegaconf import OmegaConf
 
 from vrl.generation import GenerationOutput
+from vrl.generation.execution.types import DistributedWorkerHandle
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.ray.config import (
     DRIVER_CUDA_OWNERSHIP_ERROR,
     RayGenerationConfig,
 )
-from vrl.generation.execution.types import DistributedWorkerHandle
 from vrl.generation.ray.launcher import (
     RayGenerationLauncher,
     _all_workers_support_versioned_slots,

@@ -73,7 +73,7 @@ def main() -> None:
 
     def score(path: Path) -> dict[str, float]:
         # absolute path: qwen prepends file:// and decord rejects file://<relative>
-        out = model._reward([str(path.resolve())], [_PROMPT], use_norm=True)  # noqa: SLF001
+        out = model._reward([str(path.resolve())], [_PROMPT], use_norm=True)
         return out[0]
 
     good: dict[str, list[float]] = {d: [] for d in dims}

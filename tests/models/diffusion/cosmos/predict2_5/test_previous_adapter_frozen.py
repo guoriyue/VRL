@@ -29,7 +29,7 @@ class _PeftLikeModule(nn.Module):
         self.lora_A_previous = nn.Parameter(torch.randn(4, 4))
         self.lora_B_previous = nn.Parameter(torch.randn(4, 4))
 
-    def named_parameters(self, *args, **kwargs):  # noqa: ANN002, ANN003
+    def named_parameters(self, *args, **kwargs):
         # rename to PEFT's dotted convention so the ".{name}." marker matches
         rename = {
             "lora_A_default": "base.lora_A.default.weight",

@@ -190,7 +190,7 @@ def test_wan_i2v_from_spec_rejects_legacy_offload_keys(monkeypatch) -> None:
         model_config={"enable_model_cpu_offload": True},
     )
 
-    with pytest.raises(ValueError, match="model.enable_model_cpu_offload"):
+    with pytest.raises(ValueError, match=r"model\.enable_model_cpu_offload"):
         WanI2VDiffusersModel.from_spec(spec)
 
 

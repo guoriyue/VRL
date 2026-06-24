@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import torch
 import torch.nn as nn
 
 from vrl.models.diffusion.base import DiffusionModelBase

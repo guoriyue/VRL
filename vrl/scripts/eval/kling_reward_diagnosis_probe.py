@@ -66,7 +66,7 @@ def _run_shard(args: argparse.Namespace) -> None:
     )
 
     def score(path: Path) -> dict[str, float]:
-        return model._reward([str(path.resolve())], [_PROMPT], use_norm=True)[0]  # noqa: SLF001
+        return model._reward([str(path.resolve())], [_PROMPT], use_norm=True)[0]
 
     rows = []
     with tempfile.TemporaryDirectory() as tmp:

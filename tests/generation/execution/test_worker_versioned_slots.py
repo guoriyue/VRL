@@ -18,8 +18,8 @@ from typing import Any
 
 import torch
 
-from vrl.generation.execution.types import ChunkExecutionEnvelope
 from vrl.generation.execution.chunks import SampleChunk
+from vrl.generation.execution.types import ChunkExecutionEnvelope
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.types import GenerationRequest

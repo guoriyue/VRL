@@ -21,7 +21,7 @@ class _FakeDriverModel:
         if with_frozen_hook:
             self.move_frozen_components = self._move_frozen
 
-    def to(self, device: Any) -> "_FakeDriverModel":
+    def to(self, device: Any) -> _FakeDriverModel:
         self.to_calls.append(device)
         return self
 
