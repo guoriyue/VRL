@@ -127,15 +127,28 @@ def load_pickapic(
 ) -> PickAPicPreferenceDataset:
     """One-liner loader: returns a ready-to-iterate PyTorch Dataset.
 
-    Requires ``datasets`` and ``torchvision``. The first call streams
-    Pick-a-Pic v2 (~250 GB) — use ``cache_dir`` and consider
-    ``yuvalkirstain/pickapic_v2_no_images`` for metadata-only debugging.
+    Requires ``datasets`` and ``torchvision``. The full train split is
+    ~190 GB across ~387 parquet shards, so pass ``max_samples`` for a bounded
+    subset — it streams only the leading shard(s) instead of downloading every
+    shard. ``split`` must be a plain name (e.g. ``"train"``) in that path, not a
+    ``"train[:N]"`` slice (streaming does not accept slice syntax).
     """
-    from datasets import load_dataset
+    import itertools
 
-    ds = load_dataset(dataset_name, split=split, cache_dir=cache_dir, streaming=streaming)
+    from datasets import Dataset, load_dataset
+
     if max_samples is not None and not streaming:
-        ds = ds.select(range(min(max_samples, len(ds))))
+        # Stream the first `max_samples` rows, then materialise a map-style
+        # Dataset. A plain `load_dataset(split="train[:N]")` (or a post-hoc
+        # `.select`) downloads EVERY shard first just to keep N rows — useless on
+        # a 190 GB dataset. Streaming reads only the shards actually consumed.
+        stream = load_dataset(dataset_name, split=split, streaming=True)
+        rows = list(itertools.islice(stream, max_samples))
+        ds = Dataset.from_list(rows)
+    else:
+        ds = load_dataset(
+            dataset_name, split=split, cache_dir=cache_dir, streaming=streaming,
+        )
     return PickAPicPreferenceDataset(
         ds, resolution=resolution, random_crop=random_crop, no_hflip=no_hflip,
     )

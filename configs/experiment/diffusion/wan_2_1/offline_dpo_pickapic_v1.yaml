@@ -1,0 +1,50 @@
+# Wan 2.1 1.3B + Diffusion-DPO (offline, Pick-a-Pic v1).
+#
+# Same recipe as offline_dpo_pickapic.yaml, but pointed at the surviving
+# pickapic-anonymous/pickapic_v1 mirror (the yuvalkirstain/pickapic_v2 repo this
+# project originally targeted was delisted — 404 on the Hub, 2026-06).
+#
+# Smoke vs full run differ by CLI override only (no separate file):
+#   smoke  : ... data.split=train[:32] trainer.max_train_steps=15 trainer.log_interval=1
+#   refine : ... data.split=train[:512] trainer.max_train_steps=1500 actor.optim.lr=1e-6
+defaults:
+  - /recipe/offline/diffusion_dpo
+  - /model/diffusion/wan_2_1/1_3b
+  - /sampling/video/240p_33f
+  - /sampling/denoise/20_step_cfg_4_5
+  - /dataset/pickapic_v1
+
+precision: bf16
+
+# DPO is offline preference learning over images replicated to T frames.
+# Default to single-frame "image-style" DPO; bump num_frames for true video pairs.
+sampling:
+  num_frames: 1
+
+rollout:
+  n_samples_per_prompt: 1
+  rollout_batch_size: 1
+
+# DPO-specific trainer overrides — paper-default schedule for SDXL scaled to Wan.
+trainer:
+  entrypoint: vrl.scripts.diffusion.wan_2_1.train_dpo:train_wan_2_1_dpo
+  output_dir: outputs/wan_1_3b_dpo_pickapic_v1
+  max_train_steps: 2000
+  checkpointing_steps: 500
+  log_interval: 10
+
+# Optimizer / batch — DPO uses tiny lr (paper §4) and synchronous mini-batches.
+actor:
+  optim:
+    lr: 1.0e-8
+  scale_lr: true
+  gradient_accumulation_steps: 1
+  train_batch_size: 1
+  use_adafactor: false
+  prediction_type: flow_matching   # Wan uses flow-matching velocity target
+
+# Disable torch.compile on the transformer — DPO's twin policy/ref forwards
+# under no_grad collide with reduce-overhead CUDA graphs.
+model:
+  torch_compile:
+    enable: false

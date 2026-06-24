@@ -1,0 +1,22 @@
+# Pick-a-Pic v1 preference-pair dataset (HuggingFace).
+#
+# The original `yuvalkirstain/pickapic_v2` (and v1) repos were delisted from the
+# Hub (404 as of 2026-06). `pickapic-anonymous/pickapic_v1` is the surviving
+# public, ungated mirror and carries the exact schema the loader expects:
+#   jpg_0 / jpg_1 (image bytes) + label_0 ∈ {0, 0.5, 1} + caption.
+# ~0.5M preference pairs — enough for an offline Diffusion-DPO refine.
+data:
+  loader: pickapic_preference
+  source: huggingface
+  dataset_name: pickapic-anonymous/pickapic_v1
+  cache_dir: ""
+  split: train
+  max_train_samples: null
+  preprocessing:
+    random_crop: false
+    horizontal_flip: true
+    resolution: 0                  # 0 → derive from sampling.height
+  sampler:
+    shuffle: true
+    drop_last: true
+    dataloader_num_workers: 4
