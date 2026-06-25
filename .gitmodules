@@ -1,3 +1,6 @@
 [submodule "third_party/videophy"]
 	path = third_party/videophy
 	url = https://github.com/Hritikbansal/videophy
+[submodule "third_party/joyai_echo"]
+	path = third_party/joyai_echo
+	url = https://github.com/jd-opensource/JoyAI-Echo.git

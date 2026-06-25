@@ -73,8 +73,6 @@ class VideoConPhysicsModel(RewardModel):
             self.num_frames,
         )
 
-        _ensure_mplug_owl_video_on_path()
-
         from mplug_owl_video.modeling_mplug_owl import (
             MplugOwlForConditionalGeneration,
         )
@@ -196,38 +194,8 @@ class VideoConPhysicsModel(RewardModel):
 def preflight_videocon_physics_backend() -> None:
     """Validate vendored backend imports without downloading weights."""
 
-    _ensure_mplug_owl_video_on_path()
     import mplug_owl_video  # noqa: F401
     import transformers  # noqa: F401
-
-
-def _ensure_mplug_owl_video_on_path() -> None:
-    """Add the ``mplug_owl_video`` directory from the videophy submodule to
-    ``sys.path`` so we can ``import mplug_owl_video`` without prefixing a
-    deep ``third_party/videophy/videocon/training/pipeline_video`` path.
-
-    Raises a clear error if the submodule has not been initialized — fix
-    with ``git submodule update --init --recursive``.
-    """
-
-    import sys
-    from pathlib import Path
-
-    repo_root = Path(__file__).resolve().parents[3]
-    parent_dir = (
-        repo_root / "third_party" / "videophy"
-        / "videocon" / "training" / "pipeline_video"
-    )
-    needed = parent_dir / "mplug_owl_video" / "modeling_mplug_owl.py"
-    if not needed.exists():
-        raise RuntimeError(
-            "VideoCon-Physics requires the vendored mPLUG-Owl-Video sources. "
-            f"Missing file: {needed}. Initialize the videophy submodule with "
-            "`git submodule update --init --recursive`."
-        )
-    parent_str = str(parent_dir)
-    if parent_str not in sys.path:
-        sys.path.insert(0, parent_str)
 
 
 def _resolve_model_root(worker_config: Mapping[str, Any]) -> Path:

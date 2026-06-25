@@ -86,7 +86,30 @@ vrl/
 configs/    layered YAML configs
 datasets/   committed prompt datasets and dataset build scripts
 docs/       architecture notes, sprint notes, training examples
+third_party/  vendored submodules + editable-install wrappers
 ```
+
+## Setup
+
+A bare `git clone` does **not** fetch submodules, so run once after cloning:
+
+```bash
+make setup
+```
+
+That fetches the vendored submodules and editable-installs everything. It is the
+only setup step; re-run it after a submodule bump.
+
+### Why a setup step (vendored submodules)
+
+Some model/reward backends are upstream code that ships no Python packaging
+(JoyAI-Echo's `ltx_*`, videophy's `mplug_owl_video`). They live as git
+submodules under `third_party/`, each paired with a thin editable-install wrapper
+(`third_party/<name>_packaging/`) that exposes its packages — so `vrl/` contains
+**no** `sys.path` injection. `make setup` fetches the submodules, then discovers
+and editable-installs **every** `third_party/*_packaging/` wrapper, so adding a
+vendored dependency needs no edit outside `third_party/`. See
+[`third_party/README.md`](third_party/README.md) for the convention.
 
 ## Current Focus
 

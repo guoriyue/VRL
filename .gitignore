@@ -72,6 +72,15 @@ outputs/
 # stray content placed under third_party/ that isn't a tracked submodule.
 third_party/*
 !third_party/videophy
+!third_party/joyai_echo
+# Editable-install wrappers that expose the un-packaged submodule sources as
+# importable packages (so vrl/ needs no sys.path injection). See third_party/README.md.
+!third_party/echo_packaging
+!third_party/videophy_packaging
+!third_party/README.md
 
 # All Python virtualenvs live under one parent dir (one ignore entry covers all)
 .venvs/
+
+# Model weights belong in the HF cache (~/.cache/huggingface), never the repo.
+checkpoints/
