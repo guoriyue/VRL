@@ -12,12 +12,13 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
+from diffusers import FlowMatchEulerDiscreteScheduler
+
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.diffusion.echo.model import (
     EchoModel,
     EchoReplayModel,
     EchoSamplingState,
-    _flow_match_scheduler,
     _sigma_from_timestep,
 )
 
@@ -59,7 +60,7 @@ def _build_model() -> tuple[EchoModel, _FakeEcho]:
         echo=echo,
         text_encoder=_FakeTextEncoder(),
         video_vae=None,
-        scheduler=_flow_match_scheduler(),
+        scheduler=FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000),
         dtype=torch.float32,
         device=torch.device("cpu"),
     )
@@ -197,7 +198,7 @@ def test_move_frozen_components_offloads_wrappers_device_driven() -> None:
         echo=echo,
         text_encoder=te,
         video_vae=vae,
-        scheduler=_flow_match_scheduler(),
+        scheduler=FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000),
         dtype=torch.float32,
         device=torch.device("cpu"),
     )
@@ -213,7 +214,7 @@ def test_move_frozen_components_offloads_wrappers_device_driven() -> None:
 def test_replay_model_offload_is_noop_without_wrappers() -> None:
     echo = _FakeEcho()
     replay = EchoReplayModel(
-        echo=echo, scheduler=_flow_match_scheduler(), dtype=torch.float32, device=torch.device("cpu"),
+        echo=echo, scheduler=FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000), dtype=torch.float32, device=torch.device("cpu"),
     )
     replay.move_frozen_components("cpu")  # no text encoder / VAE -> must not raise
 
@@ -226,7 +227,7 @@ def test_replay_model_is_transformer_only_and_runs_velocity_forward() -> None:
     echo = _FakeEcho()
     replay = EchoReplayModel(
         echo=echo,
-        scheduler=_flow_match_scheduler(),
+        scheduler=FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000),
         dtype=torch.float32,
         device=torch.device("cpu"),
     )

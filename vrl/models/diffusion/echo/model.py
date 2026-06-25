@@ -90,19 +90,6 @@ class EchoSamplingState:
     guidance_scale: float
 
 
-def _flow_match_scheduler(num_train_timesteps: int = 1000) -> Any:
-    """A standard diffusers flow-matching scheduler for Echo's velocity field.
-
-    Echo's released sampler is a bespoke DMD few-step loop, but for RL we sample
-    with the same flow-matching SDE the rest of the diffusion families use; this
-    scheduler supplies the σ schedule + ``sde_step_with_logprob`` math.
-    """
-
-    from diffusers import FlowMatchEulerDiscreteScheduler
-
-    return FlowMatchEulerDiscreteScheduler(num_train_timesteps=num_train_timesteps)
-
-
 class EchoModel(LoraModelMixin, DiffusionModelBase):
     """Diffusers-free JoyAI-Echo video flow-matching policy."""
 
@@ -215,6 +202,7 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
         ``spec.model_config['gemma_path']`` is the separate Gemma-3-12B directory.
         """
 
+        from diffusers import FlowMatchEulerDiscreteScheduler
         from ltx_distillation.models.ltx_wrapper import create_ltx2_wrapper
         from ltx_distillation.models.text_encoder_wrapper import (
             create_text_encoder_wrapper,
@@ -259,11 +247,18 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
             dtype=dtype,
             with_video_encoder=False,
         )
+        # Echo ships a bespoke DMD few-step sampler, but for RL we drive its
+        # velocity field with the standard flow-matching SDE (σ schedule +
+        # sde_step_with_logprob), same as the other diffusion families.
+        # num_train_timesteps=1000 is Echo/LTX's train-time discretization:
+        # forward_step derives σ = t / num_train_timesteps, so this must match the
+        # value the transformer's timestep embedding was trained on, not a free knob.
+        scheduler = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000)
         return cls(
             echo=echo,
             text_encoder=text_encoder,
             video_vae=video_vae,
-            scheduler=_flow_match_scheduler(),
+            scheduler=scheduler,
             dtype=dtype,
             device=device,
         )

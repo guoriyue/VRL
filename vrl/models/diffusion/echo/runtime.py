@@ -106,9 +106,10 @@ def build_echo_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
 def build_echo_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
     """Build the trainer replay bundle: Echo's velocity transformer only."""
 
+    from diffusers import FlowMatchEulerDiscreteScheduler
+
     from vrl.models.diffusion.echo.model import (
         EchoReplayModel,
-        _flow_match_scheduler,
         _resolve_echo_checkpoint,
         _resolve_gemma_dir,
     )
@@ -127,9 +128,14 @@ def build_echo_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         video_height=int(sampling.get("height", 512)),
         video_width=int(sampling.get("width", 768)),
     )
+    # Same flow-matching scheduler as the rollout side (model.py from_spec): Echo's
+    # released DMD few-step sampler is bypassed; RL drives the velocity field with
+    # the standard flow-matching SDE. num_train_timesteps=1000 is Echo/LTX's
+    # train-time discretization (σ = t / num_train_timesteps), and it MUST match the
+    # rollout value so replay log-prob recompute reads the identical σ table.
     model = EchoReplayModel(
         echo=echo,
-        scheduler=_flow_match_scheduler(),
+        scheduler=FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000),
         dtype=dtype,
         device=device,
     )
