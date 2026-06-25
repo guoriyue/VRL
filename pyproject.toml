@@ -45,13 +45,17 @@ cosmos = [
     "peft>=0.11.0",          # LoRA adapters for diffusion/AR model families
     "torchvision>=0.17.0",   # diffusers cosmos transformer + preference data transforms
 ]
-# Video reward scoring (Kling VideoReward / Qwen2-VL). qwen_vl_utils pulls
-# torchvision for its decode path; the backend loads a LoRA adapter via peft.
+# Video reward scoring. Covers Kling VideoReward / Qwen2-VL, VideoScore2 and
+# UnifiedReward-2.0 (Qwen2.5-VL, trust_remote_code, transformers>=4.49).
+# qwen_vl_utils pulls torchvision for its decode path; Kling loads a LoRA via peft;
+# UnifiedReward-2.0 samples frames with opencv. PhyMotion's SMPL+MuJoCo backend is
+# external by design (vendored under third_party/) and intentionally absent here.
 reward = [
-    "transformers>=4.40.0,<5",
+    "transformers>=4.49.0,<5",
     "peft>=0.11.0",
     "qwen-vl-utils>=0.0.10",
     "torchvision>=0.17.0",
+    "opencv-python-headless>=4.9.0",
 ]
 # Dataset preparation / scraping under vrl/scripts/data.
 data = [
@@ -80,6 +84,13 @@ pose-gpu = [
 ar-vllm = [
     "torch==2.11.0",
     "vllm>=0.21.0,<0.22",
+]
+# Fixed video-eval suite extras (vrl/scripts/eval/video_reward_suite.py). VBench
+# is PyPI-packaged so it is a dependency here; the other motion-eval benchmarks
+# (VMBench, DynamicEval) ship no packaging and are vendored as submodules under
+# third_party/ — run their CLIs and fold results in via --merge-json.
+videoeval = [
+    "vbench>=0.1.5",
 ]
 
 [project.scripts]

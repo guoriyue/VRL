@@ -12,8 +12,9 @@ signal. In particular, Kling VideoReward's `overall_reward` is
 `VQ + MQ + TA`, so it already includes prompt/text alignment.
 
 The aggregate score key differs per reward: it is `overall_reward` in Kling
-VideoReward and `overall` in VideoCon-Physics (each reward keeps its own
-deliberate vocabulary — see the per-reward score-key table below).
+VideoReward, `overall` in VideoCon-Physics, and `overall` in VideoScore2 (the
+mean of its three axes). Each reward keeps its own deliberate vocabulary — see
+the per-reward score-key table below.
 
 Use these conventions for compound video recipes:
 
@@ -23,6 +24,10 @@ Use these conventions for compound video recipes:
 | Motion or physics compound | `kling_video_reward` | `motion_quality` | Keeps Kling focused on motion and avoids duplicating prompt-alignment rewards. |
 | Visual-quality compound | `kling_video_reward` | `visual_quality` | Keeps Kling focused on visual quality. |
 | Physical commonsense | `videocon_physics` | `physical_commonsense` | Avoids mixing VideoCon semantic adherence into prompt-alignment rewards. |
+| Physical/common-sense judge | `videoscore2` | `physical_common_sense` | VideoScore2's naturalness/physics axis; pair with Kling `motion_quality` instead of duplicating text alignment. |
+| Visual-quality judge | `videoscore2` | `visual_quality` | VideoScore2's clarity/artifact axis as a learned second opinion to Kling `visual_quality`. |
+| Rubric / cloth-physics judge | `unified_reward_video` | `physics` | UnifiedReward-2.0's physics axis; steer it at the dress/skirt question via `worker_config.rubric_path`. |
+| Human dynamics (external) | `phymotion` | `overall` | SMPL+MuJoCo kinematic/contact/dynamic feasibility via an external PhyMotion env (opt-in). |
 
 Keep `configs/reward/kling_video_reward.yaml` on `overall_reward` for single-reward
 baselines. Compound experiments should override the score key explicitly, e.g.

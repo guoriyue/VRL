@@ -29,8 +29,11 @@ def _register_builtins() -> None:
     from vrl.rewards.functions.kling_video_reward import KlingVideoReward
     from vrl.rewards.functions.nsfw_safety import NSFWSafetyReward
     from vrl.rewards.functions.ocr import OCRReward
+    from vrl.rewards.functions.phymotion import PhyMotionReward
     from vrl.rewards.functions.pickscore import PickScoreReward
+    from vrl.rewards.functions.unified_reward_video import UnifiedRewardVideoReward
     from vrl.rewards.functions.videocon_physics import VideoConPhysicsReward
+    from vrl.rewards.functions.videoscore2 import VideoScore2Reward
 
     _REWARD_REGISTRY.update({
         "aesthetic": AestheticReward,
@@ -40,6 +43,9 @@ def _register_builtins() -> None:
         "pickscore": PickScoreReward,
         "kling_video_reward": KlingVideoReward,
         "videocon_physics": VideoConPhysicsReward,
+        "videoscore2": VideoScore2Reward,
+        "unified_reward_video": UnifiedRewardVideoReward,
+        "phymotion": PhyMotionReward,
     })
 
 

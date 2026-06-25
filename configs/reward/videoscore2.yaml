@@ -1,0 +1,39 @@
+# VideoScore2 reward (TIGER-Lab/VideoScore2, Qwen2.5-VL-7B judge).
+# Generative judge: reasons, then prints visual quality / text-to-video alignment
+# / physical-common-sense scores (1-5). Loaded via AutoModelForVision2Seq with
+# trust_remote_code (the checkpoint ships its own model code). Default score_key
+# is physical_common_sense for motion/physics compounds (see configs/reward/README.md).
+distributed:
+  resources:
+    reward:
+      num_gpus: 1
+      gpus_per_worker: 1.0
+      num_workers: 1
+  reward:
+    cpus_per_worker: 4.0
+    placement_strategy: STRICT_PACK
+    max_inflight_batches: 1
+
+reward:
+  components:
+    videoscore2: 1.0
+  kwargs:
+    videoscore2:
+      execution: pool
+      reward_name: videoscore2   # logical tag (request label)
+      score_key: physical_common_sense
+      media_type: video
+      artifact_format: mp4
+      artifact_dir: ${trainer.output_dir}/reward_artifacts
+      debug_dir: ${trainer.output_dir}/reward_debug
+      # Omit model_path to resolve reward_model_name from the local HF cache;
+      # set worker_config.model_path to load a local checkpoint dir.
+      worker_config:
+        reward_model_name: TIGER-Lab/VideoScore2@main   # which HF checkpoint to load
+        dtype: bfloat16
+        fps: 2.0                 # video frame sampling rate (upstream default)
+        max_new_tokens: 1024
+        # Continuous expected-value scoring over digit tokens 1-5 gives GRPO a
+        # smoother signal than the coarse integer parse; falls back to the
+        # integer per-axis if a score digit cannot be located in the output.
+        soft_scores: true

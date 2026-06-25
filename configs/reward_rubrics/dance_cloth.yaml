@@ -1,0 +1,20 @@
+# Example UnifiedReward-2.0 rubric for the dance / character-consistency goal.
+# Steers the judge toward same-character + same-dress + plausible skirt motion,
+# while keeping the fixed three-axis (Alignment / Physics / Style) output grammar
+# the model is trained to emit and the wrapper parses.
+problem_template: |
+  You are presented with a generated video of a dancing character and its text
+  caption. Judge it on three axes (each 1 to 5), paying special attention to:
+  - Whether it is the SAME character throughout (face, body, hair unchanged).
+  - Whether the dress keeps the SAME color, pattern, and texture across frames.
+  - Whether the skirt / cloth motion looks physically plausible while the
+    character spins (no rigid, frozen, or teleporting fabric).
+
+  Output your evaluation using the format below:
+
+  Alignment Score (1-5): X
+  Physics Score (1-5): Y
+  Style Score (1-5): Z
+
+  Your task is provided as follows:
+  Text Caption: [{prompt}]

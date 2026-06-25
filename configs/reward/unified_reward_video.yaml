@@ -1,0 +1,37 @@
+# UnifiedReward-2.0 video reward (CodeGoat24/UnifiedReward-2.0-qwen-7b, Qwen2.5-VL).
+# General image/video judge used pointwise: samples 16 frames, emits 1-5 float
+# Alignment / Physics / Style scores. Loaded via AutoModelForVision2Seq with
+# trust_remote_code. Default score_key is overall; use physics for cloth/skirt
+# plausibility and set worker_config.rubric_path to steer with a task rubric.
+distributed:
+  resources:
+    reward:
+      num_gpus: 1
+      gpus_per_worker: 1.0
+      num_workers: 1
+  reward:
+    cpus_per_worker: 4.0
+    placement_strategy: STRICT_PACK
+    max_inflight_batches: 1
+
+reward:
+  components:
+    unified_reward_video: 1.0
+  kwargs:
+    unified_reward_video:
+      execution: pool
+      reward_name: unified_reward_video   # logical tag (request label)
+      score_key: overall
+      media_type: video
+      artifact_format: mp4
+      artifact_dir: ${trainer.output_dir}/reward_artifacts
+      debug_dir: ${trainer.output_dir}/reward_debug
+      worker_config:
+        reward_model_name: CodeGoat24/UnifiedReward-2.0-qwen-7b@main
+        dtype: bfloat16
+        num_frames: 16
+        max_new_tokens: 256
+        # Optional rubric YAML (problem_template with a {prompt} slot) to steer the
+        # judge toward the character/dress/skirt question; omit for the default
+        # alignment/physics/style rubric. Example: configs/reward_rubrics/dance_cloth.yaml
+        rubric_path: ""

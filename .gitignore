@@ -73,6 +73,11 @@ outputs/
 third_party/*
 !third_party/videophy
 !third_party/joyai_echo
+# Video reward / motion-eval benchmarks (no PyPI packaging; run via CLI or an
+# external command — not imported by vrl/, so no *_packaging wrapper needed).
+!third_party/PhyMotion
+!third_party/VMBench
+!third_party/DynamicEval
 # Editable-install wrappers that expose the un-packaged submodule sources as
 # importable packages (so vrl/ needs no sys.path injection). See third_party/README.md.
 !third_party/echo_packaging
