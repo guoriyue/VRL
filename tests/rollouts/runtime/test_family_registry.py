@@ -27,6 +27,7 @@ def test_family_registry_covers_current_rollout_families() -> None:
         "cosmos-predict2",
         "cosmos-predict2.5",
         "cosmos-predict2-anima",
+        "echo",
         "janus_pro",
         "janus_pro_r1",
         "nextstep_1",
