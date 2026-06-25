@@ -1,0 +1,23 @@
+# JoyAI-Echo (LTX-2.3-derived) video transformer — checkpoint, Gemma encoder, LoRA.
+# path / gemma_path are HuggingFace repo ids (same convention as wan/sd3): weights
+# resolve to the shared HF cache (~/.cache/huggingface) on first use, not the repo.
+# Local file/dir paths also work if you have the weights elsewhere.
+# Echo is DMD-distilled with guidance baked in, so the RL policy runs WITHOUT CFG
+# (set sampling.guidance_scale: 1.0). H/W must be divisible by 32 and frame_count
+# must be 1 + 8*k (LTX VAE compression).
+model:
+  family: echo
+  path: jdopensource/JoyAI-Echo
+  gemma_path: google/gemma-3-12b-it
+
+  use_lora: true
+  lora:
+    rank: 32
+    alpha: 64
+    # LTX attention projections (video self-attn, text cross-attn, A/V cross-attn
+    # all share these names); PEFT matches by module-name suffix.
+    target_modules:
+      - to_q
+      - to_k
+      - to_v
+      - to_out.0

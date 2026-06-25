@@ -261,6 +261,19 @@ register_rollout_family(
 )
 
 register_rollout_family(
+    _diffusion_entry(
+        family="echo",
+        task="t2v",
+        aliases=("joyai_echo",),
+        executor_cls="vrl.models.diffusion.echo.runtime:EchoChunkExecutor",
+        runtime_builder="vrl.models.diffusion.echo.runtime:build_echo_runtime_bundle",
+        runtime_spec_extractor="vrl.models.diffusion.echo.runtime:extract_echo_runtime_spec",
+        request_prefix="echo",
+        default_task_type="text_to_video",
+    ),
+)
+
+register_rollout_family(
     RolloutFamilyEntry(
         family="janus_pro",
         task="ar_t2i",

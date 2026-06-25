@@ -1,0 +1,49 @@
+# JoyAI-Echo video GRPO on motion-grounded prompts with a production video reward.
+# Single-shot, video-only flow-matching RL (audio + cross-shot memory are Echo
+# inference features, not on the RL path). Echo is a ~24GB transformer + Gemma-12B
+# encoder: this needs an 80GB-class card even with LoRA + gradient checkpointing.
+defaults:
+  - /recipe/online/diffusion_grpo
+  - /model/diffusion/echo/release
+  - /reward/kling_video_reward
+  - /dataset/videophy
+
+# Echo-safe shape: H/W divisible by 32, frames = 1 + 8*k. 256x256, 25 frames.
+# guidance_scale=1.0 because the DMD checkpoint bakes guidance in (no CFG branch).
+sampling:
+  width: 256
+  height: 256
+  num_frames: 25
+  num_steps: 16
+  guidance_scale: 1.0
+  max_sequence_length: 512
+  fps: 24
+
+actor:
+  optim:
+    lr: 1.0e-4              # LoRA wants higher LR than full-param's 1e-5
+  gradient_checkpointing: true
+  # >1 reuses each rollout batch for several optimizer steps so the GRPO drift
+  # mechanisms are non-degenerate (see the flux algo-validation sprint note).
+  ppo_epochs: 4
+
+algorithm:
+  kl_coef: 0.004
+
+rollout:
+  n_samples_per_prompt: 8
+  rollout_batch_size: 1
+  sample_batch_size: 1
+  noise_level: 0.7
+  sde:
+    type: flow_grpo
+
+trainer:
+  entrypoint: vrl.scripts.diffusion.echo.train:train_echo_grpo
+  output_dir: outputs/echo_kling_video_reward
+  save_freq: 20
+
+reward:
+  kwargs:
+    kling_video_reward:
+      artifact_format: mp4

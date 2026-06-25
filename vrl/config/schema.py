@@ -394,6 +394,20 @@ class NextStep1ModelConfig(ModelConfig):
     vae_path: Any = None
 
 
+class EchoModelConfig(ModelConfig):
+    """JoyAI-Echo model keys consumed by the echo runtime/model loaders.
+
+    ``path`` is the merged Echo safetensors checkpoint; ``gemma_path`` is the
+    separate Gemma-3-12B text-encoder directory (both downloaded into the run's
+    checkpoints dir — weights are not vendored).
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    gemma_path: Any = None
+    task_variant: Any = None
+
+
 _model_config_classes_by_family: dict[str, type[ModelConfig]] = {
     "sd3_5": SD3ModelConfig,
     "wan": WanModelConfig,
@@ -414,6 +428,8 @@ _model_config_classes_by_family: dict[str, type[ModelConfig]] = {
     "janus_pro_r1": JanusProModelConfig,
     "nextstep": NextStep1ModelConfig,
     "nextstep_1": NextStep1ModelConfig,
+    "echo": EchoModelConfig,
+    "joyai_echo": EchoModelConfig,
 }
 
 _model_config_variant_classes: tuple[type[ModelConfig], ...] = tuple(
