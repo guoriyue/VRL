@@ -1,6 +1,6 @@
 # SPRINT: 消除 parse→runtime 结构的 pass-through 字段重复
 
-状态：**planned（2026-06-25）**。exemplar 已修（见 §3），其余按本文逐条处理。范围是一个**架构卫生**问题，不是 correctness bug——但它会孕育 correctness bug（silent no-op knob），所以值得收口。
+状态：**done（2026-06-25）**。exemplar（§3）+ #1 + #2 已修并测试通过；#3 经评估**保留**（理由见 §4 第 3 行）。范围是一个**架构卫生**问题，不是 correctness bug——但它会孕育 correctness bug（silent no-op knob），所以值得收口。
 
 ## 0. 一句话
 
@@ -44,9 +44,9 @@ B 的多数字段是 A 的转换/解析/新增(如 per-chunk 解析窗口、reso
 
 | # | A(源) | B(目标) | 拷贝点 | 纯抄 / 转换 | 处置 |
 |---|---|---|---|---|---|
-| **1** | `LogprobMismatchStats` `algorithms/logprob_mismatch.py:28` | `TrainStepMetrics` `algorithms/types.py:8` | `GRPO.compute_loss` `grpo/continuous.py:190-195` | **6 纯 / 0 转换** | **FIX** |
-| **2** | `AxisCapability` `generation/capabilities.py:25` | `ResolvedAxis` `generation/execution/planner.py:26` | `ResolvedAxis.from_capability:36-49` | **4 纯 / 1 新增**(`length`) | **FIX(轻量)** |
-| 3 | `ExecutionStageCapability` `generation/capabilities.py:60` | `ExecutionStage` `generation/execution/planner.py:52` | `EnginePlanner._execution_stages:291-303` | 5 纯 / 7 新增+转换 | **多半保留**(见下) |
+| **1** | `LogprobMismatchStats` `algorithms/logprob_mismatch.py:28` | `TrainStepMetrics` `algorithms/types.py:8` | `GRPO.compute_loss` `grpo/continuous.py:190-195` | **6 纯 / 0 转换** | ✅ **DONE** |
+| **2** | `AxisCapability` `generation/capabilities.py:25` | `ResolvedAxis` `generation/execution/planner.py:26` | `ResolvedAxis.from_capability:36-49` | **4 纯 / 1 新增**(`length`) | ✅ **DONE** |
+| 3 | `ExecutionStageCapability` `generation/capabilities.py:60` | `ExecutionStage` `generation/execution/planner.py:52` | `EnginePlanner._execution_stages:291-303` | 5 纯 / 7 新增+转换 | **保留**(见下) |
 
 ### #1 — `LogprobMismatchStats` → `TrainStepMetrics`(最该修,与 exemplar 同型)
 
@@ -57,11 +57,15 @@ B 的多数字段是 A 的转换/解析/新增(如 per-chunk 解析窗口、reso
 - `TrainStepMetrics` 加 `from_mismatch(mismatch, **rest)` 工厂,把 6 字段映射收口到一处。
 两种都把"6 行散抄"变成"一处映射",新增指标只碰映射点。顺带决定 `finite` 是该进 metrics 还是确认丢弃。
 
+**已修**:`LogprobMismatchStats.to_metrics_kwargs()` 返回 6 个指标 dict,`compute_loss` 改为 `TrainStepMetrics(..., **mismatch.to_metrics_kwargs())`。`finite` **确认排除**——它是 `precision_guard`(`trainers/online/precision_guard.py:114,152`)消费的护栏信号,不是 logged metric,放进 `TrainStepMetrics` 反而错。唯一拷贝点(`continuous.py`)收口;`token.py`/`multisegment.py` 本就不抄 mismatch,无需改。
+
 ### #2 — `AxisCapability` → `ResolvedAxis`(轻量修)
 
 `ResolvedAxis.from_capability` 抄 `name/kind/batchable/chunkable`,只有 `length` 是 per-request resolved。5 个字段里 4 个纯抄。
 
 **修法**:`ResolvedAxis` 持有 `capability: AxisCapability` + `length`,消费端读 `resolved.capability.kind` / `resolved.length`。或者更保守:保留 `ResolvedAxis` 但加一行断言 `set(fields(ResolvedAxis)) - {"length"} == 字段来自 capability`,防 rot。前者彻底,后者改动更小。实现时按 `ResolvedAxis` 的消费面大小定(消费点少就内嵌,多就先加断言)。
+
+**已修(内嵌)**:核实消费面极小——`ResolvedAxis` 仅由 `_resolved_axes` 构造、仅在 `EnginePlan.summary()` 读 4 字段,`.name` 根本没被读,无任何外部直接构造。故内嵌:`ResolvedAxis(capability, length)`,`summary()` 改读 `axis.capability.<f>`,顺手把 trivial 的单调用 `from_capability` inline 进 `_resolved_axes`(去掉一个单调用工厂)。AxisCapability 加字段现自动透出,不会再 rot。
 
 ### #3 — `ExecutionStageCapability` → `ExecutionStage`(建议保留,记录理由)
 
@@ -82,11 +86,13 @@ AGENTS.md:cleanup 不要外溢到正当 convention。以下**已核查、确认�
 ## 6. Phase plan
 
 ```
-P0  exemplar(DiffusionSDEParams→DiffusionDenoiseConfig)            # 已完成,作模板
-P1  #1 LogprobMismatchStats→TrainStepMetrics:to_metrics_kwargs/from_mismatch + 决定 finite
-P2  #2 AxisCapability→ResolvedAxis:内嵌 capability 或加 rot 断言(按消费面定)
---  #3 不立项,只在 ExecutionStage 旁加一行注释记"5 字段重叠已知、可接受"
+P0  exemplar(DiffusionSDEParams→DiffusionDenoiseConfig)            # ✅ 已完成,作模板
+P1  #1 LogprobMismatchStats→TrainStepMetrics:to_metrics_kwargs + finite 排除   # ✅ 已完成
+P2  #2 AxisCapability→ResolvedAxis:内嵌 capability + inline from_capability     # ✅ 已完成
+--  #3 不立项,保留(5 字段重叠已知、可接受;4/5 构造点是合成的)
 ```
+
+全部 P 完成后回归:`tests/generation/`(109)+`tests/algorithms/`+`tests/trainers/`(190)全绿,ruff 干净。
 
 每条统一验收:
 

@@ -25,28 +25,16 @@ from vrl.generation.types import (
 
 @dataclass(frozen=True, slots=True)
 class ResolvedAxis:
-    """Resolved axis metadata for one request."""
+    """An AxisCapability resolved with a concrete per-request ``length``.
 
-    name: str
-    kind: str
+    Holds the source capability by reference instead of re-declaring its fields
+    (name/kind/batchable/chunkable), so a new AxisCapability field is exposed
+    automatically via ``resolved.capability.<field>`` and cannot rot into a stale
+    field-by-field copy. ``length`` is the only genuinely resolved value.
+    """
+
+    capability: AxisCapability
     length: int | None
-    batchable: bool = False
-    chunkable: bool = False
-
-    @classmethod
-    def from_capability(
-        cls,
-        axis: AxisCapability,
-        *,
-        length: int | None,
-    ) -> ResolvedAxis:
-        return cls(
-            name=axis.name,
-            kind=axis.kind,
-            length=length,
-            batchable=axis.batchable,
-            chunkable=axis.chunkable,
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,10 +141,10 @@ class EnginePlan:
             "capability": self.capability.to_dict(),
             "axes": {
                 name: {
-                    "kind": axis.kind,
+                    "kind": axis.capability.kind,
                     "length": axis.length,
-                    "batchable": axis.batchable,
-                    "chunkable": axis.chunkable,
+                    "batchable": axis.capability.batchable,
+                    "chunkable": axis.capability.chunkable,
                 }
                 for name, axis in self.expected_axes.items()
             },
@@ -251,8 +239,8 @@ class EnginePlanner:
 
     def _resolved_axes(self) -> dict[str, ResolvedAxis]:
         return {
-            axis.name: ResolvedAxis.from_capability(
-                axis,
+            axis.name: ResolvedAxis(
+                capability=axis,
                 length=self._axis_length(axis.name),
             )
             for axis in self.capability.expected_axes
