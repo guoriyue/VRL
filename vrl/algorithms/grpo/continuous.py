@@ -50,6 +50,12 @@ class GRPO(Algorithm):
     # trainer requests the SDE KL intermediates (dt) even when kl_coef == 0.
     needs_kl_intermediates = False
 
+    # Plain GRPO's clip is a safety rail, not the objective: at ppo_epochs=1 it
+    # is honest REINFORCE-with-group-baseline (the ratio is ~1 and the clip is
+    # simply inactive). Trust-region subclasses whose loss IS the ratio term flip
+    # this True so the trainer rejects the strict + ppo_epochs=1 no-op config.
+    requires_active_trust_region = False
+
     def __init__(self, config: GRPOConfig | None = None) -> None:
         self.config = config or GRPOConfig()
         # Rollout->replay precision correction (TIS). Off by default; the trainer
@@ -246,6 +252,10 @@ class FlowDPPO(GRPO):
     """
 
     needs_kl_intermediates = True
+    # The KL mask is the objective: at strict + ppo_epochs=1 the rollout and
+    # current proposal means coincide, KL==0, nothing is masked, and the loss
+    # collapses to -advantages * 1 (plain REINFORCE). Require a moving policy.
+    requires_active_trust_region = True
 
     def __init__(self, config: FlowDPPOConfig | None = None) -> None:
         cfg = config or FlowDPPOConfig()
@@ -328,6 +338,10 @@ class GRPOGuard(GRPO):
     """
 
     needs_kl_intermediates = True
+    # The ratio-mean-bias / step-scale guard is the objective: at strict +
+    # ppo_epochs=1 the current-vs-rollout drift is 0, the guard correction
+    # vanishes, and the loss collapses to plain GRPO. Require a moving policy.
+    requires_active_trust_region = True
 
     def __init__(self, config: GRPOGuardConfig | None = None) -> None:
         cfg = config or GRPOGuardConfig()

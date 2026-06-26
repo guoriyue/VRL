@@ -23,7 +23,14 @@ class Algorithm(Protocol):
     # payload lacks a tensor the loss consumes. Mirrors verl-omni's
     # ``DiffusionLossFn.required_data_keys`` / ``validate_inputs``, and belongs
     # to the same "algorithm self-describes" family as ``uses_evaluator`` /
-    # ``tolerates_off_policy_staleness``.
+    # ``tolerates_off_policy_staleness`` / ``requires_active_trust_region``.
+    #
+    # requires_active_trust_region: the loss is *defined* by a clipped/guarded
+    #   importance ratio r = pi_new/pi_old (Flow-DPPO / GRPO-Guard). When True the
+    #   trainer refuses strict_on_policy + ppo_epochs==1, where r==1 makes the
+    #   trust-region term identically zero (the run degenerates to plain GRPO).
+    #   False (default) for objectives whose ratio clip is only a safety rail
+    #   (plain GRPO at ppo_epochs=1 is honest REINFORCE-with-group-baseline).
     #
     # required_signal_keys: ``SegmentSignal`` fields the loss reads from the
     #   evaluator replay (signal branch, ``uses_evaluator=True``).
