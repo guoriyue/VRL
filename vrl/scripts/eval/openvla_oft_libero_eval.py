@@ -221,7 +221,8 @@ def main() -> None:
     }
 
     try:
-        from experiments.robot.libero.libero_utils import get_libero_env, save_rollout_video
+        import imageio.v3 as iio
+        from experiments.robot.libero.libero_utils import get_libero_env
         from experiments.robot.libero.run_libero_eval import initialize_model
         from experiments.robot.robot_utils import get_image_resize_size, set_seed_everywhere
         from libero.libero import benchmark
@@ -270,12 +271,13 @@ def main() -> None:
                 report["episodes"].append(rec)
                 successes += int(rec["success"])
                 total += 1
+                # Write the episode video under --video-dir (lives in the
+                # gitignored outputs/), NOT openvla-oft's hardcoded ./rollouts/.
                 artifact = env.render_episode()
                 if artifact.video is not None:
-                    save_rollout_video(
-                        artifact.video, total, success=rec["success"],
-                        task_description=task_description, log_file=None,
-                    )
+                    tag = "success" if rec["success"] else "fail"
+                    video_path = Path(args.video_dir) / f"task{task_id}_trial{trial}_{tag}.mp4"
+                    iio.imwrite(video_path, artifact.video, fps=10, codec="libx264")
                 print(f"[task {task_id} trial {trial}] success={rec['success']} "
                       f"chunks={rec['chunks']} reward={rec['reward']}", flush=True)
 
