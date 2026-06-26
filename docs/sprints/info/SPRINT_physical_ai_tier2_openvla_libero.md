@@ -42,11 +42,10 @@ seam 不是纸面设计，能承载真实机器人策略闭环。
 环境: LIBERO-10 (libero_10), MuJoCo EGL headless, max_steps=520
 硬件: RTX 5090 (sm_120), torch 2.9.1+cu128
 
-success_rate = 6/6 = 1.00   (3 tasks × 2 trials, 小样本)
-  task0 (alphabet soup + tomato sauce → basket): 2/2   chunks 48,38
-  task1 (cream cheese + butter):                 2/2   chunks 30,32
-  task2 (turn on stove + moka pot):              2/2   chunks 30,29
-moojink 官方全 500-trial libero_10 ≈ 94%；本次小样本 6/6 与之一致量级。
+小样本 (3 task × 2 trial):  success = 6/6  = 1.000
+全 10 task × 3 trial:        success = 29/30 = 0.967   ← 主结果
+  唯一失败 = task7 trial1，撞到 65-chunk/520-step 上限（没解完，非策略错）。
+moojink 官方全 500-trial libero_10 ≈ 94%；本次 29/30 与之一致。
 ```
 
 每集 `ActionTrajectoryBatch.actions` 形状 `[1, n_chunks, 8, 7]`（batch, chunks,
@@ -92,9 +91,41 @@ MUJOCO_GL=egl PYTHONPATH=~/Desktop/vrl2/VRL ~/miniconda3/envs/vla_eval/bin/pytho
   --out outputs/openvla_oft_libero/eval.json
 ```
 
+## P3：PI0.5 flow logprob —— RL 能不能接的关键判定
+
+OFT 既然无 logprob，sprint 的 RL 出路是 PI0.5（flow action policy）。P3 探针
+`vrl/scripts/eval/pi05_flow_logprob_probe.py` 从 cosmos-rl 的 PI0.5 GRPO 实现
+（`cosmos_rl/policy/model/pi05/__init__.py` 的 `get_x_t_mean_std`）取证 + CPU 数学
+验证，结论：
+
+```text
+PI0.5 每个 denoise step 输出一个高斯转移 x_{t-1} ~ N(x_t_mean, x_t_std^2)。
+  eval 模式 x_t_std = 0  → 确定性 ODE → 无 logprob（同 OFT）
+  train 模式 x_t_std > 0：
+    flow_sde   = sqrt(dt)*noise_level*sqrt(t/(1-t))     ← 默认
+    flow_cps   = (t-dt)*sin(pi*noise_level/2)
+    flow_noise = 可学习 ExploreNoiseNet head
+action-chunk logprob = Σ 每步高斯 log_prob。
+```
+
+判定：**PI0.5 是 RL-eligible**。三种方法全部 replay-exact（重算 stored 轨迹的
+logprob 与采集时 bit-identical，max_abs_diff=0）且对策略可导。而且这正是 VRL
+已有的 `vrl/math/diffusion/flow_matching.py:sde_step_with_logprob`
+（`SDEStepResult.prev_sample_mean ↔ x_t_mean`、`std_dev_t ↔ x_t_std`、
+`sde_type="cps" == flow_cps`）—— **PI0.5 的 action logprob 不需要新数学，直接复用
+现有 diffusion flow SDE logprob 接口**。所以接 PI0.5 GRPO 不是开新 logprob 栈，
+而是把 PI0.5 的 (mean,std) 喂进现有 `SegmentSignal` flow_matching 通道。
+
+对比一句话：**OFT = eval-only（确定性 L1，无分布）；PI0.5 = RL-eligible（flow 随机
+采样有可复算 logprob）。** 这把 sprint 的 RL gate 从「未知」推进到「PI0.5 可接」。
+
 ## 还没做（仍 gate）
 
-- on-policy RL（GRPO/DAPO）：OFT 无 logprob → 不接；要 RL 先上 discrete OpenVLA
-  或 PI0.5 flow logprob（P3 probe）。
-- 没把 VLA family 注册进 rollout family registry（还没有可训 runtime builder）。
-- 没跑全 500-trial（10 task × 50），只做了小样本验证 seam 跑通。
+- 真跑 PI0.5 端到端（下 `sunshk/pi05_libero_pytorch` + paligemma+expert 栈 + LIBERO
+  闭环）：logprob 契约已判定可行，但端到端跑通是独立 MR（又一套 3B 模型集成）。
+- on-policy RL recipe（GRPO/DAPO）：契约 OK，但要 env smoke + reward variance +
+  episode storage bounded 都过了才落 trainer（sprint §P4 gate）。
+- 没把 VLA family 注册进 rollout family registry：现有 registry 是给 diffusion/AR
+  *生成*管线的，env-rollout 是另一条 collector 路径，硬塞会造出跑不起来的半截
+  family。等 PI0.5 真训练管线成形再注册，不为注册而注册。
+- OFT 全 500-trial（10×50）没跑，只跑了 10×3=30（29/30）。

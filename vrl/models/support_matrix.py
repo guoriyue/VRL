@@ -166,13 +166,17 @@ MODEL_SUPPORT_MATRIX: tuple[ModelSupportEntry, ...] = (
         inputs=("image", "state", "instruction"),
         outputs=("action",),
         action_payload="action_chunk",
-        logprob="unknown",
+        logprob="replayable",
         env="libero",
         tier="tier2",
         status="probe",
-        path="cosmos-rl:configs/pi05/pi05-b1k-grpo-colocate.toml",
-        notes="Closest fit to diffusion logprob reuse. P3 probe: which of "
-        "flow_sde/flow_cps/flow_noise yields a training logprob.",
+        path="sunshk/pi05_libero_pytorch",
+        notes="RL-ELIGIBLE: train-mode flow sampling (flow_sde/flow_cps/flow_noise) "
+        "emits a per-denoise-step Gaussian transition whose summed log-prob is "
+        "replayable + differentiable, reusing VRL's sde_step_with_logprob "
+        "(P3 probe vrl/scripts/eval/pi05_flow_logprob_probe.py, all 3 methods "
+        "replay-exact). Eval-mode (std=0) is deterministic -> eval/SFT only. "
+        "Unlike OFT, this is the path to on-policy robot RL.",
     ),
     ModelSupportEntry(
         key="openvla_oft",
