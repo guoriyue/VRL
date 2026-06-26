@@ -35,6 +35,10 @@ actor:
   # is identically 0 and the Guard correction never engages. >1 lets the policy
   # drift from the rollout WITHIN the batch -- the only thing that exercises the
   # ratio-mean-bias correction (now visible from epoch 0, not just in long runs).
+  # ACCEPTANCE GATE: confirm clip_fraction / ratio_abs_dev_mean > 0 across epochs in
+  # the run logs. If they stay ~0 the Guard correction never engaged and the curve is
+  # plain GRPO in disguise — fix the signal (lr / full-param vs LoRA / advantage
+  # variance), do NOT trust the reward curve as GRPO-Guard evidence.
   ppo_epochs: 4
 
 algorithm:

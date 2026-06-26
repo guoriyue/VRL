@@ -44,6 +44,10 @@ actor:
   # reported as clip_fraction, is identically 0). >1 lets the policy drift from the
   # rollout WITHIN the batch so the KL trust region actually drops samples (visible
   # from epoch 0). kl_mask_threshold then becomes a meaningful sweep knob.
+  # ACCEPTANCE GATE: confirm clip_fraction (masked_fraction) > 0 across epochs in
+  # the run logs. If it stays ~0 the trust region never engaged and the curve is
+  # REINFORCE-in-disguise (= plain GRPO) — fix the signal (lr / full-param vs LoRA /
+  # advantage variance), do NOT trust the reward curve as Flow-DPPO evidence.
   ppo_epochs: 4
 
 algorithm:

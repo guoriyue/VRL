@@ -25,6 +25,10 @@ actor:
   gradient_checkpointing: true
   # >1 reuses each rollout batch for several optimizer steps so the GRPO drift
   # mechanisms are non-degenerate (see the flux algo-validation sprint note).
+  # ACCEPTANCE GATE: confirm clip_fraction / approx_kl are non-trivial across epochs
+  # in the run logs. If clip_fraction ~0, the policy isn't moving and ppo_epochs is
+  # just scaling effective lr — the win region for the ref-noise-pred cache and for
+  # ppo_epochs both vanish; fix the signal (lr / full-param) before reading the curve.
   ppo_epochs: 4
 
 algorithm:
