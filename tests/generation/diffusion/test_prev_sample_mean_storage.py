@@ -16,6 +16,7 @@ from vrl.generation.diffusion.executor import (
     DiffusionDenoiseConfig,
     preallocate_denoise_buffers,
 )
+from vrl.generation.diffusion.layout import DiffusionSDEParams
 
 
 def _config(*, return_prev_sample_mean: bool) -> DiffusionDenoiseConfig:
@@ -24,10 +25,16 @@ def _config(*, return_prev_sample_mean: bool) -> DiffusionDenoiseConfig:
         sample_start=0,
         sample_count=2,
         seed=None,
-        same_latent=False,
+        sde=DiffusionSDEParams(
+            noise_level=1.0,
+            sde_type="flow_grpo",
+            sde_window_size=0,
+            sde_window_range=(0, 0),
+            same_latent=False,
+            return_kl=False,
+            return_prev_sample_mean=return_prev_sample_mean,
+        ),
         sde_window=None,
-        return_kl=False,
-        return_prev_sample_mean=return_prev_sample_mean,
     )
 
 

@@ -21,7 +21,7 @@ from vrl.generation.diffusion.executor import (
     DiffusionDenoiseConfig,
     preallocate_denoise_buffers,
 )
-from vrl.generation.diffusion.layout import DiffusionRequestLayout
+from vrl.generation.diffusion.layout import DiffusionRequestLayout, DiffusionSDEParams
 from vrl.models.diffusion import DiffusionModelBase
 from vrl.models.interfaces import ReplayResult, ReplaySegmentResult
 from vrl.rollouts.batch import RolloutBatch
@@ -38,10 +38,16 @@ def _config(*, cache_ref_noise_pred: bool) -> DiffusionDenoiseConfig:
         sample_start=0,
         sample_count=2,
         seed=None,
-        same_latent=False,
+        sde=DiffusionSDEParams(
+            noise_level=1.0,
+            sde_type="flow_grpo",
+            sde_window_size=0,
+            sde_window_range=(0, 0),
+            same_latent=False,
+            return_kl=False,
+            cache_ref_noise_pred=cache_ref_noise_pred,
+        ),
         sde_window=None,
-        return_kl=False,
-        cache_ref_noise_pred=cache_ref_noise_pred,
     )
 
 

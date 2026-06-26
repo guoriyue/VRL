@@ -10,6 +10,7 @@ from vrl.generation.diffusion.executor import (
     DiffusionChunkExecutorBase,
     DiffusionDenoiseConfig,
 )
+from vrl.generation.diffusion.layout import DiffusionSDEParams
 
 
 def test_native_denoise_mode_uses_scheduler_step() -> None:
@@ -30,11 +31,15 @@ def test_native_denoise_mode_uses_scheduler_step() -> None:
             sample_start=0,
             sample_count=1,
             seed=None,
-            same_latent=False,
+            sde=DiffusionSDEParams(
+                noise_level=0.7,
+                sde_type="flow_grpo",
+                sde_window_size=0,
+                sde_window_range=(0, 0),
+                same_latent=False,
+                return_kl=False,
+            ),
             sde_window=None,
-            return_kl=False,
-            noise_level=0.7,
-            sde_type="flow_grpo",
             denoise_mode="native",
         ),
     )

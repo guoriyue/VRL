@@ -13,6 +13,7 @@ from vrl.generation.diffusion import (
     DiffusionDenoiseConfig,
     preallocate_denoise_buffers,
 )
+from vrl.generation.diffusion.layout import DiffusionSDEParams
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
 
@@ -147,9 +148,15 @@ def _config(*, sample_count: int = 2, return_kl: bool = False) -> DiffusionDenoi
         sample_start=0,
         sample_count=sample_count,
         seed=None,
-        same_latent=False,
+        sde=DiffusionSDEParams(
+            noise_level=1.0,
+            sde_type="flow_grpo",
+            sde_window_size=0,
+            sde_window_range=(0, 0),
+            same_latent=False,
+            return_kl=return_kl,
+        ),
         sde_window=(0, 0),
-        return_kl=return_kl,
     )
 
 

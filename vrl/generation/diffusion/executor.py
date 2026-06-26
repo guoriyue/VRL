@@ -15,6 +15,7 @@ from vrl.generation.diffusion.gather import DiffusionChunkGatherer
 from vrl.generation.diffusion.layout import (
     DiffusionRequestLayout,
     DiffusionSamplingParams,
+    DiffusionSDEParams,
     VideoGenerationRequest,
 )
 from vrl.generation.diffusion.teacache import (
@@ -47,26 +48,31 @@ from vrl.utils.media import load_reference_image, to_uint8
 
 @dataclass(frozen=True, slots=True)
 class DiffusionDenoiseConfig:
-    """Runtime knobs for one diffusion sample chunk denoise loop."""
+    """Runtime knobs for one diffusion sample chunk denoise loop.
+
+    Chunk identity (prompt_index/sample_start/sample_count/seed), the per-chunk
+    resolved ``sde_window``, and cross-group knobs (denoise_mode, teacache). The
+    SDE pass-through knobs are NOT re-declared here — they live on ``sde`` (the
+    parsed DiffusionSDEParams) and are read via ``config.sde.<knob>``. One source
+    of truth: a new SDE knob is added in DiffusionSDEParams alone and cannot rot
+    into a silent no-op by being forgotten in a field-by-field copy.
+    """
 
     prompt_index: int
     sample_start: int
     sample_count: int
     seed: int | None
-    same_latent: bool
+    # Parsed SDE knobs (noise_level / sde_type / same_latent / return_kl /
+    # return_prev_sample_mean / cache_ref_noise_pred). Read via config.sde.<knob>.
+    sde: DiffusionSDEParams
+    # Per-chunk resolved denoise window: select_sde_window picks it from
+    # sde.sde_window_size/range and may be random per chunk, so it is resolved
+    # here rather than carried on the request-scoped sde params.
     sde_window: tuple[int, int] | None
-    return_kl: bool
-    noise_level: float = 1.0
-    sde_type: str = "flow_grpo"
     denoise_mode: str = "sde"
     # Opt-in rollout-only TeaCache (skip transformer forwards on low-change steps).
     # None = off = the unchanged full-forward path, so the GRPO baseline is exact.
     teacache: TeaCacheConfig | None = None
-    # Store each step's rollout proposal mean for trust-region replay losses.
-    return_prev_sample_mean: bool = False
-    # Cache the frozen reference (LoRA-disabled) noise_pred per step so KL replay
-    # reads it instead of rerunning the ref forward every ppo_epoch (Lever D).
-    cache_ref_noise_pred: bool = False
 
 
 @dataclass(slots=True)
@@ -213,7 +219,7 @@ def preallocate_denoise_buffers(
                 dtype=latents.dtype,
                 device=device,
             )
-            if config.return_prev_sample_mean
+            if config.sde.return_prev_sample_mean
             else None
         ),
         ref_noise_preds=(
@@ -222,7 +228,7 @@ def preallocate_denoise_buffers(
                 dtype=latents.dtype,
                 device=device,
             )
-            if config.cache_ref_noise_pred
+            if config.sde.cache_ref_noise_pred
             else None
         ),
     )
@@ -433,16 +439,11 @@ class DiffusionChunkExecutorBase(
             sample_start=chunk.sample_start,
             sample_count=chunk.sample_count,
             seed=params.base.seed,
-            same_latent=params.sde.same_latent,
+            sde=params.sde,
             sde_window=layout.select_sde_window(
                 params.sde.sde_window_size,
                 params.sde.sde_window_range,
             ),
-            return_kl=params.sde.return_kl,
-            return_prev_sample_mean=params.sde.return_prev_sample_mean,
-            cache_ref_noise_pred=params.sde.cache_ref_noise_pred,
-            noise_level=params.sde.noise_level,
-            sde_type=params.sde.sde_type,
             denoise_mode=params.denoise_mode,
             teacache=params.teacache,
         )
@@ -688,7 +689,7 @@ class DiffusionChunkExecutorBase(
         if config.seed is not None:
             generator = torch.Generator(device=device)
             generator.manual_seed(config.seed + config.sample_start)
-        elif config.same_latent:
+        elif config.sde.same_latent:
             raise ValueError("same_latent=True requires an explicit sampling.seed")
         else:
             generator = None
@@ -768,9 +769,9 @@ class DiffusionChunkExecutorBase(
                             timestep.unsqueeze(0),
                             state.latents.float(),
                             prev_sample=prev_latents.float(),
-                            return_dt=config.return_kl,
-                            noise_level=config.noise_level,
-                            sde_type=config.sde_type,
+                            return_dt=config.sde.return_kl,
+                            noise_level=config.sde.noise_level,
+                            sde_type=config.sde.sde_type,
                             step_index=step_idx,
                         )
                     else:
@@ -785,9 +786,9 @@ class DiffusionChunkExecutorBase(
                                 state.latents.float(),
                                 generator=generator if in_sde_window else None,
                                 deterministic=not in_sde_window,
-                                return_dt=config.return_kl,
-                                noise_level=config.noise_level,
-                                sde_type=config.sde_type,
+                                return_dt=config.sde.return_kl,
+                                noise_level=config.sde.noise_level,
+                                sde_type=config.sde.sde_type,
                                 step_index=step_idx,
                             )
                         prev_latents = sde_result.prev_sample
@@ -810,7 +811,7 @@ class DiffusionChunkExecutorBase(
                             device=device,
                         ),
                     )
-                    if config.return_kl:
+                    if config.sde.return_kl:
                         buffers.kl[:, step_idx].copy_(
                             sde_result.log_prob.detach()
                             .abs()
