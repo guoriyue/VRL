@@ -37,6 +37,23 @@ class LogprobMismatchStats:
     mismatch_k3_kl: float = 0.0
     finite: bool = True
 
+    def to_metrics_kwargs(self) -> dict[str, float]:
+        """The six mismatch metrics as ``TrainStepMetrics`` kwargs.
+
+        One mapping point so a new mismatch metric is wired here, not re-copied
+        field-by-field at every TrainStepMetrics call site. ``finite`` is
+        deliberately excluded — it is a precision-guard signal (read by
+        ``precision_guard``), not a logged training metric.
+        """
+        return {
+            "logprob_abs_diff_mean": self.logprob_abs_diff_mean,
+            "logprob_abs_diff_max": self.logprob_abs_diff_max,
+            "ratio_abs_dev_mean": self.ratio_abs_dev_mean,
+            "ratio_abs_dev_max": self.ratio_abs_dev_max,
+            "mismatch_kl": self.mismatch_kl,
+            "mismatch_k3_kl": self.mismatch_k3_kl,
+        }
+
 
 def compute_logprob_mismatch_stats(
     fresh_log_prob: torch.Tensor,

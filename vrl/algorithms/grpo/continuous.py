@@ -187,12 +187,7 @@ class GRPO(Algorithm):
             approx_kl=approx_kl,
             tis_clip_fraction=tis_clip_fraction,
             rs_seq_masked_fraction=rs_seq_masked_fraction,
-            logprob_abs_diff_mean=mismatch.logprob_abs_diff_mean,
-            logprob_abs_diff_max=mismatch.logprob_abs_diff_max,
-            ratio_abs_dev_mean=mismatch.ratio_abs_dev_mean,
-            ratio_abs_dev_max=mismatch.ratio_abs_dev_max,
-            mismatch_kl=mismatch.mismatch_kl,
-            mismatch_k3_kl=mismatch.mismatch_k3_kl,
+            **mismatch.to_metrics_kwargs(),
         )
 
         return loss, metrics
