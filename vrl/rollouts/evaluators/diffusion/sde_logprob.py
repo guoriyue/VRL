@@ -99,24 +99,20 @@ class DiffusionSDELogProbEvaluator(Evaluator):
         ref_prev_sample_mean = None
         ref_sqrt_neg_dt = None
 
-        # Reference model forward for KL
-        if signal_request.need_ref and ref_model is not None:
+        # Reference model signal for KL. The ref forward is frozen, so generation
+        # can cache its noise_pred (sampling.cache_ref_noise_pred). When present we
+        # run the same sde_step_with_logprob on the cached tensor instead of
+        # rerunning the ref forward every ppo_epoch (Lever D); the math is
+        # identical, only the transformer forward is skipped.
+        if signal_request.need_ref:
+            cached_ref_noise_pred = self._cached_ref_noise_pred(
+                batch, timestep_idx, device,
+            )
             with torch.no_grad():
-                # ReplayModel.disable_adapter() may be a no-op for non-adapter
-                # models. A distinct frozen reference still comes through
-                # the explicit ref_model path.
-                use_adapter_disable = ref_model is model
-                ctx = model.disable_adapter() if use_adapter_disable else contextlib.nullcontext()
-
-                with ctx:
-                    ref_fwd = ref_model.replay_forward(batch, timestep_idx).require_segment(
-                        "denoise",
-                    )
-                    ref_noise_pred = ref_fwd.require_value("noise_pred")
-
+                if cached_ref_noise_pred is not None:
                     ref_result = flow_matching_math.sde_step_with_logprob(
                         self.scheduler,
-                        ref_noise_pred,
+                        cached_ref_noise_pred,
                         t,
                         observations,
                         prev_sample=actions,
@@ -128,6 +124,37 @@ class DiffusionSDELogProbEvaluator(Evaluator):
                     ref_log_prob = ref_result.log_prob
                     ref_prev_sample_mean = ref_result.prev_sample_mean
                     ref_sqrt_neg_dt = ref_result.sqrt_neg_dt
+                elif ref_model is not None:
+                    # ReplayModel.disable_adapter() may be a no-op for non-adapter
+                    # models. A distinct frozen reference still comes through
+                    # the explicit ref_model path.
+                    use_adapter_disable = ref_model is model
+                    ctx = (
+                        model.disable_adapter()
+                        if use_adapter_disable
+                        else contextlib.nullcontext()
+                    )
+
+                    with ctx:
+                        ref_fwd = ref_model.replay_forward(
+                            batch, timestep_idx,
+                        ).require_segment("denoise")
+                        ref_noise_pred = ref_fwd.require_value("noise_pred")
+
+                        ref_result = flow_matching_math.sde_step_with_logprob(
+                            self.scheduler,
+                            ref_noise_pred,
+                            t,
+                            observations,
+                            prev_sample=actions,
+                            return_dt=signal_request.need_kl_intermediates,
+                            noise_level=self.noise_level,
+                            sde_type=self.sde_type,
+                            math_dtype=self.math_dtype,
+                        )
+                        ref_log_prob = ref_result.log_prob
+                        ref_prev_sample_mean = ref_result.prev_sample_mean
+                        ref_sqrt_neg_dt = ref_result.sqrt_neg_dt
 
         # Rollout-time proposal mean for this step, captured at generation
         # (return_prev_sample_mean) and replayed back unchanged. Trust-region
@@ -162,6 +189,25 @@ class DiffusionSDELogProbEvaluator(Evaluator):
 
         replay = TrajectoryResolver.from_batch(batch).replay_tensor_dict("denoise")
         stored = replay.get("old_prev_sample_mean")
+        if stored is None:
+            return None
+        step = stored[:, timestep_idx] if getattr(stored, "ndim", 0) > 1 else stored
+        return move_value_to_device(step, device)
+
+    @staticmethod
+    def _cached_ref_noise_pred(batch: RolloutBatch, timestep_idx: int, device: object) -> object:
+        """Frozen reference noise_pred for ``timestep_idx`` from the trajectory, or None.
+
+        Stored as a denoise replay tensor at generation when the recipe set
+        sampling.cache_ref_noise_pred; absent otherwise. Shaped
+        ``[B, num_steps, *latent]`` -> sliced to ``[B, *latent]`` so it lines up
+        with the replayed observations/actions for sde_step_with_logprob.
+        """
+
+        from vrl.trajectory import TrajectoryResolver
+
+        replay = TrajectoryResolver.from_batch(batch).replay_tensor_dict("denoise")
+        stored = replay.get("ref_noise_pred")
         if stored is None:
             return None
         step = stored[:, timestep_idx] if getattr(stored, "ndim", 0) > 1 else stored

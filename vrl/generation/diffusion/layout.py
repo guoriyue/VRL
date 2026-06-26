@@ -64,6 +64,11 @@ class DiffusionSDEParams:
     # Off by default — it adds a full-latent-per-step tensor, so only the recipes
     # that need it pay the memory.
     return_prev_sample_mean: bool = False
+    # Cache the frozen reference (LoRA-disabled) noise_pred per step at collect so
+    # KL replay reads it instead of rerunning the ref forward every ppo_epoch.
+    # Off by default — adds one full-latent-per-step tensor; only KL recipes
+    # (kl_coef > 0) pay the memory, and only the LoRA disable_adapter ref applies.
+    cache_ref_noise_pred: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +144,9 @@ class DiffusionRequestLayout:
             return_kl=bool(sampling.get("return_kl", False)),
             return_prev_sample_mean=bool(
                 sampling.get("return_prev_sample_mean", False),
+            ),
+            cache_ref_noise_pred=bool(
+                sampling.get("cache_ref_noise_pred", False),
             ),
         )
         return DiffusionSamplingParams(

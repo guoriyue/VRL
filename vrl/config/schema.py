@@ -263,6 +263,10 @@ class RolloutConfig(ConfigBase):
     # reader: vrl/generation/diffusion/layout.py — opt-in to storing each denoise
     # step's rollout proposal mean for trust-region replay (flow_dppo/grpo_guard).
     return_prev_sample_mean: Any = None
+    # reader: vrl/generation/diffusion/layout.py — opt-in to caching the frozen
+    # reference (LoRA-disabled) noise_pred at collect, so KL replay never reruns
+    # the ref forward. Lossless: replay applies the same sde_step_with_logprob.
+    cache_ref_noise_pred: Any = None
     same_latent: Any = None
     sample_batch_size: Any = None
     temperature: Any = None

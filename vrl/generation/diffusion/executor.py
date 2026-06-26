@@ -64,6 +64,9 @@ class DiffusionDenoiseConfig:
     teacache: TeaCacheConfig | None = None
     # Store each step's rollout proposal mean for trust-region replay losses.
     return_prev_sample_mean: bool = False
+    # Cache the frozen reference (LoRA-disabled) noise_pred per step so KL replay
+    # reads it instead of rerunning the ref forward every ppo_epoch (Lever D).
+    cache_ref_noise_pred: bool = False
 
 
 @dataclass(slots=True)
@@ -77,6 +80,7 @@ class DiffusionDenoiseResult:
     timesteps: Any
     kl: Any
     prev_sample_means: Any | None = None
+    ref_noise_preds: Any | None = None
     peak_memory_mb: float | None = None
     engine_counters: dict[str, Any] = field(default_factory=dict)
 
@@ -93,6 +97,9 @@ class DiffusionDenoiseBuffers:
     # Rollout proposal mean per step (full latent shape); None unless the denoise
     # config opts in via return_prev_sample_mean.
     prev_sample_means: torch.Tensor | None = None
+    # Frozen reference noise_pred per step (full latent shape); None unless the
+    # denoise config opts in via cache_ref_noise_pred.
+    ref_noise_preds: torch.Tensor | None = None
 
 
 @dataclass(slots=True)
@@ -207,6 +214,15 @@ def preallocate_denoise_buffers(
                 device=device,
             )
             if config.return_prev_sample_mean
+            else None
+        ),
+        ref_noise_preds=(
+            torch.empty(
+                (chunk_batch, num_steps, *latent_shape),
+                dtype=latents.dtype,
+                device=device,
+            )
+            if config.cache_ref_noise_pred
             else None
         ),
     )
@@ -424,6 +440,7 @@ class DiffusionChunkExecutorBase(
             ),
             return_kl=params.sde.return_kl,
             return_prev_sample_mean=params.sde.return_prev_sample_mean,
+            cache_ref_noise_pred=params.sde.cache_ref_noise_pred,
             noise_level=params.sde.noise_level,
             sde_type=params.sde.sde_type,
             denoise_mode=params.denoise_mode,
@@ -722,6 +739,21 @@ class DiffusionChunkExecutorBase(
                         if teacache is not None:
                             teacache.cache_noise_pred(noise_pred)
 
+                    ref_noise_pred = None
+                    if buffers.ref_noise_preds is not None:
+                        # Frozen reference forward (LoRA disabled) at collect time.
+                        # state.latents is still x_t here — the scheduler step below
+                        # overwrites it — so the ref sees the exact input the KL
+                        # replay would. Computed once per step; replay reads it back
+                        # instead of rerunning this forward every ppo_epoch.
+                        # Already inside the loop's torch.no_grad(); just drop the
+                        # adapter so the forward is the frozen base model.
+                        with record_function(
+                            "generation.ref_denoise_forward",
+                        ), model.disable_adapter():
+                            ref_step_output = model.forward_step(state, step_idx)
+                        ref_noise_pred = ref_step_output["noise_pred"]
+
                     if config.denoise_mode == "native":
                         with record_function("generation.scheduler_step"):
                             prev_latents = state.scheduler.step(
@@ -792,6 +824,12 @@ class DiffusionChunkExecutorBase(
                                 dtype=buffers.prev_sample_means.dtype,
                             ),
                         )
+                    if buffers.ref_noise_preds is not None:
+                        buffers.ref_noise_preds[:, step_idx].copy_(
+                            ref_noise_pred.detach().to(
+                                dtype=buffers.ref_noise_preds.dtype,
+                            ),
+                        )
         peak_memory_mb = None
         if torch.cuda.is_available():
             try:
@@ -807,6 +845,7 @@ class DiffusionChunkExecutorBase(
             timesteps=buffers.timesteps,
             kl=buffers.kl,
             prev_sample_means=buffers.prev_sample_means,
+            ref_noise_preds=buffers.ref_noise_preds,
             peak_memory_mb=peak_memory_mb,
             engine_counters={
                 "diffusion_num_denoise_steps": int(buffers.timesteps.shape[1]),
@@ -820,6 +859,11 @@ class DiffusionChunkExecutorBase(
                 ),
                 "diffusion_timestep_bytes": trajectory_tensor_bytes(buffers.timesteps),
                 "diffusion_kl_bytes": trajectory_tensor_bytes(buffers.kl),
+                "diffusion_ref_noise_pred_bytes": (
+                    trajectory_tensor_bytes(buffers.ref_noise_preds)
+                    if buffers.ref_noise_preds is not None
+                    else 0
+                ),
                 "diffusion_denoise_mode": config.denoise_mode,
                 "diffusion_rollout_transformer_dtype": _dtype_label(transformer_dtype),
                 "diffusion_rollout_autocast_enabled": rollout_autocast_enabled,
@@ -860,6 +904,14 @@ class DiffusionChunkExecutorBase(
             replay_tensors = {
                 **replay_tensors,
                 "old_prev_sample_mean": denoise_result.prev_sample_means,
+            }
+        # Frozen reference noise_pred per step (cache_ref_noise_pred). Lands under
+        # the denoise segment like old_log_prob; the SDE evaluator reads it at
+        # replay via replay_tensor_dict("denoise") to skip the ref forward.
+        if denoise_result.ref_noise_preds is not None:
+            replay_tensors = {
+                **replay_tensors,
+                "ref_noise_pred": denoise_result.ref_noise_preds,
             }
         context = dict(model.export_batch_context(state))
         context.setdefault("denoise_mode", config.denoise_mode)
