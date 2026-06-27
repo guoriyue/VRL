@@ -78,10 +78,10 @@ third_party/*
 !third_party/PhyMotion
 !third_party/VMBench
 !third_party/DynamicEval
-# Editable-install wrappers that expose the un-packaged submodule sources as
-# importable packages (so vrl/ needs no sys.path injection). See third_party/README.md.
-!third_party/echo_packaging
-!third_party/videophy_packaging
+# Single editable-install wrapper exposing the un-packaged submodule sources as
+# importable packages (so vrl/ needs no sys.path injection). Its generated
+# *.egg-info stays ignored by the third_party/* rule. See third_party/README.md.
+!third_party/pyproject.toml
 !third_party/README.md
 
 # All Python virtualenvs live under one parent dir (one ignore entry covers all)

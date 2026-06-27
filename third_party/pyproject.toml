@@ -1,0 +1,31 @@
+# Single editable-install wrapper exposing every vendored submodule's un-packaged
+# `src` tree as a real importable package, so the main repo needs NO sys.path
+# injection. One install covers all vendored deps:
+#   pip install -e third_party          (run automatically by `make setup`)
+# Re-run after `git submodule update --init`. The vendored upstreams ship no
+# packaging of their own, hence this thin shim. See third_party/README.md.
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vrl-vendored-third-party"
+version = "0.0.0"
+description = "Path-only wrapper exposing the vendored third_party submodule packages."
+
+# Paths are relative to third_party/. Each `where` entry is one submodule's
+# un-packaged src root; `include` whitelists exactly the packages to expose, so
+# nothing else under third_party/ is ever scanned/installed.
+[tool.setuptools.packages.find]
+where = [
+    "joyai_echo/ltx-core/src",
+    "joyai_echo/ltx-pipelines/src",
+    "joyai_echo/ltx-distillation/src",
+    "videophy/videocon/training/pipeline_video",
+]
+include = [
+    "ltx_core*",
+    "ltx_pipelines*",
+    "ltx_distillation*",
+    "mplug_owl_video*",
+]
