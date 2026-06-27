@@ -343,6 +343,151 @@ no larger denoise batch is blocked by VAE decode memory
 This mirrors `SPRINT_rollout_performance.md`: optimize denoise first; only then
 consider batch-level staged rollout.
 
+### 4.1 2026-06-27 cosmos video profile — gate result + single-GPU verdict
+
+A real Ray run was profiled with nsys (fork-flag to capture the worker) + the
+kernel-interval UNION method (NOT nsys projection — projection double-counts
+async launches and misleads; see memory `project_real_run_profiling`). cosmos
+predict2 2B, 240p_33f, n_samples=8, single 32GB GPU:
+
+```text
+rollout window 134.1s, kernel-union GPU-busy = 64%, idle = 36%
+  denoise loop                96-98% GPU-busy  (GPU-BOUND; compile 1.25x = fusion, not idle-fill)
+  encode + VAE decode + prep  ~6% of wall      (matches the SD3.5 "<1.5-2%" reading above)
+  UNATTRIBUTED between-chunk gap = 44.3s (33%)  <- the real bubble
+```
+
+So the §4 gate's ">= 10% bubble" condition IS numerically met for video — but the
+bubble is NOT encode/decode (those stay small, as on SD3.5). It is the
+**between-chunk orchestration gap**: 7 chunk boundaries (sbs=1 -> 8 chunks),
+~7.9s each, 81% GPU-idle, filled with cudaMemcpyAsync (latent/observation
+transfer) + cudaLaunchKernel overhead + pure host Python (build next chunk /
+trajectory-buffer write / decode setup). This maps to the gate's "queue wait /
+inter-stage payload movement" line, not the "decode/reward/encode" line.
+
+**Single-GPU verdict — the cheap lever subsumes most of it WITHOUT a physical
+pipeline:** `rollout.sample_batch_size` reduces the chunk COUNT (chunks =
+ceil(n/sbs), boundaries = chunks-1), so each boundary's cost is paid fewer times.
+Measured scaling (single GPU, fits 32GB):
+
+```text
+sbs  chunks  boundaries  rollout wall  GPU-busy  speedup
+1    8       7           134.1s        64%       1.00x
+2    4       3           103.0s        77%       1.30x
+4    2       1            89.2s        89%       1.50x   <- landed in config
+```
+
+**Why the full physical stage pipeline (T3-T6, SGLang-Omni shape) on a single GPU
+is bounded — NCU-measured, NOT assumed:** an earlier draft claimed "all stages
+contend for the same SMs, so single-GPU staging cannot help." That was too
+strong. NCU on the real cosmos denoise kernels (synthetic real dims, 240p_33f,
+time-weighted over 45 kernels) shows the SMs are NOT saturated:
+
+```text
+sm__throughput (compute SM util)        = 42%
+sm__warps_active (achieved occupancy)   = 15%   (cutlass GEMM runs few, heavy warps)
+sm__pipe_tensor_cycles_active           = 43%   (the dominant cutlass GEMM is 82% of time)
+```
+
+So there IS spare SM capacity in principle (only 42% compute throughput, 15%
+occupancy). BUT the bottleneck pipe is the **tensor core**, and 43% ≈ the RTX 5090
+consumer **bf16+fp32-accumulate half-rate ceiling** (~47%) — i.e. the tensor
+cores ARE maxed; the ~58% "headroom" is mostly the half-rate penalty plus the
+NON-tensor pipes (FMA/ALU/LSU/memory) sitting below 43%. Consequence for
+single-GPU concurrent multi-staging (CUDA streams / MPS):
+
+```text
+co-run another TENSOR-heavy stage (VAE conv / reward GEMM) with denoise GEMM
+   -> both want the already-maxed tensor pipe -> NO speedup (serializes at half-rate)
+co-run NON-tensor work (memcpy on copy engine, host Python, elementwise/norm on FMA/ALU)
+   -> uses the idle non-tensor pipes -> REAL but bounded overlap  (= P2 / serial_staged T2)
+```
+
+So single-GPU staging is a **bounded** lever, not a forbidden one: it can hide the
+boundary's memcpy + CPU + non-GEMM work behind the next chunk's denoise, but it
+cannot make two GEMM-heavy stages run concurrently for free (the tensor cores are
+at ceiling). The full per-stage **compute** concurrency that the SGLang-Omni shape
+buys — running denoise GEMMs and VAE/reward GEMMs at the same time — still needs
+**separate GPUs** (denoise on GPU0-1, VAE on GPU2, reward on GPU3), because each
+tensor-heavy stage wants its own un-contended tensor cores. On one GPU: `sbs`
+removes most boundaries for free (sbs=4 -> 89% busy), and the residual ~9% is the
+non-tensor boundary overlap (T2/P2). NCU probe:
+`vrl/scripts/perf/ncu_denoise_occupancy_probe.py` (run under
+`ncu --launch-skip 400 --launch-count 45 --metrics sm__throughput.avg.pct_of_peak_sustained_elapsed,...`),
+metrics in memory `project_real_run_profiling`.
+
+**Updated gate verdict:**
+
+```text
+single GPU  -> sbs (reduce boundary count, landed sbs=4 = 1.50x) + optional T2/serial_staged
+               for the last boundary. Full physical pipeline stays CLOSED here.
+multi GPU   -> the SGLang-Omni-shape physical pipeline (T3-T6) opens: separate
+               denoise/VAE/reward placement is the only way to run the stages as
+               concurrent compute. THIS is where §1's StageConfig/placement/relay pays off.
+```
+
+So this sprint's full build is gated to the **multi-GPU** path; the single-GPU
+bubble is a `sample_batch_size` + (optional) serial-staged-overlap problem, not a
+physical-pipeline problem.
+
+### 4.2 GATE OPENS — the reward stage is the measured justification (2026-06-27)
+
+The §4 gate condition "decode/reward/text-encode/queue-wait >= 10% of rollout wall"
+is now met by a stage I had NOT measured until now: the **reward stage**. It is
+scored after rollout (outside the denoise window), already instrumented as
+`collector.reward_score` (core.py:182). Measured (cosmos, sbs=1 and sbs=4 alike):
+
+```text
+reward stage = 12.6s wall per group, 0% busy on the rollout GPU, = 14% of reward+denoise
+```
+
+Root cause of the 0%: `reward execution: pool` (kling_video_reward.yaml) runs reward
+in a separate pool actor, and `release_rollout_before_reward` (core.py:222)
+OFFLOADS the rollout 2B model first because a single 32GB GPU cannot hold the
+rollout model + the reward model at once. So on ONE GPU rollout and reward are
+forced SERIAL by **memory** (offload -> reward -> restore barrier), not by tensor
+contention. This is the clean, measured >= 10% bubble — and unlike the generation
+boundary, `sbs` does NOT touch it.
+
+**Gate verdict (final):** OPEN for the multi-GPU path, on the reward stage.
+Placing the reward pool on a 2nd GPU runs reward(group N) concurrently with
+rollout(group N+1) AND removes the offload/restore barrier — hiding the full 14% +
+the barrier. This is exactly §1's per-stage placement; the reward stage is the
+first and best-justified stage to split off (it is already an independent pool
+actor — only placement + async scheduling are missing).
+
+### 4.3 Goal (how to set it)
+
+```text
+North star metric : end-to-end samples/sec (rollout + reward + train cycle wall),
+                    NOT per-kernel SM occupancy (§7).
+Measured prize    : hide the 14% reward stage + delete the release_rollout_before_reward
+                    offload/restore barrier. (VAE/encode are small ~6%, lower priority.)
+Mechanism         : reward pool actor -> dedicated GPU; bounded-async schedule so
+                    reward(group N) overlaps rollout(group N+1).
+Throughput model  : 1 / max(T_rollout, T_reward, ...) once stages are placed on
+                    separate GPUs (single GPU degenerates to the serial sum — see 4.1).
+Correctness gate  : reward values / advantage / old_log_prob BIT-IDENTICAL to the
+                    synchronous baseline. Async only moves WHEN reward runs; group N's
+                    reward MUST complete before group N trains (bounded async, NO
+                    staleness, NO off-policy). drift guard + reward-curve parity must hold.
+```
+
+**Validation split (single machine now -> multi-GPU later):**
+
+```text
+on 1 GPU now  : build + UNIT-test the async-reward scheduler and per-stage placement
+                contracts; correctness is verifiable (serial fallback must stay
+                bit-identical). NO throughput win here (memory forces serial).
+on >= 2 GPU   : measure the 14% reward hide + barrier removal; validate the 1/max
+                throughput model and reward-curve parity.
+```
+
+So: the sprint can START now scoped to **async reward + per-stage placement**
+(reward stage first), correctness-validated on one GPU; the throughput payoff is
+gated to a second GPU. Do NOT build the generic encode/VAE/relay machinery first —
+the reward stage is the measured prize; everything else is small until proven.
+
 ## 5. Future Target Architecture
 
 This section is a design reference for the gate-open path, not a current build
