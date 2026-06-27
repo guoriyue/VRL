@@ -180,12 +180,11 @@ class TestGRPOClippedSurrogate:
         _, metrics = grpo.compute_loss(
             AlgorithmInput(signals=signals, advantages=torch.ones(2)),
         )
-        ratio = torch.exp(log_prob - old_log_prob)
-        expected_clip = torch.mean((torch.abs(ratio - 1.0) > clip_ratio).float()).item()
-        expected_kl = 0.5 * torch.mean((log_prob - old_log_prob) ** 2).item()
-        assert metrics.clip_fraction == pytest.approx(expected_clip)
+        # Independent literal anchors, not the metric's own formula recomputed:
+        # ratio = exp([1, 0]) -> |e-1| > 0.2 clipped, |1-1| < 0.2 not -> 0.5 clipped;
+        # approx_kl = 0.5 * mean([1, 0] ** 2) = 0.25.
         assert metrics.clip_fraction == pytest.approx(0.5)
-        assert metrics.approx_kl == pytest.approx(expected_kl)
+        assert metrics.approx_kl == pytest.approx(0.25)
 
     def test_reports_logprob_mismatch_metrics(self) -> None:
         """GRPO surfaces rollout-vs-replay (fresh vs old) drift in TrainStepMetrics."""

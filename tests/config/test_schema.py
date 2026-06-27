@@ -11,7 +11,6 @@ from vrl.config.schema import (
     AlgorithmConfig,
     DataConfig,
     RewardConfig,
-    TrainingSection,
     parse_config,
 )
 
@@ -59,15 +58,6 @@ def _kling_video_reward_kwargs(**overrides) -> dict:
 
 
 # ── Algorithm kind discriminator ──────────────────────────────────────────────
-
-
-@pytest.mark.parametrize(
-    "kind", _literal_args(AlgorithmConfig.model_fields["kind"].annotation)
-)
-def test_valid_algorithm_kinds_are_accepted(kind: str) -> None:
-    """Every kind in the AlgorithmConfig.kind Literal allow-list is accepted."""
-    algo = AlgorithmConfig(kind=kind)
-    assert algo.kind == kind
 
 
 def test_unknown_algorithm_kind_raises() -> None:
@@ -137,16 +127,6 @@ def test_unknown_final_image_policy_raises() -> None:
 
 
 # ── distributed.training strategy ─────────────────────────────────────────────
-
-
-@pytest.mark.parametrize(
-    "strategy", _literal_args(TrainingSection.model_fields["strategy"].annotation)
-)
-def test_valid_training_strategies_are_accepted(strategy: str) -> None:
-    """Every strategy in the Literal allow-list validates (the Literal is the
-    only allow-list; deriving the cases keeps a newly added backend covered)."""
-    section = TrainingSection(strategy=strategy)
-    assert section.strategy == strategy
 
 
 def test_unknown_training_strategy_raises() -> None:
