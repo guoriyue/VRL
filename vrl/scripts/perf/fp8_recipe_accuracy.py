@@ -25,12 +25,12 @@ from __future__ import annotations
 import torch
 from torch import nn
 
-FP8_MAX = 448.0
+from vrl.scripts.perf.common.fp8_math import FP8_E4M3_MAX, relative_l1_drift
 
 
 def _to_fp8_dequant(t: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
     """Round-trip ``t`` through fp8-e4m3 at ``scale`` (broadcastable), back to bf16."""
-    q = (t / scale).clamp(-FP8_MAX, FP8_MAX).to(torch.float8_e4m3fn)
+    q = (t / scale).clamp(-FP8_E4M3_MAX, FP8_E4M3_MAX).to(torch.float8_e4m3fn)
     return q.to(torch.bfloat16) * scale.to(torch.bfloat16)
 
 
@@ -38,14 +38,14 @@ def fake_quant(t: torch.Tensor, recipe: str) -> torch.Tensor:
     """Dequantized fp8 view of ``t`` ([rows, K]) under a scaling granularity."""
     rows, k = t.shape
     if recipe == "tensor":
-        scale = (t.abs().amax() / FP8_MAX).clamp_min(1e-12)
+        scale = (t.abs().amax() / FP8_E4M3_MAX).clamp_min(1e-12)
         return _to_fp8_dequant(t, scale)
     if recipe == "row":
-        scale = (t.abs().amax(dim=1, keepdim=True) / FP8_MAX).clamp_min(1e-12)
+        scale = (t.abs().amax(dim=1, keepdim=True) / FP8_E4M3_MAX).clamp_min(1e-12)
         return _to_fp8_dequant(t, scale)
     block = {"block128": 128, "mx32": 32}[recipe]
     tb = t.reshape(rows, k // block, block)
-    amax = tb.abs().amax(dim=-1, keepdim=True) / FP8_MAX
+    amax = tb.abs().amax(dim=-1, keepdim=True) / FP8_E4M3_MAX
     if recipe == "mx32":  # microscaling: power-of-two (e8m0) scales
         amax = torch.exp2(torch.ceil(torch.log2(amax.clamp_min(1e-20))))
     scale = amax.clamp_min(1e-12)
@@ -54,14 +54,10 @@ def fake_quant(t: torch.Tensor, recipe: str) -> torch.Tensor:
     )
 
 
-def _drift(out: torch.Tensor, ref: torch.Tensor) -> float:
-    return float((out.float() - ref.float()).abs().mean() / ref.float().abs().mean().clamp_min(1e-12))
-
-
 def _linear_drift(x: torch.Tensor, w: torch.Tensor, recipe: str) -> float:
     ref = x @ w.t()
     out = fake_quant(x, recipe) @ fake_quant(w, recipe).t()
-    return _drift(out, ref)
+    return relative_l1_drift(out, ref)
 
 
 RECIPES = ["tensor", "row", "block128", "mx32"]
@@ -109,7 +105,7 @@ def _stack_drift(dim: int, depth: int, recipe: str) -> float:
             x = x + lin(down, torch.nn.functional.gelu(lin(up, h)))
         return x
 
-    return _drift(run(recipe), run(None))
+    return relative_l1_drift(run(recipe), run(None))
 
 
 def main() -> None:
@@ -121,9 +117,9 @@ def main() -> None:
     # sanity: fake-quant rowwise must match the real _scaled_mm rowwise kernel.
     x, w = _make_inputs(2048, 2048, 512, outlier=False)
     fq = _linear_drift(x, w, "row")
-    xs = (x.abs().amax(1, keepdim=True) / FP8_MAX).float()
-    ws = (w.abs().amax(1, keepdim=True) / FP8_MAX).float()
-    real = _drift(
+    xs = (x.abs().amax(1, keepdim=True) / FP8_E4M3_MAX).float()
+    ws = (w.abs().amax(1, keepdim=True) / FP8_E4M3_MAX).float()
+    real = relative_l1_drift(
         torch._scaled_mm((x / xs).to(torch.float8_e4m3fn), (w / ws).to(torch.float8_e4m3fn).t(),
                          scale_a=xs, scale_b=ws.reshape(1, -1), out_dtype=torch.bfloat16),
         x @ w.t())

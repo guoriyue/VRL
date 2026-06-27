@@ -17,20 +17,7 @@ import argparse
 
 import torch
 
-
-def _cuda_time(fn, iters: int, warmup: int = 3) -> float:
-    """Mean wall-time (ms) of fn() over iters, GPU-synced, after warmup."""
-    for _ in range(warmup):
-        fn()
-    torch.cuda.synchronize()
-    start = torch.cuda.Event(enable_timing=True)
-    end = torch.cuda.Event(enable_timing=True)
-    start.record()
-    for _ in range(iters):
-        fn()
-    end.record()
-    torch.cuda.synchronize()
-    return start.elapsed_time(end) / iters
+from vrl.scripts.perf.common.timing import cuda_mean_ms
 
 
 def main() -> None:
@@ -84,7 +71,7 @@ def main() -> None:
                 )
 
         try:
-            ms = _cuda_time(_fwd, args.iters)
+            ms = cuda_mean_ms(_fwd, iters=args.iters)
         except torch.cuda.OutOfMemoryError:
             print(f"{b:>6} | OOM")
             torch.cuda.empty_cache()
@@ -123,9 +110,9 @@ def main() -> None:
             z = (lat / pipe.vae.config.scaling_factor) + pipe.vae.config.shift_factor
             return pipe.vae.decode(z, return_dict=False)[0]
 
-    denoise_ms = _cuda_time(_denoise, iters=3, warmup=1)
+    denoise_ms = cuda_mean_ms(_denoise, iters=3, warmup=1)
     final = _denoise()
-    vae_ms = _cuda_time(lambda: _vae(final), iters=3, warmup=1)
+    vae_ms = cuda_mean_ms(lambda: _vae(final), iters=3, warmup=1)
     total = denoise_ms + vae_ms
     print(f"  denoise ({args.steps} DiT fwd): {denoise_ms:>9.1f} ms  ({denoise_ms/total*100:4.1f}%)")
     print(f"  VAE decode               : {vae_ms:>9.1f} ms  ({vae_ms/total*100:4.1f}%)")

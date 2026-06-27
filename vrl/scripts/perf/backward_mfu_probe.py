@@ -16,18 +16,7 @@ import argparse
 
 import torch
 
-
-def _cuda_time(fn, iters: int, warmup: int = 2) -> float:
-    for _ in range(warmup):
-        fn()
-    torch.cuda.synchronize()
-    s, e = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-    s.record()
-    for _ in range(iters):
-        fn()
-    e.record()
-    torch.cuda.synchronize()
-    return s.elapsed_time(e) / iters
+from vrl.scripts.perf.common.timing import cuda_mean_ms
 
 
 def main() -> None:
@@ -110,9 +99,9 @@ def main() -> None:
 
             try:
                 warmup = 6 if args.compile else 2  # inductor needs more warmup per shape
-                fwd_ms = _cuda_time(_fwd_nograd, iters=4, warmup=warmup)
+                fwd_ms = cuda_mean_ms(_fwd_nograd, iters=4, warmup=warmup)
                 torch.cuda.reset_peak_memory_stats()
-                step_ms = _cuda_time(_step, iters=4, warmup=warmup)
+                step_ms = cuda_mean_ms(_step, iters=4, warmup=warmup)
                 peak = torch.cuda.max_memory_allocated() / 1024**3
                 bwd_ms = max(step_ms - fwd_ms, 0.01)
                 mfu = total_flops / (step_ms / 1e3) / 1e12 / args.peak_tflops * 100

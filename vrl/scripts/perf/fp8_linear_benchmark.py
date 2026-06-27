@@ -27,11 +27,8 @@ from __future__ import annotations
 import torch
 from torch import nn
 
-FP8_E4M3_MAX = 448.0
-
-
-def _amax_scale(t: torch.Tensor) -> torch.Tensor:
-    return (t.abs().amax() / FP8_E4M3_MAX).clamp_min(1e-12).to(torch.float32)
+from vrl.scripts.perf.common.fp8_math import amax_scale, relative_l1_drift
+from vrl.scripts.perf.common.timing import cuda_mean_ms
 
 
 class Fp8DynamicLinear(nn.Module):
@@ -45,7 +42,7 @@ class Fp8DynamicLinear(nn.Module):
     def __init__(self, lin: nn.Linear) -> None:
         super().__init__()
         w = lin.weight.data  # [out, in]
-        w_scale = _amax_scale(w)
+        w_scale = amax_scale(w)
         self.register_buffer("w_fp8", (w / w_scale).to(torch.float8_e4m3fn))
         self.register_buffer("w_scale", w_scale)
         self.bias = lin.bias
@@ -54,7 +51,7 @@ class Fp8DynamicLinear(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         shape = x.shape
         x2d = x.reshape(-1, shape[-1])
-        x_scale = _amax_scale(x2d)
+        x_scale = amax_scale(x2d)
         x_fp8 = (x2d / x_scale).to(torch.float8_e4m3fn)
         out = torch._scaled_mm(
             x_fp8, self.w_fp8.t(), scale_a=x_scale, scale_b=self.w_scale, out_dtype=x.dtype,
@@ -63,23 +60,6 @@ class Fp8DynamicLinear(nn.Module):
         if self.bias is not None:
             out = out + self.bias
         return out
-
-
-def _time_ms(fn, x, iters: int = 100, warmup: int = 25) -> float:
-    for _ in range(warmup):
-        fn(x)
-    torch.cuda.synchronize()
-    start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-    start.record()
-    for _ in range(iters):
-        fn(x)
-    end.record()
-    torch.cuda.synchronize()
-    return start.elapsed_time(end) / iters
-
-
-def _drift(a: torch.Tensor, b: torch.Tensor) -> float:
-    return float((a.float() - b.float()).abs().mean() / b.float().abs().mean().clamp_min(1e-12))
 
 
 def main() -> None:
@@ -110,9 +90,9 @@ def main() -> None:
         x = torch.randn(m, k, device=dev, dtype=torch.bfloat16)
         with torch.no_grad():
             ref, q = lin(x), fp8(x)
-            bf16_ms = _time_ms(lin, x)
-            fp8_ms = _time_ms(fp8, x)
-        sp, dr = bf16_ms / fp8_ms, _drift(q, ref)
+            bf16_ms = cuda_mean_ms(lambda lin=lin, x=x: lin(x), iters=100, warmup=25)
+            fp8_ms = cuda_mean_ms(lambda fp8=fp8, x=x: fp8(x), iters=100, warmup=25)
+        sp, dr = bf16_ms / fp8_ms, relative_l1_drift(q, ref)
         speedups.append(sp)
         drifts.append(dr)
         print(f"{f'({m},{k},{n})':>22} | {bf16_ms:8.4f} | {fp8_ms:8.4f} | {sp:6.2f}x | {dr:8.4f}")

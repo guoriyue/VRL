@@ -40,7 +40,7 @@ from vrl.config.loading import load_config
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.diffusion.teacache import TeaCacheConfig, TeaCacheState
 from vrl.math.diffusion.flow_matching import sde_step_with_logprob
-from vrl.scripts.perf.generation_bottleneck_profile import build_model
+from vrl.scripts.perf.common.diffusion_runtime import build_model
 
 _SDE_TYPE = "cps"
 

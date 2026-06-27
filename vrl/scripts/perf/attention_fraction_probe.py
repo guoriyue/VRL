@@ -19,18 +19,7 @@ import argparse
 
 import torch
 
-
-def _cuda_time(fn, iters: int, warmup: int = 3) -> float:
-    for _ in range(warmup):
-        fn()
-    torch.cuda.synchronize()
-    s, e = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-    s.record()
-    for _ in range(iters):
-        fn()
-    e.record()
-    torch.cuda.synchronize()
-    return s.elapsed_time(e) / iters
+from vrl.scripts.perf.common.timing import cuda_mean_ms
 
 
 def main() -> None:
@@ -84,7 +73,7 @@ def main() -> None:
                 tf(hidden_states=model_in, timestep=ts, encoder_hidden_states=full_embeds,
                    pooled_projections=full_pooled, return_dict=False)
         try:
-            ms = _cuda_time(_fwd, args.iters)
+            ms = cuda_mean_ms(_fwd, iters=args.iters)
             ms_s = f"{ms:7.1f}"
         except torch.cuda.OutOfMemoryError:
             ms_s = "    OOM"

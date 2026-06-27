@@ -36,13 +36,13 @@ Usage:
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 import torch
 
-from vrl.scripts.perf.gemm_projection_breakdown import build_synthetic_inputs
+from vrl.scripts.perf.common.synthetic_diffusion import build_synthetic_inputs
+from vrl.scripts.perf.common.timing import cuda_median_ms, kernel_launches_per_step
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -74,52 +74,6 @@ class ParityResult:
     max_rel_out: float
     max_abs_grad: float | None  # train path only (None for rollout)
     params_checked: int | None
-
-
-def _median_latency_ms(step_fn: Callable[[], None], *, warmup: int, iters: int) -> float:
-    """Median wall time of one step via CUDA events (ms), after warmup.
-
-    Warmup absorbs the first compiled call (graph capture + guard install), which
-    is one-time and not part of steady-state throughput.
-    """
-
-    for _ in range(max(0, warmup)):
-        step_fn()
-    torch.cuda.synchronize()
-
-    times: list[float] = []
-    for _ in range(max(1, iters)):
-        start = torch.cuda.Event(enable_timing=True)
-        end = torch.cuda.Event(enable_timing=True)
-        start.record()
-        step_fn()
-        end.record()
-        torch.cuda.synchronize()
-        times.append(start.elapsed_time(end))
-    times.sort()
-    return times[len(times) // 2]
-
-
-def _launches_per_step(step_fn: Callable[[], None], *, steps: int = 3) -> float:
-    """Host-side kernel launches issued per step (the launch-bound metric).
-
-    Counts every kernel-launch runtime/driver call -- ``cudaLaunchKernel`` (eager
-    aten) AND ``cuLaunchKernel`` (inductor's Triton kernels) -- so a compile that
-    fuses N elementwise ops into one Triton kernel shows up as fewer launches.
-    Caller must warm up first so compilation isn't counted.
-    """
-
-    activities = [torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA]
-    with torch.profiler.profile(activities=activities) as prof:
-        for _ in range(steps):
-            step_fn()
-        torch.cuda.synchronize()
-
-    launches = 0
-    for evt in prof.key_averages():
-        if "launchkernel" in str(evt.key).lower():
-            launches += int(getattr(evt, "count", 0) or 0)
-    return launches / float(steps)
 
 
 def _maybe_compile(model: torch.nn.Module, *, compiled: bool, mode: str) -> torch.nn.Module:
@@ -189,8 +143,8 @@ def _run_cell(
     else:  # pragma: no cover - guarded by argparse choices
         raise ValueError(f"unknown path {path!r}")
 
-    latency = _median_latency_ms(step_fn, warmup=warmup, iters=iters)
-    launches = _launches_per_step(step_fn)
+    latency = cuda_median_ms(step_fn, warmup=warmup, iters=iters)
+    launches = kernel_launches_per_step(step_fn)
     peak_mb = torch.cuda.max_memory_allocated(device) / (1024 * 1024)
 
     del model, runner, kwargs

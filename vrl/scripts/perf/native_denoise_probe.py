@@ -30,7 +30,7 @@ from pathlib import Path
 import torch
 
 from vrl.config.loading import load_config
-from vrl.scripts.perf.generation_bottleneck_profile import build_model, make_step_fn
+from vrl.scripts.perf.common.diffusion_runtime import build_model, make_step_fn
 
 
 def main(argv=None) -> None:

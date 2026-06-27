@@ -20,18 +20,7 @@ import argparse
 
 import torch
 
-
-def _cuda_time(fn, iters: int, warmup: int = 3) -> float:
-    for _ in range(warmup):
-        fn()
-    torch.cuda.synchronize()
-    s, e = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-    s.record()
-    for _ in range(iters):
-        fn()
-    e.record()
-    torch.cuda.synchronize()
-    return s.elapsed_time(e) / iters
+from vrl.scripts.perf.common.timing import cuda_mean_ms
 
 
 def main() -> None:
@@ -106,7 +95,7 @@ def main() -> None:
           f"mem_efficient={torch.backends.cuda.mem_efficient_sdp_enabled()}, "
           f"math={torch.backends.cuda.math_sdp_enabled()}")
 
-    eager_ms = _cuda_time(lambda: _fwd(tf), iters=10)
+    eager_ms = cuda_mean_ms(lambda: _fwd(tf), iters=10)
     eager_tflops = flops / (eager_ms / 1e3) / 1e12
     print("\n=== eager ===")
     print(f"  {eager_ms:.2f} ms/forward  ->  {eager_tflops:.0f} TFLOPS achieved  "
@@ -115,7 +104,7 @@ def main() -> None:
     print(f"\ncompiling (inductor, mode={args.compile_mode!r}, ~1-3 min) ...")
     compiled = torch.compile(tf, mode=args.compile_mode)
     # reduce-overhead (CUDA graphs) needs more warmup to capture/replay the graph.
-    comp_ms = _cuda_time(lambda: _fwd(compiled), iters=10, warmup=8)
+    comp_ms = cuda_mean_ms(lambda: _fwd(compiled), iters=10, warmup=8)
     comp_tflops = flops / (comp_ms / 1e3) / 1e12
     print(f"=== torch.compile (mode={args.compile_mode}) ===")
     print(f"  {comp_ms:.2f} ms/forward  ->  {comp_tflops:.0f} TFLOPS  "

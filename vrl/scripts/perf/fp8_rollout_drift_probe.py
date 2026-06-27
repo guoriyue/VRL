@@ -44,26 +44,17 @@ from vrl.algorithms.logprob_mismatch import (
 )
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
+from vrl.scripts.perf.common.fp8_math import tensorwise_fp8_matmul
 from vrl.trainers.core.types import PrecisionDriftGuardConfig
 from vrl.trainers.online.precision_guard import (
     PrecisionDriftError,
     run_precision_drift_guard,
 )
 
-FP8_E4M3_MAX = 448.0
-
-
-def _amax_scale(t: torch.Tensor) -> torch.Tensor:
-    """Per-tensor e4m3 scale: map the tensor's amax onto the fp8 max representable."""
-    return (t.abs().amax() / FP8_E4M3_MAX).clamp_min(1e-12).to(torch.float32)
-
 
 def _fp8_matmul(x_bf16: torch.Tensor, w_bf16: torch.Tensor) -> torch.Tensor:
     """x @ w.T computed in fp8-e4m3 on tensor cores, accumulated to bf16."""
-    sx, sw = _amax_scale(x_bf16), _amax_scale(w_bf16)
-    xf = (x_bf16 / sx).to(torch.float8_e4m3fn)
-    wf = (w_bf16 / sw).to(torch.float8_e4m3fn)
-    return torch._scaled_mm(xf, wf.t(), scale_a=sx, scale_b=sw, out_dtype=torch.bfloat16)
+    return tensorwise_fp8_matmul(x_bf16, w_bf16)
 
 
 def _logprob_from_logits(logits: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:

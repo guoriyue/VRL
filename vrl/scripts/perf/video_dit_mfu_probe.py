@@ -23,20 +23,8 @@ import argparse
 
 import torch
 
-from vrl.scripts.perf.gemm_projection_breakdown import build_synthetic_inputs
-
-
-def _cuda_time(fn, iters: int, warmup: int = 4) -> float:
-    for _ in range(warmup):
-        fn()
-    torch.cuda.synchronize()
-    s, e = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-    s.record()
-    for _ in range(iters):
-        fn()
-    e.record()
-    torch.cuda.synchronize()
-    return s.elapsed_time(e) / iters
+from vrl.scripts.perf.common.synthetic_diffusion import build_synthetic_inputs
+from vrl.scripts.perf.common.timing import cuda_mean_ms
 
 
 def main() -> None:
@@ -86,7 +74,7 @@ def main() -> None:
             with torch.no_grad():
                 model(**kw)
         try:
-            ms = _cuda_time(_fwd, args.iters)
+            ms = cuda_mean_ms(_fwd, iters=args.iters, warmup=4)
             ms_s = f"{ms:7.1f}"
         except torch.cuda.OutOfMemoryError:
             ms_s = "    OOM"
@@ -107,7 +95,7 @@ def main() -> None:
             model(**kw)
 
     try:
-        eager_ms = _cuda_time(_fwd, iters=args.iters)
+        eager_ms = cuda_mean_ms(_fwd, iters=args.iters, warmup=4)
         eager_tflops = flops / (eager_ms / 1e3) / 1e12
         print(f"\n=== eager (frames={f}, vid_tok={vid_tok}) ===")
         print(f"  {eager_ms:.1f} ms -> {eager_tflops:.0f} TFLOPS -> MFU ~ {eager_tflops/args.peak_tflops*100:.0f}%")
@@ -117,7 +105,7 @@ def main() -> None:
         def _fwd_c(kw=kw):
             with torch.no_grad():
                 compiled(**kw)
-        comp_ms = _cuda_time(_fwd_c, iters=args.iters, warmup=6)
+        comp_ms = cuda_mean_ms(_fwd_c, iters=args.iters, warmup=6)
         comp_tflops = flops / (comp_ms / 1e3) / 1e12
         print("=== torch.compile ===")
         print(f"  {comp_ms:.1f} ms -> {comp_tflops:.0f} TFLOPS -> MFU ~ {comp_tflops/args.peak_tflops*100:.0f}%")
