@@ -654,7 +654,7 @@ async def run_online_recipe(
     _warn_global_std_streaming_divergence(cfg, trainer_config)
     gradient_accumulation_steps = int(getattr(trainer_config, "gradient_accumulation_steps", 0))
     if trainer_config.profile:
-        os.environ["VRL_PROFILE_COLLECT"] = "1"
+        os.environ["VRL_PROFILE"] = "1"
 
     resume_checkpoint = load_training_checkpoint_from_config(cfg)
     prepare_model_config_for_training_resume(

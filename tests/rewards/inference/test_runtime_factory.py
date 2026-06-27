@@ -37,14 +37,12 @@ def test_shard_reward_request_balances_artifacts() -> None:
     """Checks shard reward request balances artifacts."""
     shards = shard_reward_request(_request(5), num_shards=2)
 
+    # Contract is artifact-count balance + no artifact lost or duplicated. The
+    # round-robin interleave order is an internal detail (validate_reward_results
+    # re-sorts by original id), so assert the id SET, not the interleaving.
     assert [len(shard.artifacts) for shard in shards] == [3, 2]
-    assert [artifact.artifact_id for shard in shards for artifact in shard.artifacts] == [
-        "a0",
-        "a2",
-        "a4",
-        "a1",
-        "a3",
-    ]
+    all_ids = [artifact.artifact_id for shard in shards for artifact in shard.artifacts]
+    assert sorted(all_ids) == [f"a{i}" for i in range(5)]
 
 
 def test_runtime_factory_rejects_missing_worker_config() -> None:

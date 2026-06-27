@@ -124,7 +124,7 @@ class RolloutCollector:
 
         collector_request = self.request_builder.build(prompts, int(group_size), dict(kwargs))
 
-        profile = os.environ.get("VRL_PROFILE_COLLECT") == "1"
+        profile = os.environ.get("VRL_PROFILE") == "1"
         phase_t = _sync_time() if profile else None
 
         output = await self.runtime.generate(collector_request.request)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import os
 import socket
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -42,16 +43,33 @@ class TorchProfilerConfig:
 
 @contextlib.contextmanager
 def record_function(name: str) -> Iterator[None]:
-    """Record a profiler range when torch profiler is available."""
+    """Record a torch.profiler range and, under ``VRL_PROFILE=1``, also an NVTX
+    range so Nsight Systems / Compute attribute GPU time to the named rollout stage in a
+    REAL run (Ray worker included via ``nsys --trace-fork-before-exec=true``). Without the
+    env set this is exactly the prior torch.profiler-only behavior (no NVTX overhead).
+    """
 
     try:
         import torch
 
         ctx = torch.profiler.record_function(name)
     except Exception:
-        ctx = contextlib.nullcontext()
-    with ctx:
-        yield
+        with contextlib.nullcontext():
+            yield
+        return
+    # nvtx push/pop makes the named range visible to nsys/ncu; gated to profiling runs.
+    emit_nvtx = os.environ.get("VRL_PROFILE") == "1"
+    if emit_nvtx:
+        try:
+            torch.cuda.nvtx.range_push(name)
+        except Exception:
+            emit_nvtx = False
+    try:
+        with ctx:
+            yield
+    finally:
+        if emit_nvtx:
+            torch.cuda.nvtx.range_pop()
 
 
 @contextlib.contextmanager

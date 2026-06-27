@@ -233,16 +233,18 @@ def test_online_metrics_csv_includes_logprob_mismatch_metrics(tmp_path):
     assert "continuous_predicted_admit_staleness" in header
     assert "continuous_admit_blocked_on_staleness" in header
     values = dict(zip(header.split(","), row.split(","), strict=True))
-    assert values["logprob_abs_diff_mean"] == "0.100000"
-    assert values["ratio_abs_dev_max"] == "0.400000"
-    assert values["mismatch_kl"] == "-0.500000"
+    # Assert the numeric value landed in the right column, not the CSV float
+    # format width (.6f / .4f zero-padding is a display detail, not a contract).
+    assert float(values["logprob_abs_diff_mean"]) == pytest.approx(0.1)
+    assert float(values["ratio_abs_dev_max"]) == pytest.approx(0.4)
+    assert float(values["mismatch_kl"]) == pytest.approx(-0.5)
     # Continuous-async diagnostics sourced from TrainStepMetrics.phase_times.
-    assert values["continuous_stale_versions"] == "1.0"
-    assert values["continuous_ready_groups"] == "3.0"
-    assert values["continuous_weight_sync_pause_s"] == "0.2500"
+    assert float(values["continuous_stale_versions"]) == pytest.approx(1.0)
+    assert float(values["continuous_ready_groups"]) == pytest.approx(3.0)
+    assert float(values["continuous_weight_sync_pause_s"]) == pytest.approx(0.25)
     # Admit-time predicted-version throttle observability.
-    assert values["continuous_predicted_admit_staleness"] == "2.0"
-    assert values["continuous_admit_blocked_on_staleness"] == "1.0"
+    assert float(values["continuous_predicted_admit_staleness"]) == pytest.approx(2.0)
+    assert float(values["continuous_admit_blocked_on_staleness"]) == pytest.approx(1.0)
 
 
 @pytest.mark.parametrize(
