@@ -512,7 +512,7 @@ class ActorSection(ConfigBase):
     ppo_epochs: Any = None
     gradient_accumulation_steps: Any = None
     drop_zero_advantage: Any = None
-    gradient_checkpointing: Any = None
+    gradient_checkpointing: Any = None  # off | full | selective (or bool: true=full, false=off)
     timestep_fraction: Any = None
     timestep_selection: Any = None  # strided | random (DanceGRPO)
     # offline DPO entrypoint (vrl/scripts/diffusion/wan_2_1/train_dpo.py)

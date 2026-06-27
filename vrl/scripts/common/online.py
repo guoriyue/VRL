@@ -35,6 +35,9 @@ from vrl.scripts.common.types import (
     OnlineRecipeStack,
     RecipeDeviceContext,
 )
+from vrl.trainers.activation_checkpointing import (
+    enable_transformer_gradient_checkpointing,
+)
 from vrl.trainers.checkpointing import (
     LORA_WEIGHTS_NAME,
     capture_rng_state,
@@ -228,38 +231,6 @@ def export_language_model_lora(bundle: Any, cfg: DictConfig) -> dict[str, Any] |
     if bool(OmegaConf.select(cfg, "model.use_lora", default=False)):
         return {LORA_WEIGHTS_NAME: bundle.model.language_model}
     return None
-
-
-def enable_transformer_gradient_checkpointing(
-    bundle: Any,
-    cfg: DictConfig,
-    *,
-    require_method: bool = True,
-) -> None:
-    """Enable transformer gradient checkpointing while preserving family policy."""
-
-    from vrl.trainers.core.types import TrainerConfig
-
-    # Optional key: base yaml no longer restates the dataclass default, so an
-    # absent key means "use the TrainerConfig default" — derived, not copied.
-    enabled = OmegaConf.select(cfg, "actor.gradient_checkpointing")
-    if enabled is None:
-        enabled = TrainerConfig.__dataclass_fields__["gradient_checkpointing"].default
-    if not bool(enabled):
-        return
-
-    trainable_modules = getattr(bundle, "trainable_modules", None) or {
-        "transformer": bundle.model.transformer,
-    }
-    for name, module in trainable_modules.items():
-        enable = getattr(module, "enable_gradient_checkpointing", None)
-        if enable is None:
-            if require_method:
-                raise AttributeError(
-                    f"trainable module {name!r} does not expose enable_gradient_checkpointing",
-                )
-            continue
-        enable()
 
 
 def _check_host_memory_budget(
@@ -605,8 +576,9 @@ class OnlineRecipeRun:
 def _maybe_autodetect_cross_node(cfg: DictConfig, ray: Any) -> None:
     """Enable distributed.resources.cross_node automatically on a multi-node cluster.
 
-    Mirrors slime/cosmos-rl, where the operator brings the cluster up first
-    (``ray start``) and the driver attaches to it. When ``cross_node`` is not set
+    Follows the standard Ray multi-node pattern, where the operator brings the
+    cluster up first (``ray start``) and the driver attaches to it. When
+    ``cross_node`` is not set
     explicitly we ATTACH to an already-running cluster (``address="auto"``) and, if
     it exposes GPUs on non-driver nodes, set ``cross_node=true`` before resolving so
     the user need not hand-set it. A single-node run with no external cluster raises
@@ -1291,7 +1263,7 @@ async def _run_distributed_fixed_eval(
 ) -> _FixedEvalResult:
     """Run fixed eval as a GLOBAL phase: every rank scores a disjoint prompt shard.
 
-    Cosmos-RL shape without a controller (§0/§2): the rollout side (every training
+    Controller-free disaggregation shape (§0/§2): the rollout side (every training
     rank's colocated runtime) splits the eval generation/reward work by global
     index, then a single stats all-reduce gives every rank the same global
     ``_FixedEvalResult`` — the learning signal over the WHOLE eval set, not rank0's

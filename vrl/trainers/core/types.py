@@ -315,12 +315,15 @@ class TrainerConfig:
     # Empty -> fp32 ("no"). Production always bridges this from precision.train;
     # bare construction (tests) defaults to fp32.
     train_precision: str = field(default="", metadata={"yaml": "bridged"})
-    # Default OFF: activation checkpointing is a recompute tax (measured ~1.3-2x
-    # slower backward, and it lowers MFU) that only pays for itself when activations
-    # would otherwise OOM -- i.e. video / high-resolution x high-batch. Image and
-    # single-GPU runs fit without it (transformer-only backward ~9-16GB on 32GB).
-    # Set True per-config for video (cosmos/wan) or large-batch runs that OOM.
-    gradient_checkpointing: bool = field(default=False, metadata={"yaml": "actor"})
+    # off | full | selective (or bool: true=full, false=off). Activation
+    # checkpointing is a recompute tax that lowers MFU; it only pays for itself
+    # when activations would otherwise OOM -- i.e. video / high-resolution x
+    # high-batch. ``full`` recomputes every block (~1.3-2x slower backward).
+    # ``selective`` (SAC) saves the expensive GEMM/attention outputs and recomputes
+    # only cheap norm/pointwise, recovering ~2/3 of full's tax while still reaching
+    # larger batches than off -- the MFU-preferred mode for large-batch runs that
+    # OOM without checkpointing (measured: SPRINT_training_mfu_selective_checkpointing).
+    gradient_checkpointing: bool | str = field(default=False, metadata={"yaml": "actor"})
     # Rollout (generation) compute precision. Empty -> treated as same as
     # compute. The drift guard compares this against the compute precision to
     # decide whether to enforce parity.
