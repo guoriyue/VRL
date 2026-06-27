@@ -25,12 +25,19 @@ def main() -> None:
     p.add_argument("--height", type=int, default=1024)
     p.add_argument("--width", type=int, default=1024)
     p.add_argument("--batches", type=int, nargs="+", default=[1, 2, 4])
-    p.add_argument("--peak-tflops", type=float, default=419.0)
+    p.add_argument("--peak-tflops", type=float, default=0.0,
+                   help="bf16 MFU denominator; 0 = measure real bf16 peak (gpu_preflight). "
+                        "419 is the fp8/sparse headline; real 5090 bf16 dense is ~232.")
     p.add_argument("--compile", action="store_true",
                    help="torch.compile the transformer (measures training-side fusion "
                         "headroom: backward MFU eager vs compiled). Restricts to ckpt=False "
                         "since compile+grad-checkpointing recompiles/collides.")
     args = p.parse_args()
+
+    if args.peak_tflops <= 0:
+        from vrl.scripts.perf.gpu_preflight import measured_bf16_peak_tflops
+        args.peak_tflops = measured_bf16_peak_tflops()
+        print(f"measured bf16 peak (MFU denominator) = {args.peak_tflops:.0f} TFLOPS")
 
     from diffusers import StableDiffusion3Pipeline
 

@@ -1,15 +1,16 @@
-"""Video DiT (Cosmos/Wan): is it compute-bound, what MFU, and where does attention take over?
+"""Video DiT analytic FLOP/time probe for Cosmos/Wan shapes.
 
-WHY: the lossless-research probes on SD3.5 IMAGE (docs/sprints/reading/
-SPRINT_lossless_diffusion_rl_research.md §0.6) found the DiT compute-bound at ~94% MFU
-post-compile with attention only 4-13% of FLOPs — so FA-3/attention kernels and fused
-AdaLN have a small ceiling there. VIDEO is the real target and the conclusions may flip:
-self-attention is O(seq^2) and a video clip has tokens = frames x (H/2) x (W/2), so as
-frames grow attention can overtake the linear/MLP work and FA-3 becomes worth it.
+This is a screening tool: it estimates achieved TFLOPS from model-shape FLOP formulas
+and divides by a measured bf16 GEMM peak. That is useful for trend checks, but it is
+not enough to prove tensor-core saturation. Final "is there kernel headroom?" calls must
+be checked with Nsight Compute tensor-pipe SOL against a square-GEMM baseline on the same
+GPU. The old "cosmos post-compile ~51% MFU" result was caused by using an inflated vendor
+peak instead of the real bf16+fp32-accumulate peak.
 
 This sweeps the latent FRAME count for a real-dims (synthetic-weight; only shapes drive
-kernel time) Cosmos/Wan transformer and reports, per frame count: token count, attn-FLOP
-fraction, eager ms; then an eager-vs-compile MFU A/B at a representative video length.
+kernel time) Cosmos/Wan transformer and reports, per frame count: token count,
+attention-FLOP fraction, eager ms; then an eager-vs-compile analytic MFU A/B at a
+representative video length.
 
 Reuses build_synthetic_inputs (the single source of production-faithful dims shared with
 the GEMM breakdown + compile A/B), so shapes match the real model.
@@ -34,9 +35,17 @@ def main() -> None:
     p.add_argument("--frames", type=int, nargs="+", default=[1, 4, 8, 16])
     p.add_argument("--batch", type=int, default=1)
     p.add_argument("--compile-at", type=int, default=8, help="frame count for the compile A/B")
-    p.add_argument("--peak-tflops", type=float, default=419.0)
+    p.add_argument("--peak-tflops", type=float, default=0.0,
+                   help="bf16 MFU denominator; 0 = measure this GPU's real bf16 peak "
+                        "(gpu_preflight). NEVER hardcode the vendor fp8/sparse headline "
+                        "(419 on a 5090 is fp8/sparse; real bf16 dense is ~232).")
     p.add_argument("--iters", type=int, default=6)
     args = p.parse_args()
+
+    if args.peak_tflops <= 0:
+        from vrl.scripts.perf.gpu_preflight import measured_bf16_peak_tflops
+        args.peak_tflops = measured_bf16_peak_tflops()
+        print(f"measured bf16 peak (MFU denominator) = {args.peak_tflops:.0f} TFLOPS")
 
     device = torch.device("cuda")
     dtype = torch.bfloat16

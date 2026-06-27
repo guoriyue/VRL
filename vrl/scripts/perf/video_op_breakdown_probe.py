@@ -1,10 +1,14 @@
-"""Where does the post-compile time go in a video DiT — matmul, attention, or the
-bandwidth-bound norm/elementwise work that a fused AdaLN kernel would remove?
+"""Where does video DiT GPU time go: matmul, attention, or norm/elementwise work?
 
-WHY (SPRINT_cosmos_video_mfu_kernels P0): video_dit_mfu_probe found cosmos at ~51% MFU
-after compile — ~half the GPU time is NOT in the FLOP-heavy GEMM/attention kernels. To
-prioritize fusion work we need to know what that other half IS. This profiles one forward
-(eager AND compiled) with torch.profiler and buckets every CUDA kernel's self-time into:
+WHY: this is an op-time attribution probe, not a saturation proof. The historical
+"cosmos is ~51% MFU" conclusion came from dividing analytic FLOPs by an inflated
+vendor peak. Nsight Compute later showed the main bf16 GEMMs run at the same tensor-pipe
+SOL as a square GEMM on RTX 5090, so the compute kernels are already near the real
+bf16+fp32-accumulate ceiling. This probe still answers a different useful question:
+which CUDA kernel families dominate eager/compiled wall time?
+
+It profiles one forward (eager AND compiled) with torch.profiler and buckets every CUDA
+kernel's self-time into:
 
   - MATMUL    : GEMM (linear/proj/MLP) — the useful linear FLOPs
   - ATTENTION : SDPA / flash / fmha — the useful attention FLOPs

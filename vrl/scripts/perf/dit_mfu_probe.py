@@ -29,13 +29,20 @@ def main() -> None:
     p.add_argument("--height", type=int, default=1024)
     p.add_argument("--width", type=int, default=1024)
     p.add_argument("--batch", type=int, default=4)
-    p.add_argument("--peak-tflops", type=float, default=419.0,
-                   help="RTX 5090 dense bf16 tensor-core peak (~419) for MFU.")
+    p.add_argument("--peak-tflops", type=float, default=0.0,
+                   help="bf16 MFU denominator; 0 = measure this GPU's real bf16 peak "
+                        "(gpu_preflight). The 419 'RTX 5090 peak' is fp8/sparse — the real "
+                        "bf16 dense peak is ~232, and using 419 mis-diagnoses MFU by ~1.8x.")
     p.add_argument("--compile-mode", default="default",
                    help="torch.compile mode: 'default' (inductor fusion) or "
                         "'reduce-overhead' (adds CUDA graphs — captures kernel-launch "
                         "overhead; helps launch-bound, marginal for compute-bound).")
     args = p.parse_args()
+
+    if args.peak_tflops <= 0:
+        from vrl.scripts.perf.gpu_preflight import measured_bf16_peak_tflops
+        args.peak_tflops = measured_bf16_peak_tflops()
+        print(f"measured bf16 peak (MFU denominator) = {args.peak_tflops:.0f} TFLOPS")
 
     from diffusers import StableDiffusion3Pipeline
 
