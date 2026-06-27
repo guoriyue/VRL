@@ -1,4 +1,4 @@
-"""vLLM-style process-safe logging for driver and Ray worker processes.
+"""Process-safe logging for driver and Ray worker processes.
 
 Ray actors never run the driver's ``logging.basicConfig``, so module loggers
 inside workers have no handler and silently drop INFO records — which is why
@@ -7,8 +7,7 @@ guarantees exactly one stdout handler on the ``"vrl"`` namespace logger in
 every process. ``propagate=False`` keeps records from also reaching the root
 logger, so a driver that ran ``basicConfig`` does not print them twice.
 
-Level is controlled by the ``VRL_LOG_LEVEL`` env var (default ``INFO``),
-mirroring vLLM's ``VLLM_LOGGING_LEVEL``.
+Level is controlled by the ``VRL_LOG_LEVEL`` env var (default ``INFO``).
 """
 
 from __future__ import annotations

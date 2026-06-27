@@ -5,8 +5,7 @@ Every rollout quantization scheme — ``Fp8Linear`` today, future ``Fp4Linear`` 
 single contract the rest of the stack keys off: the rollout backstop guard counts
 "any quantized linear" via ``isinstance(m, QuantizedLinear)`` instead of a
 hand-maintained per-scheme type list, so a newly added scheme is covered the
-moment it subclasses this (no guard edit, no silent gap). Mirrors vLLM's
-``quantization/base_config`` and torchao's quantized-module base.
+moment it subclasses this (no guard edit, no silent gap).
 """
 
 from __future__ import annotations

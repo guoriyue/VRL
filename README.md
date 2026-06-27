@@ -18,6 +18,25 @@ rewards, generated artifacts, and changed weights.
 - **Validation-first recipes.** Runnable wiring is not treated as a working recipe
   until a real run clears the promotion bar.
 
+## Why not an LLM-RL framework?
+
+RL frameworks built for text LLMs (slime, verl, OpenRLHF, TRL) assume a shape that
+visual generation does not have, so bending them to diffusion/video RL fights the
+core abstractions at every step:
+
+- **Rollout is a multi-step denoising trajectory** — 20–50 full DiT forwards per
+  sample, not one token-by-token pass over a KV-cache.
+- **The log-prob is a continuous-latent Gaussian density** (flow-matching / SDE
+  transition), not a categorical token cross-entropy.
+- **The reward is on decoded pixels/video** (VAE decode → image/video reward
+  model), not on text.
+- **Conditioning is world-model-shaped** (reference image/video, I2V, V2W), not a
+  text prefix.
+
+`visual-rl` is built around exactly these — diffusion *and* autoregressive image
+*and* video — behind one rollout / replay / algorithm contract. See
+[`docs/NORTH_STAR.md`](docs/NORTH_STAR.md) for the full positioning and roadmap.
+
 ## Status Policy
 
 | Status | Meaning |
@@ -111,9 +130,36 @@ and editable-installs **every** `third_party/*_packaging/` wrapper, so adding a
 vendored dependency needs no edit outside `third_party/`. See
 [`third_party/README.md`](third_party/README.md) for the convention.
 
+## Quickstart
+
+After `make setup`, launch the one ✅ validated recipe — SD3.5 text-to-image GRPO
+with an OCR reward — in a single command:
+
+```bash
+vrl-train --config experiment/diffusion/sd3_5/online_grpo_ocr
+```
+
+`--config` names any YAML under `configs/` (no extension); trailing args are
+OmegaConf dotlist overrides (`vrl-train --help`):
+
+```bash
+# shorter smoke run
+vrl-train --config experiment/diffusion/sd3_5/online_grpo_ocr \
+    trainer.total_epochs=2 trainer.seed=0
+```
+
+Within the first few epochs you should see optimizer steps and a **non-flat**
+`reward_mean`. A flat reward is a bug, not a result (see Status Policy). Every
+recipe lives under `configs/experiment/` — browse it to see what runs.
+
 ## Current Focus
 
 - Promote video recipes only after real training validation.
 - Broaden AR rollout coverage.
 - Validate DiffusionNFT and DanceGRPO on more model families.
 - Expand multi-card and cross-node online training coverage.
+
+## Docs
+
+- [`docs/NORTH_STAR.md`](docs/NORTH_STAR.md) — positioning, moat, and roadmap (why visual-rl, not slime/verl).
+- [`docs/ADDING_A_MODEL_FAMILY.md`](docs/ADDING_A_MODEL_FAMILY.md) — make your own model RL-trainable here (a registry line, not a fork).
