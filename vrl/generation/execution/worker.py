@@ -239,7 +239,7 @@ class GenerationWorkerCore:
         self,
         envelope: ChunkExecutionEnvelope,
     ) -> Any:
-        from vrl.utils.profiling import record_function, torch_profiler_step
+        from vrl.utils.profiling import capture_torch_trace, profile_range
 
         assert self.executor is not None
         request = envelope.request
@@ -261,14 +261,14 @@ class GenerationWorkerCore:
                 )
             if envelope.execution_stage is None:
                 raise RuntimeError("chunk execution requires an EnginePlan execution stage")
-            with torch_profiler_step(
+            with capture_torch_trace(
                 self._profiler_config,
                 output_dir=self._profiler_output_dir,
                 step=step,
                 device=device,
                 worker_name=worker_name,
                 trace_subdir=f"generation/{self.worker_id}",
-            ), record_function(event_name):
+            ), profile_range(event_name):
                 return forward_chunk_plan(
                     request,
                     chunk,

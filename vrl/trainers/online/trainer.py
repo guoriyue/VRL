@@ -624,9 +624,9 @@ class OnlineTrainer(Trainer):
 
     async def step(self, prompts: list[str] | None = None) -> TrainStepMetrics:
         """Run one full training step: collect -> evaluate -> advantage -> loss -> backward -> step."""
-        from vrl.utils.profiling import torch_profiler_step
+        from vrl.utils.profiling import capture_torch_trace
 
-        with torch_profiler_step(
+        with capture_torch_trace(
             self.config.torch_profiler,
             output_dir=self.config.output_dir,
             step=self.state.step,

@@ -1,8 +1,10 @@
-# Optional PyTorch profiler overlay.
+# Short-diagnostic PyTorch profiler overlay (low overhead).
 # Keep base experiments profiler-free by default; compose this file only for
 # short diagnostic runs. Only keys that differ from the TorchProfilerConfig
 # defaults (vrl/utils/profiling.py) appear here — the dataclass is the single
-# copy of the tuning defaults.
+# copy of the tuning defaults (record_shapes/profile_memory/with_stack/
+# with_flops already default false). For shape/memory/stack/flops deep dives,
+# use explicit dotlist overrides for the one run that needs them.
 trainer:
   profile: true
   torch_profiler:
@@ -13,8 +15,5 @@ rollout:
     enabled: true
     activities:
       # Rollout traces can explode during autoregressive generation. Keep the
-      # default focused on CUDA kernels; use explicit overrides for CPU/memory
-      # deep dives.
+      # default focused on CUDA kernels; override activities for CPU/memory.
       - cuda
-    record_shapes: false
-    profile_memory: false
