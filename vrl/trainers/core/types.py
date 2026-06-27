@@ -36,6 +36,12 @@ class OptimConfig:
     weight_decay: float = field(default=1e-4)
     eps: float = field(default=1e-8)
     allow_tf32: bool = field(default=True)
+    # 8-bit AdamW (bitsandbytes): keeps the optimizer momentum/variance in int8, cutting
+    # Adam state from ~8 to ~2 bytes/param. This is what makes FULL-PARAMETER fine-tuning
+    # of a 2B+ DiT fit on a single 32GB card (fp32 Adam state alone is ~16GB for 2B). It
+    # quantizes the OPTIMIZER STATE, not the forward, so it does NOT change rollout/replay
+    # logprobs — safe on the RL policy path (unlike fp8 forward). Default off (fp32 AdamW).
+    optim_8bit: bool = field(default=False)
 
 
 @dataclass(slots=True)

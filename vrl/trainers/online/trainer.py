@@ -134,6 +134,19 @@ def _create_optimizer(
         isinstance(p, torch.Tensor) and p.is_cuda and p.is_floating_point()
         for p in parameters
     )
+    if getattr(optim, "optim_8bit", False):
+        # int8 Adam state -> full-parameter 2B+ DiT fits on one 32GB card. Quantizes the
+        # optimizer state only (not the forward), so rollout/replay logprobs are unchanged
+        # — safe on the RL policy path. Requires bitsandbytes (CUDA, incl. Blackwell sm_120).
+        import bitsandbytes as bnb
+
+        return bnb.optim.AdamW8bit(
+            parameters,
+            lr=optim.lr,
+            betas=(optim.adam_beta1, optim.adam_beta2),
+            weight_decay=optim.weight_decay,
+            eps=optim.eps,
+        )
     return torch.optim.AdamW(
         parameters,
         lr=optim.lr,
