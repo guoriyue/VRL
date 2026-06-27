@@ -2,71 +2,31 @@
 
 from __future__ import annotations
 
-import re
-
 import pytest
 
 from vrl.rewards.functions.ocr import OCRReward
 
 
-def _normalize_text(text: str) -> str:
-    """Normalize text for helper-level OCR edit-distance tests."""
-    normalized = re.sub(r"[^a-z0-9\s]+", "", text.lower())
-    return re.sub(r"\s+", " ", normalized).strip()
+def test_ocr_text_normalization_matches_flow_grpo_contract() -> None:
+    """Pin the real ``_normalize_ocr_text`` contract: lowercase and strip ALL
+    spaces, while deliberately PRESERVING punctuation.
+
+    The substring/Levenshtein scoring in ``OCRRewardModel`` depends on this exact
+    behavior, so the test imports the production function rather than re-deriving
+    a (different) normalizer inside the test.
+    """
+    from vrl.rewards.models.ocr import _normalize_ocr_text
+
+    assert _normalize_ocr_text("Hello World") == "helloworld"
+    assert _normalize_ocr_text("  EXIT 42  ") == "exit42"
+    # Punctuation is kept (a regex word-normalizer would have dropped it).
+    assert _normalize_ocr_text("Cafe, Free!") == "cafe,free!"
+    assert _normalize_ocr_text("") == ""
 
 
-def _normalized_edit_distance(a: str, b: str) -> float:
-    """Return Levenshtein distance normalized by the longer input length."""
-    if not a and not b:
-        return 0.0
-    distance = _edit_distance(a, b)
-    return distance / max(len(a), len(b), 1)
-
-
-def _edit_distance(a: str, b: str) -> int:
-    """Small dependency-free Levenshtein implementation for tests."""
-    if a == b:
-        return 0
-    if not a:
-        return len(b)
-    if not b:
-        return len(a)
-
-    prev = list(range(len(b) + 1))
-    for i, ca in enumerate(a, start=1):
-        curr = [i]
-        for j, cb in enumerate(b, start=1):
-            curr.append(
-                min(
-                    prev[j] + 1,
-                    curr[j - 1] + 1,
-                    prev[j - 1] + (0 if ca == cb else 1),
-                )
-            )
-        prev = curr
-    return prev[-1]
-
-
-def test_text_normalization_core_cases() -> None:
-    """Checks text normalization core cases."""
-    assert _normalize_text("  Hello, World!  ") == "hello world"
-    assert _normalize_text("a   b\tc") == "a b c"
-    assert _normalize_text("EXIT-42.") == "exit42"
-    assert _normalize_text("") == ""
-
-
-def test_normalized_edit_distance_core_cases() -> None:
-    """Checks normalized edit distance core cases."""
-    assert _normalized_edit_distance("hello", "hello") == pytest.approx(0.0)
-    assert _normalized_edit_distance("", "") == pytest.approx(0.0)
-    assert _normalized_edit_distance("abc", "xyz") > 0.5
-
-    partial = _normalized_edit_distance("hello", "helo")
-    assert 0.0 < partial < 1.0
-
-    d1 = _normalized_edit_distance("abc", "abcd")
-    d2 = _normalized_edit_distance("abcd", "abc")
-    assert d1 == pytest.approx(d2, abs=0.01)
+# Real end-to-end scoring (substring full-credit + video Levenshtein) is exercised
+# by the live/fake-engine tests below, so no shadow edit-distance reimplementation
+# is needed here.
 
 
 class _FakePaddleOCR:

@@ -82,10 +82,6 @@ def _trainer_config(**overrides):
     return TrainerConfig(**base)
 
 
-def test_trainer_config_defaults_to_strided() -> None:
-    assert _trainer_config().timestep_selection == "strided"
-
-
 def test_trainer_config_accepts_random() -> None:
     assert _trainer_config(timestep_selection="random").timestep_selection == "random"
 

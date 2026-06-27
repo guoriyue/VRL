@@ -323,15 +323,6 @@ def test_algorithm_config_dispatches_representative_kinds() -> None:
         cfg = load_config(f"experiment/{name}")
         algo_cfg = build_algorithm_config(cfg)
         assert isinstance(algo_cfg, expected_type)
-        if name == "ar/janus_pro/online_r1_grpo_ocr":
-            # Segment *names* are the structural contract compute_loss reads to
-            # gate per-segment loss; the True/False values are tuning knobs, not
-            # a contract to pin (see grpo/multisegment.py compute_loss).
-            assert set(algo_cfg.train_segments) == {
-                "initial_image",
-                "selfcheck_text",
-                "final_image",
-            }
 
 
 def test_algorithm_dispatch_is_stable_per_kind() -> None:

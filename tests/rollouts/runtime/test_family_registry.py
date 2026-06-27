@@ -17,23 +17,18 @@ from vrl.rollouts.families.registry import _default_return_artifacts
 
 
 def test_family_registry_covers_current_rollout_families() -> None:
-    """Checks family registry covers current rollout families."""
-    assert registered_rollout_families() == (
-        "sd3_5",
-        "flux",
-        "qwen_image",
-        "wan_2_1",
-        "wan_2_1_i2v",
-        "cosmos-predict2",
-        "cosmos-predict2.5",
-        "cosmos-predict2-anima",
-        "echo",
-        "janus_pro",
-        "janus_pro_r1",
-        "nextstep_1",
-    )
+    """Every registered family carries structurally valid dispatch wiring.
 
-    for family in registered_rollout_families():
+    Asserts the *shape* each entry must satisfy (modality-consistent import
+    paths, non-empty task/prefix, importable gatherer) rather than a hand-copied
+    list of family names — a new family is covered automatically and adding one
+    cannot pass without valid wiring.
+    """
+    families = registered_rollout_families()
+    assert families  # registry must not be empty
+    assert len(set(families)) == len(families)  # no duplicate keys
+
+    for family in families:
         entry = FAMILY_REGISTRY[family]
         expected_model_prefix = (
             "vrl.models.diffusion."

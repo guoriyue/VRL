@@ -23,26 +23,26 @@ def test_parse_checkpoint_accepts_label_and_path(tmp_path) -> None:
 
 
 def test_seed_grid_is_identical_across_checkpoints() -> None:
-    """Checks controlled eval uses the same seed grid for every checkpoint."""
-    first = eval_script._seed_for(
-        base_seed=17,
-        checkpoint_index=0,
-        prompt_index=2,
-        sample_index=1,
-        samples_per_prompt=4,
-    )
-    second = eval_script._seed_for(
-        base_seed=17,
-        checkpoint_index=3,
-        prompt_index=2,
-        sample_index=1,
-        samples_per_prompt=4,
-    )
+    """Eval seeds depend only on the (prompt, sample) cell, never the checkpoint,
+    so reward deltas reflect weight changes and not a different latent-noise draw —
+    yet distinct cells still get distinct seeds (the grid is not degenerate)."""
 
-    # Seed is checkpoint-independent: same (prompt, sample) -> same draw.
-    assert first == second
-    # Numeric anchor recomputed from the _seed_for formula, not a frozen literal.
-    assert first == 17 + 2 * 4 + 1  # base_seed + prompt_index*samples_per_prompt + sample_index
+    def seed(checkpoint_index: int, prompt_index: int, sample_index: int) -> int:
+        return eval_script._seed_for(
+            base_seed=17,
+            checkpoint_index=checkpoint_index,
+            prompt_index=prompt_index,
+            sample_index=sample_index,
+            samples_per_prompt=4,
+        )
+
+    # Same cell across different checkpoints -> identical seed (the real contract).
+    assert seed(0, 2, 1) == seed(3, 2, 1)
+
+    # Non-degeneracy: different sample / prompt cells must not collide, otherwise a
+    # constant function would also satisfy the checkpoint-independence assert above.
+    assert seed(0, 2, 1) != seed(0, 2, 2)
+    assert seed(0, 2, 1) != seed(0, 3, 1)
 
 
 def test_video_to_cthw_accepts_btchw_layout() -> None:
