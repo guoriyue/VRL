@@ -196,7 +196,7 @@ def main() -> None:
         _trajectory_logprob(traj_logits_replay, traj_actions), traj_rollout_logprob,
     )
     advantages = torch.randn(n_traj, device=device)  # mix of +/- advantages
-    # A real TIS cap is tight (slime/cosmos sit around here); pick one the genuine
+    # A real TIS cap is tight (~1.5 is typical); pick one the genuine
     # fp8 trajectory tail crosses so the truncation actually engages.
     cap = 1.5
     traj_ratio = torch.exp(

@@ -28,7 +28,7 @@ def cap_cuda_memory_fraction(fraction: float | None) -> None:
     """Hard-cap this process's CUDA allocator to ``fraction`` of the current device.
 
     Bounds the caching allocator so a colocated rollout worker cannot grow its
-    reservation into memory the trainer needs on a shared GPU (the vLLM/cosmos-rl
+    reservation into memory the trainer needs on a shared GPU (the vLLM
     ``gpu_memory_utilization`` role). ``None`` leaves the allocator uncapped, which
     is correct for a worker that owns a dedicated GPU. Best-effort: a CPU-only or
     torch-less worker is a no-op.

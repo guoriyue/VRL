@@ -1,10 +1,10 @@
 """FSDP2 applier: turn a trainable handle into a sharded module and back.
 
 This is the torch-native FSDP2 path (``torch.distributed.fsdp.fully_shard`` +
-DTensor), not FSDP1. The design mirrors cosmos-rl's diffusion parallelizer
-(``cosmos_rl/policy/model/diffusers/parallelize.py``): shard each transformer
-*block* with ``fully_shard`` and then the root, deriving the block boundaries
-from the model's ``_no_split_modules``. There is no tensor/pipeline parallel —
+DTensor), not FSDP1. The design is the standard diffusion ZeRO-3 parallelizer:
+shard each transformer *block* with ``fully_shard`` and then the root, deriving
+the block boundaries from the model's ``_no_split_modules``. There is no
+tensor/pipeline parallel —
 diffusion + LoRA is a pure ZeRO-3 (sharded-params/grads/optim) workload (see
 ``SPRINT_multi_gpu_training.md`` §10.5 for why FSDP2, not Megatron).
 
@@ -149,9 +149,8 @@ def iter_blocks(base: nn.Module) -> Iterator[nn.Module]:
     diffusers DiTs and Llama-style trunks list their per-layer block *class
     names* in ``_no_split_modules`` (the same list ``device_map='auto'`` uses to
     keep a layer un-split); we shard every submodule whose class name is in it.
-    This is how cosmos-rl derives block boundaries
-    (``parallelize.py:88`` ``getattr(model, "_no_split_modules", None)``), so the
-    applier stays family-agnostic — change the mesh, not per-family hooks.
+    Deriving block boundaries from ``getattr(model, "_no_split_modules", None)``
+    keeps the applier family-agnostic — change the mesh, not per-family hooks.
     """
 
     no_split = getattr(base, "_no_split_modules", None)
@@ -176,8 +175,7 @@ def apply_fsdp(
 ) -> nn.Module:
     """Shard ``handle`` in place with FSDP2 and return it.
 
-    Per-block then root, exactly like cosmos-rl
-    (``parallelize.py:94-110``): each block becomes its own FSDP module (so its
+    Per-block then root: each block becomes its own FSDP module (so its
     params/grads reshard independently) and the root call wraps whatever is left.
     ``reshard_after_forward=True`` is ZeRO-3 (re-gather params each forward, lowest
     memory); ``False`` trades memory for fewer all-gathers. After this the handle's

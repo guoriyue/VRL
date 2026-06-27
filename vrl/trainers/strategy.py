@@ -466,9 +466,8 @@ def _assert_fsdp_config_supported(cfg: Any) -> None:
         raise NotImplementedError(
             "distributed.training.strategy=fsdp with model.torch_compile.enable=true "
             "is not supported: torch.compile (inductor graph capture) is unsound with "
-            "FSDP2 fully_shard's reshard-after-forward all-gathers — cosmos-rl asserts "
-            "the same for its diffusion FSDP2 path. Set model.torch_compile.enable=false "
-            "to run FSDP2.",
+            "FSDP2 fully_shard's reshard-after-forward all-gathers. Set "
+            "model.torch_compile.enable=false to run FSDP2.",
         )
 
 

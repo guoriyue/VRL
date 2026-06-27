@@ -1,8 +1,8 @@
 """Quantization schemes for model GEMMs (rollout-side).
 
 The home for low-precision linear kernels and the module-tree swap that installs
-them, mirroring vLLM's ``model_executor/layers/quantization`` and slime's fp8
-tooling. Today it holds the fp8-e4m3 dynamic-quantization linear used by the
+them, mirroring vLLM's ``model_executor/layers/quantization`` layout. Today it
+holds the fp8-e4m3 dynamic-quantization linear used by the
 rollout DiT — ``rowwise``/``tensorwise`` on torch ``_scaled_mm``, and a
 ``blockwise`` recipe that **reuses vLLM's triton block kernel** rather than
 hand-rolling. fp4 / int8 / other schemes land here as siblings. The package

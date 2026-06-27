@@ -63,8 +63,7 @@ def compute_logprob_mismatch_stats(
 
     ``fresh_log_prob`` is the freshly recomputed replay logprob (compute dtype);
     ``old_log_prob`` is the rollout behavior logprob (rollout dtype). Reductions run
-    in fp32 so a bf16 input does not itself add noise to the measurement. Mirrors
-    slime's ``train_rollout_logprob_abs_diff`` / ``mismatch_kl`` / ``mismatch_k3_kl``.
+    in fp32 so a bf16 input does not itself add noise to the measurement.
     """
 
     fresh = fresh_log_prob.detach().to(torch.float32)

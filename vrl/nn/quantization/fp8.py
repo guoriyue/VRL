@@ -19,7 +19,7 @@ step); the activation is quantized per forward.
 - ``rowwise`` (default): per-token activation + per-output-channel weight scales,
   torch ``_scaled_mm`` — dep-free, robust to activation outliers.
 - ``tensorwise``: one scalar scale per tensor, torch ``_scaled_mm`` — cheapest.
-- ``blockwise``: 1x128 activation + 128x128 weight scales (DeepSeek/slime recipe),
+- ``blockwise``: 1x128 activation + 128x128 weight scales (DeepSeek recipe),
   **delegated to vLLM's triton kernel** (``w8a8_triton_block_scaled_mm``) instead
   of hand-rolling — best accuracy on outliers, and runs on CUDA 12.8 (the torch
   ``_scaled_mm`` block path needs CUDA>=12.9). Requires vLLM installed.
@@ -36,7 +36,7 @@ from vrl.nn.quantization.base import QuantizedLinear
 
 # fp8-e4m3 max representable magnitude; the amax scale maps a tensor's peak onto it.
 FP8_E4M3_MAX = 448.0
-# Block size for the ``blockwise`` recipe (DeepSeek/slime/vLLM standard 128).
+# Block size for the ``blockwise`` recipe (DeepSeek/vLLM standard 128).
 FP8_BLOCK = 128
 
 # Module-path substrings whose nn.Linear must stay in bf16: the small,

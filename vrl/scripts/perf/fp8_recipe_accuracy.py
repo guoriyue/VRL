@@ -1,6 +1,6 @@
 """fp8 scaling-recipe accuracy: how much does finer granularity cut drift?
 
-WHY: slime/DeepSeek reduce fp8 drift with finer-grained (block-wise) scaling
+WHY: finer-grained (block-wise) fp8 scaling (the DeepSeek recipe) reduces drift
 before correcting the residual with TIS. This profiles the *reduce* half — the
 quantization error of each granularity — so we know whether block-wise is worth
 wiring for RL, where the rollout->replay logprob mismatch must stay small.

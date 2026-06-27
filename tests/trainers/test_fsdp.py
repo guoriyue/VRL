@@ -449,8 +449,8 @@ def test_build_strategy_fsdp_rejects_optimizer_resume() -> None:
 
 
 def test_build_strategy_fsdp_rejects_train_compile() -> None:
-    # torch.compile (inductor) is unsound with FSDP2 reshard-after-forward all-gathers
-    # (cosmos-rl asserts the same); the build_strategy §10 gate must reject it.
+    # torch.compile (inductor) is unsound with FSDP2 reshard-after-forward all-gathers;
+    # the build_strategy §10 gate must reject it.
     with pytest.raises(NotImplementedError, match="torch_compile"):
         build_strategy(
             {"model": {"torch_compile": {"enable": True}}}, _cpu_fsdp_context()

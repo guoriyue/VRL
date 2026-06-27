@@ -224,8 +224,7 @@ class ContinuousRolloutSchedule:
                 # Admit-time throttle observability: how far ahead admission is
                 # running and which budget is binding (1 = the predicted-version
                 # staleness throttle is what stops admission — the proactive
-                # backpressure cosmos-rl's Controller does and vrl previously
-                # lacked).
+                # backpressure vrl previously lacked).
                 "continuous.predicted_admit_staleness": float(
                     state.predicted_admit_staleness,
                 ),

@@ -33,10 +33,10 @@ The queue holds the deque and its byte/count safety net but no longer knows what
 4. an admit-time **predicted-version** staleness throttle: a group submitted now
    lands a number of training steps later, so if the pipeline already holds more
    than ``max_stale`` iterations of lookahead, the group would be discarded at
-   receipt — do not generate it. This is the cosmos-rl Controller's
-   ``weight_version = current_step + total_pending // rollouts_per_batch`` idea
-   (``dispatcher/controller.py:273-303``) adapted to vrl's per-iteration cadence:
-   one consumed iteration == one version bump.
+   receipt — do not generate it. This applies the predicted-staleness idea
+   ``weight_version = current_step + total_pending // rollouts_per_batch``,
+   adapted to vrl's per-iteration cadence: one consumed iteration == one version
+   bump.
 
 The throttle never reduces what gets *trained* and never starves a full
 iteration: ``predicted == 0`` until a complete iteration of work is queued, so

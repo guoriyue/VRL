@@ -16,7 +16,22 @@ import argparse
 
 import torch
 
+# Measure the EXACT production policy, not a copy: selective_checkpoint_func is the
+# same SAC helper that enable_transformer_gradient_checkpointing applies to every
+# diffusion family, so probe numbers describe what real training actually runs.
+# Imported from the trainers module (not the online runner) so the probe stays a
+# lightweight perf script and does not pull in Ray/launcher.
+from vrl.trainers.activation_checkpointing import selective_checkpoint_func
 from vrl.scripts.perf.common.timing import cuda_mean_ms
+
+
+def _apply_ckpt(tf, mode: str) -> None:
+    """off | full | selective — full recomputes every block, selective uses SAC."""
+    tf.disable_gradient_checkpointing()
+    if mode == "full":
+        tf.enable_gradient_checkpointing()
+    elif mode == "selective":
+        tf.enable_gradient_checkpointing(gradient_checkpointing_func=selective_checkpoint_func)
 
 
 def main() -> None:
@@ -71,7 +86,7 @@ def main() -> None:
         return lin + attn
 
     print(f"model {n_params/1e9:.2f}B, seq={seq}, peak~{args.peak_tflops:.0f} TFLOPS bf16")
-    print(f"\n{'batch':>5} | {'ckpt':>5} | {'fwd ms':>7} | {'bwd ms':>7} | "
+    print(f"\n{'batch':>5} | {'ckpt':>9} | {'fwd ms':>7} | {'bwd ms':>7} | "
           f"{'bwd/fwd':>7} | {'fwd+bwd MFU':>11} | {'peak GB':>7}")
 
     for b in args.batches:
@@ -84,13 +99,14 @@ def main() -> None:
         # fwd+bwd FLOPs ~ 3x forward (fwd 2ND + bwd 4ND).
         total_flops = 3.0 * _fwd_flops(b)
 
-        # compile + grad-checkpointing recompiles/collides; isolate to ckpt=False.
-        ckpt_modes = (False,) if args.compile else (False, True)
+        # Eager measures all three. Under --compile we skip full (compile + full
+        # block checkpointing recompiles/collides) but DO measure selective: SAC
+        # goes through AOTAutograd's min-cut partitioner, so compiled x selective
+        # is the P1 question — does it compose and beat compiled x off at a larger
+        # batch? (off / selective only; errors are caught and printed per row.)
+        ckpt_modes = ("off", "selective") if args.compile else ("off", "full", "selective")
         for ckpt in ckpt_modes:
-            if ckpt:
-                tf.enable_gradient_checkpointing()
-            else:
-                tf.disable_gradient_checkpointing()
+            _apply_ckpt(tf, ckpt)
 
             def _fwd_nograd(emb=emb, pol=pol, latents=latents, ts=ts):
                 with torch.no_grad():
@@ -112,17 +128,19 @@ def main() -> None:
                 peak = torch.cuda.max_memory_allocated() / 1024**3
                 bwd_ms = max(step_ms - fwd_ms, 0.01)
                 mfu = total_flops / (step_ms / 1e3) / 1e12 / args.peak_tflops * 100
-                print(f"{b:>5} | {ckpt!s:>5} | {fwd_ms:>7.1f} | {bwd_ms:>7.1f} | "
+                print(f"{b:>5} | {ckpt:>9} | {fwd_ms:>7.1f} | {bwd_ms:>7.1f} | "
                       f"{bwd_ms/fwd_ms:>7.2f} | {mfu:>10.0f}% | {peak:>7.2f}")
             except (torch.cuda.OutOfMemoryError, RuntimeError) as exc:
-                print(f"{b:>5} | {ckpt!s:>5} | OOM/err ({type(exc).__name__})")
+                print(f"{b:>5} | {ckpt:>9} | OOM/err ({type(exc).__name__})")
             finally:
                 tf.zero_grad(set_to_none=True)
                 torch.cuda.synchronize()
                 torch.cuda.empty_cache()
 
     print("\nreads: bwd/fwd~2 expected; if MFU low at batch=1 -> launch-bound "
-          "(batch up / compile helps); ckpt True = slower (recompute) but lower peak GB.")
+          "(batch up / compile helps). full = lower peak GB but recompute tax; "
+          "selective should sit between off and full on time, near full on peak GB "
+          "-> the win is reaching larger batch (higher MFU) where off would OOM.")
 
 
 if __name__ == "__main__":
