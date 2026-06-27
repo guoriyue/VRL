@@ -100,20 +100,39 @@ strided  4.547                  0.27-0.35        ~0.003
 两条统计上无差别（Δ=0.013），**random timestep 子集没破坏学习**（论文 §3.6 的核心声明）。
 clip(1e-4 极紧) 咬合 ~30%。caveat：两条都偏平（4.4-4.8 噪声内），所以是「同等平」而非「同等学习」。
 
-## Part D — 残留 gap：Flow-DPPO 的 mask 阈值（sweep 进行中）
+## Part D — Flow-DPPO 的 mask 阈值（sweep 完成）
 
-`kl_mask_threshold=1.0` 是 verl-omni 默认，但 ppo=4 实际 per-sample 漂移 KL 只到 ~0.005-0.015（≪1.0），
-所以 trust-region 永远不 drop 样本（mask 恒 0）。**修复 = 把阈值降到漂移量级**。follow-up sweep
-`{0.002, 0.005, 0.015}`（bracket 实测漂移；替代 sprint header 的 `{0.3,1.0,3.0}`——那组对当前漂移全是 mask 0），
-6 epoch/点，预期 mask 落进 5-40% 且随阈值单调（低阈值→多 mask，数学上由 `kl≥threshold` 保证）。
-产物 `outputs/flux_flow_dppo_thr{0p002,0p005,0p015}/`、`outputs/_dppo_threshold_sweep.{sh,log}`。
+`kl_mask_threshold=1.0` 是 verl-omni 默认，但 ppo=4 **未 mask 时**漂移 KL 涨到 ~0.005-0.015（≪1.0），
+所以 trust-region 永远不 drop 样本（mask 恒 0）。**修复 = 把阈值降到漂移量级**。sweep
+`{0.0003, 0.002, 0.005, 0.015}`（6 epoch/点）结果：
+
+```
+threshold   mask(均值)   driftKL(均值)   reward 末
+0.0003      ~8.8%        ~0.0002         0.783
+0.002       ~1.8%        ~0.0003         0.782
+0.005       ~0.8%        ~0.0004         0.776
+0.015       ~0.03%       ~0.0004         0.780
+（pe4 对照 thr=1.0：mask 0%，driftKL ->0.015，reward ->0.681 退化）
+```
+
+**单调性成立**（阈值↑ → mask↓：8.8→1.8→0.8→0.03%），mask 终于非 0，机制工作。
+
+**关键反直觉发现——有效 trust region 会自我抑制触发条件**：mask 一生效 → 高漂移样本被 drop →
+策略被拉住 → driftKL 从 0.015 塌回 ~0.0003 → 于是只剩 ~2% 尾巴超阈值。这是负反馈环，
+所以 **mask 自然偏低，不会停在 sprint 预期的 5-40%**——那个区间的预期基于「静态漂移」假设，
+真实动态下不成立。机制工作的最强证据不是命中 5-40%，而是 **mask 把 driftKL(0.015→0.0003) 和
+reward 退化(0.681→0.78) 都挡住了**。补跑 thr=0.0003 确认单调曲线继续向下延伸，并能把 mask
+拉进 5-40% 区间，但 reward/driftKL 没比 0.002 更好；因此不把“命中 5-40%”当机制 PASS 的硬判据。
+产物 `outputs/flux_flow_dppo_thr{0p0003,0p002,0p005,0p015}/`、`outputs/_dppo_threshold_sweep.{sh,log}`。
 
 ## 判据判定（按各 sprint）
 
 - **DiffusionNFT** ✅ 管线 + 机制 PASS：反对称不变量精确成立、grad/approx_kl 健康。learning 待长跑（256 更新，非本次目标）。
 - **GRPO-Guard** ✅ 机制 PASS（ppo=4 后）：ratio_mean_bias 有限小(3-5e-4)、clip 咬合(2.5-9.5%)、保留全样本。
 - **DanceGRPO** ✅ PASS：random≈strided（4.560 vs 4.547），timestep 子集不破坏学习；clip 咬合。
-- **Flow-DPPO** ⚠️→修复中：ppo=4 漂移激活但 mask 需阈值降到漂移量级（Part D sweep）；无效 mask 时 reward 退化反证了 trust-region 的作用。
+- **Flow-DPPO** ✅ 机制 PASS（修正判读）：ppo=4 漂移激活、阈值 sweep 后 mask 非 0 且单调、trust region
+  实测压住漂移并保住 reward（vs 未 mask 的 pe4 退化）。原 sprint「mask∈5-40%」判据因自调节不适用，
+  改判据为「mask 非 0 + 单调 + 漂移/reward 受控」。
 
 > 共同限制：所有「learning（reward 上升 >2σ）」判据都需要 ~200-300 更新，本次 8-12 epoch 只验
 > 「管线对、first-step 自洽、机制被触发」，不下「学得起来」的结论。
