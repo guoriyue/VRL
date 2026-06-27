@@ -250,7 +250,7 @@ class DiffusionModelBase(nn.Module, ABC):
     def apply_lora(self, spec: Any) -> None:  # pragma: no cover (default no-op)
         raise NotImplementedError
 
-    def enable_full_finetune(self) -> None:  # pragma: no cover (default no-op)
+    def apply_full_finetune(self) -> None:  # pragma: no cover (default no-op)
         raise NotImplementedError
 
     def torch_compile_transformer(self, mode: str) -> None:

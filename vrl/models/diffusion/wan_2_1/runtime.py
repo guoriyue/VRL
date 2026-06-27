@@ -102,7 +102,7 @@ def build_wan_2_1_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
                 lora_config["alpha"],
             )
     else:
-        model.enable_full_finetune()
+        model.apply_full_finetune()
 
     apply_rollout_quantization(model, spec)
 
@@ -196,7 +196,7 @@ def build_wan_2_1_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle
     if use_lora:
         model.apply_lora(spec)
     else:
-        model.enable_full_finetune()
+        model.apply_full_finetune()
 
     compile_cfg = spec.torch_compile or {}
     if compile_cfg.get("enable"):

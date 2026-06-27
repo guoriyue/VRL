@@ -102,7 +102,7 @@ class _DiffusionModelBaseStub(DiffusionModelBase):
     def apply_lora(self, spec):
         del spec
 
-    def enable_full_finetune(self):
+    def apply_full_finetune(self):
         return None
 
     def torch_compile_transformer(self, mode: str):

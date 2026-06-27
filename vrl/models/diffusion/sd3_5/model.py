@@ -149,7 +149,7 @@ class SD3_5Model(LoraModelMixin, DiffusionModelBase):
     def _lora_dtype(self, spec: Any) -> Any:
         return resolve_torch_dtype(spec.dtype)
 
-    def enable_full_finetune(self) -> None:
+    def apply_full_finetune(self) -> None:
         """Mark transformer fully trainable (no-LoRA path)."""
         self.pipeline.transformer.requires_grad_(True)
         self.pipeline.transformer.to(self.device)

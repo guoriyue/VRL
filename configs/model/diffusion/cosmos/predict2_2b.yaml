@@ -1,7 +1,7 @@
 # Cosmos Predict2 2B Video2World — checkpoint + compile only.
 # Sampling shape and denoise defaults live under configs/sampling/.
 # LoRA removed 2026-06-10: GRPO runs full-parameter fine-tuning
-# (enable_full_finetune), sized for multi-GPU training.
+# (apply_full_finetune), sized for multi-GPU training.
 model:
   family: cosmos-predict2
   path: nvidia/Cosmos-Predict2-2B-Video2World

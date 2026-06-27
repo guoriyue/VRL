@@ -148,7 +148,7 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
         del spec
         return self._dtype
 
-    def enable_full_finetune(self) -> None:
+    def apply_full_finetune(self) -> None:
         self.transformer.requires_grad_(True)
         self.transformer.to(self.device, dtype=self._dtype)
 

@@ -169,7 +169,7 @@ class WanT2VDiffusersModel(LoraModelMixin, DiffusionModelBase):
             modules["transformer_2"] = self.transformer_2
         return modules
 
-    def enable_full_finetune(self) -> None:
+    def apply_full_finetune(self) -> None:
         for module in self.trainable_modules.values():
             module.requires_grad_(True)
             module.to(self.device)

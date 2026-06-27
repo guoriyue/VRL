@@ -144,7 +144,7 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusionModelBas
             device=spec.device,
         )
 
-    def enable_full_finetune(self) -> None:
+    def apply_full_finetune(self) -> None:
         self.pipeline.transformer.requires_grad_(True)
         self.pipeline.transformer.to(self.device)
 

@@ -131,7 +131,7 @@ def test_wan_runtime_bundle_records_model_build_memory_metadata(
         def generation_memory_targets(self) -> dict[str, Any]:
             return {"vae_decode": self.vae}
 
-        def enable_full_finetune(self) -> None:
+        def apply_full_finetune(self) -> None:
             return None
 
         def set_num_steps(self, _num_steps: int) -> None:
@@ -202,7 +202,7 @@ def test_full_generation_runtime_bundles_record_model_build_memory_metadata(
         def from_spec(cls, _spec: Any) -> _FakeModel:
             return cls()
 
-        def enable_full_finetune(self) -> None:
+        def apply_full_finetune(self) -> None:
             return None
 
         def set_num_steps(self, _num_steps: int) -> None:

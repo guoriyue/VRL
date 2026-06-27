@@ -195,7 +195,7 @@ class FluxModel(LoraModelMixin, DiffusionModelBase):
 
         copy_adapter_weights(self.transformer, src="default", dst="previous", decay=decay)
 
-    def enable_full_finetune(self) -> None:
+    def apply_full_finetune(self) -> None:
         """Mark transformer fully trainable (no-LoRA path)."""
         self.pipeline.transformer.requires_grad_(True)
         self.pipeline.transformer.to(self.device)

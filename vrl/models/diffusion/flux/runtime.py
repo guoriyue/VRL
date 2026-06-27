@@ -82,7 +82,7 @@ def build_flux_runtime_bundle(
             model.attach_previous_policy_adapter(spec)
             logger.info("Attached frozen DiffusionNFT `previous` LoRA adapter")
     else:
-        model.enable_full_finetune()
+        model.apply_full_finetune()
 
     apply_rollout_quantization(model, spec)
 

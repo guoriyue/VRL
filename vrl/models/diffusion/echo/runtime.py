@@ -69,7 +69,7 @@ def build_echo_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
     if use_lora:
         model.apply_lora(spec)
     else:
-        model.enable_full_finetune()
+        model.apply_full_finetune()
 
     num_steps = spec.num_steps
     if num_steps is not None:
@@ -151,7 +151,7 @@ def build_echo_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
     if use_lora:
         model.apply_lora(spec)
     else:
-        model.enable_full_finetune()
+        model.apply_full_finetune()
 
     return RuntimeBundle(
         model=model,

@@ -244,7 +244,7 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusionModelBase):
             decay=decay,
         )
 
-    def enable_full_finetune(self) -> None:
+    def apply_full_finetune(self) -> None:
         raise RuntimeError(
             "Cosmos Predict2.5 DiffusionNFT requires LoRA with default+previous "
             "adapters; set model.use_lora=true.",

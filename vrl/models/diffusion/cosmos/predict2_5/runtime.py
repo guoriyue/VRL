@@ -72,7 +72,7 @@ def build_cosmos_predict25_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBund
     if use_lora:
         model.apply_lora(spec)
     else:
-        model.enable_full_finetune()
+        model.apply_full_finetune()
 
     apply_rollout_quantization(model, spec)
 
@@ -134,7 +134,7 @@ def build_cosmos_predict25_replay_runtime_bundle(spec: RuntimeBuildSpec) -> Runt
     if use_lora:
         model.apply_lora(spec)
     else:
-        model.enable_full_finetune()
+        model.apply_full_finetune()
 
     compile_cfg = spec.torch_compile or {}
     if compile_cfg.get("enable"):

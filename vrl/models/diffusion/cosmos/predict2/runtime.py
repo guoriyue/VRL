@@ -86,7 +86,7 @@ def build_cosmos_predict2_runtime_bundle(
                 lora_config["rank"], lora_config["alpha"],
             )
     else:
-        model.enable_full_finetune()
+        model.apply_full_finetune()
 
     apply_rollout_quantization(model, spec)
 
