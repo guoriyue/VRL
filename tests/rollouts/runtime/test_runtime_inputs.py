@@ -146,11 +146,11 @@ def test_diffusion_launch_contract_uses_worker_primitive_device_and_dtype() -> N
         ("diffusion/anima_preview3/online_grpo_aesthetic", "cosmos-predict2-anima"),
     ],
 )
-def test_diffusion_rollout_compile_override_applies_to_all_diffusion_families(
+def test_model_torch_compile_applies_to_all_diffusion_rollout_families(
     experiment: str,
     family: str,
 ) -> None:
-    """Checks rollout denoise compile is wired through every diffusion family."""
+    """Checks model.torch_compile is the single compile source for rollout workers."""
     cfg = load_config(
         f"experiment/{experiment}",
         overrides=[
@@ -161,8 +161,8 @@ def test_diffusion_rollout_compile_override_applies_to_all_diffusion_families(
             "distributed.resources.rollout.num_workers=1",
             "distributed.resources.reward.num_gpus=0",
             "distributed.resources.reward.gpus_per_worker=0",
-            "rollout.denoise_compile.enable=true",
-            "rollout.denoise_compile.mode=reduce-overhead",
+            "model.torch_compile.enable=true",
+            "model.torch_compile.mode=default",
         ],
     )
     entry = get_rollout_family_entry(family)
@@ -179,7 +179,7 @@ def test_diffusion_rollout_compile_override_applies_to_all_diffusion_families(
     model_config = inputs.launch_contract.model_build["model_config"]
     assert model_config["torch_compile"] == {
         "enable": True,
-        "mode": "reduce-overhead",
+        "mode": "default",
     }
 
 

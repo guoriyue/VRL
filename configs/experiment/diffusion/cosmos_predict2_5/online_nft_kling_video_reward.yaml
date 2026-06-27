@@ -13,9 +13,9 @@ precision: bf16
 
 # Compile-both: compile the DiT for BOTH train replay and rollout denoise. The
 # model block is read by the trainer AND inherited by the rollout worker, so this
-# one switch compiles both paths -- unlike a rollout-only `rollout.denoise_compile`
-# override (which leaves train eager and, in bf16, makes the two sides' velocity
-# differ by ~5e-2: the worst case for rollout/train logprob drift).
+# one switch compiles both paths. Keep rollout and replay on the same kernels;
+# bf16 one-sided compile made the two sides' velocity differ by ~5e-2 in probes,
+# the worst case for rollout/train logprob drift.
 # Why compile-both is the parity-safe choice: both paths run the SAME compiled
 # kernel -> bit-identical -> zero compile-induced drift. Measured fp32 forward
 # parity ~2e-6 and 1.31x rollout / 1.33x train (RTX 5090,
@@ -62,8 +62,7 @@ rollout:
     type: cps
   same_latent: false
   # Rollout denoise compile is handled by the top-level `model.torch_compile`
-  # block (compile-both): the rollout worker inherits the model block, so no
-  # separate rollout-only `denoise_compile` override is needed here.
+  # block (compile-both): the rollout worker inherits the model block.
 
 trainer:
   entrypoint: vrl.scripts.diffusion.cosmos.train:train_cosmos_predict25_diffusion_nft

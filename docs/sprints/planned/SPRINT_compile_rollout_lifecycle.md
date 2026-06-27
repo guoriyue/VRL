@@ -23,9 +23,9 @@
 
 ## 1. 核心结论 (TL;DR)
 
-**(A) Predict2.5 rollout compile 当前是关的。** `model.torch_compile.enable=false`
-(`predict2_5_2b.yaml:30`),且 `rollout.denoise_compile.enable` 默认也 false
-(`configs/base/rollout/diffusion.yaml:19`)。接线本身是通的(§2),只是没开。
+**(A) Predict2.5 base compile 当前是关的。** `model.torch_compile.enable=false`
+(`predict2_5_2b.yaml:30`)。接线本身是通的(§2),只是 base 不默认开；具体 recipe 通过
+`model.torch_compile.enable=true` 显式 opt in。
 
 **(B) 真正的变量是 worker 生命周期。** 编译产物**常驻**则 warmup 摊销到 ~0;每周期
 **重建**则首次前向重新 codegen。三态由 **GPU 拓扑派生**(不再是 public 开关):
@@ -65,18 +65,15 @@ predict2_5_2b.yaml  model.torch_compile.enable  (当前 false)
   └─ denoise 前向调用这张编译后的 transformer（rollout+train 共用）
 ```
 
-**两个 compile knob（集成面）——这是测 ON vs OFF 的开关:**
-- `model.torch_compile.enable`(全局):rollout + train replay 都吃(rollout 继承整个 model block)。
-- `rollout.denoise_compile.enable`(**rollout 单独、单向覆盖**):`_apply_rollout_compile_override`
-  (`launcher.py:384-415`)——`enable:true` 时**覆盖**成开(即使 model.torch_compile 是 false);
-  **`enable:false` 是 no-op(第 396-397 行提前 return),关不掉继承来的 model.torch_compile**。
-  经 `capability.supports_torch_compile` 门控(Predict2.5 = True,`capabilities.py:61`)。
+**一个 public compile knob（集成面）——这是测 ON vs OFF 的开关:**
+- `model.torch_compile.enable`: rollout + train replay 都吃，rollout worker 继承整个 model block。
+- 旧的 rollout-only `rollout.denoise_compile` 已删除；它曾用于早期 A/B，但 bf16 一侧编译会制造
+  rollout/replay kernel mismatch。需要临时 rollout-only perf probe 时，应由 probe 直接改 runtime
+  payload，而不是进入 recipe YAML。
 
 > **测 Predict2.5 Kling RL 的 compile ON vs OFF,正确实验面:**
-> - **ON(rollout 隔离)**:在 `configs/experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward.yaml`
->   覆盖 `rollout.denoise_compile: {enable: true, mode: default}`(只动 rollout,train 不变)。
-> - **ON(全局,rollout+train 都编)**:`model.torch_compile.enable: true`。
-> - **OFF(基线)**:两者都 false(= 当前默认)。
+> - **ON(rollout+train 都编)**:`model.torch_compile.enable: true`。
+> - **OFF(基线)**:`model.torch_compile.enable: false`。
 
 ---
 
@@ -175,7 +172,7 @@ production depth,wan 用 8–12 层——parity 是逐层结构性的,深度足�
 
 ## 5. 给 Cosmos Predict2.5 RL 的建议
 
-**结论:Cosmos Predict2.5 RL 直接开 compile(`rollout.denoise_compile.enable: true`)。**
+**结论:Cosmos Predict2.5 RL 直接开 compile(`model.torch_compile.enable: true`)。**
 resident 拿全额稳态加速;release-after-collect 的每周期重编译也因 **inductor 默认持久缓存**
 而是暖的(~0.6s 量级,§4.2),不再需要任何 cache 配置。
 
@@ -201,12 +198,12 @@ resident 拿全额稳态加速;release-after-collect 的每周期重编译也因
 ## 6. 执行顺序
 
 - [x] **P0 — 接线 + 生命周期落实(本 sprint §1/§2 即证据)。** Predict2.5 compile 接线已通但
-  默认关;三态生命周期由拓扑派生(非 public 开关);实验面 = `rollout.denoise_compile.enable`。
+  base 默认关;三态生命周期由拓扑派生(非 public 开关);实验面 = `model.torch_compile.enable`。
 - [x] **稳态 compile 加速已实测(§4.3)** — Predict2.5 rollout 1.37× / train 1.26×(RTX 5090,
   `compile_benchmark.py --family cosmos-predict2.5`)。resident 下开 compile 稳赚。
-- [x] **rollout compile 已在 Kling RL 实验里翻开** — `online_nft_kling_video_reward.yaml` 加
-  `rollout.denoise_compile: {enable: true, mode: default}`(rollout-only,经 loader 实测解析为 true)。
-  train replay 仍 eager(`model.torch_compile.enable=false`),其 +1.26× 留作单独一步(需 LoRA+grad-ckpt parity 核)。
+- [x] **compile-both 已在 Kling RL 实验里翻开** — `online_nft_kling_video_reward.yaml` 加
+  `model.torch_compile: {enable: true, mode: default}`，rollout 与 train replay 走同一 compiled
+  transformer。
 - [x] **inductor cache 已查清(§4.2)** — torch **默认**缓存(`/tmp/torchinductor_<user>`)就跨进程
   持久,重建 worker 默认命中暖缓存(实测 1.88s→0.63s)。**结论:不需要 cache 旋钮/注入/代码**;
   原计划的"加 `inductor_cache_dir` 配置 + 注入 worker env"已**作废、并撤销**(过度设计)。
@@ -224,7 +221,7 @@ resident 拿全额稳态加速;release-after-collect 的每周期重编译也因
 - **不动调度架构**:resident / release-after-collect / persistent 三态及 colocate 调度由
   `vrl/ray/` + `vrl/generation/ray/` 现有代码负责(由拓扑派生)。本 sprint 只在三态**之上**测
   compile 净收益 + 重编译成本,**不改派生逻辑,不加 public 开关**。
-- **实验面是 config,不是改代码**:测 ON/OFF 翻 `rollout.denoise_compile.enable` 即可。
+- **实验面是 config,不是改代码**:测 ON/OFF 翻 `model.torch_compile.enable` 即可。
 - **parity 红线**:rollout 与 train 走等价数值路径(`SPRINT_gemm_utilization.md` §5)。
 - **mode=default,不碰 CUDA-graph**:reduce-overhead/CUDA-graph 与 PEFT LoRA + grad-ckpt 冲突
   (项目记忆 `project_torch_compile_wan`),全程 default。
@@ -250,9 +247,9 @@ resident 拿全额稳态加速;release-after-collect 的每周期重编译也因
 - `vrl/models/interfaces/runtime.py:112-117` — `RuntimeBuildSpec.torch_compile`（enable 门控）
 - `vrl/models/diffusion/cosmos/predict2_5/runtime.py:77-78` — 调 `torch_compile_transformer`
 - `vrl/models/diffusion/cosmos/predict2_5/model.py:245-246` — `torch.compile(pipeline.transformer, mode=mode, fullgraph=False)`
-- `vrl/generation/ray/launcher.py:384-415` — `_apply_rollout_compile_override`（单向覆盖）
-- `configs/base/rollout/diffusion.yaml:19` — `rollout.denoise_compile.enable: false`（默认）
-- `vrl/models/diffusion/capabilities.py:61` — Predict2.5 `supports_torch_compile=True`
+- `vrl/models/interfaces/runtime.py:123-128` — `RuntimeBuildSpec.torch_compile` reads the single `model.torch_compile` source
+- `vrl/generation/ray/launcher.py` — `model.torch_compile.enable` unsupported-family fail-fast gate
+- `vrl/models/diffusion/capabilities.py` — diffusion families declare `supports_torch_compile=True`
 
 **测量**
 - `vrl/ray/actor_pool.py:140-150` — per-chunk `execution_s` / `queue_wait_s`（first/later 来源）

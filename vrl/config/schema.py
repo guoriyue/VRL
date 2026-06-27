@@ -252,9 +252,6 @@ class RolloutConfig(ConfigBase):
     # Fail-fast host-RAM guard fraction for streaming accumulation (0.0 = off).
     # reader: vrl/scripts/common/online.py:_run_streaming_optimizer_update.
     host_memory_budget_fraction: float | None = None
-    # Key registry: validated by their reader layers (generation/trainers).
-    # reader: generation/ray/launcher.py compile override
-    denoise_compile: Annotated[Any, ConfigBlock(("enable", "mode"))] = None
     # reader: vrl/generation/diffusion/layout.py _parse_denoise_mode (request boundary).
     # Allowed set is the type; the layout guard stays for over-the-wire request dicts.
     denoise_mode: Literal["native", "sde"] | None = None

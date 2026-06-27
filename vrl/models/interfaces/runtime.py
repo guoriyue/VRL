@@ -24,15 +24,8 @@ MEMORY_POLICY_METADATA_KEY = "memory_policy"
 MODEL_MEMORY_SECTIONS: tuple[str, ...] = ("vae_decode",)
 
 # Single source of truth for the model_config compile block that the
-# ``RuntimeBuildSpec.torch_compile`` property below consumes. Writers (e.g. the
-# Ray rollout launcher) build it through ``torch_compile_model_config`` so the
-# key and block shape live in one place instead of being re-hardcoded per writer.
+# ``RuntimeBuildSpec.torch_compile`` property below consumes.
 TORCH_COMPILE_MODEL_KEY = "torch_compile"
-
-
-def torch_compile_model_config(*, enable: bool, mode: str) -> dict[str, Any]:
-    """Build the ``model_config[TORCH_COMPILE_MODEL_KEY]`` block this spec reads."""
-    return {TORCH_COMPILE_MODEL_KEY: {"enable": enable, "mode": mode}}
 
 
 @dataclass

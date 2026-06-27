@@ -17,13 +17,17 @@ actor:
 algorithm:
   kl_coef: 0.004
 
+model:
+  # Compile is a policy-transformer build choice. Keep rollout and train replay on
+  # the same compiled kernels instead of one-sided compile.
+  torch_compile:
+    enable: true
+    mode: default
+
 rollout:
   n_samples_per_prompt: 8
   rollout_batch_size: 1
   sample_batch_size: 8   # sbs=4 GPM still leaves SM occupancy at ~18%; keep one prompt per reward request.
-  denoise_compile:
-    enable: true
-    mode: default
   denoise_mode: native
   noise_level: 0.7
   sde:

@@ -82,18 +82,17 @@ class _FakeArCapability(_FakeCapability):
 
 
 def extract_fake_runtime_spec(cfg: Any, device: str, weight_dtype: str) -> RuntimeBuildSpec:
-    del cfg
+    model_node = OmegaConf.select(cfg, "model")
+    model_config = (
+        OmegaConf.to_container(model_node, resolve=True)
+        if OmegaConf.is_config(model_node)
+        else {}
+    )
     return RuntimeBuildSpec(
         model_name_or_path="unit-test",
         device=device,
         dtype=weight_dtype,
-        model_config={
-            "marker": "driver-config",
-            "torch_compile": {
-                "enable": False,
-                "mode": "default",
-            },
-        },
+        model_config=model_config,
         sampling_config={
             "num_steps": 1,
         },
@@ -194,7 +193,18 @@ def _resource_cfg(
     )
 
 
-def _build_inputs_cfg(*, denoise_compile: dict[str, Any] | None = None) -> Any:
+def _build_inputs_cfg(
+    *,
+    model_torch_compile: dict[str, Any] | None = None,
+) -> Any:
+    model_config = {
+        "marker": "driver-config",
+        "torch_compile": model_torch_compile
+        or {
+            "enable": False,
+            "mode": "default",
+        },
+    }
     cfg: dict[str, Any] = {
         "distributed": {
             "resources": {
@@ -212,10 +222,9 @@ def _build_inputs_cfg(*, denoise_compile: dict[str, Any] | None = None) -> Any:
                 "allow_overlap": False,
             },
         },
+        "model": model_config,
         "rollout": {},
     }
-    if denoise_compile is not None:
-        cfg["rollout"]["denoise_compile"] = denoise_compile
     return OmegaConf.create(cfg)
 
 
@@ -320,10 +329,15 @@ def test_sync_trainable_state_defaults_on_for_from_cfg() -> None:
     assert RayGenerationConfig.from_cfg(cfg).sync_trainable_state is False
 
 
-def test_ray_build_inputs_leaves_model_compile_config_without_rollout_override() -> None:
-    """Checks build inputs keep model compile config when rollout override is absent."""
+def test_ray_build_inputs_uses_model_compile_config_as_single_source() -> None:
+    """Checks build inputs carry model.torch_compile without rollout overrides."""
     launch_inputs = RayGenerationLauncher.build_inputs(
-        _build_inputs_cfg(),
+        _build_inputs_cfg(
+            model_torch_compile={
+                "enable": True,
+                "mode": "default",
+            },
+        ),
         _build_inputs_entry(),
         weight_dtype="bfloat16",
     )
@@ -333,20 +347,15 @@ def test_ray_build_inputs_leaves_model_compile_config_without_rollout_override()
     assert model_build["dtype"] == "bfloat16"
     assert model_build["model_config"]["marker"] == "driver-config"
     assert model_build["model_config"]["torch_compile"] == {
-        "enable": False,
+        "enable": True,
         "mode": "default",
     }
 
 
-def test_ray_build_inputs_applies_rollout_only_compile_override() -> None:
-    """Checks rollout denoise compile only mutates the worker launch payload."""
+def test_ray_build_inputs_preserves_disabled_model_compile_config() -> None:
+    """Checks disabled model.torch_compile is preserved as ordinary model config."""
     launch_inputs = RayGenerationLauncher.build_inputs(
-        _build_inputs_cfg(
-            denoise_compile={
-                "enable": True,
-                "mode": "reduce-overhead",
-            },
-        ),
+        _build_inputs_cfg(),
         _build_inputs_entry(),
         weight_dtype="bfloat16",
     )
@@ -354,8 +363,8 @@ def test_ray_build_inputs_applies_rollout_only_compile_override() -> None:
     model_config = launch_inputs.launch_contract.model_build["model_config"]
     assert model_config["marker"] == "driver-config"
     assert model_config["torch_compile"] == {
-        "enable": True,
-        "mode": "reduce-overhead",
+        "enable": False,
+        "mode": "default",
     }
 
 
@@ -388,14 +397,14 @@ def test_ray_build_inputs_omits_gpu_memory_fraction_when_unset() -> None:
     assert "gpu_memory_fraction" not in launch_inputs.launch_contract.extra
 
 
-def test_ray_build_inputs_rejects_compile_on_family_without_capability() -> None:
-    """Checks enabling rollout compile on a family that can't compile fails fast."""
+def test_ray_build_inputs_rejects_model_compile_on_family_without_capability() -> None:
+    """Checks model.torch_compile fails fast on rollout families that cannot compile."""
     with pytest.raises(ValueError, match="does not support torch compile"):
         RayGenerationLauncher.build_inputs(
             _build_inputs_cfg(
-                denoise_compile={
+                model_torch_compile={
                     "enable": True,
-                    "mode": "reduce-overhead",
+                    "mode": "default",
                 },
             ),
             _build_inputs_entry(_FakeArCapability()),

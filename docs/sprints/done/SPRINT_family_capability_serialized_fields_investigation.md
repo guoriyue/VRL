@@ -26,7 +26,9 @@
 | `FamilyCapability.cache_kinds` | 无 | 无 | **死** |
 | `ExecutionStageCapability.metadata` | 仅 `planner.py:312` `dict(stage.metadata)` 拷进运行期 `ExecutionStage.metadata`，后者只再序列化（`planner.py:187`） | 无控制流消费 | **死** |
 
-**活字段对照（勿连坐，均有真控制流分支）**：`supports_chunked_execution`（`chunks.py:122`）、`supports_torch_compile`（`launcher.py:424`）、`supports_reference_conditioning`（`registry.py:127`）——全部保留。
+**活字段对照（勿连坐，均有真控制流分支）**：`supports_chunked_execution`（`chunks.py:122`）、
+`supports_torch_compile`（后续 compile config cleanup 后 gate `model.torch_compile.enable`）、
+`supports_reference_conditioning`（`registry.py:127`）——全部保留。
 
 ## 2. 落地（删除 + 同步序列化点）
 

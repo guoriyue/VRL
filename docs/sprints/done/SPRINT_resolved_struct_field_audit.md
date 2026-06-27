@@ -207,7 +207,9 @@ stored 字段），但它和 `ray_total_bundles` **本质不同，倾向保留**
     `supports_batched_requests` / `supports_batched_forward` 实为 LIVE（`batch_signature()` →
     `generation/types.py:133` 的 batching key）。scan 曾把这几个列为"仅在 batch_signature 内部"而疑似可删，
     逐 flag 复核证明 `batch_signature` 本身被消费，故必须保留。
-  - **`supports_torch_compile` 保留**（LIVE，`ray/launcher.py:399` 的 compile gate）。
+  - **后续更新（compile config cleanup）**：`supports_torch_compile` 的控制流读者从旧
+    rollout-only compile gate 迁到 `model.torch_compile.enable` unsupported-family fail-fast gate；
+    该字段仍保留，因为它会触发配置错误而不是只被序列化/日志读取。
   - **`supports_reference_conditioning` 保留 + 记一个 follow-up**：该 FamilyCapability 字段**本身无直接
     读者**，真实消费走 registry 派生出的另一字段 `ExecutorKwargsMetadata.include_reference_image`
     （`launcher.py:363`）。即它疑似 duplicate-derived，但删它要动 registry 的双路 threading，属

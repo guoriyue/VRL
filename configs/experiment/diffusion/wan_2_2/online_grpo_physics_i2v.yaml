@@ -21,6 +21,12 @@ model:
   # routing still loads both experts; only transformer_2 receives gradients.
   trainable_transformers:
     - transformer_2
+  # Compile is a policy-transformer build choice. This proof run opts into
+  # compile-both locally while the shared Wan2.2 I2V model default remains
+  # conservative.
+  torch_compile:
+    enable: true
+    mode: default
 
 actor:
   optim:
@@ -34,9 +40,6 @@ rollout:
   n_samples_per_prompt: 2
   rollout_batch_size: 1
   sample_batch_size: 4   # batch the denoise forward; sbs=1 left the GPU at 25% (smoke 2026-06-09)
-  denoise_compile:
-    enable: true
-    mode: default
   denoise_mode: native
   noise_level: 0.7
   sde:

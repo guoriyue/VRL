@@ -26,22 +26,20 @@ Predict2.5 RL 用 compile-both（`model.torch_compile.enable=true`）而非 roll
 
 ## 1. 全家族 compile 默认态（审计，已逐文件核实）
 
-compile 有两个开关：`model.torch_compile`（model 块，**train + rollout 都吃**，rollout 继承整个
-model 块）和 `rollout.denoise_compile`（**rollout-only、单向覆盖**，只能额外开、`enable:false` 是
-no-op，且被 `capability.supports_torch_compile` 门控）。base 默认态：
+compile 现在只有一个 public 配置入口：`model.torch_compile`（model 块，**train + rollout 都吃**，
+rollout 继承整个 model 块）。旧的 `rollout.denoise_compile` 已删除；rollout-only 只能作为临时
+perf/debug 改 runtime payload 的实验手段，不再是 recipe 配置面。base 默认态：
 
 | checkpoint | train | rollout | 来源 / 判定 |
 |---|---|---|---|
 | sd3.5 medium | ✅ ON | ✅ ON（继承） | `medium.yaml` `torch_compile.enable:true`；launch-bound DiT，正确 |
 | cosmos predict2 2b | ✅ ON | ✅ ON（继承） | `predict2_2b.yaml:21` true；已测 1.37×/1.25×（#11） |
 | wan 2.1 1.3b / 14b | ✅ ON | ✅ ON（继承） | 均 true；t2v 已验证 |
-| **cosmos predict2.5 2b** | ❌ OFF | ⚠️ 仅 kling 实验 ON | base off；kling 实验 rollout-only → 本 doc 改 compile-both |
+| **cosmos predict2.5 2b** | ❌ OFF | ❌ OFF | base off；kling/cross-node/DDP recipe 用 `model.torch_compile` 显式 compile-both |
 | cosmos anima_preview3 | ❌ OFF | ❌ OFF | 同 cosmos DiT，验证过但**无 recipe 在跑**（§5） |
-| wan 2.1 i2v_14b | ❌ OFF | ❌ OFF | base GRPO run 未跑（多卡卡着）（§5） |
-| wan 2.2 a14b / i2v_a14b | ❌ OFF | ❌ OFF | dual-stage（`transformer_2`）proof run 未跑（§5） |
+| wan 2.1 i2v_14b | ❌ OFF | ❌ OFF | base off；physics smoke recipe 显式 compile-both |
+| wan 2.2 a14b / i2v_a14b | ❌ OFF | ❌ OFF | base off；I2V proof recipe 显式 compile-both |
 | AR janus_pro / nextstep_1 | **未接线** | **未接线** | 无 `torch_compile` 块；`capabilities.py` gate=False；KV-cache 自回归路径，正确 |
-
-> AR 的 gate 不是疏漏：`launcher.py` 会在 AR family 误开 `denoise_compile` 时直接 raise。
 
 ## 2. 加速实测（compile off→on，mode=default，fullgraph=False）
 
@@ -107,8 +105,8 @@ logprob drift ≤ 0.01（P3）；若真漂，回退 compile-neither（不要回 
 
 - **`compile_benchmark.py` 加 `--parity` 模式** — eager-vs-compiled 前向/梯度数值对比（CPU-offload
   eager-grad 快照以适配重网格）。已提交 `dff4c82`。
-- **kling 训练 yaml 翻 compile-both** — `online_nft_kling_video_reward.yaml` 把 rollout-only 的
-  `rollout.denoise_compile` 换成 `model.torch_compile.enable: true`（train+rollout 都编）。cross_node
+- **kling 训练 yaml 翻 compile-both** — `online_nft_kling_video_reward.yaml` 使用
+  `model.torch_compile.enable: true`（train+rollout 都编）。cross_node
   变体 `defaults`-继承本文件，自动跟随，无需单独改。
 - **4 个 gap config 写 defer 注释** — i2v_14b / wan_2_2 a14b+i2v / anima：记录"已验证安全 + 为什么先
   OFF + 何时翻"。
@@ -120,7 +118,6 @@ logprob drift ≤ 0.01（P3）；若真漂，回退 compile-neither（不要回 
 - `vrl/scripts/perf/compile_benchmark.py` — `--family` 加速 A/B + `--parity` 数值对比（本 doc 数据源）
 - `configs/experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward.yaml` — compile-both 落地
 - `configs/model/diffusion/{cosmos/anima_preview3,wan_2_1/i2v_14b,wan_2_2/a14b,wan_2_2/i2v_a14b}.yaml` — defer 注释
-- `vrl/generation/ray/launcher.py` `_apply_rollout_compile_override` — rollout-only 单向覆盖 + capability gate
 - `vrl/models/interfaces/runtime.py` `RuntimeBuildSpec.torch_compile` — model 块 → worker（rollout 继承的来源）
 - `vrl/models/diffusion/{base,cosmos/predict2_5/model,wan_2_1/model}.py` `torch_compile_transformer`
 - 配套：`docs/sprints/planned/SPRINT_compile_rollout_lifecycle.md`（§4.3 加速 / §4.4 parity / P3）、
