@@ -96,8 +96,9 @@
    但见第 3 点。
 2. **官方数据集 403**：`videophy_i2v` 需要从 `videophysics/videophy_test_public` 的官方视频 URL 解码 frame 0
    作参考图，URL 返回 **HTTP 403 Forbidden**（外部访问权限缺失）。
-   *已绕过*：用 `third_party/videophy/examples/*.mp4`（7 个本地样例）解码 frame 0 → 832×480 PNG，
-   手工建最小 manifest（`data/external/videophy_i2v/manifests/{train,eval}.jsonl`，7+2 行）。数据加载已通过。
+   *smoke-only 绕过*：用 `third_party/videophy/examples/*.mp4`（7 个本地样例）解码 frame 0 → 832×480 PNG，
+   手工建最小 manifest 时必须放在 `data/external/videophy_i2v_smoke/` 或 `_scratch_*` 路径。7+2 行只够
+   smoke，不得写入 canonical `data/external/videophy_i2v/manifests/{train,eval}.jsonl` 冒充正式数据。
 3. **2×14B 显存（任务 2，本就标「未验证」）**：Wan I2V 14B 单卡唯一路径是 `model.offload_mode: sequential`
    （per-layer 流式，极慢）。两专家（~56GB bf16）+ 若再把 reward 挤上同一张 46GB 卡 → 必然 OOM。
    任务 2 的「非活跃专家 offload」内存策略仍未在真机验证，是 proof run 的真正前置缺口。

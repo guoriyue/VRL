@@ -1,6 +1,11 @@
 # SPRINT: full-param 替换 LoRA + FP8/FP4 精度轴（吞吐杠杆）(planned)
 
-状态：**部分落地（2026-06-18 从 [[SPRINT_gemm_utilization]] 拆出）**。GEMM 审计的 profiler（P0）+ QKV 融合 A/B（P1，低 ROI 不落 runtime）+ torch.compile（P2，默认开）已全部落地、那个 sprint 已归档 `done/`。本 sprint：**P3 的精度-修正地基（config 轴 + dtype + TIS + drift guard + 5090 实测）已落地**（详见 §2），rollout fp8 kernel 路由已由 [[SPRINT_fp8_rollout_gemm_kernel]] 落地并 live 验证；剩余是假旋钮 family guard / recipe wiring（见 [[SPRINT_rollout_optimization_layer]]）以及 **P1.5（full-param）**，后者受多卡显存门控。
+状态：**部分落地（2026-06-18 拆出）；2026-06-27 两条轴都被本机实测推进**（见下方复核）。GEMM 审计的 profiler（P0）+ QKV 融合 A/B（P1，低 ROI 不落 runtime）+ torch.compile（P2，默认开）已全部落地、那个 sprint 已归档 `done/`。本 sprint：**P3 的精度-修正地基（config 轴 + dtype + TIS + drift guard + 5090 实测）已落地**（详见 §2），rollout fp8 kernel 路由已由 [[SPRINT_fp8_rollout_gemm_kernel]] 落地并 live 验证；剩余是假旋钮 family guard / recipe wiring（见 [[SPRINT_rollout_optimization_layer]]）以及 **P1.5（full-param）**，后者原受多卡显存门控——**门已解，见复核**。
+
+> **2026-06-27 复核（[[SPRINT_lossless_diffusion_rl_research]] + 本轮工作）：**
+> - **full-param 轴（P1.5）：单卡显存门已解。** 本轮建了 `actor.optim.optim_8bit`（bitsandbytes AdamW8bit，Blackwell sm_120 实测通），int8 Adam 状态让 full-param 2B 在单卡 32GB fit（fp32 Adam 状态 ~16GB 原本 OOM）。**对 RL 安全**（量化优化器状态不是 forward，不碰 old_log_prob）。落地见 [[SPRINT_cosmos_predict2_2b_trustworthy_curve]] / 记忆 `project_fullparam_8bit_adam`。caveat：8-bit 只解优化器状态，**video 激活值仍要小 shape**（240p_33f）。
+> - **fp8/fp4 轴：NCU 确认 bf16 单卡 compute 已饱和**（GEMM tensor SOL 45% ≈ 最优方阵 47% = 硬件上限），所以 **fp8/fp4 是唯一能越过 bf16 上限的 compute 杠杆——但有损，只能离 policy path**。"吞吐杠杆"在 bf16 上已无空间；fp8 是越界手段不是无损优化。原 P1（QKV 融合）低 ROI 结论被 NCU 加强（compile 已把非-matmul 融到 3.5%，手写融合端到端 ~2-3%）。
+> - **2026-06-27 外部佐证（deep-research）：本 sprint 的精度-split 契约 = 发表 SOTA。** `FP4 Explore, BF16 Train`（arXiv:2604.06916, 2026-04）用近乎相同的设计（FP4 只跑 rollout、训练全程 bf16、**log-prob 在 bf16 重算所以 old_log_prob 永不被 FP4 污染**）报 ~2.5-3x rollout / 1.5-2x 端到端，独立印证了这里的 TIS/RS + 受控 rollout 轴方向。caveat：其数在 H100，5090（sm_120）FP4 路径不同 → 幅度本机重测。我们已落地的 fp8 rollout（1.40x、漂移 6.6%）是同一契约的 fp8 实例；FP4 是下一档但仍 gated（dtype 齐、kernel 路由待接）。
 
 ## 0. 来历
 

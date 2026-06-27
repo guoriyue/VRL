@@ -1,12 +1,12 @@
 # SPRINT: Cosmos Predict2 2B — 第一条可信的正向 RL 学习曲线（full-param, 单卡）
 
-状态：**planned / 执行就绪（2026-06-27）**。目标:**在 cosmos predict2 2B 上拿到第一条可信的正向学习曲线(eval reward 上升 >2σ)**——这是整个项目从"能跑/机制对"推到"真能学"的那一步,目前**没人拿到过**。enabler(8-bit Adam full-param)已建好,配置已写好,差一次显存 smoke + 长跑。
+状态：**blocked / dataset-blocked（2026-06-27）**。目标:**在 cosmos predict2 2B 上拿到第一条可信的正向学习曲线(eval reward 上升 >2σ)**。enabler(8-bit Adam full-param)已建好,但本地没有 source-backed Video2World reference-image dataset；`perf_smoke/ref.png` 是随机噪声并已由 `SPRINT_remove_smoke_datasets.md` 删除,不能作为 RL 目标。
 
 > 证据:记忆 `project_first_trustworthy_curve`(2026-06-13 cosmos GRPO 持平=未学)、`project_flux_algo_validation`(ppo_epochs=1 让机制恒 0)、`project_fullparam_8bit_adam`(本轮建的 enabler)。配置:`configs/experiment/diffusion/cosmos_predict2/online_grpo_fullparam_8bit_240p.yaml`。
 
 ## 0. 一句话
 
-之前 cosmos+Kling GRPO 端到端跑通但 **reward 全平**(-4.726→-4.69,噪声内)。根因诊断:① `ppo_epochs=1` 让 trust-region clip 恒 0(flux 验证实测,clip_fraction 恒 0);② LoRA 梯度太小(~2e-4),reward 推不动。**本 sprint 同时上三个修复——ppo_epochs=4 + full-parameter + 合适 lr——并用 8-bit Adam 让 full-param 2B 在单卡 32GB 上 fit。** 判据是 eval reward(固定 prompt)涨 >2σ,不是看会动的训练 reward_mean。
+之前 cosmos+Kling GRPO 端到端跑通但 **reward 全平**(-4.726→-4.69,噪声内)。根因诊断:① `ppo_epochs=1` 让 trust-region clip 恒 0(flux 验证实测,clip_fraction 恒 0);② LoRA 梯度太小(~2e-4),reward 推不动。三个训练侧修复仍成立——ppo_epochs=4 + full-parameter + 合适 lr——但当前 sprint 不能执行长曲线：**数据目标不成立**。Predict2 2B 是 Video2World，必须有真实 reference image；随机 smoke reference 或无关 global reference 会污染 RL 目标。
 
 ## 1. 三个修复(都已诊断,本 sprint 一起上)
 
@@ -48,10 +48,11 @@ algorithm: { clip_ratio: 1.0e-3, kl_coef: 0.0 }
 
 ## 5. Phase plan
 
-- **P0 — 显存 smoke(决定可行性)**:`total_epochs=2 eval.enabled=false`,带 reference image。看两件:① 不 OOM(full-param 240p_33f 在 32GB fit)② `clip_fraction>0`(机制活)。**OOM 则降:33→若干帧 / 关 CFG / 退而 DeepSpeed offload。**
-- **P1 — 短曲线(~50 更新)**:确认 reward 在动、drift guard / TIS-RS 指标健康、grad_norm 比 LoRA 的 ~2e-4 大(full-param 应明显更大)。
-- **P2 — 满曲线(300 epoch)**:resumable(单卡争用,见记忆 `project_cosmos_reward_run_setup` 的 auto-resume wrapper)。
-- **P3 — 判定**:见 §6。
+- **P0 — 数据前置门**:必须先有 source-backed V2W manifest（如 `video_world_v2w` 的 per-sample `reference_image`）。没有这个门,不跑显存 smoke、不读曲线。
+- **P1 — 显存 smoke(决定可行性)**:`total_epochs=2 eval.enabled=false`,使用 source-backed per-sample reference。看两件:① 不 OOM(full-param 240p_33f 在 32GB fit)② `clip_fraction>0`(机制活)。**OOM 则降:33→若干帧 / 关 CFG / 退而 DeepSpeed offload。**
+- **P2 — 短曲线(~50 更新)**:确认 reward 在动、drift guard / TIS-RS 指标健康、grad_norm 比 LoRA 的 ~2e-4 大(full-param 应明显更大)。
+- **P3 — 满曲线(300 epoch)**:resumable(单卡争用,见记忆 `project_cosmos_reward_run_setup` 的 auto-resume wrapper)。
+- **P4 — 判定**:见 §6。
 
 ## 6. 验收（可信判据,别自欺）
 

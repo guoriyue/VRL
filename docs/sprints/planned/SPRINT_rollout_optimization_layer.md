@@ -1,6 +1,8 @@
 # SPRINT: rollout 优化层 — 架构决策 + patch 收拢 + 剩余 wiring (planned)
 
-状态：**planned（2026-06-19）**。fp8 kernel 已落地并 live 验证（见 [[SPRINT_fp8_rollout_gemm_kernel]]）；本 sprint 记录"rollout 怎么优化"的**架构决策**（别再 re-litigate）、可选的一致性收拢、以及剩余的功能 wiring。
+状态：**planned（2026-06-19）；2026-06-27 NCU 复核确认 §1 架构决策**。fp8 kernel 已落地并 live 验证（见 [[SPRINT_fp8_rollout_gemm_kernel]]）；本 sprint 记录"rollout 怎么优化"的**架构决策**（别再 re-litigate）、可选的一致性收拢、以及剩余的功能 wiring。
+
+> **2026-06-27 NCU 硬件复核 reinforces §1**（全文 [[SPRINT_lossless_diffusion_rl_research]]）：§1 用 `nvidia-smi dmon`（SM 100%）定的"compute-bound、引擎级无用、patch 即可"被 NCU tensor-pipe SOL 实锤——cosmos GEMM 45% ≈ 最优方阵 GEMM 47% = bf16+fp32 累加硬件上限,**不是有头空间没榨**。推论:① fp8 是唯一越 bf16 上限的杠杆但**有损**(只能离 policy path);② §1 否决重写/引擎的结论加强,不是减弱;③ §1.附带决策"小请求用静态 batch 不用 continuous batching"经本轮 stepwise-batching 探针证伪 continuous batching 后更稳。**判 MFU 用 `gpu_preflight` 实测峰值,别用 vendor 419(会把饱和误诊成 51%)。**
 
 ## 0. 来历
 

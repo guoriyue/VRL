@@ -72,9 +72,9 @@
 ## 5. 任务 3 — 数据集（复用 2.2 run 已踩平的绕过）
 
 官方 `videophysics/videophy_test_public` 视频 URL 返回 403。复用 [[SPRINT_wan_2_2_proof_run]] §8#2 的本地
-绕过：`third_party/videophy/examples/*.mp4` 解码 frame 0 → PNG，建最小 manifest
-（`data/external/videophy_i2v/manifests/{train,eval}.jsonl`）。7 样本够 smoke 跑通、不够信号——信号判读
-留给多卡正式 run。
+绕过时，`third_party/videophy/examples/*.mp4` 解码 frame 0 → PNG 后只能建到
+`data/external/videophy_i2v_smoke/` 或 `_scratch_*` 路径。7 样本够 smoke 跑通、不够信号；不得写入
+canonical `data/external/videophy_i2v/manifests/{train,eval}.jsonl` 冒充正式数据。
 
 ## 6. 验收标准（finishing criteria）
 
