@@ -44,7 +44,20 @@ FP8_BLOCK = 128
 # feeding a norm / AdaLN modulation, timestep projections). Quantizing these
 # trades accuracy for ~no speed (they are tiny). Matched against the dotted path
 # within the transformer; size filtering (min_features) skips the rest.
-DEFAULT_EXCLUDE: tuple[str, ...] = ("norm", "embed", "proj_out", "time_")
+# AdaLN modulation is named per-backbone: flux/sd3.5 fold it into ``norm*.linear``
+# (caught by ``norm``), but qwen-image exposes it as ``img_mod``/``txt_mod`` and
+# its text-conditioning input as ``txt_in`` — none of which contain ``norm``, so
+# they must be listed explicitly or they would be silently quantized (the
+# modulation drives every block's scale/shift/gate — the most precision-sensitive
+# GEMM in the stack).
+DEFAULT_EXCLUDE: tuple[str, ...] = (
+    "norm",
+    "embed",
+    "proj_out",
+    "time_",
+    "_mod",
+    "txt_in",
+)
 
 
 def _amax_scale(t: torch.Tensor, dim: int | None) -> torch.Tensor:

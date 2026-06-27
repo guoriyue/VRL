@@ -17,6 +17,7 @@ from vrl.algorithms.grpo.continuous import (
     GRPOGuard,
     GRPOGuardConfig,
 )
+from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
 
@@ -208,6 +209,91 @@ def test_flow_dppo_requires_old_prev_sample_mean() -> None:
     )
     with pytest.raises(RuntimeError, match="return_prev_sample_mean"):
         FlowDPPO().compute_loss(_input(sig, torch.ones(n)))
+
+
+def test_flow_dppo_truncates_precision_weight_into_loss() -> None:
+    # Under fp8/bf16-split rollout, TIS-truncate must cap the rollout->replay ratio
+    # that enters the trust-region loss; without it a single inflated weight (e^3)
+    # dominates the gradient. Trust region keeps the sample (inf threshold), so the
+    # only thing acting is the precision correction.
+    sig = _signals(
+        log_prob=torch.tensor([3.0]),  # raw ratio = e^3 ~ 20
+        old_log_prob=torch.zeros(1),
+        prev_sample_mean=torch.zeros(1, 1, 1, 1),
+        old_prev_sample_mean=torch.zeros(1, 1, 1, 1),
+        std_dev_t=torch.ones(1, 1, 1, 1),
+        dt=torch.full((1, 1, 1, 1), 0.1),
+    )
+    algo = FlowDPPO(FlowDPPOConfig(kl_mask_threshold=float("inf")))
+    algo.precision_correction = PrecisionCorrectionConfig(
+        tis_mode="truncate", tis_imp_weight_cap=1.5,
+    )
+    loss, _ = algo.compute_loss(_input(sig, torch.tensor([1.0])))
+    assert loss.item() == pytest.approx(-1.5, rel=1e-5)  # capped, not ~-20
+
+
+def test_flow_dppo_rs_rejects_out_of_band_precision_drift() -> None:
+    # RS drops a whole sample whose rollout->replay log-ratio is out of band, even
+    # though the trust region (inf threshold) keeps everything. Sample 2's drift
+    # (log-ratio 5) is far outside [-1, 1] -> rejected.
+    n = 4
+    sig = _signals(
+        log_prob=torch.tensor([0.0, 0.0, 5.0, 0.0]),
+        old_log_prob=torch.zeros(n),
+        prev_sample_mean=torch.zeros(n, 1, 1, 1),
+        old_prev_sample_mean=torch.zeros(n, 1, 1, 1),
+        std_dev_t=torch.ones(n, 1, 1, 1),
+        dt=torch.full((n, 1, 1, 1), 0.1),
+    )
+    algo = FlowDPPO(FlowDPPOConfig(kl_mask_threshold=float("inf")))
+    algo.precision_correction = PrecisionCorrectionConfig(
+        rs_mode="seq_mean_k1", rs_log_ratio_low=-1.0, rs_log_ratio_high=1.0,
+    )
+    _loss, metrics = algo.compute_loss(_input(sig, torch.ones(n)))
+    assert metrics.rs_seq_masked_fraction == pytest.approx(0.25)
+
+
+def test_flow_dppo_default_precision_correction_is_noop() -> None:
+    # The default (tis/rs off) must leave the loss exactly at the vanilla value —
+    # the fix must not perturb non-fp8 (same-dtype) runs.
+    n = 3
+    log_prob = torch.tensor([0.3, -0.2, 0.1])
+    sig = _signals(
+        log_prob=log_prob,
+        old_log_prob=torch.zeros(n),
+        prev_sample_mean=torch.zeros(n, 1, 1, 1),
+        old_prev_sample_mean=torch.zeros(n, 1, 1, 1),
+        std_dev_t=torch.ones(n, 1, 1, 1),
+        dt=torch.full((n, 1, 1, 1), 0.1),
+    )
+    adv = torch.tensor([1.0, -1.0, 0.5])
+    loss, m = FlowDPPO(FlowDPPOConfig(kl_mask_threshold=float("inf"))).compute_loss(
+        _input(sig, adv),
+    )
+    assert loss.item() == pytest.approx((-adv * torch.exp(log_prob)).mean().item(), rel=1e-6)
+    assert m.tis_clip_fraction == 0.0 and m.rs_seq_masked_fraction == 0.0
+
+
+def test_grpo_guard_rs_rejects_out_of_band_precision_drift() -> None:
+    # GRPO-Guard keeps every sample by design; RS still drops a whole sample whose
+    # raw rollout->replay drift is out of band (the precision guard, orthogonal to
+    # the soft ratio-mean-bias correction).
+    n = 4
+    mean = torch.zeros(n, 1, 2, 2)
+    sig = _signals(
+        log_prob=torch.tensor([0.0, 0.0, 5.0, 0.0]),
+        old_log_prob=torch.zeros(n),
+        prev_sample_mean=mean,
+        old_prev_sample_mean=mean.clone(),
+        std_dev_t=torch.ones(n, 1, 2, 2),
+        dt=torch.ones(n, 1, 2, 2),
+    )
+    algo = GRPOGuard()
+    algo.precision_correction = PrecisionCorrectionConfig(
+        rs_mode="seq_mean_k1", rs_log_ratio_low=-1.0, rs_log_ratio_high=1.0,
+    )
+    _loss, metrics = algo.compute_loss(_input(sig, torch.ones(n)))
+    assert metrics.rs_seq_masked_fraction == pytest.approx(0.25)
 
 
 def test_trust_region_losses_fail_fast_without_dt() -> None:

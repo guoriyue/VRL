@@ -139,6 +139,43 @@ def test_exclude_substring_is_respected():
     assert any("to_k" in p for p in swapped)  # to_k still swapped
 
 
+def test_swap_excludes_qwen_modulation_and_text_input():
+    # qwen-image names AdaLN modulation `img_mod`/`txt_mod` and the text-
+    # conditioning input `txt_in`; none contain "norm", so without explicit
+    # excludes the most precision-sensitive GEMMs (per-block scale/shift/gate)
+    # would be silently fp8-quantized. Pin that the exclude list catches the qwen
+    # naming while attention/MLP still quantize.
+    class _QwenBlock(nn.Module):
+        def __init__(self, dim: int, heads: int) -> None:
+            super().__init__()
+            self.img_mod = nn.ModuleList([nn.SiLU(), nn.Linear(dim, 6 * dim)])
+            self.txt_mod = nn.ModuleList([nn.SiLU(), nn.Linear(dim, 6 * dim)])
+            self.attn = _Attn(dim, heads)
+            self.img_mlp = _FF(dim)
+
+    class _QwenDiT(nn.Module):
+        def __init__(self, dim: int, depth: int) -> None:
+            super().__init__()
+            self.img_in = nn.Linear(64, dim)   # small in_features -> size-filtered
+            self.txt_in = nn.Linear(dim, dim)  # big -> would quantize w/o exclude
+            self.transformer_blocks = nn.ModuleList(
+                [_QwenBlock(dim, 8) for _ in range(depth)]
+            )
+            self.proj_out = nn.Linear(dim, dim)
+
+    dit = _QwenDiT(dim=1024, depth=2)
+    swapped = swap_linears_to_fp8(dit, min_features=1024)
+
+    # modulation + text-conditioning input stay bf16
+    assert not any("_mod" in p for p in swapped), swapped
+    assert "txt_in" not in swapped
+    assert isinstance(dit.txt_in, nn.Linear) and not isinstance(dit.txt_in, Fp8Linear)
+    assert not isinstance(dit.transformer_blocks[0].img_mod[1], Fp8Linear)
+    # attention + MLP are still quantized (the real speed levers)
+    assert any("attn.to_q" in p for p in swapped)
+    assert any("img_mlp" in p for p in swapped)
+
+
 def test_invalid_recipe_rejected():
     with pytest.raises(ValueError, match="recipe"):
         Fp8Linear(nn.Linear(16, 16), recipe="bogus")

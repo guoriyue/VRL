@@ -269,7 +269,18 @@ class FlowDPPO(GRPO):
         old_prev_sample_mean = _require_trust_region_signals(signals, "FlowDPPO")
         advantages = inputs.advantages
 
-        ratio = torch.exp(signals.log_prob - signals.old_log_prob)
+        raw_ratio = torch.exp(signals.log_prob - signals.old_log_prob)
+        # Bound the rollout->replay precision drift (fp8/fp4 rollout) before it
+        # enters the trust-region loss — the same TIS/RS the base GRPO applies.
+        # Without it a quantized rollout's logprob drift flows unclipped into the
+        # negative-advantage branch; the trust-region KL mask below only catches
+        # *policy* drift, not *precision* drift. No-op when precision is not split
+        # (tis_mode/rs_mode default to "off").
+        pc = self.precision_correction
+        ratio, tis_keep = apply_truncated_importance_weight(raw_ratio, pc)
+        rs_keep = apply_rejection_sample_mask(
+            signals.log_prob - signals.old_log_prob, pc,
+        )
         # Gaussian KL between the current and rollout proposal means (the
         # current-vs-rollout drift). With add_kl_coefficient the sigma folds in the
         # per-step diffusion coefficient (sigma_t = std_dev_t * sqrt_dt, the closed
@@ -292,15 +303,27 @@ class FlowDPPO(GRPO):
         high_kl = kl_per_sample >= cfg.kl_mask_threshold
         pos_rm = high_kl & (ratio > 1.0) & (advantages > 0)
         neg_rm = high_kl & (ratio < 1.0) & (advantages < 0)
-        keep = (~(pos_rm | neg_rm)).detach()
+        trust_keep = (~(pos_rm | neg_rm)).detach()
+        # Intersect the trust-region keep with the TIS/RS precision keeps; when
+        # precision is not split both are None and ``keep`` collapses to
+        # ``trust_keep`` (exact legacy behavior).
+        keep = combine_keep_masks(trust_keep.to(ratio.dtype), tis_keep, rs_keep)
         unclipped_loss = -advantages * ratio
-        per_sample_loss = torch.where(keep, unclipped_loss, torch.zeros_like(unclipped_loss))
+        per_sample_loss = torch.where(
+            keep.bool(), unclipped_loss, torch.zeros_like(unclipped_loss),
+        )
         policy_loss = per_sample_loss.mean()
 
         self._last_policy_loss_tensor = policy_loss
         self._last_kl_term_tensor = None
 
-        masked_fraction = (1.0 - keep.float().mean()).item()
+        masked_fraction = (1.0 - keep.mean()).item()
+        tis_clip_fraction = (
+            (1.0 - tis_keep.mean()).item() if tis_keep is not None else 0.0
+        )
+        rs_seq_masked_fraction = (
+            (1.0 - rs_keep.mean()).item() if rs_keep is not None else 0.0
+        )
         approx_kl = 0.5 * torch.mean(
             (signals.log_prob - signals.old_log_prob) ** 2,
         ).item()
@@ -310,6 +333,8 @@ class FlowDPPO(GRPO):
             kl_penalty=kl_per_sample.mean().item(),
             clip_fraction=masked_fraction,
             approx_kl=approx_kl,
+            tis_clip_fraction=tis_clip_fraction,
+            rs_seq_masked_fraction=rs_seq_masked_fraction,
         )
         return policy_loss, metrics
 
@@ -354,6 +379,14 @@ class GRPOGuard(GRPO):
         advantages = inputs.advantages
 
         log_ratio = signals.log_prob - signals.old_log_prob
+        # Bound rollout->replay precision drift (fp8/fp4 rollout). GRPO-Guard keeps
+        # every sample by design, so TIS-*truncate* on the raw weight does not touch
+        # the soft-corrected guard ratio; RS (whole-sample band rejection on the raw
+        # rollout->replay log-ratio) is the effective precision guard here, plus
+        # TIS-*mask* when configured. No-op when precision is not split.
+        pc = self.precision_correction
+        _, tis_keep = apply_truncated_importance_weight(torch.exp(log_ratio), pc)
+        rs_keep = apply_rejection_sample_mask(log_ratio, pc)
         # dt is guaranteed present by _require_trust_region_signals (no silent
         # fallback-to-1, which would erase the per-step scale normalization).
         sqrt_dt_mean = signals.dt.mean()
@@ -365,8 +398,15 @@ class GRPOGuard(GRPO):
         ratio = torch.exp((log_ratio + ratio_mean_bias) * scale)
         clipped_ratio = torch.clamp(ratio, 1.0 - cfg.clip_ratio, 1.0 + cfg.clip_ratio)
         per_sample_loss = torch.maximum(-advantages * ratio, -advantages * clipped_ratio)
+        # Reject out-of-band precision-drift samples; collapses to the plain mean
+        # when no precision keep is active.
+        keep = combine_keep_masks(tis_keep, rs_keep)
+        if keep is not None:
+            reduced = (per_sample_loss * keep).sum() / keep.sum().clamp_min(1.0)
+        else:
+            reduced = per_sample_loss.mean()
         # Per-step magnitude normalization (cross-timestep consistent gradients).
-        policy_loss = per_sample_loss.mean() / sqrt_dt_mean.pow(2).clamp_min(1e-12)
+        policy_loss = reduced / sqrt_dt_mean.pow(2).clamp_min(1e-12)
 
         self._last_policy_loss_tensor = policy_loss
         self._last_kl_term_tensor = None
@@ -374,6 +414,12 @@ class GRPOGuard(GRPO):
         clip_fraction = torch.mean(
             (torch.abs(ratio - 1.0) > cfg.clip_ratio).float(),
         ).item()
+        tis_clip_fraction = (
+            (1.0 - tis_keep.mean()).item() if tis_keep is not None else 0.0
+        )
+        rs_seq_masked_fraction = (
+            (1.0 - rs_keep.mean()).item() if rs_keep is not None else 0.0
+        )
         approx_kl = 0.5 * torch.mean(log_ratio**2).item()
         metrics = TrainStepMetrics(
             loss=policy_loss.item(),
@@ -381,5 +427,7 @@ class GRPOGuard(GRPO):
             kl_penalty=ratio_mean_bias.mean().item(),
             clip_fraction=clip_fraction,
             approx_kl=approx_kl,
+            tis_clip_fraction=tis_clip_fraction,
+            rs_seq_masked_fraction=rs_seq_masked_fraction,
         )
         return policy_loss, metrics
