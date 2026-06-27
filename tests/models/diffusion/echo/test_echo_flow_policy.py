@@ -3,7 +3,7 @@
 Echo's real transformer needs an 80GB GPU + the merged checkpoint, so these
 tests inject a fake Echo wrapper and exercise the parts that must be correct
 regardless of weights: the x0->velocity conversion (rectified-flow convention),
-the σ = t/num_train derivation, latent-shape math, and the
+the sigma = t/num_train derivation, latent-shape math, and the
 encode/prepare/export/restore plumbing the shared diffusion executor drives.
 """
 
@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
-
 from diffusers import FlowMatchEulerDiscreteScheduler
 
 from vrl.generation.diffusion.layout import VideoGenerationRequest
@@ -86,12 +85,12 @@ def _request(num_steps: int = 4) -> VideoGenerationRequest:
 def test_sigma_from_timestep_divides_and_clamps() -> None:
     like = torch.zeros(2, 1)
     assert abs(float(_sigma_from_timestep(torch.tensor(500.0), 1000, like)) - 0.5) < 1e-6
-    # σ=0 is undefined for velocity; clamp keeps it strictly positive.
+    # sigma=0 is undefined for velocity; clamp keeps it strictly positive.
     assert float(_sigma_from_timestep(torch.tensor(0.0), 1000, like)) > 0.0
 
 
 def test_forward_step_velocity_is_rectified_flow_of_x0() -> None:
-    """v = (x_t - x0)/σ, and x0 must be exactly recoverable as x_t - v·σ."""
+    """v = (x_t - x0)/sigma, and x0 must be recoverable as x_t - v*sigma."""
 
     model, echo = _build_model()
     latents = torch.randn(2, 4, 128, 8, 8)
@@ -117,10 +116,10 @@ def test_forward_step_velocity_is_rectified_flow_of_x0() -> None:
     assert v.shape == latents.shape
     expected_v = (latents - x0) / sigma
     assert torch.allclose(v, expected_v, atol=1e-4)
-    # Round-trip: the SDE step reconstructs x0 from (x_t, v, σ).
+    # Round-trip: the SDE step reconstructs x0 from (x_t, v, sigma).
     x0_recovered = latents - v * sigma
     assert torch.allclose(x0_recovered, x0, atol=1e-4)
-    # Echo received σ (not the raw flow timestep), broadcast per batch.
+    # Echo received sigma (not the raw flow timestep), broadcast per batch.
     assert torch.allclose(echo.last_timestep, torch.full((2,), sigma), atol=1e-5)
 
 
@@ -253,5 +252,5 @@ def test_replay_model_is_transformer_only_and_runs_velocity_forward() -> None:
     )
     out = replay.forward_step(state, 0)
     assert out["noise_pred"].shape == latents.shape
-    # x0=0 -> v = x_t/σ with σ=0.5 -> v = 2·x_t.
+    # x0=0 -> v = x_t/sigma with sigma=0.5 -> v = 2*x_t.
     assert torch.allclose(out["noise_pred"], latents / 0.5, atol=1e-4)

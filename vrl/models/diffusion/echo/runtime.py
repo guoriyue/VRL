@@ -131,8 +131,8 @@ def build_echo_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
     # Same flow-matching scheduler as the rollout side (model.py from_spec): Echo's
     # released DMD few-step sampler is bypassed; RL drives the velocity field with
     # the standard flow-matching SDE. num_train_timesteps=1000 is Echo/LTX's
-    # train-time discretization (σ = t / num_train_timesteps), and it MUST match the
-    # rollout value so replay log-prob recompute reads the identical σ table.
+    # train-time discretization (sigma = t / num_train_timesteps), and it MUST match the
+    # rollout value so replay log-prob recompute reads the identical sigma table.
     model = EchoReplayModel(
         echo=echo,
         scheduler=FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000),
@@ -140,7 +140,7 @@ def build_echo_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         device=device,
     )
     # The replay scheduler feeds the SDE log-prob evaluator, which maps each
-    # stored timestep -> σ via scheduler.sigmas; populate the schedule (the
+    # stored timestep -> sigma via scheduler.sigmas; populate the schedule (the
     # rollout side does this in prepare_sampling, but the trainer reads
     # bundle.scheduler directly).
     num_steps = spec.num_steps

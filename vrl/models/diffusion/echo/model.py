@@ -2,7 +2,8 @@
 
 Echo ships as a custom, non-diffusers, DMD-distilled audio-video generator. Its
 inner ``LTXModel`` is nonetheless a plain **flow-matching velocity model**: with
-``x_t = (1-σ)·x0 + σ·ε`` the velocity ``v = (x_t - x0)/σ = ε - x0`` is exactly the
+``x_t = (1-sigma)*x0 + sigma*eps`` the velocity
+``v = (x_t - x0)/sigma = eps - x0`` is exactly the
 diffusers rectified-flow convention SD3/Flux/Wan already use. So we wrap Echo's
 **video** transformer as a standard flow-matching policy and drive it through the
 shared diffusion executor / GRPO replay machinery unchanged.
@@ -13,7 +14,7 @@ This is single-shot, video-only — ``forward_step`` calls Echo with
 ``noisy_audio=None`` and no memory.
 
 The released checkpoint is DMD-distilled for ~8-step sampling, but the velocity
-field is defined at every σ, so flow-matching SDE sampling for RL is well-posed
+field is defined at every sigma, so flow-matching SDE sampling for RL is well-posed
 (the same regime flow-GRPO already runs).
 """
 
@@ -77,7 +78,7 @@ class EchoSamplingState:
     documented ``latents`` / ``timesteps`` / ``scheduler`` contract.
 
     ``timesteps`` are flow-matching scheduler timesteps in ``[0, num_train]`` (the
-    executor reads them per step); ``forward_step`` derives σ = t/num_train. In
+    executor reads them per step); ``forward_step`` derives sigma = t/num_train. In
     replay ``scheduler`` is None (the evaluator owns its own scheduler).
     """
 
@@ -86,7 +87,7 @@ class EchoSamplingState:
     scheduler: Any                 # FlowMatchEulerDiscreteScheduler | None (replay)
     video_context: torch.Tensor    # Gemma text context [B, S, 4096]
     attention_mask: Any            # text padding mask [B, S] or None
-    num_train_timesteps: int       # σ = t / num_train_timesteps
+    num_train_timesteps: int       # sigma = t / num_train_timesteps
     guidance_scale: float
 
 
@@ -248,10 +249,10 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
             with_video_encoder=False,
         )
         # Echo ships a bespoke DMD few-step sampler, but for RL we drive its
-        # velocity field with the standard flow-matching SDE (σ schedule +
+        # velocity field with the standard flow-matching SDE (sigma schedule +
         # sde_step_with_logprob), same as the other diffusion families.
         # num_train_timesteps=1000 is Echo/LTX's train-time discretization:
-        # forward_step derives σ = t / num_train_timesteps, so this must match the
+        # forward_step derives sigma = t / num_train_timesteps, so this must match the
         # value the transformer's timestep embedding was trained on, not a free knob.
         scheduler = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000)
         return cls(
@@ -294,7 +295,7 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
         encoded: dict[str, Any],
         **kwargs: Any,
     ) -> EchoSamplingState:
-        """Build initial flow-matching noise latents + the σ schedule."""
+        """Build initial flow-matching noise latents + the sigma schedule."""
 
         del kwargs
         device = self.device
@@ -346,7 +347,7 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
         """One Echo velocity forward: predict x0, convert to flow-matching velocity.
 
         Echo returns x0; the executor/evaluator both consume a velocity
-        ``noise_pred`` (rectified-flow ``v = (x_t - x0)/σ``). σ is derived from the
+        ``noise_pred`` (rectified-flow ``v = (x_t - x0)/sigma``). sigma is derived from the
         flow-match timestep so rollout and replay agree without sharing scheduler
         state.
         """
@@ -355,7 +356,7 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
         latents = state.latents.to(td)
         t = state.timesteps[step_idx]
         sigma = _sigma_from_timestep(t, state.num_train_timesteps, latents)
-        # Echo's wrapper takes σ directly (its Modality.sigma), broadcast per batch.
+        # Echo's wrapper takes sigma directly (its Modality.sigma), broadcast per batch.
         echo_sigma = sigma.reshape(-1).to(td)
         if echo_sigma.numel() == 1:
             echo_sigma = echo_sigma.expand(latents.shape[0])
@@ -373,7 +374,7 @@ class EchoModel(LoraModelMixin, DiffusionModelBase):
             timestep=echo_sigma,
             noisy_audio=None,
         )
-        # v = (x_t - x0) / σ, in fp32 for the downstream SDE log-prob math.
+        # v = (x_t - x0) / sigma, in fp32 for the downstream SDE log-prob math.
         sigma_b = sigma.float().reshape(-1, *[1] * (latents.dim() - 1))
         velocity = (latents.float() - x0.float()) / sigma_b
         return {"noise_pred": velocity}
@@ -435,7 +436,7 @@ def _sigma_from_timestep(
     num_train_timesteps: int,
     like: torch.Tensor,
 ) -> torch.Tensor:
-    """Flow-match timestep → σ ∈ (0, 1]; guards σ=0 (velocity undefined there)."""
+    """Flow-match timestep -> sigma in (0, 1]; guards sigma=0."""
 
     sigma = torch.as_tensor(t, device=like.device, dtype=torch.float32) / float(num_train_timesteps)
     return sigma.clamp_min(1e-6)
