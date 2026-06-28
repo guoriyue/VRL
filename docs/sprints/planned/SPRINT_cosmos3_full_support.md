@@ -1,12 +1,29 @@
 # SPRINT: Cosmos3 Vision Generator — RL via the diffusion seam
 
-状态：**planned（2026-06-28）**。范围：**只做 Cosmos3 的 vision 生成器**（`vrl/models/diffusion/cosmos/cosmos3/`），让它能进本仓库的 diffusion seam 被 RL 训练。本仓先落 registry/family skeleton + 已验证契约；权重加载和 RL run-verify 需要有多卡 + 网络通的机器。
+状态：**blocked / run-verify-gated（2026-06-28）**。范围：**只做 Cosmos3 的 vision 生成器**（`vrl/models/diffusion/cosmos/cosmos3/`），让它能进本仓库的 diffusion seam 被 RL 训练。本仓先落 registry/family skeleton + 已验证契约；权重加载和 RL run-verify 需要有多卡 + 网络通的机器。
 
 > **reasoner-judge 已单独 ship**（`reward: add cosmos3 reasoner judge`）：`vrl/rewards/models/cosmos3_reasoner_reward.py` + config + 注册 + 测试。它是 VLM 裁判（视频→分数），属 reward seam，**不在本 sprint**。本 sprint 只管"生成视频"的那半。
 
 ## 0. 一句话
 
 Cosmos3（`model_type="cosmos3_omni"`）的生成器是一个 **diffusion MoT**（Mixture-of-Transformers）。它**已经是 diffusers 格式、可加载**——之前"被 diffusers 永久卡死"是错的，真相是**唯一硬阻塞 = diffusers 版本**（类在 git-main，不在装的 0.37.1），且**不需要 NVIDIA 原生 cosmos-rl 代码**。要支持它 = 新建一个 `cosmos3` diffusion family（包住 diffusers 的 `Cosmos3OmniDiffusersPipeline`）+ 复用现有 `flow_grpo` 算 logprob。
+
+## 0.1 Readiness verdict（2026-06-28）
+
+**不能移到 `done/`。** 这个 sprint 的结论是"已落 skeleton，未过 run-verify gate"。
+
+已完成：
+- reasoner-judge 已单独提交并推送；它属于 reward seam，不属于本生成器 sprint 的 done gate。
+- MR0 contract/probe 已跑出明确结论：Cosmos3-Nano 是 diffusers-format MoT，当前仓库环境缺少 git-main 的 `Cosmos3OmniDiffusersPipeline`。
+- `cosmos3` registry/family skeleton 已提交并通过 CPU/registry/config 级验证。
+
+未完成的 done gate：
+- MR1：需要 diffusers git-main/vendor 后 `Cosmos3OmniDiffusersPipeline.from_pretrained(...)` 真实 load，并产出 T2V clip。
+- MR2：需要 family executor 真产出 T2V clip，证明 `packed_static` 装配正确。
+- MR3：需要 first-step logprob diff≈0，证明 generator RL-eligible。
+- MR4：需要 LoRA RL run 满足 clip_fraction>0、artifact 连贯、eval reward >2σ。
+
+因此它继续留在 `docs/sprints/planned/`，状态是 `blocked / run-verify-gated`；只有 MR0 和 MR2 skeleton 已经落地。
 
 ## 1. 权威事实（已读源 / 已实测，非推断）
 
