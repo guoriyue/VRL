@@ -1,0 +1,25 @@
+# Cosmos3-Nano Omni vision generator for flow-matching GRPO RL.
+# Strictly batch=1: Cosmos3OmniPipeline packs one sample at a time, so the chunk
+# executor pins sample_batch_size=1 (runtime.py). 16B => single-card LoRA smoke
+# only; a trustworthy curve needs multi-GPU FSDP2.
+# REQUIRES diffusers with Cosmos3OmniPipeline (git-main+, not 0.37.1).
+model:
+  family: cosmos3
+  path: nvidia/Cosmos3-Nano
+  use_lora: true
+  lora:
+    rank: 32
+    alpha: 64
+    target_modules:
+      - to_q
+      - to_k
+      - to_v
+      - to_out.0
+      - ff.net.0.proj
+      - ff.net.2
+  memory:
+    vae_decode:
+      tiling: true
+  torch_compile:
+    enable: false
+    mode: default

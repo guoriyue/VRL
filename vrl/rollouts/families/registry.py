@@ -243,6 +243,26 @@ register_rollout_family(
 
 register_rollout_family(
     _diffusion_entry(
+        family="cosmos3",
+        task="t2v",
+        aliases=("cosmos3_omni", "cosmos_omni"),
+        executor_cls="vrl.models.diffusion.cosmos.cosmos3.runtime:Cosmos3ChunkExecutor",
+        runtime_builder=(
+            "vrl.models.diffusion.cosmos.cosmos3.runtime:"
+            "build_cosmos3_runtime_bundle"
+        ),
+        runtime_spec_extractor=(
+            "vrl.models.diffusion.cosmos.cosmos3.runtime:"
+            "extract_cosmos3_runtime_spec"
+        ),
+        request_prefix="cosmos3",
+        default_task_type="text_to_video",
+        supports_reference_conditioning=False,
+    ),
+)
+
+register_rollout_family(
+    _diffusion_entry(
         family="cosmos-predict2-anima",
         task="t2i",
         aliases=("anima", "cosmos_anima"),

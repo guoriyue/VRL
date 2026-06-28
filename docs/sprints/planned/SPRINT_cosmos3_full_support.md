@@ -1,156 +1,128 @@
-# SPRINT: Cosmos3 全量支持 — reasoner(judge)+ generator(policy)双塔，按 MR 拆分
+# SPRINT: Cosmos3 Vision Generator — RL via the diffusion seam
 
-状态：**planned（2026-06-27）**。性质：**模型支持执行计划 + 架构边界决策**。承接 `SPRINT_physical_ai_model_support.md`（Cosmos3 Tier-1 probe），并用 NVIDIA 自家的 `~/Desktop/cosmos-rl` 作权威蓝本，把"能不能训"从推断升级为**有参考实现的可执行拆分**。实现落在**另一个 repo**，本 sprint 是设计 + MR 边界 + 契约。
+状态：**planned（2026-06-28）**。范围：**只做 Cosmos3 的 vision 生成器**（`vrl/models/diffusion/cosmos/cosmos3/`），让它能进本仓库的 diffusion seam 被 RL 训练。本仓先落 registry/family skeleton + 已验证契约；权重加载和 RL run-verify 需要有多卡 + 网络通的机器。
+
+> **reasoner-judge 已单独 ship**（`reward: add cosmos3 reasoner judge`）：`vrl/rewards/models/cosmos3_reasoner_reward.py` + config + 注册 + 测试。它是 VLM 裁判（视频→分数），属 reward seam，**不在本 sprint**。本 sprint 只管"生成视频"的那半。
 
 ## 0. 一句话
 
-Cosmos3（`model_type="cosmos3_omni"`）是统一 omni 模型 = **AR reasoner（视觉→文本理解）+ diffusion generator（→图/视频/音/动作）+ audio + action 塔**。两塔在 RL 回路里角色不同、解锁状态不同，所以**两塔都接，但按 MR 分期**：
+Cosmos3（`model_type="cosmos3_omni"`）的生成器是一个 **diffusion MoT**（Mixture-of-Transformers）。它**已经是 diffusers 格式、可加载**——之前"被 diffusers 永久卡死"是错的，真相是**唯一硬阻塞 = diffusers 版本**（类在 git-main，不在装的 0.37.1），且**不需要 NVIDIA 原生 cosmos-rl 代码**。要支持它 = 新建一个 `cosmos3` diffusion family（包住 diffusers 的 `Cosmos3OmniDiffusersPipeline`）+ 复用现有 `flow_grpo` 算 logprob。
 
-```text
-diffusion generator  ->  被 RL 训练的 policy   ->  diffusion seam（复用 flow_grpo / Predict2）
-AR reasoner          ->  reward/judge + 理解服务 ->  reward-model seam（仿 Kling，vLLM 服务）
-audio / action 塔     ->  本 sprint 非目标，track only（action 走 VLA/Env seam）
+## 1. 权威事实（已读源 / 已实测，非推断）
+
+### 1.1 生成器 = diffusers 格式的 MoT（实测确认）
+
+- `nvidia/Cosmos3-Nano` 的 checkpoint **本就是 diffusers 格式**：`transformer/`(7 分片) + `vae/`(Wan2.2-TI2V, z_dim=48) + `scheduler/`(UniPCMultistep, flow_shift=10) + `model_index.json`(pipeline=`Cosmos3OmniDiffusersPipeline`)，还附 `example_t2v_diffusers_output.mp4`。
+- 生成器类 `Cosmos3OmniTransformer` + pipeline `Cosmos3OmniDiffusersPipeline` **在 diffusers git-main**（实测 `from_config()` 实例化 = **15.17B 参数**），**不在装的 0.37.1**。**不能**塞进旧的 `CosmosTransformer3DModel`（config `model_type=qwen3_vl_text`/`use_moe`/`unified_3d_mrope` 不兼容）。
+- 架构 = **MoT，不是路由 MoE**：一个 transformer，Qwen3-VL 因果 reasoner 流 + 双向 diffusion 生成流，共享 joint attention 但每层**分开的参数集**；`_moe_gen` key = 生成流权重（`use_moe=true` 选它）。Nano 16B = 8B reasoner + 8B generator。flow-matching DiT，无独立 text encoder。
+
+### 1.2 forward 不是干净的扩散 DiT（MR2 真实难点）
+
+实测 `Cosmos3OmniTransformer.forward`：
 ```
+forward(input_ids, text_indexes, position_ids, und_len, sequence_length,
+        vision_tokens[], vision_sequence_indexes, vision_timesteps, vision_noisy_frame_indexes,
+        sound_*, action_*) -> (preds_vision, preds_sound, preds_action)
+```
+text/vision/sound/action 交错成一个联合序列。denoise 蓝本（`pipeline_cosmos3_omni.py:1618-1744`）：每步 `vision_timesteps=full(timestep)` + splice `vision_tokens=[latents]` → `transformer(**cond_pack,...)` 得 `preds_vision`(velocity) → `_mask_velocity_predictions` → CFG 合成 → `scheduler.step`。
+- ⚠️ **核心工作量**：cond/uncond 的 `packed_static`（text/vision segment + MRoPE `position_ids` 拼接 + `vision_sequence_indexes` 等）是**写在 pipeline `__call__` 内联的 ~100 行，不是可复用方法**。MR2 要么把它重构成 `_assemble_packed_static` 复用，要么复刻（bug 面大）——**必须 run-verify，不能 import-only 当完成**。
 
-**核心修正（相对上一版）**：生成器**不是**被 diffusers 永久卡死。diffusers 没有 Cosmos3 pipeline 是真的，但 **NVIDIA 原生 `cosmos-rl` 已经有完整的"生成器 denoise + 每步可复算 logprob + GRPO"实现**——所以 generator RL 的路径是"移植已知契约"，不是"探索是否可能"。
+### 1.3 logprob = 复用现有 flow_grpo，不是新算法
 
-## 1. 权威事实（已读源，非推断）
-
-### 1.1 生成器 = diffusion DiT（cosmos-rl 确认）
-
-- 网络：`MinimalV1LVGDiT`（DiT + AdaLN + LoRA），`cosmos-rl/cosmos_rl/policy/model/wfm/networks/minimal_v1_lvg_dit.py`。
-- denoise：EDM / Rectified-Flow 预条件（`c_skip/c_out/c_in/c_noise`），`x0_pred = c_skip*x_t + c_out*net(...)`，`t2v_model.py:1298-1343`。**不是自回归。**
-- forward 签名 `denoise(x_t, sigma, condition: T2VCondition)`——**standalone DiT**。
-
-### 1.2 generator 与 reasoner/conditioner 解耦（关键，解掉 MoT 风险）
-
-- conditioner（含 `qwen_omni` 文本编码器）**不可训练**：`assert sum(p.requires_grad for p in conditioner.parameters()) == 0`（`t2v_model.py:248`）。
-- generator 只吃 `condition` object（embeddings/tokens），**不在架构层 fuse**。→ **可以单独 forward 生成器**，不需要跑整个 omni。`qwen_omni` 只是可选的 online 文本编码器（`compute_online=True` 才加载）。
-
-### 1.3 RL logprob 契约（cosmos-rl 的核心，可直接复用）
-
-每个 denoise step 是一个高斯转移 `x_{t-1} = μ(x_t,σ_t) + std·ε`，policy-gradient 的 ratio 来自**当前策略均值 μ_θ vs 参考均值 μ_ref 的高斯似然比**（`wfm_trainer.py:464-490`）：
-
+每个 denoise step 是高斯转移 `x_{t-1}=μ(x_t,σ)+std·ε`，policy-gradient 的 ratio = 当前策略均值 μ_θ vs 参考均值 μ_ref 的高斯似然比：
 ```text
-μ_θ   = get_mu_from_model(x0_fn_θ,   x_t, σ_t, σ_next, cond)   # 当前策略走一步 solver
-μ_ref = rollout 时存下的 mu_old                                  # 参考策略（frozen net_ref）
 log_prob_ratio = -( ||x_sample-μ_θ||² - ||x_sample-μ_ref||² ) / (2·σ_next²·(η²+2η))
-ratio = exp(mean(log_prob_ratio))         # p_θ / p_ref
-loss  = max(-A·ratio, -clip(ratio,1±ε)·A) + kl_beta·KL + data_beta·SFT
 ```
+- **这就是仓库已有的 `vrl/algorithms/flow_matching.sde_step_with_logprob`（DanceGRPO/Flow-GRPO 同构）**，而且**是 executor（不是 model）在调它**；Cosmos3 是 flow-matching 同族，executor 在 collect 时已自动用带 logprob 的 SDE 替换确定性 UniPC。→ MR3 只把 Cosmos 的 scaling/solver 喂进去，**不写新算法**。
+- 数学参考实现：NVIDIA `~/Desktop/cosmos-rl/cosmos_rl/policy/trainer/wfm_trainer.py:464-490`（注意它是 **Predict2.5 的 WFM** 不是 Cosmos3，只借 logprob 公式）。⚠️ **移植坑**：cosmos-rl 把方差归一化 `/(2·std²)` 注释掉了（`:486` TODO），**用归一化的正确式，别照搬 bug**。
 
-- η 来自 `s_churn/(sample_steps+1)`（EDM 随机性），`std = σ_next·√(η²+2η)·s_noise`。
-- **这就是 VRL 已有的 `vrl/algorithms/flow_matching.sde_step_with_logprob`(DanceGRPO/Flow-GRPO)同构**——P3 不需要新算法，只需把 Cosmos 的 scaling/solver 喂进去。
-- 参考模型 `net_ref` 每 16 iter 刷新；`train_on=[0..7]` 选哪些 step 训练；轨迹存 `{noise_x, sigma, sigma_next, mu_old, sample, x0_pred}`。
-- ⚠️ **移植坑**：cosmos-rl 当前把方差归一化 `/(2·std²)` 注释掉了（`wfm_trainer.py:486` TODO），用的是未归一化的 `-(diff_current-diff_old)`。移植时**用归一化的正确式**，别照搬 bug。
+### 1.4 模型与规模
 
-### 1.4 reasoner = Qwen3-VL（vLLM 已支持）
+- HF：`nvidia/Cosmos3-Nano`(16B) / `Cosmos3-Super`(64B) 等。
+- 15.17B bf16 ≈ 30GB 权重 → **单卡 32GB 训练 forward 装不下**（推理需 sequential CPU offload，RAM 够但慢）；**可信 RL 曲线必须多卡 FSDP2**（本仓库 online FSDP2 仍 gated）。generator RL 单卡只能 LoRA smoke。
 
-- `vllm/model_executor/models/cosmos3.py` = `Cosmos3ForConditionalGeneration(Qwen3VLForConditionalGeneration)`，WeightsMapper **drop 生成塔/audio/action，只留 "Reasoner-only part"**。所以 reasoner 服务可直接用 vLLM。
-- config `cosmos3_omni`（`vllm/transformers_utils/configs/cosmos3.py`）。
+### 1.5 MR0 实测确认（diffusers@main, 2026-06-27/28）
 
-### 1.5 模型与规模
+装 diffusers@main(0.39.0.dev0)到一次性 venv（复用基础 torch 2.11/transformers 4.57.6）实测：
+- ✅ `Cosmos3OmniTransformer.from_config()` = 15.17B（只下 config，不下权重）。
+- ✅ **diffusers@main 向后兼容**：现有 cosmos2/wan/predict2 + 已 ship 的 reasoner judge 在 0.39 下导入+测试全过；唯一报错（`tests/models/interfaces` echo 注册）在 0.37.1 下一模一样，是预先存在缺口 → **升级 diffusers 安全**。
+- 🧱 **本机下载墙**：Cosmos3-Nano 16B 下到 6/7 分片（33GB）后，最后一个 transformer 分片被 HF xet/CDN 连接重置死死卡住（试遍 xet/非xet/单文件/hf_transfer 都冻在 ~88%）→ 本机加载不了、MR1+ 跑不了。换网络/换机器即可。
 
-- HF 真实存在：`nvidia/Cosmos3-Nano`(16B)、`Cosmos3-Super`(64B)、`Cosmos3-Super-Text2Image/Image2Video`、`Cosmos3-Nano-Policy-DROID`。
-- 16B → 单卡 32GB **full-param 必 OOM**；generator RL 只能 LoRA（AdaLN-LoRA 是原生支持）或多卡 FSDP（`SPRINT_multi_gpu_training`）。
-
-## 2. MR 拆分 + 依赖 DAG
+## 2. MR 拆分（生成器线）
 
 ```text
-MR0 (contract probe) ──┬──> MR1 (reasoner-judge)            [独立，已解锁]
-                       └──> MR2 (generator adapter) ──> MR3 (diffusion family) ──> MR4 (generator RL run)
-                                                                                   MR5 (action/audio) = 非目标/track
+MR0 (probe) ✅done → MR1 (bump diffusers + load) → MR2 (cosmos3 family) → MR3 (logprob recipe) → MR4 (LoRA RL run)
+                                                                                  audio/action = 非目标
 ```
 
-reasoner 线(MR1)与 generator 线(MR2→4)**并行独立**，只共享 MR0 的盘点。
+### MR0 — 契约盘点（✅ 已完成 + run-verified）
 
-### MR0 — 契约盘点（probe，不训练）
+- `vrl/scripts/eval/cosmos3_nano_generator_probe.py`（已内联 model id，跑出 decision note）。
+- 实测：generator 从 config 实例化 15.17B、forward 签名读出、denoise 蓝本读出、pack 装配难点定位、diffusers@main 兼容性确认。见 §1.1-1.5。
 
-- 刷新 `cosmos3_nano_generator_probe.py` / `cosmos3_nano_policy_droid_probe.py` 的 decision note。
-- 对 `nvidia/Cosmos3-Nano` 实测：组件图（reasoner/generator/vae/conditioner/media-tokenizer）、generator 是否能 `denoise(x_t,σ,cond)` 单独 forward（按 §1.2 预期 yes）、scheduler 暴露的 σ 序列。
-- 把 `support_matrix.py` 的 `cosmos3_nano.logprob` 从 `unknown` 落定为 `gaussian_step_ratio`（按 §1.3）。
-- **验收**：两塔 component graph + tensor/logprob 契约写清；负结果也算交付。**KILL**：若 Cosmos3-Nano 的 generator 与 reasoner 真的架构级 fuse、无法单独 forward（与 cosmos-rl WFM 不同）→ 记录并把 generator 线降级为"只用 cosmos-rl 原生训练，不进本仓库 seam"。
+### MR1 — 升 diffusers + 加载生成器
 
-### MR1 — Reasoner-as-judge（已解锁，先拿价值）
+- `pyproject.toml` 把 diffusers pin 到含 Cosmos3 的 git-main commit（或 vendor `transformer_cosmos3.py` + `pipeline_cosmos3_omni.py` 两个模块，避免全量升级）。
+- **gate**：`Cosmos3OmniDiffusersPipeline.from_pretrained(...)` 在多卡/offload 上 load（bf16 only），跑出一个非 RL 的 T2V clip。
+- **blocker**：①本机下载墙（§1.5）→ 换机器；②git-main pin 与仓库 pin 的 transformers/torch 兼容性 → 按"verify against declared deps"在 clean install 上验。
 
-把 Cosmos3 reasoner 接成 video reward，仿 `kling_video_reward`：
+### MR2 — `cosmos3` diffusion family（核心工作量）
 
-- 新增 `vrl/rewards/models/cosmos3_reasoner_reward.py`（`RewardModel` 子类）：vLLM 起 `Cosmos3ForConditionalGeneration` 服务（参考 `vllm_omni_diffusion_profile.py` 的 vLLM 用法）或 HF Qwen3-VL；prompt 模板 + 视频 artifact → 结构化分数（task_success / contact_realism / temporal_consistency / physical_plausibility）。
-- 新增 `configs/reward/cosmos3_reasoner.yaml`（仿 kling：`reward_name` + `worker_config`，`execution: pool`）。
-- **复用** `RewardInferenceArtifact` 落盘 mp4 + pool execution，不改 transport 边界。
-- **验收（discrimination probe，data-factory §2）**：reward 能区分 real / good-gen / bad-gen / perturbed-negative，AUC>0.7 才当主 reward；否则当 guard。
+新建 `vrl/models/diffusion/cosmos/cosmos3/{model,runner,runtime}.py`，**包住 diffusers 的 `Cosmos3OmniDiffusersPipeline`**（像 predict2 包 `Cosmos2VideoToWorldPipeline`）：
+- `model.py`：`Cosmos3Model(DiffusionModelBase)` + `Cosmos3SamplingState`。`from_spec` 载 pipeline；`encode_prompt` 走 pipeline 的 tokenization 出 input_ids；`prepare_sampling` 建 **cond/uncond `packed_static`**（§1.2 的难点：把 pipeline `__call__` 内联的 pack 装配抽出来复用）；`forward_step` 每步 splice `vision_timesteps`+latents → `transformer(**pack)` → `preds_vision`(velocity)，返回 `{noise_pred, noise_pred_cond, noise_pred_uncond}`，CFG+logprob 交给 executor。
+- `register_rollout_family(family="cosmos3", diffusion 分支)`（`vrl/rollouts/families/registry.py`）+ `configs/model/diffusion/cosmos/cosmos3_nano.yaml`。
+- **复用**：`DiffusionModelBase`、executor SDE-logprob 循环（`vrl/generation/diffusion/executor.py`）、loader、gatherer、CFG caller。
+- **gate**：family executor 出一个非 RL T2V clip（与 MR1 pipeline 输出一致）。
 
-### MR2 — Generator 访问 adapter（KILL-RISK gate）
+### MR3 — logprob 接线 + train recipe
 
-把原生生成器的 denoise + 每步 logprob 暴露成可训练句柄（**移植 cosmos-rl 契约**，§1.3）：
+- `forward_step` 返回的 velocity 喂 `vrl/algorithms/flow_matching.sde_step_with_logprob`（§1.3，executor 已在调）；配好 Cosmos3 的 scaling/solver（UniPC flow_shift=10）。
+- `configs/experiment/diffusion/cosmos3/online_grpo_t2v.yaml` + train entry。
+- **gate**：old-vs-new denoise logprob 复算一致（first-step diff≈0，同 Predict2 判据）。
 
-- 句柄 1：`denoise_step(x_t, σ_t, σ_next, cond) -> (mu, std)`（= cosmos-rl `get_mu_from_model` + `rl_update_step_fn`）。
-- 句柄 2：scheduler 的 `σ` 序列 + solver（2ab / RK），使 ratio 可复算。
-- 句柄 3：可挂 LoRA / 可 backward 的 `net`（AdaLN-LoRA 原生支持）。
-- 验证：first-step log-prob diff ≈ 0（训推一致，同 Predict2 判据）。
-- **KILL 条件**（命中即停）：generator 只暴露 server-level API、σ 序列不可得、或 step 非高斯可复算 → generator RL 不接本仓库，只在 cosmos-rl 原生跑。
+### MR4 — LoRA RL run
 
-### MR3 — Generator diffusion family（gated on MR2）
+- 16B → **LoRA 优先**（单卡 smoke）；可信曲线走多卡 FSDP2。
+- 数据：机器人 per-sample reference（复用 `video_world_v2w`，见 data-factory sprint）。reward：已 ship 的 Cosmos3 reasoner-judge 或 Kling 过渡。
+- **gate**：clip_fraction>0、first-step logprob diff≈0、生成 artifact **肉眼**连贯（480p 教训：neighbor-diff 统计骗人，必须看）、eval reward >2σ 才算"学到"。
 
-接入 VRL diffusion seam，**复用 flow_grpo**：
+### 非目标
 
-- `vrl/models/diffusion/cosmos3/{model,runner,runtime}.py`：`encode_conditioning`(走 reasoner/text-encoder 出 condition)/`prepare_sampling`/`forward_step`/`sde_logprob`（直接调 `vrl/algorithms/flow_matching`，喂 Cosmos 的 c_skip/c_out/c_in/c_noise + solver）。
-- `register_rollout_family(...)`（`vrl/rollouts/families/registry.py`），family=`cosmos3`，diffusion 分支。
-- `configs/model/diffusion/cosmos3/nano.yaml`、`configs/experiment/diffusion/cosmos3/online_grpo_*.yaml`。
-- 配置对齐 cosmos-rl 默认：`sample_steps≈10`、`num_rollout=8`、`clip_ratio=1e-4`、`kl_beta=0.01`、resolution 480、latent `state_t=24/state_ch=16`、solver `2ab`。
+audio / action 塔不做；action 走 `SPRINT_physical_ai_model_support.md` 的 VLA/Env seam。Super 64B 只 track。不在单卡硬上 full-param 16B。
 
-### MR4 — Generator RL run（gated on MR3）
-
-- 16B → **LoRA 优先**（单卡可行性 smoke）；full-param 等多卡 FSDP（cosmos-rl 用 FSDP+CP+TP）。
-- 数据：机器人 per-sample reference（复用 `video_world_v2w`，见 data-factory sprint）。
-- reward：MR1 的 Cosmos3-reasoner judge（或 Kling 过渡）。
-- **验收**：clip_fraction>0、first-step logprob diff≈0、生成 artifact **肉眼**连贯（参考 480p 教训：neighbor-diff 统计骗人，必须看）、eval reward >2σ 才算"学到"。
-
-### MR5 — action / audio 塔（非目标）
-
-track only。action 走 `SPRINT_physical_ai_model_support.md` 的 VLA/Env seam，不塞进 diffusion。
-
-## 3. 工程落点（按 MR）
+## 3. 工程落点
 
 | MR | 路径 | 复用/参考 |
 |---|---|---|
-| MR0 | 扩 `vrl/scripts/eval/cosmos3_nano_generator_probe.py`；落定 `vrl/models/support_matrix.py` logprob | — |
-| MR1 | `vrl/rewards/models/cosmos3_reasoner_reward.py`、`configs/reward/cosmos3_reasoner.yaml` | `kling_video_reward.py`、vLLM `cosmos3.py` |
-| MR2 | generator adapter（另 repo 的 native 封装层） | cosmos-rl `wfm/models/t2v_model.py`、`trainer/wfm_trainer.py:405-634` |
-| MR3 | `vrl/models/diffusion/cosmos3/{model,runner,runtime}.py`、registry entry、configs | `vrl/models/diffusion/cosmos/predict2/*`、`vrl/algorithms/flow_matching` |
-| MR4 | `configs/experiment/diffusion/cosmos3/*` | data-factory `video_world_v2w` |
+| MR1 | `pyproject.toml`(diffusers pin / vendor 模块) | diffusers `transformer_cosmos3.py`/`pipeline_cosmos3_omni.py` |
+| MR2 | `vrl/models/diffusion/cosmos/cosmos3/{model,runner,runtime}.py`、registry、`configs/model/diffusion/cosmos/cosmos3_nano.yaml` | `vrl/models/diffusion/cosmos/predict2/*`、diffusers `Cosmos3OmniDiffusersPipeline` |
+| MR3 | `configs/experiment/diffusion/cosmos3/*`、train entry | `vrl/algorithms/flow_matching`、`vrl/generation/diffusion/executor.py` |
+| MR4 | experiment config | data-factory `video_world_v2w` |
 
-**保持不变**：Predict2/2.5/Wan/Echo diffusion seam 不动；reward transport 不动；reasoner 不塞进 AR 图像生成家族（它是 VLM）；不用 vLLM cosmos3.py 当 generator 参考（它 drop 了生成塔）。
+**保持不变**：Predict2/2.5/Wan/Echo diffusion seam 不动；executor SDE-logprob 循环不动。
 
-## 4. 全局验收
+## 4. 验收
 
-- **MR1**：reasoner-judge 对机器人视频出可区分结构化分数（AUC>0.7）。**这一条独立可交付，不依赖 generator。**
-- **MR2**：拿到可训练 denoiser + 可复算高斯-step logprob（first-step diff≈0），或明确 KILL 并记录。
-- **MR3/4**（若 MR2 过）：clip_fraction>0 + 生成连贯 + eval reward >2σ。
-- 16B 资源边界写清：单卡只能 LoRA/judge-only，full-param 需多卡。
+- **MR1**：pipeline 在目标机器上 load + 出 T2V clip。
+- **MR2**：cosmos3 family executor 出 T2V clip（pack 装配正确）。
+- **MR3**：logprob 复算一致（first-step diff≈0）→ generator RL-eligible。
+- **MR4**：clip_fraction>0 + 生成连贯 + eval reward >2σ（多卡）。
 
-## 5. 非目标
-
-- 不把 reasoner 接成 AR 图像生成家族（它是视觉→文本 VLM）。
-- 不用 vLLM cosmos3.py 当 generator 参考。
-- MR2 契约未过前不接 generator 训练（不伪造 logprob，verl 训推一致铁律）。
-- 不照搬 cosmos-rl 的未归一化 logprob bug（§1.3）。
-- 不做 audio/action 训练；不上 Super 64B 训练；不为 16B full-param 单卡硬上。
-
-## 6. 风险
+## 5. 风险
 
 | 风险 | 处理 |
 |---|---|
-| Cosmos3 generator 与 cosmos-rl WFM 结构不同、真 MoT fuse | MR0 KILL gate 探明；不可单独 forward 则只用 cosmos-rl 原生 + 本仓库只接 reasoner |
-| 16B 单卡 OOM | LoRA + judge-only 先行；full-param gated 多卡 FSDP |
-| reasoner judge 被 hack（看似对、物理错） | discrimination probe + 多 lens；judge 只当 reward 之一 |
-| logprob 方差归一化错（照搬 cosmos-rl TODO） | 用 §1.3 归一化式 + first-step diff≈0 验 |
-| generator 训练需 CP/TP 才能放下激活 | 对齐 cosmos-rl 的 FSDP+CP；先小 shape/LoRA smoke |
+| diffusers git-main pin 破坏现有 pin 的 transformers/torch | clean-install 验；或 vendor 两个模块而非全量升级 |
+| pack 装配（§1.2）复刻出错 | 优先把 pipeline `__call__` 重构出 `_assemble_packed_static` 复用，别手抄；run-verify |
+| 16B 单卡装不下 | LoRA smoke 先行；可信曲线 gated 多卡 FSDP2 |
+| 本机下载墙 | 换网络/换目标多卡机器下载 |
+| 照搬 cosmos-rl 未归一化 logprob bug | 用 §1.3 归一化式 + first-step diff≈0 验 |
 
-## 7. 参考
+## 6. 参考
 
-- **权威蓝本（generator RL 契约）**：`~/Desktop/cosmos-rl/cosmos_rl/policy/model/wfm/`（`models/t2v_model.py`、`networks/minimal_v1_lvg_dit.py`、`networks/vlm_qwen/qwen_omni.py`）、`cosmos_rl/policy/trainer/wfm_trainer.py:405-634`(logprob+GRPO)、`cosmos_rl/policy/config`(RLConfig)
-- **reasoner 服务参考**：`~/Desktop/vllm/vllm/model_executor/models/cosmos3.py`、`transformers_utils/configs/cosmos3.py`
-- **本仓库复用**：`vrl/algorithms/flow_matching`(sde_step_with_logprob)、`vrl/models/diffusion/cosmos/predict2/*`、`vrl/rewards/models/kling_video_reward.py`、`vrl/scripts/eval/cosmos3_nano_generator_probe.py`、`vrl/models/support_matrix.py`
-- **承接/下游**：`SPRINT_physical_ai_model_support.md`、`SPRINT_cosmos_robotic_data_factory_domain_rl.md`(reward 缺口)、`SPRINT_multi_gpu_training.md`(16B 多卡)
-- 模型：`nvidia/Cosmos3-Nano`(16B) / `Cosmos3-Super`(64B)，HF collection https://huggingface.co/collections/nvidia/cosmos3
+- diffusers 生成器源（git-main）：`pipelines/cosmos/pipeline_cosmos3_omni.py`、`models/transformers/transformer_cosmos3.py`
+- logprob 数学参考：`~/Desktop/cosmos-rl/cosmos_rl/policy/trainer/wfm_trainer.py:464-490`（Predict2.5 WFM，只借公式）
+- 本仓库复用：`vrl/algorithms/flow_matching`、`vrl/models/diffusion/cosmos/predict2/*`、`vrl/generation/diffusion/executor.py`、`vrl/rollouts/families/registry.py`
+- 探针：`vrl/scripts/eval/cosmos3_nano_generator_probe.py`
+- 承接/下游：`SPRINT_physical_ai_model_support.md`、`SPRINT_cosmos_robotic_data_factory_domain_rl.md`(reward + 数据)、`SPRINT_multi_gpu_training.md`(16B 多卡)
+- 模型：`nvidia/Cosmos3-Nano`(16B)，HF collection https://huggingface.co/collections/nvidia/cosmos3
