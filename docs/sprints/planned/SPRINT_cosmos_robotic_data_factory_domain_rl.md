@@ -168,6 +168,65 @@ Home chores / household manipulation 目标域下一步应该接：
 - 不加没有 detector/label 支撑的空壳 pedestrian/contact reward。
 - 不再接受“本地路径 JSONL bridge”作为公开数据集接入。
 
+## 5.5 引擎/性能确认 + 240p_33f 生成质量陷阱（实测 2026-06-27, RTX 5090 32GB）
+
+在动 audit/reward 之前，先确认**引擎层**：Cosmos Predict2 2B 能在机器人参考数据上端到端跑 RL 管线，且 GPU 跑在健康 compute-bound 区间。**结论分两半：引擎/性能/利用率真实有效；但具体的 240p_33f 配置生成是垃圾、不能用于真训练（见 point 6）——别把“引擎能跑”读成“模型能学”。**
+
+**新增配置**：`configs/experiment/diffusion/cosmos_predict2/online_grpo_v2w_reference_fullparam_240p.yaml`
+= `video_world_v2w`（per_sample 机器人首帧）+ 240p_33f + full-param + 8bit Adam + ppo4。补上了 trustworthy_curve sprint §3.5 标记缺失的“真 reference + full-param”配置。
+
+**工具**（`vrl/scripts/perf/`）：`gpu_preflight`（定标 MFU 分母）+ `video_dit_mfu_probe`（隔离 DiT MFU）+ `gpm_sampler`（NVML GPM SM 级计数器，非 `nvidia-smi` 的“有 kernel 驻留”伪占用）。
+
+### 实测结果
+
+1. **MFU 分母（定标）**：这台 5090 真实 **bf16 dense 峰值 = 231.5 TFLOPS**（不是 vendor 419 fp8/sparse headline）；torch 已 build sm_120；最快 SDPA = flash@187（cuDNN@183，约 5% 内打平）。FA-3 在 Blackwell sm_120 不存在。
+
+2. **隔离 DiT forward MFU**（合成权重，编译后稳态）：cosmos-predict2 2B，frames=8 代表长度下 **eager 76% → torch.compile 93% MFU（216 TFLOPS）**，1.24x 融合收益。attn% 随帧数上升（11%→47%@16f），视频侧唯一剩的无损杠杆是 FA-3（不存在）/ fused AdaLN。`torch_compile` 在模型配置里默认开 → 生产即拿 93%。
+
+3. **端到端训练 SM 占用**（GPM，活跃计算窗口，已剔除 compile 空窗）：rollout denoise 与 training backward 签名高度一致。
+
+   | 阶段 | 采样窗口 | sm_util | sm_occupancy | tensor 占空比 | DRAM 带宽 |
+   |---|---|---|---|---|---|
+   | rollout denoise（8 样本） | 8×约 9s | 约 76% | 约 11% | 约 31% | 约 14% |
+   | training backward | 488s 连续 | **78.0%**（p90 78.9） | 约 12% | 约 31% | 约 17% |
+
+   读法：**SM 约 77% 忙、DRAM 仅约 15%（远非带宽 bound）、非 launch-bound、非空转**。backward 那 488s 窗口 sm_util 纹丝不动（p50 78.1 / p90 78.9，零方差）= 真实持续 GEMM 计算，不是 compile autotuning 抖动。tensor 占空比约 30% 是 video DiT 的 norm/AdaLN/elementwise + grad-ckpt recompute 在 CUDA core 上与 tensor GEMM 串行的已知特征；其唯一无损解（FA-3）在 Blackwell sm_120 不存在 → 这已是该模型在这张卡上的实际性能天花板，与项目 MFU-bound north star 的结论一致。
+
+   **吞吐 vs 效率要分开看**：单步 wall-clock 偏大（rollout 约 130s + backward 约 488s，ppo_epochs=4 → 32 个 full-param microbatch backward，约 15s/个，与 rollout 约 15s/样本同量级）。这个“慢”是**单卡 full-param 2B × ppo4 的规模属性**（要提速靠多卡 FSDP，见 SPRINT_multi_gpu_training），**不是利用率/效率问题**——效率（SM 占用）实测就是好的。首步还额外吃一次性 rollout+backward 的 torch.compile 编译。
+
+4. **训推一致 + 机制健康（正确性）**：一个完整 epoch 跑通并写出 `checkpoint-final/checkpoint.pt`（11.8GB，`uses_lora=false` → full-param 2B 权重+8bit 优化器态）。`metrics.csv` 实测：
+   - `first-step log-prob diff: mean=0.000000`、`logprob_abs_diff_mean=0.0028`、`approx_kl=1.1e-5` → full-param + 8bit Adam + compile **不污染 old_log_prob**，训推一致。
+   - **`clip_fraction=0.52`** → ppo_epochs=4 让 GRPO trust-region clip 真正咬合（ppo=1 会恒 0，flux 验证证实）；`grad_norm=0.035`（full-param 非零梯度）、`advantage` 非塌缩、`group_size=8`、`reward_mean=-4.585`（Kling overall, in-distribution 负尺度）。
+   - 机制层面坐实了 trustworthy_curve P0 的两个判据（full-param 240p_33f 单卡 fit + `clip_fraction>0` 机制活）。**但注意 point 6**：240p_33f 生成是垃圾，所以这个“fit”是个不能用的 shape——P0 的“显存可行”达到了，“可信曲线”反而被 shape 问题挡死，不是数据扩量就能解的。
+
+5. **显存**：rollout 峰值约 17GB；training backward 峰值约 31GB（含一外部进程占 532MiB）。**首跑在编译后的 backward 图处 OOM**（差 32MiB，但有 1.19GB “reserved-but-unallocated” 碎片）——根因是 inductor 编译的 backward 图峰值 > eager，叠加碎片顶破 32GB。**修复 = `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`，已实测证实**：带此 env 的复跑在 run1 OOM 的同一 backward 处稳定顶在 31.2GB 跑过去（不再 OOM）。
+
+   运行处方（单卡 32GB full-param）：
+
+   ```bash
+   CUDA_VISIBLE_DEVICES=0 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True vrl-train \
+     --config experiment/diffusion/cosmos_predict2/online_grpo_v2w_reference_fullparam_240p
+   ```
+
+6. **生成质量在 240p_33f 崩掉（2026-06-27 复核）**：肉眼检查生成的 `reward_artifacts/sample-*.mp4`——**只有 frame 0（被 reference 的 init_latents/cond_indicator 钳住）是连贯的真实机器人场景，frame 4 起全部退化成彩虹噪声**。逐帧 neighbor-diff 统计骗人（彩虹是大色块、空间平滑），必须肉眼看。reward=-4.58 / visual_quality≈-1.5 正是在反映这个垃圾输出。
+   - **根因（已实测坐实，非假设）**：同一套管线在原生 **704p_93f 生成连贯**——单样本检查 `online_grpo_v2w_reference`（704p_93f）肉眼确认是连贯的机器人厨房操作视频（机械臂+物品，93 帧稳定一致），生成耗时约 733s/样本。所以管线/条件/VAE/denoise 都对，**问题纯粹是 240p_33f 对 Cosmos Predict2 2B V2W 严重 OOD**（原生约 704p_93f）。
+   - **含义**：RL 在拿垃圾 rollout 做优化 → 这个配置**不能**用来出可信曲线。**单卡 32GB 的根本矛盾**：能 fit full-param 的 shape（240p_33f）生成是坏的；能正常生成的 shape（704p_93f）full-param 激活又 OOM。要同时“真生成 + full-param”必须上**多卡 FSDP**（见 SPRINT_multi_gpu_training），或退而用 LoRA + 704p_93f（梯度小，project_first_trustworthy_curve 已证推不动）。
+
+7. **降 rollout 时间的杠杆（实测 2026-06-27）**：rollout 是绝对瓶颈（704p 单样本 733s × 8 = 约 98min，远超 backward 488s）。实测各档：
+
+   | 档位 | 1 样本耗时 | token vs 704p | 720p ckpt 生成 |
+   |---|---|---|---|
+   | 704p_93f（原生） | 733s | 1x | 连贯 |
+   | 480p_33f | 约 77s（约 10x 快） | 5.4x 少 | 垃圾 |
+   | 240p_33f | 约 15s | 22x 少 | 垃圾 |
+
+   - **关键耦合**：分辨率提速 = 真实的（480p 约 10x 快），但**降分辨率对 720p checkpoint 是 OOD → 生成垃圾**。要拿这个提速，必须下**官方 480P 2B V2W checkpoint**（832×480 原生，模型卡列为支持变体），不是改 config 就行——shape 和 checkpoint 是绑定的。
+   - **不改分辨率、保 704p 连贯的提速杠杆**（可叠加）：去噪步数 35→20（`20_step_cfg_5_0`，约 1.75x）；关 CFG（`20_step_no_cfg`，约 2x，且对 RL log-prob 更干净）；720P+NATTEN 稀疏注意力变体（砍 attention，Blackwell 无 FA-3 时的替代）；fp8 rollout（`vrl/config/precision.py`，约 1.5-2x，但改 old_log_prob → 必须配 TIS-RS 修正）。
+   - **组合**：480P checkpoint（约 10x）× 20步no-cfg（约 3.5x）≈ 35x → 733s/样本 → 约 20s/样本，单卡 RL 才真正可行。
+   - **采坑记录**：CLI `sampling.video.height=480` 不生效（生成读扁平 `sampling.height`，见 `layout.py:104`）；改 shape 要走 config 的 defaults bucket，并肉眼验生成（统计的 neighbor-diff 对彩虹色块无效）。
+
+**结论（修正后）**：**引擎/性能层就绪，但 240p_33f 这条具体配置不可用于真训练**。成立的：端到端管线打通（rollout→reward→backward→ckpt）、训推一致精确、SM 占用健康（约 77%、DiT 93% MFU、DRAM 非瓶颈，这些与输出好坏无关、测量有效）、expandable_segments 修 OOM。**不成立的**：把这当“cosmos 能学”——240p_33f 生成垃圾。下一步真正的门是**shape**：要么多卡跑 704p_93f full-param，要么找一个该模型生成不崩的最小 shape 再谈 RL。
+
 ## 6. 验证
 
 - `python -m py_compile vrl/scripts/data/video_world.py vrl/scripts/eval/target_video_similarity_probe.py`

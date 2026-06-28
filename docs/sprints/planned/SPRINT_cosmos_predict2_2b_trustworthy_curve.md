@@ -33,6 +33,22 @@ full-param 的障碍是**优化器显存**,不是权重:cosmos 2B 权重 bf16 �
 - `/sampling/video/240p_33f`(416×240, 33 帧,约 512p_93f 的 ~13% token)+ `gradient_checkpointing: true`。
 - cosmos predict2 2B 是 **Video2World**,需 reference image 条件:`model.reference_image=/path/ref.png`(global)或 `cosmos.reference_mode=per_sample`(JSONL 带 reference_image)。
 
+## 3.5 reference image:两种模式服务两个目的,别混（澄清 2026-06-27）
+
+本 sprint 的"可信曲线"和"用参考图生成视频"是**两条不同的线**,reference 模式正好对应:
+
+| 模式 | 数据 | reference image 的角色 | 适用 |
+|---|---|---|---|
+| **`global`** | `drawbench_train_192`(纯文本 prompt) | **占位条件**:一张固定参考帧配 192 条**无关** prompt(参考帧与 prompt 互相矛盾) | **只**用于 P0 显存 smoke + 验证三修复机制;**不是**"按参考图生成"的真演示(§7 已指出信号弱) |
+| **`per_sample`** | `video_world_v2w`(droid 首帧 + 对应任务描述,真实配对) | **真条件**:每条 prompt 自带匹配首帧 | **这才是"rl train cosmos with reference image"的真身** |
+
+**真身路径(per_sample)当前两个阻塞,各自一个 MR:**
+
+1. **数据是 smoke**:`data/external/video_world/manifests/robot_train.jsonl` 只有 **3 train + 1 eval** 行、4 张参考图(`--limit` 小)。3 个 prompt 出不了可信曲线(固定 prompt 集太小,eval 也只有 1 条)。**MR-data**:用现成 importer 扩量 `python -m vrl.scripts.data video-world-bridge --repo-id lerobot/droid_100 --limit N`(首帧+caption 真实配对,参考图存 git 外)。
+2. **没有 full-param 的 per_sample 配置**:现有 `online_grpo_v2w_reference.yaml` 是 **LoRA + 704p_93f**,与本 sprint 的 full-param 240p 论点冲突,且 704p 激活在 32GB 装不下 full-param。**MR-config**:新建 `video_world_v2w(per_sample) + 240p_33f + use_lora:false + optim_8bit + ppo_epochs:4`(=把 §4 的修复栈套到真 reference 数据上)。
+
+**决策**:P0/P1 用 `global`+drawbench 先验机制与显存(reference 占位即可);真正的 reference-image 曲线走 per_sample,但需先落地上面两个 MR。
+
 ## 4. 配置（已写好）
 
 `configs/experiment/diffusion/cosmos_predict2/online_grpo_fullparam_8bit_240p.yaml`:
@@ -64,7 +80,8 @@ algorithm: { clip_ratio: 1.0e-3, kl_coef: 0.0 }
 
 ## 7. 已知坑(记忆)
 
-- Kling reward 是**本地 HF model**(无 API key);global reference 模式"一张固定参考图 + 无关 prompt"信号弱,优先 per_sample 或 `online_grpo_v2w_reference`。
+- Kling reward 是**本地 HF model**(无 API key);global reference 模式"一张固定参考图 + 无关 prompt"信号弱——只拿来跑 P0 显存/机制 smoke,**真曲线走 per_sample**(见 §3.5,先补数据 + full-param 配置,别直接用 LoRA 704p 的 `online_grpo_v2w_reference`,它与本 sprint full-param 240p 论点冲突)。
+- **Kling reward 不读 reference image**(只用 prompt+video 打分):架构上首帧被 `init_latents`/`cond_indicator` 钳死,但后续帧偏离参考图 reward **不惩罚**。若要奖励"与参考图一致",是单独一件事(§8 非目标),不在本 sprint。
 - 别用 wan+OCR(结构性 absorbing-zero 死路)。
 - `sampling.num_steps` 必须 ≥ `rollout.sde.window_range` 上限。
 - 训练 reward_mean 会动但不可信(§6)。
@@ -81,5 +98,6 @@ algorithm: { clip_ratio: 1.0e-3, kl_coef: 0.0 }
 - 配置:`configs/experiment/diffusion/cosmos_predict2/online_grpo_fullparam_8bit_240p.yaml`
 - enabler:`vrl/trainers/online/trainer.py:_create_optimizer`、`vrl/trainers/core/types.py:OptimConfig.optim_8bit`
 - full/LoRA gate:`model.use_lora`(`apply_lora` / `apply_full_finetune` 配对,本轮改名)、`vrl/models/diffusion/cosmos/predict2/runtime.py:77-89`
-- 入口:`vrl/scripts/diffusion/cosmos/train.py:train_cosmos_predict2_grpo`
+- 入口:`vrl/scripts/diffusion/cosmos/train.py:train_cosmos_predict2_grpo`(`_predict2_collector_kwargs` 是 global/per_sample 分叉 + global 缺图即 raise)
+- reference 真身路径(§3.5):数据 importer `vrl/scripts/data/video_world.py`(`video-world-bridge`)、manifest `data/external/video_world/manifests/robot_{train,eval}.jsonl`(现 3+1 行,smoke)、dataset 配置 `configs/dataset/video_world_v2w.yaml`、LoRA 704p 配置 `online_grpo_v2w_reference.yaml`(待补 full-param 240p 变体)
 - 证据:记忆 `project_first_trustworthy_curve`、`project_flux_algo_validation`、`project_fullparam_8bit_adam`、`project_cosmos_reward_run_setup`
