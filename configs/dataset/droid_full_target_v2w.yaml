@@ -1,0 +1,17 @@
+# Source-backed Video2World target clips from the public full LeRobot DROID dataset.
+# Build with:
+#   python -m vrl.scripts.data.setup video-world-targets --repo-id lerobot/droid_1.0.1 --name droid_full_targets --limit 1000 --eval-limit 64 --camera observation.images.exterior_1_left
+data:
+  loader: prompt_manifest
+  manifest: data/external/video_world/manifests/droid_full_targets_train.jsonl
+  eval_manifest: data/external/video_world/manifests/droid_full_targets_eval.jsonl
+  source_report: data/external/video_world/droid_full_targets_report.json
+  artifact_data_root: data/external
+  task_type: video2world
+  preprocessing:
+    format: jsonl
+    target_text: none
+    media_type: video
+    conditioning: reference_image
+  sampler:
+    type: random_without_replacement

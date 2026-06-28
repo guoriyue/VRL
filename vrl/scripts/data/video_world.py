@@ -58,7 +58,7 @@ def register(subparsers: Any) -> None:
 
     targets = subparsers.add_parser(TARGET_COMMAND_NAME)
     targets.add_argument("--repo-id", default="lerobot/droid_100")
-    targets.add_argument("--limit", type=int, default=50)
+    targets.add_argument("--limit", type=int, default=100)
     targets.add_argument("--eval-limit", type=int, default=8)
     targets.add_argument("--data-root", type=Path, default=None)
     targets.add_argument("--manifest-dir", type=Path, default=None)
@@ -81,6 +81,38 @@ def register(subparsers: Any) -> None:
 
 def manifest_setup_hints() -> tuple[tuple[str, tuple[str, ...]], ...]:
     return (
+        (
+            f"data/external/{DATASET_NAME}/manifests/droid_full_targets_",
+            (
+                TARGET_COMMAND_NAME,
+                "--repo-id",
+                "lerobot/droid_1.0.1",
+                "--name",
+                "droid_full_targets",
+                "--limit",
+                "1000",
+                "--eval-limit",
+                "64",
+                "--camera",
+                "observation.images.exterior_1_left",
+            ),
+        ),
+        (
+            f"data/external/{DATASET_NAME}/droid_full_targets_report.json",
+            (
+                TARGET_COMMAND_NAME,
+                "--repo-id",
+                "lerobot/droid_1.0.1",
+                "--name",
+                "droid_full_targets",
+                "--limit",
+                "1000",
+                "--eval-limit",
+                "64",
+                "--camera",
+                "observation.images.exterior_1_left",
+            ),
+        ),
         (
             f"data/external/{DATASET_NAME}/manifests/droid_targets_",
             (TARGET_COMMAND_NAME, "--repo-id", "lerobot/droid_100", "--name", "droid_targets"),
@@ -404,12 +436,14 @@ def _iter_lerobot_v20(
 
 
 def _row_action(row: Mapping[str, Any], action_cols: Sequence[str]) -> list[float]:
-    """Flatten a parquet row's action column(s) into one control-step action vector.
+    """Flatten a parquet row's action column(s) into one control-step vector.
 
     Handles both a single ``action`` array column and split
-    ``action.cartesian_position`` / ``action.gripper_position`` columns; the exact
-    layout is recorded in ``metadata['action_keys']`` so the reward is self-describing.
+    ``action.cartesian_position`` / ``action.gripper_position`` columns. The exact
+    layout is recorded in ``metadata['action_keys']`` so rewards can interpret the
+    action vector without relying on dataset-specific hidden state.
     """
+
     vec: list[float] = []
     for col in action_cols:
         value = row.get(col)
@@ -431,11 +465,125 @@ def _iter_lerobot_v21_target_clips(
     max_target_frames: int,
     dl: Callable[[str], str],
 ) -> Iterator[dict[str, Any]]:
+    video_tmpl = str(info["video_path"])
+    fps = float(info.get("fps") or _video_fps(info, video_key) or 15.0)
+    episode_files = _repo_files(repo_id, prefix="meta/episodes/")
+    if episode_files:
+        yield from _iter_v21_target_clips_from_episode_metadata(
+            repo_id,
+            info,
+            video_key=video_key,
+            video_tmpl=video_tmpl,
+            fps=fps,
+            limit=limit,
+            max_target_frames=max_target_frames,
+            episode_files=episode_files,
+            dl=dl,
+        )
+        return
+
+    yield from _iter_v21_target_clips_from_data_rows(
+        repo_id,
+        info,
+        video_key=video_key,
+        fps=fps,
+        limit=limit,
+        max_target_frames=max_target_frames,
+        dl=dl,
+    )
+
+
+def _iter_v21_target_clips_from_episode_metadata(
+    repo_id: str,
+    info: Mapping[str, Any],
+    *,
+    video_key: str,
+    video_tmpl: str,
+    fps: float,
+    limit: int,
+    max_target_frames: int,
+    episode_files: Sequence[str],
+    dl: Callable[[str], str],
+) -> Iterator[dict[str, Any]]:
+    import pyarrow.parquet as pq
+
+    selected = []
+    video_chunk_col = f"videos/{video_key}/chunk_index"
+    video_file_col = f"videos/{video_key}/file_index"
+    video_from_col = f"videos/{video_key}/from_timestamp"
+    for episode_file in episode_files:
+        columns = [
+            "episode_index",
+            "tasks",
+            "dataset_from_index",
+            video_chunk_col,
+            video_file_col,
+            video_from_col,
+        ]
+        table = pq.read_table(dl(episode_file), columns=columns)
+        for row in table.to_pylist():
+            prompt = _episode_prompt(row)
+            if not prompt:
+                continue
+            selected.append(
+                {
+                    "episode_id": int(row["episode_index"]),
+                    "prompt": prompt,
+                    "video_chunk": int(row[video_chunk_col]),
+                    "video_file": int(row[video_file_col]),
+                    "start_timestamp": float(row[video_from_col]),
+                    "dataset_from_index": int(row.get("dataset_from_index") or 0),
+                },
+            )
+            if len(selected) >= limit:
+                break
+        if len(selected) >= limit:
+            break
+    if not selected:
+        return
+
+    groups: dict[tuple[int, int], list[dict[str, Any]]] = {}
+    for item in selected:
+        groups.setdefault((int(item["video_chunk"]), int(item["video_file"])), []).append(item)
+
+    for (chunk_index, file_index), group in groups.items():
+        rel = video_tmpl.format(
+            video_key=video_key,
+            chunk_index=chunk_index,
+            file_index=file_index,
+        )
+        yield from _decode_grouped_target_clips(
+            repo_id,
+            rel,
+            group,
+            fps=fps,
+            max_target_frames=max_target_frames,
+            metadata_base={
+                "source_repo": repo_id,
+                "source_split": "main",
+                "source_video": rel,
+                "source_fps": fps,
+                "source_camera": video_key,
+                "decode_method": "pyav_http_target_clip",
+                "codebase_version": str(info.get("codebase_version", "v2.1")),
+            },
+        )
+
+
+def _iter_v21_target_clips_from_data_rows(
+    repo_id: str,
+    info: Mapping[str, Any],
+    *,
+    video_key: str,
+    fps: float,
+    limit: int,
+    max_target_frames: int,
+    dl: Callable[[str], str],
+) -> Iterator[dict[str, Any]]:
     import pyarrow.parquet as pq
 
     video_tmpl = str(info["video_path"])
     data_tmpl = str(info["data_path"])
-    fps = float(info.get("fps") or _video_fps(info, video_key) or 15.0)
 
     task_rows = pq.read_table(dl("meta/tasks.parquet")).to_pylist()
     if not task_rows:
@@ -443,9 +591,6 @@ def _iter_lerobot_v21_target_clips(
     caption_col = next(col for col in task_rows[0] if col != "task_index")
     captions = {int(r["task_index"]): str(r[caption_col]).strip() for r in task_rows}
 
-    # Discover robot-action columns from the parquet schema so action-conditioned
-    # rewards (inverse-dynamics action-following) can read the commanded action per
-    # frame. Degrades gracefully to no target_actions when the source has none.
     data_path = dl(data_tmpl.format(chunk_index=0, file_index=0))
     base_cols = ["episode_index", "frame_index", "task_index", "index"]
     schema_names = set(pq.ParquetFile(data_path).schema_arrow.names)
@@ -506,8 +651,6 @@ def _iter_lerobot_v21_target_clips(
             }
             actions = item.get("actions") or []
             if actions:
-                # One commanded action per decoded control step; the inverse-dynamics
-                # action-following reward reads these from metadata (not pixels).
                 aligned = [list(a) for a in actions[: len(frames)]]
                 metadata["target_actions"] = aligned
                 metadata["action_keys"] = action_cols
@@ -574,6 +717,90 @@ def _iter_lerobot_v20_target_clips(
                     "codebase_version": str(info.get("codebase_version", "v2.0")),
                 },
             }
+
+
+def _repo_files(repo_id: str, *, prefix: str) -> tuple[str, ...]:
+    from huggingface_hub import HfApi
+
+    files = HfApi().list_repo_files(repo_id, repo_type="dataset")
+    return tuple(sorted(path for path in files if path.startswith(prefix)))
+
+
+def _episode_prompt(row: Mapping[str, Any]) -> str:
+    tasks = row.get("tasks") or []
+    if isinstance(tasks, list):
+        for task in tasks:
+            text = str(task).strip()
+            if text:
+                return text
+    for key in ("language_instruction", "language_instruction_2", "language_instruction_3"):
+        text = str(row.get(key, "") or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _decode_grouped_target_clips(
+    repo_id: str,
+    rel: str,
+    group: Sequence[Mapping[str, Any]],
+    *,
+    fps: float,
+    max_target_frames: int,
+    metadata_base: Mapping[str, Any],
+) -> Iterator[dict[str, Any]]:
+    entries = []
+    for item in group:
+        start_frame = round(float(item["start_timestamp"]) * fps)
+        entries.append(
+            {
+                "episode_id": int(item["episode_id"]),
+                "prompt": str(item["prompt"]),
+                "start_frame": start_frame,
+                "end_frame": start_frame + max_target_frames - 1,
+                "dataset_from_index": int(item.get("dataset_from_index") or 0),
+                "frames": [],
+            },
+        )
+    if not entries:
+        return
+
+    starts: dict[int, list[dict[str, Any]]] = {}
+    for entry in entries:
+        starts.setdefault(int(entry["start_frame"]), []).append(entry)
+    active: list[dict[str, Any]] = []
+    max_stop = max(int(entry["end_frame"]) for entry in entries)
+    url = f"https://huggingface.co/datasets/{repo_id}/resolve/main/{rel}"
+
+    for position, frame in _decode_frames(url, stop_after=max_stop):
+        active.extend(starts.get(position, []))
+        done: list[dict[str, Any]] = []
+        keep: list[dict[str, Any]] = []
+        for entry in active:
+            if int(entry["start_frame"]) <= position <= int(entry["end_frame"]):
+                entry["frames"].append(frame)
+            if len(entry["frames"]) >= max_target_frames or position >= int(entry["end_frame"]):
+                done.append(entry)
+            else:
+                keep.append(entry)
+        active = keep
+        for entry in done:
+            frames = list(entry["frames"])
+            if frames:
+                metadata = dict(metadata_base)
+                metadata.update(
+                    {
+                        "source_frame_index": int(entry["start_frame"]),
+                        "source_dataset_from_index": int(entry["dataset_from_index"]),
+                        "source_target_frame_count": len(frames),
+                    },
+                )
+                yield {
+                    "frames": frames,
+                    "prompt": str(entry["prompt"]),
+                    "episode_id": f"{int(entry['episode_id']):06d}",
+                    "metadata": metadata,
+                }
 
 
 def _decode_frames(url: str, *, stop_after: int) -> Iterator[tuple[int, Any]]:

@@ -48,6 +48,7 @@ def _register_builtins() -> None:
         "videoscore2": VideoScore2Reward,
         "unified_reward_video": UnifiedRewardVideoReward,
         "phymotion": PhyMotionReward,
+        "target_video_similarity": TargetVideoSimilarityReward,
     })
 
 

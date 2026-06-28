@@ -1,0 +1,61 @@
+# Cosmos Predict2 2B Video2World + GRPO on public full LeRobot DROID target clips.
+#
+# This is the non-smoke DROID recipe. Build the dataset with:
+#   python -m vrl.scripts.data.setup video-world-targets --repo-id lerobot/droid_1.0.1 --name droid_full_targets --limit 1000 --eval-limit 64 --camera observation.images.exterior_1_left
+defaults:
+  - /recipe/online/diffusion_grpo
+  - /model/diffusion/cosmos/predict2_2b
+  - /sampling/video/240p_33f
+  - /sampling/denoise/35_step_cfg_7
+  - /reward/target_video_similarity
+  - /reward/kling_video_reward
+  - /dataset/droid_full_target_v2w
+
+model:
+  use_lora: false
+
+actor:
+  optim:
+    lr: 2.0e-5
+    optim_8bit: true
+  gradient_checkpointing: true
+  ppo_epochs: 4
+
+algorithm:
+  clip_ratio: 1.0e-3
+  kl_coef: 0.0
+
+rollout:
+  n_samples_per_prompt: 8
+  rollout_batch_size: 1
+  sample_batch_size: 4
+  sde: { type: cps }
+  same_latent: false
+
+cosmos:
+  reference_mode: per_sample
+
+trainer:
+  entrypoint: vrl.scripts.diffusion.cosmos.train:train_cosmos_predict2_grpo
+  output_dir: outputs/cosmos_pred2_droid_full_target_240p
+  total_epochs: 300
+  save_freq: 50
+  debug: { first_step: true }
+  eval: { enabled: true, freq: 25, samples_per_prompt: 2, max_prompts: 64, seed: 20260628 }
+
+reward:
+  components:
+    target_video_similarity: 0.80
+    kling_video_reward: 0.20
+  kwargs:
+    target_video_similarity:
+      score_key: target_similarity
+      worker_config:
+        num_frames: 8
+        feature_size: 64
+        sequence_weight: 0.50
+        final_weight: 0.30
+        temporal_weight: 0.20
+    kling_video_reward:
+      artifact_format: mp4
+      score_key: visual_quality+motion_quality
