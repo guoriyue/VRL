@@ -1,0 +1,328 @@
+"""Cosmos3 reasoner reward model (Ray-actor backend).
+
+Uses the **reasoner / understanding tower** of NVIDIA Cosmos3 (``cosmos3_omni``)
+— a Qwen3-VL VLM — as a generative judge over a generated robot/physical-AI
+video. Cosmos3's generator tower is a separate diffusion model (not this file);
+here the reasoner reads the video + task instruction and prints four physical-AI
+axes (1-5 integers), which we parse:
+
+* ``task_success``           — does the action complete the instructed goal.
+* ``contact_realism``        — grasps/contacts/forces are physically believable.
+* ``temporal_consistency``   — object identity and motion are stable over frames.
+* ``physical_plausibility``  — no clipping, teleporting, or physics violations.
+
+This is the "domain judge" the robotic-data-factory sprint asks for (Kling
+``overall_reward`` is video-quality, not task/contact-aware). It mirrors
+``videoscore2.py``: a generative Qwen-VL judge, greedily decoded once, parsed
+with a fixed-format regex. Public score keys are exactly the four axes plus
+``overall`` (their mean) — the free-text wording never leaks as a score key.
+
+CHECKPOINT NOTE — the raw ``nvidia/Cosmos3-Nano`` checkpoint is a **flat-key
+unified** omni checkpoint (reasoner LLM/visual keys + ``*_moe_gen`` generator-
+tower keys in one flat namespace). ``Qwen3VLForConditionalGeneration`` expects
+the **nested** Qwen3-VL key layout, so the unified checkpoint does NOT load
+HF-direct. ``worker_config.checkpoint_layout`` selects how the reasoner weights
+are obtained:
+
+* ``remapped`` — ``model_path`` points at a pre-remapped, reasoner-only Qwen3-VL
+  checkpoint (produced offline by the vLLM ``cosmos3.py`` WeightsMapper: flat->
+  nested, drop the generator/audio/action towers). Loaded cleanly here.
+* unset / anything else — ``__init__`` raises with the remap prerequisite rather
+  than attempting a doomed raw ``from_pretrained`` that mismatches every key.
+"""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Any
+
+import torch
+
+from vrl.models.dtypes import resolve_torch_dtype
+from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
+from vrl.rewards.models.hub import parse_hf_repo_revision
+from vrl.rewards.ray.model import RewardModel
+from vrl.utils.logging import init_logger, kv
+
+logger = init_logger(__name__)
+
+_DEFAULT_REWARD_MODEL = "nvidia/Cosmos3-Nano"
+_DEFAULT_FPS = 2.0
+_DEFAULT_MAX_NEW_TOKENS = 1024
+
+# Fixes the judge task AND the output grammar we parse below. Kept here (not a
+# YAML rubric asset) because it is a short model-specific decode contract; a
+# tunable rubric layer, if needed, belongs in worker_config.rubric_path.
+_SYSTEM_PROMPT = (
+    "You are an expert evaluator of robot-manipulation and physical-interaction "
+    "videos. Judge the video on four axes, each an integer from 1 to 5: "
+    "(1) task success - does the action complete the instructed goal; "
+    "(2) contact realism - grasps, contacts and forces are physically believable; "
+    "(3) temporal consistency - object identity and motion are stable across frames; "
+    "(4) physical plausibility - no clipping, teleporting, or physics violations. "
+    "Reason briefly, then output the final line exactly as: "
+    "task success: <s>; contact realism: <c>, temporal consistency: <t>, "
+    "physical plausibility: <p>"
+)
+_USER_TEMPLATE = (
+    "Task instruction: {prompt}\n"
+    "Please output in this format:\n"
+    "task success: <s>; contact realism: <c>, temporal consistency: <t>, "
+    "physical plausibility: <p>"
+)
+
+# Must match the wording in the prompts above; '.*?' tolerates any separator the
+# model emits between axes. Hard integer parse only — Cosmos3 uses the Qwen3-VL
+# tokenizer, so VideoScore2's single-digit-token soft path is not assumed here.
+_SCORE_REGEX = re.compile(
+    r"task success:\s*(\d+).*?"
+    r"contact realism:\s*(\d+).*?"
+    r"temporal consistency:\s*(\d+).*?"
+    r"physical plausibility:\s*(\d+)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+class Cosmos3ReasonerRewardModel(RewardModel):
+    """Load the Cosmos3 reasoner (Qwen3-VL) and judge one (prompt, video) pair."""
+
+    def __init__(self, worker_config: Mapping[str, Any]) -> None:
+        self.worker_config = dict(worker_config)
+        self.reward_model_name = str(
+            self.worker_config.get("reward_model_name", ""),
+        ).strip()
+        # Generator tower is a separate diffusion model; only the reasoner judges
+        # here, and the unified checkpoint will not load HF-direct (see module
+        # docstring). Require an explicit, supported layout.
+        self.checkpoint_layout = str(
+            self.worker_config.get("checkpoint_layout", ""),
+        ).strip().lower()
+        self.dtype = resolve_torch_dtype(str(self.worker_config.get("dtype", "bfloat16")))
+        self.device = str(self.worker_config.get("device", "cuda:0"))
+        self.fps = float(self.worker_config.get("fps", _DEFAULT_FPS))
+        self.max_new_tokens = int(
+            self.worker_config.get("max_new_tokens", _DEFAULT_MAX_NEW_TOKENS),
+        )
+        max_frame_pixels = self.worker_config.get("max_frame_pixels")
+        self.max_frame_pixels = None if max_frame_pixels is None else int(max_frame_pixels)
+        self.local_files_only = bool(self.worker_config.get("local_files_only", False))
+        # 16B reasoner: allow sharding / attention backend without a code change.
+        self.attn_implementation = self.worker_config.get("attn_implementation")
+        self.device_map = self.worker_config.get("device_map")
+
+        if self.checkpoint_layout != "remapped":
+            raise ValueError(
+                "Cosmos3 reasoner judge requires worker_config.checkpoint_layout='remapped' "
+                "with model_path pointing at a pre-remapped, reasoner-only Qwen3-VL checkpoint. "
+                "The raw nvidia/Cosmos3-Nano unified checkpoint is flat-key (reasoner + "
+                "*_moe_gen generator tower in one namespace) and does NOT load under "
+                "Qwen3VLForConditionalGeneration. Produce the remapped checkpoint offline via "
+                "the vLLM cosmos3.py WeightsMapper (flat->nested, drop generator/audio/action "
+                f"towers). Got checkpoint_layout={self.checkpoint_layout!r}.",
+            )
+        # 'remapped' means an offline-produced LOCAL dir; reward_model_name's
+        # snapshot_download fallback would silently pull the raw flat-key unified
+        # repo (which does NOT load), failing late after a multi-GB download. Require
+        # model_path so the unfilled-config case fails fast with an actionable error.
+        if not str(self.worker_config.get("model_path", "")).strip():
+            raise ValueError(
+                "Cosmos3 reasoner checkpoint_layout='remapped' requires a non-empty "
+                "worker_config.model_path pointing at the offline pre-remapped, reasoner-only "
+                "Qwen3-VL checkpoint dir. Refusing to snapshot_download reward_model_name "
+                "(the raw unified nvidia/Cosmos3-Nano checkpoint is flat-key and will not load).",
+            )
+
+        self.model_root = _resolve_model_root(self.worker_config)
+        logger.info(
+            "loading Cosmos3 reasoner judge %s",
+            kv(
+                root=self.model_root,
+                device=self.device,
+                dtype=self.dtype,
+                fps=self.fps,
+                layout=self.checkpoint_layout,
+            ),
+        )
+
+        from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
+
+        processor = AutoProcessor.from_pretrained(
+            str(self.model_root),
+            trust_remote_code=True,
+            local_files_only=self.local_files_only,
+        )
+        load_kwargs: dict[str, Any] = {
+            "torch_dtype": self.dtype,
+            "local_files_only": self.local_files_only,
+        }
+        if self.attn_implementation:
+            load_kwargs["attn_implementation"] = str(self.attn_implementation)
+        if self.device_map is not None:
+            load_kwargs["device_map"] = self.device_map
+        model = Qwen3VLForConditionalGeneration.from_pretrained(
+            str(self.model_root),
+            **load_kwargs,
+        )
+        model.eval()
+        self.processor = processor
+        self.tokenizer = getattr(processor, "tokenizer", None) or processor
+        # device_map handles placement itself; otherwise pin to a single device.
+        self.model = model if self.device_map is not None else model.to(self.device)
+
+    def __call__(
+        self,
+        *,
+        artifact: RewardInferenceArtifact,
+        request: RewardInferenceRequest,
+    ) -> dict[str, float]:
+        del request
+        prompt = artifact.prompt or str(artifact.metadata.get("prompt", ""))
+        if not prompt:
+            raise ValueError(
+                f"Cosmos3 reasoner judge requires a prompt for artifact {artifact.artifact_id!r}; "
+                "found none on artifact.prompt or artifact.metadata['prompt']",
+            )
+        video_path = str(Path(artifact.as_path()).expanduser().resolve())
+        return self._score_video(video_path, prompt)
+
+    def _score_video(self, video_path: str, prompt: str) -> dict[str, float]:
+        from qwen_vl_utils import process_vision_info
+
+        video_content: dict[str, Any] = {
+            "type": "video",
+            "video": f"file://{video_path}",
+            "fps": self.fps,
+        }
+        if self.max_frame_pixels is not None:
+            video_content["max_pixels"] = self.max_frame_pixels
+        messages = [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": [
+                    video_content,
+                    {"type": "text", "text": _USER_TEMPLATE.format(prompt=prompt)},
+                ],
+            },
+        ]
+        text = self.processor.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        image_inputs, video_inputs = process_vision_info(messages)
+        inputs = self.processor(
+            text=[text],
+            images=image_inputs,
+            videos=video_inputs,
+            padding=True,
+            return_tensors="pt",
+        ).to(self.model.device)
+
+        with torch.no_grad():
+            generated = self.model.generate(
+                **inputs,
+                max_new_tokens=self.max_new_tokens,
+                do_sample=False,
+                return_dict_in_generate=True,
+            )
+        prompt_len = int(inputs["input_ids"].shape[1])
+        generated_ids = generated.sequences[0][prompt_len:].tolist()
+        decoded = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
+
+        parsed = _parse_integer_scores(decoded)
+        if parsed is None:
+            raise ValueError(
+                "Cosmos3 reasoner produced no parseable score line; "
+                f"output head was: {decoded[:200]!r}",
+            )
+        return _normalize_scores(*parsed)
+
+
+def preflight_cosmos3_reasoner_backend() -> None:
+    """Validate backend imports without downloading weights."""
+
+    import qwen_vl_utils  # noqa: F401
+    import transformers  # noqa: F401
+
+
+def _parse_integer_scores(text: str) -> tuple[int, int, int, int] | None:
+    """Extract the four 1-5 integer axes from the judge's generated text."""
+
+    match = _SCORE_REGEX.search(text)
+    if match is None:
+        return None
+    scores = tuple(int(match.group(i)) for i in (1, 2, 3, 4))
+    if any(not (1 <= value <= 5) for value in scores):
+        return None
+    return scores  # type: ignore[return-value]
+
+
+def _normalize_scores(
+    task_success: float,
+    contact_realism: float,
+    temporal_consistency: float,
+    physical_plausibility: float,
+) -> dict[str, float]:
+    """Map the four axes to the public score keys plus their mean ``overall``.
+
+    This dict is the public scoring contract: only the documented keys, so a
+    config cannot select an undocumented upstream key as ``score_key``.
+    """
+
+    task_success = float(task_success)
+    contact_realism = float(contact_realism)
+    temporal_consistency = float(temporal_consistency)
+    physical_plausibility = float(physical_plausibility)
+    return {
+        "task_success": task_success,
+        "contact_realism": contact_realism,
+        "temporal_consistency": temporal_consistency,
+        "physical_plausibility": physical_plausibility,
+        "overall": (
+            task_success
+            + contact_realism
+            + temporal_consistency
+            + physical_plausibility
+        )
+        / 4.0,
+    }
+
+
+def _resolve_model_root(worker_config: Mapping[str, Any]) -> Path:
+    """Return a local checkpoint dir: ``model_path`` if set, else snapshot_download.
+
+    For the ``remapped`` layout ``model_path`` is the offline-produced reasoner-only
+    Qwen3-VL dir; ``reward_model_name`` snapshot_download is the fallback only when a
+    repo already hosts a Qwen3-VL-loadable reasoner.
+    """
+
+    model_path = str(worker_config.get("model_path", "")).strip()
+    if model_path:
+        root = Path(model_path).expanduser().resolve()
+        if not root.exists():
+            raise FileNotFoundError(f"Cosmos3 reasoner model_path missing: {root}")
+        return root
+
+    reward_model_name = str(worker_config.get("reward_model_name", "")).strip()
+    if not reward_model_name:
+        reward_model_name = _DEFAULT_REWARD_MODEL
+    model_ref = parse_hf_repo_revision(reward_model_name)
+
+    from huggingface_hub import snapshot_download
+
+    return Path(
+        snapshot_download(
+            repo_id=model_ref.repo_id,
+            revision=model_ref.revision,
+            local_files_only=bool(worker_config.get("local_files_only", False)),
+        ),
+    ).resolve()
+
+
+__all__ = [
+    "Cosmos3ReasonerRewardModel",
+    "preflight_cosmos3_reasoner_backend",
+]

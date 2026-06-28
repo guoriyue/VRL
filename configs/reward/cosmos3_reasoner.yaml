@@ -1,0 +1,41 @@
+# Cosmos3 reasoner-as-judge reward (nvidia/Cosmos3-Nano, Qwen3-VL omni reasoner).
+# Generative judge over a robot/physical-AI video: task_success / contact_realism /
+# temporal_consistency / physical_plausibility (1-5), plus overall (mean). Loaded via
+# Qwen3VLForConditionalGeneration. NOTE: the raw unified nvidia/Cosmos3-Nano checkpoint
+# is flat-key and does NOT load HF-direct — point worker_config.model_path at a
+# pre-remapped reasoner-only Qwen3-VL checkpoint and set checkpoint_layout=remapped
+# (see vrl/rewards/models/cosmos3_reasoner_reward.py module docstring).
+distributed:
+  resources:
+    reward:
+      num_gpus: 1
+      gpus_per_worker: 1.0
+      num_workers: 1
+  reward:
+    cpus_per_worker: 4.0
+    placement_strategy: STRICT_PACK
+    max_inflight_batches: 1
+
+reward:
+  components:
+    cosmos3_reasoner: 1.0
+  kwargs:
+    cosmos3_reasoner:
+      execution: pool
+      reward_name: cosmos3_reasoner   # logical tag (request label)
+      score_key: task_success
+      media_type: video
+      artifact_format: mp4
+      artifact_dir: ${trainer.output_dir}/reward_artifacts
+      debug_dir: ${trainer.output_dir}/reward_debug
+      worker_config:
+        checkpoint_layout: remapped         # remapped | (raw unified checkpoint is unsupported)
+        model_path: ""                       # local pre-remapped reasoner-only Qwen3-VL dir
+        reward_model_name: nvidia/Cosmos3-Nano
+        dtype: bfloat16
+        fps: 2.0                 # video frame sampling rate
+        max_new_tokens: 1024
+        local_files_only: false
+        # 16B reasoner: optionally shard / pick attention backend without code change.
+        # device_map: auto
+        # attn_implementation: flash_attention_2

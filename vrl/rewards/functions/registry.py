@@ -25,6 +25,7 @@ def get_reward(name: str) -> type[RewardFunction]:
 
 def _register_builtins() -> None:
     from vrl.rewards.functions.aesthetic import AestheticReward
+    from vrl.rewards.functions.cosmos3_reasoner import Cosmos3ReasonerReward
     from vrl.rewards.functions.geneval import GenEvalReward
     from vrl.rewards.functions.kling_video_reward import KlingVideoReward
     from vrl.rewards.functions.nsfw_safety import NSFWSafetyReward
@@ -44,6 +45,7 @@ def _register_builtins() -> None:
         "pickscore": PickScoreReward,
         "target_video_similarity": TargetVideoSimilarityReward,
         "kling_video_reward": KlingVideoReward,
+        "cosmos3_reasoner": Cosmos3ReasonerReward,
         "videocon_physics": VideoConPhysicsReward,
         "videoscore2": VideoScore2Reward,
         "unified_reward_video": UnifiedRewardVideoReward,
