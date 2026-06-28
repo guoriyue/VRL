@@ -152,7 +152,6 @@ def _build_trajectory_draft(
     actions = np.stack([c.actions for c in chunks])[None]  # [1, T, horizon, dim]
     reward = EnvRewardSignal(reward=0.0, success=False, terminal=True)
     return ActionTrajectoryBatch(
-        observations=np.zeros((1, steps), dtype=np.float32),
         actions=actions,
         log_probs=None,  # eval-only: no trainable distribution from a server policy
         rewards=np.asarray([reward.reward], dtype=np.float32),
@@ -160,7 +159,6 @@ def _build_trajectory_draft(
         dones=np.asarray([[t == steps - 1 for t in range(steps)]]),
         group_ids=np.zeros((1,), dtype=np.int64),
         episode_lengths=np.asarray([steps], dtype=np.int64),
-        distribution=None,
         extras={"embodiment": spec.embodiment, "task": spec.task},
     )
 

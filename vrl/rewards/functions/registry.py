@@ -31,6 +31,7 @@ def _register_builtins() -> None:
     from vrl.rewards.functions.ocr import OCRReward
     from vrl.rewards.functions.phymotion import PhyMotionReward
     from vrl.rewards.functions.pickscore import PickScoreReward
+    from vrl.rewards.functions.target_video_similarity import TargetVideoSimilarityReward
     from vrl.rewards.functions.unified_reward_video import UnifiedRewardVideoReward
     from vrl.rewards.functions.videocon_physics import VideoConPhysicsReward
     from vrl.rewards.functions.videoscore2 import VideoScore2Reward
@@ -41,6 +42,7 @@ def _register_builtins() -> None:
         "nsfw_safety": NSFWSafetyReward,
         "ocr": OCRReward,
         "pickscore": PickScoreReward,
+        "target_video_similarity": TargetVideoSimilarityReward,
         "kling_video_reward": KlingVideoReward,
         "videocon_physics": VideoConPhysicsReward,
         "videoscore2": VideoScore2Reward,

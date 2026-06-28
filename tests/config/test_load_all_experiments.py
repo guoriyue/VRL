@@ -420,6 +420,88 @@ def test_cosmos_v2w_production_validation_accepts_source_backed_data(
     validate_training_config(cfg)
 
 
+def test_cosmos_target_v2w_production_validation_requires_target_clip(
+    tmp_path: Path,
+) -> None:
+    """Checks target-reward Cosmos V2W validation requires public-source target clips."""
+    data_root = tmp_path / "external"
+    reference = data_root / "video_world" / "references" / "ref.ppm"
+    target = data_root / "video_world" / "targets" / "target.mp4"
+    reference.parent.mkdir(parents=True, exist_ok=True)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    reference.write_text("P3\n1 1\n255\n0 0 0\n", encoding="utf-8")
+    target.write_bytes(b"fake-video")
+    metadata = {
+        "source": "droid",
+        "source_repo": "lerobot/droid_100",
+        "source_split": "main",
+        "source_episode": "episode_train",
+        "source_video": "videos/camera/chunk-000/file-000.mp4",
+        "source_frame_index": 0,
+        "decode_method": "pyav_http_target_clip",
+        "conditioning": "first_frame",
+    }
+    train = tmp_path / "droid_targets_train.jsonl"
+    eval_manifest = tmp_path / "droid_targets_eval.jsonl"
+    train.write_text(
+        json.dumps(
+            {
+                "prompt": "The robot arm moves toward the cup.",
+                "reference_image": "video_world/references/ref.ppm",
+                "target_video": "video_world/targets/target.mp4",
+                "metadata": metadata,
+            },
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    eval_metadata = dict(metadata, source_episode="episode_eval")
+    eval_manifest.write_text(
+        json.dumps(
+            {
+                "prompt": "The robot arm moves away from the cup.",
+                "reference_image": "video_world/references/ref.ppm",
+                "target_video": "video_world/targets/target.mp4",
+                "metadata": eval_metadata,
+            },
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    report = tmp_path / "droid_targets_report.json"
+    report.write_text(
+        json.dumps(
+            {
+                "dataset": "video_world_targets",
+                "source": "droid",
+                "repo_id": "lerobot/droid_100",
+                "source_split": "main",
+                "decode_method": "pyav_http_target_clip",
+                "train_rows": 1,
+                "eval_rows": 1,
+                "train_manifest": train.as_posix(),
+                "eval_manifest": eval_manifest.as_posix(),
+                "reference_dir": reference.parent.as_posix(),
+                "target_dir": target.parent.as_posix(),
+                "validation_summary": {"row_count": 1},
+            },
+        ),
+        encoding="utf-8",
+    )
+    cfg = load_config(
+        "experiment/diffusion/cosmos_predict2/online_grpo_droid_target_240p",
+        overrides=[
+            "production.kling_video_reward.enabled=true",
+            f"data.manifest={train.as_posix()}",
+            f"data.eval_manifest={eval_manifest.as_posix()}",
+            f"data.source_report={report.as_posix()}",
+            f"data.artifact_data_root={data_root.as_posix()}",
+        ],
+    )
+
+    validate_training_config(cfg)
+
+
 def test_wan_i2v_production_validation_accepts_source_backed_data(tmp_path: Path) -> None:
     """Checks Wan I2V production validation accepts source-backed data."""
     data_root = tmp_path / "videophy_i2v"

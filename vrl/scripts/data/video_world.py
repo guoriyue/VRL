@@ -1,4 +1,4 @@
-"""Cosmos Video2World dataset population.
+"""Cosmos Video2World dataset population from public robot datasets.
 
 ``video-world-bridge`` imports first frames from a real LeRobot v2.1 robotics
 dataset (DROID / BridgeData V2 style on the HF Hub):
@@ -7,16 +7,21 @@ dataset (DROID / BridgeData V2 style on the HF Hub):
 - episodes  <- ``data/*.parquet`` (per-episode ``frame_index==0`` row + global index)
 - pixels    <- per-camera ``videos/.../*.mp4`` decoded with PyAV (streamed over HTTP)
 
-``build_video_world_rows`` is a pure transform so it stays offline-testable; the
-fetch/decode lives in ``_iter_lerobot_first_frames``. No synthetic smoke data is
-shipped. Bounded to the first data/video file (use ``--limit`` to cap episodes).
+``video-world-targets`` imports first-frame conditioning images and short target
+clips from the same public LeRobot source, so target-aware rewards can train on
+real demonstration continuations instead of a hand-authored local manifest.
+
+The build functions are pure transforms so they stay offline-testable; the
+fetch/decode lives in the ``_iter_lerobot_*`` iterators. No synthetic smoke data
+is shipped. Bounded to the first data/video file (use ``--limit`` to cap
+episodes).
 """
 
 from __future__ import annotations
 
 import argparse
 import os
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +35,7 @@ from vrl.scripts.data.common import (
 from vrl.trainers.data.artifacts import validate_source_backed_video_world_manifest_pair
 
 COMMAND_NAME = "video-world-bridge"
+TARGET_COMMAND_NAME = "video-world-targets"
 DATASET_NAME = "video_world"
 
 
@@ -50,9 +56,41 @@ def register(subparsers: Any) -> None:
     )
     bridge.set_defaults(func=_cmd_video_world_bridge)
 
+    targets = subparsers.add_parser(TARGET_COMMAND_NAME)
+    targets.add_argument("--repo-id", default="lerobot/droid_100")
+    targets.add_argument("--limit", type=int, default=50)
+    targets.add_argument("--eval-limit", type=int, default=8)
+    targets.add_argument("--data-root", type=Path, default=None)
+    targets.add_argument("--manifest-dir", type=Path, default=None)
+    targets.add_argument("--name", default="droid_targets")
+    targets.add_argument("--source", default="droid")
+    targets.add_argument("--cache-dir", type=Path, default=default_cache_dir())
+    targets.add_argument(
+        "--camera",
+        default="",
+        help="observation.images.<name> video key; default = first camera",
+    )
+    targets.add_argument(
+        "--max-target-frames",
+        type=int,
+        default=33,
+        help="Maximum frames copied from each public demonstration clip.",
+    )
+    targets.set_defaults(func=_cmd_video_world_targets)
+
 
 def manifest_setup_hints() -> tuple[tuple[str, tuple[str, ...]], ...]:
-    return ((f"data/external/{DATASET_NAME}/", (COMMAND_NAME,)),)
+    return (
+        (
+            f"data/external/{DATASET_NAME}/manifests/droid_targets_",
+            (TARGET_COMMAND_NAME, "--repo-id", "lerobot/droid_100", "--name", "droid_targets"),
+        ),
+        (
+            f"data/external/{DATASET_NAME}/droid_targets_report.json",
+            (TARGET_COMMAND_NAME, "--repo-id", "lerobot/droid_100", "--name", "droid_targets"),
+        ),
+        (f"data/external/{DATASET_NAME}/", (COMMAND_NAME,)),
+    )
 
 
 def build_video_world_rows(
@@ -101,6 +139,58 @@ def build_video_world_rows(
     return rows
 
 
+def build_target_video_world_rows(
+    episodes: Iterable[Mapping[str, Any]],
+    *,
+    reference_dir: Path,
+    target_dir: Path,
+    data_root: Path,
+    source: str,
+    fps: float,
+    conditioning: str = "first_frame",
+    video_writer: Callable[[Path, Sequence[Any], float], None] | None = None,
+) -> list[dict[str, Any]]:
+    """Write first-frame PNGs + target clips from real robot demonstrations."""
+
+    reference_dir.mkdir(parents=True, exist_ok=True)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    writer = video_writer or _write_mp4
+    rows: list[dict[str, Any]] = []
+    for episode in episodes:
+        prompt = str(episode.get("prompt", "")).strip()
+        episode_id = str(episode.get("episode_id", "")).strip()
+        frames = list(episode.get("frames") or [])
+        if not prompt or not episode_id or not frames:
+            continue
+        metadata_raw = dict(episode.get("metadata") or {})
+        clip_fps = float(metadata_raw.get("source_fps") or fps)
+        ref_path = reference_dir / f"{source}_{episode_id}_first.png"
+        target_path = target_dir / f"{source}_{episode_id}_target.mp4"
+        _write_png(ref_path, frames[0])
+        writer(target_path, frames, clip_fps)
+        source_metadata = {
+            key: value
+            for key, value in metadata_raw.items()
+            if value is not None and str(value).strip()
+        }
+        metadata = {
+            "source": source,
+            "source_episode": episode_id,
+            "conditioning": conditioning,
+            **source_metadata,
+        }
+        rows.append(
+            {
+                "prompt": prompt,
+                "reference_image": os.path.relpath(ref_path, data_root),
+                "target_video": os.path.relpath(target_path, data_root),
+                "task_type": "video2world",
+                "metadata": metadata,
+            },
+        )
+    return rows
+
+
 def _iter_lerobot_first_frames(
     repo_id: str,
     *,
@@ -140,6 +230,56 @@ def _iter_lerobot_first_frames(
         yield from _iter_lerobot_v20(repo_id, info, video_key=video_key, limit=limit, dl=_dl)
     else:
         yield from _iter_lerobot_v21(repo_id, info, video_key=video_key, limit=limit, dl=_dl)
+
+
+def _iter_lerobot_target_clips(
+    repo_id: str,
+    *,
+    limit: int,
+    cache_dir: Path,
+    camera: str = "",
+    max_target_frames: int = 33,
+) -> Iterator[dict[str, Any]]:
+    """Yield {frames, prompt, episode_id} target clips from a real LeRobot dataset."""
+
+    import json
+
+    from huggingface_hub import hf_hub_download
+
+    if max_target_frames <= 0:
+        raise ValueError("--max-target-frames must be positive")
+
+    def _dl(rel: str) -> str:
+        return hf_hub_download(repo_id, rel, repo_type="dataset", cache_dir=str(cache_dir))
+
+    info = json.loads(Path(_dl("meta/info.json")).read_text(encoding="utf-8"))
+    features = list(info.get("features", {}).keys())
+    video_key = camera or next(
+        (f for f in features if f.startswith("observation.images.")),
+        "",
+    )
+    if not video_key:
+        return
+
+    version = str(info.get("codebase_version", "v2.1")).lower()
+    if version.startswith("v2.0"):
+        yield from _iter_lerobot_v20_target_clips(
+            repo_id,
+            info,
+            video_key=video_key,
+            limit=limit,
+            max_target_frames=max_target_frames,
+            dl=_dl,
+        )
+    else:
+        yield from _iter_lerobot_v21_target_clips(
+            repo_id,
+            info,
+            video_key=video_key,
+            limit=limit,
+            max_target_frames=max_target_frames,
+            dl=_dl,
+        )
 
 
 def _iter_lerobot_v21(
@@ -263,6 +403,141 @@ def _iter_lerobot_v20(
             }
 
 
+def _iter_lerobot_v21_target_clips(
+    repo_id: str,
+    info: Mapping[str, Any],
+    *,
+    video_key: str,
+    limit: int,
+    max_target_frames: int,
+    dl: Callable[[str], str],
+) -> Iterator[dict[str, Any]]:
+    import pyarrow.parquet as pq
+
+    video_tmpl = str(info["video_path"])
+    data_tmpl = str(info["data_path"])
+    fps = float(info.get("fps") or _video_fps(info, video_key) or 15.0)
+
+    task_rows = pq.read_table(dl("meta/tasks.parquet")).to_pylist()
+    if not task_rows:
+        return
+    caption_col = next(col for col in task_rows[0] if col != "task_index")
+    captions = {int(r["task_index"]): str(r[caption_col]).strip() for r in task_rows}
+
+    data_rows = pq.read_table(
+        dl(data_tmpl.format(chunk_index=0, file_index=0)),
+        columns=["episode_index", "frame_index", "task_index", "index"],
+    ).to_pylist()
+    if not data_rows:
+        return
+
+    base_index = int(data_rows[0]["index"])
+    selected_order: list[int] = []
+    selected: dict[int, dict[str, Any]] = {}
+    positions: dict[int, int] = {}
+    for row in data_rows:
+        episode = int(row["episode_index"])
+        if episode not in selected:
+            if len(selected_order) >= limit:
+                continue
+            selected_order.append(episode)
+            selected[episode] = {
+                "task_index": int(row["task_index"]),
+                "start_global_index": int(row["index"]),
+                "frames": [],
+            }
+        if episode in selected and int(row["frame_index"]) < max_target_frames:
+            positions[int(row["index"]) - base_index] = episode
+
+    if not positions:
+        return
+    rel = video_tmpl.format(video_key=video_key, chunk_index=0, file_index=0)
+    url = f"https://huggingface.co/datasets/{repo_id}/resolve/main/{rel}"
+    for position, frame in _decode_frames(url, stop_after=max(positions)):
+        episode = positions.get(position)
+        if episode is not None:
+            selected[episode]["frames"].append(frame)
+
+    for episode in selected_order:
+        item = selected[episode]
+        frames = item["frames"]
+        task_index = int(item["task_index"])
+        prompt = captions.get(task_index, "")
+        if prompt and frames:
+            yield {
+                "frames": frames,
+                "prompt": prompt,
+                "episode_id": f"{episode:06d}",
+                "metadata": {
+                    "source_repo": repo_id,
+                    "source_split": "main",
+                    "source_video": rel,
+                    "source_frame_index": int(item["start_global_index"]) - base_index,
+                    "source_target_frame_count": len(frames),
+                    "source_fps": fps,
+                    "source_camera": video_key,
+                    "decode_method": "pyav_http_target_clip",
+                    "codebase_version": str(info.get("codebase_version", "v2.1")),
+                },
+            }
+
+
+def _iter_lerobot_v20_target_clips(
+    repo_id: str,
+    info: Mapping[str, Any],
+    *,
+    video_key: str,
+    limit: int,
+    max_target_frames: int,
+    dl: Callable[[str], str],
+) -> Iterator[dict[str, Any]]:
+    import json
+
+    video_tmpl = str(info["video_path"])
+    chunks_size = int(info.get("chunks_size", 1000))
+    fps = float(info.get("fps") or _video_fps(info, video_key) or 15.0)
+
+    episodes: list[dict[str, Any]] = []
+    for line in Path(dl("meta/episodes.jsonl")).read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        episodes.append(json.loads(line))
+        if len(episodes) >= limit:
+            break
+
+    for ep in episodes:
+        episode = int(ep["episode_index"])
+        tasks = ep.get("tasks") or []
+        prompt = str(tasks[0]).strip() if tasks else ""
+        if not prompt:
+            continue
+        rel = video_tmpl.format(
+            episode_chunk=episode // chunks_size,
+            video_key=video_key,
+            episode_index=episode,
+        )
+        url = f"https://huggingface.co/datasets/{repo_id}/resolve/main/{rel}"
+        frames = [frame for _, frame in _decode_frames(url, stop_after=max_target_frames - 1)]
+        if frames:
+            yield {
+                "frames": frames,
+                "prompt": prompt,
+                "episode_id": f"{episode:06d}",
+                "metadata": {
+                    "source_repo": repo_id,
+                    "source_split": "main",
+                    "source_video": rel,
+                    "source_frame_index": 0,
+                    "source_target_frame_count": len(frames),
+                    "source_fps": fps,
+                    "source_camera": video_key,
+                    "decode_method": "pyav_http_target_clip",
+                    "codebase_version": str(info.get("codebase_version", "v2.0")),
+                },
+            }
+
+
 def _decode_frames(url: str, *, stop_after: int) -> Iterator[tuple[int, Any]]:
     import av
 
@@ -285,6 +560,29 @@ def _write_png(path: Path, image: Any) -> None:
     if array.dtype != np.uint8:
         array = array.astype("uint8")
     Image.fromarray(array).convert("RGB").save(path, format="PNG")
+
+
+def _write_mp4(path: Path, frames: Sequence[Any], fps: float) -> None:
+    import imageio.v2 as imageio
+    import numpy as np
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    arrays = []
+    for frame in frames:
+        array = np.asarray(frame)
+        if array.dtype != np.uint8:
+            array = array.astype("uint8")
+        arrays.append(array)
+    if not arrays:
+        raise ValueError(f"Cannot write empty target clip: {path}")
+    imageio.mimsave(path, arrays, fps=fps, macro_block_size=1)
+
+
+def _video_fps(info: Mapping[str, Any], video_key: str) -> float | None:
+    feature = (info.get("features") or {}).get(video_key) or {}
+    video_info = feature.get("video_info") or {}
+    fps = video_info.get("video.fps") or feature.get("fps")
+    return float(fps) if fps else None
 
 
 def _cmd_video_world_bridge(args: argparse.Namespace) -> None:
@@ -362,4 +660,91 @@ def _cmd_video_world_bridge(args: argparse.Namespace) -> None:
     emit(report)
 
 
-__all__ = ["build_video_world_rows", "manifest_setup_hints", "register"]
+def _cmd_video_world_targets(args: argparse.Namespace) -> None:
+    data_root = args.data_root.expanduser().resolve() if args.data_root else default_data_root()
+    video_root = data_root / "video_world"
+    manifest_dir = args.manifest_dir or (video_root / "manifests")
+    reference_dir = video_root / "references"
+    target_dir = video_root / "targets"
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        episodes = _iter_lerobot_target_clips(
+            args.repo_id,
+            limit=args.limit,
+            cache_dir=args.cache_dir.expanduser(),
+            camera=args.camera,
+            max_target_frames=args.max_target_frames,
+        )
+        rows = build_target_video_world_rows(
+            episodes,
+            reference_dir=reference_dir,
+            target_dir=target_dir,
+            data_root=data_root,
+            source=args.source,
+            fps=15.0,
+        )
+    except ImportError as exc:  # pragma: no cover - environment dependent
+        raise RuntimeError(
+            "video-world-targets needs `pyarrow`, `av`, `pillow`, `imageio`, and `huggingface_hub`",
+        ) from exc
+
+    if not rows:
+        raise RuntimeError(
+            f"No usable target clips from {args.repo_id!r}. Check it is a public LeRobot "
+            "dataset with meta/tasks.parquet + data/*.parquet + videos/*.mp4, or set "
+            "--camera to a valid observation.images.<name> key.",
+        )
+
+    eval_count = min(args.eval_limit, len(rows) - 1) if len(rows) > 1 else 0
+    split_at = len(rows) - eval_count
+    train_rows, eval_rows = rows[:split_at], rows[split_at:]
+
+    train_manifest = manifest_dir / f"{args.name}_train.jsonl"
+    eval_manifest = manifest_dir / f"{args.name}_eval.jsonl"
+    write_jsonl(train_manifest, train_rows)
+    if eval_rows:
+        write_jsonl(eval_manifest, eval_rows)
+
+    validation_summary: dict[str, Any] = {}
+    if eval_rows:
+        validation = validate_source_backed_video_world_manifest_pair(
+            train_manifest,
+            eval_manifest,
+            data_root=data_root,
+            require_target_video=True,
+        )
+        validation_summary = validation.to_dict()
+
+    report = {
+        "dataset": "video_world_targets",
+        "source": args.source,
+        "repo_id": args.repo_id,
+        "camera": args.camera,
+        "source_split": "main",
+        "decode_method": "pyav_http_target_clip",
+        "episode_count": len(rows),
+        "train_rows": len(train_rows),
+        "eval_rows": len(eval_rows),
+        "data_root": data_root.as_posix(),
+        "train_manifest": train_manifest.as_posix(),
+        "eval_manifest": eval_manifest.as_posix() if eval_rows else "",
+        "reference_dir": reference_dir.as_posix(),
+        "target_dir": target_dir.as_posix(),
+        "max_target_frames": int(args.max_target_frames),
+        "validation_summary": validation_summary,
+        "license_note": (
+            "Respect the source dataset license. Target clips are decoded from public "
+            "LeRobot videos and stored under data/external; do not commit them to git."
+        ),
+    }
+    write_report(video_root / f"{args.name}_report.json", report)
+    emit(report)
+
+
+__all__ = [
+    "build_target_video_world_rows",
+    "build_video_world_rows",
+    "manifest_setup_hints",
+    "register",
+]

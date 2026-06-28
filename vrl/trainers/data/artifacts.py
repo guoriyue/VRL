@@ -168,11 +168,37 @@ def resolve_prompt_example_artifacts(
         if example.reference_video
         else ""
     )
+    target_image = (
+        str(
+            resolve_artifact_path(
+                example.target_image,
+                data_root=data_root,
+                allow_absolute=allow_absolute,
+            ),
+        )
+        if example.target_image
+        else ""
+    )
+    target_video = (
+        str(
+            resolve_artifact_path(
+                example.target_video,
+                data_root=data_root,
+                allow_absolute=allow_absolute,
+            ),
+        )
+        if example.target_video
+        else ""
+    )
     metadata = dict(example.metadata)
     if reference_image:
         metadata["reference_image"] = reference_image
     if reference_video:
         metadata["reference_video"] = reference_video
+    if target_image:
+        metadata["target_image"] = target_image
+    if target_video:
+        metadata["target_video"] = target_video
     if references:
         metadata["references"] = references
     return PromptExample(
@@ -180,6 +206,8 @@ def resolve_prompt_example_artifacts(
         target_text=example.target_text,
         reference_image=reference_image,
         reference_video=reference_video,
+        target_image=target_image,
+        target_video=target_video,
         references=references,
         task_type=example.task_type,
         request_overrides=dict(example.request_overrides),
@@ -295,15 +323,18 @@ def validate_source_backed_video_world_manifest_pair(
     eval_manifest: str | Path,
     *,
     data_root: str | Path | None = None,
+    require_target_video: bool = False,
 ) -> ArtifactManifestReport:
     """Validate real Video2World manifests and first-frame reference provenance."""
 
+    artifact_fields = ("reference_image", "target_video") if require_target_video else ("reference_image",)
+    required_artifact_fields = artifact_fields
     return validate_artifact_manifest_pair(
         train_manifest,
         eval_manifest,
         data_root=data_root,
-        artifact_fields=("reference_image",),
-        required_artifact_fields=("reference_image",),
+        artifact_fields=artifact_fields,
+        required_artifact_fields=required_artifact_fields,
         required_metadata_fields=SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS,
     )
 

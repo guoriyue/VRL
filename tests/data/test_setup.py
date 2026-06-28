@@ -61,6 +61,53 @@ def test_video_world_bridge_rows_match_cosmos_consumer(
     assert Path(examples[0].reference_image).exists()
 
 
+def test_video_world_targets_rows_include_real_source_target_clip(tmp_path: Path) -> None:
+    """Checks public LeRobot target rows include reference and target artifacts."""
+    data_root = tmp_path / "external"
+    reference_dir = data_root / "video_world" / "references"
+    target_dir = data_root / "video_world" / "targets"
+    episodes = [
+        {
+            "frames": [
+                Image.new("RGB", (4, 4), (10, 20, 30)),
+                Image.new("RGB", (4, 4), (40, 50, 60)),
+            ],
+            "prompt": "put the marker in the pot",
+            "episode_id": "000001",
+            "metadata": {
+                "source_repo": "lerobot/droid_100",
+                "source_split": "main",
+                "source_video": "videos/observation.images.exterior/chunk-000/file-000.mp4",
+                "source_frame_index": 0,
+                "decode_method": "pyav_http_target_clip",
+                "source_fps": 15.0,
+            },
+        },
+    ]
+
+    def fake_video_writer(path: Path, frames: list[Image.Image], fps: float) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(f"fake-video frames={len(frames)} fps={fps}".encode())
+
+    rows = video_world.build_target_video_world_rows(
+        episodes,
+        reference_dir=reference_dir,
+        target_dir=target_dir,
+        data_root=data_root,
+        source="droid",
+        fps=10.0,
+        video_writer=fake_video_writer,
+    )
+
+    assert rows[0]["reference_image"].startswith("video_world/references/")
+    assert rows[0]["target_video"].startswith("video_world/targets/")
+    assert (data_root / rows[0]["reference_image"]).exists()
+    assert (data_root / rows[0]["target_video"]).read_text(encoding="utf-8").endswith("fps=15.0")
+    assert rows[0]["task_type"] == "video2world"
+    assert rows[0]["metadata"]["source"] == "droid"
+    assert rows[0]["metadata"]["source_repo"] == "lerobot/droid_100"
+
+
 # NOTE: the bare ``download_danbooru_images`` selection path is owned by
 # ``test_danbooru.py::test_download_danbooru_images_downloads_only_positive_selection``.
 # This module only covers the ``setup.main`` CLI wiring that sits on top of it.

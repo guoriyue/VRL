@@ -65,7 +65,6 @@ def test_reward_signal_is_env_owned() -> None:
 def test_action_trajectory_batch_eval_only_vs_trainable() -> None:
     """An eval-only batch (log_probs=None) is distinguishable from a trainable one."""
     eval_batch = ActionTrajectoryBatch(
-        observations=np.zeros((2, 8)),
         actions=np.zeros((2, 8, 16, 7)),
         log_probs=None,
         rewards=np.zeros((2,)),
@@ -77,7 +76,6 @@ def test_action_trajectory_batch_eval_only_vs_trainable() -> None:
     assert eval_batch.is_trainable is False
 
     trainable_batch = ActionTrajectoryBatch(
-        observations=np.zeros((2, 8)),
         actions=np.zeros((2, 8, 16, 7)),
         log_probs=np.zeros((2, 8, 16)),
         rewards=np.zeros((2,)),
@@ -85,7 +83,6 @@ def test_action_trajectory_batch_eval_only_vs_trainable() -> None:
         dones=np.zeros((2, 8), dtype=bool),
         group_ids=np.zeros((2,), dtype=np.int64),
         episode_lengths=np.full((2,), 8, dtype=np.int64),
-        distribution="flow_matching",
     )
     assert trainable_batch.is_trainable is True
 

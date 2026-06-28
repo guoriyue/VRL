@@ -108,6 +108,12 @@ class GenerationRequestBuilder:
         references = kwargs.get("references")
         if references:
             metadata["references"] = references
+        target_image = kwargs.get("target_image")
+        if target_image is not None:
+            metadata["target_image"] = target_image
+        target_video = kwargs.get("target_video")
+        if target_video is not None:
+            metadata["target_video"] = target_video
         if self.default_task_type is not None:
             metadata["task_type"] = kwargs.get("task_type", self.default_task_type)
             reference_image = kwargs.get("reference_image")

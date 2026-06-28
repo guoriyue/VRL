@@ -1,0 +1,19 @@
+# Lightweight target-aware reward for robot-domain Video2World.
+#
+# Reads target_video or target_image from rollout metadata, compares generated
+# frames against target media using low-resolution RGB features, and returns:
+# target_similarity / target_sequence_similarity /
+# target_final_frame_similarity / target_temporal_similarity.
+reward:
+  components:
+    target_video_similarity: 1.0
+  kwargs:
+    target_video_similarity:
+      reward_name: target_video_similarity
+      score_key: target_similarity
+      worker_config:
+        num_frames: 8
+        feature_size: 64
+        sequence_weight: 0.5
+        final_weight: 0.3
+        temporal_weight: 0.2

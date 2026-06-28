@@ -1118,6 +1118,12 @@ def _fixed_eval_collect_kwargs(item: Any, *, group_size: int, seed: int) -> dict
         reference_video = getattr(item, "reference_video", None)
         if reference_video:
             kwargs["reference_video"] = reference_video
+        target_image = getattr(item, "target_image", None)
+        if target_image:
+            kwargs["target_image"] = target_image
+        target_video = getattr(item, "target_video", None)
+        if target_video:
+            kwargs["target_video"] = target_video
     return kwargs
 
 

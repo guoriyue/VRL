@@ -131,25 +131,29 @@ class EpisodeArtifact:
 class ActionTrajectoryBatch:
     """Typed robot-action trajectory consumed by the trainer.
 
-    Parallel to ``RolloutBatch`` but for closed-loop env rollouts. The collector
-    fills this after stepping an environment to completion across a group of
-    episodes. ``log_probs`` is ``None`` for an eval-only collection (no trainable
-    policy distribution); a trainer must refuse to build an RL update from such a
-    batch rather than treat absent logprobs as zero.
+    Parallel to ``RolloutBatch`` but deliberately NOT a subclass of it: ``actions``
+    and ``dones`` carry a different rank ([B, T, horizon, action_dim] / [B, T] vs the
+    diffusion [B, T, ...] / [B]), and ``vrl/rollouts/collector/artifacts.py`` does
+    ``isinstance(_, RolloutBatch)`` dispatch — so inheriting would make a robot batch
+    a false IS-A and let diffusion code accept shape-incompatible data. The collector
+    fills this after stepping an environment to completion across a group of episodes.
+    ``log_probs`` is ``None`` for an eval-only collection; a trainer must refuse to
+    build an RL update from such a batch rather than treat absent logprobs as zero.
+
+    Fields are only the trajectory's own data. The episode video lives on
+    ``EpisodeArtifact.video`` (not duplicated here); the sampling ``distribution`` is
+    owned by ``ActionChunk``; per-step observations are reconstructed by the trainer
+    at replay time rather than carried as a placeholder.
     """
 
-    observations: Any            # stacked obs features [B, T, ...]
     actions: Any                 # [B, T, horizon, action_dim]
     log_probs: Any | None        # [B, T, horizon] or None (eval-only)
     rewards: Any                 # [B] terminal/return reward per episode
     success: Any                 # [B] bool success per episode
     dones: Any                   # [B, T] per-step done flags
-    group_ids: Any               # [B] task/prompt group assignment
+    group_ids: Any               # [B] task/prompt group assignment (group-relative adv)
     episode_lengths: Any         # [B] control steps actually taken per episode
-    distribution: str | None = None
-    videos: Any | None = None    # [B, C, T, H, W] episode frames (for video reward)
     extras: dict[str, Any] = field(default_factory=dict)
-    context: dict[str, Any] = field(default_factory=dict)
 
     @property
     def is_trainable(self) -> bool:

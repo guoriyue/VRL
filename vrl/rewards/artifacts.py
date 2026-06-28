@@ -133,6 +133,8 @@ def _artifact_provenance(metadata: dict[str, Any]) -> dict[str, Any]:
         "task_type",
         "reference_image",
         "reference_video",
+        "target_image",
+        "target_video",
         "source",
         "source_repo",
         "source_split",

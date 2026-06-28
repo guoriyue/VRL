@@ -172,7 +172,6 @@ def _run_episode(env: Any, policy: Any, spec: Any, max_chunks: int) -> dict[str,
 
     actions = np.stack(chunks)[None] if chunks else np.zeros((1, 0, 0, 7), np.float32)
     batch = ActionTrajectoryBatch(
-        observations=np.zeros((1, len(chunks)), dtype=np.float32),
         actions=actions,  # [1, n_chunks, horizon, action_dim]
         log_probs=None,   # OFT L1 regression: eval-only, no replayable logprob
         rewards=np.asarray([total_reward], dtype=np.float32),
@@ -180,7 +179,6 @@ def _run_episode(env: Any, policy: Any, spec: Any, max_chunks: int) -> dict[str,
         dones=np.asarray([[i == len(chunks) - 1 for i in range(len(chunks))]]),
         group_ids=np.asarray([spec.options.get("task_id", 0)], dtype=np.int64),
         episode_lengths=np.asarray([len(chunks)], dtype=np.int64),
-        distribution="l1_regression",
         extras={"task": spec.task},
     )
     return {

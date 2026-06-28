@@ -389,6 +389,36 @@ def test_collector_forwards_reference_metadata_to_request() -> None:
     assert collector_request.metadata["reference_image"] == "/tmp/reference.png"
 
 
+def test_collector_forwards_target_metadata_to_request() -> None:
+    """Checks collector forwards target artifact metadata to rewards."""
+    from vrl.rollouts.collector.config import RolloutConfig
+    from vrl.rollouts.collector.requests import GenerationRequestBuilder
+
+    builder = GenerationRequestBuilder(
+        family="cosmos",
+        task="v2w",
+        request_prefix="cosmos",
+        config=RolloutConfig(family="cosmos", values={"num_steps": 1}),
+        return_artifacts=("trajectory",),
+        default_task_type="video2world",
+    )
+
+    collector_request = builder.build(
+        ["prompt"],
+        1,
+        {
+            "reference_image": "/tmp/reference.png",
+            "target_image": "/tmp/target.png",
+            "target_video": "/tmp/target.mp4",
+        },
+    )
+
+    assert collector_request.request.metadata["target_image"] == "/tmp/target.png"
+    assert collector_request.request.metadata["target_video"] == "/tmp/target.mp4"
+    assert collector_request.metadata["target_image"] == "/tmp/target.png"
+    assert collector_request.metadata["target_video"] == "/tmp/target.mp4"
+
+
 def _sample_rows(request: GenerationRequest) -> list[GenerationSampleRow]:
     rows: list[GenerationSampleRow] = []
     for prompt_index, prompt in enumerate(request.prompts):

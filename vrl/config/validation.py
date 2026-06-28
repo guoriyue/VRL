@@ -166,9 +166,12 @@ def _validate_video_world_production_data(cfg: DictConfig) -> None:
 
     data_root = str(OmegaConf.select(cfg, "data.artifact_data_root", default="") or "").strip()
     kwargs = {"data_root": data_root} if data_root else {}
+    reward_components = OmegaConf.select(cfg, "reward.components", default={}) or {}
+    require_target_video = "target_video_similarity" in reward_components
     validate_source_backed_video_world_manifest_pair(
         str(require(cfg, "data.manifest")),
         str(require(cfg, "data.eval_manifest")),
+        require_target_video=require_target_video,
         **kwargs,
     )
     _validate_video_world_source_report(Path(str(require(cfg, "data.source_report"))))

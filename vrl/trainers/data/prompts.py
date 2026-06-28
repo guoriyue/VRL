@@ -20,6 +20,8 @@ class PromptExample:
     target_text: str = ""
     reference_image: str = field(default="", metadata={"artifact": True})
     reference_video: str = field(default="", metadata={"artifact": True})
+    target_image: str = field(default="", metadata={"artifact": True})
+    target_video: str = field(default="", metadata={"artifact": True})
     references: list[str] = field(default_factory=list, metadata={"artifact": True})
     task_type: str = "text_to_video"
     request_overrides: dict[str, Any] = field(default_factory=dict)

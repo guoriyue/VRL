@@ -28,6 +28,7 @@ Use these conventions for compound video recipes:
 | Visual-quality judge | `videoscore2` | `visual_quality` | VideoScore2's clarity/artifact axis as a learned second opinion to Kling `visual_quality`. |
 | Rubric / cloth-physics judge | `unified_reward_video` | `physics` | UnifiedReward-2.0's physics axis; steer it at the dress/skirt question via `worker_config.rubric_path`. |
 | Human dynamics (external) | `phymotion` | `overall` | SMPL+MuJoCo kinematic/contact/dynamic feasibility via an external PhyMotion env (opt-in). |
+| Robot target matching | `target_video_similarity` | `target_similarity` | Compares generated V2W output with manifest `target_video` / `target_image`; use as a probeable task signal, with Kling as a guard. |
 
 Keep `configs/reward/kling_video_reward.yaml` on `overall_reward` for single-reward
 baselines. Compound experiments should override the score key explicitly, e.g.

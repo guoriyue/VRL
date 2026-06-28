@@ -51,6 +51,38 @@ def test_artifact_manifest_resolves_relative_references_via_data_root(tmp_path: 
     assert report.resolved_artifacts[0].resolved_path == reference.resolve()
 
 
+def test_target_artifacts_are_prompt_fields_and_validate(tmp_path: Path) -> None:
+    """Checks target media fields are first-class artifact fields."""
+    data_root = tmp_path / "external"
+    reference = data_root / "video_world" / "references" / "ref.ppm"
+    target = data_root / "video_world" / "targets" / "target.ppm"
+    manifest = tmp_path / "home_train.jsonl"
+    _write_ppm(reference)
+    _write_ppm(target)
+    _write_manifest(
+        manifest,
+        {
+            "prompt": "open the drawer",
+            "reference_image": "video_world/references/ref.ppm",
+            "target_image": "video_world/targets/target.ppm",
+        },
+    )
+
+    examples = load_prompt_manifest(manifest)
+    report = validate_artifact_manifest(
+        manifest,
+        data_root=data_root,
+        required_artifact_fields=("reference_image", "target_image"),
+    )
+
+    assert examples[0].target_image == "video_world/targets/target.ppm"
+    assert report.artifact_count == 2
+    assert {item.field for item in report.resolved_artifacts} == {
+        "reference_image",
+        "target_image",
+    }
+
+
 def test_missing_reference_image_fails_with_manifest_row(tmp_path: Path) -> None:
     """Checks missing reference image fails with manifest row."""
     manifest = tmp_path / "missing.jsonl"
@@ -120,4 +152,4 @@ def test_setup_cli_creates_ignored_external_dirs(
     ) is None
 
     assert (data_root / "video_world" / "references").is_dir()
-    assert (data_root / "video_world" / "source_videos").is_dir()
+    assert (data_root / "video_world" / "targets").is_dir()

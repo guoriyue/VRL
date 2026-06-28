@@ -9,7 +9,8 @@ framework lives here.
     python -m vrl.scripts.data.setup <command>
 
 Commands: pickapic, anime-prompts, anime-safety-prompts, anime-positives,
-anime-fetch-images, videophy-i2v, video-world-bridge, for-experiment, init-dirs.
+anime-fetch-images, videophy-i2v, video-world-bridge, video-world-targets,
+for-experiment, init-dirs.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ from vrl.scripts.data import bootstrap, danbooru, pickapic, video_world, videoph
 _INIT_DIRS_BY_DATASET = {
     "pickapic": ("pickapic",),
     "anime": ("danbooru/images", "danbooru/hand_crops"),
-    "video-world": ("video_world/references", "video_world/source_videos"),
+    "video-world": ("video_world/references", "video_world/targets"),
 }
 
 
