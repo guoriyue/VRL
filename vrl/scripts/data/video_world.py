@@ -403,6 +403,25 @@ def _iter_lerobot_v20(
             }
 
 
+def _row_action(row: Mapping[str, Any], action_cols: Sequence[str]) -> list[float]:
+    """Flatten a parquet row's action column(s) into one control-step action vector.
+
+    Handles both a single ``action`` array column and split
+    ``action.cartesian_position`` / ``action.gripper_position`` columns; the exact
+    layout is recorded in ``metadata['action_keys']`` so the reward is self-describing.
+    """
+    vec: list[float] = []
+    for col in action_cols:
+        value = row.get(col)
+        if value is None:
+            continue
+        if isinstance(value, (list, tuple)):
+            vec.extend(float(x) for x in value)
+        else:
+            vec.append(float(value))
+    return vec
+
+
 def _iter_lerobot_v21_target_clips(
     repo_id: str,
     info: Mapping[str, Any],
@@ -424,9 +443,16 @@ def _iter_lerobot_v21_target_clips(
     caption_col = next(col for col in task_rows[0] if col != "task_index")
     captions = {int(r["task_index"]): str(r[caption_col]).strip() for r in task_rows}
 
+    # Discover robot-action columns from the parquet schema so action-conditioned
+    # rewards (inverse-dynamics action-following) can read the commanded action per
+    # frame. Degrades gracefully to no target_actions when the source has none.
+    data_path = dl(data_tmpl.format(chunk_index=0, file_index=0))
+    base_cols = ["episode_index", "frame_index", "task_index", "index"]
+    schema_names = set(pq.ParquetFile(data_path).schema_arrow.names)
+    action_cols = sorted(c for c in schema_names if c == "action" or c.startswith("action."))
     data_rows = pq.read_table(
-        dl(data_tmpl.format(chunk_index=0, file_index=0)),
-        columns=["episode_index", "frame_index", "task_index", "index"],
+        data_path,
+        columns=base_cols + [c for c in action_cols if c not in base_cols],
     ).to_pylist()
     if not data_rows:
         return
@@ -445,9 +471,12 @@ def _iter_lerobot_v21_target_clips(
                 "task_index": int(row["task_index"]),
                 "start_global_index": int(row["index"]),
                 "frames": [],
+                "actions": [],
             }
         if episode in selected and int(row["frame_index"]) < max_target_frames:
             positions[int(row["index"]) - base_index] = episode
+            if action_cols:
+                selected[episode]["actions"].append(_row_action(row, action_cols))
 
     if not positions:
         return
@@ -464,21 +493,30 @@ def _iter_lerobot_v21_target_clips(
         task_index = int(item["task_index"])
         prompt = captions.get(task_index, "")
         if prompt and frames:
+            metadata: dict[str, Any] = {
+                "source_repo": repo_id,
+                "source_split": "main",
+                "source_video": rel,
+                "source_frame_index": int(item["start_global_index"]) - base_index,
+                "source_target_frame_count": len(frames),
+                "source_fps": fps,
+                "source_camera": video_key,
+                "decode_method": "pyav_http_target_clip",
+                "codebase_version": str(info.get("codebase_version", "v2.1")),
+            }
+            actions = item.get("actions") or []
+            if actions:
+                # One commanded action per decoded control step; the inverse-dynamics
+                # action-following reward reads these from metadata (not pixels).
+                aligned = [list(a) for a in actions[: len(frames)]]
+                metadata["target_actions"] = aligned
+                metadata["action_keys"] = action_cols
+                metadata["action_dim"] = len(aligned[0]) if aligned else 0
             yield {
                 "frames": frames,
                 "prompt": prompt,
                 "episode_id": f"{episode:06d}",
-                "metadata": {
-                    "source_repo": repo_id,
-                    "source_split": "main",
-                    "source_video": rel,
-                    "source_frame_index": int(item["start_global_index"]) - base_index,
-                    "source_target_frame_count": len(frames),
-                    "source_fps": fps,
-                    "source_camera": video_key,
-                    "decode_method": "pyav_http_target_clip",
-                    "codebase_version": str(info.get("codebase_version", "v2.1")),
-                },
+                "metadata": metadata,
             }
 
 
