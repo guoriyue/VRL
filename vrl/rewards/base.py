@@ -339,6 +339,53 @@ class RewardFunction:
                 handle.write(json.dumps(asdict(result), sort_keys=True) + "\n")
 
 
+_IMAGE_SUFFIXES = frozenset({".bmp", ".gif", ".jpeg", ".jpg", ".png", ".ppm", ".webp"})
+
+
+def decode_artifact_frames(artifact: Any, num_frames: int | None = None) -> Any:
+    """Decode a reward artifact's generated media to a ``[T,H,W,3]`` float frame stack.
+
+    Shared by the frame-comparison rewards (target_dino_similarity,
+    motion_dynamics): an artifact carries either a materialized file path (the Ray
+    disk path / probe mp4) or an in-memory tensor (the inline collector path), and
+    both must yield the same ``[T,H,W,3]`` float tensor in ``[0,1]``. Lives in the
+    rewards base (not utils/media) because it depends on the artifact contract.
+
+    In-memory video media is channel-first ``[C,T,H,W]`` / ``[1,C,T,H,W]`` (the layout
+    the collector emits and ``video_tensor_to_uint8_frames`` enforces, raising loudly on
+    a wrong channel count); images are ``[C,H,W]``. The on-disk path (mp4/png) is the
+    common case in practice (the probe and the Ray pool both materialize to disk).
+    """
+
+    import torch
+
+    from vrl.utils.media import (
+        frames_thwc_to_float,
+        image_to_uint8_hwc,
+        read_image_as_frames,
+        read_video_frames,
+        sample_frames,
+        video_tensor_to_uint8_frames,
+    )
+
+    path = str(getattr(artifact, "path", "") or "")
+    if path and not path.endswith(".pt"):
+        if Path(path).suffix.lower() in _IMAGE_SUFFIXES:
+            return read_image_as_frames(path)
+        return read_video_frames(path, num_frames)
+    media = artifact.as_media()
+    if isinstance(media, torch.Tensor):
+        if media.ndim in {4, 5}:
+            frames = torch.from_numpy(video_tensor_to_uint8_frames(media))
+            return sample_frames(frames_thwc_to_float(frames), num_frames)
+        if media.ndim == 3:
+            image = torch.from_numpy(image_to_uint8_hwc(media))
+            return frames_thwc_to_float(image.unsqueeze(0))
+    raise TypeError(
+        f"reward artifact expected image/video tensor or media path, got {type(media)}",
+    )
+
+
 def _max_result_timing(results: list[RewardInferenceResult], field: str) -> float:
     values = [
         float(value)
@@ -356,4 +403,4 @@ def _sum_result_timing(results: list[RewardInferenceResult], field: str) -> floa
     )
 
 
-__all__ = ["ArtifactBuilder", "RewardFunction"]
+__all__ = ["ArtifactBuilder", "RewardFunction", "decode_artifact_frames"]

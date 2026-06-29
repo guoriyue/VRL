@@ -1,0 +1,21 @@
+# RAFT motion-dynamics quality-guard reward for Video2World (SPRINT_future_reward S3).
+#
+# VBench "Dynamic Degree": the top-5% optical-flow magnitude (RAFT-small) of the
+# GENERATED clip, with no reference to the target. Its only job is a hard floor under
+# static / blurred / temporal-mean collapse (flow ~= 0), which EVA warns relapses late in
+# GRPO. NOT a temporal-order judge -- a reversed/shuffled clip may score high; that is the
+# IDM/DINOv2 temporal terms' job. Local CPU/GPU; no separate reward GPU pool.
+#
+# Passes vrl.scripts.eval.future_reward_discrimination_probe (static -> ~0.03 floor vs
+# exact ~0.36). magnitude_scale maps fraction-of-diagonal flow to [0,1] and is domain-tunable.
+reward:
+  components:
+    motion_dynamics: 1.0
+  kwargs:
+    motion_dynamics:
+      reward_name: motion_dynamics
+      score_key: motion_dynamics
+      worker_config:
+        num_frames: 16
+        flow_size: 256
+        magnitude_scale: 50.0

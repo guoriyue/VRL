@@ -28,10 +28,12 @@ def _register_builtins() -> None:
     from vrl.rewards.functions.cosmos3_reasoner import Cosmos3ReasonerReward
     from vrl.rewards.functions.geneval import GenEvalReward
     from vrl.rewards.functions.kling_video_reward import KlingVideoReward
+    from vrl.rewards.functions.motion_dynamics import MotionDynamicsReward
     from vrl.rewards.functions.nsfw_safety import NSFWSafetyReward
     from vrl.rewards.functions.ocr import OCRReward
     from vrl.rewards.functions.phymotion import PhyMotionReward
     from vrl.rewards.functions.pickscore import PickScoreReward
+    from vrl.rewards.functions.target_dino_similarity import TargetDinoSimilarityReward
     from vrl.rewards.functions.target_video_similarity import TargetVideoSimilarityReward
     from vrl.rewards.functions.unified_reward_video import UnifiedRewardVideoReward
     from vrl.rewards.functions.videocon_physics import VideoConPhysicsReward
@@ -43,6 +45,13 @@ def _register_builtins() -> None:
         "nsfw_safety": NSFWSafetyReward,
         "ocr": OCRReward,
         "pickscore": PickScoreReward,
+        # Future Reward suite (SPRINT_future_reward): DINOv2 perceptual anchor + RAFT
+        # motion guard replace the retired pixel-L1 target_video_similarity. (The IDM
+        # action-following signal is designed in SPRINT_future_reward S3 but not shipped.)
+        "target_dino_similarity": TargetDinoSimilarityReward,
+        "motion_dynamics": MotionDynamicsReward,
+        # Retired: pixel-L1, reward-hackable (kept registered for back-compat only;
+        # see SPRINT_future_reward S1). Do not use in new recipes.
         "target_video_similarity": TargetVideoSimilarityReward,
         "kling_video_reward": KlingVideoReward,
         "cosmos3_reasoner": Cosmos3ReasonerReward,
@@ -50,7 +59,6 @@ def _register_builtins() -> None:
         "videoscore2": VideoScore2Reward,
         "unified_reward_video": UnifiedRewardVideoReward,
         "phymotion": PhyMotionReward,
-        "target_video_similarity": TargetVideoSimilarityReward,
     })
 
 

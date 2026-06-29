@@ -138,6 +138,75 @@ def video_tensor_to_uint8_frames(tensor: torch.Tensor) -> np.ndarray:
     return (video.numpy() * 255.0).round().astype(np.uint8)
 
 
+def frames_thwc_to_float(frames: torch.Tensor) -> torch.Tensor:
+    """Normalize a ``[T,H,W,C]`` uint8/float frame stack to ``[T,H,W,3]`` float in ``[0,1]``."""
+
+    if frames.ndim != 4 or frames.shape[-1] not in {1, 3, 4}:
+        raise ValueError(f"frames must be [T,H,W,C], got {tuple(frames.shape)}")
+    rgb = frames[..., :3]
+    if torch.is_floating_point(rgb):
+        # Float frames are assumed unit-range; tolerate an unusual 0-255 float source.
+        out = rgb.float()
+        if float(out.max().item()) > 1.5:
+            out = out / 255.0
+    else:
+        out = rgb.float() / 255.0  # integer 0-255 frames
+    if out.shape[-1] == 1:
+        out = out.repeat(1, 1, 1, 3)
+    return out.clamp(0.0, 1.0)
+
+
+def sample_frames(frames: torch.Tensor, num_frames: int | None) -> torch.Tensor:
+    """Evenly subsample a ``[T,...]`` stack to ``num_frames`` (no-op when fewer/None)."""
+
+    if num_frames is None or frames.shape[0] <= num_frames:
+        return frames
+    indices = torch.linspace(0, frames.shape[0] - 1, steps=num_frames).round().long()
+    return frames.index_select(0, indices)
+
+
+def align_frame_counts(
+    a: torch.Tensor,
+    b: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Subsample both stacks to their common (minimum) frame count."""
+
+    count = min(int(a.shape[0]), int(b.shape[0]))
+    if count < 1:
+        raise ValueError("need at least one frame per side")
+    return sample_frames(a, count), sample_frames(b, count)
+
+
+def read_video_frames(
+    path: str | Path,
+    num_frames: int | None = None,
+) -> torch.Tensor:
+    """Decode a video file to a ``[T,H,W,3]`` float tensor in ``[0,1]`` (optionally subsampled)."""
+
+    import imageio.v2 as imageio
+
+    reader = imageio.get_reader(Path(path))
+    frames: list[torch.Tensor] = []
+    try:
+        for frame in reader:
+            frames.append(torch.from_numpy(image_to_uint8_hwc(frame)))
+    finally:
+        reader.close()
+    if not frames:
+        raise ValueError(f"decoded no frames from {path}")
+    return sample_frames(frames_thwc_to_float(torch.stack(frames, dim=0)), num_frames)
+
+
+def read_image_as_frames(path: str | Path) -> torch.Tensor:
+    """Decode an image file to a single-frame ``[1,H,W,3]`` float tensor in ``[0,1]``."""
+
+    from PIL import Image
+
+    with Image.open(path) as image:
+        frame = torch.from_numpy(image_to_uint8_hwc(image.convert("RGB")))
+    return frames_thwc_to_float(frame.unsqueeze(0))
+
+
 def write_mp4(tensor: torch.Tensor, path: str | Path, *, fps: float) -> None:
     """Write a channel-first video tensor to an mp4 file."""
 
@@ -152,8 +221,13 @@ def write_mp4(tensor: torch.Tensor, path: str | Path, *, fps: float) -> None:
 
 
 __all__ = [
+    "align_frame_counts",
+    "frames_thwc_to_float",
     "image_to_uint8_hwc",
     "load_reference_image",
+    "read_image_as_frames",
+    "read_video_frames",
+    "sample_frames",
     "to_pil_image",
     "to_uint8",
     "video_tensor_to_uint8_frames",

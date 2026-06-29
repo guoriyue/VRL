@@ -28,7 +28,9 @@ Use these conventions for compound video recipes:
 | Visual-quality judge | `videoscore2` | `visual_quality` | VideoScore2's clarity/artifact axis as a learned second opinion to Kling `visual_quality`. |
 | Rubric / cloth-physics judge | `unified_reward_video` | `physics` | UnifiedReward-2.0's physics axis; steer it at the dress/skirt question via `worker_config.rubric_path`. |
 | Human dynamics (external) | `phymotion` | `overall` | SMPL+MuJoCo kinematic/contact/dynamic feasibility via an external PhyMotion env (opt-in). |
-| Robot target matching | `target_video_similarity` | `target_similarity` | Compares generated V2W output with manifest `target_video` / `target_image`; use as a probeable task signal, with Kling as a guard. |
+| Robot V2W perceptual anchor | `target_dino_similarity` | `target_dino_similarity` | Frozen-DINOv2 cosine + temporal term vs manifest `target_video` / `target_image`; keeps frames on the real-image manifold. Zero-training (pretrained). |
+| Robot V2W motion guard | `motion_dynamics` | `motion_dynamics` | RAFT optical-flow Dynamic Degree; a hard floor under static/blur collapse. |
+| Robot target matching (DEAD) | `target_video_similarity` | `target_similarity` | RETIRED pixel-L1 — optimum is a blurred mean (SPRINT_future_reward §1). Kept for back-compat only; use the three rows above. |
 
 Keep `configs/reward/kling_video_reward.yaml` on `overall_reward` for single-reward
 baselines. Compound experiments should override the score key explicitly, e.g.
