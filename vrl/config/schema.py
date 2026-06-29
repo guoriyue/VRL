@@ -598,6 +598,11 @@ class RolloutWorkerSection(ConfigBase):
     max_inflight_chunks_per_worker: int = 1
     chunk_placement_strategy: Literal["round_robin", "dynamic"] = "round_robin"
     sync_trainable_state: bool = True
+    # Opt-in single-worker pipelined rollout. Read by RayGenerationConfig.from_cfg;
+    # only takes effect with exactly one rollout worker and more than one planned
+    # chunk. Best paired with the largest sample_batch_size that keeps 2 chunks
+    # resident.
+    pipelined: bool = False
 
 
 class DistributedSection(ConfigBase):

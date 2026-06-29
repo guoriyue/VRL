@@ -134,6 +134,7 @@ class RayGenerationLauncher:
             workers,
             chunk_gatherer,
             max_inflight_chunks_per_worker=rollout_config.max_inflight_chunks_per_worker,
+            pipelined=rollout_config.pipelined,
         )
         weight_sync = (
             RayGenerationWeightSync(workers)

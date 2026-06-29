@@ -318,6 +318,16 @@ def test_chunk_placement_strategy_switches_from_cfg() -> None:
     # see tests/config/test_schema.py::test_unknown_chunk_placement_strategy_raises.
 
 
+def test_pipelined_switches_from_cfg() -> None:
+    """Checks distributed.rollout.pipelined flips the per-request pipelined path."""
+    assert RayGenerationConfig.from_cfg(_cfg()).pipelined is False
+
+    cfg = _cfg()
+    cfg.distributed.rollout.pipelined = True
+
+    assert RayGenerationConfig.from_cfg(cfg).pipelined is True
+
+
 def test_sync_trainable_state_defaults_on_for_from_cfg() -> None:
     """Online runs train the policy the rollout workers must resync, so an omitted
     sync_trainable_state defaults ON (True), not silently False (which would train

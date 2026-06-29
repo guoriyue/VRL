@@ -31,6 +31,7 @@ class RayGenerationExecutor:
         gatherer: ChunkGatherer,
         *,
         max_inflight_chunks_per_worker: int = 1,
+        pipelined: bool = False,
     ) -> None:
         if not workers:
             raise ValueError("RayGenerationExecutor requires at least one worker")
@@ -40,10 +41,16 @@ class RayGenerationExecutor:
         self.workers = list(workers)
         self.gatherer = gatherer
         self.max_inflight_chunks_per_worker = int(max_inflight_chunks_per_worker)
+        # Opt-in single-worker pipelined rollout. Default False = unchanged per-chunk
+        # dispatch. Only valid with exactly one worker; ignored otherwise.
+        self.pipelined = bool(pipelined)
 
     async def execute(self, request: GenerationRequest) -> GenerationOutput:
+        import time
+
         from vrl.utils.profiling import record_function
 
+        _gen_start = time.perf_counter()
         sample_rows = build_sample_rows(request)
         with record_function("engine.plan"):
             generation_plan = self.planner.plan_with_engine(
@@ -53,6 +60,13 @@ class RayGenerationExecutor:
             )
         assignments = list(generation_plan.assignments)
         engine_plan = generation_plan.engine_plan
+        if self.pipelined and len(self.workers) == 1:
+            out = await self._execute_request_pipelined(request, engine_plan, sample_rows)
+            logger.info(
+                "generation wall: path=per_request_pipelined chunks=%d wall_s=%.3f",
+                len(engine_plan.chunks), time.perf_counter() - _gen_start,
+            )
+            return out
         worker_by_id = {worker.worker_id: worker for worker in self.workers}
         strategy = self.planner.policy.strategy
         remote_jobs: list[RayActorJob] = []
@@ -211,7 +225,36 @@ class RayGenerationExecutor:
             debug_payload["chunk_oom_splits"] = oom_splits
         if debug_payload:
             output.extra["runtime_debug"] = debug_payload
+        logger.info(
+            "generation wall: path=per_chunk_dispatch chunks=%d wall_s=%.3f",
+            len(assignments), time.perf_counter() - _gen_start,
+        )
         return output
+
+    async def _execute_request_pipelined(
+        self,
+        request: GenerationRequest,
+        engine_plan: Any,
+        sample_rows: Any,
+    ) -> GenerationOutput:
+        """Single-worker stage-overlap path (opt-in, ``pipelined=True``):
+        the whole request's chunks run software-pipelined on one worker
+        (``forward_plan_pipelined``), returning the already-gathered
+        GenerationOutput. Skips the per-chunk dispatch + OOM-split (the pipeline
+        keeps depth 1 = ~2 chunks resident, raising peak vs single-chunk — only use
+        when 2 chunks fit). Version safety is enforced in the worker (slot
+        activation / StaleSlotDiscard); a stale request raises and is counted as a
+        graceful discard upstream, never trained off-policy."""
+
+        worker = self.workers[0]
+        actor = worker.actor
+        if actor is None:
+            raise RuntimeError(f"worker {worker.worker_id!r} has no actor")
+        call = actor.execute_request_pipelined
+        remote = getattr(call, "remote", None)
+        if callable(remote):
+            return await remote(request, engine_plan, sample_rows)
+        return call(request, engine_plan, sample_rows)
 
     async def _degrade_oom_chunks(
         self,

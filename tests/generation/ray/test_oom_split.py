@@ -301,3 +301,94 @@ def test_is_oom_error_classifier() -> None:
     assert _is_oom_error(_OOM_MESSAGE)
     assert _is_oom_error("torch.OutOfMemoryError: HIP out of memory")
     assert not _is_oom_error("ValueError: shape mismatch")
+
+
+@dataclass
+class _RoutingWorker:
+    """Records whether execute() took the per-request pipelined path or the
+    per-chunk path."""
+
+    worker_id: str
+    chunk_calls: list[str] = field(default_factory=list)
+    request_calls: list[str] = field(default_factory=list)
+
+    def execute_chunk(self, envelope: ChunkExecutionEnvelope) -> ChunkExecutionResult:
+        self.chunk_calls.append(envelope.chunk.chunk_key)
+        return ChunkExecutionResult(
+            request_id=envelope.request.request_id,
+            worker_id=self.worker_id,
+            chunk=envelope.chunk,
+            output={"chunk_key": envelope.chunk.chunk_key, "samples": envelope.chunk.sample_count},
+        )
+
+    def execute_request_pipelined(self, request, engine_plan, sample_rows) -> GenerationOutput:
+        self.request_calls.append(request.request_id)
+        return GenerationOutput(
+            request_id=request.request_id,
+            family=request.family,
+            task=request.task,
+            prompts=list(request.prompts),
+            sample_rows=list(sample_rows),
+            output=[{"pipelined": True}],
+        )
+
+
+def _routing_executor(chunks, workers, *, pipelined):
+    handles = [
+        DistributedWorkerHandle(worker_id=w.worker_id, node_id="local", actor=w)
+        for w in workers
+    ]
+    return RayGenerationExecutor(
+        planner=_StaticPlanner(chunks=chunks),
+        workers=handles,
+        gatherer=_CoverageGatherer(),
+        pipelined=pipelined,
+    )
+
+
+@pytest.mark.asyncio
+async def test_pipelined_routes_single_worker_to_per_request_path() -> None:
+    """pipelined=True + one worker => the whole request runs via the per-request
+    pipelined path (execute_request_pipelined), NOT per-chunk dispatch."""
+
+    chunk = SampleChunk(prompt_index=0, prompt="p", sample_start=0, sample_count=4)
+    worker = _RoutingWorker(worker_id="w0")
+    executor = _routing_executor([chunk], [worker], pipelined=True)
+
+    output = await executor.execute(_request(4))
+
+    assert worker.request_calls == ["req-oom"]
+    assert worker.chunk_calls == []
+    assert output.output == [{"pipelined": True}]
+
+
+@pytest.mark.asyncio
+async def test_pipelined_falls_back_to_per_chunk_with_multiple_workers() -> None:
+    """The per-request pipelined path is single-worker only; with >1 worker the
+    executor uses the per-chunk dispatch (data-parallel across workers)."""
+
+    chunks = [
+        SampleChunk(prompt_index=0, prompt="p", sample_start=i * 2, sample_count=2)
+        for i in range(2)
+    ]
+    workers = [_RoutingWorker(worker_id=f"w{i}") for i in range(2)]
+    executor = _routing_executor(chunks, workers, pipelined=True)
+
+    await executor.execute(_request(4))
+
+    assert all(w.request_calls == [] for w in workers)
+    assert sum(len(w.chunk_calls) for w in workers) == 2
+
+
+@pytest.mark.asyncio
+async def test_default_uses_per_chunk_path() -> None:
+    """Default (pipelined=False) is the unchanged per-chunk dispatch."""
+
+    chunk = SampleChunk(prompt_index=0, prompt="p", sample_start=0, sample_count=4)
+    worker = _RoutingWorker(worker_id="w0")
+    executor = _routing_executor([chunk], [worker], pipelined=False)
+
+    await executor.execute(_request(4))
+
+    assert worker.request_calls == []
+    assert worker.chunk_calls == [chunk.chunk_key]

@@ -57,6 +57,17 @@ class RayGenerationWorker:
     def execute_chunk(self, envelope: ChunkExecutionEnvelope) -> ChunkExecutionResult:
         return self.core.execute_chunk(envelope)
 
+    def execute_request_pipelined(
+        self,
+        request: Any,
+        engine_plan: Any,
+        sample_rows: Any,
+    ) -> Any:
+        """Per-request software-pipelined execution (single-worker stage-overlap
+        path); returns the gathered GenerationOutput. See
+        GenerationWorkerCore.execute_request_pipelined."""
+        return self.core.execute_request_pipelined(request, engine_plan, sample_rows)
+
     def _ray_metadata(self) -> dict[str, Any]:
         try:
             node_ip = current_node_ip()

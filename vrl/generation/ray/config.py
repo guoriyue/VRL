@@ -27,6 +27,10 @@ class RayGenerationConfig:
     cpus_per_worker: float = 1.0
     allow_driver_gpu_overlap: bool = False
     max_inflight_chunks_per_worker: int = 1
+    # Opt-in single-worker pipelined rollout: one rollout worker runs a request's
+    # chunks via execute_request_pipelined / forward_plan_pipelined. Default False
+    # = unchanged per-chunk dispatch; only takes effect with exactly one worker.
+    pipelined: bool = False
     # Chunk->worker binding: "round_robin" binds at plan time (baseline);
     # "dynamic" binds at dispatch time (pull + LPT). Equivalent for 1 worker.
     # Allowed-set rejection is at the typed schema boundary (RolloutWorkerSection);
@@ -82,6 +86,9 @@ class RayGenerationConfig:
                     "max_inflight_chunks_per_worker",
                     1,
                 ),
+            ),
+            pipelined=bool(
+                cfg_get(rollout, "pipelined", False),
             ),
             sync_trainable_state=bool(
                 cfg_get(rollout, "sync_trainable_state", True),

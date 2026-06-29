@@ -460,9 +460,33 @@ class DiffusionChunkExecutorBase(
                 request,
                 chunk,
                 plan.chunk_stage_for(chunk),
-                plan.summary(),
             ),
         )
+        return attach_engine_plan(self.gather_chunks(request, sample_rows, chunks), plan)
+
+    def forward_plan_pipelined(
+        self,
+        request: GenerationRequest,
+        sample_rows: list[GenerationSampleRow],
+        plan: Any,
+    ) -> GenerationOutput:
+        """In-process software-pipelined variant of forward_plan: chunk N+1's
+        produce (encode->prepare->denoise->decode, GPU compute on the default
+        stream) overlaps chunk N's teardown (the GPU->CPU result copy + host
+        packing, on a copy stream), hiding the per-chunk copy+CPU boundary behind
+        the next chunk's denoise. BIT-EXACT to forward_plan: same per-chunk stage
+        methods (via run_chunk_through_pipeline), value-preserving side-stream copy,
+        and the SAME order-preserving gather_chunks — so the gathered output is
+        identical; only the wall-clock changes.
+
+        This is the executor-level entry for the single-GPU stage-overlap lever; the
+        Ray worker calls it per-request (all of a request's chunks on one worker)
+        instead of dispatching one monolithic forward_chunk_plan per chunk.
+        """
+
+        from vrl.generation.diffusion.pipeline import forward_chunks_pipelined
+
+        chunks = forward_chunks_pipelined(self, request, plan.chunks)
         return attach_engine_plan(self.gather_chunks(request, sample_rows, chunks), plan)
 
     def forward_chunk_plan(

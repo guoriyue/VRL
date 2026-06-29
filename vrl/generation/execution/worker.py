@@ -235,6 +235,51 @@ class GenerationWorkerCore:
                 error=str(exc),
             )
 
+    def execute_request_pipelined(
+        self,
+        request: Any,
+        engine_plan: Any,
+        sample_rows: Any,
+    ) -> Any:
+        """Run ALL of a request's chunks through the executor's software pipeline
+        (``forward_plan_pipelined``) on THIS worker, so chunk N+1's denoise overlaps
+        chunk N's GPU->CPU copy + host packing — hiding the per-chunk worker
+        boundary that per-chunk dispatch leaves serial. Single-worker only (all the
+        request's chunks must be here). Returns the gathered ``GenerationOutput``.
+
+        Version safety mirrors ``execute_chunk`` but at the REQUEST level (every
+        chunk shares ``request.policy_version``): slot mode serves the request from
+        its stamped version's slot (stale slot -> ``StaleSlotDiscard`` so the
+        producer counts a graceful discard, never an off-policy train); non-slot
+        mode rejects a version mismatch. The version is checked + activated ONCE
+        here, not per chunk.
+        """
+
+        from vrl.generation.execution.types import StaleSlotDiscard
+
+        self.load_policy()
+        expected_version = request.policy_version
+        model = getattr(self.executor, "model", None)
+        if self._uses_versioned_slots and expected_version is not None:
+            if not model.has_trainable_state(expected_version):
+                raise StaleSlotDiscard(
+                    f"trainable-state slot evicted for policy_version={expected_version}",
+                )
+            model.activate_trainable_state(expected_version)
+        elif expected_version is not None and self._policy_version != expected_version:
+            raise RuntimeError(
+                "policy_version mismatch: "
+                f"expected={expected_version}, actual={self._policy_version}",
+            )
+        assert self.executor is not None
+        forward_plan_pipelined = getattr(self.executor, "forward_plan_pipelined", None)
+        if not callable(forward_plan_pipelined):
+            raise TypeError(
+                f"{type(self.executor).__name__} must implement forward_plan_pipelined(...) "
+                "for per-request pipelined execution",
+            )
+        return forward_plan_pipelined(request, sample_rows, engine_plan)
+
     def _profile_forward_chunk(
         self,
         envelope: ChunkExecutionEnvelope,
