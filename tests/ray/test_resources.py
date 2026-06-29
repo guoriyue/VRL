@@ -803,6 +803,39 @@ def test_reward_auto_placement_falls_back_to_shared_pool_on_single_gpu() -> None
     assert resolved.lifecycle.handoff.release_reward_after_score is True
 
 
+def test_resident_colocated_rollout_cannot_share_gpu_with_reward() -> None:
+    """Resident rollout/trainer colocation cannot also keep reward on that GPU."""
+    with pytest.raises(
+        ValueError,
+        match=r"cannot share the rollout GPU.*reward\.gpu_pool=dedicated",
+    ):
+        resolve_distributed_resources(
+            _cfg(
+                {
+                    "visible_devices": [0],
+                    "trainer": {"devices": [0]},
+                    "rollout": {
+                        "gpu_pool": "trainer",
+                        "memory_fraction": 0.45,
+                        "gpus_per_worker": 1,
+                        "num_workers": 1,
+                    },
+                    "reward": {
+                        "gpu_pool": "rollout",
+                        "num_gpus": 1,
+                        "gpus_per_worker": 1,
+                        "num_workers": 1,
+                    },
+                    # Allows the reward/trainer overlap check to pass so this test
+                    # reaches the resident-colocation lifecycle invariant.
+                    "allow_overlap": True,
+                },
+                reward_components={"custom_gpu_reward": 1.0},
+                reward_kwargs={"custom_gpu_reward": {"execution": "pool"}},
+            ),
+        )
+
+
 def test_reward_can_share_rollout_pool_when_phases_release() -> None:
     """Checks reward can share rollout pool when phases release."""
     resolved = resolve_distributed_resources(
@@ -1317,3 +1350,51 @@ def test_rollout_gpu_pool_rejects_unknown_value() -> None:
                 },
             ),
         )
+
+
+# ── cosmos async-reward recipe (3-GPU disjoint reward overlap) ───────────────
+
+
+def test_cosmos_async_reward_recipe_resolves_resident_reward_overlap() -> None:
+    """The cosmos online_grpo_async_reward recipe composes a 3-GPU disjoint layout
+    whose RESOLVED plan enables reward(N)/rollout(N+1) overlap.
+
+    Loads the recipe through the real config compose path (same as
+    test_all_experiments_load_and_validate), then asserts the resolver's BEHAVIOR,
+    not literal YAML values: reward devices disjoint from rollout, the handoff does
+    NOT release rollout before reward, the reward lease is resident, and the
+    continuous orchestration block is present/parsed. visible_devices is the only
+    site-supplied knob (the recipe is GPU-count agnostic), so the test pins the
+    [0,1,2] disjoint topology the recipe header documents.
+    """
+    from vrl.config.loading import load_config
+
+    cfg = load_config("experiment/diffusion/cosmos_predict2/online_grpo_async_reward")
+
+    # The recipe deliberately omits visible_devices (it is a site/run knob). Supply
+    # the 3-GPU box the disjoint layout targets; the resolver derives the rest.
+    cfg.distributed.resources.visible_devices = [0, 1, 2]
+
+    resolved = resolve_distributed_resources(cfg)
+
+    # Disjoint reward placement is the load-bearing topology: reward must not share
+    # the rollout GPU, otherwise reward(N) serializes after rollout(N).
+    assert not (set(resolved.reward_devices) & set(resolved.rollout_devices))
+    # Disjoint reward -> no pre-reward rollout release -> reward overlaps rollout(N+1).
+    assert resolved.lifecycle.handoff.release_rollout_before_reward is False
+    # A resident reward lease is what keeps reward on its own card across iterations.
+    assert resolved.lifecycle.reward.mode == "resident"
+
+    # Continuous orchestration must be composed in (the producer keeps rollout(N+1)
+    # in flight while reward(N) scores). Assert the parsed schedule mode + inflight
+    # bound behavior, not the literal yaml number.
+    from vrl.trainers.core.types import RolloutOrchestrationConfig
+
+    orchestration = cfg.trainer.rollout_orchestration
+    assert orchestration.schedule_mode == "continuous"
+    typed = RolloutOrchestrationConfig(
+        **OmegaConf.to_container(orchestration, resolve=True),
+    )
+    # >=2 inflight groups is the invariant that lets rollout(N+1) produce while
+    # reward(N) scores; assert the relation, not the literal value.
+    assert typed.continuous.max_inflight_groups >= 2

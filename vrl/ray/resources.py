@@ -305,7 +305,9 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
         raise ValueError(
             "distributed.resources.rollout.gpu_pool=trainer + memory_fraction "
             "(resident colocation) cannot share the rollout GPU with a Ray reward "
-            "worker",
+            "worker. Use distributed.resources.reward.gpu_pool=dedicated (or expose "
+            "a separate reward GPU) for async reward overlap; shared reward pools "
+            "require phase handoff instead of resident overlap.",
         )
     # Resident colocation requires the cap (a resident worker + resident trainer on
     # one GPU would otherwise let the worker's allocator grow until the trainer's

@@ -273,11 +273,29 @@ def test_rollout_keys_are_registered_not_unknown() -> None:
                 "max_inflight_chunks_per_worker": 2,
                 "chunk_placement_strategy": "dynamic",
                 "sync_trainable_state": False,
+                "pipelined": True,
             }
         }
     )
     unknown = find_unknown_keys(cfg)
     assert not [k for k in unknown if k.startswith("distributed.rollout")]
+
+
+def test_reward_resident_overlap_is_not_a_resource_key() -> None:
+    """Same-GPU reward/rollout residency is not a public resource topology knob."""
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg = _minimal_grpo_cfg(
+        distributed={
+            "resources": {
+                "reward": {
+                    "resident_overlap": True,
+                },
+            },
+        },
+    )
+
+    assert "distributed.resources.reward.resident_overlap" in find_unknown_keys(cfg)
 
 
 # ── Data loader discriminator ─────────────────────────────────────────────────
