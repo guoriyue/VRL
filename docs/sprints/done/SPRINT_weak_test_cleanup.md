@@ -1,6 +1,15 @@
 # SPRINT: 清掉镜像源码的弱测试，换成验证真实逻辑
 
-状态：**planned（2026-06-27）**。目标：删除/重写一批「只断言一个写死的字面量/路径，或把生产代码的常量、字典推导、`get_args` 派生原样抄进断言再跟自己比」的测试。这类测试在构造上恒真——源码改了它只会要求你同步抄一遍，**永远抓不到回归**。把它们换成验证*行为/契约/分支*的测试。
+状态：**done（2026-06-28，复核确认全部 12 处已处理；主体由 c613762 完成）**。目标：删除/重写一批「只断言一个写死的字面量/路径，或把生产代码的常量、字典推导、`get_args` 派生原样抄进断言再跟自己比」的测试。这类测试在构造上恒真——源码改了它只会要求你同步抄一遍，**永远抓不到回归**。把它们换成验证*行为/契约/分支*的测试。
+
+> **复核结论（2026-06-28）**：12 处全部处理完毕。`c613762`（"test: replace weak mirror assertions"）做掉主体——9 处删/改名 + #1/#2/#10 **保名换体**重写成行为测试；#11/#12（perf_smoke schema 测试）随 `validation.py` 那套 magic-substring 校验整体退役而消失（§2.3 路线 2，`validation.py` 现已无 `rejection_reason`/smoke-marker 痕迹，仓库级 grep 为空，无未测路径残留）。三个"名字还在"的已逐一验证不再弱：
+> - **#1 `test_family_registry_covers_current_rollout_families`**：改为断言每个 entry 的**结构契约**（diffusion 家族 `executor_cls`/`runtime_builder` 必须以 `vrl.models.diffusion.` 开头、非空 task/request_prefix、gatherer import_path 含 `:`），新增家族自动覆盖、错配 modality 会 fail。不再抄家族名列表。
+> - **#2 `test_algorithm_config_dispatches_representative_kinds`**：改为加载 5 个真 experiment YAML 断言 `isinstance(build_algorithm_config(cfg), expected_type)`（分派**行为**），不再抄 `train_segments` 字面集合；另有 `test_algorithm_dispatch_is_stable_per_kind` 配套。
+> - **#10 `test_seed_grid_is_identical_across_checkpoints`**：保留真契约（checkpoint 无关 `seed(0,2,1)==seed(3,2,1)` + 非退化 `!=seed(0,2,2)`），已删除重抄公式的数值锚点 `assert first == 17+2*4+1`。
+>
+> 保留清单（§3）两项原样在位。相关测试文件 101 passed。本轮无代码改动，仅本文件状态收尾。
+>
+> **顺带发现（不属本 sprint，已记录待办）**：裸 `pytest` 当前被 2 个 **collection error** 中断——`tests/models/interfaces/__init__.py:90` 的 `FAMILY_MODEL_CLASSES` 覆盖断言报 `missing families ['cosmos3','echo']`（你并行加的 cosmos3/echo 家族未同步进测试侧契约覆盖表）。排除这 2 个文件后 **1321 passed / 11 failed / 18 skipped**，11 个红全是 env-gap/既有/并行红（OCR 缺 `Levenshtein`、fp8、ray-substrate architecture、echo flow-policy 等），**无一来自本 sprint**。cosmos3/echo 契约覆盖是单独一件事。
 
 ## 0. 结论
 
@@ -136,7 +145,7 @@ assert first == 17 + 2 * 4 + 1  # 注释自承 "recomputed from the formula"
 
 ## 5. 验收
 
-- [ ] 12 处按 §2 处理完毕（删 2、重写 9、`perf_smoke` 2 按 §2.3 定）。
-- [ ] 每条重写后的测试满足：注释掉/改坏对应源码分支后该测试 fail（不可证伪性消除）。
-- [ ] 保留清单 3 项原样保留。
-- [ ] `pytest` 全绿；无新增对源码常量/字典/`get_args` 派生的镜像断言。
+- [x] 12 处按 §2 处理完毕（删/改名 9、`perf_smoke` 2 随 §2.3 路线 2 退役、#1/#2/#10 保名重写）。
+- [x] 每条重写后的测试满足不可证伪性消除（按行为/契约断言，源码策略错配即 fail）：#1 modality-import-path 契约、#2 真实 dispatch 类型、#10 checkpoint-无关 + 非退化、#5/#6 调真 `_normalize_ocr_text`。
+- [x] 保留清单 3 项原样保留（`test_registry_keeps_return_artifacts_as_wiring_metadata`、`test_anima_runtime_spec_uses_explicit_local_paths`、各消费者断言）。
+- [x] 弱测试范围内全绿、无新增镜像断言。**注**：裸 `pytest` 全绿因**与本 sprint 无关**的两类问题未达成——(a) cosmos3/echo 未进 `FAMILY_MODEL_CLASSES` → 2 个 collection error 中断 suite；(b) 排除后 1321 passed / 11 failed 的红全是 env-gap/既有红（Levenshtein、fp8、ray-substrate…）。两者都不在本 sprint 范围。
