@@ -1,8 +1,16 @@
-# SPRINT: Trustworthy profiling API（planned）
+# SPRINT: Trustworthy profiling API（done）
 
-状态：proposed / planned（2026-06-27）。本 sprint 只改 profiling API 的可信边界与验证，
+状态：done（Part A 2026-06-27，Part B 2026-06-28）。本 sprint 只改 profiling API 的可信边界与验证，
 不做新的性能优化结论。目标是让一次 profile run 产出的 trace、summary、NVTX 归因能被信任：
 知道采了什么、没采什么、每个数字能不能当 wall-time 百分比读，以及失败时不会静默给出半真结果。
+
+> **两部分。** Part A（本文 §0–§9，**done** 2026-06-27）固化的是 **采集/标注** 那半：
+> `profile_range` / `capture_torch_trace` / manifest / activity resolver——一次 profile run
+> 采了什么、没采什么、能不能信。Part B（§10，**done** 2026-06-28）固化的是 **分析** 那半：
+> 把一次 nsys 采集（`.nsys-rep`/`.sqlite`）的 GPU-idle 归因——也就是手跑过两轮的
+> kernel-union over wall + boundary 分解——做成可复用 API（`vrl/utils/nsys_report.py`）。
+> Part A 只提供 NVTX 标注，不读 nsys 产物；Part B 只读已导出的 sqlite，不碰采集运行时。
+> 两半合起来才是一次可信的 profile：采得对（A）、读得对（B）。
 
 ## 0. 现状问题
 
@@ -310,3 +318,108 @@ summary 文档明确不能把嵌套 NVTX range 百分比相加当 wall-time
 - 历史性能方法论：`docs/sprints/info/SPRINT_rollout_performance.md`
 - PyTorch profiler API：https://docs.pytorch.org/docs/2.12/profiler.html
 - Nsight Systems Analysis Guide：https://docs.nvidia.com/nsight-systems/AnalysisGuide/index.html
+
+---
+
+# Part B — nsys + NVTX + kernel-union 归因 API（done 2026-06-28）
+
+Part A 让"采集"可信，但"读数"仍只活在散文和手敲的 SQL 里：判断 RL rollout 的 GPU 到底
+忙不忙、idle 在哪、idle 是什么，前后手跑过两轮（见 `project_real_run_profiling` memory），
+每次都是 `nsys export --type sqlite` 后现敲查询。Part B 把这套方法固化成可复用 API，纯工具、
+零训练，不产生新性能结论——只让"GPU-busy = X%、idle 卡在 Y"这类数字可一行复现、可审计。
+
+## 10.0 为什么是独立模块，不塞进 `profiling.py`
+
+`vrl/utils/profiling.py` 的职责是**进程内**标注 + torch trace 采集（docstring 明确"nsys 仍是
+外部采集器，Python 只发 NVTX，不读 nsys 产物"）。Part B 干的是**事后**读 nsys 导出的 sqlite，
+做区间代数 + 归因——和 profiling.py 的边界正交。塞进去会污染那条"不读 nsys 产物"的边界，
+所以落在同族新文件 `vrl/utils/nsys_report.py`（~430 行：sqlite 解析 + 区间并集 + boundary 分解 +
+渲染）。这不是 lean file——它是一个内聚的真模块，多函数多 dataclass，不是单类薄壳。与
+profiling.py 并列，表明 profiling 家族有两半。
+
+## 10.1 载荷核心：kernel-interval UNION over wall（不是 projection）
+
+唯一可信的 GPU-busy 定义（前后踩了三次错读才定下来，见 memory）：
+
+```text
+GPU-busy = 对 CUPTI_ACTIVITY_KIND_KERNEL 的 [start,end] 求并集（合并重叠），按 deviceId 分开算，
+           / 窗口 wall。
+```
+
+它 **不是** nsys 的 `nvtx_gpu_proj_sum` "Proj Time"。Projection 算的是 range 内 *launch* 的
+kernel 的 GPU 时间；异步 launch 让 kernel 溢出 range wall，于是 projection 报出 GPU-time > wall
+（实测 denoise_forward 78.2s "GPU" vs 65.7s wall），谁把它当 busy 比例读谁被误导。只有 kernel
+区间并集对 wall 才回答"GPU 到底有没有闲"。
+
+两条由构造保证诚实的规则：
+
+- **并集按设备分。** 两张卡同一墙钟时刻各跑 kernel，两张都忙；它们的区间不能并成一个数。
+  N 卡产出 N 个 busy 比例，绝不跨设备合一。`test_multi_device_busy_is_per_device` 钉住这点。
+- **窗口边缘按 clip 算，不按 projection。** 跨窗口边界的 kernel 只计落在窗口内的那段
+  （`clip_intervals`），projection 会把整条 kernel 全记进来。`test_clip_keeps_only_the_in_window_part`
+  钉住这就是 projection-vs-union 的区别。
+
+## 10.2 API 面
+
+库 `vrl/utils/nsys_report.py`：
+
+| 入口 | 作用 |
+|---|---|
+| `merge_intervals` / `union_length` / `clip_intervals` / `overlap_length` | 纯区间代数，无 sqlite 无 GPU，可单测 |
+| `open_report(path)` | 接 `.sqlite` 直读，接 `.nsys-rep` 自动 `nsys export` 成临时 sqlite（事后分析，非包采集） |
+| `capture_window` / `nvtx_window` | 默认窗口 = kernel span；`--window-nvtx NAME` = 命名 NVTX range 的 span |
+| `analyze(...) -> GpuBusyReport` | 顶层：每设备 busy + top idle gaps（含 API 分解）+ 每 NVTX-stage 归因 + provenance |
+| `format_report` / `report_to_dict` | 文本渲染（表头自带"这是 union 不是 projection"告警）/ JSON 导出 |
+
+CLI `vrl/scripts/perf/nsys_gpu_busy.py`（薄消费者，匹配既有 perf 脚本模式）：
+
+```bash
+# 采集（外部，nsys 是采集器）—— --trace-fork-before-exec=true 是抓 Ray worker 的关键
+VRL_PROFILE=1 nsys profile --trace=cuda,nvtx --trace-fork-before-exec=true \
+    --output outputs/run python -m vrl.scripts.train --config ...
+# 分析（一行复现手跑两轮的归因）
+python -m vrl.scripts.perf.nsys_gpu_busy outputs/run.nsys-rep
+python -m vrl.scripts.perf.nsys_gpu_busy outputs/run.sqlite --window-nvtx rollout --device 0 --json out.json
+```
+
+## 10.3 boundary / idle 分解
+
+`analyze` 对所选设备求 kernel-union 的**补集** = idle 段，取最长的 N 个，每段按
+`CUPTI_ACTIVITY_KIND_RUNTIME`（host CUDA-API，名字按 `_vNNNN` 后缀归一）+
+`CUPTI_ACTIVITY_KIND_MEMCPY`（copy-engine）拆开。这正是手跑两轮里"between-sample boundary =
+cudaMemcpyAsync + cudaLaunchKernel + cudaStreamSynchronize + 纯 Python"的分解，现在可复现：
+一个 API 时间很少的 idle 段就是纯 host Python。memcpy 单列，因为它跑在独立 copy engine、
+正是能藏到下一段 compute 背后的数据搬运。
+
+NVTX-stage 归因按 range **名字**聚合（`denoise_dit_forward` × T 步合一行），列 occurrences、
+summed wall、union-busy、busy%。表头写明：不同名 range 会 NEST，summed wall 不可相加成 wall
+比例——读 union-busy 判断"这段 GPU 有没有干活"。
+
+## 10.4 验证（done 2026-06-28）
+
+```text
+pytest tests/utils/test_nsys_report.py        -> 14 passed（纯区间代数 + 合成 sqlite，CPU-only，无需 GPU）
+pytest tests/utils/                            -> 42 passed（含既有 test_profiling.py，零回归）
+真实 nsys 采集端到端（RTX 5090，smoke matmul）：
+  nsys profile --trace=cuda,nvtx -> export sqlite -> python -m vrl.scripts.perf.nsys_gpu_busy
+  -> nsys version 2025.3.2.474 从 META_DATA_EXPORT 正确提取；6 kernel busy=12352ns=0.02% over 57ms 窗口，
+     idle 正确归因到 cuLibraryLoadData（CUDA 模块懒加载冷启动）+ cudaLaunchKernel，非 compute。
+```
+
+合成 sqlite 用的是经验确认过的 nsys 2025.3 schema（`CUPTI_ACTIVITY_KIND_KERNEL/RUNTIME/MEMCPY`、
+`NVTX_EVENTS`、`StringIds`、`TARGET_INFO_GPU`），所以载荷逻辑无 GPU 也能证伪，符合 Part A 的 P0 哲学。
+
+## 10.5 非目标（Part B）
+
+- 不包 nsys 采集运行时。`nsys profile` 仍由用户外部跑；Part B 只读它导出的 sqlite。
+  （`.nsys-rep` 自动 export 是事后一步 `nsys export`，不是包采集。）
+- 不复刻 `nsys stats`。只算 nsys 不直接给的那个数——kernel-union over wall——和它的 boundary 分解。
+- 不产生新性能结论。Part B 是把已验证的方法变成工具；rollout 该不该 sbs=4、该不该 pipeline，
+  归 `SPRINT_video_rollout_stage_overlap`，由这工具的输出驱动，不在本 sprint 重判。
+
+## 10.6 Part B 参考
+
+- 分析库：`vrl/utils/nsys_report.py`
+- 分析 CLI：`vrl/scripts/perf/nsys_gpu_busy.py`
+- 契约测试：`tests/utils/test_nsys_report.py`
+- 方法论来源（手跑两轮）：`project_real_run_profiling` memory、`SPRINT_video_rollout_stage_overlap.md` §方法

@@ -1,7 +1,7 @@
 """PyTorch profiler helpers for runtime and trainer steps.
 
 Two layers, kept deliberately separate (see
-``docs/sprints/planned/SPRINT_trustworthy_profiling_api.md``):
+``docs/sprints/done/SPRINT_trustworthy_profiling_api.md``):
 
 * ``profile_range`` — stage annotation. Names a code block so it shows up as a
   range in the torch profiler trace and, when NVTX is on, in nsys/ncu. It does
