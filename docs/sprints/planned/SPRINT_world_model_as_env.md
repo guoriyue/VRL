@@ -14,28 +14,53 @@
 
 → 所以这不是 bandit 的换皮,是一次**刻意的 scope 扩张**;但 Phase-0 静态门已过,**真正的悬念前移到 Phase-1 的 action-fidelity**(加了 action,生成的下一帧到底听不听 action),那个要 weights。
 
-## 1. 已有的接缝（reuse，全部可原样用）
+## 1. 复用图（grounded：as-is / 改造 / 新写）
 
-- **`Env` 协议**(`vrl/rollouts/envs/contract.py`):`reset(spec)→EnvObservation`、`step(action)→(EnvObservation, EnvRewardSignal)`、`render_episode()`;`runtime_checkable`,签名对上即 drop-in。已强制"**环境独占 reward,policy 不准造 reward**"。
-- **`LiberoEnv` 模板**(`vrl/rollouts/envs/libero.py`):持 `_t` + 帧 buffer 的模式,唯一要改的就是把 `self._env.step(...)` 换成世界模型前向。
-- **动作/轨迹类型**:`ActionChunk`、`EnvObservation`、`ActionTrajectoryBatch`——刻意和扩散 `RolloutBatch` 平行,不复用。
-- **`ActionPolicy` 协议** + RL-eligibility 规则(`can_replay_logprob=False` → trainer 拒绝 RL 更新)。
-- **编排 / Ray / weight-sync**:`vrl/rollouts/orchestration`、`vrl/trainers/weight_sync.py`、`vrl/generation/ray/`——policy-agnostic,actor-in-world-model 需要的"把 trainable state 同步到 rollout worker"它们已经做。
+**整体 ~70-75% 可复用,但不对称:Target II ≈90% 原样,Target I 只复用下半截基础设施。** 分界线:内层机器(去噪循环、weight-sync、reward 契约、trajectory store、optimizer/strategy/checkpoint)能复用;外层"一次性 prompt→生成→打分整段"的 bandit 编排必须翻写。
 
-## 2. 缺的（net-new，诚实清单）
+### AS-IS —— 四根范式无关支柱(两目标通吃,最高杠杆)
 
-1. **`WorldModelEnv` 适配器**:实现 `Env` 协议,`step()` 里跑 Cosmos/Wan 前向 + 解码成相机图 `EnvObservation` + 出 `EnvRewardSignal`。
-2. **action 条件**(最硬):扩散路径里现在**零** action 输入。可用接缝 = Wan-I2V 的 `extra=` dict(`wan_2_1/model.py:740-745`)或 DIAMOND 式 AdaGN 注入。**注意**:加 `extra['action']` 是非破坏的,但 `WanI2V*BackboneRunner` 必须被改成**真的消费**它,否则不条件化。
-3. **自回归逐 chunk + 跨步带状态**:今天整段原子生成(`executor.py:725-833` 一次跑完整段)。要把循环翻成"外层 chunk、每 chunk 一个去噪子循环、出 `obs_{t+1}` 后停"。跨 `step()` 要带:条件 latent 前缀(上 K 帧 VAE 编码,从生成帧来)+ `cond_mask`/`cond_indicator`。**扩散 DiT 没有 KV-cache 要带**(双向 attention 无状态;KV-cache 只在 AR 家族)。标准做法 = **Vid2World**(去噪当前 chunk 时历史帧保持 clean,防未来偷看)。
-4. **reward 来源**:生成世界不能自评(会奖励自己的幻觉)。标准答案 = **外部 VLM critic**(Genie3+SIMA 用独立 Gemini)。`vrl/rewards/`(ABC/composite/remote/registry + video-reward suite)已能托管。
-5. **policy/actor + actor-critic trainer**(仅 Target I 需要,见 §3)。
+| 复用 | 路径 |
+|---|---|
+| 权重同步(换 `sync_state_getter` 指向的 bundle 即可) | `vrl/trainers/weight_sync.py`、`vrl/generation/ray/weight_sync.py` |
+| 整个 Ray 层(WorldModelEnv = 又一个 rollout 角色) | `vrl/ray/{resources,placement,actor_pool}.py` |
+| 训练下半截(loss-agnostic,白送多卡 + 8-bit Adam) | `vrl/trainers/{strategy,fsdp,checkpointing,ema}.py` + optimizer 工厂 |
+| 去噪内循环 + 注入接缝(**已存在**) | `generation/diffusion/executor.py:675-873`(`run_denoise_steps`)、`models/diffusion/common/backbone.py`(`DiffusionBackboneInput.extra`)、`cosmos/predict2/model.py`(V2W 已有 prefix-conditioning) |
 
-## 3. 两个训练目标 —— 第一步选 Target II
+外加 **reward + trajectory store**(设计上范式中立):`vrl/rewards/inference.py` 是 `(prompt,media)→score`、transport model-agnostic;`vrl/trajectory/types.py` 轴里**已有 `frame`/`observation`/`action`**(本就为存 episode 设计)。VLM critic = 抄 `rewards/models/videoscore2.py` 的 ~40 行壳 + 一行注册。
 
-- **Target I —— 在(冻结)世界模型里训 policy**(MBRL/actor-critic on imagined rollouts)。真 sequential RL,要 value head + GAE。`vrl/algorithms/base.py` 的 `Algorithm` 协议**没有 critic 接缝**——硬塞会污染 bandit 路径。需要**独立的 `ActorCriticTrainer`**。更大、更险。
-- **Target II —— RL-finetune 世界模型本身**(让生成听 action / 更一致)。**就是**现有 diffusion-GRPO bandit + 一个 action-following reward。**复用 ~95%**:整个 `OnlineTrainer` + GRPO/FlowDPPO/NFT + `multisegment.py`(已能按段加权 loss);per-frame reward 折现成一个标量 advantage **零 trainer 改动**,只加一个 reward fn。
+### ADAPT —— 骨架复用、改一处
 
-**第一步果断 Target II**:codebase 重心(`OnlineTrainer`、GRPO/NFT、连续编排、weight-sync、replay-logprob parity 守卫)都是为"被训的是扩散生成器"建的,Target II 正是它;Target I 要一整套平行 trainer + critic,无现成。**先 II,I 作为独立第二里程碑,绝不把 critic 塞进 bandit `Algorithm` 协议。**
+| 组件 | 改什么 |
+|---|---|
+| `generation/diffusion/executor.py` | `run_denoise_steps` 内层**原样**;把外层 `forward_chunk_plan:468-496` 的"一次整段"翻成逐 chunk 自回归(reset→prepare(前缀,action)→去噪→解码→喂回) |
+| `cosmos/predict2_5/model.py:320-375` `prepare_sampling` | 现写死 `prepare_latents(video=None, num_frames_in=0)`(冷启动);改成喂上一 chunk 帧 + `num_frames_in>0` + `extra['action']`,跨步带 latent |
+| Wan-I2V | 只单图条件,**无 `num_frames_in` 多帧前缀** → 历史弱于 Cosmos;**Cosmos-Predict2.5 当主力 backbone,Wan 当 fallback** |
+| producer/consumer/strict_on_policy | cadence 范式无关;`collect_prompt_batches` 换成 env-rollout collect,batch 类型泛化(`group_ids` 在 `ActionTrajectoryBatch` 已有) |
+| VLM critic | 抄 `videoscore2` 壳,换 system prompt + `action_following` score keys + ckpt |
+
+### NEW —— 现有 infra 不覆盖
+
+1. **env-collector**(闭环 reset→step→`ActionTrajectoryBatch`)— I(II 复用 `collector/core.py` 只换 scorer)
+2. **有状态 `WorldModelEnv` worker**(跨 `step()` 持 episode latent 状态)— both
+3. **逐 chunk 自回归外层循环**(imagined rollout)— I
+4. **action-conditioning encoder**(`ActionChunk.actions` → `extra`/embeds 张量)— both
+5. **VLM-critic 内容**(`ActionFollowingVLMModel`:action-following system prompt + score keys + ckpt)— both
+6. **`build_world_model_trajectory`**(frame 轴 + value/per-step-reward 张量)— I
+7. **`ActorCriticTrainer` + value head + GAE + per-step reward 路径**— **I only**
+
+## 2. 按训练目标拆
+
+- **Target II(RL-finetune 世界模型)≈90% 原样复用**——它**就是**你在跑的 diffusion bandit:`OnlineTrainer.step` + `GRPO continuous.py` + `group_relative_advantages` + `build_diffusion_trajectory` + `collector/core.py` + `rewards.py score_many`(一标量/样本)全精确匹配。**唯一真新写 = reward 内容**(`ActionFollowingVLMModel`,走现有 registry)。无 per-step reward 问题,不重写 trainer。模型侧的两处 adapt(`prepare_sampling` 前缀条件、`extra['action']`)是机械抄 Predict2 V2W 已有路径。
+- **Target I(actor-critic 训 policy)只复用下半截(~50%)**——硬件/strategy/optimizer/checkpoint/EMA/weight-sync/trajectory store + Ray 全复用;但上半截 RL objective 全新(env-collector、stateful worker、`build_world_model_trajectory`、`ActorCriticTrainer`+value+GAE)。
+
+**第一步果断 Target II**:复用 ~90%,唯一新写是一个 VLM critic 壳。Target I 是独立第二里程碑。
+
+## 别硬塞(踩坑警告)
+
+- ❌ **别把 critic 塞进 `OnlineTrainer`/`Algorithm` 协议**:它只有 `compute_advantages_from_tensors`+`compute_loss`,内循环迭代**去噪步**,无 value/GAE/per-step seam。塞进去污染 II 依赖的 bandit 路径。写**平行的 `ActorCriticTrainer`**,只抬 optimizer/EMA/strategy/grad-accum helper。
+- ❌ **别把去噪轨迹当 MDP 轨迹**:`run_denoise_steps` 出的是 `x_t→x_{t-1}` 去噪轨迹,不是 env-step 的 `ActionTrajectoryBatch`。
+- ❌ **别把 `collector/core.py` 当 env loop**:名字 generic,实际写死 `request→generate→reward`(bandit);闭环 env 要新 collector,只 II 能骑现成。
 
 ## 4. 分阶段计划（每阶段一个 KILL-RISK 门）
 

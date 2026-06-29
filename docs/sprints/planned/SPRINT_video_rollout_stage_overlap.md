@@ -5,7 +5,8 @@
 > **2026-06-27 实测结论(kernel-union + NVTX,真 cosmos run,推翻本 sprint 原假设):**
 > - **生成侧不是大头**:denoise 循环 GPU-bound(96-98%);单卡 rollout 的 36% idle 几乎全在 **per-sample chunk 边界**(sbs=1=7 个边界),已用 **`sample_batch_size=4` 单卡回收(1.50x,64%→89% busy,已落配置)**。剩 ~9% 是非-tensor 边界,被 NCU 证明 tensor core 已到 5090 bf16 天花板(43%≈47%)→ 单卡 P2 重叠只能藏非-tensor 部分,ROI 低。
 > - **真正的大 bubble = reward stage**:`collector.reward_score` 实测 **12.6s/group wall、rollout GPU 0% busy、= reward+denoise 的 14%**。根因:`reward execution: pool`(独立 actor)+ `release_rollout_before_reward` 把 rollout 2B 模型 offload 腾显存才能装 reward 模型 → **单卡被显存逼成串行(offload→reward→restore),不是 tensor 争用**。
-> - **所以本 sprint 的 async-reward 从"deferred 配菜"升为主线,且明确是 ≥2-GPU 杠杆**:reward pool 放第二张卡 → reward(group N) ∥ rollout(group N+1) + 干掉 offload barrier → 藏掉 14%。单卡无法重叠(显存)。详见 [[SPRINT_diffusion_rollout_stage_pipeline]] §4(多卡 gate 已由此开)。
+> - **所以本 sprint 的 async-reward 从"deferred 配菜"升为主线**:reward pool 放第二张卡 → reward(group N) ∥ rollout(group N+1) + 干掉 offload barrier → 藏掉 14% 的 reward **tensor compute**(这部分单卡藏不了,要 ≥2-GPU)。详见 [[SPRINT_diffusion_rollout_stage_pipeline]] §4。
+> - **⚠️ 更正(2026-06-27 晚,micro-benchmark 实测推翻上面两条悲观结论):** ① 上面说"单卡无法重叠(显存)/ROI 低"是**错的**——(a) 显存装得下(reward 常驻实测峰值 20.8GB/32GB),(b) 单卡 `compute∥(copy+CPU)` 实测能重叠(快 20%,copy engine+CPU ≠ tensor core)。② 边界是 **33%(44s)不是 9%**,其中 ~38s 是 copy(8s)+Python(30s)= **单卡可藏**(藏进下一个 denoise)。③ 单卡藏不了的只有 reward 的**纯 tensor compute**(那才需 ≥2-GPU)。**净:单卡 staged pipeline 是真杠杆(~33% 边界),见下方 P2/P3。**
 
 > 实测来由([[SPRINT_approximate_single_gpu_perf.md]] §2):flux image rollout sbs=1 GPU 只 49% 利用率、31% 空转 → 调大 `sample_batch_size` 填到 77%(2.7x,干净)。**video 不一样**:240p_33f sbs 难调大(OOM),空转来自更大的串行非-DiT stage(33帧 VAE + Kling 视频 reward model 前向 + 33帧×35步 CPU SDE/logprob)。repo 已有 profile 说 cosmos **denoise 是 SM 100% compute-bound** → 空转在 denoise 之外。
 
@@ -60,8 +61,20 @@ video rollout 的 GPU 在 denoise 时满载,但在 **reward 打分 / CPU 数学 
   | 4 | 2 | 1 | 89.2s | 89% | **1.50x** | **FIT ✓** |
 
   **设 `rollout.sample_batch_size=4` → 1.50x rollout,89% GPU-busy,放得下**(online_grpo_fullparam_8bit_240p.yaml:52 当前是 1)。每翻倍 sbs 砍半边界 → 填 boundary idle。**精确无损**(sbs 只控制 n 样本里几个共享一次 forward batch 维,每样本 noise/denoise/log-prob 不变;planner 本就支持 fixed-size sample chunks)。**推翻旧假设"video can't batch (OOM)"——240p_33f 至少 batch 到 4。** sbs=8(1 chunk,0 边界)未测,OOM 风险 + 边际小(~89%→~94%)。
-- **P2 — pipeline 边界与下一 denoise(结构修法,sbs 受显存逼成 1 时走这条)**:把 sample N 的 VAE-decode+transfer+Python-setup 与 sample N+1 的 denoise forward 双缓冲重叠 → 隐藏 45s idle。验收:逐位不变(纯重叠)。
-- **P3 — 砍 transfer + 常驻 actor**:8s memcpy(observation/latent GPU→CPU)留 GPU/批量搬;colocated 每轮 relaunch 重载模型 → 常驻 actor 去 orchestration 空转。
+- **P2/P3 — 单卡 staged pipeline(把边界的 copy+CPU 藏进下一个 denoise)。实测背书,2026-06-27:**
+  - **能藏什么 / 不能藏什么(micro-benchmark 实测,`vrl/scripts/perf/single_gpu_overlap_{compute,copy}_probe.py`):**
+    ```
+    compute ∥ compute        → NEUTRAL（2×2B forward,双流 1.1% = 噪声;tensor core 串行)
+    compute ∥ (copy+CPU)     → 藏得了（denoise 1680ms ∥ 400ms copy+CPU → 并发 1687ms ≈ compute 单独,快 20%)
+    ```
+    copy engine(DMA)和 CPU 是和 tensor core **分开的硬件** → 数据搬运 + Python 编排能藏进 GPU compute。**44.3s 边界里 ~38s 是 copy(8s)+Python(30s),全可藏；不能藏的只有 reward 的纯 tensor compute。**
+  - **结构 = staged pipeline(sample N+1 denoise ∥ sample N 的 VAE/transfer/reward-prep/Python-setup)。两个独立 enabler:**
+    - **① async copy + 独立 stream**:把同步/SM-kernel 的拷贝改 `cudaMemcpyAsync`(走 copy engine,让出 SM)→ 重叠在硬件上真并发。
+    - **③ 常驻 actor**:去掉 colocated per-cycle relaunch 的模型重载 + Python 开销(边界 ~30s host 工作的大头)。
+    - **双缓冲 latent/observation = 此 pipeline 的【内在存储】,不是独立杠杆**(N+1 写新 latent 时 N 的还在被 reward/VAE 读,必须 ≥2 份;缓冲深度 = pipeline 重叠级数,是 pipeline 参数)。
+  - **验收**:reward/old_log_prob/advantage 逐位不变(纯重叠,无 staleness)；rollout wall 下降 ≤ 边界占比(33%)。
+- **⚠️ 不要走的弯路(实测撞过)**:让 reward **模型常驻**和 rollout 同卡并发(`reward.resident_overlap` enabler,resources.py +33 行已建、20.8GB 实测装得下)——但 ① reward 的 Qwen2-VL **compute** 和 denoise 抢 tensor core(藏不了),② Ray reward pool actor + resident rollout 在单卡 **死锁 hang**。正确路是上面的"藏 copy+CPU",**不需要 reward 模型常驻**,绕开死锁。
+- **更正旧结论**:本 sprint 顶部曾写"单卡无法重叠(显存)"——**错**。显存装得下(20.8GB),且 copy+CPU 能重叠;单卡 staged pipeline 是真杠杆(~33% 边界),不是只能 ≥2-GPU。≥2-GPU 才需要的是藏 reward 的 **tensor compute**(单卡那部分藏不了)。
 
 ## 4. 验收（无损铁律）
 
