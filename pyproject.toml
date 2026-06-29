@@ -81,6 +81,15 @@ pose-gpu = [
     "nvidia-cudnn-cu12>=9.0.0",
     "opencv-python>=4.8.0",
 ]
+# OPTIONAL AR-image accelerator (Janus-Pro, NextStep). AR families run in the
+# main env without this via sampling.attention_backend=torch_native; the extra
+# only adds vLLM's internal KV/paged-attention kernels
+# (vrl/nn/kernels/attention/vllm_paged.py) and the blockwise-fp8 path
+# (vrl/nn/quantization/fp8.py). The vLLM wheel is ABI-locked to an exact torch,
+# so DO NOT co-install with [cosmos] — it clashes with the rest of the stack's
+# floating torch/torchvision/CUDA wheels (the ARAttentionUnavailable raised at
+# import time is exactly this ABI mismatch). Install it in its own venv, the way
+# the repo already ships vllm-omni at .venvs/vllm-omni.
 ar-vllm = [
     "torch==2.11.0",
     "vllm>=0.21.0,<0.22",
@@ -91,6 +100,14 @@ ar-vllm = [
 # third_party/ — run their CLIs and fold results in via --merge-json.
 videoeval = [
     "vbench>=0.1.5",
+]
+# Full-param 8-bit Adam optimizer states (actor.optim.optim_8bit). int8 Adam state
+# via bitsandbytes lets a full-param 2B DiT fit a single 32GB card where fp32 Adam
+# state OOMs. Quantizes the optimizer state only (not the forward) → RL-safe:
+# old_log_prob / train-inference consistency are untouched. Opt-in heavy CUDA
+# wheel, kept out of [cosmos]/CI so plain diffusion installs stay lean.
+optim8bit = [
+    "bitsandbytes>=0.43.0",
 ]
 
 [project.scripts]

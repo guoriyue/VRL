@@ -116,8 +116,10 @@ A bare `git clone` does **not** fetch submodules, so run once after cloning:
 make setup
 ```
 
-That fetches the vendored submodules and editable-installs everything. It is the
-only setup step; re-run it after a submodule bump.
+That fetches the vendored submodules and editable-installs the **base** package
+plus the vendored submodule wrappers. It is the only setup step; re-run it after a
+submodule bump. Base install ≠ feature extras — see **Dependencies** below for the
+one or two extras your use case needs (the quickstart needs `.[cosmos,ocr]`).
 
 ### Why a setup step (vendored submodules)
 
@@ -130,12 +132,42 @@ and editable-installs **every** `third_party/*_packaging/` wrapper, so adding a
 vendored dependency needs no edit outside `third_party/`. See
 [`third_party/README.md`](third_party/README.md) for the convention.
 
+## Dependencies
+
+`make setup` installs the **base** package only. Each use case adds one or two
+optional-dependency groups; groups **compose** in a single `pip install`:
+
+| Use case | Install | Brings (why) |
+|---|---|---|
+| Diffusion families (SD3.5 / Flux / Cosmos / Wan / Qwen …) | `.[cosmos]` | diffusers + transformers + peft + torchvision |
+| AR-image families (Janus-Pro / NextStep) | `.[cosmos]` | transformers/peft model runtime (vLLM accel is separate — see note) |
+| OCR reward (the validated quickstart) | `.[ocr]` | paddleocr |
+| Video / VLM reward (Kling, VideoScore2, UnifiedReward) | `.[reward]` | transformers≥4.49, qwen-vl-utils, opencv |
+| Pose / motion / anatomy eval | `.[pose]` (CPU) · `.[pose-gpu]` (GPU) | onnxruntime + opencv |
+| Dataset prep (video-world, pickapic) | `.[data]` | datasets, pyarrow, av |
+| Fixed video-eval suite (VBench) | `.[videoeval]` | vbench |
+| Full-param 8-bit Adam (Cosmos trustworthy-curve recipe) | `.[optim8bit]` | bitsandbytes (int8 Adam state, RL-safe) |
+| Tests / lint | `.[dev]` | pytest, ruff |
+
+Example — the SD3.5-OCR quickstart below needs `pip install -e ".[cosmos,ocr]"`.
+(The `cosmos` group is the core model-runtime extra and is misnamed for history —
+it serves *all* diffusion and AR families, not just Cosmos.)
+
+> **`ar-vllm` is optional and installs in its own environment.** AR-image families
+> run in the main env without it via `sampling.attention_backend=torch_native`;
+> `.[ar-vllm]` only adds vLLM's internal paged-attention / blockwise-fp8 kernels.
+> The vLLM wheel is ABI-locked to an exact `torch`, so co-installing it with
+> `.[cosmos]` clashes with the rest of the stack's floating torch/torchvision/CUDA
+> wheels (an `ARAttentionUnavailable` at import time *is* that ABI mismatch). Put
+> it in a dedicated venv — the repo already ships one at `.venvs/vllm-omni`.
+
 ## Quickstart
 
-After `make setup`, launch the one ✅ validated recipe — SD3.5 text-to-image GRPO
-with an OCR reward — in a single command:
+After `make setup`, install the two extras the validated recipe needs and launch
+it — SD3.5 text-to-image GRPO with an OCR reward:
 
 ```bash
+pip install -e ".[cosmos,ocr]"
 vrl-train --config experiment/diffusion/sd3_5/online_grpo_ocr
 ```
 
