@@ -1,0 +1,78 @@
+# Cosmos Predict2 2B Video2World + GRPO on public full LeRobot DROID target clips,
+# at the model's NATIVE 480P resolution. This is the single-32GB-card "first
+# trustworthy curve" recipe (SPRINT_cosmos_predict2_2b_trustworthy_curve).
+#
+# WHY 480P (not the 240p sibling): the 720p checkpoint generates GARBAGE at 240p/480p
+# (severely OOD -> frame 0 ok, then rainbow noise; verified by eye, neighbor-diff stats
+# lie). The fix is the model's own 480P-native weights, which generate coherently and
+# are ~10x faster than 704p_93f -- the only way a full-param curve is affordable on one
+# 32GB card (704p_93f full-param OOMs; 704p_93f LoRA gradients are too small to move the
+# curve, see project_first_trustworthy_curve).
+#
+# CHECKPOINT REQUIREMENT (this is NOT just a config change):
+#   The diffusers repo nvidia/Cosmos-Predict2-2B-Video2World ships the 720P weights in
+#   its transformer/ folder; the 480P variant exists ONLY as the original-format file
+#   model-480p-16fps.pt in that same repo. The diffusers Cosmos2VideoToWorldPipeline
+#   loads transformer/ (=720P), so model-480p-16fps.pt must first be CONVERTED to a
+#   diffusers transformer layout, then reused with the (resolution-independent) vae/
+#   text_encoder/ scheduler/ tokenizer/ from the 720P repo. Set model.path below to that
+#   converted local pipeline directory. If the path does not exist, from_pretrained fails
+#   loudly -- by design, so a missing conversion can never silently fall back to 720P
+#   weights at 480P shape (which would reproduce the rainbow-noise garbage).
+#     hf download nvidia/Cosmos-Predict2-2B-Video2World model-480p-16fps.pt
+#     # convert model-480p-16fps.pt -> <dir>/transformer/ (diffusers convert_cosmos script),
+#     # then copy vae/ text_encoder/ scheduler/ tokenizer/ model_index.json from the 720P repo.
+#
+# Reward = the same ZERO-TRAINING default as the 240p sibling: DINOv2 perceptual anchor
+# + RAFT motion guard. Both RE-VERIFIED on real DROID eval clips by the S4 discrimination
+# probe (dino gap_ratio=0.298 PASS, motion gap_ratio=0.969 PASS) -- not just synthetic.
+# Compose any /reward/* block per experiment; this is a default, not a commitment.
+defaults:
+  - /recipe/online/diffusion_grpo
+  - /model/diffusion/cosmos/predict2_2b
+  - /sampling/video/480p_33f
+  - /sampling/denoise/35_step_cfg_7
+  - /reward/target_dino_similarity
+  - /reward/motion_dynamics
+  - /dataset/droid_full_target_v2w
+
+model:
+  use_lora: false
+  # Converted 480P-native diffusers pipeline directory (see CHECKPOINT REQUIREMENT above).
+  # Must be the 480P weights -- the inherited 720P repo id WOULD silently run garbage here.
+  path: checkpoints/cosmos-predict2-2b-480p-16fps-diffusers
+
+actor:
+  optim:
+    lr: 2.0e-5
+    optim_8bit: true
+  gradient_checkpointing: true
+  ppo_epochs: 4
+
+algorithm:
+  clip_ratio: 1.0e-3
+  kl_coef: 0.0
+
+rollout:
+  n_samples_per_prompt: 8
+  rollout_batch_size: 1
+  sample_batch_size: 4
+  sde: { type: cps }
+  same_latent: false
+
+cosmos:
+  reference_mode: per_sample
+
+trainer:
+  entrypoint: vrl.scripts.diffusion.cosmos.train:train_cosmos_predict2_grpo
+  output_dir: outputs/cosmos_pred2_droid_full_target_480p
+  total_epochs: 300
+  save_freq: 50
+  debug: { first_step: true }
+  eval: { enabled: true, freq: 25, samples_per_prompt: 2, max_prompts: 64, seed: 20260628 }
+
+reward:
+  # Zero-training default: DINOv2 anchor (main) + RAFT motion guard. Override per experiment.
+  components:
+    target_dino_similarity: 1.0
+    motion_dynamics: 0.2

@@ -4,6 +4,12 @@
 
 > 证据:记忆 `project_first_trustworthy_curve`(2026-06-13 cosmos GRPO 持平=未学)、`project_flux_algo_validation`(ppo_epochs=1 让机制恒 0)、`project_fullparam_8bit_adam`(本轮建的 enabler)。配置:`configs/experiment/diffusion/cosmos_predict2/online_grpo_fullparam_8bit_240p.yaml`。
 
+> **更新（2026-06-28）—— 数据阻塞已清、reward 真数据复验,阻塞换成 shape/checkpoint:**
+> - **数据不再是阻塞**:936 行真实 LeRobot DROID target V2W manifest 已落盘(`data/external/video_world/manifests/droid_full_targets_{train,eval}.jsonl` = 936+64 行,1013 真首帧 + 1013 真 target clip);配置 `online_grpo_droid_full_target_240p.yaml` 已是 full-param(use_lora:false + optim_8bit + lr 2e-5 + ppo4 + per_sample)并指向它。§5 P0 的"数据前置门"达成。
+> - **reward 真数据复验 PASS**:退役 pixel-L1 后的 DINOv2 + RAFT 默认,用真 DROID eval clip 跑 S4 判别探针(`future_reward_discrimination_probe`):dino gap_ratio=**0.298**(exact 0.826 ≫ blur 0.182)、motion gap_ratio=**0.969**(static 塌到 0.027 地板),均 PASS——不只合成 clip。
+> - **真正的阻塞换成 shape/checkpoint**:240p_33f 在默认 720p 权重上生成垃圾(严重 OOD,见 `SPRINT_cosmos_robotic_data_factory_domain_rl` §5.5 point 6)。破局 = 模型**原生 480P** 权重(~10x 快于 704p,单卡 full-param 唯一可负担路径)。坑:HF repo `nvidia/Cosmos-Predict2-2B-Video2World` 里 480P 只是原始格式单文件 `model-480p-16fps.pt`(720P 才转好放在 `transformer/`),diffusers `from_pretrained` 只加载 `transformer/`=720P → **480P 必须先转成 diffusers transformer 再用,不是改 config 字段能解决**。
+> - **新配置 `online_grpo_droid_full_target_480p.yaml`** = 240p 那份只改 shape→`/sampling/video/480p_33f` + `model.path`→转换后的本地 480P diffusers 目录(fail-fast:路径不存在即 `from_pretrained` 报错,绝不静默拿 720P 权重跑 480P 出垃圾)。§4 的 240p_33f 保留作机制/显存 smoke,但**真曲线走 480P**。
+
 ## 0. 一句话
 
 之前 cosmos+Kling GRPO 端到端跑通但 **reward 全平**(-4.726→-4.69,噪声内)。根因诊断:① `ppo_epochs=1` 让 trust-region clip 恒 0(flux 验证实测,clip_fraction 恒 0);② LoRA 梯度太小(~2e-4),reward 推不动。三个训练侧修复仍成立——ppo_epochs=4 + full-parameter + 合适 lr——但当前 sprint 不能执行长曲线：**数据目标不成立**。Predict2 2B 是 Video2World，必须有真实 reference image；随机 smoke reference 或无关 global reference 会污染 RL 目标。
@@ -61,6 +67,11 @@ actor:
 algorithm: { clip_ratio: 1.0e-3, kl_coef: 0.0 }
 # /sampling/video/240p_33f + /reward/kling_video_reward(本地) + total_epochs 300 + eval freq 25
 ```
+
+**真曲线配方(2026-06-28 起,优先用这份)**:`online_grpo_droid_full_target_480p.yaml`
+= 真 DROID per_sample(936 行)+ full-param + optim_8bit + ppo4 + **480p_33f**(原生,不 OOD)
++ dino+motion(真数据已 PASS)。唯一前置 = 转换 480P 权重(见顶部更新块)。上面的
+240p_33f 配方降级为机制/显存 smoke(其生成质量不可用于读曲线)。
 
 ## 5. Phase plan
 
