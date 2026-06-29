@@ -167,7 +167,10 @@ def _validate_video_world_production_data(cfg: DictConfig) -> None:
     data_root = str(OmegaConf.select(cfg, "data.artifact_data_root", default="") or "").strip()
     kwargs = {"data_root": data_root} if data_root else {}
     reward_components = OmegaConf.select(cfg, "reward.components", default={}) or {}
-    require_target_video = "target_video_similarity" in reward_components
+    # The target-clip-reading reward is target_dino_similarity (successor to the deleted
+    # pixel-L1 target_video_similarity); it consumes metadata['target_video'], so its
+    # presence is what makes target clips a hard manifest requirement.
+    require_target_video = "target_dino_similarity" in reward_components
     validate_source_backed_video_world_manifest_pair(
         str(require(cfg, "data.manifest")),
         str(require(cfg, "data.eval_manifest")),

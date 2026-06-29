@@ -40,8 +40,9 @@ def test_probe_builds_full_candidate_battery() -> None:
     assert torch.equal(candidates["exact"], frames)
 
 
-def test_verdict_fails_pixel_l1_like_scores() -> None:
-    # Reproduces the pixel-L1 failure shape: hacks within ~1% of exact.
+def test_verdict_fails_near_tie_hack_distribution() -> None:
+    # The shape that killed pixel-L1: hacks within ~1% of exact. The gate must FAIL it
+    # for any main/anchor signal (here target_dino_similarity).
     agg = _agg(
         exact=0.994,
         perceptual_blur=0.944,
@@ -52,7 +53,7 @@ def test_verdict_fails_pixel_l1_like_scores() -> None:
         wrong_clip=0.776,
         random=0.756,
     )
-    verdict = _verdict("target_video_similarity", agg)
+    verdict = _verdict("target_dino_similarity", agg)
     assert verdict["passed"] is False
     assert verdict["gap_ratio"] < 0.25
 

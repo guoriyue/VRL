@@ -96,7 +96,7 @@ CPU 跑 CLIP/DINOv2/LPIPS/RAFT(7 clip × 33 帧,torch.hub,无 GPU);reward-pool G
 
 - [x] dino / motion **过 §4 判别探针**;数字落本文件(见「实施状态」)。
 - [x] 可直接跑的零训练 recipe = dino(1.0)+motion(0.2),两组件都过探针(默认 recipe 已是此值)。
-- [x] `target_video_similarity` 退役:从两个 droid recipe 的 defaults 移除,`configs/reward/target_video_similarity.yaml` 头部标 DEAD,registry 注释为 back-compat-only。
+- [x] `target_video_similarity` **彻底删除**(2026-06-28):model/function/config/registry 项 + 旧 `target_video_similarity_probe.py` 自比对脚本全删;production validation 的 `require_target_video` 改 key 到 `target_dino_similarity`(同样读 `metadata['target_video']`,语义不丢)。下方表里的 pixel-L1 数字保留为"为什么删它"的存档。
 - [~] action-following(IDM)**设计保留、代码不发**:用户选零训练路线,IDM reward/bridge/训练脚本已删;§2/§3 + EVA 调查是重建依据。manifest 的 `target_actions` plumbing(commit d22d7d5d)留着但当前无 reward 读它。
 
 ## 实施状态（2026-06-28）
@@ -105,7 +105,7 @@ CPU 跑 CLIP/DINOv2/LPIPS/RAFT(7 clip × 33 帧,torch.hub,无 GPU);reward-pool G
 
 | reward | exact | blur | static | temporal-mean | shuffle | reverse | wrong-clip | random | gap_ratio | 判定 |
 |---|---|---|---|---|---|---|---|---|---|---|
-| `target_video_similarity`(pixel-L1,死) | 0.994 | 0.944 | 0.983 | 0.985 | 0.982 | 0.979 | 0.776 | 0.756 | **0.039** | **FAIL**(复现 §1) |
+| `target_video_similarity`(pixel-L1,**已删除**,数字存档) | 0.994 | 0.944 | 0.983 | 0.985 | 0.982 | 0.979 | 0.776 | 0.756 | **0.039** | **FAIL**(复现 §1) |
 | `target_dino_similarity`(0.4/0.2/0.4) | 0.826 | 0.210 | 0.577 | 0.573 | 0.586 | 0.565 | 0.209 | −0.008 | **0.298** | **PASS** |
 | `motion_dynamics`(scale 50) | 0.355 | 0.036 | 0.027 | 0.026 | 0.527 | 0.367 | 0.355 | 1.000 | 0.969 | **PASS**(static 塌到地板) |
 | `idm_action_following` | — | — | — | — | — | — | — | — | — | 设计保留,代码已删（见下） |
@@ -115,7 +115,7 @@ CPU 跑 CLIP/DINOv2/LPIPS/RAFT(7 clip × 33 帧,torch.hub,无 GPU);reward-pool G
 - **motion**:static/blur/temporal-mean 全塌到 ~0.03 地板,exact 0.36;random(噪声)和 shuffle 反而最高(光流幅度 order-agnostic)—— 这是 guard 的预期行为,不是 bug。
 
 **落地的资产(留下来的)**:
-- 探针(keystone):`vrl/scripts/eval/future_reward_discrimination_probe.py` —— reward-agnostic,8 候选,pixel/dino/motion 三条支路 + 每家族 PASS 规则。任何新 reward 先过它。
+- 探针(keystone):`vrl/scripts/eval/future_reward_discrimination_probe.py` —— reward-agnostic,8 候选,dino/motion 两条支路 + 每家族 PASS 规则。任何新 reward 先过它。(pixel-L1 支路随 reward 一起删了;它的失败数字已存档在上表。)
 - DINOv2 锚:`vrl/rewards/{models,functions}/target_dino_similarity.py` + `configs/reward/target_dino_similarity.yaml`。
 - RAFT motion guard:`vrl/rewards/{models,functions}/motion_dynamics.py` + `configs/reward/motion_dynamics.yaml`。
 - 共享:帧解码 helper 进 `vrl/utils/media.py`(`read_video_frames`/`sample_frames`/`align_frame_counts`/`frames_thwc_to_float`)+ `decode_artifact_frames` 进 `vrl/rewards/base.py`(没动被退役的 pixel model)。
@@ -125,7 +125,7 @@ CPU 跑 CLIP/DINOv2/LPIPS/RAFT(7 clip × 33 帧,torch.hub,无 GPU);reward-pool G
 
 **删掉的(给没在走的 IDM 路建的脚手架,从没端到端跑过)**:`vrl/rewards/{models,functions}/idm_action_following.py`、bridge scorer `idm_action_score.py`、训练脚本 `train_droid_idm.py`、`configs/reward/idm_action_following.yaml`。用户选了零训练 dino+motion,IDM 设计留在 §2/§3 + 下方 EVA 调查里,以后真要再建照此。
 
-**怎么跑探针**:`python -m vrl.scripts.eval.future_reward_discrimination_probe --reward <name> --manifest data/external/video_world/manifests/droid_targets_eval.jsonl --out outputs/probe_<name>.jsonl --device cuda`(`<name>` = target_dino_similarity / motion_dynamics / target_video_similarity)。
+**怎么跑探针**:`python -m vrl.scripts.eval.future_reward_discrimination_probe --reward <name> --manifest data/external/video_world/manifests/droid_targets_eval.jsonl --out outputs/probe_<name>.jsonl --device cuda`(`<name>` = target_dino_similarity / motion_dynamics)。
 
 **以后真要做 action-following(IDM)的话(代码已删,照此重建)**:① 重建带 `target_actions` 的 manifest(`vrl.scripts.data.setup video-world-targets ...`,action 路径已在 d22d7d5d 接好,需 `pyarrow`);② 按下方 EVA 调查的结论建一个 vision-only IDM(conv backbone + spatial-softmax + MLP,~0.56M),在 manifest 标签上监督训练;③ 给探针加回 idm 支路,要求 exact≥0.7、static/blur/shuffle/reverse/wrong-action ≤0.4、exact 比 wrong-action 高 >2σ,**过不了别进训练**;④ 过了再加 `/reward/idm_action_following` 进 recipe。
 

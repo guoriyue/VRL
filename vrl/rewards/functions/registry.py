@@ -34,7 +34,6 @@ def _register_builtins() -> None:
     from vrl.rewards.functions.phymotion import PhyMotionReward
     from vrl.rewards.functions.pickscore import PickScoreReward
     from vrl.rewards.functions.target_dino_similarity import TargetDinoSimilarityReward
-    from vrl.rewards.functions.target_video_similarity import TargetVideoSimilarityReward
     from vrl.rewards.functions.unified_reward_video import UnifiedRewardVideoReward
     from vrl.rewards.functions.videocon_physics import VideoConPhysicsReward
     from vrl.rewards.functions.videoscore2 import VideoScore2Reward
@@ -46,13 +45,11 @@ def _register_builtins() -> None:
         "ocr": OCRReward,
         "pickscore": PickScoreReward,
         # Future Reward suite (SPRINT_future_reward): DINOv2 perceptual anchor + RAFT
-        # motion guard replace the retired pixel-L1 target_video_similarity. (The IDM
-        # action-following signal is designed in SPRINT_future_reward S3 but not shipped.)
+        # motion guard. They replaced the deleted pixel-L1 target_video_similarity (it was
+        # reward-hackable, see S1). The IDM action-following signal is designed in S3 but
+        # not shipped.
         "target_dino_similarity": TargetDinoSimilarityReward,
         "motion_dynamics": MotionDynamicsReward,
-        # Retired: pixel-L1, reward-hackable (kept registered for back-compat only;
-        # see SPRINT_future_reward S1). Do not use in new recipes.
-        "target_video_similarity": TargetVideoSimilarityReward,
         "kling_video_reward": KlingVideoReward,
         "cosmos3_reasoner": Cosmos3ReasonerReward,
         "videocon_physics": VideoConPhysicsReward,

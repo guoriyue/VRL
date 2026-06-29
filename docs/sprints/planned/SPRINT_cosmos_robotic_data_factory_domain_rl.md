@@ -2,6 +2,12 @@
 
 状态：**planned / public-source substrate landed（2026-06-27）**。
 
+> ⚠️ **更新（2026-06-28，SPRINT_future_reward）**：本文下面引用的 `target_video_similarity`
+> reward 及其 `target_video_similarity_probe` 脚本**已删除** —— 实测证伪(pixel-L1,最优解=糊均值,
+> 判别 gap 仅 ~4%)。改用 `target_dino_similarity`(DINOv2 感知锚)+ `motion_dynamics`(RAFT 运动 guard),
+> 判别探针换成 `vrl.scripts.eval.future_reward_discrimination_probe`。下文凡提到 `target_video_similarity`
+> / 旧 probe 的命令与权重均已过时,按 SPRINT_future_reward 替换。
+
 核心边界：训练数据必须来自可下载、可解析、有 provenance 的真实公开数据集。仓库不再保留 `sidewalk_world` / `home_world` 这类本地手工 manifest bridge，也不把目标域名字伪装成数据集。
 
 ## 0. 核心结论

@@ -22,9 +22,9 @@ Candidates built from each anchor clip (real future ``frames``):
 
 PASS rules (per reward family):
 
-* main signals (target_video_similarity / target_dino_similarity): ``exact`` is the
-  max, and ``exact - max(perceptual_blur, static_frozen, temporal_mean)`` is >= 25%
-  of the metric dynamic range. pixel-L1 fails this (~4%).
+* main / anchor signals (target_dino_similarity): ``exact`` is the max, and
+  ``exact - max(perceptual_blur, static_frozen, temporal_mean)`` is >= 25% of the
+  metric dynamic range. (The deleted pixel-L1 reward failed this at ~4%.)
 * target_dino_similarity also: blur and temporal_mean each >= 0.15 cosine below exact.
 * motion_dynamics (quality guard): static_frozen collapses to the floor and exact is
   far above it. (Order is not its job, so shuffle/reverse may score high.)
@@ -56,11 +56,6 @@ from vrl.utils.media import align_frame_counts, read_video_frames, write_mp4
 
 # reward name -> (model module, model class, primary score key)
 _REWARDS: dict[str, tuple[str, str, str]] = {
-    "target_video_similarity": (
-        "vrl.rewards.models.target_video_similarity",
-        "TargetVideoSimilarityModel",
-        "target_similarity",
-    ),
     "target_dino_similarity": (
         "vrl.rewards.models.target_dino_similarity",
         "TargetDinoSimilarityModel",
@@ -183,7 +178,7 @@ def _verdict(reward: str, agg: dict[str, dict[str, float]]) -> dict[str, Any]:
     exact_is_top = all(exact >= mean(name) for name in _MAIN_RANKED if name in agg)
 
     reasons: list[str] = []
-    if reward in {"target_video_similarity", "target_dino_similarity"}:
+    if reward == "target_dino_similarity":
         passed = exact_is_top and gap_ratio >= 0.25
         reasons.append(f"exact_is_top={exact_is_top}")
         reasons.append(f"gap_ratio={gap_ratio:.3f} (need >=0.25)")
