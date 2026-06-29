@@ -1,6 +1,6 @@
 # SPRINT: Future Reward —— 给 V2W 世界模型 RLHF 一个站得住的奖励
 
-状态：**planned（2026-06-27）**。目标：退役已被实测证伪的 `target_video_similarity`(64×64 像素 L1),换成一个**扛得住"糊/静止/均值"刷分**的 Future Reward,给 Cosmos Predict2 Video2World 世界模型的 GRPO 用。核心纪律:**任何 reward 进训练前,先过一个判别力探针**(就是杀掉 pixel-L1 那个)。
+状态：**已落地（2026-06-28）= 探针 + DINOv2 + RAFT motion(零训练,都过探针);退役 pixel-L1**。Phase 3(IDM action-following)**只留设计,代码不发** —— 用户选了零训练路线(dino+motion),IDM 的 reward/bridge/训练脚本作为"给没在走的功能建的、没端到端跑过的脚手架"已删除;**§2/§3 的设计 + 文末 EVA 来源调查结论保留**,以后真要 action-following 照着重建。详见文末「实施状态」。目标：退役已被实测证伪的 `target_video_similarity`(64×64 像素 L1),换成一个**扛得住"糊/静止/均值"刷分**的 Future Reward,给 Cosmos Predict2 Video2World 世界模型的 GRPO 用。核心纪律:**任何 reward 进训练前,先过一个判别力探针**(就是杀掉 pixel-L1 那个)。
 
 ## 0. 结论先行
 
@@ -94,11 +94,50 @@ CPU 跑 CLIP/DINOv2/LPIPS/RAFT(7 clip × 33 帧,torch.hub,无 GPU);reward-pool G
 
 ## 验收
 
-- [ ] 每个 reward(dino / idm / motion)**过 §4 判别探针**;数字落本文件。
-- [ ] `idm_action_following` 在探针上 exact 比 wrong-action 高 >2σ,static/blur ≤0.4。
-- [ ] manifest 带 `target_actions`;reward 从 metadata 读动作不读像素。
-- [ ] blend 在 1-GPU GRPO smoke 上 reward 上升且 component means 稳定(无单项飙升=无 hack)。
-- [ ] `target_video_similarity` 退役(从 recipe 移除,或降为 0 权重 + 注释"dead: pixel-L1, see SPRINT_future_reward §1")。
+- [x] dino / motion **过 §4 判别探针**;数字落本文件(见「实施状态」)。
+- [x] 可直接跑的零训练 recipe = dino(1.0)+motion(0.2),两组件都过探针(默认 recipe 已是此值)。
+- [x] `target_video_similarity` 退役:从两个 droid recipe 的 defaults 移除,`configs/reward/target_video_similarity.yaml` 头部标 DEAD,registry 注释为 back-compat-only。
+- [~] action-following(IDM)**设计保留、代码不发**:用户选零训练路线,IDM reward/bridge/训练脚本已删;§2/§3 + EVA 调查是重建依据。manifest 的 `target_actions` plumbing(commit d22d7d5d)留着但当前无 reward 读它。
+
+## 实施状态（2026-06-28）
+
+**探针实测数字（8 条真 DROID target,`droid_targets_eval.jsonl`,5090）** —— PASS bar = `exact` 最高且 `gap = exact − max(blur,static,temporal-mean) ≥ 0.25 × 动态范围`(动态范围 = exact − 全候选最低）:
+
+| reward | exact | blur | static | temporal-mean | shuffle | reverse | wrong-clip | random | gap_ratio | 判定 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `target_video_similarity`(pixel-L1,死) | 0.994 | 0.944 | 0.983 | 0.985 | 0.982 | 0.979 | 0.776 | 0.756 | **0.039** | **FAIL**(复现 §1) |
+| `target_dino_similarity`(0.4/0.2/0.4) | 0.826 | 0.210 | 0.577 | 0.573 | 0.586 | 0.565 | 0.209 | −0.008 | **0.298** | **PASS** |
+| `motion_dynamics`(scale 50) | 0.355 | 0.036 | 0.027 | 0.026 | 0.527 | 0.367 | 0.355 | 1.000 | 0.969 | **PASS**(static 塌到地板) |
+| `idm_action_following` | — | — | — | — | — | — | — | — | — | 设计保留,代码已删（见下） |
+
+- **pixel-L1 复现死因**:exact 比刷分候选只高 ~1%,gap_ratio 4%,和 §1 的 0.012/0.31≈4% 一致 → 退役无疑。
+- **DINOv2 的关键发现**:per-frame cosine 单用**过不了**(temporal-mean/static 同场景仍 ~0.76,gap_ratio 仅 0.15)。把 order-sensitive 的 temporal 项(相邻帧 embedding delta 的 cosine)权重提到和 appearance 同级(0.4/0.2/0.4)才过 —— 这正印证 §2 "per-frame cosine order-blind,需补时序项"。**默认权重已设成过探针的值;调低 temporal_weight 会重新挂。**
+- **motion**:static/blur/temporal-mean 全塌到 ~0.03 地板,exact 0.36;random(噪声)和 shuffle 反而最高(光流幅度 order-agnostic)—— 这是 guard 的预期行为,不是 bug。
+
+**落地的资产(留下来的)**:
+- 探针(keystone):`vrl/scripts/eval/future_reward_discrimination_probe.py` —— reward-agnostic,8 候选,pixel/dino/motion 三条支路 + 每家族 PASS 规则。任何新 reward 先过它。
+- DINOv2 锚:`vrl/rewards/{models,functions}/target_dino_similarity.py` + `configs/reward/target_dino_similarity.yaml`。
+- RAFT motion guard:`vrl/rewards/{models,functions}/motion_dynamics.py` + `configs/reward/motion_dynamics.yaml`。
+- 共享:帧解码 helper 进 `vrl/utils/media.py`(`read_video_frames`/`sample_frames`/`align_frame_counts`/`frames_thwc_to_float`)+ `decode_artifact_frames` 进 `vrl/rewards/base.py`(没动被退役的 pixel model)。
+- registry 注册 dino + motion(可复用积木);两个单 reward 组 config。**probe + 这两个组 = 真资产,任何实验按需 compose。**
+- **两个 droid recipe 默认 = dino(1.0)+ motion(0.2),零训练、可直接跑**(原本指向死掉的 pixel-L1,必须重指一个能用的;这是默认值不是承诺,每个实验可 override)。kling 等是 opt-in `/reward/*` 积木。
+- 测试:`tests/rewards/functions/test_future_reward.py`(探针候选构造 + 各家族判定逻辑的 CPU 单测)。
+
+**删掉的(给没在走的 IDM 路建的脚手架,从没端到端跑过)**:`vrl/rewards/{models,functions}/idm_action_following.py`、bridge scorer `idm_action_score.py`、训练脚本 `train_droid_idm.py`、`configs/reward/idm_action_following.yaml`。用户选了零训练 dino+motion,IDM 设计留在 §2/§3 + 下方 EVA 调查里,以后真要再建照此。
+
+**怎么跑探针**:`python -m vrl.scripts.eval.future_reward_discrimination_probe --reward <name> --manifest data/external/video_world/manifests/droid_targets_eval.jsonl --out outputs/probe_<name>.jsonl --device cuda`(`<name>` = target_dino_similarity / motion_dynamics / target_video_similarity)。
+
+**以后真要做 action-following(IDM)的话(代码已删,照此重建)**:① 重建带 `target_actions` 的 manifest(`vrl.scripts.data.setup video-world-targets ...`,action 路径已在 d22d7d5d 接好,需 `pyarrow`);② 按下方 EVA 调查的结论建一个 vision-only IDM(conv backbone + spatial-softmax + MLP,~0.56M),在 manifest 标签上监督训练;③ 给探针加回 idm 支路,要求 exact≥0.7、static/blur/shuffle/reverse/wrong-action ≤0.4、exact 比 wrong-action 高 >2σ,**过不了别进训练**;④ 过了再加 `/reward/idm_action_following` 进 recipe。
+
+**IDM 来源调查结论（2026-06-28,5 源对抗式核实）—— 为什么不从零也下不到能直接插的(留作以后重建的依据)**:
+- **Route (b) 直接接现成 IDM = 死**:没有一个对得上"DROID 单臂 / 只吃帧 / 我们的 7 维标签"契约的。**EVA**(arXiv:2603.17808,HF `RobbinWang123/EVA` `IDM_singleview.pt` 348MB Apache-2.0,vision-only)输出是 **14 维双臂 RoboTwin 关节空间**,不是 DROID;**Seer/PIDM**(2412.15109,DROID ckpt 在 Google Drive)**必须喂本体状态+双相机+语言**,我们只有生成帧给不了;OpenVLA/π0 是前向语言策略、重、要 state。
+- **动作约定真相**:lerobot 把语义抹成 `motor_0..6`,权威转换脚本(`port_droid.py`/openpi)实际产 **8 维关节**,droid_100 是 7 维,**确切语义无权威源能 pin 死**。但这对我们**不重要** —— 自训在同一批 manifest 标签上监督,IDM 学"帧对→该标签向量"即可(`action_dim` 已动态读取,gripper_index=action_dim-1 对 7/8 维都成立)。
+- **若做,采纳的架构 = EVA 验证过的设计**:vision-only **卷积 backbone + spatial-softmax + MLP(~0.56M 参数)** —— EVA 正是证明了"vision-only IDM 当 reward"这条路,spatial-softmax 专抽末端执行器 2D 位置,比 global-avg-pool 更适合恢复动作。(本 sprint 一度建好了这个网络,随 IDM cluster 一并删除;重建照此。)可选 Octo-small(27M,MIT)encoder 蒸馏因 JAX→torch 移植成本不优先。
+- 一句话:**"下一个直接用"查证后走不通(契约对不上);要 action-following 只能自训一个小 IDM,这是 contract-correct 的最省路,且架构有文献背书。**
+
+**已知环境/边界**:
+- `.venv`(uv 管理)原本缺 torchvision,本次已 `uv pip install torchvision==0.26.0+cu130`(RAFT 需要;DINOv2 走 torch.hub,无需 transformers)。
+- 不相关的既有红测试(非本 sprint 引入,未触碰对应文件):`test_reward_models_live_under_models`(cosmos3 的 model 文件名是 `cosmos3_reasoner_reward.py` ≠ registry key)、`test_shared_ray_substrate_stays_domain_neutral`(`vrl/ray/resources.py:1061` import 了 reward registry)、OCR 两条(`.venv` 缺 `Levenshtein`)。
 
 **参考**
 - RLIR(inverse rewards,world-model post-train):arXiv:2509.23958 · EVA(IDM reward → executable actions):arXiv:2603.17808

@@ -1,14 +1,21 @@
 # Cosmos Predict2 2B Video2World + GRPO on public full LeRobot DROID target clips.
 #
-# This is the non-smoke DROID recipe. Build the dataset with:
+# This is the non-smoke DROID recipe. Build the dataset with (the action path now
+# also emits metadata['target_actions'] for the IDM reward -- SPRINT_future_reward S2):
 #   python -m vrl.scripts.data.setup video-world-targets --repo-id lerobot/droid_1.0.1 --name droid_full_targets --limit 1000 --eval-limit 64 --camera observation.images.exterior_1_left
+#
+# Reward = a ZERO-TRAINING runnable DEFAULT: DINOv2 perceptual anchor + RAFT motion guard
+# (both pretrained, both pass the SPRINT_future_reward S4 probe). Retired pixel-L1
+# target_video_similarity (SPRINT S1). NOT a committed training reward -- compose any
+# /reward/* building block per experiment. Instruction-grounded action-following is
+# designed in SPRINT_future_reward S3 (an inverse-dynamics reward) but not shipped.
 defaults:
   - /recipe/online/diffusion_grpo
   - /model/diffusion/cosmos/predict2_2b
   - /sampling/video/240p_33f
   - /sampling/denoise/35_step_cfg_7
-  - /reward/target_video_similarity
-  - /reward/kling_video_reward
+  - /reward/target_dino_similarity
+  - /reward/motion_dynamics
   - /dataset/droid_full_target_v2w
 
 model:
@@ -44,18 +51,9 @@ trainer:
   eval: { enabled: true, freq: 25, samples_per_prompt: 2, max_prompts: 64, seed: 20260628 }
 
 reward:
+  # Zero-training default: DINOv2 anchor (main here) + RAFT motion guard. With idm absent,
+  # dino carries the signal -- the weaker "imitate one recording" regime (SPRINT S6), fine
+  # for a baseline curve. Override per experiment (this is a default, not a commitment).
   components:
-    target_video_similarity: 0.80
-    kling_video_reward: 0.20
-  kwargs:
-    target_video_similarity:
-      score_key: target_similarity
-      worker_config:
-        num_frames: 8
-        feature_size: 64
-        sequence_weight: 0.50
-        final_weight: 0.30
-        temporal_weight: 0.20
-    kling_video_reward:
-      artifact_format: mp4
-      score_key: visual_quality+motion_quality
+    target_dino_similarity: 1.0
+    motion_dynamics: 0.2

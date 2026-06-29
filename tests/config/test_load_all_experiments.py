@@ -488,10 +488,13 @@ def test_cosmos_target_v2w_production_validation_requires_target_clip(
         ),
         encoding="utf-8",
     )
+    # The droid-target recipe now uses a zero-training dino+motion reward (no kling); the
+    # kling production-contract path is covered by
+    # test_cosmos_v2w_production_validation_accepts_source_backed_data. Here we validate
+    # that target-clip-backed data resolves and validates for this recipe.
     cfg = load_config(
         "experiment/diffusion/cosmos_predict2/online_grpo_droid_target_240p",
         overrides=[
-            "production.kling_video_reward.enabled=true",
             f"data.manifest={train.as_posix()}",
             f"data.eval_manifest={eval_manifest.as_posix()}",
             f"data.source_report={report.as_posix()}",
