@@ -47,7 +47,7 @@ algorithm:
 
 rollout:
   n_samples_per_prompt: 16     # Flow-GRPO uses 24; 16 = single-GPU floor (watch zero_std_ratio)
-  rollout_batch_size: 8
+  prompts_per_batch: 8
   sample_batch_size: 1
   noise_level: 0.7
   return_prev_sample_mean: true        # REQUIRED (recipe default; explicit here)

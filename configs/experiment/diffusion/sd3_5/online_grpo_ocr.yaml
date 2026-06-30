@@ -25,7 +25,7 @@ algorithm:
 rollout:
   # GPM active samples at n/sbs=8 still show ~20% SM occupancy; VAE tiling is on.
   n_samples_per_prompt: 16
-  rollout_batch_size: 8
+  prompts_per_batch: 8
   sample_batch_size: 16
 
 trainer:

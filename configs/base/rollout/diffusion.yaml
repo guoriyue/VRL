@@ -3,7 +3,7 @@
 # configs/sampling/{image,video} plus configs/sampling/denoise.
 rollout:
   n_samples_per_prompt: 4
-  rollout_batch_size: 4
+  prompts_per_batch: 4
   denoise_mode: sde             # 'sde' keeps Flow-GRPO stochastic sampling.
   noise_level: 1.0
   sample_batch_size: 1

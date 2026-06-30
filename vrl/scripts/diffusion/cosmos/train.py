@@ -152,7 +152,7 @@ def _predict2_collector_kwargs(cfg: DictConfig, examples: Any) -> dict[str, Any]
     _normalize_per_sample_reference_images(
         examples,
         manifest_path=Path(str(cfg.data.manifest)),
-        rollout_batch_size=int(cfg.rollout.rollout_batch_size),
+        prompts_per_batch=int(cfg.rollout.prompts_per_batch),
     )
     return {}
 
@@ -161,12 +161,12 @@ def _normalize_per_sample_reference_images(
     examples: Any,
     *,
     manifest_path: Path,
-    rollout_batch_size: int,
+    prompts_per_batch: int,
 ) -> None:
-    if rollout_batch_size != 1:
+    if prompts_per_batch != 1:
         raise ValueError(
             "cosmos.reference_mode=per_sample currently requires "
-            "trainer.rollout_batch_size=1",
+            "trainer.prompts_per_batch=1",
         )
     for idx, example in enumerate(examples):
         raw_path = str(getattr(example, "reference_image", "") or "").strip()

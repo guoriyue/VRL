@@ -48,7 +48,7 @@ rollout:
   #    memory. flow_grpo (2505.05470) uses 24, but on a single 32GB card with
   #    1B R1 (3 segments) 8 is the safe ceiling (matches the proven non-R1 run).
   #    Drop to 4-6 if replay OOMs.
-  #  * rollout_batch_size = prompt groups per optimizer step (= gas, since
+  #  * prompts_per_batch = prompt groups per optimizer step (= gas, since
   #    microbatch_size=1). With streaming this is GPU-memory-FREE: groups are
   #    collected/trained/released one at a time, only wall-clock grows. The
   #    ar_r1 base default rbs=1 means each update sees ONE prompt -> a very
@@ -56,8 +56,8 @@ rollout:
   #    cosmos recipe's 32 / flow_grpo's ~48 prompts-per-update if step time
   #    allows (no extra GPU memory).
   n_samples_per_prompt: 8
-  rollout_batch_size: 8
-  # microbatch_size=1 -> gas=rollout_batch_size; host RAM holds ~1 group's AR
+  prompts_per_batch: 8
+  # microbatch_size=1 -> gas=prompts_per_batch; host RAM holds ~1 group's AR
   # replay tensors at a time (host_memory_budget_fraction guards it).
   microbatch_size: 1
   host_memory_budget_fraction: 0.9

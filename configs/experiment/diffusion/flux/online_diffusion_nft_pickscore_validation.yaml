@@ -50,7 +50,7 @@ algorithm:                     # cosmos-RL DiffusionNFT parity knobs (base/algor
 
 rollout:
   n_samples_per_prompt: 16     # paper uses 24; 16 = single-GPU floor
-  rollout_batch_size: 8
+  prompts_per_batch: 8
   sample_batch_size: 1
   noise_level: 0.7
   sde: { window_range: [0, 10] }

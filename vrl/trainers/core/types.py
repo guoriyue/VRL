@@ -232,7 +232,7 @@ class TrainerConfig:
     optim: OptimConfig = field(metadata={"yaml": "actor.optim"})
     # GRPO advantage group size (samples per prompt).
     n_samples_per_prompt: int = field(metadata={"yaml": "rollout"})
-    rollout_batch_size: int = field(metadata={"yaml": "rollout"})
+    prompts_per_batch: int = field(metadata={"yaml": "rollout"})
     # Fraction of denoise timesteps that receive loss (gradient estimator
     # coverage) — an experiment decision, not a tuning knob.
     timestep_fraction: float = field(metadata={"yaml": "actor"})
@@ -288,7 +288,7 @@ class TrainerConfig:
     # microbatch accumulation cadence.
     gradient_accumulation_steps: int = field(default=0, metadata={"yaml": "actor"})
     # Streaming slice declared as a SIZE: groups per microbatch. Inverse of
-    # gradient_accumulation_steps (= rollout_batch_size // this). Set ONE of the
+    # gradient_accumulation_steps (= prompts_per_batch // this). Set ONE of the
     # two; __post_init__ derives the other so they cannot drift. 0 = unset
     # (derive from gradient_accumulation_steps). This is the "set the slice once"
     # knob: you declare how many groups fit in one slice, the microstep count
@@ -348,13 +348,13 @@ class TrainerConfig:
             )
         # Streaming-accumulation slice (SPRINT_streaming_rollout_accumulation +
         # SPRINT_memory_budgeted_microbatch). The optimizer-target batch
-        # (rollout_batch_size groups) is collected/trained/released in
+        # (prompts_per_batch groups) is collected/trained/released in
         # microbatches. The slice may be declared as a SIZE
         # (microbatch_size = groups per microbatch) OR as a COUNT
         # (gradient_accumulation_steps = number of microbatches); set ONE and the
         # other is derived here so the two views can never drift. 0/0 keeps the
         # legacy unsplit full-batch path.
-        rbs = int(self.rollout_batch_size)
+        rbs = int(self.prompts_per_batch)
         gas = int(self.gradient_accumulation_steps)
         mbs = int(self.microbatch_size)
         sample_batch_size = int(self.sample_batch_size)
@@ -377,7 +377,7 @@ class TrainerConfig:
             if rbs != gas * mbs:
                 raise ValueError(
                     "rollout.microbatch_size * actor.gradient_accumulation_steps "
-                    f"must equal rollout.rollout_batch_size ({mbs} * {gas} != {rbs}); "
+                    f"must equal rollout.prompts_per_batch ({mbs} * {gas} != {rbs}); "
                     "set only one of them.",
                 )
         elif mbs > 0:
@@ -385,7 +385,7 @@ class TrainerConfig:
             if rbs % mbs != 0:
                 raise ValueError(
                     "rollout.microbatch_size must evenly divide "
-                    f"rollout.rollout_batch_size ({rbs} % {mbs} != 0)",
+                    f"rollout.prompts_per_batch ({rbs} % {mbs} != 0)",
                 )
             gas = rbs // mbs
             self.gradient_accumulation_steps = gas
@@ -394,7 +394,7 @@ class TrainerConfig:
             if rbs % gas != 0:
                 raise ValueError(
                     "actor.gradient_accumulation_steps must evenly divide "
-                    "rollout.rollout_batch_size when > 0 (it is the number of "
+                    "rollout.prompts_per_batch when > 0 (it is the number of "
                     "rollout/train microsteps the optimizer target batch is split "
                     f"into): {rbs} % {gas} != 0",
                 )
@@ -403,7 +403,7 @@ class TrainerConfig:
         if gas > 0:
             if rbs // gas < 1:
                 raise ValueError(
-                    "rollout.rollout_batch_size // gradient_accumulation_steps must be "
+                    "rollout.prompts_per_batch // gradient_accumulation_steps must be "
                     f">= 1 (got {rbs} // {gas} = {rbs // gas})",
                 )
             if int(self.ppo_epochs) != 1:

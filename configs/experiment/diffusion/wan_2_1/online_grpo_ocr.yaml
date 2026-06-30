@@ -13,7 +13,7 @@ actor:
 
 rollout:
   n_samples_per_prompt: 8
-  rollout_batch_size: 4
+  prompts_per_batch: 4
   # Stream the 4 video prompt-groups one at a time (derives
   # gradient_accumulation_steps=4) so host RAM holds ~1 group's heavy video
   # replay trajectories instead of all 4 before backward. Gradient-identical to

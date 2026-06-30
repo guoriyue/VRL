@@ -22,7 +22,7 @@ algorithm:
 
 rollout:
   n_samples_per_prompt: 8
-  rollout_batch_size: 1
+  prompts_per_batch: 1
   sample_batch_size: 1   # 512p93f peaks ~31.8GB at sbs=1; CFG doubles the transformer batch — no sample-batch headroom on 32GB (scale gate OOM 2026-06-10)
   sde:
     type: cps

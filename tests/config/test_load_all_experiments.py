@@ -72,7 +72,7 @@ def test_build_trainer_config_reports_all_missing_required_keys() -> None:
         "actor.timestep_fraction",
         "trainer.total_epochs",
         "trainer.output_dir",
-        "rollout.rollout_batch_size",
+        "rollout.prompts_per_batch",
         "rollout.n_samples_per_prompt",
     ):
         assert path in message
@@ -229,18 +229,18 @@ def test_cosmos_predict25_kling_reward_uses_paper_rl_batch() -> None:
     """Checks the Kling reward recipe matches the paper RL batch geometry."""
     cfg = load_config("experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward")
 
-    # Batch geometry (n_samples_per_prompt / rollout_batch_size / sample_batch_size /
+    # Batch geometry (n_samples_per_prompt / prompts_per_batch / sample_batch_size /
     # microbatch_size) is declarative YAML a tuner is free to change. Assert the real
     # coupling instead of pinning the paper's magic numbers.
-    assert cfg.rollout.rollout_batch_size % cfg.rollout.n_samples_per_prompt == 0
+    assert cfg.rollout.prompts_per_batch % cfg.rollout.n_samples_per_prompt == 0
     # gradient_accumulation_steps is a DERIVED TrainerConfig value — this stays: it
-    # tests the rollout_batch_size / microbatch_size derivation, not a literal.
+    # tests the prompts_per_batch / microbatch_size derivation, not a literal.
     from vrl.trainers.core.types import OptimConfig, TrainerConfig
 
     derived = TrainerConfig(
         optim=OptimConfig(lr=1e-4),
         n_samples_per_prompt=cfg.rollout.n_samples_per_prompt,
-        rollout_batch_size=cfg.rollout.rollout_batch_size,
+        prompts_per_batch=cfg.rollout.prompts_per_batch,
         microbatch_size=cfg.rollout.microbatch_size,
         timestep_fraction=0.5,
         total_epochs=1,
@@ -249,7 +249,7 @@ def test_cosmos_predict25_kling_reward_uses_paper_rl_batch() -> None:
     )
     assert (
         derived.gradient_accumulation_steps
-        == cfg.rollout.rollout_batch_size // cfg.rollout.microbatch_size
+        == cfg.rollout.prompts_per_batch // cfg.rollout.microbatch_size
     )
 
 

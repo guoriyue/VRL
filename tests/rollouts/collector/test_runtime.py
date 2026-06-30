@@ -496,7 +496,7 @@ def test_collect_phase_timings_are_per_call_not_shared(
     """Phase timings live on each call's rollouts; no shared collector state."""
     import asyncio
 
-    monkeypatch.setenv("VRL_PROFILE_COLLECT", "1")
+    monkeypatch.setenv("VRL_PROFILE", "1")
     collector = _collector(runtime=_Runtime(), reward_scorer=_RewardScorer())
 
     async def _run() -> tuple[Any, Any]:

@@ -244,7 +244,7 @@ class RolloutConfig(ConfigBase):
     # legality in RootConfig._cross_field_validate (which requires it for that kind).
     final_image_policy: Literal["always_generate", "use_selfcheck"] | None = None
     n_samples_per_prompt: int | None = None
-    rollout_batch_size: int | None = None
+    prompts_per_batch: int | None = None
     # "Set the slice once" size knob: prompt groups per streamed microbatch.
     # reader: TrainerConfig.__post_init__ derives actor.gradient_accumulation_steps
     # from it (vrl/trainers/core/types.py).

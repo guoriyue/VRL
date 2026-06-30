@@ -9,10 +9,10 @@ here.
 This module only resolves and validates the context. The FSDP2 strategy layer
 (``fully_shard`` wrapping + DTensor full-state export) now lives in
 ``vrl/trainers/fsdp.py`` + ``FSDPStrategy``, built from this context by
-``vrl/trainers/strategy.py`` build_strategy. The online GRPO multi-rank
-orchestration that would actually *run* it (rank0 collect / all-rank train +
-torchrun↔Ray coordination, ``SPRINT_multi_gpu_training.md`` Phase 4/6) is still
-gated in ``run_online_recipe``.
+``vrl/trainers/strategy.py`` build_strategy. The online recipe supports the
+symmetric colocated torchrun path for ``ddp`` and ``fsdp``: each rank owns its
+local rollout/training device and the strategy layer handles cross-rank gradient
+coordination.
 """
 
 from __future__ import annotations

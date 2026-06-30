@@ -15,7 +15,7 @@ sampling:
 
 rollout:
   n_samples_per_prompt: 1
-  rollout_batch_size: 1
+  prompts_per_batch: 1
 
 # DPO-specific trainer overrides — paper-default schedule for SDXL scaled to Wan.
 trainer:

@@ -26,7 +26,7 @@ model:
 
 rollout:
   n_samples_per_prompt: 8
-  rollout_batch_size: 1
+  prompts_per_batch: 1
   sample_batch_size: 8   # sbs=4 GPM still leaves SM occupancy at ~18%; keep one prompt per reward request.
   denoise_mode: native
   noise_level: 0.7

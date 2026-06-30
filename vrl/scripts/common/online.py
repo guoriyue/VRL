@@ -104,9 +104,9 @@ def _apply_precision_policy(cfg: DictConfig, trainer_config: Any) -> None:
 def _log_rollout_memory_plan(trainer_config: Any) -> None:
     """Log how many rollout tensors one optimizer update can hold at once."""
 
-    rollout_batch_size = int(trainer_config.rollout_batch_size)
+    prompts_per_batch = int(trainer_config.prompts_per_batch)
     samples_per_prompt = int(trainer_config.n_samples_per_prompt)
-    target_samples = rollout_batch_size * samples_per_prompt
+    target_samples = prompts_per_batch * samples_per_prompt
     sample_batch_size = int(getattr(trainer_config, "sample_batch_size", 0) or 0)
     # One knob bounds both the generation forward chunk and the train replay
     # chunk, so this per-call sample count applies to generation and backward.
@@ -118,16 +118,16 @@ def _log_rollout_memory_plan(trainer_config: Any) -> None:
     gas = int(getattr(trainer_config, "gradient_accumulation_steps", 0))
     if gas > 0:
         # Read the reconciled microbatch_size (TrainerConfig.__post_init__ sets it
-        # to rollout_batch_size // gas) rather than recomputing the same quotient.
+        # to prompts_per_batch // gas) rather than recomputing the same quotient.
         microbatch_prompts = int(trainer_config.microbatch_size)
         microbatch_samples = microbatch_prompts * samples_per_prompt
         logger.info(
             "Rollout memory plan: streaming accumulation enabled "
-            "(rollout_batch_size=%d, gradient_accumulation_steps=%d, "
+            "(prompts_per_batch=%d, gradient_accumulation_steps=%d, "
             "microbatch_prompts=%d, microbatch_samples=%d, "
             "sample_chunk_size_per_call=%d, "
             "target_samples_per_update=%d)",
-            rollout_batch_size,
+            prompts_per_batch,
             gas,
             microbatch_prompts,
             microbatch_samples,
@@ -138,19 +138,19 @@ def _log_rollout_memory_plan(trainer_config: Any) -> None:
 
     logger.info(
         "Rollout memory plan: legacy full-batch accumulation "
-        "(rollout_batch_size=%d, sample_chunk_size_per_call=%d, "
+        "(prompts_per_batch=%d, sample_chunk_size_per_call=%d, "
         "target_samples_per_update=%d)",
-        rollout_batch_size,
+        prompts_per_batch,
         sample_chunk_size,
         target_samples,
     )
-    if rollout_batch_size > 1:
+    if prompts_per_batch > 1:
         logger.warning(
             "Legacy full-batch rollout accumulation is enabled; host RAM may hold "
             "up to %d prompt groups (%d samples) before backward. Set "
-            "actor.gradient_accumulation_steps to a divisor of rollout_batch_size "
+            "actor.gradient_accumulation_steps to a divisor of prompts_per_batch "
             "to stream rollout microbatches and fail earlier on memory issues.",
-            rollout_batch_size,
+            prompts_per_batch,
             target_samples,
         )
 
@@ -172,7 +172,7 @@ def _warn_global_std_streaming_divergence(cfg: Any, trainer_config: Any) -> None
         return
     if not bool(OmegaConf.select(cfg, "algorithm.global_std", default=False)):
         return
-    rbs = int(trainer_config.rollout_batch_size)
+    rbs = int(trainer_config.prompts_per_batch)
     groups_per_microbatch = rbs // gas
     if groups_per_microbatch <= 1:
         return
@@ -270,13 +270,13 @@ async def _run_streaming_optimizer_update(
     example_batch: list[Any],
     *,
     gradient_accumulation_steps: int,
-    rollout_batch_size: int,
+    prompts_per_batch: int,
     n_samples_per_prompt: int,
     host_memory_budget_fraction: float = 0.0,
 ) -> Any:
     """One optimizer update streamed over ``gradient_accumulation_steps`` microbatches.
 
-    Splits the ``rollout_batch_size`` prompts into microbatches and runs
+    Splits the ``prompts_per_batch`` prompts into microbatches and runs
     collect -> backward -> RELEASE for each before the next, so host RAM holds
     ~one microbatch of rollout/replay tensors instead of the whole target batch
     (the memory fix that lets bigger models train on limited GPUs). One
@@ -288,11 +288,11 @@ async def _run_streaming_optimizer_update(
     checked against the host-RAM budget and the run fails fast if it is already
     over budget (SPRINT_memory_budgeted_microbatch T2).
     """
-    micro = rollout_batch_size // gradient_accumulation_steps
+    micro = prompts_per_batch // gradient_accumulation_steps
     microbatches = [
         example_batch[k : k + micro] for k in range(0, len(example_batch), micro)
     ]
-    total_groups = int(rollout_batch_size)
+    total_groups = int(prompts_per_batch)
 
     reward_fn.reset_components()
     trainer.begin_optimizer_update()
@@ -921,15 +921,15 @@ async def run_online_recipe(
 
         # Both ddp and fsdp are data-parallel (fsdp shards the MODEL, not the data):
         # every rank shares the prompt RNG (identical draw), so draw world_size *
-        # rollout_batch_size prompts and hand each rank a DISJOINT slice. The
+        # prompts_per_batch prompts and hand each rank a DISJOINT slice. The
         # cross-rank gradient (DDP all-reduce / FSDP reduce-scatter) then covers
-        # world_size * rollout_batch_size DISTINCT prompts (the effective batch)
-        # instead of every rank redundantly training the SAME rollout_batch_size
+        # world_size * prompts_per_batch DISTINCT prompts (the effective batch)
+        # instead of every rank redundantly training the SAME prompts_per_batch
         # prompts and averaging identical gradients. single_process (world_size=1,
         # rank=0) takes the whole draw unchanged. Requires the prompt manifest to
-        # hold >= world_size * rollout_batch_size prompts for a without-replacement
+        # hold >= world_size * prompts_per_batch prompts for a without-replacement
         # sampler.
-        rank_batch = int(trainer_config.rollout_batch_size)
+        rank_batch = int(trainer_config.prompts_per_batch)
         sampler_strategy = str(
             OmegaConf.select(cfg, "data.sampler.type", default="random_without_replacement"),
         )
@@ -937,7 +937,7 @@ async def run_online_recipe(
             idx = sample_prompt_indices(
                 rng,
                 num_examples=len(examples),
-                rollout_batch_size=rank_batch * training_context.world_size,
+                prompts_per_batch=rank_batch * training_context.world_size,
                 strategy=sampler_strategy,
                 epoch=epoch,
             )
@@ -959,7 +959,7 @@ async def run_online_recipe(
                     components.reward_fn,
                     example_batch,
                     gradient_accumulation_steps=gradient_accumulation_steps,
-                    rollout_batch_size=int(trainer_config.rollout_batch_size),
+                    prompts_per_batch=int(trainer_config.prompts_per_batch),
                     n_samples_per_prompt=int(trainer_config.n_samples_per_prompt),
                     host_memory_budget_fraction=float(
                         getattr(trainer_config, "host_memory_budget_fraction", 0.0),

@@ -49,7 +49,7 @@ rollout:
   # conditions per optimizer update. Generation still uses sample_batch_size=1
   # so rollout denoising can stream on limited memory.
   n_samples_per_prompt: 8
-  rollout_batch_size: 32
+  prompts_per_batch: 32
   # Stream the optimizer-target batch one prompt group at a time so host RAM
   # holds ~1 group instead of all 32 (derives gradient_accumulation_steps=32).
   microbatch_size: 1
@@ -68,7 +68,7 @@ trainer:
   entrypoint: vrl.scripts.diffusion.cosmos.train:train_cosmos_predict25_diffusion_nft
   output_dir: outputs/cosmos_predict2_5_2b_diffusionnft
   # Paper §4.2.2: "trained for 256 steps with a batch size of 32." Each epoch
-  # here = one optimizer update over the rollout_batch_size=32 target batch, so
+  # here = one optimizer update over the prompts_per_batch=32 target batch, so
   # 256 epochs = the paper's 256 parameter updates. The 2026-06-13/06-16 runs
   # stopped at 10-14 updates and saw only noise — far too few. Override to a
   # smaller value for a quick smoke.

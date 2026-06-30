@@ -43,7 +43,7 @@ algorithm: { kl_coef: 0.0, global_std: true }   # no-KL per DanceGRPO
 
 rollout:
   n_samples_per_prompt: 12           # group size (paper DanceGRPO uses 12)
-  rollout_batch_size: 8
+  prompts_per_batch: 8
   sample_batch_size: 1
   noise_level: 0.7
   sde: { window_range: [0, 10] }

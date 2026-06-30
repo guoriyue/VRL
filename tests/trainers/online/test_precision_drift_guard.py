@@ -254,7 +254,7 @@ def test_online_trainer_precision_guard_fails_before_optimizer_when_ratio_drifts
         evaluator=_Evaluator(),
         model=model,
         config=TrainerConfig(
-            rollout_batch_size=1,
+            prompts_per_batch=1,
             timestep_fraction=1.0,
             total_epochs=1,
             drop_zero_advantage=False,

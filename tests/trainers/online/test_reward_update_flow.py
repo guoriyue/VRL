@@ -85,7 +85,7 @@ class TestRewardUpdateFlow:
             evaluator=_Evaluator(),
             model=model,
             config=TrainerConfig(
-                rollout_batch_size=1,
+                prompts_per_batch=1,
                 timestep_fraction=1.0,
                 total_epochs=1,
                 drop_zero_advantage=False,
@@ -203,7 +203,7 @@ class TestRewardUpdateFlow:
             evaluator=_Evaluator(),
             model=model,
             config=TrainerConfig(
-                rollout_batch_size=1,
+                prompts_per_batch=1,
                 timestep_fraction=1.0,
                 total_epochs=1,
                 drop_zero_advantage=False,
@@ -305,7 +305,7 @@ class TestRewardUpdateFlow:
             evaluator=_Evaluator(),
             model=model,
             config=TrainerConfig(
-                rollout_batch_size=4,
+                prompts_per_batch=4,
                 timestep_fraction=1.0,
                 total_epochs=1,
                 drop_zero_advantage=False,
@@ -325,7 +325,7 @@ class TestRewardUpdateFlow:
                 _Reward(),
                 ["prompt-a", "prompt-b", "prompt-c", "prompt-d"],
                 gradient_accumulation_steps=4,
-                rollout_batch_size=4,
+                prompts_per_batch=4,
                 n_samples_per_prompt=2,
             ),
         )
@@ -411,7 +411,7 @@ class TestRewardUpdateFlow:
                 _Reward(),
                 ["prompt-a", "prompt-b"],
                 gradient_accumulation_steps=2,
-                rollout_batch_size=2,
+                prompts_per_batch=2,
                 n_samples_per_prompt=2,
             ),
         )
@@ -496,7 +496,7 @@ class TestRewardUpdateFlow:
             evaluator=_Evaluator(),
             model=model,
             config=TrainerConfig(
-                rollout_batch_size=4,
+                prompts_per_batch=4,
                 timestep_fraction=1.0,
                 total_epochs=1,
                 drop_zero_advantage=False,
@@ -525,7 +525,7 @@ class TestRewardUpdateFlow:
                 _Reward(),
                 ["prompt-a", "prompt-b", "prompt-c", "prompt-d"],
                 gradient_accumulation_steps=4,
-                rollout_batch_size=4,
+                prompts_per_batch=4,
                 n_samples_per_prompt=2,
             ),
         )
@@ -608,7 +608,7 @@ class TestRewardUpdateFlow:
                 evaluator=_Evaluator(),
                 model=model,
                 config=TrainerConfig(
-                    rollout_batch_size=4,
+                    prompts_per_batch=4,
                     timestep_fraction=1.0,
                     total_epochs=1,
                     drop_zero_advantage=False,
@@ -633,7 +633,7 @@ class TestRewardUpdateFlow:
                 _Reward(),
                 list(prompts),
                 gradient_accumulation_steps=4,
-                rollout_batch_size=4,
+                prompts_per_batch=4,
                 n_samples_per_prompt=2,
             ),
         )
@@ -738,7 +738,7 @@ def test_sample_batch_size_splits_training_replay_and_preserves_gradient(monkeyp
             evaluator=_Evaluator(replay_calls),
             model=model,
             config=TrainerConfig(
-                rollout_batch_size=1,
+                prompts_per_batch=1,
                 timestep_fraction=1.0,
                 total_epochs=1,
                 drop_zero_advantage=False,
@@ -781,7 +781,7 @@ def test_sample_batch_size_splits_training_replay_and_preserves_gradient(monkeyp
                     _Reward(),
                     ["prompt"],
                     gradient_accumulation_steps=1,
-                    rollout_batch_size=1,
+                    prompts_per_batch=1,
                     n_samples_per_prompt=4,
                 ),
             )
@@ -816,7 +816,7 @@ def test_sample_batch_size_splits_training_replay_and_preserves_gradient(monkeyp
 
 
 def test_gradient_accumulation_steps_validation() -> None:
-    """gradient_accumulation_steps must evenly divide rollout_batch_size when > 0."""
+    """gradient_accumulation_steps must evenly divide prompts_per_batch when > 0."""
     import pytest
 
     from vrl.trainers.core.types import OptimConfig, TrainerConfig
@@ -825,7 +825,7 @@ def test_gradient_accumulation_steps_validation() -> None:
         return TrainerConfig(
             optim=OptimConfig(lr=1e-4),
             n_samples_per_prompt=2,
-            rollout_batch_size=rbs,
+            prompts_per_batch=rbs,
             timestep_fraction=0.5,
             total_epochs=1,
             output_dir="x",
@@ -858,7 +858,7 @@ def test_microbatch_size_reconciles_with_gradient_accumulation_steps() -> None:
         base = dict(
             optim=OptimConfig(lr=1e-4),
             n_samples_per_prompt=2,
-            rollout_batch_size=32,
+            prompts_per_batch=32,
             timestep_fraction=0.5,
             total_epochs=1,
             output_dir="x",
@@ -905,7 +905,7 @@ def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
         return TrainerConfig(
             optim=OptimConfig(lr=1e-4),
             n_samples_per_prompt=2,
-            rollout_batch_size=rbs,
+            prompts_per_batch=rbs,
             timestep_fraction=1.0,
             total_epochs=1,
             output_dir="x",
@@ -948,7 +948,7 @@ def test_global_std_streaming_divergence_warning(caplog) -> None:
         return TrainerConfig(
             optim=OptimConfig(lr=1e-4),
             n_samples_per_prompt=2,
-            rollout_batch_size=rbs,
+            prompts_per_batch=rbs,
             timestep_fraction=0.5,
             total_epochs=1,
             output_dir="x",
@@ -1022,7 +1022,7 @@ def test_host_memory_budget_fraction_bounds() -> None:
         return TrainerConfig(
             optim=OptimConfig(lr=1e-4),
             n_samples_per_prompt=2,
-            rollout_batch_size=4,
+            prompts_per_batch=4,
             timestep_fraction=0.5,
             total_epochs=1,
             output_dir="x",

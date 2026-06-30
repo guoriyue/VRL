@@ -32,7 +32,7 @@ sampling:
 rollout:
   # 2 images per group, 2 groups per step - 16x fewer pixels vs. baseline.
   n_samples_per_prompt: 2
-  rollout_batch_size: 2
+  prompts_per_batch: 2
   sample_batch_size: 2
   # sampling.num_steps is shrunk to 4 above, but the base diffusion rollout
   # (configs/base/rollout/diffusion.yaml) sets sde.window_range=[0,10] for the

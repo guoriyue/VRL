@@ -22,5 +22,5 @@ trainer:
 
 rollout:
   n_samples_per_prompt: 2
-  rollout_batch_size: 1
+  prompts_per_batch: 1
 

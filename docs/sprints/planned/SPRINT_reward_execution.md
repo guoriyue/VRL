@@ -1,6 +1,9 @@
 # SPRINT: Reward execution —— 成本分层放置 + 异步打分
 
-状态：design / not-started —— P1/P2/P3 全部未实现（P1 硬 barrier 仍在 collector/core.py:107-108 与 prompt_collection.py:23-26,74-80 的 collect-all→score-all；P2 `reward_cost` 全仓 0 命中、_resolve_reward_devices auto 仍只看 spare GPU（resources.py:814-823）；P3 无 ref 数据面）。注意 §4.1/§4.2/§6/§10 引用的 `inference_runtime: local|ray` 已被 8de3e63 改名为 `execution: inline|pool`，该核心抽象论证需按新 key 重写。
+状态：**design / not-started（P1 + P2 都已撤回，2026-06-29）；P3 仍未实现**。本轮 CPU 落地了 P1（流式打分）+ P2（reward_cost 成本感知放置），评审后**两个都撤回**，只保留分析结论（§13/§13.1）和一个顺带的 stale 测试修复（`VRL_PROFILE_COLLECT`→`VRL_PROFILE`）。
+- **P2 撤回**：现形态只做了"显式标注"那半，**和已有的显式 `gpu_pool: rollout` 重复**；真正价值在自动测量（需 GPU run，未做），且和 P1 互斥（单卡 share = 串行卸载，不是并发）。
+- **P1 撤回**：reward 的 async **早已存在于 `continuous` 模式**（reward ∥ 别的 group 生成 + ∥ 训练，见 §13.1）；P1 改的 `collect_prompt_batches` 在 continuous 下每次只收一个 group → no-op，只对 strict_on_policy 默认路径有那一条窄的 call 内重叠，niche 太小、未实测、和 continuous 高度重叠。**没有引入新能力。**
+此前为 design / not-started。注意 §4.1/§4.2/§6/§10 旧文引用的 `inference_runtime: local|ray` 已被 8de3e63 改名为 `execution: inline|pool`；§9.1.1 的 factory reward-key 硬编码已由 `active_pool_reward_keys`（按 `execution` 派生）消除，无需再改。
 
 关联：
 - [[SPRINT_global_ray_placement_owner]]（reward 的 GPU 怎么来：owner 的 bundle）
@@ -493,3 +496,101 @@ vrl 代码（落点，本 run 实读）：
 - `vrl/rollouts/orchestration/prompt_collection.py:23-26,74-80`（generate-all → score-all，P1 要替换的两段式）
 - `vrl/rewards/runtime.py:62-81`（`make_reward_runtime(execution: inline|pool)` —— 对位 `enable_agent_reward_loop`）
 - `vrl/rewards/ray/runtime.py:53-64`（`RayRewardRuntime.score_batch` → `shard_reward_request` → `_actor.map` —— P1 流式改写的载体）
+## 13. 落地记录（2026-06-28 P1 落地 / 2026-06-29 P2 撤回，CPU-only，未 commit）
+
+本轮 CPU 落地了 P1（流式打分）+ P2（auto 成本感知放置），**评审后两个都撤回**（2026-06-29），代码全部
+还原到 committed 状态；只保留下面的分析结论 + 一个顺带的 stale 测试修复。P3（ref 数据面）不在本轮。
+
+**决定性边界发现（撤回 P1 的根据）：** reward 的重叠**早已存在于 `continuous` 模式**——
+`ContinuousRolloutProducer` 维持 `max_inflight_groups` 个并发 `_collect_group`（各自 generate+score 一个
+group），且 `after_train_step` 的 non-draining weight sync 让 in-flight 的 collect（含 reward）**与训练并发**
+（`continuous/schedule.py:130-145`、`producer.py:164-228`）。所以 continuous 里 reward 同时和「其他 group
+的生成」+「训练」重叠。**而 P1 改的 `collect_prompt_batches` 在 continuous 下每次只收一个 group
+（`producer.py:214` 传 `prompts=[prompt]`）→ P1 的 call 内 streaming 是 no-op。** P1 只对
+**strict_on_policy 默认路径**生效，收益是窄窄的 "score(N) ∥ generate(N+1)" call 内重叠 + 仍有硬 train
+barrier，且和 continuous 高度重叠（continuous(max_stale=0)≈strict 还自带 producer 重叠）。**P1 没有引入
+新能力，niche 太小且未实测，故撤回。** 完整重叠表见 §13.1。
+
+### P1 — 流式打分（曾实现，已撤回 2026-06-29）
+
+曾落点 `collect_prompt_batches` + `RolloutCollector.can_stream_scoring`（按 topology 派生 stream/batch 两条
+路），已全部还原。下面记录当时的根因判断，供未来评估同类改动参考。
+
+根因判断（仍成立）：**collect→score barrier 不是无条件错的**。`score_rollouts` 里有个
+`_should_release_runtime_before_reward_model()` gate——共享单卡时 rollout 必须先 release 才能让
+reward model 占同一张卡（§7 fallback），批量打分把 release + actor cold start 摊一次，是**对的**。
+barrier 只在 reward **不和 rollout 争卡**（disjoint pool 或 CPU-inline）时纯属多余串行。所以：
+
+- `can_stream_scoring = not _should_release_runtime_before_reward_model()`——由 GPU topology 派生，
+  **不新增 config key**（对位 verl-omni 的 `enable_agent_reward_loop` = reward 有独立 pool）。
+- 流式路径：每个 group `collect_unscored` 一完成，立刻 `asyncio.ensure_future(score_rollouts([group]))`
+  作为后台 task，与下一个 group 的生成并发；末尾 `await` 收齐，按输入序 remap+split。
+- 批量路径（共享单卡）：完全保留原行为（generate-all → release → score-all）。
+
+**on-policy 不变**（§12.3）：流式只改"何时打分"，`collect_prompt_batches` 仍在返回前收齐全部已打分
+batch，trainer.step 消费的还是完整 scored batch。**分数正确性由构造保证**：asyncio 单线程协作式，
+sync inline reward 在两次 await 间原子执行、async pool reward 只在 Ray await 处让出，分数按值返回——
+只有 reward_fn 的 telemetry（last_results）在并发 pool 打分下可能 stale，已在 docstring 标注 best-effort。
+
+测试（`tests/rollouts/orchestration/test_prompt_collection.py` + `tests/rollouts/collector/test_runtime.py`）：
+- `test_streaming_overlaps_scoring_with_next_generation`：用 `asyncio.Event` 做**确定性 overlap 证明**——
+  group1 的生成阻塞到 group0 打分开始，只有流式（打分∥生成）才不死锁；断言 `score:p0` 早于 `generate:p1`
+  + 每 group 一次 score 调用 + 结果与批量路径逐 group 等价、有序。
+- `test_streaming_accumulates_per_group_phase_times`：每 group 自带 score/build 计时累加（无重复计 wall）。
+- `can_stream_scoring` 属性：shared-GPU lifecycle → False（保持批量）；disjoint lifecycle → True（放行流式）。
+
+### P2 — auto 放置消费 `reward_cost`（成本感知）—— 已撤回（2026-06-29）
+
+曾落地 `RewardResourceConfig.reward_cost` + `_parse_reward_cost` + `_reward_can_saturate_card` +
+`_resolve_reward_devices` auto 分支 cost gate + 阈值 `_REWARD_SATURATION_COST=1.0`（cost<1→share、
+cost>=1→dedicate、auto→保持 topology 默认），全部撤回。撤回理由：
+
+1. **和已有的显式 `gpu_pool: rollout` 重复**：用户知道 reward 轻，直接显式写 rollout 就行；手动 cost
+   knob 没给独立价值。`reward_cost` 真正值钱的是**自动测量**（per-item 打分耗时 ÷ 生成耗时自动回填），
+   而那半要 GPU run，没做——所以现形态是给未来自动测量留的脚手架，独立看价值很薄。
+2. **可能和 P1 互相抵消**：单卡上 rollout 和 reward 内存装不下（`release_rollout_before_reward`），
+   "share" 其实是卸载→打分→装回的串行，不是真并发。把轻 reward 从 dedicated（P1 流式能藏到生成背后）
+   改成 share，反而把藏好的 reward 时间又变回串行 bubble。cost<1→share 这条规则太粗。
+3. 一个用户看得见、却基本是 no-op 的配置键，正是 AGENTS.md 点名要避免的。
+
+净结论：轻 reward 的干净答案是 **Tier 0（纯 CPU、进程内、`execution=inline`，根本不碰 GPU）**；GPU 轻
+reward 这个中间档本就没有干净的纯放置答案，要靠"深 backlog 喂满"或"多 reward 混着填卡"，那都是 ≥2-GPU
+的事，不是一个 cost 阈值能解决。`reward_cost` 等真能上多卡自动测时再建。
+
+### 最终状态（P1 + P2 都撤回后，2026-06-29）
+
+P1/P2 的源码与新增测试全部还原到 committed 状态（`vrl/ray/resources.py`、`vrl/rollouts/collector/core.py`、
+`vrl/rollouts/orchestration/prompt_collection.py` 及其测试 git 无 diff）。**唯一保留的代码改动**是一个
+独立于 P1/P2 的 stale 测试修复：`test_collect_phase_timings_are_per_call_not_shared` 用的环境变量
+`VRL_PROFILE_COLLECT` 在 2026-06-27 重命名为 `VRL_PROFILE` 时漏改（源码读 `VRL_PROFILE`），改正后转绿。
+
+```text
+pytest tests/rollouts/collector/test_runtime.py
+  tests/rollouts/orchestration/test_prompt_collection.py   -> 16 passed（env 修复 + 原有 deferred-scoring 测试）
+```
+
+注：rebase 后发现 `tests/scripts/test_online_lifecycle.py` 里 FSDP 策略守卫测试仍按旧预期要求阻断
+`fsdp`；当前 recipe/launcher 已支持 symmetric colocated FSDP 路径，测试已改为验证 `fsdp` 放行。
+
+### 仍未做（P3 + 后续）
+
+- P3 ref-based 数据面（rollout 产物走 ref，reward 直接 pull，省 driver 往返）——未动。
+- `reward_cost` 整个知识点（含自动测量）——已撤回，等能上多卡自动测时再建（见 P2 小节）。
+- 流式的 ≥2-GPU 吞吐验收（§10 "reward 卡利用率 > burst"、"打分与下轮生成 wall-clock 重叠"）——需多卡实测。
+
+### 13.1 reward 到底能和什么重叠（评审确认，带证据）
+
+| 模式 | reward ∥ 其他 group 生成？ | reward ∥ 训练？ | 机制 / 证据 |
+|---|---|---|---|
+| **continuous**（多卡 async 路径，默认 `require_separate_gpus=True`） | **是** | **是** | producer 维持 `max_inflight_groups` 个并发 `_collect_group`（各跑 generate+score 一个 group）；non-draining weight sync 让 in-flight collect 与训练并发。`continuous/producer.py:164-228`、`continuous/schedule.py:130-145` |
+| **strict_on_policy**（默认、严格 on-policy、cosmos 用） + 共享单卡 | 否 | 否 | `release_rollout_before_reward=True` → 卸载 rollout 才能打分；generate-all→release→score-all→train 全串行。P1 在此 `can_stream_scoring=False`，no-op（保留批量是对的） |
+| **strict_on_policy** + reward 独立卡 + **P1** | **是（仅 call 内 group 间）** | 否 | P1 让 `collect_prompt_batches` 里 score(group N) 作为后台 task ∥ generate(group N+1)；但 collect 之后仍硬 train barrier |
+
+读法：
+- **想要 reward 和「生成 + 训练」都重叠，continuous 模式早就给了**（代价是 staleness，由 `StalenessPolicy` 管）。
+- continuous 用 `max_stale=0` + 队列=一个 iteration 时**行为等价于 strict_on_policy**（`schedule.py:9-12` docstring），
+  且仍走 producer 的 in-flight 重叠——所以"既要严格 on-policy 又要重叠"这个诉求，continuous(max_stale=0) 也能接。
+- **P1 唯一独占的 niche**：strict_on_policy + reward 独立卡 + 多 group + 坚持零 staleness（不切 continuous）——
+  此时 P1 给 call 内 score∥next-gen 重叠（不含训练）。窄、未实测、且和 continuous 能做的高度重叠。
+- 净判断：**P1 没有引入 reward async（早有）；它只是给 strict 默认路径补一条 call 内的窄重叠。** 是否值得保留，
+  取决于是否真有"strict + 独立 reward 卡 + 不接受 continuous staleness"的实跑场景；若没有，P1 也可一并 park。

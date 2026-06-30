@@ -59,7 +59,7 @@ distributed:
 actor:
   ema:
     enable: false                 # fsdp gate: DTensor-aware EMA not implemented
-  # rollout_batch_size=1 below, so gradient_accumulation_steps must divide 1: use 1
+  # prompts_per_batch=1 below, so gradient_accumulation_steps must divide 1: use 1
   # (the base GRPO OCR recipe streams over 4 microbatches for its rbs=8; with a
   # single-prompt validation batch there is nothing to split).
   gradient_accumulation_steps: 1
@@ -69,6 +69,6 @@ actor:
 
 # Small batch so the full-param optimizer state + colocated rollout fit one card.
 rollout:
-  rollout_batch_size: 1
+  prompts_per_batch: 1
   n_samples_per_prompt: 8
   sample_batch_size: 4

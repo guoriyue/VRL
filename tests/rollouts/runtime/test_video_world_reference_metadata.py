@@ -72,7 +72,7 @@ def test_cosmos_per_sample_reference_uses_vrl_data_root(monkeypatch, tmp_path: P
     _normalize_per_sample_reference_images(
         examples,
         manifest_path=manifest,
-        rollout_batch_size=1,
+        prompts_per_batch=1,
     )
 
     assert examples[0].reference_image == str(
@@ -81,7 +81,7 @@ def test_cosmos_per_sample_reference_uses_vrl_data_root(monkeypatch, tmp_path: P
     assert examples[0].metadata["reference_image"] == examples[0].reference_image
 
 
-def test_cosmos_predict2_collector_uses_rollout_batch_size_config(
+def test_cosmos_predict2_collector_uses_prompts_per_batch_config(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -93,7 +93,7 @@ def test_cosmos_predict2_collector_uses_rollout_batch_size_config(
         {
             "cosmos": {"reference_mode": "per_sample"},
             "data": {"manifest": manifest.as_posix()},
-            "rollout": {"rollout_batch_size": 1},
+            "rollout": {"prompts_per_batch": 1},
         },
     )
 

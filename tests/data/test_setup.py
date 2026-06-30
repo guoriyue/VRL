@@ -55,7 +55,7 @@ def test_video_world_bridge_rows_match_cosmos_consumer(
     _normalize_per_sample_reference_images(
         examples,
         manifest_path=manifest,
-        rollout_batch_size=1,
+        prompts_per_batch=1,
     )
     assert examples[0].metadata["source_episode"] == "000001"
     assert Path(examples[0].reference_image).exists()

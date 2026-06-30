@@ -164,7 +164,7 @@ _REQUEST_SAMPLING_EXCLUDES = {
     "kl_reward_coef",
     "n_samples_per_prompt",
     "reward_view",
-    "rollout_batch_size",
+    "prompts_per_batch",
 }
 
 

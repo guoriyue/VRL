@@ -155,10 +155,9 @@ class FSDPStrategy(Strategy):
     lives in ``vrl/trainers/fsdp.py``; this class is the trainer-facing adapter.
 
     This is the strategy *layer* of ``SPRINT_multi_gpu_training.md``. The online
-    GRPO multi-rank orchestration (rank0 collect / all-rank train + torchrun↔Ray
-    coordination) is a separate, not-yet-wired phase, so the online recipe still
-    gates ``fsdp`` (see ``run_online_recipe``). The strategy itself is real and is
-    exercised on a single CPU rank in ``tests/trainers/test_fsdp.py``.
+    recipe drives it through the same per-rank-local symmetric-colocated path as
+    DDP: every torchrun rank owns a local rollout/training device, while FSDP
+    handles DTensor sharding and collectives behind this adapter.
     """
 
     def __init__(

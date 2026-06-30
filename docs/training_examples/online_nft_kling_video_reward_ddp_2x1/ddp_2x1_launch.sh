@@ -16,7 +16,7 @@
 # Everything run-specific is an env var with a default; override per run, e.g.:
 #   OUT=outputs/my_run \
 #   EXTRA_OVERRIDES="sampling.width=832 sampling.height=480 sampling.num_frames=33 \
-#     rollout.rollout_batch_size=16 rollout.sample_batch_size=4 \
+#     rollout.prompts_per_batch=16 rollout.sample_batch_size=4 \
 #     rollout.trajectory_storage.dtype=bfloat16 model.torch_compile.enable=false" \
 #   ./ddp_2x1_launch.sh 0
 set -uo pipefail

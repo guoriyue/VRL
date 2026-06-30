@@ -19,7 +19,7 @@
 # drains only homogeneous-policy ready groups, so it is the overlap path for
 # remote rollout workers.
 #
-# Note: max_ready_groups must be >= rollout_batch_size (one iteration's worth of
+# Note: max_ready_groups must be >= prompts_per_batch (one iteration's worth of
 # prompt groups); the schedule raises the effective queue cap to fit if smaller.
 # weight_sync_barrier is derived for this mode
 # (pause_admission_and_drain_inflight) — continuous supports no other value.

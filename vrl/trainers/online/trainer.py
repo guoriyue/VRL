@@ -800,7 +800,7 @@ class OnlineTrainer(Trainer):
         """Evaluate + loss + backward for ONE collected microbatch; no optimizer step.
 
         ``total_groups`` is the global prompt-group count across the whole
-        optimizer update (= rollout_batch_size); loss divides by
+        optimizer update (= prompts_per_batch); loss divides by
         ``total_groups * num_train_timesteps`` so the accumulated gradient over
         all microbatches equals the legacy full-batch path.
         """

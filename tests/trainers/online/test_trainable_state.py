@@ -91,7 +91,7 @@ class TestTrainableState:
             weight_syncer=syncer,
             sync_state_getter=lambda: {"linear.weight": model.weight.detach().clone()},
             config=TrainerConfig(
-                rollout_batch_size=1,
+                prompts_per_batch=1,
                 timestep_fraction=1.0,
                 total_epochs=1,
                 drop_zero_advantage=False,
@@ -152,7 +152,7 @@ class TestTrainableState:
                 model=nn.Linear(1, 1),
                 weight_syncer=_Syncer(),
                 config=TrainerConfig(
-                    rollout_batch_size=1,
+                    prompts_per_batch=1,
                     timestep_fraction=1.0,
                     total_epochs=1,
                     drop_zero_advantage=False,

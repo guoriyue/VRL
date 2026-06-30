@@ -113,7 +113,7 @@ def test_request_sampling_is_projected_from_resolved_yaml_config() -> None:
             },
             "rollout": {
                 "n_samples_per_prompt": 4,
-                "rollout_batch_size": 1,
+                "prompts_per_batch": 1,
                 "sample_batch_size": 8,
                 "reward_view": "image",
                 "noise_level": 1.0,
@@ -143,7 +143,7 @@ def test_request_sampling_is_projected_from_resolved_yaml_config() -> None:
     assert "kl_reward_coef" not in sampling
     assert "n" not in sampling
     assert "reward_view" not in sampling
-    assert "rollout_batch_size" not in sampling
+    assert "prompts_per_batch" not in sampling
 
 
 def test_registry_keeps_return_artifacts_as_wiring_metadata() -> None:

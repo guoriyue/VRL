@@ -79,7 +79,7 @@ algorithm:
 
 rollout:
   n_samples_per_prompt: 8
-  rollout_batch_size: 1
+  prompts_per_batch: 1
   # 4 samples/forward (2 chunks for n=8): cuts the per-sample-boundary GPU-idle.
   # Measured 1×32GB 240p_33f: sbs 1->4 = rollout 1.50x (134->89s), GPU-busy 64%->89%.
   sample_batch_size: 4

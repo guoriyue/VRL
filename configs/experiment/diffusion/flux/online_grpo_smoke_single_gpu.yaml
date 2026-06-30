@@ -37,7 +37,7 @@ algorithm:
 
 rollout:
   n_samples_per_prompt: 2
-  rollout_batch_size: 2
+  prompts_per_batch: 2
   sample_batch_size: 1
   # num_steps shrunk to 4, but base diffusion rollout sets sde.window_range=[0,10]
   # for the 10-step preset; _parse_sde_window_range validates hi <= num_steps, so

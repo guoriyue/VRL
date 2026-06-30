@@ -24,7 +24,7 @@ crosses the network.
 
 - **No shared Ray cluster.** Each rank does its own local `ray.init()` and owns its node's
   GPU. (Contrast: cross_node uses one Ray cluster with `--num-gpus=0` on the head.)
-- **Genuine 2× batch.** The data loader draws `world_size × rollout_batch_size` prompts and
+- **Genuine 2× batch.** The data loader draws `world_size × prompts_per_batch` prompts and
   hands each rank a **disjoint** slice, so rank0 + rank1 cover 32 distinct conditions for
   `rbs=16` — the all-reduced gradient is over 2× the data, not a duplicated run.
 - **NFT requires `find_unused_parameters=true`** — its previous/reference adapters
@@ -38,7 +38,7 @@ On **each** node (from the repo root), pass the node rank:
 # node A (master, rank0)
 NODE_A=<A-ip> OUT=outputs/my_run \
   EXTRA_OVERRIDES="sampling.width=832 sampling.height=480 sampling.num_frames=33 \
-    rollout.rollout_batch_size=16 rollout.sample_batch_size=4 \
+    rollout.prompts_per_batch=16 rollout.sample_batch_size=4 \
     rollout.trajectory_storage.device=cpu rollout.trajectory_storage.dtype=bfloat16 \
     model.torch_compile.enable=false" \
   bash docs/training_examples/online_nft_kling_video_reward_ddp_2x1/ddp_2x1_launch.sh 0

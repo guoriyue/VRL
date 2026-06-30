@@ -393,7 +393,7 @@ def sample_prompt_indices(
     rng: torch.Generator,
     *,
     num_examples: int,
-    rollout_batch_size: int,
+    prompts_per_batch: int,
     strategy: str = "random_without_replacement",
     epoch: int = 0,
 ) -> list[int]:
@@ -401,13 +401,13 @@ def sample_prompt_indices(
 
     if num_examples < 1:
         raise ValueError("prompt manifest must contain at least one example")
-    if rollout_batch_size < 1:
-        raise ValueError("rollout_batch_size must be >= 1")
+    if prompts_per_batch < 1:
+        raise ValueError("prompts_per_batch must be >= 1")
     if strategy == "random_without_replacement":
-        return torch.randperm(num_examples, generator=rng)[:rollout_batch_size].tolist()
+        return torch.randperm(num_examples, generator=rng)[:prompts_per_batch].tolist()
     if strategy == "sequential_window":
-        start = (max(0, int(epoch)) * rollout_batch_size) % num_examples
-        return [(start + offset) % num_examples for offset in range(rollout_batch_size)]
+        start = (max(0, int(epoch)) * prompts_per_batch) % num_examples
+        return [(start + offset) % num_examples for offset in range(prompts_per_batch)]
     raise ValueError(
         "data.sampler.type must be random_without_replacement or sequential_window; "
         f"got {strategy!r}",

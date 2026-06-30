@@ -142,7 +142,7 @@ def _trainer_config(tmp_path: Any) -> SimpleNamespace:
         output_dir=str(tmp_path),
         total_epochs=1,
         seed=0,
-        rollout_batch_size=1,
+        prompts_per_batch=1,
         n_samples_per_prompt=1,
         save_freq=0,
     )
@@ -272,9 +272,8 @@ async def test_run_online_recipe_shutdowns_owner_after_success(monkeypatch, tmp_
     assert state["owner_shutdowns"] == 1
 
 
-def test_require_supported_online_strategy_blocks_fsdp() -> None:
-    """The online recipe fail-fasts on fsdp: the FSDP2 strategy layer exists, but
-    the multi-rank GRPO orchestration that drives it is not wired yet."""
+def test_require_supported_online_strategy_allows_fsdp() -> None:
+    """fsdp uses the same per-rank-local symmetric-colocated path as ddp."""
     from vrl.trainers.distributed import DistributedTrainingContext
 
     ctx = DistributedTrainingContext(
@@ -286,8 +285,7 @@ def test_require_supported_online_strategy_blocks_fsdp() -> None:
         is_primary=True,
         device=torch.device("cpu"),
     )
-    with pytest.raises(NotImplementedError, match="multi-rank"):
-        online._require_supported_online_strategy(ctx)
+    online._require_supported_online_strategy(ctx)  # no raise
 
 
 def test_require_supported_online_strategy_allows_single_process() -> None:

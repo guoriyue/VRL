@@ -324,14 +324,14 @@ def test_sample_prompt_indices_uses_configured_sampler_strategy() -> None:
     sequential = sample_prompt_indices(
         torch.Generator().manual_seed(0),
         num_examples=5,
-        rollout_batch_size=3,
+        prompts_per_batch=3,
         strategy="sequential_window",
         epoch=1,
     )
     random_batch = sample_prompt_indices(
         torch.Generator().manual_seed(0),
         num_examples=5,
-        rollout_batch_size=3,
+        prompts_per_batch=3,
         strategy="random_without_replacement",
     )
 
