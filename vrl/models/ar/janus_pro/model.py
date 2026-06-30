@@ -1015,9 +1015,12 @@ class JanusProModel(nn.Module):
         B, L = image_token_ids.shape
         side = int(L ** 0.5)
         assert side * side == L, f"expected square grid, got L_img={L}"
-        # Janus' decode_code expects token grid + (B, C, H, W) target shape.
-        # Latent channels differ across Janus-Pro variants — read from the
-        # VQ config so 7B works without a code change.
+        # Janus' decode_code feeds shape[1] to the quantizer as the codebook-entry
+        # dim, and it differs across Janus-Pro variants — resolve it from the LIVE
+        # quantizer. Do NOT "align to upstream" by hardcoding `8` (upstream
+        # generation_inference.py): any variant whose codebook width != 8 would then
+        # reshape to garbage silently. Locked by
+        # tests/models/ar/janus_pro/test_upstream_reconcile_contracts.py.
         latent_channels = self._resolve_vq_latent_channels()
         decoded = self.vq_model.decode_code(
             image_token_ids.to(torch.int32),

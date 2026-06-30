@@ -233,6 +233,14 @@ class JanusProARModelRunner:
         probs = F.softmax(guided / state.temperature, dim=-1)
         sampled = torch.multinomial(probs, num_samples=1).squeeze(-1)
 
+        # RL-correctness contract — do NOT "align to upstream" by scoring `guided`.
+        # We SAMPLE from the CFG-`guided` distribution but score the log-prob under
+        # `cond_logits`: the conditional model is the policy GRPO optimizes, and CFG
+        # is only the sampling/importance distribution. Scoring `guided` here would
+        # make lp the behavior policy and silently break the old_log_prob invariant
+        # (train/infer logprob parity). Upstream Janus' inference script computes no
+        # log-prob, so there is no upstream line to copy. Locked by
+        # tests/models/ar/janus_pro/test_upstream_reconcile_contracts.py.
         log_probs = F.log_softmax(cond_logits / state.temperature, dim=-1)
         lp = log_probs.gather(-1, sampled.unsqueeze(-1)).squeeze(-1)
         return sampled, lp

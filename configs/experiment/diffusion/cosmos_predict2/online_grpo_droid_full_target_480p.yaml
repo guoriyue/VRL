@@ -60,6 +60,15 @@ rollout:
   sde: { type: cps }
   same_latent: false
 
+distributed:
+  rollout:
+    # Single-worker software pipeline: hide each chunk's GPU->CPU copy + host packing
+    # behind the next chunk's denoise (bit-exact -> old_log_prob unchanged, RL-safe;
+    # auto no-op on >1 worker). Needs >=2 chunks: n_samples=8 / sample_batch_size=4
+    # gives exactly 2 (the sweet spot). ~20% single-card rollout speedup. NOTE: this is
+    # distributed.rollout.pipelined (the Ray worker config), NOT the top-level rollout.
+    pipelined: true
+
 cosmos:
   reference_mode: per_sample
 

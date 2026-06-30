@@ -126,7 +126,11 @@ def video_tensor_to_uint8_frames(tensor: torch.Tensor) -> np.ndarray:
             "video frame conversion expects channel-first video with 1, 3, or 4 channels, "
             f"got shape={tuple(tensor.shape)}",
         )
-    video = tensor.float()
+    # .cpu(): this converter ends in .numpy(), which requires a host tensor. The
+    # single-worker pipelined rollout (forward_chunks_pipelined) can hand the reward
+    # an artifact whose video tensor is still on CUDA, unlike the per-chunk path's
+    # worker._to_cpu. Mirror image_to_uint8_hwc's intake so any device works.
+    video = tensor.detach().float().cpu()
     if float(video.min().item()) < -0.01:
         video = (video + 1.0) / 2.0
     video = video.clamp(0.0, 1.0)
