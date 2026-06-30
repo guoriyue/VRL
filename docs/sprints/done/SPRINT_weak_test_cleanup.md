@@ -10,6 +10,12 @@
 > 保留清单（§3）两项原样在位。相关测试文件 101 passed。本轮无代码改动，仅本文件状态收尾。
 >
 > **顺带发现（不属本 sprint，已记录待办）**：裸 `pytest` 当前被 2 个 **collection error** 中断——`tests/models/interfaces/__init__.py:90` 的 `FAMILY_MODEL_CLASSES` 覆盖断言报 `missing families ['cosmos3','echo']`（你并行加的 cosmos3/echo 家族未同步进测试侧契约覆盖表）。排除这 2 个文件后 **1321 passed / 11 failed / 18 skipped**，11 个红全是 env-gap/既有/并行红（OCR 缺 `Levenshtein`、fp8、ray-substrate architecture、echo flow-policy 等），**无一来自本 sprint**。cosmos3/echo 契约覆盖是单独一件事。
+>
+> **已解决（2026-06-29）**：
+> - **collection error**：给 `FAMILY_MODEL_CLASSES` 补了 `cosmos3`→`Cosmos3Model`/`Cosmos3ReplayModel`、`echo`→`EchoModel`/`EchoReplayModel` 两条绑定（两个类结构完整、满足 `RuntimeModel`/`ReplayModel` protocol）。collection error 消除，整套 **1402 collected**、interfaces 契约 **53 passed**。
+> - **architecture 红 ①** `test_reward_models_live_under_models`：reward model 文件名和 registry key 对不上（`cosmos3_reasoner_reward.py` vs key `cosmos3_reasoner`）。`git mv` → `cosmos3_reasoner.py`，更新 2 处引用。
+> - **architecture 红 ②** `test_shared_ray_substrate_stays_domain_neutral`：`vrl/ray/resources.py` import 了 `vrl.rewards.functions.registry` 破坏 domain-neutral。把 `active_pool_reward_keys`（"哪些 reward 吃 GPU pool"）从 `ray/resources.py` 搬到 reward 领域 `vrl/rewards/functions/registry.py`（`default_execution` 的老家）；原 `_default_reward_execution` 单调用方 helper 直接内联进它（不另立函数）。`resolve_distributed_resources` 加 keyword-only `pool_reward_count`（向后兼容，~85 个位置调用不变），由领域感知入口（factory/online）算好 count 传进去；generation 层走中性 cfg-only 回退（它只读 rollout 字段，且自身 boundary test 禁止 import rewards）。parity 保持。最终 reward 领域只多一个函数 `active_pool_reward_keys`。
+> - 全套现在 **3 failed / 1381 passed / 18 skipped**，3 个红全是纯 env-gap（OCR 缺 `Levenshtein` ×2、echo 缺 `ltx_core` ×1）——无一来自代码改动。
 
 ## 0. 结论
 

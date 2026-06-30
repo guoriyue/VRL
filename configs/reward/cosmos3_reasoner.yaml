@@ -4,7 +4,7 @@
 # Qwen3VLForConditionalGeneration. NOTE: the raw unified nvidia/Cosmos3-Nano checkpoint
 # is flat-key and does NOT load HF-direct — point worker_config.model_path at a
 # pre-remapped reasoner-only Qwen3-VL checkpoint and set checkpoint_layout=remapped
-# (see vrl/rewards/models/cosmos3_reasoner_reward.py module docstring).
+# (see vrl/rewards/models/cosmos3_reasoner.py module docstring).
 distributed:
   resources:
     reward:

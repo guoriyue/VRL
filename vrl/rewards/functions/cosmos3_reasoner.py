@@ -19,7 +19,7 @@ from typing import Any
 
 from vrl.rewards.base import RewardFunction
 
-_COSMOS3_REASONER_MODEL = "vrl.rewards.models.cosmos3_reasoner_reward:Cosmos3ReasonerRewardModel"
+_COSMOS3_REASONER_MODEL = "vrl.rewards.models.cosmos3_reasoner:Cosmos3ReasonerRewardModel"
 
 
 class Cosmos3ReasonerReward(RewardFunction):

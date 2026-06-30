@@ -192,9 +192,11 @@
   family 名以裸字面 `"janus_pro"`/`"nextstep_1"` 远离 `FAMILY_REGISTRY` 校验。安全窄步：family 名改经 registry
   常量引用（rename 才能被捕获）。**别**给 registry 加 `supported_kinds` 矩阵（改 guarded 结构）。
 - **✅ 已落地 · "pool reward" 谓词在 factory 与 resources 双写**。
-  选择抽 `active_pool_reward_keys(reward_components, reward_kwargs)`：factory 的 built dict 和 resources 的 raw cfg
+  选择抽 `active_pool_reward_keys(reward_components, reward_kwargs)`：factory 的 built dict 和 cfg 持有方的 raw cfg
   都调用同一 helper，规则仍是 `weight>0 AND execution=="pool"`。`rewards/base.py`/`runtime.py` 的 `"pool"`
   字面保留，它们是 runtime protocol boundary，不并入资源谓词。
+  （**位置更新 2026-06-29**：该 helper 已从 `ray/resources.py` 搬到 reward 领域 `rewards/functions/registry.py`，
+  通用 Ray 底座改为接收 `pool_reward_count` 数据而非 import rewards——domain-neutral 解耦，见 `done/SPRINT_weak_test_cleanup.md`。）
 - **✅ 已落地 (Round 2) · sampler 类型合法集在 `config/schema.py` 手抄两遍**。把 `prompt_manifest` /
   `prompt_image_manifest` 两分支里逐字节相同的 sampler.type 校验块合并为 `DataConfig._validate_sampler_type()`
   （2 调用方、纯文件内、错误串不变、`test_schema.py` 45 passed）。⚠️ 遵守判据**未**从 `checkpointing.py`

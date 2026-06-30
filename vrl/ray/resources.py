@@ -152,12 +152,23 @@ class ResolvedDistributedResources:
 _MISSING = object()
 
 
-def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
+def resolve_distributed_resources(
+    cfg: Any,
+    *,
+    pool_reward_count: int | None = None,
+) -> ResolvedDistributedResources:
     """Resolve role-level resource config into concrete CUDA ordinals.
 
     This is the single source of truth for trainer/rollout/reward GPU
     ownership. It intentionally does static ownership checks only; memory
     pressure is still a runtime concern.
+
+    ``pool_reward_count`` is the number of active rewards that run on a Ray actor
+    pool (and therefore need a reward GPU). Domain-aware callers compute it with
+    ``vrl.rewards.functions.registry.active_pool_reward_keys`` (which knows each
+    reward class's ``default_execution``) and pass it in, so this shared substrate
+    stays reward-domain-neutral. When omitted, it falls back to a neutral count of
+    rewards that explicitly spell ``execution: pool`` in the cfg.
     """
 
     config = _distributed_resource_config_from_cfg(cfg)
@@ -261,7 +272,7 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
         allow_overlap=config.allow_overlap,
     )
     reward_num_gpus = len(reward_devices)
-    ray_reward_count = _count_ray_rewards(cfg)
+    ray_reward_count = pool_reward_count if pool_reward_count is not None else _count_ray_rewards(cfg)
     if ray_reward_count > 0 and reward_gpus_per_worker > 0 and reward_num_gpus == 0:
         raise ValueError(
             "reward component with execution=pool requires "
@@ -1020,54 +1031,6 @@ def reward_runtime_resource_kwargs(
     }
 
 
-def active_pool_reward_keys(reward_components: Any, reward_kwargs: Any) -> tuple[str, ...]:
-    """Return active reward component keys backed by a Ray actor pool.
-
-    ``execution`` is the per-reward runtime selector. When a reward omits it, the
-    pool-ness is derived from the reward class's ``default_execution`` (disk-artifact
-    rewards default to ``pool``) so GPU allocation counts the reward even when the
-    YAML does not spell ``execution: pool``. Both counting sites (the factory
-    resolution layer and ``_count_ray_rewards``) funnel through here, so the
-    derivation lives in one place and the count can never disagree with what the
-    reward actually constructs.
-    """
-
-    keys: list[str] = []
-    for reward_key in reward_components or {}:
-        name = str(reward_key)
-        try:
-            reward_weight = float(cfg_get(reward_components, name, 0.0))
-        except (TypeError, ValueError):
-            reward_weight = 0.0
-        if reward_weight <= 0:
-            continue
-        component_kwargs = cfg_get(reward_kwargs, name, {})
-        execution = cfg_get(component_kwargs, "execution", None)
-        if execution is None:
-            execution = _default_reward_execution(name)
-        if str(execution) == "pool":
-            keys.append(name)
-    return tuple(keys)
-
-
-def _default_reward_execution(name: str) -> str:
-    """The reward class's default execution runtime (``inline`` unless overridden).
-
-    Read off the class attribute without instantiating, so a disk-artifact reward
-    that omits ``execution`` in YAML is still counted as ``pool`` for GPU planning.
-    Unknown names (and any import hiccup) fall back to ``inline`` — the safe, no
-    reward-GPU default.
-    """
-
-    try:
-        from vrl.rewards.functions.registry import _register_builtins, get_reward
-
-        _register_builtins()
-        return str(getattr(get_reward(name), "default_execution", "inline"))
-    except Exception:
-        return "inline"
-
-
 @dataclass(frozen=True, slots=True)
 class BundleLayout:
     """Run-level mapping of execution roles to placement-group bundle indices.
@@ -1341,10 +1304,32 @@ def _parse_num_workers(
 
 
 def _count_ray_rewards(cfg: Any) -> int:
+    """Domain-neutral count of rewards that spell ``execution: pool`` in the cfg.
+
+    Fallback for the ``pool_reward_count is None`` path. It counts only rewards whose
+    YAML explicitly sets ``execution: pool``; the class-default derivation (a
+    disk-artifact reward that omits ``execution``) lives in the reward domain as
+    ``vrl.rewards.functions.registry.active_pool_reward_keys`` so this shared substrate
+    never imports rewards. Orchestration entry points that have the registry available
+    pass the resolved count into ``resolve_distributed_resources`` for an exact count.
+    """
+
     reward = cfg_get(cfg, "reward", {})
     components = cfg_get(reward, "components", {})
     kwargs = cfg_get(reward, "kwargs", {})
-    return len(active_pool_reward_keys(components, kwargs))
+    count = 0
+    for reward_key in components or {}:
+        name = str(reward_key)
+        try:
+            weight = float(cfg_get(components, name, 0.0))
+        except (TypeError, ValueError):
+            weight = 0.0
+        if weight <= 0:
+            continue
+        component_kwargs = cfg_get(kwargs, name, {})
+        if str(cfg_get(component_kwargs, "execution", None)) == "pool":
+            count += 1
+    return count
 
 
 def _dedupe_ints(values: list[int], *, field_name: str) -> list[int]:
@@ -1412,7 +1397,6 @@ __all__ = [
     "RewardResourceConfig",
     "RoleResourceConfig",
     "RolloutResourceConfig",
-    "active_pool_reward_keys",
     "build_bundle_layout",
     "format_distributed_resource_plan",
     "resolve_distributed_resources",

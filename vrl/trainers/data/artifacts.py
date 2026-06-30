@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
 from vrl.trainers.data.prompts import PromptExample, load_prompt_manifest
+from vrl.utils.artifacts import (
+    DATA_ROOT_ENV,
+    ArtifactManifestError,
+    default_data_root,
+    repo_root,
+    resolve_artifact_path,
+)
 
-DATA_ROOT_ENV = "VRL_DATA_ROOT"
 # Derived from PromptExample fields tagged metadata={'artifact': True} — single source of truth.
 DEFAULT_ARTIFACT_FIELDS = tuple(
     f.name for f in fields(PromptExample) if f.metadata.get("artifact")
@@ -32,11 +37,6 @@ SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS = (
     "decode_method",
     "conditioning",
 )
-
-
-class ArtifactManifestError(ValueError):
-    """Raised when an artifact manifest violates storage policy."""
-
 
 @dataclass(frozen=True, slots=True)
 class ResolvedArtifact:
@@ -88,51 +88,6 @@ class ArtifactManifestReport:
             "eval_source_episodes": list(self.eval_source_episodes),
             "source_episode_overlap": list(self.source_episode_overlap),
         }
-
-
-def repo_root() -> Path:
-    """Return the repository root for local ignored artifact defaults."""
-
-    return Path(__file__).resolve().parents[3]
-
-
-def default_data_root() -> Path:
-    """Resolve the artifact data root from ``VRL_DATA_ROOT`` or local ignored data."""
-
-    env_value = os.environ.get(DATA_ROOT_ENV, "").strip()
-    if env_value:
-        return Path(env_value).expanduser().resolve()
-    return (repo_root() / "data" / "external").resolve()
-
-
-def resolve_artifact_path(
-    raw_path: str | Path,
-    *,
-    data_root: str | Path | None = None,
-    allow_absolute: bool = False,
-) -> Path:
-    """Resolve one manifest artifact path under ``data_root``.
-
-    Production manifests should use relative paths such as
-    ``video_world/references/example.png``. Absolute paths are rejected unless a
-    caller explicitly opts in for local debugging.
-    """
-
-    text = str(raw_path).strip()
-    if not text:
-        raise ArtifactManifestError("artifact path is empty")
-    path = Path(text).expanduser()
-    root = _coerce_data_root(data_root)
-    if path.is_absolute():
-        if not allow_absolute:
-            raise ArtifactManifestError(
-                f"absolute artifact paths are not allowed by default: {text}",
-            )
-        return path.resolve()
-    if any(part == ".." for part in path.parts):
-        raise ArtifactManifestError(f"artifact paths must stay under data root: {text}")
-    return (root / path).resolve()
-
 
 def resolve_prompt_example_artifacts(
     example: PromptExample,

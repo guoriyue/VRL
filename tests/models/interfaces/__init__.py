@@ -61,6 +61,14 @@ FAMILY_MODEL_CLASSES: dict[str, tuple[str, str]] = {
         "vrl.models.diffusion.cosmos.anima.model:AnimaModel",
         "vrl.models.diffusion.cosmos.anima.model:AnimaReplayModel",
     ),
+    "cosmos3": (
+        "vrl.models.diffusion.cosmos.cosmos3.model:Cosmos3Model",
+        "vrl.models.diffusion.cosmos.cosmos3.model:Cosmos3ReplayModel",
+    ),
+    "echo": (
+        "vrl.models.diffusion.echo.model:EchoModel",
+        "vrl.models.diffusion.echo.model:EchoReplayModel",
+    ),
     "janus_pro": (
         "vrl.models.ar.janus_pro.model:JanusProModel",
         "vrl.models.ar.janus_pro.model:JanusProReplayModel",

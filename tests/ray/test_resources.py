@@ -6,12 +6,12 @@ import pytest
 from omegaconf import OmegaConf
 
 from vrl.ray.resources import (
-    active_pool_reward_keys,
     build_bundle_layout,
     format_distributed_resource_plan,
     resolve_distributed_resources,
     trainer_torch_device,
 )
+from vrl.rewards.functions.registry import active_pool_reward_keys
 
 
 def _cfg(

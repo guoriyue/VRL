@@ -4,6 +4,7 @@
 - **P2 撤回**：现形态只做了"显式标注"那半，**和已有的显式 `gpu_pool: rollout` 重复**；真正价值在自动测量（需 GPU run，未做），且和 P1 互斥（单卡 share = 串行卸载，不是并发）。
 - **P1 撤回**：reward 的 async **早已存在于 `continuous` 模式**（reward ∥ 别的 group 生成 + ∥ 训练，见 §13.1）；P1 改的 `collect_prompt_batches` 在 continuous 下每次只收一个 group → no-op，只对 strict_on_policy 默认路径有那一条窄的 call 内重叠，niche 太小、未实测、和 continuous 高度重叠。**没有引入新能力。**
 此前为 design / not-started。注意 §4.1/§4.2/§6/§10 旧文引用的 `inference_runtime: local|ray` 已被 8de3e63 改名为 `execution: inline|pool`；§9.1.1 的 factory reward-key 硬编码已由 `active_pool_reward_keys`（按 `execution` 派生）消除，无需再改。
+- **位置变更（2026-06-29）**：`active_pool_reward_keys`（"哪些 active reward 走 GPU pool"，含 `default_execution` 类默认回退）已从 `vrl/ray/resources.py` **搬到 reward 领域** `vrl/rewards/functions/registry.py`——通用 Ray 底座 `ray/resources.py` 不再 import reward registry（修 `test_shared_ray_substrate_stays_domain_neutral`）。`resolve_distributed_resources` 改为接收 keyword-only `pool_reward_count`（领域感知入口 factory/online 算好传入），底座只拿"要几块 reward GPU"这个数，不懂 reward 的事。见 `done/SPRINT_weak_test_cleanup.md` 收尾记录。
 
 关联：
 - [[SPRINT_global_ray_placement_owner]]（reward 的 GPU 怎么来：owner 的 bundle）

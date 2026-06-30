@@ -11,10 +11,10 @@ from vrl.config.builders import build_configs
 from vrl.config.precision import resolve_precision_policy
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.ray.resources import (
-    active_pool_reward_keys,
     resolve_distributed_resources,
     reward_runtime_resource_kwargs,
 )
+from vrl.rewards.functions.registry import active_pool_reward_keys
 from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.collector.config import (
     build_rollout_config_from_cfg as build_collector_rollout_config_from_cfg,
@@ -134,7 +134,7 @@ def _with_resolved_reward_runtime_kwargs(
     if not ray_reward_keys:
         return reward_kwargs
 
-    resources = resolve_distributed_resources(cfg)
+    resources = resolve_distributed_resources(cfg, pool_reward_count=len(ray_reward_keys))
     resolved_runtime = reward_runtime_resource_kwargs(resources)
 
     out = dict(reward_kwargs)
@@ -297,7 +297,15 @@ def build_collector_from_cfg(
     # distributed.resources, where there is no shared GPU to hand off.
     lifecycle = None
     if OmegaConf.select(cfg, "distributed.resources", default=None) is not None:
-        lifecycle = resolve_distributed_resources(cfg).lifecycle
+        pool_reward_count = len(
+            active_pool_reward_keys(
+                OmegaConf.select(cfg, "reward.components", default={}) or {},
+                OmegaConf.select(cfg, "reward.kwargs", default={}) or {},
+            )
+        )
+        lifecycle = resolve_distributed_resources(
+            cfg, pool_reward_count=pool_reward_count
+        ).lifecycle
     return build_rollout_collector(
         entry.family,
         model=model,

@@ -336,7 +336,7 @@ class ReferenceConditionedChunks:
             # else the rollout opens it relative to CWD and FileNotFoundErrors. The
             # intended resolver (resolve_prompt_example_artifacts) is never wired into
             # prompt loading, so per-sample reference paths arrive here unresolved.
-            from vrl.trainers.data.artifacts import default_data_root, resolve_artifact_path
+            from vrl.utils.artifacts import default_data_root, resolve_artifact_path
 
             ref = str(resolve_artifact_path(ref, data_root=default_data_root(), allow_absolute=True))
         return load_reference_image(ref)

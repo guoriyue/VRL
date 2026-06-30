@@ -25,6 +25,7 @@ from vrl.ray.resources import (
     resolve_distributed_resources,
     trainer_torch_device,
 )
+from vrl.rewards.functions.registry import active_pool_reward_keys
 from vrl.rollouts.families import build_ray_generation_inputs_for_family
 from vrl.scripts.common.factory import (
     build_collector_from_cfg,
@@ -640,7 +641,15 @@ async def run_online_recipe(
     # the resolver sizes the GPU budget differently under cross_node. No-op (and
     # ordering unchanged) for single-node runs with no external cluster.
     _maybe_autodetect_cross_node(cfg, require_ray())
-    resources = resolve_distributed_resources(cfg)
+    resources = resolve_distributed_resources(
+        cfg,
+        pool_reward_count=len(
+            active_pool_reward_keys(
+                OmegaConf.select(cfg, "reward.components", default={}) or {},
+                OmegaConf.select(cfg, "reward.kwargs", default={}) or {},
+            )
+        ),
+    )
     logger.info(format_distributed_resource_plan(resources))
     device = torch.device(trainer_torch_device(resources))
     # Resolve the training process identity (rank/device) and fail-fast on

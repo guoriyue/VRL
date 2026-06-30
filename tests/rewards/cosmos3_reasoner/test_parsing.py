@@ -7,7 +7,7 @@ score contract — are covered deterministically on CPU.
 
 from __future__ import annotations
 
-from vrl.rewards.models.cosmos3_reasoner_reward import (
+from vrl.rewards.models.cosmos3_reasoner import (
     _normalize_scores,
     _parse_integer_scores,
 )
