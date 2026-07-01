@@ -63,7 +63,7 @@ log_prob_ratio = -( ||x_sample-μ_θ||² - ||x_sample-μ_ref||² ) / (2·σ_next
 装 diffusers@main(0.39.0.dev0)到一次性 venv（复用基础 torch 2.11/transformers 4.57.6）实测：
 - ✅ `Cosmos3OmniTransformer.from_config()` = 15.17B（只下 config，不下权重）。
 - ✅ **diffusers@main 向后兼容**：现有 cosmos2/wan/predict2 + 已 ship 的 reasoner judge 在 0.39 下导入+测试全过；唯一报错（`tests/models/interfaces` echo 注册）在 0.37.1 下一模一样，是预先存在缺口 → **升级 diffusers 安全**。
-- 🧱 **本机下载墙**：Cosmos3-Nano 16B 下到 6/7 分片（33GB）后，最后一个 transformer 分片被 HF xet/CDN 连接重置死死卡住（试遍 xet/非xet/单文件/hf_transfer 都冻在 ~88%）→ 本机加载不了、MR1+ 跑不了。换网络/换机器即可。
+- ✅ **本机下载已完成（2026-06-28 更正）**：之前卡在 6/7 分片（最后一个 transformer 分片 HF xet/CDN reset 冻在 ~88%），现已下全。snapshot `fea6e03…` 下 7 个 transformer 分片全在，逐个 safetensors header/offset 校验通过（file size 精确等于 8+header+max_offset，无截断），总 ~30.3GB = index `total_size`；完整 pipeline 组件（`model_index.json`=`Cosmos3OmniDiffusersPipeline` + transformer + vae + vision_encoder + sound_tokenizer + tokenizer/config 全套）均在。**下载墙不再是 blocker**；MR1+ 的剩余阻塞是 **diffusers 版本（git-main 才有 `Cosmos3OmniDiffusersPipeline`，装的 0.37.1 没有）** + 16B 多卡，不是下载。
 
 ## 2. MR 拆分（生成器线）
 
@@ -82,6 +82,7 @@ MR0 (probe) ✅done → MR1 (bump diffusers + load) → MR2 (cosmos3 family) →
 - `pyproject.toml` 把 diffusers pin 到含 Cosmos3 的 git-main commit（或 vendor `transformer_cosmos3.py` + `pipeline_cosmos3_omni.py` 两个模块，避免全量升级）。
 - **gate**：`Cosmos3OmniDiffusersPipeline.from_pretrained(...)` 在多卡/offload 上 load（bf16 only），跑出一个非 RL 的 T2V clip。
 - **blocker**：①本机下载墙（§1.5）→ 换机器；②git-main pin 与仓库 pin 的 transformers/torch 兼容性 → 按"verify against declared deps"在 clean install 上验。
+- **进展（2026-06-28）**：① 下载墙已解，权重下全 + 校验通过（§1.5）。② diffusers 升级落在**隔离 venv** `.venvs/cosmos3`（diffusers `0.39.0.dev0`，`--system-site-packages` 复用 base torch + `--no-deps`），**不动 pyproject 的 0.37.1 pin**（git-main pin 会破坏 CI clean-install，且会动到正在跑曲线的 base env）。③ 实测该 build 已导出 `Cosmos3OmniTransformer`（top-level）+ `Cosmos3OmniPipeline`。**坑**：当前 main 把 pipeline 类命名为 `Cosmos3OmniPipeline`，而 checkpoint 的 `model_index.json` 写的是 `Cosmos3OmniDiffusersPipeline`（改过名）→ `from_pretrained` 需要把 model_index 那行改名，或 pin 到用旧名的确切 commit。④ 剩余 gate（本机做不了）：GPU load + T2V clip（单卡被 480p 曲线占用，且 16B 要 offload/多卡）、MR2 family code（未写）、16B 多卡 FSDP2（仍 gated）。
 
 ### MR2 — `cosmos3` diffusion family（核心工作量）
 

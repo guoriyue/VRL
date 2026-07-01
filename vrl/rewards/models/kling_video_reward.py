@@ -262,6 +262,17 @@ class KlingVideoRewardModel(RewardModel):
         self.inference_config = inference_config
         logger.info("loaded Kling VideoReward model %s", kv(device=self.device))
 
+    def to(self, device: str) -> None:
+        """Move the reward model between GPU and CPU (resident-reward parking).
+
+        Lets the worker park the model on CPU between scores (freeing the GPU for
+        rollout/training) and move it back for scoring, instead of rebuilding the
+        actor each step. Inputs are placed on ``self.device`` in _prepare_batch,
+        so updating it here keeps forward consistent.
+        """
+        self.model = self.model.to(device)
+        self.device = device
+
     def __call__(
         self,
         *,

@@ -166,3 +166,22 @@ configs/.../sd3_5/online_grpo_ocr_single_gpu_async_debug.yaml
 契约、gpu_pool 语法、async 重叠当成「要新建」来立项——根因是其 reader 映射了**源码**却没映射
 **既有测试套件**（`tests/ray/test_resources.py` 的 placement/lifecycle 测试 + async debug
 配方本就证明这些机制是活的）。scope build 前必须 grep `tests/` 与 `configs/` 确认是否已被测被配。
+
+---
+
+## 结论（2026-06-29 实测落地）
+
+### A) 单卡生成侧：P1（sbs↑）已吃满，staged-pipeline 在生成内部无活
+- **P1 = `rollout.sample_batch_size` 1→4：实测 generation 139.6s→99.5s = 1.40x**（每样本 DiT fwd 17.5→12.4s），峰值显存 18.8→25.3GB 都装得下，old_log_prob 逐位不变。已 commit；并修了一个 committed 配置直接跑会崩的独立 bug（`gradient_checkpointing` 与默认开的 `torch_compile` 互斥 → 补 `model.torch_compile.enable=false`）。
+- **dmon 实测 sbs=4 rollout 已 ~95% SM-busy**：P1 把 sbs=1 的 7 个 per-sample 边界压成 1 个、edge gap≈0。所以**生成循环内部**的 chunk overlap 单卡上**没活**——文档原假设的 33% 边界 idle 是 P1 吃掉的，不是 staged-pipeline。
+
+### B) reward stage：才是真 bubble，单卡可解（不是 ≥2-GPU）
+- reward_score ~12.7s/步拆解 = **~8s reward Ray-actor 每步被杀+重建+重载**（`release_after_score` 派生自 reward 与 rollout 共卡）+ ~3s decord 解码 + 1.8s Qwen2-VL forward。**8s reload 是大头、是 copy/IO 不是 tensor**。
+- **错路（证伪）**：co-residence（gen 期间 prewarm reward 上 GPU）→ sbs=4/sbs=2 都 OOM（gen 25GB + reward 4.4GB 在 full-param trainer 25GB footprint 下过 32GB）；降 sbs 无用（瓶颈是 trainer footprint 非 activation）。
+- **正路（enabler ③，已实现 + 小规模实测）**：reward actor **常驻 + 模型 park 到 CPU**（gen/train 0 显存，只在打分时 rollout 已释放后上 GPU）。**n=2 干净验证：reward_score 10.77s(冷)→1.6s(稳态)，4 步无 OOM/无 hang，无损**；sbs=4 与 resident 叠加（park 避开 co-residence OOM）；显存不增、仅 +~4.4GB CPU RAM。
+- 4 文件，opt-in `reward.kwargs.<name>.resident=true`，默认 inert：`KlingVideoRewardModel.to()`、`worker` park/unpark + 线程上限、`runtime` resident 资源覆盖（`gpus_per_worker=0`/`cpus_per_worker=1`/`release_after_call=False`/park 后 `empty_cache`）。需 run-env `RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO=0`。
+
+### 未决 / do-next
+- **n=8 真实配置稳定性未验证**：两次 n=8 崩（"GCS killed by ray stop"/"socket closed"）发生在 host 有**并行 droid run** + 测试脚本用了**全局 `pkill raylet|gcs_server`** 的污染环境——外部互杀签名，非 resident 不稳。需**隔离窗口 + 精准 session 清理**重测（绝不用全局 pkill，见 [[feedback_vrl_concurrent_worktree]]）。
+- **resident 设默认**：按拓扑派生（`reward_shared_with_rollout`→自动 park 常驻；多卡/无 `.to()`→fallback），`resident: false` 作 opt-out。先确认 n=8 稳定性再翻默认。
+- 记忆：[[project_p1_sbs_confirmed]]、[[project_staged_pipeline_reward_overlap]]。

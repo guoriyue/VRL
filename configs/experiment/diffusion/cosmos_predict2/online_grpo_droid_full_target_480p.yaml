@@ -1,62 +1,62 @@
-# Cosmos Predict2 2B Video2World + GRPO on public full LeRobot DROID target clips,
-# at the model's NATIVE 480P resolution. This is the single-32GB-card "first
-# trustworthy curve" recipe (SPRINT_cosmos_predict2_2b_trustworthy_curve).
+# Cosmos Predict2 2B Video2World + GRPO on public DROID targets, at the COHERENT 480P shape.
 #
-# WHY 480P (not the 240p sibling): the 720p checkpoint generates GARBAGE at 240p/480p
-# (severely OOD -> frame 0 ok, then rainbow noise; verified by eye, neighbor-diff stats
-# lie). The fix is the model's own 480P-native weights, which generate coherently and
-# are ~10x faster than 704p_93f -- the only way a full-param curve is affordable on one
-# 32GB card (704p_93f full-param OOMs; 704p_93f LoRA gradients are too small to move the
-# curve, see project_first_trustworthy_curve).
+# WHY 480P (not 240p): the cached default checkpoint is the 720P variant, which generates
+# GARBAGE below 704p (verified: 240p/480p with 720P weights collapse to rainbow noise — OOD
+# resolution). So online_grpo_droid_full_target_240p optimizes on garbage rollouts and cannot
+# produce a trustworthy curve. The native 480P weights (NVIDIA .pt -> diffusers, model.path)
+# generate COHERENT video at their NATIVE 93-frame clip length (33f is OOD -> artifacts), and
+# 480p_93f is ~2.25x fewer tokens than 704p_93f -> it fits a single 32GB card with full-param
+# 8-bit Adam where 704p_93f full-param OOMs. This is the single-card shape that can actually
+# learn on the DROID target data + reward we built.
 #
-# CHECKPOINT REQUIREMENT (this is NOT just a config change):
-#   The diffusers repo nvidia/Cosmos-Predict2-2B-Video2World ships the 720P weights in
-#   its transformer/ folder; the 480P variant exists ONLY as the original-format file
-#   model-480p-16fps.pt in that same repo. The diffusers Cosmos2VideoToWorldPipeline
-#   loads transformer/ (=720P), so model-480p-16fps.pt must first be CONVERTED to a
-#   diffusers transformer layout, then reused with the (resolution-independent) vae/
-#   text_encoder/ scheduler/ tokenizer/ from the 720P repo. Set model.path below to that
-#   converted local pipeline directory. If the path does not exist, from_pretrained fails
-#   loudly -- by design, so a missing conversion can never silently fall back to 720P
-#   weights at 480P shape (which would reproduce the rainbow-noise garbage).
-#     hf download nvidia/Cosmos-Predict2-2B-Video2World model-480p-16fps.pt
-#     # convert model-480p-16fps.pt -> <dir>/transformer/ (diffusers convert_cosmos script),
-#     # then copy vae/ text_encoder/ scheduler/ tokenizer/ model_index.json from the 720P repo.
-#
-# Reward = the same ZERO-TRAINING default as the 240p sibling: DINOv2 perceptual anchor
-# + RAFT motion guard. Both RE-VERIFIED on real DROID eval clips by the S4 discrimination
-# probe (dino gap_ratio=0.298 PASS, motion gap_ratio=0.969 PASS) -- not just synthetic.
-# Compose any /reward/* block per experiment; this is a default, not a commitment.
+# Checkpoint (reproduce): download model-480p-16fps.pt from nvidia/Cosmos-Predict2-2B-Video2World
+# and run the diffusers cosmos converter (transformer_type=Cosmos-2.0-Diffusion-2B-Video2World),
+# reusing the 720P vae/text_encoder/tokenizer/scheduler. 567/567 transformer keys map exactly.
+# Dataset: python -m vrl.scripts.data.setup video-world-targets --repo-id lerobot/droid_1.0.1 \
+#   --name droid_full_targets --limit 1000 --eval-limit 64 --camera observation.images.exterior_1_left
+# Run (single 32GB): PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True (full-param video OOMs without it).
 defaults:
   - /recipe/online/diffusion_grpo
   - /model/diffusion/cosmos/predict2_2b
-  - /sampling/video/480p_33f
+  - /sampling/video/480p_33f          # 832x480 bucket; num_frames overridden to native 93 below
   - /sampling/denoise/35_step_cfg_7
   - /reward/target_dino_similarity
-  - /reward/motion_dynamics
+  - /reward/kling_video_reward
   - /dataset/droid_full_target_v2w
 
 model:
   use_lora: false
-  # Converted 480P-native diffusers pipeline directory (see CHECKPOINT REQUIREMENT above).
-  # Must be the 480P weights -- the inherited 720P repo id WOULD silently run garbage here.
-  path: checkpoints/cosmos-predict2-2b-480p-16fps-diffusers
+  # Converted native-480P transformer + shared 720P vae/text_encoder/tokenizer/scheduler (see header).
+  path: /home/mingfeiguo/Desktop/vrl2/VRL/checkpoints/cosmos_predict2_2b_v2w_480p_diffusers
+  # Compile OFF: it cannot combine with gradient_checkpointing (torch.compile traces
+  # torch.utils.checkpoint into an InternalTorchDynamoError — see activation_checkpointing.py),
+  # and at 480p_93f full-param we NEED grad-ckpt for memory, so we take the eager+checkpointing
+  # branch and forgo compile's ~1.25x. predict2_2b defaults torch_compile.enable=true.
+  torch_compile:
+    enable: false
+
+sampling:
+  num_frames: 93                      # native clip length for the 480P weights (33f is OOD -> artifacts)
+  fps: 16
 
 actor:
   optim:
     lr: 2.0e-5
-    optim_8bit: true
+    optim_8bit: true                  # int8 Adam state -> full-param 2B fits 32GB (fp32 state OOMs)
   gradient_checkpointing: true
-  ppo_epochs: 4
+  ppo_epochs: 4                       # =1 makes clip_fraction identically 0 (dead trust-region)
 
 algorithm:
   clip_ratio: 1.0e-3
   kl_coef: 0.0
 
+cosmos:
+  reference_mode: per_sample
+
 rollout:
   n_samples_per_prompt: 8
   prompts_per_batch: 1
-  sample_batch_size: 4
+  sample_batch_size: 1                # 480p_93f is token-heavy; keep 1 for memory (raise if smoke shows headroom)
   sde: { type: cps }
   same_latent: false
 
@@ -64,13 +64,10 @@ distributed:
   rollout:
     # Single-worker software pipeline: hide each chunk's GPU->CPU copy + host packing
     # behind the next chunk's denoise (bit-exact -> old_log_prob unchanged, RL-safe;
-    # auto no-op on >1 worker). Needs >=2 chunks: n_samples=8 / sample_batch_size=4
-    # gives exactly 2 (the sweet spot). ~20% single-card rollout speedup. NOTE: this is
+    # auto no-op on >1 worker). Needs >=2 chunks; sbs=1 gives 8 chunks for the
+    # 480p_93f memory-safe shape, and can be raised only after a memory smoke. NOTE: this is
     # distributed.rollout.pipelined (the Ray worker config), NOT the top-level rollout.
     pipelined: true
-
-cosmos:
-  reference_mode: per_sample
 
 trainer:
   entrypoint: vrl.scripts.diffusion.cosmos.train:train_cosmos_predict2_grpo
@@ -81,7 +78,10 @@ trainer:
   eval: { enabled: true, freq: 25, samples_per_prompt: 2, max_prompts: 64, seed: 20260628 }
 
 reward:
-  # Zero-training default: DINOv2 anchor (main) + RAFT motion guard. Override per experiment.
   components:
-    target_dino_similarity: 1.0
-    motion_dynamics: 0.2
+    target_dino_similarity: 0.80
+    kling_video_reward: 0.20
+  kwargs:
+    kling_video_reward:
+      artifact_format: mp4
+      score_key: visual_quality+motion_quality
