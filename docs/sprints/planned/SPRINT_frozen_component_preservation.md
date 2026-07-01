@@ -1,6 +1,6 @@
 # SPRINT: rollout 内存释放时保留冻结的 VAE / text-encoder（offload-and-restore，不要 discard+reload）
 
-状态：**缺陷 B DONE（2026-06-20，分支 sprint/frozen-component-preservation）/ 缺陷 A deferred（依赖未定的 actor 生命周期架构，见 §1.D）**。范围：让 rollout 每周期的内存释放对**冻结的非可训练组件**（VAE、3× text-encoder）采用 offload-and-restore（类似 vLLM `sleep_level=1` / wake-up），而不是当前的 discard + 冷重载；不动调度架构、不动 weight-sync 语义。
+状态：**缺陷 B DONE（2026-06-20）/ 缺陷 A 的 colocated-trainer 这一类 DONE（2026-06-29，sleep/wake 已落地，CPU-fake 单测覆盖，GPU 侧残留实测留作验收）/ 缺陷 A 的 reward-handoff 这一类仍 deferred（bundle 要交给 reward actor，保留 teardown）**。范围：让 rollout 每周期的内存释放对**冻结的非可训练组件**（VAE、3× text-encoder）采用 offload-and-restore（类似 vLLM `sleep_level=1` / wake-up），而不是当前的 discard + 冷重载；不动调度架构、不动 weight-sync 语义。
 
 ## 实现状态（2026-06-20）
 
@@ -11,7 +11,29 @@
 - 测试：`tests/models/diffusion/test_frozen_offload.py`（派生集合排除 transformer/非 module；只搬冻结；无 pipeline no-op）+ `tests/rollouts/orchestration/test_driver_frozen_offload.py`（offload/restore 调用 + AR 无 hook 不崩）。`tests/models/diffusion` + `tests/rollouts/orchestration` 共 172 passed。
 - 验收口径：本机无 GPU，§3 的 nvidia-smi/逐 bit/计时探针留作 GPU 跑测；CPU 侧用「记录 `.to` 目标」的 fake 证明搬运范围正确（冻结组件被搬、transformer 不被本 hook 重复搬）。
 
-**⏸ 缺陷 A（lease 模式 kill→sleep，sprint 标的"主目标"）暂缓：** 它要求把 `release_after_collect` 的 `kill_actors`（进程级销毁）改成"sleep actor 保活 + offload 冻结组件 + wake 时搬回不重读磁盘"，前提是 §1.D 未定的架构选型（actor 是否每周期保活，触及 [[SPRINT_framework_lessons_vrl]] P1-2 与 [[SPRINT_compile_rollout_lifecycle]] 的常驻-vs-重建轴）。这不是单文件机械改动，需先拍板 actor 生命周期，故不在本次随手做，doc 留 planned/。
+**✅ 缺陷 A（lease 模式 kill→sleep）——colocated-trainer 这一类已落地（2026-06-29）：** 复核 §1.D 后发现"未定的 actor 生命周期架构"其实窄得多（见下方更新），于是把 colocated-trainer timeshare 这一类的 kill 改成了 sleep/wake：
+- `GenerationWorkerCore.sleep()/wake()`（`vrl/generation/execution/worker.py`）：level-1 offload——保住 executor，把 model（transformer 经 `nn.Module.to` + 冻结组件经**缺陷 B 的 `move_frozen_components`**）搬 CPU、`release_cuda_memory`；wake 从 host RAM 搬回**捕获到的原 GPU**，不重读磁盘。executor 被硬释放过则 `load_policy` 兜底重建。`RayGenerationWorker` 暴露 `sleep/wake` 透传（`vrl/generation/ray/worker.py`）。
+- lease FSM（`vrl/generation/ray/runtime.py`）：`_RuntimeLease` 加 `sleep_eligible`/`asleep`；`release()` 对 sleep-eligible 租约调 `sleep_workers()`、保活 `state.runtime`，否则照旧 `shutdown()`（teardown）；`_ensure_runtime()` 见到"睡着"就 `wake_workers()` 并**重放 `last_state`**（与冷启动后 `update_weights(last_state)` 同一刷新契约）；`update_weights` 在睡眠期只记 `last_state` 不下推到 CPU 上的 worker。
+- sleep-eligibility 派生（内联在 `with_release_after_collect` 里，不单拆函数）：仅当 `handoff.release_rollout_before_train and not release_rollout_before_reward` —— 纯 trainer 让位才 sleep；reward 要 bundle 一律 teardown；无 resolved topology 的手搓 config 默认 teardown。
+
+**✅ cumem-backed offload（2026-06-29，把 naive 的"打平"推到"真赢"）：** 朴素 `to(cpu)+empty_cache+to(gpu)` 实测往返 3.7s、且 wake 后碎片化 +4.8GB（几十周期会把 colocated trainer 挤 OOM）。改用 vLLM 的 `CuMemAllocator`（verl-omni 同款机制，0.21 已装）：
+- sleep-eligible worker 的 model 在 `CuMemAllocator.use_memory_pool(tag="weights")` 里分配（`GenerationWorkerCore._build_executor_maybe_pooled`，由 lease 给契约打 `extra["sleep_offload"]` 触发，`runtime._with_sleep_offload`）；`sleep()/wake()` 走 `alloc.sleep(offload_tags=("weights",))` / `alloc.wake_up(tags=["weights"])`，cumem 不可用（CPU 机/无 vLLM）或非 sleep-offload worker 自动回落朴素路径。
+- cumem 用 CUDA 虚拟内存释放/重映射物理页、保留虚拟地址 → wake 不 re-malloc、不碎片化。
+- 测试：`test_worker_sleep.py` 加 cumem 分支（sleep/wake 走 allocator 不动 module；`sleep_offload` 时进 pool、cumem 不可用回落、无 flag 不进 pool）+ `test_runtime_lease_sleep.py` 加契约打标（sleep-eligible 打 `sleep_offload`、teardown 租约不打）。全套 266 passed。
+
+**✅ GPU 验收已跑（2026-06-29，GPU 0 独占，SD3.5-medium bf16，`vrl/scripts/perf/rollout_sleep_probe.py --backend both`）：**
+
+| 指标 | naive | **cumem** | 冷重载 |
+|---|---|---|---|
+| sleep 后残留（驱动级 `mem_get_info`） | 1297 MB（仅 context） | 1327 MB（仅 context） | — |
+| trainer 拿回 | 11132 MB | 11104 MB | — |
+| wake 后碎片（vs load） | **+4830 MB** | **+28 MB** | — |
+| sleep+wake 往返 | 3722 ms | **845 ms** | — |
+| 冷重载本身 | — | — | 5425 ms |
+
+结论：cumem sleep/wake **845ms**，比 naive 快 4.4×、比冷重载快 6.4×；对比真实 kill 路径（冷重载 5.4s + context 初始化 1.06s + Ray 重建调度 ~1–3s ≈ 6.5–8.5s）**快约 8–10×**，且几乎零碎片。残留两 backend 都降到 ~context（~1.3GB），"context 残留挤掉训练"确认是伪问题。注：probe 的残留早期误用 `memory_reserved()`（看不见 cumem 虚拟内存），已改驱动级 `mem_get_info`。坑：cumem pool 上下文里不能 `expandable_segments` / `empty_cache`（PyTorch pluggable-allocator bug），故只在 sleep-eligible diffusion worker 上启用。
+
+**⏸ 缺陷 A 的 reward-handoff 这一类仍暂缓：** `release_rollout_before_reward` 触发的 lease（reward Ray actor 要进 rollout 的 bundle）保留 teardown ——sleep 只让出物理显存、不让出 Ray bundle，不满足 reward 调度需求。是否能让 reward 与 rollout 共 bundle 从而也 sleep，留 §1.D 单独核实。
 
 关联：[[SPRINT_compile_rollout_lifecycle]]（同一条 worker 生命周期上的常驻-vs-每周期重建权衡，编译产物的摊销与本 sprint 的冻结权重摊销是同一根轴）、[[SPRINT_framework_lessons_vrl]]（P1-2：sleep/wake vs actor teardown —— 本 sprint 是该课的具体落点）。
 
@@ -75,7 +97,10 @@
 
 - **未验证：** cosmos / wan / janus_pro / nextstep 等其他 family 的 `from_spec` 是否同样整盘冷重载冻结组件。本轮只核实了 SD3.5（`vrl/models/diffusion/sd3_5/model.py`）。设计上其余 family 走相同的 `_build_executor → build_runtime_bundle → from_spec` 通道，预期同构，但**未逐个核实**。
 - **未验证：** offload 冻结组件到 CPU 再搬回的耗时是否真的小于 `from_pretrained` 冷重载（直觉上 CPU↔GPU 拷贝远快于磁盘反序列化 + 构图 + 冻结，但**未实测**）。需在落地前用一次 probe 量化（见 §3 验收）。
-- **未验证：** lease 模式被 `kill_actors` 整体杀掉 Ray actor（进程级销毁，`vrl/generation/ray/runtime.py:163-168`）后，能否在"不杀进程"的前提下仅 offload —— 即 offload-and-restore 在 lease 模式下需要把 actor 生命周期从"每周期杀"改成"每周期 sleep"。这触及 [[SPRINT_framework_lessons_vrl]] P1-2 的核心（sleep/wake vs actor teardown），**架构选型未定**。
+- **已核实（2026-06-29，原"架构选型未定"项收窄）：** 复核两处代码后，"actor 生命周期是否每周期保活"不是一个不可知的架构分叉，而是一个可测量的显存问题：
+  1. **lease 模式下 bundle 根本不交还。** `_ensure_runtime` 重 launch 时传的是同一个 `state.placement`（`runtime.py:181-186`），launcher 里 `owned_placement_group = None`、PG 由 `GlobalRayPlacementOwner` 持有、`shutdown` 从不 remove PG（`launcher.py:88` 注释）。所以 `kill_actors` 杀掉的只是 **actor 进程**，bundle 一直为 rollout 保留、下周期同 bundle 重建——kill 的唯一作用是回收那张物理卡的显存（含 CUDA context），**不是**把 Ray 调度位让给别的角色。
+  2. **on_demand 只有两类触发**（`resources.py:328-335`）：`release_before_train = colocated and not persistent_colocated`（trainer 同卡相位切换）或 `release_before_reward = reward_shared_with_rollout`（reward 共享卡）。结合 (1)：trainer 这一类只需让出物理显存 → in-process sleep 充分；reward 这一类可能要让出 bundle → 保留 teardown。
+  - 于是 A 收窄为**一个经验问题**：colocated 场景里 sleeping actor 残留的 CUDA context（~几百 MB）放在共享卡上，trainer 的训练步还塞得下吗？`rollout_sleep_probe.py` 在 free-GPU 机上给数字。这正是 verl-omni `sleep_level=1`（offload 保活）vs `level=2`（discard）的同一道选择——vrl 原本的 lease=kill+reload 等价于"永远 level-2"。
 
 ---
 

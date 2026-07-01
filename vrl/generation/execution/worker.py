@@ -24,6 +24,29 @@ from vrl.utils.profiling import TorchProfilerConfig
 
 logger = init_logger(__name__)
 
+# Pool tag for the model weights managed by CuMemAllocator. vLLM uses the same
+# "weights" tag for the part of a sleeping engine that is offloaded (not discarded);
+# matching it keeps the offload/restore semantics identical to verl-omni's level-1.
+_CUMEM_WEIGHTS_TAG = "weights"
+
+
+def _cumem_allocator() -> Any | None:
+    """Return the process-wide vLLM CuMemAllocator, or None when unavailable.
+
+    Unavailable on a CPU box or when vLLM is not installed — callers fall back to
+    the naive to(cpu)/to(gpu) offload. The allocator is a singleton; a diffusion-only
+    rollout process does not otherwise use it, so there is no contention.
+    """
+
+    try:
+        from vllm.device_allocator.cumem import CuMemAllocator
+    except Exception:
+        return None
+    try:
+        return CuMemAllocator.get_instance()
+    except Exception:
+        return None
+
 
 class GenerationWorkerCore:
     """Own one generation executor and execute plan-aware chunks."""
@@ -52,6 +75,10 @@ class GenerationWorkerCore:
         self._profiler_step = 0
         self.capability = self._capability_from_contract(self.launch_contract)
         self._metadata_provider = metadata_provider or self._fallback_metadata
+        # Set to a CuMemAllocator when load_policy pools the model for sleep-offload
+        # (extra["sleep_offload"]); sleep()/wake() then release/restore GPU physical
+        # pages through it instead of the naive to(cpu)/to(gpu) round trip.
+        self._cumem: Any | None = None
 
     def load_policy(self) -> None:
         """Build the family executor from the serialized launch contract."""
@@ -65,15 +92,100 @@ class GenerationWorkerCore:
         # trainer its share of the shared GPU (no-op when unset / dedicated GPU).
         cap_cuda_memory_fraction(self.launch_contract.extra.get("gpu_memory_fraction"))
         log_host_memory(f"generation_worker:{self.worker_id}:before_load_policy", log=logger)
-        self.executor = self._build_executor()
+        self.executor = self._build_executor_maybe_pooled()
         self.capability = self._merge_loaded_capability(self.executor)
         log_host_memory(f"generation_worker:{self.worker_id}:after_load_policy", log=logger)
+
+    def _build_executor_maybe_pooled(self) -> GenerationChunkExecutor:
+        """Build the executor, pooling the model in CuMemAllocator when requested.
+
+        A sleep-offload worker (``extra["sleep_offload"]``, set by the lease for the
+        colocated-trainer timeshare) allocates the whole model inside vLLM's
+        CuMemAllocator pool, so ``sleep``/``wake`` release and restore the GPU
+        *physical* pages via CUDA virtual memory — virtual addresses stay mapped, so
+        wake needs no cudaMalloc and incurs no fragmentation (the naive
+        ``to(cpu)``+``empty_cache``+``to(gpu)`` path pays both). Falls back to a
+        plain build when offload is not requested or cumem is unavailable (CPU box,
+        vLLM not installed), so non-colocated and AR workers are unaffected.
+        """
+
+        if not self.launch_contract.extra.get("sleep_offload"):
+            return self._build_executor()
+        allocator = _cumem_allocator()
+        if allocator is None:
+            return self._build_executor()
+        with allocator.use_memory_pool(tag=_CUMEM_WEIGHTS_TAG):
+            executor = self._build_executor()
+        self._cumem = allocator
+        return executor
 
     def release_policy(self) -> None:
         """Drop loaded model state so the worker releases CUDA memory before exit."""
 
         self.executor = None
         release_cuda_memory(gc_collect=True, ipc_collect=True)
+
+    def sleep(self) -> None:
+        """Offload the loaded model to host RAM, freeing the GPU without discarding it.
+
+        Level-1 offload-and-restore (cf. vLLM ``sleep_level=1``): unlike
+        ``release_policy`` (level-2 discard → ``wake``/``load_policy`` cold-reloads
+        the frozen VAE / text-encoders from disk), this keeps the executor and its
+        loaded model alive, parking *all* weights on CPU so a colocated trainer
+        reclaims the GPU for its step. ``wake`` then restores them from host RAM
+        without re-reading the checkpoint. ``nn.Module.to`` moves only registered
+        submodules (the transformer), so the diffusers pipeline's unregistered
+        frozen components ride the same ``move_frozen_components`` hook the
+        in-process driver-offload path uses. No-op when nothing is loaded.
+        """
+
+        if self.executor is None:
+            return
+        if self._cumem is not None:
+            # cumem owns the whole pooled model (transformer + frozen components);
+            # one call offloads every tagged allocation to host RAM and releases the
+            # physical pages, no per-module .to() or empty_cache needed.
+            self._cumem.sleep(offload_tags=(_CUMEM_WEIGHTS_TAG,))
+            return
+        model = getattr(self.executor, "model", None)
+        if model is None:
+            return
+        # Remember where to restore to: capture before the CPU move so a custom
+        # ``device`` property that does not track ``nn.Module.to`` still reports the
+        # GPU the model lived on.
+        self._sleep_device = self._executor_device(self.executor)
+        move = getattr(model, "to", None)
+        if callable(move):
+            move("cpu")
+        move_frozen = getattr(model, "move_frozen_components", None)
+        if callable(move_frozen):
+            move_frozen("cpu")
+        release_cuda_memory(gc_collect=True, ipc_collect=True)
+
+    def wake(self) -> None:
+        """Restore a slept model from host RAM onto its GPU (no disk reload).
+
+        The counterpart to ``sleep``. If the executor was evicted instead of slept
+        (e.g. a hard release happened in between), rebuild it via ``load_policy`` so
+        a wake is always safe to call.
+        """
+
+        model = getattr(self.executor, "model", None)
+        if model is None:
+            self.load_policy()
+            return
+        if self._cumem is not None:
+            # Restore the pooled model's physical pages from host RAM at the same
+            # virtual addresses — the tensors stay valid cuda tensors throughout.
+            self._cumem.wake_up(tags=[_CUMEM_WEIGHTS_TAG])
+            return
+        device = getattr(self, "_sleep_device", None) or self._executor_device(self.executor)
+        move = getattr(model, "to", None)
+        if callable(move):
+            move(device)
+        move_frozen = getattr(model, "move_frozen_components", None)
+        if callable(move_frozen):
+            move_frozen(device)
 
     def update_weights(self, state_ref: Any, policy_version: int) -> None:
         """Update generation weights, then record the active policy version.

@@ -20,7 +20,17 @@ from vrl.ray.placement import RolePlacement
 @dataclass(slots=True)
 class _RuntimeLease:
     """On-demand worker lease: the inner runtime is acquired on generate and
-    dropped on release, so a shared GPU can be handed back between phases."""
+    dropped on release, so a shared GPU can be handed back between phases.
+
+    ``sleep_eligible`` picks the release discipline. When the only handoff is a
+    colocated trainer timeshare (rollout keeps its placement bundle and just has
+    to vacate the *physical* GPU between collect and train), release offloads the
+    workers to host RAM and reacquire wakes them — level-1 offload-and-restore
+    (cf. vLLM ``sleep_level=1``), saving the per-cycle cold reload of the frozen
+    VAE / text-encoders. When a reward worker must take the bundle instead
+    (``release_before_reward``), the workers are still torn down (level-2) so the
+    bundle is genuinely free.
+    """
 
     config: RayGenerationConfig
     launch_contract: Any
@@ -28,6 +38,8 @@ class _RuntimeLease:
     placement: RolePlacement
     runtime: RayGenerationRuntime | None = None
     last_state: Any | None = None
+    sleep_eligible: bool = False
+    asleep: bool = False
 
 
 class RayGenerationRuntime(GenerationRuntime):
@@ -81,11 +93,27 @@ class RayGenerationRuntime(GenerationRuntime):
         runtime._owned_actors = []
         runtime._placement_group = None
         runtime._colocated = False
+        # Sleep (level-1 offload-and-restore) is safe only when the lease releases
+        # purely for a colocated trainer timeshare: the rollout keeps its placement
+        # bundle and just vacates the physical GPU, so offloading to host RAM frees
+        # the memory the trainer needs. When a reward worker must take the bundle
+        # (release_before_reward) the workers are torn down so the bundle is truly
+        # free; a config without a resolved topology (test specs) also tears down.
+        handoff = config.resources.lifecycle.handoff if config.resources is not None else None
+        sleep_eligible = (
+            handoff is not None
+            and handoff.release_rollout_before_train
+            and not handoff.release_rollout_before_reward
+        )
         runtime._release_after_collect = _RuntimeLease(
             config=config,
-            launch_contract=launch_contract,
+            # Tell the worker to pool its model in CuMemAllocator so sleep/wake
+            # release+restore GPU physical pages instead of a to(cpu)/to(gpu) round
+            # trip. Only for sleep-eligible leases; teardown leases load normally.
+            launch_contract=_with_sleep_offload(launch_contract) if sleep_eligible else launch_contract,
             gatherer=gatherer,
             placement=placement,
+            sleep_eligible=sleep_eligible,
         )
         runtime.requires_driver_model_offload = config.gpus_per_worker > 0
         runtime.current_policy_version = _launch_contract_policy_version(launch_contract)
@@ -120,7 +148,10 @@ class RayGenerationRuntime(GenerationRuntime):
                 raise RuntimeError("RayGenerationRuntime has no generation weight sync")
             state.last_state = state_ref
             self.current_policy_version = int(policy_version)
-            if state.runtime is not None:
+            # A slept worker holds its model on CPU; don't push onto it now. The
+            # retained ``last_state`` is replayed on wake (mirroring the cold-launch
+            # path), so the awoken worker always serves the latest version.
+            if state.runtime is not None and not state.asleep:
                 await state.runtime.update_weights(state_ref, self.current_policy_version)
             return
         if self.weight_sync is None:
@@ -129,15 +160,23 @@ class RayGenerationRuntime(GenerationRuntime):
         self.current_policy_version = int(policy_version)
 
     async def release(self) -> None:
-        """Drop the on-demand workers (lease release); generate() reacquires them.
+        """Release the on-demand workers between phases; generate() reacquires them.
 
-        No-op for a resident runtime, whose actors stay up until shutdown().
+        Sleep-eligible leases (colocated trainer timeshare) offload the live
+        workers to host RAM and keep them alive, so reacquire wakes them without a
+        cold reload. Otherwise the workers are torn down so the placement bundle is
+        free for the next role. No-op for a resident runtime (actors stay up until
+        shutdown()).
         """
         state = self._release_after_collect
         if state is None:
             return None
         runtime = state.runtime
         if runtime is None:
+            return None
+        if state.sleep_eligible:
+            await runtime.sleep_workers()
+            state.asleep = True
             return None
         state.runtime = None
         await runtime.shutdown()
@@ -171,10 +210,55 @@ class RayGenerationRuntime(GenerationRuntime):
         self._placement_group = None
         return None
 
+    async def sleep_workers(self) -> None:
+        """Offload every owned worker's model to host RAM, freeing the GPU.
+
+        The workers stay alive (process + placement bundle retained); only their
+        weights leave the GPU. Failures are not suppressed: a worker that fails to
+        offload would otherwise hold the GPU a colocated trainer is about to use.
+        """
+        if not self._owned_workers:
+            return None
+        ray = require_ray()
+        refs = [
+            worker.actor.sleep.remote()
+            for worker in self._owned_workers
+            if worker.actor is not None
+        ]
+        if refs:
+            ray.get(refs, timeout=120)
+        return None
+
+    async def wake_workers(self) -> None:
+        """Restore every owned worker's model from host RAM back onto its GPU."""
+        if not self._owned_workers:
+            return None
+        ray = require_ray()
+        refs = [
+            worker.actor.wake.remote()
+            for worker in self._owned_workers
+            if worker.actor is not None
+        ]
+        if refs:
+            ray.get(refs, timeout=120)
+        return None
+
     async def _ensure_runtime(self) -> RayGenerationRuntime:
         state = self._release_after_collect
         if state is None:
             return self
+        if state.runtime is not None and state.asleep:
+            # Wake the offloaded workers (host RAM -> GPU, no disk reload) and
+            # replay the latest trainable state, the same refresh contract the
+            # cold-launch path below applies after a teardown.
+            await state.runtime.wake_workers()
+            state.asleep = False
+            if state.last_state is not None:
+                await state.runtime.update_weights(
+                    state.last_state,
+                    int(self.current_policy_version),
+                )
+            return state.runtime
         if state.runtime is None:
             from vrl.generation.ray.launcher import RayGenerationLauncher
 
@@ -191,6 +275,19 @@ class RayGenerationRuntime(GenerationRuntime):
                     int(self.current_policy_version),
                 )
         return state.runtime
+
+
+def _with_sleep_offload(launch_contract: Any) -> Any:
+    """Return the contract with ``extra["sleep_offload"]`` set so the worker pools
+    its model for cumem sleep/wake. Best-effort: a non-contract test spec that does
+    not normalize is returned unchanged (the worker just takes the naive path)."""
+    from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
+
+    try:
+        contract = GenerationRuntimeLaunchContract.from_value(launch_contract)
+    except (TypeError, ValueError):
+        return launch_contract
+    return replace(contract, extra={**contract.extra, "sleep_offload": True})
 
 
 def _launch_contract_policy_version(launch_contract: Any) -> int | None:

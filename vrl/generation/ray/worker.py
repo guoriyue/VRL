@@ -42,6 +42,12 @@ class RayGenerationWorker:
     def release_policy(self) -> None:
         self.core.release_policy()
 
+    def sleep(self) -> None:
+        self.core.sleep()
+
+    def wake(self) -> None:
+        self.core.wake()
+
     def update_weights(self, state_ref: Any, policy_version: int) -> None:
         self.core.update_weights(state_ref, policy_version)
 
