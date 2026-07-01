@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import time
 from collections.abc import Mapping
 from typing import Any
@@ -93,47 +92,19 @@ class RayRewardRuntime:
             placement_group = placement.placement_group
             bundle_indices = tuple(placement.bundle_indices)
 
-        # Resident-reward (single-GPU staged pipeline): keep the actor alive and
-        # park the model on CPU between scores (see RewardModelWorker). The actor
-        # must NOT hold a Ray GPU reservation (it would block the rollout actor on
-        # the shared single-GPU bundle), so it schedules as a 0-GPU actor and uses
-        # the GPU via CUDA only while scoring; and it must NOT be released after
-        # each call (that is the per-step kill+reload this avoids).
-        resident = bool(cfg.get("resident", False))
-        gpus_per_worker = 0.0 if resident else float(cfg.get("gpus_per_worker", 0.0))
-        # The colocated GPU bundle reserves CPU = max(rollout, reward) on the
-        # assumption only one of them runs at a time (the reward actor is killed
-        # before the rollout relaunches). A resident reward stays alive alongside
-        # the rollout, so it must reserve only a SMALL slice (1 CPU) that fits
-        # under the max-sized bundle next to the rollout's 1 CPU; reserving the
-        # full reward_cpus would push rollout_cpus + reward_cpus past the bundle
-        # and deadlock the step-N+1 rollout relaunch on CPU. (A 0-CPU actor also
-        # works for the bundle but destabilizes the raylet under heavy n=8 decode;
-        # 1 CPU gives Ray normal resource accounting. The worker additionally caps
-        # its thread pools so decode/preprocess never starves the raylet.)
-        cpus_per_worker = 1.0 if resident else float(cfg.get("cpus_per_worker", 0.5))
-        release_after_call = False if resident else bool(cfg.get("release_after_score", False))
-        worker_config = dict(worker_config_raw)
-        if resident:
-            # A 0-GPU Ray actor gets CUDA_VISIBLE_DEVICES="" by default; this opts
-            # the reward actor back into seeing the colocated GPU so it can move
-            # its model there for scoring.
-            os.environ.setdefault("RAY_ACCEL_ENV_VAR_OVERRIDE_ON_ZERO", "0")
-            worker_config["resident"] = True
-
         return RayActorMethodRuntime(
             worker_cls=RewardModelWorker,
-            worker_config=worker_config,
+            worker_config=dict(worker_config_raw),
             method_name="score_batch",
             worker_id_prefix="reward",
             num_workers=int(cfg.get("num_workers", 1)),
-            cpus_per_worker=cpus_per_worker,
-            gpus_per_worker=gpus_per_worker,
+            cpus_per_worker=float(cfg.get("cpus_per_worker", 0.5)),
+            gpus_per_worker=float(cfg.get("gpus_per_worker", 0.0)),
             max_inflight_per_worker=int(cfg.get("max_inflight_batches", 1)),
             startup_method="load_model",
             init_ray=init_ray,
             ray_init_kwargs=dict(ray_init_kwargs or {}),
-            release_after_call=release_after_call,
+            release_after_call=bool(cfg.get("release_after_score", False)),
             placement_strategy=str(cfg.get("placement_strategy", "SPREAD")),
             expected_gpu_ids=(
                 tuple(int(gpu_id) for gpu_id in placement.expected_gpu_ids)

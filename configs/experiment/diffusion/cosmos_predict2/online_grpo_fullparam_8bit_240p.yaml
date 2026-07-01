@@ -34,11 +34,6 @@ defaults:
 
 model:
   use_lora: false                     # FULL-PARAMETER (-> apply_full_finetune in the runtime builder)
-  # gradient_checkpointing='full' (below) is mutually exclusive with torch.compile
-  # (activation_checkpointing.py raises: compile traces torch.utils.checkpoint into an
-  # InternalTorchDynamoError). Full-param 240p needs grad-ckpt for backward memory, so
-  # compile is OFF here; the recipe default enables it, hence this explicit disable.
-  torch_compile: { enable: false }
 
 actor:
   optim:
@@ -55,10 +50,8 @@ rollout:
   n_samples_per_prompt: 8
   prompts_per_batch: 1
   # 4 samples/forward (2 chunks for n=8): cuts the per-sample-boundary GPU-idle.
-  # Measured 1×32GB 240p_33f (compile off, first step, real V2W run 2026-06-29):
-  # sbs 1->4 = generation 139.6s->99.5s = 1.40x (per-sample DiT fwd 17.5s->12.4s).
-  # Generation-phase peak mem 18.8GB->25.3GB, both fit 32GB (no OOM). Exact/lossless:
-  # sbs only sets the forward batch dim, old_log_prob==fresh_log_prob bit-identical.
+  # Measured 1×32GB 240p_33f: sbs 1->4 = rollout 1.50x (134->89s), GPU-busy 64%->89%,
+  # fits (no OOM). Exact/lossless — sbs only sets the forward batch dim, not the samples.
   sample_batch_size: 4
   sde: { type: cps }
   same_latent: false
