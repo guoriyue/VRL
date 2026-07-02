@@ -1056,7 +1056,7 @@ def test_run_fixed_eval_uses_fixed_seed_grid_and_no_backward() -> None:
     import pytest
     import torch
 
-    from vrl.scripts.common.online import _FixedEvalResult, _run_distributed_fixed_eval
+    from vrl.scripts.common.fixed_eval import _FixedEvalResult, _run_distributed_fixed_eval
     from vrl.trainers.data.prompts import PromptExample
     from vrl.trainers.distributed import resolve_training_context
 

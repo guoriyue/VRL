@@ -22,7 +22,7 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
-from vrl.scripts.common.online import (
+from vrl.scripts.common.fixed_eval import (
     _fixed_eval_group_seed,
     _FixedEvalLocalStats,
     _FixedEvalResult,
