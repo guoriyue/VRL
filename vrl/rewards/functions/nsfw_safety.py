@@ -15,7 +15,7 @@ class NSFWSafetyReward(RewardFunction):
     def __init__(
         self,
         device: str = "cuda",
-        execution: Literal["inline", "pool"] = "inline",
+        execution: Literal["inline"] = "inline",
         **kwargs: Any,
     ) -> None:
         if str(execution) != "inline":

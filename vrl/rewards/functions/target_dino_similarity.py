@@ -12,8 +12,6 @@ from vrl.rewards.runtime import LocalRewardRuntime
 class TargetDinoSimilarityReward(RewardFunction):
     """Local reward comparing generated video to target media by DINOv2 cosine."""
 
-    default_execution = "inline"
-
     def __init__(
         self,
         device: str = "",

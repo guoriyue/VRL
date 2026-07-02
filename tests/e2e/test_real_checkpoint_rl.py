@@ -546,7 +546,7 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
             f"{case.reference_image_cfg_path}={reference_image.as_posix()}",
         )
     if case.use_config_reward:
-        case_overrides.extend(_ray_reward_overrides(tmp_path))
+        case_overrides.extend(_local_reward_overrides(tmp_path))
 
     cfg = load_config(
         case.config,
@@ -636,7 +636,7 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
                 f"{case.logprob_parity_tol}) — broken sample/replay parity"
             )
         if case.use_config_reward:
-            _assert_ray_reward_artifacts(tmp_path, reward_fn)
+            _assert_local_reward_artifacts(tmp_path, reward_fn)
     finally:
         if reward_fn is not None:
             asyncio.run(_shutdown_if_present(reward_fn))
@@ -675,23 +675,19 @@ def build_tensor_mean_model(worker_config):
     return _model
 
 
-def _ray_reward_overrides(tmp_path: Path) -> tuple[str, ...]:
+def _local_reward_overrides(tmp_path: Path) -> tuple[str, ...]:
     artifact_dir = tmp_path / "reward_artifacts"
     debug_dir = tmp_path / "reward_debug"
     model_factory = "tests.e2e.test_real_checkpoint_rl:build_tensor_mean_model"
     return (
         f"reward.kwargs.kling_video_reward.artifact_dir={artifact_dir.as_posix()}",
         f"reward.kwargs.kling_video_reward.debug_dir={debug_dir.as_posix()}",
-        "reward.kwargs.kling_video_reward.release_after_score=true",
-        "reward.kwargs.kling_video_reward.num_workers=1",
-        "reward.kwargs.kling_video_reward.cpus_per_worker=0.5",
-        "reward.kwargs.kling_video_reward.gpus_per_worker=0.0",
         f"reward.kwargs.kling_video_reward.worker_config.model_factory={model_factory}",
         "reward.kwargs.kling_video_reward.worker_config.reward_model_version=e2e-tensor-mean",
     )
 
 
-def _assert_ray_reward_artifacts(tmp_path: Path, reward_fn: Any) -> None:
+def _assert_local_reward_artifacts(tmp_path: Path, reward_fn: Any) -> None:
     components = getattr(reward_fn, "last_components", {})
     assert "kling_video_reward" in components
     assert len(components["kling_video_reward"]) >= 2

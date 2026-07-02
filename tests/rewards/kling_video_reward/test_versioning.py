@@ -13,29 +13,24 @@ from vrl.rewards.inference import RewardInferenceResult
 from vrl.rewards.types import RewardRollout, RewardTrajectory
 
 
-class _VersionedActorRuntime:
-    num_workers = 1
-
-    async def map(self, shards):
+class _VersionedRuntime:
+    async def score_batch(self, request):
         return [
-            [
-                RewardInferenceResult(
-                    artifact_id=artifact.artifact_id,
-                    scores={"overall_reward": 4.0},
-                    selected_score=4.0,
-                    reward_name=shard.reward_name,
-                    score_key=shard.score_key,
-                    policy_version=artifact.policy_version,
-                    reward_model_version="reward-v2",
-                    latency_ms=7.0,
-                    queue_wait_ms=2.0,
-                    inference_ms=5.0,
-                    worker_id="reward-0",
-                    metadata={"gpu_ids": [1], "node_ip": "127.0.0.1"},
-                )
-                for artifact in shard.artifacts
-            ]
-            for shard in shards
+            RewardInferenceResult(
+                artifact_id=artifact.artifact_id,
+                scores={"overall_reward": 4.0},
+                selected_score=4.0,
+                reward_name=request.reward_name,
+                score_key=request.score_key,
+                policy_version=artifact.policy_version,
+                reward_model_version="reward-v2",
+                latency_ms=7.0,
+                queue_wait_ms=2.0,
+                inference_ms=5.0,
+                worker_id="reward-0",
+                metadata={"gpu_ids": [1], "node_ip": "127.0.0.1"},
+            )
+            for artifact in request.artifacts
         ]
 
     async def shutdown(self) -> None:
@@ -57,13 +52,12 @@ def _rollout() -> RewardRollout:
 async def test_video_reward_debug_records_versions_and_latency(tmp_path: Path) -> None:
     """Checks video reward debug records versions and latency."""
     reward = KlingVideoReward(
-        execution="pool",
         reward_name="KlingTeam/VideoReward@main",
         score_key="overall_reward",
         artifact_format="tensor",  # codec-independent wiring test (no imageio dep)
         artifact_dir=str(tmp_path / "reward_artifacts"),
         debug_dir=str(tmp_path / "reward_debug"),
-        actor_runtime=_VersionedActorRuntime(),
+        runtime=_VersionedRuntime(),
     )
 
     scores = await reward.score_batch([_rollout()])
@@ -96,15 +90,3 @@ async def test_video_reward_debug_records_versions_and_latency(tmp_path: Path) -
     assert result_rows[0]["queue_wait_ms"] == pytest.approx(2.0)
     assert result_rows[0]["inference_ms"] == pytest.approx(5.0)
 
-
-def test_video_reward_rejects_async_scheduling_until_supported(tmp_path: Path) -> None:
-    """Checks video reward rejects async scheduling until supported."""
-    with pytest.raises(ValueError, match="scheduling"):
-        KlingVideoReward(
-            execution="pool",
-            reward_name="KlingTeam/VideoReward@main",
-            score_key="overall_reward",
-            artifact_dir=str(tmp_path / "reward_artifacts"),
-            scheduling="async",
-            actor_runtime=_VersionedActorRuntime(),
-        )

@@ -21,35 +21,30 @@ _FAKE_SCORES = {
 }
 
 
-class _FakeActorRuntime:
-    num_workers = 1
-
+class _FakeRuntime:
     def __init__(self) -> None:
         self.requests = []
 
-    async def map(self, shards):
-        nested = []
-        for shard in shards:
-            self.requests.append(shard)
-            out = []
-            for artifact in shard.artifacts:
-                # select_score raises KeyError here when score_key names a key
-                # the model never returns — the fail-fast under test.
-                out.append(
-                    RewardInferenceResult(
-                        artifact_id=artifact.artifact_id,
-                        scores=dict(_FAKE_SCORES),
-                        selected_score=shard.select_score(_FAKE_SCORES),
-                        reward_name=shard.reward_name,
-                        score_key=shard.score_key,
-                        policy_version=artifact.policy_version,
-                        reward_model_version="fake-test",
-                        latency_ms=1.0,
-                        worker_id="fake",
-                    ),
-                )
-            nested.append(out)
-        return nested
+    async def score_batch(self, request):
+        self.requests.append(request)
+        out = []
+        for artifact in request.artifacts:
+            # select_score raises KeyError here when score_key names a key
+            # the model never returns — the fail-fast under test.
+            out.append(
+                RewardInferenceResult(
+                    artifact_id=artifact.artifact_id,
+                    scores=dict(_FAKE_SCORES),
+                    selected_score=request.select_score(_FAKE_SCORES),
+                    reward_name=request.reward_name,
+                    score_key=request.score_key,
+                    policy_version=artifact.policy_version,
+                    reward_model_version="fake-test",
+                    latency_ms=1.0,
+                    worker_id="fake",
+                ),
+            )
+        return out
 
     async def shutdown(self) -> None:
         return None
@@ -65,7 +60,6 @@ def _rollout(output: torch.Tensor, *, policy_version: int = 7) -> RewardRollout:
 
 def _build_reward(tmp_path: Path, *, score_key: str = "physical_common_sense", **kwargs):
     return VideoScore2Reward(
-        execution="pool",
         reward_name="videoscore2",
         score_key=score_key,
         media_type="video",
@@ -73,7 +67,7 @@ def _build_reward(tmp_path: Path, *, score_key: str = "physical_common_sense", *
         artifact_format="tensor",
         artifact_dir=str(tmp_path / "artifacts"),
         debug_dir=str(tmp_path / "debug"),
-        actor_runtime=_FakeActorRuntime(),
+        runtime=_FakeRuntime(),
         **kwargs,
     )
 
@@ -85,7 +79,7 @@ async def test_materializes_artifacts_and_selects_score_key(tmp_path: Path) -> N
     scores = await reward.score_batch([_rollout(torch.ones(1, 2, 2, 2))])
 
     assert scores == pytest.approx([3.25])
-    request = reward.runtime._actor.requests[0]
+    request = reward.runtime.requests[0]
     assert request.reward_name == "videoscore2"
     assert request.score_key == "physical_common_sense"
     assert request.artifacts[0].policy_version == 7
@@ -113,15 +107,14 @@ async def test_missing_score_key_fails_fast(tmp_path: Path) -> None:
         await reward.score_batch([_rollout(torch.ones(1, 2, 2, 2))])
 
 
-def test_rejects_non_pool_execution(tmp_path: Path) -> None:
-    """VideoScore2 is GPU-pool only; inline execution is rejected."""
-    with pytest.raises(ValueError, match="execution must be 'pool'"):
+def test_rejects_removed_pool_execution(tmp_path: Path) -> None:
+    """The removed pool execution fails loud with the migration hint."""
+    with pytest.raises(ValueError, match="sleep_offload"):
         VideoScore2Reward(
-            execution="inline",
+            execution="pool",
             reward_name="videoscore2",
             score_key="physical_common_sense",
             artifact_dir=str(tmp_path),
-            actor_runtime=_FakeActorRuntime(),
         )
 
 

@@ -52,11 +52,10 @@ def test_normalize_scores_public_keys_and_mean() -> None:
     assert scores["overall"] == (4.0 + 2.0 + 3.0 + 5.0) / 4.0
 
 
-def test_registered_as_pool_reward() -> None:
-    """The reward must be registered and declare pool execution without instantiation."""
+def test_registered_reward() -> None:
+    """The reward must be registered under its config key."""
     from vrl.rewards.functions.registry import _register_builtins, get_reward
 
     _register_builtins()
     reward_cls = get_reward("cosmos3_reasoner")
-    # default_execution is read by the Ray pool sizing WITHOUT instantiating.
-    assert reward_cls.default_execution == "pool"
+    assert reward_cls is not None

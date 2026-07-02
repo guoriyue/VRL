@@ -15,44 +15,37 @@ from vrl.rewards.inference import RewardInferenceResult
 from vrl.rewards.types import RewardRollout, RewardTrajectory
 
 
-class _FakeActorRuntime:
-    num_workers = 1
-
+class _FakeRuntime:
     def __init__(self) -> None:
         self.requests = []
 
-    async def map(self, shards):
-        nested = []
-        for shard in shards:
-            self.requests.append(shard)
-            out = []
-            for artifact in shard.artifacts:
-                scores = {"overall_reward": 1.5, "detail": 0.5}
-                out.append(
-                    RewardInferenceResult(
-                        artifact_id=artifact.artifact_id,
-                        scores=scores,
-                        selected_score=shard.select_score(scores),
-                        reward_name=shard.reward_name,
-                        score_key=shard.score_key,
-                        policy_version=artifact.policy_version,
-                        reward_model_version="fake-test",
-                        latency_ms=1.0,
-                        worker_id="fake",
-                    ),
-                )
-            nested.append(out)
-        return nested
+    async def score_batch(self, request):
+        self.requests.append(request)
+        out = []
+        for artifact in request.artifacts:
+            scores = {"overall_reward": 1.5, "detail": 0.5}
+            out.append(
+                RewardInferenceResult(
+                    artifact_id=artifact.artifact_id,
+                    scores=scores,
+                    selected_score=request.select_score(scores),
+                    reward_name=request.reward_name,
+                    score_key=request.score_key,
+                    policy_version=artifact.policy_version,
+                    reward_model_version="fake-test",
+                    latency_ms=1.0,
+                    worker_id="fake",
+                ),
+            )
+        return out
 
     async def shutdown(self) -> None:
         return None
 
 
-class _EmptyActorRuntime:
-    num_workers = 1
-
-    async def map(self, shards):
-        return [[] for _ in shards]
+class _EmptyRuntime:
+    async def score_batch(self, request):
+        return []
 
     async def shutdown(self) -> None:
         return None
@@ -68,7 +61,6 @@ def _rollout(output: torch.Tensor, *, policy_version: int = 3) -> RewardRollout:
 
 def _video_reward_config(**video_kwargs: object):
     kwargs = {
-        "execution": "pool",
         "reward_name": "kling_video_reward",
         "score_key": "overall_reward",
         "worker_config": {
@@ -91,9 +83,8 @@ async def test_video_reward_materializes_artifacts_and_returns_runtime_scores(
     tmp_path: Path,
 ) -> None:
     """Checks video reward materializes artifacts and returns runtime scores."""
-    actor_runtime = _FakeActorRuntime()
+    runtime = _FakeRuntime()
     reward = KlingVideoReward(
-        execution="pool",
         reward_name="kling_video_reward",
         score_key="overall_reward",
         media_type="video",
@@ -102,14 +93,14 @@ async def test_video_reward_materializes_artifacts_and_returns_runtime_scores(
         artifact_format="tensor",
         artifact_dir=str(tmp_path / "artifacts"),
         debug_dir=str(tmp_path / "debug"),
-        actor_runtime=actor_runtime,
+        runtime=runtime,
     )
 
     scores = await reward.score_batch([_rollout(torch.ones(1, 2, 2, 2))])
 
     assert scores == pytest.approx([1.5])
-    assert len(actor_runtime.requests) == 1
-    request = actor_runtime.requests[0]
+    assert len(runtime.requests) == 1
+    request = runtime.requests[0]
     assert request.reward_name == "kling_video_reward"
     assert request.artifacts[0].policy_version == 3
     assert Path(request.artifacts[0].path).exists()
@@ -123,27 +114,25 @@ async def test_video_reward_materializes_artifacts_and_returns_runtime_scores(
 async def test_video_reward_rejects_missing_runtime_results(tmp_path: Path) -> None:
     """Checks video reward rejects missing runtime results."""
     reward = KlingVideoReward(
-        execution="pool",
         reward_name="kling_video_reward",
         score_key="overall_reward",
         artifact_format="tensor",  # codec-independent wiring test (no imageio dep)
         artifact_dir=str(tmp_path / "artifacts"),
-        actor_runtime=_EmptyActorRuntime(),
+        runtime=_EmptyRuntime(),
     )
 
     with pytest.raises(RuntimeError, match="result/artifact mismatch"):
         await reward.score_batch([_rollout(torch.ones(1, 2, 2, 2))])
 
 
-def test_video_reward_rejects_non_ray_runtime(tmp_path: Path) -> None:
-    """Checks video reward rejects non Ray runtime."""
-    with pytest.raises(ValueError, match="execution must be 'pool'"):
+def test_video_reward_rejects_removed_pool_execution(tmp_path: Path) -> None:
+    """Checks video reward fails loud on the removed pool execution."""
+    with pytest.raises(ValueError, match="sleep_offload"):
         KlingVideoReward(
-            execution="inline",
+            execution="pool",
             reward_name="kling_video_reward",
             score_key="overall_reward",
             artifact_dir=str(tmp_path),
-            actor_runtime=_FakeActorRuntime(),
         )
 
 

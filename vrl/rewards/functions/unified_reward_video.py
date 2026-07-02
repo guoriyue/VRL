@@ -20,10 +20,7 @@ _UNIFIED_REWARD_VIDEO_MODEL = "vrl.rewards.models.unified_reward_video:UnifiedRe
 
 
 class UnifiedRewardVideoReward(RewardFunction):
-    """UnifiedReward-2.0 video judge running in a Ray actor pool on a separate GPU."""
-
-    # Disk-artifact path: always scored by a Ray pool on its own GPU.
-    default_execution = "pool"
+    """UnifiedReward-2.0 video judge scored in-process from disk artifacts."""
 
     def __init__(self, **kwargs: Any) -> None:
         self._init_disk_artifact_reward(

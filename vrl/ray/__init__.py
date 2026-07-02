@@ -11,17 +11,14 @@ from vrl.ray.resources import (
     RolloutResourceConfig,
     format_distributed_resource_plan,
     resolve_distributed_resources,
-    reward_runtime_resource_kwargs,
     trainer_torch_device,
 )
-from vrl.ray.runtime import RayActorMethodRuntime
 
 __all__ = [
     "DistributedResourceConfig",
     "RayActorGroup",
     "RayActorHandle",
     "RayActorJob",
-    "RayActorMethodRuntime",
     "ResolvedDistributedResources",
     "RewardResourceConfig",
     "RoleResourceConfig",
@@ -32,7 +29,6 @@ __all__ = [
     "import_from_path",
     "require_ray",
     "resolve_distributed_resources",
-    "reward_runtime_resource_kwargs",
     "run_actor_jobs",
     "trainer_torch_device",
 ]

@@ -11,13 +11,12 @@
 # Setup + launch commands:
 #   docs/training_examples/online_nft_kling_video_reward_cross_node/README.md
 #
-# Accepted cost of the 2-GPU layout: the Kling reward is pool-only (it must own
-# a GPU slice on a Ray node, vrl/rewards/base.py), so with only 2 GPUs it has to
-# share node B's card with rollout. Sharing forces the rollout worker on_demand,
-# i.e. it RELOADS the cosmos 2B model every epoch (vrl/generation/ray/runtime.py
-# release -> kill_actors -> next generate() reloads). That is fine to validate
-# the cross-node mechanism; for a full 256-epoch training run give the reward its
-# own GPU (3-GPU topology) so rollout stays resident.
+# STALE SINCE THE RAY REWARD POOL REMOVAL: rewards now score in-process on the
+# DRIVER (node A), so "the Kling reward pool worker on node B" no longer exists.
+# As composed, the Kling model loads on node A's trainer card next to the
+# trainer model — memory-unverified. This recipe's reward placement needs a
+# redesign (or a revived remote transport) before the cross-node layout is run
+# again; the rollout-on-node-B half is unaffected.
 defaults:
   - /experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward
 

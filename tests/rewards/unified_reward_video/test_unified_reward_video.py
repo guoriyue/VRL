@@ -17,33 +17,26 @@ from vrl.rewards.types import RewardRollout, RewardTrajectory
 _FAKE_SCORES = {"alignment": 4.0, "physics": 2.0, "style": 3.0, "overall": 3.0}
 
 
-class _FakeActorRuntime:
-    num_workers = 1
-
+class _FakeRuntime:
     def __init__(self) -> None:
         self.requests = []
 
-    async def map(self, shards):
-        nested = []
-        for shard in shards:
-            self.requests.append(shard)
-            nested.append(
-                [
-                    RewardInferenceResult(
-                        artifact_id=artifact.artifact_id,
-                        scores=dict(_FAKE_SCORES),
-                        selected_score=shard.select_score(_FAKE_SCORES),
-                        reward_name=shard.reward_name,
-                        score_key=shard.score_key,
-                        policy_version=artifact.policy_version,
-                        reward_model_version="fake",
-                        latency_ms=1.0,
-                        worker_id="fake",
-                    )
-                    for artifact in shard.artifacts
-                ],
+    async def score_batch(self, request):
+        self.requests.append(request)
+        return [
+            RewardInferenceResult(
+                artifact_id=artifact.artifact_id,
+                scores=dict(_FAKE_SCORES),
+                selected_score=request.select_score(_FAKE_SCORES),
+                reward_name=request.reward_name,
+                score_key=request.score_key,
+                policy_version=artifact.policy_version,
+                reward_model_version="fake",
+                latency_ms=1.0,
+                worker_id="fake",
             )
-        return nested
+            for artifact in request.artifacts
+        ]
 
     async def shutdown(self) -> None:
         return None
@@ -88,22 +81,20 @@ def test_load_rubric_rejects_missing_prompt_slot(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_facade_selects_physics_and_fails_fast(tmp_path: Path) -> None:
     reward = UnifiedRewardVideoReward(
-        execution="pool",
         reward_name="unified_reward_video",
         score_key="physics",
         artifact_format="tensor",
         artifact_dir=str(tmp_path / "a"),
-        actor_runtime=_FakeActorRuntime(),
+        runtime=_FakeRuntime(),
     )
     assert await reward.score_batch([_rollout()]) == pytest.approx([2.0])
 
     bad = UnifiedRewardVideoReward(
-        execution="pool",
         reward_name="unified_reward_video",
         score_key="identity_consistency",
         artifact_format="tensor",
         artifact_dir=str(tmp_path / "b"),
-        actor_runtime=_FakeActorRuntime(),
+        runtime=_FakeRuntime(),
     )
     with pytest.raises(KeyError, match="missing score keys"):
         await bad.score_batch([_rollout()])

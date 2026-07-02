@@ -642,11 +642,12 @@ class DistributedSection(ConfigBase):
     # runtime knobs). chunk_placement_strategy / sync_trainable_state Literals reject
     # bad values here at parse time. Colocation lives in resources.rollout.gpu_pool.
     rollout: RolloutWorkerSection | None = None
-    # reader: vrl/ray/resources.py reward runtime block (release derived from topology)
+    # reader: vrl/ray/resources.py reward runtime block. Ray reward actor-pool
+    # knobs were removed; reward release is derived from topology and heavy
+    # in-process rewards use reward.kwargs.<name>.sleep_offload.
     reward: Annotated[
         Any,
-        ConfigBlock(("cpus_per_worker", "placement_strategy",
-                     "max_inflight_batches")),
+        ConfigBlock(("cpus_per_worker",)),
     ] = None
     # readers: vrl/trainers/distributed.py resolve_training_context (rank/device)
     # + vrl/ray/resources.py strategy-aware trainer GPU validation

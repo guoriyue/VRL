@@ -65,7 +65,7 @@ class RewardInferenceArtifact:
             return self.path
         raise ValueError(
             f"reward artifact {self.artifact_id!r} has no materialized path; "
-            "use execution='pool' or materialize the artifact first",
+            "materialize the artifact before calling a file-based reward model",
         )
 
 
@@ -197,28 +197,6 @@ class RewardInferenceRuntime(Protocol):
     async def shutdown(self) -> None: ...
 
 
-def shard_reward_request(
-    request: RewardInferenceRequest,
-    *,
-    num_shards: int,
-) -> list[RewardInferenceRequest]:
-    """Split a reward request into artifact-count-balanced shards."""
-
-    if num_shards < 1:
-        raise ValueError("num_shards must be >= 1")
-    if not request.artifacts:
-        return []
-
-    buckets = [[] for _ in range(min(num_shards, len(request.artifacts)))]
-    for index, artifact in enumerate(request.artifacts):
-        buckets[index % len(buckets)].append(artifact)
-    return [
-        request.with_artifacts(tuple(bucket), shard_index=shard_index)
-        for shard_index, bucket in enumerate(buckets)
-        if bucket
-    ]
-
-
 def validate_reward_results(
     request: RewardInferenceRequest,
     results: list[RewardInferenceResult],
@@ -323,6 +301,5 @@ __all__ = [
     "RewardInferenceResult",
     "RewardInferenceRuntime",
     "score_artifacts_with_model",
-    "shard_reward_request",
     "validate_reward_results",
 ]

@@ -11,17 +11,12 @@ distributed:
       num_gpus: 1
       gpus_per_worker: 1.0
       num_workers: 1
-  reward:
-    cpus_per_worker: 4.0
-    placement_strategy: STRICT_PACK
-    max_inflight_batches: 1
 
 reward:
   components:
     phymotion: 1.0
   kwargs:
     phymotion:
-      execution: pool
       reward_name: phymotion   # logical tag (request label)
       score_key: overall
       media_type: video

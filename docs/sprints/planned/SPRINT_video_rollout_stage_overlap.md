@@ -1,5 +1,16 @@
 # SPRINT: Video rollout staged pipeline —— async reward + stream 重叠（填非-DiT 空转）
 
+> **2026-07-01 架构更正（reward 执行层收敛到 inline + sleep/wake）：** d90ce04 的
+> resident-reward Ray parking 被 revert 后，本轮把整个 **Ray reward actor pool 删掉了**
+> （`vrl/rewards/ray/`、`vrl/ray/runtime.py` 的 `RayActorMethodRuntime`+`release_after_call`、
+> resources/factory 的 pool 计数与 kwargs 注入）。替代：所有 reward **进程内打分**
+> （`LocalRewardRuntime`），重型 reward 用 `reward.kwargs.<name>.sleep_offload=true` 借
+> rollout lease 的 sleep/wake 语义在打分间隙 park 到 CPU（kling 已开，实测 ~1.6s/score
+> steady vs 旧 pool 的 ~8s/步 actor 重载）。`release_rollout_before_reward`（rollout 先让卡）
+> 保留不变——inline 大 reward 依然依赖它。本 sprint 内提到的 "reward pool 放第二张卡"
+> 的多卡形态失去了传输层：cross_node 配方已在 header 标注 STALE；若将来要跨节点 reward，
+> 需要新的 remote 传输而不是复活 actor pool。
+
 状态：**planned → 机制基本落地,等待多卡吞吐验证（2026-06-27 二次复核,见 §7）**。性质：EXACT(无损)吞吐杠杆。**实测后主线变了:真正的 prize 是 reward stage(实测 14%,见下),不是生成侧那 9% 边界;而 reward 是 ≥2-GPU 杠杆(单卡显存装不下 rollout+reward 两模型,被 `release_rollout_before_reward` offload barrier 逼成串行)。** 二次复核（对照通过的测试 + 既有配置）发现：async-reward + per-stage-placement 这条线**绝大部分已经建好且已测**——placement/release 契约、`reward.gpu_pool` 语法、continuous producer 的 reward(N)∥generate(N+1) 重叠、late-group 版本丢弃**都已存在**。本轮又补上 cosmos continuous + `reward.gpu_pool=dedicated` 配方和 late-reward draining / non-draining 正确性测试。真正剩的是 ≥2/3-GPU 吞吐验证（唯一仍需第二/第三张卡）和单卡 worker/pool I/O overlap。详见 §7。
 
 > **2026-06-27 实测结论(kernel-union + NVTX,真 cosmos run,推翻本 sprint 原假设):**

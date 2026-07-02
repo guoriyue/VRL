@@ -15,7 +15,7 @@ class AestheticReward(RewardFunction):
         device: str = "cuda",
         dtype: str = "float32",
         model_name: str = "openai/clip-vit-large-patch14",
-        execution: Literal["inline", "pool"] = "inline",
+        execution: Literal["inline"] = "inline",
         **kwargs: Any,
     ) -> None:
         worker_config = {

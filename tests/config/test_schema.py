@@ -48,7 +48,7 @@ def _minimal_grpo_cfg(**overrides):
 
 def _kling_video_reward_kwargs(**overrides) -> dict:
     base = {
-        "execution": "pool",
+        "sleep_offload": True,
         "reward_name": "org/model@main",
         "score_key": "overall",
         "worker_config": {"model_path": "/tmp/model"},
@@ -279,6 +279,19 @@ def test_rollout_keys_are_registered_not_unknown() -> None:
     )
     unknown = find_unknown_keys(cfg)
     assert not [k for k in unknown if k.startswith("distributed.rollout")]
+
+
+@pytest.mark.parametrize("removed_key", ["placement_strategy", "max_inflight_batches"])
+def test_removed_reward_pool_runtime_keys_are_unknown(removed_key: str) -> None:
+    """Ray reward actor-pool knobs are no longer registered config keys."""
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg = _minimal_grpo_cfg(
+        distributed={"reward": {"cpus_per_worker": 2.0, removed_key: "legacy"}},
+    )
+    unknown = find_unknown_keys(cfg)
+    assert f"distributed.reward.{removed_key}" in unknown
+    assert "distributed.reward.cpus_per_worker" not in unknown
 
 
 def test_reward_resident_overlap_is_not_a_resource_key() -> None:
@@ -545,7 +558,7 @@ def test_production_video_reward_structural_rules() -> None:
                 "components": {"kling_video_reward": 1.0},
                 "kwargs": {
                     "kling_video_reward": {
-                        "execution": "pool",
+                        "sleep_offload": True,
                         "reward_name": "org/model@main",
                         "score_key": "overall",
                         "media_type": "video",
@@ -587,7 +600,7 @@ def test_production_video_reward_accepts_image_to_video_task_type() -> None:
                 "components": {"kling_video_reward": 1.0},
                 "kwargs": {
                     "kling_video_reward": {
-                        "execution": "pool",
+                        "sleep_offload": True,
                         "reward_name": "org/model@main",
                         "score_key": "overall",
                         "media_type": "video",
@@ -622,7 +635,7 @@ def test_production_video_reward_missing_reward_name_raises() -> None:
                 "components": {"kling_video_reward": 1.0},
                 "kwargs": {
                     "kling_video_reward": {
-                        "execution": "pool",
+                        "sleep_offload": True,
                         "reward_name": "",  # empty
                         "score_key": "overall",
                         "media_type": "video",
@@ -657,7 +670,7 @@ def test_production_video_reward_forbidden_worker_key_raises() -> None:
                 "components": {"kling_video_reward": 1.0},
                 "kwargs": {
                     "kling_video_reward": {
-                        "execution": "pool",
+                        "sleep_offload": True,
                         "reward_name": "org/model@main",
                         "score_key": "overall",
                         "media_type": "video",

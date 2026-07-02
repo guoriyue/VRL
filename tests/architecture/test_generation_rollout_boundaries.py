@@ -64,24 +64,19 @@ def test_shared_ray_substrate_stays_domain_neutral() -> None:
     assert not violations, _format_violations(violations)
 
 
-def test_reward_ray_adapter_stays_lean() -> None:
-    """Checks reward Ray adapter stays lean."""
-    ray_root = VRL_ROOT / "rewards" / "ray"
-    assert {"__init__.py", "model.py", "runtime.py", "worker.py"} <= _module_filenames(ray_root)
-    forbidden_text = (
-        "class RewardInferenceArtifact",
-        "class RewardInferenceRequest",
-        "class RewardInferenceResult",
-        "class VideoRewardArtifactStore",
-    )
-    model_specific = ("KlingTeam", "VideoVLMRewardInference", "huggingface_hub")
-    for path in _python_files(ray_root):
-        text = path.read_text(encoding="utf-8")
-        for snippet in forbidden_text:
-            assert snippet not in text
-        for snippet in model_specific:
-            assert snippet not in text, f"{path} leaks a specific model into generic ray/"
+def test_reward_scoring_is_in_process() -> None:
+    """Rewards score in-process; the removed Ray pool transport must stay gone.
+
+    The pool (actor pool + release_after_call kill/reload + resident parking)
+    was replaced by LocalRewardRuntime sleep/wake offload. Guard against it
+    creeping back as a directory, and keep the in-process runtime generic (no
+    model-specific code in the shared transport).
+    """
+    assert not (VRL_ROOT / "rewards" / "ray").exists()
     assert not (VRL_ROOT / "rewards" / "ray.py").exists()
+    runtime_text = (VRL_ROOT / "rewards" / "runtime.py").read_text(encoding="utf-8")
+    for snippet in ("KlingTeam", "VideoVLMRewardInference", "huggingface_hub"):
+        assert snippet not in runtime_text, "runtime.py leaks a specific model"
     assert not (VRL_ROOT / "rewards" / "inference").exists()
     assert not (VRL_ROOT / "rewards" / "video_inference").exists()
     assert not list((VRL_ROOT / "rewards").rglob("spec.py"))

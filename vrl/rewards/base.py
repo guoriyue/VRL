@@ -30,12 +30,6 @@ class RewardFunction:
     scoring path.
     """
 
-    # The reward's default execution runtime when the config omits ``execution``.
-    # Disk-artifact rewards override this to ``"pool"`` so GPU allocation counts
-    # them even when the YAML does not spell ``execution: pool`` (the counter in
-    # vrl.ray.resources reads this class attribute without instantiating).
-    default_execution: str = "inline"
-
     @staticmethod
     def build_inmemory_artifacts(
         rollouts: list[RewardRollout],
@@ -115,7 +109,7 @@ class RewardFunction:
         score_key: str,
         model_factory: str,
         worker_config: Mapping[str, Any],
-        execution: Literal["inline", "pool"],
+        execution: Literal["inline"],
         media_type: MediaType = "image",
     ) -> None:
         """Initialize a RewardFunction backed by a RewardModel factory."""
@@ -144,7 +138,7 @@ class RewardFunction:
         config_key: str,
         request_prefix: str,
         debug_basename: str,
-        execution: Literal["inline", "pool"] = "pool",
+        execution: Literal["inline"] = "inline",
         reward_name: str | None = None,
         score_key: str | None = None,
         media_type: MediaType = "video",
@@ -154,32 +148,36 @@ class RewardFunction:
         default_score_key: str = "",
         default_artifact_format: str = "tensor",
         debug_dir: str = "",
-        max_inflight_batches: int = 1,
-        scheduling: str = "sync",
-        actor_runtime: Any | None = None,
-        **kwargs: Any,
+        device: str | None = None,
+        sleep_offload: bool = False,
+        worker_config: Mapping[str, Any] | None = None,
+        runtime: Any | None = None,
     ) -> None:
-        """Initialize a reward whose media is materialized to disk, scored by a Ray pool.
+        """Initialize a reward whose media is materialized to disk before scoring.
 
         Sibling to :meth:`_init_reward_model`: same idea (configure ``self`` as a
         ``RewardFunction``), but the heavyweight path — media is written to disk
-        via ``VideoRewardArtifactStore`` and scored by a Ray actor pool on its own
-        GPU, instead of passed in-memory to a local model. ``model_factory`` /
-        ``config_key`` / ``request_prefix`` / ``debug_basename`` and the
-        ``default_*`` values are the only per-reward differences; everything else
-        is shared wiring, so no concrete reward copies this body.
+        via ``VideoRewardArtifactStore`` and scored in-process, instead of passed
+        in-memory. ``sleep_offload`` parks the model on CPU between scores (the
+        rollout/trainer own the GPU then), mirroring the rollout lease's
+        sleep/wake. ``model_factory`` / ``config_key`` / ``request_prefix`` /
+        ``debug_basename`` and the ``default_*`` values are the only per-reward
+        differences; everything else is shared wiring, so no concrete reward
+        copies this body. ``runtime`` injects a ready ``RewardInferenceRuntime``
+        (tests); it wins over the factory-built one.
         """
 
         from vrl.rewards.artifacts import VideoRewardArtifactStore
-        from vrl.rewards.ray.runtime import RayRewardRuntime
+        from vrl.rewards.runtime import LocalRewardRuntime
 
-        if str(scheduling) != "sync":
+        if str(execution) != "inline":
             raise ValueError(
-                f"reward.kwargs.{config_key}.scheduling currently supports only 'sync'",
+                f"reward.kwargs.{config_key}.execution={execution!r} is no longer "
+                "supported: the Ray reward pool was removed and rewards score "
+                "in-process. Drop the key (inline is the default); for a "
+                "heavyweight model on a shared GPU set "
+                f"reward.kwargs.{config_key}.sleep_offload=true instead.",
             )
-        self.execution = str(execution)
-        if self.execution != "pool":
-            raise ValueError(f"reward.kwargs.{config_key}.execution must be 'pool'")
 
         resolved_reward_name = str(
             reward_name if reward_name is not None else default_reward_name,
@@ -196,43 +194,43 @@ class RewardFunction:
             artifact_format=resolved_format,
         )
 
-        if actor_runtime is not None:
-            runtime: Any = RayRewardRuntime(actor_runtime=actor_runtime)
-        else:
-            runtime_cfg = {**dict(kwargs), "max_inflight_batches": max_inflight_batches}
-            worker_config = runtime_cfg.get("worker_config")
-            if isinstance(worker_config, dict):
-                worker_config = dict(worker_config)
-                has_model_factory = bool(
-                    str(worker_config.get("model_factory", "")).strip(),
-                )
-                # Normalize the model-id key ONCE here so the disk loaders
-                # (kling/videocon) read only worker_config["reward_model_name"].
-                # Precedence: an explicit worker_config.reward_model_name wins;
-                # otherwise fold worker_config.model_name (deprecated alias) or a
-                # top-level reward_name that looks like a HF repo (contains "/")
-                # — a bare reward_name stays a logical tag, not a model id.
-                reward_name_repo = (
-                    resolved_reward_name if "/" in resolved_reward_name else ""
-                )
-                reward_model_name = str(
-                    worker_config.get("reward_model_name")
-                    or worker_config.get("model_name")  # deprecated alias
-                    or reward_name_repo
-                    or "",
-                ).strip()
-                model_path = str(worker_config.get("model_path", "")).strip()
-                # YAML names the public model; workers need the private loader.
-                if not has_model_factory and (reward_model_name or model_path):
-                    if reward_model_name:
-                        worker_config["reward_model_name"] = reward_model_name
-                    worker_config["model_factory"] = model_factory
-                    if not str(worker_config.get("reward_model_version", "")).strip():
-                        worker_config["reward_model_version"] = (
-                            reward_model_name or model_path
-                        )
-                runtime_cfg["worker_config"] = worker_config
-            runtime = RayRewardRuntime(runtime_cfg)
+        if runtime is None:
+            worker_cfg = dict(worker_config or {})
+            has_model_factory = bool(
+                str(worker_cfg.get("model_factory", "")).strip(),
+            )
+            # Normalize the model-id key ONCE here so the disk loaders
+            # (kling/videocon) read only worker_config["reward_model_name"].
+            # Precedence: an explicit worker_config.reward_model_name wins;
+            # otherwise fold worker_config.model_name (deprecated alias) or a
+            # top-level reward_name that looks like a HF repo (contains "/")
+            # — a bare reward_name stays a logical tag, not a model id.
+            reward_name_repo = (
+                resolved_reward_name if "/" in resolved_reward_name else ""
+            )
+            reward_model_name = str(
+                worker_cfg.get("reward_model_name")
+                or worker_cfg.get("model_name")  # deprecated alias
+                or reward_name_repo
+                or "",
+            ).strip()
+            model_path = str(worker_cfg.get("model_path", "")).strip()
+            # YAML names the public model; the loader needs the private factory.
+            if not has_model_factory and (reward_model_name or model_path):
+                if reward_model_name:
+                    worker_cfg["reward_model_name"] = reward_model_name
+                worker_cfg["model_factory"] = model_factory
+                if not str(worker_cfg.get("reward_model_version", "")).strip():
+                    worker_cfg["reward_model_version"] = (
+                        reward_model_name or model_path
+                    )
+            # An explicit worker_config.device wins; otherwise the resolved
+            # reward device from the caller (MultiReward.from_dict / factory).
+            if device is not None and not str(worker_cfg.get("device", "")).strip():
+                worker_cfg["device"] = str(device)
+            if sleep_offload:
+                worker_cfg["sleep_offload"] = True
+            runtime = LocalRewardRuntime(worker_cfg)
 
         RewardFunction.__init__(
             self,
@@ -245,16 +243,6 @@ class RewardFunction:
             request_prefix=request_prefix,
             debug_basename=debug_basename,
         )
-
-    @property
-    def _actor_runtime(self) -> Any:
-        """The Ray actor pool backing this reward, or ``None`` for local runtimes.
-
-        Generic over any Ray-backed reward (the trainer's resource layer uses it
-        to release the reward GPUs after scoring); not specific to one reward type.
-        """
-
-        return getattr(self.runtime, "_actor", None)
 
     async def _score_with_inference_runtime(
         self,
@@ -287,7 +275,15 @@ class RewardFunction:
             },
         )
         inference_started = time.perf_counter()
-        results = await runtime.score_batch(request)
+        # Contract enforcement lives at this seam, not inside each runtime, so
+        # every RewardInferenceRuntime (including injected test fakes) gets the
+        # same result/artifact mismatch guard and request-order re-sort.
+        from vrl.rewards.inference import validate_reward_results
+
+        results = validate_reward_results(
+            request,
+            await runtime.score_batch(request),
+        )
         inference_total_ms = (time.perf_counter() - inference_started) * 1000.0
         total_latency_ms = (time.perf_counter() - total_started) * 1000.0
         self.last_results = list(results)

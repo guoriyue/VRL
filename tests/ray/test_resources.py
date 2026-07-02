@@ -11,7 +11,6 @@ from vrl.ray.resources import (
     resolve_distributed_resources,
     trainer_torch_device,
 )
-from vrl.rewards.functions.registry import active_pool_reward_keys
 
 
 def _cfg(
@@ -42,7 +41,7 @@ def _cfg(
     }
     if kling_video_reward:
         reward_components = {"kling_video_reward": 1.0}
-        reward_kwargs = {"kling_video_reward": {"execution": "pool"}}
+        reward_kwargs = {"kling_video_reward": {"sleep_offload": True}}
     if reward_components is not None:
         data["reward"] = {
             "components": reward_components,
@@ -51,52 +50,6 @@ def _cfg(
     return OmegaConf.create(
         data,
     )
-
-
-def test_active_pool_reward_keys_match_raw_and_built_reward_shapes() -> None:
-    """Checks pool reward detection is shared across resource and factory inputs."""
-
-    raw_reward = OmegaConf.create(
-        {
-            "components": {"pool_a": 1.0, "disabled_pool": 0.0, "local": 1.0},
-            "kwargs": {
-                "pool_a": {"execution": "pool"},
-                "disabled_pool": {"execution": "pool"},
-                "local": {"debug_dir": "debug"},
-            },
-        },
-    )
-    built_components = {"pool_a": 1.0, "disabled_pool": 0.0, "local": 1.0}
-    built_kwargs = {
-        "pool_a": {"execution": "pool"},
-        "disabled_pool": {"execution": "pool"},
-        "local": {"debug_dir": "debug"},
-    }
-
-    assert active_pool_reward_keys(raw_reward.components, raw_reward.kwargs) == ("pool_a",)
-    assert active_pool_reward_keys(built_components, built_kwargs) == ("pool_a",)
-
-
-def test_active_pool_reward_keys_derive_pool_from_disk_artifact_class() -> None:
-    """A disk-artifact reward is counted as pool even when the YAML omits execution,
-    so GPU allocation never misses it; an explicit execution is never overridden."""
-
-    # No execution kwarg -> derived from KlingVideoReward.default_execution == "pool".
-    assert active_pool_reward_keys({"kling_video_reward": 1.0}, {}) == (
-        "kling_video_reward",
-    )
-    # Explicit execution wins over the class default (UNSET-only derivation).
-    assert (
-        active_pool_reward_keys(
-            {"kling_video_reward": 1.0},
-            {"kling_video_reward": {"execution": "inline"}},
-        )
-        == ()
-    )
-    # An in-memory model reward defaults inline -> not a pool reward.
-    assert active_pool_reward_keys({"pickscore": 1.0}, {}) == ()
-
-
 def test_auto_split_uses_remaining_visible_gpus_for_rollout() -> None:
     """Checks auto split uses remaining visible gpus for rollout."""
     resolved = resolve_distributed_resources(
@@ -543,39 +496,6 @@ def test_reward_role_resolves_after_trainer_and_rollout_devices() -> None:
     assert not (set(resolved.reward_devices) & set(resolved.rollout_devices))
     assert resolved.requires_trainer_reservation is True
     assert resolved.lifecycle.handoff.release_rollout_before_reward is False
-
-
-def test_ray_video_reward_requires_reward_gpu_budget() -> None:
-    """Checks Ray video reward requires reward GPU budget."""
-    with pytest.raises(ValueError, match=r"distributed\.resources\.reward\.num_gpus > 0"):
-        resolve_distributed_resources(
-            _cfg(
-                {
-                    "visible_devices": [0, 1],
-                    "trainer": {"devices": [0]},
-                    "rollout": {"devices": [1], "gpus_per_worker": 1},
-                },
-                kling_video_reward=True,
-            ),
-        )
-
-
-def test_ray_reward_requires_reward_gpu_budget_for_any_component() -> None:
-    """Checks any active Ray reward requires reward GPU budget."""
-    with pytest.raises(ValueError, match=r"distributed\.resources\.reward\.num_gpus > 0"):
-        resolve_distributed_resources(
-            _cfg(
-                {
-                    "visible_devices": [0, 1],
-                    "trainer": {"devices": [0]},
-                    "rollout": {"devices": [1], "gpus_per_worker": 1},
-                },
-                reward_components={"custom_gpu_reward": 1.0},
-                reward_kwargs={"custom_gpu_reward": {"execution": "pool"}},
-            ),
-        )
-
-
 def test_reward_shared_pool_derives_release_lifecycle_when_unset() -> None:
     """Checks unset release flags derive to true for a shared reward pool."""
     resolved = resolve_distributed_resources(
@@ -617,29 +537,6 @@ def test_dedicated_reward_gpu_derives_resident_lifecycle_when_unset() -> None:
     assert resolved.lifecycle.rollout.mode == "resident"
     assert resolved.lifecycle.handoff.release_rollout_before_reward is False
     assert resolved.lifecycle.handoff.release_reward_after_score is False
-
-
-def test_multiple_ray_rewards_derive_release_after_score_on_dedicated_gpu() -> None:
-    """Checks sequential Ray reward models release a shared reward placement."""
-    resolved = resolve_distributed_resources(
-        _cfg(
-            {
-                "visible_devices": [0, 1, 2],
-                "trainer": {"devices": [0]},
-                "rollout": {"devices": [1], "gpus_per_worker": 1},
-                "reward": {"devices": [2], "gpus_per_worker": 1, "num_workers": 1},
-            },
-            reward_components={"first_gpu_reward": 1.0, "second_gpu_reward": 1.0},
-            reward_kwargs={
-                "first_gpu_reward": {"execution": "pool"},
-                "second_gpu_reward": {"execution": "pool"},
-            },
-        ),
-    )
-
-    assert not (set(resolved.reward_devices) & set(resolved.rollout_devices))
-    assert resolved.lifecycle.handoff.release_reward_after_score is True
-
 
 def test_lifecycle_plan_resident_when_roles_disjoint() -> None:
     """Fully disjoint trainer/rollout/reward GPUs -> every role resident, no handoff."""

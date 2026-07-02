@@ -12,8 +12,6 @@ from vrl.rewards.runtime import LocalRewardRuntime
 class MotionDynamicsReward(RewardFunction):
     """Local reward scoring generated-video motion magnitude via RAFT optical flow."""
 
-    default_execution = "inline"
-
     def __init__(
         self,
         device: str = "",

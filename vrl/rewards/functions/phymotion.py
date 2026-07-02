@@ -21,10 +21,7 @@ _PHYMOTION_MODEL = "vrl.rewards.models.phymotion:PhyMotionModel"
 
 
 class PhyMotionReward(RewardFunction):
-    """PhyMotion human-dynamics reward via an external scorer in a Ray actor pool."""
-
-    # Disk-artifact path: always scored by a Ray pool on its own GPU.
-    default_execution = "pool"
+    """PhyMotion human-dynamics reward via an external scorer, run in-process."""
 
     def __init__(self, **kwargs: Any) -> None:
         self._init_disk_artifact_reward(

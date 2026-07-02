@@ -70,9 +70,7 @@ class DistributedResourceConfig:
     # (rollout.gpu_pool == "trainer" and this is not None) -- it is not cached here,
     # since both inputs already live on this config.
     rollout_gpu_memory_fraction: float | None = None
-    reward_placement_strategy: str = "SPREAD"
     reward_cpus_per_worker: float = 0.5
-    reward_max_inflight_batches: int = 1
     cross_node: bool = False
 
 
@@ -137,9 +135,7 @@ class ResolvedDistributedResources:
     reward_num_workers: int
     reward_gpus_per_worker: float
     rollout_gpu_memory_fraction: float | None
-    reward_placement_strategy: str
     reward_cpus_per_worker: float
-    reward_max_inflight_batches: int
     requires_trainer_reservation: bool
     colocated: bool
     cross_node: bool
@@ -152,23 +148,12 @@ class ResolvedDistributedResources:
 _MISSING = object()
 
 
-def resolve_distributed_resources(
-    cfg: Any,
-    *,
-    pool_reward_count: int | None = None,
-) -> ResolvedDistributedResources:
+def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
     """Resolve role-level resource config into concrete CUDA ordinals.
 
     This is the single source of truth for trainer/rollout/reward GPU
     ownership. It intentionally does static ownership checks only; memory
     pressure is still a runtime concern.
-
-    ``pool_reward_count`` is the number of active rewards that run on a Ray actor
-    pool (and therefore need a reward GPU). Domain-aware callers compute it with
-    ``vrl.rewards.functions.registry.active_pool_reward_keys`` (which knows each
-    reward class's ``default_execution``) and pass it in, so this shared substrate
-    stays reward-domain-neutral. When omitted, it falls back to a neutral count of
-    rewards that explicitly spell ``execution: pool`` in the cfg.
     """
 
     config = _distributed_resource_config_from_cfg(cfg)
@@ -272,12 +257,6 @@ def resolve_distributed_resources(
         allow_overlap=config.allow_overlap,
     )
     reward_num_gpus = len(reward_devices)
-    ray_reward_count = pool_reward_count if pool_reward_count is not None else _count_ray_rewards(cfg)
-    if ray_reward_count > 0 and reward_gpus_per_worker > 0 and reward_num_gpus == 0:
-        raise ValueError(
-            "reward component with execution=pool requires "
-            "distributed.resources.reward.num_gpus > 0",
-        )
     reward_num_workers = _resolve_role_num_workers(
         role="reward",
         num_workers=config.reward.num_workers,
@@ -338,9 +317,10 @@ def resolve_distributed_resources(
     # plan and the flat compatibility fields on ResolvedDistributedResources.
     rollout_release_before_train = colocated and not persistent_colocated
     rollout_release_before_reward_model = reward_shared_with_rollout
-    reward_release_after_score = reward_shared_with_rollout or (
-        ray_reward_count > 1 and reward_gpus_per_worker > 0
-    )
+    # Rewards score in-process now (no Ray reward actors); a shared-GPU reward
+    # frees the card by sleep_offload parking inside LocalRewardRuntime. This
+    # flag still records the topology fact for the lifecycle plan / log line.
+    reward_release_after_score = reward_shared_with_rollout
     rollout_release_after_collect = (
         rollout_release_before_train or rollout_release_before_reward_model
     )
@@ -379,9 +359,7 @@ def resolve_distributed_resources(
         reward_num_workers=reward_num_workers,
         reward_gpus_per_worker=reward_gpus_per_worker,
         rollout_gpu_memory_fraction=gpu_memory_fraction,
-        reward_placement_strategy=config.reward_placement_strategy,
         reward_cpus_per_worker=config.reward_cpus_per_worker,
-        reward_max_inflight_batches=config.reward_max_inflight_batches,
         requires_trainer_reservation=requires_trainer_reservation,
         colocated=colocated,
         cross_node=config.cross_node,
@@ -535,14 +513,8 @@ def _distributed_resource_config_from_cfg(cfg: Any) -> DistributedResourceConfig
         # is derived from gpu_pool=trainer + memory_fraction in
         # resolve_distributed_resources, not cached here.
         rollout_gpu_memory_fraction=rollout_memory_fraction,
-        reward_placement_strategy=str(
-            cfg_get(reward_runtime, "placement_strategy", "SPREAD"),
-        ),
         reward_cpus_per_worker=float(
             cfg_get(reward_runtime, "cpus_per_worker", 0.5),
-        ),
-        reward_max_inflight_batches=int(
-            cfg_get(reward_runtime, "max_inflight_batches", 1),
         ),
         cross_node=bool(cfg_get(resources, "cross_node", False)),
     )
@@ -1013,24 +985,6 @@ def _resolve_role_num_workers(
     return workers
 
 
-def reward_runtime_resource_kwargs(
-    resolved: ResolvedDistributedResources,
-) -> dict[str, Any]:
-    """Return flat reward Ray runtime kwargs derived from the shared plan."""
-
-    return {
-        "num_workers": resolved.reward_num_workers,
-        "gpus_per_worker": resolved.reward_gpus_per_worker,
-        "cpus_per_worker": resolved.reward_cpus_per_worker,
-        "max_inflight_batches": resolved.reward_max_inflight_batches,
-        # Sourced from the lifecycle plan: an on_demand reward lease drops its
-        # actors after each score so a shared placement can be reused.
-        "release_after_score": resolved.lifecycle.reward.mode == "on_demand",
-        "placement_strategy": resolved.reward_placement_strategy,
-        "expected_gpu_ids": tuple(resolved.reward_devices),
-    }
-
-
 @dataclass(frozen=True, slots=True)
 class BundleLayout:
     """Run-level mapping of execution roles to placement-group bundle indices.
@@ -1245,6 +1199,14 @@ def _reject_removed_distributed_keys(rollout_runtime: Any, reward_runtime: Any) 
             "derived from the GPU topology (shared / multi-reward pool -> release, "
             "dedicated reward GPU -> resident). Remove the key.",
         )
+    for stale_pool_key in ("placement_strategy", "max_inflight_batches"):
+        if cfg_get(reward_runtime, stale_pool_key, _MISSING) is not _MISSING:
+            raise ValueError(
+                f"distributed.reward.{stale_pool_key} was removed with the Ray reward "
+                "actor pool: rewards score in-process now. Remove the key; a "
+                "heavyweight reward on a shared GPU sets "
+                "reward.kwargs.<name>.sleep_offload=true instead.",
+            )
 
 
 def _parse_devices(value: Any) -> list[int] | str:
@@ -1301,35 +1263,6 @@ def _parse_num_workers(
         minimum = 0 if allow_zero else 1
         raise ValueError(f"distributed.resources.{role}.num_workers must be >= {minimum}")
     return parsed
-
-
-def _count_ray_rewards(cfg: Any) -> int:
-    """Domain-neutral count of rewards that spell ``execution: pool`` in the cfg.
-
-    Fallback for the ``pool_reward_count is None`` path. It counts only rewards whose
-    YAML explicitly sets ``execution: pool``; the class-default derivation (a
-    disk-artifact reward that omits ``execution``) lives in the reward domain as
-    ``vrl.rewards.functions.registry.active_pool_reward_keys`` so this shared substrate
-    never imports rewards. Orchestration entry points that have the registry available
-    pass the resolved count into ``resolve_distributed_resources`` for an exact count.
-    """
-
-    reward = cfg_get(cfg, "reward", {})
-    components = cfg_get(reward, "components", {})
-    kwargs = cfg_get(reward, "kwargs", {})
-    count = 0
-    for reward_key in components or {}:
-        name = str(reward_key)
-        try:
-            weight = float(cfg_get(components, name, 0.0))
-        except (TypeError, ValueError):
-            weight = 0.0
-        if weight <= 0:
-            continue
-        component_kwargs = cfg_get(kwargs, name, {})
-        if str(cfg_get(component_kwargs, "execution", None)) == "pool":
-            count += 1
-    return count
 
 
 def _dedupe_ints(values: list[int], *, field_name: str) -> list[int]:
@@ -1400,6 +1333,5 @@ __all__ = [
     "build_bundle_layout",
     "format_distributed_resource_plan",
     "resolve_distributed_resources",
-    "reward_runtime_resource_kwargs",
     "trainer_torch_device",
 ]

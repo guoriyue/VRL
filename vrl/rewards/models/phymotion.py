@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
-from vrl.rewards.ray.model import RewardModel
+from vrl.rewards.models.base import RewardModel
 from vrl.utils.logging import init_logger, kv
 
 logger = init_logger(__name__)

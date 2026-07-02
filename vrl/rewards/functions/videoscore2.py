@@ -21,10 +21,7 @@ _VIDEOSCORE2_MODEL = "vrl.rewards.models.videoscore2:VideoScore2Model"
 
 
 class VideoScore2Reward(RewardFunction):
-    """Reward whose VideoScore2 actor runs in a Ray pool on a separate GPU."""
-
-    # Disk-artifact path: always scored by a Ray pool on its own GPU.
-    default_execution = "pool"
+    """VideoScore2 reward scored in-process from disk artifacts."""
 
     def __init__(self, **kwargs: Any) -> None:
         self._init_disk_artifact_reward(

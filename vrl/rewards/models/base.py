@@ -1,20 +1,38 @@
-"""Shared base for in-process torch reward models.
+"""Reward model contract and shared base for in-process torch reward models.
 
-``TorchRewardModel`` implements the ``RewardModel`` protocol
-(``__call__(artifact, request) -> Mapping[str, float]``) and absorbs the
-device/dtype/lazy-load boilerplate that every torch-nn reward used to hand-roll.
-Subclasses implement ``_load`` (build the model once) and ``score_media``
-(score one media payload + prompt). Media is pulled via ``artifact.as_media()``,
-so the same model runs under the local transport (in-memory tensor) or the Ray
-transport (tensor loaded from the materialized ``.pt`` path).
+``RewardModel`` is the scoring contract: given one already-materialized
+artifact plus the request, return named scores. ``TorchRewardModel``
+implements it and absorbs the device/dtype/lazy-load boilerplate that every
+torch-nn reward used to hand-roll. Subclasses implement ``_load`` (build the
+model once) and ``score_media`` (score one media payload + prompt). Media is
+pulled via ``artifact.as_media()``, so the same model scores an in-memory
+tensor or a materialized disk artifact (``.pt`` / ``.mp4`` path).
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Protocol
 
 from vrl.models.dtypes import resolve_torch_dtype
+
+from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
+
+
+class RewardModel(Protocol):
+    """A reward model the runtime loads and runs.
+
+    The runtime is model-agnostic: any model that implements this protocol and
+    is named by ``worker_config.model_factory`` can be loaded. Concrete models
+    live under ``vrl.rewards.models``.
+    """
+
+    def __call__(
+        self,
+        *,
+        artifact: RewardInferenceArtifact,
+        request: RewardInferenceRequest,
+    ) -> Mapping[str, float]: ...
 
 
 class TorchRewardModel:
@@ -55,4 +73,4 @@ class TorchRewardModel:
         )
 
 
-__all__ = ["TorchRewardModel"]
+__all__ = ["RewardModel", "TorchRewardModel"]

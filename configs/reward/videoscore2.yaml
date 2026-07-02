@@ -9,17 +9,12 @@ distributed:
       num_gpus: 1
       gpus_per_worker: 1.0
       num_workers: 1
-  reward:
-    cpus_per_worker: 4.0
-    placement_strategy: STRICT_PACK
-    max_inflight_batches: 1
 
 reward:
   components:
     videoscore2: 1.0
   kwargs:
     videoscore2:
-      execution: pool
       reward_name: videoscore2   # logical tag (request label)
       score_key: physical_common_sense
       media_type: video

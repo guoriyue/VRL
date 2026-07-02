@@ -16,7 +16,7 @@ class PickScoreReward(RewardFunction):
         dtype: str = "float32",
         processor_name: str = "laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
         model_name: str = "yuvalkirstain/PickScore_v1",
-        execution: Literal["inline", "pool"] = "inline",
+        execution: Literal["inline"] = "inline",
         **kwargs: Any,
     ) -> None:
         worker_config = {

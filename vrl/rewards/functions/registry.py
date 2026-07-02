@@ -60,41 +60,6 @@ def _register_builtins() -> None:
     })
 
 
-def active_pool_reward_keys(reward_components: Any, reward_kwargs: Any) -> tuple[str, ...]:
-    """Return active reward component keys backed by a Ray actor pool.
-
-    ``execution`` is the per-reward runtime selector. When a reward omits it, the
-    pool-ness falls back to the reward class's ``default_execution`` (disk-artifact
-    rewards default to ``pool``), read off the registry without instantiating, so GPU
-    allocation counts the reward even when the YAML does not spell ``execution: pool``.
-    This lives in the reward domain (next to the registry that owns ``default_execution``)
-    so the shared Ray substrate can stay domain-neutral — it receives the pool count as
-    data instead of importing rewards.
-    """
-
-    keys: list[str] = []
-    for reward_key in reward_components or {}:
-        name = str(reward_key)
-        try:
-            reward_weight = float(cfg_get(reward_components, name, 0.0))
-        except (TypeError, ValueError):
-            reward_weight = 0.0
-        if reward_weight <= 0:
-            continue
-        component_kwargs = cfg_get(reward_kwargs, name, {})
-        execution = cfg_get(component_kwargs, "execution", None)
-        if execution is None:
-            # Unknown names / import hiccups fall back to inline — the safe, no-reward-GPU default.
-            try:
-                _register_builtins()
-                execution = getattr(get_reward(name), "default_execution", "inline")
-            except Exception:
-                execution = "inline"
-        if str(execution) == "pool":
-            keys.append(name)
-    return tuple(keys)
-
-
 class MultiReward(RewardFunction):
     """Weighted combination of named reward functions.
 

@@ -5,17 +5,17 @@ distributed:
       num_gpus: 1
       gpus_per_worker: 1.0
       num_workers: 1
-  reward:
-    cpus_per_worker: 4.0
-    placement_strategy: STRICT_PACK
-    max_inflight_batches: 1
 
 reward:
   components:
     kling_video_reward: 1.0
   kwargs:
     kling_video_reward:
-      execution: pool
+      # Park the 7B reward model on CPU between scores (in-process sleep/wake,
+      # same semantics as the rollout lease): on a shared/single GPU the card
+      # belongs to rollout+trainer outside scoring. Measured clean: ~1.6s/score
+      # steady-state vs ~8s per-step actor reload the old Ray pool paid.
+      sleep_offload: true
       reward_name: kling_video_reward   # logical tag (request label)
       score_key: overall_reward
       media_type: video

@@ -21,7 +21,7 @@ from transformers import Qwen2VLForConditionalGeneration
 
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
 from vrl.rewards.models.hub import parse_hf_repo_revision
-from vrl.rewards.ray.model import RewardModel
+from vrl.rewards.models.base import RewardModel
 from vrl.utils.logging import init_logger, kv
 
 logger = init_logger(__name__)
@@ -261,6 +261,17 @@ class KlingVideoRewardModel(RewardModel):
         self.data_config = data_config
         self.inference_config = inference_config
         logger.info("loaded Kling VideoReward model %s", kv(device=self.device))
+
+    def to(self, device: str) -> None:
+        """Move the reward model between GPU and CPU (runtime sleep_offload).
+
+        Lets ``LocalRewardRuntime`` park the model on CPU between scores (freeing
+        the GPU for rollout/training) and move it back for scoring. Inputs are
+        placed on ``self.device`` in ``_prepare_batch``, so updating it here
+        keeps forward consistent.
+        """
+        self.model = self.model.to(device)
+        self.device = device
 
     def __call__(
         self,

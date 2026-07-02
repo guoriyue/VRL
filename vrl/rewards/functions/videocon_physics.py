@@ -21,10 +21,7 @@ _VIDEOCON_PHYSICS_MODEL = "vrl.rewards.models.videocon_physics:VideoConPhysicsMo
 
 
 class VideoConPhysicsReward(RewardFunction):
-    """Reward whose VideoCon-Physics actor runs in a Ray pool on a separate GPU."""
-
-    # Disk-artifact path: always scored by a Ray pool on its own GPU.
-    default_execution = "pool"
+    """VideoCon-Physics reward scored in-process from disk artifacts."""
 
     def __init__(self, **kwargs: Any) -> None:
         self._init_disk_artifact_reward(

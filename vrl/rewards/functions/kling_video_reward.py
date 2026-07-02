@@ -19,10 +19,7 @@ _KLING_VIDEO_REWARD_MODEL = "vrl.rewards.models.kling_video_reward:KlingVideoRew
 
 
 class KlingVideoReward(RewardFunction):
-    """Kling VideoReward whose model runs in a Ray actor pool on a separate GPU."""
-
-    # Disk-artifact path: always scored by a Ray pool on its own GPU.
-    default_execution = "pool"
+    """Kling VideoReward scored in-process from disk artifacts."""
 
     def __init__(self, **kwargs: Any) -> None:
         self._init_disk_artifact_reward(
