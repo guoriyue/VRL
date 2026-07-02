@@ -223,7 +223,109 @@ def build_diffusion_replay_runtime_bundle(
     )
 
 
+# -- registry-descriptor path (families with NO builder functions) -----------
+# A family whose build is pure data records a ``DiffusionFamilyBuild`` on its
+# registry entry and points ``runtime_builder`` / ``runtime_spec_extractor``
+# at the two generic functions below. The extractor stamps the canonical
+# family onto the spec (it rides the Ray launch payload), and the builder
+# looks the recipe back up worker-side. Registry imports stay local: the
+# registry module imports family runtimes, so a top-level import here would
+# cycle.
+
+
+def _family_build_entry(family: str | None):
+    from vrl.rollouts.families.registry import get_rollout_family_entry
+
+    if not family:
+        raise ValueError(
+            "the generic family builder requires spec.family; build the spec "
+            "through vrl.models.diffusion.build:extract_family_runtime_spec",
+        )
+    entry = get_rollout_family_entry(family)
+    if entry.build is None:
+        raise ValueError(
+            f"rollout family {entry.family!r} has no DiffusionFamilyBuild "
+            "descriptor; it builds through its own runtime.py functions",
+        )
+    return entry
+
+
+def extract_family_runtime_spec(cfg, device, weight_dtype) -> RuntimeBuildSpec:
+    """Generic extractor: resolve the family from ``cfg.model.family``."""
+
+    from vrl.models.runtime_config import extract_runtime_spec
+
+    entry = _family_build_entry(str(cfg.model.family))
+    return extract_runtime_spec(
+        cfg,
+        device,
+        weight_dtype,
+        task_variant=entry.build.task_variant,
+        family=entry.family,
+    )
+
+
+def build_family_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
+    """Generic rollout builder driven by the family's registry descriptor."""
+
+    from vrl.utils.config import import_from_path
+
+    entry = _family_build_entry(spec.family)
+    recipe = entry.build
+    logger.info("Building %s runtime bundle (registry descriptor)", entry.family)
+    return build_diffusion_runtime_bundle(
+        spec,
+        model_cls=import_from_path(recipe.model_cls),
+        capability=entry.capability,
+        memory_owner=recipe.memory_owner,
+        runtime_caps=None if recipe.runtime_caps is None else dict(recipe.runtime_caps),
+    )
+
+
+def build_family_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
+    """Generic replay builder driven by the family's registry descriptor."""
+
+    from vrl.utils.config import import_from_path
+
+    entry = _family_build_entry(spec.family)
+    recipe = entry.build
+    logger.info(
+        "Building %s replay runtime bundle (registry descriptor) from %s",
+        entry.family,
+        spec.model_name_or_path,
+    )
+    return build_diffusion_replay_runtime_bundle(
+        spec,
+        replay_cls=import_from_path(recipe.replay_cls),
+        transformer_classname=recipe.transformer_classname,
+        scheduler_classname=recipe.scheduler_classname,
+        capability=entry.capability,
+        runtime_caps=None if recipe.runtime_caps is None else dict(recipe.runtime_caps),
+    )
+
+
+def build_family_runtime_bundle_from_cfg(cfg, device, weight_dtype) -> RuntimeBundle:
+    """Whole-cfg convenience for the trainer path: cfg -> spec -> bundle."""
+
+    return build_family_runtime_bundle(
+        extract_family_runtime_spec(cfg, device, weight_dtype),
+    )
+
+
+def build_family_replay_runtime_bundle_from_cfg(cfg, device, weight_dtype) -> RuntimeBundle:
+    """Whole-cfg convenience for the trainer path: cfg -> spec -> replay bundle."""
+
+    return build_family_replay_runtime_bundle(
+        extract_family_runtime_spec(cfg, device, weight_dtype),
+    )
+
+
 __all__ = [
     "build_diffusion_replay_runtime_bundle",
     "build_diffusion_runtime_bundle",
+    "build_family_replay_runtime_bundle",
+    "build_family_replay_runtime_bundle_from_cfg",
+    "build_family_runtime_bundle",
+    "build_family_runtime_bundle_from_cfg",
+    "extract_family_runtime_spec",
 ]

@@ -45,7 +45,7 @@ rollout:
     window_range: [0, 4]
 
 trainer:
-  entrypoint: vrl.scripts.diffusion.qwen_image.train:train_qwen_image_grpo
+  entrypoint: vrl.scripts.diffusion.train:train_diffusion_grpo
   output_dir: outputs/qwen_image_ocr_grpo_smoke_single_gpu
   total_epochs: 1
   save_freq: 9999

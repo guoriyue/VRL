@@ -287,10 +287,11 @@ def test_family_loaders_do_not_apply_memory_policy() -> None:
 def test_runtime_builders_apply_generation_memory_policy() -> None:
     """Every full-generation runtime builder routes through the shared policy.
 
-    Routing is satisfied either by calling ``apply_generation_memory_policy``
-    directly, or by delegating to the shared ``build_diffusion_runtime_bundle``
-    (which applies it). The shared builder is the single home of the call and is
-    pinned separately below, so a migrated family delegating to it still routes.
+    Routing is satisfied by calling ``apply_generation_memory_policy``
+    directly, by delegating to the shared ``build_diffusion_runtime_bundle``
+    (which applies it), or by shipping no builder functions at all (a
+    registry-descriptor family — the generic builder routes for it). The
+    shared builder is the single home of the call and is pinned separately.
     """
 
     from pathlib import Path
@@ -305,7 +306,8 @@ def test_runtime_builders_apply_generation_memory_policy() -> None:
     missing = [
         str(path)
         for path in runtimes
-        if "apply_generation_memory_policy" not in (source := path.read_text())
+        if "_runtime_bundle(" in (source := path.read_text())  # defines builders
+        and "apply_generation_memory_policy" not in source
         and "build_diffusion_runtime_bundle" not in source
     ]
     assert not missing, f"runtime builders missing the shared policy call: {missing}"

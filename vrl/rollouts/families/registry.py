@@ -60,6 +60,30 @@ class GathererMetadata:
 
 
 @dataclass(frozen=True, slots=True)
+class DiffusionFamilyBuild:
+    """Declarative build recipe for a descriptor-driven diffusion family.
+
+    A family whose runtime construction is pure data — no per-call code such
+    as variant resolution (wan), artifact resolution (anima), or adapter hooks
+    (flux NFT) — records its build inputs here and points ``runtime_builder``
+    / ``runtime_spec_extractor`` at the generic functions in
+    ``vrl.models.diffusion.build``. Such a family ships NO builder functions:
+    its ``runtime.py`` holds only the capability constant and the chunk
+    executor. Families with per-call code keep their own thin stubs instead.
+    """
+
+    model_cls: str
+    replay_cls: str
+    transformer_classname: str
+    task_variant: str
+    memory_owner: str
+    scheduler_classname: str | None = None
+    # Verbatim runtime_caps override for both bundles; None keeps the generic
+    # default ({family_capability, supports_reference_conditioning}).
+    runtime_caps: Mapping[str, Any] | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class RolloutFamilyEntry:
     """Declarative binding for one canonical rollout family."""
 
@@ -75,6 +99,7 @@ class RolloutFamilyEntry:
         default_factory=ExecutorKwargsMetadata,
     )
     aliases: tuple[str, ...] = ()
+    build: DiffusionFamilyBuild | None = None
 
 
 FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {}
@@ -100,6 +125,7 @@ def _diffusion_entry(
     request_prefix: str,
     default_task_type: str,
     supports_reference_conditioning: bool = False,
+    build: DiffusionFamilyBuild | None = None,
 ) -> RolloutFamilyEntry:
     return RolloutFamilyEntry(
         family=family,
@@ -114,6 +140,7 @@ def _diffusion_entry(
         executor_cls=executor_cls,
         runtime_builder=runtime_builder,
         runtime_spec_extractor=runtime_spec_extractor,
+        build=build,
         gatherer=GathererMetadata(
             import_path="vrl.generation.diffusion.gather:DiffusionChunkGatherer",
         ),
@@ -161,14 +188,20 @@ register_rollout_family(
         task="t2i",
         aliases=("qwen-image",),
         executor_cls="vrl.models.diffusion.qwen_image.runtime:QwenImageChunkExecutor",
-        runtime_builder=(
-            "vrl.models.diffusion.qwen_image.runtime:build_qwen_image_runtime_bundle"
-        ),
-        runtime_spec_extractor=(
-            "vrl.models.diffusion.qwen_image.runtime:extract_qwen_image_runtime_spec"
-        ),
+        # Descriptor-driven family: the generic functions in
+        # vrl.models.diffusion.build read the recipe below, so qwen_image ships
+        # no per-family builder/extractor functions.
+        runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
+        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
         request_prefix="qwen_image",
         default_task_type="text_to_image",
+        build=DiffusionFamilyBuild(
+            model_cls="vrl.models.diffusion.qwen_image.model:QwenImageModel",
+            replay_cls="vrl.models.diffusion.qwen_image.model:QwenImageReplayModel",
+            transformer_classname="QwenImageTransformer2DModel",
+            task_variant="t2i",
+            memory_owner="Qwen-Image VAE",
+        ),
     ),
 )
 

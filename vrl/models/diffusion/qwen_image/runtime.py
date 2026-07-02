@@ -1,7 +1,8 @@
 """Qwen-Image family runtime.
 
-Backend imports live inside the model's ``from_spec`` so the shared runtime does
-not import diffusers eagerly. Mirrors the sd3_5 runtime four-builder shape.
+Registry-descriptor family: no builder functions live here — the generic
+functions in ``vrl.models.diffusion.build`` construct the bundles from the
+``DiffusionFamilyBuild`` recipe on the qwen_image registry entry.
 """
 
 from __future__ import annotations
@@ -11,81 +12,14 @@ from typing import Any
 from vrl.generation.diffusion import (
     DiffusionChunkExecutorBase,
 )
-from vrl.models.diffusion.build import (
-    build_diffusion_replay_runtime_bundle,
-    build_diffusion_runtime_bundle,
-)
 from vrl.models.diffusion.capabilities import diffusion_family_capability
-from vrl.models.interfaces.runtime import (
-    RuntimeBuildSpec,
-    RuntimeBundle,
-)
-from vrl.models.runtime_config import (
-    extract_runtime_spec,
-)
-from vrl.utils.logging import init_logger
 
-logger = init_logger(__name__)
 QWEN_IMAGE_FAMILY_CAPABILITY = diffusion_family_capability("qwen_image", "t2i")
 
-
-def extract_qwen_image_runtime_spec(
-    cfg: Any, device: Any, weight_dtype: Any,
-) -> RuntimeBuildSpec:
-    """Slice the runtime-relevant subset out of a whole RL cfg."""
-    return extract_runtime_spec(
-        cfg,
-        device,
-        weight_dtype,
-        task_variant="t2i",
-    )
-
-
-def build_qwen_image_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    """Thin family stub over the shared diffusion runtime builder."""
-    from vrl.models.diffusion.qwen_image.model import QwenImageModel
-
-    logger.info("Building qwen_image runtime bundle")
-    return build_diffusion_runtime_bundle(
-        spec,
-        model_cls=QwenImageModel,
-        capability=QWEN_IMAGE_FAMILY_CAPABILITY,
-        memory_owner="Qwen-Image VAE",
-    )
-
-
-def build_qwen_image_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    """Thin family stub over the shared diffusion replay builder."""
-    from vrl.models.diffusion.qwen_image.model import QwenImageReplayModel
-
-    logger.info(
-        "Building qwen_image replay runtime bundle from %s",
-        spec.model_name_or_path,
-    )
-    return build_diffusion_replay_runtime_bundle(
-        spec,
-        replay_cls=QwenImageReplayModel,
-        transformer_classname="QwenImageTransformer2DModel",
-        capability=QWEN_IMAGE_FAMILY_CAPABILITY,
-    )
-
-
-def build_qwen_image_runtime_bundle_from_cfg(
-    cfg: Any, device: Any, weight_dtype: Any,
-) -> RuntimeBundle:
-    """Outer convenience: whole-cfg → spec → bundle."""
-    spec = extract_qwen_image_runtime_spec(cfg, device, weight_dtype)
-    return build_qwen_image_runtime_bundle(spec)
-
-
-def build_qwen_image_replay_runtime_bundle_from_cfg(
-    cfg: Any,
-    device: Any,
-    weight_dtype: Any,
-) -> RuntimeBundle:
-    """Outer convenience: whole-cfg → spec → replay bundle."""
-    spec = extract_qwen_image_runtime_spec(cfg, device, weight_dtype)
-    return build_qwen_image_replay_runtime_bundle(spec)
+# Registry-descriptor family: build/extract/replay all come from the generic
+# functions in ``vrl.models.diffusion.build``, driven by the
+# ``DiffusionFamilyBuild`` recipe on this family's registry entry — this module
+# ships only the capability constant and the chunk executor.
 
 
 class QwenImageChunkExecutor(DiffusionChunkExecutorBase):
@@ -113,10 +47,6 @@ class QwenImageChunkExecutor(DiffusionChunkExecutorBase):
 
 
 __all__ = [
+    "QWEN_IMAGE_FAMILY_CAPABILITY",
     "QwenImageChunkExecutor",
-    "build_qwen_image_replay_runtime_bundle",
-    "build_qwen_image_replay_runtime_bundle_from_cfg",
-    "build_qwen_image_runtime_bundle",
-    "build_qwen_image_runtime_bundle_from_cfg",
-    "extract_qwen_image_runtime_spec",
 ]

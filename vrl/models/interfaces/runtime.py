@@ -49,6 +49,11 @@ class RuntimeBuildSpec:
     model_name_or_path: str
     device: Any
     dtype: Any
+    # Canonical rollout family name, set by the registry-descriptor extractor
+    # (vrl.models.diffusion.build:extract_family_runtime_spec) so the generic
+    # builders can look the family's build recipe up worker-side. None on the
+    # legacy per-family builder path, which binds its model class in code.
+    family: str | None = None
     # Diffusion t2v/i2v axis only. AR families must NOT reuse this field; they
     # carry their trajectory variant in ``ar_task`` so a single field never holds
     # two disjoint enums (t2v/i2v vs ar_t2i/ar_t2i_r1).

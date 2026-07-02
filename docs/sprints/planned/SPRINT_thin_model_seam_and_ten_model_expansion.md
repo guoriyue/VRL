@@ -209,6 +209,25 @@ def build_sd3_5_replay_runtime_bundle_from_cfg(cfg, device, wd): ...  # 2 行包
 > 非 diffusers 工厂/核心分支替换），不是参数差异，折叠必然把共享 builder 变成 hook 拼盘。
 > 验证：`tests/models + tests/rollouts + tests/generation/ar + config` **356 passed**。
 > ⏭️ echo 的 GPU 验证事项（开 compile/fp8 前）：80GB 卡真 rollout + `debug.first_step` logprob parity。
+
+> **薄化第五轮（2026-07-01）——§2.1+§2.4 落地：registry 描述符彻底消灭 wrapper（qwen_image pilot）**：
+> - ✅ 机制：`RolloutFamilyEntry` 新增 `build: DiffusionFamilyBuild`（model_cls/replay_cls/
+>   transformer_classname/task_variant/memory_owner/scheduler_classname/runtime_caps，纯字符串数据）；
+>   `vrl/models/diffusion/build.py` 新增 4 个 generic 函数（`extract_family_runtime_spec` 从
+>   `cfg.model.family` 解析家族并盖到 spec 上；`build_family_runtime_bundle`/`_replay_` 用 `spec.family`
+>   查描述符；2 个 from_cfg）；`RuntimeBuildSpec` 新增 `family` 字段（随 Ray payload 走，worker/launcher
+>   **零改动**——contract 本就带 family，payload 归一化是白名单外透传）；新增通用 train entrypoint
+>   `vrl/scripts/diffusion/train.py:train_diffusion_grpo`（sd3_5/qwen 的 train.py 逐字同构证明了它家族无关）。
+> - ✅ pilot：qwen_image 端到端迁移——runtime.py 的 5 个 builder/extractor 函数**全删**（只剩 capability
+>   常量 + executor），`scripts/diffusion/qwen_image/` 整目录删除，实验 yaml entrypoint 切到通用 recipe，
+>   wiring 测试换 descriptor 专测（含 spec.family 缺失 fail-loud 断言）。
+> - **新家族的落地面（当下起）**：`model.py`（真代码）+ `runner.py`（若需要）+ `runtime.py`
+>   （capability + executor，~30 行）+ registry 一条带 `build=` 描述符 + yaml（entrypoint 用通用 recipe）
+>   ——**零 builder 函数、零 train.py**。SANA 按此接。
+> - 旧家族迁移策略：sd3_5/echo 等 data-only 家族可随时同法迁移（改 registry + 删函数 + 切 yaml
+>   entrypoint）；带 per-call 代码的（flux NFT hook、wan 变体解析、anima artifact 解析、predict2/2.5 的
+>   extra_metadata lambda）**保留薄 stub**——描述符装不下代码，stub 就是它们的正确形态。
+> - 验证：**411 passed**（含 precision-bridge + rollout-launcher）。
 > **遗留审计项**：predict2_5 写入 caps 的 `supports_diffusion_nft` **全仓库无读取方**（dead cap，
 > 按 dead-field 规则应删或补上本该存在的校验）；cosmos/wan/echo/anima 系 caps 无 `family_capability`
 > 键与 sd3/flux/qwen 不一致（行为无差——`capabilities.py:177` 缺键回落 registry 声明——但契约分裂）。

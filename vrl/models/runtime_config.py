@@ -29,6 +29,7 @@ def extract_runtime_spec(
     task_variant: str | None = None,
     ar_task: str | None = None,
     model_name_or_path: Any | None = None,
+    family: str | None = None,
 ) -> RuntimeBuildSpec:
     """Build the uniform ``RuntimeBuildSpec`` from a whole training config.
 
@@ -54,6 +55,7 @@ def extract_runtime_spec(
         model_name_or_path=str(path),
         device=device,
         dtype=dtype,
+        family=family,
         task_variant=task_variant,
         ar_task=ar_task,
         model_config=model_config,

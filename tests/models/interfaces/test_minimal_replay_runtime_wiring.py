@@ -93,10 +93,6 @@ def _spec(**overrides: Any) -> RuntimeBuildSpec:
             "build_flux_replay_runtime_bundle",
         ),
         (
-            "vrl.models.diffusion.qwen_image.runtime",
-            "build_qwen_image_replay_runtime_bundle",
-        ),
-        (
             "vrl.models.diffusion.wan_2_1.runtime",
             "build_wan_2_1_replay_runtime_bundle",
         ),
@@ -150,6 +146,44 @@ def test_diffusion_replay_builders_return_minimal_bundles(
     assert "pipeline" not in vars(bundle.model)
     with pytest.raises(RuntimeError, match="pipeline"):
         _ = bundle.model.pipeline
+
+
+def test_registry_descriptor_replay_builder_returns_minimal_bundle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The descriptor-driven generic replay builder (qwen_image pilot).
+
+    qwen_image ships no builder functions: the registry entry's
+    ``DiffusionFamilyBuild`` recipe drives the generic builder, keyed by
+    ``spec.family``. Behavioral contract matches the per-family builders above.
+    """
+    from vrl.models.diffusion import build as _shared_build
+
+    monkeypatch.setattr(
+        _shared_build,
+        "load_diffusers_transformer",
+        lambda *_args, **_kwargs: _TinyTransformer(),
+    )
+    monkeypatch.setattr(
+        _shared_build,
+        "load_flow_match_scheduler",
+        lambda *_args, **_kwargs: _TinyScheduler(),
+    )
+
+    bundle = _shared_build.build_family_replay_runtime_bundle(
+        _spec(family="qwen_image"),
+    )
+
+    assert bundle_loads_full_generation_modules(bundle) is False
+    assert bundle.raw_handle is None
+    assert set(bundle.trainable_modules) == {"transformer"}
+    assert bundle.metadata["family"] == "qwen_image"
+    with pytest.raises(RuntimeError, match="pipeline"):
+        _ = bundle.model.pipeline
+
+    # A spec without family fails loud instead of guessing.
+    with pytest.raises(ValueError, match="spec.family"):
+        _shared_build.build_family_replay_runtime_bundle(_spec())
 
 
 def test_wan_replay_builder_uses_wan_pipeline_scheduler_class(
