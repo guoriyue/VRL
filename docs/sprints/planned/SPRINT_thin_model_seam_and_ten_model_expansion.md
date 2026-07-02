@@ -129,6 +129,27 @@ def build_sd3_5_replay_runtime_bundle_from_cfg(cfg, device, wd): ...  # 2 行包
 > - ⏭️ 剩余 Phase 0：§2.1 registry 描述符字段（把 model_cls/transformer_classname 等挪进 entry，让 stub
 >   进一步变薄）、§2.5 的 `build_ar_runtime_bundle` 折叠（janus config 构造复杂、双 capability，需谨慎）。
 
+> **薄化全量审计（2026-07-01，AST 扫描全部 runtime.py 的 build_/extract_ 函数）**：
+>
+> | 家族 | rollout / replay builder | 状态 |
+> |---|---|---|
+> | sd3_5 / qwen_image | 11 / 14 行 [DELEGATES] | ✅ 已薄 |
+> | flux | 30 / 53 行 [DELEGATES]（多出的是 NFT/动态时间步闭包，真家族逻辑） | ✅ 已薄 |
+> | wan_2_1 | 68 / 76 行自建 | ✅ 真发散（多 transformer 变体），保留 |
+> | echo | 41 / 64 行自建 | ✅ 真发散（无 quant/compile、LTX wrapper replay），保留 |
+> | anima | 63 / 57 行自建 | ✅ 真发散（单文件 artifact 解析），保留 |
+> | cosmos3 | 32 / 30 行自建 | ✅ 真发散（`_apply_train_knobs`、无 compile），保留 |
+> | **cosmos predict2 / predict2_5** | 59+48 / 48+49 行自建 | ⚠️ **~90% 同通用形状但不能盲折**：runtime_caps
+> 无 `family_capability` 键（与 sd3_5/flux/qwen 不一致！）、各带家族 metadata（reference_image /
+> model_revision / skip_text_encoder）。折叠须给共享 builder 加 caps/metadata 参数并决定 caps 契约
+> 是否统一——**有人值守项**，且 caps 不一致本身值得单独审（消费方读不读 `family_capability`？）。 |
+> | **AR janus_pro / nextstep_1** | 22+27 / 22+22 行自建 | ⚠️ **bundle 组装 ~18 行逐字重复**（差异只在
+> capability 常量与 `supports_chunked_execution`；家族真逻辑是 config-from-spec 函数，那部分保留）。
+> **建议在接 3 个 AR 新家族（GLM-Image/Emu3/LlamaGen）前折叠 `build_ar_runtime_bundle(spec, ...)`**，
+> 否则每个新 AR 家族再抄一份。model.py 侧已由 ARModelBase 收薄（tick 3）。 |
+> | `*_from_cfg` 包装（各家族 6-8 行×2） | — | ✅ 保留：它们是 train.py `trainer.entrypoint` 的派发目标，
+> 折叠属于 §2.4（有人值守项）。 |
+
 ### 2.1 扩展 registry 描述符
 
 给 `RolloutFamilyEntry`（或 `_diffusion_entry`）补上现在藏在各家族 `build_*` 里的 5 个值：
@@ -197,49 +218,47 @@ AR 的 executor（`forward_plan`/`gather_chunks`）含 tokenize/decode/VQ，是�
 - `tests/config/test_load_all_experiments.py` 绿（所有现有 experiment 仍能 resolve）。
 - 随机抽一个家族做 1-step 生成 smoke（如 `tests/generation/diffusion/test_diffusion_metrics.py`）不回归。
 
-## 3. Phase 1：十个新模型清单（每小时接一个）
+## 3. Phase 1：十个新模型清单（index——每个模型已拆为独立落地 sprint）
 
-接入前提：Phase 0 已合入（否则每个模型仍要抄 build 编排）。每个模型的落地 = **真薄层**：
-`model.py` +（AR 才需要）`runner.py` + registry 一条描述符 + yaml 一份 + test 一个。
+**2026-07-01 起本节降级为 index**：每个模型有自己的落地 sprint（按仓库惯例，照 [[SPRINT_flux_t2i]] /
+[[SPRINT_qwen_image_t2i]] 的模式），模型事实 / 技术点 / KILL-RISK 门 / 验收全在各自 sprint 里，
+本表只留 checkbox 与一句话定位。**接入建议顺序**（依赖与风险排序）：
+SANA → Lumina2 → Emu3 → HunyuanVideo → Mochi-1 → GLM-Image → HunyuanImage-2.1 → LlamaGen →
+（PixArt-Σ / CogVideoX 需先过 DDIM logprob 门，见各自 sprint §0）。
 
-> ⚠️ Evidence-first：下表 HF repo id 与 diffusers 类名是**预期**，落地第一步必须核对该模型在当前
-> diffusers/transformers 里的真实 pipeline/transformer 类名——**类名决定它能否套 seam**。核对不过就
-> 记录到本表并降级/换模型，不硬接。
+> ⚠️ Evidence-first：HF repo id 与 diffusers 类名是**预期**，落地第一步必须核对真实类名——核对不过就
+> 记录并降级/换模型，不硬接。SANA 已核对（2026-07-01）；PixArt-Σ / CogVideoX 已确认**非 flow-matching**，
+> 带 KILL-RISK 门。
 
 ### 3.1 Tier A — T2I 扩散（纯 diffusion seam，最省）
 
-- [ ] **1. SANA** — `Efficient-Large-Model/Sana_1600M_1024px`（NVIDIA，linear-DiT，1024px 高效）。
-  seam：diffusion T2I。训练：LoRA。为什么：cosmos-rl 已支持、极省显存，最适合当 Phase 0 之后的第一个薄接样例。
-  > **接入侦察（2026-07-01，tick 4）**：diffusers 0.37.1 已含 `SanaTransformer2DModel` / `SanaPipeline` /
-  > `AutoencoderDC`（DC-AE，32x 压缩）/ `FlowMatchEulerDiscreteScheduler`——**seam 确认吻合**。SANA 与 sd3_5
-  > 的差异：文本编码器是 Gemma-2（非双 CLIP+T5，**无 pooled embeds**）、VAE 是 DC-AE（32x 非 8x）、
-  > transformer forward 签名不同。**未落地原因见下方"Phase 1 与 loop 的边界"**。
-- [ ] **2. PixArt-Σ** — `PixArt-alpha/PixArt-Sigma-XL-2-1024-MS`（T2I DiT，弱 CFG，社区常用基线）。
-  seam：diffusion T2I。训练：LoRA。
-- [ ] **3. Lumina-Image 2.0** — `Alpha-VLLM/Lumina-Image-2.0`（flow-matching DiT，Gemma 文本编码器）。
-  seam：diffusion T2I。训练：LoRA。技术点：文本编码器非 CLIP，`encode_prompt` 要对齐。
-- [ ] **4. HunyuanImage-2.1** — `tencent/HunyuanImage-2.1`（大 T2I DiT，强中文/文字渲染）。
-  seam：diffusion T2I。训练：**LoRA-only**（体量大）。
+- [ ] **1. SANA** → [[SPRINT_sana_t2i]] — 1.6B linear-DiT + DC-AE，**已核对 seam 吻合**，
+  Phase 0 之后第一个薄接样例（模板 qwen_image）。
+- [ ] **2. PixArt-Σ** → [[SPRINT_pixart_sigma_t2i]] — ⚠️ **epsilon-prediction 非 flow-matching**，
+  须先过 DDIM logprob 门（门 A 扩展 / 门 B 换模型）。
+- [ ] **3. Lumina-Image 2.0** → [[SPRINT_lumina_image_2_t2i]] — 2.6B flow-matching + Gemma-2，
+  与 SANA 同形状类，排 SANA 之后增量最小。
+- [ ] **4. HunyuanImage-2.1** → [[SPRINT_hunyuan_image_2_1_t2i]] — ~17B 双编码器（MLLM+byT5），
+  LoRA-only，T2I 侧最重，diffusers 支持须先验证。
 
 ### 3.2 Tier B — T2V 视频扩散（套 Wan/Cosmos 5D 潜变量 seam）
 
-- [ ] **5. HunyuanVideo** — `tencent/HunyuanVideo`（T2V DiT）。seam：diffusion 视频（5D latent）。
-  训练：LoRA。为什么：[[SPRINT_model_family_coverage]] Tier-2 已点名；VAE/scheduler 需单独对齐。
-- [ ] **6. CogVideoX** — `THUDM/CogVideoX-5b`（Zhipu/GLM 的 T2V，与 GLM-Image 同门）。
-  seam：diffusion 视频。训练：LoRA。技术点：3D VAE + T5 文本编码器。
-- [ ] **7. Mochi-1** — `genmo/mochi-1-preview`（T2V DiT，AsymmDiT）。seam：diffusion 视频。训练：LoRA。
+- [ ] **5. HunyuanVideo** → [[SPRINT_hunyuan_video_t2v]] — 13B flow-matching，embedded-guidance
+  单分支（runner 照 flux）× 5D 布局（照 wan）。
+- [ ] **6. CogVideoX** → [[SPRINT_cogvideox_t2v]] — ⚠️ **v-prediction 非 flow-matching**，与 PixArt-Σ
+  共享 DDIM logprob 门（另加 v-pred 分支）。GLM 系 T2V。
+- [ ] **7. Mochi-1** → [[SPRINT_mochi_1_t2v]] — 10B AsymmDiT 真 flow-matching + 真 CFG，
+  T2V 里调度器最干净，预期 rollout/replay 都能委托共享 builder。
 
-### 3.3 Tier C — AR（自回归，套 janus_pro/nextstep_1 seam）
+### 3.3 Tier C — AR（自回归，套 janus_pro/nextstep_1 seam + ARModelBase）
 
-- [ ] **8. GLM-Image** ⭐ — `zai-org/GLM-Image`（16B = 9B AR〔GLM-4-9B〕+ 7B diffusion decoder + Glyph Encoder）。
-  **用户点名**。seam：**混合 AR+decoder**，形状最贴 `nextstep_1`（AR 连续 + flow/decoder head），不是纯离散
-  `janus_pro`。训练：LoRA-only（16B）。技术点：AR 段出语义 token → diffusion decoder 出像素；logprob 打在
-  AR 段。落地前先决定 RL 到底训哪一段（AR 语义段 vs decoder）——建议先只训 AR 段，decoder frozen（对齐
-  [[SPRINT_frozen_component_preservation]]）。
-- [ ] **9. Emu3** — `BAAI/Emu3-Gen`（纯 next-token AR T2I，单一 transformer）。seam：`ar_discrete`（最贴 janus_pro）。
-  训练：LoRA。为什么：最干净的离散 AR，验证 GLM-Image 之前的 AR seam 压力测试。
-- [ ] **10. LlamaGen** — `FoundationVision/LlamaGen`（AR 离散 T2I，class/text 条件 + VQ decode）。
-  seam：`ar_discrete`。训练：LoRA。技术点：VQ tokenizer 与 janus 的 VQ decode 路径可复用。
+- [ ] **8. GLM-Image** ⭐ → [[SPRINT_glm_image_ar_t2i]] — **用户点名**。9B AR + 7B frozen diffusion
+  decoder，只训 AR 段（LoRA）；两个 KILL-RISK 门（语义 token logprob 可达性、decoder 后处理定位）。
+  建议 Emu3 之后接。
+- [ ] **9. Emu3** → [[SPRINT_emu3_ar_t2i]] — 8B 纯 next-token（transformers 原生类），GLM-Image 的
+  前置压力测试；技术点是约束解码要挂进 RL 采样。
+- [ ] **10. LlamaGen** → [[SPRINT_llamagen_ar_t2i]] — 学术基线，无 HF 原生类（零-vendor 优先：
+  LLaMA 架构尝试 `LlamaForCausalLM` 复现）；优先级最低，vendor 成本超标可降级关闭。
 
 ### 3.4 覆盖平衡校验
 
