@@ -210,6 +210,10 @@ AR 的 executor（`forward_plan`/`gather_chunks`）含 tokenize/decode/VQ，是�
 
 - [ ] **1. SANA** — `Efficient-Large-Model/Sana_1600M_1024px`（NVIDIA，linear-DiT，1024px 高效）。
   seam：diffusion T2I。训练：LoRA。为什么：cosmos-rl 已支持、极省显存，最适合当 Phase 0 之后的第一个薄接样例。
+  > **接入侦察（2026-07-01，tick 4）**：diffusers 0.37.1 已含 `SanaTransformer2DModel` / `SanaPipeline` /
+  > `AutoencoderDC`（DC-AE，32x 压缩）/ `FlowMatchEulerDiscreteScheduler`——**seam 确认吻合**。SANA 与 sd3_5
+  > 的差异：文本编码器是 Gemma-2（非双 CLIP+T5，**无 pooled embeds**）、VAE 是 DC-AE（32x 非 8x）、
+  > transformer forward 签名不同。**未落地原因见下方"Phase 1 与 loop 的边界"**。
 - [ ] **2. PixArt-Σ** — `PixArt-alpha/PixArt-Sigma-XL-2-1024-MS`（T2I DiT，弱 CFG，社区常用基线）。
   seam：diffusion T2I。训练：LoRA。
 - [ ] **3. Lumina-Image 2.0** — `Alpha-VLLM/Lumina-Image-2.0`（flow-matching DiT，Gemma 文本编码器）。
@@ -302,6 +306,24 @@ tests/generation/diffusion/test_sana_*  # 1-step forward + config resolve
 > 注意：`ScheduleWakeup` 上限是 1 小时（runtime clamp [60,3600]）。若要比 1 小时更稀疏的节奏、或要在
 > 关终端后仍跑，改用本地 crontab（`0 */3 * * * cd <repo> && claude -p "<loop prompt>"`）——那是 §6.1
 > 里被否掉的备选，机器长期开机时可切过去。
+
+### 6.3.1 Phase 1 与 loop 的边界（2026-07-01，tick 4 记录）
+
+**Phase 0（纯重构）适合无人值守 hourly loop；Phase 1（接真模型）不适合。** 原因：
+
+- Phase 0 的验证是 fast 单元测试（wiring/config/registry），无人值守能自证正确——已完成 sd3_5/flux/
+  qwen_image 迁移 + ARModelBase + 删 vla，全程 tests 绿。
+- Phase 1 每个模型的核心是**生成/replay 的 flow-matching / AR logprob 数学**（见 sd3_5/model.py 的
+  `prepare_sampling`/`forward_step`/`export_replay_tensors`/`restore_eval_state`，其中 `debug.first_step`
+  断言 rollout logprob == replay logprob）。这类正确性**只能用真权重跑一次生成做 parity 验证**；wiring/config
+  测试用 fake tiny transformer，只查 bundle 结构，**不验证生成数学**。
+- 因此在"无真权重 + 无 GPU 生成 parity"的无人值守环境里写 model.py 让 wiring 变绿就勾 checkbox，是**假信号**
+  ——模型并未被验证能生成/训练。按仓库 Evidence-First 与"验证后才报完成"，不这么做。
+
+**结论**：loop 的自主安全工作（Phase 0）已基本穷尽。Phase 1 需要三者之一：(a) 提供 SANA 等模型的真权重 +
+GPU，让某一跳能跑生成 parity；(b) 转为**有人值守**逐个接（我写 model.py、你在 GPU 上跑 parity 确认）；
+(c) 把 loop 重定向到剩余的可选 Phase 0 项（§2.1 需先给 `RuntimeBuildSpec` 加 `family` 字段并过 Ray
+序列化，或 `build_ar_runtime_bundle` 折叠——都是更大、非纯净的单元）。tick 4 未提交任何代码，停在此决策点。
 
 ### 6.4 一个诚实提醒
 
