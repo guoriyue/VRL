@@ -18,6 +18,7 @@ from vrl.generation.types import (
     GenerationRequest,
     GenerationSampleRow,
 )
+from vrl.models.ar.build import build_ar_runtime_bundle
 from vrl.models.ar.capabilities import ar_continuous_family_capability
 from vrl.models.ar.nextstep_1.model import (
     NextStep1Config,
@@ -27,10 +28,6 @@ from vrl.models.ar.nextstep_1.model import (
 from vrl.models.ar.nextstep_1.runner import NextStep1ARModelRunner
 from vrl.models.dtypes import dtype_to_config_string
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
-from vrl.models.replay_loading import (
-    full_generation_bundle_metadata,
-    minimal_replay_bundle_metadata,
-)
 from vrl.models.runtime_config import (
     extract_runtime_spec,
 )
@@ -43,26 +40,13 @@ NEXTSTEP_1_FAMILY_CAPABILITY = ar_continuous_family_capability("nextstep_1", "ar
 
 
 def build_nextstep_1_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    """Build the NextStep-1 model from a serializable runtime spec."""
+    """Thin family stub over the shared AR bundle assembly."""
 
     config = _nextstep_1_config_from_runtime_spec(spec)
-    model = NextStep1Model(NextStep1Config(**config))
-    return RuntimeBundle(
-        model=model,
-        trainable_modules={"model": model},
-        scheduler=None,
-        raw_handle=model,
-        runtime_caps={
-            "family_capability": NEXTSTEP_1_FAMILY_CAPABILITY.to_dict(),
-            "supports_chunked_execution": True,
-        },
-        metadata={
-            "model_path": spec.model_name_or_path,
-            "family": NEXTSTEP_1_FAMILY_CAPABILITY.family,
-            "ar_task": spec.ar_task,
-            "use_lora": spec.use_lora,
-            **full_generation_bundle_metadata(),
-        },
+    return build_ar_runtime_bundle(
+        spec,
+        model=NextStep1Model(NextStep1Config(**config)),
+        capability=NEXTSTEP_1_FAMILY_CAPABILITY,
     )
 
 
@@ -70,23 +54,11 @@ def build_nextstep_1_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBun
     """Build a NextStep trainer replay bundle without VAE/tokenizer/pipeline."""
 
     config = _nextstep_1_config_from_runtime_spec(spec)
-    model = NextStep1ReplayModel(NextStep1Config(**config))
-    return RuntimeBundle(
-        model=model,
-        trainable_modules={"model": model},
-        scheduler=None,
-        raw_handle=None,
-        runtime_caps={
-            "family_capability": NEXTSTEP_1_FAMILY_CAPABILITY.to_dict(),
-            "supports_chunked_execution": False,
-        },
-        metadata={
-            "model_path": spec.model_name_or_path,
-            "family": NEXTSTEP_1_FAMILY_CAPABILITY.family,
-            "ar_task": spec.ar_task,
-            "use_lora": spec.use_lora,
-            **minimal_replay_bundle_metadata(),
-        },
+    return build_ar_runtime_bundle(
+        spec,
+        model=NextStep1ReplayModel(NextStep1Config(**config)),
+        capability=NEXTSTEP_1_FAMILY_CAPABILITY,
+        replay=True,
     )
 
 

@@ -51,6 +51,8 @@ def build_diffusion_runtime_bundle(
     memory_owner: str,
     supports_reference_conditioning: bool = False,
     after_lora: Callable[[object, RuntimeBuildSpec], None] | None = None,
+    runtime_caps: dict[str, object] | None = None,
+    extra_metadata: Callable[[object, RuntimeBuildSpec], dict[str, object]] | None = None,
 ) -> RuntimeBundle:
     """Generic rollout bundle: load the family model and apply the shared policy.
 
@@ -63,6 +65,16 @@ def build_diffusion_runtime_bundle(
     path only). FLUX uses it to attach the frozen DiffusionNFT ``previous``
     adapter; families with no such step leave it ``None``. Keeping it a hook
     means the generic body never learns family-specific concepts.
+
+    ``runtime_caps``, when given, replaces the default caps dict verbatim. The
+    cosmos families historically publish caps WITHOUT ``family_capability``
+    (the worker then falls back to the registry-declared capability — see
+    ``FamilyCapability.with_runtime_caps``), so a migrated family passes its
+    exact historical dict to keep behavior bit-identical. Unifying the caps
+    contract is a separate audit, not this builder's job.
+
+    ``extra_metadata(model, spec)`` returns family metadata merged over the
+    generic keys (e.g. cosmos predict2's ``reference_image``).
     """
 
     model = model_cls.from_spec(spec)
@@ -93,28 +105,35 @@ def build_diffusion_runtime_bundle(
         model.set_num_steps(num_steps)
     # If None, caller (e.g. DPO trainer) will set scheduler timesteps itself.
 
+    metadata: dict[str, object] = {
+        "model_path": spec.model_name_or_path,
+        "family": capability.family,
+        "task_variant": spec.task_variant,
+        "dtype": str(spec.dtype),
+        "use_lora": spec.use_lora,
+        **full_generation_bundle_metadata(),
+        **apply_generation_memory_policy(
+            model,
+            memory_config=getattr(spec, "memory", None),
+            owner=memory_owner,
+        ),
+    }
+    if extra_metadata is not None:
+        metadata.update(extra_metadata(model, spec))
     return RuntimeBundle(
         model=model,
         trainable_modules=model.trainable_modules,
         scheduler=model.scheduler,
         raw_handle=model.raw_handle,
-        runtime_caps={
-            "family_capability": capability.to_dict(),
-            "supports_reference_conditioning": supports_reference_conditioning,
-        },
-        metadata={
-            "model_path": spec.model_name_or_path,
-            "family": capability.family,
-            "task_variant": spec.task_variant,
-            "dtype": str(spec.dtype),
-            "use_lora": spec.use_lora,
-            **full_generation_bundle_metadata(),
-            **apply_generation_memory_policy(
-                model,
-                memory_config=getattr(spec, "memory", None),
-                owner=memory_owner,
-            ),
-        },
+        runtime_caps=(
+            dict(runtime_caps)
+            if runtime_caps is not None
+            else {
+                "family_capability": capability.to_dict(),
+                "supports_reference_conditioning": supports_reference_conditioning,
+            }
+        ),
+        metadata=metadata,
     )
 
 
@@ -127,6 +146,8 @@ def build_diffusion_replay_runtime_bundle(
     supports_reference_conditioning: bool = False,
     after_construct: Callable[[object, RuntimeBuildSpec], None] | None = None,
     after_lora: Callable[[object, RuntimeBuildSpec], None] | None = None,
+    runtime_caps: dict[str, object] | None = None,
+    extra_metadata: Callable[[object, RuntimeBuildSpec], dict[str, object]] | None = None,
 ) -> RuntimeBundle:
     """Generic replay bundle for single-transformer diffusion families.
 
@@ -140,6 +161,9 @@ def build_diffusion_replay_runtime_bundle(
     (FLUX sets its dynamic-shift timesteps here); ``after_lora`` runs after
     ``apply_lora`` on the LoRA path (FLUX attaches the frozen NFT ``previous``
     adapter). Families needing neither leave both ``None``.
+
+    ``runtime_caps`` / ``extra_metadata`` follow the rollout builder's contract
+    (verbatim caps override; family metadata merged over generic keys).
     """
 
     model = replay_cls(
@@ -162,23 +186,30 @@ def build_diffusion_replay_runtime_bundle(
     if compile_cfg.get("enable"):
         compile_transformer(model, compile_cfg["mode"])
 
+    metadata: dict[str, object] = {
+        "model_path": spec.model_name_or_path,
+        "family": capability.family,
+        "task_variant": spec.task_variant,
+        "dtype": str(spec.dtype),
+        "use_lora": spec.use_lora,
+        **minimal_replay_bundle_metadata(),
+    }
+    if extra_metadata is not None:
+        metadata.update(extra_metadata(model, spec))
     return RuntimeBundle(
         model=model,
         trainable_modules=model.trainable_modules,
         scheduler=model.scheduler,
         raw_handle=None,
-        runtime_caps={
-            "family_capability": capability.to_dict(),
-            "supports_reference_conditioning": supports_reference_conditioning,
-        },
-        metadata={
-            "model_path": spec.model_name_or_path,
-            "family": capability.family,
-            "task_variant": spec.task_variant,
-            "dtype": str(spec.dtype),
-            "use_lora": spec.use_lora,
-            **minimal_replay_bundle_metadata(),
-        },
+        runtime_caps=(
+            dict(runtime_caps)
+            if runtime_caps is not None
+            else {
+                "family_capability": capability.to_dict(),
+                "supports_reference_conditioning": supports_reference_conditioning,
+            }
+        ),
+        metadata=metadata,
     )
 
 

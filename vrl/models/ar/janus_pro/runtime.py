@@ -19,6 +19,7 @@ from vrl.generation.types import (
     GenerationRequest,
     GenerationSampleRow,
 )
+from vrl.models.ar.build import build_ar_runtime_bundle
 from vrl.models.ar.capabilities import ar_discrete_family_capability
 from vrl.models.ar.janus_pro import JANUS_R1_SEGMENTS
 from vrl.models.ar.janus_pro.model import (
@@ -29,10 +30,6 @@ from vrl.models.ar.janus_pro.model import (
 from vrl.models.ar.janus_pro.runner import JanusProARModelRunner
 from vrl.models.dtypes import dtype_to_config_string
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
-from vrl.models.replay_loading import (
-    full_generation_bundle_metadata,
-    minimal_replay_bundle_metadata,
-)
 from vrl.models.runtime_config import (
     extract_runtime_spec,
 )
@@ -51,26 +48,13 @@ JANUS_PRO_R1_FAMILY_CAPABILITY = ar_discrete_family_capability(
 
 
 def build_janus_pro_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    """Build the Janus-Pro model from a serializable runtime spec."""
+    """Thin family stub over the shared AR bundle assembly."""
 
     config = _janus_config_from_runtime_spec(spec)
-    model = JanusProModel(JanusProConfig(**config))
-    return RuntimeBundle(
-        model=model,
-        trainable_modules={"model": model},
-        scheduler=None,
-        raw_handle=model,
-        runtime_caps={
-            "family_capability": JANUS_PRO_FAMILY_CAPABILITY.to_dict(),
-            "supports_chunked_execution": True,
-        },
-        metadata={
-            "model_path": spec.model_name_or_path,
-            "family": JANUS_PRO_FAMILY_CAPABILITY.family,
-            "ar_task": spec.ar_task,
-            "use_lora": spec.use_lora,
-            **full_generation_bundle_metadata(),
-        },
+    return build_ar_runtime_bundle(
+        spec,
+        model=JanusProModel(JanusProConfig(**config)),
+        capability=JANUS_PRO_FAMILY_CAPABILITY,
     )
 
 
@@ -78,28 +62,16 @@ def build_janus_pro_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBund
     """Build a Janus trainer replay bundle without VQ/vision/processor modules."""
 
     config = _janus_config_from_runtime_spec(spec)
-    model = JanusProReplayModel(JanusProConfig(**config))
     family_capability = (
         JANUS_PRO_R1_FAMILY_CAPABILITY
         if spec.ar_task == "ar_t2i_r1"
         else JANUS_PRO_FAMILY_CAPABILITY
     )
-    return RuntimeBundle(
-        model=model,
-        trainable_modules={"model": model},
-        scheduler=None,
-        raw_handle=None,
-        runtime_caps={
-            "family_capability": family_capability.to_dict(),
-            "supports_chunked_execution": False,
-        },
-        metadata={
-            "model_path": spec.model_name_or_path,
-            "family": family_capability.family,
-            "ar_task": spec.ar_task,
-            "use_lora": spec.use_lora,
-            **minimal_replay_bundle_metadata(),
-        },
+    return build_ar_runtime_bundle(
+        spec,
+        model=JanusProReplayModel(JanusProConfig(**config)),
+        capability=family_capability,
+        replay=True,
     )
 
 

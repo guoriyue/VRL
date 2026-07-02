@@ -16,22 +16,12 @@ from vrl.generation.diffusion.executor import ReferenceConditionedChunks
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
+from vrl.models.diffusion.build import (
+    build_diffusion_replay_runtime_bundle,
+    build_diffusion_runtime_bundle,
+)
 from vrl.models.diffusion.capabilities import diffusion_family_capability
-from vrl.models.diffusion.common.vae_decode_memory import (
-    apply_generation_memory_policy,
-)
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
-from vrl.models.loader import (
-    apply_rollout_quantization,
-    compile_transformer,
-    enable_transformer_full_finetune,
-    load_diffusers_transformer,
-    load_flow_match_scheduler,
-)
-from vrl.models.replay_loading import (
-    full_generation_bundle_metadata,
-    minimal_replay_bundle_metadata,
-)
 from vrl.models.runtime_config import (
     extract_runtime_spec,
 )
@@ -67,60 +57,26 @@ def _reference_image_from_spec(spec: RuntimeBuildSpec) -> str | None:
 def build_cosmos_predict2_runtime_bundle(
     spec: RuntimeBuildSpec,
 ) -> RuntimeBundle:
-    """Generic build: dispatch the backend model by runtime spec."""
+    """Thin family stub over the shared diffusion runtime builder.
+
+    Passes the historical caps dict verbatim (no ``family_capability`` key —
+    the worker falls back to the registry-declared capability) and merges the
+    v2w ``reference_image`` into metadata.
+    """
     from vrl.models.diffusion.cosmos.predict2.model import CosmosPredict2Model
 
     logger.info(
         "Building cosmos-predict2 runtime bundle from %s",
         spec.model_name_or_path,
     )
-    use_lora = spec.use_lora
-    model = CosmosPredict2Model.from_spec(spec)
-
-    if use_lora:
-        model.apply_lora(spec)
-        lora_config = spec.lora
-        if lora_config:
-            logger.info(
-                "Applied LoRA (rank=%d, alpha=%d)",
-                lora_config["rank"], lora_config["alpha"],
-            )
-    else:
-        model.apply_full_finetune()
-
-    apply_rollout_quantization(model, spec)
-
-    compile_cfg = spec.torch_compile or {}
-    if compile_cfg.get("enable"):
-        logger.info("Compiling transformer with mode=%s", compile_cfg["mode"])
-        model.torch_compile_transformer(compile_cfg["mode"])
-
-    num_steps = spec.num_steps
-    if num_steps is not None:
-        model.set_num_steps(num_steps)
-    # If None, caller (e.g. DPO trainer) will set scheduler timesteps itself.
-
-    return RuntimeBundle(
-        model=model,
-        trainable_modules=model.trainable_modules,
-        scheduler=model.scheduler,
-        raw_handle=model.raw_handle,
-        runtime_caps={
-            "supports_reference_conditioning": True,
-        },
-        metadata={
-            "model_path": spec.model_name_or_path,
-            "family": COSMOS_PREDICT2_FAMILY_CAPABILITY.family,
-            "task_variant": spec.task_variant,
-            "dtype": str(spec.dtype),
-            "use_lora": use_lora,
+    return build_diffusion_runtime_bundle(
+        spec,
+        model_cls=CosmosPredict2Model,
+        capability=COSMOS_PREDICT2_FAMILY_CAPABILITY,
+        memory_owner="Cosmos Predict2 VAE",
+        runtime_caps={"supports_reference_conditioning": True},
+        extra_metadata=lambda model, spec: {
             "reference_image": _reference_image_from_spec(spec),
-            **full_generation_bundle_metadata(),
-            **apply_generation_memory_policy(
-                model,
-                memory_config=getattr(spec, "memory", None),
-                owner="Cosmos Predict2 VAE",
-            ),
         },
     )
 
@@ -128,7 +84,7 @@ def build_cosmos_predict2_runtime_bundle(
 def build_cosmos_predict2_replay_runtime_bundle(
     spec: RuntimeBuildSpec,
 ) -> RuntimeBundle:
-    """Build the trainer replay bundle without Cosmos generation-only modules."""
+    """Thin family stub over the shared diffusion replay builder."""
 
     from vrl.models.diffusion.cosmos.predict2.model import CosmosPredict2ReplayModel
 
@@ -136,41 +92,14 @@ def build_cosmos_predict2_replay_runtime_bundle(
         "Building cosmos-predict2 replay runtime bundle from %s",
         spec.model_name_or_path,
     )
-    model = CosmosPredict2ReplayModel(
-        transformer=load_diffusers_transformer(
-            spec,
-            "CosmosTransformer3DModel",
-        ),
-        scheduler=load_flow_match_scheduler(spec),
-        device=spec.device,
-    )
-
-    use_lora = spec.use_lora
-    if use_lora:
-        model.apply_lora(spec)
-    else:
-        enable_transformer_full_finetune(model)
-
-    compile_cfg = spec.torch_compile or {}
-    if compile_cfg.get("enable"):
-        compile_transformer(model, compile_cfg["mode"])
-
-    return RuntimeBundle(
-        model=model,
-        trainable_modules=model.trainable_modules,
-        scheduler=model.scheduler,
-        raw_handle=None,
-        runtime_caps={
-            "supports_reference_conditioning": True,
-        },
-        metadata={
-            "model_path": spec.model_name_or_path,
-            "family": COSMOS_PREDICT2_FAMILY_CAPABILITY.family,
-            "task_variant": spec.task_variant,
-            "dtype": str(spec.dtype),
-            "use_lora": use_lora,
+    return build_diffusion_replay_runtime_bundle(
+        spec,
+        replay_cls=CosmosPredict2ReplayModel,
+        transformer_classname="CosmosTransformer3DModel",
+        capability=COSMOS_PREDICT2_FAMILY_CAPABILITY,
+        runtime_caps={"supports_reference_conditioning": True},
+        extra_metadata=lambda model, spec: {
             "reference_image": _reference_image_from_spec(spec),
-            **minimal_replay_bundle_metadata(),
         },
     )
 

@@ -11,18 +11,14 @@ from vrl.generation.diffusion import (
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
+from vrl.models.diffusion.build import build_diffusion_runtime_bundle
 from vrl.models.diffusion.capabilities import diffusion_family_capability
-from vrl.models.diffusion.common.vae_decode_memory import (
-    apply_generation_memory_policy,
-)
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.loader import (
-    apply_rollout_quantization,
     load_diffusers_scheduler,
     load_diffusers_transformer,
 )
 from vrl.models.replay_loading import (
-    full_generation_bundle_metadata,
     minimal_replay_bundle_metadata,
 )
 from vrl.models.runtime_config import (
@@ -61,51 +57,27 @@ def _skip_text_encoder_from_spec(spec: RuntimeBuildSpec) -> bool:
 
 
 def build_cosmos_predict25_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
+    """Thin family stub over the shared diffusion runtime builder.
+
+    The non-LoRA branch still fails loud: the shared builder calls
+    ``model.apply_full_finetune()``, which Predict2.5 defines as a
+    DiffusionNFT-requires-LoRA error. Historical caps dict passed verbatim.
+    """
     from vrl.models.diffusion.cosmos.predict2_5.model import CosmosPredict25Model
 
     logger.info(
         "Building cosmos-predict2.5 runtime bundle from %s",
         spec.model_name_or_path,
     )
-    use_lora = spec.use_lora
-    model = CosmosPredict25Model.from_spec(spec)
-    if use_lora:
-        model.apply_lora(spec)
-    else:
-        model.apply_full_finetune()
-
-    apply_rollout_quantization(model, spec)
-
-    compile_cfg = spec.torch_compile or {}
-    if compile_cfg.get("enable"):
-        model.torch_compile_transformer(compile_cfg["mode"])
-
-    num_steps = spec.num_steps
-    if num_steps is not None:
-        model.set_num_steps(num_steps)
-
-    return RuntimeBundle(
-        model=model,
-        trainable_modules=model.trainable_modules,
-        scheduler=model.scheduler,
-        raw_handle=model.raw_handle,
-        runtime_caps={
-            "supports_diffusion_nft": True,
-        },
-        metadata={
-            "model_path": spec.model_name_or_path,
-            "family": COSMOS_PREDICT25_FAMILY_CAPABILITY.family,
-            "task_variant": spec.task_variant,
-            "dtype": str(spec.dtype),
-            "use_lora": use_lora,
+    return build_diffusion_runtime_bundle(
+        spec,
+        model_cls=CosmosPredict25Model,
+        capability=COSMOS_PREDICT25_FAMILY_CAPABILITY,
+        memory_owner="Cosmos Predict2.5 VAE",
+        runtime_caps={"supports_diffusion_nft": True},
+        extra_metadata=lambda model, spec: {
             "model_revision": _model_revision_from_spec(spec),
             "skip_text_encoder": _skip_text_encoder_from_spec(spec),
-            **full_generation_bundle_metadata(),
-            **apply_generation_memory_policy(
-                model,
-                memory_config=getattr(spec, "memory", None),
-                owner="Cosmos Predict2.5 VAE",
-            ),
         },
     )
 

@@ -150,6 +150,43 @@ def build_sd3_5_replay_runtime_bundle_from_cfg(cfg, device, wd): ...  # 2 行包
 > | `*_from_cfg` 包装（各家族 6-8 行×2） | — | ✅ 保留：它们是 train.py `trainer.entrypoint` 的派发目标，
 > 折叠属于 §2.4（有人值守项）。 |
 
+> **薄化第二轮（2026-07-01，有人值守）——AR 折叠落地 + cosmos 折叠落地 + 剩余家族逐一判定**：
+>
+> **已落地**（`build_ar_runtime_bundle` + 共享 builder 新增 `runtime_caps` 全量覆盖 / `extra_metadata(model, spec)` 两参）：
+> - ✅ **AR janus_pro / nextstep_1**：4 个 builder → 9-15 行 stub（`vrl/models/ar/build.py`）。caps 差异
+>   （R1 按 `ar_task` 选 capability）留在 janus stub。GLM-Image/Emu3/LlamaGen 落地时直接用。
+> - ✅ **cosmos predict2（rollout+replay）**：历史 caps dict（无 `family_capability` 键）原样传入——
+>   `capabilities.py:177` 只在键存在时覆盖、缺失回落 registry 声明，值相同 → **零行为变化**。
+>   `reference_image` 走 `extra_metadata`。
+> - ✅ **cosmos predict2_5（仅 rollout）**：非 LoRA 分支的 fail-loud 保留（共享 builder 调
+>   `model.apply_full_finetune()`，Predict2.5 定义为 raise "NFT requires LoRA"）。
+>
+> **判定保留（各有具体根因，不是"懒得折"）**：
+> - **predict2_5 replay（49L）**：两处真发散——UniPC 调度器（非 `load_flow_match_scheduler`）+ 非 LoRA
+>   分支用 `model.apply_full_finetune()`（故意 raise）而通用 replay 用 `enable_transformer_full_finetune`
+>   helper（SD3 系 replay model 的 `apply_full_finetune` 会碰 pipeline 而炸，所以通用不能改）。折叠要加
+>   `scheduler_classname` + `full_finetune` 两个 knob 只服务一个家族 = knob 蔓延，保留。
+> - **wan rollout（68L）**：**其实可折**（下一个有人值守单元）——`_resolve_model_cls(task_variant)` 在
+>   stub 里先解析再传 `model_cls`，caps/家族名切换也在 stub 定，`boundary_ratio`/`trainable_transformers`
+>   走 `extra_metadata(model, spec)`（model 依赖的 metadata 正是这个签名的设计原因）。replay（76L）
+>   多 transformer 构造，保留。wan 是最高流量视频家族，折叠单独一个 commit + 全量 wan 测试。
+> - **echo rollout（41L）**：机械可折且现有配置下零行为变化（echo 配置没设 compile/quant，通用 builder
+>   的这两步是条件 no-op）。但**语义变化**：今天 echo 静默忽略这两个 knob（按本仓库 no-op-knob 规则这
+>   本身是个 bug——用户设了没效果），折叠后会真的生效于 LTX wrapper——**需要 GPU 验证 echo+compile
+>   后再折**。echo replay（64L）是 LTX wrapper 工厂，保留。
+> - **anima rollout（63L）**：可折但要先把 artifact 路径解析（原地 mutate `spec.model_config`）挪进
+>   `AnimaModel.from_spec`（本来就该在那），metadata 的三个 path 键走 `extra_metadata` 读已解析的
+>   config。preview-grade 家族，ROI 低，可选。replay（57L）自建调度器 + `load_anima_transformer`，保留。
+> - **cosmos3（32/30L）**：`_apply_train_knobs` 替换了整个 lora/full-finetune 分支且无 compile 步——
+>   折叠等于用 hook 换掉 builder 心脏，不是折叠。probe-grade，保留。
+>
+> **终态**：22 个 build 函数（不含 from_cfg/chunk_encoded）中 **12 个委托**；9 个保留各有引用到行级的
+> 根因；1 个（wan rollout）标记为下一个可折单元。验证：`tests/models + tests/rollouts + tests/generation/ar
+> + config` **356 passed**（预存失败照旧排除）。
+> **顺带发现（单独审计项）**：echo 静默忽略 `torch_compile`/`rollout_quantization` knob（no-op knob）；
+> cosmos 系 runtime_caps 无 `family_capability` 键与 sd3/flux/qwen 不一致（行为无差但契约分裂，
+> 统一与否待定）。
+
 ### 2.1 扩展 registry 描述符
 
 给 `RolloutFamilyEntry`（或 `_diffusion_entry`）补上现在藏在各家族 `build_*` 里的 5 个值：
