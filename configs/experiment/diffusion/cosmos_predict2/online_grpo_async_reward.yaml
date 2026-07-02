@@ -9,9 +9,8 @@
 #   (2) reward on a DEDICATED GPU disjoint from rollout
 #       (distributed.resources.reward.gpu_pool: dedicated): the reward worker
 #       takes a spare GPU that does NOT overlap rollout's GPU.
-#   (3) the cosmos full-param 8-bit base (mirrors
-#       online_grpo_fullparam_8bit_240p.yaml — same model / sampling / reward /
-#       optim_8bit / samples_per_chunk=4).
+#   (3) cosmos full-param 8-bit training at 480p-native (720p weights are
+#       garbage at 240p/480p; see SPRINT_config_correctness_audit).
 #
 # GPU TOPOLOGY — use >= 3 visible GPUs: trainer GPU0, rollout GPU1, reward GPU2,
 # all disjoint. rollout.gpu_pool=dedicated takes a spare disjoint from the
@@ -40,16 +39,17 @@
 #     --config experiment/diffusion/cosmos_predict2/online_grpo_async_reward \
 #     model.reference_image=/path/to/ref.png
 defaults:
-  - /recipe/online/diffusion_grpo
-  - /model/diffusion/cosmos/predict2_2b
-  - /sampling/video/240p_33f          # smallest video shape — keeps full-param activations on 32GB
-  - /sampling/denoise/35_step_cfg_7
-  - /reward/kling_video_reward        # local HF model, no API key
-  - /dataset/drawbench_train_192
-  - /base/rollout/orchestration/continuous
+- /recipe/online/cosmos_predict2_grpo
+- /model/diffusion/cosmos/predict2_2b
+- /sampling/video/480p_33f            # 480p-native; 240p is OOD -> rainbow garbage (SPRINT_config_correctness_audit)
+- /sampling/denoise/35_step_cfg_7
+- /reward/kling_video_reward          # local HF model, no API key
+- /dataset/drawbench_train_192
+- /base/rollout/orchestration/continuous
 
 model:
-  use_lora: false                     # FULL-PARAMETER (-> apply_full_finetune in the runtime builder)
+  use_lora: false                     # FULL-PARAMETER (-> apply_full_finetune); 480p full-param needs FSDP/multi-GPU
+  path: checkpoints/cosmos-predict2-2b-480p-16fps-diffusers   # 480p-native weights (720p weights = garbage at 480p)
   torch_compile:
     enable: false
 
@@ -73,29 +73,18 @@ actor:
   gradient_checkpointing: true
   ppo_epochs: 4                       # engages the trust-region clip (1 -> clip_fraction==0, flat curve)
 
-algorithm:
-  clip_ratio: 1.0e-3
-  kl_coef: 0.0
-
 rollout:
-  n_samples_per_prompt: 8
-  prompts_per_batch: 1
-  # 4 samples/forward (2 chunks for n=8): cuts the per-sample-boundary GPU-idle.
-  # Measured 1×32GB 240p_33f: sbs 1->4 = rollout 1.50x (134->89s), GPU-busy 64%->89%.
   samples_per_chunk: 4
-  sde: { type: cps }
-  same_latent: false
 
 cosmos:
-  reference_mode: global              # global | per_sample (see fullparam base header)
+  reference_mode: global              # global | per_sample
 
 trainer:
-  entrypoint: vrl.scripts.diffusion.cosmos.train:train_cosmos_predict2_grpo
-  output_dir: outputs/cosmos_pred2_2b_async_reward_240p
+  output_dir: outputs/cosmos_pred2_2b_async_reward_480p
   total_epochs: 300
   save_freq: 50
-  debug: { first_step: true }
-  eval: { enabled: true, freq: 25, samples_per_prompt: 2, max_prompts: 32, seed: 20260621 }
+  debug: {first_step: true}
+  eval: {enabled: true, freq: 25, samples_per_prompt: 2, max_prompts: 32, seed: 20260621}
 
   rollout_orchestration:
     require_separate_gpus: true       # trainer/rollout/reward are disjoint GPUs here

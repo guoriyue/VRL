@@ -60,7 +60,6 @@ rollout:
   noise_level: 0.7
   sde:
     type: cps
-  same_latent: false
   # Rollout denoise compile is handled by the top-level `model.torch_compile`
   # block (compile-both): the rollout worker inherits the model block.
 

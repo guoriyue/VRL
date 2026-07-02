@@ -51,7 +51,6 @@ rollout:
   noise_level: 0.7
   sde:
     type: cps
-  same_latent: false
 
 trainer:
   entrypoint: vrl.scripts.diffusion.cosmos.train:train_cosmos_predict25_diffusion_nft

@@ -1,0 +1,23 @@
+# Cosmos Predict2 2B online GRPO recipe: the family+algo defaults every
+# cosmos_predict2 experiment shared inline. Composes the generic diffusion-GRPO
+# recipe and pins the values that are unanimous across all cosmos_predict2 runs
+# (entrypoint + the flow-matching clip range + CPS SDE + the rollout group shape),
+# so experiments carry only their real per-run diffs (shape, checkpoint, reward,
+# lr/ppo_epochs/samples_per_chunk when they deviate). Override any of these in an
+# experiment when it genuinely differs.
+defaults:
+  - /recipe/online/diffusion_grpo
+
+trainer:
+  entrypoint: vrl.scripts.diffusion.cosmos.train:train_cosmos_predict2_grpo
+
+algorithm:
+  # cosmos/wan video GRPO wants a tighter clip than the diffusion default (1e-4);
+  # set at the family boundary so every cosmos experiment inherits it.
+  clip_ratio: 1.0e-3
+
+rollout:
+  n_samples_per_prompt: 8
+  prompts_per_batch: 1
+  sde:
+    type: cps

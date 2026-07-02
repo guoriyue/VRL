@@ -8,20 +8,19 @@
 # heavier quality guard). Instruction-grounded action-following is designed in
 # SPRINT_future_reward S3 (an inverse-dynamics reward) but not shipped.
 defaults:
-  - /recipe/online/diffusion_grpo
-  - /model/diffusion/cosmos/predict2_2b
-  - /sampling/video/240p_33f
-  - /sampling/denoise/35_step_cfg_7
-  - /reward/target_dino_similarity
-  - /reward/motion_dynamics
-  - /dataset/droid_target_v2w
+- /recipe/online/cosmos_predict2_grpo
+- /model/diffusion/cosmos/predict2_2b
+- /sampling/video/480p_33f            # 480p-native; 240p is OOD -> garbage (SPRINT_config_correctness_audit)
+- /sampling/denoise/35_step_cfg_7
+- /reward/target_dino_similarity
+- /reward/motion_dynamics
+- /dataset/droid_target_v2w
 
 model:
   use_lora: false
-  # Compile OFF: it cannot combine with gradient_checkpointing (torch.compile traces
-  # torch.utils.checkpoint into an InternalTorchDynamoError - see activation_checkpointing.py),
-  # and 240p full-param on 32GB NEEDS grad-ckpt for memory, so we take the eager+checkpointing
-  # branch and forgo compile's ~1.25x. predict2_2b defaults torch_compile.enable=true.
+  path: checkpoints/cosmos-predict2-2b-480p-16fps-diffusers   # 480p-native weights (720p weights = garbage at 480p)
+  # Compile OFF: incompatible with gradient_checkpointing; predict2_2b defaults
+  # torch_compile.enable=true.
   torch_compile:
     enable: false
 
@@ -32,27 +31,18 @@ actor:
   gradient_checkpointing: true
   ppo_epochs: 4
 
-algorithm:
-  clip_ratio: 1.0e-3
-  kl_coef: 0.0
-
 rollout:
-  n_samples_per_prompt: 8
-  prompts_per_batch: 1
   samples_per_chunk: 4
-  sde: { type: cps }
-  same_latent: false
 
 cosmos:
   reference_mode: per_sample
 
 trainer:
-  entrypoint: vrl.scripts.diffusion.cosmos.train:train_cosmos_predict2_grpo
-  output_dir: outputs/cosmos_pred2_droid_target_240p
+  output_dir: outputs/cosmos_pred2_droid_target_480p
   total_epochs: 300
   save_freq: 50
-  debug: { first_step: true }
-  eval: { enabled: true, freq: 25, samples_per_prompt: 2, max_prompts: 32, seed: 20260627 }
+  debug: {first_step: true}
+  eval: {enabled: true, freq: 25, samples_per_prompt: 2, max_prompts: 32, seed: 20260627}
 
 reward:
   # Zero-training default: DINOv2 anchor (main here) + RAFT motion guard. With idm absent,

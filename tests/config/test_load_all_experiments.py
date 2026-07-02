@@ -514,7 +514,7 @@ def test_cosmos_target_v2w_production_validation_requires_target_clip(
     # test_cosmos_v2w_production_validation_accepts_source_backed_data. Here we validate
     # that target-clip-backed data resolves and validates for this recipe.
     cfg = load_config(
-        "experiment/diffusion/cosmos_predict2/online_grpo_droid_target_240p",
+        "experiment/diffusion/cosmos_predict2/online_grpo_droid_target_480p",
         overrides=[
             f"data.manifest={train.as_posix()}",
             f"data.eval_manifest={eval_manifest.as_posix()}",

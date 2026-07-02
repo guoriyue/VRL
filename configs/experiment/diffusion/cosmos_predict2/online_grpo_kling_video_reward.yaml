@@ -11,12 +11,12 @@
 #   2. per-sample mode: set cosmos.reference_mode=per_sample and use JSONL rows:
 #      {"prompt": "...", "reference_image": "path/to/frame.png"}
 defaults:
-  - /recipe/online/diffusion_grpo
-  - /model/diffusion/cosmos/predict2_2b
-  - /sampling/video/704p_93f
-  - /sampling/denoise/35_step_cfg_7
-  - /reward/kling_video_reward
-  - /dataset/drawbench_train_192
+- /recipe/online/cosmos_predict2_grpo
+- /model/diffusion/cosmos/predict2_2b
+- /sampling/video/704p_93f
+- /sampling/denoise/35_step_cfg_7
+- /reward/kling_video_reward
+- /dataset/drawbench_train_192
 
 # The upstream beta=0.004 KL prior is too strong for the current VRL
 # loss-scale on Kling reward: local diagnostics showed the objective dominated
@@ -24,25 +24,14 @@ defaults:
 actor:
   optim:
     lr: 1.0e-4
-  ppo_epochs: 1
-
-algorithm:
-  clip_ratio: 1.0e-3
-  kl_coef: 0.0
+  ppo_epochs: 4                       # =1 makes clip_fraction identically 0 (dead trust-region, flat curve)
 
 rollout:
-  n_samples_per_prompt: 8
-  prompts_per_batch: 1
   samples_per_chunk: 1   # 512p93f peaks ~31.8GB at sbs=1; CFG doubles the transformer batch — no sample-batch headroom on 32GB (scale gate OOM 2026-06-10)
-  sde:
-    type: cps
-  same_latent: false
-
 cosmos:
   reference_mode: global   # global | per_sample
 
 trainer:
-  entrypoint: vrl.scripts.diffusion.cosmos.train:train_cosmos_predict2_grpo
   output_dir: outputs/cosmos_pred2_2b_grpo
   save_freq: 20
   debug:

@@ -2,7 +2,7 @@
 #
 # WHY 480P (not 240p): the cached default checkpoint is the 720P variant, which generates
 # GARBAGE below 704p (verified: 240p/480p with 720P weights collapse to rainbow noise — OOD
-# resolution). So online_grpo_droid_full_target_240p optimizes on garbage rollouts and cannot
+# resolution). So a 240p full-param config optimizes on garbage rollouts and cannot
 # produce a trustworthy curve. The native 480P weights (NVIDIA .pt -> diffusers, model.path)
 # generate COHERENT video at their NATIVE 93-frame clip length (33f is OOD -> artifacts), and
 # 480p_93f is ~2.25x fewer tokens than 704p_93f -> it fits a single 32GB card with full-param
@@ -16,18 +16,18 @@
 #   --name droid_full_targets --limit 1000 --eval-limit 64 --camera observation.images.exterior_1_left
 # Run (single 32GB): PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True (full-param video OOMs without it).
 defaults:
-  - /recipe/online/diffusion_grpo
-  - /model/diffusion/cosmos/predict2_2b
-  - /sampling/video/480p_33f          # 832x480 bucket; num_frames overridden to native 93 below
-  - /sampling/denoise/35_step_cfg_7
-  - /reward/target_dino_similarity
-  - /reward/kling_video_reward
-  - /dataset/droid_full_target_v2w
+- /recipe/online/cosmos_predict2_grpo
+- /model/diffusion/cosmos/predict2_2b
+- /sampling/video/480p_33f            # 832x480 bucket; num_frames overridden to native 93 below
+- /sampling/denoise/35_step_cfg_7
+- /reward/target_dino_similarity
+- /reward/kling_video_reward
+- /dataset/droid_full_target_v2w
 
 model:
   use_lora: false
   # Converted native-480P transformer + shared 720P vae/text_encoder/tokenizer/scheduler (see header).
-  path: /home/mingfeiguo/Desktop/vrl2/VRL/checkpoints/cosmos_predict2_2b_v2w_480p_diffusers
+  path: checkpoints/cosmos-predict2-2b-480p-16fps-diffusers
   # Compile OFF: it cannot combine with gradient_checkpointing (torch.compile traces
   # torch.utils.checkpoint into an InternalTorchDynamoError — see activation_checkpointing.py),
   # and at 480p_93f full-param we NEED grad-ckpt for memory, so we take the eager+checkpointing
@@ -46,19 +46,11 @@ actor:
   gradient_checkpointing: true
   ppo_epochs: 4                       # =1 makes clip_fraction identically 0 (dead trust-region)
 
-algorithm:
-  clip_ratio: 1.0e-3
-  kl_coef: 0.0
-
 cosmos:
   reference_mode: per_sample
 
 rollout:
-  n_samples_per_prompt: 8
-  prompts_per_batch: 1
   samples_per_chunk: 1                # 480p_93f is token-heavy; keep 1 for memory (raise if smoke shows headroom)
-  sde: { type: cps }
-  same_latent: false
 
 distributed:
   rollout:
@@ -70,12 +62,11 @@ distributed:
     pipelined: true
 
 trainer:
-  entrypoint: vrl.scripts.diffusion.cosmos.train:train_cosmos_predict2_grpo
   output_dir: outputs/cosmos_pred2_droid_full_target_480p
   total_epochs: 300
   save_freq: 50
-  debug: { first_step: true }
-  eval: { enabled: true, freq: 25, samples_per_prompt: 2, max_prompts: 64, seed: 20260628 }
+  debug: {first_step: true}
+  eval: {enabled: true, freq: 25, samples_per_prompt: 2, max_prompts: 64, seed: 20260628}
 
 reward:
   components:

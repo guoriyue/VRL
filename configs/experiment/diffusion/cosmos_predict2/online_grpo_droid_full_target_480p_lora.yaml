@@ -11,20 +11,20 @@
 # Uses the converted 480P diffusers pipeline at model.path (see the full-param sibling
 # online_grpo_droid_full_target_480p.yaml header for the conversion recipe).
 defaults:
-  - /recipe/online/diffusion_grpo
-  - /model/diffusion/cosmos/predict2_2b
-  - /sampling/video/480p_33f
-  - /sampling/denoise/35_step_cfg_7
-  - /reward/target_dino_similarity
-  - /reward/motion_dynamics
-  - /dataset/droid_full_target_v2w
+- /recipe/online/cosmos_predict2_grpo
+- /model/diffusion/cosmos/predict2_2b
+- /sampling/video/480p_33f
+- /sampling/denoise/35_step_cfg_7
+- /reward/target_dino_similarity
+- /reward/motion_dynamics
+- /dataset/droid_full_target_v2w
 
 model:
   use_lora: true
   path: checkpoints/cosmos-predict2-2b-480p-16fps-diffusers
   # Eager: robust for an unattended overnight run. compile needs gradient_checkpointing
   # off (mutually exclusive), and compile-alone OOMs at 480p activations -- so eager.
-  torch_compile: { enable: false }
+  torch_compile: {enable: false}
   lora:
     rank: 32
     alpha: 32
@@ -36,16 +36,8 @@ actor:
   gradient_checkpointing: true
   ppo_epochs: 4         # >1 so clip_fraction>0 (trust-region engages); flow_grpo lesson
 
-algorithm:
-  clip_ratio: 1.0e-3
-  kl_coef: 0.0
-
 rollout:
-  n_samples_per_prompt: 8
-  prompts_per_batch: 1
   samples_per_chunk: 4
-  sde: { type: cps }
-  same_latent: false
 
 distributed:
   rollout:
@@ -55,12 +47,11 @@ cosmos:
   reference_mode: per_sample
 
 trainer:
-  entrypoint: vrl.scripts.diffusion.cosmos.train:train_cosmos_predict2_grpo
   output_dir: outputs/cosmos_pred2_droid_full_target_480p_lora
   total_epochs: 100     # long overnight run
   save_freq: 10         # checkpoints at 10,20,... so a mid-run crash is resumable
-  debug: { first_step: true }
-  eval: { enabled: true, freq: 10, samples_per_prompt: 2, max_prompts: 4, seed: 20260628 }
+  debug: {first_step: true}
+  eval: {enabled: true, freq: 10, samples_per_prompt: 2, max_prompts: 4, seed: 20260628}
 
 reward:
   components:
