@@ -224,10 +224,17 @@ def build_sd3_5_replay_runtime_bundle_from_cfg(cfg, device, wd): ...  # 2 行包
 > - **新家族的落地面（当下起）**：`model.py`（真代码）+ `runner.py`（若需要）+ `runtime.py`
 >   （capability + executor，~30 行）+ registry 一条带 `build=` 描述符 + yaml（entrypoint 用通用 recipe）
 >   ——**零 builder 函数、零 train.py**。SANA 按此接。
-> - 旧家族迁移策略：sd3_5/echo 等 data-only 家族可随时同法迁移（改 registry + 删函数 + 切 yaml
->   entrypoint）；带 per-call 代码的（flux NFT hook、wan 变体解析、anima artifact 解析、predict2/2.5 的
->   extra_metadata lambda）**保留薄 stub**——描述符装不下代码，stub 就是它们的正确形态。
-> - 验证：**411 passed**（含 precision-bridge + rollout-launcher）。
+> - ✅ **sd3_5 同法迁移完成（第二个 descriptor 家族）**：5 个函数删、`scripts/diffusion/sd3_5/` 目录删、
+>   5 个实验 yaml entrypoint 切通用 recipe（fsdp yaml 经 defaults 继承自动跟随）、3 处测试改指 generic
+>   （precision-bridge 用 `extract_family_runtime_spec`；wiring 的 descriptor 专测参数化覆盖
+>   sd3_5+qwen_image；vae-memory 参数化加 spec_family 列）。全仓 `build_sd3_5_*`/`train_sd3_5_*` 零残留。
+> - **descriptor 家族名册（终态）**：sd3_5、qwen_image（+ 未来所有 data-only 新家族，SANA 起）。
+>   **其余家族为何不迁（都是"stub 里有代码"）**：flux（NFT hook 闭包）、wan（t2v/i2v 变体解析 +
+>   model 依赖 metadata）、anima（artifact 路径解析前置）、predict2/predict2_5（extra_metadata lambda +
+>   NFT 守卫）、echo（replay 是 LTX wrapper 工厂，descriptor 的 replay_cls 装不下）、cosmos3
+>   （`_apply_train_knobs`）、AR janus/nextstep（config-from-spec 是真代码，且 janus 双 capability）。
+>   描述符装数据不装代码——这条边界就是"能否零函数"的判据。
+> - 验证：**439 passed**（迄今最宽集合：+ execution worker 测试）。
 > **遗留审计项**：predict2_5 写入 caps 的 `supports_diffusion_nft` **全仓库无读取方**（dead cap，
 > 按 dead-field 规则应删或补上本该存在的校验）；cosmos/wan/echo/anima 系 caps 无 `family_capability`
 > 键与 sd3/flux/qwen 不一致（行为无差——`capabilities.py:177` 缺键回落 registry 声明——但契约分裂）。

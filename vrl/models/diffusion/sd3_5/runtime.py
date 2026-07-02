@@ -1,7 +1,8 @@
 """SD 3.5 family runtime.
 
-Backend imports live inside the model's ``from_spec`` so the shared runtime
-does not import diffusers or future native backends eagerly.
+Registry-descriptor family: no builder functions live here — the generic
+functions in ``vrl.models.diffusion.build`` construct the bundles from the
+``DiffusionFamilyBuild`` recipe on the sd3_5 registry entry.
 """
 
 from __future__ import annotations
@@ -15,79 +16,9 @@ from vrl.generation.diffusion import (
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
-from vrl.models.diffusion.build import (
-    build_diffusion_replay_runtime_bundle,
-    build_diffusion_runtime_bundle,
-)
 from vrl.models.diffusion.capabilities import diffusion_family_capability
-from vrl.models.interfaces.runtime import (
-    RuntimeBuildSpec,
-    RuntimeBundle,
-)
-from vrl.models.runtime_config import (
-    extract_runtime_spec,
-)
-from vrl.utils.logging import init_logger
 
-logger = init_logger(__name__)
 SD3_5_FAMILY_CAPABILITY = diffusion_family_capability("sd3_5", "t2i")
-
-
-def extract_sd3_5_runtime_spec(cfg: Any, device: Any, weight_dtype: Any) -> RuntimeBuildSpec:
-    """Slice the runtime-relevant subset out of a whole RL cfg."""
-    return extract_runtime_spec(
-        cfg,
-        device,
-        weight_dtype,
-        task_variant="t2i",
-    )
-
-
-def build_sd3_5_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    """Thin family stub over the shared diffusion runtime builder."""
-    from vrl.models.diffusion.sd3_5.model import SD3_5Model
-
-    logger.info("Building sd3_5 runtime bundle")
-    return build_diffusion_runtime_bundle(
-        spec,
-        model_cls=SD3_5Model,
-        capability=SD3_5_FAMILY_CAPABILITY,
-        memory_owner="SD3.5 VAE",
-    )
-
-
-def build_sd3_5_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    """Thin family stub over the shared diffusion replay builder."""
-    from vrl.models.diffusion.sd3_5.model import SD3_5ReplayModel
-
-    logger.info(
-        "Building sd3_5 replay runtime bundle from %s",
-        spec.model_name_or_path,
-    )
-    return build_diffusion_replay_runtime_bundle(
-        spec,
-        replay_cls=SD3_5ReplayModel,
-        transformer_classname="SD3Transformer2DModel",
-        capability=SD3_5_FAMILY_CAPABILITY,
-    )
-
-
-def build_sd3_5_runtime_bundle_from_cfg(
-    cfg: Any, device: Any, weight_dtype: Any,
-) -> RuntimeBundle:
-    """Outer convenience: whole-cfg → spec → bundle."""
-    spec = extract_sd3_5_runtime_spec(cfg, device, weight_dtype)
-    return build_sd3_5_runtime_bundle(spec)
-
-
-def build_sd3_5_replay_runtime_bundle_from_cfg(
-    cfg: Any,
-    device: Any,
-    weight_dtype: Any,
-) -> RuntimeBundle:
-    """Outer convenience: whole-cfg → spec → replay bundle."""
-    spec = extract_sd3_5_runtime_spec(cfg, device, weight_dtype)
-    return build_sd3_5_replay_runtime_bundle(spec)
 
 
 class SD3_5ChunkExecutor(DiffusionChunkExecutorBase):
@@ -148,9 +79,5 @@ class SD3_5ChunkExecutor(DiffusionChunkExecutorBase):
 
 __all__ = [
     "SD3_5ChunkExecutor",
-    "build_sd3_5_replay_runtime_bundle",
-    "build_sd3_5_replay_runtime_bundle_from_cfg",
-    "build_sd3_5_runtime_bundle",
-    "build_sd3_5_runtime_bundle_from_cfg",
-    "extract_sd3_5_runtime_spec",
+    "SD3_5_FAMILY_CAPABILITY",
 ]

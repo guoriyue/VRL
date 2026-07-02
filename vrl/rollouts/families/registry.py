@@ -162,10 +162,17 @@ register_rollout_family(
         task="t2i",
         aliases=(),
         executor_cls="vrl.models.diffusion.sd3_5.runtime:SD3_5ChunkExecutor",
-        runtime_builder="vrl.models.diffusion.sd3_5.runtime:build_sd3_5_runtime_bundle",
-        runtime_spec_extractor="vrl.models.diffusion.sd3_5.runtime:extract_sd3_5_runtime_spec",
+        runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
+        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
         request_prefix="sd3_5",
         default_task_type="text_to_image",
+        build=DiffusionFamilyBuild(
+            model_cls="vrl.models.diffusion.sd3_5.model:SD3_5Model",
+            replay_cls="vrl.models.diffusion.sd3_5.model:SD3_5ReplayModel",
+            transformer_classname="SD3Transformer2DModel",
+            task_variant="t2i",
+            memory_owner="SD3.5 VAE",
+        ),
     ),
 )
 

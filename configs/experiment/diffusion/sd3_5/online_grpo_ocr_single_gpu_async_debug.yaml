@@ -66,7 +66,7 @@ rollout:
     window_range: [0, 4]
 
 trainer:
-  entrypoint: vrl.scripts.diffusion.sd3_5.train:train_sd3_5_grpo
+  entrypoint: vrl.scripts.diffusion.train:train_diffusion_grpo
   output_dir: outputs/sd3_5_ocr_grpo_single_gpu_async_debug
   total_epochs: 3
   save_freq: 9999

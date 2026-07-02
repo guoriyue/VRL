@@ -253,8 +253,11 @@ def test_online_metrics_csv_includes_logprob_mismatch_metrics(tmp_path):
 def test_frozen_axis_in_runtime_spec(frozen, expected):
     # P1b: the frozen axis rides the spec as a real torch.dtype (like `dtype`).
     """Checks frozen axis in runtime spec."""
-    from vrl.models.diffusion.sd3_5.runtime import extract_sd3_5_runtime_spec
+    # sd3_5 is a registry-descriptor family: its spec comes from the generic
+    # extractor (family resolved from cfg.model.family).
+    from vrl.models.diffusion.build import extract_family_runtime_spec
 
     cfg = _with_precision("diffusion/sd3_5/online_grpo_ocr", {"train": "fp32", "frozen": frozen})
-    spec = extract_sd3_5_runtime_spec(cfg, torch.device("cpu"), torch.float32)
+    spec = extract_family_runtime_spec(cfg, torch.device("cpu"), torch.float32)
+    assert spec.family == "sd3_5"
     assert spec.frozen_dtype is expected

@@ -156,25 +156,36 @@ def test_wan_runtime_bundle_records_model_build_memory_metadata(
 
 
 @pytest.mark.parametrize(
-    ("runtime_module_name", "model_module_name", "model_class_name", "build_fn_name"),
+    (
+        "runtime_module_name",
+        "model_module_name",
+        "model_class_name",
+        "build_fn_name",
+        "spec_family",
+    ),
     [
+        # sd3_5 is a registry-descriptor family: the generic builder resolves
+        # its model class from the registry recipe, keyed by spec.family.
         (
-            "vrl.models.diffusion.sd3_5.runtime",
+            "vrl.models.diffusion.build",
             "vrl.models.diffusion.sd3_5.model",
             "SD3_5Model",
-            "build_sd3_5_runtime_bundle",
+            "build_family_runtime_bundle",
+            "sd3_5",
         ),
         (
             "vrl.models.diffusion.cosmos.predict2.runtime",
             "vrl.models.diffusion.cosmos.predict2.model",
             "CosmosPredict2Model",
             "build_cosmos_predict2_runtime_bundle",
+            None,
         ),
         (
             "vrl.models.diffusion.cosmos.predict2_5.runtime",
             "vrl.models.diffusion.cosmos.predict2_5.model",
             "CosmosPredict25Model",
             "build_cosmos_predict25_runtime_bundle",
+            None,
         ),
     ],
 )
@@ -184,6 +195,7 @@ def test_full_generation_runtime_bundles_record_model_build_memory_metadata(
     model_module_name: str,
     model_class_name: str,
     build_fn_name: str,
+    spec_family: str | None,
 ) -> None:
     """Checks full-generation runtime bundles report VAE memory policy."""
     from vrl.models.interfaces.runtime import RuntimeBuildSpec
@@ -223,6 +235,7 @@ def test_full_generation_runtime_bundles_record_model_build_memory_metadata(
             model_name_or_path="fake/model",
             device="cpu",
             dtype="float32",
+            family=spec_family,
             sampling_config={"num_steps": 2},
             model_config={"memory": {"vae_decode": {"tiling": True, "slicing": False}}},
         ),

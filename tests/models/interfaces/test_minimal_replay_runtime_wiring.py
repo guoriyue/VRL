@@ -85,10 +85,6 @@ def _spec(**overrides: Any) -> RuntimeBuildSpec:
     ("module_path", "builder_name"),
     [
         (
-            "vrl.models.diffusion.sd3_5.runtime",
-            "build_sd3_5_replay_runtime_bundle",
-        ),
-        (
             "vrl.models.diffusion.flux.runtime",
             "build_flux_replay_runtime_bundle",
         ),
@@ -148,12 +144,14 @@ def test_diffusion_replay_builders_return_minimal_bundles(
         _ = bundle.model.pipeline
 
 
+@pytest.mark.parametrize("family", ["sd3_5", "qwen_image"])
 def test_registry_descriptor_replay_builder_returns_minimal_bundle(
     monkeypatch: pytest.MonkeyPatch,
+    family: str,
 ) -> None:
-    """The descriptor-driven generic replay builder (qwen_image pilot).
+    """The descriptor-driven generic replay builder (descriptor families).
 
-    qwen_image ships no builder functions: the registry entry's
+    These families ship no builder functions: the registry entry's
     ``DiffusionFamilyBuild`` recipe drives the generic builder, keyed by
     ``spec.family``. Behavioral contract matches the per-family builders above.
     """
@@ -171,13 +169,13 @@ def test_registry_descriptor_replay_builder_returns_minimal_bundle(
     )
 
     bundle = _shared_build.build_family_replay_runtime_bundle(
-        _spec(family="qwen_image"),
+        _spec(family=family),
     )
 
     assert bundle_loads_full_generation_modules(bundle) is False
     assert bundle.raw_handle is None
     assert set(bundle.trainable_modules) == {"transformer"}
-    assert bundle.metadata["family"] == "qwen_image"
+    assert bundle.metadata["family"] == family
     with pytest.raises(RuntimeError, match="pipeline"):
         _ = bundle.model.pipeline
 
