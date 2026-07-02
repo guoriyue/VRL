@@ -69,7 +69,7 @@ def test_run_denoise_steps_writes_preallocated_buffers(return_kl: bool) -> None:
     else:
         assert torch.count_nonzero(result.kl).item() == 0
     assert result.engine_counters["diffusion_num_denoise_steps"] == 2
-    assert result.engine_counters["diffusion_sample_batch_size"] == 2
+    assert result.engine_counters["diffusion_samples_per_chunk"] == 2
     assert result.engine_counters["diffusion_observation_bytes"] == (
         result.observations.numel() * result.observations.element_size()
     )

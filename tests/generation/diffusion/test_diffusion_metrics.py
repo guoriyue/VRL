@@ -36,7 +36,7 @@ def test_diffusion_chunk_gatherer_aggregates_json_serializable_counters() -> Non
     assert output.metrics is not None
     counters = output.metrics.engine_counters
     assert counters["diffusion_num_denoise_steps"] == 2
-    assert counters["diffusion_sample_batch_size"] == 1
+    assert counters["diffusion_samples_per_chunk"] == 1
     assert counters["diffusion_observation_bytes"] == trajectory_tensor_bytes(
         torch.cat([chunk.observations for chunk in chunks], dim=0),
     )

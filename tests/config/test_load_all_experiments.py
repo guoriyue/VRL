@@ -229,7 +229,7 @@ def test_cosmos_predict25_kling_reward_uses_paper_rl_batch() -> None:
     """Checks the Kling reward recipe matches the paper RL batch geometry."""
     cfg = load_config("experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward")
 
-    # Batch geometry (n_samples_per_prompt / prompts_per_batch / sample_batch_size /
+    # Batch geometry (n_samples_per_prompt / prompts_per_batch / samples_per_chunk /
     # microbatch_size) is declarative YAML a tuner is free to change. Assert the real
     # coupling instead of pinning the paper's magic numbers.
     assert cfg.rollout.prompts_per_batch % cfg.rollout.n_samples_per_prompt == 0
@@ -629,7 +629,7 @@ def test_cli_overrides_reach_typed_trainer_config() -> None:
             "trainer.torch_profiler.enabled=true",
             "trainer.torch_profiler.activities=[cpu]",
             "actor.drop_zero_advantage=false",
-            "rollout.sample_batch_size=2",
+            "rollout.samples_per_chunk=2",
         ],
     )
     trainer = build_configs(cfg)["trainer"]
@@ -638,7 +638,7 @@ def test_cli_overrides_reach_typed_trainer_config() -> None:
     assert trainer.torch_profiler.enabled is True
     assert trainer.torch_profiler.activities == ("cpu",)
     assert trainer.drop_zero_advantage is False
-    assert trainer.sample_batch_size == 2
+    assert trainer.samples_per_chunk == 2
 
 
 def test_invalid_algorithm_kind_fails_fast() -> None:

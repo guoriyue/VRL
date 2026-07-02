@@ -139,7 +139,7 @@ def build_cosmos3_replay_runtime_bundle_from_cfg(cfg: Any, device: Any, weight_d
 class Cosmos3ChunkExecutor(DiffusionChunkExecutorBase):
     """Diffusion executor for Cosmos3 Omni text-to-video rollouts.
 
-    Strictly ``sample_batch_size=1``: the Cosmos3OmniPipeline packs one sample at a
+    Strictly ``samples_per_chunk=1``: the Cosmos3OmniPipeline packs one sample at a
     time (no native B>1 path), so the chunk executor pins a single sample.
     """
 
@@ -150,10 +150,10 @@ class Cosmos3ChunkExecutor(DiffusionChunkExecutorBase):
     default_fps: int | None = 24
     default_max_sequence_length: int = 512
 
-    def __init__(self, model: Any, *, sample_batch_size: int = 1) -> None:
-        del sample_batch_size  # cosmos3 is strictly batch=1 (pipeline constraint)
+    def __init__(self, model: Any, *, samples_per_chunk: int = 1) -> None:
+        del samples_per_chunk  # cosmos3 is strictly batch=1 (pipeline constraint)
         self.model = model
-        self.default_sample_batch_size = 1
+        self.default_samples_per_chunk = 1
 
     def encode_prompt_for_chunk(
         self,

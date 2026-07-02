@@ -99,7 +99,7 @@ class DistributedExecutionPlanner:
         if not workers:
             raise ValueError("DistributedExecutionPlanner requires at least one worker")
         max_samples = int(
-            request.sampling.get("sample_batch_size", request.samples_per_prompt),
+            request.sampling.get("samples_per_chunk", request.samples_per_prompt),
         )
         capability = self.capability
         if capability is None:

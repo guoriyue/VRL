@@ -91,7 +91,7 @@ def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
         cfg,
         family,
         weight_dtype=torch.bfloat16,
-        executor_kwargs={"sample_batch_size": 2},
+        executor_kwargs={"samples_per_chunk": 2},
     )
 
     assert isinstance(inputs, RayGenerationLaunchInputs)
@@ -102,7 +102,7 @@ def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
     assert inputs.launch_contract.policy_version == 0
     assert inputs.launch_contract.runtime_builder == entry.runtime_builder
     assert inputs.launch_contract.executor_cls == entry.executor_cls
-    assert inputs.launch_contract.executor_kwargs == {"sample_batch_size": 2}
+    assert inputs.launch_contract.executor_kwargs == {"samples_per_chunk": 2}
     assert isinstance(inputs.gatherer, expected_gatherer)
     assert not isinstance(inputs.gatherer, GenerationChunkExecutor)
 
@@ -259,7 +259,7 @@ def test_explicit_executor_kwargs_override_registry_defaults() -> None:
             "distributed.resources.rollout.num_gpus=0",
             "distributed.resources.rollout.gpus_per_worker=0",
             "distributed.resources.rollout.num_workers=1",
-            "rollout.sample_batch_size=8",
+            "rollout.samples_per_chunk=8",
         ],
     )
 
@@ -267,8 +267,8 @@ def test_explicit_executor_kwargs_override_registry_defaults() -> None:
         cfg,
         "sd3_5",
         weight_dtype=torch.bfloat16,
-        executor_kwargs={"sample_batch_size": 3},
+        executor_kwargs={"samples_per_chunk": 3},
     )
 
     assert isinstance(inputs, RayGenerationLaunchInputs)
-    assert inputs.launch_contract.executor_kwargs == {"sample_batch_size": 3}
+    assert inputs.launch_contract.executor_kwargs == {"samples_per_chunk": 3}

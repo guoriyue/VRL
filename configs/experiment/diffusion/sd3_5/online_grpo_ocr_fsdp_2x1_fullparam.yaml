@@ -71,4 +71,4 @@ actor:
 rollout:
   prompts_per_batch: 1
   n_samples_per_prompt: 8
-  sample_batch_size: 4
+  samples_per_chunk: 4

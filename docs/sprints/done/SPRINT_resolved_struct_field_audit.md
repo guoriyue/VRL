@@ -410,3 +410,22 @@ stored 字段），但它和 `ray_total_bundles` **本质不同，倾向保留**
 - DiffusionNFT：`vrl/algorithms/diffusion_nft.py:26`、`configs/base/algorithm/diffusion_nft.yaml:11`
 - PrecisionDriftGuard / DPO：`vrl/trainers/core/types.py:73,82-83`、`vrl/trainers/offline/dpo.py:54` + `vrl/scripts/diffusion/wan_2_1/train_dpo.py:213`
 - 缓删：`vrl/trainers/core/types.py:251`（`log_freq`，+ schema.py:306 + 9 个实验 YAML）、`vrl/generation/diffusion/layout.py:19`（`VideoGenerationRequest` DTO）
+
+---
+
+## Re-audit 2026-06-30（GPT-5.5 重写 resources.py 后复核；结论：现在无干净可删项）
+
+一个 background agent 复审了所有 `Resolved*`/`*Capability`/`*Plan` 结构。**自查后否掉了 agent 的两个头号候选**（Evidence-First 拦截）：
+
+- **`FamilyCapability.supports_reference_conditioning` —— 不是死字段。** `vrl/rollouts/families/registry.py:127` 用它驱动 `include_reference_image=`，且每个 family 都有意设置（wan i2v=True、predict2=True、其余 False）。是有意义的 per-family capability，**保留**。
+- **`BundleLayout.trainer_bundle_indices` —— 不是"零读取"。** agent 只查了 `vrl/`，漏了 **7 处测试读取**（`tests/ray/test_global_placement.py:44/64/106/124/142/279`，其中 `:279` 还 `[0]` 索引它）。按规则"仅测试读取"= 死,但删它要改 7 个测试,且它在 resources.py。
+- **`FamilyCapability.metadata` —— 未用的扩展点 dict**（只有 `from_value` round-trip 填充）。删它低价值 + 扩展 hatch 常是有意的，**缓删**。
+
+**真正值得删、但被并发阻塞的（等 GPT-5.5 的 resources.py 工作落定后再动，避免 clobber）：**
+- `PhaseHandoffPolicy.release_reward_after_score`（`resources.py:103`）—— logging-only，行为已由 `reward.mode`（`resources.py:363` 从同一 local 派生）承载。真候选。
+- `BundleLayout.trainer_bundle_indices`（`resources.py:1053`）—— 仅测试读取（含 `:279` 索引用）。删需连带改 `tests/ray/`。
+- 陈旧 docstring：`RayLifecyclePlan`（`resources.py:113-115`）仍宣称有扁平镜像 `rollout_release_after_collect`，该字段已不存在（只剩 `resources.py:344` 的局部变量）。
+
+次要（低置信，feed 进 summary，属 display，先不动）：`AxisCapability.chunkable/batchable`、`ExecutionStageCapability.segment/axis`。
+
+**未删任何字段**：真候选都在 GPT-5.5 正在动的 `resources.py` + 连带 `tests/ray/`；等其落定再一并处理。

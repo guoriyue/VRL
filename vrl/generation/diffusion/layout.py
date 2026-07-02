@@ -43,7 +43,7 @@ class DiffusionBaseParams:
     width: int
     num_frames: int
     fps: int | None
-    sample_batch_size: int
+    samples_per_chunk: int
     max_sequence_length: int
     seed: int | None
     negative_prompt: str | None
@@ -85,7 +85,7 @@ class DiffusionSamplingParams:
 class DiffusionRequestLayout:
     """Prompt-major request layout shared by diffusion executors and gatherers."""
 
-    default_sample_batch_size: int = 1
+    default_samples_per_chunk: int = 1
     default_num_frames: int = 1
     default_fps: int | None = None
     default_max_sequence_length: int = 512
@@ -110,12 +110,12 @@ class DiffusionRequestLayout:
                 )
             ),
             fps=None if fps_value is None else int(fps_value),
-            sample_batch_size=max(
+            samples_per_chunk=max(
                 1,
                 int(
                     sampling.get(
-                        "sample_batch_size",
-                        self.default_sample_batch_size,
+                        "samples_per_chunk",
+                        self.default_samples_per_chunk,
                     )
                 ),
             ),

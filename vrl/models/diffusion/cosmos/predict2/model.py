@@ -401,7 +401,7 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusionModelBas
         ``init_latents`` must be aligned to the sample batch: the state holds
         it with a leading-1 dim (forward expands lazily), but the trajectory
         builder silently drops replay tensors whose dim-0 != batch_size — with
-        sample_batch_size > 1 an unaligned export loses the key and replay
+        samples_per_chunk > 1 an unaligned export loses the key and replay
         restore KeyErrors on ``init_latents``.
         """
         return {

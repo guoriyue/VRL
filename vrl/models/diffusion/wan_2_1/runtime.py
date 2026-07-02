@@ -264,10 +264,10 @@ class Wan_2_1ChunkExecutor(DiffusionChunkExecutorBase):
         self,
         model: Any,
         *,
-        sample_batch_size: int = 1,
+        samples_per_chunk: int = 1,
     ) -> None:
         self.model = model
-        self.default_sample_batch_size = max(1, int(sample_batch_size))
+        self.default_samples_per_chunk = max(1, int(samples_per_chunk))
 
     def build_chunk_encoded(
         self,
@@ -311,11 +311,11 @@ class Wan_2_1I2VChunkExecutor(ReferenceConditionedChunks, DiffusionChunkExecutor
         model: Any,
         *,
         reference_image: Any = None,
-        sample_batch_size: int = 1,
+        samples_per_chunk: int = 1,
     ) -> None:
         self.model = model
         self.reference_image = reference_image
-        self.default_sample_batch_size = max(1, int(sample_batch_size))
+        self.default_samples_per_chunk = max(1, int(samples_per_chunk))
 
     def build_chunk_encoded(
         self,

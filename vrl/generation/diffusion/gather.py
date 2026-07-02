@@ -70,7 +70,7 @@ class DiffusionChunkGatherer:
         engine_counters = diffusion_rollout_engine_counters(
             stage_durations=stage_durations,
             num_denoise_steps=int(timesteps_tensor.shape[1]),
-            sample_batch_size=max(chunk.sample_count for chunk in ordered_chunks),
+            samples_per_chunk=max(chunk.sample_count for chunk in ordered_chunks),
             byte_values={
                 "observation": observations,
                 "action": actions,

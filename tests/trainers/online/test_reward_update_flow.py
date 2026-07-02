@@ -646,8 +646,8 @@ class TestRewardUpdateFlow:
         )
 
 
-def test_sample_batch_size_splits_training_replay_and_preserves_gradient(monkeypatch) -> None:
-    """rollout.sample_batch_size bounds replay/backward calls without changing gradients."""
+def test_samples_per_chunk_splits_training_replay_and_preserves_gradient(monkeypatch) -> None:
+    """rollout.samples_per_chunk bounds replay/backward calls without changing gradients."""
     import asyncio
 
     import pytest
@@ -724,7 +724,7 @@ def test_sample_batch_size_splits_training_replay_and_preserves_gradient(monkeyp
             pass
 
     def _make_trainer(
-        sample_batch_size: int,
+        samples_per_chunk: int,
         *,
         streaming: bool,
     ) -> tuple[OnlineTrainer, list[int]]:
@@ -748,20 +748,20 @@ def test_sample_batch_size_splits_training_replay_and_preserves_gradient(monkeyp
                 debug=DebugConfig(),
                 n_samples_per_prompt=4,
                 gradient_accumulation_steps=1 if streaming else 0,
-                sample_batch_size=sample_batch_size,
+                samples_per_chunk=samples_per_chunk,
             ),
             device="cpu",
         )
         return trainer, replay_calls
 
     def _run(
-        sample_batch_size: int,
+        samples_per_chunk: int,
         *,
         streaming: bool,
     ) -> tuple[float, list[int], list[int]]:
         device_move_sizes.clear()
         trainer, replay_calls = _make_trainer(
-            sample_batch_size,
+            samples_per_chunk,
             streaming=streaming,
         )
         recorded_grads: list[float] = []
@@ -792,15 +792,15 @@ def test_sample_batch_size_splits_training_replay_and_preserves_gradient(monkeyp
         return recorded_grads[0], replay_calls, list(device_move_sizes)
 
     full_grad, full_calls, full_device_moves = _run(
-        sample_batch_size=0,
+        samples_per_chunk=0,
         streaming=False,
     )
     legacy_split_grad, legacy_split_calls, legacy_split_device_moves = _run(
-        sample_batch_size=2,
+        samples_per_chunk=2,
         streaming=False,
     )
     streaming_split_grad, streaming_split_calls, streaming_split_device_moves = _run(
-        sample_batch_size=2,
+        samples_per_chunk=2,
         streaming=True,
     )
 
@@ -890,8 +890,8 @@ def test_microbatch_size_reconciles_with_gradient_accumulation_steps() -> None:
         _cfg(microbatch_size=4, ppo_epochs=2)
     with pytest.raises(ValueError, match=">= 0"):
         _cfg(microbatch_size=-1)
-    with pytest.raises(ValueError, match="sample_batch_size"):
-        _cfg(sample_batch_size=-1)
+    with pytest.raises(ValueError, match="samples_per_chunk"):
+        _cfg(samples_per_chunk=-1)
 
 
 def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
@@ -911,7 +911,7 @@ def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
             output_dir="x",
             drop_zero_advantage=False,
             gradient_accumulation_steps=gas,
-            sample_batch_size=2,
+            samples_per_chunk=2,
         )
 
     logger_name = "vrl.scripts.common.online"

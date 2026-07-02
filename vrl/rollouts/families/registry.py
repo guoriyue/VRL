@@ -47,7 +47,7 @@ class CollectorMetadata:
 class ExecutorKwargsMetadata:
     """Runtime executor kwargs that can be derived from a full rollout cfg."""
 
-    include_sample_batch_size: bool = False
+    include_samples_per_chunk: bool = False
     include_reference_image: bool = False
 
 
@@ -123,7 +123,7 @@ def _diffusion_entry(
             supports_reference_conditioning=supports_reference_conditioning,
         ),
         executor_kwargs=ExecutorKwargsMetadata(
-            include_sample_batch_size=True,
+            include_samples_per_chunk=True,
             include_reference_image=supports_reference_conditioning,
         ),
     )

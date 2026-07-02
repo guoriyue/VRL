@@ -209,11 +209,11 @@ class CosmosChunkExecutor(ReferenceConditionedChunks, DiffusionChunkExecutorBase
         model: Any,  # CosmosPredict2Model
         *,
         reference_image: Any = None,
-        sample_batch_size: int = 8,
+        samples_per_chunk: int = 8,
     ) -> None:
         self.model = model
         self.reference_image = load_reference_image(reference_image)
-        self.default_sample_batch_size = max(1, int(sample_batch_size))
+        self.default_samples_per_chunk = max(1, int(samples_per_chunk))
 
     def build_chunk_encoded(
         self,

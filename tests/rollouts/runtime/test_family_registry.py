@@ -76,7 +76,7 @@ def test_rollout_config_is_projected_from_yaml() -> None:
                 "cfg": True,
             },
             "rollout": {
-                "sample_batch_size": 8,
+                "samples_per_chunk": 8,
                 "noise_level": 1.0,
                 "same_latent": False,
                 "sde": {
@@ -93,7 +93,7 @@ def test_rollout_config_is_projected_from_yaml() -> None:
 
     assert rollout_config.require("width") == 1280
     assert rollout_config.require("num_steps") == 35
-    assert rollout_config.require("sample_batch_size") == 8
+    assert rollout_config.require("samples_per_chunk") == 8
     assert rollout_config.require("sde_window_range") == (0, 10)
     assert rollout_config.require("return_kl") is True
 
@@ -114,7 +114,7 @@ def test_request_sampling_is_projected_from_resolved_yaml_config() -> None:
             "rollout": {
                 "n_samples_per_prompt": 4,
                 "prompts_per_batch": 1,
-                "sample_batch_size": 8,
+                "samples_per_chunk": 8,
                 "reward_view": "image",
                 "noise_level": 1.0,
                 "same_latent": False,
@@ -136,7 +136,7 @@ def test_request_sampling_is_projected_from_resolved_yaml_config() -> None:
     assert sampling["width"] == 1280
     assert sampling["num_frames"] == 93
     assert sampling["fps"] == 16
-    assert sampling["sample_batch_size"] == 8
+    assert sampling["samples_per_chunk"] == 8
     assert sampling["sde_type"] == "flow_grpo"
     assert sampling["sde_window_range"] == (0, 10)
     assert sampling["return_kl"] is False
@@ -166,7 +166,7 @@ def test_migrated_collectors_build_direct_trajectory_collectors() -> None:
                 family=family,
                 values={
                     "n_samples_per_prompt": 1,
-                    "sample_batch_size": 1,
+                    "samples_per_chunk": 1,
                 },
             ),
         )

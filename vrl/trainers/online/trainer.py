@@ -349,7 +349,7 @@ class _TrainingSampleChunk:
 def _training_sample_chunks(
     batch: RolloutBatch,
     advantages: torch.Tensor,
-    sample_batch_size: int,
+    samples_per_chunk: int,
 ) -> list[_TrainingSampleChunk]:
     """Split one prompt group for replay without changing full-group loss math."""
 
@@ -361,7 +361,7 @@ def _training_sample_chunks(
         )
     if batch_size <= 0:
         return []
-    chunk_size = int(sample_batch_size)
+    chunk_size = int(samples_per_chunk)
     if chunk_size <= 0 or chunk_size >= batch_size:
         return [_TrainingSampleChunk(batch=batch, advantages=advantages, loss_weight=1.0)]
 
@@ -395,7 +395,7 @@ def _distributed_max_int(value: int, device: torch.device) -> int:
 def _balanced_training_sample_chunks(
     batches: list[RolloutBatch],
     advantages: list[torch.Tensor],
-    sample_batch_size: int,
+    samples_per_chunk: int,
     device: torch.device,
 ) -> list[_TrainingSampleChunk]:
     """Plan replay execution slots with equal slot counts across ranks.
@@ -408,7 +408,7 @@ def _balanced_training_sample_chunks(
 
     chunks: list[_TrainingSampleChunk] = []
     for batch, adv in zip(batches, advantages, strict=True):
-        chunks.extend(_training_sample_chunks(batch, adv, sample_batch_size))
+        chunks.extend(_training_sample_chunks(batch, adv, samples_per_chunk))
 
     target_count = _distributed_max_int(len(chunks), device)
     if target_count == len(chunks):
@@ -827,12 +827,12 @@ class OnlineTrainer(Trainer):
             num_timesteps, cfg.timestep_fraction, cfg.timestep_selection,
         )
         loss_scale = int(total_groups) * len(train_indices)
-        sample_batch_size = int(getattr(cfg, "sample_batch_size", 0))
+        samples_per_chunk = int(getattr(cfg, "samples_per_chunk", 0))
         agg = self._update_agg_metrics
         for sample_chunk in _balanced_training_sample_chunks(
             batch.batches,
             batch.advantages,
-            sample_batch_size,
+            samples_per_chunk,
             self.device,
         ):
             chunk_batch = move_training_batch_to_device(
@@ -1071,7 +1071,7 @@ class OnlineTrainer(Trainer):
         grad_accum_batches = int(cfg.gradient_accumulation_steps)
         if grad_accum_batches <= 0 or grad_accum_batches > len(filtered_batches):
             grad_accum_batches = len(filtered_batches)
-        sample_batch_size = int(getattr(cfg, "sample_batch_size", 0))
+        samples_per_chunk = int(getattr(cfg, "samples_per_chunk", 0))
 
         # Debug first step: compare old vs fresh log-probs on first timestep
         # (using first filtered batch so memory footprint is bounded).
@@ -1083,7 +1083,7 @@ class OnlineTrainer(Trainer):
         first_debug_chunk = _training_sample_chunks(
             filtered_batches[0],
             filtered_advs[0],
-            sample_batch_size,
+            samples_per_chunk,
         )[0]
         if cfg.debug.first_step and self.state.step == 0 and uses_evaluator:
             _dbg_batch = move_training_batch_to_device(
@@ -1259,7 +1259,7 @@ class OnlineTrainer(Trainer):
                 for sample_chunk in _balanced_training_sample_chunks(
                     chunk_batches,
                     chunk_advs,
-                    sample_batch_size,
+                    samples_per_chunk,
                     self.device,
                 ):
                     chunk_batch = move_training_batch_to_device(

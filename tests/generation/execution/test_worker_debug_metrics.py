@@ -15,7 +15,7 @@ def test_chunk_output_debug_metrics_includes_stage_memory_and_counters() -> None
     output = SimpleNamespace(
         stage_durations={"denoise": 1.25, "decode": 0.5},
         engine_counters={
-            "diffusion_sample_batch_size": 8,
+            "diffusion_samples_per_chunk": 8,
             "nested": {"scalar": torch.tensor(3)},
         },
         peak_memory_mb=1234.5,
@@ -26,7 +26,7 @@ def test_chunk_output_debug_metrics_includes_stage_memory_and_counters() -> None
     assert metrics == {
         "stage_durations_s": {"denoise": 1.25, "decode": 0.5},
         "engine_counters": {
-            "diffusion_sample_batch_size": 8,
+            "diffusion_samples_per_chunk": 8,
             "nested": {"scalar": 3},
         },
         "peak_memory_mb": 1234.5,

@@ -21,7 +21,7 @@ rollout:
   microbatch_size: 1
   # Fail fast if one streamed group already uses >90% of host RAM (0.0 disables).
   host_memory_budget_fraction: 0.9
-  sample_batch_size: 8   # GPM: sbs=4 leaves SM occupancy at ~18%; next safe T2V scale.
+  samples_per_chunk: 8   # GPM: sbs=4 leaves SM occupancy at ~18%; next safe T2V scale.
   denoise_mode: native
 
 trainer:

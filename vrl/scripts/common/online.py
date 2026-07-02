@@ -108,13 +108,13 @@ def _log_rollout_memory_plan(trainer_config: Any) -> None:
     prompts_per_batch = int(trainer_config.prompts_per_batch)
     samples_per_prompt = int(trainer_config.n_samples_per_prompt)
     target_samples = prompts_per_batch * samples_per_prompt
-    sample_batch_size = int(getattr(trainer_config, "sample_batch_size", 0) or 0)
+    samples_per_chunk = int(getattr(trainer_config, "samples_per_chunk", 0) or 0)
     # One knob bounds both the generation forward chunk and the train replay
     # chunk, so this per-call sample count applies to generation and backward.
     sample_chunk_size = (
         samples_per_prompt
-        if sample_batch_size <= 0
-        else min(samples_per_prompt, sample_batch_size)
+        if samples_per_chunk <= 0
+        else min(samples_per_prompt, samples_per_chunk)
     )
     gas = int(getattr(trainer_config, "gradient_accumulation_steps", 0))
     if gas > 0:

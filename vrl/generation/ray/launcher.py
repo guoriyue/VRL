@@ -381,10 +381,10 @@ def _build_gatherer(entry: Any) -> ChunkGatherer:
 def _build_executor_kwargs(entry: Any, cfg: Any) -> dict[str, Any]:
     kwargs: dict[str, Any] = {}
     metadata = entry.executor_kwargs
-    if metadata.include_sample_batch_size:
-        sample_batch_size = cfg_path(cfg, "rollout.sample_batch_size", None)
-        if sample_batch_size is not None:
-            kwargs["sample_batch_size"] = int(sample_batch_size)
+    if metadata.include_samples_per_chunk:
+        samples_per_chunk = cfg_path(cfg, "rollout.samples_per_chunk", None)
+        if samples_per_chunk is not None:
+            kwargs["samples_per_chunk"] = int(samples_per_chunk)
     if metadata.include_reference_image:
         reference_image = cfg_path(cfg, "model.reference_image", None)
         if reference_image:

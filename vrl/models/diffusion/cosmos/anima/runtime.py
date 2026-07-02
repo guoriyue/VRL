@@ -200,9 +200,9 @@ class AnimaChunkExecutor(DiffusionChunkExecutorBase):
     default_fps: int | None = None
     default_max_sequence_length: int = 512
 
-    def __init__(self, model: Any, *, sample_batch_size: int = 1) -> None:
+    def __init__(self, model: Any, *, samples_per_chunk: int = 1) -> None:
         self.model = model
-        self.default_sample_batch_size = max(1, int(sample_batch_size))
+        self.default_samples_per_chunk = max(1, int(samples_per_chunk))
 
 
 def _resolve_artifact(

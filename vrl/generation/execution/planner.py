@@ -231,7 +231,7 @@ class EnginePlanner:
             1,
             int(
                 self.request.sampling.get(
-                    "sample_batch_size",
+                    "samples_per_chunk",
                     self.request.samples_per_prompt,
                 )
             ),

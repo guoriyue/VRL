@@ -24,7 +24,7 @@ algorithm:
 rollout:
   n_samples_per_prompt: 16
   prompts_per_batch: 8
-  sample_batch_size: 16
+  samples_per_chunk: 16
 
 trainer:
   entrypoint: vrl.scripts.diffusion.sd3_5.train:train_sd3_5_grpo

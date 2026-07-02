@@ -38,7 +38,7 @@ algorithm:
 rollout:
   n_samples_per_prompt: 2
   prompts_per_batch: 2
-  sample_batch_size: 1
+  samples_per_chunk: 1
   # Clamp the SDE window to the 4-step budget (base preset is [0,10]); must live
   # under rollout.sde, not sampling.
   sde:

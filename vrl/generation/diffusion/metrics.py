@@ -19,7 +19,7 @@ def diffusion_rollout_engine_counters(
     *,
     stage_durations: Mapping[str, float],
     num_denoise_steps: int,
-    sample_batch_size: int,
+    samples_per_chunk: int,
     byte_values: Mapping[str, object],
 ) -> dict[str, Any]:
     """Build the diffusion rollout counter schema from final gathered tensors."""
@@ -27,7 +27,7 @@ def diffusion_rollout_engine_counters(
     counters: dict[str, Any] = {
         "stage_durations_s": dict(stage_durations),
         "diffusion_num_denoise_steps": int(num_denoise_steps),
-        "diffusion_sample_batch_size": int(sample_batch_size),
+        "diffusion_samples_per_chunk": int(samples_per_chunk),
         "diffusion_storage_device": "preserve",
         "diffusion_storage_dtype": "preserve",
     }

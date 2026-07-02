@@ -350,7 +350,7 @@ class DiffusionChunkExecutorBase(
     family: str
     task: str
     model: Any
-    default_sample_batch_size: int = 1
+    default_samples_per_chunk: int = 1
     default_num_frames: int = 1
     default_fps: int | None = None
     default_max_sequence_length: int = 512
@@ -363,7 +363,7 @@ class DiffusionChunkExecutorBase(
     @property
     def layout(self) -> DiffusionRequestLayout:
         return DiffusionRequestLayout(
-            default_sample_batch_size=self.default_sample_batch_size,
+            default_samples_per_chunk=self.default_samples_per_chunk,
             default_num_frames=self.default_num_frames,
             default_fps=self.default_fps,
             default_max_sequence_length=self.default_max_sequence_length,
@@ -387,7 +387,7 @@ class DiffusionChunkExecutorBase(
             request,
             sample_rows,
             capability=self.capability(),
-            max_samples_per_chunk=params.base.sample_batch_size,
+            max_samples_per_chunk=params.base.samples_per_chunk,
         )
 
     def parse_sampling_params(self, request: GenerationRequest) -> DiffusionSamplingParams:
@@ -883,7 +883,7 @@ class DiffusionChunkExecutorBase(
             peak_memory_mb=peak_memory_mb,
             engine_counters={
                 "diffusion_num_denoise_steps": int(buffers.timesteps.shape[1]),
-                "diffusion_sample_batch_size": int(chunk_batch),
+                "diffusion_samples_per_chunk": int(chunk_batch),
                 "diffusion_observation_bytes": trajectory_tensor_bytes(
                     buffers.observations,
                 ),

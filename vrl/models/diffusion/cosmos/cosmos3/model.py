@@ -9,7 +9,7 @@ Two design facts that drive this file (verified against diffusers@main source):
 
 1. **Strictly batch=1.** ``Cosmos3OmniPipeline`` packs one sample at a time
    (``vision_tokens=[one [1,C,T,H,W] latent]``; all packed-static index tensors
-   sized for a single sample). The chunk executor pins ``sample_batch_size=1``;
+   sized for a single sample). The chunk executor pins ``samples_per_chunk=1``;
    ``forward_step`` therefore runs the single sample, no dim-0 batch.
 
 2. **forward_step returns the RAW rectified-flow velocity as ``noise_pred`` —

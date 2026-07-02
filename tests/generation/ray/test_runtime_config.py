@@ -125,7 +125,7 @@ def _build_inputs_entry(capability: Any | None = None) -> Any:
         ),
         capability=capability or _FakeCapability(),
         executor_kwargs=SimpleNamespace(
-            include_sample_batch_size=False,
+            include_samples_per_chunk=False,
             include_reference_image=False,
         ),
     )

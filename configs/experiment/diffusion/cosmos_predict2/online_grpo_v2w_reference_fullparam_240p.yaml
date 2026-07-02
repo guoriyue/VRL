@@ -48,7 +48,7 @@ algorithm:
 rollout:
   n_samples_per_prompt: 8
   prompts_per_batch: 1
-  sample_batch_size: 1
+  samples_per_chunk: 1
   sde: { type: cps }
   same_latent: false
 

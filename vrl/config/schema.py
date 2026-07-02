@@ -265,7 +265,7 @@ class RolloutConfig(ConfigBase):
     # the ref forward. Lossless: replay applies the same sde_step_with_logprob.
     cache_ref_noise_pred: Any = None
     same_latent: Any = None
-    sample_batch_size: Any = None
+    samples_per_chunk: Any = None
     temperature: Any = None
     torch_profiler: Annotated[Any, ConfigBlock(TorchProfilerConfig)] = None
     trajectory_storage: Annotated[Any, ConfigBlock(TrajectoryStoragePolicy)] = None
@@ -600,7 +600,7 @@ class RolloutWorkerSection(ConfigBase):
     sync_trainable_state: bool = True
     # Opt-in single-worker pipelined rollout. Read by RayGenerationConfig.from_cfg;
     # only takes effect with exactly one rollout worker and more than one planned
-    # chunk. Best paired with the largest sample_batch_size that keeps 2 chunks
+    # chunk. Best paired with the largest samples_per_chunk that keeps 2 chunks
     # resident.
     pipelined: bool = False
 

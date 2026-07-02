@@ -11,7 +11,7 @@
 #       takes a spare GPU that does NOT overlap rollout's GPU.
 #   (3) the cosmos full-param 8-bit base (mirrors
 #       online_grpo_fullparam_8bit_240p.yaml — same model / sampling / reward /
-#       optim_8bit / sample_batch_size=4).
+#       optim_8bit / samples_per_chunk=4).
 #
 # GPU TOPOLOGY — use >= 3 visible GPUs: trainer GPU0, rollout GPU1, reward GPU2,
 # all disjoint. rollout.gpu_pool=dedicated takes a spare disjoint from the
@@ -82,7 +82,7 @@ rollout:
   prompts_per_batch: 1
   # 4 samples/forward (2 chunks for n=8): cuts the per-sample-boundary GPU-idle.
   # Measured 1×32GB 240p_33f: sbs 1->4 = rollout 1.50x (134->89s), GPU-busy 64%->89%.
-  sample_batch_size: 4
+  samples_per_chunk: 4
   sde: { type: cps }
   same_latent: false
 
