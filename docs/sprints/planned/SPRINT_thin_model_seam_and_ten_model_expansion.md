@@ -180,12 +180,27 @@ def build_sd3_5_replay_runtime_bundle_from_cfg(cfg, device, wd): ...  # 2 行包
 > - **cosmos3（32/30L）**：`_apply_train_knobs` 替换了整个 lora/full-finetune 分支且无 compile 步——
 >   折叠等于用 hook 换掉 builder 心脏，不是折叠。probe-grade，保留。
 >
-> **终态**：22 个 build 函数（不含 from_cfg/chunk_encoded）中 **12 个委托**；9 个保留各有引用到行级的
-> 根因；1 个（wan rollout）标记为下一个可折单元。验证：`tests/models + tests/rollouts + tests/generation/ar
-> + config` **356 passed**（预存失败照旧排除）。
-> **顺带发现（单独审计项）**：echo 静默忽略 `torch_compile`/`rollout_quantization` knob（no-op knob）；
-> cosmos 系 runtime_caps 无 `family_capability` 键与 sd3/flux/qwen 不一致（行为无差但契约分裂，
-> 统一与否待定）。
+> **薄化第三轮（2026-07-01）——wan/anima rollout 折叠落地，折叠收官**：
+> - ✅ **wan rollout（68→34L）**：t2v/i2v 解析（model_cls/capability/caps flag）留在 stub 做前置，
+>   规范化 task_variant 与 model 依赖的 metadata（boundary_ratio/trainable_transformers）走
+>   `extra_metadata`（merge 在通用键之后，覆盖原始 task_variant）。
+> - ✅ **anima rollout（63→35L）**：单文件 artifact 解析留在 stub 做前置（原地改 `spec.model_config`，
+>   发生在 from_spec 之前——委托内部才调 from_spec，顺序保持）；`_resolve_artifact` 不挪
+>   （replay 路径与 wiring 测试还在用它）。新增模块级 `ANIMA_FAMILY_CAPABILITY`，executor 类属性复用。
+> - ❌ **echo rollout 撤出折叠名单（修正第二轮判断）**：echo 文件头 docstring 明确记录
+>   "Quantization and torch.compile are intentionally not wired in Stage 1 ... add them once validated
+>   on an 80GB card"——跳过是**有记录的刻意决策**，不是静默 no-op bug（且量化侧本有 worker 的
+>   `assert_rollout_quantization_applied` 兜底 fail-loud）。折叠会在未验证前接线，违背该决策。
+>   80GB 卡验证过 LTX+compile/fp8 后再折。
+>
+> **折叠终态（22 个 build 函数，不含 from_cfg/chunk_encoded）**：**15 个委托，7 个保留**。
+> 保留清单及行级根因：wan replay（多 transformer 构造）、echo rollout+replay（Stage-1 刻意不接线 +
+> LTX wrapper 工厂）、anima replay（自建调度器 + `load_anima_transformer`）、cosmos3 两侧
+> （`_apply_train_knobs` 替换核心分支）、predict2_5 replay（UniPC + NFT fail-loud）。
+> 验证：`tests/models + tests/rollouts + tests/generation/ar + config` **356 passed**。
+> **遗留审计项**：predict2_5 写入 caps 的 `supports_diffusion_nft` **全仓库无读取方**（dead cap，
+> 按 dead-field 规则应删或补上本该存在的校验）；cosmos/wan/echo/anima 系 caps 无 `family_capability`
+> 键与 sd3/flux/qwen 不一致（行为无差——`capabilities.py:177` 缺键回落 registry 声明——但契约分裂）。
 
 ### 2.1 扩展 registry 描述符
 

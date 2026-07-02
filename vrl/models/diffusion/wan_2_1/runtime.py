@@ -17,21 +17,17 @@ from vrl.generation.diffusion.executor import ReferenceConditionedChunks
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
+from vrl.models.diffusion.build import build_diffusion_runtime_bundle
 from vrl.models.diffusion.capabilities import diffusion_family_capability
-from vrl.models.diffusion.common.vae_decode_memory import (
-    apply_generation_memory_policy,
-)
 from vrl.models.interfaces.runtime import (
     RuntimeBuildSpec,
     RuntimeBundle,
 )
 from vrl.models.loader import (
-    apply_rollout_quantization,
     load_diffusers_scheduler,
     load_diffusers_transformer,
 )
 from vrl.models.replay_loading import (
-    full_generation_bundle_metadata,
     minimal_replay_bundle_metadata,
 )
 from vrl.models.runtime_config import (
@@ -81,72 +77,38 @@ def extract_wan_2_1_runtime_spec(cfg: Any, device: Any, weight_dtype: Any) -> Ru
 
 
 def build_wan_2_1_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    """Generic build: dispatch the backend model by runtime spec."""
+    """Thin family stub over the shared diffusion runtime builder.
+
+    The t2v/i2v variant is resolved here first (model class, capability, caps
+    flag) — family preamble the shared builder must not know about. The
+    normalized ``task_variant`` and the model-derived keys ride
+    ``extra_metadata`` (its merge overrides the generic raw ``task_variant``);
+    the historical caps dict (no ``family_capability`` key) is passed verbatim.
+    """
     task_variant = _normalize_task_variant(spec.task_variant)
     model_cls = _resolve_model_cls(task_variant)
+    capability = (
+        WAN_2_1_I2V_FAMILY_CAPABILITY
+        if task_variant == "i2v"
+        else WAN_2_1_FAMILY_CAPABILITY
+    )
 
     logger.info(
         "Building wan_2_1 runtime bundle (task=%s)",
         task_variant,
     )
-    use_lora = spec.use_lora
-    model = model_cls.from_spec(spec)
-
-    if use_lora:
-        model.apply_lora(spec)
-        lora_config = spec.lora
-        if lora_config:
-            logger.info(
-                "Applied LoRA (rank=%d, alpha=%d)",
-                lora_config["rank"],
-                lora_config["alpha"],
-            )
-    else:
-        model.apply_full_finetune()
-
-    apply_rollout_quantization(model, spec)
-
-    compile_cfg = spec.torch_compile or {}
-    if compile_cfg.get("enable"):
-        logger.info("Compiling transformer with mode=%s", compile_cfg["mode"])
-        model.torch_compile_transformer(compile_cfg["mode"])
-
-    num_steps = spec.num_steps
-    if num_steps is not None:
-        model.set_num_steps(num_steps)
-    # If None, caller (e.g. DPO trainer) will set scheduler timesteps itself.
-
-    metadata = {
-        "model_path": spec.model_name_or_path,
-        "family": (
-            WAN_2_1_I2V_FAMILY_CAPABILITY.family
-            if task_variant == "i2v"
-            else WAN_2_1_FAMILY_CAPABILITY.family
-        ),
-        "task_variant": task_variant,
-        "dtype": str(spec.dtype),
-        "use_lora": use_lora,
-        "reference_image": (spec.model_config or {}).get("reference_image"),
-        "boundary_ratio": getattr(model, "boundary_ratio", None),
-        "trainable_transformers": tuple(model.trainable_modules),
-        **full_generation_bundle_metadata(),
-    }
-    metadata.update(
-        apply_generation_memory_policy(
-            model,
-            memory_config=getattr(spec, "memory", None),
-            owner="Wan VAE",
-        )
-    )
-    return RuntimeBundle(
-        model=model,
-        trainable_modules=model.trainable_modules,
-        scheduler=model.scheduler,
-        raw_handle=model.raw_handle,
-        runtime_caps={
-            "supports_reference_conditioning": task_variant == "i2v",
+    return build_diffusion_runtime_bundle(
+        spec,
+        model_cls=model_cls,
+        capability=capability,
+        memory_owner="Wan VAE",
+        runtime_caps={"supports_reference_conditioning": task_variant == "i2v"},
+        extra_metadata=lambda model, spec: {
+            "task_variant": task_variant,
+            "reference_image": (spec.model_config or {}).get("reference_image"),
+            "boundary_ratio": getattr(model, "boundary_ratio", None),
+            "trainable_transformers": tuple(model.trainable_modules),
         },
-        metadata=metadata,
     )
 
 

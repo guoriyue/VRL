@@ -7,17 +7,13 @@ from pathlib import Path
 from typing import Any
 
 from vrl.generation.diffusion import DiffusionChunkExecutorBase
+from vrl.models.diffusion.build import build_diffusion_runtime_bundle
 from vrl.models.diffusion.capabilities import diffusion_family_capability
-from vrl.models.diffusion.common.vae_decode_memory import (
-    apply_generation_memory_policy,
-)
 from vrl.models.interfaces.runtime import (
     RuntimeBuildSpec,
     RuntimeBundle,
 )
-from vrl.models.loader import apply_rollout_quantization
 from vrl.models.replay_loading import (
-    full_generation_bundle_metadata,
     minimal_replay_bundle_metadata,
 )
 from vrl.models.runtime_config import (
@@ -28,6 +24,7 @@ from vrl.utils.logging import init_logger
 logger = init_logger(__name__)
 
 ANIMA_FAMILY = "cosmos-predict2-anima"
+ANIMA_FAMILY_CAPABILITY = diffusion_family_capability(ANIMA_FAMILY, "t2i")
 
 
 def extract_anima_runtime_spec(
@@ -86,48 +83,20 @@ def build_anima_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         if resolved:
             model_config[path_field] = resolved
 
-    use_lora = spec.use_lora
-    model = AnimaModel.from_spec(spec)
-    if use_lora:
-        model.apply_lora(spec)
-    else:
-        model.apply_full_finetune()
-
-    apply_rollout_quantization(model, spec)
-
-    compile_cfg = spec.torch_compile or {}
-    if compile_cfg.get("enable"):
-        model.torch_compile_transformer(compile_cfg["mode"])
-
-    num_steps = spec.num_steps
-    if num_steps is not None:
-        model.set_num_steps(int(num_steps))
-
-    metadata = {
-        "model_path": spec.model_name_or_path,
-        "family": ANIMA_FAMILY,
-        "task_variant": spec.task_variant,
-        "dtype": str(spec.dtype),
-        "use_lora": use_lora,
-        "transformer_path": model_config.get("transformer_path"),
-        "text_encoder_path": model_config.get("text_encoder_path"),
-        "vae_path": model_config.get("vae_path"),
-        **full_generation_bundle_metadata(),
-    }
-    metadata.update(apply_generation_memory_policy(
-        model,
-        memory_config=getattr(spec, "memory", None),
-        owner="Anima VAE",
-    ))
-    return RuntimeBundle(
-        model=model,
-        trainable_modules=model.trainable_modules,
-        scheduler=model.scheduler,
-        raw_handle=model.raw_handle,
-        runtime_caps={
-            "supports_reference_conditioning": False,
+    # Family preamble: single-file artifact resolution rewrites model_config
+    # paths in place BEFORE from_spec reads them (delegation calls from_spec
+    # inside), and the resolved paths then ride extra_metadata below.
+    return build_diffusion_runtime_bundle(
+        spec,
+        model_cls=AnimaModel,
+        capability=ANIMA_FAMILY_CAPABILITY,
+        memory_owner="Anima VAE",
+        runtime_caps={"supports_reference_conditioning": False},
+        extra_metadata=lambda model, spec: {
+            "transformer_path": model_config.get("transformer_path"),
+            "text_encoder_path": model_config.get("text_encoder_path"),
+            "vae_path": model_config.get("vae_path"),
         },
-        metadata=metadata,
     )
 
 
@@ -195,7 +164,7 @@ class AnimaChunkExecutor(DiffusionChunkExecutorBase):
 
     family: str = ANIMA_FAMILY
     task: str = "t2i"
-    family_capability = diffusion_family_capability(ANIMA_FAMILY, "t2i")
+    family_capability = ANIMA_FAMILY_CAPABILITY
     default_num_frames: int = 1
     default_fps: int | None = None
     default_max_sequence_length: int = 512
