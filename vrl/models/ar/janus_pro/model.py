@@ -36,7 +36,6 @@ DeepSeek's reference implementation:
 
 from __future__ import annotations
 
-import contextlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -47,7 +46,8 @@ import torch.nn.functional as F
 
 from vrl.models.ar.janus_pro import JANUS_R1_SEGMENTS
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
-from vrl.models.utils import count_trainable_params, disable_adapter_on, load_weights_into
+from vrl.models.ar.base import ARModelBase
+from vrl.models.utils import count_trainable_params
 from vrl.trajectory import role_tensor
 from vrl.utils.logging import init_logger
 
@@ -145,7 +145,7 @@ def image_token_logits_from_hidden(
 # ---------------------------------------------------------------------------
 
 
-class JanusProModel(nn.Module):
+class JanusProModel(ARModelBase):
     """Train-and-sample wrapper for Janus-Pro text-to-image generation.
 
     Keeps the LoRA-wrapped language model + frozen vq / vision / aligner
@@ -266,10 +266,6 @@ class JanusProModel(nn.Module):
     def trainable_param_count(self) -> int:
         return count_trainable_params(self.mmgpt)
 
-    def load_trainable_state(self, state_dict: Mapping[str, Any]) -> Any:
-        """Load only the trainable Janus parameters from a rollout sync state."""
-        return load_weights_into(self, state_dict, prefix="model", label="JanusProModel")
-
     # ------------------------------------------------------------------
     # LoRA / reference-policy helpers
     # ------------------------------------------------------------------
@@ -309,11 +305,6 @@ class JanusProModel(nn.Module):
         return hasattr(lm, "disable_adapter") and callable(
             lm.disable_adapter
         )
-
-    def disable_adapter(self) -> contextlib.AbstractContextManager[None]:
-        """Disable the LoRA adapter for a reference forward, or no-op when absent."""
-
-        return disable_adapter_on(self.language_model)
 
     # ------------------------------------------------------------------
     # Train-time forward — image-token logits

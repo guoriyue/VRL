@@ -112,6 +112,23 @@ def build_sd3_5_replay_runtime_bundle_from_cfg(cfg, device, wd): ...  # 2 行包
 > - ⏭️ 待办（后续 tick）：video/anima 保留自建 replay builder（多 transformer/单文件，形状不同，可只复用
 >   rollout 侧 `build_diffusion_runtime_bundle`）；§2.1 registry 描述符字段、§2.4 train.py 折叠、§2.5 `ARModelBase`。
 
+> **进度（2026-07-01，loop tick 3）**：
+> - ✅ §2.5 `ARModelBase` 落地：`vrl/models/ar/base.py`，上提 AR 两处 byte-identical 逻辑
+>   （`load_trainable_state` 用 `type(self).__name__` 做 label；`disable_adapter` 走 `self.language_model`）。
+>   `JanusProModel` / `NextStep1Model` 改继承 `ARModelBase`，删掉重复方法 + 各自 3 个转为未用的 import
+>   （`contextlib` / `disable_adapter_on` / `load_weights_into`）。4 个类（含两个 Replay 子类）继承验证通过。
+>   前瞻价值：Phase 1 的 3 个 AR 模型（GLM-Image/Emu3/LlamaGen）直接继承，不再抄这两段。
+> - ✅ 验证：`tests/models/ar` + `tests/generation/ar` + config **61 passed**；`tests/models`+`tests/rollouts`
+>   **311 passed**。两个预存 collection error（cosmos3/echo）确认与本次无关且未加重。
+> - 📌 架构结论（本 tick 勘察确定，非待办）：**video/anima 的 rollout builder 是真发散不是重复**——wan 多变体
+>   `_resolve_model_cls(t2v/i2v)` + 特有 metadata/caps；echo 不做 quantization/compile；anima 单文件 artifact
+>   解析。硬套通用体要加一堆 skip flag 污染通用体，故**保留自建**，(a) 项无干净可做的部分，关闭。
+> - 📌 §2.4 train.py 折叠**降级/暂缓**：train.py 经 `trainer.entrypoint` dotted path 被每个实验 yaml 引用，
+>   且家族有 GRPO/NFT/DPO 多 recipe（如 flux 的 `build_flux_nft_*`）。折叠会改 config entrypoint 契约、
+>   blast radius 覆盖所有实验 yaml，不是无人值守 tick 的干净单元——留给有人值守时做。
+> - ⏭️ 剩余 Phase 0：§2.1 registry 描述符字段（把 model_cls/transformer_classname 等挪进 entry，让 stub
+>   进一步变薄）、§2.5 的 `build_ar_runtime_bundle` 折叠（janus config 构造复杂、双 capability，需谨慎）。
+
 ### 2.1 扩展 registry 描述符
 
 给 `RolloutFamilyEntry`（或 `_diffusion_entry`）补上现在藏在各家族 `build_*` 里的 5 个值：

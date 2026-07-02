@@ -27,7 +27,6 @@ The flow head's velocity-call signature is handled in
 
 from __future__ import annotations
 
-import contextlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -40,7 +39,8 @@ from vrl.math.ar.flow_matching import (
 )
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
-from vrl.models.utils import count_trainable_params, disable_adapter_on, load_weights_into
+from vrl.models.ar.base import ARModelBase
+from vrl.models.utils import count_trainable_params
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -98,7 +98,7 @@ class NextStep1Config:
 # ---------------------------------------------------------------------------
 
 
-class NextStep1Model(nn.Module):
+class NextStep1Model(ARModelBase):
     """Continuous-token AR T2I wrapper for the GRPO trainer.
 
     Composes:
@@ -189,10 +189,6 @@ class NextStep1Model(nn.Module):
 
     def trainable_param_count(self) -> int:
         return count_trainable_params(self)
-
-    def load_trainable_state(self, state_dict: Mapping[str, Any]) -> Any:
-        """Load only trainable NextStep parameters from a rollout sync state."""
-        return load_weights_into(self, state_dict, prefix="model", label="NextStep1Model")
 
     @property
     def device(self) -> torch.device:
@@ -346,11 +342,6 @@ class NextStep1Model(nn.Module):
     # ------------------------------------------------------------------
     # Public: reference-model hook
     # ------------------------------------------------------------------
-
-    def disable_adapter(self) -> contextlib.AbstractContextManager[None]:
-        """Disable the LoRA adapter for a reference forward, or no-op when absent."""
-
-        return disable_adapter_on(self.language_model)
 
     # ------------------------------------------------------------------
     # Internal: LLM step / KV plumbing
