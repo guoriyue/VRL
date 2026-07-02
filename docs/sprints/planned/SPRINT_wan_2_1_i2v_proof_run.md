@@ -1,6 +1,6 @@
 # SPRINT: Wan 2.1 I2V 14B GRPO proof run（图生视频 RL 落地验证）
 
-状态：planned（2026-06-21）。**链路实现已完整接好**（registry → I2V executor → reference-image
+状态：in-progress（2026-07-01，单卡 smoke 配方已落地；真机 smoke 待跑）。**链路实现已完整接好**（registry → I2V executor → reference-image
 条件 → GRPO loss → replay 重建条件，见下 §1 的端到端证据）；本 sprint 是这条路径唯一的剩余项：
 **把 Wan 2.1 I2V 14B GRPO 在真机上跑通一次**，验证「首帧条件穿过梯度回放」的契约与 reward 信号能动。
 
@@ -62,6 +62,27 @@
 
 > 这一步把「3 GPU 角色」缩成「rollout+reward 同卡（kling 单奖励）+ trainer 同进程」，让任务 4 在
 > **单卡或 2 卡**上就能触发，绕过 3 卡硬阻塞。
+
+2026-07-01 更新：任务 1 的 code-only 部分已落地为
+`configs/experiment/diffusion/wan_2_1/online_grpo_i2v_smoke_single_gpu.yaml`。
+它继承 `i2v_14b`、`480p_33f`、`10_step_cfg_4_5`、`kling_video_reward`、
+`videophy_i2v`，并显式设置：
+
+```yaml
+model.offload_mode: sequential
+model.torch_compile.enable: false
+rollout.n_samples_per_prompt: 2
+rollout.prompts_per_batch: 1
+rollout.samples_per_chunk: 1
+reward.kwargs.kling_video_reward.score_key: motion_quality
+```
+
+保持母配方不变；完整 `kling + videocon_physics` 物理 reward 栈仍属于任务 2/正式 run。
+现有 `tests/models/diffusion/wan_2_1/test_backbone_parity.py` 已覆盖
+`export_replay_tensors -> restore_eval_state` 保留 `condition` / `image_embeds`；
+`tests/rollouts/runtime/test_runtime_inputs.py` 已把新 smoke 配方纳入 I2V runtime launch
+contract 覆盖。真机验收仍需实际跑 `vrl-train --config
+experiment/diffusion/wan_2_1/online_grpo_i2v_smoke_single_gpu`。
 
 ## 4. 任务 2 — 多卡正式 run 的资源（阻塞在硬件）
 

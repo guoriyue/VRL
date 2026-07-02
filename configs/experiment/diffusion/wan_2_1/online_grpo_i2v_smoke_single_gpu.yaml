@@ -1,0 +1,63 @@
+# Wan 2.1 14B I2V GRPO - single-GPU smoke recipe.
+#
+# Smallest code-path proof for image-to-video RL: per-sample reference image ->
+# Wan I2V encode/prepare -> denoise -> Kling reward -> replay with the same
+# condition/image_embeds tensors. This is a contract smoke, not a learning curve.
+#
+# Usage:
+#   CUDA_VISIBLE_DEVICES=0 vrl-train \
+#     --config experiment/diffusion/wan_2_1/online_grpo_i2v_smoke_single_gpu
+defaults:
+  - /recipe/online/diffusion_grpo
+  - /model/diffusion/wan_2_1/i2v_14b
+  - /sampling/video/480p_33f
+  - /sampling/denoise/10_step_cfg_4_5
+  - /reward/kling_video_reward
+  - /dataset/videophy_i2v
+  - _self_
+
+precision: bf16
+
+model:
+  offload_mode: sequential
+  torch_compile:
+    enable: false
+
+actor:
+  optim:
+    lr: 5.0e-5
+  ppo_epochs: 1
+  gradient_accumulation_steps: 1
+  gradient_checkpointing: true
+
+algorithm:
+  kl_coef: 0.004
+
+rollout:
+  n_samples_per_prompt: 2
+  prompts_per_batch: 1
+  samples_per_chunk: 1
+  denoise_mode: native
+  noise_level: 0.7
+  sde:
+    type: cps
+    window_range: [0, 10]
+
+trainer:
+  entrypoint: vrl.scripts.diffusion.wan_2_1.train:train_wan_2_1_i2v_grpo
+  output_dir: outputs/wan_i2v_14b_kling_smoke_single_gpu
+  total_epochs: 1
+  save_freq: 9999
+  debug:
+    first_step: true
+
+reward:
+  kwargs:
+    kling_video_reward:
+      artifact_format: mp4
+      score_key: motion_quality
+
+production:
+  kling_video_reward:
+    enabled: false
+    report_path: outputs/wan_i2v_14b_kling_smoke_single_gpu/production_report.md

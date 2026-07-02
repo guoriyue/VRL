@@ -35,6 +35,11 @@ from vrl.rollouts.families import (
             DiffusionChunkGatherer,
         ),
         (
+            "diffusion/wan_2_1/online_grpo_i2v_smoke_single_gpu",
+            "wan_2_1_i2v",
+            DiffusionChunkGatherer,
+        ),
+        (
             "diffusion/cosmos_predict2/online_grpo_kling_video_reward",
             "cosmos-predict2",
             DiffusionChunkGatherer,
@@ -138,6 +143,7 @@ def test_diffusion_launch_contract_uses_worker_primitive_device_and_dtype() -> N
         ("diffusion/sd3_5/online_grpo_ocr", "sd3_5"),
         ("diffusion/wan_2_1/online_grpo_ocr", "wan_2_1"),
         ("diffusion/wan_2_1/online_grpo_physics_i2v", "wan_2_1_i2v"),
+        ("diffusion/wan_2_1/online_grpo_i2v_smoke_single_gpu", "wan_2_1_i2v"),
         ("diffusion/cosmos_predict2/online_grpo_kling_video_reward", "cosmos-predict2"),
         (
             "diffusion/cosmos_predict2_5/online_nft_kling_video_reward",
