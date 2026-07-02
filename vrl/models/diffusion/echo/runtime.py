@@ -3,9 +3,12 @@
 Echo is not diffusers-backed, so the replay bundle does NOT use
 ``load_diffusers_transformer``; it builds the velocity transformer through Echo's
 own ``create_ltx2_wrapper`` (transformer only — no text encoder / VAE / audio).
-Quantization and torch.compile are intentionally not wired in Stage 1 (Echo's
-LTX transformer is untested under the diffusers-shaped fp8 swap / inductor path);
-add them once validated on an 80GB card.
+
+The rollout bundle routes through the shared diffusion builder (2026-07-01),
+which wires rollout quantization and torch.compile — both conditional no-ops
+while the config leaves them off, and both still UNVALIDATED on the LTX
+transformer (built against diffusers-shaped modules). Before enabling either
+knob on Echo, run a real-rollout parity check on an 80GB card.
 """
 
 from __future__ import annotations
@@ -21,14 +24,11 @@ from vrl.generation.diffusion import (
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
+from vrl.models.diffusion.build import build_diffusion_runtime_bundle
 from vrl.models.diffusion.capabilities import diffusion_family_capability
-from vrl.models.diffusion.common.vae_decode_memory import (
-    apply_generation_memory_policy,
-)
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.replay_loading import (
-    full_generation_bundle_metadata,
     minimal_replay_bundle_metadata,
 )
 from vrl.models.runtime_config import extract_runtime_spec
@@ -61,45 +61,25 @@ def _gemma_path_from_spec(spec: RuntimeBuildSpec) -> str:
 
 
 def build_echo_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
+    """Thin family stub over the shared diffusion runtime builder.
+
+    This wires rollout quantization and torch.compile for Echo — conditional
+    no-ops until the config enables them, and UNVALIDATED on the LTX
+    transformer (see module docstring) — so keep both knobs off until the
+    80GB-card parity check. Echo's video VAE memory is owned by its own
+    wrapper, not the diffusers tiling/slicing protocol, so the memory policy
+    is a no-op unless ``model.memory`` asks for a target (then it fails loud,
+    the intended contract).
+    """
     from vrl.models.diffusion.echo.model import EchoModel
 
     logger.info("Building echo runtime bundle from %s", spec.model_name_or_path)
-    use_lora = spec.use_lora
-    model = EchoModel.from_spec(spec)
-    if use_lora:
-        model.apply_lora(spec)
-    else:
-        model.apply_full_finetune()
-
-    num_steps = spec.num_steps
-    if num_steps is not None:
-        model.set_num_steps(num_steps)
-
-    return RuntimeBundle(
-        model=model,
-        trainable_modules=model.trainable_modules,
-        scheduler=model.scheduler,
-        raw_handle=model.raw_handle,
-        runtime_caps={
-            "supports_reference_conditioning": False,
-        },
-        metadata={
-            "model_path": spec.model_name_or_path,
-            "family": ECHO_FAMILY_CAPABILITY.family,
-            "task_variant": spec.task_variant,
-            "dtype": str(spec.dtype),
-            "use_lora": use_lora,
-            **full_generation_bundle_metadata(),
-            # Echo's video VAE memory is owned by its own wrapper, not the
-            # diffusers tiling/slicing protocol, so the model exposes no targets
-            # by default — this is a no-op unless model.memory asks for one
-            # (then it fails loud, the intended contract).
-            **apply_generation_memory_policy(
-                model,
-                memory_config=getattr(spec, "memory", None),
-                owner="Echo video VAE",
-            ),
-        },
+    return build_diffusion_runtime_bundle(
+        spec,
+        model_cls=EchoModel,
+        capability=ECHO_FAMILY_CAPABILITY,
+        memory_owner="Echo video VAE",
+        runtime_caps={"supports_reference_conditioning": False},
     )
 
 

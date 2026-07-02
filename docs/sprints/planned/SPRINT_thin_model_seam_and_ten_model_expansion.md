@@ -193,11 +193,22 @@ def build_sd3_5_replay_runtime_bundle_from_cfg(cfg, device, wd): ...  # 2 行包
 >   `assert_rollout_quantization_applied` 兜底 fail-loud）。折叠会在未验证前接线，违背该决策。
 >   80GB 卡验证过 LTX+compile/fp8 后再折。
 >
-> **折叠终态（22 个 build 函数，不含 from_cfg/chunk_encoded）**：**15 个委托，7 个保留**。
-> 保留清单及行级根因：wan replay（多 transformer 构造）、echo rollout+replay（Stage-1 刻意不接线 +
-> LTX wrapper 工厂）、anima replay（自建调度器 + `load_anima_transformer`）、cosmos3 两侧
-> （`_apply_train_knobs` 替换核心分支）、predict2_5 replay（UniPC + NFT fail-loud）。
+> **薄化第四轮（2026-07-01，用户拍板）——echo rollout + predict2_5 replay 折叠**：
+> - ✅ **echo rollout（41→21L）**：用户决定接线、GPU 验证后置。共享 builder 的 quant/compile 对 echo
+>   变为"配置开才生效"（现有配置全关 → 行为零变化）。⚠️ **两条路径仍未在 LTX transformer 上验证**——
+>   module docstring 与 stub docstring 都标了"开 knob 前先在 80GB 卡跑 parity"。
+> - ✅ **predict2_5 replay（49→35L）**：flux 模式统一。NFT 的 LoRA-only 守卫**前置到 stub**（比原来更好：
+>   原来先加载完整个 transformer 才 raise，现在加载前就 fail，错误信息逐字保留；模型自己的
+>   `apply_full_finetune` raise 仍在，护住其它调用面）。UniPC 用新的 `scheduler_classname` 参数
+>   （与 `transformer_classname` 完全对称的数据参数）。wiring 测试的 loader patch 改指共享 build 模块。
+>
+> **折叠终态（22 个 build 函数，不含 from_cfg/chunk_encoded）**：**18 个委托，4 个保留**。
+> 保留清单及行级根因：wan replay（76L，多 transformer 构造）、echo replay（64L，LTX wrapper 工厂 +
+> 自建调度器）、anima replay（57L，自建 shift 调度器 + `load_anima_transformer`）、cosmos3 两侧
+> （62L，`_apply_train_knobs` 替换 builder 核心分支）——这 4 个的"发散"都是**构造方式**不同（多件套/
+> 非 diffusers 工厂/核心分支替换），不是参数差异，折叠必然把共享 builder 变成 hook 拼盘。
 > 验证：`tests/models + tests/rollouts + tests/generation/ar + config` **356 passed**。
+> ⏭️ echo 的 GPU 验证事项（开 compile/fp8 前）：80GB 卡真 rollout + `debug.first_step` logprob parity。
 > **遗留审计项**：predict2_5 写入 caps 的 `supports_diffusion_nft` **全仓库无读取方**（dead cap，
 > 按 dead-field 规则应删或补上本该存在的校验）；cosmos/wan/echo/anima 系 caps 无 `family_capability`
 > 键与 sd3/flux/qwen 不一致（行为无差——`capabilities.py:177` 缺键回落 registry 声明——但契约分裂）。

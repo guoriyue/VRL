@@ -31,6 +31,7 @@ from vrl.models.loader import (
     apply_rollout_quantization,
     compile_transformer,
     enable_transformer_full_finetune,
+    load_diffusers_scheduler,
     load_diffusers_transformer,
     load_flow_match_scheduler,
 )
@@ -143,6 +144,7 @@ def build_diffusion_replay_runtime_bundle(
     replay_cls: type,
     transformer_classname: str,
     capability: FamilyCapability,
+    scheduler_classname: str | None = None,
     supports_reference_conditioning: bool = False,
     after_construct: Callable[[object, RuntimeBuildSpec], None] | None = None,
     after_lora: Callable[[object, RuntimeBuildSpec], None] | None = None,
@@ -155,6 +157,10 @@ def build_diffusion_replay_runtime_bundle(
     the trainer's colocated-RAM guard sees ``minimal_replay_bundle_metadata``.
     ``transformer_classname`` is the diffusers class to instantiate (e.g.
     ``"SD3Transformer2DModel"``). Multi-transformer families do not use this.
+    ``scheduler_classname`` mirrors it for the scheduler: ``None`` loads the
+    flow-match Euler scheduler (every flow-matching family); a classname loads
+    that diffusers scheduler instead (Cosmos Predict2.5 ships UniPC, and replay
+    must recompute log-probs under the same schedule the rollout sampled with).
 
     Two family extension hooks keep family-specific replay logic out of the
     generic body: ``after_construct`` runs right after the replay model is built
@@ -168,7 +174,11 @@ def build_diffusion_replay_runtime_bundle(
 
     model = replay_cls(
         transformer=load_diffusers_transformer(spec, transformer_classname),
-        scheduler=load_flow_match_scheduler(spec),
+        scheduler=(
+            load_diffusers_scheduler(spec, scheduler_classname)
+            if scheduler_classname is not None
+            else load_flow_match_scheduler(spec)
+        ),
         device=spec.device,
     )
 

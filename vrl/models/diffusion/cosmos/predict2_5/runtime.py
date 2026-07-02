@@ -11,16 +11,12 @@ from vrl.generation.diffusion import (
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
-from vrl.models.diffusion.build import build_diffusion_runtime_bundle
+from vrl.models.diffusion.build import (
+    build_diffusion_replay_runtime_bundle,
+    build_diffusion_runtime_bundle,
+)
 from vrl.models.diffusion.capabilities import diffusion_family_capability
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
-from vrl.models.loader import (
-    load_diffusers_scheduler,
-    load_diffusers_transformer,
-)
-from vrl.models.replay_loading import (
-    minimal_replay_bundle_metadata,
-)
 from vrl.models.runtime_config import (
     extract_runtime_spec,
 )
@@ -83,52 +79,38 @@ def build_cosmos_predict25_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBund
 
 
 def build_cosmos_predict25_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    """Build the trainer replay bundle without Cosmos2.5 text/VAE modules."""
+    """Thin family stub over the shared diffusion replay builder.
+
+    Family preamble guards the NFT constraint BEFORE the transformer loads:
+    DiffusionNFT needs the trainable ``default`` + frozen ``previous`` adapters,
+    which only exist on the LoRA path (the model's own ``apply_full_finetune``
+    raises the same message, but only after paying the full transformer load).
+    ``scheduler_classname`` mirrors the rollout pipeline's shipped UniPC so
+    replay log-probs recompute under the same schedule.
+    """
 
     from vrl.models.diffusion.cosmos.predict2_5.model import CosmosPredict25ReplayModel
+
+    if not spec.use_lora:
+        raise RuntimeError(
+            "Cosmos Predict2.5 DiffusionNFT requires LoRA with default+previous "
+            "adapters; set model.use_lora=true.",
+        )
 
     logger.info(
         "Building cosmos-predict2.5 replay runtime bundle from %s",
         spec.model_name_or_path,
     )
-    model = CosmosPredict25ReplayModel(
-        transformer=load_diffusers_transformer(
-            spec,
-            "CosmosTransformer3DModel",
-        ),
-        scheduler=load_diffusers_scheduler(
-            spec,
-            "UniPCMultistepScheduler",
-        ),
-        device=spec.device,
-    )
-    use_lora = spec.use_lora
-    if use_lora:
-        model.apply_lora(spec)
-    else:
-        model.apply_full_finetune()
-
-    compile_cfg = spec.torch_compile or {}
-    if compile_cfg.get("enable"):
-        model.torch_compile_transformer(compile_cfg["mode"])
-
-    return RuntimeBundle(
-        model=model,
-        trainable_modules=model.trainable_modules,
-        scheduler=model.scheduler,
-        raw_handle=None,
-        runtime_caps={
-            "supports_diffusion_nft": True,
-        },
-        metadata={
-            "model_path": spec.model_name_or_path,
-            "family": COSMOS_PREDICT25_FAMILY_CAPABILITY.family,
-            "task_variant": spec.task_variant,
-            "dtype": str(spec.dtype),
-            "use_lora": use_lora,
+    return build_diffusion_replay_runtime_bundle(
+        spec,
+        replay_cls=CosmosPredict25ReplayModel,
+        transformer_classname="CosmosTransformer3DModel",
+        scheduler_classname="UniPCMultistepScheduler",
+        capability=COSMOS_PREDICT25_FAMILY_CAPABILITY,
+        runtime_caps={"supports_diffusion_nft": True},
+        extra_metadata=lambda model, spec: {
             "model_revision": _model_revision_from_spec(spec),
             "skip_text_encoder": _skip_text_encoder_from_spec(spec),
-            **minimal_replay_bundle_metadata(),
         },
     )
 

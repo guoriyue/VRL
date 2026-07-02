@@ -248,16 +248,19 @@ def test_cosmos_predict25_replay_builder_keeps_diffusion_nft_surface(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Checks Cosmos predict25 replay builder keeps diffusion NFT surface."""
+    from vrl.models.diffusion import build as _shared_build
     from vrl.models.diffusion.cosmos import predict2_5
     from vrl.models.diffusion.cosmos.predict2_5 import runtime
 
+    # The replay builder delegates to the shared diffusion builder, so the
+    # loaders are patched there (the family module no longer binds them).
     monkeypatch.setattr(
-        runtime,
+        _shared_build,
         "load_diffusers_transformer",
         lambda *_args, **_kwargs: _TinyTransformer(),
     )
     monkeypatch.setattr(
-        runtime,
+        _shared_build,
         "load_diffusers_scheduler",
         lambda *_args, **_kwargs: _TinyScheduler(),
     )
