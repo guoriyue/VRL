@@ -285,15 +285,28 @@ def test_family_loaders_do_not_apply_memory_policy() -> None:
 
 
 def test_runtime_builders_apply_generation_memory_policy() -> None:
-    """Every full-generation runtime builder routes through the shared policy."""
+    """Every full-generation runtime builder routes through the shared policy.
+
+    Routing is satisfied either by calling ``apply_generation_memory_policy``
+    directly, or by delegating to the shared ``build_diffusion_runtime_bundle``
+    (which applies it). The shared builder is the single home of the call and is
+    pinned separately below, so a migrated family delegating to it still routes.
+    """
 
     from pathlib import Path
+
+    # The shared diffusion builder must own the policy call.
+    shared = Path("vrl/models/diffusion/build.py").read_text()
+    assert "apply_generation_memory_policy" in shared, (
+        "shared diffusion builder must apply the generation memory policy"
+    )
 
     runtimes = sorted(Path("vrl/models/diffusion").rglob("runtime.py"))
     missing = [
         str(path)
         for path in runtimes
-        if "apply_generation_memory_policy" not in path.read_text()
+        if "apply_generation_memory_policy" not in (source := path.read_text())
+        and "build_diffusion_runtime_bundle" not in source
     ]
     assert not missing, f"runtime builders missing the shared policy call: {missing}"
 

@@ -105,23 +105,32 @@ def test_diffusion_replay_builders_return_minimal_bundles(
 ) -> None:
     """Checks diffusion replay builders return minimal bundles."""
     module = __import__(module_path, fromlist=[builder_name])
-    monkeypatch.setattr(
-        module,
-        "load_diffusers_transformer",
-        lambda *_args, **_kwargs: _TinyTransformer(),
-    )
-    monkeypatch.setattr(
-        module,
-        "load_flow_match_scheduler",
-        lambda *_args, **_kwargs: _TinyScheduler(),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        module,
-        "load_diffusers_scheduler",
-        lambda *_args, **_kwargs: _TinyScheduler(),
-        raising=False,
-    )
+    # Single-transformer families (sd3_5) delegate loading to the shared
+    # ``vrl.models.diffusion.build`` module, so the loaders must be patched
+    # there; families not yet migrated (wan, cosmos) still bind the loaders in
+    # their own runtime namespace. Patch both with ``raising=False`` so one set
+    # of monkeypatches covers the mixed migration state.
+    from vrl.models.diffusion import build as _shared_build
+
+    for target in (module, _shared_build):
+        monkeypatch.setattr(
+            target,
+            "load_diffusers_transformer",
+            lambda *_args, **_kwargs: _TinyTransformer(),
+            raising=False,
+        )
+        monkeypatch.setattr(
+            target,
+            "load_flow_match_scheduler",
+            lambda *_args, **_kwargs: _TinyScheduler(),
+            raising=False,
+        )
+        monkeypatch.setattr(
+            target,
+            "load_diffusers_scheduler",
+            lambda *_args, **_kwargs: _TinyScheduler(),
+            raising=False,
+        )
 
     bundle = getattr(module, builder_name)(_spec())
 

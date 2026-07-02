@@ -15,24 +15,14 @@ from vrl.generation.diffusion import (
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
-from vrl.models.diffusion.capabilities import diffusion_family_capability
-from vrl.models.diffusion.common.vae_decode_memory import (
-    apply_generation_memory_policy,
+from vrl.models.diffusion.build import (
+    build_diffusion_replay_runtime_bundle,
+    build_diffusion_runtime_bundle,
 )
+from vrl.models.diffusion.capabilities import diffusion_family_capability
 from vrl.models.interfaces.runtime import (
     RuntimeBuildSpec,
     RuntimeBundle,
-)
-from vrl.models.loader import (
-    apply_rollout_quantization,
-    compile_transformer,
-    enable_transformer_full_finetune,
-    load_diffusers_transformer,
-    load_flow_match_scheduler,
-)
-from vrl.models.replay_loading import (
-    full_generation_bundle_metadata,
-    minimal_replay_bundle_metadata,
 )
 from vrl.models.runtime_config import (
     extract_runtime_spec,
@@ -54,106 +44,31 @@ def extract_sd3_5_runtime_spec(cfg: Any, device: Any, weight_dtype: Any) -> Runt
 
 
 def build_sd3_5_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    """Generic build: dispatch the backend model by runtime spec."""
+    """Thin family stub over the shared diffusion runtime builder."""
     from vrl.models.diffusion.sd3_5.model import SD3_5Model
 
     logger.info("Building sd3_5 runtime bundle")
-    use_lora = spec.use_lora
-    model = SD3_5Model.from_spec(spec)
-
-    if use_lora:
-        model.apply_lora(spec)
-        lora_config = spec.lora
-        if lora_config:
-            logger.info(
-                "Applied LoRA (rank=%d, alpha=%d)",
-                lora_config["rank"], lora_config["alpha"],
-            )
-    else:
-        model.apply_full_finetune()
-
-    apply_rollout_quantization(model, spec)
-
-    compile_cfg = spec.torch_compile or {}
-    if compile_cfg.get("enable"):
-        logger.info("Compiling transformer with mode=%s", compile_cfg["mode"])
-        model.torch_compile_transformer(compile_cfg["mode"])
-
-    num_steps = spec.num_steps
-    if num_steps is not None:
-        model.set_num_steps(num_steps)
-    # If None, caller (e.g. DPO trainer) will set scheduler timesteps itself.
-
-    return RuntimeBundle(
-        model=model,
-        trainable_modules=model.trainable_modules,
-        scheduler=model.scheduler,
-        raw_handle=model.raw_handle,
-        runtime_caps={
-            "family_capability": SD3_5_FAMILY_CAPABILITY.to_dict(),
-            "supports_reference_conditioning": False,
-        },
-        metadata={
-            "model_path": spec.model_name_or_path,
-            "family": SD3_5_FAMILY_CAPABILITY.family,
-            "task_variant": spec.task_variant,
-            "dtype": str(spec.dtype),
-            "use_lora": use_lora,
-            **full_generation_bundle_metadata(),
-            **apply_generation_memory_policy(
-                model,
-                memory_config=getattr(spec, "memory", None),
-                owner="SD3.5 VAE",
-            ),
-        },
+    return build_diffusion_runtime_bundle(
+        spec,
+        model_cls=SD3_5Model,
+        capability=SD3_5_FAMILY_CAPABILITY,
+        memory_owner="SD3.5 VAE",
     )
 
 
 def build_sd3_5_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    """Build the trainer replay bundle without loading SD3 prompt/VAE modules."""
-
+    """Thin family stub over the shared diffusion replay builder."""
     from vrl.models.diffusion.sd3_5.model import SD3_5ReplayModel
 
     logger.info(
         "Building sd3_5 replay runtime bundle from %s",
         spec.model_name_or_path,
     )
-    model = SD3_5ReplayModel(
-        transformer=load_diffusers_transformer(
-            spec,
-            "SD3Transformer2DModel",
-        ),
-        scheduler=load_flow_match_scheduler(spec),
-        device=spec.device,
-    )
-
-    use_lora = spec.use_lora
-    if use_lora:
-        model.apply_lora(spec)
-    else:
-        enable_transformer_full_finetune(model)
-
-    compile_cfg = spec.torch_compile or {}
-    if compile_cfg.get("enable"):
-        compile_transformer(model, compile_cfg["mode"])
-
-    return RuntimeBundle(
-        model=model,
-        trainable_modules=model.trainable_modules,
-        scheduler=model.scheduler,
-        raw_handle=None,
-        runtime_caps={
-            "family_capability": SD3_5_FAMILY_CAPABILITY.to_dict(),
-            "supports_reference_conditioning": False,
-        },
-        metadata={
-            "model_path": spec.model_name_or_path,
-            "family": SD3_5_FAMILY_CAPABILITY.family,
-            "task_variant": spec.task_variant,
-            "dtype": str(spec.dtype),
-            "use_lora": use_lora,
-            **minimal_replay_bundle_metadata(),
-        },
+    return build_diffusion_replay_runtime_bundle(
+        spec,
+        replay_cls=SD3_5ReplayModel,
+        transformer_classname="SD3Transformer2DModel",
+        capability=SD3_5_FAMILY_CAPABILITY,
     )
 
 
