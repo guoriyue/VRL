@@ -15,24 +15,14 @@ from vrl.generation.diffusion import (
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
-from vrl.models.diffusion.capabilities import diffusion_family_capability
-from vrl.models.diffusion.common.vae_decode_memory import (
-    apply_generation_memory_policy,
+from vrl.models.diffusion.build import (
+    build_diffusion_replay_runtime_bundle,
+    build_diffusion_runtime_bundle,
 )
+from vrl.models.diffusion.capabilities import diffusion_family_capability
 from vrl.models.interfaces.runtime import (
     RuntimeBuildSpec,
     RuntimeBundle,
-)
-from vrl.models.loader import (
-    apply_rollout_quantization,
-    compile_transformer,
-    enable_transformer_full_finetune,
-    load_diffusers_transformer,
-    load_flow_match_scheduler,
-)
-from vrl.models.replay_loading import (
-    full_generation_bundle_metadata,
-    minimal_replay_bundle_metadata,
 )
 from vrl.models.runtime_config import (
     extract_runtime_spec,
@@ -58,66 +48,30 @@ def build_flux_runtime_bundle(
     *,
     attach_previous_adapter: bool = False,
 ) -> RuntimeBundle:
-    """Generic build: dispatch the backend model by runtime spec.
+    """Thin family stub over the shared diffusion runtime builder.
 
     ``attach_previous_adapter`` is the DiffusionNFT-only switch: when set, build a
     frozen ``previous`` LoRA adapter mirroring ``default`` (the NFT previous-policy
-    forward). Left False for GRPO so its build path is bit-for-bit unchanged.
+    forward), routed through the shared builder's ``after_lora`` hook. Left False
+    for GRPO so its build path is bit-for-bit unchanged.
     """
     from vrl.models.diffusion.flux.model import FluxModel
 
     logger.info("Building flux runtime bundle")
-    use_lora = spec.use_lora
-    model = FluxModel.from_spec(spec)
 
-    if use_lora:
-        model.apply_lora(spec)
-        lora_config = spec.lora
-        if lora_config:
-            logger.info(
-                "Applied LoRA (rank=%d, alpha=%d)",
-                lora_config["rank"], lora_config["alpha"],
-            )
-        if attach_previous_adapter:
+    after_lora = None
+    if attach_previous_adapter:
+
+        def after_lora(model: Any, spec: RuntimeBuildSpec) -> None:
             model.attach_previous_policy_adapter(spec)
             logger.info("Attached frozen DiffusionNFT `previous` LoRA adapter")
-    else:
-        model.apply_full_finetune()
 
-    apply_rollout_quantization(model, spec)
-
-    compile_cfg = spec.torch_compile or {}
-    if compile_cfg.get("enable"):
-        logger.info("Compiling transformer with mode=%s", compile_cfg["mode"])
-        model.torch_compile_transformer(compile_cfg["mode"])
-
-    num_steps = spec.num_steps
-    if num_steps is not None:
-        model.set_num_steps(num_steps)
-    # If None, caller (e.g. DPO trainer) will set scheduler timesteps itself.
-
-    return RuntimeBundle(
-        model=model,
-        trainable_modules=model.trainable_modules,
-        scheduler=model.scheduler,
-        raw_handle=model.raw_handle,
-        runtime_caps={
-            "family_capability": FLUX_FAMILY_CAPABILITY.to_dict(),
-            "supports_reference_conditioning": False,
-        },
-        metadata={
-            "model_path": spec.model_name_or_path,
-            "family": FLUX_FAMILY_CAPABILITY.family,
-            "task_variant": spec.task_variant,
-            "dtype": str(spec.dtype),
-            "use_lora": use_lora,
-            **full_generation_bundle_metadata(),
-            **apply_generation_memory_policy(
-                model,
-                memory_config=getattr(spec, "memory", None),
-                owner="FLUX VAE",
-            ),
-        },
+    return build_diffusion_runtime_bundle(
+        spec,
+        model_cls=FluxModel,
+        capability=FLUX_FAMILY_CAPABILITY,
+        memory_owner="FLUX VAE",
+        after_lora=after_lora,
     )
 
 
@@ -126,11 +80,13 @@ def build_flux_replay_runtime_bundle(
     *,
     attach_previous_adapter: bool = False,
 ) -> RuntimeBundle:
-    """Build the trainer replay bundle without loading FLUX prompt/VAE modules.
+    """Thin family stub over the shared diffusion replay builder.
 
     This is the model that actually runs the DiffusionNFT loss (the trainer
-    optimizes it), so ``attach_previous_adapter`` must be set here too — it builds
-    the frozen ``previous`` adapter the NFT forward activates. GRPO leaves it off.
+    optimizes it), so ``attach_previous_adapter`` must be set here too. FLUX also
+    needs its dynamic-shift replay timesteps set right after construction; both
+    ride the shared builder's ``after_construct`` / ``after_lora`` hooks so the
+    generic body stays family-agnostic.
     """
 
     from vrl.models.diffusion.flux.model import FluxReplayModel
@@ -139,60 +95,38 @@ def build_flux_replay_runtime_bundle(
         "Building flux replay runtime bundle from %s",
         spec.model_name_or_path,
     )
-    model = FluxReplayModel(
-        transformer=load_diffusers_transformer(
-            spec,
-            "FluxTransformer2DModel",
-        ),
-        scheduler=load_flow_match_scheduler(spec),
-        device=spec.device,
-    )
 
-    # FLUX's dynamic-shifting scheduler was loaded WITHOUT timesteps (mu unknown
-    # in the generic loader). The replay SDE log-prob math reads scheduler.sigmas
-    # + index_for_timestep, so the replay scheduler must carry the SAME mu-shifted
-    # schedule the rollout used. Resolution is fixed per run, so derive the packed
-    # image_seq_len from it and set the dynamic timesteps now — identical to the
-    # rollout's prepare_sampling. (debug.first_step asserts old==new log-prob, so
-    # any drift here surfaces immediately.) FLUX packs an 8x VAE + 2x2 patch grid,
-    # so seq_len = (H // 16) * (W // 16).
-    sampling = spec.sampling_config or {}
-    num_steps = spec.num_steps
-    height, width = sampling.get("height"), sampling.get("width")
-    if num_steps is not None and height and width:
-        image_seq_len = (int(height) // 16) * (int(width) // 16)
-        model._set_dynamic_timesteps(int(num_steps), image_seq_len, spec.device)
+    def after_construct(model: Any, spec: RuntimeBuildSpec) -> None:
+        # FLUX's dynamic-shifting scheduler was loaded WITHOUT timesteps (mu
+        # unknown in the generic loader). The replay SDE log-prob math reads
+        # scheduler.sigmas + index_for_timestep, so the replay scheduler must
+        # carry the SAME mu-shifted schedule the rollout used. Resolution is
+        # fixed per run, so derive the packed image_seq_len from it and set the
+        # dynamic timesteps now — identical to the rollout's prepare_sampling.
+        # (debug.first_step asserts old==new log-prob, so any drift here surfaces
+        # immediately.) FLUX packs an 8x VAE + 2x2 patch grid, so
+        # seq_len = (H // 16) * (W // 16).
+        sampling = spec.sampling_config or {}
+        num_steps = spec.num_steps
+        height, width = sampling.get("height"), sampling.get("width")
+        if num_steps is not None and height and width:
+            image_seq_len = (int(height) // 16) * (int(width) // 16)
+            model._set_dynamic_timesteps(int(num_steps), image_seq_len, spec.device)
 
-    use_lora = spec.use_lora
-    if use_lora:
-        model.apply_lora(spec)
-        if attach_previous_adapter:
+    after_lora = None
+    if attach_previous_adapter:
+
+        def after_lora(model: Any, spec: RuntimeBuildSpec) -> None:
             model.attach_previous_policy_adapter(spec)
             logger.info("Attached frozen DiffusionNFT `previous` LoRA adapter (replay)")
-    else:
-        enable_transformer_full_finetune(model)
 
-    compile_cfg = spec.torch_compile or {}
-    if compile_cfg.get("enable"):
-        compile_transformer(model, compile_cfg["mode"])
-
-    return RuntimeBundle(
-        model=model,
-        trainable_modules=model.trainable_modules,
-        scheduler=model.scheduler,
-        raw_handle=None,
-        runtime_caps={
-            "family_capability": FLUX_FAMILY_CAPABILITY.to_dict(),
-            "supports_reference_conditioning": False,
-        },
-        metadata={
-            "model_path": spec.model_name_or_path,
-            "family": FLUX_FAMILY_CAPABILITY.family,
-            "task_variant": spec.task_variant,
-            "dtype": str(spec.dtype),
-            "use_lora": use_lora,
-            **minimal_replay_bundle_metadata(),
-        },
+    return build_diffusion_replay_runtime_bundle(
+        spec,
+        replay_cls=FluxReplayModel,
+        transformer_classname="FluxTransformer2DModel",
+        capability=FLUX_FAMILY_CAPABILITY,
+        after_construct=after_construct,
+        after_lora=after_lora,
     )
 
 

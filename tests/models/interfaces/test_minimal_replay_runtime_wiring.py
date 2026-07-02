@@ -89,6 +89,14 @@ def _spec(**overrides: Any) -> RuntimeBuildSpec:
             "build_sd3_5_replay_runtime_bundle",
         ),
         (
+            "vrl.models.diffusion.flux.runtime",
+            "build_flux_replay_runtime_bundle",
+        ),
+        (
+            "vrl.models.diffusion.qwen_image.runtime",
+            "build_qwen_image_replay_runtime_bundle",
+        ),
+        (
             "vrl.models.diffusion.wan_2_1.runtime",
             "build_wan_2_1_replay_runtime_bundle",
         ),

@@ -101,9 +101,16 @@ def build_sd3_5_replay_runtime_bundle_from_cfg(cfg, device, wd): ...  # 2 行包
 >   119 passed。两个 pin 测试（policy-source-scan、replay-namespace-patch）已改指向共享 `build.py` 并保留
 >   全部行为断言。剩余失败（cosmos3/echo 缺 FAMILY_MODEL_CLASSES、rollout runtime AttributeError）经 stash
 >   对比确认为**干净树预存**，与本次无关。
-> - ⏭️ 待办（后续 tick）：迁移 flux / qwen_image（同 single-transformer 形状，直接套）；video/anima 保留自建
->   replay builder（多 transformer/单文件，形状不同）；§2.1 registry 描述符字段、§2.4 train.py 折叠、
->   §2.5 `ARModelBase`。
+> **进度（2026-07-01，loop tick 2）**：
+> - ✅ qwen_image 迁移完成（纯样板，直接套 sd3_5 stub）。
+> - ✅ flux 迁移完成：flux 有两处家族特有逻辑（NFT `previous` adapter + 动态时间步），给共享 builder 加了
+>   两个可选 hook `after_lora` / `after_construct`——flux 逻辑留在 flux stub 的闭包里，通用体不认识 NFT。
+>   NFT 的 `attach_previous_adapter=True` 只从 `scripts/diffusion/flux/train.py` 传入，registry/GRPO 路径不变。
+> - ✅ 扩测试覆盖：wiring 测试的 replay 参数化新增 flux + qwen_image（原本只有 sd3_5/wan/cosmos_predict2）。
+> - ✅ 验证：wiring/vae-memory/config + flux/ + qwen_image/ **75 passed**；`tests/models`+`tests/rollouts`
+>   **311 passed**（预存失败照旧 deselect）。
+> - ⏭️ 待办（后续 tick）：video/anima 保留自建 replay builder（多 transformer/单文件，形状不同，可只复用
+>   rollout 侧 `build_diffusion_runtime_bundle`）；§2.1 registry 描述符字段、§2.4 train.py 折叠、§2.5 `ARModelBase`。
 
 ### 2.1 扩展 registry 描述符
 

@@ -20,6 +20,8 @@ replay model differently and keep their own builder; they can still reuse
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from vrl.generation.capabilities import FamilyCapability
 from vrl.models.diffusion.common.vae_decode_memory import (
     apply_generation_memory_policy,
@@ -48,6 +50,7 @@ def build_diffusion_runtime_bundle(
     capability: FamilyCapability,
     memory_owner: str,
     supports_reference_conditioning: bool = False,
+    after_lora: Callable[[object, RuntimeBuildSpec], None] | None = None,
 ) -> RuntimeBundle:
     """Generic rollout bundle: load the family model and apply the shared policy.
 
@@ -55,6 +58,11 @@ def build_diffusion_runtime_bundle(
     ``apply_lora`` / ``apply_full_finetune`` + the ``trainable_modules`` /
     ``scheduler`` / ``raw_handle`` properties). ``memory_owner`` labels the VAE
     in the generation memory policy log.
+
+    ``after_lora`` is a family extension hook run once after ``apply_lora`` (LoRA
+    path only). FLUX uses it to attach the frozen DiffusionNFT ``previous``
+    adapter; families with no such step leave it ``None``. Keeping it a hook
+    means the generic body never learns family-specific concepts.
     """
 
     model = model_cls.from_spec(spec)
@@ -68,6 +76,8 @@ def build_diffusion_runtime_bundle(
                 lora_config["rank"],
                 lora_config["alpha"],
             )
+        if after_lora is not None:
+            after_lora(model, spec)
     else:
         model.apply_full_finetune()
 
@@ -115,6 +125,8 @@ def build_diffusion_replay_runtime_bundle(
     transformer_classname: str,
     capability: FamilyCapability,
     supports_reference_conditioning: bool = False,
+    after_construct: Callable[[object, RuntimeBuildSpec], None] | None = None,
+    after_lora: Callable[[object, RuntimeBuildSpec], None] | None = None,
 ) -> RuntimeBundle:
     """Generic replay bundle for single-transformer diffusion families.
 
@@ -122,6 +134,12 @@ def build_diffusion_replay_runtime_bundle(
     the trainer's colocated-RAM guard sees ``minimal_replay_bundle_metadata``.
     ``transformer_classname`` is the diffusers class to instantiate (e.g.
     ``"SD3Transformer2DModel"``). Multi-transformer families do not use this.
+
+    Two family extension hooks keep family-specific replay logic out of the
+    generic body: ``after_construct`` runs right after the replay model is built
+    (FLUX sets its dynamic-shift timesteps here); ``after_lora`` runs after
+    ``apply_lora`` on the LoRA path (FLUX attaches the frozen NFT ``previous``
+    adapter). Families needing neither leave both ``None``.
     """
 
     model = replay_cls(
@@ -130,8 +148,13 @@ def build_diffusion_replay_runtime_bundle(
         device=spec.device,
     )
 
+    if after_construct is not None:
+        after_construct(model, spec)
+
     if spec.use_lora:
         model.apply_lora(spec)
+        if after_lora is not None:
+            after_lora(model, spec)
     else:
         enable_transformer_full_finetune(model)
 
