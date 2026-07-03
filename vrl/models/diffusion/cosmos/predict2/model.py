@@ -25,7 +25,11 @@ from typing import Any
 import torch
 
 from vrl.generation.diffusion.layout import VideoGenerationRequest
-from vrl.models.diffusion import DiffusionModelBase, ReplayRolloutStubs
+from vrl.models.diffusion import (
+    DiffusersPipelineModelBase,
+    DiffusionModelBase,
+    ReplayRolloutStubs,
+)
 from vrl.models.diffusion.common import (
     ChunkedLatentDecoder,
     DiffusionBackboneCaller,
@@ -72,7 +76,7 @@ class CosmosPredict2SamplingState:
     sigma_conditioning: float = 0.0001
 
 
-class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
+class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBase):
     """Diffusers-backed Cosmos Predict2 Video2World model (RL path).
 
     The pipeline is constructed by the family runtime
@@ -80,25 +84,6 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusionModelBas
     and passed in. Scripts must NOT instantiate the diffusers pipeline
     directly.
     """
-
-    def __init__(
-        self,
-        *,
-        pipeline: Any,
-        device: Any = None,
-    ) -> None:
-        super().__init__()
-        object.__setattr__(self, "_pipeline", pipeline)
-        self.transformer = pipeline.transformer
-        self._device = device
-
-    @property
-    def pipeline(self) -> Any:
-        return self._pipeline
-
-    def _set_transformer(self, transformer: Any) -> None:
-        self.transformer = transformer
-        self.pipeline.transformer = transformer
 
     # -- backend ownership (called by runtime, not by collectors) -------
 
@@ -143,29 +128,6 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusionModelBas
             pipeline=pipeline,
             device=spec.device,
         )
-
-    def apply_full_finetune(self) -> None:
-        self.pipeline.transformer.requires_grad_(True)
-        self.pipeline.transformer.to(self.device)
-
-    def set_num_steps(self, n: int) -> None:
-        self.pipeline.scheduler.set_timesteps(n, device=self.device)
-
-    @property
-    def trainable_modules(self) -> dict[str, Any]:
-        return {"transformer": self.transformer}
-
-    @property
-    def scheduler(self) -> Any:
-        return self.pipeline.scheduler
-
-    @property
-    def raw_handle(self) -> Any:
-        return self.pipeline
-
-    @property
-    def device(self) -> Any:
-        return self._device if self._device is not None else self.pipeline.device
 
     # -- encode_prompt -------------------------------------------------
 

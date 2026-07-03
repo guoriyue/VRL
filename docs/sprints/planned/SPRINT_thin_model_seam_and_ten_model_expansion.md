@@ -235,6 +235,23 @@ def build_sd3_5_replay_runtime_bundle_from_cfg(cfg, device, wd): ...  # 2 行包
 >   （`_apply_train_knobs`）、AR janus/nextstep（config-from-spec 是真代码，且 janus 双 capability）。
 >   描述符装数据不装代码——这条边界就是"能否零函数"的判据。
 > - 验证：**439 passed**（迄今最宽集合：+ execution worker 测试）。
+
+> **薄化第六轮（2026-07-02）——model.py 层：`DiffusersPipelineModelBase` 上提逐字重复成员**：
+> - 方法级 AST 哈希审计发现 builder 层之下还有一层重复：7 个 pipeline-backed model 类
+>   （sd3_5/flux/qwen/cosmos3/predict2/predict2_5/wan）的 `pipeline`/`device`/`scheduler`/`raw_handle`
+>   逐字相同，`_set_transformer` 6/7 相同、`trainable_modules` 8/9、`apply_full_finetune` 语义等价
+>   （`pipeline.transformer` ≡ `self.transformer` 同一对象）。
+> - ✅ 新增 `base.py:DiffusersPipelineModelBase(DiffusionModelBase)`：`__init__(pipeline, device)` +
+>   上述 8 个成员。`set_num_steps` 采用 **flux 的动态 shifting 版本**为基类实现（对静态调度器行为
+>   等价、读 `self.scheduler` 兼容 replay）——全家族零 override。7 个类换基类、删重复成员：
+>   **净 -172 行**（+121/-293）。
+> - 保留的真 override（各 1 处）：sd3 `_set_transformer`（attention processor 重装）、wan
+>   `trainable_modules`/`apply_lora`/`load_trainable_state` 等（多 transformer）、predict2_5
+>   `apply_full_finetune`（NFT raise）。`_lora_dtype` 的 3 份相同 override 保留——`LoraModelMixin`
+>   在 MRO 中先于新基类，挪进基类会被 mixin 默认遮住，改 mixin 会改 cosmos 系行为。
+> - echo/anima 不采用（非 pipeline-backed：LTX wrapper / 单文件 checkpoint），留在 `DiffusionModelBase`。
+> - 新家族增益：SANA 等 model.py 不再写这 8 个成员，只写 from_spec + 四个生成抽象方法 + replay 投影。
+> - 验证：**439 passed** + 8 类继承/override 断言抽查。
 > **遗留审计项**：predict2_5 写入 caps 的 `supports_diffusion_nft` **全仓库无读取方**（dead cap，
 > 按 dead-field 规则应删或补上本该存在的校验）；cosmos/wan/echo/anima 系 caps 无 `family_capability`
 > 键与 sd3/flux/qwen 不一致（行为无差——`capabilities.py:177` 缺键回落 registry 声明——但契约分裂）。

@@ -342,6 +342,72 @@ class DiffusionModelBase(nn.Module, ABC):
                 module.to(device)
 
 
+class DiffusersPipelineModelBase(DiffusionModelBase):
+    """Shared shape for families backed by ONE diffusers pipeline + ONE
+    trainable transformer (sd3_5, flux, qwen_image, cosmos, wan's primary).
+
+    Factors the members that were byte-identical across those families:
+    pipeline/device/scheduler/raw_handle access, transformer swap, the
+    single-transformer trainable map, full-finetune, and scheduler timestep
+    init. A family overrides only where it genuinely differs (sd3's attention
+    processor reinstall on ``_set_transformer``, wan's multi-transformer
+    ``trainable_modules``/LoRA, Predict2.5's NFT full-finetune guard).
+    Families NOT backed by a diffusers pipeline (echo's LTX wrapper, anima's
+    single-file checkpoint) stay on ``DiffusionModelBase`` directly.
+    """
+
+    def __init__(self, *, pipeline: Any, device: Any = None) -> None:
+        super().__init__()
+        # Bypass nn.Module attribute registration: the pipeline is a frozen
+        # container, not a trainable submodule.
+        object.__setattr__(self, "_pipeline", pipeline)
+        self.transformer = pipeline.transformer
+        self._device = device
+
+    @property
+    def pipeline(self) -> Any:
+        return self._pipeline
+
+    def _set_transformer(self, transformer: Any) -> None:
+        self.transformer = transformer
+        self.pipeline.transformer = transformer
+
+    @property
+    def device(self) -> Any:
+        return self._device if self._device is not None else self.pipeline.device
+
+    @property
+    def trainable_modules(self) -> dict[str, Any]:
+        return {"transformer": self.transformer}
+
+    @property
+    def scheduler(self) -> Any:
+        return self.pipeline.scheduler
+
+    @property
+    def raw_handle(self) -> Any:
+        return self.pipeline
+
+    def apply_full_finetune(self) -> None:
+        """Mark the transformer fully trainable (no-LoRA path)."""
+        self.transformer.requires_grad_(True)
+        self.transformer.to(self.device)
+
+    def set_num_steps(self, n: int) -> None:
+        """Initialize the scheduler timesteps for sampling.
+
+        Dynamic-shifting FlowMatch schedulers (FLUX, Qwen-Image) derive their
+        schedule from a resolution-dependent ``mu`` unknown at build time, so
+        the real set is deferred to ``prepare_sampling``; static schedulers
+        are set eagerly. Reads ``self.scheduler`` (not ``pipeline.scheduler``)
+        so pipeline-less replay subclasses can set their replay scheduler too.
+        """
+        scheduler = self.scheduler
+        if getattr(scheduler.config, "use_dynamic_shifting", False):
+            return
+        scheduler.set_timesteps(n, device=self.device)
+
+
 class ReplayRolloutStubs:
     """Rollout-only surface stubs shared by replay models.
 
@@ -361,4 +427,4 @@ class ReplayRolloutStubs:
 
 
 
-__all__ = ["DiffusionModelBase"]
+__all__ = ["DiffusersPipelineModelBase", "DiffusionModelBase"]

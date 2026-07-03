@@ -36,7 +36,11 @@ from typing import Any
 import torch
 
 from vrl.generation.diffusion.layout import VideoGenerationRequest
-from vrl.models.diffusion import DiffusionModelBase, ReplayRolloutStubs
+from vrl.models.diffusion import (
+    DiffusersPipelineModelBase,
+    DiffusionModelBase,
+    ReplayRolloutStubs,
+)
 from vrl.models.diffusion.common import align_replay_tensor
 from vrl.models.diffusion.common.lora import LoraModelMixin
 from vrl.models.diffusion.cosmos import CosmosReplayForward
@@ -71,42 +75,10 @@ class Cosmos3SamplingState:
     uncond_input_ids: list[int] = field(default_factory=list)
 
 
-class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
+class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBase):
     """Cosmos3 Omni T2V generator wrapped for the vrl diffusion RL seam."""
 
-    def __init__(self, *, pipeline: Any, device: Any = None) -> None:
-        super().__init__()
-        # Unregistered handle: nn.Module.to() then only moves self.transformer,
-        # not the (frozen, fp32) vae held by the pipeline.
-        object.__setattr__(self, "_pipeline", pipeline)
-        self.transformer = pipeline.transformer
-        self._device = device
-
     # ---- properties (mirror predict2_5) ----
-    @property
-    def pipeline(self) -> Any:
-        return self._pipeline
-
-    @property
-    def scheduler(self) -> Any:
-        return self.pipeline.scheduler
-
-    @property
-    def raw_handle(self) -> Any:
-        return self.pipeline
-
-    @property
-    def device(self) -> Any:
-        return self._device if self._device is not None else self.pipeline.device
-
-    @property
-    def trainable_modules(self) -> dict[str, Any]:
-        return {"transformer": self.transformer}
-
-    def _set_transformer(self, transformer: Any) -> None:
-        self.transformer = transformer
-        self.pipeline.transformer = transformer
-
     @classmethod
     def from_spec(cls, spec: Any) -> Cosmos3Model:
         # Lazy: diffusers@main (Cosmos3 classes) must not be imported at module load.
@@ -134,19 +106,6 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
             kv(path=spec.model_name_or_path, device=spec.device, dtype=spec.dtype),
         )
         return cls(pipeline=pipeline, device=spec.device)
-
-    def apply_full_finetune(self) -> None:
-        # Plain GRPO/flow-grpo: full-param is legal (no NFT previous-adapter).
-        self.transformer.requires_grad_(True)
-        self.transformer.to(self.device)
-
-    def torch_compile_transformer(self, mode: str) -> None:
-        self._set_transformer(
-            torch.compile(self.pipeline.transformer, mode=mode, fullgraph=False),
-        )
-
-    def set_num_steps(self, n: int) -> None:
-        self.pipeline.scheduler.set_timesteps(n, device=self.device)
 
     # ---- encode ----
     def encode_prompt(

@@ -34,7 +34,11 @@ from typing import Any
 import torch
 
 from vrl.generation.diffusion.layout import VideoGenerationRequest
-from vrl.models.diffusion import DiffusionModelBase, ReplayRolloutStubs
+from vrl.models.diffusion import (
+    DiffusersPipelineModelBase,
+    DiffusionModelBase,
+    ReplayRolloutStubs,
+)
 from vrl.models.diffusion.common import (
     ChunkedLatentDecoder,
     DiffusionBackboneCaller,
@@ -71,7 +75,7 @@ class FluxSamplingState:
     width: int
 
 
-class FluxModel(LoraModelMixin, DiffusionModelBase):
+class FluxModel(LoraModelMixin, DiffusersPipelineModelBase):
     """Diffusers-backed FLUX.1 t2i model.
 
     Owns the DiffusionNFT previous-policy adapter methods directly
@@ -88,28 +92,13 @@ class FluxModel(LoraModelMixin, DiffusionModelBase):
         pipeline: Any,
         device: Any = None,
     ) -> None:
-        super().__init__()
-        object.__setattr__(self, "_pipeline", pipeline)
-        self.transformer = pipeline.transformer
-        self._device = device
+        super().__init__(pipeline=pipeline, device=device)
         # decode_latents only receives the packed latent tensor; the executor runs
         # prepare -> denoise -> decode sequentially on this one model instance per
         # chunk (no concurrency), so prepare_sampling records the spatial shape it
         # must unpack to here. Defaults are overwritten on the first prepare call.
         self._decode_height = 1024
         self._decode_width = 1024
-
-    @property
-    def pipeline(self) -> Any:
-        return self._pipeline
-
-    def _set_transformer(self, transformer: Any) -> None:
-        self.transformer = transformer
-        self.pipeline.transformer = transformer
-
-    @property
-    def device(self) -> Any:
-        return self._device if self._device is not None else self.pipeline.device
 
     # -- backend ownership (called by runtime, not by collectors) -------
 
@@ -195,27 +184,6 @@ class FluxModel(LoraModelMixin, DiffusionModelBase):
 
         copy_adapter_weights(self.transformer, src="default", dst="previous", decay=decay)
 
-    def apply_full_finetune(self) -> None:
-        """Mark transformer fully trainable (no-LoRA path)."""
-        self.pipeline.transformer.requires_grad_(True)
-        self.pipeline.transformer.to(self.device)
-
-    def set_num_steps(self, n: int) -> None:
-        """Initialize the scheduler timesteps for sampling.
-
-        FLUX's FlowMatch scheduler uses ``use_dynamic_shifting``: the timestep
-        schedule depends on a resolution-derived ``mu`` (image sequence length),
-        which is unknown at build time. Defer the real set to ``prepare_sampling``
-        for such schedulers; only eager-set the static ones.
-
-        Reads ``self.scheduler`` (not ``self.pipeline.scheduler``) so the
-        pipeline-less ``FluxReplayModel`` can set its replay scheduler too.
-        """
-        scheduler = self.scheduler
-        if getattr(scheduler.config, "use_dynamic_shifting", False):
-            return
-        scheduler.set_timesteps(n, device=self.device)
-
     def _set_dynamic_timesteps(self, num_steps: int, image_seq_len: int, device: Any) -> Any:
         """Set FLUX timesteps with the resolution-derived ``mu`` (diffusers parity)."""
         from diffusers.pipelines.flux.pipeline_flux import calculate_shift
@@ -234,18 +202,6 @@ class FluxModel(LoraModelMixin, DiffusionModelBase):
         else:
             scheduler.set_timesteps(num_steps, device=device)
         return scheduler.timesteps
-
-    @property
-    def trainable_modules(self) -> dict[str, Any]:
-        return {"transformer": self.transformer}
-
-    @property
-    def scheduler(self) -> Any:
-        return self.pipeline.scheduler
-
-    @property
-    def raw_handle(self) -> Any:
-        return self.pipeline
 
     @property
     def _guidance_embeds(self) -> bool:

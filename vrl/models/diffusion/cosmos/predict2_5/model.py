@@ -10,7 +10,11 @@ from typing import Any
 import torch
 
 from vrl.generation.diffusion.layout import VideoGenerationRequest
-from vrl.models.diffusion import DiffusionModelBase, ReplayRolloutStubs
+from vrl.models.diffusion import (
+    DiffusersPipelineModelBase,
+    DiffusionModelBase,
+    ReplayRolloutStubs,
+)
 from vrl.models.diffusion.common import (
     ChunkedLatentDecoder,
     DiffusionBackboneCaller,
@@ -108,7 +112,7 @@ class CosmosPredict25SamplingState:
     conditional_frame_timestep: float = 0.1
 
 
-class CosmosPredict25Model(CosmosReplayForward, DiffusionModelBase):
+class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
     """Cosmos-Predict2.5 PredictBase model with DiffusionNFT training extras."""
 
     def __init__(
@@ -118,35 +122,8 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusionModelBase):
         device: Any = None,
         synthetic_prompt_embeds: bool = False,
     ) -> None:
-        super().__init__()
-        object.__setattr__(self, "_pipeline", pipeline)
-        self.transformer = pipeline.transformer
-        self._device = device
+        super().__init__(pipeline=pipeline, device=device)
         self.synthetic_prompt_embeds = bool(synthetic_prompt_embeds)
-
-    @property
-    def pipeline(self) -> Any:
-        return self._pipeline
-
-    @property
-    def scheduler(self) -> Any:
-        return self.pipeline.scheduler
-
-    @property
-    def raw_handle(self) -> Any:
-        return self.pipeline
-
-    @property
-    def device(self) -> Any:
-        return self._device if self._device is not None else self.pipeline.device
-
-    @property
-    def trainable_modules(self) -> dict[str, Any]:
-        return {"transformer": self.transformer}
-
-    def _set_transformer(self, transformer: Any) -> None:
-        self.transformer = transformer
-        self.pipeline.transformer = transformer
 
     @classmethod
     def from_spec(cls, spec: Any) -> CosmosPredict25Model:
@@ -249,12 +226,6 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusionModelBase):
             "Cosmos Predict2.5 DiffusionNFT requires LoRA with default+previous "
             "adapters; set model.use_lora=true.",
         )
-
-    def torch_compile_transformer(self, mode: str) -> None:
-        self._set_transformer(torch.compile(self.pipeline.transformer, mode=mode, fullgraph=False))
-
-    def set_num_steps(self, n: int) -> None:
-        self.pipeline.scheduler.set_timesteps(n, device=self.device)
 
     def encode_prompt(
         self,

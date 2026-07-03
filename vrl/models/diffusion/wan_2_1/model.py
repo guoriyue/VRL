@@ -34,7 +34,11 @@ from typing import Any
 import torch
 
 from vrl.generation.diffusion.layout import VideoGenerationRequest
-from vrl.models.diffusion import DiffusionModelBase, ReplayRolloutStubs
+from vrl.models.diffusion import (
+    DiffusersPipelineModelBase,
+    DiffusionModelBase,
+    ReplayRolloutStubs,
+)
 from vrl.models.diffusion.common import (
     ChunkedLatentDecoder,
     DiffusionBackboneCaller,
@@ -86,7 +90,7 @@ class WanI2VSamplingState:
     num_train_timesteps: int | None = None
 
 
-class WanT2VDiffusersModel(LoraModelMixin, DiffusionModelBase):
+class WanT2VDiffusersModel(LoraModelMixin, DiffusersPipelineModelBase):
     """Diffusers-backed Wan 2.1 T2V model (1.3B variant)."""
 
     def __init__(
@@ -96,11 +100,8 @@ class WanT2VDiffusersModel(LoraModelMixin, DiffusionModelBase):
         device: Any = None,
         trainable_transformers: Any = None,
     ) -> None:
-        super().__init__()
-        object.__setattr__(self, "_pipeline", pipeline)
-        self.transformer = pipeline.transformer
+        super().__init__(pipeline=pipeline, device=device)
         self.transformer_2 = getattr(pipeline, "transformer_2", None)
-        self._device = device
         self._boundary_ratio = _optional_float(
             _config_value(getattr(pipeline, "config", None), "boundary_ratio"),
             "boundary_ratio",
@@ -112,21 +113,9 @@ class WanT2VDiffusersModel(LoraModelMixin, DiffusionModelBase):
         for module in self._wan_transformers().values():
             module.requires_grad_(False)
 
-    @property
-    def pipeline(self) -> Any:
-        return self._pipeline
-
-    def _set_transformer(self, transformer: Any) -> None:
-        self.transformer = transformer
-        self.pipeline.transformer = transformer
-
     def _set_transformer_2(self, transformer: Any) -> None:
         self.transformer_2 = transformer
         self.pipeline.transformer_2 = transformer
-
-    @property
-    def device(self) -> Any:
-        return self._device if self._device is not None else self.pipeline.device
 
     @property
     def boundary_ratio(self) -> float | None:
@@ -223,9 +212,6 @@ class WanT2VDiffusersModel(LoraModelMixin, DiffusionModelBase):
                 torch.compile(module, mode=mode, fullgraph=False),
             )
 
-    def set_num_steps(self, n: int) -> None:
-        self.pipeline.scheduler.set_timesteps(n, device=self.device)
-
     @property
     def trainable_modules(self) -> dict[str, Any]:
         modules = self._wan_transformers()
@@ -258,14 +244,6 @@ class WanT2VDiffusersModel(LoraModelMixin, DiffusionModelBase):
                 label=type(module).__name__,
             )
         return results
-
-    @property
-    def scheduler(self) -> Any:
-        return self.pipeline.scheduler
-
-    @property
-    def raw_handle(self) -> Any:
-        return self.pipeline
 
     def _set_wan_transformer(self, name: str, transformer: Any) -> None:
         if name == "transformer":

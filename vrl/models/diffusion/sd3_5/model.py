@@ -36,7 +36,11 @@ from typing import Any
 import torch
 
 from vrl.generation.diffusion.layout import VideoGenerationRequest
-from vrl.models.diffusion import DiffusionModelBase, ReplayRolloutStubs
+from vrl.models.diffusion import (
+    DiffusersPipelineModelBase,
+    DiffusionModelBase,
+    ReplayRolloutStubs,
+)
 from vrl.models.diffusion.common import (
     ChunkedLatentDecoder,
     DiffusionBackboneCaller,
@@ -69,7 +73,7 @@ class SD3SamplingState:
     do_cfg: bool
 
 
-class SD3_5Model(LoraModelMixin, DiffusionModelBase):
+class SD3_5Model(LoraModelMixin, DiffusersPipelineModelBase):
     """Diffusers-backed SD 3.5 t2i model."""
 
     def __init__(
@@ -78,28 +82,16 @@ class SD3_5Model(LoraModelMixin, DiffusionModelBase):
         pipeline: Any,
         device: Any = None,
     ) -> None:
-        super().__init__()
-        object.__setattr__(self, "_pipeline", pipeline)
-        self.transformer = pipeline.transformer
-        self._device = device
+        super().__init__(pipeline=pipeline, device=device)
         self.uses_vrl_attention_processor = install_sd3_joint_attention_processor(
             self.transformer,
         )
 
-    @property
-    def pipeline(self) -> Any:
-        return self._pipeline
-
     def _set_transformer(self, transformer: Any) -> None:
-        self.transformer = transformer
-        self.pipeline.transformer = transformer
+        super()._set_transformer(transformer)
         self.uses_vrl_attention_processor = install_sd3_joint_attention_processor(
             transformer,
         )
-
-    @property
-    def device(self) -> Any:
-        return self._device if self._device is not None else self.pipeline.device
 
     # -- backend ownership (called by runtime, not by collectors) -------
 
@@ -148,27 +140,6 @@ class SD3_5Model(LoraModelMixin, DiffusionModelBase):
 
     def _lora_dtype(self, spec: Any) -> Any:
         return resolve_torch_dtype(spec.dtype)
-
-    def apply_full_finetune(self) -> None:
-        """Mark transformer fully trainable (no-LoRA path)."""
-        self.pipeline.transformer.requires_grad_(True)
-        self.pipeline.transformer.to(self.device)
-
-    def set_num_steps(self, n: int) -> None:
-        """Initialize the scheduler timesteps for sampling."""
-        self.pipeline.scheduler.set_timesteps(n, device=self.device)
-
-    @property
-    def trainable_modules(self) -> dict[str, Any]:
-        return {"transformer": self.transformer}
-
-    @property
-    def scheduler(self) -> Any:
-        return self.pipeline.scheduler
-
-    @property
-    def raw_handle(self) -> Any:
-        return self.pipeline
 
     # -- encode_prompt -------------------------------------------------
 
