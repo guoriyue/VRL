@@ -39,7 +39,7 @@ from vrl.math.ar.flow_matching import (
 )
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
-from vrl.models.ar.base import ARModelBase
+from vrl.models.ar.base import ARModelBase, ARReplayRolloutStubs
 from vrl.models.utils import count_trainable_params
 from vrl.utils.logging import init_logger
 
@@ -406,7 +406,7 @@ class NextStep1Model(ARModelBase):
         return kv2, kv2["last_hidden"]
 
 
-class NextStep1ReplayModel(NextStep1Model):
+class NextStep1ReplayModel(ARReplayRolloutStubs, NextStep1Model):
     """Replay-only NextStep-1 wrapper without VAE, tokenizer, or pipeline."""
 
     def __init__(
@@ -446,16 +446,6 @@ class NextStep1ReplayModel(NextStep1Model):
             init_lora_weights=self.config.lora_init,
         )
         self.language_model = get_peft_model(self.language_model, lora_cfg)
-
-    @torch.no_grad()
-    def decode_image_tokens(
-        self,
-        tokens: torch.Tensor,
-        image_size: int | None = None,
-    ) -> torch.Tensor:
-        del tokens, image_size
-        raise RuntimeError("NextStep1ReplayModel cannot decode image tokens")
-
 
 def _load_nextstep_replay_model(config: NextStep1Config) -> Any:
     """Load the upstream NextStep model without the inference pipeline or VAE."""

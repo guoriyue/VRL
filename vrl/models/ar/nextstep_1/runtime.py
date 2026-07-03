@@ -18,7 +18,7 @@ from vrl.generation.types import (
     GenerationRequest,
     GenerationSampleRow,
 )
-from vrl.models.ar.build import build_ar_runtime_bundle
+from vrl.models.ar.build import build_ar_runtime_bundle, extract_ar_runtime_spec
 from vrl.models.ar.capabilities import ar_continuous_family_capability
 from vrl.models.ar.nextstep_1.model import (
     NextStep1Config,
@@ -28,9 +28,6 @@ from vrl.models.ar.nextstep_1.model import (
 from vrl.models.ar.nextstep_1.runner import NextStep1ARModelRunner
 from vrl.models.dtypes import dtype_to_config_string
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
-from vrl.models.runtime_config import (
-    extract_runtime_spec,
-)
 from vrl.trajectory import build_ar_continuous_trajectory
 from vrl.utils.logging import init_logger
 
@@ -69,15 +66,12 @@ def extract_nextstep_1_runtime_spec(
 ) -> RuntimeBuildSpec:
     """Slice NextStep-1 runtime construction fields out of a whole RL cfg."""
 
-    model_block = cfg.get("model") if hasattr(cfg, "get") else None
-    model_path = (model_block or {}).get("path") if model_block is not None else None
-    dtype = (model_block or {}).get("dtype") if model_block is not None else None
-    spec = extract_runtime_spec(
+    spec = extract_ar_runtime_spec(
         cfg,
         device,
-        dtype_to_config_string(dtype if dtype is not None else (weight_dtype or "bfloat16")),
+        weight_dtype,
         ar_task="ar_t2i",
-        model_name_or_path=model_path or "stepfun-ai/NextStep-1.1",
+        default_model_path="stepfun-ai/NextStep-1.1",
     )
     # gradient_checkpointing lives under cfg.actor (outside the model block the
     # uniform extractor carries), so fold it into model_config here for the

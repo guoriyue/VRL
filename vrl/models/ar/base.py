@@ -46,4 +46,17 @@ class ARModelBase(nn.Module):
         return disable_adapter_on(self.language_model)
 
 
-__all__ = ["ARModelBase"]
+class ARReplayRolloutStubs:
+    """Rollout-only surface stubs shared by AR replay models.
+
+    The AR analog of ``vrl.models.diffusion.base.ReplayRolloutStubs``: replay
+    models load only the modules needed to recompute log-probs, so the
+    rollout-side decode surface is unreachable by construction and raises with
+    the concrete class name instead of each family re-writing the stub.
+    """
+
+    def decode_image_tokens(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError(f"{type(self).__name__} cannot decode image tokens")
+
+
+__all__ = ["ARModelBase", "ARReplayRolloutStubs"]

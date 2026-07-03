@@ -19,11 +19,43 @@ from __future__ import annotations
 from typing import Any
 
 from vrl.generation.capabilities import FamilyCapability
+from vrl.models.dtypes import dtype_to_config_string
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.replay_loading import (
     full_generation_bundle_metadata,
     minimal_replay_bundle_metadata,
 )
+from vrl.models.runtime_config import extract_runtime_spec
+
+
+def extract_ar_runtime_spec(
+    cfg: Any,
+    device: Any,
+    weight_dtype: Any | None = None,
+    *,
+    ar_task: str,
+    default_model_path: str,
+) -> RuntimeBuildSpec:
+    """Slice AR runtime construction fields out of a whole RL cfg.
+
+    The AR families share this exact preamble: read the model block, prefer
+    ``model.dtype`` over the caller's ``weight_dtype`` over bf16, and fall back
+    to the family's canonical checkpoint when ``model.path`` is unset. A family
+    stub supplies only its ``ar_task`` and default path; family-specific
+    post-processing (NextStep's gradient-checkpointing fold-in) stays in the
+    stub.
+    """
+
+    model_config = cfg.get("model") if hasattr(cfg, "get") else None
+    model_path = (model_config or {}).get("path") if model_config is not None else None
+    dtype = (model_config or {}).get("dtype") if model_config is not None else None
+    return extract_runtime_spec(
+        cfg,
+        device,
+        dtype_to_config_string(dtype if dtype is not None else (weight_dtype or "bfloat16")),
+        ar_task=ar_task,
+        model_name_or_path=model_path or default_model_path,
+    )
 
 
 def build_ar_runtime_bundle(
@@ -64,4 +96,4 @@ def build_ar_runtime_bundle(
     )
 
 
-__all__ = ["build_ar_runtime_bundle"]
+__all__ = ["build_ar_runtime_bundle", "extract_ar_runtime_spec"]

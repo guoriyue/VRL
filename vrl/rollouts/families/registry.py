@@ -16,11 +16,11 @@ from vrl.generation.ray.launcher import (
     RayGenerationLauncher,
     RayGenerationLaunchInputs,
 )
-from vrl.models.ar.capabilities import (
-    ar_continuous_family_capability,
-    ar_discrete_family_capability,
+from vrl.models.ar.janus_pro.runtime import (
+    JANUS_PRO_FAMILY_CAPABILITY,
+    JANUS_PRO_R1_FAMILY_CAPABILITY,
 )
-from vrl.models.ar.janus_pro import JANUS_R1_SEGMENTS
+from vrl.models.ar.nextstep_1.runtime import NEXTSTEP_1_FAMILY_CAPABILITY
 from vrl.models.diffusion.capabilities import diffusion_family_capability
 
 CollectorKind = Literal["diffusion", "ar_discrete", "ar_continuous", "ar_r1"]
@@ -366,7 +366,7 @@ register_rollout_family(
         gatherer=GathererMetadata(
             import_path="vrl.models.ar.janus_pro.runtime:JanusProChunkGatherer",
         ),
-        capability=ar_discrete_family_capability("janus_pro", "ar_t2i"),
+        capability=JANUS_PRO_FAMILY_CAPABILITY,
     ),
 )
 
@@ -388,12 +388,7 @@ register_rollout_family(
         gatherer=GathererMetadata(
             import_path="vrl.models.ar.janus_pro.runtime:JanusProR1ChunkGatherer",
         ),
-        capability=ar_discrete_family_capability(
-            "janus_pro_r1",
-            "ar_t2i_r1",
-            trajectory_kind="multisegment",
-            trainable_segments=JANUS_R1_SEGMENTS,
-        ),
+        capability=JANUS_PRO_R1_FAMILY_CAPABILITY,
     ),
 )
 
@@ -416,7 +411,7 @@ register_rollout_family(
         gatherer=GathererMetadata(
             import_path="vrl.models.ar.nextstep_1.runtime:NextStep1ChunkGatherer",
         ),
-        capability=ar_continuous_family_capability("nextstep_1", "ar_t2i"),
+        capability=NEXTSTEP_1_FAMILY_CAPABILITY,
     ),
 )
 

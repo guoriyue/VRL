@@ -46,7 +46,7 @@ import torch.nn.functional as F
 
 from vrl.models.ar.janus_pro import JANUS_R1_SEGMENTS
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
-from vrl.models.ar.base import ARModelBase
+from vrl.models.ar.base import ARModelBase, ARReplayRolloutStubs
 from vrl.models.utils import count_trainable_params
 from vrl.trajectory import role_tensor
 from vrl.utils.logging import init_logger
@@ -1091,7 +1091,7 @@ class JanusProReplayCore(nn.Module):
         return self.gen_aligner(self.gen_embed(image_ids))
 
 
-class JanusProReplayModel(JanusProModel):
+class JanusProReplayModel(ARReplayRolloutStubs, JanusProModel):
     """Replay-only Janus wrapper without processor, vision tower, or VQ decoder."""
 
     def __init__(
@@ -1136,16 +1136,6 @@ class JanusProReplayModel(JanusProModel):
     @property
     def vq_model(self) -> nn.Module:
         raise RuntimeError("JanusProReplayModel does not own a VQ decoder")
-
-    @torch.no_grad()
-    def decode_image_tokens(
-        self,
-        image_token_ids: torch.Tensor,
-        image_size: int = JANUS_IMAGE_PIXEL_SIZE,
-    ) -> torch.Tensor:
-        del image_token_ids, image_size
-        raise RuntimeError("JanusProReplayModel cannot decode image tokens")
-
 
 # ---------------------------------------------------------------------------
 # Loader — lazy import so this module is importable without the janus pkg.

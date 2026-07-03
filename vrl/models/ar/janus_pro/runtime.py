@@ -19,7 +19,7 @@ from vrl.generation.types import (
     GenerationRequest,
     GenerationSampleRow,
 )
-from vrl.models.ar.build import build_ar_runtime_bundle
+from vrl.models.ar.build import build_ar_runtime_bundle, extract_ar_runtime_spec
 from vrl.models.ar.capabilities import ar_discrete_family_capability
 from vrl.models.ar.janus_pro import JANUS_R1_SEGMENTS
 from vrl.models.ar.janus_pro.model import (
@@ -30,9 +30,6 @@ from vrl.models.ar.janus_pro.model import (
 from vrl.models.ar.janus_pro.runner import JanusProARModelRunner
 from vrl.models.dtypes import dtype_to_config_string
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
-from vrl.models.runtime_config import (
-    extract_runtime_spec,
-)
 from vrl.trajectory import build_ar_discrete_trajectory, build_ar_multisegment_trajectory
 from vrl.utils.logging import init_logger
 
@@ -82,15 +79,12 @@ def extract_janus_pro_runtime_spec(
 ) -> RuntimeBuildSpec:
     """Slice Janus-Pro runtime construction fields out of a whole RL cfg."""
 
-    model_config = cfg.get("model") if hasattr(cfg, "get") else None
-    model_path = (model_config or {}).get("path") if model_config is not None else None
-    dtype = (model_config or {}).get("dtype") if model_config is not None else None
-    return extract_runtime_spec(
+    return extract_ar_runtime_spec(
         cfg,
         device,
-        dtype_to_config_string(dtype if dtype is not None else (weight_dtype or "bfloat16")),
+        weight_dtype,
         ar_task="ar_t2i",
-        model_name_or_path=model_path or "deepseek-ai/Janus-Pro-1B",
+        default_model_path="deepseek-ai/Janus-Pro-1B",
     )
 
 
