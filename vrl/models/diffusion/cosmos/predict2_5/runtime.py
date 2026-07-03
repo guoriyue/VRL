@@ -17,12 +17,6 @@ from vrl.generation.diffusion import (
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
-from vrl.models.diffusion.capabilities import diffusion_family_capability
-
-COSMOS_PREDICT25_FAMILY_CAPABILITY = diffusion_family_capability(
-    "cosmos-predict2.5",
-    "t2w",
-)
 
 
 class CosmosPredict25ChunkExecutor(DiffusionChunkExecutorBase):
@@ -30,7 +24,6 @@ class CosmosPredict25ChunkExecutor(DiffusionChunkExecutorBase):
 
     family: str = "cosmos-predict2.5"
     task: str = "t2w"
-    family_capability = COSMOS_PREDICT25_FAMILY_CAPABILITY
     default_num_frames: int = 93
     default_fps: int | None = 16
     default_max_sequence_length: int = 512
@@ -61,6 +54,5 @@ class CosmosPredict25ChunkExecutor(DiffusionChunkExecutorBase):
         )
 
 __all__ = [
-    "COSMOS_PREDICT25_FAMILY_CAPABILITY",
     "CosmosPredict25ChunkExecutor",
 ]

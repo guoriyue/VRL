@@ -477,6 +477,12 @@ class GenerationWorkerCore:
         built = executor_cls(model, **dict(launch_contract.executor_kwargs))
         if getattr(bundle, "runtime_caps", None) is not None:
             built.runtime_caps = dict(bundle.runtime_caps)
+        # Registry-descriptor families declare no executor capability of their
+        # own — the registry entry is the single construction site, and it
+        # arrives here via the launch contract. Families that still declare
+        # keep theirs (the declared-vs-contract cross-check below covers them).
+        if getattr(built, "family_capability", None) is None:
+            built.family_capability = self._capability_from_contract(launch_contract)
         return _require_chunked_executor(built)
 
     @staticmethod
