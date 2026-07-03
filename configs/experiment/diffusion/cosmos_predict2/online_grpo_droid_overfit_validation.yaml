@@ -1,0 +1,113 @@
+# Cosmos Predict2 2B V2W — OVERFIT VALIDATION run ("can the curve move at all", cheap).
+#
+# PURPOSE: answer "does the V2W + dino-reward combination climb" in one overnight
+# run (~40 updates), instead of a multi-day curve. NOT a learning-quality run:
+# train == eval == the same 4 fixed prompts (overfitting is the point), judged by
+# the paired same-seed eval series of r_target_dino_similarity (fixed sampling
+# seed + fixed eval seed -> epoch-to-epoch deltas are paired, so ~2x-paired-std
+# movement within ~30 updates is detectable without a block test).
+#
+# Why these knobs differ from online_grpo_droid_full_target_480p:
+# - data: 4-row manifest (droid_overfit_validation.jsonl) picked by the dino
+#   discrimination probe = the eval rows with the LARGEST exact-vs-static
+#   headroom (0.37-0.39), i.e. where the reward is most climbable. Regenerate:
+#   future_reward_discrimination_probe on droid_full_targets_eval.jsonl, take
+#   top-4 (exact - static_frozen).
+# - num_steps 10 (not 35): ~3.5x faster generation, and the SDE window [0, 10)
+#   now covers EVERY denoise step -> full gradient coverage. 10-step output
+#   EYEBALLED 2026-07-02 (outputs/_overfit_preflight/10step_93f.mp4): scene +
+#   first-frame condition coherent, moving arm smeared/ghosted — usable for a
+#   can-it-climb validation. Fallback if rewards turn out all-mush: raise
+#   num_steps to 15 and KEEP the window at [0, 10] (flow_grpo's low-step-train /
+#   clean-tail trick) at ~1.5x gen cost.
+# - same_latent + per-row fixed seed: group members share the initial latent,
+#   so intra-group reward differences come only from SDE exploration noise ->
+#   cleaner advantages at group_size 8. The seed rides in each manifest row's
+#   request_overrides.seed (the sanctioned per-prompt seed path: PromptExample
+#   -> prompt_collection kwargs -> sampling["seed"]); a top-level sampling.seed
+#   key does not exist. Same row seed every epoch -> paired rollouts/eval.
+# - EMA off: its lag would mask the first ~10-20 updates of movement, which is
+#   exactly the signal this run exists to detect.
+# - motion_dynamics at weight 1.0 (not 0.2): the discrimination probe shows a
+#   frozen-static video scores ~0.50-0.56 on dino vs ~0.05 on-policy, so at
+#   guard weight 0.2 static collapse is a NET-POSITIVE hack (+0.5 dino - 0.2
+#   motion). At 1.0 it is net-negative; for honest (moving) samples motion
+#   saturates at 1.0 = a zero-variance constant that adds no gradient noise.
+# - eval every epoch on the same 4 prompts (n=16) — the flat-480p lesson: a
+#   run whose eval never fires cannot be judged "moved" or "not moved".
+#
+# Verdict rule: PASS = eval r_target_dino_similarity rises > 2x its paired std
+# within ~30 updates AND reward_std stays alive (collapse to 0 = group diversity
+# died). Watch the kling-free artifact gap: this recipe saves no mp4s, so eyeball
+# via the pre-flight sample probe, not from this run's outputs.
+#
+# Run (single 32GB): PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+defaults:
+  - /recipe/online/diffusion_grpo
+  - /model/diffusion/cosmos/predict2_2b
+  - /sampling/video/480p_33f          # 832x480 bucket; num_frames overridden to native 93 below
+  - /sampling/denoise/35_step_cfg_7   # keeps cfg 7.0; num_steps overridden to 10 below
+  - /reward/target_dino_similarity
+  - /reward/motion_dynamics
+  - /dataset/droid_overfit_validation
+
+model:
+  use_lora: false
+  # Converted native-480P transformer (see online_grpo_droid_full_target_480p header).
+  path: /home/mingfeiguo/Desktop/vrl2/VRL/checkpoints/cosmos_predict2_2b_v2w_480p_diffusers
+  # Compile OFF: incompatible with gradient_checkpointing (predict2_2b defaults it on).
+  torch_compile:
+    enable: false
+
+sampling:
+  num_frames: 93                      # native clip length for the 480P weights (33f is OOD -> artifacts)
+  fps: 16
+  num_steps: 10                       # == sde window hi -> every step trainable; ~3.5x faster than 35
+
+actor:
+  optim:
+    lr: 2.0e-5
+    optim_8bit: true                  # int8 Adam state -> full-param 2B fits 32GB
+  gradient_checkpointing: true
+  ppo_epochs: 4
+  ema:
+    enable: false                     # validation: no averaging lag on top of the raw policy
+
+algorithm:
+  clip_ratio: 1.0e-3
+  kl_coef: 0.0
+
+cosmos:
+  reference_mode: per_sample
+
+rollout:
+  n_samples_per_prompt: 16
+  prompts_per_batch: 1                # per_sample reference mode hard-requires 1 (cosmos/train.py);
+                                      # 16 rollouts/update via the bigger group instead — same budget,
+                                      # lower advantage noise, prompts rotate across epochs
+  samples_per_chunk: 2                # 4 OOMs here: P1's 25.3GiB@sbs4 gen peak only fits with the
+                                      # driver fully vacated, but ~4.2GiB stays resident on the driver
+                                      # during collect -> 2 (gen peak ~21GiB) is the safe ceiling
+  sde: { type: cps }
+  same_latent: true                   # group shares the initial latent (seed from manifest request_overrides)
+  trajectory_storage:
+    device: cpu                       # 93f trajectories on the GPU wire OOM the driver at collect
+                                      # handoff (worker still holds ~23.5GiB gen memory while the
+                                      # driver deserializes) — park them on host RAM (~1.7GB)
+
+distributed:
+  rollout:
+    pipelined: true
+
+trainer:
+  entrypoint: vrl.scripts.diffusion.cosmos.train:train_cosmos_predict2_grpo
+  output_dir: outputs/cosmos_pred2_droid_overfit_validation
+  total_epochs: 40
+  save_freq: 20
+  debug: { first_step: true }
+  eval: { enabled: true, freq: 1, samples_per_prompt: 4, max_prompts: 4, seed: 20260628 }
+
+reward:
+  components:
+    target_dino_similarity: 1.0
+    motion_dynamics: 1.0              # anti-static guard must dominate (see header)

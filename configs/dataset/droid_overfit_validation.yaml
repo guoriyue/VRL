@@ -1,0 +1,25 @@
+# 4-row overfit-validation slice of the DROID full-target eval manifest.
+# train == eval on purpose: the overfit-validation recipe asks "can the curve
+# move at all", not "does it generalize". Rows are the 4 eval episodes with the
+# largest dino exact-vs-static headroom (0.37-0.39), picked by
+#   python -m vrl.scripts.eval.future_reward_discrimination_probe \
+#     --reward target_dino_similarity \
+#     --manifest data/external/video_world/manifests/droid_full_targets_eval.jsonl \
+#     --data-root data/external --num-anchors 16 --out <report>
+# then taking top-4 by (exact - static_frozen). Each row carries a fixed
+# request_overrides.seed so rollouts/eval are paired across epochs (and
+# same_latent has the explicit seed it requires).
+data:
+  loader: prompt_manifest
+  manifest: data/external/video_world/manifests/droid_overfit_validation.jsonl
+  eval_manifest: data/external/video_world/manifests/droid_overfit_validation.jsonl
+  source_report: data/external/video_world/droid_full_targets_report.json
+  artifact_data_root: data/external
+  task_type: video2world
+  preprocessing:
+    format: jsonl
+    target_text: none
+    media_type: video
+    conditioning: reference_image
+  sampler:
+    type: random_without_replacement
