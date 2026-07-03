@@ -181,6 +181,23 @@ class ARRequestLayout:
             for sample_index in range(chunk.sample_start, chunk.sample_end)
         ]
 
+    def cat_chunk_fields(
+        self,
+        chunks: Sequence[Any],
+        fields: Sequence[str],
+    ) -> dict[str, torch.Tensor]:
+        """Concatenate ordered chunk payload tensors along the batch dim.
+
+        The gatherers' cat step is pure data (a field-name list over already
+        ``ordered_chunks``-validated payloads), so it lives here once instead
+        of each family writing one ``torch.cat`` block per field.
+        """
+
+        return {
+            field: torch.cat([getattr(chunk, field) for chunk in chunks], dim=0)
+            for field in fields
+        }
+
     def max_peak_memory_mb(self, chunks: Sequence[ARChunkResult]) -> float | None:
         """Return the maximum non-null peak memory metric across chunk results."""
 

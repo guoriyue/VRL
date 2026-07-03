@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from vrl.generation.ar.layout import ARRequestLayout
+from vrl.generation.capabilities import FamilyCapability
 from vrl.generation.protocols import GenerationChunkExecutor
 from vrl.generation.types import (
+    GenerationOutput,
     GenerationRequest,
+    GenerationSampleRow,
 )
 
 
@@ -16,13 +20,18 @@ class ARChunkExecutorBase(
 ):
     """Base helpers for AR family executors.
 
-    Subclasses still own tokenization details, sampling math, decoding, and
-    family-specific output packing.
+    Owns the request-level plumbing (``plan`` / ``forward_plan`` /
+    ``capability``), mirroring ``DiffusionChunkExecutorBase``: the full-request
+    path IS the production chunk path plus the family gatherer, so there is a
+    single trajectory/metrics assembly line. Subclasses still own tokenization
+    details, sampling math, decoding, and family-specific output packing
+    (``forward_chunk_plan`` + their chunk gatherer).
     """
 
     family: str
     task: str
     model: Any
+    family_capability: FamilyCapability | None = None
     default_image_token_num: int | None = None
     default_image_size: int | None = None
     default_max_text_length: int | None = None
@@ -39,6 +48,58 @@ class ARChunkExecutorBase(
             default_image_token_num=self.default_image_token_num,
             default_image_size=self.default_image_size,
             default_max_text_length=self.default_max_text_length,
+        )
+
+    # -- request-level plumbing (shared; families own the chunk step) ----
+
+    def capability(self) -> FamilyCapability:
+        if self.family_capability is None:
+            raise RuntimeError(
+                f"{type(self).__name__} must declare family_capability explicitly",
+            )
+        return self.family_capability
+
+    def plan(
+        self,
+        request: GenerationRequest,
+        sample_rows: Sequence[GenerationSampleRow],
+    ) -> Any:
+        from vrl.generation.execution.planner import build_engine_plan
+
+        return build_engine_plan(
+            request,
+            list(sample_rows),
+            capability=self.capability(),
+        )
+
+    def forward_plan(
+        self,
+        request: GenerationRequest,
+        sample_rows: Sequence[GenerationSampleRow],
+        engine_plan: Any,
+    ) -> GenerationOutput:
+        """Full-request path: the production chunk path plus the gatherer.
+
+        Runs every planned chunk through ``forward_chunk_plan`` (with the same
+        OOM-split retry the diffusion base uses) and assembles the output with
+        the family chunk gatherer — the exact objects the per-chunk Ray
+        dispatch produces and gathers, so this path cannot drift from
+        production the way the old hand-rolled full-batch implementations did.
+        """
+        from vrl.generation.execution.chunks import run_sample_chunks_with_oom_retry
+        from vrl.generation.execution.planner import attach_engine_plan
+
+        chunks = run_sample_chunks_with_oom_retry(
+            engine_plan.chunks,
+            lambda chunk: self.forward_chunk_plan(
+                request,
+                chunk,
+                engine_plan.chunk_stage_for(chunk),
+            ),
+        )
+        return attach_engine_plan(
+            self.gather_chunks(request, list(sample_rows), chunks),
+            engine_plan,
         )
 
     def _ar_runner(self, request: GenerationRequest) -> Any:

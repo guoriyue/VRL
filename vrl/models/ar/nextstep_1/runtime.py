@@ -195,146 +195,6 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
 
     # -- protocol ------------------------------------------------------
 
-    def capability(self) -> FamilyCapability:
-        return self.family_capability
-
-    def forward_plan(
-        self,
-        request: GenerationRequest,
-        sample_rows: list[GenerationSampleRow],
-        engine_plan: Any,
-    ) -> GenerationOutput:
-        del engine_plan
-        self.require_native_ar_engine(request)
-        sampling = request.sampling
-        params: ARSamplingParams = self.layout.parse_sampling_params(request)
-        prompts = list(request.prompts)
-
-        guidance_scale = float(sampling["guidance_scale"])
-        num_steps = int(sampling["num_steps"])
-        noise_level = float(sampling["noise_level"])
-
-        # Repeat each prompt ``samples_per_prompt`` times so the AR loop
-        # sees a flat ``[B, ...]`` batch where ``B = num_prompts x G``.
-        repeated_prompts = self.layout.expand_prompts(request)
-
-        prompt_ids, prompt_mask = self._tokenize_prompts(
-            repeated_prompts,
-            max_text_length=params.max_text_length,
-        )
-        uncond_ids, uncond_mask = self._tokenize_prompts(
-            [""] * len(repeated_prompts),
-            max_text_length=params.max_text_length,
-        )
-        pad_id = getattr(self.model.processor, "pad_token_id", None) or 0
-        prompt_ids, prompt_mask, uncond_ids, uncond_mask = self.layout.align_pair(
-            prompt_ids,
-            prompt_mask,
-            uncond_ids,
-            uncond_mask,
-            pad_id=pad_id,
-        )
-
-        cond_embeds = self._embed(prompt_ids)
-        uncond_embeds = self._embed(uncond_ids)
-
-        # Optional deterministic generator consumed by the AR runner.
-        generator: torch.Generator | None = None
-        if params.seed is not None:
-            device = self.model.device
-            generator = torch.Generator(device=device)
-            generator.manual_seed(params.seed)
-
-        sample_kwargs: dict[str, Any] = {
-            "guidance_scale": guidance_scale,
-            "num_steps": num_steps,
-            "noise_level": noise_level,
-            "image_token_num": params.image_token_num,
-        }
-        if generator is not None:
-            sample_kwargs["generator"] = generator
-
-        scheduler_batch_size = (
-            params.ar_scheduler_batch_size if params.use_ar_scheduler else len(sample_rows)
-        )
-        decode_result = ARDecodeLoop(
-            request=request,
-            sample_rows=sample_rows,
-            runner=self._ar_runner(request),
-            max_new_tokens=params.image_token_num,
-            tokenizer_key="nextstep_1",
-            dtype=str(cond_embeds.dtype),
-            scheduler_batch_size=scheduler_batch_size,
-            init_args=(cond_embeds, uncond_embeds, prompt_mask, uncond_mask),
-            init_kwargs=sample_kwargs,
-            step_kwargs=sample_kwargs,
-        ).run()
-        tokens, saved_noise, old_logprobs = decode_result.finalized
-        scheduler_batches = decode_result.scheduler_batches
-        # tokens:        [B, L_img, D_token]
-        # saved_noise:   [B, L_img, D_token]
-        # old_logprobs:  [B, L_img]
-
-        images = self.model.decode_image_tokens(tokens, image_size=params.image_size)
-
-        images_for_reward = images
-
-        peak_mem_mb = self.layout.peak_memory_mb()
-        engine_counters = {
-            "ar_decode_loop_enabled": True,
-            "ar_prefill_forwards": 1,
-            "ar_decode_forwards": max(params.image_token_num - 1, 0),
-            "ar_decode_tokens": len(sample_rows) * params.image_token_num,
-            "ar_scheduler_enabled": bool(params.use_ar_scheduler),
-            "ar_scheduler_batch_size": params.ar_scheduler_batch_size,
-            "ar_scheduler_batches": scheduler_batches,
-        }
-        engine_counters.update(decode_result.engine_counters)
-        engine_counters["ar_scheduler_enabled"] = bool(params.use_ar_scheduler)
-        engine_counters["ar_scheduler_batch_size"] = params.ar_scheduler_batch_size
-        metrics = GenerationMetrics(
-            num_steps=params.image_token_num,
-            chunks=1,
-            peak_memory_mb=peak_mem_mb,
-            engine_counters=engine_counters,
-        )
-
-        trajectory_context: dict[str, Any] = {
-            "guidance_scale": guidance_scale,
-            "num_steps": num_steps,
-            "noise_level": noise_level,
-            "image_token_num": params.image_token_num,
-            "image_size": params.image_size,
-            "ar_decode_loop_enabled": True,
-        }
-        trajectory = build_ar_continuous_trajectory(
-            request=request,
-            sample_rows=sample_rows,
-            tokens=tokens,
-            saved_noise=saved_noise,
-            token_log_probs=old_logprobs,
-            token_mask=torch.ones_like(old_logprobs),
-            prompt_input_ids=prompt_ids,
-            prompt_attention_mask=prompt_mask,
-            uncond_input_ids=uncond_ids,
-            uncond_attention_mask=uncond_mask,
-            images_for_reward=images_for_reward,
-            context=trajectory_context,
-        )
-
-        return GenerationOutput(
-            request_id=request.request_id,
-            family=request.family,
-            task=request.task,
-            prompts=prompts,
-            sample_rows=sample_rows,
-            output=images,
-            trajectory=trajectory,
-            extra={},
-            metrics=metrics,
-            peak_memory_mb=peak_mem_mb or 0.0,
-        )
-
     def forward_chunk_plan(
         self,
         request: GenerationRequest,
@@ -486,29 +346,24 @@ class NextStep1ChunkGatherer:
     ) -> GenerationOutput:
         """Pack prompt/sample AR chunks back into the canonical GenerationOutput."""
 
+        fields = (
+            "output",
+            "tokens",
+            "saved_noise",
+            "log_probs",
+            "images_for_reward",
+            "prompt_input_ids",
+            "prompt_attention_mask",
+            "uncond_input_ids",
+            "uncond_attention_mask",
+        )
         ordered_ar_chunks = self.layout.ordered_chunks(
             request,
             sample_rows,
             chunks,
-            row_fields=(
-                "output",
-                "tokens",
-                "saved_noise",
-                "log_probs",
-                "images_for_reward",
-                "prompt_input_ids",
-                "prompt_attention_mask",
-                "uncond_input_ids",
-                "uncond_attention_mask",
-            ),
+            row_fields=fields,
         )
-        tokens = torch.cat([chunk.tokens for chunk in ordered_ar_chunks], dim=0)
-        saved_noise = torch.cat(
-            [chunk.saved_noise for chunk in ordered_ar_chunks],
-            dim=0,
-        )
-        log_probs = torch.cat([chunk.log_probs for chunk in ordered_ar_chunks], dim=0)
-        output = torch.cat([chunk.output for chunk in ordered_ar_chunks], dim=0)
+        cat = self.layout.cat_chunk_fields(ordered_ar_chunks, fields)
         peak_mem_mb = self.layout.max_peak_memory_mb(ordered_ar_chunks)
         image_token_num = int(request.sampling["image_token_num"])
         trajectory_context = dict(ordered_ar_chunks[0].context)
@@ -528,38 +383,18 @@ class NextStep1ChunkGatherer:
                 "ar_scheduler_batches": None,
             },
         )
-        images_for_reward = torch.cat(
-            [chunk.images_for_reward for chunk in ordered_ar_chunks],
-            dim=0,
-        )
-        prompt_input_ids = torch.cat(
-            [chunk.prompt_input_ids for chunk in ordered_ar_chunks],
-            dim=0,
-        )
-        prompt_attention_mask = torch.cat(
-            [chunk.prompt_attention_mask for chunk in ordered_ar_chunks],
-            dim=0,
-        )
-        uncond_input_ids = torch.cat(
-            [chunk.uncond_input_ids for chunk in ordered_ar_chunks],
-            dim=0,
-        )
-        uncond_attention_mask = torch.cat(
-            [chunk.uncond_attention_mask for chunk in ordered_ar_chunks],
-            dim=0,
-        )
         trajectory = build_ar_continuous_trajectory(
             request=request,
             sample_rows=list(sample_rows),
-            tokens=tokens,
-            saved_noise=saved_noise,
-            token_log_probs=log_probs,
-            token_mask=torch.ones_like(log_probs),
-            prompt_input_ids=prompt_input_ids,
-            prompt_attention_mask=prompt_attention_mask,
-            uncond_input_ids=uncond_input_ids,
-            uncond_attention_mask=uncond_attention_mask,
-            images_for_reward=images_for_reward,
+            tokens=cat["tokens"],
+            saved_noise=cat["saved_noise"],
+            token_log_probs=cat["log_probs"],
+            token_mask=torch.ones_like(cat["log_probs"]),
+            prompt_input_ids=cat["prompt_input_ids"],
+            prompt_attention_mask=cat["prompt_attention_mask"],
+            uncond_input_ids=cat["uncond_input_ids"],
+            uncond_attention_mask=cat["uncond_attention_mask"],
+            images_for_reward=cat["images_for_reward"],
             context=trajectory_context,
         )
 
@@ -569,7 +404,7 @@ class NextStep1ChunkGatherer:
             task=request.task,
             prompts=list(request.prompts),
             sample_rows=list(sample_rows),
-            output=output,
+            output=cat["output"],
             trajectory=trajectory,
             extra={},
             metrics=metrics,
