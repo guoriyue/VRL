@@ -50,8 +50,25 @@ eval / benchmark：
   测试通过，无回归。
 - **eval suite**：端到端跑通，产出 `eval_video_metrics.csv`（Kling 列 + VideoScore2 列 + 外部
   benchmark 合并列）。
-- **VideoScore2 真机 7B 推理**：权重下载较大，已在本地 5090 上发起真实 inference probe（结果写回
-  本节）；soft-score 的 digit-token 对齐目前仅由合成 logits 单测覆盖，真机跑通后核对回退率。
+- **VideoScore2 真机 7B 推理（2026-07-02 跑通，P0 gate PASS + 抓到一个真 bug）**：此前"已发起"的
+  probe 实际卡在权重下载（4 shard 只下了 3 个）；续传后在 5090 真跑（wan_i2v_parity_probe 的两条
+  480p mp4，fps=2，bf16）：**加载 2.9s（权重已缓存）、单视频推理 4.2-5.1s、峰值显存 15.8GiB
+  alloc / 16.4GiB reserved**；digit token 1-5 全部解析为单 token，hard 解析路径正常
+  （3/4/4 与 3/4/3），CoT + 最终评分行格式与 wrapper 假设一致。报告
+  `wm-infra/outputs/videoscore2_probe/report_prefix_anchor_bug.json`。
+- **真机核对发现 soft-score 对齐 bug（比回退更糟：静默锚错，回退率 0 但分是错的）**：模型 CoT 先写
+  "Visual Quality Analysis:"（无数字），最终评分行是编号列表 `(1) visual quality: 3`——soft 路径
+  从第一次 marker 命中往后找 digit，撞上列表编号 "1"，给出 soft=1.0 而 hard=3（text_alignment/
+  physical 碰巧对齐只是格式运气）。修复：`_next_digit_step` 改为**锚定最后一次 marker 出现 + digit
+  必须在 marker 后近窗口内**（评分行恒为 `<marker>: <digit>`；CoT 提及后远处的数字出窗 → 走 hard
+  回退）。已加单测复现该场景（`tests/rewards/videoscore2/test_parsing.py::
+  test_soft_scores_anchor_last_marker_not_cot_mention`，修复前红/修复后绿），reward 套件通过
+  （2 个 OCR 红为 venv 缺 Levenshtein 的既有环境问题）。修复 patch 暂存
+  `wm-infra/outputs/videoscore2_probe/soft_anchor_fix.patch`（vrl2/VRL feat/videoscore2-reward
+  分支工作区，未提交）；**修复后真机复验 PASS（同日）**：sample00 visual_quality soft 1.0→**2.997**
+  （≈hard 3），全部轴 soft≈hard 对齐、回退率 0，physical 3.85 展示出 soft 路径想要的整数间连续信号。
+  复验报告 `wm-infra/outputs/videoscore2_probe/report_fixed.json`。P0 finishing criterion
+  「fake tests 通过 + 本地 mp4 真实 inference」就此闭合。
 
 ## 外部 benchmark 已 vendoring（third_party 子模块）
 
