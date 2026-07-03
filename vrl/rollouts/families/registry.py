@@ -81,11 +81,10 @@ class DiffusionFamilyBuild:
     # Verbatim runtime_caps override for both bundles; None keeps the generic
     # default ({family_capability, supports_reference_conditioning}).
     runtime_caps: Mapping[str, Any] | None = None
-    # Non-None marks the family LoRA-only: the generic builders fail loud with
-    # this reason BEFORE paying the transformer load (Cosmos Predict2.5's
-    # DiffusionNFT needs the default+previous adapters, which only exist on
-    # the LoRA path).
-    requires_lora_reason: str | None = None
+    # LoRA-only family: the generic builders fail loud BEFORE paying the
+    # transformer load. The per-family WHY belongs in a comment on the entry
+    # (and in the model's own apply_full_finetune error), not in runtime data.
+    requires_lora: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -290,10 +289,9 @@ register_rollout_family(
             scheduler_classname="UniPCMultistepScheduler",
             task_variant="text2world",
             memory_owner="Cosmos Predict2.5 VAE",
-            requires_lora_reason=(
-                "DiffusionNFT needs the trainable default + frozen previous "
-                "adapters, which only exist on the LoRA path"
-            ),
+            # DiffusionNFT needs the trainable default + frozen previous
+            # adapters, which only exist on the LoRA path.
+            requires_lora=True,
         ),
     ),
 )

@@ -253,10 +253,10 @@ def _family_build_entry(family: str | None):
 def _check_requires_lora(entry, spec: RuntimeBuildSpec) -> None:
     """Fail a LoRA-only family loud before paying the transformer load."""
 
-    reason = entry.build.requires_lora_reason
-    if reason is not None and not spec.use_lora:
+    if entry.build.requires_lora and not spec.use_lora:
         raise RuntimeError(
-            f"{entry.family} requires LoRA ({reason}); set model.use_lora=true.",
+            f"rollout family {entry.family!r} is LoRA-only; "
+            "set model.use_lora=true.",
         )
 
 
