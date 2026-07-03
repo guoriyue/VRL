@@ -15,6 +15,7 @@ from vrl.generation.protocols import PolicyVersionProvider
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.ray.placement import RolePlacement
+from vrl.ray.resources import PhaseHandoffPolicy
 from vrl.trainers.weight_sync import RayRuntimeWeightSyncer, WeightSyncer
 
 
@@ -25,7 +26,19 @@ def _release_after_collect_runtime(
 ) -> RayGenerationRuntime:
     config = RayGenerationConfig(
         allow_driver_gpu_overlap=allow_driver_gpu_overlap,
-        resources=SimpleNamespace(colocated=colocated),
+        # lifecycle.handoff is read by with_release_after_collect to decide
+        # sleep-vs-teardown leases; the real PhaseHandoffPolicy keeps this fake
+        # from drifting when the handoff contract changes.
+        resources=SimpleNamespace(
+            colocated=colocated,
+            lifecycle=SimpleNamespace(
+                handoff=PhaseHandoffPolicy(
+                    release_rollout_before_train=True,
+                    release_rollout_before_reward=True,
+                    release_reward_after_score=False,
+                ),
+            ),
+        ),
     )
     return RayGenerationRuntime.with_release_after_collect(
         config,
