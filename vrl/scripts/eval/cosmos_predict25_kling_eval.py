@@ -20,9 +20,9 @@ from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.math.diffusion.flow_matching import sde_step_with_logprob
-from vrl.models.diffusion.cosmos.predict2_5.runtime import (
-    build_cosmos_predict25_runtime_bundle,
-    extract_cosmos_predict25_runtime_spec,
+from vrl.models.diffusion.build import (
+    build_family_runtime_bundle,
+    extract_family_runtime_spec,
 )
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
 from vrl.rewards.models.kling_video_reward import KlingVideoRewardModel
@@ -313,8 +313,8 @@ def _generate_all(
                     "Building Cosmos Predict2.5 generation bundle for %s",
                     checkpoint.label,
                 )
-                spec = extract_cosmos_predict25_runtime_spec(cfg, device, dtype)
-                bundle = build_cosmos_predict25_runtime_bundle(spec)
+                spec = extract_family_runtime_spec(cfg, device, dtype)
+                bundle = build_family_runtime_bundle(spec)
             _load_checkpoint_into_bundle(bundle, checkpoint)
             model = bundle.model.eval()
             try:

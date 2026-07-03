@@ -266,6 +266,20 @@ def build_sd3_5_replay_runtime_bundle_from_cfg(cfg, device, wd): ...  # 2 行包
 >   签名不同）+ qwen 的范数保持 CFG 数学。
 > - 净 **-216 行**（+67/-283）。验证：**537 passed**（首次含全量 `tests/generation`）。
 > - 新家族增益：SANA 的 executor 大概率零方法（qwen 同款，纯类属性）；runner 只写 `build_branch`。
+
+> **薄化第八轮（2026-07-02）——predict2_5 升级 descriptor 家族（第三个）+ 死键清链**：
+> - **死键判定**：`model_revision` / `skip_text_encoder` 两个 bundle-metadata 键全仓库零读取方
+>   （dead-field 规则）→ 两个 `_from_spec` helper + 两个 extra_metadata lambda + cosmos3 的同款死键
+>   整链删除。死 cap `supports_diffusion_nft`（此前已判死）一并删。
+> - **删完发现 predict2_5 只剩一处"代码"**：NFT LoRA 守卫 → 数据化为描述符新字段
+>   `requires_lora_reason: str | None`（generic builder 在加载 transformer 前 fail-loud）。
+>   于是 predict2_5 完整升级 descriptor：runtime.py 只剩 capability + executor，6 个函数全删。
+> - **train.py 的 recipe 保留**（真 recipe 差异：NFT 不传 `reference_model_getter`——用 previous adapter
+>   替代参考模型），但其 `_build_predict25_*` 转发改指 generic from_cfg。eval 脚本
+>   （`cosmos_predict25_kling_eval.py`）改指 generic extract/build。
+> - **descriptor 家族名册更新**：sd3_5、qwen_image、**cosmos-predict2.5**。predict2 也已接近
+>   （死键删完后只剩 reference_image 兜底 lambda——它读 generation_request，是 executor 层真逻辑）。
+> - 验证：**577 passed**（+ 全量 tests/scripts）。
 > **遗留审计项**：predict2_5 写入 caps 的 `supports_diffusion_nft` **全仓库无读取方**（dead cap，
 > 按 dead-field 规则应删或补上本该存在的校验）；cosmos/wan/echo/anima 系 caps 无 `family_capability`
 > 键与 sd3/flux/qwen 不一致（行为无差——`capabilities.py:177` 缺键回落 registry 声明——但契约分裂）。

@@ -46,10 +46,6 @@ def extract_cosmos3_runtime_spec(cfg: Any, device: Any, weight_dtype: Any) -> Ru
     return extract_runtime_spec(cfg, device, weight_dtype, task_variant="text2world")
 
 
-def _model_revision_from_spec(spec: RuntimeBuildSpec) -> str | None:
-    return (spec.model_config or {}).get("revision") or None
-
-
 def _apply_train_knobs(model: Any, spec: RuntimeBuildSpec) -> bool:
     use_lora = spec.use_lora
     if use_lora:
@@ -85,7 +81,6 @@ def build_cosmos3_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
             "task_variant": spec.task_variant,
             "dtype": str(spec.dtype),
             "use_lora": use_lora,
-            "model_revision": _model_revision_from_spec(spec),
             **full_generation_bundle_metadata(),
             **apply_generation_memory_policy(
                 model,
@@ -122,7 +117,6 @@ def build_cosmos3_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle
             "task_variant": spec.task_variant,
             "dtype": str(spec.dtype),
             "use_lora": use_lora,
-            "model_revision": _model_revision_from_spec(spec),
             **minimal_replay_bundle_metadata(),
         },
     )

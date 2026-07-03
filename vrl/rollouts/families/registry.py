@@ -81,6 +81,11 @@ class DiffusionFamilyBuild:
     # Verbatim runtime_caps override for both bundles; None keeps the generic
     # default ({family_capability, supports_reference_conditioning}).
     runtime_caps: Mapping[str, Any] | None = None
+    # Non-None marks the family LoRA-only: the generic builders fail loud with
+    # this reason BEFORE paying the transformer load (Cosmos Predict2.5's
+    # DiffusionNFT needs the default+previous adapters, which only exist on
+    # the LoRA path).
+    requires_lora_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -268,16 +273,28 @@ register_rollout_family(
             "vrl.models.diffusion.cosmos.predict2_5.runtime:"
             "CosmosPredict25ChunkExecutor"
         ),
-        runtime_builder=(
-            "vrl.models.diffusion.cosmos.predict2_5.runtime:"
-            "build_cosmos_predict25_runtime_bundle"
-        ),
-        runtime_spec_extractor=(
-            "vrl.models.diffusion.cosmos.predict2_5.runtime:"
-            "extract_cosmos_predict25_runtime_spec"
-        ),
+        runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
+        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
         request_prefix="cosmos-predict2.5",
         default_task_type="text_to_video",
+        build=DiffusionFamilyBuild(
+            model_cls=(
+                "vrl.models.diffusion.cosmos.predict2_5.model:CosmosPredict25Model"
+            ),
+            replay_cls=(
+                "vrl.models.diffusion.cosmos.predict2_5.model:CosmosPredict25ReplayModel"
+            ),
+            transformer_classname="CosmosTransformer3DModel",
+            # Upstream ships UniPC; replay must recompute log-probs under the
+            # same schedule the rollout sampled with.
+            scheduler_classname="UniPCMultistepScheduler",
+            task_variant="text2world",
+            memory_owner="Cosmos Predict2.5 VAE",
+            requires_lora_reason=(
+                "DiffusionNFT needs the trainable default + frozen previous "
+                "adapters, which only exist on the LoRA path"
+            ),
+        ),
     ),
 )
 

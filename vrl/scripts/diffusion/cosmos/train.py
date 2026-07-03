@@ -86,11 +86,9 @@ def _build_predict2_replay_bundle(
 
 
 def _build_predict25_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
-    from vrl.models.diffusion.cosmos.predict2_5.runtime import (
-        build_cosmos_predict25_runtime_bundle_from_cfg,
-    )
+    from vrl.models.diffusion.build import build_family_runtime_bundle_from_cfg
 
-    return build_cosmos_predict25_runtime_bundle_from_cfg(cfg, device, weight_dtype)
+    return build_family_runtime_bundle_from_cfg(cfg, device, weight_dtype)
 
 
 def _build_predict25_replay_bundle(
@@ -98,11 +96,11 @@ def _build_predict25_replay_bundle(
     device: Any,
     weight_dtype: Any,
 ) -> Any:
-    from vrl.models.diffusion.cosmos.predict2_5.runtime import (
-        build_cosmos_predict25_replay_runtime_bundle_from_cfg,
+    from vrl.models.diffusion.build import (
+        build_family_replay_runtime_bundle_from_cfg,
     )
 
-    return build_cosmos_predict25_replay_runtime_bundle_from_cfg(cfg, device, weight_dtype)
+    return build_family_replay_runtime_bundle_from_cfg(cfg, device, weight_dtype)
 
 
 def _build_anima_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:

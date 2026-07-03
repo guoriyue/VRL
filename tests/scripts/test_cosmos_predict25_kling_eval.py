@@ -137,12 +137,12 @@ def test_generate_all_releases_model_before_rebuilding(monkeypatch, tmp_path) ->
     monkeypatch.setattr(eval_script, "_release_cuda", gc.collect)
     monkeypatch.setattr(
         eval_script,
-        "extract_cosmos_predict25_runtime_spec",
+        "extract_family_runtime_spec",
         lambda cfg, device, dtype: object(),
     )
     monkeypatch.setattr(
         eval_script,
-        "build_cosmos_predict25_runtime_bundle",
+        "build_family_runtime_bundle",
         fake_build_runtime_bundle,
     )
     monkeypatch.setattr(eval_script, "_load_checkpoint_into_bundle", lambda bundle, checkpoint: None)

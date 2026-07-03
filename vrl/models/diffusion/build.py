@@ -250,6 +250,16 @@ def _family_build_entry(family: str | None):
     return entry
 
 
+def _check_requires_lora(entry, spec: RuntimeBuildSpec) -> None:
+    """Fail a LoRA-only family loud before paying the transformer load."""
+
+    reason = entry.build.requires_lora_reason
+    if reason is not None and not spec.use_lora:
+        raise RuntimeError(
+            f"{entry.family} requires LoRA ({reason}); set model.use_lora=true.",
+        )
+
+
 def extract_family_runtime_spec(cfg, device, weight_dtype) -> RuntimeBuildSpec:
     """Generic extractor: resolve the family from ``cfg.model.family``."""
 
@@ -272,6 +282,7 @@ def build_family_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
 
     entry = _family_build_entry(spec.family)
     recipe = entry.build
+    _check_requires_lora(entry, spec)
     logger.info("Building %s runtime bundle (registry descriptor)", entry.family)
     return build_diffusion_runtime_bundle(
         spec,
@@ -289,6 +300,7 @@ def build_family_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
 
     entry = _family_build_entry(spec.family)
     recipe = entry.build
+    _check_requires_lora(entry, spec)
     logger.info(
         "Building %s replay runtime bundle (registry descriptor) from %s",
         entry.family,

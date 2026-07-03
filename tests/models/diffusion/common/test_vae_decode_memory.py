@@ -180,12 +180,14 @@ def test_wan_runtime_bundle_records_model_build_memory_metadata(
             "build_cosmos_predict2_runtime_bundle",
             None,
         ),
+        # predict2_5 is also a registry-descriptor family (LoRA-only, so the
+        # shared fake spec below carries a minimal lora block).
         (
-            "vrl.models.diffusion.cosmos.predict2_5.runtime",
+            "vrl.models.diffusion.build",
             "vrl.models.diffusion.cosmos.predict2_5.model",
             "CosmosPredict25Model",
-            "build_cosmos_predict25_runtime_bundle",
-            None,
+            "build_family_runtime_bundle",
+            "cosmos-predict2.5",
         ),
     ],
 )
@@ -237,7 +239,13 @@ def test_full_generation_runtime_bundles_record_model_build_memory_metadata(
             dtype="float32",
             family=spec_family,
             sampling_config={"num_steps": 2},
-            model_config={"memory": {"vae_decode": {"tiling": True, "slicing": False}}},
+            model_config={
+                "memory": {"vae_decode": {"tiling": True, "slicing": False}},
+                # LoRA path so LoRA-only descriptor families (predict2_5) pass
+                # their requires_lora guard; the fake's apply_lora is a no-op.
+                "use_lora": True,
+                "lora": {"rank": 1, "alpha": 1, "target_modules": ["to_q"]},
+            },
         ),
     )
 
