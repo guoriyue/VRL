@@ -43,6 +43,8 @@ from vrl.models.diffusion.common import (
     ChunkedLatentDecoder,
     DiffusionBackboneCaller,
     DiffusionBackboneInput,
+    DiffusionBackboneRunnerBase,
+    DiffusionBranch,
     LatentDecodeSpec,
     LatentDecodeTransform,
     expand_batch_timestep,
@@ -54,7 +56,6 @@ from vrl.models.diffusion.common.lora import (
     copy_adapter_weights,
     freeze_adapter_params,
 )
-from vrl.models.diffusion.flux.runner import FluxDiffusionBackboneRunner
 from vrl.models.dtypes import resolve_torch_dtype
 
 
@@ -75,7 +76,7 @@ class FluxSamplingState:
     width: int
 
 
-class FluxModel(LoraModelMixin, DiffusersPipelineModelBase):
+class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
     """Diffusers-backed FLUX.1 t2i model.
 
     Owns the DiffusionNFT previous-policy adapter methods directly
@@ -84,7 +85,40 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase):
     never attach it. The PEFT primitives they build on
     (``build_lora_config`` / ``copy_adapter_weights`` / ``freeze_adapter_params``)
     stay shared with cosmos/predict2.5 in ``common/lora.py``.
+
+    Implements the backbone-runner protocol itself. FLUX.1-dev is
+    guidance-distilled: a single transformer forward conditioned on a
+    ``guidance`` embedding, NOT classifier-free guidance with an unconditional
+    branch — hence ``single_branch`` and ``forward_step`` always sets
+    ``do_cfg=False``; the ``guidance`` scalar rides ``request.extra`` as an
+    ordinary conditioning input.
     """
+
+    cfg_mode = "single_branch"
+    cfg_base = "cond"
+
+    def build_branch(
+        self,
+        request: DiffusionBackboneInput,
+        branch: str,
+    ) -> DiffusionBranch:
+        """Map FLUX transformer kwargs (packed latents + rotary ids + pooled)."""
+        if branch != "cond":
+            raise ValueError("FLUX is guidance-distilled and has no uncond branch")
+        extra_kwargs = {
+            "pooled_projections": request.extra["pooled_projections"],
+            "img_ids": request.extra["img_ids"],
+            "txt_ids": request.extra["txt_ids"],
+        }
+        # ``guidance`` is None for non-distilled checkpoints (config.guidance_embeds
+        # off); pass it through either way so the transformer's own None-check fires.
+        extra_kwargs["guidance"] = request.extra.get("guidance")
+        return DiffusionBranch(
+            hidden_states=request.hidden_states,
+            timestep=request.timestep,
+            encoder_hidden_states=request.prompt_embeds,
+            extra_kwargs=extra_kwargs,
+        )
 
     def __init__(
         self,
@@ -371,7 +405,7 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase):
             )
         output = DiffusionBackboneCaller(
             self.transformer,
-            FluxDiffusionBackboneRunner(),
+            self,
         )(
             DiffusionBackboneInput(
                 hidden_states=latent_input,

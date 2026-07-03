@@ -43,17 +43,27 @@ from vrl.models.diffusion.common import (
     ChunkedLatentDecoder,
     DiffusionBackboneCaller,
     DiffusionBackboneInput,
+    DiffusionBackboneRunnerBase,
+    DiffusionBranch,
     LatentDecodeSpec,
     LatentDecodeTransform,
     expand_batch_timestep,
     pack_eval_timestep,
 )
 from vrl.models.diffusion.common.lora import LoraModelMixin
-from vrl.models.diffusion.wan_2_1.runner import (
-    WanDiffusionBackboneRunner,
-    WanI2VDiffusionBackboneRunner,
-)
+from vrl.models.diffusion.common.tensors import require_tensor
 from vrl.models.utils import disable_adapter_on, load_weights_into
+
+
+def _batch_align_tensor(value: torch.Tensor, batch_size: int) -> torch.Tensor:
+    if value.shape[0] == batch_size:
+        return value
+    if value.shape[0] != 1:
+        raise ValueError(
+            "Wan I2V conditioning tensor has incompatible batch dimension: "
+            f"{tuple(value.shape)} for batch_size={batch_size}",
+        )
+    return value.expand(batch_size, *value.shape[1:])
 
 
 @dataclass
@@ -90,8 +100,33 @@ class WanI2VSamplingState:
     num_train_timesteps: int | None = None
 
 
-class WanT2VDiffusersModel(LoraModelMixin, DiffusersPipelineModelBase):
-    """Diffusers-backed Wan 2.1 T2V model (1.3B variant)."""
+class WanT2VDiffusersModel(
+    LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRunnerBase,
+):
+    """Diffusers-backed Wan 2.1 T2V model (1.3B variant).
+
+    Implements the backbone-runner protocol itself (batched CFG over the T5
+    text embeds); the I2V subclass overrides ``build_branch`` with its
+    channel-wise conditioning concat.
+    """
+
+    cfg_mode = "batched_cfg"
+    cfg_base = "uncond"
+
+    def build_branch(
+        self,
+        request: DiffusionBackboneInput,
+        branch: str,
+    ) -> DiffusionBranch:
+        """Map Wan transformer kwargs into the shared backbone contract."""
+        embeds = request.prompt_embeds
+        if branch == "uncond":
+            embeds = require_tensor(request.negative_prompt_embeds, "Wan negative_prompt_embeds")
+        return DiffusionBranch(
+            hidden_states=request.hidden_states,
+            timestep=request.timestep,
+            encoder_hidden_states=embeds,
+        )
 
     def __init__(
         self,
@@ -394,7 +429,7 @@ class WanT2VDiffusersModel(LoraModelMixin, DiffusersPipelineModelBase):
         )
         output = DiffusionBackboneCaller(
             transformer,
-            WanDiffusionBackboneRunner(),
+            self,
         )(
             DiffusionBackboneInput(
                 hidden_states=latent_input,
@@ -542,6 +577,58 @@ class WanT2VReplayModel(ReplayRolloutStubs, WanT2VDiffusersModel):
 
 class WanI2VDiffusersModel(WanT2VDiffusersModel):
     """Diffusers-backed Wan 2.1 I2V model (14B 480P variant)."""
+
+    def build_branch(
+        self,
+        request: DiffusionBackboneInput,
+        branch: str,
+    ) -> DiffusionBranch:
+        """I2V branch: channel-wise conditioning concat + CLIP image embeds.
+
+        - Hidden states are ``cat([noise_latents, condition], dim=1)`` so the
+          transformer sees both the noisy frames and the (mask + first-frame
+          latent) conditioning channel-wise concatenated. The condition tensor
+          is produced once per request by ``pipe.prepare_latents`` and rides
+          ``request.extra``.
+        - ``encoder_hidden_states_image`` is the CLIP visual feature from
+          ``pipe.encode_image``; cond/uncond share the same tensor object so
+          the batched-CFG packer concatenates it along dim 0 alongside
+          ``prompt_embeds``.
+
+        Wan 2.2 5B's expand_timesteps mode (mask-blended hidden states) remains
+        a separate future upgrade path; the A14B dual-stage routing selects
+        ``transformer`` / ``transformer_2`` outside this method.
+        """
+        embeds = request.prompt_embeds
+        if branch == "uncond":
+            embeds = require_tensor(request.negative_prompt_embeds, "Wan negative_prompt_embeds")
+
+        extra = request.extra
+        condition = _batch_align_tensor(
+            require_tensor(extra.get("condition"), "Wan condition"),
+            request.hidden_states.shape[0],
+        )
+        # Channel-wise concat (mimics WanImageToVideoPipeline `__call__`:
+        # `latent_model_input = torch.cat([latents, condition], dim=1)`).
+        hidden_states = torch.cat(
+            [request.hidden_states, condition.to(request.hidden_states.dtype)],
+            dim=1,
+        )
+
+        extra_kwargs: dict[str, torch.Tensor] = {}
+        image_embeds = extra.get("image_embeds")
+        if image_embeds is not None:
+            extra_kwargs["encoder_hidden_states_image"] = _batch_align_tensor(
+                require_tensor(image_embeds, "Wan image_embeds"),
+                request.hidden_states.shape[0],
+            )
+
+        return DiffusionBranch(
+            hidden_states=hidden_states,
+            timestep=request.timestep,
+            encoder_hidden_states=embeds,
+            extra_kwargs=extra_kwargs,
+        )
 
     @classmethod
     def from_spec(cls, spec: Any) -> WanI2VDiffusersModel:
@@ -705,7 +792,7 @@ class WanI2VDiffusersModel(WanT2VDiffusersModel):
         )
         output = DiffusionBackboneCaller(
             transformer,
-            WanI2VDiffusionBackboneRunner(),
+            self,
         )(
             DiffusionBackboneInput(
                 hidden_states=latent_input,

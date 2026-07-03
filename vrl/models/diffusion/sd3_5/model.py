@@ -45,17 +45,46 @@ from vrl.models.diffusion.common import (
     ChunkedLatentDecoder,
     DiffusionBackboneCaller,
     DiffusionBackboneInput,
+    DiffusionBackboneRunnerBase,
+    DiffusionBranch,
     LatentDecodeSpec,
     LatentDecodeTransform,
     expand_batch_timestep,
     pack_eval_timestep,
 )
 from vrl.models.diffusion.common.lora import LoraModelMixin
-from vrl.models.diffusion.sd3_5.runner import (
-    SD3DiffusionBackboneRunner,
-    install_sd3_joint_attention_processor,
-)
+from vrl.models.diffusion.common.tensors import require_tensor
 from vrl.models.dtypes import resolve_torch_dtype
+from vrl.nn.layers.attention.joint import SD3JointAttentionProcessor
+
+
+def install_sd3_joint_attention_processor(transformer: object) -> bool:
+    """Install VRL SD3 attention processor when the transformer supports it."""
+
+    for candidate in _candidate_transformers(transformer):
+        set_attn_processor = getattr(candidate, "set_attn_processor", None)
+        if callable(set_attn_processor):
+            set_attn_processor(SD3JointAttentionProcessor())
+            return True
+    return False
+
+
+def _candidate_transformers(transformer: object) -> tuple[object, ...]:
+    candidates: list[object] = []
+    stack = [transformer]
+    seen: set[int] = set()
+    while stack:
+        item = stack.pop(0)
+        marker = id(item)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        candidates.append(item)
+        for attr in ("module", "base_model", "model"):
+            child = getattr(item, attr, None)
+            if child is not None:
+                stack.append(child)
+    return tuple(candidates)
 
 
 @dataclass
@@ -73,8 +102,16 @@ class SD3SamplingState:
     do_cfg: bool
 
 
-class SD3_5Model(LoraModelMixin, DiffusersPipelineModelBase):
-    """Diffusers-backed SD 3.5 t2i model."""
+class SD3_5Model(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
+    """Diffusers-backed SD 3.5 t2i model.
+
+    The model implements the backbone-runner protocol itself (``cfg_mode`` /
+    ``build_branch``): "how to call MY transformer" is model knowledge, so
+    ``forward_step`` passes ``self`` to the shared CFG caller.
+    """
+
+    cfg_mode = "batched_cfg"
+    cfg_base = "uncond"
 
     def __init__(
         self,
@@ -247,6 +284,30 @@ class SD3_5Model(LoraModelMixin, DiffusersPipelineModelBase):
             do_cfg=do_cfg,
         )
 
+    # -- backbone runner protocol ---------------------------------------
+
+    def build_branch(
+        self,
+        request: DiffusionBackboneInput,
+        branch: str,
+    ) -> DiffusionBranch:
+        """Map SD3 transformer kwargs into the shared backbone contract."""
+        if branch == "cond":
+            embeds = request.prompt_embeds
+            pooled = request.extra["pooled_prompt_embeds"]
+        else:
+            embeds = require_tensor(request.negative_prompt_embeds, "negative_prompt_embeds")
+            pooled = require_tensor(
+                request.extra.get("negative_pooled_prompt_embeds"),
+                "negative_pooled_prompt_embeds",
+            )
+        return DiffusionBranch(
+            hidden_states=request.hidden_states,
+            timestep=request.timestep,
+            encoder_hidden_states=embeds,
+            extra_kwargs={"pooled_projections": pooled},
+        )
+
     # -- forward_step --------------------------------------------------
 
     def forward_step(
@@ -280,7 +341,7 @@ class SD3_5Model(LoraModelMixin, DiffusersPipelineModelBase):
         )
         output = DiffusionBackboneCaller(
             self.transformer,
-            SD3DiffusionBackboneRunner(),
+            self,
         )(
             DiffusionBackboneInput(
                 hidden_states=latent_input,

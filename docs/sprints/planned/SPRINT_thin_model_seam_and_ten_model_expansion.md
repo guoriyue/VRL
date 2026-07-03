@@ -280,6 +280,21 @@ def build_sd3_5_replay_runtime_bundle_from_cfg(cfg, device, wd): ...  # 2 行包
 > - **descriptor 家族名册更新**：sd3_5、qwen_image、**cosmos-predict2.5**。predict2 也已接近
 >   （死键删完后只剩 reference_image 兜底 lambda——它读 generation_request，是 executor 层真逻辑）。
 > - 验证：**577 passed**（+ 全量 tests/scripts）。
+
+> **薄化第九轮（2026-07-02，用户拍板）——runner 并入 model.py，runner.py 文件归零**：
+> - **无状态四家（sd3_5/qwen/flux/wan）走激进版**：模型类自己实现 backbone-runner 协议
+>   （bases += `DiffusionBackboneRunnerBase`，`cfg_mode`/`cfg_base`/`build_branch` 上类，qwen 保留
+>   范数 CFG `finalize_noise_pred`），`forward_step` 传 `self`——runner **类和文件都消失**。
+>   "怎么调我的 transformer"回归模型知识。wan I2V 在子类覆写 `build_branch`，replay 类经继承链自动获得。
+>   sd3 的 attention-processor 安装 helper 随迁 model.py。
+> - **cosmos predict2/predict2_5 走保守版**：它们的 runner 是**带每步状态的真策略对象**
+>   （构造参数是当步 sigma，EDM 预条件/velocity 数学在 postprocess/finalize 里）——类保留、整体搬进
+>   model.py，文件消失。
+> - 终态：`vrl/models/diffusion/**/runner.py` **0 个文件**；净 -109 行（442+/551-）。
+>   家族文件形状收敛为：**model.py（模型全部知识）+ runtime.py（引擎参数表）**。
+> - capability 常量去重同轮完成（前一 commit）：descriptor 三家的 runtime.py 常量删除，
+>   worker 从 launch contract 注入（registry 是唯一构造点）。
+> - 验证：**577 passed**（backbone parity 测试真实走过 model-as-runner 路径）。
 > **遗留审计项**：predict2_5 写入 caps 的 `supports_diffusion_nft` **全仓库无读取方**（dead cap，
 > 按 dead-field 规则应删或补上本该存在的校验）；cosmos/wan/echo/anima 系 caps 无 `family_capability`
 > 键与 sd3/flux/qwen 不一致（行为无差——`capabilities.py:177` 缺键回落 registry 声明——但契约分裂）。

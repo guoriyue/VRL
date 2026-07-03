@@ -38,13 +38,15 @@ from vrl.models.diffusion.common import (
     ChunkedLatentDecoder,
     DiffusionBackboneCaller,
     DiffusionBackboneInput,
+    DiffusionBackboneRunnerBase,
+    DiffusionBranch,
     LatentDecodeSpec,
     LatentDecodeTransform,
     expand_batch_timestep,
     pack_eval_timestep,
 )
 from vrl.models.diffusion.common.lora import LoraModelMixin
-from vrl.models.diffusion.qwen_image.runner import QwenImageDiffusionBackboneRunner
+from vrl.models.diffusion.common.tensors import require_tensor
 from vrl.models.dtypes import resolve_torch_dtype
 
 
@@ -67,8 +69,66 @@ class QwenImageSamplingState:
     vae_scale_factor: int
 
 
-class QwenImageModel(LoraModelMixin, DiffusersPipelineModelBase):
-    """Diffusers-backed Qwen-Image t2i model."""
+class QwenImageModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):
+    """Diffusers-backed Qwen-Image t2i model.
+
+    Implements the backbone-runner protocol itself. Qwen-Image does TRUE
+    classifier-free guidance where cond/uncond prompts tokenize to DIFFERENT
+    sequence lengths (their masks differ), so the two branches cannot be packed
+    into one batched call — hence ``separate_cfg`` (two independent forwards)
+    instead of sd3_5's ``batched_cfg``. ``finalize_noise_pred`` reproduces
+    Qwen-Image's norm-preserving CFG combine.
+    """
+
+    cfg_mode = "separate_cfg"
+    cfg_base = "uncond"
+
+    def build_branch(
+        self,
+        request: DiffusionBackboneInput,
+        branch: str,
+    ) -> DiffusionBranch:
+        """Map Qwen-Image transformer kwargs into the shared backbone contract."""
+        if branch == "cond":
+            embeds = request.prompt_embeds
+            mask = request.extra.get("encoder_hidden_states_mask")
+        else:
+            embeds = require_tensor(
+                request.negative_prompt_embeds, "negative_prompt_embeds",
+            )
+            mask = request.extra.get("negative_encoder_hidden_states_mask")
+        extra_kwargs = {
+            "encoder_hidden_states_mask": mask,
+            "img_shapes": request.extra["img_shapes"],
+        }
+        if request.extra.get("guidance") is not None:
+            extra_kwargs["guidance"] = request.extra["guidance"]
+        return DiffusionBranch(
+            hidden_states=request.hidden_states,
+            timestep=request.timestep,
+            encoder_hidden_states=embeds,
+            extra_kwargs=extra_kwargs,
+        )
+
+    def finalize_noise_pred(
+        self,
+        request: DiffusionBackboneInput,
+        combined: torch.Tensor,
+        cond: torch.Tensor,
+        uncond: torch.Tensor,
+    ) -> torch.Tensor:
+        """Qwen-Image norm-preserving CFG: rescale the combined pred to the cond norm.
+
+        Mirrors diffusers QwenImagePipeline:
+            comb = uncond + s * (cond - uncond)   # done by combine_cfg upstream
+            noise = comb * (||cond|| / ||comb||)
+        """
+        del uncond
+        if not request.do_cfg:
+            return combined
+        cond_norm = torch.norm(cond, dim=-1, keepdim=True)
+        comb_norm = torch.norm(combined, dim=-1, keepdim=True)
+        return combined * (cond_norm / comb_norm)
 
     def __init__(
         self,
@@ -308,7 +368,7 @@ class QwenImageModel(LoraModelMixin, DiffusersPipelineModelBase):
         )
         output = DiffusionBackboneCaller(
             self.transformer,
-            QwenImageDiffusionBackboneRunner(),
+            self,
         )(
             DiffusionBackboneInput(
                 hidden_states=latent_input,
