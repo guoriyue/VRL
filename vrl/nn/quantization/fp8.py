@@ -23,6 +23,9 @@ step); the activation is quantized per forward.
   **delegated to vLLM's triton kernel** (``w8a8_triton_block_scaled_mm``) instead
   of hand-rolling — best accuracy on outliers, and runs on CUDA 12.8 (the torch
   ``_scaled_mm`` block path needs CUDA>=12.9). Requires vLLM installed.
+  Eager-only: the kernel's wrapper graph-breaks torch.compile (lru_cache'd
+  deep_gemm check + ctypes pynvml call; measured 45 breaks / compiled ~10x
+  slower than eager on SD3.5), so the loader refuses blockwise + torch_compile.
 
 All accumulate in bf16.
 """

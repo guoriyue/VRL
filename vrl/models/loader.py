@@ -114,6 +114,18 @@ def apply_rollout_quantization(model: Any, spec: Any) -> int:
     if not scheme:  # bf16/fp16/fp32 rollout — a load-time dtype, not a swap
         return 0
     recipe = getattr(spec, "rollout_quantization_recipe", None)
+    # blockwise delegates to vLLM's triton kernel, whose wrapper dynamo cannot
+    # trace (lru_cache'd deep_gemm check + ctypes pynvml call): measured 45 graph
+    # breaks on SD3.5 and a compiled forward ~10x SLOWER than eager
+    # (SPRINT_rollout_optimization_layer item 2). Refuse the combination instead
+    # of silently shipping the regression.
+    if recipe == "blockwise" and getattr(spec, "torch_compile", None):
+        raise ValueError(
+            "precision.rollout_recipe='blockwise' is incompatible with "
+            "model.torch_compile (the vLLM block kernel graph-breaks inductor; the "
+            "compiled forward is ~10x slower than eager). Use recipe='rowwise' "
+            "(compile-clean) or disable model.torch_compile.",
+        )
     if scheme == "fp8":
         swapped = model.quantize_transformer_fp8(recipe=recipe or "rowwise")
     else:

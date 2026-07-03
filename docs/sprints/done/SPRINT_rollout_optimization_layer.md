@@ -1,6 +1,6 @@
-# SPRINT: rollout 优化层 — 架构决策 + patch 收拢 + 剩余 wiring (planned)
+# SPRINT: rollout 优化层 — 架构决策 + patch 收拢 + 剩余 wiring (done)
 
-状态：**planned（2026-06-19）；2026-06-27 NCU 复核确认 §1 架构决策**。fp8 kernel 已落地并 live 验证（见 [[SPRINT_fp8_rollout_gemm_kernel]]）；本 sprint 记录"rollout 怎么优化"的**架构决策**（别再 re-litigate）、可选的一致性收拢、以及剩余的功能 wiring。
+状态：**done（2026-07-02）**。§3 全部收口：P0 假旋钮守卫（06-19）、recipe config-wire（07-02）、blockwise×compile 探针（07-02，NEGATIVE→加守卫）、samples_per_chunk A/B（07-02，1.35x 确认）。fp8 kernel 已落地并 live 验证（见 [[SPRINT_fp8_rollout_gemm_kernel]]）；本 sprint 记录"rollout 怎么优化"的**架构决策**（别再 re-litigate）、可选的一致性收拢、以及剩余的功能 wiring。2026-06-27 NCU 复核确认 §1 架构决策。
 
 > **2026-06-27 NCU 硬件复核 reinforces §1**（全文 [[SPRINT_lossless_diffusion_rl_research]]）：§1 用 `nvidia-smi dmon`（SM 100%）定的"compute-bound、引擎级无用、patch 即可"被 NCU tensor-pipe SOL 实锤——cosmos GEMM 45% ≈ 最优方阵 GEMM 47% = bf16+fp32 累加硬件上限,**不是有头空间没榨**。推论:① fp8 是唯一越 bf16 上限的杠杆但**有损**(只能离 policy path);② §1 否决重写/引擎的结论加强,不是减弱;③ §1.附带决策"小请求用静态 batch 不用 continuous batching"经本轮 stepwise-batching 探针证伪 continuous batching 后更稳。**判 MFU 用 `gpu_preflight` 实测峰值,别用 vendor 419(会把饱和误诊成 51%)。**
 
@@ -14,7 +14,7 @@ fp8 swap 接进三家 rollout builder 后，出现一个反复出现的疑问：
 
 - **profile（`outputs/perf/cosmos25_gen_trace.json`）**：cosmos predict2.5 rollout（512p×93f）**compute-bound**——`nvidia-smi dmon` 实测 **SM 100% / MEM 22–27%**，GEMM 主导，48% 已被 `torch.compile` 融成一个 FX 图。结论：kernel 级 patch（fp8）正中靶心；引擎级（continuous batching / paged cache）**无用武之地**（SM 已满，没有空 SM 给 batch 填）。
 - **cosmos-rl 源码**：它的 diffusion rollout 是**裸 PyTorch**——`cosmos_rl/rollout/wfm_rollout/wfm_rollout.py:137` 原话 *"WFM rollout directly use Pytorch model as the naive forward. it doesn't need inference framework like vllm or trtllm."* 它的 fp8 monkey-patch 只在 **LLM/vLLM** 那半边（`vllm_rollout/monkey_patch_for_fp8.py`，patch vLLM 的 `Fp8LinearOp`）。**NVIDIA 自己都没重写 diffusion forward。**
-- **vLLM 没有 diffusion 形状的融合 kernel**：它的 fused QKV+RoPE / SwiGLU MLP / RMSNorm 是 **LLM 形状**；diffusion DiT 是 adaLN 调制 + LayerNorm + GELU + joint/cross attention，对不上。能 reuse 的是**单个 fp8 GEMM 路径**：默认 live path 已用 rowwise `torch._scaled_mm` module-swap；vLLM 的 `w8a8_triton_block_scaled_mm` 已作为 `recipe="blockwise"` 实现,但还没 config-wire / live 默认。重写拿不到新 kernel，只能自己写融合，而那正是 `torch.compile` 已自动生成的。
+- **vLLM 没有 diffusion 形状的融合 kernel**：它的 fused QKV+RoPE / SwiGLU MLP / RMSNorm 是 **LLM 形状**；diffusion DiT 是 adaLN 调制 + LayerNorm + GELU + joint/cross attention，对不上。能 reuse 的是**单个 fp8 GEMM 路径**：默认 live path 已用 rowwise `torch._scaled_mm` module-swap；vLLM 的 `w8a8_triton_block_scaled_mm` 已作为 `recipe="blockwise"` 实现并 config-wire（`precision.rollout_recipe`），但 §3.2 实测它 graph-break torch.compile → eager-only opt-in，永不做 live 默认。重写拿不到新 kernel，只能自己写融合，而那正是 `torch.compile` 已自动生成的。
 
 **重写的成本**：own sd3.5/wan/cosmos 每家的 forward + 永远和 diffusers 数值 bit-match（自有 memory：EDM sigma 域 bug、scheduler logprob parity bug、predict2 GRPO parity），换一个不确定且很小的融合增量。**否决。**
 
@@ -55,8 +55,29 @@ rollout builder 调 `quantize_rollout=True`，replay 调 `False`。重复的 pre
    - **scheme 通用化**：新增 marker 基类 `vrl/nn/quantization/base.py:QuantizedLinear`，`Fp8Linear` 继承它；守卫 `isinstance(m, QuantizedLinear)` 而非 hardcode `Fp8Linear`，**以后加 fp4/int8 scheme 只要继承基类就自动被守卫覆盖**（不用改 guard、不留静默缺口）。比"builder 自己记 `runtime_caps.swapped_count`"更稳：直接 inspect 真实模型，漏接也照样炸。
    - **测试**：apply 0-swap 报错 + backstop（scheme 参数化 fp8/fp4、有/无 `QuantizedLinear`、含 compiled unwrap、无量化 noop）。283 regression 过。
 1. ✅ **config-wire fp8 recipe（已落地 2026-07-02）**：新增 `precision.rollout_recipe`（默认缺省 = scheme 默认 `rowwise`；`blockwise`/`tensorwise` opt-in）。链路：`precision.py` 解析进 `PrecisionPolicy.rollout_recipe`（非量化 rollout 上设置直接 raise，堵假旋钮）→ `extract_runtime_spec` 填 `RuntimeBuildSpec.rollout_quantization_recipe`（asdict 自动过 Ray launch contract）→ `apply_rollout_quantization` 传给 `quantize_transformer_fp8(recipe=...)`。recipe 词表唯一真源仍是 `Fp8Linear`（config 层不重复维护值校验）。测试：config 解析/拒绝/walker + loader recipe 透传（tests/config/test_precision.py、tests/nn/quantization/test_fp8.py）。
-2. **blockwise + torch.compile 交互**：vLLM triton kernel 会不会让 compile graph-break、损失多少融合 —— rowwise(`_scaled_mm`)和 compile 干净，blockwise 要 live 测（[[SPRINT_fp8_rollout_gemm_kernel]] §3.5 开放项）。
-3. **小请求静态 batch A/B**：SD3.5 小图 `sample_batch_size=1` 时 SM 78%。显存够的轻负载调大 `sample_batch_size` 跑 wall-clock A/B（预期 ~1.25x）。视频被显存逼成 1，不适用。
+2. ✅ **blockwise + torch.compile 交互（已测 2026-07-02，NEGATIVE→加守卫）**：真实 SD3.5-medium DiT（batch 8 = CFG×chunk4，512p，5090）三档对测：
+
+   | recipe | graph breaks | eager ms | compiled ms | compile 加速 |
+   |---|---|---|---|---|
+   | bf16 | 0 | 141.8 | 103.9 | 1.36x |
+   | rowwise | 0 | 137.7 | **62.2** | **2.22x** |
+   | blockwise | **45** | 119.8 | **1210.7** | **0.10x（慢 10 倍）** |
+
+   - **rowwise 和 compile 完全干净**（0 break，单图；compiled rowwise 62ms vs compiled bf16 104ms = compile 下 fp8 仍赚 1.67x）。
+   - **blockwise graph-break 是结构性的**：断点不在 triton kernel 本身，而在 vLLM wrapper——`per_token_group_quant_fp8` 每次调用都过 `functools.lru_cache` 包装的 `is_deep_gemm_e8m0_used`（dynamo 不能 trace lru_cache，gb0177），`w8a8_triton_block_scaled_mm` 的 config 查找又碰 pynvml ctypes 调用（gb0156）；另外 dynamo 对该 kernel 的 mutation 分析失败（"assuming every input is mutated"），融合全毁。45 个 break 的 guard/重入开销让 compiled 反而比 eager 慢 10 倍。
+   - **处置**：`apply_rollout_quantization` 加 build-time 守卫——`recipe='blockwise'` + `model.torch_compile` 直接 `ValueError`（静默 10 倍减速比 crash 更糟）；fp8.py/precision.py 文档同步注明 blockwise = eager-only。**rowwise 维持默认且是唯一 compile 兼容 recipe**；blockwise 仅在 compile-off 时有意义（eager 120ms 仍是最快 eager，但输给 compiled rowwise 62ms —— compile 默认开的家族里 blockwise 严格劣势）。测试：blockwise+compile 拒绝、blockwise 无 compile / rowwise+compile 放行（test_fp8.py）。
+3. ✅ **小请求静态 batch A/B（已测 2026-07-02，CONFIRMED ~1.25–1.35x）**：真实 SD3.5-medium 完整 rollout 循环（10-step CFG 4.5 去噪 + VAE decode，512p，5090；旋钮现名 `rollout.samples_per_chunk`，旧 `sample_batch_size` 已改名）：
+
+   | chunk | eager ms/样本 | 加速 | compiled ms/样本 | 加速 | 峰值显存 |
+   |---|---|---|---|---|---|
+   | 1 | 510.0 | 1.00 | 387.3 | 1.00 | 5.4 GB |
+   | 2 | 408.7 | **1.25** | 312.5 | 1.24 | 5.8 GB |
+   | 4 | 377.8 | **1.35** | 286.5 | 1.35 | 6.8 GB |
+   | 8 | 365.4 | 1.40 | 265.8 | 1.46 | 8.8 GB |
+
+   预期的 ~1.25x 在 chunk=2 就兑现，chunk=4 到 1.35x，之后边际递减；显存 8.8GB 远未顶 32GB。**结论：图像轻负载 `samples_per_chunk>=4`（live OCR config 已是 16，无需动）；视频被显存逼成小 chunk 的仍不适用。**与 cosmos 视频侧实测互相印证（sbs 1→4 = 1.40x、1→8 ≈ 1.95x，见 [[SPRINT_diffusion_rollout_stage_pipeline]]）。
+
+   > 环境注记：两个探针都在 conda base（torch 2.11.0+cu128 / vllm 0.21.0 / dev triton 3.8）跑；probe 3 需 `TORCHINDUCTOR_COMPILE_THREADS=1`（dev triton fork-unsafe，见 triton env memory）。graph-break 计数是 dynamo 结构性结论，与 triton 版本无关。
 
 ## 非目标
 

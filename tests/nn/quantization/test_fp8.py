@@ -286,6 +286,42 @@ def test_apply_rollout_quantization_noop_and_count_when_not_fp8_or_swapped():
     assert apply_rollout_quantization(_SwapModel(["a", "b"]), SimpleNamespace(rollout_quantization="fp8")) == 2
 
 
+def test_apply_rollout_quantization_rejects_blockwise_with_compile():
+    """blockwise graph-breaks inductor (compiled ~10x slower than eager) — refuse."""
+    from vrl.models.loader import apply_rollout_quantization
+
+    with pytest.raises(ValueError, match="blockwise.*torch_compile"):
+        apply_rollout_quantization(
+            _SwapModel(["a"]),
+            SimpleNamespace(
+                rollout_quantization="fp8",
+                rollout_quantization_recipe="blockwise",
+                torch_compile={"enable": True, "mode": "default"},
+            ),
+        )
+    # blockwise without compile, and rowwise with compile, both stay allowed.
+    model = _SwapModel(["a"])
+    apply_rollout_quantization(
+        model,
+        SimpleNamespace(
+            rollout_quantization="fp8",
+            rollout_quantization_recipe="blockwise",
+            torch_compile=None,
+        ),
+    )
+    assert model.recipe_seen == "blockwise"
+    model = _SwapModel(["a"])
+    apply_rollout_quantization(
+        model,
+        SimpleNamespace(
+            rollout_quantization="fp8",
+            rollout_quantization_recipe="rowwise",
+            torch_compile={"enable": True, "mode": "default"},
+        ),
+    )
+    assert model.recipe_seen == "rowwise"
+
+
 def test_apply_rollout_quantization_passes_recipe_through():
     """precision.rollout_recipe reaches the fp8 swap; absent → rowwise default."""
     from vrl.models.loader import apply_rollout_quantization

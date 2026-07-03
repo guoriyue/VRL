@@ -80,7 +80,10 @@ class PrecisionPolicy:
     # the scheme default (fp8: "rowwise"). Only legal alongside a quantized
     # rollout — on a plain-dtype rollout it would be a silent no-op knob. The
     # recipe vocabulary is owned by the kernel layer (Fp8Linear raises on an
-    # unknown recipe), not duplicated here.
+    # unknown recipe), not duplicated here. "blockwise" is additionally rejected
+    # when model.torch_compile is on (build-time guard in
+    # apply_rollout_quantization: the vLLM kernel graph-breaks inductor and the
+    # compiled forward is ~10x slower than eager).
     rollout_recipe: str | None = None
 
     def __post_init__(self) -> None:
