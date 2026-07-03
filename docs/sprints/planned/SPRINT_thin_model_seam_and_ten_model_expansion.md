@@ -508,6 +508,58 @@ GPU，让某一跳能跑生成 parity；(b) 转为**有人值守**逐个接（�
 - **Phase 0 不动 registry 的 `_diffusion_entry` 声明式结构、不动 `common/*` 与算法层**——只折叠 build 编排。
 - 不追 flux / qwen_image（已实现，见 `vrl/models/diffusion/{flux,qwen_image}/`）。
 
+## 附录：AR executor 层组织设计（2026-07-02，未动代码——先设计后实施）
+
+### 事实基础（全部引用到行级）
+
+1. **基类失衡**：`DiffusionChunkExecutorBase` 715 行共享机器 vs `ARChunkExecutorBase`（`vrl/generation/ar/executor.py`）
+   仅 100 行（layout / `_ar_runner` 接线 / `_align_tokenizer_output` / engine 守卫）。AR 家族因此各自手搓
+   ~350 行编排。
+2. **决定性事实：`forward_plan` 无生产调用方**。全仓 `.forward_plan(` 只有
+   `tests/models/ar/janus_pro/test_r1_model.py:389` 和 `tests/e2e/test_real_checkpoint_rl.py:474`。
+   生产路径（`worker.py:391` 起）只走 `forward_chunk_plan` 逐 chunk 派发（AR 无 pipelined 路径）。
+   diffusion 基类的 `forward_plan` 就是三行：`run_sample_chunks_with_oom_retry(chunks, forward_chunk_plan)
+   → gather_chunks`——家族不写。
+3. **双装配漂移**：AR 每家族的 `forward_plan`（janus 140L / nextstep 136L / R1 90L，合计 366L）各自
+   独立组装 trajectory+metrics，而 chunk 路径由 gatherer 再组装一遍——同一产物两条装配线
+   （已存在实际分叉：janus `forward_plan` 感知 `use_ar_scheduler`，`JanusProChunkGatherer` 硬编码
+   `ar_scheduler_enabled: False`）。生产只走 gatherer 线，`forward_plan` 线只被测试覆盖。
+4. **chunk 路径的骨架重复**：`forward_chunk_plan`（93/94/64L）共享 tokenize+align → embed →
+   `ARDecodeLoop` → decode-payload 骨架，但每份是**可读的直线代码**，真差异（janus 离散 VQ /
+   nextstep 连续 flow-head / R1 `generate_with_refine` 反转控制流）占每份约 1/3。
+5. 琐碎项：`capability()` 2L 逐字相同未上提；janus 缺省 `plan()` 在两测试被调、nextstep 无 `plan()`；
+   gatherer 的 cat-字段循环（89/97/64L 里各 ~30L）是数据形状。
+
+### 设计裁决
+
+**做（按序）：**
+
+1. **`ARChunkExecutorBase` 补齐请求级三件套**（对齐 diffusion 基类）：`plan()`（build_engine_plan +
+   capability）、`capability()`、`forward_plan()` = chunks → `forward_chunk_plan` → `gather_chunks`
+   （复用 `run_sample_chunks_with_oom_retry`，AR 顺带获得 OOM 降级）。**删除 3 份家族 `forward_plan`
+   （-366L）**，装配线归一为 gatherer 一条。两个测试调用方原样工作且从此见证"测试路径 == 生产路径"。
+2. **gatherer 瘦身**：加 `cat_chunk_fields(chunks, fields) -> dict` 小助手（字段清单已是
+   `layout.ordered_chunks(row_fields=...)` 的数据），gatherer 各删 ~30L 的手写 `torch.cat` 段；
+   engine-counters 组装与 `_ar_engine_counters` 合并单份。
+3. `capability()` 上提基类。
+
+**明确不做（及为什么）：**
+
+- **`forward_chunk_plan` 不做模板方法化**。骨架重复 ~40L×2（R1 形状不同不算），拆成 4 个 hook 会把
+  可读的 90 行直线流碎成跨文件跳读——AGENTS.md 反对为省行数 flatten/碎片化薄函数。**触发条件**：
+  GLM-Image/Emu3/LlamaGen 落地后骨架 ×5 份时再模板化（届时收益翻倍、且新家族可当 pilot）。
+- **R1 不进任何模板**：其控制流反转（委托 `model.generate_with_refine` + `image_sampler` 回调），
+  只继承基类新 `forward_plan`，chunk 路径保持自有。
+- **`use_ar_scheduler` 的跨 prompt 批调度语义随家族 `forward_plan` 一起删除**：它只存在于无生产调用方
+  的路径上（生产 chunk 路径本就是 per-chunk 调度），属于死语义；TokenScheduler 本体与其单测不动。
+
+### 风险与验证
+
+- 最大风险：`forward_plan` 语义换成 chunk+gather 后两个测试调用方的输出等价性——它们正是等价性见证人，
+  跑 `tests/models/ar/` + `tests/generation/ar/` + `tests/e2e/test_real_checkpoint_rl.py`（收集级）验证。
+- 迁移序：基类三件套 + janus 删 `forward_plan` → 全测 → nextstep → R1 → gatherer 瘦身 → 全测提交。
+- 预期净变化：约 **-350 行**，AR 执行面从"每家一条完整流水线"收敛为"每家一个 chunk 步骤 + 一个装配器"。
+
 ## 参考
 
 - 重复证据：`vrl/models/diffusion/sd3_5/runtime.py:46-175`、`vrl/models/ar/janus_pro/runtime.py:53-122`
