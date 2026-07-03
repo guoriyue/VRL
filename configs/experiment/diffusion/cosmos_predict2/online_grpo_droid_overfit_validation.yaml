@@ -52,7 +52,19 @@ defaults:
   - /dataset/droid_overfit_validation
 
 model:
-  use_lora: false
+  # LoRA, not full-param: full-param 480p_93f training MEASURED not to fit 32GB
+  # in this validation's own runs (backward ckpt-recompute OOM at 29.95GiB with
+  # samples_per_chunk=1, after rollout release + cpu trajectories + reward
+  # gpu_pool were all in place; spc=4 and spc=2 OOM earlier in the loop).
+  # Matches the ~30.2GB trainer-alone peak documented by the LoRA sibling
+  # (online_grpo_droid_full_target_480p_lora.yaml) at 33f. Full-param stays
+  # multi-GPU-gated; LoRA at lr 1e-4 is the single-card path this validation
+  # certifies.
+  use_lora: true
+  lora:
+    rank: 32
+    alpha: 32
+    target_modules: [to_q, to_k, to_v, to_out.0]
   # Converted native-480P transformer (see online_grpo_droid_full_target_480p header).
   path: /home/mingfeiguo/Desktop/vrl2/VRL/checkpoints/cosmos_predict2_2b_v2w_480p_diffusers
   # Compile OFF: incompatible with gradient_checkpointing (predict2_2b defaults it on).
@@ -66,8 +78,7 @@ sampling:
 
 actor:
   optim:
-    lr: 2.0e-5
-    optim_8bit: true                  # int8 Adam state -> full-param 2B fits 32GB
+    lr: 1.0e-4                        # LoRA lr scale (project lesson: 1e-4, not full-param's 2e-5)
   gradient_checkpointing: true
   ppo_epochs: 4
   ema:
@@ -85,9 +96,11 @@ rollout:
   prompts_per_batch: 1                # per_sample reference mode hard-requires 1 (cosmos/train.py);
                                       # 16 rollouts/update via the bigger group instead — same budget,
                                       # lower advantage noise, prompts rotate across epochs
-  samples_per_chunk: 2                # 4 OOMs here: P1's 25.3GiB@sbs4 gen peak only fits with the
-                                      # driver fully vacated, but ~4.2GiB stays resident on the driver
-                                      # during collect -> 2 (gen peak ~21GiB) is the safe ceiling
+  samples_per_chunk: 1                # this knob chunks BOTH generation and training replay; at
+                                      # full-param 480p_93f the run OOMs at 4 (gen, 25.3GiB + 4.2GiB
+                                      # driver-resident) AND at 2 (train backward, 29.9GiB) — the
+                                      # base recipe's "keep 1 for memory" holds for the full loop
+                                      # (P1's 1.4x sbs evidence measured the gen phase only)
   sde: { type: cps }
   same_latent: true                   # group shares the initial latent (seed from manifest request_overrides)
   trajectory_storage:
@@ -96,6 +109,12 @@ rollout:
                                       # driver deserializes) — park them on host RAM (~1.7GB)
 
 distributed:
+  resources:
+    reward:
+      gpu_pool: rollout               # reward time-shares the rollout GPU -> topology derives
+                                      # release_rollout_before_reward=True. Without it reward=[]
+                                      # and the worker keeps ~23GiB resident while inline dino/RAFT
+                                      # score 93f videos on the driver -> OOM at the collect handoff
   rollout:
     pipelined: true
 
