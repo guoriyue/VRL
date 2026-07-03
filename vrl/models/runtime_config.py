@@ -60,6 +60,7 @@ def extract_runtime_spec(
         sampling_config=sampling_config,
         frozen_dtype=frozen_dtype,
         rollout_quantization=rollout_quantization,
+        rollout_quantization_recipe=policy.rollout_recipe,
     )
 
 

@@ -23,7 +23,9 @@ precision-correction problem (the collection-time logprob no longer equals the
 replay logprob). fp8/fp4 are rollout-only: the scalar form (``precision: fp8``)
 and the ``train``/``math`` axes reject them, because a sub-byte replay/training
 forward has no stable gradient path. The split is reachable only by deliberately
-writing ``{train: bf16, rollout: fp8}``. The trainer config builder then derives
+writing ``{train: bf16, rollout: fp8}``. An optional ``rollout_recipe`` picks the
+quantization kernel recipe (fp8: ``rowwise`` default / ``tensorwise`` /
+``blockwise`` via vLLM's block kernel). The trainer config builder then derives
 the correction path automatically: rollout-recorded logprobs are used as the old
 policy anchor, drift metrics are reported, TIS/RS are enabled, and the guard
 fails only on catastrophic/non-finite drift unless the user provides an explicit
@@ -74,11 +76,23 @@ class PrecisionPolicy:
     rollout: str
     math: str
     frozen: str
+    # Quantization kernel recipe for a quantized (fp8/fp4) rollout, or None for
+    # the scheme default (fp8: "rowwise"). Only legal alongside a quantized
+    # rollout — on a plain-dtype rollout it would be a silent no-op knob. The
+    # recipe vocabulary is owned by the kernel layer (Fp8Linear raises on an
+    # unknown recipe), not duplicated here.
+    rollout_recipe: str | None = None
 
     def __post_init__(self) -> None:
         for axis in (self.train, self.rollout, self.math, self.frozen):
             if axis not in _CANONICAL:
                 raise ValueError(f"invalid precision axis value: {axis!r}")
+        if self.rollout_recipe is not None and self.rollout not in ("fp8", "fp4"):
+            raise ValueError(
+                f"precision.rollout_recipe={self.rollout_recipe!r} requires a "
+                f"quantized rollout (fp8/fp4); rollout={self.rollout!r} is a plain "
+                "dtype with no kernel recipe, so the knob would silently do nothing.",
+            )
 
 
 def precision_bridge_fields(policy: PrecisionPolicy) -> dict[str, str]:
@@ -170,7 +184,14 @@ def _from_precision_block(block: Any) -> PrecisionPolicy:
         )
     frozen_raw = _select(block, "frozen", None)
     frozen = normalize_precision(frozen_raw) if frozen_raw is not None else _frozen_default(rollout)
-    return PrecisionPolicy(train=train, rollout=rollout, math=math, frozen=frozen)
+    # Kernel recipe for the quantized rollout (e.g. fp8 "rowwise"/"blockwise").
+    # Passed through as-is: PrecisionPolicy rejects it on a non-quantized rollout,
+    # the swap layer (Fp8Linear) rejects an unknown recipe token.
+    recipe_raw = _select(block, "rollout_recipe", None)
+    rollout_recipe = str(recipe_raw).lower().strip() if recipe_raw is not None else None
+    return PrecisionPolicy(
+        train=train, rollout=rollout, math=math, frozen=frozen, rollout_recipe=rollout_recipe,
+    )
 
 
 def _select(obj: Any, path: str, default: Any = None) -> Any:

@@ -113,8 +113,9 @@ def apply_rollout_quantization(model: Any, spec: Any) -> int:
     scheme = getattr(spec, "rollout_quantization", None)
     if not scheme:  # bf16/fp16/fp32 rollout — a load-time dtype, not a swap
         return 0
+    recipe = getattr(spec, "rollout_quantization_recipe", None)
     if scheme == "fp8":
-        swapped = model.quantize_transformer_fp8()
+        swapped = model.quantize_transformer_fp8(recipe=recipe or "rowwise")
     else:
         raise NotImplementedError(
             f"precision.rollout={scheme!r} has no rollout swap yet (only fp8); add a "
@@ -127,7 +128,8 @@ def apply_rollout_quantization(model: Any, spec: Any) -> int:
             "list / min_features). It would be a no-op.",
         )
     logging.getLogger(__name__).info(
-        "%s rollout: quantized %d transformer linears", scheme, len(swapped),
+        "%s rollout (recipe=%s): quantized %d transformer linears",
+        scheme, recipe or "rowwise", len(swapped),
     )
     return len(swapped)
 

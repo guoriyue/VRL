@@ -146,6 +146,36 @@ def test_subbyte_on_train_or_math_rejected(axis):
         resolve_precision_policy(_cfg(precision={axis: "fp8", "rollout": "fp8"}))
 
 
+def test_rollout_recipe_parsed_with_quantized_rollout():
+    """rollout_recipe rides along with an fp8 rollout; absent → None (scheme default)."""
+    p = resolve_precision_policy(
+        _cfg(precision={"train": "bf16", "rollout": "fp8", "rollout_recipe": "blockwise"}),
+    )
+    assert p.rollout_recipe == "blockwise"
+    p = resolve_precision_policy(_cfg(precision={"train": "bf16", "rollout": "fp8"}))
+    assert p.rollout_recipe is None
+    p = resolve_precision_policy(_cfg(precision="bf16"))
+    assert p.rollout_recipe is None
+
+
+def test_rollout_recipe_without_quantized_rollout_rejected():
+    """A recipe on a plain-dtype rollout would be a silent no-op knob — rejected."""
+    with pytest.raises(ValueError, match="rollout_recipe"):
+        resolve_precision_policy(
+            _cfg(precision={"train": "bf16", "rollout_recipe": "blockwise"}),
+        )
+
+
+def test_rollout_recipe_key_known_to_walker():
+    """precision.rollout_recipe is a declared block key, not an unknown-key warning."""
+    from omegaconf import OmegaConf
+
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    block = {"train": "bf16", "rollout": "fp8", "rollout_recipe": "blockwise"}
+    assert "precision.rollout_recipe" not in find_unknown_keys(OmegaConf.create({"precision": block}))
+
+
 @pytest.mark.parametrize(
     ("spelling", "torch_name"),
     [

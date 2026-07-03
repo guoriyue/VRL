@@ -68,6 +68,11 @@ class RuntimeBuildSpec:
     # ("fp8"/"fp4"), or None. The runtime builder swaps the transformer's big
     # linears to fp8 when this is "fp8" (storage stays the bf16 master ``dtype``).
     rollout_quantization: str | None = None
+    # Kernel recipe for the quantized rollout (``precision.rollout_recipe``), or
+    # None for the scheme default (fp8: "rowwise"). Consumed by
+    # ``apply_rollout_quantization``; only ever set alongside a quantized rollout
+    # (the precision resolver rejects it otherwise).
+    rollout_quantization_recipe: str | None = None
 
     @property
     def use_lora(self) -> bool:

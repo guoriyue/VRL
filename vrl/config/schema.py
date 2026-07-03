@@ -687,7 +687,7 @@ class RootConfig(ConfigBase):
     distributed: DistributedSection | None = None
     # reader: vrl/config/precision.py (scalar form skips the block walk).
     # `rollout` is the experimental fp8/fp4-rollout split (rollout != train).
-    precision: Annotated[Any, ConfigBlock(("train", "rollout", "math", "frozen"))] = None
+    precision: Annotated[Any, ConfigBlock(("train", "rollout", "math", "frozen", "rollout_recipe"))] = None
     # reader: vrl/scripts/diffusion/cosmos/train.py
     cosmos: Annotated[Any, ConfigBlock(("reference_mode",))] = None
 

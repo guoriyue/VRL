@@ -265,8 +265,10 @@ def test_fp8_linear_preserves_leading_dims_and_bias():
 class _SwapModel:
     def __init__(self, swapped: list[str]) -> None:
         self._swapped = swapped
+        self.recipe_seen: str | None = None
 
     def quantize_transformer_fp8(self, recipe: str = "rowwise") -> list[str]:
+        self.recipe_seen = recipe
         return self._swapped
 
 
@@ -282,6 +284,22 @@ def test_apply_rollout_quantization_noop_and_count_when_not_fp8_or_swapped():
 
     assert apply_rollout_quantization(_SwapModel([]), SimpleNamespace(rollout_quantization=None)) == 0
     assert apply_rollout_quantization(_SwapModel(["a", "b"]), SimpleNamespace(rollout_quantization="fp8")) == 2
+
+
+def test_apply_rollout_quantization_passes_recipe_through():
+    """precision.rollout_recipe reaches the fp8 swap; absent → rowwise default."""
+    from vrl.models.loader import apply_rollout_quantization
+
+    model = _SwapModel(["a"])
+    apply_rollout_quantization(
+        model,
+        SimpleNamespace(rollout_quantization="fp8", rollout_quantization_recipe="blockwise"),
+    )
+    assert model.recipe_seen == "blockwise"
+
+    model = _SwapModel(["a"])
+    apply_rollout_quantization(model, SimpleNamespace(rollout_quantization="fp8"))
+    assert model.recipe_seen == "rowwise"
 
 
 @pytest.mark.parametrize("scheme", ["fp8", "fp4"])
