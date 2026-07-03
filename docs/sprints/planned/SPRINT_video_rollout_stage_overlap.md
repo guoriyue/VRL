@@ -6,7 +6,16 @@
 > resources/factory 的 pool 计数与 kwargs 注入）。替代：所有 reward **进程内打分**
 > （`LocalRewardRuntime`），重型 reward 用 `reward.kwargs.<name>.sleep_offload=true` 借
 > rollout lease 的 sleep/wake 语义在打分间隙 park 到 CPU（kling 已开，实测 ~1.6s/score
-> steady vs 旧 pool 的 ~8s/步 actor 重载）。`release_rollout_before_reward`（rollout 先让卡）
+> steady vs 旧 pool 的 ~8s/步 actor 重载）。**2026-07-02 定稿：reward 侧 cumem-only + 共享 `CumemPool` 类**——
+> sleep_offload 的 naive `.to()` 回退已删（vLLM 视为必装，不可用 fail-loud）；cumem 语义
+> 收进 `vrl/utils/cuda_memory.py::CumemPool`（rollout worker 与 LocalRewardRuntime 共用；
+> rollout 固定 tag="weights"，reward 每 runtime 独立 tag——单例 allocator 按 tag 睡醒，
+> 共享 tag 会让 wake A 拖回 B）。**真机 profile（14GB=Kling 规模，5090，真实代码路径）：
+> cumem 稳态 wake+score+sleep=0.71s/cycle vs naive .to() 4.42s = 6.2x；碎片压力下 6.3x；
+> 对照旧 Ray pool ~8s/步 actor 重载 = 11x；sleep 后显存完全释放，权重逐位完好。**
+> 不再要求模型实现 `.to()`（kling 的 `.to()` 已删；6 个视频 reward 全部可开 sleep_offload）。
+> ⚠️ cumem 物理页不走 torch 缓存分配器：共卡阶段让位时必须 empty_cache，否则其缓存空闲块
+> 会饿死 wake 的重映射（probe 实测踩到）。`release_rollout_before_reward`（rollout 先让卡）
 > 保留不变——inline 大 reward 依然依赖它。本 sprint 内提到的 "reward pool 放第二张卡"
 > 的多卡形态失去了传输层：cross_node 配方已在 header 标注 STALE；若将来要跨节点 reward，
 > 需要新的 remote 传输而不是复活 actor pool。

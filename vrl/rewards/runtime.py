@@ -12,18 +12,26 @@ from vrl.rewards.inference import (
     RewardInferenceRuntime,
     score_artifacts_with_model,
 )
+from vrl.utils.cuda_memory import CumemPool
 
 
 class LocalRewardRuntime:
     """``RewardInferenceRuntime`` that runs a ``RewardModel`` in this process.
 
     ``worker_config.sleep_offload`` opts a heavyweight model into the same
-    sleep/wake semantics the rollout lease uses (generation/execution/worker.py):
-    the model is parked on CPU between scores so it holds no GPU memory while the
-    rollout/trainer own the card, and moves back only for scoring — the caller's
-    step ordering (rollout releases the GPU before rewards score) already
-    guarantees the card is free at that point. The model must expose ``.to()``;
-    small in-memory rewards (CLIP-class) leave the knob off and stay resident.
+    sleep/wake semantics the rollout lease uses: the model holds no GPU memory
+    between scores — the rollout/trainer own the card then — and comes back
+    only for scoring; the caller's step ordering (rollout releases the GPU
+    before rewards score) already guarantees the card is free at that point.
+    Small in-memory rewards (CLIP-class) leave the knob off and stay resident.
+
+    Offload is cumem-only (vLLM's CuMemAllocator is a hard requirement of
+    ``sleep_offload``): the model is BUILT inside a per-runtime tagged pool,
+    so ``sleep`` releases the physical pages (weights copied to pinned host
+    RAM) while virtual addresses stay mapped, and ``wake`` remaps without
+    cudaMalloc — no fragmentation, no per-model ``.to()`` needed, works for
+    any reward model. Probe-measured ~6x faster per score cycle than a naive
+    ``.to()`` round trip at Kling scale (14GB).
     """
 
     def __init__(
@@ -33,9 +41,15 @@ class LocalRewardRuntime:
         model: Any | None = None,
     ) -> None:
         self._worker_config = dict(worker_config or {})
-        self._model = model
         self._sleep_offload = bool(self._worker_config.get("sleep_offload", False))
-        self._wake_device: str | None = None
+        if model is not None and self._sleep_offload:
+            raise ValueError(
+                "sleep_offload requires the runtime to build the model itself "
+                "(worker_config.model_factory) so its allocations land in the "
+                "cumem pool; an already-built injected model cannot be pooled.",
+            )
+        self._model = model
+        self._pool: CumemPool | None = None
 
     def _ensure_model(self) -> Any:
         if self._model is None:
@@ -47,33 +61,16 @@ class LocalRewardRuntime:
                 )
             module_path, attr = factory_path.split(":", 1)
             factory = getattr(importlib.import_module(module_path), attr)
-            self._model = factory(self._worker_config)
+            if self._sleep_offload:
+                # Build inside the pool so every CUDA allocation the factory
+                # makes (from_pretrained, .to(device), buffers) is tagged and
+                # sleep/wake can release/restore it wholesale.
+                self._pool = CumemPool.require()
+                with self._pool.building():
+                    self._model = factory(self._worker_config)
+            else:
+                self._model = factory(self._worker_config)
         return self._model
-
-    def _sleep(self) -> None:
-        """Park the model on CPU and return its GPU memory to the pool."""
-
-        model = self._model
-        move = getattr(model, "to", None)
-        if not callable(move):
-            raise TypeError(
-                "reward worker_config.sleep_offload=true requires the reward "
-                f"model to implement .to(device); {type(model).__name__} does not",
-            )
-        # Capture the scoring device before the move so a model whose ``device``
-        # attribute tracks ``.to`` still wakes back onto the right GPU.
-        if self._wake_device is None:
-            self._wake_device = str(getattr(model, "device", "cuda"))
-        move("cpu")
-        from vrl.utils.cuda_memory import release_cuda_memory
-
-        release_cuda_memory(gc_collect=True, ipc_collect=True)
-
-    def _wake(self, model: Any) -> None:
-        """Restore a parked model onto its scoring device (no rebuild)."""
-
-        if self._wake_device is not None:
-            model.to(self._wake_device)
 
     async def score_batch(
         self,
@@ -82,8 +79,8 @@ class LocalRewardRuntime:
         if not request.artifacts:
             return []
         model = self._ensure_model()
-        if self._sleep_offload:
-            self._wake(model)
+        if self._pool is not None:
+            self._pool.wake()
         try:
             # The result/artifact mismatch guard lives at the RewardFunction
             # seam (one enforcement point for every runtime), not here.
@@ -94,12 +91,17 @@ class LocalRewardRuntime:
                 reward_model_version=str(self._worker_config.get("reward_model_version", "")),
             )
         finally:
-            if self._sleep_offload:
-                self._sleep()
+            if self._pool is not None:
+                self._pool.sleep()
 
     async def shutdown(self) -> None:
+        # A slept pool holds pinned host buffers for its pages; wake before
+        # dropping the model so freeing the tensors actually returns the
+        # pool's memory instead of leaking offloaded copies.
+        if self._pool is not None:
+            self._pool.wake()
+        self._pool = None
         self._model = None
-        self._wake_device = None
 
 
 def make_reward_runtime(

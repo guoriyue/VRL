@@ -18,35 +18,11 @@ from vrl.generation.protocols import GenerationChunkExecutor
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces import require_runtime_model
 from vrl.utils.config import import_from_path
-from vrl.utils.cuda_memory import release_cuda_memory
+from vrl.utils.cuda_memory import CumemPool, release_cuda_memory
 from vrl.utils.logging import init_logger
 from vrl.utils.profiling import TorchProfilerConfig
 
 logger = init_logger(__name__)
-
-# Pool tag for the model weights managed by CuMemAllocator. vLLM uses the same
-# "weights" tag for the part of a sleeping engine that is offloaded (not discarded);
-# matching it keeps the offload/restore semantics identical to verl-omni's level-1.
-_CUMEM_WEIGHTS_TAG = "weights"
-
-
-def _cumem_allocator() -> Any | None:
-    """Return the process-wide vLLM CuMemAllocator, or None when unavailable.
-
-    Unavailable on a CPU box or when vLLM is not installed — callers fall back to
-    the naive to(cpu)/to(gpu) offload. The allocator is a singleton; a diffusion-only
-    rollout process does not otherwise use it, so there is no contention.
-    """
-
-    try:
-        from vllm.device_allocator.cumem import CuMemAllocator
-    except Exception:
-        return None
-    try:
-        return CuMemAllocator.get_instance()
-    except Exception:
-        return None
-
 
 class GenerationWorkerCore:
     """Own one generation executor and execute plan-aware chunks."""
@@ -75,10 +51,12 @@ class GenerationWorkerCore:
         self._profiler_step = 0
         self.capability = self._capability_from_contract(self.launch_contract)
         self._metadata_provider = metadata_provider or self._fallback_metadata
-        # Set to a CuMemAllocator when load_policy pools the model for sleep-offload
+        # Set to a CumemPool when load_policy pools the model for sleep-offload
         # (extra["sleep_offload"]); sleep()/wake() then release/restore GPU physical
-        # pages through it instead of the naive to(cpu)/to(gpu) round trip.
-        self._cumem: Any | None = None
+        # pages through it instead of the naive to(cpu)/to(gpu) round trip. vLLM's
+        # own "weights" tag = the offloaded (not discarded) slice of a sleeping
+        # engine, keeping semantics identical to verl-omni's level-1.
+        self._cumem: CumemPool | None = None
 
     def load_policy(self) -> None:
         """Build the family executor from the serialized launch contract."""
@@ -111,12 +89,12 @@ class GenerationWorkerCore:
 
         if not self.launch_contract.extra.get("sleep_offload"):
             return self._build_executor()
-        allocator = _cumem_allocator()
-        if allocator is None:
+        pool = CumemPool.try_create(tag="weights")
+        if pool is None:
             return self._build_executor()
-        with allocator.use_memory_pool(tag=_CUMEM_WEIGHTS_TAG):
+        with pool.building():
             executor = self._build_executor()
-        self._cumem = allocator
+        self._cumem = pool
         return executor
 
     def release_policy(self) -> None:
@@ -145,7 +123,7 @@ class GenerationWorkerCore:
             # cumem owns the whole pooled model (transformer + frozen components);
             # one call offloads every tagged allocation to host RAM and releases the
             # physical pages, no per-module .to() or empty_cache needed.
-            self._cumem.sleep(offload_tags=(_CUMEM_WEIGHTS_TAG,))
+            self._cumem.sleep()
             return
         model = getattr(self.executor, "model", None)
         if model is None:
@@ -177,7 +155,7 @@ class GenerationWorkerCore:
         if self._cumem is not None:
             # Restore the pooled model's physical pages from host RAM at the same
             # virtual addresses — the tensors stay valid cuda tensors throughout.
-            self._cumem.wake_up(tags=[_CUMEM_WEIGHTS_TAG])
+            self._cumem.wake()
             return
         device = getattr(self, "_sleep_device", None) or self._executor_device(self.executor)
         move = getattr(model, "to", None)

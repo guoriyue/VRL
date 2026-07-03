@@ -2,6 +2,93 @@
 
 from __future__ import annotations
 
+import itertools
+from typing import Any
+
+
+def _cumem_allocator() -> Any | None:
+    """Return the process-wide vLLM CuMemAllocator, or None when unavailable.
+
+    None on a CPU box or when vLLM is not importable. The allocator is a
+    per-process singleton; callers hold a :class:`CumemPool` tag slice of it
+    rather than the raw allocator. Single mock point for tests.
+    """
+
+    try:
+        from vllm.device_allocator.cumem import CuMemAllocator
+    except Exception:
+        return None
+    try:
+        return CuMemAllocator.get_instance()
+    except Exception:
+        return None
+
+
+class CumemPool:
+    """One tagged slice of the process-wide vLLM CuMemAllocator.
+
+    The allocator is a per-process singleton whose sleep/wake act on TAGS, so
+    every owner (the rollout executor, each heavyweight reward) holds its own
+    tag: waking one owner's pages never drags another owner's back onto the
+    GPU. Build the owner's model inside :meth:`building` so every CUDA
+    allocation it makes lands in the tagged pool; :meth:`sleep` then copies
+    the physical pages to pinned host RAM and unmaps them while the virtual
+    addresses stay valid — the model needs no ``.to()``, and :meth:`wake`
+    remaps without cudaMalloc, immune to fragmentation (probe-measured ~6x
+    faster than a naive ``.to()`` round trip at 14GB scale).
+
+    Note: pooled physical pages come from CUDA virtual memory, NOT torch's
+    caching allocator — a co-resident phase must ``empty_cache`` before this
+    pool wakes, or its cached-but-free blocks starve the remap.
+    """
+
+    _tags = itertools.count()
+
+    def __init__(self, allocator: Any, tag: str) -> None:
+        self._allocator = allocator
+        self.tag = tag
+        self.asleep = False
+
+    @classmethod
+    def try_create(cls, tag: str | None = None) -> CumemPool | None:
+        """Pool handle, or None when cumem is unavailable (CPU box / no vLLM)."""
+
+        allocator = _cumem_allocator()
+        if allocator is None:
+            return None
+        return cls(allocator, tag if tag else f"cumem-{next(cls._tags)}")
+
+    @classmethod
+    def require(cls, tag: str | None = None) -> CumemPool:
+        """Pool handle; raise when cumem is unavailable (no silent fallback)."""
+
+        pool = cls.try_create(tag)
+        if pool is None:
+            raise RuntimeError(
+                "vLLM's CuMemAllocator is required here but unavailable — "
+                "install vLLM and run on a CUDA device.",
+            )
+        return pool
+
+    def building(self) -> Any:
+        """Context manager: allocations made inside land in this pool's tag."""
+
+        return self._allocator.use_memory_pool(tag=self.tag)
+
+    def sleep(self) -> None:
+        """Offload this tag's physical pages to pinned host RAM, free the GPU."""
+
+        self._allocator.sleep(offload_tags=(self.tag,))
+        self.asleep = True
+
+    def wake(self) -> None:
+        """Remap this tag's pages back onto the GPU (no-op when not asleep)."""
+
+        if not self.asleep:
+            return
+        self._allocator.wake_up(tags=[self.tag])
+        self.asleep = False
+
 
 def is_cuda_out_of_memory(exc: BaseException) -> bool:
     """Return whether an exception looks like a CUDA OOM failure."""
@@ -80,6 +167,7 @@ def release_cuda_memory(
 
 
 __all__ = [
+    "CumemPool",
     "cap_cuda_memory_fraction",
     "empty_cuda_cache",
     "is_cuda_out_of_memory",

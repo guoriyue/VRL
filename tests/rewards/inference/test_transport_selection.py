@@ -50,48 +50,84 @@ def test_reward_class_uses_inline_transport() -> None:
     assert isinstance(reward.runtime, LocalRewardRuntime)
 
 
-class _MovableModel:
-    """Fake reward model recording .to() moves (sleep_offload contract)."""
+class _FakeCumemAllocator:
+    """Records pool/sleep/wake calls (the cumem contract, no CUDA needed)."""
 
     def __init__(self) -> None:
-        self.device = "cuda:7"
-        self.moves: list[str] = []
+        self.pool_tags: list[str] = []
+        self.sleeps: list[tuple[str, ...]] = []
+        self.wakes: list[list[str]] = []
 
-    def to(self, device: str) -> None:
-        self.moves.append(device)
-        self.device = device
+    def use_memory_pool(self, *, tag: str):
+        import contextlib
 
-    def __call__(self, *, artifact, request):
-        return {"overall": 1.0}
+        self.pool_tags.append(tag)
+        return contextlib.nullcontext()
 
+    def sleep(self, *, offload_tags) -> None:
+        self.sleeps.append(tuple(offload_tags))
 
-@pytest.mark.asyncio
-async def test_sleep_offload_parks_between_scores() -> None:
-    """sleep_offload wakes the model for scoring and parks it back on CPU.
-
-    First score: the factory-built (or injected) model is already on its GPU,
-    so no wake move happens; after scoring it parks to cpu. Second score: wake
-    restores the captured device, then parks again.
-    """
-    model = _MovableModel()
-    runtime = LocalRewardRuntime({"sleep_offload": True}, model=model)
-
-    await runtime.score_batch(_request())
-    assert model.moves == ["cpu"]
-    assert model.device == "cpu"
-
-    await runtime.score_batch(_request())
-    assert model.moves == ["cpu", "cuda:7", "cpu"]
+    def wake_up(self, *, tags) -> None:
+        self.wakes.append(list(tags))
 
 
-@pytest.mark.asyncio
-async def test_sleep_offload_requires_movable_model() -> None:
-    """A sleep_offload model without .to() fails loud, not silently resident."""
+def _immovable_factory(worker_config):
+    """Module-level factory: a reward model WITHOUT .to() (cumem needs none)."""
 
     class _Immovable:
         def __call__(self, *, artifact, request):
-            return {"overall": 1.0}
+            return {"overall": 2.0}
 
-    runtime = LocalRewardRuntime({"sleep_offload": True}, model=_Immovable())
-    with pytest.raises(TypeError, match="sleep_offload"):
-        await runtime.score_batch(_request())
+    return _Immovable()
+
+
+@pytest.mark.asyncio
+async def test_sleep_offload_uses_cumem_pool(monkeypatch) -> None:
+    """cumem path: model built inside the pool, per-runtime tag, no .to() needed."""
+    import vrl.utils.cuda_memory as cuda_memory_mod
+
+    allocator = _FakeCumemAllocator()
+    monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: allocator)
+
+    factory = f"{__name__}:_immovable_factory"
+    a = LocalRewardRuntime({"sleep_offload": True, "model_factory": factory})
+    b = LocalRewardRuntime({"sleep_offload": True, "model_factory": factory})
+
+    await a.score_batch(_request())
+    await a.score_batch(_request())
+    await b.score_batch(_request())
+
+    # Build happened inside each runtime's own pool; tags never shared, so
+    # waking one heavyweight reward cannot drag another's pages back to GPU.
+    assert len(allocator.pool_tags) == 2
+    assert allocator.pool_tags[0] != allocator.pool_tags[1]
+    # a: score->sleep, wake->score->sleep; b: score->sleep.
+    assert allocator.sleeps == [
+        (allocator.pool_tags[0],),
+        (allocator.pool_tags[0],),
+        (allocator.pool_tags[1],),
+    ]
+    assert allocator.wakes == [[allocator.pool_tags[0]]]
+
+    await a.shutdown()  # slept pool wakes before drop (frees pinned host copies)
+    assert allocator.wakes[-1] == [allocator.pool_tags[0]]
+
+
+def test_sleep_offload_requires_cumem(monkeypatch) -> None:
+    """sleep_offload has no naive fallback: missing cumem fails loud at build."""
+    import asyncio
+
+    import vrl.utils.cuda_memory as cuda_memory_mod
+
+    monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: None)
+    runtime = LocalRewardRuntime(
+        {"sleep_offload": True, "model_factory": f"{__name__}:_immovable_factory"},
+    )
+    with pytest.raises(RuntimeError, match="CuMemAllocator"):
+        asyncio.run(runtime.score_batch(_request()))
+
+
+def test_sleep_offload_rejects_injected_model() -> None:
+    """An already-built model cannot be pooled; sleep_offload rejects it."""
+    with pytest.raises(ValueError, match="model_factory"):
+        LocalRewardRuntime({"sleep_offload": True}, model=object())

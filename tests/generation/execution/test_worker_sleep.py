@@ -144,24 +144,29 @@ def test_wake_after_eviction_rebuilds_via_load_policy() -> None:
 
 
 def test_cumem_sleep_wake_uses_allocator_not_module_moves() -> None:
+    from vrl.utils.cuda_memory import CumemPool
+
     model = _SleepModel(device="cuda:0")
     core = _core(model)
-    core._cumem = _FakeCuMem()  # as if load_policy pooled the model
+    fake = _FakeCuMem()
+    core._cumem = CumemPool(fake, "weights")  # as if load_policy pooled the model
 
     core.sleep()
     core.wake()
 
     # The whole pooled model is released/restored through the allocator; the naive
     # per-module .to() round trip is bypassed entirely.
-    assert core._cumem.sleep_calls == [("weights",)]
-    assert core._cumem.wake_calls == [["weights"]]
+    assert fake.sleep_calls == [("weights",)]
+    assert fake.wake_calls == [["weights"]]
     assert model.to_calls == []
     assert model.frozen_calls == []
 
 
 def test_load_policy_pools_model_when_sleep_offload_and_cumem_available(monkeypatch) -> None:
+    import vrl.utils.cuda_memory as cuda_memory_mod
+
     fake = _FakeCuMem()
-    monkeypatch.setattr(worker_mod, "_cumem_allocator", lambda: fake)
+    monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: fake)
     core = _core(None, sleep_offload=True)
     sentinel = object()
     core._build_executor = lambda: sentinel  # type: ignore[method-assign]
@@ -170,11 +175,14 @@ def test_load_policy_pools_model_when_sleep_offload_and_cumem_available(monkeypa
 
     assert built is sentinel
     assert fake.pool_tags == ["weights"]  # model allocated inside the cumem pool
-    assert core._cumem is fake  # sleep/wake will now route through cumem
+    assert core._cumem is not None  # sleep/wake will now route through cumem
+    assert core._cumem._allocator is fake
 
 
 def test_load_policy_falls_back_when_cumem_unavailable(monkeypatch) -> None:
-    monkeypatch.setattr(worker_mod, "_cumem_allocator", lambda: None)
+    import vrl.utils.cuda_memory as cuda_memory_mod
+
+    monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: None)
     core = _core(None, sleep_offload=True)
     sentinel = object()
     core._build_executor = lambda: sentinel  # type: ignore[method-assign]
@@ -187,8 +195,10 @@ def test_load_policy_falls_back_when_cumem_unavailable(monkeypatch) -> None:
 
 def test_load_policy_does_not_pool_without_sleep_offload(monkeypatch) -> None:
     """A teardown-lease / resident worker never enters the cumem pool."""
+    import vrl.utils.cuda_memory as cuda_memory_mod
+
     called: list[bool] = []
-    monkeypatch.setattr(worker_mod, "_cumem_allocator", lambda: called.append(True))
+    monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: called.append(True))
     core = _core(None, sleep_offload=False)
     core._build_executor = lambda: object()  # type: ignore[method-assign]
 
