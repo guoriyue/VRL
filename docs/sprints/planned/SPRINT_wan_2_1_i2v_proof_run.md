@@ -1,6 +1,30 @@
 # SPRINT: Wan 2.1 I2V 14B GRPO proof run（图生视频 RL 落地验证）
 
-状态：in-progress（2026-07-01，单卡 smoke 配方已落地；真机 smoke 待跑）。**链路实现已完整接好**（registry → I2V executor → reference-image
+状态：in-progress（2026-07-02 更新：**§6 核心契约已在真权重上验证 PASS（逐位一致）；完整单卡 GRPO smoke 被实测证实结构性阻塞——I2V transformer 实际 16.4B 参数（bf16 ≈ 32.8GB）> 单卡 32GB，trainer 侧 replay 放不下**。剩余 = 多卡 train step）。
+
+> **2026-07-02 真机实测结论（单卡 RTX 5090 32GB）：**
+> 1. **smoke run 实跑 OOM，且是结构性的**：`online_grpo_i2v_smoke_single_gpu` 在 driver 侧
+>    `build_wan_2_1_replay_runtime_bundle` 的 LoRA attach 阶段 OOM（allocator 已占 30.65GiB /
+>    31.33GiB）。根因：本 sprint §2 的"14B bf16 ~28GB"用的是 **T2V** 的参数量；I2V 带 image
+>    cross-attention，**实际 16.4B 参数**（HF safetensors index total_size=65.6GB fp32 →
+>    bf16 ≈ 32.8GB），**裸 transformer 就比整张卡大**。`offload_mode: sequential` 只救 rollout
+>    （streaming 前向），救不了 replay 反传（权重必须全量驻留）。→ **单卡 32GB 上 I2V 14B 的
+>    train step 不可能，无论怎么调 microbatch/ckpt/LoRA**；需 ≥2 卡（replay 分片/更大卡）。
+> 2. **§6 的 I2V 专属硬契约已用真权重单独验证 PASS**：新探针
+>    `vrl/scripts/eval/wan_i2v_logprob_parity_probe.py`（rollout 记录 old_log_prob →
+>    `export_replay_tensors`（condition+image_embeds）过 CPU wire → `restore_eval_state` →
+>    replay 前向重算 log_prob，逐步对比；与 `run_denoise_steps` / `DiffusionSDELogProbEvaluator`
+>    同一代码路径）。结果（480p×33f×10 步，batch=2，sequential offload）：
+>    **mean/max |fresh−old| = 0.0 逐位一致，ratio=1.0**（阈值 0.01，同 trainer
+>    `debug.first_step`）；rollout 192s / replay 176s，**峰值仅 6.16GiB**；生成 mp4 已目检——
+>    跟随首帧条件（汤锅→木勺入画搅动），真实运动非静止非噪声。报告
+>    `outputs/wan_i2v_parity_probe/parity_report.json`。
+> 3. **数据（任务 3）已就位**：`data/external/videophy_i2v_smoke/`（7 train + 2 eval，
+>    frame-0 PNG 832×480 + manifest + report.json，本地 examples 绕过官方 403；未写 canonical 路径）。
+>    运行时用 `data.manifest/eval_manifest/artifact_data_root/source_report` 四个 override 指过去。
+> 4. **train step 仍属家族无关共享层**（GRPO loss / trainer 已在其他家族真跑过），I2V 家族喂给它的
+>    唯一新东西正是本探针验证的 replay log_prob 与条件重建。**剩余唯一缺口 = 多卡资源上跑一次完整
+>    smoke**（任务 2/4 合并为多卡项）。**链路实现已完整接好**（registry → I2V executor → reference-image
 条件 → GRPO loss → replay 重建条件，见下 §1 的端到端证据）；本 sprint 是这条路径唯一的剩余项：
 **把 Wan 2.1 I2V 14B GRPO 在真机上跑通一次**，验证「首帧条件穿过梯度回放」的契约与 reward 信号能动。
 
@@ -43,7 +67,7 @@
 
 | 缺口 | 现状 | 谁能补 |
 |---|---|---|
-| **显存：14B 单卡** | recipe 设 `offload_mode: none`；14B bf16 ~28GB + LoRA + 激活，单张 32GB 边缘/超。逃生口 `enable_sequential_cpu_offload`（`model.py` 注释「the 32GB Wan I2V escape hatch」）存在但极慢、且 recipe 未启用 | 任务 1（code-only，现在就能做） |
+| **显存：14B 单卡** | ~~14B bf16 ~28GB + LoRA + 激活，单张 32GB 边缘/超~~ **2026-07-02 实测证伪：I2V transformer 是 16.4B 参数，bf16 ≈ 32.8GB > 整张卡**（28GB 是 T2V 的数）。sequential offload 只救 rollout 前向；trainer replay 反传需全量驻留 → **单卡 train step 结构性不可能** | **多卡**（原任务 1 的"单卡挤进去"路线已死） |
 | **拓扑：3 GPU 角色** | wan 物理 recipe 解析出 `trainer=[0] rollout=[1] reward=[2]`（videocon_physics 视频奖励独占 1 卡）。2 卡硬件放不下（见 [[SPRINT_wan_2_2_proof_run]] §8#1） | 任务 2（≥3 卡，或 reward 错时共卡） |
 | **数据集：videophy 403** | `videophy_i2v` 要从官方 URL 解码 frame 0 作参考图，URL 返回 HTTP 403 | 已有本地绕过（任务 3，复用 2.2 run 的 manifest） |
 | **真机 proof run** | 无 run 证据；契约（log_prob 一致）未触及 | 任务 4（阻塞在任务 1/2 解一） |
@@ -99,13 +123,14 @@ canonical `data/external/videophy_i2v/manifests/{train,eval}.jsonl` 冒充正式
 
 ## 6. 验收标准（finishing criteria）
 
-- **契约硬指标**：rollout 记录的 `old_log_prob` 与训练 replay 重算**逐步一致**——且 I2V 路径特有的
+- ✅ **契约硬指标（2026-07-02 真权重 PASS，逐位一致）**：rollout 记录的 `old_log_prob` 与训练 replay 重算**逐步一致**——且 I2V 路径特有的
   `condition`+`image_embeds` 经 `restore_eval_state` 重建后，replay 前向与 rollout 前向数值对齐
-  （这是 I2V 区别于 T2I 的唯一新增契约面，最容易出 bug 的地方）；
-- I2V GRPO smoke 端到端不崩、`kling_video_reward` 曲线可动（按 `project_first_trustworthy_curve` 的判据：
-  固定 prompt 集 + BLOCK test，>2σ 才算信号，不把噪声当 learning）；
-- 单卡 `offload_mode: sequential` 路径峰值显存在 32GB 内（任务 1 验收）；
-- T2I / T2V 既有路径回归不变（CPU 单测兜底，真机再确认一次不破坏 wan_2_1 t2v / sd3_5 等）。
+  （这是 I2V 区别于 T2I 的唯一新增契约面，最容易出 bug 的地方）。见 header 更新 #2 的探针与数字；
+- ⬜ I2V GRPO smoke 端到端不崩、`kling_video_reward` 曲线可动（按 `project_first_trustworthy_curve` 的判据：
+  固定 prompt 集 + BLOCK test，>2σ 才算信号，不把噪声当 learning）——**多卡 gated**（header 更新 #1）；
+- ✅(rollout 侧) / ❌(trainer 侧) 单卡 `offload_mode: sequential` 路径峰值显存在 32GB 内：rollout+replay 前向实测峰值 **6.16GiB**；
+  trainer 反传侧被 16.4B bf16 权重（~32.8GB）结构性排除；
+- ✅ T2I / T2V 既有路径回归不变（2026-07-02 全量 CPU 单测绿）。
 
 ## 7. 下游解锁（proof 通过后）
 
