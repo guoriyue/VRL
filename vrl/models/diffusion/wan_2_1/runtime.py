@@ -11,7 +11,6 @@ from typing import Any
 
 from vrl.generation.diffusion import DiffusionChunkExecutorBase
 from vrl.generation.diffusion.executor import ReferenceConditionedChunks
-from vrl.models.diffusion.build import build_diffusion_runtime_bundle
 from vrl.models.diffusion.capabilities import diffusion_family_capability
 from vrl.models.interfaces.runtime import (
     RuntimeBuildSpec,
@@ -24,10 +23,6 @@ from vrl.models.loader import (
 from vrl.models.replay_loading import (
     minimal_replay_bundle_metadata,
 )
-from vrl.models.runtime_config import (
-    extract_runtime_spec,
-)
-from vrl.utils.config import cfg_get
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -42,68 +37,6 @@ _MODEL_BY_TASK: dict[str, str] = {
     "t2v": "vrl.models.diffusion.wan_2_1.model:WanT2VDiffusersModel",
     "i2v": "vrl.models.diffusion.wan_2_1.model:WanI2VDiffusersModel",
 }
-
-
-def _resolve_model_cls(task_variant: str | None) -> type:
-    import importlib
-
-    task = _normalize_task_variant(task_variant)
-    if task not in _MODEL_BY_TASK:
-        raise NotImplementedError(
-            f"wan_2_1 has no model for task={task!r}; registered: {sorted(_MODEL_BY_TASK)}",
-        )
-    spec = _MODEL_BY_TASK[task]
-    mod_path, cls_name = spec.rsplit(":", 1)
-    return getattr(importlib.import_module(mod_path), cls_name)
-
-
-def extract_wan_2_1_runtime_spec(cfg: Any, device: Any, weight_dtype: Any) -> RuntimeBuildSpec:
-    """Slice the runtime-relevant subset out of a whole RL cfg."""
-    # task_variant (t2v vs i2v) is the one runtime field that varies per cfg;
-    # offload_mode / reference_image ride in model_config and are read by the
-    # consumer, so no per-field extra building here.
-    return extract_runtime_spec(
-        cfg,
-        device,
-        weight_dtype,
-        task_variant=_task_variant_from_cfg(cfg),
-    )
-
-
-def build_wan_2_1_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    """Thin family stub over the shared diffusion runtime builder.
-
-    The t2v/i2v variant is resolved here first (model class, capability, caps
-    flag) — family preamble the shared builder must not know about. The
-    normalized ``task_variant`` and the model-derived keys ride
-    ``extra_metadata`` (its merge overrides the generic raw ``task_variant``);
-    the historical caps dict (no ``family_capability`` key) is passed verbatim.
-    """
-    task_variant = _normalize_task_variant(spec.task_variant)
-    model_cls = _resolve_model_cls(task_variant)
-    capability = (
-        WAN_2_1_I2V_FAMILY_CAPABILITY
-        if task_variant == "i2v"
-        else WAN_2_1_FAMILY_CAPABILITY
-    )
-
-    logger.info(
-        "Building wan_2_1 runtime bundle (task=%s)",
-        task_variant,
-    )
-    return build_diffusion_runtime_bundle(
-        spec,
-        model_cls=model_cls,
-        capability=capability,
-        memory_owner="Wan VAE",
-        runtime_caps={"supports_reference_conditioning": task_variant == "i2v"},
-        extra_metadata=lambda model, spec: {
-            "task_variant": task_variant,
-            "reference_image": (spec.model_config or {}).get("reference_image"),
-            "boundary_ratio": getattr(model, "boundary_ratio", None),
-            "trainable_transformers": tuple(model.trainable_modules),
-        },
-    )
 
 
 def build_wan_2_1_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
@@ -176,22 +109,9 @@ def build_wan_2_1_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle
             "task_variant": task_variant,
             "dtype": str(spec.dtype),
             "use_lora": use_lora,
-            "reference_image": (spec.model_config or {}).get("reference_image"),
-            "boundary_ratio": boundary_ratio,
-            "trainable_transformers": tuple(model.trainable_modules),
             **minimal_replay_bundle_metadata(),
         },
     )
-
-
-def build_wan_2_1_runtime_bundle_from_cfg(
-    cfg: Any,
-    device: Any,
-    weight_dtype: Any,
-) -> RuntimeBundle:
-    """Outer convenience: whole-cfg → spec → bundle."""
-    spec = extract_wan_2_1_runtime_spec(cfg, device, weight_dtype)
-    return build_wan_2_1_runtime_bundle(spec)
 
 
 def build_wan_2_1_replay_runtime_bundle_from_cfg(
@@ -199,9 +119,17 @@ def build_wan_2_1_replay_runtime_bundle_from_cfg(
     device: Any,
     weight_dtype: Any,
 ) -> RuntimeBundle:
-    """Outer convenience: whole-cfg → spec → replay bundle."""
-    spec = extract_wan_2_1_runtime_spec(cfg, device, weight_dtype)
-    return build_wan_2_1_replay_runtime_bundle(spec)
+    """Outer convenience: whole-cfg -> spec -> replay bundle.
+
+    The spec comes from the generic descriptor extractor (task_variant is
+    decided by which wan registry entry cfg.model.family selects); only the
+    multi-transformer replay construction itself stays hand-written.
+    """
+    from vrl.models.diffusion.build import extract_family_runtime_spec
+
+    return build_wan_2_1_replay_runtime_bundle(
+        extract_family_runtime_spec(cfg, device, weight_dtype),
+    )
 
 
 """Wan 2.1 diffusion pipeline executor."""
@@ -244,16 +172,6 @@ class Wan_2_1I2VChunkExecutor(ReferenceConditionedChunks, DiffusionChunkExecutor
         self.model = model
         self.reference_image = reference_image
         self.default_samples_per_chunk = max(1, int(samples_per_chunk))
-
-def _task_variant_from_cfg(cfg: Any) -> str:
-    explicit = cfg_get(cfg.model, "task_variant", None)
-    if explicit:
-        return _normalize_task_variant(str(explicit))
-    family = str(cfg_get(cfg.model, "family", ""))
-    if "i2v" in family or "image" in family:
-        return "i2v"
-    return "t2v"
-
 
 def _normalize_task_variant(task_variant: str | None) -> str:
     # Accept any non-i2v value as t2v so generic test fixtures that use a

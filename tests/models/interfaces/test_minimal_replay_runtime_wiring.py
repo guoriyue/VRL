@@ -273,7 +273,9 @@ def test_wan_dual_stage_replay_builder_loads_low_noise_transformer(
     assert bundle_loads_full_generation_modules(bundle) is False
     assert loaded_subfolders == ["transformer_2", "transformer"]
     assert set(bundle.trainable_modules) == {"transformer_2"}
-    assert bundle.metadata["boundary_ratio"] == 0.9
+    # boundary_ratio is behavior-consumed on the model (dual-stage transformer
+    # routing), not bundle metadata — assert the consumed surface.
+    assert bundle.model.boundary_ratio == 0.9
 
 
 def test_cosmos_predict25_replay_builder_keeps_diffusion_nft_surface(

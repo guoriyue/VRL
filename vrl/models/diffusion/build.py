@@ -106,6 +106,10 @@ def build_diffusion_runtime_bundle(
         model.set_num_steps(num_steps)
     # If None, caller (e.g. DPO trainer) will set scheduler timesteps itself.
 
+    # model_path/family/task_variant/dtype/use_lora are provenance-only: no
+    # runtime consumer reads them (audited 2026-07-02) — they identify what a
+    # bundle was built from when inspecting it. The functional keys are the
+    # full/minimal-generation marker (colocated-RAM guard) and memory_policy.
     metadata: dict[str, object] = {
         "model_path": spec.model_name_or_path,
         "family": capability.family,
@@ -300,6 +304,11 @@ def build_family_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
 
     entry = _family_build_entry(spec.family)
     recipe = entry.build
+    if recipe.replay_cls is None or recipe.transformer_classname is None:
+        raise ValueError(
+            f"rollout family {entry.family!r} keeps its own replay builder; "
+            "the registry descriptor covers the rollout side only",
+        )
     _check_requires_lora(entry, spec)
     logger.info(
         "Building %s replay runtime bundle (registry descriptor) from %s",

@@ -48,12 +48,6 @@ def extract_cosmos_predict2_runtime_spec(
     )
 
 
-def _reference_image_from_spec(spec: RuntimeBuildSpec) -> str | None:
-    """Bundle-metadata reference image; empty cfg value reads as ``None``."""
-
-    return (spec.model_config or {}).get("reference_image") or None
-
-
 def build_cosmos_predict2_runtime_bundle(
     spec: RuntimeBuildSpec,
 ) -> RuntimeBundle:
@@ -75,9 +69,6 @@ def build_cosmos_predict2_runtime_bundle(
         capability=COSMOS_PREDICT2_FAMILY_CAPABILITY,
         memory_owner="Cosmos Predict2 VAE",
         runtime_caps={"supports_reference_conditioning": True},
-        extra_metadata=lambda model, spec: {
-            "reference_image": _reference_image_from_spec(spec),
-        },
     )
 
 
@@ -98,9 +89,6 @@ def build_cosmos_predict2_replay_runtime_bundle(
         transformer_classname="CosmosTransformer3DModel",
         capability=COSMOS_PREDICT2_FAMILY_CAPABILITY,
         runtime_caps={"supports_reference_conditioning": True},
-        extra_metadata=lambda model, spec: {
-            "reference_image": _reference_image_from_spec(spec),
-        },
     )
 
 

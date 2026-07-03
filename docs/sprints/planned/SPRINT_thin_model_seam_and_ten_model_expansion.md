@@ -508,7 +508,23 @@ GPU，让某一跳能跑生成 parity；(b) 转为**有人值守**逐个接（�
 - **Phase 0 不动 registry 的 `_diffusion_entry` 声明式结构、不动 `common/*` 与算法层**——只折叠 build 编排。
 - 不追 flux / qwen_image（已实现，见 `vrl/models/diffusion/{flux,qwen_image}/`）。
 
-## 附录：AR executor 层组织设计（2026-07-02，未动代码——先设计后实施）
+> **薄化第十一轮（2026-07-02）——wan per-entry descriptor + 全模型死键清扫**：
+> - **wan 变体机器蒸发**：registry 本就有 `wan_2_1`/`wan_2_1_i2v` 两条 entry 却共用一个 builder 在运行时
+>   重推导变体（registry 已知的信息被二次查询——与 capability 双份构造同病）。两条 entry 各带
+>   `DiffusionFamilyBuild`（model_cls/task_variant 按 entry 固定）后，`_MODEL_BY_TASK`/`_resolve_model_cls`/
+>   `_task_variant_from_cfg`/extract 包装/rollout stub 全删；replay 保留自建（多 transformer），
+>   `DiffusionFamilyBuild.replay_cls` 改 optional（None = 家族自管 replay，generic fail-loud）。
+>   配置里冗余的 `task_variant: i2v` 死 knob 一并删（i2v 全部经 family 选择）。
+> - **全模型 metadata 死键审计**（精确 -F grep 每键读者）：`ar_task`/`dtype`/`model_path`/`task_variant`/
+>   `use_lora` 零读者、`bundle.metadata` 无整体消费——generic 五键按 provenance-only 规则**标注保留**
+>   （build.py 单点注释）；家族特有死键**删除**：wan 的 boundary_ratio（读者仅测试断言，改断言
+>   `model.boundary_ratio` 行为面）/trainable_transformers/reference_image、anima 的三个 path 键、
+>   predict2 的 reference_image（读者全是 request.metadata，另一对象）+ 死 helper `_reference_image_from_spec`。
+> - **死函数扫描（vrl/models 全模块级函数 × 仓外调用方）：零命中**——前几轮已清完。
+> - 验证：**623 passed**。descriptor 家族名册：sd3_5、qwen_image、cosmos-predict2.5、**wan_2_1、
+>   wan_2_1_i2v（rollout 侧）**。
+
+## 附录：AR executor 层组织设计（2026-07-02，已实施——见薄化第十轮）
 
 ### 事实基础（全部引用到行级）
 

@@ -137,13 +137,19 @@ def test_wan_runtime_bundle_records_model_build_memory_metadata(
         def set_num_steps(self, _num_steps: int) -> None:
             return None
 
-    monkeypatch.setattr(runtime, "_resolve_model_cls", lambda _task: _FakeModel)
+    # wan is a per-entry descriptor family now: the generic builder resolves
+    # WanT2VDiffusersModel from the registry recipe, so patch the model class.
+    from vrl.models.diffusion import build as _shared_build
+    from vrl.models.diffusion.wan_2_1 import model as _wan_model
 
-    bundle = runtime.build_wan_2_1_runtime_bundle(
+    monkeypatch.setattr(_wan_model, "WanT2VDiffusersModel", _FakeModel)
+
+    bundle = _shared_build.build_family_runtime_bundle(
         RuntimeBuildSpec(
             model_name_or_path="fake/model",
             device="cpu",
             dtype="float32",
+            family="wan_2_1",
             sampling_config={"num_steps": 2},
             model_config={"memory": {"vae_decode": {"tiling": True, "slicing": True}}},
         ),
@@ -323,14 +329,22 @@ def test_runtime_builders_apply_generation_memory_policy() -> None:
         "shared diffusion builder must apply the generation memory policy"
     )
 
+    import re
+
     runtimes = sorted(Path("vrl/models/diffusion").rglob("runtime.py"))
-    missing = [
-        str(path)
-        for path in runtimes
-        if "_runtime_bundle(" in (source := path.read_text())  # defines builders
-        and "apply_generation_memory_policy" not in source
-        and "build_diffusion_runtime_bundle" not in source
-    ]
+    missing = []
+    for path in runtimes:
+        source = path.read_text()
+        builder_names = re.findall(r"def (build_\w+_runtime_bundle)\(", source)
+        # Replay builders own no VAE and never apply the policy; only files
+        # that still define a full-generation (rollout) builder must route.
+        defines_rollout_builder = any("replay" not in name for name in builder_names)
+        if (
+            defines_rollout_builder
+            and "apply_generation_memory_policy" not in source
+            and "build_diffusion_runtime_bundle" not in source
+        ):
+            missing.append(str(path))
     assert not missing, f"runtime builders missing the shared policy call: {missing}"
 
 

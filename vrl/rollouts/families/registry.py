@@ -73,10 +73,12 @@ class DiffusionFamilyBuild:
     """
 
     model_cls: str
-    replay_cls: str
-    transformer_classname: str
     task_variant: str
     memory_owner: str
+    # Replay recipe; None marks a family whose replay builder stays hand-written
+    # (wan's multi-transformer replay) — the generic replay builder fails loud.
+    replay_cls: str | None = None
+    transformer_classname: str | None = None
     scheduler_classname: str | None = None
     # Verbatim runtime_caps override for both bundles; None keeps the generic
     # default ({family_capability, supports_reference_conditioning}).
@@ -222,10 +224,20 @@ register_rollout_family(
         task="t2v",
         aliases=("wan",),
         executor_cls="vrl.models.diffusion.wan_2_1.runtime:Wan_2_1ChunkExecutor",
-        runtime_builder="vrl.models.diffusion.wan_2_1.runtime:build_wan_2_1_runtime_bundle",
-        runtime_spec_extractor="vrl.models.diffusion.wan_2_1.runtime:extract_wan_2_1_runtime_spec",
+        # The two wan entries carry their own per-variant recipes, so the
+        # t2v/i2v resolution the runtime module used to re-derive from cfg is
+        # decided here, once, by family selection. Replay stays hand-written
+        # (multi-transformer), hence no replay_cls.
+        runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
+        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
         request_prefix="wan_2_1",
         default_task_type="text_to_video",
+        build=DiffusionFamilyBuild(
+            model_cls="vrl.models.diffusion.wan_2_1.model:WanT2VDiffusersModel",
+            task_variant="t2v",
+            memory_owner="Wan VAE",
+            runtime_caps={"supports_reference_conditioning": False},
+        ),
     ),
 )
 
@@ -235,11 +247,17 @@ register_rollout_family(
         task="i2v",
         aliases=("wan_i2v",),
         executor_cls="vrl.models.diffusion.wan_2_1.runtime:Wan_2_1I2VChunkExecutor",
-        runtime_builder="vrl.models.diffusion.wan_2_1.runtime:build_wan_2_1_runtime_bundle",
-        runtime_spec_extractor="vrl.models.diffusion.wan_2_1.runtime:extract_wan_2_1_runtime_spec",
+        runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
+        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
         request_prefix="wan_2_1_i2v",
         default_task_type="image_to_video",
         supports_reference_conditioning=True,
+        build=DiffusionFamilyBuild(
+            model_cls="vrl.models.diffusion.wan_2_1.model:WanI2VDiffusersModel",
+            task_variant="i2v",
+            memory_owner="Wan VAE",
+            runtime_caps={"supports_reference_conditioning": True},
+        ),
     ),
 )
 

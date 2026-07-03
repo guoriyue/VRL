@@ -92,11 +92,6 @@ def build_anima_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         capability=ANIMA_FAMILY_CAPABILITY,
         memory_owner="Anima VAE",
         runtime_caps={"supports_reference_conditioning": False},
-        extra_metadata=lambda model, spec: {
-            "transformer_path": model_config.get("transformer_path"),
-            "text_encoder_path": model_config.get("text_encoder_path"),
-            "vae_path": model_config.get("vae_path"),
-        },
     )
 
 
@@ -153,7 +148,6 @@ def build_anima_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
             "task_variant": spec.task_variant,
             "dtype": str(spec.dtype),
             "use_lora": use_lora,
-            "transformer_path": model_config.get("transformer_path"),
             **minimal_replay_bundle_metadata(),
         },
     )
