@@ -19,6 +19,15 @@ defaults:
   - /reward/videocon_physics
   - /dataset/videophy
 
+# Compile-both, same as online_nft_kling_video_reward.yaml (this recipe is its
+# skeleton with only the reward swapped): one switch compiles train replay AND
+# rollout denoise on the same kernels — the parity-safe choice (see the kling
+# config header for the full rationale + measured 1.31x/1.33x numbers).
+model:
+  torch_compile:
+    enable: true
+    mode: default
+
 actor:
   optim:
     lr: 3.0e-5
