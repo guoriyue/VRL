@@ -168,22 +168,6 @@ class CosmosPredict25ChunkExecutor(DiffusionChunkExecutorBase):
             guidance_scale=params.base.guidance_scale,
         )
 
-    def build_chunk_encoded(
-        self,
-        *,
-        encoded: dict[str, Any],
-        generation_request: GenerationRequest,
-        video_request: VideoGenerationRequest,
-        params: DiffusionSamplingParams,
-        chunk: SampleChunk,
-    ) -> dict[str, Any]:
-        del generation_request, video_request, params
-        return {
-            key: self.layout.repeat_batch(value, chunk.sample_count)
-            for key, value in encoded.items()
-        }
-
-
 __all__ = [
     "CosmosPredict25ChunkExecutor",
     "build_cosmos_predict25_replay_runtime_bundle",

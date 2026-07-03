@@ -199,22 +199,6 @@ class EchoChunkExecutor(DiffusionChunkExecutorBase):
         del generation_request, video_request, params
         return self.model.encode_prompt(chunk.prompt)
 
-    def build_chunk_encoded(
-        self,
-        *,
-        encoded: dict[str, Any],
-        generation_request: GenerationRequest,
-        video_request: VideoGenerationRequest,
-        params: DiffusionSamplingParams,
-        chunk: SampleChunk,
-    ) -> dict[str, Any]:
-        del generation_request, video_request, params
-        return {
-            key: (self.layout.repeat_batch(value, chunk.sample_count) if value is not None else None)
-            for key, value in encoded.items()
-        }
-
-
 __all__ = [
     "EchoChunkExecutor",
     "build_echo_replay_runtime_bundle",

@@ -1012,6 +1012,14 @@ class DiffusionChunkExecutorBase(
             request=video_request,
         )
 
+    # Encoded keys copied through UNREPEATED by the default build_chunk_encoded.
+    # For batch-shared tensors whose leading dim is not a batch axis (FLUX's
+    # ``text_ids`` is ``[seq, 3]``), the generic repeat would corrupt the shape,
+    # so the family lists them here instead of overriding the whole method.
+    # Non-tensor values (PIL reference images, python lists) already pass
+    # through ``repeat_batch`` untouched and need no listing.
+    chunk_passthrough_keys: tuple[str, ...] = ()
+
     def build_chunk_encoded(
         self,
         *,
@@ -1024,7 +1032,17 @@ class DiffusionChunkExecutorBase(
         """Build per-sample encoded tensors for one sample chunk."""
 
         del generation_request, video_request, params
-        return self.layout.repeat_encoded_batch(encoded, chunk.sample_count)
+        if not self.chunk_passthrough_keys:
+            return self.layout.repeat_encoded_batch(encoded, chunk.sample_count)
+        passthrough = set(self.chunk_passthrough_keys)
+        return {
+            key: (
+                value
+                if key in passthrough
+                else self.layout.repeat_batch(value, chunk.sample_count)
+            )
+            for key, value in encoded.items()
+        }
 
     def build_prepare_kwargs(
         self,

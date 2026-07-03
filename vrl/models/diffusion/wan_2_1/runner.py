@@ -18,12 +18,13 @@ import torch
 
 from vrl.models.diffusion.common import (
     DiffusionBackboneInput,
+    DiffusionBackboneRunnerBase,
     DiffusionBranch,
 )
 from vrl.models.diffusion.common.tensors import require_tensor
 
 
-class WanDiffusionBackboneRunner:
+class WanDiffusionBackboneRunner(DiffusionBackboneRunnerBase):
     """Map Wan transformer kwargs into the shared backbone contract."""
 
     cfg_mode = "batched_cfg"
@@ -43,27 +44,7 @@ class WanDiffusionBackboneRunner:
             encoder_hidden_states=embeds,
         )
 
-    def postprocess_branch(
-        self,
-        request: DiffusionBackboneInput,
-        branch: DiffusionBranch,
-        raw_output: torch.Tensor,
-    ) -> torch.Tensor:
-        del request, branch
-        return raw_output
-
-    def finalize_noise_pred(
-        self,
-        request: DiffusionBackboneInput,
-        combined: torch.Tensor,
-        cond: torch.Tensor,
-        uncond: torch.Tensor,
-    ) -> torch.Tensor:
-        del request, cond, uncond
-        return combined
-
-
-class WanI2VDiffusionBackboneRunner:
+class WanI2VDiffusionBackboneRunner(DiffusionBackboneRunnerBase):
     """Map Wan 2.1 I2V transformer kwargs into the shared backbone contract.
 
     Differences from T2V runner:
@@ -123,26 +104,6 @@ class WanI2VDiffusionBackboneRunner:
             encoder_hidden_states=embeds,
             extra_kwargs=extra_kwargs,
         )
-
-    def postprocess_branch(
-        self,
-        request: DiffusionBackboneInput,
-        branch: DiffusionBranch,
-        raw_output: torch.Tensor,
-    ) -> torch.Tensor:
-        del request, branch
-        return raw_output
-
-    def finalize_noise_pred(
-        self,
-        request: DiffusionBackboneInput,
-        combined: torch.Tensor,
-        cond: torch.Tensor,
-        uncond: torch.Tensor,
-    ) -> torch.Tensor:
-        del request, cond, uncond
-        return combined
-
 
 def _batch_align_tensor(value: torch.Tensor, batch_size: int) -> torch.Tensor:
     if value.shape[0] == batch_size:

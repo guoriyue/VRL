@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import Literal
 
-import torch
 
 from vrl.models.diffusion.common import (
     DiffusionBackboneInput,
+    DiffusionBackboneRunnerBase,
     DiffusionBranch,
 )
 from vrl.models.diffusion.common.tensors import require_tensor
@@ -43,7 +43,7 @@ def _candidate_transformers(transformer: object) -> tuple[object, ...]:
     return tuple(candidates)
 
 
-class SD3DiffusionBackboneRunner:
+class SD3DiffusionBackboneRunner(DiffusionBackboneRunnerBase):
     """Map SD3 transformer kwargs into the shared backbone contract."""
 
     cfg_mode = "batched_cfg"
@@ -69,24 +69,3 @@ class SD3DiffusionBackboneRunner:
             encoder_hidden_states=embeds,
             extra_kwargs={"pooled_projections": pooled},
         )
-
-    def postprocess_branch(
-        self,
-        request: DiffusionBackboneInput,
-        branch: DiffusionBranch,
-        raw_output: torch.Tensor,
-    ) -> torch.Tensor:
-        del request, branch
-        return raw_output
-
-    def finalize_noise_pred(
-        self,
-        request: DiffusionBackboneInput,
-        combined: torch.Tensor,
-        cond: torch.Tensor,
-        uncond: torch.Tensor,
-    ) -> torch.Tensor:
-        del request, cond, uncond
-        return combined
-
-

@@ -252,6 +252,20 @@ def build_sd3_5_replay_runtime_bundle_from_cfg(cfg, device, wd): ...  # 2 行包
 > - echo/anima 不采用（非 pipeline-backed：LTX wrapper / 单文件 checkpoint），留在 `DiffusionModelBase`。
 > - 新家族增益：SANA 等 model.py 不再写这 8 个成员，只写 from_spec + 四个生成抽象方法 + replay 投影。
 > - 验证：**439 passed** + 8 类继承/override 断言抽查。
+
+> **薄化第七轮（2026-07-02）——runner/executor 层：no-op 骨架与 base 等价 override 清除**：
+> - **executor 侧关键发现**：`DiffusionChunkExecutorBase.build_chunk_encoded` 的默认实现
+>   （`repeat_encoded_batch`：非 tensor/None/已对齐 batch 自动 passthrough）**已经与 sd3_5 / wan-T2V /
+>   wan-I2V / predict2_5 / echo 的 override 行为等价**——5 个 override 是纯冗余，全删。flux 的唯一差异
+>   （`text_ids` [seq,3] 无 batch 维不能 repeat）改为**数据**：base 新增 `chunk_passthrough_keys`
+>   类属性，flux 只写 `("text_ids",)` 一行。保留的 2 个 override 各有真逻辑：predict2（从
+>   generation_request 兜底 reference_image）、cosmos3（batch=1 全 passthrough 语义）。
+> - **runner 侧**：`common/backbone.py` 新增 `DiffusionBackboneRunnerBase`（no-op `postprocess_branch`
+>   / `finalize_noise_pred`），5 个 runner 类继承并删掉逐字相同的 no-op（sd3/flux/wan-T2V/wan-I2V 各删
+>   2 个、qwen 删 1 个）。runner 剩下的全是真差异：`build_branch` 的 kwargs 映射（各家 transformer
+>   签名不同）+ qwen 的范数保持 CFG 数学。
+> - 净 **-216 行**（+67/-283）。验证：**537 passed**（首次含全量 `tests/generation`）。
+> - 新家族增益：SANA 的 executor 大概率零方法（qwen 同款，纯类属性）；runner 只写 `build_branch`。
 > **遗留审计项**：predict2_5 写入 caps 的 `supports_diffusion_nft` **全仓库无读取方**（dead cap，
 > 按 dead-field 规则应删或补上本该存在的校验）；cosmos/wan/echo/anima 系 caps 无 `family_capability`
 > 键与 sd3/flux/qwen 不一致（行为无差——`capabilities.py:177` 缺键回落 registry 声明——但契约分裂）。

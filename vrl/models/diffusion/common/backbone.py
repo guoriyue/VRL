@@ -81,6 +81,37 @@ class DiffusionBackboneRunner(Protocol):
         ...
 
 
+class DiffusionBackboneRunnerBase:
+    """No-op defaults for the two optional runner hooks.
+
+    Every family runner must map kwargs in ``build_branch``, but most have
+    nothing to do after the transformer call: ``postprocess_branch`` and
+    ``finalize_noise_pred`` were byte-identical identity methods across
+    sd3_5/flux/wan. They live here once; a runner overrides only when it does
+    real math (qwen_image's norm-preserving CFG rescale in
+    ``finalize_noise_pred``).
+    """
+
+    def postprocess_branch(
+        self,
+        request: DiffusionBackboneInput,
+        branch: DiffusionBranch,
+        raw_output: torch.Tensor,
+    ) -> torch.Tensor:
+        del request, branch
+        return raw_output
+
+    def finalize_noise_pred(
+        self,
+        request: DiffusionBackboneInput,
+        combined: torch.Tensor,
+        cond: torch.Tensor,
+        uncond: torch.Tensor,
+    ) -> torch.Tensor:
+        del request, cond, uncond
+        return combined
+
+
 class DiffusionBackboneCaller:
     """Run one diffusion transformer step with shared CFG orchestration."""
 

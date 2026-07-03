@@ -17,12 +17,13 @@ import torch
 
 from vrl.models.diffusion.common import (
     DiffusionBackboneInput,
+    DiffusionBackboneRunnerBase,
     DiffusionBranch,
 )
 from vrl.models.diffusion.common.tensors import require_tensor
 
 
-class QwenImageDiffusionBackboneRunner:
+class QwenImageDiffusionBackboneRunner(DiffusionBackboneRunnerBase):
     """Map Qwen-Image transformer kwargs into the shared backbone contract."""
 
     cfg_mode = "separate_cfg"
@@ -53,15 +54,6 @@ class QwenImageDiffusionBackboneRunner:
             encoder_hidden_states=embeds,
             extra_kwargs=extra_kwargs,
         )
-
-    def postprocess_branch(
-        self,
-        request: DiffusionBackboneInput,
-        branch: DiffusionBranch,
-        raw_output: torch.Tensor,
-    ) -> torch.Tensor:
-        del request, branch
-        return raw_output
 
     def finalize_noise_pred(
         self,

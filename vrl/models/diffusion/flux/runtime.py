@@ -8,13 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.generation.diffusion import (
-    DiffusionChunkExecutorBase,
-    DiffusionSamplingParams,
-)
-from vrl.generation.diffusion.layout import VideoGenerationRequest
-from vrl.generation.execution.chunks import SampleChunk
-from vrl.generation.types import GenerationRequest
+from vrl.generation.diffusion import DiffusionChunkExecutorBase
 from vrl.models.diffusion.build import (
     build_diffusion_replay_runtime_bundle,
     build_diffusion_runtime_bundle,
@@ -156,6 +150,9 @@ class FluxChunkExecutor(DiffusionChunkExecutorBase):
     family_capability = FLUX_FAMILY_CAPABILITY
     default_num_frames: int = 1
     default_max_sequence_length: int = 512
+    # ``text_ids`` is batch-shared (shape [seq, 3], no batch dim) — repeating
+    # it would corrupt its leading dim, so the base repeat path skips it.
+    chunk_passthrough_keys: tuple[str, ...] = ("text_ids",)
 
     def __init__(
         self,
@@ -165,36 +162,6 @@ class FluxChunkExecutor(DiffusionChunkExecutorBase):
     ) -> None:
         self.model = model
         self.default_samples_per_chunk = max(1, int(samples_per_chunk))
-
-    def build_chunk_encoded(
-        self,
-        *,
-        encoded: dict[str, Any],
-        generation_request: GenerationRequest,
-        video_request: VideoGenerationRequest,
-        params: DiffusionSamplingParams,
-        chunk: SampleChunk,
-    ) -> dict[str, Any]:
-        """Repeat FLUX prompt/pooled embeds across the chunk batch.
-
-        ``text_ids`` is batch-shared (shape ``[seq, 3]``, no batch dim), so it is
-        passed through unrepeated — repeating it would corrupt its leading dim.
-        """
-
-        del generation_request, video_request, params
-        chunk_g = chunk.sample_count
-        return {
-            "prompt_embeds": self.layout.repeat_batch(
-                encoded["prompt_embeds"],
-                chunk_g,
-            ),
-            "pooled_prompt_embeds": self.layout.repeat_batch(
-                encoded["pooled_prompt_embeds"],
-                chunk_g,
-            ),
-            "text_ids": encoded["text_ids"],
-        }
-
 
 __all__ = [
     "FluxChunkExecutor",

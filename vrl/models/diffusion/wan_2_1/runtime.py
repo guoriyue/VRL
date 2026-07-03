@@ -9,14 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.generation.diffusion import (
-    DiffusionChunkExecutorBase,
-    DiffusionSamplingParams,
-)
+from vrl.generation.diffusion import DiffusionChunkExecutorBase
 from vrl.generation.diffusion.executor import ReferenceConditionedChunks
-from vrl.generation.diffusion.layout import VideoGenerationRequest
-from vrl.generation.execution.chunks import SampleChunk
-from vrl.generation.types import GenerationRequest
 from vrl.models.diffusion.build import build_diffusion_runtime_bundle
 from vrl.models.diffusion.capabilities import diffusion_family_capability
 from vrl.models.interfaces.runtime import (
@@ -231,34 +225,6 @@ class Wan_2_1ChunkExecutor(DiffusionChunkExecutorBase):
         self.model = model
         self.default_samples_per_chunk = max(1, int(samples_per_chunk))
 
-    def build_chunk_encoded(
-        self,
-        *,
-        encoded: dict[str, Any],
-        generation_request: GenerationRequest,
-        video_request: VideoGenerationRequest,
-        params: DiffusionSamplingParams,
-        chunk: SampleChunk,
-    ) -> dict[str, Any]:
-        """Repeat Wan text embeds across the chunk batch."""
-
-        del generation_request, video_request, params
-        chunk_g = chunk.sample_count
-        chunk_encoded: dict[str, Any] = {
-            "prompt_embeds": self.layout.repeat_batch(
-                encoded["prompt_embeds"],
-                chunk_g,
-            ),
-        }
-        neg = encoded.get("negative_prompt_embeds")
-        if neg is not None:
-            chunk_encoded["negative_prompt_embeds"] = self.layout.repeat_batch(
-                neg,
-                chunk_g,
-            )
-        return chunk_encoded
-
-
 class Wan_2_1I2VChunkExecutor(ReferenceConditionedChunks, DiffusionChunkExecutorBase):
     """Diffusion executor for Wan 2.1 image-to-video rollouts."""
 
@@ -278,43 +244,6 @@ class Wan_2_1I2VChunkExecutor(ReferenceConditionedChunks, DiffusionChunkExecutor
         self.model = model
         self.reference_image = reference_image
         self.default_samples_per_chunk = max(1, int(samples_per_chunk))
-
-    def build_chunk_encoded(
-        self,
-        *,
-        encoded: dict[str, Any],
-        generation_request: GenerationRequest,
-        video_request: VideoGenerationRequest,
-        params: DiffusionSamplingParams,
-        chunk: SampleChunk,
-    ) -> dict[str, Any]:
-        """Repeat encoded tensors across K samples and keep the image handle shared."""
-
-        del generation_request, video_request, params
-        chunk_g = chunk.sample_count
-        chunk_encoded: dict[str, Any] = {
-            "prompt_embeds": self.layout.repeat_batch(
-                encoded["prompt_embeds"],
-                chunk_g,
-            ),
-            "reference_image": encoded.get("reference_image"),
-        }
-        neg = encoded.get("negative_prompt_embeds")
-        if neg is not None:
-            chunk_encoded["negative_prompt_embeds"] = self.layout.repeat_batch(
-                neg,
-                chunk_g,
-            )
-        else:
-            chunk_encoded["negative_prompt_embeds"] = None
-        image_embeds = encoded.get("image_embeds")
-        if image_embeds is not None:
-            chunk_encoded["image_embeds"] = self.layout.repeat_batch(
-                image_embeds,
-                chunk_g,
-            )
-        return chunk_encoded
-
 
 def _task_variant_from_cfg(cfg: Any) -> str:
     explicit = cfg_get(cfg.model, "task_variant", None)

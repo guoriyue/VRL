@@ -11,15 +11,15 @@ from __future__ import annotations
 
 from typing import Literal
 
-import torch
 
 from vrl.models.diffusion.common import (
     DiffusionBackboneInput,
+    DiffusionBackboneRunnerBase,
     DiffusionBranch,
 )
 
 
-class FluxDiffusionBackboneRunner:
+class FluxDiffusionBackboneRunner(DiffusionBackboneRunnerBase):
     """Map FLUX transformer kwargs into the shared backbone contract.
 
     FLUX's MMDiT takes packed image latents plus rotary position ids
@@ -52,22 +52,3 @@ class FluxDiffusionBackboneRunner:
             encoder_hidden_states=request.prompt_embeds,
             extra_kwargs=extra_kwargs,
         )
-
-    def postprocess_branch(
-        self,
-        request: DiffusionBackboneInput,
-        branch: DiffusionBranch,
-        raw_output: torch.Tensor,
-    ) -> torch.Tensor:
-        del request, branch
-        return raw_output
-
-    def finalize_noise_pred(
-        self,
-        request: DiffusionBackboneInput,
-        combined: torch.Tensor,
-        cond: torch.Tensor,
-        uncond: torch.Tensor,
-    ) -> torch.Tensor:
-        del request, cond, uncond
-        return combined

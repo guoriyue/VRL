@@ -5,6 +5,7 @@ from vrl.models.diffusion.common.backbone import (
     DiffusionBackboneInput,
     DiffusionBackboneOutput,
     DiffusionBackboneRunner,
+    DiffusionBackboneRunnerBase,
 )
 from vrl.models.diffusion.common.cfg import (
     DiffusionBranch,
@@ -35,6 +36,7 @@ __all__ = [
     "DiffusionBackboneInput",
     "DiffusionBackboneOutput",
     "DiffusionBackboneRunner",
+    "DiffusionBackboneRunnerBase",
     "DiffusionBranch",
     "DiffusionBranchBatch",
     "LatentDecodeSpec",
