@@ -204,6 +204,27 @@ def test_all_experiments_load_and_validate() -> None:
         validate_training_config(cfg)
 
 
+def test_validate_rejects_compile_with_gradient_checkpointing() -> None:
+    """compile x grad-ckpt must fail at config load, not as a mid-run dynamo crash.
+
+    The trainer refuses the combination at startup (activation_checkpointing.py);
+    this checks validate_training_config rejects it too, because a model-layer
+    torch_compile.enable=true default can silently flip compile on underneath an
+    experiment that sets checkpointing (that exact collision shipped in four
+    cosmos_predict2 240p recipes before this load-time check existed).
+    """
+    base = "experiment/diffusion/sd3_5/online_grpo_ocr"  # resolves compile=true
+
+    for ckpt in ("true", "full", "selective"):
+        cfg = load_config(base, overrides=[f"actor.gradient_checkpointing={ckpt}"])
+        with pytest.raises(ValueError, match="cannot combine"):
+            validate_training_config(cfg)
+
+    # Explicit off (either spelling) keeps compile allowed.
+    cfg = load_config(base, overrides=["actor.gradient_checkpointing=off"])
+    validate_training_config(cfg)
+
+
 @pytest.mark.parametrize(
     "name",
     [

@@ -341,6 +341,13 @@ def validate_training_config(cfg: DictConfig) -> None:
     from vrl.config.precision import resolve_precision_policy
 
     resolve_precision_policy(cfg)
+    # compile x grad-checkpointing is refused at trainer startup; check it here
+    # too so the collision fails at config load (where the all-experiments test
+    # sees it) — a model-layer torch_compile.enable=true default can silently
+    # flip compile on underneath an experiment that needs checkpointing.
+    from vrl.trainers.activation_checkpointing import require_compile_checkpointing_compatible
+
+    require_compile_checkpointing_compatible(cfg)
     if bool(OmegaConf.select(cfg, "production.kling_video_reward.enabled", default=False)):
         validate_production_kling_video_reward_config(cfg)
 

@@ -83,6 +83,48 @@ def _normalize_gradient_checkpointing(value: Any) -> str:
     )
 
 
+def resolve_gradient_checkpointing_mode(cfg: DictConfig) -> str:
+    """The recipe's effective checkpointing mode: off | full | selective.
+
+    Optional key: base yaml no longer restates the dataclass default, so an
+    absent key means "use the TrainerConfig default" — derived, not copied.
+    """
+
+    from vrl.trainers.core.types import TrainerConfig
+
+    enabled = OmegaConf.select(cfg, "actor.gradient_checkpointing")
+    if enabled is None:
+        enabled = TrainerConfig.__dataclass_fields__["gradient_checkpointing"].default
+    return _normalize_gradient_checkpointing(enabled)
+
+
+def require_compile_checkpointing_compatible(cfg: DictConfig) -> None:
+    """Refuse model.torch_compile.enable=true combined with grad-checkpointing.
+
+    compile + manual checkpointing collide: torch.compile traces
+    torch.utils.checkpoint into an InternalTorchDynamoError (measured for both
+    full and selective/SAC), and inductor's AOTAutograd min-cut partitioner
+    already does automatic selective recompute -- so compiling makes manual
+    checkpointing both broken and redundant. Mirrors the FSDP+compile guard in
+    trainers/strategy.py. Called from BOTH the runtime apply below and
+    config-load validation (validate_training_config): a model-layer default can
+    flip compile on underneath a ckpt recipe, so the collision must fail at load
+    time (where config tests see it), not as a cryptic mid-run dynamo crash.
+    """
+
+    mode = resolve_gradient_checkpointing_mode(cfg)
+    if mode == "off":
+        return
+    if bool(OmegaConf.select(cfg, "model.torch_compile.enable")):
+        raise ValueError(
+            f"actor.gradient_checkpointing={mode!r} cannot combine with "
+            "model.torch_compile.enable=true: torch.compile traces "
+            "torch.utils.checkpoint into an InternalTorchDynamoError, and its min-cut "
+            "partitioner already does automatic selective recompute. Pick one — compile "
+            "alone (preferred when it fits memory), or eager + checkpointing.",
+        )
+
+
 def enable_transformer_gradient_checkpointing(
     bundle: Any,
     cfg: DictConfig,
@@ -98,32 +140,10 @@ def enable_transformer_gradient_checkpointing(
     never silently, so the run log states what it actually got.
     """
 
-    from vrl.trainers.core.types import TrainerConfig
-
-    # Optional key: base yaml no longer restates the dataclass default, so an
-    # absent key means "use the TrainerConfig default" — derived, not copied.
-    enabled = OmegaConf.select(cfg, "actor.gradient_checkpointing")
-    if enabled is None:
-        enabled = TrainerConfig.__dataclass_fields__["gradient_checkpointing"].default
-    mode = _normalize_gradient_checkpointing(enabled)
+    mode = resolve_gradient_checkpointing_mode(cfg)
     if mode == "off":
         return
-
-    # compile + manual checkpointing collide: torch.compile traces
-    # torch.utils.checkpoint into an InternalTorchDynamoError (measured for both
-    # full and selective/SAC), and inductor's AOTAutograd min-cut partitioner
-    # already does automatic selective recompute -- so compiling makes manual
-    # checkpointing both broken and redundant. Fail at config time with an
-    # actionable message instead of a cryptic mid-run dynamo crash. Mirrors the
-    # FSDP+compile guard in trainers/strategy.py.
-    if bool(OmegaConf.select(cfg, "model.torch_compile.enable")):
-        raise ValueError(
-            f"actor.gradient_checkpointing={mode!r} cannot combine with "
-            "model.torch_compile.enable=true: torch.compile traces "
-            "torch.utils.checkpoint into an InternalTorchDynamoError, and its min-cut "
-            "partitioner already does automatic selective recompute. Pick one — compile "
-            "alone (preferred when it fits memory), or eager + checkpointing.",
-        )
+    require_compile_checkpointing_compatible(cfg)
 
     trainable_modules = getattr(bundle, "trainable_modules", None) or {
         "transformer": bundle.model.transformer,
@@ -151,5 +171,7 @@ def enable_transformer_gradient_checkpointing(
 
 __all__ = [
     "enable_transformer_gradient_checkpointing",
+    "require_compile_checkpointing_compatible",
+    "resolve_gradient_checkpointing_mode",
     "selective_checkpoint_func",
 ]

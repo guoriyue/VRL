@@ -20,6 +20,12 @@ defaults:
 
 model:
   use_lora: false
+  # Compile OFF: it cannot combine with gradient_checkpointing (torch.compile traces
+  # torch.utils.checkpoint into an InternalTorchDynamoError - see activation_checkpointing.py),
+  # and 240p full-param on 32GB NEEDS grad-ckpt for memory, so we take the eager+checkpointing
+  # branch and forgo compile's ~1.25x. predict2_2b defaults torch_compile.enable=true.
+  torch_compile:
+    enable: false
 
 actor:
   optim:
