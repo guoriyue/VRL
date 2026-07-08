@@ -41,6 +41,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out", default=None, help="save first output image/frame here")
     parser.add_argument("--check-replay", action="store_true")
     parser.add_argument(
+        "--deterministic",
+        action="store_true",
+        help="ODE sampling (no SDE noise) — matches the reference pipeline output",
+    )
+    parser.add_argument(
         "--offload",
         action="store_true",
         help="move the text encoder to CPU after encode (large-family probes)",
@@ -108,6 +113,11 @@ def main() -> None:
     generator = torch.Generator(device=device)
     generator.manual_seed(args.seed)
 
+    # The probe verifies the forward rollout only — no backward pass — so the
+    # whole loop runs under inference_mode (the trainable transformer would
+    # otherwise accumulate 8 steps of activation graphs and OOM at decode).
+    ctx = torch.inference_mode()
+    ctx.__enter__()
     first_step: dict[str, Any] = {}
     logprobs = []
     for step_idx in range(args.steps):
@@ -118,7 +128,8 @@ def main() -> None:
             out["noise_pred"].float(),
             timestep.unsqueeze(0),
             state.latents.float(),
-            generator=generator,
+            generator=None if args.deterministic else generator,
+            deterministic=args.deterministic,
             step_index=step_idx,
         )
         if step_idx == 0 and args.check_replay:
