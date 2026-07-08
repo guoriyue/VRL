@@ -245,6 +245,29 @@ def build_tiny_hunyuan_video_transformer(*, seed: int = 0) -> Any:
     )
 
 
+TINY_MOCHI_LATENT_SHAPE = (2, 4, 3, 8, 8)
+TINY_MOCHI_TEXT_DIM = 16
+
+
+def build_tiny_mochi_transformer(*, seed: int = 0) -> Any:
+    """Tiny real ``MochiTransformer3DModel`` on CPU, cache-free (config-init)."""
+
+    from diffusers import MochiTransformer3DModel
+
+    torch.manual_seed(seed)
+    return MochiTransformer3DModel(
+        patch_size=2,
+        num_attention_heads=2,
+        attention_head_dim=8,
+        num_layers=1,
+        pooled_projection_dim=16,
+        in_channels=TINY_MOCHI_LATENT_SHAPE[1],
+        text_embed_dim=TINY_MOCHI_TEXT_DIM,
+        time_embed_dim=8,
+        max_sequence_length=16,
+    )
+
+
 TINY_QWEN_IN_CHANNELS = 16
 TINY_QWEN_JOINT_DIM = 16
 

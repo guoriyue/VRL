@@ -1,0 +1,23 @@
+# Mochi-1 10B AsymmDiT — checkpoint, LoRA. T5-XXL parks on CPU (from_spec).
+model:
+  family: mochi
+  path: genmo/mochi-1-preview
+
+  memory:
+    vae_decode:
+      tiling: true
+      slicing: true
+
+  use_lora: true
+  lora:
+    rank: 16
+    alpha: 32
+    target_modules:
+      - to_k
+      - to_q
+      - to_v
+      - to_out.0
+
+  torch_compile:
+    enable: false
+    mode: default

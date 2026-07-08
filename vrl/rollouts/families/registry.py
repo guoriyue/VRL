@@ -287,6 +287,26 @@ register_rollout_family(
 
 register_rollout_family(
     _diffusion_entry(
+        family="mochi",
+        task="t2v",
+        aliases=("mochi_1",),
+        executor_cls="vrl.models.diffusion.mochi.runtime:MochiChunkExecutor",
+        runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
+        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
+        request_prefix="mochi",
+        default_task_type="text_to_video",
+        build=DiffusionFamilyBuild(
+            model_cls="vrl.models.diffusion.mochi.model:MochiModel",
+            replay_cls="vrl.models.diffusion.mochi.model:MochiReplayModel",
+            transformer_classname="MochiTransformer3DModel",
+            task_variant="t2v",
+            memory_owner="Mochi VAE",
+        ),
+    ),
+)
+
+register_rollout_family(
+    _diffusion_entry(
         family="wan_2_1",
         task="t2v",
         aliases=("wan",),

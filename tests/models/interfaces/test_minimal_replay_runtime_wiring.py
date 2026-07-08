@@ -135,7 +135,7 @@ def test_diffusion_replay_builders_return_minimal_bundles(
         _ = bundle.model.pipeline
 
 
-@pytest.mark.parametrize("family", ["sd3_5", "qwen_image", "flux", "cosmos-predict2", "sana", "lumina2", "hunyuan_video"])
+@pytest.mark.parametrize("family", ["sd3_5", "qwen_image", "flux", "cosmos-predict2", "sana", "lumina2", "hunyuan_video", "mochi"])
 def test_registry_descriptor_replay_builder_returns_minimal_bundle(
     monkeypatch: pytest.MonkeyPatch,
     family: str,
