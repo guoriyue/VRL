@@ -217,6 +217,34 @@ def build_tiny_lumina2_transformer(*, seed: int = 0) -> Any:
     )
 
 
+TINY_HUNYUAN_VIDEO_LATENT_SHAPE = (2, 4, 3, 8, 8)
+TINY_HUNYUAN_VIDEO_TEXT_DIM = 16
+TINY_HUNYUAN_VIDEO_POOLED_DIM = 8
+
+
+def build_tiny_hunyuan_video_transformer(*, seed: int = 0) -> Any:
+    """Tiny real ``HunyuanVideoTransformer3DModel`` on CPU, cache-free."""
+
+    from diffusers import HunyuanVideoTransformer3DModel
+
+    torch.manual_seed(seed)
+    return HunyuanVideoTransformer3DModel(
+        in_channels=TINY_HUNYUAN_VIDEO_LATENT_SHAPE[1],
+        out_channels=TINY_HUNYUAN_VIDEO_LATENT_SHAPE[1],
+        num_attention_heads=2,
+        attention_head_dim=8,
+        num_layers=1,
+        num_single_layers=1,
+        num_refiner_layers=1,
+        patch_size=2,
+        patch_size_t=1,
+        guidance_embeds=True,
+        text_embed_dim=TINY_HUNYUAN_VIDEO_TEXT_DIM,
+        pooled_projection_dim=TINY_HUNYUAN_VIDEO_POOLED_DIM,
+        rope_axes_dim=(2, 4, 2),
+    )
+
+
 TINY_QWEN_IN_CHANNELS = 16
 TINY_QWEN_JOINT_DIM = 16
 

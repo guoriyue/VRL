@@ -267,6 +267,26 @@ register_rollout_family(
 
 register_rollout_family(
     _diffusion_entry(
+        family="hunyuan_video",
+        task="t2v",
+        aliases=("hunyuanvideo",),
+        executor_cls="vrl.models.diffusion.hunyuan_video.runtime:HunyuanVideoChunkExecutor",
+        runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
+        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
+        request_prefix="hunyuan_video",
+        default_task_type="text_to_video",
+        build=DiffusionFamilyBuild(
+            model_cls="vrl.models.diffusion.hunyuan_video.model:HunyuanVideoModel",
+            replay_cls="vrl.models.diffusion.hunyuan_video.model:HunyuanVideoReplayModel",
+            transformer_classname="HunyuanVideoTransformer3DModel",
+            task_variant="t2v",
+            memory_owner="HunyuanVideo VAE",
+        ),
+    ),
+)
+
+register_rollout_family(
+    _diffusion_entry(
         family="wan_2_1",
         task="t2v",
         aliases=("wan",),

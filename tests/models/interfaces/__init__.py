@@ -33,6 +33,10 @@ FAMILY_MODEL_CLASSES: dict[str, tuple[str, str]] = {
         "vrl.models.diffusion.sd3_5.model:SD3_5Model",
         "vrl.models.diffusion.sd3_5.model:SD3_5ReplayModel",
     ),
+    "hunyuan_video": (
+        "vrl.models.diffusion.hunyuan_video.model:HunyuanVideoModel",
+        "vrl.models.diffusion.hunyuan_video.model:HunyuanVideoReplayModel",
+    ),
     "lumina2": (
         "vrl.models.diffusion.lumina2.model:Lumina2Model",
         "vrl.models.diffusion.lumina2.model:Lumina2ReplayModel",

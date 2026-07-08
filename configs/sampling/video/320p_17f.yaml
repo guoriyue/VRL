@@ -1,0 +1,6 @@
+# Small validation shape: 320x320, 17 frames (4x temporal compression + 1).
+sampling:
+  width: 320
+  height: 320
+  num_frames: 17
+  max_sequence_length: 256

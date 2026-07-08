@@ -1,0 +1,6 @@
+# Shared denoise preset for guidance-distilled models: 10 steps, guidance 6.0
+# rides the transformer's guidance embedding (no CFG branch).
+sampling:
+  num_steps: 10
+  guidance_scale: 6.0
+  cfg: false

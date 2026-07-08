@@ -1,0 +1,25 @@
+# HunyuanVideo 13B guidance-distilled DiT — checkpoint, LoRA.
+# 25.6 GB bf16 transformer: LoRA-only on 32 GB cards; the LLaMA-8B text
+# encoder is parked on CPU by from_spec.
+model:
+  family: hunyuan_video
+  path: hunyuanvideo-community/HunyuanVideo
+
+  memory:
+    vae_decode:
+      tiling: true
+      slicing: true
+
+  use_lora: true
+  lora:
+    rank: 16
+    alpha: 32
+    target_modules:
+      - to_k
+      - to_q
+      - to_v
+      - to_out.0
+
+  torch_compile:
+    enable: false
+    mode: default
