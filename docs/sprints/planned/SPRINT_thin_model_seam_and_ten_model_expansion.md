@@ -1,8 +1,15 @@
 # SPRINT: 薄化模型 seam + 十个新模型扩张（diffusion + AR，含 GLM-Image）
 
-状态：**planned（2026-06-30）**。性质：**架构瘦身重构（Phase 0）+ 模型覆盖扩张（Phase 1，10 个）**。
+状态：**Phase 0 收官（2026-07-07，全部合入 main）；Phase 1 未开始（0/10）**。
+性质：**架构瘦身重构（Phase 0）+ 模型覆盖扩张（Phase 1，10 个）**。
 承接 [[SPRINT_model_family_coverage]]（覆盖度 index）与 [[SPRINT_physical_ai_model_support]]（优先级边界）。
-本 sprint 是**可落地**的：Phase 0 一次性重构，Phase 1 每小时接一个模型（配 hourly loop trigger，见 §6）。
+
+> **Phase 0 终局对账（2026-07-07）**：11 轮薄化，净删 ~1500 行样板；descriptor 家族 5 个
+> （sd3_5/qwen_image/predict2_5/wan_2_1/wan_2_1_i2v rollout）；diffusion runner 归零；AR 装配线归一；
+> capability 全仓单一构造点；死键/死函数两轮全仓扫描零命中。**挂条件延期项**（非遗漏）：
+> ① per-family train.py ×6（多带真 recipe 差异，纯 GRPO 的可再审）② executor-as-data（等 owner 决策）
+> ③ AR chunk 模板化（等 5 个 AR 家族）④ echo compile/fp8 GPU 验证（80GB 卡）⑤ cosmos caps 契约统一
+> （行为无差）⑥ SamplingState 基类（已设计未做）。**下一步 = Phase 1 接 SANA**（[[SPRINT_sana_t2i]]）。
 
 ## 0. 一句话
 
