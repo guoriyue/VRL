@@ -388,22 +388,22 @@ SANA → Lumina2 → Emu3 → HunyuanVideo → Mochi-1 → GLM-Image → Hunyuan
 
 ### 3.1 Tier A — T2I 扩散（纯 diffusion seam，最省）
 
-- [ ] **1. SANA** → [[SPRINT_sana_t2i]] — 1.6B linear-DiT + DC-AE，**已核对 seam 吻合**，
+- [x] **1. SANA**（2026-07-08 GPU 验证：探针 rollout + replay parity 0 误差 + 与 SanaPipeline 同 seed 视觉一致） → [[SPRINT_sana_t2i]] — 1.6B linear-DiT + DC-AE，**已核对 seam 吻合**，
   Phase 0 之后第一个薄接样例（模板 qwen_image）。
-- [ ] **2. PixArt-Σ** → [[SPRINT_pixart_sigma_t2i]] — ⚠️ **epsilon-prediction 非 flow-matching**，
+- [x] **2. PixArt-Σ**（code-landed c06dd987；DDIM 门已开 db97675c；GPU 探针待权重） → [[SPRINT_pixart_sigma_t2i]] — ⚠️ **epsilon-prediction 非 flow-matching**，
   须先过 DDIM logprob 门（门 A 扩展 / 门 B 换模型）。
-- [ ] **3. Lumina-Image 2.0** → [[SPRINT_lumina_image_2_t2i]] — 2.6B flow-matching + Gemma-2，
+- [x] **3. Lumina-Image 2.0**（code-landed eb9e7e25；GPU 探针待权重） → [[SPRINT_lumina_image_2_t2i]] — 2.6B flow-matching + Gemma-2，
   与 SANA 同形状类，排 SANA 之后增量最小。
 - [ ] **4. HunyuanImage-2.1** → [[SPRINT_hunyuan_image_2_1_t2i]] — ~17B 双编码器（MLLM+byT5），
   LoRA-only，T2I 侧最重，diffusers 支持须先验证。
 
 ### 3.2 Tier B — T2V 视频扩散（套 Wan/Cosmos 5D 潜变量 seam）
 
-- [ ] **5. HunyuanVideo** → [[SPRINT_hunyuan_video_t2v]] — 13B flow-matching，embedded-guidance
+- [x] **5. HunyuanVideo**（code-landed 051b5f83；GPU 探针待权重） → [[SPRINT_hunyuan_video_t2v]] — 13B flow-matching，embedded-guidance
   单分支（runner 照 flux）× 5D 布局（照 wan）。
-- [ ] **6. CogVideoX** → [[SPRINT_cogvideox_t2v]] — ⚠️ **v-prediction 非 flow-matching**，与 PixArt-Σ
+- [x] **6. CogVideoX**（code-landed f2616506，v-pred 走 sde_type=ddim；GPU 探针待权重） → [[SPRINT_cogvideox_t2v]] — ⚠️ **v-prediction 非 flow-matching**，与 PixArt-Σ
   共享 DDIM logprob 门（另加 v-pred 分支）。GLM 系 T2V。
-- [ ] **7. Mochi-1** → [[SPRINT_mochi_1_t2v]] — 10B AsymmDiT 真 flow-matching + 真 CFG，
+- [x] **7. Mochi-1**（code-landed 70d18b3c，倒 sigma 标准化；GPU 探针待权重） → [[SPRINT_mochi_1_t2v]] — 10B AsymmDiT 真 flow-matching + 真 CFG，
   T2V 里调度器最干净，预期 rollout/replay 都能委托共享 builder。
 
 ### 3.3 Tier C — AR（自回归，套 janus_pro/nextstep_1 seam + ARModelBase）
