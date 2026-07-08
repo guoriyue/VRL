@@ -1,6 +1,17 @@
 # SPRINT: 薄化模型 seam + 十个新模型扩张（diffusion + AR，含 GLM-Image）
 
-状态：**Phase 0 收官（2026-07-07，全部合入 main）；Phase 1 未开始（0/10）**。
+状态：**Phase 0 收官（2026-07-07）；Phase 1 完成（2026-07-08，10/10 落地 + 真权重 rollout 验证）**。
+
+> **Phase 1 验证记录（2026-07-08，RTX 5090 32GB + CPU 兜底）**：探针 = `vrl/scripts/diffusion/generate.py`
+> （生产 `sde_step_with_logprob` 循环 + first-step replay parity）/ AR 家族用 executor 直驱。
+> 10/10 全部 replay parity **0.0e+00**（AR 家族由 rollout↔teacher-forced 等值测试锁定）：
+> SANA（与 SanaPipeline 同 seed 视觉一致）、Lumina-Image-2（摄影级输出）、PixArt-Σ（ddim 阶梯首战）、
+> HunyuanImage-2.1（17B CPU 验证）、HunyuanVideo（13B + tiled decode）、Mochi（倒 sigma 标准化实证）、
+> CogVideoX（v-pred ddim + BFCHW）、Emu3（4163 受限 token 直出高质量图）、LlamaGen（vendored GPT 256 token）、
+> GLM-Image（transformers 5.13 升级后落地；9B AR 采样 + 冻结 DiT 解码链路真权重端到端，
+> 原生分辨率质量跑需 18GB 空卡）。
+> **栈变更**：transformers 4.57.6 → **5.13.0**（GLM-Image 硬依赖；两处兼容修复：cache_rows 的
+> legacy-cache 适配、emu3 replay loader 的 shard-index 遍历；全套件 672 passed）。
 性质：**架构瘦身重构（Phase 0）+ 模型覆盖扩张（Phase 1，10 个）**。
 承接 [[SPRINT_model_family_coverage]]（覆盖度 index）与 [[SPRINT_physical_ai_model_support]]（优先级边界）。
 
@@ -394,7 +405,7 @@ SANA → Lumina2 → Emu3 → HunyuanVideo → Mochi-1 → GLM-Image → Hunyuan
   须先过 DDIM logprob 门（门 A 扩展 / 门 B 换模型）。
 - [x] **3. Lumina-Image 2.0**（code-landed eb9e7e25；GPU 探针待权重） → [[SPRINT_lumina_image_2_t2i]] — 2.6B flow-matching + Gemma-2，
   与 SANA 同形状类，排 SANA 之后增量最小。
-- [ ] **4. HunyuanImage-2.1** → [[SPRINT_hunyuan_image_2_1_t2i]] — ~17B 双编码器（MLLM+byT5），
+- [x] **4. HunyuanImage-2.1**（GPU 验证 2026-07-08：17B CPU 探针 parity 0） → [[SPRINT_hunyuan_image_2_1_t2i]] — ~17B 双编码器（MLLM+byT5），
   LoRA-only，T2I 侧最重，diffusers 支持须先验证。
 
 ### 3.2 Tier B — T2V 视频扩散（套 Wan/Cosmos 5D 潜变量 seam）
@@ -408,12 +419,12 @@ SANA → Lumina2 → Emu3 → HunyuanVideo → Mochi-1 → GLM-Image → Hunyuan
 
 ### 3.3 Tier C — AR（自回归，套 janus_pro/nextstep_1 seam + ARModelBase）
 
-- [ ] **8. GLM-Image** ⭐ → [[SPRINT_glm_image_ar_t2i]] — **用户点名**。9B AR + 7B frozen diffusion
+- [x] **8. GLM-Image** ⭐ → [[SPRINT_glm_image_ar_t2i]] — **用户点名**。9B AR + 7B frozen diffusion
   decoder，只训 AR 段（LoRA）；两个 KILL-RISK 门（语义 token logprob 可达性、decoder 后处理定位）。
   建议 Emu3 之后接。
-- [ ] **9. Emu3** → [[SPRINT_emu3_ar_t2i]] — 8B 纯 next-token（transformers 原生类），GLM-Image 的
+- [x] **9. Emu3** → [[SPRINT_emu3_ar_t2i]] — 8B 纯 next-token（transformers 原生类），GLM-Image 的
   前置压力测试；技术点是约束解码要挂进 RL 采样。
-- [ ] **10. LlamaGen** → [[SPRINT_llamagen_ar_t2i]] — 学术基线，无 HF 原生类（零-vendor 优先：
+- [x] **10. LlamaGen** → [[SPRINT_llamagen_ar_t2i]] — 学术基线，无 HF 原生类（零-vendor 优先：
   LLaMA 架构尝试 `LlamaForCausalLM` 复现）；优先级最低，vendor 成本超标可降级关闭。
 
 ### 3.4 覆盖平衡校验
