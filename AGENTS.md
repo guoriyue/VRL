@@ -62,6 +62,52 @@
 - When proposing cleanup, explicitly list what should change, what should stay unchanged, why each thin function or ALL_CAPS constant is necessary or not, and non-goals where consistency is more valuable than LOC reduction.
 - Every field of a **derived/resolved struct** ("compute once, read everywhere" — e.g. `Resolved*`, `*Capability`) must have a **non-logging consumer**: a control-flow branch, a value passed to a runtime/config/Ray call, or a validation that can raise. A field whose only readers are `format_*`/log builders or tests is a dead field — delete it, OR (if its log line carries genuinely un-derivable provenance, like the full visible-GPU pool) keep it and annotate the field at its definition as `display/provenance-only`. A field that is neither behavior-consumed nor explicitly marked display-only is dead and should be removed. This mirrors the ALL_CAPS rule above: the consumer is the source of truth — a field nobody reads silently rots, and for user-facing config keys it is worse (a no-op knob the user sets expecting an effect).
 
+### Dead Code Audit — the five forms
+
+Learned the hard way during the thin-model-seam sprint (2026-07): a "zero
+callers" sweep is **necessary but not sufficient**. "This is genuinely
+family-specific / can't be folded" verdicts are only valid after reading the
+**function body**, not the call site — two wrong verdicts in that sprint
+(predict2_5's dead metadata keys masquerading as family logic, cosmos3's
+`_apply_train_knobs` masquerading as a custom build branch) both came from
+judging by the caller. Audit every suspect against all five forms:
+
+1. **Zero callers.** The obvious one — but grep must exclude the definition,
+   include tests separately (test-only callers make it TEST-ONLY, which per the
+   dead-field rule is still dead), and cover `module:function` string
+   references (registries, launch contracts, e2e harnesses dispatch by dotted
+   string — a plain-symbol grep misses them).
+2. **Live callers, dead semantics.** The function runs, but a branch's inputs
+   no longer have producers. Example: a task-variant normalizer whose alias
+   set (`image_to_video`, …) had zero producers left after the config knob
+   feeding it was deleted — the function reduced to one comparison. Check:
+   for each branch, who can still produce the input that selects it?
+3. **Single-caller concept splits.** One decision spread across two private
+   functions where the second has exactly one caller (the first). Merge them —
+   a decision should read top-to-bottom in one place. Distinguish from
+   *justified* single-caller helpers: lazy-import boundaries and
+   concept-naming extractions from long flows stay (see the thin-function
+   keep-list above).
+4. **Body identical to an existing shared implementation.** A hand-copied
+   private helper whose body IS the shared builder/base-class sequence
+   (sometimes with the steps in a subtly wrong order — cosmos3 ran
+   quantization after compile, hiding the fp8 modules from inductor). Diff the
+   body against the shared implementation before ruling "custom".
+5. **Reimplementing a dependency's internals.** Hand-walking the HF hub cache
+   layout (`models--org--name/snapshots`, mtime-max "latest") instead of
+   calling `hf_hub_download`; anything that hardcodes another library's
+   directory/format/protocol internals. Replace with the library call —
+   prior-art rule applies to dependencies too.
+
+Same forms apply to **data**: bundle/metadata keys, `runtime_caps` keys, and
+config knobs are dead when no reader exists (`grep -rnF 'metadata["key"]'` +
+`.get("key"` — plain regex greps corrupt the brackets and match everything).
+Duplicate construction sites are the data twin of form 4: information the
+registry already encodes must not be re-derived at runtime (wan re-resolved
+its t2v/i2v variant from cfg although family selection had already picked the
+registry entry; capabilities were constructed both registry-side and
+family-side). One construction site; everyone else imports or is handed it.
+
 ### Long-term Assets vs One-shot Validation
 
 - Distinguish **one-shot validation artifacts** (KILL-RISK gates, feasibility spikes, smoke probes, scratch datasets, intermediate manifests, throwaway logs) from **long-term assets** (production tools, configs, dataset generators, tests, model wrappers, sprint docs, entrypoints). Both deliver value, but follow different lifecycles.
