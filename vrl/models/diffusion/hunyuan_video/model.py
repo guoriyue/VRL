@@ -126,8 +126,11 @@ class HunyuanVideoModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBac
             text_encoder.to("cpu", dtype=frozen_dtype)
         text_encoder_2 = getattr(pipeline, "text_encoder_2", None)
         if text_encoder_2 is not None:
+            # The pipeline's encode_prompt drives BOTH encoders on one device;
+            # CLIP-L on GPU + LLaMA on CPU mixes devices inside one call, so
+            # the tiny pooled encoder parks on CPU with the LLaMA.
             text_encoder_2.requires_grad_(False)
-            text_encoder_2.to(spec.device, dtype=frozen_dtype)
+            text_encoder_2.to("cpu", dtype=frozen_dtype)
         pipeline.vae.to(spec.device, dtype=torch.float32)
         return cls(
             pipeline=pipeline,

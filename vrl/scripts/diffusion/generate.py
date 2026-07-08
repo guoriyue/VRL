@@ -37,8 +37,20 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--guidance-scale", type=float, default=4.5)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--dtype", default="bfloat16")
+    parser.add_argument(
+        "--device",
+        default=None,
+        help="cuda/cpu (default: cuda if available). cpu lets a >VRAM model "
+        "verify rollout correctness slowly",
+    )
     parser.add_argument("--max-sequence-length", type=int, default=None)
     parser.add_argument("--out", default=None, help="save first output image/frame here")
+    parser.add_argument(
+        "--sde-type",
+        default="flow_grpo",
+        choices=["flow_grpo", "cps", "ddim"],
+        help="log-prob math family (ddim for alphas-ladder checkpoints)",
+    )
     parser.add_argument("--check-replay", action="store_true")
     parser.add_argument(
         "--deterministic",
@@ -69,7 +81,11 @@ def main() -> None:
 
     family = normalize_rollout_family(args.family)
     entry = get_rollout_family_entry(family)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device(
+        args.device
+        if args.device is not None
+        else ("cuda" if torch.cuda.is_available() else "cpu"),
+    )
     dtype = getattr(torch, args.dtype)
 
     spec = RuntimeBuildSpec(
@@ -78,7 +94,13 @@ def main() -> None:
         dtype=dtype,
         family=family,
         task_variant=entry.build.task_variant if entry.build else None,
-        model_config={"path": args.path, "use_lora": False},
+        model_config={
+            "path": args.path,
+            "use_lora": False,
+            # Probe-scale decode safety: tiled/sliced VAE decode keeps the
+            # decode inside whatever VRAM the resident transformer left over.
+            "memory": {"vae_decode": {"tiling": True, "slicing": True}},
+        },
         sampling_config={"num_steps": args.steps},
     )
     print(f"[probe] building {family} bundle from {args.path} ...")
@@ -130,6 +152,7 @@ def main() -> None:
             state.latents.float(),
             generator=None if args.deterministic else generator,
             deterministic=args.deterministic,
+            sde_type=args.sde_type,
             step_index=step_idx,
         )
         if step_idx == 0 and args.check_replay:
@@ -188,6 +211,7 @@ def main() -> None:
             first_step["timestep"].unsqueeze(0),
             first_step["latents"].float(),
             prev_sample=first_step["prev_sample"].float(),
+            sde_type=args.sde_type,
             step_index=0,
         )
         lp_err = (sde.log_prob - first_step["log_prob"]).abs().max()
