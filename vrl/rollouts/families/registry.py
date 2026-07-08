@@ -188,10 +188,17 @@ register_rollout_family(
         task="t2i",
         aliases=("flux_1_dev",),
         executor_cls="vrl.models.diffusion.flux.runtime:FluxChunkExecutor",
-        runtime_builder="vrl.models.diffusion.flux.runtime:build_flux_runtime_bundle",
-        runtime_spec_extractor="vrl.models.diffusion.flux.runtime:extract_flux_runtime_spec",
+        runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
+        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
         request_prefix="flux",
         default_task_type="text_to_image",
+        build=DiffusionFamilyBuild(
+            model_cls="vrl.models.diffusion.flux.model:FluxModel",
+            task_variant="t2i",
+            memory_owner="FLUX VAE",
+            replay_cls="vrl.models.diffusion.flux.model:FluxReplayModel",
+            transformer_classname="FluxTransformer2DModel",
+        ),
     ),
 )
 

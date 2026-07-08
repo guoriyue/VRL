@@ -531,6 +531,17 @@ GPU，让某一跳能跑生成 parity；(b) 转为**有人值守**逐个接（�
 > - 验证：**623 passed**。descriptor 家族名册：sd3_5、qwen_image、cosmos-predict2.5、**wan_2_1、
 >   wan_2_1_i2v（rollout 侧）**。
 
+> **薄化第十二轮（2026-07-07）——flux 升级第六个 descriptor 家族；builder hook 机制退役**：
+> - **判决修正**：flux 的两个 hook 装的都是模型知识（runner 合并同款论证）——NFT `previous` adapter
+>   搬进 `FluxModel.apply_lora`（配置驱动：`model.nft_previous_adapter: true`，from_spec/prepare_replay
+>   双守卫拦全参）；动态时间步搬进 `FluxReplayModel.prepare_replay`（`DiffusionModelBase` 新增 no-op
+>   协议，generic replay builder 构造后统一调用）。
+> - **hook 参数退役**：`after_lora`/`after_construct` 随唯一用户消失，从共享 builder 签名删除。
+> - flux runtime.py 173→41 行（仅 executor）；train_flux_grpo 删除（== generic recipe，4 个 GRPO yaml
+>   切 `train_diffusion_grpo`）；NFT recipe 保留（真差异：无 reference model）但 build 转发走 generic，
+>   其实验 yaml 增加 `nft_previous_adapter: true`。
+> - descriptor 名册：sd3_5、qwen_image、predict2_5、wan×2、**flux**。验证：**623 passed**。
+
 ## 附录：AR executor 层组织设计（2026-07-02，已实施——见薄化第十轮）
 
 ### 事实基础（全部引用到行级）

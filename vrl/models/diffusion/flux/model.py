@@ -141,6 +141,12 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
         """Load the diffusers FLUX pipeline + freeze non-trainable modules."""
         from diffusers import FluxPipeline
 
+        if (spec.model_config or {}).get("nft_previous_adapter") and not spec.use_lora:
+            raise RuntimeError(
+                "model.nft_previous_adapter requires LoRA (the frozen previous "
+                "adapter is a PEFT adapter); set model.use_lora=true.",
+            )
+
         model_dtype = resolve_torch_dtype(spec.dtype)
         # Frozen text encoders / VAE follow the ``frozen`` precision axis, same
         # contract as SD3: fp16 when the denoiser runs fp32, else the model dtype.
@@ -187,6 +193,18 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
     # the trainable adapter, forward-evaluated under no_grad and refreshed by
     # weight copy each optimizer step (never optimized). Call ``attach_*`` after
     # the normal LoRA attach (``self.transformer`` must already carry ``default``).
+
+    def apply_lora(self, spec: Any) -> None:
+        """Attach LoRA; opt into the DiffusionNFT ``previous`` mirror via config.
+
+        ``model.nft_previous_adapter: true`` (the NFT recipes' switch) builds the
+        frozen ``previous`` adapter right after the trainable ``default`` — model
+        knowledge that used to ride the builders' ``after_lora`` hook. GRPO
+        configs leave the key unset and pay nothing.
+        """
+        super().apply_lora(spec)
+        if bool((spec.model_config or {}).get("nft_previous_adapter", False)):
+            self.attach_previous_policy_adapter(spec)
 
     def attach_previous_policy_adapter(self, spec: Any) -> None:
         """Build the frozen ``previous`` adapter, seeded from ``default``.
@@ -626,6 +644,30 @@ class FluxReplayModel(ReplayRolloutStubs, FluxModel):
         self.transformer = transformer
         self._scheduler = scheduler
         self._device = device
+
+    def prepare_replay(self, spec: Any) -> None:
+        """Set the mu-shifted replay timesteps FLUX's dynamic scheduler needs.
+
+        The replay scheduler was loaded WITHOUT timesteps (mu unknown in the
+        generic loader). The replay SDE log-prob math reads scheduler.sigmas +
+        index_for_timestep, so the replay scheduler must carry the SAME
+        mu-shifted schedule the rollout used. Resolution is fixed per run, so
+        derive the packed image_seq_len from it and set the dynamic timesteps
+        now — identical to the rollout's prepare_sampling. (debug.first_step
+        asserts old==new log-prob, so any drift here surfaces immediately.)
+        FLUX packs an 8x VAE + 2x2 patch grid: seq_len = (H // 16) * (W // 16).
+        """
+        if (spec.model_config or {}).get("nft_previous_adapter") and not spec.use_lora:
+            raise RuntimeError(
+                "model.nft_previous_adapter requires LoRA (the frozen previous "
+                "adapter is a PEFT adapter); set model.use_lora=true.",
+            )
+        sampling = spec.sampling_config or {}
+        num_steps = spec.num_steps
+        height, width = sampling.get("height"), sampling.get("width")
+        if num_steps is not None and height and width:
+            image_seq_len = (int(height) // 16) * (int(width) // 16)
+            self._set_dynamic_timesteps(int(num_steps), image_seq_len, spec.device)
 
     @property
     def pipeline(self) -> Any:

@@ -46,7 +46,7 @@ rollout:
     window_range: [0, 4]
 
 trainer:
-  entrypoint: vrl.scripts.diffusion.flux.train:train_flux_grpo
+  entrypoint: vrl.scripts.diffusion.train:train_diffusion_grpo
   output_dir: outputs/flux_ocr_grpo_smoke_single_gpu
   total_epochs: 1
   save_freq: 9999

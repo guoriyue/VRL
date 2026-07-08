@@ -95,6 +95,16 @@ class DiffusionModelBase(nn.Module, ABC):
         """Rebuild private sampling state for trainer replay."""
         raise NotImplementedError
 
+    def prepare_replay(self, spec: Any) -> None:
+        """Family hook run once by the replay builder right after construction.
+
+        Default no-op. FLUX overrides it to set its dynamic-shift replay
+        timesteps (the replay scheduler must carry the same mu-shifted schedule
+        the rollout used); the spec carries the sampling block it derives from.
+        """
+        del spec
+        return None
+
     def replay_forward(
         self,
         batch: Any,

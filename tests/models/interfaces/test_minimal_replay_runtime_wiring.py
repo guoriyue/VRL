@@ -85,10 +85,6 @@ def _spec(**overrides: Any) -> RuntimeBuildSpec:
     ("module_path", "builder_name"),
     [
         (
-            "vrl.models.diffusion.flux.runtime",
-            "build_flux_replay_runtime_bundle",
-        ),
-        (
             "vrl.models.diffusion.wan_2_1.runtime",
             "build_wan_2_1_replay_runtime_bundle",
         ),
@@ -144,7 +140,7 @@ def test_diffusion_replay_builders_return_minimal_bundles(
         _ = bundle.model.pipeline
 
 
-@pytest.mark.parametrize("family", ["sd3_5", "qwen_image"])
+@pytest.mark.parametrize("family", ["sd3_5", "qwen_image", "flux"])
 def test_registry_descriptor_replay_builder_returns_minimal_bundle(
     monkeypatch: pytest.MonkeyPatch,
     family: str,

@@ -63,4 +63,6 @@ trainer:
   debug: { first_step: true }  # the NFT lr=0 advantage-flip invariant
   eval: { enabled: true, freq: 32, samples_per_prompt: 2, max_prompts: 32, seed: 20260621 }
 
-model: { torch_compile: { enable: false } }
+# nft_previous_adapter builds the frozen NFT previous-policy LoRA mirror
+# (FluxModel.apply_lora); required by algorithm.kind=diffusion_nft.
+model: { torch_compile: { enable: false }, nft_previous_adapter: true }

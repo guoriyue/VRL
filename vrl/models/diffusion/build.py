@@ -51,7 +51,6 @@ def build_diffusion_runtime_bundle(
     capability: FamilyCapability,
     memory_owner: str,
     supports_reference_conditioning: bool = False,
-    after_lora: Callable[[object, RuntimeBuildSpec], None] | None = None,
     runtime_caps: dict[str, object] | None = None,
     extra_metadata: Callable[[object, RuntimeBuildSpec], dict[str, object]] | None = None,
 ) -> RuntimeBundle:
@@ -62,10 +61,9 @@ def build_diffusion_runtime_bundle(
     ``scheduler`` / ``raw_handle`` properties). ``memory_owner`` labels the VAE
     in the generation memory policy log.
 
-    ``after_lora`` is a family extension hook run once after ``apply_lora`` (LoRA
-    path only). FLUX uses it to attach the frozen DiffusionNFT ``previous``
-    adapter; families with no such step leave it ``None``. Keeping it a hook
-    means the generic body never learns family-specific concepts.
+    Family build-time extras (FLUX's DiffusionNFT ``previous`` adapter) are
+    model knowledge and live in the family's ``apply_lora`` override, not in
+    builder hooks.
 
     ``runtime_caps``, when given, replaces the default caps dict verbatim. The
     cosmos families historically publish caps WITHOUT ``family_capability``
@@ -89,8 +87,6 @@ def build_diffusion_runtime_bundle(
                 lora_config["rank"],
                 lora_config["alpha"],
             )
-        if after_lora is not None:
-            after_lora(model, spec)
     else:
         model.apply_full_finetune()
 
@@ -150,8 +146,6 @@ def build_diffusion_replay_runtime_bundle(
     capability: FamilyCapability,
     scheduler_classname: str | None = None,
     supports_reference_conditioning: bool = False,
-    after_construct: Callable[[object, RuntimeBuildSpec], None] | None = None,
-    after_lora: Callable[[object, RuntimeBuildSpec], None] | None = None,
     runtime_caps: dict[str, object] | None = None,
     extra_metadata: Callable[[object, RuntimeBuildSpec], dict[str, object]] | None = None,
 ) -> RuntimeBundle:
@@ -166,11 +160,9 @@ def build_diffusion_replay_runtime_bundle(
     that diffusers scheduler instead (Cosmos Predict2.5 ships UniPC, and replay
     must recompute log-probs under the same schedule the rollout sampled with).
 
-    Two family extension hooks keep family-specific replay logic out of the
-    generic body: ``after_construct`` runs right after the replay model is built
-    (FLUX sets its dynamic-shift timesteps here); ``after_lora`` runs after
-    ``apply_lora`` on the LoRA path (FLUX attaches the frozen NFT ``previous``
-    adapter). Families needing neither leave both ``None``.
+    Right after construction the builder calls ``model.prepare_replay(spec)``
+    (a ``DiffusionModelBase`` no-op) so a family can finish replay-only setup
+    with the spec in hand — FLUX sets its dynamic-shift timesteps there.
 
     ``runtime_caps`` / ``extra_metadata`` follow the rollout builder's contract
     (verbatim caps override; family metadata merged over generic keys).
@@ -186,13 +178,10 @@ def build_diffusion_replay_runtime_bundle(
         device=spec.device,
     )
 
-    if after_construct is not None:
-        after_construct(model, spec)
+    model.prepare_replay(spec)
 
     if spec.use_lora:
         model.apply_lora(spec)
-        if after_lora is not None:
-            after_lora(model, spec)
     else:
         enable_transformer_full_finetune(model)
 
