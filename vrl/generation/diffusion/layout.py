@@ -280,8 +280,10 @@ class DiffusionRequestLayout:
     @staticmethod
     def _parse_sde_type(value: Any) -> str:
         sde_type = str(value)
-        if sde_type not in {"flow_grpo", "cps"}:
-            raise ValueError("sampling.sde_type must be 'flow_grpo' or 'cps'")
+        if sde_type not in {"flow_grpo", "cps", "ddim"}:
+            raise ValueError(
+                "sampling.sde_type must be 'flow_grpo', 'cps', or 'ddim'",
+            )
         return sde_type
 
     @staticmethod

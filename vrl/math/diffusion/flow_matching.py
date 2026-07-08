@@ -52,6 +52,26 @@ def sde_step_with_logprob(
     ``sqrt_neg_dt`` are flow-domain quantities on every path, which keeps
     ratios, parity checks, and KL comparable across model families.
     """
+    if sde_type == "ddim":
+        # DDPM-family checkpoints (PixArt-Sigma, CogVideoX) live on an
+        # alphas_cumprod ladder, not rectified-flow sigmas; forward to the
+        # DDIM eta-SDE so every call site keeps this one entry point.
+        from vrl.math.diffusion.ddim import ddim_step_with_logprob
+
+        return ddim_step_with_logprob(
+            scheduler,
+            model_output,
+            timestep,
+            sample,
+            prev_sample=prev_sample,
+            generator=generator,
+            deterministic=deterministic,
+            return_dt=return_dt,
+            noise_level=noise_level,
+            math_dtype=math_dtype,
+            step_index=step_index,
+        )
+
     import torch
     from diffusers.utils.torch_utils import randn_tensor
 
