@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import contextlib
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -384,11 +383,10 @@ def test_anima_runtime_spec_uses_explicit_local_paths() -> None:
     assert replay.model_config["transformer_path"] == "/models/anima/transformer.safetensors"
 
 
-def test_anima_runtime_spec_rejects_hf_repo_id_without_cached_artifacts(
+def test_anima_artifact_resolution_fails_loud_when_hub_fetch_fails(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
 ) -> None:
-    """Checks Anima runtime spec rejects HF repo ID without cached artifacts."""
+    """Hub-fetch failure surfaces the config knob, not a raw download error."""
     from vrl.config.loading import load_config
     from vrl.models.diffusion.cosmos.anima.runtime import extract_anima_replay_runtime_spec
 
@@ -400,8 +398,16 @@ def test_anima_runtime_spec_rejects_hf_repo_id_without_cached_artifacts(
         ],
     )
     spec = extract_anima_replay_runtime_spec(cfg, "cpu", torch.float32)
-    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "empty_hf_cache"))
-    monkeypatch.delenv("HF_HOME", raising=False)
+
+    # Resolution delegates to hf_hub_download (auto-fetch, same contract as
+    # from_pretrained); when the hub fetch fails the error names the config
+    # knob to set instead of leaking a bare download traceback.
+    import huggingface_hub
+
+    def _refuse(*_args: Any, **_kwargs: Any) -> str:
+        raise OSError("offline")
+
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", _refuse)
 
     with pytest.raises(ValueError, match=r"model\.path='circlestone-labs/Anima'"):
         spec.model_config["transformer_path"] = ""

@@ -7,7 +7,6 @@ plus a learned LLM adapter before feeding Cosmos' 1024-wide text context.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import random
@@ -592,6 +591,13 @@ def _resolve_artifact(
     relative_file: str,
     field_name: str,
 ) -> str:
+    """Resolve one single-file checkpoint artifact.
+
+    Precedence: explicit config path > local checkpoint root > the HF hub via
+    ``hf_hub_download`` (cache hit or download — the same auto-fetch contract
+    every ``from_pretrained`` family gets; the previous hand-rolled snapshot
+    scan duplicated hub internals and refused to download).
+    """
     if explicit_path:
         return explicit_path
     if not (root and relative_file):
@@ -599,27 +605,15 @@ def _resolve_artifact(
     root_path = Path(root).expanduser()
     if root_path.exists() or root.startswith(("/", "./", "../", "~")):
         return str(root_path / relative_file)
-    # Search HF hub cache for the most recent snapshot containing required_file.
-    hub_cache = os.environ.get("HF_HUB_CACHE")
-    hf_home = os.environ.get("HF_HOME")
-    if hub_cache:
-        hf_root = Path(hub_cache).expanduser()
-    elif hf_home:
-        hf_root = Path(hf_home).expanduser() / "hub"
-    else:
-        hf_root = Path.home() / ".cache" / "huggingface" / "hub"
-    snapshots_dir = hf_root / ("models--" + root.replace("/", "--")) / "snapshots"
-    if snapshots_dir.is_dir():
-        candidates = [
-            p for p in snapshots_dir.iterdir()
-            if p.is_dir() and (p / relative_file).exists()
-        ]
-        if candidates:
-            return str(max(candidates, key=lambda p: p.stat().st_mtime) / relative_file)
-    raise ValueError(
-        f"model.path={root!r} is not a local root and no cached HF snapshot "
-        f"contains {relative_file!r}; set model.{field_name}",
-    )
+    from huggingface_hub import hf_hub_download
+
+    try:
+        return hf_hub_download(repo_id=root, filename=relative_file)
+    except Exception as exc:
+        raise ValueError(
+            f"model.path={root!r} is not a local root and {relative_file!r} "
+            f"could not be fetched from the HF hub; set model.{field_name}",
+        ) from exc
 
 
 __all__ = [
