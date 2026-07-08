@@ -1,0 +1,35 @@
+# HunyuanImage-2.1 17B dual/single-stream MMDiT — checkpoint, LoRA.
+# 17B bf16 transformer = ~34.9 GB > 32 GB VRAM: even LoRA-only cannot hold the
+# frozen bf16 backbone on a single 5090 — single-5090 runs need the fp8
+# quantize/offload plan before this config is usable there. The Qwen2.5-VL-7B
+# (~16.6 GB) and byT5 text encoders are parked on CPU by from_spec.
+model:
+  family: hunyuan_image
+  path: hunyuanvideo-community/HunyuanImage-2.1-Diffusers
+
+  memory:
+    # 32x image VAE decode at 2K-native scale is memory-heavy; tile + slice.
+    vae_decode:
+      tiling: true
+      slicing: true
+
+  use_lora: true
+  lora:
+    rank: 16
+    alpha: 32
+    # Dual-stream blocks expose the standard diffusers projection names plus
+    # the added-KV text-stream projections (verified on
+    # HunyuanImageTransformer2DModel / HunyuanImageAttnProcessor).
+    target_modules:
+      - to_k
+      - to_q
+      - to_v
+      - to_out.0
+      - add_k_proj
+      - add_q_proj
+      - add_v_proj
+      - to_add_out
+
+  torch_compile:
+    enable: false
+    mode: default

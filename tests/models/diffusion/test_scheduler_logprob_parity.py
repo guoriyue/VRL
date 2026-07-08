@@ -108,13 +108,39 @@ _MODEL_CONFIGS_BY_FAMILY = _model_configs_by_family()
 # (vrl/.../cosmos/anima/runtime.py), not downloaded — mirror that construction.
 # Keyed off a registry family so a rename/typo fails the guard below instead of
 # silently dropping anima's cache-free coverage.
-_MANUAL_SCHEDULERS = {"cosmos-predict2-anima": _anima_scheduler}
+def _mochi_scheduler():
+    # Mochi ships invert_sigmas=true (ascending time); the FAMILY standardizes
+    # onto the descending domain before any SDE math runs — mirror that, since
+    # the raw checkpoint table is never what the rollout uses
+    # (vrl/models/diffusion/mochi/model.py:standard_mochi_scheduler).
+    shipped = _load_hf_scheduler("genmo/mochi-1-preview")
+    if shipped is None:
+        return None
+    from vrl.models.diffusion.mochi.model import standard_mochi_scheduler
+
+    scheduler = standard_mochi_scheduler(shipped.config, _NUM_STEPS, "cpu")
+    scheduler._vrl_timesteps_ready = True
+    return scheduler
+
+
+_MANUAL_SCHEDULERS = {
+    "cosmos-predict2-anima": _anima_scheduler,
+    "mochi": _mochi_scheduler,
+}
 assert set(_MANUAL_SCHEDULERS) <= set(_diffusion_families())
+
+# alphas_cumprod-ladder families: their rollout/replay log-probs run through
+# sde_type="ddim", never the flow SDE — the parity invariant is checked there.
+_DDIM_FAMILIES = {"cogvideox", "pixart_sigma"}
+assert _DDIM_FAMILIES <= set(_diffusion_families())
 
 
 def _scheduler_for(family: str):
     if family in _MANUAL_SCHEDULERS:
-        return _MANUAL_SCHEDULERS[family]()
+        scheduler = _MANUAL_SCHEDULERS[family]()
+        if scheduler is None:
+            pytest.skip(f"no cached scheduler config for {family!r}")
+        return scheduler
     # Try the family's configs in order; the first with a cached scheduler wins.
     # path/revision come from the YAML, never re-typed here.
     for cfg_name in _MODEL_CONFIGS_BY_FAMILY.get(family, ()):
@@ -130,6 +156,8 @@ def _set_timesteps(scheduler) -> None:
     # resolution-derived ``mu`` at set_timesteps; the sample<->replay parity
     # invariant is independent of the shift, so pin mu=0 (identity shift) for a
     # deterministic, valid sigma table. Fixed-schedule schedulers ignore mu.
+    if getattr(scheduler, "_vrl_timesteps_ready", False):
+        return  # family construction already set its own ladder (mochi)
     if getattr(scheduler.config, "use_dynamic_shifting", False):
         scheduler.set_timesteps(_NUM_STEPS, mu=0.0)
     else:
@@ -144,9 +172,12 @@ def _timestep(scheduler, step_index: int) -> torch.Tensor:
 @pytest.mark.parametrize("family", sorted(_diffusion_families()))
 def test_family_scheduler_sample_replay_parity(family: str, sde_type: str) -> None:
     """Checks the GRPO ratio==1 invariant on each family's real sigma table."""
+    if family in _DDIM_FAMILIES:
+        if sde_type == "cps":
+            pytest.skip("ddim family: one parity row is enough")
+        sde_type = "ddim"
     scheduler = _scheduler_for(family)
     _set_timesteps(scheduler)
-    assert scheduler.sigmas is not None
 
     # First, middle, and last-but-one step; the final row's sigma_prev is 0 and
     # carries no stochastic step to replay.

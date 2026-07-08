@@ -21,6 +21,8 @@ from vrl.models.ar.janus_pro.runtime import (
     JANUS_PRO_R1_FAMILY_CAPABILITY,
 )
 from vrl.models.ar.nextstep_1.runtime import NEXTSTEP_1_FAMILY_CAPABILITY
+from vrl.models.ar.emu3.runtime import EMU3_FAMILY_CAPABILITY
+from vrl.models.ar.llamagen.runtime import LLAMAGEN_FAMILY_CAPABILITY
 from vrl.models.diffusion.capabilities import diffusion_family_capability
 
 CollectorKind = Literal["diffusion", "ar_discrete", "ar_continuous", "ar_r1"]
@@ -307,6 +309,26 @@ register_rollout_family(
 
 register_rollout_family(
     _diffusion_entry(
+        family="hunyuan_image",
+        task="t2i",
+        aliases=("hunyuanimage_2_1",),
+        executor_cls="vrl.models.diffusion.hunyuan_image.runtime:HunyuanImageChunkExecutor",
+        runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
+        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
+        request_prefix="hunyuan_image",
+        default_task_type="text_to_image",
+        build=DiffusionFamilyBuild(
+            model_cls="vrl.models.diffusion.hunyuan_image.model:HunyuanImageModel",
+            replay_cls="vrl.models.diffusion.hunyuan_image.model:HunyuanImageReplayModel",
+            transformer_classname="HunyuanImageTransformer2DModel",
+            task_variant="t2i",
+            memory_owner="HunyuanImage VAE",
+        ),
+    ),
+)
+
+register_rollout_family(
+    _diffusion_entry(
         family="pixart_sigma",
         task="t2i",
         aliases=("pixart",),
@@ -572,6 +594,50 @@ register_rollout_family(
             import_path="vrl.models.ar.nextstep_1.runtime:NextStep1ChunkGatherer",
         ),
         capability=NEXTSTEP_1_FAMILY_CAPABILITY,
+    ),
+)
+
+register_rollout_family(
+    RolloutFamilyEntry(
+        family="emu3",
+        task="ar_t2i",
+        aliases=("emu3_gen",),
+        collector=CollectorMetadata(
+            kind="ar_discrete",
+            request_prefix="emu3",
+            return_artifacts=_default_return_artifacts,
+        ),
+        executor_cls="vrl.models.ar.emu3.runtime:Emu3ChunkExecutor",
+        runtime_builder="vrl.models.ar.emu3.runtime:build_emu3_runtime_bundle",
+        runtime_spec_extractor=(
+            "vrl.models.ar.emu3.runtime:extract_emu3_runtime_spec"
+        ),
+        gatherer=GathererMetadata(
+            import_path="vrl.models.ar.emu3.runtime:Emu3ChunkGatherer",
+        ),
+        capability=EMU3_FAMILY_CAPABILITY,
+    ),
+)
+
+register_rollout_family(
+    RolloutFamilyEntry(
+        family="llamagen",
+        task="ar_t2i",
+        aliases=("llamagen_t2i",),
+        collector=CollectorMetadata(
+            kind="ar_discrete",
+            request_prefix="llamagen",
+            return_artifacts=_default_return_artifacts,
+        ),
+        executor_cls="vrl.models.ar.llamagen.runtime:LlamaGenChunkExecutor",
+        runtime_builder="vrl.models.ar.llamagen.runtime:build_llamagen_runtime_bundle",
+        runtime_spec_extractor=(
+            "vrl.models.ar.llamagen.runtime:extract_llamagen_runtime_spec"
+        ),
+        gatherer=GathererMetadata(
+            import_path="vrl.models.ar.llamagen.runtime:LlamaGenChunkGatherer",
+        ),
+        capability=LLAMAGEN_FAMILY_CAPABILITY,
     ),
 )
 

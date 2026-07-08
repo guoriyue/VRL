@@ -272,7 +272,9 @@ class LlamaGenModel(ARModelBase):
                 f"caption ids must be padded to cls_token_num="
                 f"{self.config.cls_token_num}; got length {input_ids.shape[1]}"
             )
-        t5_device = next(self.t5_encoder.parameters()).device
+        # Parameter-less test stubs fall back to the ids' device.
+        t5_param = next(iter(self.t5_encoder.parameters()), None)
+        t5_device = t5_param.device if t5_param is not None else input_ids.device
         outputs = self.t5_encoder(
             input_ids=input_ids.to(t5_device),
             attention_mask=attention_mask.to(t5_device),
@@ -333,9 +335,9 @@ class LlamaGenModel(ARModelBase):
         # (vendored Attention consults ``kv_cache`` whenever it is set).
         self._clear_kv_caches()
 
-        B, L_img = image_token_ids.shape
+        L_img = image_token_ids.shape[1]
         T = caption_embeds.shape[1]
-        if T != trunk.cls_token_num:
+        if trunk.cls_token_num != T:
             raise ValueError(
                 f"caption prefix length {T} != trunk cls_token_num {trunk.cls_token_num}"
             )
