@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -15,6 +16,8 @@ from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.dependencies import require_ray
 from vrl.ray.lifecycle import kill_actors, remove_placement_group
 from vrl.ray.placement import RolePlacement
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -75,6 +78,11 @@ class RayGenerationRuntime(GenerationRuntime):
         # bubble. Default False keeps the safe draining barrier. Read as a plain
         # attribute (not a method) via RolloutLifecycle.supports_non_draining_weight_sync.
         self.supports_non_draining_weight_sync = False
+        # Resolved by the startup chunk-size probe on the first request that
+        # carries sampling.samples_per_chunk == "auto"; a run-level constant
+        # (same shape + same contract budget), so lease sleep/relaunch cycles
+        # never re-probe.
+        self._probed_samples_per_chunk: int | None = None
 
     @classmethod
     def with_release_after_collect(
@@ -120,10 +128,19 @@ class RayGenerationRuntime(GenerationRuntime):
         # Lease mode requires driver-model offload, which already hard-fails the
         # continuous schedule, so non-draining never applies here.
         runtime.supports_non_draining_weight_sync = False
+        runtime._probed_samples_per_chunk = None
         return runtime
 
     async def generate(self, request: GenerationRequest) -> GenerationOutput:
         runtime = await self._ensure_runtime()
+        if request.sampling.get("samples_per_chunk") == "auto":
+            # Resolve BEFORE delegating so the lease's inner runtime (rebuilt
+            # across cycles) never sees "auto"; the facade caches the verdict.
+            resolved = await self._resolve_probed_samples_per_chunk(runtime, request)
+            request = replace(
+                request,
+                sampling={**dict(request.sampling), "samples_per_chunk": resolved},
+            )
         if runtime is not self:
             return await runtime.generate(request)
         if self.executor is None:
@@ -131,6 +148,86 @@ class RayGenerationRuntime(GenerationRuntime):
         if request.policy_version is None and self.current_policy_version is not None:
             request = replace(request, policy_version=self.current_policy_version)
         return await self.executor.execute(request)
+
+    async def _resolve_probed_samples_per_chunk(
+        self,
+        runtime: RayGenerationRuntime,
+        request: GenerationRequest,
+    ) -> int:
+        """Run the startup chunk-size probe once and cache the verdict.
+
+        vLLM shape (EngineCore init -> determine_available_memory): sizing runs
+        inside the same launch, before the first real request, user does
+        nothing. Here "startup" is the first generate() because lease-mode
+        workers only exist after _ensure_runtime() launches them lazily. Every
+        worker is probed concurrently (seconds each, homogeneous cards give
+        equal answers); the fleet answer is the min.
+        """
+
+        if self._probed_samples_per_chunk is not None:
+            return self._probed_samples_per_chunk
+        executor = runtime.executor if runtime is not self else self.executor
+        workers = list(getattr(executor, "workers", []) or [])
+        if not workers:
+            raise RuntimeError(
+                "samples_per_chunk: auto found no generation workers to probe",
+            )
+        max_samples = max(1, int(request.samples_per_prompt))
+        fraction = self._rollout_memory_fraction()
+        refs = []
+        local_results: list[dict[str, Any]] = []
+        for worker in workers:
+            probe = getattr(worker.actor, "probe_chunk_size", None)
+            if probe is None:
+                raise RuntimeError(
+                    f"worker {worker.worker_id!r} does not support the "
+                    "chunk-size probe required by samples_per_chunk: auto",
+                )
+            remote = getattr(probe, "remote", None)
+            if callable(remote):
+                refs.append(
+                    remote(request, max_samples=max_samples, memory_fraction=fraction),
+                )
+            else:
+                local_results.append(
+                    probe(request, max_samples=max_samples, memory_fraction=fraction),
+                )
+        if refs:
+            ray = require_ray()
+            local_results.extend(ray.get(refs, timeout=600))
+        resolved = min(int(result["samples_per_chunk"]) for result in local_results)
+        for result in local_results:
+            logger.info(
+                "chunk-size probe: n=%d (budget=%.0fMB fraction=%.2f trials=%s)",
+                int(result["samples_per_chunk"]),
+                result["budget_bytes"] / 2**20,
+                result["memory_fraction"],
+                [
+                    (
+                        trial["label"],
+                        trial["n"],
+                        "OOM"
+                        if trial["oom"]
+                        else f"{trial['peak_bytes'] / 2**20:.0f}MB/{trial['wall_s']:.1f}s",
+                    )
+                    for trial in result["trials"]
+                ],
+            )
+        self._probed_samples_per_chunk = resolved
+        return resolved
+
+    def _rollout_memory_fraction(self) -> float | None:
+        """Contract GPU share for rollout (colocated trainer timeshare), if known.
+
+        The probe must budget against this contract, not instantaneous free
+        memory: at probe time a colocated trainer has not restored its weights
+        yet, so free memory overestimates what rollout may keep.
+        """
+
+        state = self._release_after_collect
+        if state is None or state.config.resources is None:
+            return None
+        return state.config.resources.rollout_gpu_memory_fraction
 
     def is_colocated(self) -> bool:
         state = self._release_after_collect

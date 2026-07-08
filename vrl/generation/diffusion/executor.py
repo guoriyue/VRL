@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Sequence
-from contextlib import nullcontext
+from contextlib import nullcontext, suppress
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -73,6 +73,11 @@ class DiffusionDenoiseConfig:
     # Opt-in rollout-only TeaCache (skip transformer forwards on low-change steps).
     # None = off = the unchanged full-forward path, so the GRPO baseline is exact.
     teacache: TeaCacheConfig | None = None
+    # Startup chunk-size probe only (SPRINT_chunk_size_probe): execute just this
+    # many denoise steps while STILL preallocating full-size trajectory buffers,
+    # so the memory peak is real but a probe trial costs seconds, not minutes.
+    # None = run every step (the unchanged training path).
+    execute_steps: int | None = None
 
 
 @dataclass(slots=True)
@@ -88,6 +93,9 @@ class DiffusionDenoiseResult:
     prev_sample_means: Any | None = None
     ref_noise_preds: Any | None = None
     peak_memory_mb: float | None = None
+    # Partial ChunkMemoryReading fields (denoise phase); decode_denoise_result
+    # completes it with the decode-phase peak. None off-CUDA.
+    memory: dict[str, int] | None = None
     engine_counters: dict[str, Any] = field(default_factory=dict)
 
 
@@ -170,8 +178,52 @@ class DiffusionChunkResult:
     replay_tensors: dict[str, Any]
     context: dict[str, Any]
     peak_memory_mb: float | None = None
+    # Completed ChunkMemoryReading fields for byte-admission shadow telemetry
+    # (see vrl/generation/execution/chunk_placement.py). None off-CUDA.
+    memory: dict[str, int] | None = None
     stage_durations: dict[str, float] = field(default_factory=dict)
     engine_counters: dict[str, Any] = field(default_factory=dict)
+
+
+def _reset_cuda_peak() -> None:
+    """Rezero the per-process CUDA peak counters at a chunk phase boundary.
+
+    Without this, ``max_memory_allocated()`` is a process-lifetime high-water
+    mark: chunk 2's "peak" silently includes chunk 1's decode spike, poisoning
+    the byte-admission calibration data. Per-phase resets make the denoise
+    plateau and decode spike separately attributable (the two coefficients the
+    L2 cost model needs).
+    """
+
+    if torch.cuda.is_available():
+        with suppress(Exception):
+            torch.cuda.reset_peak_memory_stats()
+
+
+def _cuda_phase_peak_bytes() -> int | None:
+    if not torch.cuda.is_available():
+        return None
+    try:
+        return int(torch.cuda.max_memory_allocated())
+    except Exception:
+        return None
+
+
+def _cuda_occupancy_snapshot() -> dict[str, int] | None:
+    """Allocated/reserved/free/total bytes at a phase boundary (None off-CUDA)."""
+
+    if not torch.cuda.is_available():
+        return None
+    try:
+        free_bytes, total_bytes = torch.cuda.mem_get_info()
+        return {
+            "baseline_allocated_bytes": int(torch.cuda.memory_allocated()),
+            "reserved_start_bytes": int(torch.cuda.memory_reserved()),
+            "free_start_bytes": int(free_bytes),
+            "total_bytes": int(total_bytes),
+        }
+    except Exception:
+        return None
 
 
 def preallocate_denoise_buffers(
@@ -719,6 +771,12 @@ class DiffusionChunkExecutorBase(
         model = self.model
         chunk_batch = state.latents.shape[0]
         device = state.latents.device
+        # Byte-admission shadow: baseline = weights + encoded + initial latents
+        # resident before the denoise workspace (trajectory buffers, CFG batch,
+        # fp32 SDE copies) grows on top of it.
+        _reset_cuda_peak()
+        occupancy = _cuda_occupancy_snapshot()
+        latent_bytes = int(state.latents.numel() * state.latents.element_size())
         if config.seed is not None:
             generator = torch.Generator(device=device)
             generator.manual_seed(config.seed + config.sample_start)
@@ -754,8 +812,11 @@ class DiffusionChunkExecutorBase(
         else:
             autocast_ctx = nullcontext()
             rollout_autocast_enabled = False
+        num_steps_to_run = len(state.timesteps)
+        if config.execute_steps is not None:
+            num_steps_to_run = max(1, min(num_steps_to_run, int(config.execute_steps)))
         with autocast_ctx, torch.no_grad():
-            for step_idx in range(len(state.timesteps)):
+            for step_idx in range(num_steps_to_run):
                 with record_function("generation.denoise_step"):
                     with record_function("generation.latent_snapshot"):
                         latents_ori = state.latents.clone()
@@ -864,12 +925,18 @@ class DiffusionChunkExecutorBase(
                                 dtype=buffers.ref_noise_preds.dtype,
                             ),
                         )
-        peak_memory_mb = None
-        if torch.cuda.is_available():
-            try:
-                peak_memory_mb = torch.cuda.max_memory_allocated() / (1024 * 1024)
-            except Exception:
-                peak_memory_mb = None
+        denoise_peak_bytes = _cuda_phase_peak_bytes()
+        peak_memory_mb = (
+            None if denoise_peak_bytes is None else denoise_peak_bytes / (1024 * 1024)
+        )
+        memory = None
+        if occupancy is not None and denoise_peak_bytes is not None:
+            memory = {
+                "sample_count": int(chunk_batch),
+                "latent_bytes": latent_bytes,
+                **occupancy,
+                "denoise_peak_bytes": denoise_peak_bytes,
+            }
 
         return DiffusionDenoiseResult(
             state=state,
@@ -881,6 +948,7 @@ class DiffusionChunkExecutorBase(
             prev_sample_means=buffers.prev_sample_means,
             ref_noise_preds=buffers.ref_noise_preds,
             peak_memory_mb=peak_memory_mb,
+            memory=memory,
             engine_counters={
                 "diffusion_num_denoise_steps": int(buffers.timesteps.shape[1]),
                 "diffusion_samples_per_chunk": int(chunk_batch),
@@ -919,6 +987,9 @@ class DiffusionChunkExecutorBase(
 
         model = self.model
         state = denoise_result.state
+        # Byte-admission shadow: the decode + pack spike is the second memory
+        # phase, measured separately from the denoise plateau.
+        _reset_cuda_peak()
         with record_function("generation.decode_latents"):
             video = model.decode_latents(state.latents)
         # Pack decoded video as uint8 before it crosses the worker->driver
@@ -958,6 +1029,19 @@ class DiffusionChunkExecutorBase(
             denoise_result.engine_counters.get("diffusion_rollout_autocast_enabled"),
         )
 
+        decode_peak_bytes = _cuda_phase_peak_bytes()
+        memory = None
+        if denoise_result.memory is not None and decode_peak_bytes is not None:
+            memory = {**denoise_result.memory, "decode_peak_bytes": decode_peak_bytes}
+        decode_peak_mb = (
+            None if decode_peak_bytes is None else decode_peak_bytes / (1024 * 1024)
+        )
+        phase_peaks = [
+            peak
+            for peak in (denoise_result.peak_memory_mb, decode_peak_mb)
+            if peak is not None
+        ]
+
         return DiffusionChunkResult(
             prompt_index=config.prompt_index,
             sample_start=config.sample_start,
@@ -970,7 +1054,8 @@ class DiffusionChunkExecutorBase(
             video=video,
             replay_tensors=replay_tensors,
             context=context,
-            peak_memory_mb=denoise_result.peak_memory_mb,
+            peak_memory_mb=max(phase_peaks) if phase_peaks else None,
+            memory=memory,
             stage_durations=dict(stage_durations or {}),
             engine_counters={
                 **denoise_result.engine_counters,

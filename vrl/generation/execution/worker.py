@@ -325,6 +325,216 @@ class GenerationWorkerCore:
                 error=str(exc),
             )
 
+    def probe_chunk_size(
+        self,
+        request: Any,
+        *,
+        max_samples: int,
+        memory_fraction: float | None = None,
+        execute_steps: int = 2,
+        margin: float = 0.05,
+        knee_threshold: float = 0.05,
+    ) -> dict[str, Any]:
+        """Startup chunk-size probe (SPRINT_chunk_size_probe): pick the largest
+        safe ``samples_per_chunk`` for this worker by running truncated real
+        chunks — vLLM's profile-run shape, adapted to a chunked rollout.
+
+        Runs BEFORE the first real request (caller contract). Trials at n=1 and
+        n=min(4, max) give a two-point affine fit of peak bytes (demand is
+        affine in n); the fitted candidate is then CONFIRMED with one real trial
+        because the allocator layer (segment rounding, fragmentation) is not.
+        The budget is the CONTRACT value ``memory_fraction x total``, not
+        instantaneous free memory — at probe time a colocated trainer has not
+        restored its weights yet, so free memory overestimates what rollout may
+        keep. Trial timing feeds a knee rule: growth that no longer improves
+        ms/sample is refused (no memory risk for a flat throughput return).
+        Probe outputs are discarded; trainable state / policy_version untouched.
+        """
+
+        import time
+        from dataclasses import replace as dataclass_replace
+
+        import torch
+
+        from vrl.generation.execution.chunk_placement import (
+            AffinePeakFit,
+            ChunkMemoryReading,
+        )
+        from vrl.generation.execution.chunks import SampleChunk
+        from vrl.utils.profiling import record_function
+
+        if not torch.cuda.is_available():
+            raise RuntimeError("chunk-size probe requires CUDA")
+        if max_samples < 1:
+            raise ValueError(f"probe max_samples must be >= 1, got {max_samples}")
+        self.load_policy()
+        executor = self.executor
+        for method in (
+            "build_prompt_stage_input",
+            "run_prompt_encode_stage",
+            "run_prepare_stage",
+            "run_denoise_stage",
+            "run_decode_stage",
+        ):
+            if not callable(getattr(executor, method, None)):
+                raise TypeError(
+                    f"{type(executor).__name__} does not expose the diffusion "
+                    "chunk stages; samples_per_chunk: auto is diffusion-only",
+                )
+
+        fraction = 1.0 if memory_fraction is None else float(memory_fraction)
+        _, total_bytes = torch.cuda.mem_get_info()
+        contract_bytes = int(fraction * total_bytes)
+
+        def run_trial(n: int, *, timed_label: str) -> dict[str, Any]:
+            probe_sampling = {**dict(request.sampling), "samples_per_chunk": n}
+            probe_request = dataclass_replace(
+                request,
+                request_id=f"chunk-probe-{self.worker_id}-n{n}",
+                prompts=[request.prompts[0]],
+                samples_per_prompt=n,
+                sampling=probe_sampling,
+            )
+            chunk = SampleChunk(
+                prompt_index=0,
+                prompt=probe_request.prompts[0],
+                sample_start=0,
+                sample_count=n,
+            )
+            stage_durations: dict[str, float] = {}
+            started = time.perf_counter()
+            try:
+                # The four stage methods ARE forward_chunk_plan's body; only the
+                # wire-storage step is skipped because the output is discarded.
+                prompt_input = executor.build_prompt_stage_input(probe_request, chunk)
+                prompt_output = executor.run_prompt_encode_stage(
+                    prompt_input,
+                    stage_durations=stage_durations,
+                    record_function=record_function,
+                )
+                prepared = executor.run_prepare_stage(
+                    prompt_output,
+                    stage_durations=stage_durations,
+                )
+                prepared.config = dataclass_replace(
+                    prepared.config,
+                    execute_steps=execute_steps,
+                )
+                denoised = executor.run_denoise_stage(
+                    prepared,
+                    stage_durations=stage_durations,
+                )
+                chunk_result = executor.run_decode_stage(denoised)
+                # CUDA work is async-launched; without a sync here the wall
+                # time of one trial leaks into the next and the knee rule
+                # compares garbage (observed: n=4 charged 47s, n=16 1.5s).
+                torch.cuda.synchronize()
+            except Exception as exc:  # OOM is an expected trial verdict
+                if "out of memory" not in str(exc).lower():
+                    raise
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+                return {"n": n, "oom": True, "label": timed_label}
+            wall_s = time.perf_counter() - started
+            memory = chunk_result.memory
+            reading = (
+                ChunkMemoryReading.from_metrics(memory) if memory is not None else None
+            )
+            del chunk_result, denoised, prepared, prompt_output, prompt_input
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            if reading is None:
+                raise RuntimeError(
+                    "chunk-size probe trial produced no memory reading "
+                    f"(n={n}); cannot size chunks without it",
+                )
+            return {
+                "n": n,
+                "oom": False,
+                "label": timed_label,
+                "peak_bytes": reading.peak_bytes,
+                "non_torch_bytes": reading.non_torch_bytes,
+                "wall_s": wall_s,
+                "per_sample_s": wall_s / n,
+            }
+
+        trials: list[dict[str, Any]] = []
+        # Warmup at n=1 (cudnn autotune, lazy init) so trial timings compare
+        # warm-vs-warm; its memory verdict still counts: OOM at n=1 is terminal.
+        warmup = run_trial(1, timed_label="warmup")
+        if warmup["oom"]:
+            raise RuntimeError(
+                "chunk-size probe: a single sample does not fit on this worker "
+                f"(contract budget {contract_bytes / 2**30:.1f} GiB); the recipe "
+                "shape is too large for this GPU",
+            )
+        trials.append(warmup)
+        low = run_trial(1, timed_label="fit-low")
+        trials.append(low)
+        final = 1
+
+        if max_samples > 1:
+            n_high = min(4, max_samples)
+            high = run_trial(n_high, timed_label="fit-high")
+            trials.append(high)
+            if high["oom"]:
+                # The fit anchor itself OOMed: bisect between the known-good 1
+                # and n_high for the largest fitting n.
+                final = self._bisect_chunk_probe(run_trial, trials, 1, n_high)
+            else:
+                usable_bytes = int(
+                    contract_bytes * (1.0 - margin) - high["non_torch_bytes"],
+                )
+                fit = AffinePeakFit.from_trials(
+                    1,
+                    low["peak_bytes"],
+                    n_high,
+                    high["peak_bytes"],
+                )
+                candidate = max(1, min(fit.max_samples_within(usable_bytes), max_samples))
+                final = n_high if candidate >= n_high else candidate
+                if candidate > n_high:
+                    confirm = run_trial(candidate, timed_label="confirm")
+                    trials.append(confirm)
+                    if confirm["oom"]:
+                        final = self._bisect_chunk_probe(
+                            run_trial, trials, n_high, candidate,
+                        )
+                    else:
+                        final = candidate
+                        # Knee rule: growing past n_high must still buy
+                        # throughput, otherwise the extra memory risk is free.
+                        improvement = 1.0 - (
+                            confirm["per_sample_s"] / high["per_sample_s"]
+                        )
+                        if improvement < knee_threshold:
+                            final = n_high
+        return {
+            "samples_per_chunk": int(final),
+            "budget_bytes": contract_bytes,
+            "memory_fraction": fraction,
+            "trials": trials,
+        }
+
+    @staticmethod
+    def _bisect_chunk_probe(
+        run_trial: Any,
+        trials: list[dict[str, Any]],
+        low_good: int,
+        high_bad: int,
+    ) -> int:
+        """Largest fitting n in (low_good, high_bad): each trial is seconds."""
+
+        while high_bad - low_good > 1:
+            mid = (low_good + high_bad) // 2
+            trial = run_trial(mid, timed_label="bisect")
+            trials.append(trial)
+            if trial["oom"]:
+                high_bad = mid
+            else:
+                low_good = mid
+        return low_good
+
     def execute_request_pipelined(
         self,
         request: Any,
@@ -434,6 +644,12 @@ class GenerationWorkerCore:
         )
         if plan_aware_chunk is not None:
             metrics["plan_aware_chunk"] = plan_aware_chunk
+        # Byte-admission shadow reading crosses the wire unconditionally (a dozen
+        # ints per chunk): calibration data must accrue from every real run, not
+        # only runtime_debug ones. The heavyweight debug payload stays gated.
+        chunk_memory = getattr(chunk_output, "memory", None)
+        if isinstance(chunk_memory, Mapping):
+            metrics["chunk_memory"] = dict(chunk_memory)
         if runtime_debug and chunk_output is not None:
             metrics.update(_chunk_output_debug_metrics(chunk_output))
         return metrics

@@ -265,6 +265,10 @@ class RolloutConfig(ConfigBase):
     # the ref forward. Lossless: replay applies the same sde_step_with_logprob.
     cache_ref_noise_pred: Any = None
     same_latent: Any = None
+    # reader: generation planner (chunk_placement.py) + diffusion layout. int =
+    # fixed chunk size; "auto" = the Ray runtime's startup chunk-size probe
+    # resolves it before the first request (SPRINT_chunk_size_probe; Ray-only,
+    # the planner rejects "auto" on other runtimes); null = samples_per_prompt.
     samples_per_chunk: Any = None
     temperature: Any = None
     torch_profiler: Annotated[Any, ConfigBlock(TorchProfilerConfig)] = None

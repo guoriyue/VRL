@@ -6,7 +6,10 @@ import logging
 from dataclasses import replace
 from typing import Any
 
-from vrl.generation.execution.chunk_placement import DistributedExecutionPlanner
+from vrl.generation.execution.chunk_placement import (
+    DistributedExecutionPlanner,
+    build_chunk_memory_shadow,
+)
 from vrl.generation.execution.ids import build_sample_rows
 from vrl.generation.execution.planner import attach_engine_plan
 from vrl.generation.execution.types import (
@@ -180,6 +183,27 @@ class RayGenerationExecutor:
         output = self.gatherer.gather_chunks(request, sample_rows, chunk_outputs)
         attach_engine_plan(output, engine_plan)
         output.extra["ray_chunk_metrics"] = [dict(result.metrics) for result in results]
+        # Raw per-chunk memory readings (drift monitor for the startup
+        # chunk-size probe). Telemetry only — nothing here changes chunk sizing.
+        memory_shadow = build_chunk_memory_shadow(
+            [result.metrics for result in results],
+        )
+        if memory_shadow:
+            output.extra["chunk_memory_shadow"] = memory_shadow
+            for row in memory_shadow:
+                logger.info(
+                    "chunk memory: chunk=%s n=%d peak=%.0fMB "
+                    "(denoise=%.0fMB decode=%.0fMB baseline=%.0fMB) "
+                    "budget=%.0fMB non_torch=%.0fMB",
+                    row["chunk_key"],
+                    row["sample_count"],
+                    row["peak_bytes"] / 2**20,
+                    row["denoise_peak_bytes"] / 2**20,
+                    row["decode_peak_bytes"] / 2**20,
+                    row["baseline_allocated_bytes"] / 2**20,
+                    row["budget_bytes"] / 2**20,
+                    row["non_torch_bytes"] / 2**20,
+                )
         runtime_debug_on = bool(request.metadata.get("_runtime_debug"))
         schedule_summary: list[dict[str, Any]] = []
         if schedule_rows:

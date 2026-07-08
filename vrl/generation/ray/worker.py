@@ -63,6 +63,20 @@ class RayGenerationWorker:
     def execute_chunk(self, envelope: ChunkExecutionEnvelope) -> ChunkExecutionResult:
         return self.core.execute_chunk(envelope)
 
+    def probe_chunk_size(
+        self,
+        request: Any,
+        *,
+        max_samples: int,
+        memory_fraction: float | None = None,
+    ) -> dict[str, Any]:
+        """Startup chunk-size probe; see GenerationWorkerCore.probe_chunk_size."""
+        return self.core.probe_chunk_size(
+            request,
+            max_samples=max_samples,
+            memory_fraction=memory_fraction,
+        )
+
     def execute_request_pipelined(
         self,
         request: Any,

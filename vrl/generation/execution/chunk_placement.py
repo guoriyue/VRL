@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, fields
 from typing import Any
 
 from vrl.generation.capabilities import family_capability_from_value
@@ -77,6 +78,151 @@ def estimate_chunk_cost(request: GenerationRequest, chunk: SampleChunk) -> float
     return float(chunk.sample_count * max(1, int(steps or 1)))
 
 
+@dataclass(frozen=True, slots=True)
+class ChunkMemoryReading:
+    """Measured CUDA memory footprint of one executed chunk (byte admission L2).
+
+    Produced worker-side around the two memory phases of a diffusion chunk
+    (denoise = sustained plateau, decode = short spike) with per-phase
+    ``reset_peak_memory_stats``, so peaks are chunk-scoped, not process-lifetime
+    high-water marks. Shadow mode only records these next to the estimator's
+    prediction; nothing here gates admission yet.
+    """
+
+    sample_count: int
+    # Whole-chunk latent tensor bytes. Calibration provenance only: the
+    # cross-shape fit (peak ~ f(latent bytes)) consumes it offline; the v0
+    # same-shape estimator does not read it.
+    latent_bytes: int
+    # torch.cuda.memory_allocated() right before the denoise loop: weights +
+    # encoder outputs + initial latents resident on the worker.
+    baseline_allocated_bytes: int
+    # Absolute allocated peaks per phase (baseline included, since resident
+    # tensors stay allocated through both phases).
+    denoise_peak_bytes: int
+    decode_peak_bytes: int
+    # Device-level occupancy at denoise start, for the budget split
+    # total = usable-by-torch + non-torch (CUDA context + other processes).
+    reserved_start_bytes: int
+    free_start_bytes: int
+    total_bytes: int
+
+    @property
+    def peak_bytes(self) -> int:
+        return max(self.denoise_peak_bytes, self.decode_peak_bytes)
+
+    @property
+    def non_torch_bytes(self) -> int:
+        """Device bytes torch cannot use: CUDA context + other processes."""
+
+        return max(0, (self.total_bytes - self.free_start_bytes) - self.reserved_start_bytes)
+
+    @property
+    def budget_bytes(self) -> int:
+        """Bytes torch could occupy on this device: current reservation + free."""
+
+        return self.reserved_start_bytes + self.free_start_bytes
+
+    def to_metrics(self) -> dict[str, int]:
+        return {f.name: int(getattr(self, f.name)) for f in fields(self)}
+
+    @classmethod
+    def from_metrics(cls, raw: Mapping[str, Any]) -> ChunkMemoryReading | None:
+        names = [f.name for f in fields(cls)]
+        if any(raw.get(name) is None for name in names):
+            return None
+        return cls(**{name: int(raw[name]) for name in names})
+
+
+@dataclass(frozen=True, slots=True)
+class AffinePeakFit:
+    """Two-point affine fit of chunk peak bytes: peak(n) = intercept + n * slope.
+
+    Memory DEMAND is affine in sample count (latents, activations, trajectory
+    buffers all scale per sample); what is NOT affine is the allocator layer
+    (segment rounding, fragmentation), which is why the startup probe must
+    CONFIRM the fitted candidate with one real run instead of trusting the
+    division — same reason vLLM profiles its worst-case shape rather than
+    extrapolating (see SPRINT_chunk_size_probe.md).
+    """
+
+    slope_bytes_per_sample: float
+    intercept_bytes: float
+
+    @classmethod
+    def from_trials(
+        cls,
+        n_low: int,
+        peak_low: int,
+        n_high: int,
+        peak_high: int,
+    ) -> AffinePeakFit:
+        if n_high <= n_low:
+            raise ValueError(f"affine fit needs two distinct n, got {n_low} and {n_high}")
+        slope = (peak_high - peak_low) / (n_high - n_low)
+        return cls(
+            slope_bytes_per_sample=slope,
+            intercept_bytes=peak_low - slope * n_low,
+        )
+
+    def predict_bytes(self, sample_count: int) -> int:
+        return int(self.intercept_bytes + sample_count * self.slope_bytes_per_sample)
+
+    def max_samples_within(self, budget_bytes: int) -> int:
+        """Largest n with predicted peak <= budget (0 = not even the intercept fits)."""
+
+        headroom = budget_bytes - self.intercept_bytes
+        if headroom < 0:
+            return 0
+        if self.slope_bytes_per_sample <= 0:
+            # A flat/degenerate fit carries no per-sample signal; the caller's
+            # ceiling (samples_per_prompt) applies, the confirm run still guards.
+            return _FLAT_FIT_UNBOUNDED
+        return int(headroom // self.slope_bytes_per_sample)
+
+
+# Sentinel ceiling for a degenerate flat fit; callers always min() against the
+# request ceiling so any large value works. Named to keep call sites readable.
+_FLAT_FIT_UNBOUNDED = 1 << 20
+
+
+def build_chunk_memory_shadow(
+    chunk_metrics: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Raw per-chunk memory readings for drift monitoring (no estimation).
+
+    One row per executed chunk that carried a ``chunk_memory`` reading; rows
+    without one (AR chunks, CPU runs) are skipped, and no reading at all ->
+    empty list so callers emit nothing. These rows are the calibration record
+    the startup chunk-size probe is checked against: a steady-state peak that
+    drifts far from the probe's accepted trial means the probe verdict is
+    stale (e.g. the colocated trainer's phase footprint changed).
+    """
+
+    rows: list[dict[str, Any]] = []
+    for metrics in chunk_metrics:
+        raw = metrics.get("chunk_memory")
+        if not isinstance(raw, Mapping):
+            continue
+        reading = ChunkMemoryReading.from_metrics(raw)
+        if reading is None:
+            continue
+        rows.append(
+            {
+                "chunk_key": metrics.get("chunk_key"),
+                "sample_count": reading.sample_count,
+                "peak_bytes": reading.peak_bytes,
+                "baseline_allocated_bytes": reading.baseline_allocated_bytes,
+                "denoise_peak_bytes": reading.denoise_peak_bytes,
+                "decode_peak_bytes": reading.decode_peak_bytes,
+                "latent_bytes": reading.latent_bytes,
+                "non_torch_bytes": reading.non_torch_bytes,
+                "budget_bytes": reading.budget_bytes,
+            },
+        )
+    return rows
+
+
 class DistributedExecutionPlanner:
     """Plan chunk placement across generation workers."""
 
@@ -98,9 +244,16 @@ class DistributedExecutionPlanner:
     ) -> DistributedGenerationPlan:
         if not workers:
             raise ValueError("DistributedExecutionPlanner requires at least one worker")
-        max_samples = int(
-            request.sampling.get("samples_per_chunk", request.samples_per_prompt),
-        )
+        raw_samples = request.sampling.get("samples_per_chunk", request.samples_per_prompt)
+        if raw_samples == "auto":
+            # "auto" is resolved to an int by the Ray runtime's startup probe
+            # before the request reaches planning; seeing it here means the
+            # request bypassed that runtime (e.g. a local/direct executor).
+            raise ValueError(
+                "sampling.samples_per_chunk: auto requires the Ray generation "
+                "runtime (startup chunk-size probe); set an explicit int here",
+            )
+        max_samples = int(raw_samples)
         capability = self.capability
         if capability is None:
             capability = family_capability_from_value(
@@ -146,9 +299,12 @@ class DistributedExecutionPlanner:
         )
 
 __all__ = [
+    "AffinePeakFit",
+    "ChunkMemoryReading",
     "ChunkPlacementPolicy",
     "DeviceAssignment",
     "DistributedExecutionPlanner",
     "DistributedGenerationPlan",
+    "build_chunk_memory_shadow",
     "estimate_chunk_cost",
 ]
