@@ -114,6 +114,33 @@ chunk 比对、超预算 `logger.warning`，再经 collector → `RolloutStats` 
 
 ## Phase 2（L2）：字节准入 + 执行器阶梯（核心增量）
 
+> ### L2 进度（2026-07-02）：第一步 profiling shadow 已落地
+>
+> - **测量（worker 侧，`vrl/generation/diffusion/executor.py`）**：denoise 平台与 decode 尖峰
+>   两相位分开测——每相位边界 `reset_peak_memory_stats` 后读 `max_memory_allocated`。顺带修掉
+>   一个既有缺陷：原 `peak_memory_mb` 从不 reset，实为**进程终身高水位**（chunk 2 的"峰值"包含
+>   chunk 1 的 decode 尖峰），标定数据本会被污染；现 `peak_memory_mb = max(两相位)`，真 per-chunk。
+> - **读数结构 `ChunkMemoryReading`**（`execution/chunk_placement.py`，与 `estimate_chunk_cost`
+>   并列、不混用）：sample_count / latent_bytes / baseline_allocated / denoise_peak / decode_peak /
+>   reserved_start / free_start / total；派生 `non_torch_bytes=(total-free)-reserved`、
+>   `budget_bytes=reserved+free`。
+> - **v0 估算器**：`peak(n) = baseline + n·max(denoise_ps, decode_ps)`，系数取本请求最大 chunk 的
+>   实测（同形状线性模型；OOM-split 子 chunk 免费提供 n/2 的线性验证点）。与本 doc 原签名
+>   `estimate_chunk_bytes(request, chunk, capability, profile)` 的差异：v0 不做跨形状外推——
+>   capability 不携带 latent 几何，坚持 profile 驱动、不建手维护的 per-family 常量表（上方
+>   "标定债"纪律）；形状插值在标定阶段长出。
+> - **wire**：worker `_chunk_metrics` **无条件**携带 `chunk_memory`（十几个 int/chunk；重债 debug
+>   payload 仍留 runtime_debug 门内）→ driver `RayGenerationExecutor` 组装
+>   `output.extra["chunk_memory_shadow"]` + 每 chunk 一行 INFO（est / actual / err% / budget /
+>   non_torch / admissible_n）。`admissible_n` 的上限用 `samples_per_prompt` 而非当前配置的
+>   samples_per_chunk——shadow 要能报告"本可以塞更大"，不只"塞小点"。
+> - **测试**：`tests/generation/execution/test_chunk_memory_shadow.py`（估算线性、budget 准入边界、
+>   partial 读数拒绝、worker 无门控过线、无读数→空集）。tests/generation + tests/ray +
+>   tests/config + tests/architecture 全绿。
+> - **未做（下一步 = 标定）**：跨形状/跨 run 系数回填；观察真实 run 的 shadow err%；误差可控后才把
+>   `admissible_n` 变准入闸（届时改 planner `_chunk_size`）。注意 pipelined 路径的相位归因有噪
+>   （上一 chunk 的 teardown 释放与下一 chunk 的相位交错）——标定只采 per-chunk dispatch 路径的数据。
+
 目标先写清楚：memory estimation 的最终目的不是"把 chunk 切得越多越碎"，也不是
 保守省显存；目标是在当前 topology/lifecycle 给出的可用显存内，**投放尽可能多的有效
 rollout 工作量**。落到执行层，就是选择最大安全的 `chunk_samples` / `max_inflight`
@@ -195,6 +222,11 @@ with memory_profiling(...) as profile_result:
 ---
 
 ## Phase 3（L3）：标签式相位交接（替换 kill/relaunch）
+
+> **复核（2026-07-02）：本 Phase 的 colocated-trainer 让位这一类已被独立落地**——
+> [[SPRINT_frozen_component_preservation]] 的缺陷 A（kill→sleep，CuMemAllocator 按 tag
+> 释放/重映射物理页，2026-06-29 GPU 验收过）就是这里要的 slime 形状。Phase 3 剩余对象只有
+> reward-handoff teardown 这一类（bundle 要交给 reward 时仍拆毁）与下方 reload-cost probe。
 
 ```text
 现状   RayGenerationRuntime（with_release_after_collect 租约，vrl/generation/ray/runtime.py）
