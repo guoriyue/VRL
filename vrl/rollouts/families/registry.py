@@ -247,6 +247,26 @@ register_rollout_family(
 
 register_rollout_family(
     _diffusion_entry(
+        family="lumina2",
+        task="t2i",
+        aliases=("lumina_image_2",),
+        executor_cls="vrl.models.diffusion.lumina2.runtime:Lumina2ChunkExecutor",
+        runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
+        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
+        request_prefix="lumina2",
+        default_task_type="text_to_image",
+        build=DiffusionFamilyBuild(
+            model_cls="vrl.models.diffusion.lumina2.model:Lumina2Model",
+            replay_cls="vrl.models.diffusion.lumina2.model:Lumina2ReplayModel",
+            transformer_classname="Lumina2Transformer2DModel",
+            task_variant="t2i",
+            memory_owner="Lumina2 VAE",
+        ),
+    ),
+)
+
+register_rollout_family(
+    _diffusion_entry(
         family="wan_2_1",
         task="t2v",
         aliases=("wan",),

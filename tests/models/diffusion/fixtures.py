@@ -192,6 +192,31 @@ def build_tiny_sana_transformer(*, seed: int = 0) -> Any:
     )
 
 
+TINY_LUMINA2_LATENT_SHAPE = (2, 4, 8, 8)
+TINY_LUMINA2_CAP_DIM = 16
+
+
+def build_tiny_lumina2_transformer(*, seed: int = 0) -> Any:
+    """Tiny real ``Lumina2Transformer2DModel`` on CPU, cache-free (config-init)."""
+
+    from diffusers import Lumina2Transformer2DModel
+
+    torch.manual_seed(seed)
+    return Lumina2Transformer2DModel(
+        sample_size=TINY_LUMINA2_LATENT_SHAPE[2],
+        patch_size=2,
+        in_channels=TINY_LUMINA2_LATENT_SHAPE[1],
+        hidden_size=16,
+        num_layers=1,
+        num_refiner_layers=1,
+        num_attention_heads=2,
+        num_kv_heads=2,
+        multiple_of=16,
+        axes_dim_rope=(4, 2, 2),
+        cap_feat_dim=TINY_LUMINA2_CAP_DIM,
+    )
+
+
 TINY_QWEN_IN_CHANNELS = 16
 TINY_QWEN_JOINT_DIM = 16
 

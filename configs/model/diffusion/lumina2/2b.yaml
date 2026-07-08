@@ -1,0 +1,18 @@
+# Lumina-Image-2.0 2.6B Next-DiT — checkpoint, LoRA, compile.
+model:
+  family: lumina2
+  path: Alpha-VLLM/Lumina-Image-2.0
+
+  use_lora: true
+  lora:
+    rank: 16
+    alpha: 32
+    target_modules:
+      - to_k
+      - to_q
+      - to_v
+      - to_out.0
+
+  torch_compile:
+    enable: false
+    mode: default
