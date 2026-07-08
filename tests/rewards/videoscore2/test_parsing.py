@@ -12,6 +12,7 @@ from typing import ClassVar
 import torch
 
 from vrl.rewards.models.videoscore2 import (
+    _merge_soft_with_hard,
     _normalize_scores,
     _parse_integer_scores,
     _soft_scores_from_generation,
@@ -95,6 +96,31 @@ def test_soft_scores_align_to_digit_after_each_marker() -> None:
     assert soft["physical_common_sense"] == _approx(5.0)
 
 
+def test_soft_scores_anchor_last_marker_not_cot_mention() -> None:
+    """Reproduces the live misalignment: CoT mentions the marker digit-free,
+    then the numbered answer list "(1) visual quality: 3 ..." follows. The
+    list numeral "1" is the first digit after the CoT mention and must NOT be
+    read as the score (it produced soft=1.0 vs hard=3 on real weights)."""
+
+    tokenizer = _FakeTokenizer()
+    # CoT "quality ..." (no digits), then "( 1 ) quality : 3 ( 2 ) alignment : 4
+    # ( 3 ) consistency : 4"
+    generated_ids = [10, 99, 99, 99, 1, 10, 3, 99, 2, 20, 4, 99, 3, 30, 4]
+    step_logits = [_logits_for(tid) for tid in generated_ids]
+    digit_token_ids = {1: 1, 2: 2, 3: 3, 4: 4, 5: 5}
+
+    soft = _soft_scores_from_generation(
+        generated_ids,
+        step_logits,
+        digit_token_ids,
+        tokenizer=tokenizer,
+    )
+
+    assert soft["visual_quality"] == _approx(3.0)
+    assert soft["text_alignment"] == _approx(4.0)
+    assert soft["physical_common_sense"] == _approx(4.0)
+
+
 def test_soft_scores_return_none_when_marker_missing() -> None:
     tokenizer = _FakeTokenizer()
     # No "alignment"/"consistency" markers -> those axes cannot be located.
@@ -112,6 +138,21 @@ def test_soft_scores_return_none_when_marker_missing() -> None:
     assert soft["visual_quality"] == _approx(4.0)
     assert soft["text_alignment"] is None
     assert soft["physical_common_sense"] is None
+
+
+def test_merge_rejects_soft_far_from_hard_keeps_near() -> None:
+    """Soft may only refine its hard integer: a soft value more than the
+    tolerance away from the emitted digit is a misanchored slot (the live
+    failure read a list numeral "1" where the score line said 3) and must
+    fall back to hard; a nearby soft value is genuine spread and is kept."""
+
+    soft = {
+        "visual_quality": 1.0,  # misanchor vs hard 3 -> rejected
+        "text_alignment": 3.6,  # within tolerance of hard 4 -> kept
+        "physical_common_sense": None,  # unlocated -> hard fallback
+    }
+    merged = _merge_soft_with_hard(soft, (3, 4, 5))
+    assert merged == (3.0, 3.6, 5.0)
 
 
 def _approx(value: float, tol: float = 1e-2) -> object:

@@ -86,6 +86,8 @@ _DIMENSION_MARKERS: tuple[tuple[str, str], ...] = (
     ("text_alignment", "alignment"),
     ("physical_common_sense", "consistency"),
 )
+# Max tokens between a marker's end and its score digit ("<marker>: <digit>").
+_DIGIT_PROXIMITY_WINDOW = 8
 
 
 class VideoScore2Model(RewardModel):
@@ -220,11 +222,7 @@ class VideoScore2Model(RewardModel):
             self.digit_token_ids,
             tokenizer=self.tokenizer,
         )
-        merged = tuple(
-            soft[name] if soft.get(name) is not None else float(hard[i])
-            for i, (name, _marker) in enumerate(_DIMENSION_MARKERS)
-        )
-        return _normalize_scores(*merged)
+        return _normalize_scores(*_merge_soft_with_hard(soft, hard))
 
 
 def preflight_videoscore2_backend() -> None:
@@ -244,6 +242,39 @@ def _parse_integer_scores(text: str) -> tuple[int, int, int] | None:
     if any(not (1 <= value <= 5) for value in scores):
         return None
     return scores  # type: ignore[return-value]
+
+
+# Soft may drift from its greedy digit at most this far before it is treated
+# as a misanchored slot rather than genuine probability spread.
+_SOFT_HARD_TOLERANCE = 1.0
+
+
+def _merge_soft_with_hard(
+    soft: Mapping[str, float | None],
+    hard: tuple[int, int, int],
+) -> tuple[float, float, float]:
+    """Soft may only refine its hard integer, never contradict it.
+
+    The hard regex parse is the upstream-faithful ground truth for which digit
+    the judge actually emitted; the soft slot search is our extension and can
+    misanchor (measured live: a list numeral "1" read as the score where the
+    emitted digit was 3). A correctly anchored expectation sits near the greedy
+    digit it averages around, so a soft value farther than the tolerance is a
+    wrong slot — drop it with a warning instead of shipping a confident wrong
+    score into the advantage.
+    """
+
+    merged: list[float] = []
+    for i, (name, _marker) in enumerate(_DIMENSION_MARKERS):
+        value = soft.get(name)
+        if value is not None and abs(value - hard[i]) > _SOFT_HARD_TOLERANCE:
+            logger.warning(
+                "VideoScore2 soft score rejected as misanchored %s",
+                kv(axis=name, soft=value, hard=hard[i]),
+            )
+            value = None
+        merged.append(float(hard[i]) if value is None else float(value))
+    return (merged[0], merged[1], merged[2])
 
 
 def _resolve_digit_token_ids(tokenizer: Any) -> dict[int, int]:
@@ -307,18 +338,33 @@ def _next_digit_step(
     *,
     start: int,
 ) -> int | None:
-    """Index of the first digit token after a marker subsequence at/after ``start``."""
+    """Digit-token index for the marker's score slot, at/after ``start``.
 
+    The judge repeats the marker words while reasoning ("Visual Quality
+    Analysis: ...") long before the final score line, and the numbered answer
+    list ("(1) visual quality: 3") plants a stray list numeral between a CoT
+    mention and the real score — so binding to the FIRST marker match can lock
+    onto the wrong digit (measured live: soft 1.0 vs hard 3, silently). Anchor
+    on the LAST match instead, and only accept a digit within a few tokens of
+    the marker: the score line always reads "<marker>: <digit>", while a digit
+    trailing a CoT mention sits far away (out of window -> hard fallback).
+    """
+
+    best: int | None = None
     for marker_ids in marker_variants:
-        end = _find_subsequence(generated_ids, marker_ids, start=start)
-        if end is None:
-            continue
-        j = end
-        while j < len(generated_ids) and generated_ids[j] not in digit_id_set:
-            j += 1
-        if j < len(generated_ids):
-            return j
-    return None
+        pos = start
+        while True:
+            end = _find_subsequence(generated_ids, marker_ids, start=pos)
+            if end is None:
+                break
+            stop = min(len(generated_ids), end + _DIGIT_PROXIMITY_WINDOW)
+            for j in range(end, stop):
+                if generated_ids[j] in digit_id_set:
+                    if best is None or j > best:
+                        best = j
+                    break
+            pos = end
+    return best
 
 
 def _find_subsequence(
