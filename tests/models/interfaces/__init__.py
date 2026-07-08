@@ -41,6 +41,10 @@ FAMILY_MODEL_CLASSES: dict[str, tuple[str, str]] = {
         "vrl.models.diffusion.hunyuan_image.model:HunyuanImageModel",
         "vrl.models.diffusion.hunyuan_image.model:HunyuanImageReplayModel",
     ),
+    "glm_image": (
+        "vrl.models.ar.glm_image.model:GlmImageModel",
+        "vrl.models.ar.glm_image.model:GlmImageReplayModel",
+    ),
     "emu3": (
         "vrl.models.ar.emu3.model:Emu3Model",
         "vrl.models.ar.emu3.model:Emu3ReplayModel",

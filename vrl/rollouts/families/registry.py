@@ -22,6 +22,7 @@ from vrl.models.ar.janus_pro.runtime import (
 )
 from vrl.models.ar.nextstep_1.runtime import NEXTSTEP_1_FAMILY_CAPABILITY
 from vrl.models.ar.emu3.runtime import EMU3_FAMILY_CAPABILITY
+from vrl.models.ar.glm_image.runtime import GLM_IMAGE_FAMILY_CAPABILITY
 from vrl.models.ar.llamagen.runtime import LLAMAGEN_FAMILY_CAPABILITY
 from vrl.models.diffusion.capabilities import diffusion_family_capability
 
@@ -616,6 +617,28 @@ register_rollout_family(
             import_path="vrl.models.ar.emu3.runtime:Emu3ChunkGatherer",
         ),
         capability=EMU3_FAMILY_CAPABILITY,
+    ),
+)
+
+register_rollout_family(
+    RolloutFamilyEntry(
+        family="glm_image",
+        task="ar_t2i",
+        aliases=("glm_image_t2i",),
+        collector=CollectorMetadata(
+            kind="ar_discrete",
+            request_prefix="glm_image",
+            return_artifacts=_default_return_artifacts,
+        ),
+        executor_cls="vrl.models.ar.glm_image.runtime:GlmImageChunkExecutor",
+        runtime_builder="vrl.models.ar.glm_image.runtime:build_glm_image_runtime_bundle",
+        runtime_spec_extractor=(
+            "vrl.models.ar.glm_image.runtime:extract_glm_image_runtime_spec"
+        ),
+        gatherer=GathererMetadata(
+            import_path="vrl.models.ar.glm_image.runtime:GlmImageChunkGatherer",
+        ),
+        capability=GLM_IMAGE_FAMILY_CAPABILITY,
     ),
 )
 

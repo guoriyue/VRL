@@ -756,17 +756,27 @@ def _resolve_hf_checkpoint_dir(model_path: str) -> str:
 
 
 def _load_emu3_replay_checkpoint(model: nn.Module, checkpoint_dir: str) -> list[str]:
+    import json
     import os
 
-    from transformers.modeling_utils import load_sharded_checkpoint, load_state_dict
+    from transformers.modeling_utils import load_state_dict
 
     for name in (
         "pytorch_model.bin.index.json",
         "model.safetensors.index.json",
     ):
-        if os.path.exists(os.path.join(checkpoint_dir, name)):
-            result = load_sharded_checkpoint(model, checkpoint_dir, strict=False)
-            return list(getattr(result, "missing_keys", result[0] if result else []))
+        index_path = os.path.join(checkpoint_dir, name)
+        if os.path.exists(index_path):
+            # transformers 5 removed load_sharded_checkpoint; walk the shard
+            # index directly (also lets us skip shards with no replay keys).
+            with open(index_path) as fh:
+                weight_map = json.load(fh)["weight_map"]
+            missing: set[str] = set(model.state_dict().keys())
+            for shard in sorted(set(weight_map.values())):
+                state = load_state_dict(os.path.join(checkpoint_dir, shard))
+                shard_missing, _unexpected = model.load_state_dict(state, strict=False)
+                missing &= set(shard_missing)
+            return sorted(missing)
 
     for name in (
         "model.safetensors",
