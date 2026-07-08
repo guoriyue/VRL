@@ -177,7 +177,7 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipeline
     """Diffusers-backed Cosmos Predict2 Video2World model (RL path).
 
     The pipeline is constructed by the family runtime
-    (:func:`vrl.models.diffusion.cosmos.predict2.runtime.build_cosmos_predict2_runtime_bundle`)
+    (the registry-descriptor build path in ``vrl.models.diffusion.build``)
     and passed in. Scripts must NOT instantiate the diffusers pipeline
     directly.
     """

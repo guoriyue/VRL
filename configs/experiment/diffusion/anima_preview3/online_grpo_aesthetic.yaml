@@ -24,6 +24,6 @@ rollout:
     type: flow_grpo
 
 trainer:
-  entrypoint: vrl.scripts.diffusion.cosmos.train:train_anima_grpo
+  entrypoint: vrl.scripts.diffusion.train:train_diffusion_grpo
   output_dir: outputs/anima_preview3_grpo
   save_freq: 100

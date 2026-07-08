@@ -8,8 +8,6 @@ from vrl.models.diffusion.cosmos.cosmos3.model import (
 from vrl.models.diffusion.cosmos.cosmos3.runtime import (
     Cosmos3ChunkExecutor,
     build_cosmos3_replay_runtime_bundle,
-    build_cosmos3_runtime_bundle,
-    extract_cosmos3_runtime_spec,
 )
 
 __all__ = [
@@ -18,6 +16,4 @@ __all__ = [
     "Cosmos3ReplayModel",
     "Cosmos3SamplingState",
     "build_cosmos3_replay_runtime_bundle",
-    "build_cosmos3_runtime_bundle",
-    "extract_cosmos3_runtime_spec",
 ]

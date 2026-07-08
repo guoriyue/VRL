@@ -12,7 +12,6 @@ from vrl.scripts.common.online import (
     run_online_recipe,
 )
 from vrl.scripts.common.types import OnlineRecipeDefinition
-from vrl.trainers.precision import torch_dtype_for_trainer_precision
 
 
 async def train_flux_diffusion_nft(cfg: DictConfig) -> None:
@@ -34,7 +33,6 @@ async def train_flux_diffusion_nft(cfg: DictConfig) -> None:
             build_replay_bundle=_build_nft_replay_bundle,
             after_bundle_built=_after_bundle_built,
             export_modules_getter=export_transformer_lora,
-            weight_dtype_getter=_resolve_weight_dtype,
         ),
     )
 
@@ -55,11 +53,6 @@ def _build_nft_replay_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) ->
 
 def _after_bundle_built(bundle: Any, cfg: DictConfig) -> None:
     enable_transformer_gradient_checkpointing(bundle, cfg)
-
-
-def _resolve_weight_dtype(cfg: DictConfig, trainer_config: Any, torch: Any) -> Any:
-    del cfg
-    return torch_dtype_for_trainer_precision(trainer_config, torch)
 
 
 __all__ = ["train_flux_diffusion_nft"]

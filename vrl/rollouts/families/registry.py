@@ -274,17 +274,19 @@ register_rollout_family(
         task="v2w",
         aliases=("cosmos", "cosmos_predict2"),
         executor_cls="vrl.models.diffusion.cosmos.predict2.runtime:CosmosChunkExecutor",
-        runtime_builder=(
-            "vrl.models.diffusion.cosmos.predict2.runtime:"
-            "build_cosmos_predict2_runtime_bundle"
-        ),
-        runtime_spec_extractor=(
-            "vrl.models.diffusion.cosmos.predict2.runtime:"
-            "extract_cosmos_predict2_runtime_spec"
-        ),
+        runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
+        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
         request_prefix="cosmos-predict2",
         default_task_type="video2world",
         supports_reference_conditioning=True,
+        build=DiffusionFamilyBuild(
+            model_cls="vrl.models.diffusion.cosmos.predict2.model:CosmosPredict2Model",
+            task_variant="video2world",
+            memory_owner="Cosmos Predict2 VAE",
+            replay_cls="vrl.models.diffusion.cosmos.predict2.model:CosmosPredict2ReplayModel",
+            transformer_classname="CosmosTransformer3DModel",
+            runtime_caps={"supports_reference_conditioning": True},
+        ),
     ),
 )
 
@@ -327,17 +329,17 @@ register_rollout_family(
         task="t2v",
         aliases=("cosmos3_omni", "cosmos_omni"),
         executor_cls="vrl.models.diffusion.cosmos.cosmos3.runtime:Cosmos3ChunkExecutor",
-        runtime_builder=(
-            "vrl.models.diffusion.cosmos.cosmos3.runtime:"
-            "build_cosmos3_runtime_bundle"
-        ),
-        runtime_spec_extractor=(
-            "vrl.models.diffusion.cosmos.cosmos3.runtime:"
-            "extract_cosmos3_runtime_spec"
-        ),
+        runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
+        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
         request_prefix="cosmos3",
         default_task_type="text_to_video",
         supports_reference_conditioning=False,
+        build=DiffusionFamilyBuild(
+            model_cls="vrl.models.diffusion.cosmos.cosmos3.model:Cosmos3Model",
+            task_variant="text2world",
+            memory_owner="Cosmos3 VAE",
+            runtime_caps={},
+        ),
     ),
 )
 
@@ -347,16 +349,16 @@ register_rollout_family(
         task="t2i",
         aliases=("anima", "cosmos_anima"),
         executor_cls="vrl.models.diffusion.cosmos.anima.runtime:AnimaChunkExecutor",
-        runtime_builder=(
-            "vrl.models.diffusion.cosmos.anima.runtime:"
-            "build_anima_runtime_bundle"
-        ),
-        runtime_spec_extractor=(
-            "vrl.models.diffusion.cosmos.anima.runtime:"
-            "extract_anima_runtime_spec"
-        ),
+        runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
+        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
         request_prefix="anima",
         default_task_type="text_to_image",
+        build=DiffusionFamilyBuild(
+            model_cls="vrl.models.diffusion.cosmos.anima.model:AnimaModel",
+            task_variant="t2i",
+            memory_owner="Anima VAE",
+            runtime_caps={"supports_reference_conditioning": False},
+        ),
     ),
 )
 
@@ -366,10 +368,16 @@ register_rollout_family(
         task="t2v",
         aliases=("joyai_echo",),
         executor_cls="vrl.models.diffusion.echo.runtime:EchoChunkExecutor",
-        runtime_builder="vrl.models.diffusion.echo.runtime:build_echo_runtime_bundle",
-        runtime_spec_extractor="vrl.models.diffusion.echo.runtime:extract_echo_runtime_spec",
+        runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
+        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
         request_prefix="echo",
         default_task_type="text_to_video",
+        build=DiffusionFamilyBuild(
+            model_cls="vrl.models.diffusion.echo.model:EchoModel",
+            task_variant="text2video",
+            memory_owner="Echo video VAE",
+            runtime_caps={"supports_reference_conditioning": False},
+        ),
     ),
 )
 

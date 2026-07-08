@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
 from typing import Any
 
 from vrl.generation.diffusion import DiffusionChunkExecutorBase
-from vrl.models.diffusion.build import build_diffusion_runtime_bundle
-from vrl.models.diffusion.capabilities import diffusion_family_capability
+from vrl.models.diffusion.cosmos.anima.model import _resolve_artifact
 from vrl.models.interfaces.runtime import (
     RuntimeBuildSpec,
     RuntimeBundle,
@@ -16,32 +13,11 @@ from vrl.models.interfaces.runtime import (
 from vrl.models.replay_loading import (
     minimal_replay_bundle_metadata,
 )
-from vrl.models.runtime_config import (
-    extract_runtime_spec,
-)
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
 
 ANIMA_FAMILY = "cosmos-predict2-anima"
-ANIMA_FAMILY_CAPABILITY = diffusion_family_capability(ANIMA_FAMILY, "t2i")
-
-
-def extract_anima_runtime_spec(
-    cfg: Any,
-    device: Any,
-    weight_dtype: Any,
-) -> RuntimeBuildSpec:
-    """Slice the Anima-specific runtime fields out of a whole RL config."""
-
-    return extract_runtime_spec(
-        cfg,
-        device,
-        weight_dtype,
-        task_variant="text_to_image",
-    )
-
-
 def extract_anima_replay_runtime_spec(
     cfg: Any,
     device: Any,
@@ -60,39 +36,9 @@ def extract_anima_replay_runtime_spec(
     # from full-generation extraction — it previously trimmed fields
     # (commit 571277787) and may diverge again; the stable entry point lets the
     # replay spec change without touching callers/tests. Do not inline.
-    return extract_anima_runtime_spec(cfg, device, weight_dtype)
+    from vrl.models.diffusion.build import extract_family_runtime_spec
 
-
-def build_anima_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    from vrl.models.diffusion.cosmos.anima.model import AnimaModel
-
-    logger.info("Building Anima runtime bundle from %s", spec.model_name_or_path)
-    model_config = spec.model_config or {}
-    root = str(spec.model_name_or_path or "").strip()
-    for path_field, file_field in (
-        ("transformer_path", "transformer_file"),
-        ("text_encoder_path", "text_encoder_file"),
-        ("vae_path", "vae_file"),
-    ):
-        resolved = _resolve_artifact(
-            root,
-            explicit_path=model_config.get(path_field, ""),
-            relative_file=model_config.get(file_field, ""),
-            field_name=path_field,
-        )
-        if resolved:
-            model_config[path_field] = resolved
-
-    # Family preamble: single-file artifact resolution rewrites model_config
-    # paths in place BEFORE from_spec reads them (delegation calls from_spec
-    # inside), and the resolved paths then ride extra_metadata below.
-    return build_diffusion_runtime_bundle(
-        spec,
-        model_cls=AnimaModel,
-        capability=ANIMA_FAMILY_CAPABILITY,
-        memory_owner="Anima VAE",
-        runtime_caps={"supports_reference_conditioning": False},
-    )
+    return extract_family_runtime_spec(cfg, device, weight_dtype)
 
 
 def build_anima_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
@@ -158,7 +104,6 @@ class AnimaChunkExecutor(DiffusionChunkExecutorBase):
 
     family: str = ANIMA_FAMILY
     task: str = "t2i"
-    family_capability = ANIMA_FAMILY_CAPABILITY
     default_num_frames: int = 1
     default_fps: int | None = None
     default_max_sequence_length: int = 512
@@ -166,43 +111,6 @@ class AnimaChunkExecutor(DiffusionChunkExecutorBase):
     def __init__(self, model: Any, *, samples_per_chunk: int = 1) -> None:
         self.model = model
         self.default_samples_per_chunk = max(1, int(samples_per_chunk))
-
-
-def _resolve_artifact(
-    root: str,
-    *,
-    explicit_path: str,
-    relative_file: str,
-    field_name: str,
-) -> str:
-    if explicit_path:
-        return explicit_path
-    if not (root and relative_file):
-        return ""
-    root_path = Path(root).expanduser()
-    if root_path.exists() or root.startswith(("/", "./", "../", "~")):
-        return str(root_path / relative_file)
-    # Search HF hub cache for the most recent snapshot containing required_file.
-    hub_cache = os.environ.get("HF_HUB_CACHE")
-    hf_home = os.environ.get("HF_HOME")
-    if hub_cache:
-        hf_root = Path(hub_cache).expanduser()
-    elif hf_home:
-        hf_root = Path(hf_home).expanduser() / "hub"
-    else:
-        hf_root = Path.home() / ".cache" / "huggingface" / "hub"
-    snapshots_dir = hf_root / ("models--" + root.replace("/", "--")) / "snapshots"
-    if snapshots_dir.is_dir():
-        candidates = [
-            p for p in snapshots_dir.iterdir()
-            if p.is_dir() and (p / relative_file).exists()
-        ]
-        if candidates:
-            return str(max(candidates, key=lambda p: p.stat().st_mtime) / relative_file)
-    raise ValueError(
-        f"model.path={root!r} is not a local root and no cached HF snapshot "
-        f"contains {relative_file!r}; set model.{field_name}",
-    )
 
 
 def load_anima_transformer(spec: RuntimeBuildSpec) -> Any:
@@ -230,8 +138,6 @@ __all__ = [
     "ANIMA_FAMILY",
     "AnimaChunkExecutor",
     "build_anima_replay_runtime_bundle",
-    "build_anima_runtime_bundle",
     "extract_anima_replay_runtime_spec",
-    "extract_anima_runtime_spec",
     "load_anima_transformer",
 ]

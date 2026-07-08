@@ -7,6 +7,9 @@ plus a learned LLM adapter before feeding Cosmos' 1024-wide text context.
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import random
 import sys
 from dataclasses import dataclass
@@ -74,7 +77,28 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
 
     @classmethod
     def from_spec(cls, spec: Any) -> AnimaModel:
-        """Load Anima's transformer, Qwen3 encoder, and VAE from local files."""
+        """Load Anima's transformer, Qwen3 encoder, and VAE from local files.
+
+        Resolves the single-file artifact paths in place first (explicit path >
+        checkpoint-root relative file > HF hub cache search), mutating
+        ``spec.model_config`` so downstream readers (bundle provenance, the
+        replay path) see the resolved locations.
+        """
+        model_config = spec.model_config or {}
+        root = str(spec.model_name_or_path or "").strip()
+        for path_field, file_field in (
+            ("transformer_path", "transformer_file"),
+            ("text_encoder_path", "text_encoder_file"),
+            ("vae_path", "vae_file"),
+        ):
+            resolved = _resolve_artifact(
+                root,
+                explicit_path=model_config.get(path_field, ""),
+                relative_file=model_config.get(file_field, ""),
+                field_name=path_field,
+            )
+            if resolved:
+                model_config[path_field] = resolved
 
         from diffusers import AutoencoderKLQwenImage, FlowMatchEulerDiscreteScheduler
         from diffusers.image_processor import VaeImageProcessor
@@ -559,6 +583,43 @@ def _shared_replay_tensor(
     if isinstance(value, torch.Tensor) and value.shape[0] > 1:
         return value[:1]
     return value
+
+
+def _resolve_artifact(
+    root: str,
+    *,
+    explicit_path: str,
+    relative_file: str,
+    field_name: str,
+) -> str:
+    if explicit_path:
+        return explicit_path
+    if not (root and relative_file):
+        return ""
+    root_path = Path(root).expanduser()
+    if root_path.exists() or root.startswith(("/", "./", "../", "~")):
+        return str(root_path / relative_file)
+    # Search HF hub cache for the most recent snapshot containing required_file.
+    hub_cache = os.environ.get("HF_HUB_CACHE")
+    hf_home = os.environ.get("HF_HOME")
+    if hub_cache:
+        hf_root = Path(hub_cache).expanduser()
+    elif hf_home:
+        hf_root = Path(hf_home).expanduser() / "hub"
+    else:
+        hf_root = Path.home() / ".cache" / "huggingface" / "hub"
+    snapshots_dir = hf_root / ("models--" + root.replace("/", "--")) / "snapshots"
+    if snapshots_dir.is_dir():
+        candidates = [
+            p for p in snapshots_dir.iterdir()
+            if p.is_dir() and (p / relative_file).exists()
+        ]
+        if candidates:
+            return str(max(candidates, key=lambda p: p.stat().st_mtime) / relative_file)
+    raise ValueError(
+        f"model.path={root!r} is not a local root and no cached HF snapshot "
+        f"contains {relative_file!r}; set model.{field_name}",
+    )
 
 
 __all__ = [

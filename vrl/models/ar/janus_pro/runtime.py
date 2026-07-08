@@ -78,11 +78,15 @@ def extract_janus_pro_runtime_spec(
 ) -> RuntimeBuildSpec:
     """Slice Janus-Pro runtime construction fields out of a whole RL cfg."""
 
+    # The R1 trajectory variant is selected the same way wan picks t2v/i2v:
+    # by which registry family the config names — no post-extract mutation.
+    model_cfg = cfg.get("model") if hasattr(cfg, "get") else None
+    family = str((model_cfg or {}).get("family") or "janus_pro")
     return extract_ar_runtime_spec(
         cfg,
         device,
         weight_dtype,
-        ar_task="ar_t2i",
+        ar_task="ar_t2i_r1" if family == "janus_pro_r1" else "ar_t2i",
         default_model_path="deepseek-ai/Janus-Pro-1B",
     )
 

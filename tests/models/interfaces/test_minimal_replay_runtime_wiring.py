@@ -88,10 +88,6 @@ def _spec(**overrides: Any) -> RuntimeBuildSpec:
             "vrl.models.diffusion.wan_2_1.runtime",
             "build_wan_2_1_replay_runtime_bundle",
         ),
-        (
-            "vrl.models.diffusion.cosmos.predict2.runtime",
-            "build_cosmos_predict2_replay_runtime_bundle",
-        ),
     ],
 )
 def test_diffusion_replay_builders_return_minimal_bundles(
@@ -140,7 +136,7 @@ def test_diffusion_replay_builders_return_minimal_bundles(
         _ = bundle.model.pipeline
 
 
-@pytest.mark.parametrize("family", ["sd3_5", "qwen_image", "flux"])
+@pytest.mark.parametrize("family", ["sd3_5", "qwen_image", "flux", "cosmos-predict2"])
 def test_registry_descriptor_replay_builder_returns_minimal_bundle(
     monkeypatch: pytest.MonkeyPatch,
     family: str,
@@ -358,9 +354,9 @@ def test_anima_empty_prompts_are_replaced_before_tokenization() -> None:
 def test_anima_runtime_spec_uses_explicit_local_paths() -> None:
     """Checks Anima runtime spec uses explicit local paths."""
     from vrl.config.loading import load_config
+    from vrl.models.diffusion.build import extract_family_runtime_spec
     from vrl.models.diffusion.cosmos.anima.runtime import (
         extract_anima_replay_runtime_spec,
-        extract_anima_runtime_spec,
     )
 
     cfg = load_config(
@@ -377,7 +373,7 @@ def test_anima_runtime_spec_uses_explicit_local_paths() -> None:
         ],
     )
 
-    full = extract_anima_runtime_spec(cfg, "cpu", torch.float32)
+    full = extract_family_runtime_spec(cfg, "cpu", torch.float32)
     replay = extract_anima_replay_runtime_spec(cfg, "cpu", torch.float32)
 
     assert full.model_config["transformer_path"] == "/models/anima/transformer.safetensors"

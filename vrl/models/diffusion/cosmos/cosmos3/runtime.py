@@ -25,72 +25,13 @@ from vrl.generation.diffusion import (
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
-from vrl.models.diffusion.capabilities import diffusion_family_capability
-from vrl.models.diffusion.common.vae_decode_memory import (
-    apply_generation_memory_policy,
-)
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
-from vrl.models.loader import apply_rollout_quantization
 from vrl.models.replay_loading import (
-    full_generation_bundle_metadata,
     minimal_replay_bundle_metadata,
 )
-from vrl.models.runtime_config import extract_runtime_spec
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
-COSMOS3_FAMILY_CAPABILITY = diffusion_family_capability("cosmos3", "t2v")
-
-
-def extract_cosmos3_runtime_spec(cfg: Any, device: Any, weight_dtype: Any) -> RuntimeBuildSpec:
-    return extract_runtime_spec(cfg, device, weight_dtype, task_variant="text2world")
-
-
-def _apply_train_knobs(model: Any, spec: RuntimeBuildSpec) -> bool:
-    use_lora = spec.use_lora
-    if use_lora:
-        model.apply_lora(spec)
-    else:
-        model.apply_full_finetune()
-    compile_cfg = spec.torch_compile or {}
-    if compile_cfg.get("enable"):
-        model.torch_compile_transformer(compile_cfg["mode"])
-    return use_lora
-
-
-def build_cosmos3_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    from vrl.models.diffusion.cosmos.cosmos3.model import Cosmos3Model
-
-    logger.info("Building cosmos3 runtime bundle from %s", spec.model_name_or_path)
-    model = Cosmos3Model.from_spec(spec)
-    use_lora = _apply_train_knobs(model, spec)
-    apply_rollout_quantization(model, spec)
-    num_steps = spec.num_steps
-    if num_steps is not None:
-        model.set_num_steps(num_steps)
-
-    return RuntimeBundle(
-        model=model,
-        trainable_modules=model.trainable_modules,
-        scheduler=model.scheduler,
-        raw_handle=model.raw_handle,
-        runtime_caps={},
-        metadata={
-            "model_path": spec.model_name_or_path,
-            "family": COSMOS3_FAMILY_CAPABILITY.family,
-            "task_variant": spec.task_variant,
-            "dtype": str(spec.dtype),
-            "use_lora": use_lora,
-            **full_generation_bundle_metadata(),
-            **apply_generation_memory_policy(
-                model,
-                memory_config=getattr(spec, "memory", None),
-                owner="Cosmos3 VAE",
-            ),
-        },
-    )
-
-
 def build_cosmos3_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
     from vrl.models.diffusion.cosmos.cosmos3.model import Cosmos3Model, Cosmos3ReplayModel
 
@@ -103,7 +44,14 @@ def build_cosmos3_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle
         scheduler=driver.scheduler,
         device=spec.device,
     )
-    use_lora = _apply_train_knobs(model, spec)
+    use_lora = spec.use_lora
+    if use_lora:
+        model.apply_lora(spec)
+    else:
+        model.apply_full_finetune()
+    compile_cfg = spec.torch_compile or {}
+    if compile_cfg.get("enable"):
+        model.torch_compile_transformer(compile_cfg["mode"])
 
     return RuntimeBundle(
         model=model,
@@ -113,7 +61,7 @@ def build_cosmos3_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle
         runtime_caps={},
         metadata={
             "model_path": spec.model_name_or_path,
-            "family": COSMOS3_FAMILY_CAPABILITY.family,
+            "family": "cosmos3",
             "task_variant": spec.task_variant,
             "dtype": str(spec.dtype),
             "use_lora": use_lora,
@@ -122,12 +70,12 @@ def build_cosmos3_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle
     )
 
 
-def build_cosmos3_runtime_bundle_from_cfg(cfg: Any, device: Any, weight_dtype: Any) -> RuntimeBundle:
-    return build_cosmos3_runtime_bundle(extract_cosmos3_runtime_spec(cfg, device, weight_dtype))
-
-
 def build_cosmos3_replay_runtime_bundle_from_cfg(cfg: Any, device: Any, weight_dtype: Any) -> RuntimeBundle:
-    return build_cosmos3_replay_runtime_bundle(extract_cosmos3_runtime_spec(cfg, device, weight_dtype))
+    from vrl.models.diffusion.build import extract_family_runtime_spec
+
+    return build_cosmos3_replay_runtime_bundle(
+        extract_family_runtime_spec(cfg, device, weight_dtype),
+    )
 
 
 class Cosmos3ChunkExecutor(DiffusionChunkExecutorBase):
@@ -139,7 +87,6 @@ class Cosmos3ChunkExecutor(DiffusionChunkExecutorBase):
 
     family: str = "cosmos3"
     task: str = "t2v"
-    family_capability = COSMOS3_FAMILY_CAPABILITY
     default_num_frames: int = 93
     default_fps: int | None = 24
     default_max_sequence_length: int = 512
@@ -186,7 +133,4 @@ __all__ = [
     "Cosmos3ChunkExecutor",
     "build_cosmos3_replay_runtime_bundle",
     "build_cosmos3_replay_runtime_bundle_from_cfg",
-    "build_cosmos3_runtime_bundle",
-    "build_cosmos3_runtime_bundle_from_cfg",
-    "extract_cosmos3_runtime_spec",
 ]

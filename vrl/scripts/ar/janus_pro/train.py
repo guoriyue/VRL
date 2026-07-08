@@ -53,10 +53,12 @@ def _build_bundle(cfg: DictConfig, device: Any, weight_dtype: Any, *, family: st
         extract_janus_pro_runtime_spec,
     )
 
-    spec = extract_janus_pro_runtime_spec(cfg, device, weight_dtype)
-    if family == "janus_pro_r1":
-        spec.ar_task = "ar_t2i_r1"
-    return build_janus_pro_runtime_bundle(spec)
+    # ar_task derives from cfg.model.family inside the extract (R1 configs set
+    # model.family: janus_pro_r1), so no post-extract spec mutation here.
+    del family
+    return build_janus_pro_runtime_bundle(
+        extract_janus_pro_runtime_spec(cfg, device, weight_dtype),
+    )
 
 
 def _build_replay_bundle(
@@ -71,10 +73,10 @@ def _build_replay_bundle(
         extract_janus_pro_runtime_spec,
     )
 
-    spec = extract_janus_pro_runtime_spec(cfg, device, weight_dtype)
-    if family == "janus_pro_r1":
-        spec.ar_task = "ar_t2i_r1"
-    return build_janus_pro_replay_runtime_bundle(spec)
+    del family
+    return build_janus_pro_replay_runtime_bundle(
+        extract_janus_pro_runtime_spec(cfg, device, weight_dtype),
+    )
 
 
 __all__ = [

@@ -542,6 +542,24 @@ GPU，让某一跳能跑生成 parity；(b) 转为**有人值守**逐个接（�
 >   其实验 yaml 增加 `nft_previous_adapter: true`。
 > - descriptor 名册：sd3_5、qwen_image、predict2_5、wan×2、**flux**。验证：**623 passed**。
 
+> **薄化第十三轮（2026-07-07，"全部可疑再审"）——四家 rollout descriptor 化 + 两处误判翻案**：
+> - **cosmos3 翻案**：`_apply_train_knobs` 的函数体就是 generic 的 lora/full-finetune+compile 序列手抄本
+>   （此前只看调用点就判"替换核心分支"，没读函数体——误判）。且其顺序 compile 后才 quantize，与
+>   "quantize 必须在 compile 前让 inductor 看到 fp8 模块"相反，潜伏 bug 随迁移 generic 修正。
+> - **echo/anima recipe 翻案**：`weight_dtype_getter` 传的就是 `run_online_recipe` 的默认分支——全仓
+>   该参数皆冗余（已从 generic 与 flux NFT recipe 删除）；echo/anima recipe 因此与 generic 逐字等价，
+>   echo train.py 整目录删除、train_anima_grpo 删除，3 个 yaml 切 generic entrypoint。
+> - **四家升级**：predict2（全 descriptor，含 replay）、echo/cosmos3/anima（rollout descriptor，
+>   replay 自建保留：LTX 工厂 / pipeline-shell 复用 / 自建调度器）。anima 的 artifact 解析搬进
+>   `AnimaModel.from_spec`（模型知识回家）；其 replay extract 因 e2e 字符串契约 + 自辩注释保留，
+>   body 改走 generic。
+> - **janus R1 wan 病修复**：recipe 在 extract 后手动突变 `spec.ar_task` ——改为 extract 按
+>   `cfg.model.family` 派生（registry 早有 `janus_pro_r1` entry；R1 配置须声明 family）。
+> - **descriptor 名册终态：10/13**（sd3_5、qwen_image、flux、predict2、predict2_5、wan×2、echo、
+>   cosmos3、anima——后三家 rollout 侧）。runtime.py 里剩余全部函数：4 个自建 replay（真构造发散）
+>   + 2 个 AR extract/config（真家族逻辑）+ anima replay extract（命名契约）。
+> - 验证：**623 passed**。净 -296 行。
+
 ## 附录：AR executor 层组织设计（2026-07-02，已实施——见薄化第十轮）
 
 ### 事实基础（全部引用到行级）

@@ -24,33 +24,14 @@ from vrl.generation.diffusion import (
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
-from vrl.models.diffusion.build import build_diffusion_runtime_bundle
-from vrl.models.diffusion.capabilities import diffusion_family_capability
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.replay_loading import (
     minimal_replay_bundle_metadata,
 )
-from vrl.models.runtime_config import extract_runtime_spec
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
-ECHO_FAMILY_CAPABILITY = diffusion_family_capability("echo", "t2v")
-
-
-def extract_echo_runtime_spec(
-    cfg: Any,
-    device: Any,
-    weight_dtype: Any,
-) -> RuntimeBuildSpec:
-    return extract_runtime_spec(
-        cfg,
-        device,
-        weight_dtype,
-        task_variant="text2video",
-    )
-
-
 def _gemma_path_from_spec(spec: RuntimeBuildSpec) -> str:
     gemma_path = (spec.model_config or {}).get("gemma_path")
     if not gemma_path:
@@ -58,29 +39,6 @@ def _gemma_path_from_spec(spec: RuntimeBuildSpec) -> str:
             "Echo requires model.gemma_path (the Gemma-3-12B encoder directory)",
         )
     return str(gemma_path)
-
-
-def build_echo_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    """Thin family stub over the shared diffusion runtime builder.
-
-    This wires rollout quantization and torch.compile for Echo — conditional
-    no-ops until the config enables them, and UNVALIDATED on the LTX
-    transformer (see module docstring) — so keep both knobs off until the
-    80GB-card parity check. Echo's video VAE memory is owned by its own
-    wrapper, not the diffusers tiling/slicing protocol, so the memory policy
-    is a no-op unless ``model.memory`` asks for a target (then it fails loud,
-    the intended contract).
-    """
-    from vrl.models.diffusion.echo.model import EchoModel
-
-    logger.info("Building echo runtime bundle from %s", spec.model_name_or_path)
-    return build_diffusion_runtime_bundle(
-        spec,
-        model_cls=EchoModel,
-        capability=ECHO_FAMILY_CAPABILITY,
-        memory_owner="Echo video VAE",
-        runtime_caps={"supports_reference_conditioning": False},
-    )
 
 
 def build_echo_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
@@ -140,7 +98,7 @@ def build_echo_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         raw_handle=None,
         metadata={
             "model_path": spec.model_name_or_path,
-            "family": ECHO_FAMILY_CAPABILITY.family,
+            "family": "echo",
             "task_variant": spec.task_variant,
             "dtype": str(spec.dtype),
             "use_lora": use_lora,
@@ -149,21 +107,15 @@ def build_echo_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
     )
 
 
-def build_echo_runtime_bundle_from_cfg(
-    cfg: Any,
-    device: Any,
-    weight_dtype: Any,
-) -> RuntimeBundle:
-    return build_echo_runtime_bundle(extract_echo_runtime_spec(cfg, device, weight_dtype))
-
-
 def build_echo_replay_runtime_bundle_from_cfg(
     cfg: Any,
     device: Any,
     weight_dtype: Any,
 ) -> RuntimeBundle:
+    from vrl.models.diffusion.build import extract_family_runtime_spec
+
     return build_echo_replay_runtime_bundle(
-        extract_echo_runtime_spec(cfg, device, weight_dtype),
+        extract_family_runtime_spec(cfg, device, weight_dtype),
     )
 
 
@@ -172,7 +124,6 @@ class EchoChunkExecutor(DiffusionChunkExecutorBase):
 
     family: str = "echo"
     task: str = "t2v"
-    family_capability = ECHO_FAMILY_CAPABILITY
     # Echo's default release resolution is 1280x736, 241 frames @ 24fps; the RL
     # smoke/proof runs override these down for single-card feasibility.
     default_num_frames: int = 25
@@ -203,7 +154,4 @@ __all__ = [
     "EchoChunkExecutor",
     "build_echo_replay_runtime_bundle",
     "build_echo_replay_runtime_bundle_from_cfg",
-    "build_echo_runtime_bundle",
-    "build_echo_runtime_bundle_from_cfg",
-    "extract_echo_runtime_spec",
 ]
