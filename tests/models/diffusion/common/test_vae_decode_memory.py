@@ -195,6 +195,13 @@ def test_wan_runtime_bundle_records_model_build_memory_metadata(
             "build_family_runtime_bundle",
             "cosmos-predict2.5",
         ),
+        (
+            "vrl.models.diffusion.build",
+            "vrl.models.diffusion.sana.model",
+            "SanaModel",
+            "build_family_runtime_bundle",
+            "sana",
+        ),
     ],
 )
 def test_full_generation_runtime_bundles_record_model_build_memory_metadata(

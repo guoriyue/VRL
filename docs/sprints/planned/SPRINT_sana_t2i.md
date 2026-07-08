@@ -1,6 +1,13 @@
 # SPRINT: 接入 SANA T2I 家族（Phase-0 薄 seam 首个样例）
 
-状态：planned（2026-07-01）。性质：新增 T2I DiT 家族，套 Phase 0 薄化后的 diffusion seam。
+状态：**code-landed（2026-07-07）——首个 descriptor-born 家族；GPU parity 待跑（§4 清单）**。
+性质：新增 T2I DiT 家族，套 Phase 0 薄化后的 diffusion seam。
+
+> **落地形态（比 §3 计划更薄——runner 合并与 descriptor 化之后）**：model.py（含 backbone-runner
+> 协议 + replay 投影）+ runtime.py 仅 executor + registry 一条 descriptor + 2 个 yaml + tiny 真
+> transformer parity 测试 ×4。**零 builder 函数**。batched_cfg 判断修正：cond/uncond 同 pad 到
+> max_seq=300 可以 batch（sprint 原文说照 qwen_image 的 separate_cfg 是错的，qwen 是变长才分开）。
+> `complex_human_instruction` 暴露为 sampling kwarg 默认关；parity 跑两边须一致（diffusers 默认开）。
 > 拆自 [[SPRINT_thin_model_seam_and_ten_model_expansion]] §3 第 1 项。前置：Phase 0 共享 builder 已合入
 > （`vrl/models/diffusion/build.py`，分支 phase0-thin-model-seam）。
 

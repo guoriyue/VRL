@@ -33,6 +33,10 @@ FAMILY_MODEL_CLASSES: dict[str, tuple[str, str]] = {
         "vrl.models.diffusion.sd3_5.model:SD3_5Model",
         "vrl.models.diffusion.sd3_5.model:SD3_5ReplayModel",
     ),
+    "sana": (
+        "vrl.models.diffusion.sana.model:SanaModel",
+        "vrl.models.diffusion.sana.model:SanaReplayModel",
+    ),
     "flux": (
         "vrl.models.diffusion.flux.model:FluxModel",
         "vrl.models.diffusion.flux.model:FluxReplayModel",

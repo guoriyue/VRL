@@ -227,6 +227,26 @@ register_rollout_family(
 
 register_rollout_family(
     _diffusion_entry(
+        family="sana",
+        task="t2i",
+        aliases=("sana_1600m",),
+        executor_cls="vrl.models.diffusion.sana.runtime:SanaChunkExecutor",
+        runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
+        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
+        request_prefix="sana",
+        default_task_type="text_to_image",
+        build=DiffusionFamilyBuild(
+            model_cls="vrl.models.diffusion.sana.model:SanaModel",
+            replay_cls="vrl.models.diffusion.sana.model:SanaReplayModel",
+            transformer_classname="SanaTransformer2DModel",
+            task_variant="t2i",
+            memory_owner="SANA DC-AE",
+        ),
+    ),
+)
+
+register_rollout_family(
+    _diffusion_entry(
         family="wan_2_1",
         task="t2v",
         aliases=("wan",),

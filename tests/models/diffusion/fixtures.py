@@ -167,6 +167,31 @@ def build_tiny_flux_transformer(*, seed: int = 0, guidance_embeds: bool = True) 
 # 16 in_channels. out_channels(4) * patch_size**2(4) == in_channels(16) so the
 # noise_pred matches the packed latent for the SDE step. axes_dims_rope sums to
 # attention_head_dim (16).
+TINY_SANA_LATENT_SHAPE = (2, 4, 8, 8)
+TINY_SANA_CAPTION_DIM = 16
+
+
+def build_tiny_sana_transformer(*, seed: int = 0) -> Any:
+    """Tiny real ``SanaTransformer2DModel`` on CPU, cache-free (config-init)."""
+
+    from diffusers import SanaTransformer2DModel
+
+    torch.manual_seed(seed)
+    return SanaTransformer2DModel(
+        in_channels=TINY_SANA_LATENT_SHAPE[1],
+        out_channels=TINY_SANA_LATENT_SHAPE[1],
+        num_layers=1,
+        num_attention_heads=2,
+        attention_head_dim=8,
+        num_cross_attention_heads=2,
+        cross_attention_head_dim=8,
+        cross_attention_dim=16,
+        caption_channels=TINY_SANA_CAPTION_DIM,
+        sample_size=TINY_SANA_LATENT_SHAPE[2],
+        patch_size=1,
+    )
+
+
 TINY_QWEN_IN_CHANNELS = 16
 TINY_QWEN_JOINT_DIM = 16
 

@@ -1,0 +1,23 @@
+# SANA 1.6B linear-attention DiT + DC-AE — checkpoint, LoRA, compile.
+# Sampling shape/denoise defaults live under configs/sampling/.
+model:
+  family: sana
+  path: Efficient-Large-Model/Sana_1600M_1024px_diffusers
+
+  use_lora: true
+  lora:
+    rank: 16
+    alpha: 32
+    # SANA linear self-attention + vanilla cross-attention share the standard
+    # diffusers projection names (verified on SanaTransformer2DModel).
+    target_modules:
+      - to_k
+      - to_q
+      - to_v
+      - to_out.0
+
+  torch_compile:
+    # Off until the GPU parity pass validates compiled linear-attention
+    # numerics; flip after the first trustworthy curve.
+    enable: false
+    mode: default
