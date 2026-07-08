@@ -307,6 +307,30 @@ register_rollout_family(
 
 register_rollout_family(
     _diffusion_entry(
+        family="pixart_sigma",
+        task="t2i",
+        aliases=("pixart",),
+        executor_cls="vrl.models.diffusion.pixart_sigma.runtime:PixArtSigmaChunkExecutor",
+        runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
+        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
+        request_prefix="pixart_sigma",
+        default_task_type="text_to_image",
+        build=DiffusionFamilyBuild(
+            model_cls="vrl.models.diffusion.pixart_sigma.model:PixArtSigmaModel",
+            replay_cls="vrl.models.diffusion.pixart_sigma.model:PixArtSigmaReplayModel",
+            transformer_classname="PixArtTransformer2DModel",
+            # Epsilon DDPM family (sde_type=ddim): load a DDIMScheduler so the
+            # shipped beta config survives into prepare_replay, which rebuilds
+            # the rollout's DDIM ladder via pixart_ddim_scheduler.
+            scheduler_classname="DDIMScheduler",
+            task_variant="t2i",
+            memory_owner="PixArt VAE",
+        ),
+    ),
+)
+
+register_rollout_family(
+    _diffusion_entry(
         family="cogvideox",
         task="t2v",
         aliases=("cogvideox_2b", "cogvideox_5b"),

@@ -37,6 +37,10 @@ FAMILY_MODEL_CLASSES: dict[str, tuple[str, str]] = {
         "vrl.models.diffusion.hunyuan_video.model:HunyuanVideoModel",
         "vrl.models.diffusion.hunyuan_video.model:HunyuanVideoReplayModel",
     ),
+    "pixart_sigma": (
+        "vrl.models.diffusion.pixart_sigma.model:PixArtSigmaModel",
+        "vrl.models.diffusion.pixart_sigma.model:PixArtSigmaReplayModel",
+    ),
     "cogvideox": (
         "vrl.models.diffusion.cogvideox.model:CogVideoXModel",
         "vrl.models.diffusion.cogvideox.model:CogVideoXReplayModel",
