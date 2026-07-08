@@ -5,8 +5,8 @@
 > **Phase 1 验证记录（2026-07-08，RTX 5090 32GB + CPU 兜底）**：探针 = `vrl/scripts/diffusion/generate.py`
 > （生产 `sde_step_with_logprob` 循环 + first-step replay parity）/ AR 家族用 executor 直驱。
 > 10/10 全部 replay parity **0.0e+00**（AR 家族由 rollout↔teacher-forced 等值测试锁定）：
-> SANA（与 SanaPipeline 同 seed 视觉一致）、Lumina-Image-2（摄影级输出）、PixArt-Σ（ddim 阶梯首战）、
-> HunyuanImage-2.1（17B CPU 验证）、HunyuanVideo（13B + tiled decode）、Mochi（倒 sigma 标准化实证）、
+> SANA（bf16 尾数坏死线性注意力——二分定位后 from_spec 映射到 fp16，4a0c8e5e，修复后 SDE 直出杂志级）、Lumina-Image-2（摄影级输出）、PixArt-Σ（ddim 阶梯首战）、
+> HunyuanImage-2.1（17B CPU 验证；1024px/20 步复跑画质干净——首跑斑块系 6 步/512px 探针省时设置）、HunyuanVideo（13B + tiled decode）、Mochi（倒 sigma 标准化实证）、
 > CogVideoX（v-pred ddim + BFCHW）、Emu3（4163 受限 token 直出高质量图）、LlamaGen（vendored GPT 256 token）、
 > GLM-Image（transformers 5.13 升级后落地；原生 1024px CPU 全程验证——1280 prior token 采样 +
 > 20 步 DiT 解码，输出为全战役最佳画质的摄影级图像）。
