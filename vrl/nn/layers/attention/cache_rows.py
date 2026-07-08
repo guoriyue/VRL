@@ -163,20 +163,40 @@ def _concat_plain_rows(values: Sequence[Any]) -> Any:
     return first
 
 
+def _cache_kv_pairs(cache: Any) -> list[tuple[Any, Any]]:
+    """(key, value) per layer, tolerant of the transformers 4/5 cache API.
+
+    transformers 5 removed to_legacy_cache/from_legacy_cache; the cache now
+    exposes ``.layers`` with per-layer ``keys``/``values`` tensors.
+    """
+    if hasattr(cache, "to_legacy_cache"):
+        return [(key, val) for key, val in cache.to_legacy_cache()]
+    return [(layer.keys, layer.values) for layer in cache.layers]
+
+
+def _cache_from_kv_pairs(pairs: Sequence[tuple[Any, Any]]) -> Any:
+    if hasattr(DynamicCache, "from_legacy_cache"):
+        return DynamicCache.from_legacy_cache(tuple(pairs))
+    cache = DynamicCache()
+    for layer_idx, (key, val) in enumerate(pairs):
+        cache.update(key, val, layer_idx)
+    return cache
+
+
 def _split_hf_cache_rows(value: Any, batch_size: int) -> list[Any]:
     if DynamicCache is None or not isinstance(value, DynamicCache):
         raise TypeError(
             "AR KV row scheduling currently supports transformers DynamicCache; "
             f"got {type(value).__name__}",
         )
-    legacy_layers = value.to_legacy_cache()
+    layer_pairs = _cache_kv_pairs(value)
     rows: list[Any] = []
     for row in range(batch_size):
-        row_layers = tuple(
-            (key[row : row + 1], val[row : row + 1])
-            for key, val in legacy_layers
+        rows.append(
+            _cache_from_kv_pairs(
+                [(key[row : row + 1], val[row : row + 1]) for key, val in layer_pairs],
+            ),
         )
-        rows.append(DynamicCache.from_legacy_cache(row_layers))
     return rows
 
 
@@ -184,18 +204,19 @@ def _concat_hf_cache_rows(values: Sequence[Any]) -> Any:
     if DynamicCache is None or not all(isinstance(value, DynamicCache) for value in values):
         got = ", ".join(type(value).__name__ for value in values)
         raise TypeError(f"cannot concatenate mixed HF cache row types: {got}")
-    legacy_rows = [value.to_legacy_cache() for value in values]
-    layer_count = len(legacy_rows[0])
-    if any(len(row) != layer_count for row in legacy_rows[1:]):
+    kv_rows = [_cache_kv_pairs(value) for value in values]
+    layer_count = len(kv_rows[0])
+    if any(len(row) != layer_count for row in kv_rows[1:]):
         raise ValueError("cannot concatenate DynamicCache rows with different layer counts")
-    layers = tuple(
-        (
-            torch.cat([row[layer_idx][0] for row in legacy_rows], dim=0),
-            torch.cat([row[layer_idx][1] for row in legacy_rows], dim=0),
-        )
-        for layer_idx in range(layer_count)
+    return _cache_from_kv_pairs(
+        [
+            (
+                torch.cat([row[layer_idx][0] for row in kv_rows], dim=0),
+                torch.cat([row[layer_idx][1] for row in kv_rows], dim=0),
+            )
+            for layer_idx in range(layer_count)
+        ],
     )
-    return DynamicCache.from_legacy_cache(layers)
 
 
 __all__ = [
