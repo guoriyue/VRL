@@ -110,6 +110,14 @@ class SanaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
         from diffusers import SanaPipeline
 
         model_dtype = resolve_torch_dtype(spec.dtype)
+        if model_dtype == torch.bfloat16:
+            # SANA's linear attention is mantissa-sensitive: bf16 (7-bit
+            # mantissa) corrupts the prediction into confetti artifacts while
+            # fp16 (10-bit) is clean — bisected empirically against the
+            # official fp16-variant recipe at identical seed/steps (2026-07-08)
+            # and consistent with the checkpoint shipping an fp16 variant.
+            # Map the 16-bit intent onto the numerically working half format.
+            model_dtype = torch.float16
         frozen_dtype = getattr(spec, "frozen_dtype", None)
         if frozen_dtype is None:
             frozen_dtype = torch.float16 if model_dtype == torch.float32 else model_dtype
