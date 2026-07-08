@@ -1,0 +1,24 @@
+# CogVideoX-2b (v-prediction DDPM DiT) — checkpoint, LoRA.
+# Non-flow family: pair with sampling.sde_type: ddim (validated at rollout).
+model:
+  family: cogvideox
+  path: THUDM/CogVideoX-2b
+
+  memory:
+    vae_decode:
+      tiling: true
+      slicing: true
+
+  use_lora: true
+  lora:
+    rank: 16
+    alpha: 32
+    target_modules:
+      - to_k
+      - to_q
+      - to_v
+      - to_out.0
+
+  torch_compile:
+    enable: false
+    mode: default

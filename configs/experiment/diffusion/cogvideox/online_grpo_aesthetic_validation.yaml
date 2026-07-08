@@ -1,0 +1,37 @@
+# CogVideoX-2b + aesthetic GRPO — first-landing validation recipe.
+# Non-flow family: sampling.sde_type=ddim routes rollout/replay log-probs
+# through the DDIM eta-SDE (vrl/math/diffusion/ddim.py).
+defaults:
+  - /recipe/online/flow_matching_grpo
+  - /model/diffusion/cogvideox/2b
+  - /sampling/video/240p_33f
+  - /sampling/denoise/10_step_cfg_4_5
+  - /dataset/videophy
+  - /reward/aesthetic
+
+precision: bf16
+
+sampling:
+  max_sequence_length: 226
+  sde_type: ddim
+
+actor:
+  optim:
+    lr: 3.0e-4
+  gradient_accumulation_steps: 4
+
+algorithm:
+  kl_coef: 0.04
+  global_std: true
+
+rollout:
+  n_samples_per_prompt: 8
+  prompts_per_batch: 4
+  samples_per_chunk: 2
+
+trainer:
+  entrypoint: vrl.scripts.diffusion.train:train_diffusion_grpo
+  output_dir: outputs/cogvideox_aesthetic_grpo
+  save_freq: 60
+  debug:
+    first_step: true

@@ -135,7 +135,7 @@ def test_diffusion_replay_builders_return_minimal_bundles(
         _ = bundle.model.pipeline
 
 
-@pytest.mark.parametrize("family", ["sd3_5", "qwen_image", "flux", "cosmos-predict2", "sana", "lumina2", "hunyuan_video", "mochi"])
+@pytest.mark.parametrize("family", ["sd3_5", "qwen_image", "flux", "cosmos-predict2", "sana", "lumina2", "hunyuan_video", "mochi", "cogvideox"])
 def test_registry_descriptor_replay_builder_returns_minimal_bundle(
     monkeypatch: pytest.MonkeyPatch,
     family: str,
@@ -156,6 +156,13 @@ def test_registry_descriptor_replay_builder_returns_minimal_bundle(
     monkeypatch.setattr(
         _shared_build,
         "load_flow_match_scheduler",
+        lambda *_args, **_kwargs: _TinyScheduler(),
+    )
+    # Families with a scheduler_classname (cogvideox) load through the
+    # classname path instead of the flow-match default.
+    monkeypatch.setattr(
+        _shared_build,
+        "load_diffusers_scheduler",
         lambda *_args, **_kwargs: _TinyScheduler(),
     )
 

@@ -307,6 +307,29 @@ register_rollout_family(
 
 register_rollout_family(
     _diffusion_entry(
+        family="cogvideox",
+        task="t2v",
+        aliases=("cogvideox_2b", "cogvideox_5b"),
+        executor_cls="vrl.models.diffusion.cogvideox.runtime:CogVideoXChunkExecutor",
+        runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
+        runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
+        request_prefix="cogvideox",
+        default_task_type="text_to_video",
+        build=DiffusionFamilyBuild(
+            model_cls="vrl.models.diffusion.cogvideox.model:CogVideoXModel",
+            replay_cls="vrl.models.diffusion.cogvideox.model:CogVideoXReplayModel",
+            transformer_classname="CogVideoXTransformer3DModel",
+            # v-prediction DDPM family: replay recomputes log-probs on the
+            # same ladder the rollout sampled (sde_type=ddim).
+            scheduler_classname="CogVideoXDDIMScheduler",
+            task_variant="t2v",
+            memory_owner="CogVideoX VAE",
+        ),
+    ),
+)
+
+register_rollout_family(
+    _diffusion_entry(
         family="wan_2_1",
         task="t2v",
         aliases=("wan",),

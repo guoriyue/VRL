@@ -1,0 +1,24 @@
+# CogVideoX-5b — same family; external RoPE (use_rotary_positional_embeddings)
+# is recomputed per request by the model, so 2b and 5b share all code.
+model:
+  family: cogvideox
+  path: THUDM/CogVideoX-5b
+
+  memory:
+    vae_decode:
+      tiling: true
+      slicing: true
+
+  use_lora: true
+  lora:
+    rank: 16
+    alpha: 32
+    target_modules:
+      - to_k
+      - to_q
+      - to_v
+      - to_out.0
+
+  torch_compile:
+    enable: false
+    mode: default

@@ -60,7 +60,14 @@ def ddim_step_with_logprob(
 
     timesteps_table = scheduler.timesteps.to(sample.device)
     if step_index is None:
-        step_index = [scheduler.index_for_timestep(t) for t in timestep]
+        # CogVideoX's DDIM variant has no index_for_timestep; search the table.
+        lookup = getattr(scheduler, "index_for_timestep", None)
+        if lookup is not None:
+            step_index = [lookup(t) for t in timestep]
+        else:
+            step_index = [
+                int((timesteps_table == t).nonzero()[0].item()) for t in timestep
+            ]
     elif isinstance(step_index, int):
         step_index = [step_index] * len(timestep)
 

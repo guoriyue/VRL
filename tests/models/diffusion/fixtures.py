@@ -268,6 +268,40 @@ def build_tiny_mochi_transformer(*, seed: int = 0) -> Any:
     )
 
 
+TINY_COGVIDEOX_LATENT_SHAPE = (2, 3, 4, 8, 8)  # [B, F, C, H, W]
+TINY_COGVIDEOX_TEXT_DIM = 16
+TINY_COGVIDEOX_TEXT_LEN = 8
+
+
+def build_tiny_cogvideox_transformer(*, seed: int = 0, rope: bool = False) -> Any:
+    """Tiny real ``CogVideoXTransformer3DModel`` on CPU, cache-free.
+
+    ``rope=True`` mirrors the 5b config (external rotary embeddings passed
+    into forward); False mirrors 2b (learned positional embeddings).
+    """
+
+    from diffusers import CogVideoXTransformer3DModel
+
+    torch.manual_seed(seed)
+    # 3D RoPE splits head_dim across (t, h, w); 16 keeps every split even.
+    return CogVideoXTransformer3DModel(
+        num_attention_heads=2,
+        attention_head_dim=16 if rope else 8,
+        in_channels=TINY_COGVIDEOX_LATENT_SHAPE[2],
+        out_channels=TINY_COGVIDEOX_LATENT_SHAPE[2],
+        time_embed_dim=8,
+        text_embed_dim=TINY_COGVIDEOX_TEXT_DIM,
+        num_layers=1,
+        sample_width=16,
+        sample_height=16,
+        sample_frames=9,
+        patch_size=2,
+        temporal_compression_ratio=4,
+        max_text_seq_length=TINY_COGVIDEOX_TEXT_LEN,
+        use_rotary_positional_embeddings=rope,
+    )
+
+
 TINY_QWEN_IN_CHANNELS = 16
 TINY_QWEN_JOINT_DIM = 16
 
