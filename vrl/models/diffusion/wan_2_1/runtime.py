@@ -47,7 +47,9 @@ def build_wan_2_1_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle
         WanT2VReplayModel,
     )
 
-    task_variant = _normalize_task_variant(spec.task_variant)
+    # spec.task_variant is entry-canonical ("t2v"/"i2v") via the generic
+    # extractor; anything else (test fixtures' neutral placeholder) is t2v.
+    task_variant = "i2v" if str(spec.task_variant or "").strip().lower() == "i2v" else "t2v"
     replay_cls = WanI2VReplayModel if task_variant == "i2v" else WanT2VReplayModel
     boundary_ratio = _boundary_ratio_from_spec(spec)
     transformer_2 = (
@@ -173,18 +175,12 @@ class Wan_2_1I2VChunkExecutor(ReferenceConditionedChunks, DiffusionChunkExecutor
         self.reference_image = reference_image
         self.default_samples_per_chunk = max(1, int(samples_per_chunk))
 
-def _normalize_task_variant(task_variant: str | None) -> str:
-    # Accept any non-i2v value as t2v so generic test fixtures that use a
-    # neutral placeholder like "t2i" do not need a special-case branch per
-    # family. Real i2v dispatch only fires for the explicit i2v aliases below
-    # or when cfg.model.family/task_variant declares i2v.
-    text = str(task_variant or "t2v").strip().lower()
-    if text in {"image_to_video", "image-to-video", "i2v"}:
-        return "i2v"
-    return "t2v"
-
-
 def _boundary_ratio_from_spec(spec: RuntimeBuildSpec) -> float | None:
+    """Dual-stage boundary for the replay build: explicit ``model.boundary_ratio``
+    wins; Wan2.2 checkpoints read it from the pipeline config (the replay model
+    loads no pipeline of its own, so this is where transformer_2 loading is
+    decided)."""
+
     from vrl.models.diffusion.wan_2_1.model import _optional_float
 
     model_config = spec.model_config or {}
@@ -192,13 +188,7 @@ def _boundary_ratio_from_spec(spec: RuntimeBuildSpec) -> float | None:
         return _optional_float(model_config.get("boundary_ratio"), "model.boundary_ratio")
     if "Wan2.2" not in str(spec.model_name_or_path):
         return None
-    return _load_boundary_ratio_from_pipeline_config(spec)
-
-
-def _load_boundary_ratio_from_pipeline_config(spec: RuntimeBuildSpec) -> float | None:
     from diffusers import DiffusionPipeline
-
-    from vrl.models.diffusion.wan_2_1.model import _optional_float
 
     config = DiffusionPipeline.load_config(spec.model_name_or_path)
     return _optional_float(config.get("boundary_ratio"), "pipeline boundary_ratio")
