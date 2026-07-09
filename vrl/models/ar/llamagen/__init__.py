@@ -21,7 +21,6 @@ from vrl.models.ar.llamagen.model import (
 from vrl.models.ar.llamagen.runtime import (
     LLAMAGEN_FAMILY_CAPABILITY,
     LlamaGenChunkExecutor,
-    LlamaGenChunkGatherer,
     build_llamagen_replay_runtime_bundle,
     build_llamagen_runtime_bundle,
     extract_llamagen_runtime_spec,
@@ -33,7 +32,6 @@ __all__ = [
     "LLAMAGEN_IMAGE_TOKEN_NUM",
     "LLAMAGEN_IMAGE_VOCAB_SIZE",
     "LlamaGenChunkExecutor",
-    "LlamaGenChunkGatherer",
     "LlamaGenConfig",
     "LlamaGenModel",
     "LlamaGenReplayModel",

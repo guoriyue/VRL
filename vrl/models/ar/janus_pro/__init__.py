@@ -19,7 +19,6 @@ from vrl.models.ar.janus_pro.model import (  # noqa: E402
 )
 from vrl.models.ar.janus_pro.runtime import (  # noqa: E402
     JanusProChunkExecutor,
-    JanusProChunkGatherer,
     JanusProR1ChunkExecutor,
     JanusProR1ChunkGatherer,
     build_janus_pro_runtime_bundle,
@@ -29,7 +28,6 @@ from vrl.models.ar.janus_pro.runtime import (  # noqa: E402
 __all__ = [
     "JANUS_R1_SEGMENTS",
     "JanusProChunkExecutor",
-    "JanusProChunkGatherer",
     "JanusProConfig",
     "JanusProModel",
     "JanusProR1ChunkExecutor",

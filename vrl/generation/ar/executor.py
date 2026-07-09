@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
+
+import torch
 
 from vrl.generation.ar.layout import ARRequestLayout
 from vrl.generation.capabilities import FamilyCapability
+from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.protocols import GenerationChunkExecutor
 from vrl.generation.types import (
+    GenerationMetrics,
     GenerationOutput,
     GenerationRequest,
     GenerationSampleRow,
@@ -174,6 +179,253 @@ class ARChunkExecutorBase(
         raise ValueError("request.sampling.ar_engine must be 'native' if set")
 
 
+@dataclass(slots=True)
+class ARChunkInputs:
+    """Family-prepared inputs for one discrete AR sample chunk.
+
+    ``prepare_chunk_inputs`` (the one required hook of
+    ``ARDiscreteChunkExecutorBase``) returns this: everything the shared chunk
+    skeleton needs that only the family knows — parsed sampling knobs baked
+    into decode-loop wiring, encoded prompt tensors, and the trajectory/replay
+    context.
+    """
+
+    max_new_tokens: int
+    # str(cond_embeds.dtype) — the decode loop's activation dtype source.
+    decode_dtype: str
+    init_args: tuple[Any, ...]
+    init_kwargs: dict[str, Any]
+    # Passed verbatim to ``model.decode_image_tokens(token_ids, **kwargs)``.
+    image_decode_kwargs: dict[str, Any]
+    prompt_input_ids: torch.Tensor
+    prompt_attention_mask: torch.Tensor
+    # Families without a real uncond branch (glm_image, llamagen) pass zeros
+    # here to satisfy the shared discrete trajectory schema; replay never
+    # reads them.
+    uncond_input_ids: torch.Tensor
+    uncond_attention_mask: torch.Tensor
+    context: dict[str, Any]
+    # Prefill forward count this family's runner performs per chunk (2 for a
+    # separate cond+uncond CFG prefill, 1 for combined/single-branch). Pure
+    # telemetry: surfaces as the ``ar_prefill_forwards`` engine counter.
+    prefill_forwards: int
+
+
+@dataclass(slots=True)
+class ARDiscreteChunkResult:
+    """Output of one prompt/sample discrete AR chunk (shared by all discrete
+    families — the field set janus_pro/emu3/glm_image/llamagen previously
+    declared verbatim per family)."""
+
+    prompt_index: int
+    sample_start: int
+    sample_count: int
+    output: torch.Tensor
+    token_ids: torch.Tensor
+    token_log_probs: torch.Tensor
+    token_mask: torch.Tensor
+    prompt_input_ids: torch.Tensor
+    prompt_attention_mask: torch.Tensor
+    uncond_input_ids: torch.Tensor
+    uncond_attention_mask: torch.Tensor
+    context: dict[str, Any]
+    prefill_forwards: int
+    peak_memory_mb: float | None = None
+
+
+class ARDiscreteChunkExecutorBase(ARChunkExecutorBase):
+    """Chunk-step template for discrete-token AR families.
+
+    Owns the skeleton every discrete family previously copied verbatim
+    (validate -> seed -> prefill -> ``ARDecodeLoop`` -> VQ decode -> token
+    mask -> chunk result). Families implement ``prepare_chunk_inputs`` — the
+    readable straight-line part: knob parsing, prompt encoding, decode-loop
+    wiring — and may override ``chunk_token_mask`` (emu3 masks its forced
+    structural positions).
+
+    Families whose chunk step has a different shape stay off this template on
+    the plain ``ARChunkExecutorBase``: nextstep_1 (continuous tokens, 3-tuple
+    finalized decode payload) and janus_pro_r1 (inverted control flow through
+    ``model.generate_with_refine``).
+    """
+
+    def prepare_chunk_inputs(
+        self,
+        request: GenerationRequest,
+        chunk: SampleChunk,
+    ) -> ARChunkInputs:
+        raise NotImplementedError
+
+    def chunk_token_mask(
+        self,
+        inputs: ARChunkInputs,
+        token_ids: torch.Tensor,
+        token_log_probs: torch.Tensor,
+    ) -> torch.Tensor:
+        """Trainable-token mask; the default trains every generated position."""
+
+        del inputs, token_ids
+        return torch.ones_like(token_log_probs)
+
+    def forward_chunk_plan(
+        self,
+        request: GenerationRequest,
+        chunk: SampleChunk,
+        execution_stage: Any,
+    ) -> ARDiscreteChunkResult:
+        """Run one prompt-major AR chunk through the black-box sampling path."""
+
+        from vrl.generation.ar.decode_loop import ARDecodeLoop
+        from vrl.utils.profiling import record_function
+
+        del execution_stage
+        self.require_native_ar_engine(request)
+        self.layout.validate_chunk(request, chunk)
+
+        seed = request.sampling.get("seed")
+        if seed is not None:
+            torch.manual_seed(int(seed) + self.layout.chunk_seed_offset(request, chunk))
+
+        with record_function("engine.prefill"):
+            inputs = self.prepare_chunk_inputs(request, chunk)
+
+        with (
+            record_function("engine.decode_step"),
+            record_function("engine.cache_read"),
+            record_function("engine.cache_write"),
+        ):
+            decode_result = ARDecodeLoop(
+                request=request,
+                sample_rows=self.layout.chunk_sample_rows(request, chunk),
+                runner=self._ar_runner(request),
+                max_new_tokens=inputs.max_new_tokens,
+                tokenizer_key=self.family,
+                dtype=inputs.decode_dtype,
+                scheduler_batch_size=chunk.sample_count,
+                init_args=inputs.init_args,
+                init_kwargs=inputs.init_kwargs,
+            ).run()
+        token_ids, token_log_probs = decode_result.finalized
+        with record_function("engine.vq_decode"):
+            images = self.model.decode_image_tokens(
+                token_ids,
+                **inputs.image_decode_kwargs,
+            )
+        token_mask = self.chunk_token_mask(inputs, token_ids, token_log_probs)
+
+        return ARDiscreteChunkResult(
+            prompt_index=chunk.prompt_index,
+            sample_start=chunk.sample_start,
+            sample_count=chunk.sample_count,
+            output=images,
+            token_ids=token_ids,
+            token_log_probs=token_log_probs,
+            token_mask=token_mask,
+            prompt_input_ids=inputs.prompt_input_ids,
+            prompt_attention_mask=inputs.prompt_attention_mask,
+            uncond_input_ids=inputs.uncond_input_ids,
+            uncond_attention_mask=inputs.uncond_attention_mask,
+            context={**inputs.context, "ar_decode_loop_enabled": True},
+            prefill_forwards=inputs.prefill_forwards,
+            peak_memory_mb=self.layout.peak_memory_mb(),
+        )
+
+    def gather_chunks(
+        self,
+        request: GenerationRequest,
+        sample_rows: Sequence[GenerationSampleRow],
+        chunks: Sequence[ARDiscreteChunkResult],
+    ) -> GenerationOutput:
+        return ARDiscreteChunkGatherer().gather_chunks(request, sample_rows, chunks)
+
+
+@dataclass(frozen=True, slots=True)
+class ARDiscreteChunkGatherer:
+    """Pure driver-side gatherer for discrete AR chunk payloads.
+
+    One class for every discrete family (mirroring ``DiffusionChunkGatherer``
+    on the diffusion side): the payload is the shared
+    ``ARDiscreteChunkResult``, so nothing here is family-specific.
+    """
+
+    def gather_chunks(
+        self,
+        request: GenerationRequest,
+        sample_rows: Sequence[GenerationSampleRow],
+        chunks: Sequence[ARDiscreteChunkResult],
+    ) -> GenerationOutput:
+        """Pack prompt/sample AR chunks back into the canonical GenerationOutput."""
+
+        from vrl.trajectory import build_ar_discrete_trajectory
+
+        layout = ARRequestLayout()
+        fields = (
+            "output",
+            "token_ids",
+            "token_log_probs",
+            "token_mask",
+            "prompt_input_ids",
+            "prompt_attention_mask",
+            "uncond_input_ids",
+            "uncond_attention_mask",
+        )
+        ordered_ar_chunks = layout.ordered_chunks(
+            request,
+            sample_rows,
+            chunks,
+            row_fields=fields,
+        )
+        cat = layout.cat_chunk_fields(ordered_ar_chunks, fields)
+        peak_mem_mb = layout.max_peak_memory_mb(ordered_ar_chunks)
+        # The produced token count IS the step count — knob-derived (janus,
+        # llamagen) and grid-derived (emu3, glm_image) families alike.
+        image_token_num = int(cat["token_ids"].shape[1])
+        chunk_context = dict(ordered_ar_chunks[0].context)
+        metrics = GenerationMetrics(
+            num_steps=image_token_num,
+            chunks=len(ordered_ar_chunks),
+            peak_memory_mb=peak_mem_mb,
+            engine_counters={
+                "ar_decode_loop_enabled": True,
+                "ar_prefill_forwards": int(ordered_ar_chunks[0].prefill_forwards),
+                "ar_decode_forwards": max(image_token_num - 1, 0),
+                "ar_decode_tokens": len(sample_rows) * image_token_num,
+                "ar_scheduler_enabled": False,
+                "ar_scheduler_batch_size": request.sampling.get("ar_scheduler_batch_size"),
+                "ar_scheduler_batches": None,
+            },
+        )
+        trajectory = build_ar_discrete_trajectory(
+            request=request,
+            sample_rows=list(sample_rows),
+            token_ids=cat["token_ids"],
+            token_log_probs=cat["token_log_probs"],
+            token_mask=cat["token_mask"],
+            prompt_input_ids=cat["prompt_input_ids"],
+            prompt_attention_mask=cat["prompt_attention_mask"],
+            uncond_input_ids=cat["uncond_input_ids"],
+            uncond_attention_mask=cat["uncond_attention_mask"],
+            context=chunk_context,
+        )
+
+        return GenerationOutput(
+            request_id=request.request_id,
+            family=request.family,
+            task=request.task,
+            prompts=list(request.prompts),
+            sample_rows=list(sample_rows),
+            output=cat["output"],
+            trajectory=trajectory,
+            extra={},
+            metrics=metrics,
+            peak_memory_mb=peak_mem_mb or 0.0,
+        )
+
+
 __all__ = [
     "ARChunkExecutorBase",
+    "ARChunkInputs",
+    "ARDiscreteChunkExecutorBase",
+    "ARDiscreteChunkGatherer",
+    "ARDiscreteChunkResult",
 ]

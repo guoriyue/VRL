@@ -547,7 +547,7 @@ register_rollout_family(
             "vrl.models.ar.janus_pro.runtime:extract_janus_pro_runtime_spec"
         ),
         gatherer=GathererMetadata(
-            import_path="vrl.models.ar.janus_pro.runtime:JanusProChunkGatherer",
+            import_path="vrl.generation.ar.executor:ARDiscreteChunkGatherer",
         ),
         capability=JANUS_PRO_FAMILY_CAPABILITY,
     ),
@@ -614,7 +614,7 @@ register_rollout_family(
             "vrl.models.ar.emu3.runtime:extract_emu3_runtime_spec"
         ),
         gatherer=GathererMetadata(
-            import_path="vrl.models.ar.emu3.runtime:Emu3ChunkGatherer",
+            import_path="vrl.generation.ar.executor:ARDiscreteChunkGatherer",
         ),
         capability=EMU3_FAMILY_CAPABILITY,
     ),
@@ -636,7 +636,7 @@ register_rollout_family(
             "vrl.models.ar.glm_image.runtime:extract_glm_image_runtime_spec"
         ),
         gatherer=GathererMetadata(
-            import_path="vrl.models.ar.glm_image.runtime:GlmImageChunkGatherer",
+            import_path="vrl.generation.ar.executor:ARDiscreteChunkGatherer",
         ),
         capability=GLM_IMAGE_FAMILY_CAPABILITY,
     ),
@@ -658,7 +658,7 @@ register_rollout_family(
             "vrl.models.ar.llamagen.runtime:extract_llamagen_runtime_spec"
         ),
         gatherer=GathererMetadata(
-            import_path="vrl.models.ar.llamagen.runtime:LlamaGenChunkGatherer",
+            import_path="vrl.generation.ar.executor:ARDiscreteChunkGatherer",
         ),
         capability=LLAMAGEN_FAMILY_CAPABILITY,
     ),

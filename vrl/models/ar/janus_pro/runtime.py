@@ -8,7 +8,12 @@ from typing import Any
 
 import torch
 
-from vrl.generation.ar import ARChunkExecutorBase, ARRequestLayout, ARSamplingParams
+from vrl.generation.ar import (
+    ARChunkInputs,
+    ARDiscreteChunkExecutorBase,
+    ARRequestLayout,
+    ARSamplingParams,
+)
 from vrl.generation.ar.decode_loop import ARDecodeLoop, call_with_supported_kwargs
 from vrl.generation.capabilities import FamilyCapability
 from vrl.generation.execution.chunks import SampleChunk
@@ -29,7 +34,7 @@ from vrl.models.ar.janus_pro.model import (
 from vrl.models.ar.janus_pro.runner import JanusProARModelRunner
 from vrl.models.dtypes import dtype_to_config_string
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
-from vrl.trajectory import build_ar_discrete_trajectory, build_ar_multisegment_trajectory
+from vrl.trajectory import build_ar_multisegment_trajectory
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -151,26 +156,7 @@ def _resolve_lora_block(spec: RuntimeBuildSpec, defaults: dict[str, Any]) -> dic
     return lora
 
 
-@dataclass(slots=True)
-class JanusProARChunkResult:
-    """Output of one prompt/sample Janus-Pro AR chunk."""
-
-    prompt_index: int
-    sample_start: int
-    sample_count: int
-    output: torch.Tensor
-    token_ids: torch.Tensor
-    token_log_probs: torch.Tensor
-    token_mask: torch.Tensor
-    prompt_input_ids: torch.Tensor
-    prompt_attention_mask: torch.Tensor
-    uncond_input_ids: torch.Tensor
-    uncond_attention_mask: torch.Tensor
-    context: dict[str, Any]
-    peak_memory_mb: float | None = None
-
-
-class JanusProChunkExecutor(ARChunkExecutorBase):
+class JanusProChunkExecutor(ARDiscreteChunkExecutorBase):
     """AR executor for Janus-Pro text-to-image rollouts.
 
     The collector constructs a ``GenerationRequest`` whose ``sampling``
@@ -222,88 +208,50 @@ class JanusProChunkExecutor(ARChunkExecutorBase):
 
     # -- protocol ------------------------------------------------------
 
-    def forward_chunk_plan(
+    def prepare_chunk_inputs(
         self,
         request: GenerationRequest,
         chunk: SampleChunk,
-        execution_stage: Any,
-    ) -> JanusProARChunkResult:
-        """Run one prompt-major AR chunk through the black-box sampling path."""
+    ) -> ARChunkInputs:
+        """Encode cond+uncond prompts and wire the CFG decode loop."""
 
-        from vrl.utils.profiling import record_function
-
-        del execution_stage
-        self.require_native_ar_engine(request)
-        self.layout.validate_chunk(request, chunk)
         sampling = request.sampling
         params: ARSamplingParams = self.layout.parse_sampling_params(request)
 
         guidance_scale = float(sampling.get("guidance_scale", 5.0))
         temperature = float(sampling.get("temperature", 1.0))
 
-        if params.seed is not None:
-            torch.manual_seed(params.seed + self.layout.chunk_seed_offset(request, chunk))
+        repeated_prompts = [chunk.prompt] * chunk.sample_count
+        prompt_ids, prompt_mask = self._tokenize_prompts(
+            repeated_prompts,
+            max_text_length=params.max_text_length,
+        )
+        uncond_ids, uncond_mask = self._tokenize_prompts(
+            [""] * chunk.sample_count,
+            max_text_length=params.max_text_length,
+        )
+        pad_id = getattr(self.model.processor.tokenizer, "pad_token_id", None) or 0
+        prompt_ids, prompt_mask, uncond_ids, uncond_mask = self.layout.align_pair(
+            prompt_ids,
+            prompt_mask,
+            uncond_ids,
+            uncond_mask,
+            pad_id=pad_id,
+        )
 
-        with record_function("engine.prefill"):
-            repeated_prompts = [chunk.prompt] * chunk.sample_count
-            prompt_ids, prompt_mask = self._tokenize_prompts(
-                repeated_prompts,
-                max_text_length=params.max_text_length,
-            )
-            uncond_ids, uncond_mask = self._tokenize_prompts(
-                [""] * chunk.sample_count,
-                max_text_length=params.max_text_length,
-            )
-            pad_id = getattr(self.model.processor.tokenizer, "pad_token_id", None) or 0
-            prompt_ids, prompt_mask, uncond_ids, uncond_mask = self.layout.align_pair(
-                prompt_ids,
-                prompt_mask,
-                uncond_ids,
-                uncond_mask,
-                pad_id=pad_id,
-            )
+        cond_embeds = self._embed(prompt_ids)
+        uncond_embeds = self._embed(uncond_ids)
 
-            cond_embeds = self._embed(prompt_ids)
-            uncond_embeds = self._embed(uncond_ids)
-
-        chunk_specs = self.layout.chunk_sample_rows(request, chunk)
-        with (
-            record_function("engine.decode_step"),
-            record_function("engine.cache_read"),
-            record_function("engine.cache_write"),
-        ):
-            decode_result = ARDecodeLoop(
-                request=request,
-                sample_rows=chunk_specs,
-                runner=self._ar_runner(request),
-                max_new_tokens=params.image_token_num,
-                tokenizer_key="janus_pro",
-                dtype=str(cond_embeds.dtype),
-                scheduler_batch_size=chunk.sample_count,
-                init_args=(cond_embeds, uncond_embeds, prompt_mask, uncond_mask),
-                init_kwargs={
-                    "guidance_scale": guidance_scale,
-                    "temperature": temperature,
-                    "image_token_num": params.image_token_num,
-                },
-            ).run()
-        token_ids, token_log_probs = decode_result.finalized
-        with record_function("engine.vq_decode"):
-            images = self.model.decode_image_tokens(
-                token_ids,
-                image_size=params.image_size,
-            )
-        token_mask = torch.ones_like(token_log_probs)
-        peak_mem_mb = self.layout.peak_memory_mb()
-
-        return JanusProARChunkResult(
-            prompt_index=chunk.prompt_index,
-            sample_start=chunk.sample_start,
-            sample_count=chunk.sample_count,
-            output=images,
-            token_ids=token_ids,
-            token_log_probs=token_log_probs,
-            token_mask=token_mask,
+        return ARChunkInputs(
+            max_new_tokens=params.image_token_num,
+            decode_dtype=str(cond_embeds.dtype),
+            init_args=(cond_embeds, uncond_embeds, prompt_mask, uncond_mask),
+            init_kwargs={
+                "guidance_scale": guidance_scale,
+                "temperature": temperature,
+                "image_token_num": params.image_token_num,
+            },
+            image_decode_kwargs={"image_size": params.image_size},
             prompt_input_ids=prompt_ids,
             prompt_attention_mask=prompt_mask,
             uncond_input_ids=uncond_ids,
@@ -311,18 +259,10 @@ class JanusProChunkExecutor(ARChunkExecutorBase):
             context={
                 "guidance_scale": guidance_scale,
                 "image_token_num": params.image_token_num,
-                "ar_decode_loop_enabled": True,
             },
-            peak_memory_mb=peak_mem_mb,
+            # Two branch prefills: cond and uncond run as separate forwards.
+            prefill_forwards=2,
         )
-
-    def gather_chunks(
-        self,
-        request: GenerationRequest,
-        sample_rows: Sequence[GenerationSampleRow],
-        chunks: Sequence[JanusProARChunkResult],
-    ) -> GenerationOutput:
-        return JanusProChunkGatherer().gather_chunks(request, sample_rows, chunks)
 
     # -- internals -----------------------------------------------------
 
@@ -370,80 +310,6 @@ class JanusProChunkExecutor(ARChunkExecutorBase):
         return (
             f"<｜User｜>: {prompt}\n\n"  # noqa: RUF001
             f"<｜Assistant｜>:<begin_of_image>"  # noqa: RUF001
-        )
-
-
-class JanusProChunkGatherer:
-    """Pure driver-side gatherer for Janus-Pro AR chunk payloads."""
-
-    layout = ARRequestLayout()
-
-    def gather_chunks(
-        self,
-        request: GenerationRequest,
-        sample_rows: Sequence[GenerationSampleRow],
-        chunks: Sequence[JanusProARChunkResult],
-    ) -> GenerationOutput:
-        """Pack prompt/sample AR chunks back into the canonical GenerationOutput."""
-
-        fields = (
-            "output",
-            "token_ids",
-            "token_log_probs",
-            "token_mask",
-            "prompt_input_ids",
-            "prompt_attention_mask",
-            "uncond_input_ids",
-            "uncond_attention_mask",
-        )
-        ordered_ar_chunks = self.layout.ordered_chunks(
-            request,
-            sample_rows,
-            chunks,
-            row_fields=fields,
-        )
-        cat = self.layout.cat_chunk_fields(ordered_ar_chunks, fields)
-        peak_mem_mb = self.layout.max_peak_memory_mb(ordered_ar_chunks)
-        image_token_num = self.layout.parse_sampling_params(request).image_token_num
-        chunk_context = dict(ordered_ar_chunks[0].context)
-        metrics = GenerationMetrics(
-            num_steps=image_token_num,
-            chunks=len(ordered_ar_chunks),
-            peak_memory_mb=peak_mem_mb,
-            engine_counters={
-                "ar_decode_loop_enabled": True,
-                "ar_prefill_forwards": 2,
-                "ar_decode_forwards": max(image_token_num - 1, 0),
-                "ar_decode_tokens": len(sample_rows) * image_token_num,
-                "ar_scheduler_enabled": False,
-                "ar_scheduler_batch_size": request.sampling.get("ar_scheduler_batch_size"),
-                "ar_scheduler_batches": None,
-            },
-        )
-        trajectory = build_ar_discrete_trajectory(
-            request=request,
-            sample_rows=list(sample_rows),
-            token_ids=cat["token_ids"],
-            token_log_probs=cat["token_log_probs"],
-            token_mask=cat["token_mask"],
-            prompt_input_ids=cat["prompt_input_ids"],
-            prompt_attention_mask=cat["prompt_attention_mask"],
-            uncond_input_ids=cat["uncond_input_ids"],
-            uncond_attention_mask=cat["uncond_attention_mask"],
-            context=chunk_context,
-        )
-
-        return GenerationOutput(
-            request_id=request.request_id,
-            family=request.family,
-            task=request.task,
-            prompts=list(request.prompts),
-            sample_rows=list(sample_rows),
-            output=cat["output"],
-            trajectory=trajectory,
-            extra={},
-            metrics=metrics,
-            peak_memory_mb=peak_mem_mb or 0.0,
         )
 
 
@@ -741,9 +607,7 @@ def _segment_token_steps(segments: dict[str, dict[str, Any]]) -> int:
 
 
 __all__ = [
-    "JanusProARChunkResult",
     "JanusProChunkExecutor",
-    "JanusProChunkGatherer",
     "JanusProR1ChunkExecutor",
     "JanusProR1ChunkGatherer",
     "JanusProR1ChunkResult",

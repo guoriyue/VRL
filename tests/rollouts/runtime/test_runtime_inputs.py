@@ -8,9 +8,10 @@ import pytest
 import torch
 
 from vrl.config.loading import load_config
+from vrl.generation.ar.executor import ARDiscreteChunkGatherer
 from vrl.generation.diffusion import DiffusionChunkGatherer
 from vrl.generation.protocols import GenerationChunkExecutor
-from vrl.models.ar.janus_pro.runtime import JanusProChunkGatherer, JanusProR1ChunkGatherer
+from vrl.models.ar.janus_pro.runtime import JanusProR1ChunkGatherer
 from vrl.models.ar.nextstep_1.runtime import NextStep1ChunkGatherer
 from vrl.rollouts.families import (
     RayGenerationLaunchInputs,
@@ -57,7 +58,7 @@ from vrl.rollouts.families import (
         (
             "ar/janus_pro/online_grpo_ocr",
             "janus_pro",
-            JanusProChunkGatherer,
+            ARDiscreteChunkGatherer,
         ),
         (
             "ar/janus_pro/online_r1_grpo_ocr",

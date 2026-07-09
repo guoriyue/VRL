@@ -2,22 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass
 from typing import Any
 
 import torch
 
-from vrl.generation.ar import ARChunkExecutorBase, ARRequestLayout, ARSamplingParams
-from vrl.generation.ar.decode_loop import ARDecodeLoop
+from vrl.generation.ar import (
+    ARChunkInputs,
+    ARDiscreteChunkExecutorBase,
+    ARSamplingParams,
+)
 from vrl.generation.capabilities import FamilyCapability
 from vrl.generation.execution.chunks import SampleChunk
-from vrl.generation.types import (
-    GenerationMetrics,
-    GenerationOutput,
-    GenerationRequest,
-    GenerationSampleRow,
-)
+from vrl.generation.types import GenerationRequest
 from vrl.models.ar.build import build_ar_runtime_bundle, extract_ar_runtime_spec
 from vrl.models.ar.capabilities import ar_discrete_family_capability
 from vrl.models.ar.llamagen.model import (
@@ -29,7 +25,6 @@ from vrl.models.ar.llamagen.model import (
 from vrl.models.ar.llamagen.runner import LlamaGenARModelRunner
 from vrl.models.dtypes import dtype_to_config_string
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
-from vrl.trajectory import build_ar_discrete_trajectory
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -125,26 +120,7 @@ def _llamagen_config_from_runtime_spec(spec: RuntimeBuildSpec) -> dict[str, Any]
     return config
 
 
-@dataclass(slots=True)
-class LlamaGenARChunkResult:
-    """Output of one prompt/sample LlamaGen AR chunk."""
-
-    prompt_index: int
-    sample_start: int
-    sample_count: int
-    output: torch.Tensor
-    token_ids: torch.Tensor
-    token_log_probs: torch.Tensor
-    token_mask: torch.Tensor
-    prompt_input_ids: torch.Tensor
-    prompt_attention_mask: torch.Tensor
-    uncond_input_ids: torch.Tensor
-    uncond_attention_mask: torch.Tensor
-    context: dict[str, Any]
-    peak_memory_mb: float | None = None
-
-
-class LlamaGenChunkExecutor(ARChunkExecutorBase):
+class LlamaGenChunkExecutor(ARDiscreteChunkExecutorBase):
     """AR executor for LlamaGen text-to-image rollouts.
 
     Same request/output contract as ``JanusProChunkExecutor`` with these
@@ -194,19 +170,13 @@ class LlamaGenChunkExecutor(ARChunkExecutorBase):
             )
         return LlamaGenARModelRunner(self.model)
 
-    def forward_chunk_plan(
+    def prepare_chunk_inputs(
         self,
         request: GenerationRequest,
         chunk: SampleChunk,
-        execution_stage: Any,
-    ) -> LlamaGenARChunkResult:
-        """Run one prompt-major AR chunk through the black-box sampling path."""
+    ) -> ARChunkInputs:
+        """Encode the T5 caption prefix and wire the CFG decode loop."""
 
-        from vrl.utils.profiling import record_function
-
-        del execution_stage
-        self.require_native_ar_engine(request)
-        self.layout.validate_chunk(request, chunk)
         sampling = request.sampling
         params: ARSamplingParams = self.layout.parse_sampling_params(request)
 
@@ -223,63 +193,31 @@ class LlamaGenChunkExecutor(ARChunkExecutorBase):
         top_k = int(sampling.get("top_k", self.model.config.top_k))
         top_p = float(sampling.get("top_p", self.model.config.top_p))
 
-        if params.seed is not None:
-            torch.manual_seed(params.seed + self.layout.chunk_seed_offset(request, chunk))
+        repeated_prompts = [chunk.prompt] * chunk.sample_count
+        prompt_ids, prompt_mask = self._tokenize_prompts(
+            repeated_prompts,
+            max_text_length=params.max_text_length,
+        )
+        cond_embeds, cond_mask = self.model.encode_caption(prompt_ids, prompt_mask)
+        uncond_embeds = self.model.uncond_caption_embeds(chunk.sample_count)
 
-        with record_function("engine.prefill"):
-            repeated_prompts = [chunk.prompt] * chunk.sample_count
-            prompt_ids, prompt_mask = self._tokenize_prompts(
-                repeated_prompts,
-                max_text_length=params.max_text_length,
-            )
-            cond_embeds, cond_mask = self.model.encode_caption(prompt_ids, prompt_mask)
-            uncond_embeds = self.model.uncond_caption_embeds(chunk.sample_count)
-
-        chunk_specs = self.layout.chunk_sample_rows(request, chunk)
-        with (
-            record_function("engine.decode_step"),
-            record_function("engine.cache_read"),
-            record_function("engine.cache_write"),
-        ):
-            decode_result = ARDecodeLoop(
-                request=request,
-                sample_rows=chunk_specs,
-                runner=self._ar_runner(request),
-                max_new_tokens=params.image_token_num,
-                tokenizer_key="llamagen",
-                dtype=str(cond_embeds.dtype),
-                # Full-batch scheduling is a hard requirement: the vendored
-                # static KV cache advances in-place for the whole combined
-                # cond/uncond batch (runner validates each step).
-                scheduler_batch_size=chunk.sample_count,
-                # Upstream generate() drives the uncond branch with the COND
-                # prompt's mask (cat([emb_masks, emb_masks])).
-                init_args=(cond_embeds, uncond_embeds, cond_mask, cond_mask),
-                init_kwargs={
-                    "guidance_scale": guidance_scale,
-                    "temperature": temperature,
-                    "top_k": top_k,
-                    "top_p": top_p,
-                    "image_token_num": params.image_token_num,
-                },
-            ).run()
-        token_ids, token_log_probs = decode_result.finalized
-        with record_function("engine.vq_decode"):
-            images = self.model.decode_image_tokens(
-                token_ids,
-                image_size=params.image_size,
-            )
-        token_mask = torch.ones_like(token_log_probs)
-        peak_mem_mb = self.layout.peak_memory_mb()
-
-        return LlamaGenARChunkResult(
-            prompt_index=chunk.prompt_index,
-            sample_start=chunk.sample_start,
-            sample_count=chunk.sample_count,
-            output=images,
-            token_ids=token_ids,
-            token_log_probs=token_log_probs,
-            token_mask=token_mask,
+        return ARChunkInputs(
+            max_new_tokens=params.image_token_num,
+            decode_dtype=str(cond_embeds.dtype),
+            # Upstream generate() drives the uncond branch with the COND
+            # prompt's mask (cat([emb_masks, emb_masks])). Full-batch
+            # scheduling is a hard requirement: the vendored static KV cache
+            # advances in-place for the whole combined cond/uncond batch
+            # (runner validates each step).
+            init_args=(cond_embeds, uncond_embeds, cond_mask, cond_mask),
+            init_kwargs={
+                "guidance_scale": guidance_scale,
+                "temperature": temperature,
+                "top_k": top_k,
+                "top_p": top_p,
+                "image_token_num": params.image_token_num,
+            },
+            image_decode_kwargs={"image_size": params.image_size},
             prompt_input_ids=prompt_ids,
             prompt_attention_mask=prompt_mask,
             # No unconditional token ids exist — the null caption is the
@@ -293,18 +231,11 @@ class LlamaGenChunkExecutor(ARChunkExecutorBase):
                 "top_p": top_p,
                 "image_token_num": params.image_token_num,
                 "uncond_source": "caption_embedder_uncond_embedding",
-                "ar_decode_loop_enabled": True,
             },
-            peak_memory_mb=peak_mem_mb,
+            # One combined [cond | uncond] prefill forward (vs Janus' two
+            # branch prefills).
+            prefill_forwards=1,
         )
-
-    def gather_chunks(
-        self,
-        request: GenerationRequest,
-        sample_rows: Sequence[GenerationSampleRow],
-        chunks: Sequence[LlamaGenARChunkResult],
-    ) -> GenerationOutput:
-        return LlamaGenChunkGatherer().gather_chunks(request, sample_rows, chunks)
 
     # -- internals -----------------------------------------------------
 
@@ -345,87 +276,9 @@ class LlamaGenChunkExecutor(ARChunkExecutorBase):
         return ids.to(device), mask.to(device)
 
 
-class LlamaGenChunkGatherer:
-    """Pure driver-side gatherer for LlamaGen AR chunk payloads."""
-
-    layout = ARRequestLayout()
-
-    def gather_chunks(
-        self,
-        request: GenerationRequest,
-        sample_rows: Sequence[GenerationSampleRow],
-        chunks: Sequence[LlamaGenARChunkResult],
-    ) -> GenerationOutput:
-        """Pack prompt/sample AR chunks back into the canonical GenerationOutput."""
-
-        fields = (
-            "output",
-            "token_ids",
-            "token_log_probs",
-            "token_mask",
-            "prompt_input_ids",
-            "prompt_attention_mask",
-            "uncond_input_ids",
-            "uncond_attention_mask",
-        )
-        ordered_ar_chunks = self.layout.ordered_chunks(
-            request,
-            sample_rows,
-            chunks,
-            row_fields=fields,
-        )
-        cat = self.layout.cat_chunk_fields(ordered_ar_chunks, fields)
-        peak_mem_mb = self.layout.max_peak_memory_mb(ordered_ar_chunks)
-        image_token_num = self.layout.parse_sampling_params(request).image_token_num
-        chunk_context = dict(ordered_ar_chunks[0].context)
-        metrics = GenerationMetrics(
-            num_steps=image_token_num,
-            chunks=len(ordered_ar_chunks),
-            peak_memory_mb=peak_mem_mb,
-            engine_counters={
-                "ar_decode_loop_enabled": True,
-                # One combined [cond | uncond] prefill forward (vs Janus' two
-                # branch prefills).
-                "ar_prefill_forwards": 1,
-                "ar_decode_forwards": max(image_token_num - 1, 0),
-                "ar_decode_tokens": len(sample_rows) * image_token_num,
-                "ar_scheduler_enabled": False,
-                "ar_scheduler_batch_size": request.sampling.get("ar_scheduler_batch_size"),
-                "ar_scheduler_batches": None,
-            },
-        )
-        trajectory = build_ar_discrete_trajectory(
-            request=request,
-            sample_rows=list(sample_rows),
-            token_ids=cat["token_ids"],
-            token_log_probs=cat["token_log_probs"],
-            token_mask=cat["token_mask"],
-            prompt_input_ids=cat["prompt_input_ids"],
-            prompt_attention_mask=cat["prompt_attention_mask"],
-            uncond_input_ids=cat["uncond_input_ids"],
-            uncond_attention_mask=cat["uncond_attention_mask"],
-            context=chunk_context,
-        )
-
-        return GenerationOutput(
-            request_id=request.request_id,
-            family=request.family,
-            task=request.task,
-            prompts=list(request.prompts),
-            sample_rows=list(sample_rows),
-            output=cat["output"],
-            trajectory=trajectory,
-            extra={},
-            metrics=metrics,
-            peak_memory_mb=peak_mem_mb or 0.0,
-        )
-
-
 __all__ = [
     "LLAMAGEN_FAMILY_CAPABILITY",
-    "LlamaGenARChunkResult",
     "LlamaGenChunkExecutor",
-    "LlamaGenChunkGatherer",
     "build_llamagen_replay_runtime_bundle",
     "build_llamagen_runtime_bundle",
     "extract_llamagen_runtime_spec",

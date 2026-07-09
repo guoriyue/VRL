@@ -18,7 +18,6 @@ from vrl.models.ar.emu3.model import (
 )
 from vrl.models.ar.emu3.runtime import (
     Emu3ChunkExecutor,
-    Emu3ChunkGatherer,
     build_emu3_replay_runtime_bundle,
     build_emu3_runtime_bundle,
     extract_emu3_runtime_spec,
@@ -26,7 +25,6 @@ from vrl.models.ar.emu3.runtime import (
 
 __all__ = [
     "Emu3ChunkExecutor",
-    "Emu3ChunkGatherer",
     "Emu3Config",
     "Emu3Model",
     "Emu3ReplayModel",

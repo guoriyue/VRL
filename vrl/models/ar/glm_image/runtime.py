@@ -2,22 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass
 from typing import Any
 
 import torch
 
-from vrl.generation.ar import ARChunkExecutorBase, ARRequestLayout
-from vrl.generation.ar.decode_loop import ARDecodeLoop
+from vrl.generation.ar import ARChunkInputs, ARDiscreteChunkExecutorBase
 from vrl.generation.capabilities import FamilyCapability
 from vrl.generation.execution.chunks import SampleChunk
-from vrl.generation.types import (
-    GenerationMetrics,
-    GenerationOutput,
-    GenerationRequest,
-    GenerationSampleRow,
-)
+from vrl.generation.types import GenerationRequest
 from vrl.models.ar.build import build_ar_runtime_bundle, extract_ar_runtime_spec
 from vrl.models.ar.capabilities import ar_discrete_family_capability
 from vrl.models.ar.glm_image.model import (
@@ -29,7 +21,6 @@ from vrl.models.ar.glm_image.model import (
 from vrl.models.ar.glm_image.runner import GlmImageTokenRunner
 from vrl.models.dtypes import dtype_to_config_string
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
-from vrl.trajectory import build_ar_discrete_trajectory
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -125,26 +116,7 @@ def _glm_image_config_from_runtime_spec(spec: RuntimeBuildSpec) -> dict[str, Any
     return config
 
 
-@dataclass(slots=True)
-class GlmImageARChunkResult:
-    """Output of one prompt/sample GLM-Image AR chunk."""
-
-    prompt_index: int
-    sample_start: int
-    sample_count: int
-    output: torch.Tensor
-    token_ids: torch.Tensor
-    token_log_probs: torch.Tensor
-    token_mask: torch.Tensor
-    prompt_input_ids: torch.Tensor
-    prompt_attention_mask: torch.Tensor
-    uncond_input_ids: torch.Tensor
-    uncond_attention_mask: torch.Tensor
-    context: dict[str, Any]
-    peak_memory_mb: float | None = None
-
-
-class GlmImageChunkExecutor(ARChunkExecutorBase):
+class GlmImageChunkExecutor(ARDiscreteChunkExecutorBase):
     """AR executor for GLM-Image text-to-image rollouts.
 
     The collector constructs a ``GenerationRequest`` whose ``sampling``
@@ -214,19 +186,13 @@ class GlmImageChunkExecutor(ARChunkExecutorBase):
             )
         return GlmImageTokenRunner(self.model)
 
-    def forward_chunk_plan(
+    def prepare_chunk_inputs(
         self,
         request: GenerationRequest,
         chunk: SampleChunk,
-        execution_stage: Any,
-    ) -> GlmImageARChunkResult:
-        """Run one prompt-major AR chunk through the black-box sampling path."""
+    ) -> ARChunkInputs:
+        """Encode the single-branch prompt and wire the mrope decode loop."""
 
-        from vrl.utils.profiling import record_function
-
-        del execution_stage
-        self.require_native_ar_engine(request)
-        self.layout.validate_chunk(request, chunk)
         sampling = request.sampling
 
         temperature = float(sampling.get("temperature", self.model.config.temperature))
@@ -238,75 +204,42 @@ class GlmImageChunkExecutor(ARChunkExecutorBase):
         image_width = int(sampling.get("image_width", self.model.config.image_width))
         decode_steps = sampling.get("decode_num_inference_steps")
         decode_guidance = sampling.get("decode_guidance_scale")
-        seed = None if sampling.get("seed") is None else int(sampling.get("seed"))
 
-        if seed is not None:
-            torch.manual_seed(seed + self.layout.chunk_seed_offset(request, chunk))
-
-        with record_function("engine.prefill"):
-            repeated_prompts = [chunk.prompt] * chunk.sample_count
-            prompt_ids, prompt_mask, (token_h, token_w, prev_h, prev_w) = (
-                self.model.encode_generation_prompts(
-                    repeated_prompts,
-                    max_text_length=max_text_length,
-                    image_height=image_height,
-                    image_width=image_width,
-                )
+        repeated_prompts = [chunk.prompt] * chunk.sample_count
+        prompt_ids, prompt_mask, (token_h, token_w, prev_h, prev_w) = (
+            self.model.encode_generation_prompts(
+                repeated_prompts,
+                max_text_length=max_text_length,
+                image_height=image_height,
+                image_width=image_width,
             )
-            cond_embeds = self._embed(prompt_ids)
+        )
+        cond_embeds = self._embed(prompt_ids)
 
         total_token_num = glm_image_token_num(image_height, image_width)
-        chunk_specs = self.layout.chunk_sample_rows(request, chunk)
-        with (
-            record_function("engine.decode_step"),
-            record_function("engine.cache_read"),
-            record_function("engine.cache_write"),
-        ):
-            decode_result = ARDecodeLoop(
-                request=request,
-                sample_rows=chunk_specs,
-                runner=self._ar_runner(request),
-                max_new_tokens=total_token_num,
-                tokenizer_key="glm_image",
-                dtype=str(cond_embeds.dtype),
-                scheduler_batch_size=chunk.sample_count,
-                init_args=(cond_embeds, prompt_mask),
-                init_kwargs={
-                    "token_h": token_h,
-                    "token_w": token_w,
-                    "prev_h": prev_h,
-                    "prev_w": prev_w,
-                    "temperature": temperature,
-                    "top_p": top_p,
-                },
-            ).run()
-        token_ids, token_log_probs = decode_result.finalized
-        with record_function("engine.vq_decode"):
-            images = self.model.decode_image_tokens(
-                token_ids,
-                height=image_height,
-                width=image_width,
-                prompts=repeated_prompts,
-                num_inference_steps=(
+        return ARChunkInputs(
+            max_new_tokens=total_token_num,
+            decode_dtype=str(cond_embeds.dtype),
+            init_args=(cond_embeds, prompt_mask),
+            init_kwargs={
+                "token_h": token_h,
+                "token_w": token_w,
+                "prev_h": prev_h,
+                "prev_w": prev_w,
+                "temperature": temperature,
+                "top_p": top_p,
+            },
+            image_decode_kwargs={
+                "height": image_height,
+                "width": image_width,
+                "prompts": repeated_prompts,
+                "num_inference_steps": (
                     None if decode_steps is None else int(decode_steps)
                 ),
-                guidance_scale=(
+                "guidance_scale": (
                     None if decode_guidance is None else float(decode_guidance)
                 ),
-            )
-        # Every generated position is a free codebook draw (no forced
-        # structural tokens), so the whole sequence is trainable.
-        token_mask = torch.ones_like(token_log_probs)
-        peak_mem_mb = self.layout.peak_memory_mb()
-
-        return GlmImageARChunkResult(
-            prompt_index=chunk.prompt_index,
-            sample_start=chunk.sample_start,
-            sample_count=chunk.sample_count,
-            output=images,
-            token_ids=token_ids,
-            token_log_probs=token_log_probs,
-            token_mask=token_mask,
+            },
             prompt_input_ids=prompt_ids,
             prompt_attention_mask=prompt_mask,
             # No AR-side uncond branch exists (no CFG). Zeros keep the shared
@@ -319,101 +252,17 @@ class GlmImageChunkExecutor(ARChunkExecutorBase):
                 "image_height": image_height,
                 "image_width": image_width,
                 "image_token_num": total_token_num,
-                "ar_decode_loop_enabled": True,
             },
-            peak_memory_mb=peak_mem_mb,
-        )
-
-    def gather_chunks(
-        self,
-        request: GenerationRequest,
-        sample_rows: Sequence[GenerationSampleRow],
-        chunks: Sequence[GlmImageARChunkResult],
-    ) -> GenerationOutput:
-        return GlmImageChunkGatherer().gather_chunks(request, sample_rows, chunks)
-
-
-class GlmImageChunkGatherer:
-    """Pure driver-side gatherer for GLM-Image AR chunk payloads."""
-
-    layout = ARRequestLayout()
-
-    def gather_chunks(
-        self,
-        request: GenerationRequest,
-        sample_rows: Sequence[GenerationSampleRow],
-        chunks: Sequence[GlmImageARChunkResult],
-    ) -> GenerationOutput:
-        """Pack prompt/sample AR chunks back into the canonical GenerationOutput."""
-
-        fields = (
-            "output",
-            "token_ids",
-            "token_log_probs",
-            "token_mask",
-            "prompt_input_ids",
-            "prompt_attention_mask",
-            "uncond_input_ids",
-            "uncond_attention_mask",
-        )
-        ordered_ar_chunks = self.layout.ordered_chunks(
-            request,
-            sample_rows,
-            chunks,
-            row_fields=fields,
-        )
-        cat = self.layout.cat_chunk_fields(ordered_ar_chunks, fields)
-        peak_mem_mb = self.layout.max_peak_memory_mb(ordered_ar_chunks)
-        # Grid-derived (not a sampling knob): read from the produced tokens.
-        image_token_num = int(cat["token_ids"].shape[1])
-        chunk_context = dict(ordered_ar_chunks[0].context)
-        metrics = GenerationMetrics(
-            num_steps=image_token_num,
-            chunks=len(ordered_ar_chunks),
-            peak_memory_mb=peak_mem_mb,
-            engine_counters={
-                "ar_decode_loop_enabled": True,
-                # One single-branch prefill (no CFG uncond branch).
-                "ar_prefill_forwards": 1,
-                "ar_decode_forwards": max(image_token_num - 1, 0),
-                "ar_decode_tokens": len(sample_rows) * image_token_num,
-                "ar_scheduler_enabled": False,
-                "ar_scheduler_batch_size": request.sampling.get("ar_scheduler_batch_size"),
-                "ar_scheduler_batches": None,
-            },
-        )
-        trajectory = build_ar_discrete_trajectory(
-            request=request,
-            sample_rows=list(sample_rows),
-            token_ids=cat["token_ids"],
-            token_log_probs=cat["token_log_probs"],
-            token_mask=cat["token_mask"],
-            prompt_input_ids=cat["prompt_input_ids"],
-            prompt_attention_mask=cat["prompt_attention_mask"],
-            uncond_input_ids=cat["uncond_input_ids"],
-            uncond_attention_mask=cat["uncond_attention_mask"],
-            context=chunk_context,
-        )
-
-        return GenerationOutput(
-            request_id=request.request_id,
-            family=request.family,
-            task=request.task,
-            prompts=list(request.prompts),
-            sample_rows=list(sample_rows),
-            output=cat["output"],
-            trajectory=trajectory,
-            extra={},
-            metrics=metrics,
-            peak_memory_mb=peak_mem_mb or 0.0,
+            # One single-branch prefill (no CFG uncond branch). Every
+            # generated position is a free codebook draw, so the default
+            # all-ones token mask is correct.
+            prefill_forwards=1,
         )
 
 
 __all__ = [
     "GLM_IMAGE_FAMILY_CAPABILITY",
-    "GlmImageARChunkResult",
     "GlmImageChunkExecutor",
-    "GlmImageChunkGatherer",
     "build_glm_image_replay_runtime_bundle",
     "build_glm_image_runtime_bundle",
     "extract_glm_image_runtime_spec",

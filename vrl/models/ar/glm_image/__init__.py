@@ -20,7 +20,6 @@ from vrl.models.ar.glm_image.model import (
 )
 from vrl.models.ar.glm_image.runtime import (
     GlmImageChunkExecutor,
-    GlmImageChunkGatherer,
     build_glm_image_replay_runtime_bundle,
     build_glm_image_runtime_bundle,
     extract_glm_image_runtime_spec,
@@ -28,7 +27,6 @@ from vrl.models.ar.glm_image.runtime import (
 
 __all__ = [
     "GlmImageChunkExecutor",
-    "GlmImageChunkGatherer",
     "GlmImageConfig",
     "GlmImageModel",
     "GlmImageReplayModel",
