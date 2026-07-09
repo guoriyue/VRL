@@ -34,6 +34,28 @@ async def train_cosmos_predict2_grpo(cfg: DictConfig) -> None:
     )
 
 
+async def train_cosmos_predict25_grpo(cfg: DictConfig) -> None:
+    """Run Cosmos Predict2.5 GRPO through the common online recipe.
+
+    The paper's RL recipe (§4.2.2) is GRPO; the NFT entrypoint below is the
+    likelihood-free variant. Predict2.5 is text-to-world, so unlike the
+    Predict2 Video2World entrypoint there is no reference-image collector
+    wiring here.
+    """
+
+    await run_online_recipe(
+        cfg,
+        OnlineRecipeDefinition(
+            family="cosmos-predict2.5",
+            build_bundle=_build_predict25_bundle,
+            build_replay_bundle=_build_predict25_replay_bundle,
+            after_bundle_built=_after_bundle_built,
+            reference_model_getter=default_reference_model,
+            export_modules_getter=export_transformer_lora,
+        ),
+    )
+
+
 async def train_cosmos_predict25_diffusion_nft(cfg: DictConfig) -> None:
     """Run Cosmos Predict2.5 DiffusionNFT through the common online recipe."""
 
@@ -149,6 +171,7 @@ def _normalize_per_sample_reference_images(
 
 
 __all__ = [
-        "train_cosmos_predict2_grpo",
+    "train_cosmos_predict2_grpo",
     "train_cosmos_predict25_diffusion_nft",
+    "train_cosmos_predict25_grpo",
 ]

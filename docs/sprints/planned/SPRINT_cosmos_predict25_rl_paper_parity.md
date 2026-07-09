@@ -75,11 +75,17 @@ rbs=1、n=3 时组内只有 3 个样本、每步只有 1 个 prompt——advanta
    reward 在 −4.37…−4.56 平带震荡、无学习信号——但根因是**欠采样/epoch 数太少**(论文 256 次
    更新,我们才 6 次;组内 n=8 的 advantage 信号短期就是噪声),**不是 NFT vs GRPO 的算法选择问题**。
    先把 NFT 跑够 epoch / 验 reward 模型能否区分(见 §7 待办),不要因为 flat 就翻算法。
-   **但 paper-faithful GRPO 不是翻个 flag 能切的**:仓库**没有 predict2.5 的 GRPO recipe**;唯一的
+   **但 paper-faithful GRPO 不是翻个 flag 能切的**:仓库原本**没有 predict2.5 的 GRPO recipe**;唯一的
    cosmos GRPO 是 `cosmos_predict2/online_grpo_{kling_video_reward,v2w_reference}.yaml`——**predict2_2b
    家族**(不是 predict2.5),且 v2w 那个是 **Video2World + per-sample 参考图条件**(`/dataset/video_world_v2w`、
-   `reference_mode: per_sample`),走另一个数据/入口。真要 paper-faithful GRPO,得**先建一个 predict2.5
-   的 GRPO recipe**(把 GRPO 算法块接到 predict2.5 模型 + Kling reward + VideoPhy 数据上),不是现成的。
+   `reference_mode: per_sample`),走另一个数据/入口。
+   **→ 已落地（2026-07-08）**:入口 `train_cosmos_predict25_grpo`(`vrl/scripts/diffusion/cosmos/train.py`,
+   t2w、无 reference 接线)+ family recipe `configs/recipe/online/cosmos_predict25_grpo.yaml` + 实验
+   `configs/experiment/diffusion/cosmos_predict2_5/online_grpo_kling_video_reward.yaml`(paper-shaped:
+   n=8×rbs=32、512p_93f、20步no-CFG、timestep_fraction 0.5→10 切片、256 updates;有意偏差已在配置头注明:
+   LoRA 1e-4 替 full-param 3e-5、ppo_epochs=4 替单 pass、无 diffusion-loss 正则)。config 校验套件过
+   (`tests/config/test_load_all_experiments.py` 31 passed)。**跑起来仍需多卡/大卡显存**(见 §4),
+   predict2_5 从未在 GRPO/SDE-logprob 评估器下实跑过——首跑先短 smoke 验 first_step parity。
 2. **diffusion-loss 正则**:论文明确用它防 reward hacking;在 NFT recipe 里**没找到**对应实现。
    **行动:确认是否缺,缺则补**(否则容易 reward hack)。
 3. **reward 模型**:论文 **VideoAlign** vs config `kling_video_reward`——很可能同源(Kling 的

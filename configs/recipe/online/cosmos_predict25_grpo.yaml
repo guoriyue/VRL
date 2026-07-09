@@ -1,0 +1,21 @@
+# Cosmos Predict2.5 2B online GRPO recipe: the family+algo defaults shared by
+# predict2_5 GRPO experiments. Mirrors /recipe/online/cosmos_predict2_grpo (same
+# flow-matching clip range + CPS SDE + group size) but dispatches to the
+# predict2.5 entrypoint — predict2.5 is text-to-world, so there is no
+# reference-image wiring, and the family is LoRA-only (apply_full_finetune
+# raises; the paper's full-param 3e-5 path needs multi-GPU + a separate sprint).
+defaults:
+  - /recipe/online/diffusion_grpo
+
+trainer:
+  entrypoint: vrl.scripts.diffusion.cosmos.train:train_cosmos_predict25_grpo
+
+algorithm:
+  # cosmos/wan video GRPO wants a tighter clip than the diffusion default (1e-4);
+  # set at the family boundary so every cosmos experiment inherits it.
+  clip_ratio: 1.0e-3
+
+rollout:
+  n_samples_per_prompt: 8
+  sde:
+    type: cps
