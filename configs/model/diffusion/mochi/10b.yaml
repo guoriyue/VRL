@@ -12,11 +12,17 @@ model:
   lora:
     rank: 16
     alpha: 32
+    # AsymmDiT: add_* are the text-stream attention projections. Adapting only
+    # to_* freezes the text->image conditioning path. Mochi's attn1 has no
+    # to_add_out (unlike hunyuan_*), so add only the three add_* projections.
     target_modules:
       - to_k
       - to_q
       - to_v
       - to_out.0
+      - add_k_proj
+      - add_q_proj
+      - add_v_proj
 
   torch_compile:
     enable: false

@@ -14,11 +14,19 @@ model:
   lora:
     rank: 16
     alpha: 32
+    # Dual-stream MMDiT: the add_* projections are the TEXT stream's attention
+    # (image stream is to_*). Adapting only to_* freezes the text->image
+    # conditioning path, so GRPO cannot learn better prompt adherence. Match
+    # the hunyuan_image / qwen_image template which includes both streams.
     target_modules:
       - to_k
       - to_q
       - to_v
       - to_out.0
+      - add_k_proj
+      - add_q_proj
+      - add_v_proj
+      - to_add_out
 
   torch_compile:
     enable: false
