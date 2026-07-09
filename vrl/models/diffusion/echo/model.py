@@ -28,7 +28,7 @@ from typing import Any
 import torch
 
 from vrl.generation.diffusion.layout import VideoGenerationRequest
-from vrl.models.diffusion.base import DiffusionModelBase, ReplayRolloutStubs
+from vrl.models.diffusion.base import DiffusionModelBase, DiffusionSamplingStateBase, ReplayRolloutStubs
 from vrl.models.diffusion.common.lora import LoraModelMixin
 from vrl.models.dtypes import resolve_torch_dtype
 
@@ -73,22 +73,19 @@ def _resolve_gemma_dir(path_or_repo: str) -> str:
 
 
 @dataclass
-class EchoSamplingState:
+class EchoSamplingState(DiffusionSamplingStateBase):
     """Private Echo sampling state. Engine MUST NOT introspect beyond the
     documented ``latents`` / ``timesteps`` / ``scheduler`` contract.
 
-    ``timesteps`` are flow-matching scheduler timesteps in ``[0, num_train]`` (the
-    executor reads them per step); ``forward_step`` derives sigma = t/num_train. In
-    replay ``scheduler`` is None (the evaluator owns its own scheduler).
+    ``latents`` are [B, F, C=128, H, W] (Echo layout). ``timesteps`` are
+    flow-matching scheduler timesteps in ``[0, num_train]`` (the executor reads
+    them per step); ``forward_step`` derives sigma = t/num_train. In replay
+    ``scheduler`` is None (the evaluator owns its own scheduler).
     """
 
-    latents: torch.Tensor          # [B, F, C=128, H, W] (Echo layout)
-    timesteps: torch.Tensor        # flow-match timesteps [num_steps]
-    scheduler: Any                 # FlowMatchEulerDiscreteScheduler | None (replay)
     video_context: torch.Tensor    # Gemma text context [B, S, 4096]
     attention_mask: Any            # text padding mask [B, S] or None
     num_train_timesteps: int       # sigma = t / num_train_timesteps
-    guidance_scale: float
 
 
 class EchoModel(LoraModelMixin, DiffusionModelBase):

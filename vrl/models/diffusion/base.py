@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -25,6 +26,24 @@ from vrl.models.utils import (
     load_weights_into,
 )
 from vrl.trajectory.device import move_value_to_device
+
+
+@dataclass
+class DiffusionSamplingStateBase:
+    """Engine-contract fields shared by every family's private sampling state.
+
+    The chunk executor only ever touches ``latents`` (read/write),
+    ``timesteps`` and ``scheduler`` — nothing else. Every other field a
+    family declares in its subclass is private to its own ``forward_step``
+    / replay path and MUST NOT be introspected by the engine.
+    ``guidance_scale`` is engine-invisible but present in all 17 families,
+    so it is lifted here purely for dedup.
+    """
+
+    latents: torch.Tensor
+    timesteps: torch.Tensor
+    scheduler: Any
+    guidance_scale: float
 
 
 class DiffusionModelBase(nn.Module, ABC):

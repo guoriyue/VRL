@@ -28,6 +28,7 @@ from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.diffusion import (
     DiffusersPipelineModelBase,
     DiffusionModelBase,
+    DiffusionSamplingStateBase,
     ReplayRolloutStubs,
 )
 from vrl.models.diffusion.common import (
@@ -146,7 +147,7 @@ class CosmosPredict2DiffusionBackboneRunner:
 
 
 @dataclass
-class CosmosPredict2SamplingState:
+class CosmosPredict2SamplingState(DiffusionSamplingStateBase):
     """Private Cosmos Predict2 sampling state. Collector MUST NOT introspect.
 
     Cosmos Predict2 Video2World needs the full conditioning bundle
@@ -156,12 +157,8 @@ class CosmosPredict2SamplingState:
     contract.
     """
 
-    latents: torch.Tensor
-    timesteps: torch.Tensor
-    scheduler: Any
     prompt_embeds: torch.Tensor
     negative_prompt_embeds: torch.Tensor | None
-    guidance_scale: float
     do_cfg: bool
     init_latents: torch.Tensor
     cond_mask: Any

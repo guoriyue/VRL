@@ -19,7 +19,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from vrl.generation.diffusion.layout import VideoGenerationRequest
-from vrl.models.diffusion import DiffusionModelBase, ReplayRolloutStubs
+from vrl.models.diffusion import DiffusionModelBase, DiffusionSamplingStateBase, ReplayRolloutStubs
 from vrl.models.diffusion.common import (
     ChunkedLatentDecoder,
     LatentDecodeSpec,
@@ -32,15 +32,11 @@ from vrl.models.dtypes import resolve_torch_dtype
 
 
 @dataclass
-class AnimaSamplingState:
+class AnimaSamplingState(DiffusionSamplingStateBase):
     """Private Anima sampling state."""
 
-    latents: torch.Tensor
-    timesteps: torch.Tensor
-    scheduler: Any
     prompt_embeds: torch.Tensor
     negative_prompt_embeds: torch.Tensor | None
-    guidance_scale: float
     do_cfg: bool
     padding_mask: torch.Tensor
 

@@ -39,6 +39,7 @@ from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.diffusion import (
     DiffusersPipelineModelBase,
     DiffusionModelBase,
+    DiffusionSamplingStateBase,
     ReplayRolloutStubs,
 )
 from vrl.models.diffusion.common import align_replay_tensor
@@ -53,18 +54,19 @@ _DEFAULT_GUIDANCE = 7.0
 
 
 @dataclass
-class Cosmos3SamplingState:
+class Cosmos3SamplingState(DiffusionSamplingStateBase):
     """Per-rollout sampling state. The packed_static dicts are step-invariant;
-    forward_step splices the live latents + per-step timestep each call."""
+    forward_step splices the live latents + per-step timestep each call.
 
-    latents: torch.Tensor  # [1, C, T, H, W] fp32 — the live x_t
-    timesteps: torch.Tensor  # scheduler.timesteps (len == num_steps)
-    scheduler: Any  # UniPCMultistepScheduler (sigmas in [0,1] -> flow domain)
+    ``latents`` is the live x_t, [1, C, T, H, W] fp32; ``timesteps`` is
+    ``scheduler.timesteps`` (len == num_steps); ``scheduler`` is a
+    UniPCMultistepScheduler (sigmas in [0,1] -> flow domain).
+    """
+
     cond_packed_static: dict[str, Any]  # everything EXCEPT vision_tokens/vision_timesteps
     uncond_packed_static: dict[str, Any]
     vision_condition_mask: torch.Tensor  # [latent_t, 1, 1] — 0 noisy, 1 conditioned
     num_noisy_vision_tokens: int
-    guidance_scale: float
     do_cfg: bool
     height: int
     width: int

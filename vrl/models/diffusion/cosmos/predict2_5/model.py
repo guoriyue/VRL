@@ -13,6 +13,7 @@ from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.diffusion import (
     DiffusersPipelineModelBase,
     DiffusionModelBase,
+    DiffusionSamplingStateBase,
     ReplayRolloutStubs,
 )
 from vrl.models.diffusion.common import (
@@ -166,13 +167,9 @@ def _load_pipeline_without_text_encoder(
 
 
 @dataclass
-class CosmosPredict25SamplingState:
-    latents: torch.Tensor
-    timesteps: torch.Tensor
-    scheduler: Any
+class CosmosPredict25SamplingState(DiffusionSamplingStateBase):
     prompt_embeds: torch.Tensor
     negative_prompt_embeds: torch.Tensor | None
-    guidance_scale: float
     do_cfg: bool
     cond_latent: torch.Tensor
     cond_mask: torch.Tensor

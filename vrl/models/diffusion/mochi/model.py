@@ -38,6 +38,7 @@ from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.diffusion import (
     DiffusersPipelineModelBase,
     DiffusionModelBase,
+    DiffusionSamplingStateBase,
     ReplayRolloutStubs,
 )
 from vrl.models.diffusion.common import (
@@ -77,17 +78,13 @@ def standard_mochi_scheduler(scheduler_config: Any, num_steps: int, device: Any)
 
 
 @dataclass
-class MochiSamplingState:
+class MochiSamplingState(DiffusionSamplingStateBase):
     """Private Mochi sampling state. Engine MUST NOT introspect."""
 
-    latents: torch.Tensor
-    timesteps: torch.Tensor
-    scheduler: Any
     prompt_embeds: torch.Tensor
     prompt_attention_mask: torch.Tensor | None
     negative_prompt_embeds: torch.Tensor | None
     negative_prompt_attention_mask: torch.Tensor | None
-    guidance_scale: float
     do_cfg: bool
     num_train_timesteps: int
 

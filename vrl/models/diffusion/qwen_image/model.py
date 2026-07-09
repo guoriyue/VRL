@@ -32,6 +32,7 @@ from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.diffusion import (
     DiffusersPipelineModelBase,
     DiffusionModelBase,
+    DiffusionSamplingStateBase,
     ReplayRolloutStubs,
 )
 from vrl.models.diffusion.common import (
@@ -51,17 +52,13 @@ from vrl.models.dtypes import resolve_torch_dtype
 
 
 @dataclass
-class QwenImageSamplingState:
+class QwenImageSamplingState(DiffusionSamplingStateBase):
     """Private Qwen-Image sampling state. Engine MUST NOT introspect."""
 
-    latents: torch.Tensor
-    timesteps: torch.Tensor
-    scheduler: Any
     prompt_embeds: torch.Tensor
     prompt_embeds_mask: torch.Tensor | None
     negative_prompt_embeds: torch.Tensor | None
     negative_prompt_embeds_mask: torch.Tensor | None
-    guidance_scale: float
     do_cfg: bool
     guidance_embeds: bool
     height: int

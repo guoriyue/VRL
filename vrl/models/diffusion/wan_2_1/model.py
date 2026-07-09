@@ -37,6 +37,7 @@ from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.diffusion import (
     DiffusersPipelineModelBase,
     DiffusionModelBase,
+    DiffusionSamplingStateBase,
     ReplayRolloutStubs,
 )
 from vrl.models.diffusion.common import (
@@ -67,15 +68,11 @@ def _batch_align_tensor(value: torch.Tensor, batch_size: int) -> torch.Tensor:
 
 
 @dataclass
-class WanT2VSamplingState:
+class WanT2VSamplingState(DiffusionSamplingStateBase):
     """Private Wan T2V sampling state. Engine MUST NOT introspect."""
 
-    latents: torch.Tensor
-    timesteps: torch.Tensor
-    scheduler: Any
     prompt_embeds: torch.Tensor
     negative_prompt_embeds: torch.Tensor | None
-    guidance_scale: float
     do_cfg: bool
     guidance_scale_2: float | None = None
     boundary_ratio: float | None = None
@@ -83,17 +80,13 @@ class WanT2VSamplingState:
 
 
 @dataclass
-class WanI2VSamplingState:
+class WanI2VSamplingState(DiffusionSamplingStateBase):
     """Private Wan I2V sampling state. Engine MUST NOT introspect."""
 
-    latents: torch.Tensor
-    timesteps: torch.Tensor
-    scheduler: Any
     prompt_embeds: torch.Tensor
     negative_prompt_embeds: torch.Tensor | None
     image_embeds: torch.Tensor | None
     condition: torch.Tensor
-    guidance_scale: float
     do_cfg: bool
     guidance_scale_2: float | None = None
     boundary_ratio: float | None = None

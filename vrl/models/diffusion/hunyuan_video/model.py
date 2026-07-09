@@ -36,6 +36,7 @@ from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.diffusion import (
     DiffusersPipelineModelBase,
     DiffusionModelBase,
+    DiffusionSamplingStateBase,
     ReplayRolloutStubs,
 )
 from vrl.models.diffusion.common import (
@@ -54,16 +55,12 @@ from vrl.models.dtypes import resolve_torch_dtype
 
 
 @dataclass
-class HunyuanVideoSamplingState:
+class HunyuanVideoSamplingState(DiffusionSamplingStateBase):
     """Private HunyuanVideo sampling state. Engine MUST NOT introspect."""
 
-    latents: torch.Tensor
-    timesteps: torch.Tensor
-    scheduler: Any
     prompt_embeds: torch.Tensor
     prompt_attention_mask: torch.Tensor | None
     pooled_prompt_embeds: torch.Tensor
-    guidance_scale: float
 
 
 class HunyuanVideoModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRunnerBase):

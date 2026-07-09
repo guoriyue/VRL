@@ -39,6 +39,7 @@ from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.diffusion import (
     DiffusersPipelineModelBase,
     DiffusionModelBase,
+    DiffusionSamplingStateBase,
     ReplayRolloutStubs,
 )
 from vrl.models.diffusion.common import (
@@ -88,17 +89,13 @@ def _candidate_transformers(transformer: object) -> tuple[object, ...]:
 
 
 @dataclass
-class SD3SamplingState:
+class SD3SamplingState(DiffusionSamplingStateBase):
     """Private SD3 sampling state. Engine MUST NOT introspect."""
 
-    latents: torch.Tensor
-    timesteps: torch.Tensor
-    scheduler: Any
     prompt_embeds: torch.Tensor
     pooled_prompt_embeds: torch.Tensor
     negative_prompt_embeds: torch.Tensor | None
     negative_pooled_prompt_embeds: torch.Tensor | None
-    guidance_scale: float
     do_cfg: bool
 
 

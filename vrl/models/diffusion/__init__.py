@@ -3,7 +3,13 @@
 from vrl.models.diffusion.base import (
     DiffusersPipelineModelBase,
     DiffusionModelBase,
+    DiffusionSamplingStateBase,
     ReplayRolloutStubs,
 )
 
-__all__ = ["DiffusersPipelineModelBase", "DiffusionModelBase", "ReplayRolloutStubs"]
+__all__ = [
+    "DiffusersPipelineModelBase",
+    "DiffusionModelBase",
+    "DiffusionSamplingStateBase",
+    "ReplayRolloutStubs",
+]

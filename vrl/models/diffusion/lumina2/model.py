@@ -40,6 +40,7 @@ from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.diffusion import (
     DiffusersPipelineModelBase,
     DiffusionModelBase,
+    DiffusionSamplingStateBase,
     ReplayRolloutStubs,
 )
 from vrl.models.diffusion.common import (
@@ -59,17 +60,13 @@ from vrl.models.dtypes import resolve_torch_dtype
 
 
 @dataclass
-class Lumina2SamplingState:
+class Lumina2SamplingState(DiffusionSamplingStateBase):
     """Private Lumina2 sampling state. Engine MUST NOT introspect."""
 
-    latents: torch.Tensor
-    timesteps: torch.Tensor
-    scheduler: Any
     prompt_embeds: torch.Tensor
     prompt_attention_mask: torch.Tensor | None
     negative_prompt_embeds: torch.Tensor | None
     negative_prompt_attention_mask: torch.Tensor | None
-    guidance_scale: float
     do_cfg: bool
     num_train_timesteps: int
 
