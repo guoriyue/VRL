@@ -58,7 +58,6 @@ def build_cosmos3_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle
         trainable_modules=model.trainable_modules,
         scheduler=model.scheduler,
         raw_handle=None,
-        runtime_caps={},
         metadata={
             "model_path": spec.model_name_or_path,
             "family": "cosmos3",

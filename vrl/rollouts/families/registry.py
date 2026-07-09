@@ -16,14 +16,14 @@ from vrl.generation.ray.launcher import (
     RayGenerationLauncher,
     RayGenerationLaunchInputs,
 )
+from vrl.models.ar.emu3.runtime import EMU3_FAMILY_CAPABILITY
+from vrl.models.ar.glm_image.runtime import GLM_IMAGE_FAMILY_CAPABILITY
 from vrl.models.ar.janus_pro.runtime import (
     JANUS_PRO_FAMILY_CAPABILITY,
     JANUS_PRO_R1_FAMILY_CAPABILITY,
 )
-from vrl.models.ar.nextstep_1.runtime import NEXTSTEP_1_FAMILY_CAPABILITY
-from vrl.models.ar.emu3.runtime import EMU3_FAMILY_CAPABILITY
-from vrl.models.ar.glm_image.runtime import GLM_IMAGE_FAMILY_CAPABILITY
 from vrl.models.ar.llamagen.runtime import LLAMAGEN_FAMILY_CAPABILITY
+from vrl.models.ar.nextstep_1.runtime import NEXTSTEP_1_FAMILY_CAPABILITY
 from vrl.models.diffusion.capabilities import diffusion_family_capability
 
 CollectorKind = Literal["diffusion", "ar_discrete", "ar_continuous", "ar_r1"]
@@ -83,9 +83,6 @@ class DiffusionFamilyBuild:
     replay_cls: str | None = None
     transformer_classname: str | None = None
     scheduler_classname: str | None = None
-    # Verbatim runtime_caps override for both bundles; None keeps the generic
-    # default ({family_capability, supports_reference_conditioning}).
-    runtime_caps: Mapping[str, Any] | None = None
     # LoRA-only family: the generic builders fail loud BEFORE paying the
     # transformer load. The per-family WHY belongs in a comment on the entry
     # (and in the model's own apply_full_finetune error), not in runtime data.
@@ -393,7 +390,6 @@ register_rollout_family(
             model_cls="vrl.models.diffusion.wan_2_1.model:WanT2VDiffusersModel",
             task_variant="t2v",
             memory_owner="Wan VAE",
-            runtime_caps={"supports_reference_conditioning": False},
         ),
     ),
 )
@@ -413,7 +409,6 @@ register_rollout_family(
             model_cls="vrl.models.diffusion.wan_2_1.model:WanI2VDiffusersModel",
             task_variant="i2v",
             memory_owner="Wan VAE",
-            runtime_caps={"supports_reference_conditioning": True},
         ),
     ),
 )
@@ -435,7 +430,6 @@ register_rollout_family(
             memory_owner="Cosmos Predict2 VAE",
             replay_cls="vrl.models.diffusion.cosmos.predict2.model:CosmosPredict2ReplayModel",
             transformer_classname="CosmosTransformer3DModel",
-            runtime_caps={"supports_reference_conditioning": True},
         ),
     ),
 )
@@ -488,7 +482,6 @@ register_rollout_family(
             model_cls="vrl.models.diffusion.cosmos.cosmos3.model:Cosmos3Model",
             task_variant="text2world",
             memory_owner="Cosmos3 VAE",
-            runtime_caps={},
         ),
     ),
 )
@@ -507,7 +500,6 @@ register_rollout_family(
             model_cls="vrl.models.diffusion.cosmos.anima.model:AnimaModel",
             task_variant="t2i",
             memory_owner="Anima VAE",
-            runtime_caps={"supports_reference_conditioning": False},
         ),
     ),
 )
@@ -526,7 +518,6 @@ register_rollout_family(
             model_cls="vrl.models.diffusion.echo.model:EchoModel",
             task_variant="text2video",
             memory_owner="Echo video VAE",
-            runtime_caps={"supports_reference_conditioning": False},
         ),
     ),
 )

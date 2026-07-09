@@ -50,8 +50,6 @@ def build_diffusion_runtime_bundle(
     model_cls: type,
     capability: FamilyCapability,
     memory_owner: str,
-    supports_reference_conditioning: bool = False,
-    runtime_caps: dict[str, object] | None = None,
     extra_metadata: Callable[[object, RuntimeBuildSpec], dict[str, object]] | None = None,
 ) -> RuntimeBundle:
     """Generic rollout bundle: load the family model and apply the shared policy.
@@ -65,12 +63,9 @@ def build_diffusion_runtime_bundle(
     model knowledge and live in the family's ``apply_lora`` override, not in
     builder hooks.
 
-    ``runtime_caps``, when given, replaces the default caps dict verbatim. The
-    cosmos families historically publish caps WITHOUT ``family_capability``
-    (the worker then falls back to the registry-declared capability — see
-    ``FamilyCapability.with_runtime_caps``), so a migrated family passes its
-    exact historical dict to keep behavior bit-identical. Unifying the caps
-    contract is a separate audit, not this builder's job.
+    Capability flags are NOT re-published on the bundle: the registry entry's
+    capability is the single stored copy and reaches the worker via the launch
+    contract.
 
     ``extra_metadata(model, spec)`` returns family metadata merged over the
     generic keys (e.g. cosmos predict2's ``reference_image``).
@@ -126,14 +121,6 @@ def build_diffusion_runtime_bundle(
         trainable_modules=model.trainable_modules,
         scheduler=model.scheduler,
         raw_handle=model.raw_handle,
-        runtime_caps=(
-            dict(runtime_caps)
-            if runtime_caps is not None
-            else {
-                "family_capability": capability.to_dict(),
-                "supports_reference_conditioning": supports_reference_conditioning,
-            }
-        ),
         metadata=metadata,
     )
 
@@ -145,8 +132,6 @@ def build_diffusion_replay_runtime_bundle(
     transformer_classname: str,
     capability: FamilyCapability,
     scheduler_classname: str | None = None,
-    supports_reference_conditioning: bool = False,
-    runtime_caps: dict[str, object] | None = None,
     extra_metadata: Callable[[object, RuntimeBuildSpec], dict[str, object]] | None = None,
 ) -> RuntimeBundle:
     """Generic replay bundle for single-transformer diffusion families.
@@ -164,8 +149,8 @@ def build_diffusion_replay_runtime_bundle(
     (a ``DiffusionModelBase`` no-op) so a family can finish replay-only setup
     with the spec in hand — FLUX sets its dynamic-shift timesteps there.
 
-    ``runtime_caps`` / ``extra_metadata`` follow the rollout builder's contract
-    (verbatim caps override; family metadata merged over generic keys).
+    ``extra_metadata`` follows the rollout builder's contract (family metadata
+    merged over generic keys).
     """
 
     model = replay_cls(
@@ -204,14 +189,6 @@ def build_diffusion_replay_runtime_bundle(
         trainable_modules=model.trainable_modules,
         scheduler=model.scheduler,
         raw_handle=None,
-        runtime_caps=(
-            dict(runtime_caps)
-            if runtime_caps is not None
-            else {
-                "family_capability": capability.to_dict(),
-                "supports_reference_conditioning": supports_reference_conditioning,
-            }
-        ),
         metadata=metadata,
     )
 
@@ -282,7 +259,6 @@ def build_family_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         model_cls=import_from_path(recipe.model_cls),
         capability=entry.capability,
         memory_owner=recipe.memory_owner,
-        runtime_caps=None if recipe.runtime_caps is None else dict(recipe.runtime_caps),
     )
 
 
@@ -310,7 +286,6 @@ def build_family_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         transformer_classname=recipe.transformer_classname,
         scheduler_classname=recipe.scheduler_classname,
         capability=entry.capability,
-        runtime_caps=None if recipe.runtime_caps is None else dict(recipe.runtime_caps),
     )
 
 

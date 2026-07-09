@@ -231,7 +231,6 @@ def test_wan_i2v_replay_builder_uses_i2v_replay_model(
 
     assert bundle_loads_full_generation_modules(bundle) is False
     assert isinstance(bundle.model, WanI2VReplayModel)
-    assert bundle.runtime_caps["supports_reference_conditioning"] is True
 
 
 def test_wan_dual_stage_replay_builder_loads_low_noise_transformer(

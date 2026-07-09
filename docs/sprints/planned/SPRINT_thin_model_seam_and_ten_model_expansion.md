@@ -19,8 +19,9 @@
 > （sd3_5/qwen_image/predict2_5/wan_2_1/wan_2_1_i2v rollout）；diffusion runner 归零；AR 装配线归一；
 > capability 全仓单一构造点；死键/死函数两轮全仓扫描零命中。**挂条件延期项**（非遗漏）：
 > ① per-family train.py ×6（多带真 recipe 差异，纯 GRPO 的可再审）② executor-as-data（等 owner 决策）
-> ③ AR chunk 模板化（等 5 个 AR 家族）④ echo compile/fp8 GPU 验证（80GB 卡）⑤ cosmos caps 契约统一
-> （行为无差）⑥ SamplingState 基类（**薄化第十四轮落地，2026-07-08**）。**下一步 = Phase 1 接 SANA**（[[SPRINT_sana_t2i]]）。
+> ③ AR chunk 模板化（**薄化第十五轮落地，2026-07-08**——触发条件"5 个 AR 家族"已满足）
+> ④ echo compile/fp8 GPU 验证（80GB 卡）⑤ cosmos caps 契约统一（**薄化第十五轮落地，2026-07-08**）
+> ⑥ SamplingState 基类（**薄化第十四轮落地，2026-07-08**）。**下一步 = Phase 1 接 SANA**（[[SPRINT_sana_t2i]]）。
 
 ## 0. 一句话
 
@@ -580,6 +581,32 @@ GPU，让某一跳能跑生成 parity；(b) 转为**有人值守**逐个接（�
 >   布局注释迁入各自 docstring。构造点全 kwargs，字段重排零行为差。
 > - 验证：**1549 passed**（15 处失败为环境缺依赖的历史红测：ltx_core/glm_image/paddle-OCR，
 >   main 基线 worktree 同一集合同红）。净 -23 行（+70/-93）。
+
+> **薄化第十五轮（2026-07-08）——终局对账延期项③⑤落地：AR chunk 模板 + caps 单一派生**：
+> - **③ AR chunk 模板化**（触发条件满足：AR 家族 ×6）：`ARDiscreteChunkExecutorBase` 模板
+>   （validate→seed→prefill→ARDecodeLoop→VQ decode→token mask→result 骨架收进基类）+ 共享
+>   `ARDiscreteChunkResult`（四家逐字相同的 13 字段收敛为一个，另携 `prefill_forwards` 遥测）+
+>   单一 `ARDiscreteChunkGatherer`（镜像 diffusion 侧全家族共用 `DiffusionChunkGatherer` 的
+>   registry 形状），全部落在既有 `vrl/generation/ar/executor.py`。janus/emu3/glm_image/llamagen
+>   各留一个直线式 `prepare_chunk_inputs` hook（emu3 另 override `chunk_token_mask` 处理强制
+>   结构位）；**nextstep_1（连续 token 3 元组 finalized）与 R1（generate_with_refine 反转控制流）
+>   按第十一轮设计裁决留在模板外**。registry 四家 gatherer 指向共享类；净 **-317 行**。
+> - **⑤ cosmos caps 契约统一——裁决为"停止发布"而非"统一发布"**（owner 复核后二改：第一版
+>   `diffusion_runtime_caps()` 统一派生被否——派生自 registry capability 的 caps 与 worker 经
+>   launch contract 拿到的是**同一个对象**，`declared.with_runtime_caps(derive(declared)) ==
+>   declared` 恒等，统一地发布同义反复仍是赘肉）。终版：diffusion 双 builder、wan/anima/cosmos3
+>   手写 replay builder、AR `build_ar_runtime_bundle` **全部不再发布 runtime_caps**（AR 的
+>   `supports_chunked_execution: not replay` 也是假动态——replay 侧无读者，rollout 侧恒等于
+>   registry 声明 True）；`DiffusionFamilyBuild.runtime_caps` 字段（6 份手抄 dict）删除。
+>   **三改（owner 拍板）：整条 runtime_caps 通道删除**——`RuntimeBundle.runtime_caps` 字段、
+>   worker 的 caps 拷贝、`FamilyCapability.with_runtime_caps` 合并全拆；capability 的唯一存储 =
+>   registry entry，经 launch contract 到 worker，executor 自声明常量只做 fail-loud 交叉检查
+>   （`_check_executor_capability`，原 `_merge_loaded_capability` 语义收窄后改名）。"有消费者、
+>   无生产者"的 seam 不值得为假想的未来动态 flag 保留——真需求（如 chunk probe 回填
+>   `default_max_samples_per_chunk`）出现时再建通道。顺手清掉 wan runtime `__all__` 三个指向
+>   已删函数的死条目（F822）。
+> - 验证：tests/{models,generation,rollouts,config,architecture,scripts,trainers} 全绿；改动文件
+>   ruff clean。
 
 ### 事实基础（全部引用到行级）
 

@@ -71,7 +71,7 @@ class GenerationWorkerCore:
         cap_cuda_memory_fraction(self.launch_contract.extra.get("gpu_memory_fraction"))
         log_host_memory(f"generation_worker:{self.worker_id}:before_load_policy", log=logger)
         self.executor = self._build_executor_maybe_pooled()
-        self.capability = self._merge_loaded_capability(self.executor)
+        self.capability = self._check_executor_capability(self.executor)
         log_host_memory(f"generation_worker:{self.worker_id}:after_load_policy", log=logger)
 
     def _build_executor_maybe_pooled(self) -> GenerationChunkExecutor:
@@ -691,8 +691,6 @@ class GenerationWorkerCore:
 
         assert_rollout_quantization_applied(model, spec)
         built = executor_cls(model, **dict(launch_contract.executor_kwargs))
-        if getattr(bundle, "runtime_caps", None) is not None:
-            built.runtime_caps = dict(bundle.runtime_caps)
         # Registry-descriptor families declare no executor capability of their
         # own — the registry entry is the single construction site, and it
         # arrives here via the launch contract. Families that still declare
@@ -724,30 +722,32 @@ class GenerationWorkerCore:
             "for distributed generation",
         )
 
-    def _merge_loaded_capability(
+    def _check_executor_capability(
         self,
         executor: GenerationChunkExecutor,
     ) -> FamilyCapability:
-        runtime_caps = getattr(executor, "runtime_caps", None)
-        merged = self.capability.with_runtime_caps(
-            runtime_caps if isinstance(runtime_caps, Mapping) else None,
-        )
+        """Cross-check a declared executor capability against the contract.
+
+        The registry capability arrives via the launch contract and is the
+        single source; a family that also declares its own constant must agree
+        with it (a mismatch means driver/worker code skew — fail loud).
+        """
+
         declared = self._declared_executor_capability(executor)
         if declared is None:
-            return merged
-        if declared.family != merged.family or declared.task != merged.task:
+            return self.capability
+        if declared.family != self.capability.family or declared.task != self.capability.task:
             raise ValueError(
                 "executor capability does not match launch contract: "
-                f"{declared.family}/{declared.task} != {merged.family}/{merged.task}",
+                f"{declared.family}/{declared.task} != "
+                f"{self.capability.family}/{self.capability.task}",
             )
-        if declared.trajectory_kind != merged.trajectory_kind:
+        if declared.trajectory_kind != self.capability.trajectory_kind:
             raise ValueError(
                 "executor trajectory capability does not match launch contract: "
-                f"{declared.trajectory_kind} != {merged.trajectory_kind}",
+                f"{declared.trajectory_kind} != {self.capability.trajectory_kind}",
             )
-        return declared.with_runtime_caps(
-            runtime_caps if isinstance(runtime_caps, Mapping) else None,
-        )
+        return declared
 
     @staticmethod
     def _declared_executor_capability(

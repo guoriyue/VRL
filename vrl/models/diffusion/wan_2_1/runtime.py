@@ -98,9 +98,6 @@ def build_wan_2_1_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle
         trainable_modules=model.trainable_modules,
         scheduler=model.scheduler,
         raw_handle=None,
-        runtime_caps={
-            "supports_reference_conditioning": task_variant == "i2v",
-        },
         metadata={
             "model_path": spec.model_name_or_path,
             "family": (
@@ -199,7 +196,4 @@ __all__ = [
     "Wan_2_1I2VChunkExecutor",
     "build_wan_2_1_replay_runtime_bundle",
     "build_wan_2_1_replay_runtime_bundle_from_cfg",
-    "build_wan_2_1_runtime_bundle",
-    "build_wan_2_1_runtime_bundle_from_cfg",
-    "extract_wan_2_1_runtime_spec",
 ]

@@ -78,10 +78,6 @@ def build_ar_runtime_bundle(
         trainable_modules={"model": model},
         scheduler=None,
         raw_handle=None if replay else model,
-        runtime_caps={
-            "family_capability": capability.to_dict(),
-            "supports_chunked_execution": not replay,
-        },
         metadata={
             "model_path": spec.model_name_or_path,
             "family": capability.family,

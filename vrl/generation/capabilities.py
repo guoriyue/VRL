@@ -1,7 +1,8 @@
 """Typed capability contract for engine planning.
 
-Family routing still lives in the rollout family registry and backend-specific
-flags still live in ``RuntimeBundle.runtime_caps``. This module only provides
+Family routing still lives in the rollout family registry — the registry
+entry's capability is the single stored copy, shipped to workers via the
+launch contract. This module only provides
 the normalized view that the engine planner can consume. It is not user config:
 configs describe what a run wants, while capabilities describe what a family
 executor can safely support.
@@ -10,7 +11,7 @@ executor can safely support.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 TrajectoryKind = Literal[
@@ -154,39 +155,6 @@ class FamilyCapability:
     @property
     def profiler_labels(self) -> tuple[str, ...]:
         return tuple(stage.profiler_label for stage in self.execution_stages)
-
-    def with_runtime_caps(self, runtime_caps: Mapping[str, Any] | None) -> FamilyCapability:
-        """Merge backend-loaded flags without changing static trajectory facts."""
-
-        if not runtime_caps:
-            return self
-        updates: dict[str, Any] = {}
-        bool_fields = (
-            "supports_chunked_execution",
-            "supports_reference_conditioning",
-            "supports_torch_compile",
-        )
-        for field_name in bool_fields:
-            if field_name in runtime_caps:
-                updates[field_name] = bool(runtime_caps[field_name])
-        if "default_max_samples_per_chunk" in runtime_caps:
-            value = runtime_caps["default_max_samples_per_chunk"]
-            updates["default_max_samples_per_chunk"] = (
-                None if value is None else int(value)
-            )
-        if "family_capability" in runtime_caps:
-            dynamic = family_capability_from_value(runtime_caps["family_capability"])
-            if dynamic is not None:
-                updates.update(
-                    {
-                        "trajectory_kind": dynamic.trajectory_kind,
-                        "expected_axes": dynamic.expected_axes,
-                        "execution_stages": dynamic.execution_stages,
-                    }
-                )
-        if not updates:
-            return self
-        return replace(self, **updates)
 
     def to_dict(self) -> dict[str, Any]:
         return {
