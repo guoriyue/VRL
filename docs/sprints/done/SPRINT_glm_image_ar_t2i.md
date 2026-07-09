@@ -1,6 +1,10 @@
 # SPRINT: 接入 GLM-Image AR T2I 家族（⭐ 用户点名；混合 AR+decoder）
 
-状态：planned（2026-07-01）。性质：新增混合 AR 家族——10 个里战略权重最高、也是 AR 侧最重的一个。
+状态：**DONE（2026-07-08）——随 [[SPRINT_thin_model_seam_and_ten_model_expansion]] Phase 1 落地并
+真权重验证（transformers 5.13 升级后落地；原生 1024px CPU 全程验证——1280 prior token 采样 +
+20 步 DiT 解码，全战役最佳画质）。短 GRPO 曲线未单独跑（战役按 rollout 验证关账，详见 index
+sprint 文件头验证记录）。**
+性质：新增混合 AR 家族——10 个里战略权重最高、也是 AR 侧最重的一个。
 > 拆自 [[SPRINT_thin_model_seam_and_ten_model_expansion]] §3 第 8 项。**用户点名的 GLM AR 模型。**
 > 前置：[[SPRINT_emu3_ar_t2i]] 先落地（纯离散 AR 压力测试 seam），再接本 sprint 的混合形态。
 

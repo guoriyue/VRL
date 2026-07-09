@@ -1,6 +1,9 @@
 # SPRINT: 接入 SANA T2I 家族（Phase-0 薄 seam 首个样例）
 
-状态：**code-landed（2026-07-07）——首个 descriptor-born 家族；GPU parity 待跑（§4 清单）**。
+状态：**DONE（2026-07-08）——随 [[SPRINT_thin_model_seam_and_ten_model_expansion]] Phase 1 落地并
+真权重 rollout 验证（replay parity 0.0e+00）**。家族要点：bf16 尾数坏死线性注意力——二分定位后
+`from_spec` 映射 fp16（4a0c8e5e），修复后 SDE 直出杂志级画质。短 GRPO 曲线未单独跑
+（战役按 rollout 验证关账，详见 index sprint 文件头验证记录）。
 性质：新增 T2I DiT 家族，套 Phase 0 薄化后的 diffusion seam。
 
 > **落地形态（比 §3 计划更薄——runner 合并与 descriptor 化之后）**：model.py（含 backbone-runner

@@ -1,6 +1,9 @@
 # SPRINT: 接入 Emu3 AR T2I 家族（GLM-Image 的前置压力测试）
 
-状态：planned（2026-07-01）。性质：新增纯离散 AR T2I 家族，AR seam 的第二个 discrete 样例。
+状态：**DONE（2026-07-08）——随 [[SPRINT_thin_model_seam_and_ten_model_expansion]] Phase 1 落地并
+真权重验证（4163 受限 token 直出高质量图；AR parity 由 rollout↔teacher-forced 等值测试锁定）。
+短 GRPO 曲线未单独跑（战役按 rollout 验证关账，详见 index sprint 文件头验证记录）。**
+性质：新增纯离散 AR T2I 家族，AR seam 的第二个 discrete 样例。
 > 拆自 [[SPRINT_thin_model_seam_and_ten_model_expansion]] §3 第 9 项。
 > 战略定位：**GLM-Image 之前先接它**——最干净的 next-token AR，把 ARModelBase + decode loop 在
 > janus 之外的第二个家族上验证一遍，GLM-Image 的混合形态风险就只剩 decoder 部分。

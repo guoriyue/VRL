@@ -1,6 +1,9 @@
 # SPRINT: 接入 PixArt-Σ T2I 家族（⚠️ 带调度器 KILL-RISK 门）
 
-状态：planned（2026-07-01）。性质：新增 T2I DiT 家族，**但有一个必须先过的架构门**。
+状态：**DONE（2026-07-08）——随 [[SPRINT_thin_model_seam_and_ten_model_expansion]] Phase 1 落地并
+真权重 rollout 验证（replay parity 0.0e+00；ddim 阶梯首战 = 下方 KILL-RISK 门 A 已过）。短 GRPO
+曲线未单独跑（战役按 rollout 验证关账，详见 index sprint 文件头验证记录）。**
+性质：新增 T2I DiT 家族，**但有一个必须先过的架构门**（已过）。
 > 拆自 [[SPRINT_thin_model_seam_and_ten_model_expansion]] §3 第 2 项。
 
 ## 0. 一句话 + KILL-RISK 门（先过门再动手）
