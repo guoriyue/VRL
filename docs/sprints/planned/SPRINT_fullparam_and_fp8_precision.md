@@ -1,6 +1,6 @@
 # SPRINT: full-param 替换 LoRA + FP8/FP4 精度轴（吞吐杠杆）(planned)
 
-状态：**部分落地（2026-06-18 拆出）；2026-06-27 两条轴都被本机实测推进**（见下方复核）。GEMM 审计的 profiler（P0）+ QKV 融合 A/B（P1，低 ROI 不落 runtime）+ torch.compile（P2，默认开）已全部落地、那个 sprint 已归档 `done/`。本 sprint：**P3 的精度-修正地基（config 轴 + dtype + TIS + drift guard + 5090 实测）已落地**（详见 §2），rollout fp8 kernel 路由已由 [[SPRINT_fp8_rollout_gemm_kernel]] 落地并 live 验证；剩余是假旋钮 family guard / recipe wiring（见 [[SPRINT_rollout_optimization_layer]]）以及 **P1.5（full-param）**，后者原受多卡显存门控——**门已解，见复核**。
+状态：**部分落地（2026-06-18 拆出）；2026-06-27 两条轴都被本机实测推进**（见下方复核）。GEMM 审计的 profiler（P0）+ QKV 融合 A/B（P1，低 ROI 不落 runtime）+ torch.compile（P2，默认开）已全部落地、那个 sprint 已归档 `done/`。本 sprint：**P3 的精度-修正地基（config 轴 + dtype + TIS + drift guard + 5090 实测）已落地**（详见 §2），rollout fp8 kernel 路由已由 [[SPRINT_fp8_rollout_gemm_kernel]] 落地并 live 验证；~~剩余是假旋钮 family guard / recipe wiring~~ **假旋钮 guard 已落地（核对 2026-07-08）**：双层——`apply_rollout_quantization` 在唯一通用 swap 点（`vrl/models/diffusion/build.py:108`）0 命中即 `RuntimeError`，外加 family/scheme 无关的 backstop `assert_rollout_quantization_applied`（`vrl/models/loader.py:149`，worker 载权重时数 `QuantizedLinear`，`vrl/generation/execution/worker.py:687`），CPU 测试齐（`tests/nn/quantization/test_fp8.py` 2026-07-08 复跑绿）。剩余仅 **P1.5（full-param）**，原受多卡显存门控——**门已解，见复核**。
 
 > **2026-06-27 复核（[[SPRINT_lossless_diffusion_rl_research]] + 本轮工作）：**
 > - **full-param 轴（P1.5）：单卡显存门已解。** 本轮建了 `actor.optim.optim_8bit`（bitsandbytes AdamW8bit，Blackwell sm_120 实测通），int8 Adam 状态让 full-param 2B 在单卡 32GB fit（fp32 Adam 状态 ~16GB 原本 OOM）。**对 RL 安全**（量化优化器状态不是 forward，不碰 old_log_prob）。落地见 [[SPRINT_cosmos_predict2_2b_trustworthy_curve]] / 记忆 `project_fullparam_8bit_adam`。caveat：8-bit 只解优化器状态，**video 激活值仍要小 shape**（240p_33f）。
@@ -46,7 +46,7 @@
 ## 4. 非目标
 
 - 不重开 gemm 已落的 profiler / QKV / compile 结论。
-- 不让 `precision.rollout=fp8/fp4` 变成假旋钮或深处崩溃：fp8 token + GEMM kernel 已可 live，fp4 仍由 `vrl/scripts/common/online.py` 显式 `NotImplementedError` 拦住。fp8 当前剩 family-level swapped-count/capability guard，避免某个 builder 漏接 swap 时静默回到 bf16 rollout。
+- 不让 `precision.rollout=fp8/fp4` 变成假旋钮或深处崩溃：fp8 token + GEMM kernel 已可 live，fp4 仍由 `vrl/scripts/common/online.py` 显式 `NotImplementedError` 拦住。fp8 的 family-level swapped-count guard **已落地**（见文件头状态：build.py 单一 swap 点 0 命中报错 + worker 载入 backstop 数 `QuantizedLinear`），builder 漏接 swap 不再可能静默回 bf16。
 
 ## 相关
 - [[SPRINT_gemm_utilization]]（`done/`，父 sprint）

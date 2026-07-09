@@ -30,7 +30,10 @@ full-param 的障碍是**优化器显存**,不是权重:cosmos 2B 权重 bf16 �
 - **Blackwell sm_120 实测跑通**;end-to-end 验证(fp32→AdamW,8bit→AdamW8bit)。
 - **对 RL 安全**:量化的是优化器状态,**不是 forward** → 不碰 old_log_prob / 训推一致(和 fp8 forward 那种有损本质不同)。
 - 显存:`权重 4 + grad 4 + 8bit 状态 4 + 激活(grad-ckpt) ≈ 15-20GB`(配 240p_33f,见 §3)。
-- 待办:bnb 加进 pyproject deps(CI clean-install)。完全无损备选:DeepSpeed ZeRO-Offload(已装,fp32 状态放 94GB RAM,但集成量大)。
+- ~~待办:bnb 加进 pyproject deps(CI clean-install)~~ **已清（核对 2026-07-08）**:`pyproject.toml`
+  已有 `optim8bit` extra(`bitsandbytes>=0.43.0`,注释明确 opt-in、不进 [cosmos]/CI);trainer 侧是
+  函数内惰性 import、tests 无裸 import → clean-install 不受影响。完全无损备选:DeepSpeed
+  ZeRO-Offload(已装,fp32 状态放 94GB RAM,但集成量大)。
 
 ## 3. 第二约束:激活值 → 必须小 video
 

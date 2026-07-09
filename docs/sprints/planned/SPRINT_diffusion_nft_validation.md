@@ -1,6 +1,15 @@
 # SPRINT: DiffusionNFT 正确性验证实验（flux 移植 + 验证，planned）
 
-状态：planned（2026-06-21）。性质：**先移植、再验证**——DiffusionNFT 当前的 model 接口只在
+状态：**Phase A DONE（核对 2026-07-08）；Phase B（GPU learning 验证）未跑**。Phase A 的移植已
+全部在库：`FluxModel`/`FluxReplayModel` 实现三件套（`attach_previous_policy_adapter` 由
+`model.nft_previous_adapter: true` 门控、`sync_previous_policy_adapter`、
+`diffusion_nft_prepare_transformer_input`，`vrl/models/diffusion/flux/model.py:197-237,530-607`）；
+入口 `vrl/scripts/diffusion/flux/train.py:train_flux_diffusion_nft`；实验配置
+`configs/experiment/diffusion/flux/online_diffusion_nft_pickscore_validation.yaml`（pickscore
+fallback 路线）。§2 的完成判据已验证：grep 命中 + CPU 套件绿（`tests/models/diffusion/flux/
+test_diffusion_nft_interface.py` + `tests/algorithms/test_diffusion_nft.py`，2026-07-08 复跑
+115 passed）。剩余 = §3/§4 的 Phase B 真机验证（lr=0 不变量、负分支消融、学习曲线）。
+性质：**先移植、再验证**——DiffusionNFT 的 model 接口原先只在
 cosmos/predict2_5 上实现（被排除），所以要在非排除 family 上验证，**必须先把 NFT 接口移植到
 一个 t2i family（选 flux），再做 learning 验证**。这是本批 4 个算法里唯一不能纯配置落地的。
 排除 sd3.5 / cosmos。

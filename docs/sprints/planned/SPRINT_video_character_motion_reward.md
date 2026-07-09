@@ -63,12 +63,17 @@ eval / benchmark：
   必须在 marker 后近窗口内**（评分行恒为 `<marker>: <digit>`；CoT 提及后远处的数字出窗 → 走 hard
   回退）。已加单测复现该场景（`tests/rewards/videoscore2/test_parsing.py::
   test_soft_scores_anchor_last_marker_not_cot_mention`，修复前红/修复后绿），reward 套件通过
-  （2 个 OCR 红为 venv 缺 Levenshtein 的既有环境问题）。修复 patch 暂存
-  `wm-infra/outputs/videoscore2_probe/soft_anchor_fix.patch`（vrl2/VRL feat/videoscore2-reward
-  分支工作区，未提交）；**修复后真机复验 PASS（同日）**：sample00 visual_quality soft 1.0→**2.997**
+  （2 个 OCR 红为 venv 缺 Levenshtein 的既有环境问题）。修复 + ±1 硬闸已合并为一个 commit
+  **推上 VRL origin/main（`14a35069`，2026-07-07）**；**修复后真机复验 PASS（同日）**：sample00 visual_quality soft 1.0→**2.997**
   （≈hard 3），全部轴 soft≈hard 对齐、回退率 0，physical 3.85 展示出 soft 路径想要的整数间连续信号。
   复验报告 `wm-infra/outputs/videoscore2_probe/report_fixed.json`。P0 finishing criterion
   「fake tests 通过 + 本地 mp4 真实 inference」就此闭合。
+- **加固（2026-07-07，回应"文本解析太启发式"的质疑）**：soft 路径结构性弱点 = 靠搜文字定位、与
+  fail-fast 的 hard 正则解析互不校验。新增 `_merge_soft_with_hard` 硬闸：**soft 只允许在 hard
+  整数 ±1.0 内做连续细化，超出即判定锚错 → 丢弃 + warning + 回退 hard**。上面那类 1.0 vs 3 的
+  静默错分从此被结构性拦截（misanchor 单测 + merge 守卫单测各一，13 个 videoscore2 单测全绿）。
+  分层结论：评分行文本格式是模型训练出的输出契约（上游官方推理同款正则，非我们的启发式）；
+  我们自加的只有 soft 期望值扩展，现在它被约束为"只能细化、不能推翻"上游忠实解析。
 
 ## 外部 benchmark 已 vendoring（third_party 子模块）
 
