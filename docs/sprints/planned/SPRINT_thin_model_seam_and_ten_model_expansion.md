@@ -20,7 +20,7 @@
 > capability 全仓单一构造点；死键/死函数两轮全仓扫描零命中。**挂条件延期项**（非遗漏）：
 > ① per-family train.py ×6（多带真 recipe 差异，纯 GRPO 的可再审）② executor-as-data（等 owner 决策）
 > ③ AR chunk 模板化（等 5 个 AR 家族）④ echo compile/fp8 GPU 验证（80GB 卡）⑤ cosmos caps 契约统一
-> （行为无差）⑥ SamplingState 基类（已设计未做）。**下一步 = Phase 1 接 SANA**（[[SPRINT_sana_t2i]]）。
+> （行为无差）⑥ SamplingState 基类（**薄化第十四轮落地，2026-07-08**）。**下一步 = Phase 1 接 SANA**（[[SPRINT_sana_t2i]]）。
 
 ## 0. 一句话
 
@@ -571,7 +571,15 @@ GPU，让某一跳能跑生成 parity；(b) 转为**有人值守**逐个接（�
 >   + 2 个 AR extract/config（真家族逻辑）+ anima replay extract（命名契约）。
 > - 验证：**623 passed**。净 -296 行。
 
-## 附录：AR executor 层组织设计（2026-07-02，已实施——见薄化第十轮）
+> **薄化第十四轮（2026-07-08）——终局对账延期项⑥落地：`DiffusionSamplingStateBase`**：
+> - 17 个 `*SamplingState` dataclass 的字段审计：`latents`/`timesteps`/`scheduler`/`guidance_scale`
+>   四字段 17/17 逐字相同；前三个正是 chunk executor 唯一会碰的 engine 契约（echo docstring 早已
+>   口头声明该契约，现在有了类型载体）。`prompt_embeds`(15/17)/`do_cfg`(14/17) **不上提**——
+>   进基类会给 flux/echo/hunyuan_video/cosmos3 造死字段（dead-field 规则）。
+> - 新基类落在既有 `base.py`（不开新文件），全 17 类挂基类、删重复声明；echo/cosmos3 的字段行内
+>   布局注释迁入各自 docstring。构造点全 kwargs，字段重排零行为差。
+> - 验证：**1549 passed**（15 处失败为环境缺依赖的历史红测：ltx_core/glm_image/paddle-OCR，
+>   main 基线 worktree 同一集合同红）。净 -23 行（+70/-93）。
 
 ### 事实基础（全部引用到行级）
 
