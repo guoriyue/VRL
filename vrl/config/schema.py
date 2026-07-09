@@ -304,6 +304,10 @@ class SamplingConfig(ConfigBase):
     noise_level: Any = None
     num_frames: Any = None
     num_steps: Any = None
+    # reader: generation/diffusion/layout.py (request-sampling parse) routes
+    # rollout/replay log-prob math; "ddim" is the epsilon/v-pred family path
+    # (cogvideox, pixart_sigma), "cps" the pixel-space CPS variant.
+    sde_type: Literal["flow_grpo", "ddim", "cps"] = "flow_grpo"
     temperature: Any = None
     width: Any = None
 
@@ -413,8 +417,20 @@ class EchoModelConfig(ModelConfig):
     task_variant: Any = None
 
 
+class FluxModelConfig(ModelConfig):
+    """FLUX model keys consumed by the flux model loader."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    # DiffusionNFT's frozen ``previous`` adapter switch (FluxModel.apply_lora
+    # attaches it; LoRA-only, validated in FluxModel).
+    nft_previous_adapter: Any = None
+
+
 _model_config_classes_by_family: dict[str, type[ModelConfig]] = {
     "sd3_5": SD3ModelConfig,
+    "flux": FluxModelConfig,
+    "flux_1_dev": FluxModelConfig,
     "wan": WanModelConfig,
     "wan_2_1": WanModelConfig,
     "wan_2_1_i2v": WanModelConfig,
