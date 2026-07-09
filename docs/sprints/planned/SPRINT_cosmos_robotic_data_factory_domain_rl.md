@@ -139,6 +139,25 @@ reward:
 
 ## 4. 后续公开数据源，不许用本地占位桥
 
+> **落地（2026-07-08）：两个目标域的 importer 均已接通。**
+>
+> - **Home chores / household manipulation —— 零新代码，路线已验证**：现有通用 LeRobot
+>   解析器（`video-world-targets`，v2.0/v2.1 布局自适配）直接吃 BridgeData V2 的 LeRobot 公开
+>   移植 `IPEC-COMMUNITY/bridge_orig_lerobot`（53k 家用厨房操作 episode、完全公开无 gate）。
+>   3-episode 端到端实测通过（下载→PyAV 解码→首帧 PNG+target mp4→manifest+report→validation
+>   PASS，真实指令 prompt 如 "put small spoon from basket to tray"）。正式导入命令：
+>   `python -m vrl.scripts.data.setup video-world-targets --repo-id IPEC-COMMUNITY/bridge_orig_lerobot
+>   --name bridge_home_targets --source bridge --camera observation.images.image_0 --limit N --eval-limit M`
+> - **Sidewalk delivery —— 新 importer `jrdb-targets` 已落地**（`vrl/scripts/data/jrdb.py`）：
+>   直接解析 JRDB 官方解压布局（`images/<camera>/<sequence>/<frame>.jpg`），按 stride 切
+>   非重叠 clip，导出首帧+target mp4+全套 provenance+report+train/eval split+validation。
+>   **无匿名下载器是 JRDB 的注册墙所致**（per-user license）——命令在布局缺失时响亮报错并给出
+>   下载指引；prompt 由 sequence 名的地点 token 模板生成并以 `prompt_source` 字段如实标注
+>   （JRDB 无语言标注）。CPU 测试 `tests/data/test_jrdb_import.py`（合成布局，4 测，含全命令路径）。
+> - 训练 config 仍按原则**不预建**：等各目标域 audit（§0 的四问）过了再落。
+
+原要求存档：
+
 Sidewalk delivery 目标域下一步应该接：
 
 - JRDB / JackRabbot：真实 mobile robot 视角，人群、室内外校园、social navigation。

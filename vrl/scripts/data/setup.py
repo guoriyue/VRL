@@ -10,7 +10,7 @@ framework lives here.
 
 Commands: pickapic, anime-prompts, anime-safety-prompts, anime-positives,
 anime-fetch-images, videophy-i2v, video-world-bridge, video-world-targets,
-for-experiment, init-dirs.
+jrdb-targets, for-experiment, init-dirs.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ import argparse
 import json
 from pathlib import Path
 
-from vrl.scripts.data import bootstrap, danbooru, pickapic, video_world, videophy_i2v
+from vrl.scripts.data import bootstrap, danbooru, jrdb, pickapic, video_world, videophy_i2v
 
 # init-dirs CLI: dataset -> directories to create under the data root. This is the
 # init-dirs command's own small wiring table, not a generic artifact registry (the
@@ -82,6 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
     danbooru.register(subparsers)
     videophy_i2v.register(subparsers)
     video_world.register(subparsers)
+    jrdb.register(subparsers)
     bootstrap.register(subparsers)
     _register_init_dirs(subparsers)
     return parser
