@@ -882,16 +882,33 @@ async def run_online_recipe(
             bypass that would desync the next training collective. eval_epoch=-1 is
             the pre-RL baseline.
             """
-            result = await _run_distributed_fixed_eval(
-                collector,
-                components.reward_fn,
-                eval_examples,
-                samples_per_prompt=int(eval_cfg.samples_per_prompt),
-                base_seed=int(eval_cfg.seed),
-                max_prompts=int(eval_cfg.max_prompts),
-                component_names=component_names,
-                training_context=training_context,
+            # Fixed eval is a rollout-phase activity: on a colocated topology the
+            # driver model must vacate the GPU exactly as the training collect
+            # does (strict_on_policy brackets its collect with the same calls).
+            # Without this, the post-training driver residency plus the woken
+            # rollout worker OOM at video scale (first hit: 480p_93f LoRA — the
+            # epoch-0 eval collect died with the driver holding ~27GiB).
+            eval_lifecycle = getattr(trainer.rollout_schedule, "lifecycle", None)
+            eval_phases: dict[str, float] = {}
+            eval_offloaded = (
+                eval_lifecycle.offload_driver_model_for_rollout(eval_phases)
+                if eval_lifecycle is not None
+                else False
             )
+            try:
+                result = await _run_distributed_fixed_eval(
+                    collector,
+                    components.reward_fn,
+                    eval_examples,
+                    samples_per_prompt=int(eval_cfg.samples_per_prompt),
+                    base_seed=int(eval_cfg.seed),
+                    max_prompts=int(eval_cfg.max_prompts),
+                    component_names=component_names,
+                    training_context=training_context,
+                )
+            finally:
+                if eval_offloaded:
+                    eval_lifecycle.restore_driver_model_after_rollout(eval_phases)
             if is_primary:
                 run.write_eval_metric_row(
                     eval_epoch,

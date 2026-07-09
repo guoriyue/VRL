@@ -74,13 +74,26 @@ model:
 sampling:
   num_frames: 93                      # native clip length for the 480P weights (33f is OOD -> artifacts)
   fps: 16
-  num_steps: 10                       # == sde window hi -> every step trainable; ~3.5x faster than 35
+  # 15, not 10 (2026-07-07 rank-probe finding): at 10 steps generation is so
+  # fragile that a group's dino variance measures WHICH SDE DRAW BROKE LESS
+  # (worst draw = blob monster, 0.33 vs 0.43) — GRPO then climbs noise-path
+  # luck, which does not transfer and DEGRADES paired eval (run10: -4.5 sigma).
+  # 5 deterministic tail steps past the [0,10) SDE window restore the quality
+  # floor: the same blob-draw scores 0.44 and renders a clean arm at 15 steps,
+  # and the luck-variance collapses (group spread 0.10 -> 0.03).
+  num_steps: 15
 
 actor:
   optim:
     lr: 1.0e-4                        # LoRA lr scale (project lesson: 1e-4, not full-param's 2e-5)
   gradient_checkpointing: true
-  ppo_epochs: 4
+  # Wall-clock reality check from the first completed epoch (run9): ppo4 x 16
+  # samples x 10 timesteps at 93f = 640 micro-backwards = ~4h/epoch — a 15-epoch
+  # verdict would take 60h. ppo 2 + timestep_fraction 0.5 cuts training ~4x
+  # (~1h/epoch); ppo>1 keeps the trust region engaged (clip_fraction was 0.16
+  # at epoch 0) and fractional timestep training is the flow_grpo/DanceGRPO norm.
+  ppo_epochs: 2
+  timestep_fraction: 0.5
   ema:
     enable: false                     # validation: no averaging lag on top of the raw policy
 
@@ -102,7 +115,13 @@ rollout:
                                       # base recipe's "keep 1 for memory" holds for the full loop
                                       # (P1's 1.4x sbs evidence measured the gen phase only)
   sde: { type: cps }
-  same_latent: true                   # group shares the initial latent (seed from manifest request_overrides)
+  # false + NO per-row manifest seeds (2026-07-07): a fixed seed makes every
+  # chunk share the initial latent (the seed IS the same-latent mechanism; the
+  # flag only guards the seedless case), so the group's only diversity was SDE
+  # noise paths — run10 showed GRPO then optimizes path luck. Seedless rollouts
+  # give genuine init-latent (content) diversity; fixed eval stays paired via
+  # its own per-index derived seeds, so the verdict protocol is unchanged.
+  same_latent: false
   trajectory_storage:
     device: cpu                       # 93f trajectories on the GPU wire OOM the driver at collect
                                       # handoff (worker still holds ~23.5GiB gen memory while the
@@ -124,7 +143,9 @@ trainer:
   total_epochs: 40
   save_freq: 20
   debug: { first_step: true }
-  eval: { enabled: true, freq: 1, samples_per_prompt: 4, max_prompts: 4, seed: 20260628 }
+  # spp 2 (eval n=8/point): each eval video costs ~35s gen + reward; n=16 added
+  # ~20min/epoch. The paired design keeps n=8 judgeable across a dense freq=1 series.
+  eval: { enabled: true, freq: 1, samples_per_prompt: 2, max_prompts: 4, seed: 20260628 }
 
 reward:
   components:
