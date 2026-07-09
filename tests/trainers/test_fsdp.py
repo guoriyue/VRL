@@ -455,3 +455,97 @@ def test_build_strategy_fsdp_rejects_train_compile() -> None:
         build_strategy(
             {"model": {"torch_compile": {"enable": True}}}, _cpu_fsdp_context()
         )
+
+
+# ── gathered HF-adapter export (save_pretrained under FSDP2) ─────────────────
+
+
+def test_fsdp_export_modules_writes_gathered_hf_adapter(cpu_process_group, tmp_path) -> None:
+    """save_pretrained under FSDP2 serializes the gathered adapter, not shards.
+
+    The online recipe passes export_modules under fsdp too;
+    save_training_checkpoint must detect the DTensor-sharded module and feed
+    save_pretrained the full state it already gathered for checkpoint.pt.
+    """
+
+    from peft import LoraConfig, get_peft_model
+    from safetensors.torch import load_file
+    from torch.distributed.tensor import DTensor
+
+    from vrl.trainers.checkpointing import (
+        LORA_WEIGHTS_NAME,
+        save_training_checkpoint,
+    )
+
+    torch.manual_seed(0)
+    peft_model = get_peft_model(
+        _ToyTransformer(),
+        LoraConfig(r=2, lora_alpha=4, init_lora_weights="gaussian", target_modules=["lin"]),
+    )
+    sharded = _shard(peft_model)
+    assert any(isinstance(p, DTensor) for p in sharded.parameters())
+    bundle = _Bundle(sharded)
+    strategy = FSDPStrategy(_cpu_fsdp_context())
+
+    trainer = SimpleNamespace(state_dict=lambda: {"step": 0, "global_step": 0})
+    meta = save_training_checkpoint(
+        tmp_path,
+        trainer=trainer,
+        bundle=bundle,
+        family="toy",
+        progress={"completed_epoch": 0, "next_epoch": 1},
+        export_modules={LORA_WEIGHTS_NAME: sharded},
+        strategy=strategy,
+        is_primary=True,
+    )
+    assert meta["uses_lora"] is True
+
+    adapter_file = tmp_path / LORA_WEIGHTS_NAME / "adapter_model.safetensors"
+    assert adapter_file.exists()
+    adapter = load_file(str(adapter_file))
+    assert adapter, "adapter export is empty"
+
+    # Every exported tensor equals the gathered full state (PEFT strips the
+    # ".default" adapter infix on save, so map keys back before comparing).
+    gathered = strategy.export_trainable_state(bundle)["transformer"]
+    for key, tensor in adapter.items():
+        assert isinstance(tensor, torch.Tensor)
+        assert not isinstance(tensor, DTensor)
+        if ".lora_A." in key:
+            gathered_key = key.replace(".lora_A.", ".lora_A.default.")
+        else:
+            gathered_key = key.replace(".lora_B.", ".lora_B.default.")
+        torch.testing.assert_close(tensor, gathered[gathered_key])
+
+
+def test_export_modules_rejects_sharded_module_outside_bundle(cpu_process_group, tmp_path) -> None:
+    """A DTensor-sharded export module with no gathered state must fail loud."""
+
+    from peft import LoraConfig, get_peft_model
+
+    from vrl.trainers.checkpointing import (
+        LORA_WEIGHTS_NAME,
+        save_training_checkpoint,
+    )
+
+    torch.manual_seed(0)
+    stray = _shard(
+        get_peft_model(
+            _ToyTransformer(),
+            LoraConfig(r=2, lora_alpha=4, target_modules=["lin"]),
+        ),
+    )
+    bundle = _Bundle(_shard(_ToyTransformer()))
+    trainer = SimpleNamespace(state_dict=lambda: {"step": 0, "global_step": 0})
+
+    with pytest.raises(ValueError, match="DTensor-sharded"):
+        save_training_checkpoint(
+            tmp_path,
+            trainer=trainer,
+            bundle=bundle,
+            family="toy",
+            progress={"completed_epoch": 0, "next_epoch": 1},
+            export_modules={LORA_WEIGHTS_NAME: stray},
+            strategy=FSDPStrategy(_cpu_fsdp_context()),
+            is_primary=True,
+        )

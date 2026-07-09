@@ -169,11 +169,46 @@ def save_training_checkpoint(
             )
 
     try:
+        from torch.distributed.tensor import DTensor
+
         for name, module in export_modules.items():
             save_pretrained = getattr(module, "save_pretrained", None)
             if not callable(save_pretrained):
                 raise TypeError(f"export module {name!r} does not expose save_pretrained()")
-            save_pretrained(path / name)
+            # A DTensor-sharded module (FSDP2) cannot drive the default
+            # save_pretrained path: it reads module.state_dict(), which yields
+            # shards, not a loadable artifact. The strategy already gathered
+            # the full CPU state for checkpoint.pt above — hand that state to
+            # save_pretrained (PEFT extracts the adapter keys from it) so the
+            # artifact carries the same gathered tensors. Plain-tensor modules
+            # keep the default path, which is what the EMA export relies on
+            # (copy-EMA-into-params -> save_pretrained -> restore reads the
+            # LIVE parameters); EMA+fsdp is rejected at strategy construction,
+            # so the two paths never conflict.
+            parameters = getattr(module, "parameters", None)
+            if callable(parameters) and any(
+                isinstance(p, DTensor) for p in parameters()
+            ):
+                gathered_state = next(
+                    (
+                        trainable_modules[trainable_name]
+                        for trainable_name, trainable in getattr(
+                            bundle, "trainable_modules", {},
+                        ).items()
+                        if trainable is module and trainable_name in trainable_modules
+                    ),
+                    None,
+                )
+                if gathered_state is None:
+                    raise ValueError(
+                        f"export module {name!r} is DTensor-sharded but is not one "
+                        "of the bundle's gathered trainable modules; a sharded "
+                        "save_pretrained would write shard wrappers instead of a "
+                        "loadable artifact",
+                    )
+                save_pretrained(path / name, state_dict=gathered_state)
+            else:
+                save_pretrained(path / name)
     finally:
         if used_ema_export:
             export_ema.copy_temp_to(trainable_parameters)

@@ -534,16 +534,14 @@ class OnlineRecipeRun:
         stack = self.stack
         # Called on EVERY rank: save_training_checkpoint runs the trainable-state
         # gather (a collective under FSDP2) on all ranks and writes files on the
-        # primary only. The save_pretrained HF-adapter artifact (export_modules) is
-        # skipped under fsdp: the trainable transformer is sharded (DTensor) there,
-        # so save_pretrained can't serialize a clean adapter — the torch.save
-        # payload already carries the full gathered trainable state (the loadable
-        # checkpoint). A gathered HF-adapter export under fsdp is a follow-up.
+        # primary only. The save_pretrained HF-adapter artifact (export_modules)
+        # works under fsdp too: save_training_checkpoint detects DTensor-sharded
+        # export modules and feeds them the gathered full state it already
+        # collected for checkpoint.pt, so the adapter artifact is clean.
         context = stack.strategy.context
         export_modules = (
             stack.definition.export_modules_getter(stack.bundle, stack.cfg)
             if stack.definition.export_modules_getter is not None
-            and context.strategy != "fsdp"
             else None
         )
         save_training_checkpoint(
