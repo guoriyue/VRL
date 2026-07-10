@@ -166,3 +166,62 @@ def test_edm_domain_detection_is_cached_on_scheduler() -> None:
     )
 
     assert scheduler._vrl_edm_sigma_domain is True
+
+
+# ── diffusion_pretraining_pair (the sft-regularizer noising construction) ────
+
+
+def test_pretraining_pair_flow_matching_uses_scheduler_scale_noise() -> None:
+    """Flow schedulers own x_t; the target is the rectified-flow velocity."""
+    from diffusers import FlowMatchEulerDiscreteScheduler
+
+    from vrl.math.diffusion.flow_matching import diffusion_pretraining_pair
+
+    scheduler = FlowMatchEulerDiscreteScheduler()
+    scheduler.set_timesteps(8)
+    torch.manual_seed(0)
+    latents = torch.randn(2, 3, 4)
+    noise = torch.randn(2, 3, 4)
+    t = scheduler.timesteps[3].expand(2)
+
+    noisy, target = diffusion_pretraining_pair(scheduler, latents, noise, t)
+
+    torch.testing.assert_close(noisy, scheduler.scale_noise(latents, t, noise))
+    torch.testing.assert_close(target, noise - latents)
+
+
+@pytest.mark.parametrize("prediction_type", ["epsilon", "v_prediction"])
+def test_pretraining_pair_ddpm_ladder_targets(prediction_type: str) -> None:
+    from diffusers import DDPMScheduler
+
+    from vrl.math.diffusion.flow_matching import diffusion_pretraining_pair
+
+    scheduler = DDPMScheduler(prediction_type=prediction_type)
+    torch.manual_seed(0)
+    latents = torch.randn(2, 3, 4)
+    noise = torch.randn(2, 3, 4)
+    t = torch.tensor([10, 500])
+
+    noisy, target = diffusion_pretraining_pair(scheduler, latents, noise, t)
+
+    torch.testing.assert_close(noisy, scheduler.add_noise(latents, noise, t))
+    expected = (
+        noise
+        if prediction_type == "epsilon"
+        else scheduler.get_velocity(latents, noise, t)
+    )
+    torch.testing.assert_close(target, expected)
+
+
+def test_pretraining_pair_rejects_unknown_prediction_type() -> None:
+    from vrl.math.diffusion.flow_matching import diffusion_pretraining_pair
+
+    class _Sched:
+        class config:
+            prediction_type = "sample"
+
+        def add_noise(self, latents, noise, t):
+            return latents
+
+    with pytest.raises(ValueError, match="prediction_type"):
+        diffusion_pretraining_pair(_Sched(), torch.zeros(1), torch.zeros(1), torch.zeros(1))

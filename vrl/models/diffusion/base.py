@@ -153,6 +153,34 @@ class DiffusionModelBase(nn.Module, ABC):
             },
         )
 
+    def replay_forward_with_latents(
+        self,
+        batch: Any,
+        timestep_idx: int,
+        latents: Any,
+    ) -> dict[str, Any]:
+        """One replay-shaped forward on CALLER latents at the step's conditioning.
+
+        Same state rebuild as ``replay_forward`` — the trajectory's prompt
+        conditioning and the step's own timestep — but the model input is the
+        caller's tensor instead of the stored x_t. This is the GRPO
+        diffusion-loss regularizer's entry: it noises CLEAN fine-tuning
+        latents and needs the model's prediction for them under the exact
+        schedule replay uses (no second sigma-domain conversion path).
+        """
+
+        replay_tensors, batch_context, _ = self._replay_inputs_for_step(
+            batch,
+            timestep_idx,
+        )
+        state = self.restore_eval_state(
+            replay_tensors,
+            batch_context,
+            latents,
+            timestep_idx,
+        )
+        return dict(self.forward(state, 0))
+
     def _replay_inputs_for_step(
         self,
         batch: Any,

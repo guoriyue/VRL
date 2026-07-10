@@ -233,8 +233,49 @@ def compute_kl_divergence(
     ) / denom.squeeze()
 
 
+def diffusion_pretraining_pair(
+    scheduler: Any,
+    latents: Any,
+    noise: Any,
+    timesteps: Any,
+) -> tuple[Any, Any]:
+    """(noisy_input, prediction_target) of the family's pretraining loss.
+
+    The forward process and the target parametrization are OWNED BY THE
+    SCHEDULER — the same object rollout/replay sampled with — so the sigma
+    domain is whatever the family trained in (the EDM-domain trap that broke
+    predict2 parity cannot re-enter through a hand-rolled interpolation):
+
+    - flow matching (``scale_noise``): x_t = (1-sigma)x0 + sigma*eps in the
+      scheduler's own sigma table; the model predicts the velocity
+      ``eps - x0``.
+    - epsilon / v-prediction (``add_noise`` ladder): x_t from alphas_cumprod;
+      the target is ``eps`` or ``get_velocity`` per
+      ``scheduler.config.prediction_type``.
+
+    Used by the online GRPO diffusion-loss regularizer (the paper's
+    anti-reward-hacking term); the offline DPO trainer keeps its own
+    equivalent construction.
+    """
+
+    if hasattr(scheduler, "scale_noise"):
+        return scheduler.scale_noise(latents, timesteps, noise), noise - latents
+    prediction_type = str(getattr(scheduler.config, "prediction_type", "epsilon"))
+    noisy = scheduler.add_noise(latents, noise, timesteps)
+    if prediction_type == "epsilon":
+        return noisy, noise
+    if prediction_type == "v_prediction":
+        return noisy, scheduler.get_velocity(latents, noise, timesteps)
+    raise ValueError(
+        f"unsupported scheduler prediction_type={prediction_type!r} for the "
+        "diffusion pretraining pair (expected a flow-matching scheduler with "
+        "scale_noise, or an add_noise scheduler with epsilon/v_prediction)",
+    )
+
+
 __all__ = [
     "SDEStepResult",
     "compute_kl_divergence",
+    "diffusion_pretraining_pair",
     "sde_step_with_logprob",
 ]
