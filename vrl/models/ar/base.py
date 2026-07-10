@@ -41,6 +41,24 @@ class ARModelBase(nn.Module):
             label=type(self).__name__,
         )
 
+    def quantize_rollout_fp8(self, recipe: str = "rowwise") -> list[str]:
+        """Swap the language trunk's big GEMMs to fp8 in place (rollout only).
+
+        Quantizes attention/MLP linears under ``self.language_model``; the
+        vocabulary heads (lm_head / gen_head / llamagen's ``output``) and
+        embeddings stay high precision — the per-token log-probs the RL loss
+        consumes are computed from them. VQ decoders / vision towers live
+        outside ``language_model`` and are never touched. The trainer's replay
+        core keeps its bf16/fp32 master and is never quantized.
+        """
+
+        from vrl.nn.quantization import swap_linears_to_fp8
+        from vrl.nn.quantization.fp8 import LM_EXCLUDE
+
+        return swap_linears_to_fp8(
+            self.language_model, recipe=recipe, exclude=LM_EXCLUDE,
+        )
+
     def disable_adapter(self) -> contextlib.AbstractContextManager[None]:
         """Disable the LoRA adapter for a reference forward, or no-op when absent."""
         return disable_adapter_on(self.language_model)

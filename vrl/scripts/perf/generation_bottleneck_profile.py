@@ -105,7 +105,7 @@ def main(argv=None):
 
     model = build_model(cfg, device, dtype)
     if fp8:
-        swapped = model.quantize_transformer_fp8(recipe=args.fp8_recipe)
+        swapped = model.quantize_rollout_fp8(recipe=args.fp8_recipe)
         print(f"fp8/{args.fp8_recipe}: swapped {len(swapped)} transformer linears", flush=True)
     if args.compile:
         # use the model's own helper so BOTH self.transformer and pipeline.transformer

@@ -267,7 +267,7 @@ class _SwapModel:
         self._swapped = swapped
         self.recipe_seen: str | None = None
 
-    def quantize_transformer_fp8(self, recipe: str = "rowwise") -> list[str]:
+    def quantize_rollout_fp8(self, recipe: str = "rowwise") -> list[str]:
         self.recipe_seen = recipe
         return self._swapped
 
@@ -374,7 +374,7 @@ class _FakeModel:
     def __init__(self) -> None:
         self.recipes: list[str] = []
 
-    def quantize_transformer_fp8(self, recipe: str = "rowwise") -> list[str]:
+    def quantize_rollout_fp8(self, recipe: str = "rowwise") -> list[str]:
         self.recipes.append(recipe)
         return ["blocks.0.attn.to_q", "blocks.0.ff.net.0"]
 

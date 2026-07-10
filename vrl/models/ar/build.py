@@ -71,7 +71,15 @@ def build_ar_runtime_bundle(
     execution off, and minimal bundle metadata (the replay model loads no
     generation-only modules). The rollout shape exposes the model as its own
     raw handle and advertises chunked execution.
+
+    Rollout-only quantization (``precision.rollout=fp8``) applies here, same
+    contract as the diffusion builder; the replay core keeps its bf16 master.
     """
+
+    if not replay:
+        from vrl.models.loader import apply_rollout_quantization
+
+        apply_rollout_quantization(model, spec)
 
     return RuntimeBundle(
         model=model,

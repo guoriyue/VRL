@@ -289,7 +289,7 @@ class DiffusionModelBase(nn.Module, ABC):
             torch.compile(self.transformer, mode=mode, fullgraph=False),
         )
 
-    def quantize_transformer_fp8(self, recipe: str = "rowwise") -> list[str]:
+    def quantize_rollout_fp8(self, recipe: str = "rowwise") -> list[str]:
         """Swap the transformer's big policy GEMMs to fp8 in place (rollout only).
 
         Replaces the large attention/MLP ``nn.Linear`` modules with ``Fp8Linear``,

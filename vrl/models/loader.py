@@ -108,11 +108,11 @@ def apply_rollout_quantization(model: Any, spec: Any) -> int:
             "(compile-clean) or disable model.torch_compile.",
         )
     if scheme == "fp8":
-        swapped = model.quantize_transformer_fp8(recipe=recipe or "rowwise")
+        swapped = model.quantize_rollout_fp8(recipe=recipe or "rowwise")
     else:
         raise NotImplementedError(
             f"precision.rollout={scheme!r} has no rollout swap yet (only fp8); add a "
-            "quantize_transformer_* method + dispatch branch for the new scheme.",
+            "quantize_rollout_* method + dispatch branch for the new scheme.",
         )
     if not swapped:
         raise RuntimeError(

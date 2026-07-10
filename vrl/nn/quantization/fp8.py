@@ -62,6 +62,12 @@ DEFAULT_EXCLUDE: tuple[str, ...] = (
     "txt_in",
 )
 
+# Language-model trunks add their vocabulary heads: quantizing the head
+# corrupts the very logits the AR log-probs are computed from (lm_head /
+# janus's gen_head are caught by "head"; llamagen's vendored GPT names its
+# head "output").
+LM_EXCLUDE: tuple[str, ...] = DEFAULT_EXCLUDE + ("head", "output")
+
 
 def _amax_scale(t: torch.Tensor, dim: int | None) -> torch.Tensor:
     """e4m3 scale mapping ``t``'s amax onto FP8_E4M3_MAX (fp32, per-``dim`` or scalar)."""
