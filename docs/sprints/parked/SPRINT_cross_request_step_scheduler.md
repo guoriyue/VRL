@@ -16,6 +16,12 @@ for all models from scratch"这个框架级问题的方向裁决。结论：**�
 唯一允许提前做的：下面 §4 的 **AR-first 探针**，它便宜、可逆、能证伪——但其结果**不允许**把
 多阶段 ladder 拉到 RL 信号和 P0 停顿之前。
 
+> **2026-07-09 代码现实更新：** chunk planner 已收敛为只含 `SampleChunk` 的
+> `EnginePlan(chunks)`；原 `ResolvedAxis` / `ExecutionStage` / cache flag / batch-group key
+> 因零执行消费者已删除。这个删减不改变本 sprint 的触发条件，反而明确了未来约束：只有
+> StepScheduler 真正消费的 request state、position 和 cache ownership 才能进入新结构，不能
+> 先建“可调度元数据”再等待消费者出现。下文相关描述是旧架构盘点，不是当前 API。
+
 ---
 
 ## 1. 为什么是 Angle C（不是自研 forward，也不是接通 stage pipeline）
@@ -45,9 +51,9 @@ for all models from scratch"这个框架级问题的方向裁决。结论：**�
 
 ## 2. 现状成熟度（来自 12-agent map，全部经路径核对）
 
-- 执行核 = **contract-only**：planner 有 `ResolvedAxis(batchable/chunkable)` / `ExecutionStage`
-  （含 `cache_read/cache_write` 槽位但**无任何 KV store/lookup 实现**）/ `SampleChunk` 调度，但
-  staging 严格**请求内、chunk 内**；唯一动态适配是 OOM 时 chunk 减半（`chunks.py:153-180`）。
+- 执行核 = **request-level chunking only**：planner 只产 `SampleChunk`；staging 严格
+  **请求内、chunk 内**，唯一动态适配是 OOM 时 chunk 减半。跨请求 step、cache ownership
+  和 position-ready queue 都尚不存在。
 - stage pipeline 契约层 = **contract-only，零生产消费者**：`PipelineTopology/SerialPipelineRunner/
   RayPipelineStageWorker`（12 测试过）休眠;diffusion executor 已把工作拆成 typed stage
   （`run_prompt_encode_stage/run_prepare_stage/run_denoise_stage/run_decode_stage`,

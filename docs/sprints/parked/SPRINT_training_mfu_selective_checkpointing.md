@@ -1,6 +1,8 @@
 # SPRINT: Training-side MFU — selective activation checkpointing (SAC)
 
-状态：**P2 已落地 / 剩 P3 GPU-gated（2026-07-09 对账；原 planned 2026-06-27）**。性质：**把现在 full / 二值的 gradient checkpointing 换成 selective（只重算便宜的 norm/elementwise，保留贵的 GEMM/attention 激活），把腾出的显存花在更大的 microbatch 上 → 抬算术强度 → 抬训练 MFU。** 这是 [[SPRINT_training_mfu_compile]] 的姊妹杠杆：compile 靠融合腾显存，本 sprint 靠「只重算便宜的」摘掉 recompute 税，两者都服务同一个目标——**让 microbatch 顶到 MFU 最优点**。
+状态：**parked：P2 已落地 / 剩 P3 GPU-gated（2026-07-09 对账）**。
+触发条件：目标大卡可独占，用同等显存比较 selective + 更大 batch 的 samples/s 与 MFU。
+性质：**把现在 full / 二值的 gradient checkpointing 换成 selective（只重算便宜的 norm/elementwise，保留贵的 GEMM/attention 激活），把腾出的显存花在更大的 microbatch 上 → 抬算术强度 → 抬训练 MFU。** 这是 [[SPRINT_training_mfu_compile]] 的姊妹杠杆：compile 靠融合腾显存，本 sprint 靠「只重算便宜的」摘掉 recompute 税，两者都服务同一个目标——**让 microbatch 顶到 MFU 最优点**。
 
 > **对账（2026-07-09，对 main 实况）**：P0 probe 与 P1 selective×compile 均已实测（§4）；
 > **P2 已在 main 落地**——`vrl/trainers/activation_checkpointing.py` 就是三值 policy

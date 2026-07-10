@@ -12,7 +12,8 @@ rewards, generated artifacts, and changed weights.
 - **One training loop.** The same online RL loop drives diffusion and AR families
   instead of keeping a separate training script per model.
 - **Layered configs.** Model, sampling, reward, dataset, algorithm, rollout, and
-  distributed choices are composed from YAML layers under `configs/`.
+  distributed choices are composed from bundled YAML layers under
+  `vrl/config/presets/`.
 - **Decoupled rewards.** OCR, aesthetic, CLIP, PickScore, Kling VideoReward, physics,
   and safety-style rewards share the same scoring contract.
 - **Validation-first recipes.** Runnable wiring is not treated as a working recipe
@@ -52,25 +53,37 @@ core abstractions at every step:
 | **SD3.5** | text -> image diffusion | GRPO | ✅ OCR GRPO |
 | **FLUX** | text -> image diffusion | GRPO-Guard, DanceGRPO, DiffusionNFT, Flow-DPPO | 🧪 Runnable |
 | **Qwen-Image** | text -> image diffusion | GRPO | 🧪 Runnable |
+| **SANA** | text -> image diffusion | GRPO | 🧪 Runnable |
+| **Lumina-Image 2** | text -> image diffusion | GRPO | 🧪 Runnable |
+| **HunyuanImage 2.1** | text -> image diffusion | GRPO | 🧪 Runnable |
+| **PixArt-Σ** | text -> image diffusion | GRPO | 🧪 Runnable |
 | **Wan2.1** | text/image -> video diffusion | GRPO, DPO | 🧪 Runnable |
 | **Wan2.2** | image -> video diffusion | GRPO | 🧪 Runnable |
+| **HunyuanVideo** | text -> video diffusion | GRPO | 🧪 Runnable |
+| **Mochi 1** | text -> video diffusion | GRPO | 🧪 Runnable |
+| **CogVideoX** | text -> video diffusion | GRPO | 🧪 Runnable |
+| **Echo** | text -> video diffusion | GRPO | 🧪 Runnable |
 | **Cosmos-Predict2** | video diffusion | GRPO | 🧪 Runnable |
 | **Cosmos-Predict2.5** | video diffusion | DiffusionNFT | 🧪 Runnable |
 | **Cosmos-Anima** | video diffusion | GRPO | 🧪 Runnable |
 | **Janus-Pro** | autoregressive image | GRPO, R1-GRPO | 🧪 Runnable |
 | **NextStep-1** | autoregressive image | GRPO | 🧪 Runnable |
+| **Emu3** | autoregressive image | GRPO | 🚧 Recipe pending |
+| **GLM-Image** | autoregressive image | GRPO | 🚧 Recipe pending |
+| **LlamaGen** | autoregressive image | GRPO | 🚧 Recipe pending |
+| **Cosmos3** | text -> video diffusion | GRPO | 🚧 Run-gated |
 
 ## Supported Algorithms
 
 | Algorithm | Config base |
 | --- | --- |
-| GRPO | `configs/base/algorithm/grpo.yaml` |
-| GRPO-Guard | `configs/base/algorithm/grpo_guard.yaml` |
-| DanceGRPO | `configs/base/algorithm/dance_grpo.yaml` |
-| DiffusionNFT | `configs/base/algorithm/diffusion_nft.yaml` |
-| Flow-DPPO | `configs/base/algorithm/flow_dppo.yaml` |
-| Token-GRPO | `configs/base/algorithm/token_grpo{,_multisegment}.yaml` |
-| DPO | `configs/base/algorithm/dpo.yaml` |
+| GRPO | `vrl/config/presets/base/algorithm/grpo.yaml` |
+| GRPO-Guard | `vrl/config/presets/base/algorithm/grpo_guard.yaml` |
+| DanceGRPO | `vrl/config/presets/base/algorithm/dance_grpo.yaml` |
+| DiffusionNFT | `vrl/config/presets/base/algorithm/diffusion_nft.yaml` |
+| Flow-DPPO | `vrl/config/presets/base/algorithm/flow_dppo.yaml` |
+| Token-GRPO | `vrl/config/presets/base/algorithm/token_grpo{,_multisegment}.yaml` |
+| DPO | `vrl/config/presets/base/algorithm/dpo.yaml` |
 
 ## Architecture
 
@@ -99,10 +112,9 @@ vrl/
   algorithms/  GRPO, flow-matching, DPO, DiffusionNFT
   trainers/    online and offline trainers, weight sync, checkpointing
   trajectory/  trajectory build, resolve, and storage
-  config/      OmegaConf loading and typed schema
+  config/      OmegaConf loading, typed schema, and bundled YAML presets
   nn/ math/ utils/    shared kernels and helpers
   scripts/     training and data preparation entrypoints
-configs/    layered YAML configs
 datasets/   committed prompt datasets and dataset build scripts
 docs/       architecture notes, sprint notes, training examples
 third_party/  vendored submodules + editable-install wrappers
@@ -142,24 +154,23 @@ optional-dependency groups; groups **compose** in a single `pip install`:
 | Diffusion families (SD3.5 / Flux / Cosmos / Wan / Qwen …) | `.[cosmos]` | diffusers + transformers + peft + torchvision |
 | AR-image families (Janus-Pro / NextStep) | `.[cosmos]` | transformers/peft model runtime (vLLM accel is separate — see note) |
 | OCR reward (the validated quickstart) | `.[ocr]` | paddleocr |
-| Video / VLM reward (Kling, VideoScore2, UnifiedReward) | `.[reward]` | transformers≥4.49, qwen-vl-utils, opencv |
+| Video / VLM reward (Kling, VideoScore2, UnifiedReward) | `.[reward]` | transformers≥5.13, qwen-vl-utils, opencv |
 | Pose / motion / anatomy eval | `.[pose]` (CPU) · `.[pose-gpu]` (GPU) | onnxruntime + opencv |
 | Dataset prep (video-world, pickapic) | `.[data]` | datasets, pyarrow, av |
 | Fixed video-eval suite (VBench) | `.[videoeval]` | vbench |
 | Full-param 8-bit Adam (Cosmos trustworthy-curve recipe) | `.[optim8bit]` | bitsandbytes (int8 Adam state, RL-safe) |
-| Tests / lint | `.[dev]` | pytest, ruff |
+| Tests / lint | `uv sync --group test --group lint` | pytest, ruff |
 
 Example — the SD3.5-OCR quickstart below needs `pip install -e ".[cosmos,ocr]"`.
 (The `cosmos` group is the core model-runtime extra and is misnamed for history —
 it serves *all* diffusion and AR families, not just Cosmos.)
 
-> **`ar-vllm` is optional and installs in its own environment.** AR-image families
+> **`ar-vllm` is optional; a separate environment is recommended.** AR-image families
 > run in the main env without it via `sampling.attention_backend=torch_native`;
 > `.[ar-vllm]` only adds vLLM's internal paged-attention / blockwise-fp8 kernels.
-> The vLLM wheel is ABI-locked to an exact `torch`, so co-installing it with
-> `.[cosmos]` clashes with the rest of the stack's floating torch/torchvision/CUDA
-> wheels (an `ARAttentionUnavailable` at import time *is* that ABI mismatch). Put
-> it in a dedicated venv — the repo already ships one at `.venvs/vllm-omni`.
+> vLLM pins its Torch/TorchVision/TorchAudio ABI. The current lock resolves it with
+> `.[cosmos]`, but a dedicated venv keeps this large, tightly pinned accelerator
+> stack isolated — the repo already ships one at `.venvs/vllm-omni`.
 
 ## Quickstart
 
@@ -171,8 +182,8 @@ pip install -e ".[cosmos,ocr]"
 vrl-train --config experiment/diffusion/sd3_5/online_grpo_ocr
 ```
 
-`--config` names any YAML under `configs/` (no extension); trailing args are
-OmegaConf dotlist overrides (`vrl-train --help`):
+`--config` accepts a bundled config name (no extension) or an absolute YAML path;
+trailing args are OmegaConf dotlist overrides (`vrl-train --help`):
 
 ```bash
 # shorter smoke run
@@ -182,16 +193,16 @@ vrl-train --config experiment/diffusion/sd3_5/online_grpo_ocr \
 
 Within the first few epochs you should see optimizer steps and a **non-flat**
 `reward_mean`. A flat reward is a bug, not a result (see Status Policy). Every
-recipe lives under `configs/experiment/` — browse it to see what runs.
+recipe lives under `vrl/config/presets/experiment/` — browse it to see what runs.
 
 ## Current Focus
 
 - Promote video recipes only after real training validation.
-- Broaden AR rollout coverage.
+- Add training recipes for the runtime-verified Emu3, GLM-Image, and LlamaGen families.
 - Validate DiffusionNFT and DanceGRPO on more model families.
 - Expand multi-card and cross-node online training coverage.
 
 ## Docs
 
 - [`docs/NORTH_STAR.md`](docs/NORTH_STAR.md) — positioning, moat, and roadmap (why visual-rl, not slime/verl).
-- [`docs/ADDING_A_MODEL_FAMILY.md`](docs/ADDING_A_MODEL_FAMILY.md) — make your own model RL-trainable here (a registry line, not a fork).
+- [`docs/ADDING_A_MODEL_FAMILY.md`](docs/ADDING_A_MODEL_FAMILY.md) — add a model module, registry descriptor, presets, and contract tests without forking the trainer.

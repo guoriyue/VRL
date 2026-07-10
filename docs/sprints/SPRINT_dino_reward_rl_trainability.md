@@ -139,6 +139,6 @@ parity=0.0）。我用探针只因为**它在你这台"专杀 Ray + 抢卡"的�
   `vrl/models/diffusion/base.py:146`（`forward(state, 0)`）、
   `vrl/math/diffusion/flow_matching.py:74`（`sigma = scheduler.sigmas[step_index]`）
 - 守卫：`vrl/trainers/online/trainer.py:1127`（first_step parity warn→建议 hard-fail）
-- 配方：`configs/experiment/diffusion/cosmos_predict2/online_grpo_droid_overfit_validation.yaml`
+- 配方：`vrl/config/presets/experiment/diffusion/cosmos_predict2/online_grpo_droid_overfit_validation.yaml`
 - 记忆：[[project_droid_overfit_validation]]、[[project_replay_parity_audit]]、
   [[project_single_gpu_93f_probe_oom]]、[[feedback_unattended_run_survival]]、[[project_first_trustworthy_curve]]

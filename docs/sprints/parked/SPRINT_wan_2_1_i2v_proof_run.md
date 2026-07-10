@@ -1,6 +1,8 @@
 # SPRINT: Wan 2.1 I2V 14B GRPO proof run（图生视频 RL 落地验证）
 
-状态：in-progress（2026-07-02 更新：**§6 核心契约已在真权重上验证 PASS（逐位一致）；完整单卡 GRPO smoke 被实测证实结构性阻塞——I2V transformer 实际 16.4B 参数（bf16 ≈ 32.8GB）> 单卡 32GB，trainer 侧 replay 放不下**。剩余 = 多卡 train step）。
+状态：**parked（2026-07-09 复核）**。§6 核心契约已在真权重上验证 PASS；
+单卡 GRPO 被 16.4B transformer 的驻留需求结构性阻塞。触发条件：至少两卡且 replay
+分片路径可用，完成剩余 multi-GPU train step。
 
 > **2026-07-02 真机实测结论（单卡 RTX 5090 32GB）：**
 > 1. **smoke run 实跑 OOM，且是结构性的**：`online_grpo_i2v_smoke_single_gpu` 在 driver 侧

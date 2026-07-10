@@ -1,6 +1,9 @@
 # SPRINT: Cosmos Predict2 2B — 第一条可信的正向 RL 学习曲线（full-param, 单卡）
 
-状态：**blocked / dataset-blocked（2026-06-27）**。目标:**在 cosmos predict2 2B 上拿到第一条可信的正向学习曲线(eval reward 上升 >2σ)**。enabler(8-bit Adam full-param)已建好,但本地没有 source-backed Video2World reference-image dataset；`perf_smoke/ref.png` 是随机噪声并已由 `SPRINT_remove_smoke_datasets.md` 删除,不能作为 RL 目标。
+状态：**parked / GPU-available trigger（2026-07-09 复核）**。数据、reward 判别、
+原生 480P checkpoint 转换和 full-param recipe 均已就位；剩余 P1–P4 是需要独占 GPU 的
+显存 smoke、短曲线和完整可信曲线。目标：**在 Cosmos Predict2 2B 上拿到第一条可信的
+正向学习曲线（eval reward 上升 >2σ）**。
 
 > 证据:记忆 `project_first_trustworthy_curve`(2026-06-13 cosmos GRPO 持平=未学)、`project_flux_algo_validation`(ppo_epochs=1 让机制恒 0)、`project_fullparam_8bit_adam`(本轮建的 enabler)。配置:`configs/experiment/diffusion/cosmos_predict2/online_grpo_fullparam_8bit_240p.yaml`。
 

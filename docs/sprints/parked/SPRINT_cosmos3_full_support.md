@@ -1,6 +1,7 @@
 # SPRINT: Cosmos3 Vision Generator — RL via the diffusion seam
 
-状态：**blocked / run-verify-gated（2026-06-28）**。范围：**只做 Cosmos3 的 vision 生成器**（`vrl/models/diffusion/cosmos/cosmos3/`），让它能进本仓库的 diffusion seam 被 RL 训练。本仓先落 registry/family skeleton + 已验证契约；权重加载和 RL run-verify 需要有多卡 + 网络通的机器。
+状态：**parked / run-verify-gated（2026-07-09 复核）**。触发条件：有多卡、
+网络可用且能安装含 `Cosmos3OmniDiffusersPipeline` 的受控 diffusers 版本。范围：**只做 Cosmos3 的 vision 生成器**（`vrl/models/diffusion/cosmos/cosmos3/`），让它能进本仓库的 diffusion seam 被 RL 训练。本仓先落 registry/family skeleton + 已验证契约；权重加载和 RL run-verify 需要有多卡 + 网络通的机器。
 
 > **reasoner-judge 已单独 ship**（`reward: add cosmos3 reasoner judge`）：`vrl/rewards/models/cosmos3_reasoner.py` + config + 注册 + 测试。它是 VLM 裁判（视频→分数），属 reward seam，**不在本 sprint**。本 sprint 只管"生成视频"的那半。
 
@@ -23,7 +24,7 @@ Cosmos3（`model_type="cosmos3_omni"`）的生成器是一个 **diffusion MoT**�
 - MR3：需要 first-step logprob diff≈0，证明 generator RL-eligible。
 - MR4：需要 LoRA RL run 满足 clip_fraction>0、artifact 连贯、eval reward >2σ。
 
-因此它继续留在 `docs/sprints/planned/`，状态是 `blocked / run-verify-gated`；只有 MR0 和 MR2 skeleton 已经落地。
+因此它留在 `docs/sprints/parked/`，直到上述硬件/依赖事件发生；目前只有 MR0 和 MR2 skeleton 已经落地。
 
 ## 1. 权威事实（已读源 / 已实测，非推断）
 

@@ -1,6 +1,7 @@
-# SPRINT: DiffusionNFT 正确性验证实验（flux 移植 + 验证，planned）
+# SPRINT: DiffusionNFT 正确性验证实验（flux 移植 + 验证）
 
-状态：**Phase A DONE（核对 2026-07-08）；Phase B（GPU learning 验证）未跑**。Phase A 的移植已
+状态：**parked：Phase A DONE（核对 2026-07-08）；Phase B 等待空闲 GPU**。
+触发条件：有可独占 GPU 完成 lr=0 不变量、负分支消融和学习曲线。Phase A 的移植已
 全部在库：`FluxModel`/`FluxReplayModel` 实现三件套（`attach_previous_policy_adapter` 由
 `model.nft_previous_adapter: true` 门控、`sync_previous_policy_adapter`、
 `diffusion_nft_prepare_transformer_input`，`vrl/models/diffusion/flux/model.py:197-237,530-607`）；

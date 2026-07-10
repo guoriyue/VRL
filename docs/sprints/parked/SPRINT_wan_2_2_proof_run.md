@@ -1,6 +1,7 @@
 # SPRINT: Wan 2.2 A14B GRPO proof run（落地验证）
 
-状态：planned（2026-06-18）。**实现已完成**并归档（`done/SPRINT_wan_2_2_dual_expert.md`：dual-stage
+状态：**parked（2026-07-09 复核）**。实现与 experiment recipe 已完成；触发条件：
+有足够多卡资源完成 A14B 真实 GRPO proof run。实现 sprint 已归档（`done/SPRINT_wan_2_2_dual_expert.md`：dual-stage
 加载 / boundary 路由 / replay `transformer_2` / 默认 low-noise 训练 + 23 项 CPU 单测全过）。本 sprint =
 那个实现 sprint 唯一的剩余项：**把代码在真机上跑通一次 Wan 2.2 A14B GRPO，验证 replay 契约与 reward 信号**。
 
@@ -13,7 +14,7 @@
 
 | 缺口 | 现状 | 谁能补 |
 |---|---|---|
-| **experiment 入口** | `configs/experiment/diffusion/wan_2_2/` **不存在**——没有 GRPO recipe，连 launch 路径都没有 | 纯 config，**现在就能做**（任务 1） |
+| **experiment 入口** | `vrl/config/presets/experiment/diffusion/wan_2_2/online_grpo_physics_i2v.yaml` 已落地 | ✅ 完成 |
 | **2×14B 显存策略** | 实现 sprint §2#6 标"中"：inactive 专家 CPU-offload / generation memory policy 对 dual-stage 的接入未在真机验证 | 接 `done/SPRINT_generation_memory_policy.md` 的系统，需在目标拓扑上验（任务 2） |
 | **真机 proof run** | 无 run 证据；2×14B 需多卡 | **阻塞在多卡硬件**（任务 3） |
 

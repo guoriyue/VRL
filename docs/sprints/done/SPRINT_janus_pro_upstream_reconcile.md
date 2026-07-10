@@ -1,6 +1,8 @@
 # SPRINT: janus_pro family 对账 upstream Janus —— CFG / 并行解码 / VQ 解码
 
-状态：**Phase 1 done（2026-06-29，纯 CPU）；Phase 2 GPU-gated 可选**。目标：把自研 `janus_pro` AR 图像生成 family 与 upstream DeepSeek `Janus` 逐项对账(CFG、解码循环、VQ 解码、KV/paged、RL log_prob),把"能借的细节"和"潜在 bug"落实。
+状态：**done（Phase 1，2026-06-29，纯 CPU）**。Phase 2 的 batched-prefill
+probe 明确是可选性能实验，不是本 sprint 的完成条件；只有 GPU profile 证明 prefill 占比值得
+优化时才另立工作。
 
 > **Phase 1 落地（2026-06-29）**：两条"对账结论"已固化成注释 + 契约测试,防止有人"参考 upstream"改回去:
 > - `runner.py` log_prob 处加 RL 正确性注释(sample 自 `guided`、score 自 `cond_logits`,改成 `guided` 会破 old_log_prob 不变量)。

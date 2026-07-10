@@ -1,6 +1,7 @@
 # SPRINT: 接入 Qwen-Image T2I 家族（套现有 diffusion seam）
 
-状态：**LANDED（代码）/ BLOCKED（单卡 naive 实跑，2026-06-21）** — 四文件 + registry + model yaml +
+状态：**parked：LANDED（代码）/ BLOCKED（单卡 naive 实跑，2026-06-21）**。
+触发条件：可用显存足以容纳约 40GB transformer 的多卡/大卡，或原生分片/fp8 加载路径落地。四文件 + registry + model yaml +
 smoke recipe + train entrypoint 全部落地；CPU 单测绿（`tests/models/diffusion/qwen_image/`，含
 separate-CFG 不等长序列与 norm-rescale）。落地修复同 FLUX 的两处真实 seam 缺口（CPU encoder offload
 + 动态 shifting `mu`）。**单 GPU naive 实跑被显存挡住**：Qwen-Image transformer ~20B，bf16/fp16 权重

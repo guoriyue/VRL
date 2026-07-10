@@ -72,7 +72,7 @@ pipeline 全部声明为 `generation_only_modules`（absent）。
 vrl/trainers/frozen_module.py                   已删（文件不存在）
 trainer_frozen_targets / apply_trainer_memory_policy  零引用（rg 无命中）
 MODEL_MEMORY_SECTIONS                            = ("vae_decode",)（vrl/models/interfaces/runtime.py:24）
-configs/.../sd3_5/medium.yaml 的 frozen_offload  已删
+vrl/config/presets/model/diffusion/sd3_5/medium.yaml 的 frozen_offload  已删
 ```
 
 保留：所有 ReplayModel / `build_replay_bundle` / `minimal_replay_bundle_metadata`

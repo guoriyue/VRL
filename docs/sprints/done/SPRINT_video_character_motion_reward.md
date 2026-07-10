@@ -1,9 +1,8 @@
-# SPRINT: 视频角色一致性与真实运动 Reward 接入（in-progress）
+# SPRINT: 视频角色一致性与真实运动 Reward 接入
 
-状态：in-progress（2026-06-24）。目标：为“角色稳定、衣服/纹理稳定、舞蹈转圈时裙摆/布料运动可信”
-找可直接复用的公开视频 reward / evaluator，并把最有价值的候选接入 VRL 的 reward/eval 面。
-
-实现落在 `~/Desktop/vrl2/VRL` 的独立分支 `feat/videoscore2-reward`（与 wm-infra 主线分开）。
+状态：**done（2026-07-09 复核）**。VideoScore2、UnifiedReward-2.0、PhyMotion、
+固定 eval/外部 benchmark 合并边界、配置和测试均已进入 main；VideoScore2 真机 gate 与
+soft-score 修复也已闭合。本文后半的候选分析保留为决策记录，不再代表当前实现状态。
 
 ## 已完成（P0 + P1 全部 reward 接入）
 
@@ -16,7 +15,7 @@ Laplacian 闪烁做 clothes，但这俩并不真的测“同一个人 / 同一�
 是 §2.6 自己警告过的弱代理，已删除。真正忠实的做法是 VBench-2.0 的 RetinaFace+ArcFace（identity）
 和人物/衣物分割 + DINO/VQA（clothes），需要真权重才有意义，留到能装能验时再做，不上手搓版本。
 
-learned VLM judges（Ray pool，mp4 artifact）：
+learned VLM judges（in-process runtime，mp4 artifact）：
 
 - **VideoScore2** `vrl/rewards/models/videoscore2.py`：`TIGER-Lab/VideoScore2`（Qwen2.5-VL-7B，
   `AutoModelForVision2Seq` + `trust_remote_code`），greedy 生成 + 上游正则解析三维 1-5；
@@ -25,7 +24,7 @@ learned VLM judges（Ray pool，mp4 artifact）：
 - **UnifiedReward-2.0** `vrl/rewards/models/unified_reward_video.py`：
   `CodeGoat24/UnifiedReward-2.0-qwen-7b`，16 帧 pointwise，按上游脚本输出 Alignment /
   Physics / Style（已是 1-5 浮点，天然连续）。rubric 默认在模块内（即模型输出语法），可用
-  `worker_config.rubric_path` 指向 `configs/reward_rubrics/dance_cloth.yaml` 把注意力引到
+  `worker_config.rubric_path` 指向 `vrl/config/presets/reward_rubrics/dance_cloth.yaml` 把注意力引到
   “同人/同裙/裙摆物理”。public keys：`alignment` / `physics` / `style` / `overall`。
 
 人体动力学（可选外部环境）：
@@ -44,8 +43,8 @@ eval / benchmark：
 
 ## 验证状态
 
-- **单测**：每个 reward 都有 fake-actor facade 测试（score_key 选择 / 缺 key fail-fast /
-  execution=pool / config 校验）+ 纯逻辑单测（VideoScore2 解析与 soft-score 对齐 /
+- **单测**：每个 reward 都有 fake-model facade 测试（score_key 选择 / 缺 key fail-fast /
+  inline runtime / config 校验）+ 纯逻辑单测（VideoScore2 解析与 soft-score 对齐 /
   UnifiedReward 浮点解析与 rubric 加载 / PhyMotion 子进程与 JSON 解析）。全套 reward + config
   测试通过，无回归。
 - **eval suite**：端到端跑通，产出 `eval_video_metrics.csv`（Kling 列 + VideoScore2 列 + 外部
@@ -93,10 +92,10 @@ eval / benchmark：
 注：vendoring 只 pin 代码，权重和重型依赖（MuJoCo/SMPL、各 benchmark 的模型）仍由操作者在各自环境
 安装。submodule 拉取后 `git submodule update --init third_party/<name>` 即可。
 
-## 仍未做
+## 后续工作（不属于本 sprint）
 
 - 各外部 benchmark 在真实环境里**实际跑通并出分**（已 vendoring + 合并边界就位，差各自重型安装/权重）。
-- 组合训练 config（Phase D：`configs/experiment/...online_*_dance_cloth_reward.yaml`）与 before/after
+- 组合训练 config（Phase D：`vrl/config/presets/experiment/...online_*_dance_cloth_reward.yaml`）与 before/after
   contact sheet 判读。
 - VBench custom_input 是否支持 `temporal_flickering` 待真机确认（文档只列
   subject/background/motion_smoothness/dynamic_degree/aesthetic/imaging）。

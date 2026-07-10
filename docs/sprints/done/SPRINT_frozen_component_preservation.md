@@ -1,6 +1,11 @@
 # SPRINT: rollout 内存释放时保留冻结的 VAE / text-encoder（offload-and-restore，不要 discard+reload）
 
-状态：**缺陷 B DONE（2026-06-20）/ 缺陷 A 的 colocated-trainer 这一类 DONE（2026-06-29，sleep/wake 已落地，CPU-fake 单测覆盖，GPU 侧残留实测留作验收）/ 缺陷 A 的 reward-handoff 这一类仍 deferred（bundle 要交给 reward actor，保留 teardown）**。范围：让 rollout 每周期的内存释放对**冻结的非可训练组件**（VAE、3× text-encoder）采用 offload-and-restore（类似 vLLM `sleep_level=1` / wake-up），而不是当前的 discard + 冷重载；不动调度架构、不动 weight-sync 语义。
+状态：**done（2026-07-09 复核）**。缺陷 B 的 driver frozen-component offload、
+缺陷 A 的 colocated-trainer sleep/wake、CuMemAllocator 路径和 GPU 验收均已完成。
+旧文所称“reward actor 需要 rollout bundle，因此 reward handoff 仍 deferred”已经失效：
+reward 现在只支持 in-process `execution="inline"`，Ray reward pool 已删除；当前 resolver
+也明确按 inline reward 派生 handoff。因此本 sprint 没有剩余交付，以下章节保留为实现过程
+与测量记录，不再作为待办清单。
 
 ## 实现状态（2026-06-20）
 
@@ -33,7 +38,10 @@
 
 结论：cumem sleep/wake **845ms**，比 naive 快 4.4×、比冷重载快 6.4×；对比真实 kill 路径（冷重载 5.4s + context 初始化 1.06s + Ray 重建调度 ~1–3s ≈ 6.5–8.5s）**快约 8–10×**，且几乎零碎片。残留两 backend 都降到 ~context（~1.3GB），"context 残留挤掉训练"确认是伪问题。注：probe 的残留早期误用 `memory_reserved()`（看不见 cumem 虚拟内存），已改驱动级 `mem_get_info`。坑：cumem pool 上下文里不能 `expandable_segments` / `empty_cache`（PyTorch pluggable-allocator bug），故只在 sleep-eligible diffusion worker 上启用。
 
-**⏸ 缺陷 A 的 reward-handoff 这一类仍暂缓：** `release_rollout_before_reward` 触发的 lease（reward Ray actor 要进 rollout 的 bundle）保留 teardown ——sleep 只让出物理显存、不让出 Ray bundle，不满足 reward 调度需求。是否能让 reward 与 rollout 共 bundle 从而也 sleep，留 §1.D 单独核实。
+**✅ 旧 reward-handoff 假设已关闭（2026-07-09 复核）：** reward 改为
+in-process inline 执行后，不再存在“Ray reward actor 要进入 rollout bundle”的调度前提。
+若未来重新引入远程 reward transport，必须按当时的 runtime 和 placement contract 另立
+sprint，不能复活本文的旧 bundle 假设。
 
 关联：[[SPRINT_compile_rollout_lifecycle]]（同一条 worker 生命周期上的常驻-vs-每周期重建权衡，编译产物的摊销与本 sprint 的冻结权重摊销是同一根轴）、[[SPRINT_framework_lessons_vrl]]（P1-2：sleep/wake vs actor teardown —— 本 sprint 是该课的具体落点）。
 

@@ -1,6 +1,6 @@
 # SPRINT: 薄化模型 seam + 十个新模型扩张（diffusion + AR，含 GLM-Image）
 
-状态：**Phase 0 收官（2026-07-07）；Phase 1 完成（2026-07-08，10/10 落地 + 真权重 rollout 验证）**。
+状态：**done。Phase 0 收官（2026-07-07）；Phase 1 完成（2026-07-08，10/10 落地 + 真权重 rollout 验证）**。
 
 > **Phase 1 验证记录（2026-07-08，RTX 5090 32GB + CPU 兜底）**：探针 = `vrl/scripts/diffusion/generate.py`
 > （生产 `sde_step_with_logprob` 循环 + first-step replay parity）/ AR 家族用 executor 直驱。
@@ -24,7 +24,8 @@
 > ④ echo compile/fp8 GPU 验证（80GB 卡）⑤ cosmos caps 契约统一（**薄化第十五轮落地，2026-07-08**）
 > ⑥ SamplingState 基类（**薄化第十四轮落地，2026-07-08**）。~~下一步 = Phase 1 接 SANA~~——**已落地**
 > （[[SPRINT_sana_t2i]] 已归档 done/；CPU 复验 2026-07-09：tests/models/diffusion/sana 4 passed +
-> tests/config 168 passed）。Phase 1 全量收官见文首验证记录；本文件仅因挂条件延期项 ①②④ 留在 planned/。
+> tests/config 168 passed）。Phase 1 全量收官见文首验证记录；挂条件项 ②④ 不属于本 sprint
+> 的完成判据，需要时按各自触发条件另立工作。
 
 ## 0. 一句话
 
