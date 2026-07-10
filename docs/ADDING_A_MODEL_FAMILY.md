@@ -1,115 +1,157 @@
 # Adding a Model Family
 
-This guide shows how to make a new diffusion or autoregressive image/video model
-RL-trainable in `visual-rl`. The point of the unified contract is that a new family
-is a **registry entry + one model directory** — the trainer, algorithms, rollout
-orchestration, rewards, and config system are untouched. Worked example: the
-existing `sd3_5` family.
+This guide shows how to make a diffusion or autoregressive image/video model
+RL-trainable in `visual-rl`. Start from the thinnest supported path. A standard
+diffusers-backed diffusion family is one model module, one registry descriptor,
+config layers, and tests. Do not create a family `runtime.py`, executor, runner,
+or training entrypoint unless the model has behavior the shared path cannot express.
 
-## 0. What you implement
+## 1. Choose the integration path
 
-A family is a directory under `vrl/models/<modality>/<family>/` exposing three
-symbols, plus one line in the rollout registry. Nothing else in `vrl/` changes.
+### Descriptor-driven diffusion family
 
-| You provide | For `sd3_5` |
-| --- | --- |
-| `<Family>ChunkExecutor` — runs the denoise/decode rollout, records the trajectory | `vrl.models.diffusion.sd3_5.runtime:SD3_5ChunkExecutor` |
-| `build_<family>_runtime_bundle` — loads weights into a `RuntimeModel` (with `replay_forward`) | `…runtime:build_sd3_5_runtime_bundle` |
-| `extract_<family>_runtime_spec` — projects the YAML config into a typed runtime spec | `…runtime:extract_sd3_5_runtime_spec` |
-| one `register_rollout_family(...)` entry | `vrl/rollouts/families/registry.py:132` |
-
-Typical directory (mirror an existing family):
+Use this path when the family has one trainable transformer, a diffusers pipeline,
+and the shared diffusion rollout/replay lifecycle. `sd3_5` and `sana` are the
+reference implementations.
 
 ```text
 vrl/models/diffusion/<family>/
-  __init__.py     # re-exports the public symbols
-  model.py        # the nn.Module + replay_forward(batch, timestep_idx)
-  runtime.py      # <Family>ChunkExecutor, build_*_runtime_bundle, extract_*_runtime_spec
-  runner.py       # the per-step generation/denoise driver
+  __init__.py
+  model.py
 ```
 
-## 1. The contract: `replay_forward`
+The registry supplies the generic runtime spec extractor, runtime/replay builders,
+executor, gatherer, and training entrypoint. Per-family executor values such as
+`num_frames` or `max_sequence_length` belong in `configs/model/.../executor`, not
+in Python constants.
 
-The one method that makes RL work is `replay_forward(batch, timestep_idx)` on your
-`RuntimeModel`. The rollout records a multi-step denoising (or AR) trajectory; the
-evaluator **replays** it through the current weights to recompute `log_prob` at each
-step. This is the correctness core — the recomputed `old_log_prob` must match the
-rollout-time distribution (the verl rule: never corrupt `old_log_prob`). For
-diffusion, `replay_forward` returns the per-step SDE signals
-(`log_prob`, `prev_sample_mean`, `std_dev_t`); for AR, the per-token logits/log-prob.
-The algorithm layer (`vrl/algorithms/`) consumes those signals unchanged — you do not
-write algorithm code.
+### Custom diffusion adapter
 
-## 2. Register the family (the one line)
+Keep a thin `runtime.py` or custom executor only for a real protocol difference:
+reference-image request construction, a non-diffusers artifact loader, multiple
+transformers, or family-specific chunk behavior. Examples are Wan I2V, Cosmos,
+and Echo. The adapter should contain only that difference and reuse the generic
+builders for everything else.
 
-Diffusion families use the `_diffusion_entry` helper. Add to
-`vrl/rollouts/families/registry.py`:
+### Autoregressive family
+
+AR families have genuinely different token/cache protocols and therefore keep a
+model, runner, and runtime adapter. Mirror the closest family (`janus_pro`,
+`nextstep_1`, `emu3`, `glm_image`, or `llamagen`) and register its rollout and replay
+builders. Training still uses the shared `vrl.scripts.ar.train:train_ar_grpo`
+entrypoint.
+
+## 2. Implement the model contract
+
+The correctness boundary is `replay_forward(request)` on the runtime model. The
+rollout records a denoising or token trajectory; replay recomputes the current
+policy signals for the same state and step. With unchanged weights, fresh and
+collection-time log-probs must agree. Never overwrite or reconstruct
+`old_log_prob` from the current policy.
+
+For a descriptor-driven diffusion family, mirror `SanaModel` and its replay model:
+
+- `from_spec` loads the upstream pipeline and freezes generation-only modules;
+- `encode_prompt`, `prepare_sampling`, `forward_step`, and `decode_latents` own
+  family/upstream behavior;
+- `build_branch` maps the family transformer signature into the shared CFG caller;
+- the replay class restores the recorded state and implements family scheduler
+  details without loading text encoders or the VAE.
+
+Do not add algorithm code. Algorithms consume the shared replay signals.
+
+## 3. Register a descriptor-driven diffusion family
+
+Add one `_diffusion_entry` in `vrl/rollouts/families/registry.py`:
 
 ```python
 register_rollout_family(
     _diffusion_entry(
         family="my_model",
-        task="t2i",                       # t2i | t2v | i2v | v2w | t2w
+        task="t2i",
         aliases=(),
-        executor_cls="vrl.models.diffusion.my_model.runtime:MyModelChunkExecutor",
-        runtime_builder="vrl.models.diffusion.my_model.runtime:build_my_model_runtime_bundle",
-        runtime_spec_extractor="vrl.models.diffusion.my_model.runtime:extract_my_model_runtime_spec",
+        runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
+        runtime_spec_extractor=(
+            "vrl.models.diffusion.build:extract_family_runtime_spec"
+        ),
         request_prefix="my_model",
         default_task_type="text_to_image",
-        supports_reference_conditioning=False,   # True for I2V / V2W (adds reference_image plumbing)
+        supports_reference_conditioning=False,
+        build=DiffusionFamilyBuild(
+            model_cls="vrl.models.diffusion.my_model.model:MyModel",
+            replay_cls="vrl.models.diffusion.my_model.model:MyModelReplayModel",
+            transformer_classname="MyModelTransformer2DModel",
+            scheduler_classname=None,
+            task_variant="t2i",
+            memory_owner="MyModel VAE",
+        ),
     ),
 )
 ```
 
-That single entry wires the collector, the diffusion gatherer, the family
-capability, and the executor kwargs. AR families register analogously (see the
-`janus_pro` / `nextstep_1` entries in the same file) with `kind="ar_*"`.
+Leave `executor_cls` unset to use `GENERIC_DIFFUSION_EXECUTOR`. Set
+`scheduler_classname` only when replay must load a non-flow scheduler such as DDIM
+or UniPC. Set `supports_reference_conditioning=True` only when the production
+request actually consumes a reference image.
 
-Set `supports_reference_conditioning=True` for image/video-conditioned families
-(I2V, V2W): the registry then threads `reference_image` through the collector and
-reward path for you.
+If the descriptor cannot express the family, keep the same registry shape but
+point only the necessary fields at a custom adapter. Do not duplicate generic
+bundle assembly in that adapter.
 
-## 3. Config layers
+## 4. Add config layers
 
-Recipes compose from layers under `configs/`. Add the family's defaults, then an
-experiment recipe that selects them:
+Model, sampling, and experiment configs are separate axes:
 
 ```text
-configs/base/model/my_model.yaml              # weights path, dtype, LoRA, scheduler
-configs/experiment/diffusion/my_model/online_grpo_<reward>.yaml
+configs/model/diffusion/<family>/<variant>.yaml
+configs/sampling/<modality>/<shape>.yaml
+configs/experiment/diffusion/<family>/online_grpo_<reward>.yaml
 ```
 
-Mirror an existing recipe (`configs/experiment/diffusion/sd3_5/online_grpo_ocr.yaml`)
-and swap the model/sampling layers. The algorithm, rollout, and distributed layers
-are shared and need no family-specific change.
+The experiment should compose the shared recipe and use the generic diffusion
+training entrypoint:
 
-## 4. Validate (the promotion bar)
+```yaml
+trainer:
+  entrypoint: vrl.scripts.diffusion.train:train_diffusion_grpo
+```
 
-A family is **🧪 Runnable** once it loads and a rollout produces artifacts. It is
-**✅ Validated** only after a real run shows optimizer updates, a **non-flat**
-`reward_mean`, generated artifacts, and changed weights (see the README Status
-Policy). Flat reward is a bug, not a result.
+Keep checkpoint paths portable. Repository configs must use a Hub ID, a relative
+canonical path, or an explicit runtime override; never commit a user home path.
 
-Add at minimum:
-- a model-loading test under `tests/models/diffusion/<family>/test_model_loading.py`
-  (mirror an existing one) — proves weights load and shapes are right;
-- a backbone-parity test if you wrap a diffusers/upstream backbone — proves your
-  `replay_forward` matches the reference forward within tolerance.
+## 5. Validate the family
 
-Then run the recipe (`vrl-train --config experiment/diffusion/my_model/...`) and,
-once it clears the bar, flip the README Supported-Models row to ✅ with a link to a
-reproducible curve under `docs/runs/`.
+Add tests for behavior, not directory shape:
 
-## 5. Checklist
+- model/upstream backbone parity at the same prompt, seed, schedule, and precision;
+- rollout-to-replay log-prob parity;
+- descriptor runtime and minimal replay-bundle wiring;
+- config load and validation;
+- one opt-in real-checkpoint update through `tests/e2e/test_real_checkpoint_rl.py`.
 
-- [ ] `vrl/models/<modality>/<family>/` with `model.py` (`replay_forward`),
-      `runtime.py` (executor + `build_*` + `extract_*`), `runner.py`, `__init__.py`.
-- [ ] `replay_forward` recomputes per-step `log_prob` consistent with rollout
-      sampling (do not corrupt `old_log_prob`).
-- [ ] one `register_rollout_family(...)` entry in `registry.py`.
-- [ ] config layers + one experiment recipe.
-- [ ] model-loading (+ backbone-parity) test.
-- [ ] a real run clears the promotion bar before marking ✅.
+Run the repository gates, then the real recipe:
 
-See [`docs/NORTH_STAR.md`](NORTH_STAR.md) for why this contract is the moat: adding a
-13th family here is a registry line, not a fork.
+```bash
+ruff check .
+python -m vrl.config.lint
+pytest -m "not e2e and not slow_test" -q
+vrl-train --config experiment/diffusion/my_model/online_grpo_<reward>
+```
+
+A family is **Runnable** when real weights load, rollout/replay parity passes, and
+an optimizer step changes trainable weights. Mark it **Validated** only after a
+reproducible held-out evaluation shows a non-flat learning signal and the run
+record is committed under `docs/runs/`.
+
+## 6. Checklist
+
+- [ ] Choose descriptor, custom diffusion adapter, or AR adapter from actual model behavior.
+- [ ] Implement rollout and replay against the upstream scheduler/transformer contract.
+- [ ] Add one registry entry; use generic builders/executor/entrypoint where possible.
+- [ ] Add model, sampling, and experiment config layers without user absolute paths.
+- [ ] Add backbone, replay-parity, config, and real-checkpoint update coverage.
+- [ ] Run the validation gates before claiming Runnable.
+- [ ] Publish a reproducible learning curve before claiming Validated.
+
+See [`docs/NORTH_STAR.md`](NORTH_STAR.md) for the product rationale behind this
+contract.

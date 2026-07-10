@@ -8,13 +8,14 @@ import inspect
 import math
 import os
 import re
-from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pytest
 import torch
+from huggingface_hub import snapshot_download
+from huggingface_hub.errors import LocalEntryNotFoundError
 
 from tests import ci_envs
 from vrl.config.builders import build_configs
@@ -924,7 +925,7 @@ def _resolve_checkpoint_path(case: RealCheckpointCase, field: CheckpointField) -
             )
         return path
 
-    snapshot = _latest_hf_snapshot(field.repo_id, required_files=field.required_files)
+    snapshot = _cached_hf_snapshot(field.repo_id, required_files=field.required_files)
     if snapshot is None:
         selected = _requested_case_ids()
         skip_prefix = (
@@ -947,36 +948,24 @@ def _checkpoint_env_name(case: RealCheckpointCase, field: CheckpointField) -> st
     )
 
 
-def _latest_hf_snapshot(
+def _cached_hf_snapshot(
     repo_id: str,
     *,
     required_files: tuple[str, ...],
 ) -> Path | None:
-    hub_root = _hf_hub_root()
-    repo_cache = hub_root / ("models--" + repo_id.replace("/", "--"))
-    snapshots_dir = repo_cache / "snapshots"
-    if not snapshots_dir.is_dir():
+    """Resolve a cached snapshot through the Hub's public cache API.
+
+    This dependency seam is intentionally separate from checkpoint selection:
+    Hugging Face owns cache layout and revision resolution; this test owns only
+    offline behavior and the files its runtime needs.
+    """
+    try:
+        snapshot = Path(snapshot_download(repo_id=repo_id, local_files_only=True))
+    except LocalEntryNotFoundError:
         return None
-    snapshots = [
-        path for path in snapshots_dir.iterdir()
-        if path.is_dir()
-        and _snapshot_has_files(path)
-        and not _missing_required_files(path, required_files)
-    ]
-    if not snapshots:
+    if not snapshot.is_dir() or _missing_required_files(snapshot, required_files):
         return None
-    return max(snapshots, key=lambda path: path.stat().st_mtime)
-
-
-def _hf_hub_root() -> Path:
-    hf_home = os.environ.get("HF_HOME")
-    if hf_home:
-        return Path(hf_home).expanduser() / "hub"
-    return Path.home() / ".cache" / "huggingface" / "hub"
-
-
-def _snapshot_has_files(path: Path) -> bool:
-    return any(child.is_file() or child.is_symlink() for child in _iter_snapshot_children(path))
+    return snapshot
 
 
 def _missing_required_files(path: Path, relative_files: tuple[str, ...]) -> list[str]:
@@ -991,13 +980,6 @@ def _write_reference_image(tmp_path: Path) -> Path:
     return path
 
 
-def _iter_snapshot_children(path: Path) -> Iterable[Path]:
-    try:
-        yield from path.iterdir()
-    except OSError:
-        return
-
-
 def _env_token(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "_", value).strip("_").upper()
 
@@ -1009,3 +991,68 @@ def _assert_finite_positive(name: str, value: float) -> None:
 
 def _assert_finite(name: str, value: float) -> None:
     assert math.isfinite(float(value)), f"{name} must be finite, got {value}"
+
+
+def test_cached_hf_snapshot_uses_public_offline_api(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = tmp_path / "snapshot"
+    snapshot.mkdir()
+    (snapshot / "model_index.json").write_text("{}")
+    calls = []
+
+    def fake_snapshot_download(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return str(snapshot)
+
+    monkeypatch.setattr(f"{__name__}.snapshot_download", fake_snapshot_download)
+
+    resolved = _cached_hf_snapshot("org/model", required_files=("model_index.json",))
+
+    assert resolved == snapshot
+    assert calls == [{"repo_id": "org/model", "local_files_only": True}]
+
+
+def test_cached_hf_snapshot_handles_cache_miss_and_incomplete_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def raise_cache_miss(**kwargs: Any) -> str:
+        raise LocalEntryNotFoundError("not cached")
+
+    monkeypatch.setattr(f"{__name__}.snapshot_download", raise_cache_miss)
+    assert _cached_hf_snapshot("org/missing", required_files=()) is None
+
+    incomplete = tmp_path / "incomplete"
+    incomplete.mkdir()
+    monkeypatch.setattr(
+        f"{__name__}.snapshot_download",
+        lambda **kwargs: str(incomplete),
+    )
+    assert _cached_hf_snapshot(
+        "org/incomplete",
+        required_files=("model_index.json",),
+    ) is None
+
+
+def test_checkpoint_env_override_precedes_hub_lookup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = CASES[0]
+    field = case.checkpoints[0]
+    checkpoint = tmp_path / "checkpoint"
+    checkpoint.mkdir()
+    for relative_file in field.required_files:
+        path = checkpoint / relative_file
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}")
+
+    monkeypatch.setenv(_checkpoint_env_name(case, field), str(checkpoint))
+    monkeypatch.setattr(
+        f"{__name__}.snapshot_download",
+        lambda **kwargs: pytest.fail("env override must precede Hub lookup"),
+    )
+
+    assert _resolve_checkpoint_path(case, field) == checkpoint

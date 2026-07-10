@@ -44,7 +44,7 @@ model:
     rank: 32
     alpha: 32
     target_modules: [to_q, to_k, to_v, to_out.0]
-  path: /home/mingfeiguo/Desktop/vrl2/VRL/checkpoints/cosmos_predict2_2b_v2w_480p_diffusers
+  path: checkpoints/cosmos-predict2-2b-480p-16fps-diffusers
   torch_compile:
     enable: false                     # incompatible with gradient_checkpointing
 
