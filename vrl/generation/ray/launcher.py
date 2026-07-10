@@ -382,12 +382,15 @@ def _build_executor_kwargs(entry: Any, cfg: Any) -> dict[str, Any]:
     from vrl.rollouts.families.registry import GENERIC_DIFFUSION_EXECUTOR
 
     kwargs: dict[str, Any] = {}
-    metadata = entry.executor_kwargs
-    if metadata.include_samples_per_chunk:
+    # Which executor kwargs to thread is DERIVED from the family capability,
+    # not declared on the entry: diffusion executors take a chunk batch size
+    # (AR ones don't), and reference-conditioned executors take a reference
+    # image. One source (entry.capability) drives both.
+    if entry.capability.trajectory_kind == "diffusion":
         samples_per_chunk = cfg_path(cfg, "rollout.samples_per_chunk", None)
         if samples_per_chunk is not None:
             kwargs["samples_per_chunk"] = int(samples_per_chunk)
-    if metadata.include_reference_image:
+    if entry.capability.supports_reference_conditioning:
         reference_image = cfg_path(cfg, "model.reference_image", None)
         if reference_image:
             kwargs["reference_image"] = str(reference_image)

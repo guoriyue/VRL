@@ -66,6 +66,7 @@ class _FakeGatherer:
 class _FakeCapability:
     trajectory_kind = "diffusion"
     supports_torch_compile = True
+    supports_reference_conditioning = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -124,10 +125,6 @@ def _build_inputs_entry(capability: Any | None = None) -> Any:
             kwargs={},
         ),
         capability=capability or _FakeCapability(),
-        executor_kwargs=SimpleNamespace(
-            include_samples_per_chunk=False,
-            include_reference_image=False,
-        ),
     )
 
 

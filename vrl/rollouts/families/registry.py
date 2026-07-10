@@ -47,14 +47,6 @@ class CollectorMetadata:
 
 
 @dataclass(frozen=True, slots=True)
-class ExecutorKwargsMetadata:
-    """Runtime executor kwargs that can be derived from a full rollout cfg."""
-
-    include_samples_per_chunk: bool = False
-    include_reference_image: bool = False
-
-
-@dataclass(frozen=True, slots=True)
 class GathererMetadata:
     """Driver-side chunk gatherer construction metadata."""
 
@@ -102,9 +94,6 @@ class RolloutFamilyEntry:
     runtime_spec_extractor: str
     gatherer: GathererMetadata
     capability: FamilyCapability
-    executor_kwargs: ExecutorKwargsMetadata = field(
-        default_factory=ExecutorKwargsMetadata,
-    )
     aliases: tuple[str, ...] = ()
     build: DiffusionFamilyBuild | None = None
 
@@ -170,10 +159,6 @@ def _diffusion_entry(
             family,
             task,
             supports_reference_conditioning=supports_reference_conditioning,
-        ),
-        executor_kwargs=ExecutorKwargsMetadata(
-            include_samples_per_chunk=True,
-            include_reference_image=supports_reference_conditioning,
         ),
     )
 
@@ -714,7 +699,6 @@ __all__ = [
     "FAMILY_REGISTRY",
     "CollectorKind",
     "CollectorMetadata",
-    "ExecutorKwargsMetadata",
     "FamilyCapability",
     "GathererMetadata",
     "RayGenerationLaunchInputs",
