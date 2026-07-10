@@ -1,6 +1,6 @@
 # SPRINT: Wan 2.2 A14B GRPO proof run（落地验证）
 
-状态：planned（2026-06-18）。**实现已完成**并归档（`done/SPRINT_wan_2_2_dual_expert.md`：dual-stage
+状态：**parked / multi-GPU-gated（2026-07-09 归档）**。恢复触发：有多卡资源完成 A14B GRPO proof run。**实现已完成**并归档（`done/SPRINT_wan_2_2_dual_expert.md`：dual-stage
 加载 / boundary 路由 / replay `transformer_2` / 默认 low-noise 训练 + 23 项 CPU 单测全过）。本 sprint =
 那个实现 sprint 唯一的剩余项：**把代码在真机上跑通一次 Wan 2.2 A14B GRPO，验证 replay 契约与 reward 信号**。
 

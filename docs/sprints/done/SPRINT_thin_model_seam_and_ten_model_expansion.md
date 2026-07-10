@@ -480,7 +480,7 @@ tests/generation/diffusion/test_sana_*  # 1-step forward + config resolve
 
 每次唤醒（间隔 3600s ≈ 1 小时）执行同一个 loop prompt：
 
-> 打开 `docs/sprints/planned/SPRINT_thin_model_seam_and_ten_model_expansion.md`。若 Phase 0（§2）未完成，
+> 打开 `docs/sprints/done/SPRINT_thin_model_seam_and_ten_model_expansion.md`。若 Phase 0（§2）未完成，
 > 先推进 Phase 0，不接新模型。否则从 §3 找第一个未勾选 `[ ]` 的模型，按 §4 薄接、按 §5 判据验证、勾选、
 > commit。一次只接一个；完成或遇硬阻塞就停，等下一跳。十个全勾完则报告并结束循环。
 

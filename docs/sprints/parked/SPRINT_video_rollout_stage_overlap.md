@@ -20,7 +20,7 @@
 > 的多卡形态失去了传输层：cross_node 配方已在 header 标注 STALE；若将来要跨节点 reward，
 > 需要新的 remote 传输而不是复活 actor pool。
 
-状态：**planned → 机制基本落地,等待多卡吞吐验证（2026-06-27 二次复核,见 §7）**。性质：EXACT(无损)吞吐杠杆。**实测后主线变了:真正的 prize 是 reward stage(实测 14%,见下),不是生成侧那 9% 边界;而 reward 是 ≥2-GPU 杠杆(单卡显存装不下 rollout+reward 两模型,被 `release_rollout_before_reward` offload barrier 逼成串行)。** 二次复核（对照通过的测试 + 既有配置）发现：async-reward + per-stage-placement 这条线**绝大部分已经建好且已测**——placement/release 契约、`reward.gpu_pool` 语法、continuous producer 的 reward(N)∥generate(N+1) 重叠、late-group 版本丢弃**都已存在**。本轮又补上 cosmos continuous + `reward.gpu_pool=dedicated` 配方和 late-reward draining / non-draining 正确性测试。真正剩的是 ≥2/3-GPU 吞吐验证（唯一仍需第二/第三张卡）和单卡 worker/pool I/O overlap。详见 §7。
+状态：**parked / 机制基本落地，等待 ≥2/3-GPU 吞吐验证（2026-07-09 归档复核，见 §7）**。恢复触发：有独立 reward GPU 可跑真实吞吐 A/B。性质：EXACT(无损)吞吐杠杆。**实测后主线变了:真正的 prize 是 reward stage(实测 14%,见下),不是生成侧那 9% 边界;而 reward 是 ≥2-GPU 杠杆(单卡显存装不下 rollout+reward 两模型,被 `release_rollout_before_reward` offload barrier 逼成串行)。** 二次复核（对照通过的测试 + 既有配置）发现：async-reward + per-stage-placement 这条线**绝大部分已经建好且已测**——placement/release 契约、`reward.gpu_pool` 语法、continuous producer 的 reward(N)∥generate(N+1) 重叠、late-group 版本丢弃**都已存在**。本轮又补上 cosmos continuous + `reward.gpu_pool=dedicated` 配方和 late-reward draining / non-draining 正确性测试。真正剩的是 ≥2/3-GPU 吞吐验证（唯一仍需第二/第三张卡）和单卡 worker/pool I/O overlap。详见 §7。
 
 > **2026-06-27 实测结论(kernel-union + NVTX,真 cosmos run,推翻本 sprint 原假设):**
 > - **生成侧不是大头**:denoise 循环 GPU-bound(96-98%);单卡 rollout 的 36% idle 几乎全在 **per-sample chunk 边界**(sbs=1=7 个边界),已用 **`sample_batch_size=4` 单卡回收(1.50x,64%→89% busy,已落配置)**。剩 ~9% 是非-tensor 边界,被 NCU 证明 tensor core 已到 5090 bf16 天花板(43%≈47%)→ 单卡 P2 重叠只能藏非-tensor 部分,ROI 低。
