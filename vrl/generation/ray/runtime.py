@@ -25,14 +25,14 @@ class _RuntimeLease:
     """On-demand worker lease: the inner runtime is acquired on generate and
     dropped on release, so a shared GPU can be handed back between phases.
 
-    ``sleep_eligible`` picks the release discipline. When the only handoff is a
-    colocated trainer timeshare (rollout keeps its placement bundle and just has
-    to vacate the *physical* GPU between collect and train), release offloads the
-    workers to host RAM and reacquire wakes them — level-1 offload-and-restore
-    (cf. vLLM ``sleep_level=1``), saving the per-cycle cold reload of the frozen
-    VAE / text-encoders. When a reward worker must take the bundle instead
-    (``release_before_reward``), the workers are still torn down (level-2) so the
-    bundle is genuinely free.
+    ``sleep_eligible`` picks the release discipline. When every handoff is an
+    in-driver timeshare (colocated trainer step, in-process reward scoring), the
+    rollout keeps its placement bundle and just vacates the *physical* GPU:
+    release offloads the workers to host RAM and reacquire wakes them — level-1
+    offload-and-restore (cf. vLLM ``sleep_level=1``), saving the per-cycle cold
+    reload of the frozen VAE / text-encoders. Teardown (level-2) remains for
+    leases without a resolved topology, where nothing proves the bundle can be
+    retained.
     """
 
     config: RayGenerationConfig
@@ -101,17 +101,20 @@ class RayGenerationRuntime(GenerationRuntime):
         runtime._owned_actors = []
         runtime._placement_group = None
         runtime._colocated = False
-        # Sleep (level-1 offload-and-restore) is safe only when the lease releases
-        # purely for a colocated trainer timeshare: the rollout keeps its placement
-        # bundle and just vacates the physical GPU, so offloading to host RAM frees
-        # the memory the trainer needs. When a reward worker must take the bundle
-        # (release_before_reward) the workers are torn down so the bundle is truly
-        # free; a config without a resolved topology (test specs) also tears down.
+        # Sleep (level-1 offload-and-restore) is safe whenever every phase that
+        # takes the GPU is an in-driver timeshare. Both current handoff consumers
+        # are inline: the colocated trainer, and the in-process LocalRewardRuntime
+        # (remote reward actors were removed with the actor pool) — neither
+        # acquires the lease's Ray placement bundle, they only need the physical
+        # memory, which sleep releases. The old
+        # ``release_before_train and not release_before_reward`` derivation
+        # encoded the deleted reward-actor era, forcing a ~5s cold reload per
+        # cycle where an ~0.8s wake suffices. Teardown remains for configs
+        # without a resolved topology (test specs): no handoff proves a
+        # timeshare, so the bundle is genuinely freed.
         handoff = config.resources.lifecycle.handoff if config.resources is not None else None
-        sleep_eligible = (
-            handoff is not None
-            and handoff.release_rollout_before_train
-            and not handoff.release_rollout_before_reward
+        sleep_eligible = handoff is not None and (
+            handoff.release_rollout_before_train or handoff.release_rollout_before_reward
         )
         runtime._release_after_collect = _RuntimeLease(
             config=config,
@@ -274,8 +277,12 @@ class RayGenerationRuntime(GenerationRuntime):
         if runtime is None:
             return None
         if state.sleep_eligible:
-            await runtime.sleep_workers()
-            state.asleep = True
+            # Idempotent per phase: the collector's pre-reward release and the
+            # schedule's finally can both reach here — a sleeping worker must
+            # not be told to sleep again.
+            if not state.asleep:
+                await runtime.sleep_workers()
+                state.asleep = True
             return None
         state.runtime = None
         await runtime.shutdown()

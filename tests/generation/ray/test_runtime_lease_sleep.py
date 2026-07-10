@@ -63,12 +63,13 @@ def _eligible(*, before_train: bool, before_reward: bool) -> bool:
     return _lease_runtime(resources)._release_after_collect.sleep_eligible
 
 
-def test_sleep_eligible_only_for_colocated_trainer_handoff() -> None:
-    # Pure trainer timeshare -> sleep.
+def test_sleep_eligible_for_any_inline_timeshare_handoff() -> None:
+    """Every current handoff consumer is in-driver (colocated trainer step,
+    in-process LocalRewardRuntime): none of them takes the Ray bundle, so any
+    handoff combination sleeps. Only a missing topology tears down."""
     assert _eligible(before_train=True, before_reward=False) is True
-    # Reward takes the bundle -> tear down even if a trainer handoff also applies.
-    assert _eligible(before_train=True, before_reward=True) is False
-    assert _eligible(before_train=False, before_reward=True) is False
+    assert _eligible(before_train=True, before_reward=True) is True
+    assert _eligible(before_train=False, before_reward=True) is True
     # No resolved topology (hand-built specs) -> conservative teardown.
     assert _lease_runtime(None)._release_after_collect.sleep_eligible is False
 
@@ -121,12 +122,25 @@ def test_sleep_eligible_lease_stamps_contract_for_cumem_offload() -> None:
     # Sleep-eligible -> the worker is told to pool its model for cumem sleep/wake.
     contract = _contract_after_lease(before_train=True, before_reward=False)
     assert contract.extra.get("sleep_offload") is True
+    # Inline reward timeshare sleeps too (no Ray role takes the bundle).
+    contract = _contract_after_lease(before_train=False, before_reward=True)
+    assert contract.extra.get("sleep_offload") is True
 
 
 def test_teardown_lease_leaves_contract_unstamped() -> None:
-    # Reward-handoff lease tears down -> no cumem pooling requested.
-    contract = _contract_after_lease(before_train=False, before_reward=True)
-    assert "sleep_offload" not in contract.extra
+    # No resolved topology -> teardown lease -> no cumem pooling requested.
+    config = SimpleNamespace(sync_trainable_state=False, gpus_per_worker=0.0, resources=None)
+    contract = GenerationRuntimeLaunchContract(
+        family="sd3_5",
+        task="t2i",
+        policy_version=1,
+        runtime_builder="x:y",
+        executor_cls="x:z",
+    )
+    runtime = RayGenerationRuntime.with_release_after_collect(
+        config, contract, SimpleNamespace(), placement=SimpleNamespace(),
+    )
+    assert "sleep_offload" not in runtime._release_after_collect.launch_contract.extra
 
 
 # -- lease FSM ----------------------------------------------------------------
@@ -231,3 +245,19 @@ def test_sleep_eligible_shutdown_terminates_asleep_runtime_once() -> None:
     assert inner.calls == ["shutdown"]
     assert state.runtime is None
     assert state.asleep is False
+
+
+def test_release_is_idempotent_within_a_phase() -> None:
+    """Collector pre-reward release + schedule finally must sleep exactly once."""
+    runtime = _lease_runtime()
+    state = runtime._release_after_collect
+    assert state is not None
+    state.sleep_eligible = True
+    inner = _FakeInner()
+    state.runtime = inner
+
+    asyncio.run(runtime.release())
+    asyncio.run(runtime.release())
+
+    assert inner.calls == ["sleep"]
+    assert state.asleep is True
