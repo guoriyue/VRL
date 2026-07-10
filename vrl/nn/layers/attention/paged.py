@@ -6,10 +6,8 @@ calls live in ``vrl.nn.kernels.attention.vllm_paged``.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from hashlib import sha256
 from typing import Any
 
 import torch
@@ -103,83 +101,6 @@ class ARAttentionStepOutput:
         _require_last_hidden_batch(self.last_hidden, len(self.sequence_states))
 
 
-@dataclass(frozen=True, slots=True)
-class ARPrefixCacheKey:
-    """Policy-safe identity for reusable AR prompt KV pages."""
-
-    family: str
-    task: str
-    policy_version: int | str
-    tokenizer_key: str
-    prompt_hash: str
-    model_dtype: str
-    cache_dtype: str
-    cfg_branch_kind: str
-    cache_layout_version: str
-    paged_attention_config_hash: str
-
-    @classmethod
-    def from_prompt_tokens(
-        cls,
-        *,
-        family: str,
-        task: str,
-        policy_version: int | str,
-        tokenizer_key: str,
-        prompt_token_ids: Sequence[int],
-        model_dtype: str,
-        cache_dtype: str,
-        cfg_branch_kind: str,
-        cache_layout_version: str,
-        paged_attention_config_hash: str,
-    ) -> ARPrefixCacheKey:
-        prompt_hash = _stable_hash([int(token) for token in prompt_token_ids])
-        return cls(
-            family=family,
-            task=task,
-            policy_version=policy_version,
-            tokenizer_key=tokenizer_key,
-            prompt_hash=prompt_hash,
-            model_dtype=model_dtype,
-            cache_dtype=cache_dtype,
-            cfg_branch_kind=cfg_branch_kind,
-            cache_layout_version=cache_layout_version,
-            paged_attention_config_hash=paged_attention_config_hash,
-        )
-
-    def __post_init__(self) -> None:
-        required = {
-            "family": self.family,
-            "task": self.task,
-            "tokenizer_key": self.tokenizer_key,
-            "prompt_hash": self.prompt_hash,
-            "model_dtype": self.model_dtype,
-            "cache_dtype": self.cache_dtype,
-            "cfg_branch_kind": self.cfg_branch_kind,
-            "cache_layout_version": self.cache_layout_version,
-            "paged_attention_config_hash": self.paged_attention_config_hash,
-        }
-        missing = [name for name, value in required.items() if not value]
-        if missing:
-            raise ValueError(f"ARPrefixCacheKey missing fields: {', '.join(missing)}")
-
-
-@dataclass(slots=True)
-class ARPrefixCachePolicy:
-    """Small policy object for prefix-cache correctness checks."""
-
-    enabled: bool = True
-
-    def can_reuse(
-        self,
-        cached_key: ARPrefixCacheKey,
-        requested_key: ARPrefixCacheKey,
-    ) -> bool:
-        if not self.enabled:
-            return False
-        return cached_key == requested_key
-
-
 class ARAttentionBackend:
     """Minimal backend contract needed by AR model-family runners."""
 
@@ -224,11 +145,6 @@ def _require_last_hidden_batch(last_hidden: torch.Tensor, batch_size: int) -> No
         raise ValueError("last_hidden batch size must match sequence_states")
 
 
-def _stable_hash(value: Any) -> str:
-    payload = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
-    return sha256(payload).hexdigest()
-
-
 __all__ = [
     "ARAttentionBackend",
     "ARAttentionConfig",
@@ -237,6 +153,4 @@ __all__ = [
     "ARAttentionStepInput",
     "ARAttentionStepOutput",
     "ARAttentionUnavailable",
-    "ARPrefixCacheKey",
-    "ARPrefixCachePolicy",
 ]

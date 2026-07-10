@@ -30,7 +30,6 @@ class VllmPagedAttentionKernels:
         "vllm.v1.worker.block_table",
         "vllm.v1.attention.backend",
         "vllm.v1.attention.backends.flash_attn",
-        "vllm.v1.attention.ops.paged_attn",
     )
 
     def __init__(
@@ -65,10 +64,6 @@ class VllmPagedAttentionKernels:
     def flash_attn_module(self) -> Any:
         return self.modules["vllm.v1.attention.backends.flash_attn"]
 
-    @property
-    def paged_attn_module(self) -> Any:
-        return self.modules["vllm.v1.attention.ops.paged_attn"]
-
     def get_kv_cache_shape(
         self,
         *,
@@ -83,19 +78,6 @@ class VllmPagedAttentionKernels:
             num_kv_heads=num_kv_heads,
             head_size=head_size,
             cache_dtype_str=cache_dtype,
-        )
-
-    def split_kv_cache(
-        self,
-        kv_cache: torch.Tensor,
-        *,
-        num_kv_heads: int,
-        head_size: int,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        return self.paged_attn_module.PagedAttention.split_kv_cache(
-            kv_cache,
-            num_kv_heads,
-            head_size,
         )
 
     def new_block_table(
@@ -203,29 +185,6 @@ class VllmPagedAttentionKernels:
             prefix_scheduler_metadata=prefix_scheduler_metadata,
             max_num_splits=max_num_splits,
             causal=causal,
-        )
-
-    def write_to_paged_cache(
-        self,
-        *,
-        key: torch.Tensor,
-        value: torch.Tensor,
-        key_cache: torch.Tensor,
-        value_cache: torch.Tensor,
-        slot_mapping: torch.Tensor,
-        kv_cache_dtype: str,
-        k_scale: torch.Tensor,
-        v_scale: torch.Tensor,
-    ) -> None:
-        self.paged_attn_module.PagedAttention.write_to_paged_cache(
-            key,
-            value,
-            key_cache,
-            value_cache,
-            slot_mapping,
-            kv_cache_dtype,
-            k_scale,
-            v_scale,
         )
 
     def update_flash_kv_cache(

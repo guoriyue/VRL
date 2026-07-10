@@ -92,7 +92,6 @@ def _continuous_config(**continuous: Any) -> SimpleNamespace:
         "max_ready_groups": 4,
         "max_ready_bytes_mb": 8192,
         "max_stale_policy_versions": 0,
-        "drop_policy": "drop_oldest_stale",
         "wait_timeout_s": 5.0,
         "queue_poll_interval_s": 0.001,
         "fail_fast_errors": 3,

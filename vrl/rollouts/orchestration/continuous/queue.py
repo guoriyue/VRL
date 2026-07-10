@@ -24,15 +24,11 @@ class ContinuousRolloutQueue:
         *,
         max_items: int,
         max_bytes: int = 0,
-        drop_policy: str = "drop_oldest_stale",
     ) -> None:
         if int(max_items) < 1:
             raise ValueError("ContinuousRolloutQueue.max_items must be >= 1")
-        if drop_policy not in {"drop_oldest_stale", "drop_oldest"}:
-            raise ValueError(f"unknown drop_policy: {drop_policy!r}")
         self.max_items = int(max_items)
         self.max_bytes = int(max_bytes)
-        self.drop_policy = drop_policy
         self._items: deque[ContinuousRolloutItem] = deque()
         self._bytes = 0
         self.dropped_stale = 0
@@ -114,11 +110,10 @@ class ContinuousRolloutQueue:
     # -- internals ------------------------------------------------------
 
     def _enforce_caps(self) -> None:
-        while self._over_capacity():
-            victim = self._pick_victim()
-            if victim is None:
-                break
-            self._items.remove(victim)
+        # Items arrive in completion order, so the FIFO head is always the
+        # oldest item — evicting it is both drop-oldest and drop-oldest-stale.
+        while self._items and self._over_capacity():
+            victim = self._items.popleft()
             self._bytes -= int(victim.nbytes)
             self.dropped_backpressure += 1
 
@@ -126,14 +121,6 @@ class ContinuousRolloutQueue:
         if len(self._items) > self.max_items:
             return True
         return self.max_bytes > 0 and self._bytes > self.max_bytes
-
-    def _pick_victim(self) -> ContinuousRolloutItem | None:
-        if not self._items:
-            return None
-        if self.drop_policy == "drop_oldest":
-            return self._items[0]
-        # drop_oldest_stale: oldest by completion time wins; ties keep FIFO.
-        return min(self._items, key=lambda item: item.completed_at)
 
 
 __all__ = ["ContinuousRolloutQueue"]

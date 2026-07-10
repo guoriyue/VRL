@@ -132,14 +132,22 @@ class RuntimeModel(ReplayModel, Protocol):
         ...
 
 
+# Derived from the Protocol definitions (same pattern as the contract tests),
+# so a method add/rename auto-widens the runtime checks and error messages.
+_REPLAY_MODEL_METHODS = tuple(sorted(ReplayModel.__protocol_attrs__))
+_RUNTIME_MODEL_METHODS = tuple(sorted(RuntimeModel.__protocol_attrs__))
+
+
 def require_replay_model(value: Any, *, owner: str = "model") -> ReplayModel:
     """Return ``value`` as a ReplayModel or fail at the replay boundary."""
 
     if isinstance(value, ReplayModel):
         return cast("ReplayModel", value)
-    missing = _missing_callables(value, ("replay_forward", "disable_adapter"))
+    missing = _missing_callables(value, _REPLAY_MODEL_METHODS)
     detail = f"; missing: {', '.join(missing)}" if missing else ""
-    raise TypeError(f"{owner} must satisfy ReplayModel(replay_forward, disable_adapter){detail}")
+    raise TypeError(
+        f"{owner} must satisfy ReplayModel({', '.join(_REPLAY_MODEL_METHODS)}){detail}",
+    )
 
 
 def require_runtime_model(value: Any, *, owner: str = "model") -> RuntimeModel:
@@ -147,14 +155,10 @@ def require_runtime_model(value: Any, *, owner: str = "model") -> RuntimeModel:
 
     if isinstance(value, RuntimeModel):
         return cast("RuntimeModel", value)
-    missing = _missing_callables(
-        value,
-        ("replay_forward", "disable_adapter", "load_trainable_state"),
-    )
+    missing = _missing_callables(value, _RUNTIME_MODEL_METHODS)
     detail = f"; missing: {', '.join(missing)}" if missing else ""
     raise TypeError(
-        f"{owner} must satisfy RuntimeModel(replay_forward, disable_adapter, "
-        f"load_trainable_state){detail}",
+        f"{owner} must satisfy RuntimeModel({', '.join(_RUNTIME_MODEL_METHODS)}){detail}",
     )
 
 

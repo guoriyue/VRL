@@ -36,12 +36,6 @@ def reward_artifact_policy_from_cfg(value: object) -> RewardArtifactPolicy:
     )
 
 
-def extract_reward_artifact(output: GenerationOutput) -> object:
-    """Return the decoded artifact carried by a generation output."""
-
-    return output.output
-
-
 def release_reward_artifact_if_needed(
     batch: object,
     policy: RewardArtifactPolicy,
@@ -98,7 +92,6 @@ def _release_reward_view_tensors(trajectory: Any) -> None:
 
 __all__ = [
     "RewardArtifactPolicy",
-    "extract_reward_artifact",
     "release_reward_artifact_if_needed",
     "reward_artifact_policy_from_cfg",
 ]

@@ -14,7 +14,6 @@ from vrl.generation.execution.chunks import (
 from vrl.generation.execution.ids import build_sample_rows
 from vrl.generation.execution.planner import (
     EnginePlan,
-    EnginePlanner,
     build_engine_plan,
 )
 from vrl.generation.execution.types import (
@@ -33,7 +32,6 @@ __all__ = [
     "DistributedGenerationPlan",
     "DistributedWorkerHandle",
     "EnginePlan",
-    "EnginePlanner",
     "GenerationWorkerCore",
     "SampleChunk",
     "build_engine_plan",

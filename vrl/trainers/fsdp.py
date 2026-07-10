@@ -36,8 +36,8 @@ def init_training_process_group(
 ) -> None:
     """Create the torch.distributed process group for an fsdp rank.
 
-    No-op for ``single_process`` and when a group already exists. The caller
-    (a future torchrun entrypoint) owns the matching ``destroy`` on shutdown.
+    No-op for ``single_process`` and when a group already exists. The owning
+    ``Strategy.shutdown`` calls the matching ``shutdown_training_process_group``.
     ``torchrun`` has already exported ``RANK`` / ``WORLD_SIZE`` / ``MASTER_ADDR``;
     ``resolve_training_context`` validated them, so ``init_method='env'`` is the
     only contract we rely on here.

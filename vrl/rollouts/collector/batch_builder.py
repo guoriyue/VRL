@@ -11,19 +11,16 @@ import torch
 from vrl.generation import GenerationOutput
 from vrl.generation.diffusion.metrics import record_diffusion_storage_policy
 from vrl.rollouts.batch import RolloutBatch
-from vrl.rollouts.collector.artifacts import (
-    RewardArtifactPolicy,
-    extract_reward_artifact,
-)
+from vrl.rollouts.collector.artifacts import RewardArtifactPolicy
 from vrl.rollouts.collector.rewards import RewardScoringInput
 from vrl.trajectory import (
     RewardView,
     TrajectoryBatch,
     TrajectorySegment,
     TrajectoryStoragePolicy,
-    TrajectoryTensor,
     apply_trajectory_storage_policy,
     build_training_view,
+    named_tensor,
     role_tensor,
 )
 
@@ -110,7 +107,7 @@ class TrajectoryRolloutBatchBuilder:
     ) -> RolloutBatch:
         observations = role_tensor(segment, "observation").value
         actions = role_tensor(segment, "action").value
-        kl_tensor = self._named_tensor(segment, "kl").value
+        kl_tensor = named_tensor(segment, "kl").value
         device = observations.device
 
         if self.context.kl_reward_coef > 0:
@@ -151,7 +148,7 @@ class TrajectoryRolloutBatchBuilder:
         rewards_raw: torch.Tensor,
     ) -> RolloutBatch:
         actions = role_tensor(segment, "action").value
-        prompt_ids = self._named_tensor(segment, "prompt_input_ids").value
+        prompt_ids = named_tensor(segment, "prompt_input_ids").value
         device = self.context.device or prompt_ids.device
         images = self.output.output
 
@@ -243,7 +240,7 @@ class TrajectoryRolloutBatchBuilder:
 
         output_ref = view.metadata.get("output_ref")
         if output_ref == "GenerationOutput.output":
-            return extract_reward_artifact(self.output)
+            return self.output.output
         raise RuntimeError(
             f"RewardView {view.name!r} has no tensor_refs and no supported output_ref",
         )
@@ -300,18 +297,6 @@ class TrajectoryRolloutBatchBuilder:
             if segment.trainable:
                 return segment
         raise RuntimeError("TrajectoryBatch has no trainable segment")
-
-    def _named_tensor(
-        self,
-        segment: TrajectorySegment,
-        name: str,
-    ) -> TrajectoryTensor:
-        try:
-            return segment.tensors[name]
-        except KeyError as exc:
-            raise RuntimeError(
-                f"segment {segment.name!r} is missing tensor {name!r}",
-            ) from exc
 
     def _optional_named_tensor(
         self,

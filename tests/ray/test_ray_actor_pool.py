@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-import asyncio
-
-import pytest
+try:
+    import pytest
+except ModuleNotFoundError:  # Ray workers import this module for test actors.
+    pytest = None
 
 from vrl.ray.actor_group import RayActorGroup
 from vrl.ray.placement import validate_actor_gpu_ids
 
 # Every test here spins up Ray (~seconds each) — slow by nature, run nightly not per-PR.
-pytestmark = pytest.mark.slow_test
+pytestmark = pytest.mark.slow_test if pytest is not None else ()
 
 
 class _EchoWorker:
@@ -28,8 +29,8 @@ class _EchoWorker:
         return self.worker_id, payload + int(self.config["offset"])
 
 
-def test_ray_actor_group_maps_payloads_in_order() -> None:
-    """Checks Ray actor group maps payloads in order."""
+def test_ray_actor_group_launch_lifecycle() -> None:
+    """Checks Ray actor group launch wiring, worker configs, metadata, and shutdown."""
     ray = pytest.importorskip("ray")
     ray.shutdown()
     group = None
@@ -44,9 +45,18 @@ def test_ray_actor_group_maps_payloads_in_order() -> None:
             startup_method="startup",
         )
 
-        results = asyncio.run(group.map_method("echo", [1, 2, 3]))
+        assert [handle.worker_id for handle in group.handles] == ["w0", "w1"]
+        assert all(handle.node_ip == "test-node" for handle in group.handles)
+        results = ray.get(
+            [
+                group.handles[0].actor.echo.remote(1),
+                group.handles[1].actor.echo.remote(2),
+            ],
+        )
+        assert results == [("w0", 11), ("w1", 22)]
 
-        assert results == [("w0", 11), ("w1", 22), ("w0", 13)]
+        group.shutdown()
+        assert group.handles == []
     finally:
         if group is not None:
             group.shutdown()

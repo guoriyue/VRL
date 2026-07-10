@@ -48,7 +48,6 @@ class ContinuousRolloutSchedule:
         max_ready_groups: int,
         max_ready_bytes_mb: int,
         max_stale_policy_versions: int,
-        drop_policy: str,
         wait_timeout_s: float,
         queue_poll_interval_s: float,
         fail_fast_errors: int,
@@ -58,7 +57,6 @@ class ContinuousRolloutSchedule:
         self.max_inflight_groups = int(max_inflight_groups)
         self.max_ready_groups = int(max_ready_groups)
         self.max_ready_bytes_mb = int(max_ready_bytes_mb)
-        self.drop_policy = drop_policy
         self.wait_timeout_s = float(wait_timeout_s)
         self.queue_poll_interval_s = float(queue_poll_interval_s)
         self.fail_fast_errors = int(fail_fast_errors)
@@ -182,7 +180,6 @@ class ContinuousRolloutSchedule:
         self.queue = ContinuousRolloutQueue(
             max_items=capacity,
             max_bytes=self.max_ready_bytes_mb * _MB,
-            drop_policy=self.drop_policy,
         )
         # Single owner of every policy-version decision: admission (workload/byte
         # budget + admit-time predicted-version throttle), the receipt gate,

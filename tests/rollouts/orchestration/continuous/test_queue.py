@@ -56,7 +56,7 @@ def test_snapshot_and_remove_are_pure_container_ops() -> None:
 
 def test_item_count_backpressure_drops_oldest() -> None:
     """Checks item count backpressure drops oldest."""
-    queue = ContinuousRolloutQueue(max_items=2, drop_policy="drop_oldest")
+    queue = ContinuousRolloutQueue(max_items=2)
     queue.put(_item(0, group_key=0, version=1))
     queue.put(_item(1, group_key=1, version=1))
     queue.put(_item(2, group_key=2, version=1))
@@ -69,7 +69,7 @@ def test_item_count_backpressure_drops_oldest() -> None:
 
 def test_byte_cap_backpressure() -> None:
     """Checks byte cap backpressure."""
-    queue = ContinuousRolloutQueue(max_items=100, max_bytes=10, drop_policy="drop_oldest")
+    queue = ContinuousRolloutQueue(max_items=100, max_bytes=10)
     queue.put(_item(0, group_key=0, version=1, nbytes=6))
     queue.put(_item(1, group_key=1, version=1, nbytes=6))  # 12 > 10 -> drop one
     assert queue.ready_bytes() <= 10

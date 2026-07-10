@@ -144,7 +144,6 @@ class ContinuousRolloutConfig:
     max_ready_groups: int = field(default=2)
     max_ready_bytes_mb: int = field(default=8192)
     max_stale_policy_versions: int = field(default=0)
-    drop_policy: str = field(default="drop_oldest_stale")
     wait_timeout_s: float = field(default=300.0)
     queue_poll_interval_s: float = field(default=0.05)
     # Consecutive producer failures with ZERO completions the consumer tolerates
@@ -163,10 +162,6 @@ class ContinuousRolloutConfig:
             raise ValueError("continuous.max_stale_policy_versions must be >= 0")
         if int(self.fail_fast_errors) < 0:
             raise ValueError("continuous.fail_fast_errors must be >= 0")
-        if self.drop_policy not in {"drop_oldest_stale", "drop_oldest"}:
-            raise ValueError(
-                "continuous.drop_policy must be 'drop_oldest_stale' or 'drop_oldest'",
-            )
 
 
 @dataclass(slots=True)

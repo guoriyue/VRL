@@ -6,7 +6,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from vrl.ray.actor_pool import RayActorJob, run_actor_jobs
 from vrl.ray.dependencies import require_ray
 from vrl.ray.lifecycle import kill_actors
 from vrl.ray.placement import actor_scheduling_strategy
@@ -91,36 +90,6 @@ class RayActorGroup:
             for worker_id, actor, meta in zip(worker_ids, actors, metadata, strict=True)
         ]
         return cls(handles=handles)
-
-    async def map_method(
-        self,
-        method_name: str,
-        payloads: Sequence[Any],
-        *,
-        max_inflight_per_actor: int = 1,
-    ) -> list[Any]:
-        """Map payloads over actors round-robin and preserve payload order."""
-
-        if not self.handles:
-            raise RuntimeError("RayActorGroup has no actors")
-        jobs: list[RayActorJob] = []
-        for index, payload in enumerate(payloads):
-            handle = self.handles[index % len(self.handles)]
-            if handle.actor is None:
-                raise RuntimeError(f"actor handle {handle.worker_id!r} has no actor")
-            remote_method = getattr(getattr(handle.actor, method_name), "remote", None)
-            if not callable(remote_method):
-                raise TypeError(f"actor {handle.worker_id!r} has no remote method {method_name!r}")
-            jobs.append(
-                RayActorJob(
-                    job_index=index,
-                    worker_id=handle.worker_id,
-                    remote_method=remote_method,
-                    payload=payload,
-                ),
-            )
-        pairs = await run_actor_jobs(jobs, max_inflight_per_actor=max_inflight_per_actor)
-        return [result for _, result in pairs]
 
     def shutdown(self) -> None:
         """Best-effort actor shutdown."""

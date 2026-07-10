@@ -24,7 +24,7 @@
 # weight_sync_barrier is derived for this mode
 # (pause_admission_and_drain_inflight) — continuous supports no other value.
 # Queue/staleness tuning defaults (max_inflight_groups, max_ready_groups,
-# max_ready_bytes_mb, max_stale_policy_versions=0 Phase A, drop_policy,
+# max_ready_bytes_mb, max_stale_policy_versions=0 Phase A,
 # wait_timeout_s, queue_poll_interval_s) live on ContinuousRolloutConfig in
 # vrl/trainers/core/types.py — set them via dotlist as in the recipe above.
 trainer:

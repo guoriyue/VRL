@@ -15,52 +15,39 @@ class EnginePlan:
     chunks: tuple[SampleChunk, ...]
 
 
-@dataclass(frozen=True, slots=True)
-class EnginePlanner:
-    """Split one generation request into prompt-major sample chunks."""
-
-    request: GenerationRequest
-    max_samples_per_chunk: int | None = None
-
-    def build(self) -> EnginePlan:
-        """Build the immutable execution plan."""
-
-        from vrl.utils.profiling import record_function
-
-        with record_function("engine.plan"):
-            return EnginePlan(
-                chunks=build_prompt_chunks(
-                    self.request.prompts,
-                    samples_per_prompt=self.request.samples_per_prompt,
-                    max_samples_per_chunk=self._chunk_size(),
-                ),
-            )
-
-    def _chunk_size(self) -> int:
-        if self.max_samples_per_chunk is not None:
-            return max(1, int(self.max_samples_per_chunk))
-        return max(
-            1,
-            int(
-                self.request.sampling.get(
-                    "samples_per_chunk",
-                    self.request.samples_per_prompt,
-                ),
-            ),
-        )
-
-
 def build_engine_plan(
     request: GenerationRequest,
     *,
     max_samples_per_chunk: int | None = None,
 ) -> EnginePlan:
-    """Build the chunk plan consumed by direct and distributed executors."""
+    """Build the chunk plan consumed by direct and distributed executors.
 
-    return EnginePlanner(
-        request=request,
-        max_samples_per_chunk=max_samples_per_chunk,
-    ).build()
+    Chunk size precedence: explicit ``max_samples_per_chunk`` argument, then
+    the request's ``sampling["samples_per_chunk"]``, then ``samples_per_prompt``.
+    """
+
+    from vrl.utils.profiling import record_function
+
+    if max_samples_per_chunk is not None:
+        chunk_size = max(1, int(max_samples_per_chunk))
+    else:
+        chunk_size = max(
+            1,
+            int(
+                request.sampling.get(
+                    "samples_per_chunk",
+                    request.samples_per_prompt,
+                ),
+            ),
+        )
+    with record_function("engine.plan"):
+        return EnginePlan(
+            chunks=build_prompt_chunks(
+                request.prompts,
+                samples_per_prompt=request.samples_per_prompt,
+                max_samples_per_chunk=chunk_size,
+            ),
+        )
 
 
-__all__ = ["EnginePlan", "EnginePlanner", "build_engine_plan"]
+__all__ = ["EnginePlan", "build_engine_plan"]

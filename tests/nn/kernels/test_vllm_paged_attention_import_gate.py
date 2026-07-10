@@ -32,8 +32,6 @@ def test_vllm_paged_attention_kernels_report_abi_failure() -> None:
 
 def test_vllm_paged_attention_kernels_call_real_internal_api_boundary() -> None:
     """Checks vLLM paged attention kernels call real internal API boundary."""
-    calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
-
     def import_module(name: str) -> object:
         if name == "vllm.v1.worker.block_table":
             return SimpleNamespace(BlockTable=_FakeBlockTable)
@@ -45,8 +43,6 @@ def test_vllm_paged_attention_kernels_call_real_internal_api_boundary() -> None:
                 FlashAttentionImpl=_FakeFlashAttentionImpl,
                 FlashAttentionMetadata=_FakeFlashAttentionMetadata,
             )
-        if name == "vllm.v1.attention.ops.paged_attn":
-            return SimpleNamespace(PagedAttention=_fake_paged_attention(calls))
         return SimpleNamespace(__name__=name, __version__="test")
 
     kernels = VllmPagedAttentionKernels(
@@ -54,7 +50,7 @@ def test_vllm_paged_attention_kernels_call_real_internal_api_boundary() -> None:
         import_module=import_module,
     )
 
-    assert "vllm.v1.attention.ops.paged_attn" in kernels.modules
+    assert "vllm.v1.attention.backends.flash_attn" in kernels.modules
     assert kernels.debug_info()["attention_kernels"] == "vllm_paged_attention_kernels"
     assert kernels.get_kv_cache_shape(
         num_blocks=3,
@@ -72,21 +68,8 @@ def test_vllm_paged_attention_kernels_call_real_internal_api_boundary() -> None:
 
     key = torch.zeros(1, 2, 8)
     value = torch.ones(1, 2, 8)
-    key_cache = torch.zeros(3, 16, 2, 8)
-    value_cache = torch.zeros(3, 16, 2, 8)
     slot_mapping = torch.tensor([0])
     scale = torch.tensor(1.0)
-    kernels.write_to_paged_cache(
-        key=key,
-        value=value,
-        key_cache=key_cache,
-        value_cache=value_cache,
-        slot_mapping=slot_mapping,
-        kv_cache_dtype="auto",
-        k_scale=scale,
-        v_scale=scale,
-    )
-    assert calls[-1][0] == "write_to_paged_cache"
 
     impl = kernels.make_flash_attention_impl(
         num_heads=2,
@@ -203,23 +186,3 @@ class _FakeFlashAttentionMetadata:
     prefix_scheduler_metadata: torch.Tensor | None = None
     max_num_splits: int = 0
     causal: bool = True
-
-
-def _fake_paged_attention(
-    calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]],
-) -> type[object]:
-    class _FakePagedAttention:
-        @staticmethod
-        def split_kv_cache(
-            kv_cache: torch.Tensor,
-            num_kv_heads: int,
-            head_size: int,
-        ) -> tuple[torch.Tensor, torch.Tensor]:
-            calls.append(("split_kv_cache", (kv_cache, num_kv_heads, head_size), {}))
-            return kv_cache[0], kv_cache[1]
-
-        @staticmethod
-        def write_to_paged_cache(*args: Any, **kwargs: Any) -> None:
-            calls.append(("write_to_paged_cache", args, kwargs))
-
-    return _FakePagedAttention

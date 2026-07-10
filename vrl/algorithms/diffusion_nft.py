@@ -9,7 +9,20 @@ from vrl.algorithms.advantages import group_relative_advantages
 from vrl.algorithms.base import Algorithm
 from vrl.algorithms.trajectory import AlgorithmInput
 from vrl.algorithms.types import TrainStepMetrics
-from vrl.math.diffusion.nft import normalized_mse
+
+
+def normalized_mse(prediction: Any, target: Any) -> Any:
+    """Return per-sample MSE normalized by detached mean absolute error."""
+
+    import torch
+
+    reduce_dims = tuple(range(1, target.ndim))
+    with torch.no_grad():
+        weight = torch.abs(prediction.double() - target.double()).mean(
+            dim=reduce_dims,
+            keepdim=True,
+        ).clip(min=1e-5)
+    return ((prediction - target) ** 2 / weight).mean(dim=reduce_dims)
 
 
 @dataclass(slots=True)

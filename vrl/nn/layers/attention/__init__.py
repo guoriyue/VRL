@@ -10,8 +10,6 @@ from vrl.nn.layers.attention.paged import (
     ARAttentionStepInput,
     ARAttentionStepOutput,
     ARAttentionUnavailable,
-    ARPrefixCacheKey,
-    ARPrefixCachePolicy,
 )
 
 __all__ = [
@@ -23,8 +21,6 @@ __all__ = [
     "ARAttentionStepOutput",
     "ARAttentionUnavailable",
     "ARCacheRows",
-    "ARPrefixCacheKey",
-    "ARPrefixCachePolicy",
     "SD3JointAttentionProcessor",
     "ar_concat_rows",
     "ar_split_rows",

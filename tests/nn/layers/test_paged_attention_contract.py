@@ -11,8 +11,6 @@ from vrl.nn.layers.attention.paged import (
     ARAttentionPrefillOutput,
     ARAttentionStepInput,
     ARAttentionStepOutput,
-    ARPrefixCacheKey,
-    ARPrefixCachePolicy,
 )
 
 
@@ -55,30 +53,4 @@ def test_paged_attention_outputs_accept_last_hidden_rank_two_or_three() -> None:
     ARAttentionStepOutput(
         last_hidden=torch.zeros(2, 1, 4),
         sequence_states=("a", "b"),
-    )
-
-
-def test_prefix_cache_policy_requires_policy_version_match() -> None:
-    """Checks prefix cache policy requires policy version match."""
-    key = _prefix_key(policy_version=1)
-    assert ARPrefixCachePolicy().can_reuse(key, _prefix_key(policy_version=1))
-    assert not ARPrefixCachePolicy().can_reuse(key, _prefix_key(policy_version=2))
-    assert not ARPrefixCachePolicy(enabled=False).can_reuse(
-        key,
-        _prefix_key(policy_version=1),
-    )
-
-
-def _prefix_key(*, policy_version: int) -> ARPrefixCacheKey:
-    return ARPrefixCacheKey.from_prompt_tokens(
-        family="janus_pro",
-        task="ar_t2i",
-        policy_version=policy_version,
-        tokenizer_key="janus",
-        prompt_token_ids=[1, 2, 3],
-        model_dtype="float16",
-        cache_dtype="float16",
-        cfg_branch_kind="cond",
-        cache_layout_version="vllm.v1",
-        paged_attention_config_hash="config",
     )

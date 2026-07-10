@@ -163,7 +163,6 @@ def _build_continuous_schedule(
         max_ready_groups=max_ready_groups,
         max_ready_bytes_mb=int(cont.max_ready_bytes_mb),
         max_stale_policy_versions=max_stale_policy_versions,
-        drop_policy=str(cont.drop_policy),
         wait_timeout_s=float(cont.wait_timeout_s),
         queue_poll_interval_s=float(cont.queue_poll_interval_s),
         fail_fast_errors=int(cont.fail_fast_errors),

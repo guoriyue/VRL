@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 import torch
 
@@ -44,26 +46,26 @@ def test_vllm_paged_attention_writes_real_cuda_kv_cache() -> None:
     )
 
     kv_cache = torch.zeros((2, 1, 16, 2, 8), device="cuda", dtype=torch.float16)
-    key_cache, value_cache = kernels.split_kv_cache(
-        kv_cache,
-        num_kv_heads=2,
-        head_size=8,
-    )
     key = torch.arange(16, device="cuda", dtype=torch.float16).reshape(1, 2, 8)
     value = torch.arange(16, 32, device="cuda", dtype=torch.float16).reshape(1, 2, 8)
     scale = torch.ones(1, device="cuda", dtype=torch.float32)
 
-    kernels.write_to_paged_cache(
+    impl = kernels.make_flash_attention_impl(
+        num_heads=2,
+        head_size=8,
+        scale=8**-0.5,
+        num_kv_heads=2,
+    )
+    layer = SimpleNamespace(_q_scale=scale, _k_scale=scale, _v_scale=scale)
+    kernels.update_flash_kv_cache(
+        impl=impl,
+        layer=layer,
         key=key,
         value=value,
-        key_cache=key_cache,
-        value_cache=value_cache,
+        kv_cache=kv_cache,
         slot_mapping=slot_mapping,
-        kv_cache_dtype="auto",
-        k_scale=scale,
-        v_scale=scale,
     )
     torch.cuda.synchronize()
 
-    assert key_cache.sum().item() == pytest.approx(120.0)
-    assert value_cache.sum().item() == pytest.approx(376.0)
+    assert kv_cache[0].sum().item() == pytest.approx(120.0)
+    assert kv_cache[1].sum().item() == pytest.approx(376.0)
