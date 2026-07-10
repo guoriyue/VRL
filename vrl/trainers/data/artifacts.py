@@ -338,16 +338,88 @@ def _assert_readable(path: Path, *, manifest_path: Path, row_index: int) -> None
         ) from exc
 
 
+SFT_LATENTS_SCHEMA_VERSION = 1
+
+
+def save_sft_latents(
+    path: str | Path,
+    *,
+    family: str,
+    model_path: str,
+    latents_by_prompt: dict[str, Any],
+) -> None:
+    """Write the clean-latents shard the GRPO diffusion-loss regularizer reads.
+
+    One file, one contract: ``{prompt -> [C, T, H, W] VAE latents}`` plus the
+    provenance needed to reject a shard encoded with a different model. The
+    producer is ``vrl/scripts/diffusion/encode_targets.py``.
+    """
+
+    import torch
+
+    if not latents_by_prompt:
+        raise ValueError("refusing to write an empty sft-latents shard")
+    out = Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(
+        {
+            "schema_version": SFT_LATENTS_SCHEMA_VERSION,
+            "family": str(family),
+            "model_path": str(model_path),
+            "latents": {
+                str(prompt): value.detach().cpu()
+                for prompt, value in latents_by_prompt.items()
+            },
+        },
+        out,
+    )
+
+
+def load_sft_latents(path: str | Path, *, family: str | None = None) -> dict[str, Any]:
+    """Load a clean-latents shard; optionally pin it to the training family."""
+
+    import torch
+
+    shard_path = Path(path).expanduser()
+    if not shard_path.exists():
+        raise FileNotFoundError(
+            f"data.sft_latents shard not found: {shard_path} "
+            "(produce it with vrl/scripts/diffusion/encode_targets.py)",
+        )
+    payload = torch.load(shard_path, map_location="cpu", weights_only=False)
+    if not isinstance(payload, dict) or "latents" not in payload:
+        raise ValueError(f"{shard_path} is not an sft-latents shard")
+    version = int(payload.get("schema_version", 0))
+    if version != SFT_LATENTS_SCHEMA_VERSION:
+        raise ValueError(
+            f"{shard_path}: unsupported sft-latents schema_version={version}; "
+            f"expected {SFT_LATENTS_SCHEMA_VERSION}",
+        )
+    if family is not None and str(payload.get("family")) != str(family):
+        raise ValueError(
+            f"{shard_path} was encoded for family {payload.get('family')!r}, "
+            f"but this run trains {family!r} — latent spaces are not "
+            "interchangeable; re-encode with the training model",
+        )
+    latents = payload["latents"]
+    if not isinstance(latents, dict) or not latents:
+        raise ValueError(f"{shard_path}: empty sft-latents shard")
+    return latents
+
+
 __all__ = [
     "DATA_ROOT_ENV",
+    "SFT_LATENTS_SCHEMA_VERSION",
     "SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS",
     "ArtifactManifestError",
     "ArtifactManifestReport",
     "ResolvedArtifact",
     "default_data_root",
+    "load_sft_latents",
     "repo_root",
     "resolve_artifact_path",
     "resolve_prompt_example_artifacts",
+    "save_sft_latents",
     "validate_artifact_manifest",
     "validate_artifact_manifest_pair",
     "validate_source_backed_video_world_manifest_pair",

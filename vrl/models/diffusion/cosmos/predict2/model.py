@@ -534,6 +534,44 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipeline
 
     # -- decode_latents ------------------------------------------------
 
+    def encode_video_to_latents(self, video: torch.Tensor) -> torch.Tensor:
+        """Encode a clean video into scheduler-domain latents.
+
+        The exact inverse of ``decode_latents``'s un-normalization, and the
+        same construction the diffusers Cosmos pipeline applies to its
+        conditioning video: ``(vae.encode(x) - latents_mean) / latents_std *
+        sigma_data``. Deterministic (``argmax``/mode, no posterior sampling)
+        so a shard encodes reproducibly.
+
+        ``video``: ``[B, C, T, H, W]`` float in ``[0, 1]`` at the training
+        sampling geometry (the caller owns resize/frame-count). Used by
+        ``vrl/scripts/diffusion/encode_targets.py`` to build the
+        ``data.sft_latents`` shard for the GRPO diffusion-loss regularizer.
+        """
+
+        pipe = self.pipeline
+        sigma_data = pipe.scheduler.config.sigma_data
+        x = (video.to(pipe.vae.dtype) * 2.0 - 1.0).to(self.device)
+        with torch.no_grad():
+            encoded = torch.cat(
+                [
+                    pipe.vae.encode(sample.unsqueeze(0)).latent_dist.mode()
+                    for sample in x
+                ],
+                dim=0,
+            )
+        latents_mean = (
+            torch.tensor(pipe.vae.config.latents_mean)
+            .view(1, pipe.vae.config.z_dim, 1, 1, 1)
+            .to(encoded.device, encoded.dtype)
+        )
+        latents_std = (
+            torch.tensor(pipe.vae.config.latents_std)
+            .view(1, pipe.vae.config.z_dim, 1, 1, 1)
+            .to(encoded.device, encoded.dtype)
+        )
+        return (encoded - latents_mean) / latents_std * sigma_data
+
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
         """Decode latents to video tensor [B, C, T, H, W] in [0, 1].
 
