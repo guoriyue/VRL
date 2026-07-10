@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 
-def test_build_prompt_chunk_schedule_prompt_major() -> None:
-    """Checks build prompt chunk schedule prompt major."""
-    from vrl.generation.execution.chunks import build_prompt_chunk_schedule
+def test_build_prompt_chunks_prompt_major() -> None:
+    """Checks build prompt chunks prompt major."""
+    from vrl.generation.execution.chunks import build_prompt_chunks
 
-    schedule = build_prompt_chunk_schedule(
+    chunks = build_prompt_chunks(
         ["a", "b"],
         samples_per_prompt=5,
         max_samples_per_chunk=2,
@@ -15,7 +15,7 @@ def test_build_prompt_chunk_schedule_prompt_major() -> None:
 
     got = [
         (chunk.prompt_index, chunk.prompt, chunk.sample_start, chunk.sample_count)
-        for chunk in schedule.chunks
+        for chunk in chunks
     ]
     assert got == [
         (0, "a", 0, 2),
@@ -25,7 +25,6 @@ def test_build_prompt_chunk_schedule_prompt_major() -> None:
         (1, "b", 2, 2),
         (1, "b", 4, 1),
     ]
-    assert schedule.total_samples == 10
 
 
 def test_run_sample_chunks_with_oom_retry_splits_until_success() -> None:

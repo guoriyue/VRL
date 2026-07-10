@@ -9,11 +9,6 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from vrl.generation.capabilities import (  # noqa: E402
-    AxisCapability,
-    ExecutionStageCapability,
-    FamilyCapability,
-)
 from vrl.generation.diffusion.executor import DiffusionChunkExecutorBase  # noqa: E402
 from vrl.generation.execution.ids import build_sample_rows  # noqa: E402
 from vrl.generation.execution.planner import build_engine_plan  # noqa: E402
@@ -49,7 +44,7 @@ class _RealStageExecutor:
     def apply_wire_storage_policy(self, request, result):
         return result
 
-    def forward_chunk_plan(self, request, chunk, execution_stage):
+    def forward_chunk_plan(self, request, chunk):
         x = self.run_prompt_encode_stage(
             self.build_prompt_stage_input(request, chunk),
             stage_durations={},
@@ -91,16 +86,8 @@ def _request(num_samples: int) -> GenerationRequest:
 
 
 def _plan(request, sample_rows):
-    capability = FamilyCapability(
-        family="test",
-        task="t2i",
-        trajectory_kind="diffusion",
-        expected_axes=(
-            AxisCapability(name="sample", kind="sample", batchable=True, chunkable=True),
-        ),
-        execution_stages=(ExecutionStageCapability(name="denoise"),),
-    )
-    return build_engine_plan(request, sample_rows, capability=capability)
+    del sample_rows
+    return build_engine_plan(request)
 
 
 def test_forward_plan_pipelined_matches_serial_forward_plan() -> None:
@@ -115,7 +102,7 @@ def test_forward_plan_pipelined_matches_serial_forward_plan() -> None:
     pipelined = DiffusionChunkExecutorBase.forward_plan_pipelined(ex, request, sample_rows, plan)
 
     assert len(pipelined.output) == len(serial.output)
-    for idx, (s, p) in enumerate(zip(serial.output, pipelined.output)):
+    for idx, (s, p) in enumerate(zip(serial.output, pipelined.output, strict=True)):
         # serial keeps GPU tensors; pipelined's teardown moved them to CPU — same
         # VALUES, compared on CPU.
         assert torch.equal(s.detach().cpu(), p.detach().cpu()), f"chunk {idx} diverged"

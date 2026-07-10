@@ -1,4 +1,4 @@
-"""Cosmos3 reasoner reward model (Ray-actor backend).
+"""Cosmos3 reasoner reward model for the in-process reward runtime.
 
 Uses the **reasoner / understanding tower** of NVIDIA Cosmos3 (``cosmos3_omni``)
 — a Qwen3-VL VLM — as a generative judge over a generated robot/physical-AI
@@ -42,8 +42,8 @@ import torch
 
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
-from vrl.rewards.models.hub import parse_hf_repo_revision
 from vrl.rewards.models.base import RewardModel
+from vrl.rewards.models.hub import parse_hf_repo_revision
 from vrl.utils.logging import init_logger, kv
 
 logger = init_logger(__name__)

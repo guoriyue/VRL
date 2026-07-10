@@ -1,13 +1,13 @@
-"""VideoCon-Physics reward function (disk artifacts + Ray-actor transport).
+"""VideoCon-Physics reward function (disk artifacts + in-process runtime).
 
 A plain ``RewardFunction`` configured for the disk-artifact path (see
-``_init_disk_artifact_reward``) whose worker loads the vendored mPLUG-Owl-Video
+``_init_disk_artifact_reward``) whose runtime loads the vendored mPLUG-Owl-Video
 backbone with the VideoCon-Physics checkpoint and returns ``physical_commonsense``,
 ``semantic_adherence``, and ``overall`` sub-scores per artifact. This file only
 pins the model factory and the physics-reward defaults.
 
 A ``score_key`` of ``physical_commonsense`` (the default in
-``configs/reward/videocon_physics.yaml``) gives GRPO a pure physics signal.
+``vrl/config/presets/reward/videocon_physics.yaml``) gives GRPO a pure physics signal.
 Switch to ``overall`` to also reward caption faithfulness.
 """
 

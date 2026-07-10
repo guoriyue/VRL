@@ -50,7 +50,7 @@ def test_pipelined_bit_exact_vs_serial_real_cuda() -> None:
     pipelined = forward_chunks_pipelined(object(), "req", chunks, produce_fn=_produce)
 
     assert len(pipelined) == len(serial)
-    for idx, (sp, pp) in enumerate(zip(serial, pipelined)):
+    for idx, (sp, pp) in enumerate(zip(serial, pipelined, strict=True)):
         assert pp["obs"].device.type == "cpu"  # teardown moved it off GPU
         assert torch.equal(sp["obs"], pp["obs"]), f"chunk {idx} obs diverged"
         assert torch.equal(sp["scalar"], pp["scalar"]), f"chunk {idx} scalar diverged"
@@ -62,5 +62,5 @@ def test_pipelined_preserves_chunk_order_real_cuda() -> None:
     chunks = [10, 20, 30, 40]
     pipelined = forward_chunks_pipelined(object(), "req", chunks, produce_fn=_produce)
     expected = [_produce(c)["scalar"].cpu() for c in chunks]
-    for got, exp in zip(pipelined, expected):
+    for got, exp in zip(pipelined, expected, strict=True):
         assert torch.equal(got["scalar"], exp)

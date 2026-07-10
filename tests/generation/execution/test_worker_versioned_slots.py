@@ -13,7 +13,6 @@ The executor is injected directly so load_policy() short-circuits — no model b
 from __future__ import annotations
 
 import contextlib
-from types import SimpleNamespace
 from typing import Any
 
 import torch
@@ -115,7 +114,7 @@ def _core(model: Any) -> GenerationWorkerCore:
     return core
 
 
-def _envelope(version: int, *, with_stage: bool) -> ChunkExecutionEnvelope:
+def _envelope(version: int) -> ChunkExecutionEnvelope:
     request = GenerationRequest(
         request_id=f"req-{version}",
         family="sd3_5",
@@ -125,12 +124,9 @@ def _envelope(version: int, *, with_stage: bool) -> ChunkExecutionEnvelope:
         policy_version=version,
     )
     chunk = SampleChunk(prompt_index=0, prompt="p", sample_start=0, sample_count=1)
-    stage = SimpleNamespace(stage_id="s0", name="denoise") if with_stage else None
     return ChunkExecutionEnvelope(
         request=request,
         chunk=chunk,
-        plan_id="plan-0",
-        execution_stage=stage,
     )
 
 
@@ -171,7 +167,7 @@ def test_execute_chunk_missing_slot_returns_typed_stale_slot() -> None:
     core = _core(model)
     core.update_weights({"transformer.w": "v1"}, 1)  # only slot 1 exists
 
-    result = core.execute_chunk(_envelope(2, with_stage=False))
+    result = core.execute_chunk(_envelope(2))
 
     assert result.stale_slot is True
     assert result.output is None
@@ -187,7 +183,7 @@ def test_execute_chunk_activates_request_version_slot() -> None:
     core.update_weights({"transformer.w": "v2"}, 2)
 
     # An OLD v1 request still runs after v2 was installed.
-    result = core.execute_chunk(_envelope(1, with_stage=True))
+    result = core.execute_chunk(_envelope(1))
 
     assert result.error is None
     assert result.stale_slot is False
@@ -202,7 +198,7 @@ def test_plain_model_keeps_global_version_mismatch() -> None:
     core.update_weights({"transformer.w": "v1"}, 1)
 
     # Non-slot model: a request for a different version is the classic mismatch.
-    result = core.execute_chunk(_envelope(2, with_stage=False))
+    result = core.execute_chunk(_envelope(2))
 
     assert result.stale_slot is False
     assert "policy_version mismatch" in (result.error or "")

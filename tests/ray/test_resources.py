@@ -457,18 +457,13 @@ def test_cross_node_plan_formatter_reports_flag() -> None:
 
 def test_cross_node_preset_resolves() -> None:
     """Checks cross-node preset resolves."""
-    from pathlib import Path
-
     from omegaconf import OmegaConf
 
-    preset = (
-        Path(__file__).resolve().parents[2]
-        / "configs"
-        / "base"
-        / "distributed"
-        / "ray_rollout_cross_node.yaml"
-    )
-    resolved = resolve_distributed_resources(OmegaConf.load(preset))
+    from vrl.config.loading import bundled_config_resource
+
+    preset = bundled_config_resource("base/distributed/ray_rollout_cross_node")
+    with preset.open("r", encoding="utf-8") as stream:
+        resolved = resolve_distributed_resources(OmegaConf.load(stream))
 
     assert resolved.cross_node is True
     assert resolved.trainer_devices == (0,)

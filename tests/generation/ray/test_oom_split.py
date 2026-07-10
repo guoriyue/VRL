@@ -7,11 +7,6 @@ from typing import Any
 
 import pytest
 
-from vrl.generation.capabilities import (
-    AxisCapability,
-    ExecutionStageCapability,
-    FamilyCapability,
-)
 from vrl.generation.execution.chunk_placement import (
     DeviceAssignment,
     DistributedGenerationPlan,
@@ -96,21 +91,11 @@ class _StaticPlanner:
                 envelope=ChunkExecutionEnvelope(
                     request=request,
                     chunk=chunk,
-                    plan_id="plan-0",
                 ),
             )
             for index, chunk in enumerate(self.chunks)
         )
-        capability = FamilyCapability(
-            family="test",
-            task="t2i",
-            trajectory_kind="diffusion",
-            expected_axes=(
-                AxisCapability(name="sample", kind="sample", batchable=True, chunkable=True),
-            ),
-            execution_stages=(ExecutionStageCapability(name="denoise"),),
-        )
-        engine_plan = build_engine_plan(request, sample_rows, capability=capability)
+        engine_plan = build_engine_plan(request)
         return DistributedGenerationPlan(engine_plan=engine_plan, assignments=assignments)
 
 

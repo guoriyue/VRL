@@ -463,14 +463,7 @@ class _DirectExecutorGenerationRuntime:
         rows = build_sample_rows(request)
         with torch.no_grad():
             plan_fn = getattr(self.executor, "plan", None)
-            if callable(plan_fn):
-                plan = plan_fn(request, rows)
-            else:
-                plan = build_engine_plan(
-                    request,
-                    rows,
-                    capability=self.executor.capability(),
-                )
+            plan = plan_fn(request, rows) if callable(plan_fn) else build_engine_plan(request)
             return self.executor.forward_plan(request, rows, plan)
 
     async def release(self) -> None:

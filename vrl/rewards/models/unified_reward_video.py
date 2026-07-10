@@ -1,4 +1,4 @@
-"""UnifiedReward-2.0 video reward model (Ray-actor backend).
+"""UnifiedReward-2.0 video reward model for the in-process reward runtime.
 
 Wraps ``CodeGoat24/UnifiedReward-2.0-qwen-7b`` - a Qwen2.5-VL-7B general
 image/video reward - for pointwise video scoring. Following the upstream
@@ -30,8 +30,8 @@ import torch
 
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
-from vrl.rewards.models.hub import parse_hf_repo_revision
 from vrl.rewards.models.base import RewardModel
+from vrl.rewards.models.hub import parse_hf_repo_revision
 from vrl.utils.logging import init_logger, kv
 
 logger = init_logger(__name__)

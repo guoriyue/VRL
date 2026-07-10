@@ -1,190 +1,25 @@
-"""Engine planning contract shared by Ray workers and direct executor tests."""
+"""Request-level sample chunk planning."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
-from vrl.generation.capabilities import (
-    AxisCapability,
-    FamilyCapability,
-    family_capability_from_value,
-)
-from vrl.generation.execution.chunks import (
-    SampleChunk,
-    build_prompt_chunk_schedule,
-)
-from vrl.generation.types import (
-    GenerationMetrics,
-    GenerationOutput,
-    GenerationRequest,
-    GenerationSampleRow,
-)
-
-
-@dataclass(frozen=True, slots=True)
-class ResolvedAxis:
-    """An AxisCapability resolved with a concrete per-request ``length``.
-
-    Holds the source capability by reference instead of re-declaring its fields
-    (name/kind/batchable/chunkable), so a new AxisCapability field is exposed
-    automatically via ``resolved.capability.<field>`` and cannot rot into a stale
-    field-by-field copy. ``length`` is the only genuinely resolved value.
-    """
-
-    capability: AxisCapability
-    length: int | None
-
-
-@dataclass(frozen=True, slots=True)
-class ExecutionStage:
-    """One planner-visible execution stage and profiler label."""
-
-    name: str
-    stage_id: str = ""
-    segment: str | None = None
-    axis: str | None = None
-    axis_index: int | None = None
-    prompt_index: int | None = None
-    sample_start: int | None = None
-    sample_count: int | None = None
-    cache_read: bool = False
-    cache_write: bool = False
-    profiler_name: str = ""
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        if not self.name:
-            raise ValueError("ExecutionStage.name must be non-empty")
-        if not self.stage_id:
-            object.__setattr__(self, "stage_id", self.name)
-        if not self.profiler_name:
-            object.__setattr__(self, "profiler_name", f"engine.{self.name}")
-        if self.axis_index is not None and self.axis_index < 0:
-            raise ValueError("ExecutionStage.axis_index must be >= 0 when set")
-        if self.prompt_index is not None and self.prompt_index < 0:
-            raise ValueError("ExecutionStage.prompt_index must be >= 0 when set")
-        if self.sample_start is not None and self.sample_start < 0:
-            raise ValueError("ExecutionStage.sample_start must be >= 0 when set")
-        if self.sample_count is not None and self.sample_count < 1:
-            raise ValueError("ExecutionStage.sample_count must be >= 1 when set")
-
-    @property
-    def chunk_key(self) -> str | None:
-        if (
-            self.prompt_index is None
-            or self.sample_start is None
-            or self.sample_count is None
-        ):
-            return None
-        sample_end = self.sample_start + self.sample_count
-        return f"prompt:{self.prompt_index}:samples:{self.sample_start}:{sample_end}"
+from vrl.generation.execution.chunks import SampleChunk, build_prompt_chunks
+from vrl.generation.types import GenerationRequest
 
 
 @dataclass(frozen=True, slots=True)
 class EnginePlan:
-    """Request-level planning envelope for engine execution."""
+    """Public execution-plan envelope shared by direct and Ray runtimes."""
 
-    request_id: str
-    family: str
-    task: str
-    sample_rows: tuple[GenerationSampleRow, ...]
-    capability: FamilyCapability
-    trajectory_kind: str
-    expected_axes: dict[str, ResolvedAxis]
     chunks: tuple[SampleChunk, ...]
-    execution_stages: tuple[ExecutionStage, ...]
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    @property
-    def profiler_labels(self) -> tuple[str, ...]:
-        return tuple(dict.fromkeys(stage.profiler_name for stage in self.execution_stages))
-
-    @property
-    def primary_chunk_stage(self) -> ExecutionStage:
-        for preferred in ("forward_chunk", "forward"):
-            for stage in self.execution_stages:
-                if stage.name == preferred:
-                    return stage
-        return self.execution_stages[0]
-
-    @property
-    def chunk_execution_stages(self) -> tuple[ExecutionStage, ...]:
-        return tuple(
-            stage for stage in self.execution_stages if stage.name == "forward_chunk"
-        )
-
-    def chunk_stage_for(self, sample_chunk: SampleChunk) -> ExecutionStage:
-        """Return the materialized execution stage for one sample chunk."""
-
-        for stage in self.chunk_execution_stages:
-            if stage.chunk_key == sample_chunk.chunk_key:
-                return stage
-        raise KeyError(f"no execution stage found for chunk {sample_chunk.chunk_key!r}")
-
-    def profiler_label(self, stage_name: str) -> str:
-        for stage in self.execution_stages:
-            if stage.name == stage_name:
-                return stage.profiler_name
-        return f"engine.{stage_name}"
-
-    def summary(self) -> dict[str, Any]:
-        """Return a lightweight, serializable plan summary for logs/metrics."""
-
-        return {
-            "request_id": self.request_id,
-            "family": self.family,
-            "task": self.task,
-            "trajectory_kind": self.trajectory_kind,
-            "profiler_labels": list(self.profiler_labels),
-            "capability": self.capability.to_dict(),
-            "axes": {
-                name: {
-                    "kind": axis.capability.kind,
-                    "length": axis.length,
-                    "batchable": axis.capability.batchable,
-                    "chunkable": axis.capability.chunkable,
-                }
-                for name, axis in self.expected_axes.items()
-            },
-            "chunks": [
-                {
-                    "prompt_index": sample_chunk.prompt_index,
-                    "chunk_key": sample_chunk.chunk_key,
-                    "sample_start": sample_chunk.sample_start,
-                    "sample_count": sample_chunk.sample_count,
-                }
-                for sample_chunk in self.chunks
-            ],
-            "execution_stages": [
-                {
-                    "stage_id": stage.stage_id,
-                    "name": stage.name,
-                    "segment": stage.segment,
-                    "axis": stage.axis,
-                    "axis_index": stage.axis_index,
-                    "prompt_index": stage.prompt_index,
-                    "sample_start": stage.sample_start,
-                    "sample_count": stage.sample_count,
-                    "chunk_key": stage.chunk_key,
-                    "profiler_name": stage.profiler_name,
-                    "cache_read": stage.cache_read,
-                    "cache_write": stage.cache_write,
-                    "metadata": dict(stage.metadata),
-                }
-                for stage in self.execution_stages
-            ],
-        }
 
 
 @dataclass(frozen=True, slots=True)
 class EnginePlanner:
-    """Build an EnginePlan for one request and resolved family capability."""
+    """Split one generation request into prompt-major sample chunks."""
 
     request: GenerationRequest
-    capability: FamilyCapability
-    sample_rows: tuple[GenerationSampleRow, ...] = ()
     max_samples_per_chunk: int | None = None
 
     def build(self) -> EnginePlan:
@@ -193,201 +28,39 @@ class EnginePlanner:
         from vrl.utils.profiling import record_function
 
         with record_function("engine.plan"):
-            return self._build()
-
-    def _build(self) -> EnginePlan:
-        chunk_schedule = build_prompt_chunk_schedule(
-            self.request.prompts,
-            samples_per_prompt=self.request.samples_per_prompt,
-            max_samples_per_chunk=self._chunk_size(),
-            capability=self.capability,
-        )
-        resolved_axes = self._resolved_axes()
-        execution_stages = self._execution_stages(
-            chunk_schedule.chunks,
-        )
-        return EnginePlan(
-            request_id=self.request.request_id,
-            family=self.request.family,
-            task=self.request.task,
-            sample_rows=self.sample_rows,
-            capability=self.capability,
-            trajectory_kind=self.capability.trajectory_kind,
-            expected_axes=resolved_axes,
-            chunks=chunk_schedule.chunks,
-            execution_stages=execution_stages,
-            metadata={
-                "samples_per_prompt": self.request.samples_per_prompt,
-                "num_prompts": len(self.request.prompts),
-            },
-        )
+            return EnginePlan(
+                chunks=build_prompt_chunks(
+                    self.request.prompts,
+                    samples_per_prompt=self.request.samples_per_prompt,
+                    max_samples_per_chunk=self._chunk_size(),
+                ),
+            )
 
     def _chunk_size(self) -> int:
         if self.max_samples_per_chunk is not None:
             return max(1, int(self.max_samples_per_chunk))
-        if self.capability.default_max_samples_per_chunk is not None:
-            return self.capability.default_max_samples_per_chunk
         return max(
             1,
             int(
                 self.request.sampling.get(
                     "samples_per_chunk",
                     self.request.samples_per_prompt,
-                )
+                ),
             ),
         )
-
-    def _resolved_axes(self) -> dict[str, ResolvedAxis]:
-        return {
-            axis.name: ResolvedAxis(
-                capability=axis,
-                length=self._axis_length(axis.name),
-            )
-            for axis in self.capability.expected_axes
-        }
-
-    def _axis_length(self, axis_name: str) -> int | None:
-        sampling = self.request.sampling
-        if axis_name == "sample":
-            return (
-                len(self.sample_rows)
-                if self.sample_rows
-                else len(self.request.prompts) * self.request.samples_per_prompt
-            )
-        if axis_name == "denoise":
-            value = sampling.get("num_steps")
-            return None if value is None else int(value)
-        if axis_name == "token":
-            value = sampling.get("image_token_num")
-            return None if value is None else int(value)
-        if axis_name == "segment":
-            return None
-        return None
-
-    def _execution_stages(
-        self,
-        sample_chunks: tuple[SampleChunk, ...],
-    ) -> tuple[ExecutionStage, ...]:
-        units = [
-            ExecutionStage(
-                name="plan",
-                stage_id=f"{self.request.request_id}:stage:plan",
-                profiler_name="engine.plan",
-            ),
-        ]
-        units.extend(self._chunk_stages(sample_chunks))
-        for stage in self.capability.execution_stages:
-            units.append(
-                ExecutionStage(
-                    name=stage.name,
-                    stage_id=f"{self.request.request_id}:stage:{stage.name}",
-                    segment=stage.segment,
-                    axis=stage.axis,
-                    axis_index=None,
-                    cache_read=stage.cache_read,
-                    cache_write=stage.cache_write,
-                    profiler_name=stage.profiler_label,
-                )
-            )
-            if stage.cache_read:
-                units.append(
-                    ExecutionStage(
-                        name="cache_read",
-                        stage_id=(
-                            f"{self.request.request_id}:stage:{stage.name}:cache_read"
-                        ),
-                        segment=stage.segment,
-                        axis=stage.axis,
-                        profiler_name="engine.cache_read",
-                    )
-                )
-            if stage.cache_write:
-                units.append(
-                    ExecutionStage(
-                        name="cache_write",
-                        stage_id=(
-                            f"{self.request.request_id}:stage:{stage.name}:cache_write"
-                        ),
-                        segment=stage.segment,
-                        axis=stage.axis,
-                        profiler_name="engine.cache_write",
-                    )
-                )
-        return tuple(units)
-
-    def _chunk_stages(
-        self,
-        sample_chunks: tuple[SampleChunk, ...],
-    ) -> list[ExecutionStage]:
-        units: list[ExecutionStage] = []
-        for index, sample_chunk in enumerate(sample_chunks):
-            units.append(
-                ExecutionStage(
-                    name="forward_chunk",
-                    stage_id=(
-                        f"{self.request.request_id}:chunk:"
-                        f"p{sample_chunk.prompt_index}:"
-                        f"s{sample_chunk.sample_start}:"
-                        f"n{sample_chunk.sample_count}"
-                    ),
-                    axis="sample",
-                    axis_index=sample_chunk.sample_start,
-                    prompt_index=sample_chunk.prompt_index,
-                    sample_start=sample_chunk.sample_start,
-                    sample_count=sample_chunk.sample_count,
-                    profiler_name="engine.forward_chunk",
-                    metadata={
-                        "stage_kind": "chunk",
-                        "chunk_index": index,
-                        "chunk_key": sample_chunk.chunk_key,
-                    },
-                )
-            )
-        return units
 
 
 def build_engine_plan(
     request: GenerationRequest,
-    sample_rows: Sequence[GenerationSampleRow] | None = None,
     *,
-    capability: FamilyCapability | Mapping[str, Any] | None = None,
     max_samples_per_chunk: int | None = None,
 ) -> EnginePlan:
-    """Build a request-level plan from sample rows and family capability metadata."""
+    """Build the chunk plan consumed by direct and distributed executors."""
 
-    resolved_capability = family_capability_from_value(capability)
-    if resolved_capability is None:
-        raise ValueError(
-            "build_engine_plan requires an explicit FamilyCapability; "
-            f"got None for {request.family}/{request.task}",
-        )
     return EnginePlanner(
         request=request,
-        capability=resolved_capability,
-        sample_rows=tuple(sample_rows or ()),
         max_samples_per_chunk=max_samples_per_chunk,
     ).build()
 
 
-def attach_engine_plan(output: GenerationOutput, plan: EnginePlan) -> GenerationOutput:
-    """Attach a plan to a GenerationOutput without changing decoded artifacts."""
-
-    output.engine_plan = plan
-    if output.metrics is None:
-        output.metrics = GenerationMetrics()
-    if output.metrics is not None:
-        output.metrics.trajectory_kind = plan.trajectory_kind
-        output.metrics.execution_stages = plan.profiler_labels
-        output.metrics.engine_plan_id = plan.request_id
-    output.extra["engine_plan"] = plan.summary()
-    return output
-
-
-__all__ = [
-    "EnginePlan",
-    "EnginePlanner",
-    "ExecutionStage",
-    "ResolvedAxis",
-    "attach_engine_plan",
-    "build_engine_plan",
-]
+__all__ = ["EnginePlan", "EnginePlanner", "build_engine_plan"]

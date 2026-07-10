@@ -1,6 +1,6 @@
-"""PhyMotion human-dynamics reward function (disk artifacts + Ray-actor transport).
+"""PhyMotion human-dynamics reward function (disk artifacts + in-process runtime).
 
-A plain ``RewardFunction`` on the disk-artifact path whose worker delegates to an
+A plain ``RewardFunction`` on the disk-artifact path whose runtime delegates to an
 external PhyMotion environment (SMPL + MuJoCo) via a configured command (see
 ``vrl.rewards.models.phymotion.PhyMotionModel``). Returns
 ``kinematic_plausibility`` / ``contact_balance`` / ``dynamic_feasibility`` /

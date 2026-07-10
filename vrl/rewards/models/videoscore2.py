@@ -1,4 +1,4 @@
-"""VideoScore2 reward model (Ray-actor backend).
+"""VideoScore2 reward model for the in-process reward runtime.
 
 Wraps ``TIGER-Lab/VideoScore2`` — a Qwen2.5-VL-7B judge that VideoScore2 SFTs on
 VideoFeedback2 and then aligns with GRPO — to score a generated video on the
@@ -41,8 +41,8 @@ import torch
 
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
-from vrl.rewards.models.hub import parse_hf_repo_revision
 from vrl.rewards.models.base import RewardModel
+from vrl.rewards.models.hub import parse_hf_repo_revision
 from vrl.utils.logging import init_logger, kv
 
 logger = init_logger(__name__)

@@ -1,4 +1,4 @@
-"""VideoCon-Physics reward model (Ray-actor backend).
+"""VideoCon-Physics reward model for the in-process reward runtime.
 
 Wraps the vendored ``mplug_owl_video`` module under ``third_party/`` to load the
 KwaiVGI / VideoPhy ``videophysics/videocon_physics`` checkpoint and score
@@ -26,8 +26,8 @@ import torch.nn as nn
 
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
-from vrl.rewards.models.hub import parse_hf_repo_revision
 from vrl.rewards.models.base import RewardModel
+from vrl.rewards.models.hub import parse_hf_repo_revision
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)

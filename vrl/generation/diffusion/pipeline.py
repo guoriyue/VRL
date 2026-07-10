@@ -270,12 +270,12 @@ def forward_chunks_pipelined(
 
 
 __all__ = [
-    "build_diffusion_pipeline_topology",
-    "run_chunk_through_pipeline",
-    "forward_chunks_pipelined",
-    "PROMPT_ENCODE",
-    "PREPARE",
-    "DENOISE",
     "DECODE",
+    "DENOISE",
+    "PREPARE",
+    "PROMPT_ENCODE",
     "REWARD",
+    "build_diffusion_pipeline_topology",
+    "forward_chunks_pipelined",
+    "run_chunk_through_pipeline",
 ]

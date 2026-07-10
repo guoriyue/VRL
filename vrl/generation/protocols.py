@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from vrl.generation.execution.chunks import SampleChunk
-    from vrl.generation.execution.planner import ExecutionStage
     from vrl.generation.types import (
         GenerationOutput,
         GenerationRequest,
@@ -83,7 +82,6 @@ class GenerationChunkExecutor(Protocol):
         self,
         request: GenerationRequest,
         chunk: SampleChunk,
-        execution_stage: ExecutionStage,
     ) -> ChunkResult: ...
 
     def gather_chunks(

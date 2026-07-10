@@ -26,7 +26,6 @@ from vrl.generation.execution.types import (
 )
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.types import GenerationOutput, GenerationRequest
-from vrl.models.diffusion.capabilities import diffusion_family_capability
 from vrl.ray.actor_pool import RayActorJob, run_actor_jobs
 
 
@@ -186,9 +185,7 @@ def test_schedule_telemetry_rows_are_emitted() -> None:
 
 def test_round_robin_planner_binds_workers_at_plan_time() -> None:
     """Checks the default strategy keeps the historical binding."""
-    planner = DistributedExecutionPlanner(
-        diffusion_family_capability("sd3_5", "t2i"),
-    )
+    planner = DistributedExecutionPlanner()
     plan = planner.plan_with_engine(_request(), _workers(2))
 
     worker_ids = [assignment.worker_id for assignment in plan.assignments]
@@ -199,7 +196,6 @@ def test_round_robin_planner_binds_workers_at_plan_time() -> None:
 def test_dynamic_planner_leaves_chunks_unbound_with_costs() -> None:
     """Checks dynamic strategy defers binding and carries cost estimates."""
     planner = DistributedExecutionPlanner(
-        diffusion_family_capability("sd3_5", "t2i"),
         policy=ChunkPlacementPolicy(strategy="dynamic"),
     )
     request = _request(num_steps=10, samples=8, sbs=2)
@@ -218,9 +214,7 @@ def test_dynamic_planner_leaves_chunks_unbound_with_costs() -> None:
 def test_estimate_chunk_cost_uses_steps_axis() -> None:
     """Checks the cost hint scales with samples x steps."""
     request = _request(num_steps=35, samples=4, sbs=4)
-    plan = DistributedExecutionPlanner(
-        diffusion_family_capability("sd3_5", "t2i"),
-    ).plan_with_engine(request, _workers(1))
+    plan = DistributedExecutionPlanner().plan_with_engine(request, _workers(1))
 
     chunk = plan.assignments[0].chunk
     assert estimate_chunk_cost(request, chunk) == chunk.sample_count * 35
@@ -292,7 +286,6 @@ def _executor(strategy: str, actors: list[_FakeActor]) -> RayGenerationExecutor:
     ]
     return RayGenerationExecutor(
         DistributedExecutionPlanner(
-            diffusion_family_capability("sd3_5", "t2i"),
             policy=ChunkPlacementPolicy(strategy=strategy),
         ),
         workers,

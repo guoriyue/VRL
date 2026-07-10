@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from vrl.generation.execution.planner import EnginePlan
     from vrl.trajectory import TrajectoryBatch
 
 
@@ -21,9 +20,6 @@ class GenerationMetrics:
     peak_memory_mb: float | None = None
     num_steps: int | None = None
     chunks: int = 0
-    trajectory_kind: str | None = None
-    execution_stages: tuple[str, ...] = ()
-    engine_plan_id: str | None = None
     engine_counters: dict[str, Any] = field(default_factory=dict)
 
 
@@ -87,7 +83,6 @@ class GenerationOutput:
     sample_rows: list[GenerationSampleRow]
     output: Any
     trajectory: TrajectoryBatch | None = None
-    engine_plan: EnginePlan | None = None
     extra: dict[str, Any] = field(default_factory=dict)
     metrics: GenerationMetrics | None = None
     peak_memory_mb: float = 0.0

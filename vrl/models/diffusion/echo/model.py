@@ -28,7 +28,11 @@ from typing import Any
 import torch
 
 from vrl.generation.diffusion.layout import VideoGenerationRequest
-from vrl.models.diffusion.base import DiffusionModelBase, DiffusionSamplingStateBase, ReplayRolloutStubs
+from vrl.models.diffusion.base import (
+    DiffusionModelBase,
+    DiffusionSamplingStateBase,
+    ReplayRolloutStubs,
+)
 from vrl.models.diffusion.common.lora import LoraModelMixin
 from vrl.models.dtypes import resolve_torch_dtype
 

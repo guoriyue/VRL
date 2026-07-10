@@ -71,11 +71,7 @@ class ARChunkExecutorBase(
     ) -> Any:
         from vrl.generation.execution.planner import build_engine_plan
 
-        return build_engine_plan(
-            request,
-            list(sample_rows),
-            capability=self.capability(),
-        )
+        return build_engine_plan(request)
 
     def forward_plan(
         self,
@@ -92,20 +88,11 @@ class ARChunkExecutorBase(
         production the way the old hand-rolled full-batch implementations did.
         """
         from vrl.generation.execution.chunks import run_sample_chunks_with_oom_retry
-        from vrl.generation.execution.planner import attach_engine_plan
-
         chunks = run_sample_chunks_with_oom_retry(
             engine_plan.chunks,
-            lambda chunk: self.forward_chunk_plan(
-                request,
-                chunk,
-                engine_plan.chunk_stage_for(chunk),
-            ),
+            lambda chunk: self.forward_chunk_plan(request, chunk),
         )
-        return attach_engine_plan(
-            self.gather_chunks(request, list(sample_rows), chunks),
-            engine_plan,
-        )
+        return self.gather_chunks(request, list(sample_rows), chunks)
 
     def _ar_runner(self, request: GenerationRequest) -> Any:
         """Build the family AR runner with the attention backend wired."""
@@ -271,14 +258,12 @@ class ARDiscreteChunkExecutorBase(ARChunkExecutorBase):
         self,
         request: GenerationRequest,
         chunk: SampleChunk,
-        execution_stage: Any,
     ) -> ARDiscreteChunkResult:
         """Run one prompt-major AR chunk through the black-box sampling path."""
 
         from vrl.generation.ar.decode_loop import ARDecodeLoop
         from vrl.utils.profiling import record_function
 
-        del execution_stage
         self.require_native_ar_engine(request)
         self.layout.validate_chunk(request, chunk)
 

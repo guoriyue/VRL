@@ -27,7 +27,7 @@ from vrl.generation.execution.chunks import (
     SampleChunk,
     run_sample_chunks_with_oom_retry,
 )
-from vrl.generation.execution.planner import attach_engine_plan, build_engine_plan
+from vrl.generation.execution.planner import build_engine_plan
 from vrl.generation.protocols import (
     GenerationChunkExecutor,
 )
@@ -437,8 +437,6 @@ class DiffusionChunkExecutorBase(
         params = self.parse_sampling_params(request)
         return build_engine_plan(
             request,
-            sample_rows,
-            capability=self.capability(),
             max_samples_per_chunk=params.base.samples_per_chunk,
         )
 
@@ -517,13 +515,9 @@ class DiffusionChunkExecutorBase(
     ) -> GenerationOutput:
         chunks = run_sample_chunks_with_oom_retry(
             plan.chunks,
-            lambda chunk: self.forward_chunk_plan(
-                request,
-                chunk,
-                plan.chunk_stage_for(chunk),
-            ),
+            lambda chunk: self.forward_chunk_plan(request, chunk),
         )
-        return attach_engine_plan(self.gather_chunks(request, sample_rows, chunks), plan)
+        return self.gather_chunks(request, sample_rows, chunks)
 
     def forward_plan_pipelined(
         self,
@@ -548,16 +542,13 @@ class DiffusionChunkExecutorBase(
         from vrl.generation.diffusion.pipeline import forward_chunks_pipelined
 
         chunks = forward_chunks_pipelined(self, request, plan.chunks)
-        return attach_engine_plan(self.gather_chunks(request, sample_rows, chunks), plan)
+        return self.gather_chunks(request, sample_rows, chunks)
 
     def forward_chunk_plan(
         self,
         request: GenerationRequest,
         chunk: SampleChunk,
-        execution_stage: Any,
     ) -> DiffusionChunkResult:
-        del execution_stage
-
         from vrl.utils.profiling import record_function
 
         stage_durations: dict[str, float] = {}

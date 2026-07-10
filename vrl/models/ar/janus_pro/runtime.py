@@ -44,7 +44,6 @@ JANUS_PRO_R1_FAMILY_CAPABILITY = ar_discrete_family_capability(
     "janus_pro_r1",
     "ar_t2i_r1",
     trajectory_kind="multisegment",
-    trainable_segments=JANUS_R1_SEGMENTS,
 )
 
 
@@ -340,11 +339,9 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
         self,
         request: GenerationRequest,
         chunk: SampleChunk,
-        execution_stage: Any,
     ) -> JanusProR1ChunkResult:
         from vrl.utils.profiling import record_function
 
-        del execution_stage
         self.require_native_ar_engine(request)
         self.layout.validate_chunk(request, chunk)
         sampling = request.sampling

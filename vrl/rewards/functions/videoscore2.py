@@ -1,13 +1,13 @@
-"""VideoScore2 reward function (disk artifacts + Ray-actor transport).
+"""VideoScore2 reward function (disk artifacts + in-process runtime).
 
 A plain ``RewardFunction`` on the disk-artifact path (see
-``_init_disk_artifact_reward``) whose worker loads ``TIGER-Lab/VideoScore2`` and
+``_init_disk_artifact_reward``) whose runtime loads ``TIGER-Lab/VideoScore2`` and
 returns ``visual_quality`` / ``text_alignment`` / ``physical_common_sense`` /
 ``overall`` per artifact. This file only pins the model factory and the
 VideoScore2 defaults; transport and disk-vs-in-memory wiring are shared.
 
 The default ``score_key`` is ``physical_common_sense`` (see
-``configs/reward/videoscore2.yaml``) so a motion/physics compound gets the
+``vrl/config/presets/reward/videoscore2.yaml``) so a motion/physics compound gets the
 naturalness-and-plausibility axis without also pulling in text alignment.
 """
 

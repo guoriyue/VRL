@@ -126,7 +126,6 @@ class RayGenerationLauncher:
 
         executor = RayGenerationExecutor(
             DistributedExecutionPlanner(
-                contract.extra.get("family_capability"),
                 policy=ChunkPlacementPolicy(
                     strategy=rollout_config.chunk_placement_strategy,
                 ),

@@ -1,6 +1,6 @@
-"""UnifiedReward-2.0 video reward function (disk artifacts + Ray-actor transport).
+"""UnifiedReward-2.0 video reward function (disk artifacts + in-process runtime).
 
-A plain ``RewardFunction`` on the disk-artifact path whose worker loads
+A plain ``RewardFunction`` on the disk-artifact path whose runtime loads
 ``CodeGoat24/UnifiedReward-2.0-qwen-7b`` and returns ``alignment`` / ``physics``
 / ``style`` / ``overall`` per artifact. This file only pins the model factory and
 the UnifiedReward defaults; transport and disk-vs-in-memory wiring are shared.

@@ -15,7 +15,6 @@ from collections.abc import Mapping
 from typing import Any, Protocol
 
 from vrl.models.dtypes import resolve_torch_dtype
-
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
 
 

@@ -36,7 +36,7 @@ DeepSeek's reference implementation:
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -44,9 +44,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from vrl.models.ar.base import ARModelBase, ARReplayRolloutStubs
 from vrl.models.ar.janus_pro import JANUS_R1_SEGMENTS
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
-from vrl.models.ar.base import ARModelBase, ARReplayRolloutStubs
 from vrl.models.utils import count_trainable_params
 from vrl.trajectory import role_tensor
 from vrl.utils.logging import init_logger

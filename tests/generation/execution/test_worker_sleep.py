@@ -15,7 +15,6 @@ from __future__ import annotations
 import contextlib
 from typing import Any
 
-import vrl.generation.execution.worker as worker_mod
 from vrl.generation.execution.worker import GenerationWorkerCore
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.models.diffusion.capabilities import diffusion_family_capability

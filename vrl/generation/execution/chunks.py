@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 from vrl.utils.cuda_memory import empty_cuda_cache, is_cuda_out_of_memory
 
@@ -60,7 +60,7 @@ class SampleChunk:
 
     @property
     def chunk_key(self) -> str:
-        """Stable key used to join chunk assignments with engine plan units."""
+        """Stable key used by retry, telemetry, and chunk-result joins."""
 
         return f"prompt:{self.prompt_index}:samples:{self.sample_start}:{self.sample_end}"
 
@@ -86,29 +86,11 @@ class SampleChunk:
         return left, right
 
 
-@dataclass(frozen=True, slots=True)
-class SampleChunkSchedule:
-    """Prompt-major chunk schedule for one GenerationRequest."""
-
-    prompts: tuple[str, ...]
-    samples_per_prompt: int
-    max_samples_per_chunk: int
-    chunks: tuple[SampleChunk, ...]
-    trajectory_kind: str | None = None
-    batchable_axes: tuple[str, ...] = ()
-
-    @property
-    def total_samples(self) -> int:
-        return len(self.prompts) * self.samples_per_prompt
-
-
-def build_prompt_chunk_schedule(
+def build_prompt_chunks(
     prompts: Sequence[str],
     samples_per_prompt: int,
     max_samples_per_chunk: int,
-    *,
-    capability: Any | None = None,
-) -> SampleChunkSchedule:
+) -> tuple[SampleChunk, ...]:
     """Plan prompt-major sample chunks without changing RL group semantics."""
 
     if not prompts:
@@ -117,11 +99,6 @@ def build_prompt_chunk_schedule(
         raise ValueError("samples_per_prompt must be >= 1")
     if max_samples_per_chunk < 1:
         raise ValueError("max_samples_per_chunk must be >= 1")
-
-    if capability is not None and not bool(
-        getattr(capability, "supports_chunked_execution", True),
-    ):
-        max_samples_per_chunk = samples_per_prompt
 
     chunks: list[SampleChunk] = []
     for prompt_index, prompt in enumerate(prompts):
@@ -140,14 +117,7 @@ def build_prompt_chunk_schedule(
             sample_start += sample_count
             remaining -= sample_count
 
-    return SampleChunkSchedule(
-        prompts=tuple(prompts),
-        samples_per_prompt=samples_per_prompt,
-        max_samples_per_chunk=max_samples_per_chunk,
-        chunks=tuple(chunks),
-        trajectory_kind=getattr(capability, "trajectory_kind", None),
-        batchable_axes=tuple(getattr(capability, "batchable_axes", ())),
-    )
+    return tuple(chunks)
 
 
 def run_sample_chunks_with_oom_retry(
@@ -182,8 +152,7 @@ def run_sample_chunks_with_oom_retry(
 
 __all__ = [
     "SampleChunk",
-    "SampleChunkSchedule",
-    "build_prompt_chunk_schedule",
+    "build_prompt_chunks",
     "run_sample_chunks_with_oom_retry",
     "validate_chunk_range",
 ]

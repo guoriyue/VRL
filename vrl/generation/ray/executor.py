@@ -11,7 +11,6 @@ from vrl.generation.execution.chunk_placement import (
     build_chunk_memory_shadow,
 )
 from vrl.generation.execution.ids import build_sample_rows
-from vrl.generation.execution.planner import attach_engine_plan
 from vrl.generation.execution.types import (
     ChunkExecutionResult,
     DistributedWorkerHandle,
@@ -181,7 +180,6 @@ class RayGenerationExecutor:
             chunk_outputs.append(result.output)
 
         output = self.gatherer.gather_chunks(request, sample_rows, chunk_outputs)
-        attach_engine_plan(output, engine_plan)
         output.extra["ray_chunk_metrics"] = [dict(result.metrics) for result in results]
         # Raw per-chunk memory readings (drift monitor for the startup
         # chunk-size probe). Telemetry only — nothing here changes chunk sizing.

@@ -15,8 +15,11 @@ def _serial(produce, teardown, chunks):
 def test_pipelined_results_equal_serial_in_chunk_order() -> None:
     # produce: deterministic per-chunk payload; teardown: identity (stand-in for
     # the GPU->CPU copy, which is value-preserving).
-    produce = lambda chunk: ("denoised", chunk)
-    teardown = lambda result: ("on_cpu", result)
+    def produce(chunk):
+        return ("denoised", chunk)
+
+    def teardown(result):
+        return ("on_cpu", result)
 
     pipelined = forward_chunks_pipelined(
         object(), "req", ["c0", "c1", "c2", "c3"],

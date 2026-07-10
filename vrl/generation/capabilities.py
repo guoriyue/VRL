@@ -1,17 +1,9 @@
-"""Typed capability contract for engine planning.
-
-Family routing still lives in the rollout family registry — the registry
-entry's capability is the single stored copy, shipped to workers via the
-launch contract. This module only provides
-the normalized view that the engine planner can consume. It is not user config:
-configs describe what a run wants, while capabilities describe what a family
-executor can safely support.
-"""
+"""Behavioral capability contract carried from the family registry to workers."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Literal
 
 TrajectoryKind = Literal[
@@ -24,150 +16,34 @@ TrajectoryKind = Literal[
 
 
 @dataclass(frozen=True, slots=True)
-class AxisCapability:
-    """One logical trajectory axis visible to the engine planner."""
-
-    name: str
-    kind: str
-    batchable: bool = False
-    chunkable: bool = False
-
-    def __post_init__(self) -> None:
-        if not self.name:
-            raise ValueError("AxisCapability.name must be non-empty")
-        if not self.kind:
-            raise ValueError("AxisCapability.kind must be non-empty")
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "name": self.name,
-            "kind": self.kind,
-            "batchable": self.batchable,
-            "chunkable": self.chunkable,
-        }
-
-    @classmethod
-    def from_value(cls, value: AxisCapability | Mapping[str, Any]) -> AxisCapability:
-        if isinstance(value, cls):
-            return value
-        return cls(
-            name=str(value["name"]),
-            kind=str(value["kind"]),
-            batchable=bool(value.get("batchable", False)),
-            chunkable=bool(value.get("chunkable", False)),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class ExecutionStageCapability:
-    """Planner-visible execution stage, not a full pipeline graph node."""
-
-    name: str
-    segment: str | None = None
-    axis: str | None = None
-    cache_read: bool = False
-    cache_write: bool = False
-    profiler_name: str | None = None
-
-    def __post_init__(self) -> None:
-        if not self.name:
-            raise ValueError("ExecutionStageCapability.name must be non-empty")
-        if self.profiler_name is not None and not self.profiler_name:
-            raise ValueError(
-                "ExecutionStageCapability.profiler_name must be non-empty when set"
-            )
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "name": self.name,
-            "segment": self.segment,
-            "axis": self.axis,
-            "cache_read": self.cache_read,
-            "cache_write": self.cache_write,
-            "profiler_name": self.profiler_name,
-        }
-
-    @property
-    def profiler_label(self) -> str:
-        return self.profiler_name or f"engine.{self.name}"
-
-    @classmethod
-    def from_value(
-        cls,
-        value: ExecutionStageCapability | Mapping[str, Any],
-    ) -> ExecutionStageCapability:
-        if isinstance(value, cls):
-            return value
-        return cls(
-            name=str(value["name"]),
-            segment=None if value.get("segment") is None else str(value.get("segment")),
-            axis=None if value.get("axis") is None else str(value.get("axis")),
-            cache_read=bool(value.get("cache_read", False)),
-            cache_write=bool(value.get("cache_write", False)),
-            profiler_name=None if value.get("profiler_name") is None else str(value.get("profiler_name")),
-        )
-
-
-@dataclass(frozen=True, slots=True)
 class FamilyCapability:
-    """Planner-facing capability snapshot for one family/task pair."""
+    """Runtime decisions supported by one family/task pair.
+
+    Every field has a non-logging consumer: family/task/trajectory validate the
+    worker launch contract, reference conditioning changes launch inputs, and
+    Torch compile support gates the requested runtime configuration.
+    """
 
     family: str
     task: str
     trajectory_kind: TrajectoryKind
-    expected_axes: tuple[AxisCapability, ...]
-    execution_stages: tuple[ExecutionStageCapability, ...]
-    supports_chunked_execution: bool = True
     supports_reference_conditioning: bool = False
     supports_torch_compile: bool = False
-    default_max_samples_per_chunk: int | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.family:
             raise ValueError("FamilyCapability.family must be non-empty")
         if not self.task:
             raise ValueError("FamilyCapability.task must be non-empty")
-        if not self.expected_axes:
-            raise ValueError("FamilyCapability.expected_axes must be non-empty")
-        if not self.execution_stages:
-            raise ValueError("FamilyCapability.execution_stages must be non-empty")
-        if (
-            self.default_max_samples_per_chunk is not None
-            and self.default_max_samples_per_chunk < 1
-        ):
-            raise ValueError(
-                "FamilyCapability.default_max_samples_per_chunk must be >= 1"
-            )
-
-    @property
-    def axis_names(self) -> tuple[str, ...]:
-        return tuple(axis.name for axis in self.expected_axes)
-
-    @property
-    def batchable_axes(self) -> tuple[str, ...]:
-        return tuple(axis.name for axis in self.expected_axes if axis.batchable)
-
-    @property
-    def chunkable_axes(self) -> tuple[str, ...]:
-        return tuple(axis.name for axis in self.expected_axes if axis.chunkable)
-
-    @property
-    def profiler_labels(self) -> tuple[str, ...]:
-        return tuple(stage.profiler_label for stage in self.execution_stages)
+        _trajectory_kind(self.trajectory_kind)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "family": self.family,
             "task": self.task,
             "trajectory_kind": self.trajectory_kind,
-            "expected_axes": [axis.to_dict() for axis in self.expected_axes],
-            "execution_stages": [stage.to_dict() for stage in self.execution_stages],
-            "supports_chunked_execution": self.supports_chunked_execution,
             "supports_reference_conditioning": self.supports_reference_conditioning,
             "supports_torch_compile": self.supports_torch_compile,
-            "default_max_samples_per_chunk": self.default_max_samples_per_chunk,
-            "metadata": dict(self.metadata),
         }
 
     @classmethod
@@ -181,21 +57,10 @@ class FamilyCapability:
             family=str(value["family"]),
             task=str(value["task"]),
             trajectory_kind=_trajectory_kind(value.get("trajectory_kind", "unknown")),
-            expected_axes=tuple(
-                AxisCapability.from_value(axis)
-                for axis in value.get("expected_axes", ())
-            ),
-            execution_stages=tuple(
-                ExecutionStageCapability.from_value(stage)
-                for stage in value.get("execution_stages", ())
-            ),
-            supports_chunked_execution=bool(value.get("supports_chunked_execution", True)),
             supports_reference_conditioning=bool(
-                value.get("supports_reference_conditioning", False)
+                value.get("supports_reference_conditioning", False),
             ),
             supports_torch_compile=bool(value.get("supports_torch_compile", False)),
-            default_max_samples_per_chunk=None if value.get("default_max_samples_per_chunk") is None else int(value.get("default_max_samples_per_chunk")),
-            metadata=dict(value.get("metadata") or {}),
         )
 
 
@@ -210,7 +75,7 @@ def family_capability_from_value(value: Any) -> FamilyCapability | None:
         return FamilyCapability.from_value(value)
     raise TypeError(
         "family capability must be a FamilyCapability, mapping, or None; "
-        f"got {type(value).__name__}"
+        f"got {type(value).__name__}",
     )
 
 
@@ -221,10 +86,4 @@ def _trajectory_kind(value: Any) -> TrajectoryKind:
     raise ValueError(f"unsupported trajectory_kind: {value!r}")
 
 
-__all__ = [
-    "AxisCapability",
-    "ExecutionStageCapability",
-    "FamilyCapability",
-    "TrajectoryKind",
-    "family_capability_from_value",
-]
+__all__ = ["FamilyCapability", "TrajectoryKind", "family_capability_from_value"]

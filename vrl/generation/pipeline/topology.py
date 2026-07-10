@@ -1,8 +1,7 @@
 """Physical pipeline stage topology.
 
-This module describes runtime stage topology. It intentionally does not reuse
-``ExecutionStage``: that existing type is planner/profiler metadata for chunk
-execution, while this topology is the future actor/placement boundary.
+This module owns runtime stage topology and routing. The chunk planner has no
+stage model; physical pipeline stages remain a separate actor/placement boundary.
 
 Field vocabulary is ours alone: every accepted key maps onto implemented
 behavior, and unknown keys fail construction. Deliberate annotations belong

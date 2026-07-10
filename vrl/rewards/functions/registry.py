@@ -10,7 +10,6 @@ from typing import Any
 
 from vrl.rewards.base import RewardFunction
 from vrl.rewards.types import RewardRollout
-from vrl.utils.config import cfg_get
 
 # Registry of reward function factories.
 # Each factory takes (device,) and returns a RewardFunction instance.

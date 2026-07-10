@@ -1,21 +1,13 @@
 """Shared diffusion runtime-bundle orchestration.
 
-Every single-transformer diffusion family (sd3_5, flux, qwen_image, ...) built
-its runtime and replay bundles with the same imperative sequence, copied per
-family. That sequence lives here once; a family's ``runtime.py`` keeps only a
-thin ``build_<family>_*`` stub that passes its ``Model`` / ``ReplayModel`` class,
-capability, and diffusers transformer classname in.
+Single-transformer diffusion families share one imperative runtime/replay build
+sequence. A ``DiffusionFamilyBuild`` descriptor in the rollout registry supplies
+the model classes, upstream transformer classname, scheduler, and memory owner;
+Ray dispatches directly to the generic builder functions in this module.
 
-The stub — not this module — stays the dispatch target: the rollout family
-registry stores ``runtime_builder`` as a ``module:function`` string that Ray
-imports and calls with ``spec`` only, so each family must still expose a
-module-level ``build_<family>_runtime_bundle(spec)``. This module is
-family-agnostic on purpose: it must not import any family model class (the stub
-supplies them), which also keeps it free of import cycles.
-
-Multi-transformer / single-file families (wan, cosmos, anima) construct their
-replay model differently and keep their own builder; they can still reuse
-``build_diffusion_runtime_bundle`` for the rollout side.
+Families keep custom assembly only when construction has real per-call semantics
+that a descriptor cannot express. This module stays family-agnostic and resolves
+descriptor import strings lazily to avoid a registry import cycle.
 """
 
 from __future__ import annotations

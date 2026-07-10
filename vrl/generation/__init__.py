@@ -5,7 +5,6 @@ rollout collection, rewards, and trainer-ready batches live outside this layer.
 """
 
 from vrl.generation.capabilities import (
-    ExecutionStageCapability,
     FamilyCapability,
     family_capability_from_value,
 )
@@ -36,7 +35,6 @@ from vrl.generation.types import (
 __all__ = [
     "ChunkGatherer",
     "ChunkResult",
-    "ExecutionStageCapability",
     "FamilyCapability",
     "GenerationChunkExecutor",
     "GenerationMetrics",

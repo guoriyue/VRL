@@ -332,9 +332,7 @@ def test_runtime_resolves_auto_once_and_rewrites_requests() -> None:
 def test_planner_rejects_unresolved_auto() -> None:
     from vrl.generation.execution.chunk_placement import DistributedExecutionPlanner
 
-    planner = DistributedExecutionPlanner(
-        capability=diffusion_family_capability("sd3_5", "t2i"),
-    )
+    planner = DistributedExecutionPlanner()
     with pytest.raises(ValueError, match="samples_per_chunk: auto requires"):
         planner.plan_with_engine(
             _request(),
@@ -382,8 +380,6 @@ def test_worker_forwards_chunk_memory_without_runtime_debug() -> None:
     envelope = ChunkExecutionEnvelope(
         request=request,
         chunk=SampleChunk(prompt_index=0, prompt="p", sample_start=0, sample_count=1),
-        plan_id="plan-0",
-        execution_stage=SimpleNamespace(stage_id="s0", name="denoise"),
     )
 
     result = core.execute_chunk(envelope)

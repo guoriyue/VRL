@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from vrl.generation.execution.chunks import SampleChunk
-from vrl.generation.execution.planner import ExecutionStage
 from vrl.generation.protocols import ChunkResult
 from vrl.generation.types import GenerationRequest
 
@@ -39,17 +38,6 @@ class ChunkExecutionEnvelope:
 
     request: GenerationRequest
     chunk: SampleChunk
-    plan_id: str
-    execution_stage: ExecutionStage | None = None
-    profiler_label: str | None = None
-
-    @property
-    def stage_id(self) -> str | None:
-        return None if self.execution_stage is None else self.execution_stage.stage_id
-
-    @property
-    def stage_name(self) -> str | None:
-        return None if self.execution_stage is None else self.execution_stage.name
 
     @property
     def chunk_key(self) -> str:
@@ -65,11 +53,6 @@ class ChunkExecutionResult:
     chunk: SampleChunk
     output: ChunkResult | None
     metrics: dict[str, Any] = field(default_factory=dict)
-    plan_id: str | None = None
-    stage_id: str | None = None
-    stage_name: str | None = None
-    profiler_label: str | None = None
-    chunk_key: str | None = None
     policy_version: int | None = None
     error: str | None = None
     # Set when the chunk could not run because the worker no longer retains a

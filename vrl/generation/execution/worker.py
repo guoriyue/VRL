@@ -252,11 +252,6 @@ class GenerationWorkerCore:
                     chunk=chunk,
                     output=None,
                     metrics=self._chunk_metrics(envelope, runtime_debug=runtime_debug),
-                    plan_id=envelope.plan_id,
-                    stage_id=envelope.stage_id,
-                    stage_name=envelope.stage_name,
-                    profiler_label=envelope.profiler_label,
-                    chunk_key=envelope.chunk_key,
                     policy_version=expected_version,
                     error=(
                         "trainable-state slot evicted for "
@@ -271,11 +266,6 @@ class GenerationWorkerCore:
                 chunk=chunk,
                 output=None,
                 metrics=self._chunk_metrics(envelope, runtime_debug=runtime_debug),
-                plan_id=envelope.plan_id,
-                stage_id=envelope.stage_id,
-                stage_name=envelope.stage_name,
-                profiler_label=envelope.profiler_label,
-                chunk_key=envelope.chunk_key,
                 policy_version=self._policy_version,
                 error=(
                     "policy_version mismatch: "
@@ -299,14 +289,8 @@ class GenerationWorkerCore:
                 metrics=self._chunk_metrics(
                     envelope,
                     runtime_debug=runtime_debug,
-                    plan_aware_chunk=True,
                     chunk_output=output,
                 ),
-                plan_id=envelope.plan_id,
-                stage_id=envelope.stage_id,
-                stage_name=envelope.stage_name,
-                profiler_label=envelope.profiler_label,
-                chunk_key=envelope.chunk_key,
                 policy_version=result_version,
             )
         except Exception as exc:
@@ -316,11 +300,6 @@ class GenerationWorkerCore:
                 chunk=chunk,
                 output=None,
                 metrics=self._chunk_metrics(envelope, runtime_debug=runtime_debug),
-                plan_id=envelope.plan_id,
-                stage_id=envelope.stage_id,
-                stage_name=envelope.stage_name,
-                profiler_label=envelope.profiler_label,
-                chunk_key=envelope.chunk_key,
                 policy_version=result_version,
                 error=str(exc),
             )
@@ -597,15 +576,12 @@ class GenerationWorkerCore:
         )
         try:
             device = self._executor_device(self.executor)
-            event_name = envelope.profiler_label or "engine.forward_chunk"
             forward_chunk_plan = getattr(self.executor, "forward_chunk_plan", None)
             if not callable(forward_chunk_plan):
                 raise TypeError(
                     f"{type(self.executor).__name__} must implement "
                     "forward_chunk_plan(...) for distributed chunk execution",
                 )
-            if envelope.execution_stage is None:
-                raise RuntimeError("chunk execution requires an EnginePlan execution stage")
             with capture_torch_trace(
                 self._profiler_config,
                 output_dir=self._profiler_output_dir,
@@ -613,12 +589,8 @@ class GenerationWorkerCore:
                 device=device,
                 worker_name=worker_name,
                 trace_subdir=f"generation/{self.worker_id}",
-            ), profile_range(event_name):
-                return forward_chunk_plan(
-                    request,
-                    chunk,
-                    envelope.execution_stage,
-                )
+            ), profile_range("engine.forward_chunk"):
+                return forward_chunk_plan(request, chunk)
         except Exception:
             logger.exception("generation chunk execution failed")
             raise
@@ -628,22 +600,14 @@ class GenerationWorkerCore:
         envelope: ChunkExecutionEnvelope,
         *,
         runtime_debug: bool,
-        plan_aware_chunk: bool | None = None,
         chunk_output: Any | None = None,
     ) -> dict[str, Any]:
         metrics = self.worker_metadata(runtime_debug=runtime_debug)
         metrics.update(
             {
-                "plan_id": envelope.plan_id,
-                "engine_plan_id": envelope.plan_id,
-                "stage_id": envelope.stage_id,
-                "stage_name": envelope.stage_name,
-                "profiler_label": envelope.profiler_label,
                 "chunk_key": envelope.chunk_key,
             },
         )
-        if plan_aware_chunk is not None:
-            metrics["plan_aware_chunk"] = plan_aware_chunk
         # Byte-admission shadow reading crosses the wire unconditionally (a dozen
         # ints per chunk): calibration data must accrue from every real run, not
         # only runtime_debug ones. The heavyweight debug payload stays gated.
@@ -756,10 +720,6 @@ class GenerationWorkerCore:
         method = getattr(executor, "capability", None)
         if callable(method):
             return family_capability_from_value(method())
-        for attr_name in ("family_capability", "capability_metadata"):
-            value = getattr(executor, attr_name, None)
-            if value is not None:
-                return family_capability_from_value(value)
         return None
 
     @staticmethod

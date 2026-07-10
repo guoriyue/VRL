@@ -6,9 +6,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, fields
 from typing import Any
 
-from vrl.generation.capabilities import family_capability_from_value
 from vrl.generation.execution.chunks import SampleChunk
-from vrl.generation.execution.planner import EnginePlan, ExecutionStage, build_engine_plan
+from vrl.generation.execution.planner import EnginePlan, build_engine_plan
 from vrl.generation.execution.types import (
     ChunkExecutionEnvelope,
     DistributedWorkerHandle,
@@ -51,7 +50,6 @@ class DeviceAssignment:
     node_id: str | None
     gpu_ids: tuple[int, ...]
     chunk: SampleChunk
-    execution_stage: ExecutionStage | None = None
     envelope: ChunkExecutionEnvelope | None = None
     estimated_cost: float = 0.0
 
@@ -228,11 +226,9 @@ class DistributedExecutionPlanner:
 
     def __init__(
         self,
-        capability: Any | None = None,
         *,
         policy: ChunkPlacementPolicy | None = None,
     ) -> None:
-        self.capability = family_capability_from_value(capability)
         self.policy = policy or ChunkPlacementPolicy()
 
     def plan_with_engine(
@@ -254,33 +250,17 @@ class DistributedExecutionPlanner:
                 "runtime (startup chunk-size probe); set an explicit int here",
             )
         max_samples = int(raw_samples)
-        capability = self.capability
-        if capability is None:
-            capability = family_capability_from_value(
-                request.metadata.get("family_capability"),
-            )
-        if capability is None:
-            raise ValueError(
-                "GenerationRequest.metadata['family_capability'] is required for "
-                "distributed generation planning",
-            )
         engine_plan = build_engine_plan(
             request,
-            sample_rows,
-            capability=capability,
             max_samples_per_chunk=max(1, max_samples),
         )
         bind_at_plan_time = self.policy.strategy == "round_robin"
         assignments: list[DeviceAssignment] = []
         for idx, chunk in enumerate(engine_plan.chunks):
             worker = workers[idx % len(workers)] if bind_at_plan_time else None
-            chunk_stage = engine_plan.chunk_stage_for(chunk)
             envelope = ChunkExecutionEnvelope(
                 request=request,
                 chunk=chunk,
-                plan_id=engine_plan.request_id,
-                execution_stage=chunk_stage,
-                profiler_label=chunk_stage.profiler_name,
             )
             assignments.append(
                 DeviceAssignment(
@@ -288,7 +268,6 @@ class DistributedExecutionPlanner:
                     node_id=worker.node_id if worker else None,
                     gpu_ids=worker.gpu_ids if worker else (),
                     chunk=chunk,
-                    execution_stage=chunk_stage,
                     envelope=envelope,
                     estimated_cost=estimate_chunk_cost(request, chunk),
                 ),

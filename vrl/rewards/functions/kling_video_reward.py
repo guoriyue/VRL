@@ -1,7 +1,7 @@
 """Kling VideoReward entry point for world-model RL.
 
 ``KlingVideoReward`` writes each rollout's media to disk and scores it through a
-Ray actor pool of reward workers (the model needs its own GPU). It is a plain
+in-process reward runtime (the model may still need its own GPU). It is a plain
 ``RewardFunction`` configured for the disk-artifact path via
 ``_init_disk_artifact_reward`` — there is no separate "ray reward" type; transport
 is the ``make_reward_runtime`` adapter and disk-vs-in-memory is just which

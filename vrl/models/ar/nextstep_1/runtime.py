@@ -199,11 +199,9 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
         self,
         request: GenerationRequest,
         chunk: SampleChunk,
-        execution_stage: Any,
     ) -> NextStep1ARChunkResult:
         """Run one prompt-major AR chunk through the black-box sampling path."""
 
-        del execution_stage
         self.require_native_ar_engine(request)
         self.layout.validate_chunk(request, chunk)
         sampling = request.sampling

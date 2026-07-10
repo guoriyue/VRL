@@ -39,9 +39,8 @@ from __future__ import annotations
 
 import pytest
 import torch
-from omegaconf import OmegaConf
 
-from vrl.config.loading import CONFIGS_ROOT, load_config
+from vrl.config.loading import list_bundled_configs, load_config
 from vrl.math.diffusion.flow_matching import sde_step_with_logprob
 from vrl.rollouts.families import FAMILY_REGISTRY, normalize_rollout_family
 
@@ -92,12 +91,12 @@ def _model_configs_by_family() -> dict[str, list[str]]:
     checkpoint is tried first.
     """
     out: dict[str, list[str]] = {}
-    for path in sorted((CONFIGS_ROOT / "model" / "diffusion").rglob("*.yaml")):
-        declared = OmegaConf.load(path).get("model", {}).get("family")
+    for name in list_bundled_configs("model/diffusion"):
+        declared = load_config(name).get("model", {}).get("family")
         if declared is None:
             continue
         family = normalize_rollout_family(str(declared))
-        rel = path.relative_to(CONFIGS_ROOT).with_suffix("").as_posix()
+        rel = name.removesuffix(".yaml")
         out.setdefault(family, []).append(rel)
     return out
 
@@ -132,7 +131,7 @@ assert set(_MANUAL_SCHEDULERS) <= set(_diffusion_families())
 # alphas_cumprod-ladder families: their rollout/replay log-probs run through
 # sde_type="ddim", never the flow SDE — the parity invariant is checked there.
 _DDIM_FAMILIES = {"cogvideox", "pixart_sigma"}
-assert _DDIM_FAMILIES <= set(_diffusion_families())
+assert set(_diffusion_families()) >= _DDIM_FAMILIES
 
 
 def _scheduler_for(family: str):
