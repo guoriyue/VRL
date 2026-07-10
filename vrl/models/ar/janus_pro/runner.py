@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import torch
-import torch.nn.functional as F
 
 from vrl.generation.ar.decode_loop import ARTokenLoopInit
 from vrl.models.ar.janus_pro.model import image_token_logits_from_hidden
@@ -24,6 +23,7 @@ class JanusProARModelRunner(PagedCFGTokenRunner):
     """Family model runner that lets the AR engine schedule Janus token steps."""
 
     family = "janus_pro"
+    lane_owner_prefix = "janus"
 
     @torch.no_grad()
     def init_ar(
@@ -40,50 +40,15 @@ class JanusProARModelRunner(PagedCFGTokenRunner):
         cfg = guidance_scale if guidance_scale is not None else self.model.config.guidance_scale
         temp = temperature if temperature is not None else self.model.config.temperature
         image_token_num = image_token_num or self.model.config.image_token_num
-        batch_size = cond_inputs_embeds.shape[0]
-        device = cond_inputs_embeds.device
-        cond_prefill = self._prefill_ar_prompt_paged(
-            cond_inputs_embeds,
-            cond_attention_mask,
-            branch="cond",
-            image_token_num=int(image_token_num),
-        )
-        uncond_prefill = self._prefill_ar_prompt_paged(
-            uncond_inputs_embeds,
-            uncond_attention_mask,
-            branch="uncond",
-            image_token_num=int(image_token_num),
-        )
-
-        return ARTokenLoopInit(
-            state=JanusProARState(
-                token_ids=torch.empty(
-                    batch_size, image_token_num, dtype=torch.long, device=device
-                ),
-                logprobs=torch.empty(
-                    batch_size, image_token_num, dtype=torch.float32, device=device
-                ),
-                guidance_scale=float(cfg),
-                temperature=float(temp),
-                total_token_num=int(image_token_num),
-                paged_cond_states=list(cond_prefill.sequence_states),
-                paged_uncond_states=list(uncond_prefill.sequence_states),
-                prefill_forwards=2,
-            ),
-            cache_lanes={},
-            row_lanes={
-                "cond_last_hidden": cond_prefill.last_hidden,
-                "uncond_last_hidden": uncond_prefill.last_hidden,
-                "cond_attn": cond_attention_mask,
-                "uncond_attn": uncond_attention_mask,
-            },
-            cache_lane_owners={},
-            row_lane_owners={
-                "cond_last_hidden": "janus.cond_last_hidden",
-                "uncond_last_hidden": "janus.uncond_last_hidden",
-                "cond_attn": "janus.cond_attn",
-                "uncond_attn": "janus.uncond_attn",
-            },
+        return self._init_paged_cfg(
+            state_cls=JanusProARState,
+            cond_inputs_embeds=cond_inputs_embeds,
+            uncond_inputs_embeds=uncond_inputs_embeds,
+            cond_attention_mask=cond_attention_mask,
+            uncond_attention_mask=uncond_attention_mask,
+            total_token_num=int(image_token_num),
+            guidance_scale=float(cfg),
+            temperature=float(temp),
         )
 
     def _sample_cfg_image_token(
@@ -95,12 +60,6 @@ class JanusProARModelRunner(PagedCFGTokenRunner):
         del position  # Janus has no per-position structural constraint.
         logits = image_token_logits_from_hidden(self.model.mmgpt, hidden).squeeze(1)
         cond_logits, uncond_logits = logits.chunk(2, dim=0)
-        cond_logits = cond_logits.float()
-        uncond_logits = uncond_logits.float()
-        guided = uncond_logits + state.guidance_scale * (cond_logits - uncond_logits)
-
-        probs = F.softmax(guided / state.temperature, dim=-1)
-        sampled = torch.multinomial(probs, num_samples=1).squeeze(-1)
 
         # RL-correctness contract — do NOT "align to upstream" by scoring `guided`.
         # We SAMPLE from the CFG-`guided` distribution but score the log-prob under
@@ -110,9 +69,7 @@ class JanusProARModelRunner(PagedCFGTokenRunner):
         # (train/infer logprob parity). Upstream Janus' inference script computes no
         # log-prob, so there is no upstream line to copy. Locked by
         # tests/models/ar/janus_pro/test_upstream_reconcile_contracts.py.
-        log_probs = F.log_softmax(cond_logits / state.temperature, dim=-1)
-        lp = log_probs.gather(-1, sampled.unsqueeze(-1)).squeeze(-1)
-        return sampled, lp
+        return self._sample_cfg_logits(state, cond_logits, uncond_logits)
 
     def _embed_sampled_token(self, sampled: torch.Tensor) -> torch.Tensor:
         return self.model._base().prepare_gen_img_embeds(sampled.unsqueeze(-1))

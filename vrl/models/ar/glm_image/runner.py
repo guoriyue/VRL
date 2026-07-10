@@ -29,11 +29,10 @@ import torch.nn.functional as F
 
 from vrl.generation.ar.decode_loop import (
     ARStepBatch,
-    ARStepOutput,
-    ARStepResult,
     ARTokenLoopInit,
 )
 from vrl.math.ar.logprob import top_k_top_p_filtering
+from vrl.models.ar.base import ARDiscreteTokenRunner, ARDiscreteTokenState
 from vrl.models.ar.glm_image.model import (
     glm_image_decode_position_schedule,
     glm_image_prefill_position_ids,
@@ -47,28 +46,25 @@ from vrl.models.ar.paged_attention_helpers import (
 from vrl.nn.layers.attention.cache_rows import ar_concat_rows, ar_split_rows
 
 
-@dataclass(slots=True)
-class GlmImageARState:
+@dataclass(slots=True, kw_only=True)
+class GlmImageARState(ARDiscreteTokenState):
     """Mutable GLM-Image state owned by one scheduled AR token loop."""
 
-    token_ids: torch.Tensor
-    logprobs: torch.Tensor
     temperature: float
     top_p: float
-    total_token_num: int
     # [3, L_decode] mrope positions for generated token j fed as input,
     # relative to prompt_len == 0 (per-row valid lengths added at use time).
     base_position_schedule: torch.Tensor
     # [B] per-row valid prompt token count (left-padded prompts).
     prompt_valid_lens: torch.Tensor
     kv_rows: list[Any] | None = None
-    prefill_forwards: int = 0
-    decode_forwards: int = 0
-    decode_tokens: int = 0
 
 
-class GlmImageTokenRunner:
+class GlmImageTokenRunner(ARDiscreteTokenRunner):
     """Family model runner that lets the AR engine schedule GLM-Image steps."""
+
+    family = "glm_image"
+    validation_family = "GLM-Image"
 
     def __init__(self, model: Any) -> None:
         self.model = model
@@ -132,34 +128,6 @@ class GlmImageTokenRunner:
             },
         )
 
-    @torch.no_grad()
-    def step_ar(
-        self,
-        state: GlmImageARState,
-        batch: ARStepBatch,
-        *,
-        generator: torch.Generator | None = None,
-    ) -> ARStepOutput:
-        del generator
-        self._validate_ar_step_batch(state, batch)
-        row_updates = self._sample_ar_step(state, batch)
-        return ARStepOutput(
-            result=ARStepResult(
-                debug_counters={
-                    "ar_kv_cache_enabled": True,
-                    "ar_paged_attention_enabled": False,
-                    "ar_prefill_forwards": state.prefill_forwards,
-                    "ar_decode_forwards": state.decode_forwards,
-                    "ar_decode_tokens": state.decode_tokens,
-                },
-            ),
-            updated_row_lanes=row_updates,
-        )
-
-    @torch.no_grad()
-    def finalize_ar(self, state: GlmImageARState) -> tuple[torch.Tensor, torch.Tensor]:
-        return state.token_ids, state.logprobs
-
     # -- internals -----------------------------------------------------
 
     def _prefill_prompt(
@@ -185,26 +153,12 @@ class GlmImageTokenRunner:
         last_hidden = outputs.last_hidden_state[:, -1, :]
         return last_hidden, ar_split_rows(past, inputs_embeds.shape[0])
 
-    @staticmethod
-    def _validate_ar_step_batch(
-        state: GlmImageARState,
-        batch: ARStepBatch,
-    ) -> None:
-        row_indices = batch.row_indices
-        if not row_indices:
-            raise ValueError("row_indices must be non-empty")
-        if any(row < 0 or row >= state.token_ids.shape[0] for row in row_indices):
-            raise ValueError(f"invalid GLM-Image row indices: {row_indices}")
-        if len(set(batch.positions)) != 1:
-            raise ValueError("ActiveSequence positions must match within one AR step")
-        if batch.position >= state.total_token_num:
-            raise ValueError("GlmImageARState has already finished sampling")
-
     def _sample_ar_step(
         self,
-        state: GlmImageARState,
+        state: ARDiscreteTokenState,
         batch: ARStepBatch,
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        assert isinstance(state, GlmImageARState)
         row_indices = batch.row_indices
         position = batch.position
         rows = torch.tensor(row_indices, dtype=torch.long, device=state.token_ids.device)
@@ -215,8 +169,8 @@ class GlmImageTokenRunner:
         state.decode_tokens += len(row_indices)
 
         if position + 1 >= state.total_token_num:
-            return {}
-        return self._advance_after_sample(state, batch=batch, sampled=sampled)
+            return {}, {}
+        return {}, self._advance_after_sample(state, batch=batch, sampled=sampled)
 
     def _sample_image_token(
         self,

@@ -12,7 +12,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import torch
-import torch.nn.functional as F
 
 from vrl.generation.ar.decode_loop import ARTokenLoopInit
 from vrl.models.ar.emu3.model import (
@@ -55,54 +54,20 @@ class Emu3TokenRunner(PagedCFGTokenRunner):
         cfg = guidance_scale if guidance_scale is not None else self.model.config.guidance_scale
         temp = temperature if temperature is not None else self.model.config.temperature
         total_token_num = emu3_grid_token_num(int(height), int(width))
-        batch_size = cond_inputs_embeds.shape[0]
         device = cond_inputs_embeds.device
         forced = emu3_forced_token_schedule(
             int(height), int(width), self.model.image_vocab_size,
         ).to(device)
-        cond_prefill = self._prefill_ar_prompt_paged(
-            cond_inputs_embeds,
-            cond_attention_mask,
-            branch="cond",
-            image_token_num=total_token_num,
-        )
-        uncond_prefill = self._prefill_ar_prompt_paged(
-            uncond_inputs_embeds,
-            uncond_attention_mask,
-            branch="uncond",
-            image_token_num=total_token_num,
-        )
-
-        return ARTokenLoopInit(
-            state=Emu3ARState(
-                token_ids=torch.empty(
-                    batch_size, total_token_num, dtype=torch.long, device=device,
-                ),
-                logprobs=torch.empty(
-                    batch_size, total_token_num, dtype=torch.float32, device=device,
-                ),
-                guidance_scale=float(cfg),
-                temperature=float(temp),
-                total_token_num=total_token_num,
-                forced_gen_index=forced,
-                paged_cond_states=list(cond_prefill.sequence_states),
-                paged_uncond_states=list(uncond_prefill.sequence_states),
-                prefill_forwards=2,
-            ),
-            cache_lanes={},
-            row_lanes={
-                "cond_last_hidden": cond_prefill.last_hidden,
-                "uncond_last_hidden": uncond_prefill.last_hidden,
-                "cond_attn": cond_attention_mask,
-                "uncond_attn": uncond_attention_mask,
-            },
-            cache_lane_owners={},
-            row_lane_owners={
-                "cond_last_hidden": "emu3.cond_last_hidden",
-                "uncond_last_hidden": "emu3.uncond_last_hidden",
-                "cond_attn": "emu3.cond_attn",
-                "uncond_attn": "emu3.uncond_attn",
-            },
+        return self._init_paged_cfg(
+            state_cls=Emu3ARState,
+            cond_inputs_embeds=cond_inputs_embeds,
+            uncond_inputs_embeds=uncond_inputs_embeds,
+            cond_attention_mask=cond_attention_mask,
+            uncond_attention_mask=uncond_attention_mask,
+            total_token_num=total_token_num,
+            guidance_scale=float(cfg),
+            temperature=float(temp),
+            state_kwargs={"forced_gen_index": forced},
         )
 
     def _sample_cfg_image_token(
@@ -114,9 +79,6 @@ class Emu3TokenRunner(PagedCFGTokenRunner):
         assert isinstance(state, Emu3ARState)
         logits = self.model.image_gen_logits(hidden).squeeze(1)
         cond_logits, uncond_logits = logits.chunk(2, dim=0)
-        cond_logits = cond_logits.float()
-        uncond_logits = uncond_logits.float()
-        guided = uncond_logits + state.guidance_scale * (cond_logits - uncond_logits)
 
         # Structural constraint: within the grid only image tokens are legal;
         # column `width` forces EOL; the tail forces EOF/EOI/EOS. Combine CFG
@@ -125,19 +87,17 @@ class Emu3TokenRunner(PagedCFGTokenRunner):
             state.forced_gen_index[position : position + 1],
             self.model.image_vocab_size,
         )[0]
-        guided = guided.masked_fill(~allowed, float("-inf"))
-        probs = F.softmax(guided / state.temperature, dim=-1)
-        sampled = torch.multinomial(probs, num_samples=1).squeeze(-1)
-
         # RL-correctness contract (copied from janus_pro): SAMPLE from the
         # CFG-guided masked distribution but score the log-prob under the
         # masked, renormalized COND logits — the conditional model is the
         # policy GRPO optimizes; CFG is only the behavior distribution.
         # Forced positions renormalize to a single legal token -> lp == 0.
-        cond_masked = cond_logits.masked_fill(~allowed, float("-inf"))
-        log_probs = F.log_softmax(cond_masked / state.temperature, dim=-1)
-        lp = log_probs.gather(-1, sampled.unsqueeze(-1)).squeeze(-1)
-        return sampled, lp
+        return self._sample_cfg_logits(
+            state,
+            cond_logits,
+            uncond_logits,
+            allowed=allowed,
+        )
 
     def _embed_sampled_token(self, sampled: torch.Tensor) -> torch.Tensor:
         return self.model.embed_gen_tokens(sampled.unsqueeze(-1))

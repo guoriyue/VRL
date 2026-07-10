@@ -17,10 +17,17 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
+import torch
 import torch.nn as nn
 
+from vrl.generation.ar.decode_loop import (
+    ARStepBatch,
+    ARStepOutput,
+    ARStepResult,
+)
 from vrl.models.utils import disable_adapter_on, load_weights_into
 
 
@@ -77,4 +84,101 @@ class ARReplayRolloutStubs:
         raise RuntimeError(f"{type(self).__name__} cannot decode image tokens")
 
 
-__all__ = ["ARModelBase", "ARReplayRolloutStubs"]
+@dataclass(slots=True, kw_only=True)
+class ARDiscreteTokenState:
+    """Shared scheduler-visible state for discrete-token AR loops."""
+
+    token_ids: torch.Tensor
+    logprobs: torch.Tensor
+    total_token_num: int
+    prefill_forwards: int = 0
+    decode_forwards: int = 0
+    decode_tokens: int = 0
+
+
+class ARDiscreteTokenRunner:
+    """Shared step/finalize bookkeeping for discrete-token family runners.
+
+    Families still own prefill, sampling, and cache advancement. This base owns
+    only the engine contract that was identical across paged-CFG, GLM-Image,
+    and LlamaGen: validate the scheduled rows, run one family step, report the
+    common counters, and return ``(token_ids, logprobs)`` at finalization.
+    """
+
+    family: str = ""
+    validation_family: str = ""
+
+    @torch.no_grad()
+    def step_ar(
+        self,
+        state: ARDiscreteTokenState,
+        batch: ARStepBatch,
+        *,
+        generator: torch.Generator | None = None,
+    ) -> ARStepOutput:
+        del generator
+        self._validate_ar_step_batch(state, batch)
+        cache_updates, row_updates = self._sample_ar_step(state, batch)
+        return ARStepOutput(
+            result=ARStepResult(
+                debug_counters={
+                    "ar_kv_cache_enabled": True,
+                    "ar_paged_attention_enabled": self._paged_attention_enabled(state),
+                    "ar_prefill_forwards": state.prefill_forwards,
+                    "ar_decode_forwards": state.decode_forwards,
+                    "ar_decode_tokens": state.decode_tokens,
+                },
+            ),
+            updated_cache_lanes=cache_updates,
+            updated_row_lanes=row_updates,
+        )
+
+    @torch.no_grad()
+    def finalize_ar(
+        self,
+        state: ARDiscreteTokenState,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        return state.token_ids, state.logprobs
+
+    def _validate_ar_step_batch(
+        self,
+        state: ARDiscreteTokenState,
+        batch: ARStepBatch,
+    ) -> None:
+        row_indices = batch.row_indices
+        if not row_indices:
+            raise ValueError("row_indices must be non-empty")
+        if any(row < 0 or row >= state.token_ids.shape[0] for row in row_indices):
+            label = self.validation_family or self.family
+            raise ValueError(f"invalid {label} row indices: {row_indices}")
+        if len(set(batch.positions)) != 1:
+            raise ValueError("ActiveSequence positions must match within one AR step")
+        if batch.position >= state.total_token_num:
+            raise ValueError(f"{type(state).__name__} has already finished sampling")
+        self._validate_family_step(state, batch)
+
+    def _validate_family_step(
+        self,
+        state: ARDiscreteTokenState,
+        batch: ARStepBatch,
+    ) -> None:
+        del state, batch
+
+    def _paged_attention_enabled(self, state: ARDiscreteTokenState) -> bool:
+        del state
+        return False
+
+    def _sample_ar_step(
+        self,
+        state: ARDiscreteTokenState,
+        batch: ARStepBatch,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        raise NotImplementedError
+
+
+__all__ = [
+    "ARDiscreteTokenRunner",
+    "ARDiscreteTokenState",
+    "ARModelBase",
+    "ARReplayRolloutStubs",
+]

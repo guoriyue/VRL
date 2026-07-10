@@ -25,32 +25,27 @@ import torch.nn.functional as F
 
 from vrl.generation.ar.decode_loop import (
     ARStepBatch,
-    ARStepOutput,
-    ARStepResult,
     ARTokenLoopInit,
 )
 from vrl.math.ar.logprob import top_k_top_p_filtering
+from vrl.models.ar.base import ARDiscreteTokenRunner, ARDiscreteTokenState
 
 
-@dataclass(slots=True)
-class LlamaGenARState:
+@dataclass(slots=True, kw_only=True)
+class LlamaGenARState(ARDiscreteTokenState):
     """Mutable LlamaGen state owned by one scheduled AR token loop."""
 
-    token_ids: torch.Tensor
-    logprobs: torch.Tensor
     guidance_scale: float
     temperature: float
     top_k: int
     top_p: float
-    image_token_num: int
     caption_len: int
-    prefill_forwards: int = 0
-    decode_forwards: int = 0
-    decode_tokens: int = 0
 
 
-class LlamaGenARModelRunner:
+class LlamaGenARModelRunner(ARDiscreteTokenRunner):
     """Family model runner that lets the AR engine schedule LlamaGen token steps."""
+
+    family = "llamagen"
 
     def __init__(self, model: Any) -> None:
         self.model = model
@@ -127,7 +122,7 @@ class LlamaGenARModelRunner:
                 temperature=float(temp),
                 top_k=int(top_k),
                 top_p=float(top_p),
-                image_token_num=int(image_token_num),
+                total_token_num=int(image_token_num),
                 caption_len=int(caption_len),
                 prefill_forwards=1,
             ),
@@ -141,45 +136,15 @@ class LlamaGenARModelRunner:
             },
         )
 
-    @torch.no_grad()
-    def step_ar(
-        self,
-        state: LlamaGenARState,
-        batch: ARStepBatch,
-        *,
-        generator: torch.Generator | None = None,
-    ) -> ARStepOutput:
-        del generator
-        self._validate_ar_step_batch(state, batch)
-        row_updates = self._sample_ar_step(state, batch)
-        return ARStepOutput(
-            result=ARStepResult(
-                debug_counters={
-                    "ar_kv_cache_enabled": True,
-                    "ar_paged_attention_enabled": False,
-                    "ar_prefill_forwards": state.prefill_forwards,
-                    "ar_decode_forwards": state.decode_forwards,
-                    "ar_decode_tokens": state.decode_tokens,
-                },
-            ),
-            updated_row_lanes=row_updates,
-        )
-
-    @torch.no_grad()
-    def finalize_ar(self, state: LlamaGenARState) -> tuple[torch.Tensor, torch.Tensor]:
-        return state.token_ids, state.logprobs
-
     # -- internals -----------------------------------------------------
 
-    @staticmethod
-    def _validate_ar_step_batch(state: LlamaGenARState, batch: ARStepBatch) -> None:
+    def _validate_family_step(
+        self,
+        state: ARDiscreteTokenState,
+        batch: ARStepBatch,
+    ) -> None:
+        assert isinstance(state, LlamaGenARState)
         batch_size = state.token_ids.shape[0]
-        if not batch.row_indices:
-            raise ValueError("row_indices must be non-empty")
-        if len(set(batch.positions)) != 1:
-            raise ValueError("ActiveSequence positions must match within one AR step")
-        if batch.position >= state.image_token_num:
-            raise ValueError("LlamaGenARState has already finished sampling")
         # The vendored static KV cache advances in-place for the whole
         # combined [cond | uncond] batch; partial-row steps would desync it.
         if batch.row_indices != list(range(batch_size)):
@@ -192,9 +157,10 @@ class LlamaGenARModelRunner:
 
     def _sample_ar_step(
         self,
-        state: LlamaGenARState,
+        state: ARDiscreteTokenState,
         batch: ARStepBatch,
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        assert isinstance(state, LlamaGenARState)
         position = batch.position
         sampled, lp = self._sample_cfg_image_token(
             state,
@@ -205,9 +171,9 @@ class LlamaGenARModelRunner:
         state.logprobs[:, position] = lp
         state.decode_tokens += len(batch.row_indices)
 
-        if position + 1 >= state.image_token_num:
-            return {}
-        return self._advance_after_sample(state, position=position, sampled=sampled)
+        if position + 1 >= state.total_token_num:
+            return {}, {}
+        return {}, self._advance_after_sample(state, position=position, sampled=sampled)
 
     def _sample_cfg_image_token(
         self,

@@ -9,9 +9,9 @@ import torch
 
 from vrl.generation.ar.decode_loop import (
     ARStepBatch,
-    ARStepOutput,
-    ARStepResult,
+    ARTokenLoopInit,
 )
+from vrl.models.ar.base import ARDiscreteTokenRunner, ARDiscreteTokenState
 from vrl.nn.layers.attention.paged import (
     ARAttentionBackend,
     ARAttentionPrefillInput,
@@ -81,26 +81,20 @@ def scatter_paged_states(
 
 
 @dataclass(slots=True, kw_only=True)
-class PagedCFGARState:
+class PagedCFGARState(ARDiscreteTokenState):
     """Shared mutable state for a cond/uncond paged-CFG AR token loop.
 
     ``kw_only`` so family subclasses (Emu3's structural-mask schedule) can add
     required fields after these defaulted ones.
     """
 
-    token_ids: torch.Tensor
-    logprobs: torch.Tensor
     guidance_scale: float
     temperature: float
-    total_token_num: int
     paged_cond_states: list[Any] | None = None
     paged_uncond_states: list[Any] | None = None
-    prefill_forwards: int = 0
-    decode_forwards: int = 0
-    decode_tokens: int = 0
 
 
-class PagedCFGTokenRunner:
+class PagedCFGTokenRunner(ARDiscreteTokenRunner):
     """Shared cond/uncond paged-attention token loop for CFG AR families.
 
     Emu3 and Janus-Pro run the exact same loop: prefill both CFG branches,
@@ -115,6 +109,7 @@ class PagedCFGTokenRunner:
     """
 
     family: str = ""
+    lane_owner_prefix: str = ""
 
     def __init__(
         self,
@@ -124,34 +119,6 @@ class PagedCFGTokenRunner:
     ) -> None:
         self.model = model
         self.attention_backend = attention_backend
-
-    @torch.no_grad()
-    def step_ar(
-        self,
-        state: PagedCFGARState,
-        batch: ARStepBatch,
-        *,
-        generator: torch.Generator | None = None,
-    ) -> ARStepOutput:
-        del generator
-        cache_updates, row_updates = self._sample_ar_step(state, batch)
-        return ARStepOutput(
-            result=ARStepResult(
-                debug_counters={
-                    "ar_kv_cache_enabled": True,
-                    "ar_paged_attention_enabled": state.paged_cond_states is not None,
-                    "ar_prefill_forwards": state.prefill_forwards,
-                    "ar_decode_forwards": state.decode_forwards,
-                    "ar_decode_tokens": state.decode_tokens,
-                },
-            ),
-            updated_cache_lanes=cache_updates,
-            updated_row_lanes=row_updates,
-        )
-
-    @torch.no_grad()
-    def finalize_ar(self, state: PagedCFGARState) -> tuple[torch.Tensor, torch.Tensor]:
-        return state.token_ids, state.logprobs
 
     # -- family hooks ----------------------------------------------------
 
@@ -172,6 +139,99 @@ class PagedCFGTokenRunner:
 
     # -- shared loop internals --------------------------------------------
 
+    def _init_paged_cfg(
+        self,
+        *,
+        state_cls: type[PagedCFGARState],
+        cond_inputs_embeds: torch.Tensor,
+        uncond_inputs_embeds: torch.Tensor,
+        cond_attention_mask: torch.Tensor,
+        uncond_attention_mask: torch.Tensor,
+        total_token_num: int,
+        guidance_scale: float,
+        temperature: float,
+        state_kwargs: dict[str, Any] | None = None,
+    ) -> ARTokenLoopInit:
+        """Prefill both CFG branches and construct the shared loop payload."""
+
+        batch_size = cond_inputs_embeds.shape[0]
+        device = cond_inputs_embeds.device
+        cond_prefill = self._prefill_ar_prompt_paged(
+            cond_inputs_embeds,
+            cond_attention_mask,
+            branch="cond",
+            image_token_num=total_token_num,
+        )
+        uncond_prefill = self._prefill_ar_prompt_paged(
+            uncond_inputs_embeds,
+            uncond_attention_mask,
+            branch="uncond",
+            image_token_num=total_token_num,
+        )
+        owner = self.lane_owner_prefix or self.family
+        return ARTokenLoopInit(
+            state=state_cls(
+                token_ids=torch.empty(
+                    batch_size,
+                    total_token_num,
+                    dtype=torch.long,
+                    device=device,
+                ),
+                logprobs=torch.empty(
+                    batch_size,
+                    total_token_num,
+                    dtype=torch.float32,
+                    device=device,
+                ),
+                total_token_num=total_token_num,
+                guidance_scale=float(guidance_scale),
+                temperature=float(temperature),
+                paged_cond_states=list(cond_prefill.sequence_states),
+                paged_uncond_states=list(uncond_prefill.sequence_states),
+                prefill_forwards=2,
+                **(state_kwargs or {}),
+            ),
+            cache_lanes={},
+            row_lanes={
+                "cond_last_hidden": cond_prefill.last_hidden,
+                "uncond_last_hidden": uncond_prefill.last_hidden,
+                "cond_attn": cond_attention_mask,
+                "uncond_attn": uncond_attention_mask,
+            },
+            cache_lane_owners={},
+            row_lane_owners={
+                "cond_last_hidden": f"{owner}.cond_last_hidden",
+                "uncond_last_hidden": f"{owner}.uncond_last_hidden",
+                "cond_attn": f"{owner}.cond_attn",
+                "uncond_attn": f"{owner}.uncond_attn",
+            },
+        )
+
+    def _sample_cfg_logits(
+        self,
+        state: PagedCFGARState,
+        cond_logits: torch.Tensor,
+        uncond_logits: torch.Tensor,
+        *,
+        allowed: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Sample from CFG behavior logits and score the conditional policy."""
+
+        cond_logits = cond_logits.float()
+        uncond_logits = uncond_logits.float()
+        guided = uncond_logits + state.guidance_scale * (cond_logits - uncond_logits)
+        if allowed is not None:
+            guided = guided.masked_fill(~allowed, float("-inf"))
+            cond_logits = cond_logits.masked_fill(~allowed, float("-inf"))
+        probs = torch.softmax(guided / state.temperature, dim=-1)
+        sampled = torch.multinomial(probs, num_samples=1).squeeze(-1)
+        log_probs = torch.log_softmax(cond_logits / state.temperature, dim=-1)
+        return sampled, log_probs.gather(-1, sampled.unsqueeze(-1)).squeeze(-1)
+
+    def _paged_attention_enabled(self, state: ARDiscreteTokenState) -> bool:
+        assert isinstance(state, PagedCFGARState)
+        return state.paged_cond_states is not None
+
     def _prefill_ar_prompt_paged(
         self,
         inputs_embeds: torch.Tensor,
@@ -191,26 +251,11 @@ class PagedCFGTokenRunner:
 
     def _sample_ar_step(
         self,
-        state: PagedCFGARState,
+        state: ARDiscreteTokenState,
         batch: ARStepBatch,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        self._validate_ar_step_batch(state, batch)
+        assert isinstance(state, PagedCFGARState)
         return self._sample_ar_step_kv(state, batch)
-
-    def _validate_ar_step_batch(
-        self,
-        state: PagedCFGARState,
-        batch: ARStepBatch,
-    ) -> None:
-        row_indices = batch.row_indices
-        if not row_indices:
-            raise ValueError("row_indices must be non-empty")
-        if any(row < 0 or row >= state.token_ids.shape[0] for row in row_indices):
-            raise ValueError(f"invalid {self.family} row indices: {row_indices}")
-        if len(set(batch.positions)) != 1:
-            raise ValueError("ActiveSequence positions must match within one AR step")
-        if batch.position >= state.total_token_num:
-            raise ValueError(f"{type(state).__name__} has already finished sampling")
 
     def _sample_ar_step_kv(
         self,
