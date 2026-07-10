@@ -205,6 +205,22 @@ def default_reference_model(bundle: Any, cfg: Any) -> Any | None:
     return None
 
 
+def _load_sft_latents_from_config(cfg: DictConfig, family: str) -> dict[str, Any] | None:
+    """Load the clean-latents shard when the diffusion-loss regularizer is on.
+
+    The schema cross-check already rejected sft_weight>0 without
+    data.sft_latents, so this only turns a configured path into tensors (and
+    fails loud on a family-mismatched or malformed shard).
+    """
+
+    path = OmegaConf.select(cfg, "data.sft_latents", default=None)
+    if not path:
+        return None
+    from vrl.trainers.data.artifacts import load_sft_latents
+
+    return load_sft_latents(str(path), family=family)
+
+
 def export_transformer_lora(bundle: Any, cfg: DictConfig) -> dict[str, Any] | None:
     """Export diffusion transformer LoRA weights when configured."""
 
@@ -375,7 +391,7 @@ class OnlineRecipeRun:
     def prepare_metrics_csv(self) -> None:
         component_cols = ",".join(f"r_{name}" for name in self.stack.component_names)
         header = (
-            "epoch,loss,policy_loss,kl_penalty,reward_mean,reward_std,"
+            "epoch,loss,policy_loss,sft_loss,kl_penalty,reward_mean,reward_std,"
             "clip_fraction,approx_kl,logprob_abs_diff_mean,logprob_abs_diff_max,"
             "ratio_abs_dev_mean,ratio_abs_dev_max,mismatch_kl,mismatch_k3_kl,"
             "advantage_mean,grad_norm,adv_saturation,"
@@ -421,6 +437,7 @@ class OnlineRecipeRun:
             "epoch": epoch,
             "loss": metrics.loss,
             "policy_loss": metrics.policy_loss,
+            "sft_loss": metrics.sft_loss,
             "kl_penalty": metrics.kl_penalty,
             "reward_mean": metrics.reward_mean,
             "reward_std": metrics.reward_std,
@@ -469,6 +486,7 @@ class OnlineRecipeRun:
                         str(row["epoch"]),
                         f"{row['loss']:.6f}",
                         f"{row['policy_loss']:.6f}",
+                        f"{row['sft_loss']:.6f}",
                         f"{row['kl_penalty']:.6f}",
                         f"{row['reward_mean']:.4f}",
                         f"{row['reward_std']:.4f}",
@@ -791,6 +809,7 @@ async def run_online_recipe(
             config=trainer_config,
             device=device,
             strategy=strategy,
+            sft_latents=_load_sft_latents_from_config(cfg, definition.family),
         )
 
         if resume_checkpoint is not None:

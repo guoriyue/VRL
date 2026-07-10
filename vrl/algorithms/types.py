@@ -32,6 +32,9 @@ class TrainStepMetrics:
     # drift (0 when rs_mode='off'). Sustained >~5% signals rollout drift too large
     # for bypass — tighten the RS band or fall back to recompute.
     rs_seq_masked_fraction: float = 0.0
+    # Weighted diffusion-loss regularizer term (algorithm.sft_weight *
+    # pretraining MSE on clean fine-tuning latents); 0 when the knob is off.
+    sft_loss: float = 0.0
     grad_norm: float = 0.0
     adv_saturation: float = 0.0
     adv_zero_rate: float = 0.0

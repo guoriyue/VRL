@@ -142,6 +142,10 @@ class DataConfig(ConfigBase):
     dataset_name: str | None = None
     split: str | None = None
     cache_dir: str | None = None
+    # Precomputed clean-latents shard for the GRPO diffusion-loss regularizer
+    # (algorithm.sft_weight > 0): {prompt -> VAE latents} written by
+    # vrl/scripts/diffusion/encode_targets.py. reader: run_online_recipe.
+    sft_latents: str | None = None
     max_train_samples: Any = None
     task_type: str | None = None
     # Key registry: consumed by data/eval tooling, not validated here.
@@ -730,6 +734,21 @@ class RootConfig(ConfigBase):
 
         kind = algo.kind
         rollout = self.rollout
+
+        # sft regularizer needs its data channel: a weight without latents
+        # would be a silent no-op knob (or a first-step crash), so reject at
+        # config load. The reverse (latents without weight) is allowed — the
+        # shard is inert data.
+        if (
+            kind in {"grpo", "dance_grpo"}
+            and float(getattr(algo, "sft_weight", 0.0) or 0.0) > 0
+            and (self.data is None or not self.data.sft_latents)
+        ):
+            raise ValueError(
+                "algorithm.sft_weight > 0 requires data.sft_latents "
+                "(the precomputed clean-latents shard; see "
+                "vrl/scripts/diffusion/encode_targets.py)",
+            )
 
         # grpo / diffusion_nft: SDE type must be sde or cps
         # grpo / diffusion_nft require an sde block; sde.type membership is now

@@ -733,3 +733,25 @@ def test_unknown_reward_component_with_unknown_kwargs_is_accepted() -> None:
     )
     parsed = parse_config(cfg)
     assert parsed.reward.components["custom_reward"] == 1.0
+
+
+# ── algorithm.sft_weight x data.sft_latents (regularizer data channel) ───────
+
+
+def test_sft_weight_without_latents_shard_raises() -> None:
+    """A weight without its data channel would be a silent no-op knob."""
+    cfg = _minimal_grpo_cfg(algorithm={"kind": "grpo", "sft_weight": 0.1})
+    with pytest.raises(ValueError, match=r"data\.sft_latents"):
+        parse_config(cfg)
+
+
+def test_sft_weight_with_latents_shard_parses() -> None:
+    cfg = _minimal_grpo_cfg(algorithm={"kind": "grpo", "sft_weight": 0.1})
+    cfg.data.sft_latents = "data/droid/sft_latents.pt"
+    parse_config(cfg)
+
+
+def test_latents_shard_without_weight_is_inert_and_allowed() -> None:
+    cfg = _minimal_grpo_cfg()
+    cfg.data.sft_latents = "data/droid/sft_latents.pt"
+    parse_config(cfg)

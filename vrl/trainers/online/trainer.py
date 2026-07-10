@@ -10,6 +10,7 @@ import contextlib
 import logging
 import time
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -455,6 +456,7 @@ class OnlineTrainer(Trainer):
         device: torch.device | str = "cuda",
         accelerator: Any | None = None,
         strategy: Strategy | None = None,
+        sft_latents: Mapping[str, Any] | None = None,
     ) -> None:
         self.algorithm = algorithm
         self.collector = collector
@@ -475,6 +477,16 @@ class OnlineTrainer(Trainer):
         if hasattr(algorithm, "precision_correction"):
             algorithm.precision_correction = config.precision_correction
         self.prompts = prompts or []
+        # Clean fine-tuning latents ({prompt -> [C,T,H,W]}) for the GRPO
+        # diffusion-loss regularizer; the recipe loads data.sft_latents and the
+        # config layer already rejected sft_weight>0 without it.
+        self._sft_latents = dict(sft_latents) if sft_latents else None
+        self._sft_weight = float(getattr(algorithm.config, "sft_weight", 0.0) or 0.0)
+        if self._sft_weight > 0 and self._sft_latents is None:
+            raise ValueError(
+                "algorithm.sft_weight > 0 but no sft_latents were provided to "
+                "OnlineTrainer (wire data.sft_latents)",
+            )
         self.device = torch.device(device) if isinstance(device, str) else device
         self.state = TrainState()
         self.accelerator = accelerator
@@ -842,6 +854,7 @@ class OnlineTrainer(Trainer):
             )
             chunk_adv = sample_chunk.advantages.to(self.device)
             for j in train_indices:
+                sft_loss_value = 0.0
                 with autocast_ctx:
                     if not uses_evaluator:
                         with record_function("trainer.loss"):
@@ -896,12 +909,24 @@ class OnlineTrainer(Trainer):
                                     group_ids=chunk_batch.group_ids,
                                 ),
                             )
+                        # Diffusion-loss regularizer: one extra forward per
+                        # CHUNK (first timestep slice only), not per slice.
+                        if (
+                            self._sft_weight > 0
+                            and j == train_indices[0]
+                            and not sample_chunk.is_dummy
+                        ):
+                            with record_function("trainer.sft_regularizer"):
+                                sft_term = self._sft_regularizer_loss(chunk_batch)
+                            sft_loss_value = float(sft_term.detach())
+                            loss = loss + sft_term
                     loss = loss * sample_chunk.loss_weight / loss_scale
                 self._backward(loss)
                 self._clear_algorithm_diagnostics()
                 if not sample_chunk.is_dummy:
                     agg["loss"].append(metrics.loss)
                     agg["policy_loss"].append(metrics.policy_loss)
+                    agg["sft_loss"].append(sft_loss_value)
                     agg["kl_penalty"].append(metrics.kl_penalty)
                     agg["clip_fraction"].append(metrics.clip_fraction)
                     agg["approx_kl"].append(metrics.approx_kl)
@@ -956,6 +981,7 @@ class OnlineTrainer(Trainer):
         metrics = TrainStepMetrics(
             loss=avg("loss"),
             policy_loss=avg("policy_loss"),
+            sft_loss=avg("sft_loss"),
             kl_penalty=avg("kl_penalty"),
             reward_mean=reward_mean,
             reward_std=reward_std,
@@ -1269,6 +1295,7 @@ class OnlineTrainer(Trainer):
                     )
                     chunk_adv = sample_chunk.advantages.to(self.device)
                     for j in train_indices:
+                        sft_loss_value = 0.0
                         with timer.time("evaluate"), autocast_ctx:
                             if not uses_evaluator:
                                 with record_function("trainer.loss"):
@@ -1326,6 +1353,17 @@ class OnlineTrainer(Trainer):
                                             group_ids=chunk_batch.group_ids,
                                         ),
                                     )
+                                # Diffusion-loss regularizer: one extra forward
+                                # per CHUNK (first timestep slice only).
+                                if (
+                                    self._sft_weight > 0
+                                    and j == train_indices[0]
+                                    and not sample_chunk.is_dummy
+                                ):
+                                    with record_function("trainer.sft_regularizer"):
+                                        sft_term = self._sft_regularizer_loss(chunk_batch)
+                                    sft_loss_value = float(sft_term.detach())
+                                    loss = loss + sft_term
                             # Average across rollout micro-batches inside this
                             # optimizer update; timestep accumulation follows
                             # Flow-GRPO's per-denoise-step surrogate structure.
@@ -1339,6 +1377,7 @@ class OnlineTrainer(Trainer):
                         if not sample_chunk.is_dummy:
                             agg_metrics["loss"].append(metrics.loss)
                             agg_metrics["policy_loss"].append(metrics.policy_loss)
+                            agg_metrics["sft_loss"].append(sft_loss_value)
                             agg_metrics["kl_penalty"].append(metrics.kl_penalty)
                             agg_metrics["clip_fraction"].append(metrics.clip_fraction)
                             agg_metrics["approx_kl"].append(metrics.approx_kl)
@@ -1408,6 +1447,7 @@ class OnlineTrainer(Trainer):
         metrics = TrainStepMetrics(
             loss=avg("loss"),
             policy_loss=avg("policy_loss"),
+            sft_loss=avg("sft_loss"),
             kl_penalty=avg("kl_penalty"),
             reward_mean=reward_mean,
             reward_std=reward_std,
@@ -1490,6 +1530,78 @@ class OnlineTrainer(Trainer):
         for attr in ("_last_policy_loss_tensor", "_last_kl_term_tensor"):
             if hasattr(self.algorithm, attr):
                 setattr(self.algorithm, attr, None)
+
+    def _sft_regularizer_loss(self, chunk_batch: Any) -> torch.Tensor:
+        """Weighted diffusion pretraining loss on clean fine-tuning latents.
+
+        The Cosmos-Predict2.5 paper's anti-reward-hacking regularizer
+        (§4.2.2): noise the CLEAN target latents of this chunk's prompts at a
+        random step of the replay schedule and penalize the policy's
+        prediction error against the family's pretraining target. Everything
+        family-specific is reused, not re-derived: the noising runs through
+        the evaluator's own scheduler (``diffusion_pretraining_pair``), and
+        the forward through ``model.replay_forward_with_latents`` — the exact
+        conditioning + timestep the log-prob replay uses, so no second
+        sigma-domain conversion path exists (the EDM-domain trap).
+        """
+
+        import torch.nn.functional as F
+
+        from vrl.math.diffusion.flow_matching import diffusion_pretraining_pair
+        from vrl.trajectory import TrajectoryResolver
+
+        assert self._sft_latents is not None  # ctor validated
+        prompts = chunk_batch.prompts
+        if not prompts:
+            raise ValueError(
+                "the sft regularizer needs batch.prompts to key the clean "
+                "latents; this collector did not attach them",
+            )
+        missing = sorted({p for p in prompts if p not in self._sft_latents})
+        if missing:
+            raise ValueError(
+                f"data.sft_latents is missing {len(missing)} of this batch's "
+                f"prompts (first: {missing[0]!r}); re-encode the shard over "
+                "the full training manifest",
+            )
+        scheduler = getattr(self.evaluator, "scheduler", None)
+        if scheduler is None:
+            raise ValueError(
+                "algorithm.sft_weight > 0 needs the diffusion SDE evaluator "
+                "(its scheduler owns the noising domain); this evaluator has "
+                "no scheduler",
+            )
+
+        observations = chunk_batch.observations
+        x0 = torch.stack([self._sft_latents[p] for p in prompts]).to(
+            device=self.device,
+            dtype=observations.dtype if hasattr(observations, "dtype") else None,
+        )
+        expected_shape = tuple(observations.shape[0:1]) + tuple(observations.shape[2:])
+        if tuple(x0.shape) != expected_shape:
+            raise ValueError(
+                f"sft latents shape {tuple(x0.shape)} does not match the "
+                f"rollout latent shape {expected_shape}; encode the targets "
+                "at the training sampling geometry",
+            )
+
+        timesteps = TrajectoryResolver.from_batch(chunk_batch).tensor_value(
+            "denoise",
+            "timesteps",
+        )
+        num_steps = timesteps.shape[1] if timesteps.ndim > 1 else timesteps.shape[0]
+        step_idx = int(torch.randint(0, int(num_steps), (1,)).item())
+        t = (
+            timesteps[:, step_idx]
+            if timesteps.ndim > 1
+            else timesteps[step_idx].expand(x0.shape[0])
+        ).to(x0.device)
+
+        noise = torch.randn_like(x0)
+        noisy, target = diffusion_pretraining_pair(scheduler, x0, noise, t)
+        values = self.model.replay_forward_with_latents(chunk_batch, step_idx, noisy)
+        model_pred = values["noise_pred"]
+        return self._sft_weight * F.mse_loss(model_pred.float(), target.float())
 
     # ------------------------------------------------------------------
     # State dict

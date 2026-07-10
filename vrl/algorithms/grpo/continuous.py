@@ -28,6 +28,14 @@ class GRPOConfig:
     adv_clip_max: float = 5.0
     global_std: bool = False
     flow_kl_use_dt: bool = False
+    # Diffusion-loss regularizer weight (Cosmos-Predict2.5 paper 4.2.2's
+    # anti-reward-hacking term): adds sft_weight * MSE(model_pred,
+    # pretraining_target) on CLEAN fine-tuning latents (data.sft_latents,
+    # produced by vrl/scripts/diffusion/encode_targets.py). The term is
+    # computed by the trainer (it needs a model forward, which algorithm
+    # losses never do); this knob rides the algorithm config so recipes tune
+    # it next to kl_coef.
+    sft_weight: float = 0.0
 
 
 class GRPO(Algorithm):
