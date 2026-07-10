@@ -18,7 +18,11 @@ import torch.nn.functional as F
 from torch import nn
 
 from vrl.generation.diffusion.layout import VideoGenerationRequest
-from vrl.models.diffusion import DiffusionModelBase, DiffusionSamplingStateBase, ReplayRolloutStubs
+from vrl.models.diffusion import (
+    DiffusionModelBase,
+    DiffusionSamplingStateBase,
+    ReplayRolloutStubs,
+)
 from vrl.models.diffusion.common import (
     ChunkedLatentDecoder,
     LatentDecodeSpec,
