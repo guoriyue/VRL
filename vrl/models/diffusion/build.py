@@ -71,6 +71,14 @@ def build_diffusion_runtime_bundle(
 
     model = model_cls.from_spec(spec)
 
+    # Quantization/knob ordering is path-dependent, both directions forced:
+    # - LoRA path: PEFT only wraps plain nn.Linear, so LoRA must attach BEFORE
+    #   the fp8 swap (a 17B LoRA+fp8 rollout therefore still needs the bf16
+    #   weights resident once; PEFT-aware quantized linears would lift that).
+    # - Full path: apply_full_finetune owns the .to(device) move, so the swap
+    #   must run BEFORE it — quantize on CPU, move the halved weights (a 17B
+    #   bf16 transformer never fits a 32GB card, its fp8 form does). Rollout
+    #   workers never backprop, so requires_grad on swapped modules is inert.
     if spec.use_lora:
         model.apply_lora(spec)
         lora_config = spec.lora
@@ -80,10 +88,10 @@ def build_diffusion_runtime_bundle(
                 lora_config["rank"],
                 lora_config["alpha"],
             )
+        apply_rollout_quantization(model, spec)
     else:
+        apply_rollout_quantization(model, spec)
         model.apply_full_finetune()
-
-    apply_rollout_quantization(model, spec)
 
     compile_cfg = spec.torch_compile or {}
     if compile_cfg.get("enable"):
