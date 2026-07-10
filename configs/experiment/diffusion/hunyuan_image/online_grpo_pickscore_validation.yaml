@@ -21,10 +21,6 @@ actor:
     lr: 3.0e-4
   gradient_accumulation_steps: 4
 
-algorithm:
-  kl_coef: 0.04
-  global_std: true
-
 rollout:
   n_samples_per_prompt: 16
   prompts_per_batch: 8
@@ -32,7 +28,6 @@ rollout:
   samples_per_chunk: 2
 
 trainer:
-  entrypoint: vrl.scripts.diffusion.train:train_diffusion_grpo
   output_dir: outputs/hunyuan_image_pickscore_grpo
   save_freq: 60
   debug:

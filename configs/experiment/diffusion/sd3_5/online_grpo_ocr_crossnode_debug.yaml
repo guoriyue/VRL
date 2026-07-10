@@ -48,12 +48,7 @@ actor:
     lr: 3.0e-4
   gradient_accumulation_steps: 1
 
-algorithm:
-  kl_coef: 0.04
-  global_std: true
-
 trainer:
-  entrypoint: vrl.scripts.diffusion.train:train_diffusion_grpo
   output_dir: outputs/sd3_5_ocr_grpo_crossnode_debug
   total_epochs: 3
   save_freq: 9999    # no checkpoints during debug runs

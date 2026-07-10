@@ -14,3 +14,8 @@ rollout:
   # the trajectory so the trust-region KL can be computed at replay. Without it
   # the loss fails fast on a missing old_prev_sample_mean.
   return_prev_sample_mean: true
+
+trainer:
+  # Flow-DPPO trains through the family-agnostic GRPO recipe; the algorithm
+  # difference lives in /base/algorithm/flow_dppo, not in a custom entrypoint.
+  entrypoint: vrl.scripts.diffusion.train:train_diffusion_grpo

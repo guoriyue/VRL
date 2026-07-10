@@ -22,6 +22,9 @@ actor:
 
 algorithm:
   kl_coef: 0.004
+  # Predates the recipe-level global_std default: this run's numbers were taken
+  # with per-prompt std, so keep it explicit instead of inheriting true.
+  global_std: false
 
 rollout:
   n_samples_per_prompt: 8
@@ -31,6 +34,5 @@ rollout:
     type: flow_grpo
 
 trainer:
-  entrypoint: vrl.scripts.diffusion.train:train_diffusion_grpo
   output_dir: outputs/anima_preview3_safe_grpo
   save_freq: 100

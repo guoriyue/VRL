@@ -18,10 +18,6 @@ actor:
   # Flow-GRPO SD3 OCR 1GPU parity: 8 batches/epoch, accum=8//2 → 2 updates/epoch.
   gradient_accumulation_steps: 4
 
-algorithm:
-  kl_coef: 0.04
-  global_std: true
-
 rollout:
   # GPM active samples at n/sbs=8 still show ~20% SM occupancy; VAE tiling is on.
   n_samples_per_prompt: 16
@@ -29,7 +25,6 @@ rollout:
   samples_per_chunk: 16
 
 trainer:
-  entrypoint: vrl.scripts.diffusion.train:train_diffusion_grpo
   output_dir: outputs/sd3_5_ocr_grpo
   save_freq: 60
   debug:

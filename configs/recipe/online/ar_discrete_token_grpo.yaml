@@ -7,3 +7,8 @@ defaults:
   - /base/rollout/orchestration/strict
   - /base/trainer
 
+
+trainer:
+  # All AR families dispatch to the shared AR GRPO recipe; the family
+  # difference lives in the registry entry, not in a custom entrypoint.
+  entrypoint: vrl.scripts.ar.train:train_ar_grpo

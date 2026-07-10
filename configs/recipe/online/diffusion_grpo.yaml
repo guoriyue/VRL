@@ -13,3 +13,8 @@ algorithm:
   # diffusion GRPO config inherits it (and a new one can't silently get the AR
   # default). Experiment configs may still override (e.g. cosmos/wan use 1e-3).
   clip_ratio: 1.0e-4
+
+trainer:
+  # Generic diffusion GRPO dispatch; family recipes (wan, cosmos) override
+  # with their custom entrypoints.
+  entrypoint: vrl.scripts.diffusion.train:train_diffusion_grpo

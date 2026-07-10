@@ -43,7 +43,6 @@ rollout:
     type: flow_grpo
 
 trainer:
-  entrypoint: vrl.scripts.diffusion.train:train_diffusion_grpo
   output_dir: outputs/echo_kling_video_reward
   save_freq: 20
 

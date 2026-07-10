@@ -43,7 +43,7 @@
 #
 # Run (single 32GB): PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 defaults:
-  - /recipe/online/diffusion_grpo
+  - /recipe/online/cosmos_predict2_grpo
   - /model/diffusion/cosmos/predict2_2b
   - /sampling/video/480p_33f          # 832x480 bucket; num_frames overridden to native 93 below
   - /sampling/denoise/35_step_cfg_7   # keeps cfg 7.0; num_steps overridden to 10 below
@@ -97,9 +97,6 @@ actor:
   ema:
     enable: false                     # validation: no averaging lag on top of the raw policy
 
-algorithm:
-  clip_ratio: 1.0e-3
-
 cosmos:
   reference_mode: per_sample
 
@@ -113,7 +110,6 @@ rollout:
                                       # driver-resident) AND at 2 (train backward, 29.9GiB) — the
                                       # base recipe's "keep 1 for memory" holds for the full loop
                                       # (P1's 1.4x sbs evidence measured the gen phase only)
-  sde: { type: cps }
   # false + NO per-row manifest seeds (2026-07-07): a fixed seed makes every
   # chunk share the initial latent (the seed IS the same-latent mechanism; the
   # flag only guards the seedless case), so the group's only diversity was SDE
@@ -137,7 +133,6 @@ distributed:
     pipelined: true
 
 trainer:
-  entrypoint: vrl.scripts.diffusion.cosmos.train:train_cosmos_predict2_grpo
   output_dir: outputs/cosmos_pred2_droid_overfit_validation
   total_epochs: 40
   save_freq: 20

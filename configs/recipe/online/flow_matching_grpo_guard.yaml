@@ -18,3 +18,8 @@ rollout:
   # Required for GRPO-Guard: store each denoise step's rollout proposal mean so
   # the ratio-mean-bias / step-scale terms can be computed at replay.
   return_prev_sample_mean: true
+
+trainer:
+  # GRPO-Guard trains through the family-agnostic GRPO recipe; the algorithm
+  # difference lives in /base/algorithm/grpo_guard, not in a custom entrypoint.
+  entrypoint: vrl.scripts.diffusion.train:train_diffusion_grpo

@@ -3,7 +3,7 @@
 # Prompts curated from VideoPhy's public benchmark (344 unique physics
 # interaction captions; see configs/dataset/videophy.yaml).
 defaults:
-  - /recipe/online/diffusion_grpo
+  - /recipe/online/wan_2_1_grpo
   - /model/diffusion/wan_2_1/1_3b
   - /sampling/video/240p_33f
   - /sampling/denoise/20_step_cfg_4_5
@@ -27,18 +27,14 @@ model:
     mode: default
 
 rollout:
-  n_samples_per_prompt: 8
   prompts_per_batch: 1
   samples_per_chunk: 8   # sbs=4 GPM still leaves SM occupancy at ~18%; keep one prompt per reward request.
-  # Wan rollout artifacts should use Wan's native diffusers scheduler.
   # SDE knobs below are still used to score GRPO transition logprobs.
-  denoise_mode: native
   noise_level: 0.7
   sde:
     type: cps
 
 trainer:
-  entrypoint: vrl.scripts.diffusion.wan_2_1.train:train_wan_2_1_grpo
   output_dir: outputs/wan_1_3b_physics
   save_freq: 20
 

@@ -13,3 +13,16 @@ algorithm:
   # 0.2 in /base/algorithm/grpo. Set at the family boundary so every diffusion
   # GRPO config inherits it (and a new one can't silently get the AR default).
   clip_ratio: 1.0e-4
+  # flow_grpo geneval recipe: KL-as-loss against the adapter-off reference and
+  # global-batch advantage std. Both were restated verbatim by nearly every
+  # composer (13x / 14x of 16), so they live here as the diffusion-GRPO
+  # defaults; experiments that want a different KL weight (sd3_5 pickscore
+  # 0.01, anima 0.004) or per-prompt std (anima) override explicitly.
+  kl_coef: 0.04
+  global_std: true
+
+trainer:
+  # Every composer dispatches to the family-agnostic GRPO recipe (the per-model
+  # train.py forwarders were folded in the thin-seam sprint); families with a
+  # custom recipe (wan, cosmos) compose a different recipe that overrides this.
+  entrypoint: vrl.scripts.diffusion.train:train_diffusion_grpo

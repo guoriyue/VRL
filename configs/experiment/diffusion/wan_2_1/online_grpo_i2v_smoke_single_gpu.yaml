@@ -8,7 +8,7 @@
 #   CUDA_VISIBLE_DEVICES=0 vrl-train \
 #     --config experiment/diffusion/wan_2_1/online_grpo_i2v_smoke_single_gpu
 defaults:
-  - /recipe/online/diffusion_grpo
+  - /recipe/online/wan_2_1_i2v_grpo
   - /model/diffusion/wan_2_1/i2v_14b
   - /sampling/video/480p_33f
   - /sampling/denoise/10_step_cfg_4_5
@@ -24,27 +24,16 @@ model:
     enable: false
 
 actor:
-  optim:
-    lr: 5.0e-5
   ppo_epochs: 1
   gradient_accumulation_steps: 1
   gradient_checkpointing: true
 
-algorithm:
-  kl_coef: 0.004
-
 rollout:
-  n_samples_per_prompt: 2
-  prompts_per_batch: 1
   samples_per_chunk: 1
-  denoise_mode: native
-  noise_level: 0.7
   sde:
-    type: cps
     window_range: [0, 10]
 
 trainer:
-  entrypoint: vrl.scripts.diffusion.wan_2_1.train:train_wan_2_1_i2v_grpo
   output_dir: outputs/wan_i2v_14b_kling_smoke_single_gpu
   total_epochs: 1
   save_freq: 9999

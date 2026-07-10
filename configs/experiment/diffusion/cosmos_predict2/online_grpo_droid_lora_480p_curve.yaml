@@ -30,7 +30,7 @@
 #
 # Run (single 32GB): PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 defaults:
-  - /recipe/online/diffusion_grpo
+  - /recipe/online/cosmos_predict2_grpo
   - /model/diffusion/cosmos/predict2_2b
   - /sampling/video/480p_33f          # 832x480 bucket; num_frames overridden to native 93
   - /sampling/denoise/35_step_cfg_7   # cfg 7.0; num_steps overridden to 10
@@ -68,9 +68,6 @@ actor:
   ppo_epochs: 2
   timestep_fraction: 0.5
 
-algorithm:
-  clip_ratio: 1.0e-3
-
 cosmos:
   reference_mode: per_sample
 
@@ -78,7 +75,6 @@ rollout:
   n_samples_per_prompt: 16            # 16 rollouts/update (per_sample mode requires prompts_per_batch=1)
   prompts_per_batch: 1
   samples_per_chunk: 1                # measured memory floor at 480p_93f — see header
-  sde: { type: cps }
   trajectory_storage:
     device: cpu                       # 93f trajectories on the GPU wire OOM the collect handoff
 
@@ -90,7 +86,6 @@ distributed:
     pipelined: true
 
 trainer:
-  entrypoint: vrl.scripts.diffusion.cosmos.train:train_cosmos_predict2_grpo
   output_dir: outputs/cosmos_pred2_droid_lora_480p_curve
   total_epochs: 200
   save_freq: 10                       # resumable via trainer.resume_from after a crash/preemption

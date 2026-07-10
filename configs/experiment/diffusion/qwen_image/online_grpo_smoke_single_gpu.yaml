@@ -31,10 +31,6 @@ actor:
   gradient_accumulation_steps: 1
   gradient_checkpointing: true
 
-algorithm:
-  kl_coef: 0.04
-  global_std: true
-
 rollout:
   n_samples_per_prompt: 2
   prompts_per_batch: 2
@@ -45,7 +41,6 @@ rollout:
     window_range: [0, 4]
 
 trainer:
-  entrypoint: vrl.scripts.diffusion.train:train_diffusion_grpo
   output_dir: outputs/qwen_image_ocr_grpo_smoke_single_gpu
   total_epochs: 1
   save_freq: 9999

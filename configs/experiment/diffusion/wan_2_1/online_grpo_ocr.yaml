@@ -1,6 +1,6 @@
 # Wan 2.1 1.3B + OCR GRPO (flow_grpo general_ocr_wan2_1 parity)
 defaults:
-  - /recipe/online/diffusion_grpo
+  - /recipe/online/wan_2_1_grpo
   - /model/diffusion/wan_2_1/1_3b
   - /sampling/video/240p_33f
   - /sampling/denoise/20_step_cfg_4_5
@@ -12,7 +12,6 @@ actor:
     lr: 1.0e-4
 
 rollout:
-  n_samples_per_prompt: 8
   prompts_per_batch: 4
   # Stream the 4 video prompt-groups one at a time (derives
   # gradient_accumulation_steps=4) so host RAM holds ~1 group's heavy video
@@ -22,10 +21,8 @@ rollout:
   # Fail fast if one streamed group already uses >90% of host RAM (0.0 disables).
   host_memory_budget_fraction: 0.9
   samples_per_chunk: 8   # GPM: sbs=4 leaves SM occupancy at ~18%; next safe T2V scale.
-  denoise_mode: native
 
 trainer:
-  entrypoint: vrl.scripts.diffusion.wan_2_1.train:train_wan_2_1_grpo
   output_dir: outputs/wan_1_3b_ocr_grpo
   debug:
     first_step: true

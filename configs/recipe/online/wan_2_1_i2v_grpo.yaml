@@ -1,0 +1,27 @@
+# Wan 2.1 I2V (14B) family GRPO recipe: family dispatch + the tuning both I2V
+# experiments share verbatim. ppo_epochs deliberately NOT set here — see
+# SPRINT_config_correctness_audit §3: ppo_epochs=1 keeps the trust-region clip
+# identically zero, so it must stay a visible per-experiment choice, never a
+# recipe default.
+defaults:
+  - /recipe/online/diffusion_grpo
+
+trainer:
+  entrypoint: vrl.scripts.diffusion.wan_2_1.train:train_wan_2_1_i2v_grpo
+
+actor:
+  optim:
+    # 14B I2V LoRA rate shared by both I2V runs (between T2V video's 1e-5 and
+    # T2V ocr's 1e-4).
+    lr: 5.0e-5
+
+algorithm:
+  kl_coef: 0.004
+
+rollout:
+  n_samples_per_prompt: 2
+  prompts_per_batch: 1
+  denoise_mode: native
+  noise_level: 0.7
+  sde:
+    type: cps

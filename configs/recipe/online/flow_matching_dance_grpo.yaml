@@ -18,3 +18,8 @@ actor:
   # DanceGRPO's defining technique: resample which denoise steps get gradient
   # each update instead of the fixed strided subset.
   timestep_selection: random
+
+trainer:
+  # DanceGRPO trains through the family-agnostic GRPO recipe; the algorithm
+  # difference lives in /base/algorithm/dance_grpo, not in a custom entrypoint.
+  entrypoint: vrl.scripts.diffusion.train:train_diffusion_grpo
