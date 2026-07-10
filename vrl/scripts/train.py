@@ -1,8 +1,9 @@
 """Unified YAML-driven training entry point.
 
-The experiment name and implementation entrypoint belong in
-``configs/experiment/**/*.yaml``. This module is only the CLI/import layer: it
-loads one YAML config, imports ``trainer.entrypoint``, then runs it.
+The experiment name and implementation entrypoint belong in the bundled
+``vrl/config/presets/experiment/**/*.yaml`` files. This module is only the
+CLI/import layer: it loads one YAML config, imports ``trainer.entrypoint``, then
+runs it.
 """
 
 from __future__ import annotations
@@ -60,7 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--config",
         required=True,
-        help="YAML config name under configs/ or an absolute path.",
+        help="Bundled config name or absolute YAML path.",
     )
     parser.add_argument(
         "overrides",

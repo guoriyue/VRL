@@ -2,16 +2,72 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from importlib.resources import files
+from importlib.resources.abc import Traversable
+from pathlib import Path, PurePosixPath
+from typing import TypeAlias
 
 from omegaconf import DictConfig, ListConfig, OmegaConf
 
-CONFIGS_ROOT = Path(__file__).resolve().parents[2] / "configs"
+ConfigSource: TypeAlias = Path | Traversable
+
+_BUNDLED_CONFIGS = files("vrl.config.presets")
 
 _SELF_ = "_self_"
 
 
-def _resolve_default(entry: str | dict, root: Path) -> Path:
+def _normalize_config_name(path: str | Path) -> str:
+    text = str(path).strip().replace("\\", "/").lstrip("/")
+    if not text.endswith((".yaml", ".yml")):
+        text = f"{text}.yaml"
+    parts = PurePosixPath(text).parts
+    if not parts or any(part in ("", ".", "..") for part in parts):
+        raise ValueError(f"invalid bundled config name: {path!r}")
+    return PurePosixPath(*parts).as_posix()
+
+
+def _join_config(root: ConfigSource, logical_name: str) -> ConfigSource:
+    target = root
+    for part in PurePosixPath(logical_name).parts:
+        target = target.joinpath(part)
+    return target
+
+
+def bundled_config_resource(path: str | Path) -> Traversable:
+    """Return one bundled config resource by its logical name."""
+
+    return _join_config(_BUNDLED_CONFIGS, _normalize_config_name(path))
+
+
+def list_bundled_configs(prefix: str = "") -> tuple[str, ...]:
+    """List bundled YAML configs below an optional logical-name prefix."""
+
+    prefix_parts = PurePosixPath(prefix.strip().strip("/")).parts if prefix.strip("/") else ()
+    if any(part in ("", ".", "..") for part in prefix_parts):
+        raise ValueError(f"invalid bundled config prefix: {prefix!r}")
+    start = (
+        _join_config(_BUNDLED_CONFIGS, PurePosixPath(*prefix_parts).as_posix())
+        if prefix_parts
+        else _BUNDLED_CONFIGS
+    )
+    if not start.is_dir():
+        return ()
+
+    names: list[str] = []
+
+    def visit(node: Traversable, parts: tuple[str, ...]) -> None:
+        for child in sorted(node.iterdir(), key=lambda item: item.name):
+            child_parts = (*parts, child.name)
+            if child.is_dir():
+                visit(child, child_parts)
+            elif child.name.endswith((".yaml", ".yml")):
+                names.append(PurePosixPath(*child_parts).as_posix())
+
+    visit(start, prefix_parts)
+    return tuple(names)
+
+
+def _resolve_default(entry: str | dict, root: ConfigSource) -> ConfigSource:
     """Resolve a ``defaults:`` entry to a YAML path under ``root``."""
 
     if isinstance(entry, dict):
@@ -19,10 +75,7 @@ def _resolve_default(entry: str | dict, root: Path) -> Path:
             raise ValueError(f"defaults dict must have exactly one key: {entry}")
         key, value = next(iter(entry.items()))
         entry = f"{key}/{value}"
-    text = entry.lstrip("/")
-    if not text.endswith((".yaml", ".yml")):
-        text = f"{text}.yaml"
-    return root / text
+    return _join_config(root, _normalize_config_name(entry))
 
 
 def _default_group(entry: str | dict) -> str | None:
@@ -69,22 +122,23 @@ def _split_defaults_overrides(overrides: list[str] | None) -> tuple[dict[str, st
 
 
 def _load_one(
-    path: Path,
-    root: Path,
-    _seen: set[Path] | None = None,
+    path: ConfigSource,
+    root: ConfigSource,
+    _seen: set[str] | None = None,
     default_overrides: dict[str, str] | None = None,
 ) -> DictConfig:
     """Load a single YAML file and recursively merge its ``defaults:`` list."""
 
-    path = path.resolve()
     default_overrides = default_overrides or {}
     if _seen is None:
         _seen = set()
-    if path in _seen:
+    source_key = str(path.resolve()) if isinstance(path, Path) else str(path)
+    if source_key in _seen:
         raise RuntimeError(f"Cyclic defaults: {path}")
-    _seen = _seen | {path}
+    _seen = _seen | {source_key}
 
-    raw = OmegaConf.load(path)
+    with path.open("r", encoding="utf-8") as stream:
+        raw = OmegaConf.load(stream)
     if not isinstance(raw, DictConfig):
         raise TypeError(f"{path}: top-level must be a mapping")
 
@@ -123,18 +177,17 @@ def load_config(
 ) -> DictConfig:
     """Load a YAML config with defaults overlay and dotlist overrides."""
 
-    root = (root or CONFIGS_ROOT).resolve()
+    config_root: ConfigSource = root.resolve() if root is not None else _BUNDLED_CONFIGS
 
     config_path = Path(path)
-    if not config_path.is_absolute() and not config_path.exists():
-        rel = path if isinstance(path, str) else str(path)
-        rel = rel.lstrip("/")
-        if not rel.endswith((".yaml", ".yml")):
-            rel = f"{rel}.yaml"
-        config_path = root / rel
+    source: ConfigSource
+    if config_path.is_absolute():
+        source = config_path.resolve()
+    else:
+        source = _join_config(config_root, _normalize_config_name(path))
 
     default_overrides, value_overrides = _split_defaults_overrides(overrides)
-    cfg = _load_one(config_path, root, default_overrides=default_overrides)
+    cfg = _load_one(source, config_root, default_overrides=default_overrides)
 
     if value_overrides:
         cfg = OmegaConf.merge(cfg, OmegaConf.from_dotlist(value_overrides))
@@ -143,7 +196,7 @@ def load_config(
     OmegaConf.resolve(cfg)
 
     # Hard-required keys are declared as ``???`` in YAML (OmegaConf's mandatory
-    # marker, e.g. trainer.entrypoint in configs/base/trainer.yaml). Enforce
+    # marker, e.g. trainer.entrypoint in the bundled base/trainer.yaml). Enforce
     # them here so every entrypoint fails at load time with the full list,
     # instead of one MissingMandatoryValue at first access deep into a run.
     missing = sorted(OmegaConf.missing_keys(cfg))
@@ -156,4 +209,4 @@ def load_config(
     return cfg
 
 
-__all__ = ["CONFIGS_ROOT", "load_config"]
+__all__ = ["bundled_config_resource", "list_bundled_configs", "load_config"]

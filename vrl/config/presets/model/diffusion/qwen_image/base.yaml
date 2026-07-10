@@ -1,0 +1,31 @@
+# Qwen-Image MMDiT (~20B) — checkpoint, LoRA, compile, memory.
+# ~20B → LoRA-only first; sampling shape/denoise defaults live under sampling/.
+model:
+  family: qwen_image
+  executor:
+    max_sequence_length: 1024
+  path: Qwen/Qwen-Image
+
+  memory:
+    # Video VAE decode is memory-heavy; tile + slice per-image at scale.
+    vae_decode:
+      tiling: true
+      slicing: true
+
+  use_lora: true
+  lora:
+    rank: 16
+    alpha: 32
+    target_modules:
+      - to_k
+      - to_q
+      - to_v
+      - to_out.0
+      - add_k_proj
+      - add_q_proj
+      - add_v_proj
+      - to_add_out
+
+  torch_compile:
+    enable: true
+    mode: default

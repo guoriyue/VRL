@@ -1,0 +1,32 @@
+# SD 3.5 Medium MMDiT — checkpoint, LoRA, compile, and memory policy.
+# Sampling shape and denoise defaults live under sampling/.
+model:
+  family: sd3_5
+  executor:
+    max_sequence_length: 128
+  path: stabilityai/stable-diffusion-3.5-medium
+
+  memory:
+    # Sliced/tiled VAE decode: b16 chunks OOM in the image VAE conv stack
+    # otherwise (scale gate 2026-06-10); slicing decodes per-image.
+    vae_decode:
+      tiling: true
+      slicing: true
+
+  use_lora: true
+  lora:
+    rank: 32
+    alpha: 64
+    target_modules:
+      - to_k
+      - to_q
+      - to_v
+      - to_out.0
+      - add_k_proj
+      - add_q_proj
+      - add_v_proj
+      - to_add_out
+
+  torch_compile:
+    enable: true
+    mode: default

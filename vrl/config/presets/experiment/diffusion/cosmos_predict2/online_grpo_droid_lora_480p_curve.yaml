@@ -1,0 +1,98 @@
+# Cosmos Predict2 2B V2W + GRPO on full DROID targets — the REAL 480P curve run
+# (LoRA, single 32GB card). Gated on the overfit-validation PASS
+# (online_grpo_droid_overfit_validation: eval dino rises >2x paired std within
+# ~30 updates) — do not launch this before that gate fires.
+#
+# Every knob here is either (a) inherited from the validated overfit recipe's
+# memory floor, or (b) restored to real-curve semantics:
+# - LoRA, NOT full-param: full-param 480p training measured OOM on 32GB at
+#   samples_per_chunk 4/2/1 (2026-07-02 validation runs; matches the LoRA
+#   sibling's ~30.2GB trainer-alone peak). Full-param 480p needs multi-GPU FSDP.
+# - num_frames 93 (native; 33f/17f are OOD — 17f was a hidden reward tax in the
+#   Jun-30 flat run: baseline dino 0.42 at 93f vs 0.03-0.08 at 17f).
+# - num_steps 10 with the SDE window [0,10): every step trainable, ~3.5x faster
+#   generation than 35; 10-step output eyeballed coherent (outputs/_overfit_preflight).
+# - memory floor (all three measured on this card): samples_per_chunk 1,
+#   trajectory_storage.device cpu, reward gpu_pool rollout (rollout vacates
+#   before inline dino/RAFT scoring).
+# - eval cadence that can actually be judged (the Jun-30 lesson: a run whose
+#   eval series never materializes cannot be called "moved" or "not moved"):
+#   freq 2, 16 fixed prompts x 4 samples = n=64 per point, fixed seed.
+# - real-curve semantics vs the overfit recipe: full 936-row train manifest,
+#   held-out eval manifest, same_latent off (normal exploration), EMA back on,
+#   motion guard back to 0.2 (static is not net-positive at on-policy dino
+#   ~0.42, unlike the overfit set's floor; keep an eye on r_motion_dynamics
+#   anyway — if it trends toward 0 the collapse hack is back, raise the weight).
+#
+# Judge (project_first_trustworthy_curve discipline): eval r_target_dino_similarity
+# BLOCK test on the fixed eval set, >2 sigma across blocks = signal; do not spin
+# within-noise drift as learning. Resume: trainer.resume_from (save every 10).
+#
+# Run (single 32GB): PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+defaults:
+  - /recipe/online/cosmos_predict2_grpo
+  - /model/diffusion/cosmos/predict2_2b
+  - /sampling/video/480p_33f          # 832x480 bucket; num_frames overridden to native 93
+  - /sampling/denoise/35_step_cfg_7   # cfg 7.0; num_steps overridden to 10
+  - /reward/target_dino_similarity
+  - /reward/motion_dynamics
+  - /dataset/droid_full_target_v2w
+
+model:
+  use_lora: true
+  lora:
+    rank: 32
+    alpha: 32
+    target_modules: [to_q, to_k, to_v, to_out.0]
+  path: checkpoints/cosmos-predict2-2b-480p-16fps-diffusers
+  torch_compile:
+    enable: false                     # incompatible with gradient_checkpointing
+
+sampling:
+  num_frames: 93
+  fps: 16
+  # 15, not 10: at 10 steps generation fragility dominates group variance
+  # (SDE-draw "luck", see the overfit-validation recipe's sampling comment) —
+  # 5 deterministic tail steps past the [0,10) window restore the quality floor.
+  num_steps: 15
+
+actor:
+  optim:
+    lr: 1.0e-4                        # LoRA lr scale
+  gradient_checkpointing: true
+  # Measured: ppo4 x 16 samples x 10 timesteps at 93f = ~4h/epoch (validation
+  # run9's first completed epoch). ppo 2 + half timestep_fraction = ~1h/epoch;
+  # trust region stays engaged (>1) and fractional timestep training is the
+  # flow_grpo norm. Keep in lockstep with the overfit-validation recipe — the
+  # gate must certify the same trainer semantics this run uses.
+  ppo_epochs: 2
+  timestep_fraction: 0.5
+
+cosmos:
+  reference_mode: per_sample
+
+rollout:
+  n_samples_per_prompt: 16            # 16 rollouts/update (per_sample mode requires prompts_per_batch=1)
+  prompts_per_batch: 1
+  samples_per_chunk: 1                # measured memory floor at 480p_93f — see header
+  trajectory_storage:
+    device: cpu                       # 93f trajectories on the GPU wire OOM the collect handoff
+
+distributed:
+  resources:
+    reward:
+      gpu_pool: rollout               # rollout vacates before inline dino/RAFT scoring
+  rollout:
+    pipelined: true
+
+trainer:
+  output_dir: outputs/cosmos_pred2_droid_lora_480p_curve
+  total_epochs: 200
+  save_freq: 10                       # resumable via trainer.resume_from after a crash/preemption
+  debug: { first_step: true }
+  eval: { enabled: true, freq: 2, samples_per_prompt: 4, max_prompts: 16, seed: 20260628 }
+
+reward:
+  components:
+    target_dino_similarity: 1.0
+    motion_dynamics: 0.2

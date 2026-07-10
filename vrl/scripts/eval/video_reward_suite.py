@@ -42,6 +42,7 @@ from typing import Any
 import torch
 from omegaconf import OmegaConf
 
+from vrl.config.loading import load_config
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
 from vrl.trainers.data.prompts import load_prompt_manifest
 
@@ -76,7 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--kling-config",
-        default="configs/reward/kling_video_reward.yaml",
+        default="reward/kling_video_reward",
         help="Reward YAML providing reward.kwargs.kling_video_reward.worker_config.",
     )
     parser.add_argument(
@@ -232,7 +233,7 @@ def _score_kling(
 
 
 def _kling_worker_config(kling_config: str) -> dict[str, Any]:
-    cfg = OmegaConf.load(Path(kling_config).expanduser().resolve())
+    cfg = load_config(kling_config)
     reward_cfg = OmegaConf.select(cfg, "reward.kwargs.kling_video_reward", default={})
     reward_cfg = OmegaConf.to_container(reward_cfg, resolve=False) or {}
     if not isinstance(reward_cfg, dict):

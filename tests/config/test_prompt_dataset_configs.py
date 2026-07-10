@@ -1,6 +1,6 @@
 """Per-group loadability of dataset and reward config building blocks.
 
-Dataset and reward group YAMLs under ``configs/dataset`` / ``configs/reward``
+Dataset and reward group YAMLs under the bundled ``dataset`` / ``reward`` groups
 are independently reusable building blocks: an experiment composes one of each
 via defaults. The whole-experiment load+validate loop in
 ``test_load_all_experiments.py::test_all_experiments_load_and_validate`` only
@@ -12,20 +12,22 @@ literal YAML values (which ``_validate_data`` does not validate anyway).
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 from omegaconf import OmegaConf
 
+from vrl.config.loading import bundled_config_resource, list_bundled_configs
 from vrl.config.schema import DataConfig
 from vrl.rewards.functions.registry import _register_builtins, get_reward
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-CONFIGS_ROOT = REPO_ROOT / "configs"
 
 # Dataset groups whose independent loadability we pin. Each is a reusable
 # building block consumed by one or more experiment YAMLs.
 DATASET_GROUPS = ("ocr", "geneval", "pickscore_sfw", "videophy_i2v", "pickapic_v2")
+
+
+def _load_bundled_raw(name: str):
+    resource = bundled_config_resource(name)
+    with resource.open("r", encoding="utf-8") as stream:
+        return OmegaConf.load(stream)
 
 
 @pytest.mark.parametrize("group", DATASET_GROUPS)
@@ -37,7 +39,7 @@ def test_dataset_group_loads_into_valid_data_config(group: str) -> None:
     the declared shape. No literal-value equality — values are declarations,
     validated structurally by ``test_schema.py`` discriminator tests.
     """
-    raw = OmegaConf.load(CONFIGS_ROOT / "dataset" / f"{group}.yaml")
+    raw = _load_bundled_raw(f"dataset/{group}")
     payload = OmegaConf.to_container(raw.data, resolve=True)
 
     # Constructing the model runs the loader discriminator (Literal field) and
@@ -60,8 +62,8 @@ def test_reward_component_keys_resolve_to_registered_reward_names() -> None:
     prompt reward cannot ship a typo'd component key undetected.
     """
     _register_builtins()  # populate the lazily-filled registry get_reward reads
-    for path in sorted((CONFIGS_ROOT / "reward").glob("*.yaml")):
-        raw = OmegaConf.load(path)
+    for name in list_bundled_configs("reward"):
+        raw = _load_bundled_raw(name)
         reward = raw.get("reward", None)
         if reward is None:
             continue  # non-reward asset (e.g. README placeholder)

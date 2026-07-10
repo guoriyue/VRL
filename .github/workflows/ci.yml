@@ -17,14 +17,34 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  CUDA_VISIBLE_DEVICES: ""
   PYTHONUNBUFFERED: "1"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
 jobs:
-  quality:
-    name: Lint and tests
+  lock:
+    name: Locked dependencies
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8
+        with:
+          version: "0.10.2"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Verify lockfile
+        run: uv lock --check
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - name: Check out repository
@@ -34,21 +54,81 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: pyproject.toml
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[dev,cosmos]"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8
+        with:
+          version: "0.10.2"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sync locked dependencies
+        run: uv sync --locked --only-group lint
 
       - name: Ruff lint
-        run: ruff check .
+        run: uv run --no-sync ruff check .
+
+  config:
+    name: Config contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8
+        with:
+          version: "0.10.2"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sync locked dependencies
+        run: uv sync --locked --group test --extra cosmos
+
+      - name: Validate config contracts
+        run: |
+          uv run --no-sync python -m vrl.config.lint
+          uv run --no-sync pytest tests/config -q
+
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8
+        with:
+          version: "0.10.2"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sync locked dependencies
+        run: |
+          uv sync --locked --group test --extra cosmos
+          uv pip install --python .venv/bin/python -e third_party
 
       # Fast PR/push subset: excludes e2e (real weights) and slow_test (Ray spin-up).
       # GPU-marked tests skip on this CPU runner via tests/conftest.py.
       - name: Unit tests (fast subset)
-        run: pytest -m "not e2e and not slow_test" -q
+        run: uv run --no-sync pytest -m "not e2e and not slow_test" -q
 
   nightly:
     name: Full test suite (nightly)
@@ -60,30 +140,35 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+        with:
+          submodules: recursive
 
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: pyproject.toml
 
-      - name: Install dependencies
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8
+        with:
+          version: "0.10.2"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sync locked dependencies
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[dev,cosmos]"
+          uv sync --locked --group test --extra cosmos
+          uv pip install --python .venv/bin/python -e third_party
 
       # Full suite incl. slow_test (Ray) tests. e2e still opt-in (needs GPU + real
       # weights); gpu/distributed tests skip until dedicated lanes opt into them.
       - name: Unit tests (full)
-        run: pytest -m "not e2e" -q
+        run: uv run --no-sync pytest -m "not e2e" -q
 
   package:
-    name: Build package artifact
+    name: Build and install package artifact
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: quality
-    if: github.event_name != 'pull_request'
 
     steps:
       - name: Check out repository
@@ -93,13 +178,51 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: pyproject.toml
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8
+        with:
+          version: "0.10.2"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
 
       - name: Build package
+        run: uv build
+
+      - name: Rebuild wheel from source distribution
         run: |
-          python -m pip install --upgrade pip build
-          python -m build
+          sdist=$(find dist -maxdepth 1 -name '*.tar.gz' -print -quit)
+          uv build --wheel --out-dir "$RUNNER_TEMP/from-sdist" "$sdist"
+
+      - name: Verify installed wheel outside the repository
+        run: |
+          uv sync --locked
+          wheel=$(find "$RUNNER_TEMP/from-sdist" -maxdepth 1 -name '*.whl' -print -quit)
+          uv pip install --python .venv/bin/python --no-deps \
+            --target "$RUNNER_TEMP/wheel-site" "$wheel"
+          cd "$RUNNER_TEMP"
+          PYTHONPATH="$RUNNER_TEMP/wheel-site" \
+            "$GITHUB_WORKSPACE/.venv/bin/python" - <<'PY'
+          from importlib.metadata import distribution
+          from pathlib import Path
+
+          import vrl
+          from vrl.config.loading import load_config
+
+          install_root = Path("wheel-site").resolve()
+          module_path = Path(vrl.__file__).resolve()
+          assert module_path.is_relative_to(install_root), module_path
+
+          cfg = load_config("experiment/diffusion/sd3_5/online_grpo_ocr")
+          assert cfg.trainer.entrypoint
+
+          scripts = {
+              entry.name: entry.value
+              for entry in distribution("visual-rl").entry_points
+              if entry.group == "console_scripts"
+          }
+          assert scripts["vrl-train"] == "vrl.scripts.train:main"
+          PY
 
       - name: Upload package artifact
         uses: actions/upload-artifact@v7

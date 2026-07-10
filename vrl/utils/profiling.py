@@ -43,7 +43,7 @@ class TorchProfilerConfig:
     Defaults are a low-overhead short-diagnostic preset: CUDA + CPU ranges, no
     shape/memory/stack/flops recording (those change overhead and tensor
     lifetimes, so they are explicit dotlist overrides for deep dives). See
-    ``configs/profile/torch_profiler.yaml``.
+    ``vrl/config/presets/profile/torch_profiler.yaml``.
     """
 
     enabled: bool = field(default=False)

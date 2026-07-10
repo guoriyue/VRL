@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Visual generation RL infrastructure stack across autoregressive image generation, diffusion, and world models"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "Apache-2.0"}
+license = "Apache-2.0"
 dependencies = [
     "torch>=2.2.0",
     "triton>=3.0.0",
@@ -28,30 +28,34 @@ dependencies = [
     "safetensors>=0.4.0",  # weight loading (cosmos/anima, janus, FSDP save)
 ]
 
-[project.optional-dependencies]
-dev = [
+[dependency-groups]
+lint = [
+    "ruff>=0.4.0",
+]
+test = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "httpx>=0.27.0",
     "asgi-lifespan>=2.1.0",
     "python-Levenshtein>=0.27.0",
-    "ruff>=0.4.0",
 ]
+
+[project.optional-dependencies]
 cosmos = [
-    "diffusers>=0.31.0",
-    "transformers>=4.40.0,<5",
+    "diffusers>=0.37.1,<0.40",
+    "transformers>=5.13.0,<6",
     "accelerate>=0.30.0",
     "sentencepiece>=0.2.0",
     "peft>=0.11.0",          # LoRA adapters for diffusion/AR model families
     "torchvision>=0.17.0",   # diffusers cosmos transformer + preference data transforms
 ]
 # Video reward scoring. Covers Kling VideoReward / Qwen2-VL, VideoScore2 and
-# UnifiedReward-2.0 (Qwen2.5-VL, trust_remote_code, transformers>=4.49).
-# qwen_vl_utils pulls torchvision for its decode path; Kling loads a LoRA via peft;
-# UnifiedReward-2.0 samples frames with opencv. PhyMotion's SMPL+MuJoCo backend is
+# UnifiedReward-2.0 on the repository's Transformers 5.13 runtime. Kling loads
+# a LoRA via peft; the VLM backends use torchvision image transforms; UnifiedReward-2.0
+# samples frames with opencv. PhyMotion's SMPL+MuJoCo backend is
 # external by design (vendored under third_party/) and intentionally absent here.
 reward = [
-    "transformers>=4.49.0,<5",
+    "transformers>=5.13.0,<6",
     "peft>=0.11.0",
     "qwen-vl-utils>=0.0.10",
     "torchvision>=0.17.0",
@@ -83,15 +87,12 @@ pose-gpu = [
 ]
 # OPTIONAL AR-image accelerator (Janus-Pro, NextStep). AR families run in the
 # main env without this via sampling.attention_backend=torch_native; the extra
-# only adds vLLM's internal KV/paged-attention kernels
+# adds vLLM's internal KV/paged-attention kernels
 # (vrl/nn/kernels/attention/vllm_paged.py) and the blockwise-fp8 path
-# (vrl/nn/quantization/fp8.py). The vLLM wheel is ABI-locked to an exact torch,
-# so DO NOT co-install with [cosmos] — it clashes with the rest of the stack's
-# floating torch/torchvision/CUDA wheels (the ARAttentionUnavailable raised at
-# import time is exactly this ABI mismatch). Install it in its own venv, the way
-# the repo already ships vllm-omni at .venvs/vllm-omni.
+# (vrl/nn/quantization/fp8.py). vLLM pins its own Torch ABI. It currently
+# resolves with [cosmos], but a dedicated environment remains the operational
+# default because the accelerator stack is large and tightly pinned.
 ar-vllm = [
-    "torch==2.11.0",
     "vllm>=0.21.0,<0.22",
 ]
 # Fixed video-eval suite extras (vrl/scripts/eval/video_reward_suite.py). VBench
@@ -110,11 +111,26 @@ optim8bit = [
     "bitsandbytes>=0.43.0",
 ]
 
+# uv resolves every extra into one universal lock. These pairs represent real
+# environment boundaries: VBench pins Transformers 4.33, while the model and
+# reward runtimes require Transformers 5.13 and vLLM requires >=4.56; the CPU
+# and GPU ONNX runtimes install the same shared libraries.
+[tool.uv]
+conflicts = [
+    [{ extra = "videoeval" }, { extra = "cosmos" }],
+    [{ extra = "videoeval" }, { extra = "reward" }],
+    [{ extra = "videoeval" }, { extra = "ar-vllm" }],
+    [{ extra = "pose" }, { extra = "pose-gpu" }],
+]
+
 [project.scripts]
 vrl-train = "vrl.scripts.train:main"
 
 [tool.setuptools.packages.find]
 include = ["vrl*"]
+
+[tool.setuptools.package-data]
+"vrl.config.presets" = ["**/*.yaml", "**/*.yml", "**/*.md"]
 
 # ── Ruff ─────────────────────────────────────────────────────────
 [tool.ruff]

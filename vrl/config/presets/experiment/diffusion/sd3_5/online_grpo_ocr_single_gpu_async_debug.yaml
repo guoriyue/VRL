@@ -1,0 +1,82 @@
+# SD 3.5 OCR GRPO - single-GPU continuous rollout debug.
+#
+# This is a tiny orchestration probe, not a throughput profile. It intentionally
+# keeps the trainer replay model and the Ray rollout worker resident on one GPU,
+# so only use it for small shapes that you know fit together.
+#
+# Usage:
+#   CUDA_VISIBLE_DEVICES=0 vrl-train \
+#     --config experiment/diffusion/sd3_5/online_grpo_ocr_single_gpu_async_debug
+defaults:
+  - /recipe/online/flow_matching_grpo
+  - /model/diffusion/sd3_5/medium
+  - /sampling/image/512
+  - /sampling/denoise/10_step_cfg_4_5
+  - /reward/ocr
+  - /dataset/ocr
+  - /base/rollout/orchestration/continuous
+
+precision: bf16
+
+sampling:
+  height: 128
+  width: 128
+  num_steps: 4
+  max_sequence_length: 64
+
+distributed:
+  resources:
+    rollout:
+      # Pin the rollout worker resident on the trainer GPU instead of the normal
+      # single-GPU release-after-collect path. gpu_pool: trainer borrows the
+      # trainer GPU (colocated); memory_fraction makes the worker resident and
+      # hard-caps its GPU share so it cannot starve the trainer on the shared card
+      # (the trainer gets the remaining ~0.45). This is what makes continuous
+      # overlap observable on one GPU, and it is only safe for tiny debug workloads.
+      #
+      # 0.55 (not 0.45): on a 32 GiB card the resident rollout worker must hold the
+      # FULL SD3.5-medium pipeline (transformer + VAE + 3 text encoders, the T5
+      # alone ~4.7 GiB). 0.45 (~14.1 GiB) OOMs on worker load_policy; 0.55
+      # (~17.2 GiB) was verified to run all 3 epochs with the trainer fitting in
+      # the remaining ~14 GiB. Scale this with GPU VRAM if you change cards.
+      gpu_pool: trainer
+      memory_fraction: 0.55
+
+actor:
+  optim:
+    lr: 3.0e-4
+  gradient_accumulation_steps: 1
+  gradient_checkpointing: false
+
+rollout:
+  n_samples_per_prompt: 2
+  prompts_per_batch: 2
+  samples_per_chunk: 1
+  # sampling.num_steps is shrunk to 4 above, but the base diffusion rollout
+  # (base/rollout/diffusion) sets sde.window_range=[0,10] for the
+  # 10-step preset. _parse_sde_window_range validates hi <= num_steps
+  # unconditionally (layout.py), so clamp the window to the 4-step budget —
+  # otherwise generation raises "sde_window_range must satisfy 0 <= lo < hi <=
+  # num_steps".
+  sde:
+    window_range: [0, 4]
+
+trainer:
+  output_dir: outputs/sd3_5_ocr_grpo_single_gpu_async_debug
+  total_epochs: 3
+  save_freq: 9999
+  profile: true
+  debug:
+    first_step: true
+
+  rollout_orchestration:
+    require_separate_gpus: false
+    continuous:
+      max_inflight_groups: 2
+      max_ready_groups: 4
+      max_stale_policy_versions: 1
+      max_ready_bytes_mb: 4096
+
+model:
+  torch_compile:
+    enable: false

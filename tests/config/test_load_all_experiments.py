@@ -18,23 +18,29 @@ from vrl.algorithms.grpo.continuous import GRPOConfig
 from vrl.algorithms.grpo.multisegment import MultiSegmentTokenGRPOConfig
 from vrl.algorithms.grpo.token import TokenGRPOConfig
 from vrl.config.builders import build_algorithm_config, build_configs
-from vrl.config.loading import load_config
+from vrl.config.loading import (
+    bundled_config_resource,
+    list_bundled_configs,
+    load_config,
+)
 from vrl.config.validation import (
     optional_none,
     validate_reward_config,
     validate_training_config,
 )
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-EXPERIMENT_DIR = REPO_ROOT / "configs" / "experiment"
-CONFIGS_ROOT = REPO_ROOT / "configs"
-
 
 def _experiment_names() -> list[str]:
-    return sorted(
-        p.relative_to(EXPERIMENT_DIR).with_suffix("").as_posix()
-        for p in EXPERIMENT_DIR.rglob("*.yaml")
-    )
+    return [
+        name.removeprefix("experiment/").removesuffix(".yaml")
+        for name in list_bundled_configs("experiment")
+    ]
+
+
+def _load_bundled_raw(name: str):
+    resource = bundled_config_resource(name)
+    with resource.open("r", encoding="utf-8") as stream:
+        return OmegaConf.load(stream)
 
 
 def test_load_config_enforces_mandatory_marker(tmp_path: Path) -> None:
@@ -92,15 +98,16 @@ def test_typo_yaml_home_is_rejected() -> None:
 def test_config_groups_are_not_flattened() -> None:
     """Checks config groups are not flattened."""
     flattened = [
-        path
+        name
         for group in ("experiment", "model", "sampling")
-        for path in (CONFIGS_ROOT / group).glob("*.yaml")
+        for name in list_bundled_configs(group)
+        if len(Path(name).parts) == 2
     ]
-    task_configs = list((CONFIGS_ROOT / "task").glob("*.yaml"))
+    task_configs = list_bundled_configs("task")
 
     assert flattened == []
-    assert task_configs == []
-    assert not (CONFIGS_ROOT / "profiling").exists()
+    assert task_configs == ()
+    assert list_bundled_configs("profiling") == ()
 
 
 def test_experiments_are_grouped_by_model_family() -> None:
@@ -124,7 +131,7 @@ def _reward_group_kwargs_keys(group_name: str) -> dict[str, set[str]]:
     test never hand-maintains a parallel allowlist that rots when a reward group
     gains a knob.
     """
-    raw = OmegaConf.load(CONFIGS_ROOT / "reward" / f"{group_name}.yaml")
+    raw = _load_bundled_raw(f"reward/{group_name}")
     kwargs = raw.get("reward", {}).get("kwargs", {}) or {}
     return {comp: set((sub or {}).keys()) for comp, sub in kwargs.items()}
 
@@ -142,9 +149,8 @@ def test_experiments_use_dataset_groups_and_only_override_reward_weights() -> No
     """
     inline_data = []
     inline_reward_violations = []
-    for path in EXPERIMENT_DIR.rglob("*.yaml"):
-        raw = OmegaConf.load(path)
-        rel = path.relative_to(CONFIGS_ROOT).as_posix()
+    for rel in list_bundled_configs("experiment"):
+        raw = _load_bundled_raw(rel)
         if "data" in raw:
             inline_data.append(rel)
 
@@ -177,11 +183,11 @@ def test_experiments_use_dataset_groups_and_only_override_reward_weights() -> No
 def test_reward_configs_are_single_reward_building_blocks() -> None:
     """Checks reward configs are single reward building blocks."""
     offenders = []
-    for path in (CONFIGS_ROOT / "reward").rglob("*.yaml"):
-        raw = OmegaConf.load(path)
+    for name in list_bundled_configs("reward"):
+        raw = _load_bundled_raw(name)
         components = raw.get("reward", {}).get("components", {})
         if len(components) != 1:
-            offenders.append(path.relative_to(CONFIGS_ROOT).as_posix())
+            offenders.append(name)
 
     assert offenders == []
 
@@ -308,7 +314,10 @@ def test_sd35_single_gpu_async_debug_uses_persistent_colocated_rollout() -> None
     """Checks the single-GPU async debug recipe opts into colocated continuous rollout."""
     from vrl.ray.resources import resolve_distributed_resources
 
-    cfg = load_config("experiment/diffusion/sd3_5/online_grpo_ocr_single_gpu_async_debug")
+    cfg = load_config(
+        "experiment/diffusion/sd3_5/online_grpo_ocr_single_gpu_async_debug",
+        overrides=["distributed.resources.visible_devices=[0]"],
+    )
 
     assert cfg.trainer.rollout_orchestration.schedule_mode == "continuous"
     assert cfg.trainer.rollout_orchestration.require_separate_gpus is False

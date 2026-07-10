@@ -64,7 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--config",
         default="experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward",
-        help="Hydra-style config under configs/ or an absolute YAML path.",
+        help="Bundled config name or absolute YAML path.",
     )
     parser.add_argument(
         "--checkpoint",

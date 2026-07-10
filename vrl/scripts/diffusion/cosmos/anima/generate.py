@@ -39,7 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--config",
         default="experiment/diffusion/anima_preview3/online_grpo_aesthetic_nsfw_safety",
-        help="Hydra-style config under configs/ or an absolute path.",
+        help="Bundled config name or absolute YAML path.",
     )
     parser.add_argument(
         "--prompt",

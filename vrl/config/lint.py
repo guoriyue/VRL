@@ -73,13 +73,12 @@ def unregistered_code_paths() -> list[str]:
 def unknown_yaml_keys() -> dict[str, list[str]]:
     """Config sweep: unknown keys per experiment, for every shipped experiment."""
 
-    from vrl.config.loading import load_config
+    from vrl.config.loading import list_bundled_configs, load_config
     from vrl.config.unknown_keys import find_unknown_keys
 
     offenders: dict[str, list[str]] = {}
-    experiment_dir = REPO_ROOT / "configs" / "experiment"
-    for p in sorted(experiment_dir.rglob("*.yaml")):
-        name = p.relative_to(experiment_dir).with_suffix("").as_posix()
+    for logical_name in list_bundled_configs("experiment"):
+        name = logical_name.removeprefix("experiment/").removesuffix(".yaml")
         unknown = find_unknown_keys(load_config(f"experiment/{name}"))
         if unknown:
             offenders[name] = unknown
