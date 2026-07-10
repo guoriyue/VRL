@@ -143,6 +143,16 @@ rbs=1、n=3 时组内只有 3 个样本、每步只有 1 个 prompt——advanta
    配置解析和静态检查，GPU numerics gate 仍未执行。
 3. **reward 模型**:论文 **VideoAlign** vs config `kling_video_reward`——很可能同源(Kling 的
    VideoReward),但**没 100% 确认**。**行动:确认是不是同一个模型。**
+   **→ 已确认同一模型(2026-07-10)**。证据链:① "VideoAlign" 是论文名(arXiv 2501.13918,
+   "Improving Video Generation with Human Feedback",NeurIPS 2025),其发布的 reward 模型叫
+   **VideoReward**(Qwen2-VL-2B-Instruct 底座,输出 VQ/MQ/TA + overall);② 同一个 repo 同时
+   挂在 KwaiVGI(快手视觉生成组)与 KlingTeam(可灵,同一家的品牌名)两个 org 下——GitHub
+   KwaiVGI/VideoAlign == KlingTeam/VideoAlign,HF 权重 KwaiVGI/VideoReward ==
+   KlingTeam/VideoReward;③ 我们的实现本身就注明 "adapted from KwaiVGI/VideoAlign's
+   inference"(vrl/rewards/models/kling_video_reward.py:3),加载的 checkpoint 是
+   `KlingTeam/VideoReward@main`,score_key=overall_reward 对应模型的 overall 维度。
+   **residual caveat**:Cosmos 论文没写它用的 VideoAlign 具体规格——若 NVIDIA 内部用的是
+   未发布的更大变体,无法核实;可核实口径下,我们用的就是该论文公开发布的那一个 reward。
 4. **lr / 微调方式**:论文 3e-5 全参,config 是 1e-4 LoRA(注释解释:全参需多卡)。这是**有意的
    资源妥协**,不是错——有多卡时可切回 3e-5 全参。
 
