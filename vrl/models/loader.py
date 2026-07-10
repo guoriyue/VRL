@@ -120,6 +120,21 @@ def apply_rollout_quantization(model: Any, spec: Any) -> int:
             "transformer has no quantizable attention/MLP linears (check the exclude "
             "list / min_features). It would be a no-op.",
         )
+    syncs_base = getattr(spec, "rollout_weight_sync", True) and not getattr(
+        spec, "use_lora", None,
+    )
+    if not syncs_base:
+        # Base weights will never be synced into this rollout (LoRA syncs
+        # adapters; sync-free contexts sync nothing), so the bf16 masters are
+        # dead weight — drop them BEFORE the device move (a 17B fp8 rollout
+        # halves instead of gaining a cache on top of the master).
+        from vrl.nn.quantization import drop_fp8_masters
+
+        freed = drop_fp8_masters(model)
+        logging.getLogger(__name__).info(
+            "fp8 rollout without base-weight sync: dropped bf16 masters (%.1f GiB freed)",
+            freed / 2**30,
+        )
     logging.getLogger(__name__).info(
         "%s rollout (recipe=%s): quantized %d transformer linears",
         scheme, recipe or "rowwise", len(swapped),

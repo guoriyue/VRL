@@ -135,7 +135,28 @@ class Fp8Linear(QuantizedLinear):
         self.weight_fp8 = (w / scale).to(torch.float8_e4m3fn)
         self.weight_scale = scale
 
+    def drop_master(self) -> int:
+        """Free the bf16 master, keeping only the fp8 cache (+scales).
+
+        Valid whenever weight-sync never loads base weights into this module:
+        LoRA rollouts sync adapters only, and probes/inference sync nothing.
+        A subsequent state-dict load fails loud instead of silently skipping
+        the (gone) master. Returns the bytes freed.
+        """
+        if self.weight is None:
+            return 0
+        freed = self.weight.numel() * self.weight.element_size()
+        self.weight = None
+        return freed
+
     def _load_from_state_dict(self, state_dict, prefix, *args) -> None:
+        if self.weight is None and f"{prefix}weight" in state_dict:
+            raise RuntimeError(
+                "cannot load base weights into a master-free Fp8Linear "
+                f"({prefix.rstrip('.')}): the bf16 master was dropped "
+                "(drop_master). Master-free is for adapter-only/frozen "
+                "rollouts; full-finetune weight-sync must keep the master.",
+            )
         super()._load_from_state_dict(state_dict, prefix, *args)
         # A weight-sync just overwrote `weight`; refresh the fp8 cache from it.
         self._requantize_weight()
@@ -200,6 +221,19 @@ class Fp8Linear(QuantizedLinear):
 
     def extra_repr(self) -> str:
         return f"in={self.in_features}, out={self.out_features}, recipe={self.recipe}, fp8=e4m3"
+
+
+def drop_fp8_masters(root: nn.Module) -> int:
+    """Free every ``Fp8Linear`` bf16 master under ``root``; returns bytes freed.
+
+    See :meth:`Fp8Linear.drop_master` for when this is valid (adapter-only or
+    sync-free rollouts).
+    """
+    return sum(
+        module.drop_master()
+        for module in root.modules()
+        if isinstance(module, Fp8Linear)
+    )
 
 
 def swap_linears_to_fp8(

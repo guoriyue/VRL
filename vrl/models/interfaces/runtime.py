@@ -78,6 +78,14 @@ class RuntimeBuildSpec:
     # ``apply_rollout_quantization``; only ever set alongside a quantized rollout
     # (the precision resolver rejects it otherwise).
     rollout_quantization_recipe: str | None = None
+    # Whether base weights will ever be synced INTO this rollout model. True
+    # for trainer-driven rollouts (full-finetune sync loads base weights;
+    # LoRA sync loads adapters — the quantizer already distinguishes via
+    # use_lora). Sync-free contexts (generation probes, eval-only runs) set
+    # False so fp8 can drop the bf16 masters BEFORE the device move — the
+    # difference between a 17B rollout fitting a 32GB card or not.
+    # Consumed by vrl.models.loader.apply_rollout_quantization.
+    rollout_weight_sync: bool = True
 
     @property
     def use_lora(self) -> bool:

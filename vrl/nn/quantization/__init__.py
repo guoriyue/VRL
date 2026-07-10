@@ -15,13 +15,17 @@ from __future__ import annotations
 from vrl.nn.quantization.base import QuantizedLinear
 from vrl.nn.quantization.fp8 import (
     DEFAULT_EXCLUDE,
+    LM_EXCLUDE,
     Fp8Linear,
+    drop_fp8_masters,
     swap_linears_to_fp8,
     vllm_block_fp8_available,
 )
 
 __all__ = [
     "DEFAULT_EXCLUDE",
+    "LM_EXCLUDE",
+    "drop_fp8_masters",
     "Fp8Linear",
     "QuantizedLinear",
     "swap_linears_to_fp8",
