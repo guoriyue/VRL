@@ -29,7 +29,7 @@ from typing import Any
 import torch
 
 from vrl.rewards.base import decode_artifact_frames
-from vrl.trainers.data.artifacts import default_data_root, resolve_artifact_path
+from vrl.utils.artifacts import default_data_root, resolve_artifact_path
 from vrl.utils.media import align_frame_counts, read_image_as_frames, read_video_frames
 
 # ImageNet statistics DINOv2 was trained with; frames are normalized with these

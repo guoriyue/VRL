@@ -7,6 +7,7 @@ directly; builders consume a ``RuntimeBuildSpec`` and return a ``RuntimeBundle``
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -26,6 +27,35 @@ MODEL_MEMORY_SECTIONS: tuple[str, ...] = ("vae_decode",)
 # Single source of truth for the model_config compile block that the
 # ``RuntimeBuildSpec.torch_compile`` property below consumes.
 TORCH_COMPILE_MODEL_KEY = "torch_compile"
+
+# The trainer and Ray rollout worker load different runtime surfaces: rollout
+# workers own full generation state for sampling/decoding; trainers own only
+# the modules needed to replay recorded trajectory actions. The one fact the
+# runtime actually reads is whether a bundle owns full generation modules,
+# consumed by the colocated-RAM guard (``validate_colocated_replay_memory``)
+# to size host memory.
+LOADS_FULL_GENERATION_MODULES_KEY = "loads_full_generation_modules"
+
+
+def full_generation_bundle_metadata() -> dict[str, Any]:
+    """Return metadata for a runtime bundle that owns full generation modules."""
+
+    return {LOADS_FULL_GENERATION_MODULES_KEY: True}
+
+
+def minimal_replay_bundle_metadata() -> dict[str, Any]:
+    """Return metadata for a trainer bundle that owns only replay modules."""
+
+    return {LOADS_FULL_GENERATION_MODULES_KEY: False}
+
+
+def bundle_loads_full_generation_modules(bundle: Any) -> bool:
+    """Return whether a runtime bundle declares full generation module ownership."""
+
+    metadata = getattr(bundle, "metadata", {}) or {}
+    if not isinstance(metadata, Mapping):
+        return False
+    return bool(metadata.get(LOADS_FULL_GENERATION_MODULES_KEY, False))
 
 
 @dataclass
@@ -109,7 +139,8 @@ class RuntimeBuildSpec:
         ``None`` when ``use_lora`` is off. Casts and the ``init_lora_weights`` /
         ``dropout`` / ``init`` extras are carried from the raw ``model.lora``
         block only when present, preserving per-family presence semantics. AR
-        families layer their own defaults via ``_resolve_lora_block``.
+        families layer their own defaults via
+        ``vrl.models.ar.build.ar_model_config_base``.
         """
         if not self.use_lora:
             return None
@@ -165,8 +196,9 @@ class RuntimeBundle:
     trainable adapter/backbone needed for exact resume.
 
     ``metadata`` may include generic replay/runtime flags used by shared
-    trainer infrastructure. Build these through ``vrl.models.replay_loading`` so
-    family runtimes share one contract:
+    trainer infrastructure. Build these through this module's
+    ``full_generation_bundle_metadata`` / ``minimal_replay_bundle_metadata``
+    so family runtimes share one contract:
 
     - ``loads_full_generation_modules``: true when the bundle owns
       generation-only modules such as prompt encoders, VAE/VQ decoders, or a

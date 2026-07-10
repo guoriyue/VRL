@@ -32,7 +32,7 @@ _INIT_DIRS_BY_DATASET = {
 
 
 def _cmd_init_dirs(args: argparse.Namespace) -> None:
-    from vrl.trainers.data.artifacts import default_data_root, repo_root
+    from vrl.utils.artifacts import default_data_root, repo_root
 
     data_root = args.data_root.expanduser().resolve() if args.data_root else default_data_root()
     created: list[Path] = []

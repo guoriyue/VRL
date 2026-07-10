@@ -11,7 +11,7 @@ from vrl.generation.pipeline import (
     PipelineStagePayload,
     PipelineStageWorkerCore,
 )
-from vrl.ray.dependencies import import_from_path
+from vrl.utils.config import import_from_path
 
 
 class RayPipelineStageWorker:

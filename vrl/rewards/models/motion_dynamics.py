@@ -26,7 +26,7 @@ from typing import Any
 import torch
 
 from vrl.rewards.base import decode_artifact_frames
-from vrl.trainers.data.artifacts import default_data_root
+from vrl.utils.artifacts import default_data_root
 
 
 class MotionDynamicsModel:

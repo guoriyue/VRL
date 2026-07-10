@@ -20,8 +20,9 @@ from typing import Any
 
 from vrl.generation.capabilities import FamilyCapability
 from vrl.models.dtypes import dtype_to_config_string
-from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
-from vrl.models.replay_loading import (
+from vrl.models.interfaces.runtime import (
+    RuntimeBuildSpec,
+    RuntimeBundle,
     full_generation_bundle_metadata,
     minimal_replay_bundle_metadata,
 )
@@ -56,6 +57,38 @@ def extract_ar_runtime_spec(
         ar_task=ar_task,
         model_name_or_path=model_path or default_model_path,
     )
+
+
+def ar_model_config_base(
+    spec: RuntimeBuildSpec,
+    lora_defaults: dict[str, Any],
+) -> dict[str, Any]:
+    """Family-shared model_config head: identity keys + typed LoRA block.
+
+    Merges the carried ``model.lora`` block over the family's LoRA defaults so
+    the yaml only needs the values it overrides. The caller appends its
+    family-specific sampling / checkpoint keys to the returned dict.
+    """
+
+    config: dict[str, Any] = {
+        "model_path": spec.model_name_or_path,
+        "dtype": dtype_to_config_string(spec.dtype),
+        "device": str(spec.device),
+        "use_lora": spec.use_lora,
+    }
+    if spec.use_lora:
+        lora = dict(lora_defaults)
+        lora.update((spec.model_config or {}).get("lora") or {})
+        config.update(
+            {
+                "lora_rank": int(lora["rank"]),
+                "lora_alpha": int(lora["alpha"]),
+                "lora_target_modules": tuple(lora["target_modules"]),
+                "lora_dropout": float(lora["dropout"]),
+                "lora_init": str(lora["init"]),
+            },
+        )
+    return config
 
 
 def build_ar_runtime_bundle(
@@ -100,4 +133,4 @@ def build_ar_runtime_bundle(
     )
 
 
-__all__ = ["build_ar_runtime_bundle", "extract_ar_runtime_spec"]
+__all__ = ["ar_model_config_base", "build_ar_runtime_bundle", "extract_ar_runtime_spec"]

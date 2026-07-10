@@ -18,16 +18,17 @@ from vrl.generation.capabilities import FamilyCapability
 from vrl.models.diffusion.common.vae_decode_memory import (
     apply_generation_memory_policy,
 )
-from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
+from vrl.models.interfaces.runtime import (
+    RuntimeBuildSpec,
+    RuntimeBundle,
+    full_generation_bundle_metadata,
+    minimal_replay_bundle_metadata,
+)
 from vrl.models.loader import (
     apply_rollout_quantization,
     load_diffusers_scheduler,
     load_diffusers_transformer,
     load_flow_match_scheduler,
-)
-from vrl.models.replay_loading import (
-    full_generation_bundle_metadata,
-    minimal_replay_bundle_metadata,
 )
 from vrl.utils.logging import init_logger
 
@@ -95,16 +96,10 @@ def build_diffusion_runtime_bundle(
         model.set_num_steps(num_steps)
     # If None, caller (e.g. DPO trainer) will set scheduler timesteps itself.
 
-    # model_path/family/task_variant/dtype/use_lora are provenance-only: no
-    # runtime consumer reads them (audited 2026-07-02) — they identify what a
-    # bundle was built from when inspecting it. The functional keys are the
-    # full/minimal-generation marker (colocated-RAM guard) and memory_policy.
+    # The functional keys are the full/minimal-generation marker
+    # (colocated-RAM guard) and memory_policy; the rest is provenance.
     metadata: dict[str, object] = {
-        "model_path": spec.model_name_or_path,
-        "family": capability.family,
-        "task_variant": spec.task_variant,
-        "dtype": str(spec.dtype),
-        "use_lora": spec.use_lora,
+        **_provenance_metadata(spec, capability.family),
         **full_generation_bundle_metadata(),
         **apply_generation_memory_policy(
             model,
@@ -196,11 +191,7 @@ def assemble_replay_bundle(
         model.torch_compile_transformer(compile_cfg["mode"])
 
     metadata: dict[str, object] = {
-        "model_path": spec.model_name_or_path,
-        "family": family,
-        "task_variant": spec.task_variant,
-        "dtype": str(spec.dtype),
-        "use_lora": spec.use_lora,
+        **_provenance_metadata(spec, family),
         **minimal_replay_bundle_metadata(),
     }
     if extra_metadata is not None:
@@ -212,6 +203,23 @@ def assemble_replay_bundle(
         raw_handle=None,
         metadata=metadata,
     )
+
+
+def _provenance_metadata(spec: RuntimeBuildSpec, family: str) -> dict[str, object]:
+    """Single construction site for the provenance keys on both bundle kinds.
+
+    model_path/family/task_variant/dtype/use_lora are provenance-only: no
+    runtime consumer reads them (audited 2026-07-02) — they identify what a
+    bundle was built from when inspecting it.
+    """
+
+    return {
+        "model_path": spec.model_name_or_path,
+        "family": family,
+        "task_variant": spec.task_variant,
+        "dtype": str(spec.dtype),
+        "use_lora": spec.use_lora,
+    }
 
 
 # -- registry-descriptor path (families with NO builder functions) -----------
@@ -290,12 +298,21 @@ def build_family_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
 
     entry = _family_build_entry(spec.family)
     recipe = entry.build
-    if recipe.replay_cls is None or recipe.transformer_classname is None:
-        raise ValueError(
-            f"rollout family {entry.family!r} keeps its own replay builder; "
-            "the registry descriptor covers the rollout side only",
-        )
     _check_requires_lora(entry, spec)
+    if recipe.replay_cls is None or recipe.transformer_classname is None:
+        # Hand-written-replay families (echo/cosmos3/anima) register their
+        # builder on the entry; the descriptor covers the rollout side only.
+        if entry.replay_runtime_builder is not None:
+            logger.info(
+                "Building %s replay runtime bundle (hand-written builder) from %s",
+                entry.family,
+                spec.model_name_or_path,
+            )
+            return import_from_path(entry.replay_runtime_builder)(spec)
+        raise ValueError(
+            f"rollout family {entry.family!r} declares neither a replay recipe "
+            "nor a replay_runtime_builder; wire one on its registry entry",
+        )
     logger.info(
         "Building %s replay runtime bundle (registry descriptor) from %s",
         entry.family,

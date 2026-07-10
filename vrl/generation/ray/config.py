@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import logging
+import os
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from vrl.models.interfaces.runtime import bundle_loads_full_generation_modules
 from vrl.ray.resources import (
     ResolvedDistributedResources,
     resolve_distributed_resources,
 )
 from vrl.utils.config import cfg_get
+from vrl.utils.logging import init_logger
+
+logger = init_logger(__name__)
 
 DRIVER_CUDA_OWNERSHIP_ERROR = (
     "Driver CUDA device overlaps rollout devices without an explicit colocate "
@@ -117,13 +123,56 @@ class RayGenerationConfig:
         )
         _validate_driver_cuda_ownership(self, driver_cuda_devices)
         if driver_bundle is not None:
-            from vrl.utils.memory import validate_colocated_replay_memory
-
             validate_colocated_replay_memory(
                 bundle=driver_bundle,
                 rollout_config=self,
             )
         return self
+
+
+def validate_colocated_replay_memory(
+    *,
+    bundle: Any,
+    rollout_config: RayGenerationConfig,
+    strict: bool | None = None,
+    log: logging.Logger | None = None,
+) -> None:
+    """Warn or fail when trainer and Ray worker both own full generation state.
+
+    This guard does not implement a family-specific minimal replay loader. It
+    makes the risk explicit and provides a strict mode for CI or future recipes
+    once those loaders exist.
+    """
+
+    if not _is_colocated_gpu_rollout(rollout_config):
+        return
+    if not bundle_loads_full_generation_modules(bundle):
+        return
+
+    message = (
+        "trainer bundle declares loads_full_generation_modules=true while "
+        "colocated Ray rollout is enabled; host RAM can contain the trainer "
+        "generation model plus a rollout worker generation model. Implement a "
+        "family-specific minimal replay loader before enabling strict guard."
+    )
+    if strict is None:
+        strict = _env_flag("VRL_STRICT_REPLAY_MEMORY_GUARD")
+    if strict:
+        raise ValueError(message)
+    (log or logger).warning(message)
+
+
+def _is_colocated_gpu_rollout(config: RayGenerationConfig) -> bool:
+    return bool(
+        config.allow_driver_gpu_overlap
+        and config.num_workers >= 1
+        and config.gpus_per_worker > 0
+    )
+
+
+def _env_flag(name: str) -> bool:
+    value = os.environ.get(name, "")
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _validate_driver_cuda_ownership(
@@ -276,4 +325,8 @@ def _cuda_device_index(device: Any) -> int | None:
 _MISSING = object()
 
 
-__all__ = ["DRIVER_CUDA_OWNERSHIP_ERROR", "RayGenerationConfig"]
+__all__ = [
+    "DRIVER_CUDA_OWNERSHIP_ERROR",
+    "RayGenerationConfig",
+    "validate_colocated_replay_memory",
+]

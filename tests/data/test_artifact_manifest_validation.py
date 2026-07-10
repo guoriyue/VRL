@@ -7,11 +7,8 @@ import pytest
 
 from vrl.scripts.data import setup as setup_cli
 from vrl.trainers.data import load_prompt_manifest
-from vrl.trainers.data.artifacts import (
-    ArtifactManifestError,
-    resolve_artifact_path,
-    validate_artifact_manifest,
-)
+from vrl.trainers.data.artifacts import validate_artifact_manifest
+from vrl.utils.artifacts import ArtifactManifestError, resolve_artifact_path
 
 
 def _write_ppm(path: Path) -> None:

@@ -19,7 +19,7 @@ from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces import require_runtime_model
 from vrl.ray.dependencies import require_ray
-from vrl.ray.placement import GlobalRayPlacementOwner
+from vrl.ray.placement import GlobalRayPlacementOwner, cross_node_preflight
 from vrl.ray.resources import (
     format_distributed_resource_plan,
     resolve_distributed_resources,
@@ -682,6 +682,51 @@ class OnlineRecipeRun:
         stack.strategy.barrier()
 
 
+def _resolve_reference_artifacts(examples: list[Any], cfg: DictConfig) -> None:
+    """Resolve manifest-relative REFERENCE paths once, at prompt load time.
+
+    Rollout executors, family collector hooks, and rewards all consume
+    reference paths; resolving here (fields + the metadata mirror the wire
+    contract reads) means every consumer sees the same absolute path instead
+    of each re-deriving it against its own data root. Rows without reference
+    fields (t2v recipes) pass through untouched; required-ness stays with the
+    family collector hooks. Absolute manifest paths pass through unchanged.
+
+    TARGET fields are deliberately NOT resolved: ``target_video`` is the
+    identity key into sft-latents shards (see ``PromptExample``), so rewriting
+    it to a machine-local absolute path would break every shard lookup.
+    """
+
+    from vrl.utils.artifacts import coerce_data_root, resolve_artifact_path
+
+    data_root = coerce_data_root(
+        OmegaConf.select(cfg, "data.artifact_data_root", default=None),
+    )
+    for example in examples:
+        metadata: dict[str, Any] | None = None
+        for field_name in ("reference_image", "reference_video"):
+            raw = str(getattr(example, field_name, "") or "").strip()
+            if not raw:
+                continue
+            resolved = str(
+                resolve_artifact_path(raw, data_root=data_root, allow_absolute=True),
+            )
+            setattr(example, field_name, resolved)
+            metadata = dict(example.metadata) if metadata is None else metadata
+            metadata[field_name] = resolved
+        references = list(getattr(example, "references", None) or [])
+        if references:
+            resolved_refs = [
+                str(resolve_artifact_path(item, data_root=data_root, allow_absolute=True))
+                for item in references
+            ]
+            example.references = resolved_refs
+            metadata = dict(example.metadata) if metadata is None else metadata
+            metadata["references"] = resolved_refs
+        if metadata is not None:
+            example.metadata = metadata
+
+
 async def run_online_recipe(
     cfg: DictConfig,
     definition: OnlineRecipeDefinition,
@@ -749,11 +794,13 @@ async def run_online_recipe(
         weight_dtype=weight_dtype,
     )
     examples = load_prompt_examples_from_config(cfg.data)
+    _resolve_reference_artifacts(examples, cfg)
     eval_cfg = getattr(trainer_config, "eval", None)
     eval_enabled = bool(getattr(eval_cfg, "enabled", False))
     eval_examples = (
         load_eval_prompt_examples_from_config(cfg.data) if eval_enabled else []
     )
+    _resolve_reference_artifacts(eval_examples, cfg)
 
     bundle_builder = definition.build_replay_bundle or definition.build_bundle
     log_host_memory("before_trainer_bundle_build", log=logger)
@@ -788,9 +835,7 @@ async def run_online_recipe(
     try:
         ray_session = _initialize_ray_cluster(resources, ray)
         if resources.cross_node:
-            from vrl.generation.ray.launcher import _cross_node_preflight
-
-            _cross_node_preflight(ray, resources)
+            cross_node_preflight(ray, resources)
         placement_owner.create()
         components = build_online_recipe_components(
             cfg,

@@ -7,7 +7,10 @@ import contextlib
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-import pytest
+try:
+    import pytest
+except ModuleNotFoundError:  # Ray workers import this module for tiny builders.
+    pytest = None
 
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import ChunkResult
@@ -18,7 +21,7 @@ from vrl.models.ar.capabilities import ar_discrete_family_capability
 from vrl.models.interfaces import ReplayResult, RuntimeBuildSpec, RuntimeBundle
 
 # Every test here spins up Ray (~seconds each) — slow by nature, run nightly not per-PR.
-pytestmark = pytest.mark.slow_test
+pytestmark = pytest.mark.slow_test if pytest is not None else ()
 
 
 class _TinyRuntimeModel:

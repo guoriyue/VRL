@@ -26,7 +26,12 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from vrl.ray.dependencies import current_gpu_ids, current_node_ip, require_ray
+from vrl.ray.dependencies import (
+    current_gpu_ids,
+    current_node_ip,
+    inspect_cluster,
+    require_ray,
+)
 from vrl.ray.lifecycle import kill_actors, remove_placement_group
 from vrl.ray.resources import (
     BundleLayout,
@@ -84,6 +89,34 @@ def actor_scheduling_strategy(
         placement_group_bundle_index=bundle_index,
         placement_group_capture_child_tasks=capture_child_tasks,
     )
+
+
+def cross_node_preflight(ray: Any, resources: Any) -> None:
+    """Fail fast when the live Ray cluster cannot host cross-node rollout.
+
+    Runs after ``ray.init()`` (resolution earlier in the pipeline cannot see the
+    cluster). Verifies that non-driver nodes expose enough GPUs for rollout, and
+    that the driver/head node does not expose Ray GPUs — otherwise rollout actors
+    could be scheduled onto the trainer GPU, since cross-node mode intentionally
+    drops the placement-group trainer reservation.
+    """
+
+    topology = inspect_cluster(ray)
+
+    needed = resources.rollout_num_gpus
+    if topology.non_driver_gpus < needed:
+        raise RuntimeError(
+            f"cross_node rollout needs {needed} GPU(s) on non-driver Ray nodes, but "
+            f"only {topology.non_driver_gpus:g} are available. Join more rollout "
+            "workers, e.g. `ray start --address=<head>:6379 --num-gpus=<n>`.",
+        )
+    if topology.driver_gpus > 0:
+        raise RuntimeError(
+            f"cross_node rollout: the driver/head node exposes {topology.driver_gpus:g} "
+            "Ray GPU(s), so rollout could be scheduled onto the trainer GPU. Start the "
+            "head with `ray start --head --num-gpus=0` so the trainer GPU stays out "
+            "of Ray's scheduling pool.",
+        )
 
 
 def validate_actor_gpu_ids(
@@ -409,5 +442,6 @@ __all__ = [
     "RolePlacement",
     "actor_scheduling_strategy",
     "create_placement_group",
+    "cross_node_preflight",
     "validate_actor_gpu_ids",
 ]

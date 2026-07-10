@@ -50,8 +50,8 @@ from typing import Any
 import torch
 
 from vrl.rewards.inference import RewardInferenceArtifact
-from vrl.trainers.data.artifacts import default_data_root, resolve_artifact_path
 from vrl.trainers.data.prompts import load_prompt_manifest
+from vrl.utils.artifacts import default_data_root, resolve_artifact_path
 from vrl.utils.media import align_frame_counts, read_video_frames, write_mp4
 
 # reward name -> (model module, model class, primary score key)

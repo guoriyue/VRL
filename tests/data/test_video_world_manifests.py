@@ -6,11 +6,11 @@ from pathlib import Path
 import pytest
 
 from vrl.trainers.data.artifacts import (
-    ArtifactManifestError,
     validate_artifact_manifest,
     validate_artifact_manifest_pair,
     validate_source_backed_video_world_manifest_pair,
 )
+from vrl.utils.artifacts import ArtifactManifestError
 
 
 def _write_ppm(path: Path) -> None:

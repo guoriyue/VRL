@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import contextlib
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 import torch
 import torch.nn as nn
 
-from vrl.models.interfaces.runtime import RuntimeBuildSpec
-from vrl.models.replay_loading import bundle_loads_full_generation_modules
+from vrl.models.interfaces.runtime import (
+    RuntimeBuildSpec,
+    bundle_loads_full_generation_modules,
+    full_generation_bundle_metadata,
+    minimal_replay_bundle_metadata,
+)
 
 
 class _TinyTransformer(nn.Module):
@@ -413,3 +418,24 @@ def test_ar_replay_builders_return_minimal_bundles(
     assert bundle_loads_full_generation_modules(bundle) is False
     assert bundle.raw_handle is None
     assert set(bundle.trainable_modules) == {"model"}
+
+
+def test_bundle_metadata_drives_consumer_down_opposite_branches() -> None:
+    """The two bundle builders are consumed into opposite ownership decisions.
+
+    Asserts the behavior the metadata exists for — ``bundle_loads_full_generation_modules``
+    returning True for a full-generation bundle and False for a minimal one — instead
+    of mirroring each builder's literal ``{KEY: bool}`` return value.
+    """
+    full = SimpleNamespace(metadata=full_generation_bundle_metadata())
+    minimal = SimpleNamespace(metadata=minimal_replay_bundle_metadata())
+
+    assert bundle_loads_full_generation_modules(full) is True
+    assert bundle_loads_full_generation_modules(minimal) is False
+
+
+def test_bundle_loads_full_generation_modules_defaults_false() -> None:
+    """Missing flag, missing metadata, or null metadata all read as not-owning."""
+    assert bundle_loads_full_generation_modules(SimpleNamespace(metadata={})) is False
+    assert bundle_loads_full_generation_modules(SimpleNamespace()) is False
+    assert bundle_loads_full_generation_modules(SimpleNamespace(metadata=None)) is False

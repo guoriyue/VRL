@@ -1,13 +1,9 @@
-"""Lazy Ray dependency, dynamic import, and actor metadata helpers."""
+"""Lazy Ray dependency and actor metadata helpers."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
-
-# import_from_path lives in the leaf vrl.utils.config (Ray-agnostic, also used by
-# the Ray-free generation worker); re-exported here for existing call sites.
-from vrl.utils.config import import_from_path
 
 
 def require_ray() -> Any:
@@ -47,8 +43,8 @@ class ClusterTopology:
 
     The single basis for the single-node-vs-multi-node decision: cross_node
     auto-detect (``run_online_recipe``) and the cross-node preflight
-    (``_cross_node_preflight``) both read it instead of each re-walking
-    ``ray.nodes()``.
+    (``vrl.ray.placement.cross_node_preflight``) both read it instead of each
+    re-walking ``ray.nodes()``.
     """
 
     driver_gpus: float
@@ -91,7 +87,6 @@ __all__ = [
     "ClusterTopology",
     "current_gpu_ids",
     "current_node_ip",
-    "import_from_path",
     "inspect_cluster",
     "require_ray",
 ]

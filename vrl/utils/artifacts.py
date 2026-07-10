@@ -39,7 +39,7 @@ def resolve_artifact_path(
     if not text:
         raise ArtifactManifestError("artifact path is empty")
     path = Path(text).expanduser()
-    root = _coerce_data_root(data_root)
+    root = coerce_data_root(data_root)
     if path.is_absolute():
         if not allow_absolute:
             raise ArtifactManifestError(
@@ -51,13 +51,16 @@ def resolve_artifact_path(
     return (root / path).resolve()
 
 
-def _coerce_data_root(value: str | Path | None) -> Path:
+def coerce_data_root(value: str | Path | None) -> Path:
+    """Normalize an optional data-root override to an absolute path."""
+
     return Path(value).expanduser().resolve() if value is not None else default_data_root()
 
 
 __all__ = [
     "DATA_ROOT_ENV",
     "ArtifactManifestError",
+    "coerce_data_root",
     "default_data_root",
     "repo_root",
     "resolve_artifact_path",

@@ -1,12 +1,8 @@
 """Trainer data utilities."""
 
 from vrl.trainers.data.artifacts import (
-    DATA_ROOT_ENV,
-    ArtifactManifestError,
     ArtifactManifestReport,
     ResolvedArtifact,
-    default_data_root,
-    resolve_artifact_path,
     resolve_prompt_example_artifacts,
     validate_artifact_manifest,
     validate_artifact_manifest_pair,
@@ -29,8 +25,6 @@ from vrl.trainers.data.prompts import (
 from vrl.trainers.data.samplers import DistributedKRepeatSampler
 
 __all__ = [
-    "DATA_ROOT_ENV",
-    "ArtifactManifestError",
     "ArtifactManifestReport",
     "DistributedKRepeatSampler",
     "ImageCaptionPromptDataset",
@@ -40,13 +34,11 @@ __all__ = [
     "PromptExample",
     "ResolvedArtifact",
     "collate_preference",
-    "default_data_root",
     "load_eval_prompt_examples_from_config",
     "load_pickapic",
     "load_prompt_examples_from_config",
     "load_prompt_image_manifest",
     "load_prompt_manifest",
-    "resolve_artifact_path",
     "resolve_prompt_example_artifacts",
     "validate_artifact_manifest",
     "validate_artifact_manifest_pair",

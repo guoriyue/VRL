@@ -20,8 +20,8 @@ unprotected by the contract.
 
 from __future__ import annotations
 
-from vrl.ray.dependencies import import_from_path
 from vrl.rollouts.families import registered_rollout_families
+from vrl.utils.config import import_from_path
 
 # family -> (runtime-model import path, replay-model import path).
 # Sourced from the family builders (``build_<family>_runtime_bundle`` /

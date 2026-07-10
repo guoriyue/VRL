@@ -22,7 +22,6 @@ from vrl.config.builders import build_configs
 from vrl.config.loading import load_config
 from vrl.generation import GenerationOutput, GenerationRequest, build_sample_rows
 from vrl.generation.execution.planner import build_engine_plan
-from vrl.ray.dependencies import import_from_path
 from vrl.rollouts.families import RolloutFamilyEntry, get_rollout_family_entry
 from vrl.scripts.common.factory import (
     build_algorithm_and_evaluator_from_cfg,
@@ -32,6 +31,7 @@ from vrl.scripts.common.factory import (
 )
 from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.precision import torch_dtype_for_trainer_precision
+from vrl.utils.config import import_from_path
 from vrl.utils.model_diagnostics import trainable_state_digest
 
 RUN_REAL_ENV = "WM_RUN_REAL_MODEL_TESTS"

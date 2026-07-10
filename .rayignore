@@ -1,0 +1,5 @@
+# Keep Ray runtime_env packages code-shaped. Large local assets are mounted/read
+# from disk when needed, not shipped through GCS to every worker.
+docs/papers/
+datasets/
+outputs/

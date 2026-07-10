@@ -9,10 +9,8 @@ from typing import Any
 
 from vrl.trainers.data.prompts import PromptExample, load_prompt_manifest
 from vrl.utils.artifacts import (
-    DATA_ROOT_ENV,
     ArtifactManifestError,
-    default_data_root,
-    repo_root,
+    coerce_data_root,
     resolve_artifact_path,
 )
 
@@ -185,7 +183,7 @@ def validate_artifact_manifest(
 
     path = Path(manifest_path)
     examples = load_prompt_manifest(path)
-    root = _coerce_data_root(data_root)
+    root = coerce_data_root(data_root)
     resolved: list[ResolvedArtifact] = []
     warnings: list[str] = []
     for row_index, example in enumerate(examples):
@@ -292,10 +290,6 @@ def validate_source_backed_video_world_manifest_pair(
         required_artifact_fields=required_artifact_fields,
         required_metadata_fields=SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS,
     )
-
-
-def _coerce_data_root(value: str | Path | None) -> Path:
-    return Path(value).expanduser().resolve() if value is not None else default_data_root()
 
 
 def _artifact_values(example: PromptExample, field_name: str) -> tuple[str, ...]:
@@ -433,16 +427,11 @@ def load_sft_latents(
 
 
 __all__ = [
-    "DATA_ROOT_ENV",
     "SFT_LATENTS_SCHEMA_VERSION",
     "SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS",
-    "ArtifactManifestError",
     "ArtifactManifestReport",
     "ResolvedArtifact",
-    "default_data_root",
     "load_sft_latents",
-    "repo_root",
-    "resolve_artifact_path",
     "resolve_prompt_example_artifacts",
     "save_sft_latents",
     "validate_artifact_manifest",

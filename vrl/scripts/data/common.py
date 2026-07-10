@@ -13,10 +13,10 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-# Single source of truth for repo/data-root resolution lives in the trainers
-# data layer (it owns DATA_ROOT_ENV and is also used off the script path);
+# Single source of truth for repo/data-root resolution is vrl.utils.artifacts
+# (it owns DATA_ROOT_ENV and is also used off the script path);
 # re-export here so the dataset scripts keep importing from common.
-from vrl.trainers.data.artifacts import default_data_root, repo_root
+from vrl.utils.artifacts import default_data_root, repo_root
 
 
 def default_cache_dir() -> Path:

@@ -6,13 +6,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from vrl.generation.ray.config import RayGenerationConfig
-from vrl.utils.cuda_memory import cap_cuda_memory_fraction
-from vrl.utils.memory import (
-    HostMemorySnapshot,
-    format_host_memory,
+from vrl.generation.ray.config import (
+    RayGenerationConfig,
     validate_colocated_replay_memory,
 )
+from vrl.utils.cuda_memory import cap_cuda_memory_fraction
+from vrl.utils.memory import HostMemorySnapshot, format_host_memory
 
 
 def test_format_host_memory_omits_unknown_fields() -> None:

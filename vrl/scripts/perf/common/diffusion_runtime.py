@@ -16,11 +16,11 @@ _PROMPT = "a physical scene, high quality"
 def build_model(cfg, device, dtype):
     """Build any registered diffusion family's rollout model from its config."""
 
-    from vrl.ray.dependencies import import_from_path
     from vrl.rollouts.families import (
         get_rollout_family_entry,
         normalize_rollout_family,
     )
+    from vrl.utils.config import import_from_path
 
     cfg.model.use_lora = True
     entry = get_rollout_family_entry(normalize_rollout_family(cfg.model.family))

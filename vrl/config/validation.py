@@ -240,7 +240,7 @@ def _validate_image_to_video_manifest(
     image_field: str,
     caption_field: str,
 ) -> int:
-    from vrl.trainers.data.artifacts import resolve_artifact_path
+    from vrl.utils.artifacts import resolve_artifact_path
 
     # Shares the {source_repo, source_frame_index, decode_method, conditioning}
     # provenance sub-vocabulary with

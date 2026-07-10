@@ -4,8 +4,10 @@ import json
 import os
 from pathlib import Path
 
+from omegaconf import OmegaConf
 from PIL import Image
 
+from vrl.scripts.common.online import _resolve_reference_artifacts
 from vrl.scripts.data import bootstrap, common, danbooru, setup, video_world
 from vrl.scripts.diffusion.cosmos.train import _normalize_per_sample_reference_images
 from vrl.trainers.data import load_prompt_manifest
@@ -52,6 +54,10 @@ def test_video_world_bridge_rows_match_cosmos_consumer(
 
     monkeypatch.setenv("VRL_DATA_ROOT", str(data_root))
     examples = load_prompt_manifest(manifest)
+    _resolve_reference_artifacts(
+        examples,
+        OmegaConf.create({"data": {"manifest": manifest.as_posix()}}),
+    )
     _normalize_per_sample_reference_images(
         examples,
         manifest_path=manifest,

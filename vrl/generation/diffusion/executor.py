@@ -380,17 +380,10 @@ class ReferenceConditionedChunks:
         }
 
     def _reference_image_for_request(self, request: GenerationRequest) -> Any:
+        # Per-sample reference paths arrive already resolved: prompt loading
+        # (run_online_recipe -> _resolve_reference_artifacts) resolves manifest
+        # relative paths against data.artifact_data_root before collection.
         ref = request.metadata.get("reference_image", self.reference_image)
-        if isinstance(ref, str) and ref:
-            # The manifest stores reference_image as a data-root-relative path
-            # ("video_world/references/x.png"). Resolve it against the data root the
-            # SAME way the reward resolves target_video (target_dino_similarity._resolve),
-            # else the rollout opens it relative to CWD and FileNotFoundErrors. The
-            # intended resolver (resolve_prompt_example_artifacts) is never wired into
-            # prompt loading, so per-sample reference paths arrive here unresolved.
-            from vrl.utils.artifacts import default_data_root, resolve_artifact_path
-
-            ref = str(resolve_artifact_path(ref, data_root=default_data_root(), allow_absolute=True))
         return load_reference_image(ref)
 
 

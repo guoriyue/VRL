@@ -2,7 +2,7 @@
 
 from vrl.ray.actor_group import RayActorGroup, RayActorHandle
 from vrl.ray.actor_pool import RayActorJob, run_actor_jobs
-from vrl.ray.dependencies import current_gpu_ids, current_node_ip, import_from_path, require_ray
+from vrl.ray.dependencies import current_gpu_ids, current_node_ip, require_ray
 from vrl.ray.resources import (
     DistributedResourceConfig,
     ResolvedDistributedResources,
@@ -26,7 +26,6 @@ __all__ = [
     "current_gpu_ids",
     "current_node_ip",
     "format_distributed_resource_plan",
-    "import_from_path",
     "require_ray",
     "resolve_distributed_resources",
     "run_actor_jobs",
