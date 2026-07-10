@@ -1158,3 +1158,38 @@ __all__ = [
     "ReferenceConditionedChunks",
     "preallocate_denoise_buffers",
 ]
+
+
+class DiffusionChunkExecutor(DiffusionChunkExecutorBase):
+    """Generic chunk executor for pure-data diffusion families.
+
+    A family whose executor overrides no method (no ``build_chunk_encoded`` /
+    ``encode_prompt_for_chunk``) is pure configuration: ``family`` / ``task``
+    plus a few ``default_*`` values. Rather than ship a boilerplate subclass,
+    it declares a ``DiffusionExecutorConfig`` on its registry entry and
+    dispatches here; the launcher spreads that config into these constructor
+    kwargs and the worker injects ``family_capability`` from the launch
+    contract. Families with real per-chunk tensor logic (cosmos predict2/2.5,
+    cosmos3, echo) keep their own subclass.
+    """
+
+    def __init__(
+        self,
+        model: Any,
+        *,
+        family: str,
+        task: str,
+        default_num_frames: int = 1,
+        default_max_sequence_length: int = 512,
+        default_fps: int | None = None,
+        chunk_passthrough_keys: tuple[str, ...] = (),
+        samples_per_chunk: int = 8,
+    ) -> None:
+        self.model = model
+        self.family = family
+        self.task = task
+        self.default_num_frames = int(default_num_frames)
+        self.default_max_sequence_length = int(default_max_sequence_length)
+        self.default_fps = None if default_fps is None else int(default_fps)
+        self.chunk_passthrough_keys = tuple(chunk_passthrough_keys)
+        self.default_samples_per_chunk = max(1, int(samples_per_chunk))

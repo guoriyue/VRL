@@ -38,7 +38,16 @@ def test_family_registry_covers_current_rollout_families() -> None:
         assert entry.family == family
         assert entry.task
         assert entry.collector.request_prefix
-        assert entry.executor_cls.startswith(expected_model_prefix)
+        # A diffusion family's executor is either family-specific (under
+        # vrl.models.diffusion) or the shared generic DiffusionChunkExecutor
+        # (family-agnostic infra under vrl.generation.diffusion); both are
+        # modality-consistent. AR families all ship their own executor.
+        if entry.collector.kind == "diffusion":
+            assert entry.executor_cls.startswith(
+                ("vrl.models.diffusion.", "vrl.generation.diffusion."),
+            )
+        else:
+            assert entry.executor_cls.startswith(expected_model_prefix)
         assert entry.runtime_builder.startswith(expected_model_prefix)
         assert entry.runtime_spec_extractor.startswith(expected_model_prefix)
         assert ":" in entry.gatherer.import_path

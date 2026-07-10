@@ -90,6 +90,23 @@ class DiffusionFamilyBuild:
 
 
 @dataclass(frozen=True, slots=True)
+class DiffusionExecutorConfig:
+    """Pure-data chunk-executor config for families using the generic executor.
+
+    A family whose executor overrides no method carries these values here
+    instead of shipping a boilerplate ``DiffusionChunkExecutorBase`` subclass.
+    ``family`` / ``task`` come from the entry; ``family_capability`` is injected
+    by the worker from the launch contract. The launcher spreads these into the
+    generic ``DiffusionChunkExecutor`` constructor.
+    """
+
+    default_num_frames: int = 1
+    default_max_sequence_length: int = 512
+    default_fps: int | None = None
+    chunk_passthrough_keys: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class RolloutFamilyEntry:
     """Declarative binding for one canonical rollout family."""
 
@@ -106,6 +123,7 @@ class RolloutFamilyEntry:
     )
     aliases: tuple[str, ...] = ()
     build: DiffusionFamilyBuild | None = None
+    executor_config: DiffusionExecutorConfig | None = None
 
 
 FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {}
@@ -120,23 +138,40 @@ def register_rollout_family(entry: RolloutFamilyEntry) -> RolloutFamilyEntry:
     return entry
 
 
+# One generic executor serves every family whose chunk executor is pure data
+# (no build_chunk_encoded / encode_prompt_for_chunk override). Such families
+# pass ``executor_config`` and leave ``executor_cls`` unset.
+_GENERIC_DIFFUSION_EXECUTOR = (
+    "vrl.generation.diffusion.executor:DiffusionChunkExecutor"
+)
+
+
 def _diffusion_entry(
     *,
     family: str,
     task: str,
     aliases: tuple[str, ...],
-    executor_cls: str,
     runtime_builder: str,
     runtime_spec_extractor: str,
     request_prefix: str,
     default_task_type: str,
+    executor_cls: str | None = None,
+    executor_config: DiffusionExecutorConfig | None = None,
     supports_reference_conditioning: bool = False,
     build: DiffusionFamilyBuild | None = None,
 ) -> RolloutFamilyEntry:
+    if executor_cls is None:
+        if executor_config is None:
+            raise ValueError(
+                f"diffusion family {family!r}: pass either executor_cls (real "
+                "chunk logic) or executor_config (generic executor)",
+            )
+        executor_cls = _GENERIC_DIFFUSION_EXECUTOR
     return RolloutFamilyEntry(
         family=family,
         task=task,
         aliases=aliases,
+        executor_config=executor_config,
         collector=CollectorMetadata(
             kind="diffusion",
             request_prefix=request_prefix,
@@ -230,7 +265,7 @@ register_rollout_family(
         family="sana",
         task="t2i",
         aliases=("sana_1600m",),
-        executor_cls="vrl.models.diffusion.sana.runtime:SanaChunkExecutor",
+        executor_config=DiffusionExecutorConfig(default_max_sequence_length=300),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
         runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
         request_prefix="sana",

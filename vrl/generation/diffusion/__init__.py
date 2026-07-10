@@ -1,6 +1,7 @@
 """Diffusion generation helpers."""
 
 from vrl.generation.diffusion.executor import (
+    DiffusionChunkExecutor,
     DiffusionChunkExecutorBase,
     DiffusionChunkResult,
     DiffusionDenoiseBuffers,
@@ -23,6 +24,7 @@ from vrl.generation.diffusion.layout import (
 
 __all__ = [
     "DiffusionBaseParams",
+    "DiffusionChunkExecutor",
     "DiffusionChunkExecutorBase",
     "DiffusionChunkGatherer",
     "DiffusionChunkResult",
