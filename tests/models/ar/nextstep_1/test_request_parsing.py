@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import pytest
+from omegaconf import OmegaConf
 
 from vrl.generation import GenerationRequest
 from vrl.generation.ar import ARRequestLayout
 from vrl.generation.ar.decode_loop import ActiveSequence
+from vrl.models.ar.build import extract_family_ar_runtime_spec
 
 
 def test_nextstep_ar_sampling_params_carry_scheduler_batch_size() -> None:
@@ -61,3 +63,18 @@ def test_ar_layout_requires_shape_sampling_fields() -> None:
 
         with pytest.raises(ValueError, match=f"request.sampling.{missing_key}"):
             ARRequestLayout().parse_sampling_params(request)
+
+
+def test_descriptor_extractor_carries_actor_gradient_checkpointing() -> None:
+    cfg = OmegaConf.create(
+        {
+            "model": {"family": "nextstep_1", "use_lora": False},
+            "precision": "fp32",
+            "actor": {"gradient_checkpointing": True},
+        },
+    )
+
+    spec = extract_family_ar_runtime_spec(cfg, "cpu", "float32")
+
+    assert spec.family == "nextstep_1"
+    assert spec.model_config["gradient_checkpointing"] is True

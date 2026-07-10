@@ -5,9 +5,9 @@ from __future__ import annotations
 from omegaconf import OmegaConf
 
 from vrl.generation import GenerationRequest
+from vrl.models.ar.build import extract_family_ar_runtime_spec
 from vrl.models.ar.janus_pro.runtime import (
     JanusProChunkExecutor,
-    extract_janus_pro_runtime_spec,
 )
 
 
@@ -16,6 +16,7 @@ def test_janus_runtime_spec_does_not_expose_decode_strategy() -> None:
     cfg = OmegaConf.create(
         {
             "model": {
+                "family": "janus_pro",
                 "path": "deepseek-ai/Janus-Pro-1B",
                 "use_lora": False,
             },
@@ -29,7 +30,7 @@ def test_janus_runtime_spec_does_not_expose_decode_strategy() -> None:
         }
     )
 
-    spec = extract_janus_pro_runtime_spec(cfg, device="cpu", weight_dtype="float32")
+    spec = extract_family_ar_runtime_spec(cfg, device="cpu", weight_dtype="float32")
 
     assert spec.sampling_config is not None
     assert "ar_decode_strategy" not in spec.sampling_config

@@ -10,65 +10,16 @@ from vrl.generation.ar import ARChunkInputs, ARDiscreteChunkExecutorBase
 from vrl.generation.capabilities import FamilyCapability
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
-from vrl.models.ar.build import (
-    ar_model_config_base,
-    build_ar_runtime_bundle,
-    extract_ar_runtime_spec,
-)
+from vrl.models.ar.build import ar_model_config_base
 from vrl.models.ar.capabilities import ar_discrete_family_capability
 from vrl.models.ar.emu3.model import (
-    Emu3Config,
-    Emu3Model,
-    Emu3ReplayModel,
     emu3_forced_token_schedule,
     emu3_grid_token_num,
 )
 from vrl.models.ar.emu3.runner import Emu3TokenRunner
-from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
-from vrl.utils.logging import init_logger
-
-logger = init_logger(__name__)
+from vrl.models.interfaces.runtime import RuntimeBuildSpec
 
 EMU3_FAMILY_CAPABILITY = ar_discrete_family_capability("emu3", "ar_t2i")
-
-
-def build_emu3_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    """Thin family stub over the shared AR bundle assembly."""
-
-    config = _emu3_config_from_runtime_spec(spec)
-    return build_ar_runtime_bundle(
-        spec,
-        model=Emu3Model(Emu3Config(**config)),
-        capability=EMU3_FAMILY_CAPABILITY,
-    )
-
-
-def build_emu3_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    """Build an Emu3 trainer replay bundle without the VQ decoder/processor."""
-
-    config = _emu3_config_from_runtime_spec(spec)
-    return build_ar_runtime_bundle(
-        spec,
-        model=Emu3ReplayModel(Emu3Config(**config)),
-        capability=EMU3_FAMILY_CAPABILITY,
-        replay=True,
-    )
-
-
-def extract_emu3_runtime_spec(
-    cfg: Any,
-    device: Any,
-    weight_dtype: Any | None = None,
-) -> RuntimeBuildSpec:
-    """Slice Emu3 runtime construction fields out of a whole RL cfg."""
-
-    return extract_ar_runtime_spec(
-        cfg,
-        device,
-        weight_dtype,
-        ar_task="ar_t2i",
-        default_model_path="BAAI/Emu3-Gen-hf",
-    )
 
 
 # Emu3 LoRA defaults; applied at read time so the carried ``model.lora`` block
@@ -82,7 +33,7 @@ _EMU3_LORA_DEFAULTS: dict[str, Any] = {
 }
 
 
-def _emu3_config_from_runtime_spec(spec: RuntimeBuildSpec) -> dict[str, Any]:
+def emu3_config_from_runtime_spec(spec: RuntimeBuildSpec) -> dict[str, Any]:
     sampling_config = spec.sampling_config or {}
     config = ar_model_config_base(spec, _EMU3_LORA_DEFAULTS)
 
@@ -247,7 +198,5 @@ class Emu3ChunkExecutor(ARDiscreteChunkExecutorBase):
 __all__ = [
     "EMU3_FAMILY_CAPABILITY",
     "Emu3ChunkExecutor",
-    "build_emu3_replay_runtime_bundle",
-    "build_emu3_runtime_bundle",
-    "extract_emu3_runtime_spec",
+    "emu3_config_from_runtime_spec",
 ]

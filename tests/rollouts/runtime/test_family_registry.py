@@ -48,6 +48,8 @@ def test_family_registry_covers_current_rollout_families() -> None:
             )
         else:
             assert entry.executor_cls.startswith(expected_model_prefix)
+            assert entry.ar_build is not None
+            assert entry.build is None
         assert entry.runtime_builder.startswith(expected_model_prefix)
         assert entry.runtime_spec_extractor.startswith(expected_model_prefix)
         assert ":" in entry.gatherer.import_path

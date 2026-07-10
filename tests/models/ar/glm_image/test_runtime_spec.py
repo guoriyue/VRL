@@ -6,19 +6,21 @@ import pytest
 from omegaconf import OmegaConf
 
 from vrl.generation.types import GenerationRequest
+from vrl.models.ar.build import extract_family_ar_runtime_spec
 from vrl.models.ar.glm_image.runner import GlmImageTokenRunner
 from vrl.models.ar.glm_image.runtime import (
     GLM_IMAGE_FAMILY_CAPABILITY,
     GlmImageChunkExecutor,
-    _glm_image_config_from_runtime_spec,
-    extract_glm_image_runtime_spec,
+    glm_image_config_from_runtime_spec,
 )
 
 
 def test_extract_runtime_spec_defaults_to_glm_image_checkpoint() -> None:
-    cfg = OmegaConf.create({"model": {}, "precision": "fp32", "sampling": {}})
+    cfg = OmegaConf.create(
+        {"model": {"family": "glm_image"}, "precision": "fp32", "sampling": {}},
+    )
 
-    spec = extract_glm_image_runtime_spec(cfg, device="cpu", weight_dtype="float32")
+    spec = extract_family_ar_runtime_spec(cfg, device="cpu", weight_dtype="float32")
 
     assert spec.ar_task == "ar_t2i"
     assert spec.model_name_or_path == "zai-org/GLM-Image"
@@ -28,6 +30,7 @@ def test_extract_runtime_spec_carries_sampling_and_lora_overrides() -> None:
     cfg = OmegaConf.create(
         {
             "model": {
+                "family": "glm_image",
                 "path": "/ckpt/glm-image",
                 "use_lora": True,
                 "lora": {"rank": 8},
@@ -45,8 +48,8 @@ def test_extract_runtime_spec_carries_sampling_and_lora_overrides() -> None:
         }
     )
 
-    spec = extract_glm_image_runtime_spec(cfg, device="cpu", weight_dtype="float32")
-    config = _glm_image_config_from_runtime_spec(spec)
+    spec = extract_family_ar_runtime_spec(cfg, device="cpu", weight_dtype="float32")
+    config = glm_image_config_from_runtime_spec(spec)
 
     assert spec.model_name_or_path == "/ckpt/glm-image"
     assert config["temperature"] == 0.8

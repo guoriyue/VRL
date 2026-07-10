@@ -18,64 +18,18 @@ from vrl.generation.types import (
     GenerationRequest,
     GenerationSampleRow,
 )
-from vrl.models.ar.build import (
-    ar_model_config_base,
-    build_ar_runtime_bundle,
-    extract_ar_runtime_spec,
-)
+from vrl.models.ar.build import ar_model_config_base
 from vrl.models.ar.capabilities import ar_continuous_family_capability
-from vrl.models.ar.nextstep_1.model import (
-    NextStep1Config,
-    NextStep1Model,
-    NextStep1ReplayModel,
-)
 from vrl.models.ar.nextstep_1.runner import NextStep1ARModelRunner
-from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
+from vrl.models.interfaces.runtime import RuntimeBuildSpec
 from vrl.trajectory import build_ar_continuous_trajectory
-from vrl.utils.logging import init_logger
-
-logger = init_logger(__name__)
 
 NEXTSTEP_1_FAMILY_CAPABILITY = ar_continuous_family_capability("nextstep_1", "ar_t2i")
 
 
-def build_nextstep_1_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    """Thin family stub over the shared AR bundle assembly."""
+def enrich_nextstep_runtime_spec(spec: RuntimeBuildSpec, cfg: Any) -> None:
+    """Carry the actor-owned gradient-checkpointing knob into model config."""
 
-    config = _nextstep_1_config_from_runtime_spec(spec)
-    return build_ar_runtime_bundle(
-        spec,
-        model=NextStep1Model(NextStep1Config(**config)),
-        capability=NEXTSTEP_1_FAMILY_CAPABILITY,
-    )
-
-
-def build_nextstep_1_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    """Build a NextStep trainer replay bundle without VAE/tokenizer/pipeline."""
-
-    config = _nextstep_1_config_from_runtime_spec(spec)
-    return build_ar_runtime_bundle(
-        spec,
-        model=NextStep1ReplayModel(NextStep1Config(**config)),
-        capability=NEXTSTEP_1_FAMILY_CAPABILITY,
-        replay=True,
-    )
-
-
-def extract_nextstep_1_runtime_spec(
-    cfg: Any,
-    device: Any,
-    weight_dtype: Any | None = None,
-) -> RuntimeBuildSpec:
-    """Slice NextStep-1 runtime construction fields out of a whole RL cfg."""
-
-    spec = extract_ar_runtime_spec(
-        cfg,
-        device,
-        weight_dtype,
-        ar_task="ar_t2i",
-        default_model_path="stepfun-ai/NextStep-1.1",
-    )
     # gradient_checkpointing lives under cfg.actor (outside the model block the
     # uniform extractor carries), so fold it into model_config here for the
     # NextStep config builder to read alongside the other model knobs.
@@ -84,7 +38,6 @@ def extract_nextstep_1_runtime_spec(
         gc = actor.get("gradient_checkpointing") if hasattr(actor, "get") else None
         if gc is not None and spec.model_config is not None:
             spec.model_config["gradient_checkpointing"] = bool(gc)
-    return spec
 
 
 # NextStep LoRA defaults mirror the upstream recipe; applied at read time so the
@@ -98,7 +51,7 @@ _NEXTSTEP_LORA_DEFAULTS: dict[str, Any] = {
 }
 
 
-def _nextstep_1_config_from_runtime_spec(spec: RuntimeBuildSpec) -> dict[str, Any]:
+def nextstep_config_from_runtime_spec(spec: RuntimeBuildSpec) -> dict[str, Any]:
     model_config = spec.model_config or {}
     sampling_config = spec.sampling_config or {}
     config = ar_model_config_base(spec, _NEXTSTEP_LORA_DEFAULTS)
@@ -398,7 +351,6 @@ __all__ = [
     "NextStep1ARChunkResult",
     "NextStep1ChunkExecutor",
     "NextStep1ChunkGatherer",
-    "build_nextstep_1_replay_runtime_bundle",
-    "build_nextstep_1_runtime_bundle",
-    "extract_nextstep_1_runtime_spec",
+    "enrich_nextstep_runtime_spec",
+    "nextstep_config_from_runtime_spec",
 ]

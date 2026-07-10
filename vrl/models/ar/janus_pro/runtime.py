@@ -23,20 +23,11 @@ from vrl.generation.types import (
     GenerationRequest,
     GenerationSampleRow,
 )
-from vrl.models.ar.build import (
-    ar_model_config_base,
-    build_ar_runtime_bundle,
-    extract_ar_runtime_spec,
-)
+from vrl.models.ar.build import ar_model_config_base
 from vrl.models.ar.capabilities import ar_discrete_family_capability
 from vrl.models.ar.janus_pro import JANUS_R1_SEGMENTS
-from vrl.models.ar.janus_pro.model import (
-    JanusProConfig,
-    JanusProModel,
-    JanusProReplayModel,
-)
 from vrl.models.ar.janus_pro.runner import JanusProARModelRunner
-from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
+from vrl.models.interfaces.runtime import RuntimeBuildSpec
 from vrl.trajectory import build_ar_multisegment_trajectory
 from vrl.utils.logging import init_logger
 
@@ -50,54 +41,6 @@ JANUS_PRO_R1_FAMILY_CAPABILITY = ar_discrete_family_capability(
 )
 
 
-def build_janus_pro_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    """Thin family stub over the shared AR bundle assembly."""
-
-    config = _janus_config_from_runtime_spec(spec)
-    return build_ar_runtime_bundle(
-        spec,
-        model=JanusProModel(JanusProConfig(**config)),
-        capability=JANUS_PRO_FAMILY_CAPABILITY,
-    )
-
-
-def build_janus_pro_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    """Build a Janus trainer replay bundle without VQ/vision/processor modules."""
-
-    config = _janus_config_from_runtime_spec(spec)
-    family_capability = (
-        JANUS_PRO_R1_FAMILY_CAPABILITY
-        if spec.ar_task == "ar_t2i_r1"
-        else JANUS_PRO_FAMILY_CAPABILITY
-    )
-    return build_ar_runtime_bundle(
-        spec,
-        model=JanusProReplayModel(JanusProConfig(**config)),
-        capability=family_capability,
-        replay=True,
-    )
-
-
-def extract_janus_pro_runtime_spec(
-    cfg: Any,
-    device: Any,
-    weight_dtype: Any | None = None,
-) -> RuntimeBuildSpec:
-    """Slice Janus-Pro runtime construction fields out of a whole RL cfg."""
-
-    # The R1 trajectory variant is selected the same way wan picks t2v/i2v:
-    # by which registry family the config names — no post-extract mutation.
-    model_cfg = cfg.get("model") if hasattr(cfg, "get") else None
-    family = str((model_cfg or {}).get("family") or "janus_pro")
-    return extract_ar_runtime_spec(
-        cfg,
-        device,
-        weight_dtype,
-        ar_task="ar_t2i_r1" if family == "janus_pro_r1" else "ar_t2i",
-        default_model_path="deepseek-ai/Janus-Pro-1B",
-    )
-
-
 # Janus LoRA defaults mirror the upstream Janus-Pro RL recipe; applied at read
 # time so the carried ``model.lora`` block only needs the values it overrides.
 _JANUS_LORA_DEFAULTS: dict[str, Any] = {
@@ -109,7 +52,7 @@ _JANUS_LORA_DEFAULTS: dict[str, Any] = {
 }
 
 
-def _janus_config_from_runtime_spec(spec: RuntimeBuildSpec) -> dict[str, Any]:
+def janus_config_from_runtime_spec(spec: RuntimeBuildSpec) -> dict[str, Any]:
     model_config = spec.model_config or {}
     sampling_config = spec.sampling_config or {}
     config = ar_model_config_base(spec, _JANUS_LORA_DEFAULTS)
@@ -585,7 +528,5 @@ __all__ = [
     "JanusProR1ChunkExecutor",
     "JanusProR1ChunkGatherer",
     "JanusProR1ChunkResult",
-    "build_janus_pro_replay_runtime_bundle",
-    "build_janus_pro_runtime_bundle",
-    "extract_janus_pro_runtime_spec",
+    "janus_config_from_runtime_spec",
 ]

@@ -6,10 +6,10 @@ import pytest
 from omegaconf import OmegaConf
 
 from vrl.generation import GenerationRequest
+from vrl.models.ar.build import extract_family_ar_runtime_spec
 from vrl.models.ar.llamagen.runtime import (
     LlamaGenChunkExecutor,
-    _llamagen_config_from_runtime_spec,
-    extract_llamagen_runtime_spec,
+    llamagen_config_from_runtime_spec,
 )
 
 
@@ -17,6 +17,7 @@ def _cfg():
     return OmegaConf.create(
         {
             "model": {
+                "family": "llamagen",
                 "path": "peizesun/llamagen_t2i",
                 "use_lora": True,
             },
@@ -33,16 +34,18 @@ def _cfg():
 
 def test_extract_runtime_spec_defaults() -> None:
     """Checks default checkpoint path and AR task selection."""
-    cfg = OmegaConf.create({"model": {"use_lora": False}, "precision": "fp32"})
-    spec = extract_llamagen_runtime_spec(cfg, device="cpu", weight_dtype="float32")
+    cfg = OmegaConf.create(
+        {"model": {"family": "llamagen", "use_lora": False}, "precision": "fp32"},
+    )
+    spec = extract_family_ar_runtime_spec(cfg, device="cpu", weight_dtype="float32")
     assert spec.model_name_or_path == "peizesun/llamagen_t2i"
     assert spec.ar_task == "ar_t2i"
 
 
 def test_config_from_runtime_spec_uses_fused_projection_lora_targets() -> None:
     """The vendored GPT has wqkv/wo, not q_proj/k_proj/v_proj."""
-    spec = extract_llamagen_runtime_spec(_cfg(), device="cpu", weight_dtype="float32")
-    config = _llamagen_config_from_runtime_spec(spec)
+    spec = extract_family_ar_runtime_spec(_cfg(), device="cpu", weight_dtype="float32")
+    config = llamagen_config_from_runtime_spec(spec)
     assert config["lora_target_modules"] == ("wqkv", "wo")
     assert config["guidance_scale"] == 7.5
     assert config["top_k"] == 1000

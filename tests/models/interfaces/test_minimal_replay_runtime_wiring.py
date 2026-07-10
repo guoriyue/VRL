@@ -386,38 +386,111 @@ def test_anima_artifact_resolution_fails_loud_when_hub_fetch_fails(
 
 
 @pytest.mark.parametrize(
-    ("module_path", "builder_name", "model_attr", "spec_kwargs"),
+    ("family", "ar_task", "model_module_path", "model_attr"),
     [
         (
-            "vrl.models.ar.janus_pro.runtime",
-            "build_janus_pro_replay_runtime_bundle",
+            "janus_pro",
+            "ar_t2i",
+            "vrl.models.ar.janus_pro.model",
             "JanusProReplayModel",
-            {"ar_task": "ar_t2i"},
         ),
         (
-            "vrl.models.ar.nextstep_1.runtime",
-            "build_nextstep_1_replay_runtime_bundle",
+            "janus_pro_r1",
+            "ar_t2i_r1",
+            "vrl.models.ar.janus_pro.model",
+            "JanusProReplayModel",
+        ),
+        (
+            "nextstep_1",
+            "ar_t2i",
+            "vrl.models.ar.nextstep_1.model",
             "NextStep1ReplayModel",
-            {"ar_task": "ar_t2i"},
+        ),
+        (
+            "emu3",
+            "ar_t2i",
+            "vrl.models.ar.emu3.model",
+            "Emu3ReplayModel",
+        ),
+        (
+            "glm_image",
+            "ar_t2i",
+            "vrl.models.ar.glm_image.model",
+            "GlmImageReplayModel",
+        ),
+        (
+            "llamagen",
+            "ar_t2i",
+            "vrl.models.ar.llamagen.model",
+            "LlamaGenReplayModel",
         ),
     ],
 )
 def test_ar_replay_builders_return_minimal_bundles(
     monkeypatch: pytest.MonkeyPatch,
-    module_path: str,
-    builder_name: str,
+    family: str,
+    ar_task: str,
+    model_module_path: str,
     model_attr: str,
-    spec_kwargs: dict[str, Any],
 ) -> None:
     """Checks AR replay builders return minimal bundles."""
-    module = __import__(module_path, fromlist=[builder_name])
-    monkeypatch.setattr(module, model_attr, _TinyRuntimeModel)
+    from vrl.models.ar.build import build_family_ar_replay_runtime_bundle
 
-    bundle = getattr(module, builder_name)(_spec(**spec_kwargs))
+    model_module = __import__(model_module_path, fromlist=[model_attr])
+    monkeypatch.setattr(model_module, model_attr, _TinyRuntimeModel)
+
+    bundle = build_family_ar_replay_runtime_bundle(
+        _spec(family=family, ar_task=ar_task),
+    )
 
     assert bundle_loads_full_generation_modules(bundle) is False
     assert bundle.raw_handle is None
     assert set(bundle.trainable_modules) == {"model"}
+    assert bundle.metadata["family"] == family
+    assert bundle.metadata["ar_task"] == ar_task
+
+
+@pytest.mark.parametrize(
+    ("family", "ar_task", "model_module_path", "model_attr"),
+    [
+        ("janus_pro", "ar_t2i", "vrl.models.ar.janus_pro.model", "JanusProModel"),
+        (
+            "janus_pro_r1",
+            "ar_t2i_r1",
+            "vrl.models.ar.janus_pro.model",
+            "JanusProModel",
+        ),
+        (
+            "nextstep_1",
+            "ar_t2i",
+            "vrl.models.ar.nextstep_1.model",
+            "NextStep1Model",
+        ),
+        ("emu3", "ar_t2i", "vrl.models.ar.emu3.model", "Emu3Model"),
+        ("glm_image", "ar_t2i", "vrl.models.ar.glm_image.model", "GlmImageModel"),
+        ("llamagen", "ar_t2i", "vrl.models.ar.llamagen.model", "LlamaGenModel"),
+    ],
+)
+def test_ar_rollout_builders_follow_registry_descriptors(
+    monkeypatch: pytest.MonkeyPatch,
+    family: str,
+    ar_task: str,
+    model_module_path: str,
+    model_attr: str,
+) -> None:
+    from vrl.models.ar.build import build_family_ar_runtime_bundle
+
+    model_module = __import__(model_module_path, fromlist=[model_attr])
+    monkeypatch.setattr(model_module, model_attr, _TinyRuntimeModel)
+
+    bundle = build_family_ar_runtime_bundle(
+        _spec(family=family, ar_task=ar_task),
+    )
+
+    assert bundle_loads_full_generation_modules(bundle) is True
+    assert bundle.raw_handle is bundle.model
+    assert bundle.metadata["family"] == family
+    assert bundle.metadata["ar_task"] == ar_task
 
 
 def test_bundle_metadata_drives_consumer_down_opposite_branches() -> None:

@@ -14,64 +14,12 @@ from vrl.generation.ar import (
 from vrl.generation.capabilities import FamilyCapability
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
-from vrl.models.ar.build import (
-    ar_model_config_base,
-    build_ar_runtime_bundle,
-    extract_ar_runtime_spec,
-)
+from vrl.models.ar.build import ar_model_config_base
 from vrl.models.ar.capabilities import ar_discrete_family_capability
-from vrl.models.ar.llamagen.model import (
-    LLAMAGEN_HF_REPO,
-    LlamaGenConfig,
-    LlamaGenModel,
-    LlamaGenReplayModel,
-)
 from vrl.models.ar.llamagen.runner import LlamaGenARModelRunner
-from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
-from vrl.utils.logging import init_logger
-
-logger = init_logger(__name__)
+from vrl.models.interfaces.runtime import RuntimeBuildSpec
 
 LLAMAGEN_FAMILY_CAPABILITY = ar_discrete_family_capability("llamagen", "ar_t2i")
-
-
-def build_llamagen_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    """Thin family stub over the shared AR bundle assembly."""
-
-    config = _llamagen_config_from_runtime_spec(spec)
-    return build_ar_runtime_bundle(
-        spec,
-        model=LlamaGenModel(LlamaGenConfig(**config)),
-        capability=LLAMAGEN_FAMILY_CAPABILITY,
-    )
-
-
-def build_llamagen_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    """Build a LlamaGen trainer replay bundle without the VQ decoder."""
-
-    config = _llamagen_config_from_runtime_spec(spec)
-    return build_ar_runtime_bundle(
-        spec,
-        model=LlamaGenReplayModel(LlamaGenConfig(**config)),
-        capability=LLAMAGEN_FAMILY_CAPABILITY,
-        replay=True,
-    )
-
-
-def extract_llamagen_runtime_spec(
-    cfg: Any,
-    device: Any,
-    weight_dtype: Any | None = None,
-) -> RuntimeBuildSpec:
-    """Slice LlamaGen runtime construction fields out of a whole RL cfg."""
-
-    return extract_ar_runtime_spec(
-        cfg,
-        device,
-        weight_dtype,
-        ar_task="ar_t2i",
-        default_model_path=LLAMAGEN_HF_REPO,
-    )
 
 
 # LlamaGen LoRA defaults: the vendored GPT uses fused llama-style projection
@@ -86,7 +34,7 @@ _LLAMAGEN_LORA_DEFAULTS: dict[str, Any] = {
 }
 
 
-def _llamagen_config_from_runtime_spec(spec: RuntimeBuildSpec) -> dict[str, Any]:
+def llamagen_config_from_runtime_spec(spec: RuntimeBuildSpec) -> dict[str, Any]:
     model_config = spec.model_config or {}
     sampling_config = spec.sampling_config or {}
     config = ar_model_config_base(spec, _LLAMAGEN_LORA_DEFAULTS)
@@ -263,7 +211,5 @@ class LlamaGenChunkExecutor(ARDiscreteChunkExecutorBase):
 __all__ = [
     "LLAMAGEN_FAMILY_CAPABILITY",
     "LlamaGenChunkExecutor",
-    "build_llamagen_replay_runtime_bundle",
-    "build_llamagen_runtime_bundle",
-    "extract_llamagen_runtime_spec",
+    "llamagen_config_from_runtime_spec",
 ]

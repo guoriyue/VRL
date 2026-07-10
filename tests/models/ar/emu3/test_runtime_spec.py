@@ -4,19 +4,21 @@ from __future__ import annotations
 
 from omegaconf import OmegaConf
 
+from vrl.models.ar.build import extract_family_ar_runtime_spec
 from vrl.models.ar.emu3.runner import Emu3TokenRunner
 from vrl.models.ar.emu3.runtime import (
     EMU3_FAMILY_CAPABILITY,
     Emu3ChunkExecutor,
-    _emu3_config_from_runtime_spec,
-    extract_emu3_runtime_spec,
+    emu3_config_from_runtime_spec,
 )
 
 
 def test_extract_runtime_spec_defaults_to_gen_hf_checkpoint() -> None:
-    cfg = OmegaConf.create({"model": {}, "precision": "fp32", "sampling": {}})
+    cfg = OmegaConf.create(
+        {"model": {"family": "emu3"}, "precision": "fp32", "sampling": {}},
+    )
 
-    spec = extract_emu3_runtime_spec(cfg, device="cpu", weight_dtype="float32")
+    spec = extract_family_ar_runtime_spec(cfg, device="cpu", weight_dtype="float32")
 
     assert spec.ar_task == "ar_t2i"
     assert spec.model_name_or_path == "BAAI/Emu3-Gen-hf"
@@ -26,6 +28,7 @@ def test_extract_runtime_spec_carries_sampling_and_lora_overrides() -> None:
     cfg = OmegaConf.create(
         {
             "model": {
+                "family": "emu3",
                 "path": "/ckpt/emu3-gen",
                 "use_lora": True,
                 "lora": {"rank": 8},
@@ -41,8 +44,8 @@ def test_extract_runtime_spec_carries_sampling_and_lora_overrides() -> None:
         }
     )
 
-    spec = extract_emu3_runtime_spec(cfg, device="cpu", weight_dtype="float32")
-    config = _emu3_config_from_runtime_spec(spec)
+    spec = extract_family_ar_runtime_spec(cfg, device="cpu", weight_dtype="float32")
+    config = emu3_config_from_runtime_spec(spec)
 
     assert spec.model_name_or_path == "/ckpt/emu3-gen"
     assert config["guidance_scale"] == 4.0

@@ -10,64 +10,15 @@ from vrl.generation.ar import ARChunkInputs, ARDiscreteChunkExecutorBase
 from vrl.generation.capabilities import FamilyCapability
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
-from vrl.models.ar.build import (
-    ar_model_config_base,
-    build_ar_runtime_bundle,
-    extract_ar_runtime_spec,
-)
+from vrl.models.ar.build import ar_model_config_base
 from vrl.models.ar.capabilities import ar_discrete_family_capability
 from vrl.models.ar.glm_image.model import (
-    GlmImageConfig,
-    GlmImageModel,
-    GlmImageReplayModel,
     glm_image_token_num,
 )
 from vrl.models.ar.glm_image.runner import GlmImageTokenRunner
-from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
-from vrl.utils.logging import init_logger
-
-logger = init_logger(__name__)
+from vrl.models.interfaces.runtime import RuntimeBuildSpec
 
 GLM_IMAGE_FAMILY_CAPABILITY = ar_discrete_family_capability("glm_image", "ar_t2i")
-
-
-def build_glm_image_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    """Thin family stub over the shared AR bundle assembly."""
-
-    config = _glm_image_config_from_runtime_spec(spec)
-    return build_ar_runtime_bundle(
-        spec,
-        model=GlmImageModel(GlmImageConfig(**config)),
-        capability=GLM_IMAGE_FAMILY_CAPABILITY,
-    )
-
-
-def build_glm_image_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
-    """Build a GLM-Image trainer replay bundle without the DiT decode stack."""
-
-    config = _glm_image_config_from_runtime_spec(spec)
-    return build_ar_runtime_bundle(
-        spec,
-        model=GlmImageReplayModel(GlmImageConfig(**config)),
-        capability=GLM_IMAGE_FAMILY_CAPABILITY,
-        replay=True,
-    )
-
-
-def extract_glm_image_runtime_spec(
-    cfg: Any,
-    device: Any,
-    weight_dtype: Any | None = None,
-) -> RuntimeBuildSpec:
-    """Slice GLM-Image runtime construction fields out of a whole RL cfg."""
-
-    return extract_ar_runtime_spec(
-        cfg,
-        device,
-        weight_dtype,
-        ar_task="ar_t2i",
-        default_model_path="zai-org/GLM-Image",
-    )
 
 
 # GLM-Image LoRA defaults; applied at read time so the carried ``model.lora``
@@ -81,7 +32,7 @@ _GLM_IMAGE_LORA_DEFAULTS: dict[str, Any] = {
 }
 
 
-def _glm_image_config_from_runtime_spec(spec: RuntimeBuildSpec) -> dict[str, Any]:
+def glm_image_config_from_runtime_spec(spec: RuntimeBuildSpec) -> dict[str, Any]:
     sampling_config = spec.sampling_config or {}
     config = ar_model_config_base(spec, _GLM_IMAGE_LORA_DEFAULTS)
 
@@ -246,7 +197,5 @@ class GlmImageChunkExecutor(ARDiscreteChunkExecutorBase):
 __all__ = [
     "GLM_IMAGE_FAMILY_CAPABILITY",
     "GlmImageChunkExecutor",
-    "build_glm_image_replay_runtime_bundle",
-    "build_glm_image_runtime_bundle",
-    "extract_glm_image_runtime_spec",
+    "glm_image_config_from_runtime_spec",
 ]
