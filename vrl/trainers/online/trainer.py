@@ -477,7 +477,7 @@ class OnlineTrainer(Trainer):
         if hasattr(algorithm, "precision_correction"):
             algorithm.precision_correction = config.precision_correction
         self.prompts = prompts or []
-        # Clean fine-tuning latents ({prompt -> [C,T,H,W]}) for the GRPO
+        # Clean fine-tuning latents ({target_video -> [C,T,H,W]}) for the GRPO
         # diffusion-loss regularizer; the recipe loads data.sft_latents and the
         # config layer already rejected sft_weight>0 without it.
         self._sft_latents = dict(sft_latents) if sft_latents else None
@@ -853,8 +853,15 @@ class OnlineTrainer(Trainer):
                 defer_replay_tensors=defer,
             )
             chunk_adv = sample_chunk.advantages.to(self.device)
+            self._backward_sft_regularizer(
+                chunk_batch,
+                loss_weight=sample_chunk.loss_weight,
+                total_groups=total_groups,
+                is_dummy=sample_chunk.is_dummy,
+                autocast_ctx=autocast_ctx,
+                agg=agg,
+            )
             for j in train_indices:
-                sft_loss_value = 0.0
                 with autocast_ctx:
                     if not uses_evaluator:
                         with record_function("trainer.loss"):
@@ -909,24 +916,12 @@ class OnlineTrainer(Trainer):
                                     group_ids=chunk_batch.group_ids,
                                 ),
                             )
-                        # Diffusion-loss regularizer: one extra forward per
-                        # CHUNK (first timestep slice only), not per slice.
-                        if (
-                            self._sft_weight > 0
-                            and j == train_indices[0]
-                            and not sample_chunk.is_dummy
-                        ):
-                            with record_function("trainer.sft_regularizer"):
-                                sft_term = self._sft_regularizer_loss(chunk_batch)
-                            sft_loss_value = float(sft_term.detach())
-                            loss = loss + sft_term
                     loss = loss * sample_chunk.loss_weight / loss_scale
                 self._backward(loss)
                 self._clear_algorithm_diagnostics()
                 if not sample_chunk.is_dummy:
                     agg["loss"].append(metrics.loss)
                     agg["policy_loss"].append(metrics.policy_loss)
-                    agg["sft_loss"].append(sft_loss_value)
                     agg["kl_penalty"].append(metrics.kl_penalty)
                     agg["clip_fraction"].append(metrics.clip_fraction)
                     agg["approx_kl"].append(metrics.approx_kl)
@@ -977,11 +972,13 @@ class OnlineTrainer(Trainer):
             vals = agg.get(key, [])
             return max(vals) if vals else 0.0
 
+        sft_loss = self._weighted_sft_metric(agg)
+
         phase_times = dict(phase_times)
         metrics = TrainStepMetrics(
-            loss=avg("loss"),
+            loss=avg("loss") + sft_loss,
             policy_loss=avg("policy_loss"),
-            sft_loss=avg("sft_loss"),
+            sft_loss=sft_loss,
             kl_penalty=avg("kl_penalty"),
             reward_mean=reward_mean,
             reward_std=reward_std,
@@ -1294,8 +1291,15 @@ class OnlineTrainer(Trainer):
                         defer_replay_tensors=defer_replay_tensor_move,
                     )
                     chunk_adv = sample_chunk.advantages.to(self.device)
+                    self._backward_sft_regularizer(
+                        chunk_batch,
+                        loss_weight=sample_chunk.loss_weight,
+                        total_groups=len(chunk_batches),
+                        is_dummy=sample_chunk.is_dummy,
+                        autocast_ctx=autocast_ctx,
+                        agg=agg_metrics,
+                    )
                     for j in train_indices:
-                        sft_loss_value = 0.0
                         with timer.time("evaluate"), autocast_ctx:
                             if not uses_evaluator:
                                 with record_function("trainer.loss"):
@@ -1353,17 +1357,6 @@ class OnlineTrainer(Trainer):
                                             group_ids=chunk_batch.group_ids,
                                         ),
                                     )
-                                # Diffusion-loss regularizer: one extra forward
-                                # per CHUNK (first timestep slice only).
-                                if (
-                                    self._sft_weight > 0
-                                    and j == train_indices[0]
-                                    and not sample_chunk.is_dummy
-                                ):
-                                    with record_function("trainer.sft_regularizer"):
-                                        sft_term = self._sft_regularizer_loss(chunk_batch)
-                                    sft_loss_value = float(sft_term.detach())
-                                    loss = loss + sft_term
                             # Average across rollout micro-batches inside this
                             # optimizer update; timestep accumulation follows
                             # Flow-GRPO's per-denoise-step surrogate structure.
@@ -1377,7 +1370,6 @@ class OnlineTrainer(Trainer):
                         if not sample_chunk.is_dummy:
                             agg_metrics["loss"].append(metrics.loss)
                             agg_metrics["policy_loss"].append(metrics.policy_loss)
-                            agg_metrics["sft_loss"].append(sft_loss_value)
                             agg_metrics["kl_penalty"].append(metrics.kl_penalty)
                             agg_metrics["clip_fraction"].append(metrics.clip_fraction)
                             agg_metrics["approx_kl"].append(metrics.approx_kl)
@@ -1430,6 +1422,8 @@ class OnlineTrainer(Trainer):
             vals = agg_metrics.get(key, [])
             return max(vals) if vals else 0.0
 
+        sft_loss = self._weighted_sft_metric(agg_metrics)
+
         reward_mean = pre_filter_reward_mean
         reward_std = pre_filter_reward_std
         adv_mean = pre_filter_adv_mean
@@ -1445,9 +1439,9 @@ class OnlineTrainer(Trainer):
             self._write_phase_events(timer)
 
         metrics = TrainStepMetrics(
-            loss=avg("loss"),
+            loss=avg("loss") + sft_loss,
             policy_loss=avg("policy_loss"),
-            sft_loss=avg("sft_loss"),
+            sft_loss=sft_loss,
             kl_penalty=avg("kl_penalty"),
             reward_mean=reward_mean,
             reward_std=reward_std,
@@ -1531,11 +1525,52 @@ class OnlineTrainer(Trainer):
             if hasattr(self.algorithm, attr):
                 setattr(self.algorithm, attr, None)
 
+    def _backward_sft_regularizer(
+        self,
+        chunk_batch: Any,
+        *,
+        loss_weight: float,
+        total_groups: int,
+        is_dummy: bool,
+        autocast_ctx: Any,
+        agg: dict[str, list[float]],
+    ) -> None:
+        """Backpropagate one correctly normalized, rank-balanced SFT term.
+
+        The policy objective accumulates over denoise timesteps; the diffusion
+        pretraining regularizer does not. It therefore uses only the group and
+        sample-chunk normalization here, outside the timestep loop. Distributed
+        dummy slots still run the forward and a zero-weight backward so FSDP/DDP
+        execute the same collective sequence on every rank.
+        """
+
+        if self._sft_weight <= 0:
+            return
+        if total_groups <= 0:
+            raise ValueError("sft regularizer total_groups must be positive")
+
+        from vrl.utils.profiling import record_function
+
+        with autocast_ctx, record_function("trainer.sft_regularizer"):
+            sft_term = self._sft_regularizer_loss(chunk_batch)
+            scaled_term = sft_term * float(loss_weight) / int(total_groups)
+        self._backward(scaled_term)
+        if not is_dummy:
+            agg["sft_loss_weighted"].append(float(sft_term.detach()) * float(loss_weight))
+            agg["sft_loss_weights"].append(float(loss_weight))
+
+    @staticmethod
+    def _weighted_sft_metric(agg: Mapping[str, list[float]]) -> float:
+        weighted = agg.get("sft_loss_weighted", [])
+        weights = agg.get("sft_loss_weights", [])
+        denominator = sum(weights)
+        return sum(weighted) / denominator if denominator > 0 else 0.0
+
     def _sft_regularizer_loss(self, chunk_batch: Any) -> torch.Tensor:
         """Weighted diffusion pretraining loss on clean fine-tuning latents.
 
         The Cosmos-Predict2.5 paper's anti-reward-hacking regularizer
-        (§4.2.2): noise the CLEAN target latents of this chunk's prompts at a
+        (§4.2.2): noise this chunk's CLEAN target latents at a
         random step of the replay schedule and penalize the policy's
         prediction error against the family's pretraining target. Everything
         family-specific is reused, not re-derived: the noising runs through
@@ -1551,18 +1586,17 @@ class OnlineTrainer(Trainer):
         from vrl.trajectory import TrajectoryResolver
 
         assert self._sft_latents is not None  # ctor validated
-        prompts = chunk_batch.prompts
-        if not prompts:
+        reward_metadata = chunk_batch.context.get("reward_metadata", {})
+        target_key = str(reward_metadata.get("target_video", "") or "").strip()
+        if not target_key:
             raise ValueError(
-                "the sft regularizer needs batch.prompts to key the clean "
-                "latents; this collector did not attach them",
+                "the sft regularizer needs batch.context.reward_metadata.target_video "
+                "to identify the clean target latent; this collector did not attach it",
             )
-        missing = sorted({p for p in prompts if p not in self._sft_latents})
-        if missing:
+        if target_key not in self._sft_latents:
             raise ValueError(
-                f"data.sft_latents is missing {len(missing)} of this batch's "
-                f"prompts (first: {missing[0]!r}); re-encode the shard over "
-                "the full training manifest",
+                f"data.sft_latents has no entry for target_video {target_key!r}; "
+                "re-encode the shard over the full training manifest",
             )
         scheduler = getattr(self.evaluator, "scheduler", None)
         if scheduler is None:
@@ -1573,7 +1607,10 @@ class OnlineTrainer(Trainer):
             )
 
         observations = chunk_batch.observations
-        x0 = torch.stack([self._sft_latents[p] for p in prompts]).to(
+        x0 = self._sft_latents[target_key].unsqueeze(0).expand(
+            int(observations.shape[0]),
+            *self._sft_latents[target_key].shape,
+        ).to(
             device=self.device,
             dtype=observations.dtype if hasattr(observations, "dtype") else None,
         )

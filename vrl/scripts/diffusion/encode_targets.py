@@ -9,18 +9,21 @@ sampling geometry as the training run, which is why this script takes the
 experiment config rather than free-form arguments:
 
     python -m vrl.scripts.diffusion.encode_targets \\
-        --experiment diffusion/cosmos_predict2/online_grpo_droid_target_480p \\
-        --out data/droid/sft_latents_480p_93f.pt
+        --experiment diffusion/cosmos_predict2_5/online_grpo_droid_sft_numerics_240p_33f \\
+        --out data/external/video_world/sft_latents/cosmos_predict25_240p_33f.pt \\
+        --preview-out outputs/cosmos_predict25_sft_target_roundtrip.mp4
 
-Requires the family model to expose ``encode_video_to_latents`` (Cosmos
-Predict2 does; add it to another family before pointing this script at it)
-and every manifest row to carry a ``target_video`` artifact.
+Requires the family model to expose ``encode_video_to_latents`` and every
+manifest row to carry a ``target_video`` artifact. The shard is keyed by that
+stable artifact identity, not prompt text: real fine-tuning manifests may use
+the same instruction for several distinct target videos.
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -45,6 +48,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="encode only the first N manifest rows (smoke runs)",
     )
+    parser.add_argument(
+        "--preview-out",
+        default=None,
+        help="decode the first encoded target and write an mp4 round-trip preview",
+    )
     return parser
 
 
@@ -62,6 +70,13 @@ def _video_at_sampling_geometry(
     from vrl.utils.media import read_video_frames
 
     frames = read_video_frames(path, num_frames=num_frames)  # [T,H,W,3] in [0,1]
+    if int(frames.shape[0]) != num_frames:
+        raise ValueError(
+            f"target video {path} yielded {int(frames.shape[0])} frames, but the "
+            f"training sampling geometry requires {num_frames}; rebuild the target "
+            "clip at the training frame count instead of silently padding or "
+            "interpolating supervision",
+        )
     video = frames.permute(0, 3, 1, 2)  # [T,3,H,W]
     if video.shape[-2:] != (height, width):
         video = F.interpolate(
@@ -71,6 +86,45 @@ def _video_at_sampling_geometry(
             align_corners=False,
         )
     return video.permute(1, 0, 2, 3).unsqueeze(0)  # [1,3,T,H,W]
+
+
+def _resolve_target_videos(
+    examples: list[Any],
+    *,
+    data_root: str | Path | None,
+    allow_absolute: bool,
+) -> list[tuple[str, str]]:
+    """Resolve and validate stable target identities before loading a model."""
+
+    from vrl.trainers.data.artifacts import resolve_prompt_example_artifacts
+
+    targets: list[tuple[str, str]] = []
+    seen_target_keys: set[str] = set()
+    for index, example in enumerate(examples):
+        target_key = str(getattr(example, "target_video", "") or "").strip()
+        if not target_key:
+            raise ValueError(
+                f"manifest row {index} ({example.prompt!r}) has no target_video; "
+                "the sft shard needs one clean video per training example",
+            )
+        if target_key in seen_target_keys:
+            raise ValueError(
+                f"manifest row {index} repeats target_video {target_key!r}; "
+                "target_video is the sft shard identity and must be unique",
+            )
+        seen_target_keys.add(target_key)
+        resolved = resolve_prompt_example_artifacts(
+            example,
+            data_root=data_root,
+            allow_absolute=allow_absolute,
+        )
+        resolved_target = Path(resolved.target_video)
+        if not resolved_target.is_file():
+            raise FileNotFoundError(
+                f"manifest row {index} target_video does not exist: {resolved_target}",
+            )
+        targets.append((target_key, str(resolved_target)))
+    return targets
 
 
 def main() -> None:
@@ -86,10 +140,7 @@ def main() -> None:
         normalize_rollout_family,
     )
     from vrl.trainers.data import load_prompt_examples_from_config
-    from vrl.trainers.data.artifacts import (
-        resolve_prompt_example_artifacts,
-        save_sft_latents,
-    )
+    from vrl.trainers.data.artifacts import save_sft_latents
     from vrl.utils.config import import_from_path
 
     cfg = load_config(f"experiment/{args.experiment}")
@@ -104,12 +155,23 @@ def main() -> None:
     height = int(OmegaConf.select(cfg, "sampling.height"))
     width = int(OmegaConf.select(cfg, "sampling.width"))
     num_frames = int(OmegaConf.select(cfg, "sampling.num_frames", default=1) or 1)
+    fps = float(OmegaConf.select(cfg, "sampling.fps", default=16) or 16)
 
-    examples = load_prompt_examples_from_config(cfg)
+    examples = load_prompt_examples_from_config(cfg.data)
     if args.limit is not None:
         examples = examples[: int(args.limit)]
     if not examples:
         raise ValueError("the training manifest resolved to zero examples")
+
+    data_root = OmegaConf.select(cfg, "data.artifact_data_root", default=None)
+    allow_absolute = bool(
+        OmegaConf.select(cfg, "data.allow_absolute_artifact_paths", default=False),
+    )
+    targets = _resolve_target_videos(
+        examples,
+        data_root=data_root,
+        allow_absolute=allow_absolute,
+    )
 
     # The exact builder path the rollout workers import — same model, same
     # weights, same latent space as the run this shard will regularize.
@@ -126,17 +188,8 @@ def main() -> None:
             "encoding sft latents for it",
         )
 
-    latents_by_prompt: dict[str, Any] = {}
-    for index, example in enumerate(examples):
-        resolved = resolve_prompt_example_artifacts(example)
-        target = getattr(resolved, "target_video", None) or getattr(
-            example, "target_video", None,
-        )
-        if not target:
-            raise ValueError(
-                f"manifest row {index} ({example.prompt!r}) has no target_video; "
-                "the sft shard needs one clean video per prompt",
-            )
+    latents_by_target: dict[str, Any] = {}
+    for index, (target_key, target) in enumerate(targets):
         video = _video_at_sampling_geometry(
             str(target),
             height=height,
@@ -144,25 +197,32 @@ def main() -> None:
             num_frames=num_frames,
         )
         latents = encode(video.to(device))
-        latents_by_prompt[str(example.prompt)] = latents.squeeze(0).detach().cpu()
+        latents_by_target[target_key] = latents.squeeze(0).detach().cpu()
+        if args.preview_out and index == 0:
+            from vrl.utils.media import write_mp4
+
+            decoded = model.decode_latents(latents)
+            write_mp4(decoded, args.preview_out, fps=fps)
+            logger.info("wrote first-target round-trip preview to %s", args.preview_out)
         logger.info(
             "[%d/%d] encoded %s -> %s",
             index + 1,
             len(examples),
             target,
-            tuple(latents_by_prompt[str(example.prompt)].shape),
+            tuple(latents_by_target[target_key].shape),
         )
 
     save_sft_latents(
         args.out,
         family=family,
         model_path=str(OmegaConf.select(cfg, "model.path", default="")),
-        latents_by_prompt=latents_by_prompt,
+        model_revision=str(OmegaConf.select(cfg, "model.revision", default="") or ""),
+        latents_by_target=latents_by_target,
     )
     logger.info(
-        "wrote %d prompt latents to %s (set data.sft_latents to this path and "
+        "wrote %d target latents to %s (set data.sft_latents to this path and "
         "algorithm.sft_weight > 0 to enable the regularizer)",
-        len(latents_by_prompt),
+        len(latents_by_target),
         args.out,
     )
 

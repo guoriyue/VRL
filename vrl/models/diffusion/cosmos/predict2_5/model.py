@@ -547,6 +547,29 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
             "return_dict": False,
         }
 
+    def encode_video_to_latents(self, video: torch.Tensor) -> torch.Tensor:
+        """Encode clean [0, 1] video into this checkpoint's latent domain.
+
+        ``decode_latents`` unnormalizes with ``latent * latents_std +
+        latents_mean`` before VAE decode. This is the exact inverse used by the
+        offline SFT-target encoder; deterministic posterior modes keep shard
+        generation reproducible.
+        """
+
+        pipe = self.pipeline
+        x = (video.to(pipe.vae.dtype) * 2.0 - 1.0).to(self.device)
+        with torch.no_grad():
+            encoded = torch.cat(
+                [
+                    pipe.vae.encode(sample.unsqueeze(0)).latent_dist.mode()
+                    for sample in x
+                ],
+                dim=0,
+            )
+        latents_mean = pipe.latents_mean.to(encoded.device, encoded.dtype)
+        latents_std = pipe.latents_std.to(encoded.device, encoded.dtype)
+        return (encoded - latents_mean) / latents_std
+
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
         pipe = self.pipeline
         latents_mean = pipe.latents_mean.to(latents.device, latents.dtype)

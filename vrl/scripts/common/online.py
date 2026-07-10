@@ -213,12 +213,20 @@ def _load_sft_latents_from_config(cfg: DictConfig, family: str) -> dict[str, Any
     fails loud on a family-mismatched or malformed shard).
     """
 
+    weight = float(OmegaConf.select(cfg, "algorithm.sft_weight", default=0.0) or 0.0)
+    if weight <= 0:
+        return None
     path = OmegaConf.select(cfg, "data.sft_latents", default=None)
     if not path:
-        return None
+        raise ValueError("algorithm.sft_weight > 0 requires data.sft_latents")
     from vrl.trainers.data.artifacts import load_sft_latents
 
-    return load_sft_latents(str(path), family=family)
+    return load_sft_latents(
+        str(path),
+        family=family,
+        model_path=str(OmegaConf.select(cfg, "model.path", default="")),
+        model_revision=str(OmegaConf.select(cfg, "model.revision", default="") or ""),
+    )
 
 
 def export_transformer_lora(bundle: Any, cfg: DictConfig) -> dict[str, Any] | None:

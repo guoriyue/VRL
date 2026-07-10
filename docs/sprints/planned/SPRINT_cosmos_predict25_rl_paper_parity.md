@@ -115,7 +115,7 @@ rbs=1、n=3 时组内只有 3 个样本、每步只有 1 个 prompt——advanta
    **→ 通道已落地(2026-07-09,CPU 全链验证;GPU numerics 门未跑)**。实施相对设计有一处
    收紧:不预存 embeds——SFT 项复用**当前训练 batch 的 prompt 条件**(新模型方法
    `replay_forward_with_latents`,与 log-prob replay 走同一 state 重建/同一 timestep,
-   sigma 域零第二换算路径),shard 只存 {prompt → 干净视频 latents}。五件套:
+   sigma 域零第二换算路径),shard 只存 {target_video → 干净视频 latents}。五件套:
    ① 加噪构造 `diffusion_pretraining_pair`(vrl/math/diffusion/flow_matching.py,
    scheduler 拥有 forward process:flow=scale_noise+velocity 目标、ddim 系=add_noise+
    epsilon/v 目标);② `GRPOConfig.sft_weight` + schema 交叉校验(weight>0 无
@@ -129,6 +129,18 @@ rbs=1、n=3 时组内只有 3 个样本、每步只有 1 个 prompt——advanta
    sft_weight=0 与关闭逐位一致;③ 小 lr 短跑 sft_loss 下降、reward 不崩。
    注意:videophy(本 parity run 的数据集)无 target 视频——paper run 想用此正则需先给
    数据集配 target(droid 系 manifest 天然满足)。
+   **→ CPU 审计修正（2026-07-09，未运行 GPU）**：首版通道的单测通过但真实调用链有
+   盲区，现已逐项修根因：encoder 改读 `cfg.data` 并显式消费 artifact root；shard schema
+   升到 v2，以 `target_video` 稳定 artifact identity 为键（DROID full 的重复 prompt 不再
+   last-write-wins），并同时校验 family + model.path + model.revision；Cosmos
+   stored/caller-latent replay 共用
+   真实 timestep hook；SFT backward 移出 denoise timestep 循环，按 group/chunk 独立归一化，
+   dummy rank 也做零权重 backward 保持 FSDP collectives 对称；`sft_weight` 在 schema 拒绝
+   负数/NaN/Inf/非 diffusion-GRPO；Predict2.5 已补 VAE encode inverse。新增可复用机制门
+   `online_grpo_droid_sft_numerics_240p_33f.yaml`，严格匹配现有 DROID 33f target，并支持
+   `encode_targets --preview-out` 先看 encode/decode 回放。正式 paper-shaped 512p/93f 仍需
+   真正 93f target 数据；不会把 33f 静默补帧冒充监督。GPU 被占用，本轮只完成 CPU 测试、
+   配置解析和静态检查，GPU numerics gate 仍未执行。
 3. **reward 模型**:论文 **VideoAlign** vs config `kling_video_reward`——很可能同源(Kling 的
    VideoReward),但**没 100% 确认**。**行动:确认是不是同一个模型。**
 4. **lr / 微调方式**:论文 3e-5 全参,config 是 1e-4 LoRA(注释解释:全参需多卡)。这是**有意的

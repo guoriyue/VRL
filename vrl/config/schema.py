@@ -9,6 +9,7 @@ key all get the same treatment: one warning naming the dotted path.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import fields as dataclass_fields
 from typing import Annotated, Any, Literal
@@ -143,7 +144,7 @@ class DataConfig(ConfigBase):
     split: str | None = None
     cache_dir: str | None = None
     # Precomputed clean-latents shard for the GRPO diffusion-loss regularizer
-    # (algorithm.sft_weight > 0): {prompt -> VAE latents} written by
+    # (algorithm.sft_weight > 0): {target_video -> VAE latents} written by
     # vrl/scripts/diffusion/encode_targets.py. reader: run_online_recipe.
     sft_latents: str | None = None
     max_train_samples: Any = None
@@ -735,20 +736,28 @@ class RootConfig(ConfigBase):
         kind = algo.kind
         rollout = self.rollout
 
-        # sft regularizer needs its data channel: a weight without latents
-        # would be a silent no-op knob (or a first-step crash), so reject at
-        # config load. The reverse (latents without weight) is allowed — the
-        # shard is inert data.
-        if (
-            kind in {"grpo", "dance_grpo"}
-            and float(getattr(algo, "sft_weight", 0.0) or 0.0) > 0
-            and (self.data is None or not self.data.sft_latents)
-        ):
-            raise ValueError(
-                "algorithm.sft_weight > 0 requires data.sft_latents "
-                "(the precomputed clean-latents shard; see "
-                "vrl/scripts/diffusion/encode_targets.py)",
-            )
+        # The SFT term is a continuous diffusion-GRPO feature. Validate the
+        # numeric domain and algorithm ownership here so a negative/NaN value
+        # or an inherited token-GRPO field cannot silently become a no-op.
+        raw_sft_weight = getattr(algo, "sft_weight", None)
+        if raw_sft_weight is not None:
+            try:
+                sft_weight = float(raw_sft_weight)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("algorithm.sft_weight must be a finite number >= 0") from exc
+            if not math.isfinite(sft_weight) or sft_weight < 0:
+                raise ValueError("algorithm.sft_weight must be a finite number >= 0")
+            if sft_weight > 0 and kind not in {"grpo", "dance_grpo"}:
+                raise ValueError(
+                    "algorithm.sft_weight > 0 is supported only for diffusion "
+                    "grpo/dance_grpo",
+                )
+            if sft_weight > 0 and (self.data is None or not self.data.sft_latents):
+                raise ValueError(
+                    "algorithm.sft_weight > 0 requires data.sft_latents "
+                    "(the precomputed clean-latents shard; see "
+                    "vrl/scripts/diffusion/encode_targets.py)",
+                )
 
         # grpo / diffusion_nft: SDE type must be sde or cps
         # grpo / diffusion_nft require an sde block; sde.type membership is now
