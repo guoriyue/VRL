@@ -2,11 +2,31 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from vrl.config.loading import list_bundled_configs, load_config
+
+
+def test_config_package_defers_typed_builder_import() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; import vrl.config; "
+                "assert 'vrl.config.builders' not in sys.modules"
+            ),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_bundled_config_inventory_contains_canonical_recipe() -> None:
