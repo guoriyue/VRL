@@ -32,7 +32,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v8
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           version: "0.10.2"
           enable-cache: true
@@ -56,14 +56,14 @@ jobs:
           python-version: "3.12"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v8
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           version: "0.10.2"
           enable-cache: true
           cache-dependency-glob: uv.lock
 
       - name: Sync locked dependencies
-        run: uv sync --locked --only-group lint
+        run: uv sync --frozen --only-group lint
 
       - name: Ruff lint
         run: uv run --no-sync ruff check .
@@ -83,14 +83,14 @@ jobs:
           python-version: "3.12"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v8
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           version: "0.10.2"
           enable-cache: true
           cache-dependency-glob: uv.lock
 
       - name: Sync locked dependencies
-        run: uv sync --locked --group test --extra cosmos
+        run: uv sync --frozen --group test --extra cosmos
 
       - name: Validate config contracts
         run: |
@@ -114,7 +114,7 @@ jobs:
           python-version: "3.12"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v8
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           version: "0.10.2"
           enable-cache: true
@@ -122,8 +122,8 @@ jobs:
 
       - name: Sync locked dependencies
         run: |
-          uv sync --locked --group test --extra cosmos
-          uv pip install --python .venv/bin/python -e third_party
+          uv sync --frozen --group test --extra cosmos
+          uv pip install --python .venv/bin/python --no-deps --no-build-isolation --editable third_party
 
       # Fast PR/push subset: excludes e2e (real weights) and slow_test (Ray spin-up).
       # GPU-marked tests skip on this CPU runner via tests/conftest.py.
@@ -149,7 +149,7 @@ jobs:
           python-version: "3.12"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v8
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           version: "0.10.2"
           enable-cache: true
@@ -157,8 +157,8 @@ jobs:
 
       - name: Sync locked dependencies
         run: |
-          uv sync --locked --group test --extra cosmos
-          uv pip install --python .venv/bin/python -e third_party
+          uv sync --frozen --group test --extra cosmos
+          uv pip install --python .venv/bin/python --no-deps --no-build-isolation --editable third_party
 
       # Full suite incl. slow_test (Ray) tests. e2e still opt-in (needs GPU + real
       # weights); gpu/distributed tests skip until dedicated lanes opt into them.
@@ -180,7 +180,7 @@ jobs:
           python-version: "3.12"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v8
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
           version: "0.10.2"
           enable-cache: true
@@ -196,7 +196,7 @@ jobs:
 
       - name: Verify installed wheel outside the repository
         run: |
-          uv sync --locked
+          uv sync --frozen
           wheel=$(find "$RUNNER_TEMP/from-sdist" -maxdepth 1 -name '*.whl' -print -quit)
           uv pip install --python .venv/bin/python --no-deps \
             --target "$RUNNER_TEMP/wheel-site" "$wheel"

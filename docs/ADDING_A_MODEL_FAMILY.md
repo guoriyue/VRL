@@ -107,8 +107,9 @@ vrl/config/presets/experiment/diffusion/my_model/online_grpo_<reward>.yaml
 Mirror
 `vrl/config/presets/experiment/diffusion/sd3_5/online_grpo_ocr.yaml` and replace
 only the model and sampling layers. Algorithm, rollout, reward, and distributed
-layers remain shared. The CLI uses the logical name without the package prefix or
-extension:
+layers remain shared. Keep checkpoint paths portable: use a Hub ID, a repository-
+relative canonical path, or an explicit runtime override, never a contributor's
+home directory. The CLI uses the logical name without the package prefix or extension:
 
 ```bash
 vrl-train --config experiment/diffusion/my_model/online_grpo_<reward>

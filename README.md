@@ -44,6 +44,7 @@ core abstractions at every step:
 | --- | --- |
 | ✅ **Validated** | A real run proved optimizer updates, non-flat reward, artifacts, and changed weights. |
 | 🧪 **Runnable** | Config, entrypoint, runtime path, and structural tests exist; training quality is not yet proven. |
+| 🔌 **Integrated** | Model/runtime wiring and rollout parity exist, but a complete experiment recipe or environment contract is still missing. |
 | 🚧 **Planned** | Targeted, not wired end-to-end yet. |
 
 ## Supported Models
@@ -54,24 +55,28 @@ core abstractions at every step:
 | **FLUX** | text -> image diffusion | GRPO-Guard, DanceGRPO, DiffusionNFT, Flow-DPPO | 🧪 Runnable |
 | **Qwen-Image** | text -> image diffusion | GRPO | 🧪 Runnable |
 | **SANA** | text -> image diffusion | GRPO | 🧪 Runnable |
-| **Lumina-Image 2** | text -> image diffusion | GRPO | 🧪 Runnable |
-| **HunyuanImage 2.1** | text -> image diffusion | GRPO | 🧪 Runnable |
-| **PixArt-Σ** | text -> image diffusion | GRPO | 🧪 Runnable |
+| **Lumina-Image-2** | text -> image diffusion | GRPO | 🧪 Runnable |
+| **HunyuanImage-2.1** | text -> image diffusion | GRPO | 🧪 Runnable |
+| **PixArt-Sigma** | text -> image diffusion | GRPO | 🧪 Runnable |
+| **CogVideoX** | text -> video diffusion | GRPO | 🧪 Runnable |
+| **HunyuanVideo** | text -> video diffusion | GRPO | 🧪 Runnable |
+| **Mochi-1** | text -> video diffusion | GRPO | 🧪 Runnable |
 | **Wan2.1** | text/image -> video diffusion | GRPO, DPO | 🧪 Runnable |
 | **Wan2.2** | image -> video diffusion | GRPO | 🧪 Runnable |
-| **HunyuanVideo** | text -> video diffusion | GRPO | 🧪 Runnable |
-| **Mochi 1** | text -> video diffusion | GRPO | 🧪 Runnable |
-| **CogVideoX** | text -> video diffusion | GRPO | 🧪 Runnable |
+| **Cosmos-Predict2** | video -> world diffusion | GRPO | 🧪 Runnable |
+| **Cosmos-Predict2.5** | text -> world diffusion | GRPO, DiffusionNFT | 🧪 Runnable |
+| **Cosmos-Anima** | text -> image diffusion | GRPO | 🧪 Runnable |
 | **Echo** | text -> video diffusion | GRPO | 🧪 Runnable |
-| **Cosmos-Predict2** | video diffusion | GRPO | 🧪 Runnable |
-| **Cosmos-Predict2.5** | video diffusion | DiffusionNFT | 🧪 Runnable |
-| **Cosmos-Anima** | video diffusion | GRPO | 🧪 Runnable |
 | **Janus-Pro** | autoregressive image | GRPO, R1-GRPO | 🧪 Runnable |
 | **NextStep-1** | autoregressive image | GRPO | 🧪 Runnable |
-| **Emu3** | autoregressive image | GRPO | 🚧 Recipe pending |
-| **GLM-Image** | autoregressive image | GRPO | 🚧 Recipe pending |
-| **LlamaGen** | autoregressive image | GRPO | 🚧 Recipe pending |
-| **Cosmos3** | text -> video diffusion | GRPO | 🚧 Run-gated |
+| **Emu3** | autoregressive image | Token-GRPO | 🔌 Integrated |
+| **GLM-Image** | autoregressive image | Token-GRPO | 🔌 Integrated |
+| **LlamaGen** | autoregressive image | Token-GRPO | 🔌 Integrated |
+| **Cosmos3** | text -> video diffusion | — | 🔌 Integrated |
+
+`FAMILY_REGISTRY` is the canonical runtime roster. This table reports user-facing
+recipe readiness as well, so a registered family remains Integrated until a complete
+experiment config and its dependency contract are committed.
 
 ## Supported Algorithms
 
@@ -133,21 +138,27 @@ plus the vendored submodule wrappers. It is the only setup step; re-run it after
 submodule bump. Base install ≠ feature extras — see **Dependencies** below for the
 one or two extras your use case needs (the quickstart needs `.[cosmos,ocr]`).
 
+The supported install unit is currently a source checkout, not a standalone
+wheel: runtime configs, datasets, reward assets, and vendored backends live beside
+the `vrl/` package. CI therefore verifies an editable source install and config
+resolution instead of publishing an incomplete wheel artifact.
+
 ### Why a setup step (vendored submodules)
 
 Some model/reward backends are upstream code that ships no Python packaging
 (JoyAI-Echo's `ltx_*`, videophy's `mplug_owl_video`). They live as git
-submodules under `third_party/`, each paired with a thin editable-install wrapper
-(`third_party/<name>_packaging/`) that exposes its packages — so `vrl/` contains
-**no** `sys.path` injection. `make setup` fetches the submodules, then discovers
-and editable-installs **every** `third_party/*_packaging/` wrapper, so adding a
-vendored dependency needs no edit outside `third_party/`. See
+submodules under `third_party/`. The single thin editable-install wrapper at
+`third_party/pyproject.toml` exposes their packages, so `vrl/` contains **no**
+`sys.path` injection. `make setup` fetches the submodules, then installs that
+wrapper. Adding a vendored dependency only requires extending the wrapper's
+explicit source roots and package allowlist under `third_party/`. See
 [`third_party/README.md`](third_party/README.md) for the convention.
 
 ## Dependencies
 
 `make setup` installs the **base** package only. Each use case adds one or two
-optional-dependency groups; groups **compose** in a single `pip install`:
+optional-dependency groups. Most groups compose in a single `pip install`; the
+table and isolation notes below call out environments that must remain separate:
 
 | Use case | Install | Brings (why) |
 |---|---|---|
@@ -157,7 +168,7 @@ optional-dependency groups; groups **compose** in a single `pip install`:
 | Video / VLM reward (Kling, VideoScore2, UnifiedReward) | `.[reward]` | transformers≥5.13, qwen-vl-utils, opencv |
 | Pose / motion / anatomy eval | `.[pose]` (CPU) · `.[pose-gpu]` (GPU) | onnxruntime + opencv |
 | Dataset prep (video-world, pickapic) | `.[data]` | datasets, pyarrow, av |
-| Fixed video-eval suite (VBench) | `.[videoeval]` | vbench |
+| Fixed video-eval suite (VBench) | dedicated `.[videoeval]` environment | vbench 0.1.5 |
 | Full-param 8-bit Adam (Cosmos trustworthy-curve recipe) | `.[optim8bit]` | bitsandbytes (int8 Adam state, RL-safe) |
 | Tests / lint | `uv sync --group test --group lint` | pytest, ruff |
 
@@ -171,6 +182,27 @@ it serves *all* diffusion and AR families, not just Cosmos.)
 > vLLM pins its Torch/TorchVision/TorchAudio ABI. The current lock resolves it with
 > `.[cosmos]`, but a dedicated venv keeps this large, tightly pinned accelerator
 > stack isolated — the repo already ships one at `.venvs/vllm-omni`.
+
+> **`videoeval` also requires its own environment.** VBench 0.1.5 pins
+> `transformers==4.33.2`, while `cosmos` and `reward` require Transformers 5.13+
+> APIs. The conflict is declared in `pyproject.toml`, so uv can lock both valid
+> environments but rejects an invalid combined sync. Create the evaluation
+> environment directly from the repository lock:
+>
+> ```bash
+> UV_PROJECT_ENVIRONMENT=.venvs/videoeval \
+>   uv sync --frozen --extra videoeval
+> ```
+
+For the reproducible contributor/CI environment, install directly from the
+committed lock instead of resolving floating versions. The exact sync prunes
+packages outside the main project metadata, so reinstall the source-only vendored
+wrapper immediately afterward:
+
+```bash
+uv sync --frozen --extra dev --extra cosmos
+uv pip install --python .venv/bin/python --no-deps --no-build-isolation --editable third_party
+```
 
 ## Quickstart
 

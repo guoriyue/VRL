@@ -7,6 +7,7 @@ instead of parametrizing the same assertion into dozens of collected tests.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -108,6 +109,22 @@ def test_config_groups_are_not_flattened() -> None:
     assert flattened == []
     assert task_configs == ()
     assert list_bundled_configs("profiling") == ()
+
+
+def test_raw_yaml_has_no_user_specific_absolute_paths() -> None:
+    """Committed configs must not depend on one contributor's home directory."""
+    user_home = re.compile(
+        r"(?:/home/[^/\s\"'{}]+/|/Users/[^/\s\"'{}]+/|/root/|"
+        r"[A-Za-z]:[\\/]Users[\\/][^\\/\s\"'{}]+[\\/])",
+    )
+    offenders = []
+    for path in sorted(CONFIGS_ROOT.rglob("*.yaml")):
+        for line_number, line in enumerate(path.read_text().splitlines(), start=1):
+            if user_home.search(line):
+                relative = path.relative_to(REPO_ROOT).as_posix()
+                offenders.append(f"{relative}:{line_number}: {line.strip()}")
+
+    assert offenders == []
 
 
 def test_experiments_are_grouped_by_model_family() -> None:
@@ -328,6 +345,10 @@ def test_sd35_single_gpu_async_debug_uses_persistent_colocated_rollout() -> None
     # topology, not spelled in YAML. Assert the derived/lifecycle result, not the
     # raw input key.
     assert cfg.distributed.resources.rollout.gpu_pool == "trainer"
+    # Resource resolution is a static topology test. Give it one synthetic
+    # visible ordinal so the assertion is identical on CPU CI and GPU hosts;
+    # no CUDA runtime or device allocation belongs in a config test.
+    cfg.distributed.resources.visible_devices = [0]
     resolved = resolve_distributed_resources(cfg)
     # memory_fraction passes through resolve_distributed_resources unchanged, so
     # pinning == 0.55 only echoes the YAML. Assert the resolver's real invariant
