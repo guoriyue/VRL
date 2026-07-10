@@ -1,31 +1,17 @@
 """Per-family scheduler log-prob parity (sample -> replay, ratio == 1).
 
-The predict2 parity bug lived in one family's REAL scheduler sigma table (EDM
-domain, sigma_max=80), not in the shared SDE math. Each case here drives
-``sde_step_with_logprob`` with the family's actual scheduler: pipeline-owned
-schedulers load their checkpoint config from the local HF cache (skipped when
-the cache is absent, e.g. clean CI); anima constructs its scheduler explicitly
-in code, mirroring vrl/models/diffusion/cosmos/anima/runtime.py.
+The predict2 parity bug lived in one family's real scheduler sigma table (EDM
+domain, sigma_max=80), not in the shared SDE math. Each case drives
+``sde_step_with_logprob`` with the family's scheduler declaration. Checkpoint-
+owned declarations are committed as small fixtures with their Hugging Face
+source and immutable revision; code-owned schedulers mirror the production
+constructor. The suite therefore exercises every family offline and never
+depends on a developer's cache.
 
-Coverage split (what runs where):
-- The EDM->flow CONVERSION BRANCH itself (vrl/math/diffusion/flow_matching.py)
-  is already covered cache-free in EVERY CI run by
-  tests/math/test_diffusion_flow_matching.py, which feeds a synthetic EDM-domain
-  table (sigma_max > 1) through ``sde_step_with_logprob`` and pins the same
-  ratio==1 / std_dev / prev_sample_mean invariants. So clean CI never loses the
-  conversion-math coverage even though the cache-loaded families below skip.
-- The REAL per-family sigma TABLES (the actual predict2 EDM sigma_max=80 table,
-  etc.) only execute when their HF checkpoint config is cached. On a clean CI
-  runner with no cache those families skip, so the real tables currently run
-  only under the gated e2e suite (tests/.../test_real_checkpoint_rl.py). The
-  anima case is the lone family that runs cache-free here (in-code scheduler).
-
-TODO(option-a): publish/pin a tiny scheduler-only HF repo per family
-(scheduler_config.json is a few KB, not weights) and load it via ``from_config``
-at a pinned revision instead of ``local_files_only`` cache lookup, so the real
-per-family sigma tables run on every CI runner without the gated e2e suite.
-Keep the ratio==1 invariant + ``sigma.max() > 1`` magnitude pin; do NOT assert
-literal sigma values (config-as-declaration).
+The fixture is a long-term correctness asset, not a synthetic schedule: update
+it only by copying the named ``scheduler_config.json`` at the pinned source
+revision. Literal sigma values remain intentionally unpinned because the
+configuration is the declaration under test.
 
 Pinned invariant per family x sde_type x step: replaying the recorded
 prev_sample under unchanged inputs reproduces the collection log-prob exactly,
@@ -37,6 +23,10 @@ replay path.
 
 from __future__ import annotations
 
+import json
+import re
+from pathlib import Path
+
 import pytest
 import torch
 
@@ -46,27 +36,7 @@ from vrl.rollouts.families import FAMILY_REGISTRY, normalize_rollout_family
 
 _NUM_STEPS = 10
 _BATCH = 2
-
-
-def _load_hf_scheduler(repo: str, revision: str | None = None):
-    """Build a real scheduler from its cached ``scheduler_config.json``, or return
-    None on a cache miss (clean/offline CI) so the caller can try the next config
-    or skip. The conversion-math itself stays covered cache-free by
-    tests/math/test_diffusion_flow_matching.py; see the module docstring."""
-    diffusers = pytest.importorskip("diffusers")
-    try:
-        # load_config is class-agnostic for schedulers (they all read
-        # scheduler_config.json); dispatch the real class via _class_name.
-        config = diffusers.FlowMatchEulerDiscreteScheduler.load_config(
-            repo,
-            subfolder="scheduler",
-            revision=revision,
-            local_files_only=True,
-        )
-    except Exception:  # cache miss / offline CI
-        return None
-    scheduler_cls = getattr(diffusers, config["_class_name"])
-    return scheduler_cls.from_config(config)
+_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "scheduler_configs.json"
 
 
 def _anima_scheduler():
@@ -76,57 +46,39 @@ def _anima_scheduler():
     return scheduler
 
 
+def _echo_scheduler():
+    diffusers = pytest.importorskip("diffusers")
+    return diffusers.FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000)
+
+
 def _diffusion_families() -> list[str]:
     return [f for f, e in FAMILY_REGISTRY.items() if e.collector.kind == "diffusion"]
 
 
-def _model_configs_by_family() -> dict[str, list[str]]:
-    """Discover ``family -> [model config, ...]`` by reading the declared
-    ``model.family`` from every diffusion model config.
+def _model_repos_by_family() -> dict[str, set[str]]:
+    """Derive configured repositories from the bundled model presets."""
 
-    The config files are the single source of truth, so a newly added family
-    config is picked up automatically — there is no hand-maintained family->path
-    table to drift. Declared aliases (e.g. ``family: wan``) normalize to their
-    canonical registry key; configs sort so the smaller, more likely-cached
-    checkpoint is tried first.
-    """
-    out: dict[str, list[str]] = {}
+    out: dict[str, set[str]] = {}
     for name in list_bundled_configs("model/diffusion"):
-        declared = load_config(name).get("model", {}).get("family")
-        if declared is None:
+        model = load_config(name).get("model", {})
+        declared = model.get("family")
+        repo_id = model.get("path")
+        if declared is None or repo_id is None:
             continue
         family = normalize_rollout_family(str(declared))
-        rel = name.removesuffix(".yaml")
-        out.setdefault(family, []).append(rel)
+        out.setdefault(family, set()).add(str(repo_id))
     return out
 
 
-_MODEL_CONFIGS_BY_FAMILY = _model_configs_by_family()
-
-# anima is the lone diffusion family whose scheduler is built in code
-# (vrl/.../cosmos/anima/runtime.py), not downloaded — mirror that construction.
-# Keyed off a registry family so a rename/typo fails the guard below instead of
-# silently dropping anima's cache-free coverage.
-def _mochi_scheduler():
-    # Mochi ships invert_sigmas=true (ascending time); the FAMILY standardizes
-    # onto the descending domain before any SDE math runs — mirror that, since
-    # the raw checkpoint table is never what the rollout uses
-    # (vrl/models/diffusion/mochi/model.py:standard_mochi_scheduler).
-    shipped = _load_hf_scheduler("genmo/mochi-1-preview")
-    if shipped is None:
-        return None
-    from vrl.models.diffusion.mochi.model import standard_mochi_scheduler
-
-    scheduler = standard_mochi_scheduler(shipped.config, _NUM_STEPS, "cpu")
-    scheduler._vrl_timesteps_ready = True
-    return scheduler
-
+_SCHEDULER_FIXTURES: dict[str, dict[str, object]] = json.loads(
+    _FIXTURE_PATH.read_text(),
+)
 
 _MANUAL_SCHEDULERS = {
     "cosmos-predict2-anima": _anima_scheduler,
-    "mochi": _mochi_scheduler,
+    "echo": _echo_scheduler,
 }
-assert set(_MANUAL_SCHEDULERS) <= set(_diffusion_families())
+assert set(_diffusion_families()) >= set(_MANUAL_SCHEDULERS)
 
 # alphas_cumprod-ladder families: their rollout/replay log-probs run through
 # sde_type="ddim", never the flow SDE — the parity invariant is checked there.
@@ -136,18 +88,45 @@ assert set(_diffusion_families()) >= _DDIM_FAMILIES
 
 def _scheduler_for(family: str):
     if family in _MANUAL_SCHEDULERS:
-        scheduler = _MANUAL_SCHEDULERS[family]()
-        if scheduler is None:
-            pytest.skip(f"no cached scheduler config for {family!r}")
-        return scheduler
-    # Try the family's configs in order; the first with a cached scheduler wins.
-    # path/revision come from the YAML, never re-typed here.
-    for cfg_name in _MODEL_CONFIGS_BY_FAMILY.get(family, ()):
-        model = load_config(cfg_name).model
-        scheduler = _load_hf_scheduler(model.path, revision=model.get("revision"))
-        if scheduler is not None:
-            return scheduler
-    pytest.skip(f"no cached scheduler for diffusion family {family!r}")
+        return _MANUAL_SCHEDULERS[family]()
+
+    diffusers = pytest.importorskip("diffusers")
+    config = dict(_SCHEDULER_FIXTURES[family]["config"])
+    scheduler_cls = getattr(diffusers, config.pop("_class_name"))
+    scheduler = scheduler_cls.from_config(config)
+
+    if family == "mochi":
+        # Mochi ships invert_sigmas=true (ascending time), while rollout and
+        # replay standardize onto the descending domain before SDE math.
+        from vrl.models.diffusion.mochi.model import standard_mochi_scheduler
+
+        scheduler = standard_mochi_scheduler(scheduler.config, _NUM_STEPS, "cpu")
+        scheduler._vrl_timesteps_ready = True
+    elif family == "pixart_sigma":
+        # The shipped DPM solver is deterministic; production rebuilds a DDIM
+        # scheduler on the same trained beta ladder for RL log-probs.
+        from vrl.models.diffusion.pixart_sigma.model import pixart_ddim_scheduler
+
+        scheduler = pixart_ddim_scheduler(scheduler.config, _NUM_STEPS, "cpu")
+        scheduler._vrl_timesteps_ready = True
+    elif family in {"hunyuan_image", "hunyuan_video"}:
+        # These pipelines explicitly pass this linear sigma declaration rather
+        # than relying on the scheduler's default timestep construction.
+        sigmas = torch.linspace(1.0, 0.0, _NUM_STEPS + 1)[:-1].numpy()
+        scheduler.set_timesteps(sigmas=sigmas)
+        scheduler._vrl_timesteps_ready = True
+    return scheduler
+
+
+def _parity_cases() -> list[object]:
+    cases = []
+    for family in sorted(_diffusion_families()):
+        sde_types = ("ddim",) if family in _DDIM_FAMILIES else ("flow_grpo", "cps")
+        cases.extend(
+            pytest.param(family, sde_type, id=f"{family}-{sde_type}")
+            for sde_type in sde_types
+        )
+    return cases
 
 
 def _set_timesteps(scheduler) -> None:
@@ -163,18 +142,26 @@ def _set_timesteps(scheduler) -> None:
         scheduler.set_timesteps(_NUM_STEPS)
 
 
-def _timestep(scheduler, step_index: int) -> torch.Tensor:
-    return torch.full((_BATCH,), float(scheduler.timesteps[step_index]))
+def test_scheduler_fixtures_have_complete_pinned_provenance() -> None:
+    """Every checkpoint-owned scheduler is pinned and tied to a model YAML."""
+    checkpoint_owned = set(_diffusion_families()) - set(_MANUAL_SCHEDULERS)
+    assert set(_SCHEDULER_FIXTURES) == checkpoint_owned
+
+    model_repos = _model_repos_by_family()
+    for family, fixture in _SCHEDULER_FIXTURES.items():
+        assert fixture["model_repo_id"] in model_repos[family]
+        assert re.fullmatch(r"[^/]+/[^/]+", str(fixture["scheduler_repo_id"]))
+        assert re.fullmatch(r"[0-9a-f]{40}", str(fixture["revision"]))
+        assert fixture["scheduler_config_path"] == "scheduler/scheduler_config.json"
+        assert isinstance(fixture["config"], dict)
+        assert "_class_name" in fixture["config"]
+        if fixture["scheduler_repo_id"] != fixture["model_repo_id"]:
+            assert isinstance(fixture.get("note"), str)
 
 
-@pytest.mark.parametrize("sde_type", ["flow_grpo", "cps"])
-@pytest.mark.parametrize("family", sorted(_diffusion_families()))
+@pytest.mark.parametrize(("family", "sde_type"), _parity_cases())
 def test_family_scheduler_sample_replay_parity(family: str, sde_type: str) -> None:
     """Checks the GRPO ratio==1 invariant on each family's real sigma table."""
-    if family in _DDIM_FAMILIES:
-        if sde_type == "cps":
-            pytest.skip("ddim family: one parity row is enough")
-        sde_type = "ddim"
     scheduler = _scheduler_for(family)
     _set_timesteps(scheduler)
 
@@ -184,7 +171,7 @@ def test_family_scheduler_sample_replay_parity(family: str, sde_type: str) -> No
         gen = torch.Generator().manual_seed(100 + step_index)
         sample = torch.randn(_BATCH, 3, 4, generator=gen)
         model_output = torch.randn(_BATCH, 3, 4, generator=gen)
-        timestep = _timestep(scheduler, step_index)
+        timestep = torch.full((_BATCH,), float(scheduler.timesteps[step_index]))
 
         sampled = sde_step_with_logprob(
             scheduler,
