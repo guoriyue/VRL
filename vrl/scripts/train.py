@@ -116,11 +116,73 @@ def main(argv: list[str] | None = None) -> None:
 
     args = build_parser().parse_args(argv)
     cfg = load_config(args.config, overrides=args.overrides)
-    result = run_config(cfg)
-    if inspect.isawaitable(result):
-        received_signal = asyncio.run(_run_async_trainer(result))
-        if received_signal is not None:
-            raise SystemExit(128 + int(received_signal))
+    verdict_dir = _verdict_dir(cfg)
+    try:
+        result = run_config(cfg)
+        received_signal: signal.Signals | None = None
+        if inspect.isawaitable(result):
+            received_signal = asyncio.run(_run_async_trainer(result))
+    except BaseException as exc:
+        write_run_verdict(verdict_dir, error=exc)
+        raise
+    if received_signal is not None:
+        write_run_verdict(verdict_dir, received_signal=received_signal)
+        raise SystemExit(128 + int(received_signal))
+    write_run_verdict(verdict_dir)
+
+
+def _verdict_dir(cfg: DictConfig) -> str | None:
+    from vrl.utils.config import cfg_path
+
+    output_dir = str(cfg_path(cfg, "trainer.output_dir", "") or "").strip()
+    return output_dir or None
+
+
+RUN_VERDICT_NAME = "run_verdict.json"
+
+
+def write_run_verdict(
+    output_dir: str | None,
+    *,
+    error: BaseException | None = None,
+    received_signal: signal.Signals | None = None,
+) -> None:
+    """Publish this run's outcome as an explicit machine-readable contract.
+
+    A supervisor must never guess the failure cause from the exit code alone:
+    the verdict names the error class so restart policy ("same class twice ->
+    stop") is decided on facts. A missing verdict file (SIGKILL, OOM-killed
+    interpreter) is itself informative: the run died without unwinding.
+    """
+
+    if output_dir is None:
+        return
+    import json
+    from pathlib import Path
+
+    if error is not None:
+        verdict = {
+            "verdict": "failed",
+            "error_class": type(error).__name__,
+            "error_message": str(error)[:2000],
+        }
+    elif received_signal is not None:
+        verdict = {
+            "verdict": "terminated",
+            "signal": int(received_signal),
+            "signal_name": received_signal.name,
+        }
+    else:
+        verdict = {"verdict": "success"}
+    verdict["schema_version"] = 1
+    try:
+        path = Path(output_dir)
+        path.mkdir(parents=True, exist_ok=True)
+        (path / RUN_VERDICT_NAME).write_text(json.dumps(verdict, indent=2) + "\n")
+    except OSError:
+        logging.getLogger(__name__).warning(
+            "failed to write run verdict to %s", output_dir, exc_info=True,
+        )
 
 
 if __name__ == "__main__":
