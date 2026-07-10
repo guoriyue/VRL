@@ -1,7 +1,7 @@
 # Physical-AI Tier 2 — OpenVLA-OFT × LIBERO-10 real eval (run record)
 
 状态：**done（2026-06-25）**。性质：**第一次真实 model+simulator 验证 P1 contract**。
-承接 `docs/sprints/planned/SPRINT_physical_ai_model_support.md` §Tier-2 / §P2，以及
+承接 `docs/sprints/done/SPRINT_physical_ai_model_support.md` §Tier-2 / §P2，以及
 `SPRINT_physical_ai_p0p1_landing.md`（P0/P1 contract）。
 
 ## 一句话

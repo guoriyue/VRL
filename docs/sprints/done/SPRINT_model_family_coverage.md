@@ -1,7 +1,17 @@
 # SPRINT: 模型家族覆盖度路线图（对照 cosmos-rl / VeRL-Omni）
 
-状态：planned（2026-06-21）。性质：**竞品模型覆盖对照 + 优先级路线图**（index 文档，不直接落地）。
+状态：**DONE（2026-07-09 终局对账；原 planned 2026-06-21）**。性质：**竞品模型覆盖对照 +
+优先级路线图**（index 文档，不直接落地）。
 Tier-1 的两个 T2I 家族已拆为独立落地 sprint：[[SPRINT_flux_t2i]]、[[SPRINT_qwen_image_t2i]]。
+
+> **终局对账（2026-07-09，对 registry 实况）**：本路线图的可落地项已全部落地。
+> Tier-1 两家（FLUX LANDED 2026-06-21、Qwen-Image code-landed）之外，
+> [[SPRINT_thin_model_seam_and_ten_model_expansion]] Phase 1（2026-07-08，10/10 真权重验证）
+> 又接入：SANA / Lumina-Image-2 / PixArt-Σ / HunyuanImage-2.1 / **HunyuanVideo**（即本文 Tier-2 项）/
+> Mochi-1 / CogVideoX / Emu3 / LlamaGen / GLM-Image。`vrl/rollouts/families/registry.py` 现有
+> **23 个 family**（§1 的 7 行盘点是 2026-06 旧况，作历史记录保留）。剩余 gap 只剩 Tier-3
+> 统一理解+生成 / omni（BAGEL、HunyuanImage-3.0、Qwen3-Omni）——按 §5 仍是非目标：需要新
+> rollout/logprob seam，各自独立大 sprint。本 index 使命完成，归档 done/。
 
 > 来源：
 > - VeRL-Omni 发布博客（vLLM，2026-05-14）+ vllm-omni supported-models 文档；

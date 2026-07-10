@@ -1,8 +1,26 @@
 # SPRINT: Physical-AI 模型支持路线图 — Cosmos 3 / robotics / video
 
-状态：**planned（2026-06-25）**。性质：**模型支持优先级 + 架构边界决策**，不是直接落地代码。
+状态：**DONE / robotics 方向已收官（2026-07-09 终局对账；原 planned 2026-06-25）**。
+性质：**模型支持优先级 + 架构边界决策**，不是直接落地代码。
 这份 sprint 承接 `SPRINT_model_family_coverage.md`，但把范围从“纯图像/视频生成模型覆盖”
 升级到 **Physical AI**：世界生成、机器人动作、闭环环境 rollout、物理/时序 verifier。
+
+> **终局对账（2026-07-09，对 git 实况）**：路线图被执行到 Tier-2/P3，随后 robotics 方向主动收官：
+> - **P0+P1 落地（2026-06-24）**：model-support matrix + VLA/Env 类型化契约 + 两个 Cosmos3 probe，
+>   实录 [[SPRINT_physical_ai_p0p1_landing]]（info/）。Cosmos3 generator probe **负结论**（不在
+>   Diffusers 路径）；DROID policy eval-only 契约成立。
+> - **Tier-2 真机跑通（2026-06-25）**：OpenVLA-OFT 7B × LIBERO-10 真实 MuJoCo 闭环 eval 走通 P1 契约，
+>   实录 [[SPRINT_physical_ai_tier2_openvla_libero]]。关键翻案：官方 OFT checkpoint 是 continuous
+>   L1 回归 head，**无可复算 logprob** → 天然 eval/SFT-only（推翻本文 §Tier-2 的 token-policy 假设）。
+>   P3 的 PI0.5 flow-logprob probe 证明 RL-eligibility（44b7947c）。
+> - **方向收官（2026-06-27，d22d7d5d）**：整个 VLA/Env 层（contract / policy / libero adapter /
+>   support-matrix / probes / eval 脚本，-2080 行）从 main 删除，换成 video_world 的 future-reward
+>   action path——仓库定位收敛为 **RLHF-finetune 世界模型**，不做 WM-as-env robotics。
+>   两份 info/ 实录与本文保留为决策档案；若未来重启 robotics 线，从 d22d7d5d^ 找回契约实现。
+> - **Cosmos3 主线移交**：generator 进 diffusion seam 由 [[SPRINT_cosmos3_full_support]] 接管
+>   （blocked/run-verify-gated；`cosmos3` family skeleton 已在 registry）。本文 §3.1「不先塞进
+>   diffusion family」的保守边界已被 cosmos-rl 原生 logprob 契约调查取代（见该 sprint）。
+> - **Tier-0（video diffusion 主线）不受影响**，由各家族/reward sprint 继续。本文归档 done/。
 
 ## 0. 一句话
 

@@ -1,7 +1,7 @@
 # Physical-AI 模型支持 — P0/P1 落地与 probe 决策记录
 
 状态：**done（2026-06-24）**。性质：**P0 盘点 + P1 契约落地 + probe 决策记录**。
-承接 `docs/sprints/planned/SPRINT_physical_ai_model_support.md`。本 MR 只落地
+承接 `docs/sprints/done/SPRINT_physical_ai_model_support.md`。本 MR 只落地
 sprint 中 **不依赖外部模型权重/模拟器** 的部分（P0 + P1）；Tier 2+ 的训练/环境
 适配按 sprint 的非目标显式 gate 在后续 MR，方便拆分。
 

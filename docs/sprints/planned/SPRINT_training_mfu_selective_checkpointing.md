@@ -1,6 +1,11 @@
 # SPRINT: Training-side MFU — selective activation checkpointing (SAC)
 
-状态：**planned（2026-06-27）**。性质：**把现在 full / 二值的 gradient checkpointing 换成 selective（只重算便宜的 norm/elementwise，保留贵的 GEMM/attention 激活），把腾出的显存花在更大的 microbatch 上 → 抬算术强度 → 抬训练 MFU。** 这是 [[SPRINT_training_mfu_compile]] 的姊妹杠杆：compile 靠融合腾显存，本 sprint 靠「只重算便宜的」摘掉 recompute 税，两者都服务同一个目标——**让 microbatch 顶到 MFU 最优点**。
+状态：**P2 已落地 / 剩 P3 GPU-gated（2026-07-09 对账；原 planned 2026-06-27）**。性质：**把现在 full / 二值的 gradient checkpointing 换成 selective（只重算便宜的 norm/elementwise，保留贵的 GEMM/attention 激活），把腾出的显存花在更大的 microbatch 上 → 抬算术强度 → 抬训练 MFU。** 这是 [[SPRINT_training_mfu_compile]] 的姊妹杠杆：compile 靠融合腾显存，本 sprint 靠「只重算便宜的」摘掉 recompute 税，两者都服务同一个目标——**让 microbatch 顶到 MFU 最优点**。
+
+> **对账（2026-07-09，对 main 实况）**：P0 probe 与 P1 selective×compile 均已实测（§4）；
+> **P2 已在 main 落地**——`vrl/trainers/activation_checkpointing.py` 就是三值 policy
+> `off | full | selective`（bool 向后兼容，module docstring 引用本 sprint P0 数据）。
+> 剩余 = P3（按 probe 重定 microbatch、大卡 MFU 确认）+ 验收 3 的端到端 samples/s 净胜——都需要 GPU。
 
 > 证据：`vrl/trainers/activation_checkpointing.py`（5 家族共用的唯一 ckpt 入口，从 online.py 提到训练层；online.py re-export 保持家族 import 不变）、`vrl/trainers/core/types.py:323`（`gradient_checkpointing: bool = False`）、`vrl/config/schema.py:515`、`vrl/scripts/perf/backward_mfu_probe.py`、diffusers `enable_gradient_checkpointing(gradient_checkpointing_func=...)`（`modeling_utils.py:283`）、torch 2.11 `torch.utils.checkpoint.create_selective_checkpoint_contexts` / `CheckpointPolicy`。
 > 相关：[[project_rollout_bound_class_probe]]（SD3.5 train fwd+bwd ~60-65% MFU、绑激活、grad-ckpt 26.8→9.8GB）、[[feedback_mfu_bound_north_star]]（probe-first，先定 bound class 再背书）、[[project_torch_compile_wan]]（compile+ckpt 冲突的已知坑）。
