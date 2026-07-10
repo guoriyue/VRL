@@ -1,6 +1,13 @@
 # SPRINT: Grab-bag file audit — 低内聚文件结构整治
 
-**日期**: 2026-07-10  **状态**: PLANNED（未动工）
+**日期**: 2026-07-10  **状态**: EXECUTED（2026-07-10，全部 4 个 sprint 落地）
+**验证**: 全量 pytest 1630 passed / 0 failed（基线 1629：-1 删除的 prefix-cache 测试，+1 diffusion replay 回归测试，+1 artifact_data_root 断言）；ruff 与 config lint 全绿；flow_matching 重构做了 HEAD-vs-新版位精确 probe（CFG 开/关、sample+replay 全等）。
+
+**执行修正（与原计划的差异）**:
+1. Sprint 1 第 1 项**撤销**：`shutdown_training_process_group` 并非零调用方——`vrl/trainers/strategy.py:346,492`（`Strategy.shutdown`）在调用，两个测试 patch 它。审计的 verify agent 看走眼。仅修正了它的过时 docstring。
+2. Sprint 3 第 8 项做**窄版**：共享 `named_tensor` 落 `vrl/trajectory/views.py` 且 batch_builder 改用，但 `TrajectoryResolver.tensor` **不** delegate——delegate 会把错误类型从 `TrajectoryResolverError(ValueError)` 漂移成 `RuntimeError`，违反本计划自己的异常类型漂移红线。
+3. Sprint 3 第 9 项（AR/Diffusion layout 三件套收敛）**主动跳过**：`generation/diffusion/layout.py` 是另一进程 executor-as-data reconcile 的并行改动面（记忆约定 don't redo/touch）。待 reconcile 落地后可单独补做。
+4. Sprint 4 第 4 项已知行为变化（除计划记录的 cosmos/executor 尊重 `artifact_data_root` 外）：reference 路径在 load 时以 `allow_absolute=True` 解析，wan i2v 原先默认拒绝 manifest 里绝对路径的校验随之放宽（`data.allow_absolute_artifact_paths` 仍由 encode_targets 的 TARGET 侧消费，非死旋钮）。
 **来源**: 53-agent 动态 workflow 审计（12 个按包扫描 agent + 每条发现独立对抗核查 + 汇总），
 核查标准直接取自 AGENTS.md（薄函数保留清单 / no new lean files / no big refactors / 死代码五形式）。
 38 条发现确认（30 REAL + 8 PARTIAL 修正后保留），2 条否决转为显式非目标。
