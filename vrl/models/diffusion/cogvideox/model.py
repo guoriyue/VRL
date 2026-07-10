@@ -38,9 +38,9 @@ import torch
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.diffusion import (
     DiffusersPipelineModelBase,
-    DiffusionModelBase,
+    DiffusersReplayModelBase,
     DiffusionSamplingStateBase,
-    ReplayRolloutStubs,
+    diffusers_pipeline_dtypes,
 )
 from vrl.models.diffusion.common import (
     ChunkedLatentDecoder,
@@ -156,18 +156,7 @@ class CogVideoXModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
         from diffusers import CogVideoXPipeline
 
         model_dtype = resolve_torch_dtype(spec.dtype)
-        frozen_dtype = getattr(spec, "frozen_dtype", None)
-        if frozen_dtype is None:
-            frozen_dtype = torch.float16 if model_dtype == torch.float32 else model_dtype
-        load_kwargs: dict[str, Any] = {}
-        if model_dtype == torch.float32 and frozen_dtype != torch.float32:
-            load_kwargs["torch_dtype"] = {
-                "transformer": torch.float32,
-                "vae": torch.float32,
-                "default": frozen_dtype,
-            }
-        elif model_dtype != torch.float32:
-            load_kwargs["torch_dtype"] = model_dtype
+        frozen_dtype, load_kwargs = diffusers_pipeline_dtypes(spec, model_dtype)
         pipeline = CogVideoXPipeline.from_pretrained(
             spec.model_name_or_path,
             **load_kwargs,
@@ -183,9 +172,6 @@ class CogVideoXModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
             pipeline=pipeline,
             device=spec.device,
         )
-
-    def _lora_dtype(self, spec: Any) -> Any:
-        return resolve_torch_dtype(spec.dtype)
 
     def _encoder_device(self) -> Any:
         """Device the frozen T5 encoder lives on (CPU when offloaded)."""
@@ -414,29 +400,9 @@ class CogVideoXModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbo
         return decoder(latents)
 
 
-class CogVideoXReplayModel(ReplayRolloutStubs, CogVideoXModel):
+class CogVideoXReplayModel(DiffusersReplayModelBase, CogVideoXModel):
     """Replay-only CogVideoX model that owns no prompt encoder, VAE, or pipeline."""
 
-    def __init__(self, *, transformer: Any, scheduler: Any, device: Any = None) -> None:
-        DiffusionModelBase.__init__(self)
-        self.transformer = transformer
-        self._scheduler = scheduler
-        self._device = device
-
-    @property
-    def pipeline(self) -> Any:
-        raise RuntimeError("CogVideoXReplayModel does not own a diffusers pipeline")
-
-    def _set_transformer(self, transformer: Any) -> None:
-        self.transformer = transformer
-
-    @property
-    def scheduler(self) -> Any:
-        return self._scheduler
-
-    @property
-    def raw_handle(self) -> Any:
-        return None
 
 
 __all__ = [

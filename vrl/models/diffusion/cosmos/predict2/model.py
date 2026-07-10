@@ -27,9 +27,8 @@ import torch
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.diffusion import (
     DiffusersPipelineModelBase,
-    DiffusionModelBase,
+    DiffusersReplayModelBase,
     DiffusionSamplingStateBase,
-    ReplayRolloutStubs,
 )
 from vrl.models.diffusion.common import (
     ChunkedLatentDecoder,
@@ -222,6 +221,12 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipeline
             pipeline=pipeline,
             device=spec.device,
         )
+
+    def _lora_dtype(self, spec: Any) -> Any | None:
+        # The transformer is already cast at load (from_pretrained torch_dtype);
+        # skip the mixin's default pre-wrap dtype cast.
+        del spec
+        return None
 
     # -- encode_prompt -------------------------------------------------
 
@@ -615,29 +620,9 @@ class CosmosPredict2Model(CosmosReplayForward, LoraModelMixin, DiffusersPipeline
         return decoder(latents)
 
 
-class CosmosPredict2ReplayModel(ReplayRolloutStubs, CosmosPredict2Model):
+class CosmosPredict2ReplayModel(DiffusersReplayModelBase, CosmosPredict2Model):
     """Replay-only Cosmos Predict2 model without pipeline-only modules."""
 
-    def __init__(self, *, transformer: Any, scheduler: Any, device: Any = None) -> None:
-        DiffusionModelBase.__init__(self)
-        self.transformer = transformer
-        self._scheduler = scheduler
-        self._device = device
-
-    @property
-    def pipeline(self) -> Any:
-        raise RuntimeError("CosmosPredict2ReplayModel does not own a diffusers pipeline")
-
-    def _set_transformer(self, transformer: Any) -> None:
-        self.transformer = transformer
-
-    @property
-    def scheduler(self) -> Any:
-        return self._scheduler
-
-    @property
-    def raw_handle(self) -> Any:
-        return None
 
     # restore_eval_state is inherited from CosmosPredict2Model: it reads
     # ``self.scheduler``, which this replay model overrides to return its own

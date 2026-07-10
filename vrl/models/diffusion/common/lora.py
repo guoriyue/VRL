@@ -38,9 +38,16 @@ class LoraModelMixin:
         return self.transformer
 
     def _lora_dtype(self, spec: Any) -> Any | None:
-        """Optional dtype for the pre-wrap device move (sd3_5/anima cast)."""
-        del spec
-        return None
+        """Dtype for the pre-wrap device move; ``None`` skips the cast.
+
+        Default: the spec's model dtype — the near-universal diffusers-family
+        behavior. Overrides: cosmos predict2/cosmos3 return ``None`` (their
+        transformer is already cast at load); anima/echo return their stored
+        ``self._dtype`` (single-file checkpoints without the spec dtype axis).
+        """
+        from vrl.models.dtypes import resolve_torch_dtype
+
+        return resolve_torch_dtype(spec.dtype)
 
     def apply_lora(self, spec: Any) -> None:
         """Wrap the family transformer with PEFT LoRA per ``spec.lora_*``."""

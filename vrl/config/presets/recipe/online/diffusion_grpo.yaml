@@ -15,6 +15,6 @@ algorithm:
   clip_ratio: 1.0e-4
 
 trainer:
-  # Generic diffusion GRPO dispatch; family recipes (wan, cosmos) override
+  # Generic diffusion GRPO dispatch; family recipes (cosmos) override
   # with their custom entrypoints.
   entrypoint: vrl.scripts.diffusion.train:train_diffusion_grpo

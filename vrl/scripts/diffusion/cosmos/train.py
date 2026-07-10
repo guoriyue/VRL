@@ -14,7 +14,7 @@ from vrl.scripts.common.online import (
     run_online_recipe,
 )
 from vrl.scripts.common.types import OnlineRecipeDefinition
-from vrl.trainers.data.artifacts import ArtifactManifestError, resolve_artifact_path
+from vrl.scripts.diffusion.train import build_bundle, build_replay_bundle
 
 
 async def train_cosmos_predict2_grpo(cfg: DictConfig) -> None:
@@ -24,8 +24,8 @@ async def train_cosmos_predict2_grpo(cfg: DictConfig) -> None:
         cfg,
         OnlineRecipeDefinition(
             family="cosmos-predict2",
-            build_bundle=_build_predict2_bundle,
-            build_replay_bundle=_build_predict2_replay_bundle,
+            build_bundle=build_bundle,
+            build_replay_bundle=build_replay_bundle,
             after_bundle_built=_after_bundle_built,
             reference_model_getter=default_reference_model,
             export_modules_getter=export_transformer_lora,
@@ -47,8 +47,8 @@ async def train_cosmos_predict25_grpo(cfg: DictConfig) -> None:
         cfg,
         OnlineRecipeDefinition(
             family="cosmos-predict2.5",
-            build_bundle=_build_predict25_bundle,
-            build_replay_bundle=_build_predict25_replay_bundle,
+            build_bundle=build_bundle,
+            build_replay_bundle=build_replay_bundle,
             after_bundle_built=_after_bundle_built,
             reference_model_getter=default_reference_model,
             export_modules_getter=export_transformer_lora,
@@ -63,48 +63,12 @@ async def train_cosmos_predict25_diffusion_nft(cfg: DictConfig) -> None:
         cfg,
         OnlineRecipeDefinition(
             family="cosmos-predict2.5",
-            build_bundle=_build_predict25_bundle,
-            build_replay_bundle=_build_predict25_replay_bundle,
+            build_bundle=build_bundle,
+            build_replay_bundle=build_replay_bundle,
             after_bundle_built=_after_bundle_built,
             export_modules_getter=export_transformer_lora,
         ),
     )
-
-
-def _build_predict2_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
-    from vrl.models.diffusion.build import build_family_runtime_bundle_from_cfg
-
-    return build_family_runtime_bundle_from_cfg(cfg, device, weight_dtype)
-
-
-def _build_predict2_replay_bundle(
-    cfg: DictConfig,
-    device: Any,
-    weight_dtype: Any,
-) -> Any:
-    from vrl.models.diffusion.build import (
-        build_family_replay_runtime_bundle_from_cfg,
-    )
-
-    return build_family_replay_runtime_bundle_from_cfg(cfg, device, weight_dtype)
-
-
-def _build_predict25_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
-    from vrl.models.diffusion.build import build_family_runtime_bundle_from_cfg
-
-    return build_family_runtime_bundle_from_cfg(cfg, device, weight_dtype)
-
-
-def _build_predict25_replay_bundle(
-    cfg: DictConfig,
-    device: Any,
-    weight_dtype: Any,
-) -> Any:
-    from vrl.models.diffusion.build import (
-        build_family_replay_runtime_bundle_from_cfg,
-    )
-
-    return build_family_replay_runtime_bundle_from_cfg(cfg, device, weight_dtype)
 
 
 def _after_bundle_built(bundle: Any, cfg: DictConfig) -> None:
@@ -143,6 +107,10 @@ def _normalize_per_sample_reference_images(
     manifest_path: Path,
     prompts_per_batch: int,
 ) -> None:
+    # Paths were already resolved at prompt load time
+    # (run_online_recipe -> _resolve_reference_artifacts); this hook keeps only
+    # the cosmos-specific checks: the per_sample batch-shape guard and the
+    # per-row required/existence validation.
     if prompts_per_batch != 1:
         raise ValueError(
             "cosmos.reference_mode=per_sample currently requires "
@@ -154,20 +122,10 @@ def _normalize_per_sample_reference_images(
             raise ValueError(
                 f"{manifest_path}: row {idx} is missing required field reference_image",
             )
-        try:
-            ref_path = resolve_artifact_path(raw_path)
-        except ArtifactManifestError as exc:
-            raise ValueError(
-                f"{manifest_path}: row {idx} invalid reference_image",
-            ) from exc
-        if not ref_path.exists():
+        if not Path(raw_path).exists():
             raise FileNotFoundError(
-                f"{manifest_path}: row {idx} reference_image does not exist: {ref_path}",
+                f"{manifest_path}: row {idx} reference_image does not exist: {raw_path}",
             )
-        example.reference_image = str(ref_path)
-        metadata = dict(getattr(example, "metadata", None) or {})
-        metadata["reference_image"] = str(ref_path)
-        example.metadata = metadata
 
 
 __all__ = [

@@ -109,6 +109,12 @@ class Cosmos3Model(CosmosReplayForward, LoraModelMixin, DiffusersPipelineModelBa
         )
         return cls(pipeline=pipeline, device=spec.device)
 
+    def _lora_dtype(self, spec: Any) -> Any | None:
+        # The transformer is already cast at load (from_spec .to(dtype));
+        # skip the mixin's default pre-wrap dtype cast.
+        del spec
+        return None
+
     # ---- encode ----
     def encode_prompt(
         self,

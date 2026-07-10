@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from omegaconf import DictConfig
 
 from vrl.scripts.common.online import (
@@ -12,6 +10,7 @@ from vrl.scripts.common.online import (
     run_online_recipe,
 )
 from vrl.scripts.common.types import OnlineRecipeDefinition
+from vrl.scripts.diffusion.train import build_bundle, build_replay_bundle
 
 
 async def train_flux_diffusion_nft(cfg: DictConfig) -> None:
@@ -29,30 +28,12 @@ async def train_flux_diffusion_nft(cfg: DictConfig) -> None:
         cfg,
         OnlineRecipeDefinition(
             family="flux",
-            build_bundle=_build_nft_bundle,
-            build_replay_bundle=_build_nft_replay_bundle,
-            after_bundle_built=_after_bundle_built,
+            build_bundle=build_bundle,
+            build_replay_bundle=build_replay_bundle,
+            after_bundle_built=enable_transformer_gradient_checkpointing,
             export_modules_getter=export_transformer_lora,
         ),
     )
-
-
-def _build_nft_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
-    from vrl.models.diffusion.build import build_family_runtime_bundle_from_cfg
-
-    return build_family_runtime_bundle_from_cfg(cfg, device, weight_dtype)
-
-
-def _build_nft_replay_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
-    from vrl.models.diffusion.build import (
-        build_family_replay_runtime_bundle_from_cfg,
-    )
-
-    return build_family_replay_runtime_bundle_from_cfg(cfg, device, weight_dtype)
-
-
-def _after_bundle_built(bundle: Any, cfg: DictConfig) -> None:
-    enable_transformer_gradient_checkpointing(bundle, cfg)
 
 
 __all__ = ["train_flux_diffusion_nft"]

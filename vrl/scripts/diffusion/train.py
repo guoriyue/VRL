@@ -4,8 +4,10 @@ Registry-descriptor families (those with a ``DiffusionFamilyBuild`` on their
 rollout registry entry) train through this single entrypoint instead of a
 per-family ``train.py``: the family comes from ``cfg.model.family`` and the
 bundles from the generic descriptor-driven builders. The per-family recipes
-that remain (sd3_5, flux NFT, ...) either predate the descriptor path or carry
-recipe-level hooks this generic body must not learn.
+that remain (cosmos, flux NFT, wan i2v) either predate the descriptor path or
+carry recipe-level hooks this generic body must not learn — they import
+``build_bundle`` / ``build_replay_bundle`` from here instead of keeping their
+own lazy-import copies.
 
 YAML wiring: ``trainer.entrypoint: vrl.scripts.diffusion.train:train_diffusion_grpo``.
 """
@@ -35,22 +37,26 @@ async def train_diffusion_grpo(cfg: DictConfig) -> None:
         cfg,
         OnlineRecipeDefinition(
             family=family,
-            build_bundle=_build_bundle,
-            build_replay_bundle=_build_replay_bundle,
-            after_bundle_built=_after_bundle_built,
+            build_bundle=build_bundle,
+            build_replay_bundle=build_replay_bundle,
+            after_bundle_built=enable_transformer_gradient_checkpointing,
             reference_model_getter=default_reference_model,
             export_modules_getter=export_transformer_lora,
         ),
     )
 
 
-def _build_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
+def build_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
+    """Lazy-import boundary over the generic descriptor-driven rollout builder."""
+
     from vrl.models.diffusion.build import build_family_runtime_bundle_from_cfg
 
     return build_family_runtime_bundle_from_cfg(cfg, device, weight_dtype)
 
 
-def _build_replay_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
+def build_replay_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
+    """Lazy-import boundary over the generic descriptor-driven replay builder."""
+
     from vrl.models.diffusion.build import (
         build_family_replay_runtime_bundle_from_cfg,
     )
@@ -58,8 +64,4 @@ def _build_replay_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any
     return build_family_replay_runtime_bundle_from_cfg(cfg, device, weight_dtype)
 
 
-def _after_bundle_built(bundle: Any, cfg: DictConfig) -> None:
-    enable_transformer_gradient_checkpointing(bundle, cfg)
-
-
-__all__ = ["train_diffusion_grpo"]
+__all__ = ["build_bundle", "build_replay_bundle", "train_diffusion_grpo"]

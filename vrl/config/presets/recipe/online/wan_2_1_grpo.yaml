@@ -1,12 +1,10 @@
-# Wan 2.1 T2V family GRPO recipe: family dispatch + the rollout shape every
-# T2V experiment shares. Per-run tuning (lr, KL, SDE type, compile) stays in
-# the experiments — the three T2V runs genuinely differ there (ocr is
-# flow_grpo-parity shaped, kling/physics are video-reward shaped).
+# Wan 2.1 T2V family GRPO recipe: the rollout shape every T2V experiment
+# shares. Per-run tuning (lr, KL, SDE type, compile) stays in the experiments —
+# the three T2V runs genuinely differ there (ocr is flow_grpo-parity shaped,
+# kling/physics are video-reward shaped). Family dispatch comes from
+# diffusion_grpo's generic entrypoint via model.family.
 defaults:
   - /recipe/online/diffusion_grpo
-
-trainer:
-  entrypoint: vrl.scripts.diffusion.wan_2_1.train:train_wan_2_1_grpo
 
 rollout:
   n_samples_per_prompt: 8

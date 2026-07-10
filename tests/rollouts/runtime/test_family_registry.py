@@ -208,3 +208,33 @@ def test_ar_families_declare_importable_replay_builders() -> None:
         assert callable(import_from_path(entry.replay_runtime_builder))
         assert callable(import_from_path(entry.runtime_builder))
         assert callable(import_from_path(entry.runtime_spec_extractor))
+
+
+def test_diffusion_families_resolve_a_replay_path() -> None:
+    """Every diffusion family must resolve a trainer replay bundle path.
+
+    The generic replay builder (vrl/models/diffusion/build.py) either loads
+    ``build.replay_cls`` or dispatches to the entry's hand-written
+    ``replay_runtime_builder`` (echo/cosmos3/anima). A family with neither
+    would only fail at training launch — this is the regression the
+    echo/cosmos3/anima wiring gap slipped through.
+    """
+    from vrl.rollouts.families.registry import FAMILY_REGISTRY
+    from vrl.utils.config import import_from_path
+
+    diffusion_families = [
+        entry
+        for entry in FAMILY_REGISTRY.values()
+        if entry.collector.kind == "diffusion"
+    ]
+    assert len(diffusion_families) >= 10
+    for entry in diffusion_families:
+        assert entry.build is not None, f"{entry.family} lacks a build descriptor"
+        if entry.build.replay_cls is not None:
+            assert callable(import_from_path(entry.build.replay_cls))
+        else:
+            assert entry.replay_runtime_builder, (
+                f"{entry.family} has neither build.replay_cls nor "
+                "replay_runtime_builder — its trainer replay path is broken"
+            )
+            assert callable(import_from_path(entry.replay_runtime_builder))

@@ -36,9 +36,9 @@ import torch
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.diffusion import (
     DiffusersPipelineModelBase,
-    DiffusionModelBase,
+    DiffusersReplayModelBase,
     DiffusionSamplingStateBase,
-    ReplayRolloutStubs,
+    diffusers_pipeline_dtypes,
 )
 from vrl.models.diffusion.common import (
     ChunkedLatentDecoder,
@@ -147,18 +147,7 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
         model_dtype = resolve_torch_dtype(spec.dtype)
         # Frozen text encoders / VAE follow the ``frozen`` precision axis, same
         # contract as SD3: fp16 when the denoiser runs fp32, else the model dtype.
-        frozen_dtype = getattr(spec, "frozen_dtype", None)
-        if frozen_dtype is None:
-            frozen_dtype = torch.float16 if model_dtype == torch.float32 else model_dtype
-        load_kwargs: dict[str, Any] = {}
-        if model_dtype == torch.float32 and frozen_dtype != torch.float32:
-            load_kwargs["torch_dtype"] = {
-                "transformer": torch.float32,
-                "vae": torch.float32,
-                "default": frozen_dtype,
-            }
-        elif model_dtype != torch.float32:
-            load_kwargs["torch_dtype"] = model_dtype
+        frozen_dtype, load_kwargs = diffusers_pipeline_dtypes(spec, model_dtype)
         pipeline = FluxPipeline.from_pretrained(
             spec.model_name_or_path,
             **load_kwargs,
@@ -181,9 +170,6 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
             pipeline=pipeline,
             device=spec.device,
         )
-
-    def _lora_dtype(self, spec: Any) -> Any:
-        return resolve_torch_dtype(spec.dtype)
 
     # -- DiffusionNFT previous-policy adapter -----------------------------
     # NFT parametrizes its negative branch against a frozen ``previous`` copy of
@@ -633,14 +619,9 @@ class FluxModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
         return decoder(latents)
 
 
-class FluxReplayModel(ReplayRolloutStubs, FluxModel):
+class FluxReplayModel(DiffusersReplayModelBase, FluxModel):
     """Replay-only FLUX model that owns no prompt encoders, VAE, or pipeline."""
 
-    def __init__(self, *, transformer: Any, scheduler: Any, device: Any = None) -> None:
-        DiffusionModelBase.__init__(self)
-        self.transformer = transformer
-        self._scheduler = scheduler
-        self._device = device
 
     def prepare_replay(self, spec: Any) -> None:
         """Set the mu-shifted replay timesteps FLUX's dynamic scheduler needs.
@@ -666,20 +647,6 @@ class FluxReplayModel(ReplayRolloutStubs, FluxModel):
             image_seq_len = (int(height) // 16) * (int(width) // 16)
             self._set_dynamic_timesteps(int(num_steps), image_seq_len, spec.device)
 
-    @property
-    def pipeline(self) -> Any:
-        raise RuntimeError("FluxReplayModel does not own a diffusers pipeline")
-
-    def _set_transformer(self, transformer: Any) -> None:
-        self.transformer = transformer
-
-    @property
-    def scheduler(self) -> Any:
-        return self._scheduler
-
-    @property
-    def raw_handle(self) -> Any:
-        return None
 
 
 __all__ = ["FluxModel", "FluxReplayModel", "FluxSamplingState"]

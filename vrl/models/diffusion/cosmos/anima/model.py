@@ -27,6 +27,8 @@ from vrl.models.diffusion.common import (
     ChunkedLatentDecoder,
     LatentDecodeSpec,
     LatentDecodeTransform,
+    align_replay_tensor,
+    shared_replay_tensor,
 )
 from vrl.models.diffusion.common.lora import LoraModelMixin
 from vrl.models.diffusion.cosmos import CosmosReplayForward
@@ -356,7 +358,7 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
         return {
             "prompt_embeds": state.prompt_embeds,
             "negative_prompt_embeds": state.negative_prompt_embeds,
-            "padding_mask": _align_replay_tensor(
+            "padding_mask": align_replay_tensor(
                 state.padding_mask,
                 state.latents.shape[0],
             ),
@@ -378,7 +380,7 @@ class AnimaModel(CosmosReplayForward, LoraModelMixin, DiffusionModelBase):
             negative_prompt_embeds=replay_tensors.get("negative_prompt_embeds"),
             guidance_scale=batch_context["guidance_scale"],
             do_cfg=batch_context["cfg"] and batch_context["guidance_scale"] > 1.0,
-            padding_mask=_shared_replay_tensor(replay_tensors, "padding_mask"),
+            padding_mask=shared_replay_tensor(replay_tensors, batch_context, "padding_mask"),
         )
 
     def decode_latents(self, latents: torch.Tensor) -> torch.Tensor:
@@ -563,24 +565,6 @@ def _qwen3_06b_config() -> Any:
         eos_token_id=151645,
         rope_theta=1000000.0,
     )
-
-
-def _align_replay_tensor(value: torch.Tensor, batch_size: int) -> torch.Tensor:
-    if value.shape[0] == batch_size:
-        return value
-    if value.shape[0] == 1:
-        return value.expand(batch_size, *value.shape[1:])
-    return value
-
-
-def _shared_replay_tensor(
-    replay_tensors: dict[str, Any],
-    key: str,
-) -> torch.Tensor:
-    value = replay_tensors[key]
-    if isinstance(value, torch.Tensor) and value.shape[0] > 1:
-        return value[:1]
-    return value
 
 
 def _resolve_artifact(

@@ -72,7 +72,8 @@ class DiffusionFamilyBuild:
     task_variant: str
     memory_owner: str
     # Replay recipe; None marks a family whose replay builder stays hand-written
-    # (wan's multi-transformer replay) — the generic replay builder fails loud.
+    # (echo/cosmos3/anima) — the generic replay builder then dispatches to the
+    # entry's ``replay_runtime_builder`` and fails loud when that is unset too.
     replay_cls: str | None = None
     transformer_classname: str | None = None
     scheduler_classname: str | None = None
@@ -97,10 +98,11 @@ class RolloutFamilyEntry:
     capability: FamilyCapability
     aliases: tuple[str, ...] = ()
     build: DiffusionFamilyBuild | None = None
-    # Trainer-replay builder import string. Consumed by the generic AR GRPO
-    # entrypoint (vrl/scripts/ar/train.py); diffusion families resolve replay
-    # through DiffusionFamilyBuild descriptors or their hand-written stubs and
-    # leave this None.
+    # Trainer-replay builder import string. AR families consume it in the
+    # generic AR GRPO entrypoint (vrl/scripts/ar/train.py). Diffusion families
+    # usually resolve replay through DiffusionFamilyBuild.replay_cls and leave
+    # this None; hand-written-replay diffusion families (echo/cosmos3/anima)
+    # set it so the generic replay builder can dispatch to them.
     replay_runtime_builder: str | None = None
 
 
@@ -128,6 +130,7 @@ def _diffusion_entry(
     executor_cls: str | None = None,
     supports_reference_conditioning: bool = False,
     build: DiffusionFamilyBuild | None = None,
+    replay_runtime_builder: str | None = None,
 ) -> RolloutFamilyEntry:
     # Default dispatch: the shared generic executor. Families with real
     # per-chunk logic pass their own executor_cls. Per-family executor config
@@ -149,6 +152,7 @@ def _diffusion_entry(
         runtime_builder=runtime_builder,
         runtime_spec_extractor=runtime_spec_extractor,
         build=build,
+        replay_runtime_builder=replay_runtime_builder,
         gatherer=GathererMetadata(
             import_path="vrl.generation.diffusion.gather:DiffusionChunkGatherer",
         ),
@@ -477,6 +481,9 @@ register_rollout_family(
             task_variant="text2world",
             memory_owner="Cosmos3 VAE",
         ),
+        replay_runtime_builder=(
+            "vrl.models.diffusion.cosmos.cosmos3.runtime:build_cosmos3_replay_runtime_bundle"
+        ),
     ),
 )
 
@@ -493,6 +500,9 @@ register_rollout_family(
             model_cls="vrl.models.diffusion.cosmos.anima.model:AnimaModel",
             task_variant="t2i",
             memory_owner="Anima VAE",
+        ),
+        replay_runtime_builder=(
+            "vrl.models.diffusion.cosmos.anima.runtime:build_anima_replay_runtime_bundle"
         ),
     ),
 )
@@ -511,6 +521,9 @@ register_rollout_family(
             model_cls="vrl.models.diffusion.echo.model:EchoModel",
             task_variant="text2video",
             memory_owner="Echo video VAE",
+        ),
+        replay_runtime_builder=(
+            "vrl.models.diffusion.echo.runtime:build_echo_replay_runtime_bundle"
         ),
     ),
 )

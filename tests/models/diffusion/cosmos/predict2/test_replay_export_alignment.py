@@ -8,8 +8,8 @@ samples_per_chunk > 1 and replay restore KeyError'd on ``init_latents`` (found
 by the OOM-split GPU gate, 2026-06-11).
 
 predict2.5 and anima share the same shared-conditioning shape: their export
-already calls ``align_replay_tensor``/``_align_replay_tensor`` so production is
-guarded, but nothing pinned it. This parametrizes the contract across all three
+already calls the shared ``align_replay_tensor`` so production is guarded,
+but nothing pinned it. This parametrizes the contract across all three
 Cosmos families so the alignment cannot silently regress in any of them: every
 exported replay tensor must leave the model sample-aligned.
 

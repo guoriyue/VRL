@@ -417,6 +417,35 @@ class DiffusionModelBase(nn.Module, ABC):
                 module.to(device)
 
 
+def diffusers_pipeline_dtypes(
+    spec: Any,
+    model_dtype: torch.dtype,
+) -> tuple[torch.dtype, dict[str, Any]]:
+    """Resolve the frozen-module dtype + ``from_pretrained`` kwargs for a family.
+
+    Frozen text encoders / VAE follow the ``frozen`` precision axis. Its
+    default already encodes the Flow-GRPO SD3 contract (fp16 when the denoiser
+    runs fp32, else the model dtype), so ``spec.frozen_dtype`` is authoritative
+    when present; fall back for bare/test specs. Returns ``(frozen_dtype,
+    load_kwargs)`` where ``load_kwargs`` carries the per-component
+    ``torch_dtype`` mapping diffusers expects.
+    """
+
+    frozen_dtype = getattr(spec, "frozen_dtype", None)
+    if frozen_dtype is None:
+        frozen_dtype = torch.float16 if model_dtype == torch.float32 else model_dtype
+    load_kwargs: dict[str, Any] = {}
+    if model_dtype == torch.float32 and frozen_dtype != torch.float32:
+        load_kwargs["torch_dtype"] = {
+            "transformer": torch.float32,
+            "vae": torch.float32,
+            "default": frozen_dtype,
+        }
+    elif model_dtype != torch.float32:
+        load_kwargs["torch_dtype"] = model_dtype
+    return frozen_dtype, load_kwargs
+
+
 class DiffusersPipelineModelBase(DiffusionModelBase):
     """Shared shape for families backed by ONE diffusers pipeline + ONE
     trainable transformer (sd3_5, flux, qwen_image, cosmos, wan's primary).
@@ -501,5 +530,44 @@ class ReplayRolloutStubs:
         raise RuntimeError(f"{type(self).__name__} cannot decode latents")
 
 
+class DiffusersReplayModelBase(ReplayRolloutStubs):
+    """Shared shape for transformer-only replay models (no diffusers pipeline).
 
-__all__ = ["DiffusersPipelineModelBase", "DiffusionModelBase"]
+    Factors the byte-identical members of the per-family ``*ReplayModel``
+    classes: the transformer/scheduler/device ctor, the no-pipeline guard, the
+    transformer swap, and the scheduler/raw_handle accessors. A family
+    overrides only where it genuinely differs (sd3_5 reinstalls its attention
+    processor on ``_set_transformer``; flux/mochi/pixart_sigma re-standardize
+    their replay scheduler in ``prepare_replay``). ``Cosmos3ReplayModel`` stays
+    on ``ReplayRolloutStubs`` directly — it wraps a pipeline SHELL, not a bare
+    transformer, and reads ``self.pipeline``.
+    """
+
+    def __init__(self, *, transformer: Any, scheduler: Any, device: Any = None) -> None:
+        DiffusionModelBase.__init__(self)
+        self.transformer = transformer
+        self._scheduler = scheduler
+        self._device = device
+
+    @property
+    def pipeline(self) -> Any:
+        raise RuntimeError(f"{type(self).__name__} does not own a diffusers pipeline")
+
+    def _set_transformer(self, transformer: Any) -> None:
+        self.transformer = transformer
+
+    @property
+    def scheduler(self) -> Any:
+        return self._scheduler
+
+    @property
+    def raw_handle(self) -> Any:
+        return None
+
+
+__all__ = [
+    "DiffusersPipelineModelBase",
+    "DiffusersReplayModelBase",
+    "DiffusionModelBase",
+    "diffusers_pipeline_dtypes",
+]

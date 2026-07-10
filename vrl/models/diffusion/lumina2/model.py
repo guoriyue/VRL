@@ -39,9 +39,9 @@ import torch
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.diffusion import (
     DiffusersPipelineModelBase,
-    DiffusionModelBase,
+    DiffusersReplayModelBase,
     DiffusionSamplingStateBase,
-    ReplayRolloutStubs,
+    diffusers_pipeline_dtypes,
 )
 from vrl.models.diffusion.common import (
     ChunkedLatentDecoder,
@@ -136,18 +136,7 @@ class Lumina2Model(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbone
         from diffusers import Lumina2Pipeline
 
         model_dtype = resolve_torch_dtype(spec.dtype)
-        frozen_dtype = getattr(spec, "frozen_dtype", None)
-        if frozen_dtype is None:
-            frozen_dtype = torch.float16 if model_dtype == torch.float32 else model_dtype
-        load_kwargs: dict[str, Any] = {}
-        if model_dtype == torch.float32 and frozen_dtype != torch.float32:
-            load_kwargs["torch_dtype"] = {
-                "transformer": torch.float32,
-                "vae": torch.float32,
-                "default": frozen_dtype,
-            }
-        elif model_dtype != torch.float32:
-            load_kwargs["torch_dtype"] = model_dtype
+        frozen_dtype, load_kwargs = diffusers_pipeline_dtypes(spec, model_dtype)
         pipeline = Lumina2Pipeline.from_pretrained(
             spec.model_name_or_path,
             **load_kwargs,
@@ -163,9 +152,6 @@ class Lumina2Model(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbone
             pipeline=pipeline,
             device=spec.device,
         )
-
-    def _lora_dtype(self, spec: Any) -> Any:
-        return resolve_torch_dtype(spec.dtype)
 
     # -- encode_prompt -------------------------------------------------
 
@@ -396,29 +382,9 @@ class Lumina2Model(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackbone
         return decoder(latents)
 
 
-class Lumina2ReplayModel(ReplayRolloutStubs, Lumina2Model):
+class Lumina2ReplayModel(DiffusersReplayModelBase, Lumina2Model):
     """Replay-only Lumina2 model that owns no prompt encoder, VAE, or pipeline."""
 
-    def __init__(self, *, transformer: Any, scheduler: Any, device: Any = None) -> None:
-        DiffusionModelBase.__init__(self)
-        self.transformer = transformer
-        self._scheduler = scheduler
-        self._device = device
-
-    @property
-    def pipeline(self) -> Any:
-        raise RuntimeError("Lumina2ReplayModel does not own a diffusers pipeline")
-
-    def _set_transformer(self, transformer: Any) -> None:
-        self.transformer = transformer
-
-    @property
-    def scheduler(self) -> Any:
-        return self._scheduler
-
-    @property
-    def raw_handle(self) -> Any:
-        return None
 
 
 __all__ = ["Lumina2Model", "Lumina2ReplayModel", "Lumina2SamplingState"]

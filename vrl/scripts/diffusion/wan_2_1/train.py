@@ -1,4 +1,10 @@
-"""Wan 2.1 GRPO training recipe."""
+"""Wan I2V GRPO training recipe.
+
+Wan T2V trains through the generic ``vrl.scripts.diffusion.train:
+train_diffusion_grpo`` entrypoint (family dispatch via ``model.family``); only
+the I2V variant keeps a recipe here for its per-sample reference-image
+collector hook.
+"""
 
 from __future__ import annotations
 
@@ -14,23 +20,7 @@ from vrl.scripts.common.online import (
     run_online_recipe,
 )
 from vrl.scripts.common.types import OnlineRecipeDefinition
-from vrl.trainers.data.artifacts import ArtifactManifestError, resolve_artifact_path
-
-
-async def train_wan_2_1_grpo(cfg: DictConfig) -> None:
-    """Run Wan-family GRPO training driven by a merged YAML config."""
-
-    await run_online_recipe(
-        cfg,
-        OnlineRecipeDefinition(
-            family="wan_2_1",
-            build_bundle=_build_bundle,
-            build_replay_bundle=_build_replay_bundle,
-            after_bundle_built=_after_bundle_built,
-            reference_model_getter=default_reference_model,
-            export_modules_getter=export_transformer_lora,
-        ),
-    )
+from vrl.scripts.diffusion.train import build_bundle, build_replay_bundle
 
 
 async def train_wan_2_1_i2v_grpo(cfg: DictConfig) -> None:
@@ -40,9 +30,9 @@ async def train_wan_2_1_i2v_grpo(cfg: DictConfig) -> None:
         cfg,
         OnlineRecipeDefinition(
             family="wan_2_1_i2v",
-            build_bundle=_build_bundle,
-            build_replay_bundle=_build_replay_bundle,
-            after_bundle_built=_after_bundle_built,
+            build_bundle=build_bundle,
+            build_replay_bundle=build_replay_bundle,
+            after_bundle_built=enable_transformer_gradient_checkpointing,
             reference_model_getter=default_reference_model,
             export_modules_getter=export_transformer_lora,
             collector_kwargs_getter=_i2v_collector_kwargs,
@@ -50,32 +40,16 @@ async def train_wan_2_1_i2v_grpo(cfg: DictConfig) -> None:
     )
 
 
-def _build_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
-    from vrl.models.diffusion.build import build_family_runtime_bundle_from_cfg
-
-    return build_family_runtime_bundle_from_cfg(cfg, device, weight_dtype)
-
-
-def _build_replay_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
-    from vrl.models.diffusion.build import (
-        build_family_replay_runtime_bundle_from_cfg,
-    )
-
-    return build_family_replay_runtime_bundle_from_cfg(cfg, device, weight_dtype)
-
-
-def _after_bundle_built(bundle: Any, cfg: DictConfig) -> None:
-    enable_transformer_gradient_checkpointing(bundle, cfg)
-
-
 def _i2v_collector_kwargs(cfg: DictConfig, examples: list[Any]) -> dict[str, Any]:
-    """Normalize per-sample reference images before rollout collection."""
+    """Validate per-sample reference images before rollout collection.
+
+    Paths were already resolved at prompt load time (run_online_recipe ->
+    ``_resolve_reference_artifacts``); this hook keeps only the wan-specific
+    checks: missing-vs-global fallback, existence, and the I2V conditioning
+    metadata marker.
+    """
 
     global_reference = str(OmegaConf.select(cfg, "model.reference_image", default="") or "")
-    data_root = OmegaConf.select(cfg, "data.artifact_data_root", default=None)
-    allow_absolute = bool(
-        OmegaConf.select(cfg, "data.allow_absolute_artifact_paths", default=False),
-    )
     manifest_path = Path(str(OmegaConf.select(cfg, "data.manifest", default="manifest")))
 
     for row_index, example in enumerate(examples):
@@ -87,27 +61,15 @@ def _i2v_collector_kwargs(cfg: DictConfig, examples: list[Any]) -> dict[str, Any
                 f"{manifest_path}: row {row_index} is missing required field "
                 "reference_image",
             )
-        try:
-            ref_path = resolve_artifact_path(
-                raw_path,
-                data_root=data_root,
-                allow_absolute=allow_absolute,
-            )
-        except ArtifactManifestError as exc:
-            raise ValueError(
-                f"{manifest_path}: row {row_index} invalid reference_image",
-            ) from exc
-        if not ref_path.exists():
+        if not Path(raw_path).exists():
             raise FileNotFoundError(
                 f"{manifest_path}: row {row_index} reference_image does not exist: "
-                f"{ref_path}",
+                f"{raw_path}",
             )
-        example.reference_image = str(ref_path)
         metadata = dict(getattr(example, "metadata", None) or {})
-        metadata["reference_image"] = str(ref_path)
         metadata.setdefault("conditioning", "reference_image")
         example.metadata = metadata
     return {}
 
 
-__all__ = ["train_wan_2_1_grpo", "train_wan_2_1_i2v_grpo"]
+__all__ = ["train_wan_2_1_i2v_grpo"]

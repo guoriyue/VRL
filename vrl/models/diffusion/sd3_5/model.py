@@ -38,9 +38,9 @@ import torch
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.diffusion import (
     DiffusersPipelineModelBase,
-    DiffusionModelBase,
+    DiffusersReplayModelBase,
     DiffusionSamplingStateBase,
-    ReplayRolloutStubs,
+    diffusers_pipeline_dtypes,
 )
 from vrl.models.diffusion.common import (
     ChunkedLatentDecoder,
@@ -135,22 +135,7 @@ class SD3_5Model(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRu
         from diffusers import StableDiffusion3Pipeline
 
         model_dtype = resolve_torch_dtype(spec.dtype)
-        # Frozen text encoders / VAE follow the ``frozen`` precision axis. Its
-        # default already encodes the Flow-GRPO SD3 contract (fp16 when the
-        # denoiser runs fp32, else the model dtype), so ``spec.frozen_dtype`` is
-        # authoritative when present; fall back for bare/test specs.
-        frozen_dtype = getattr(spec, "frozen_dtype", None)
-        if frozen_dtype is None:
-            frozen_dtype = torch.float16 if model_dtype == torch.float32 else model_dtype
-        load_kwargs: dict[str, Any] = {}
-        if model_dtype == torch.float32 and frozen_dtype != torch.float32:
-            load_kwargs["torch_dtype"] = {
-                "transformer": torch.float32,
-                "vae": torch.float32,
-                "default": frozen_dtype,
-            }
-        elif model_dtype != torch.float32:
-            load_kwargs["torch_dtype"] = model_dtype
+        frozen_dtype, load_kwargs = diffusers_pipeline_dtypes(spec, model_dtype)
         pipeline = StableDiffusion3Pipeline.from_pretrained(
             spec.model_name_or_path,
             **load_kwargs,
@@ -171,9 +156,6 @@ class SD3_5Model(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRu
             pipeline=pipeline,
             device=spec.device,
         )
-
-    def _lora_dtype(self, spec: Any) -> Any:
-        return resolve_torch_dtype(spec.dtype)
 
     # -- encode_prompt -------------------------------------------------
 
@@ -430,35 +412,25 @@ class SD3_5Model(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRu
         return decoder(latents)
 
 
-class SD3_5ReplayModel(ReplayRolloutStubs, SD3_5Model):
+class SD3_5ReplayModel(DiffusersReplayModelBase, SD3_5Model):
     """Replay-only SD3.5 model that owns no prompt encoders, VAE, or pipeline."""
 
     def __init__(self, *, transformer: Any, scheduler: Any, device: Any = None) -> None:
-        DiffusionModelBase.__init__(self)
-        self.transformer = transformer
-        self._scheduler = scheduler
-        self._device = device
+        DiffusersReplayModelBase.__init__(
+            self,
+            transformer=transformer,
+            scheduler=scheduler,
+            device=device,
+        )
         self.uses_vrl_attention_processor = install_sd3_joint_attention_processor(
             transformer,
         )
-
-    @property
-    def pipeline(self) -> Any:
-        raise RuntimeError("SD3_5ReplayModel does not own a diffusers pipeline")
 
     def _set_transformer(self, transformer: Any) -> None:
         self.transformer = transformer
         self.uses_vrl_attention_processor = install_sd3_joint_attention_processor(
             transformer,
         )
-
-    @property
-    def scheduler(self) -> Any:
-        return self._scheduler
-
-    @property
-    def raw_handle(self) -> Any:
-        return None
 
 
 __all__ = ["SD3SamplingState", "SD3_5Model", "SD3_5ReplayModel"]

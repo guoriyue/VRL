@@ -87,16 +87,6 @@ def build_echo_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
     return assemble_replay_bundle(model, spec, family="echo")
 
 
-def build_echo_replay_runtime_bundle_from_cfg(
-    cfg: Any,
-    device: Any,
-    weight_dtype: Any,
-) -> RuntimeBundle:
-    from vrl.models.diffusion.build import extract_family_runtime_spec
-
-    return build_echo_replay_runtime_bundle(
-        extract_family_runtime_spec(cfg, device, weight_dtype),
-    )
 
 
 class EchoChunkExecutor(DiffusionChunkExecutorBase):
@@ -133,5 +123,4 @@ class EchoChunkExecutor(DiffusionChunkExecutorBase):
 __all__ = [
     "EchoChunkExecutor",
     "build_echo_replay_runtime_bundle",
-    "build_echo_replay_runtime_bundle_from_cfg",
 ]

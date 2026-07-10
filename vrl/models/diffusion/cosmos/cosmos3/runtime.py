@@ -46,14 +46,6 @@ def build_cosmos3_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle
     return assemble_replay_bundle(model, spec, family="cosmos3")
 
 
-def build_cosmos3_replay_runtime_bundle_from_cfg(cfg: Any, device: Any, weight_dtype: Any) -> RuntimeBundle:
-    from vrl.models.diffusion.build import extract_family_runtime_spec
-
-    return build_cosmos3_replay_runtime_bundle(
-        extract_family_runtime_spec(cfg, device, weight_dtype),
-    )
-
-
 class Cosmos3ChunkExecutor(DiffusionChunkExecutorBase):
     """Diffusion executor for Cosmos3 Omni text-to-video rollouts.
 
@@ -108,5 +100,4 @@ class Cosmos3ChunkExecutor(DiffusionChunkExecutorBase):
 __all__ = [
     "Cosmos3ChunkExecutor",
     "build_cosmos3_replay_runtime_bundle",
-    "build_cosmos3_replay_runtime_bundle_from_cfg",
 ]

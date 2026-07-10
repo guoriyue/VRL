@@ -12,9 +12,8 @@ import torch
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.diffusion import (
     DiffusersPipelineModelBase,
-    DiffusionModelBase,
+    DiffusersReplayModelBase,
     DiffusionSamplingStateBase,
-    ReplayRolloutStubs,
 )
 from vrl.models.diffusion.common import (
     ChunkedLatentDecoder,
@@ -599,37 +598,23 @@ class CosmosPredict25Model(CosmosReplayForward, DiffusersPipelineModelBase):
         return decoder(latents)
 
 
-class CosmosPredict25ReplayModel(ReplayRolloutStubs, CosmosPredict25Model):
+class CosmosPredict25ReplayModel(DiffusersReplayModelBase, CosmosPredict25Model):
     """Replay-only Cosmos Predict2.5 model without text encoder, VAE, or pipeline."""
 
     def __init__(self, *, transformer: Any, scheduler: Any, device: Any = None) -> None:
-        DiffusionModelBase.__init__(self)
-        self.transformer = transformer
-        self._scheduler = scheduler
-        self._device = device
+        DiffusersReplayModelBase.__init__(
+            self,
+            transformer=transformer,
+            scheduler=scheduler,
+            device=device,
+        )
         self.synthetic_prompt_embeds = False
-
-    @property
-    def pipeline(self) -> Any:
-        raise RuntimeError("CosmosPredict25ReplayModel does not own a diffusers pipeline")
-
-    @property
-    def scheduler(self) -> Any:
-        return self._scheduler
-
-    @property
-    def raw_handle(self) -> Any:
-        return None
-
-    def _set_transformer(self, transformer: Any) -> None:
-        self.transformer = transformer
 
     # apply_lora is inherited from CosmosPredict25Model: it attaches to
     # self.transformer, which this replay model owns directly (no pipeline), so
     # the parent's single implementation already does the right thing.
-
-    def torch_compile_transformer(self, mode: str) -> None:
-        self._set_transformer(torch.compile(self.transformer, mode=mode, fullgraph=False))
+    # torch_compile_transformer is inherited from DiffusionModelBase: it calls
+    # self._set_transformer, which the replay base owns.
 
     def set_num_steps(self, n: int) -> None:
         self.scheduler.set_timesteps(n, device=self.device)
