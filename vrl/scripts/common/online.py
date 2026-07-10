@@ -127,7 +127,24 @@ def _initialize_ray_cluster(
         address = "local"
         ownership = "owned_local"
 
-    context = ray.init(address=address)
+    # ray.init() documents that it overwrites the driver-process SIGTERM
+    # handler (ray._private.worker: "This method overwrite sigterm handler of
+    # the driver process"), replacing it with a bare sys.exit that skips the
+    # recipe's cleanup path. Signal ownership belongs to whoever launched this
+    # recipe (the vrl-train CLI installs cooperative-cancel handlers); snapshot
+    # and restore around init so Ray cannot silently take it.
+    import signal
+
+    previous_handlers = {
+        signum: signal.getsignal(signum)
+        for signum in (signal.SIGINT, signal.SIGTERM)
+    }
+    try:
+        context = ray.init(address=address)
+    finally:
+        for signum, handler in previous_handlers.items():
+            if handler is not None:
+                signal.signal(signum, handler)
     address_info = getattr(context, "address_info", None)
     if not isinstance(address_info, Mapping):
         address_info = {}

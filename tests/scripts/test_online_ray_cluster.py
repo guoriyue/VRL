@@ -97,3 +97,36 @@ def test_preinitialized_connection_remains_owned_by_embedding_caller() -> None:
 
     assert ray.init_calls == []
     assert ray.shutdown_calls == 0
+
+
+def test_ray_init_cannot_steal_cli_signal_handlers() -> None:
+    """ray.init overwrites the driver SIGTERM handler (documented Ray behavior);
+    the recipe must restore the launcher-owned handlers around init."""
+    import signal
+
+    def cli_handler(signum, frame):  # pragma: no cover - never invoked
+        del signum, frame
+
+    class _SignalStealingRay(_FakeRay):
+        def init(self, **kwargs):
+            # Mirror ray._private.worker: install a bare exit handler.
+            signal.signal(signal.SIGTERM, signal.SIG_DFL)
+            signal.signal(signal.SIGINT, signal.SIG_DFL)
+            return super().init(**kwargs)
+
+    previous = {
+        signal.SIGTERM: signal.getsignal(signal.SIGTERM),
+        signal.SIGINT: signal.getsignal(signal.SIGINT),
+    }
+    try:
+        signal.signal(signal.SIGTERM, cli_handler)
+        signal.signal(signal.SIGINT, cli_handler)
+        online._initialize_ray_cluster(
+            _resources(cross_node=False), _SignalStealingRay(), environ={},
+        )
+        assert signal.getsignal(signal.SIGTERM) is cli_handler
+        assert signal.getsignal(signal.SIGINT) is cli_handler
+    finally:
+        for signum, handler in previous.items():
+            if handler is not None:
+                signal.signal(signum, handler)
