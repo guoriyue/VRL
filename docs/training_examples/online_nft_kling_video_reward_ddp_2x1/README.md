@@ -4,7 +4,7 @@ Runbook for `experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_rewar
 run unattended across **two servers, 1 GPU each**, with the resume-capable launcher
 [`ddp_2x1_launch.sh`](./ddp_2x1_launch.sh).
 
-This is the **symmetric colocated** topology — distinct from the
+This is the intended **symmetric colocated** topology — distinct from the
 [cross_node](../online_nft_kling_video_reward_cross_node/README.md) one. Each node runs a
 full RL replica (rollout + reward + train on its own GPU); only the gradient all-reduce
 crosses the network.
@@ -15,15 +15,18 @@ crosses the network.
  node A (rank0 / master)              node B (rank1)
  +-------------------------------+    +-------------------------------+
  | torchrun rank0                |    | torchrun rank1                |
- |  DDP replica + local rollout  |gAR | DDP replica + local rollout   |
- |  + Kling reward (own ray.init)|<-->| + Kling reward (own ray.init) |
+ |  DDP replica + Ray rollout    |gAR | DDP replica + Ray rollout     |
+ |  + in-process Kling reward    |<-->| + in-process Kling reward     |
  |  GPU 0                        |NCCL| GPU 0                         |
  +-------------------------------+    +-------------------------------+
         gAR = gradient all-reduce only (NCCL over `enp39s0`)
 ```
 
-- **No shared Ray cluster.** Each rank does its own local `ray.init()` and owns its node's
-  GPU. (Contrast: cross_node uses one Ray cluster with `--num-gpus=0` on the head.)
+- **One explicitly local Ray cluster per node.** The recipe uses
+  `ray.init(address="local")` for this non-cross-node topology, so it starts a fresh cluster
+  instead of following `RAY_ADDRESS` or Ray's current local-cluster state. The old bare
+  `ray.init()` behavior did not prove ownership and must not be restored. (Contrast:
+  cross_node intentionally attaches both hosts to one explicitly addressed cluster.)
 - **Genuine 2× batch.** The data loader draws `world_size × prompts_per_batch` prompts and
   hands each rank a **disjoint** slice, so rank0 + rank1 cover 32 distinct conditions for
   `rbs=16` — the all-reduced gradient is over 2× the data, not a duplicated run.
@@ -31,6 +34,11 @@ crosses the network.
   `require_grad` but run under `no_grad`, so the DDP reducer would otherwise flag them.
 
 ## Run it
+
+Explicit local init prevents accidental attachment; it does not protect processes from a
+different workload's machine-local lifecycle commands. Prefer dedicated hosts/containers,
+and do not use `ray stop` to "clean" a shared host: it is a process-name scan, not an
+address-scoped teardown command.
 
 On **each** node (from the repo root), pass the node rank:
 

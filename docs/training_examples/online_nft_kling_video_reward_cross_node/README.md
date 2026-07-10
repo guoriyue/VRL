@@ -47,6 +47,9 @@ Use it only as a reference for the rollout-on-worker placement mechanics.
 
 - Same VRL code + Python env installed on **both** servers.
 - Network reachability from node B to node A on the Ray ports (6379 + workers).
+- A dedicated host/container/process-ownership boundary for this cluster. On a
+  shared host, do not use this runbook unless the Ray processes are isolated
+  from other users' lifecycle commands.
 - **node A**: cosmos Predict2.5 2B weights + the VideoPhy prompt dataset.
 - **node B**: cosmos Predict2.5 2B weights (rollout loads them).
 - **node A**: if you still run this stale Kling composition, the
@@ -75,7 +78,7 @@ ray start --address=10.0.0.1:6379 --num-gpus=1
 **3. Verify the cluster** (from either node):
 
 ```bash
-ray status
+ray status --address=10.0.0.1:6379
 # expect: 1.0 GPU total in the cluster, all on node B; head shows 0 GPU.
 ```
 
@@ -83,20 +86,23 @@ ray status
 
 ```bash
 # on node A
-vrl-train --config experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward_cross_node
+RAY_ADDRESS=10.0.0.1:6379 \
+  vrl-train --config experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward_cross_node
 ```
 
-No code change and no `RAY_ADDRESS` needed: the driver runs on node A, which
-already started the cluster, so the plain `ray.init()` in the recipe finds the
-local cluster (`/tmp/ray/ray_current_cluster`) and attaches to it — node B
-included. Only set `RAY_ADDRESS=10.0.0.1:6379` if you launch the driver from a
-machine that is *not* part of the cluster (no local `ray start`).
+Always pass the intended cluster address explicitly. The recipe rejects a
+missing, `auto`, or `local` `RAY_ADDRESS` when
+`distributed.resources.cross_node=true`, then attaches with
+`ray.init(address=<concrete address>)`. This avoids Ray's current-local-cluster
+and auto-discovery paths. The topology flag describes placement; the concrete
+address identifies the operator-owned cluster.
 
 ### Quick smoke (fewer epochs) before the full run
 
 ```bash
-vrl-train --config experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward_cross_node \
-  trainer.total_epochs=4 trainer.save_freq=2 trainer.eval.freq=2
+RAY_ADDRESS=10.0.0.1:6379 \
+  vrl-train --config experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward_cross_node \
+    trainer.total_epochs=4 trainer.save_freq=2 trainer.eval.freq=2
 ```
 
 ## What to check it worked
@@ -117,10 +123,18 @@ vrl-train --config experiment/diffusion/cosmos_predict2_5/online_nft_kling_video
 
 ## Teardown
 
-```bash
-# on each node
-ray stop
-```
+Do **not** run unconditional `ray stop` on a shared host. In Ray 2.55.1 the
+command scans local processes for Ray process names; it is not scoped by
+cluster address, namespace, port, or session directory. It can therefore stop
+Ray processes belonging to another cluster that are visible and killable by
+the caller.
+
+On dedicated nodes or inside a dedicated PID namespace, the cluster owner may
+run `ray stop` on each node after confirming no unrelated Ray workload shares
+that boundary. On a shared node, teardown must be performed by the cluster
+owner through its host/container/service lifecycle. Driver cleanup should use
+`ray.shutdown()`; when attached to this externally started cluster it
+disconnects the driver and does not stop the cluster.
 
 ## Upgrade path
 

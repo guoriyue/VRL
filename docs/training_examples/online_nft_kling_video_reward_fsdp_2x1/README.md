@@ -1,8 +1,8 @@
 # FSDP2 2×1 cross-node run (Cosmos Predict2.5 + Kling DiffusionNFT)
 
-Symmetric colocated **FSDP2** variant of the DDP 2×1 example. Same topology — two
-servers, one GPU each, one torchrun rank per server, each running its own local
-Ray + colocated rollout + Kling reward — but the trainer **shards**
+Symmetric colocated **FSDP2** variant of the DDP 2×1 example. The intended topology has
+two servers, one GPU each, and one torchrun rank per server, with one node-local Ray
+cluster for rollout plus an in-process Kling reward — but the trainer **shards**
 params/grads/optimizer as DTensor across the two ranks (ZeRO-3) instead of
 replicating them. The two ranks draw **disjoint** prompt slices (genuine data
 parallelism); only the per-layer all-gather / reduce-scatter crosses the network.
@@ -12,8 +12,8 @@ parallelism); only the per-layer all-gather / reduce-scatter crosses the network
  +-------------------------------+    +-------------------------------+
  | torchrun rank0                |    | torchrun rank1                |
  |  FSDP2 shard 0  (cuda:0)      |<==>|  FSDP2 shard 1  (cuda:0)      |
- |  local ray.init + rollout     | NCCL|  local ray.init + rollout     |
- |  Kling reward (time-share)    |    |  Kling reward (time-share)    |
+ |  Ray-backed rollout           | NCCL|  Ray-backed rollout           |
+ |  in-process Kling reward      |    |  in-process Kling reward      |
  |  writes metrics/ckpt/eval     |    |  (no IO — rank0 only)         |
  +-------------------------------+    +-------------------------------+
         master_addr = node A IP, master_port = 29500
@@ -41,8 +41,14 @@ Override per run via env vars (see the script header), e.g. `OUT=...`,
   `HF_HUB_OFFLINE=1`).
 - The two servers can reach each other on `--master_port` and the NCCL ports; set
   `NCCL_SOCKET_IFNAME` / `GLOO_SOCKET_IFNAME` to the shared interface if multi-homed.
-- Do **NOT** `ray start` a shared cluster — each rank's local `ray.init()` must own
-  its own GPU.
+- Do **NOT** start or attach a shared Ray cluster. The recipe uses
+  `ray.init(address="local")`, which starts a fresh cluster rather than following
+  `RAY_ADDRESS` or Ray's current local-cluster state. The old bare `ray.init()` behavior
+  did not prove local ownership and must not be restored.
+- Do **NOT** use `ray stop` to clean a shared host. It scans machine-local Ray process
+  names rather than targeting one cluster address, so it can terminate another visible,
+  killable Ray cluster. Explicit local init prevents accidental attachment, not an external
+  process kill; prefer dedicated hosts/containers for unattended runs.
 
 ## Differences from the DDP launcher
 

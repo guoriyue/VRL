@@ -1,7 +1,9 @@
 # SPRINT: dino reward RL-trainability —— 用因果探针证明 reward 能被正确方向推动
 
 状态：**in-progress（2026-07-09）**。核心因果问题已用 gradient-honest 探针答出（POSITIVE，near-significant）；
-剩余项 = 正式管线 `vrl-train` 端到端复验 + Ray-kill 隔离 + 提高统计功效。性质：**correctness/causal
+剩余项 = 正式管线 `vrl-train` 端到端复验 + 提高统计功效。Ray 集群归属与共享主机隔离已拆到
+[`SPRINT_ray_cluster_ownership_and_shared_host_isolation.md`](./done/SPRINT_ray_cluster_ownership_and_shared_host_isolation.md)，
+不再作为本 sprint 的 reward 因果验收项。性质：**correctness/causal
 validation**（不是新功能），沿 [[project_first_trustworthy_curve]] 的"能不能学"这条主线。
 
 > 来由：`online_grpo_droid_full_target_480p` 的 24h 长跑判"reward 往下掉 -4.5σ"（[[project_droid_overfit_validation]]），
@@ -70,7 +72,7 @@ step   forward(es,0) BUG   forward_step(es,k) FIX
 
 ## 4. 基建（抗环境）
 
-- `~/.local/bin/run-until-success`：通用进程守护,任何命令套一下即得"跑到成功为止"——SIGTERM/HUP 免疫、
+- `~/.local/bin/run-until-success`：通用进程守护,任何命令套一下即得"跑到成功为止"——SIGTERM/HUP 后自动重启、
   `setsid` 独立会话、等 GPU 空、断点续、连续同类报错就停不空烧 GPU。见 [[feedback_unattended_run_survival]]。
 - 93f 单卡显存地板：frozen offload + CPU-paged replay tensors + grad-ckpt + samples_per_chunk=1。
   见 [[project_single_gpu_93f_probe_oom]]。
@@ -80,8 +82,9 @@ step   forward(es,0) BUG   forward_step(es,k) FIX
 **现在跑的是探针,不是 `vrl-train`。** 探针复刻了 trainer 的 GRPO 数学(同 `group_relative_advantages`、
 同 `sde_step_with_logprob`、同常数)且 parity=0.0000（对同一 rollout,梯度和 trainer 逐位一致）,所以因果
 结论可迁移。但**正式管线在正确性上更 solid**（久经考验、用正确 mixin、自带 parity 守卫、run9/11 实测
-parity=0.0）。我用探针只因为**它在你这台"专杀 Ray + 抢卡"的机器上更能 survive**——正式管线依赖 Ray,
-你测试进程的 `ray stop` 会整机扫杀它的 worker;探针 Ray-free 躲过了。这是**环境**问题,不是正式管线不 solid。
+parity=0.0）。我用探针还因为它是 Ray-free：现场旧日志证明 Ray worker 曾收到外部 `SIGTERM`，而探针没有
+这类 Ray 进程暴露面。**现有证据不能识别发送方或命令，也不能确认是 `ray stop`。** 这项环境稳定性问题与
+reward 数学正确性正交，归属独立 Ray sprint。
 
 ## 6. 剩余项（按优先级）
 
@@ -93,36 +96,15 @@ parity=0.0）。我用探针只因为**它在你这台"专杀 Ray + 抢卡"的�
    - **断点续正确性坑**:`model.lora.path`(warm-start)与 `trainer.resume_from`(续 ckpt)**互斥**。条件启动器
      `scratchpad/cosmos_continue.sh`:首跑 warm-start 探针 adapter;之后每次被杀改从 vrl-train 最新 checkpoint 续
      (`save_freq=2`),不退回探针、不丢生产进度。
-   - **⚠️ Ray-stop 风险回归**:换回整框架 = 重新接上 Ray 总闸(§6.2)。探针阶段 ray-stop 是可选防护;
-     continuation 阶段变刚需——邻居频繁 `ray stop` 会让进度很碎,`run-until-success`+`save_freq=2` 只能自动续。
+   - **⚠️ 外部终止风险回归**:换回整框架会重新创建 Ray worker。历史现场存在来源未知的外部 `SIGTERM`；
+     `run-until-success`+`save_freq=2` 只能缩小进度损失，不能证明或消除发送方。集群归属与共享主机隔离由独立
+     Ray sprint 处理。
    - **warm-start confound(诚实)**:从探针 +4.6% 接着训 = 不浪费,但这条生产曲线**不能再独立宣称"生产也把
      dino 推上去了"**(大头探针推完了)。要独立复验须从零跑。且探针只 overfit 1 个 prompt,本配方 4 个 prompt →
      其余 3 个冷启动,是"热启动的真训练"非纯单-prompt 续。
    - **判读**:先看 `first-step log-prob` parity ≈0(证明 warm-start 权重接干净)→ 再看 eval dino 从 ~0.486 往哪走。
-2. **Ray-kill 隔离**：Ray 是整机全局单例,`ray stop` 按进程名全杀。解法(按干净度)：① 训练放独立机器/容器;
-   ② 同机则 `run-until-success` + 勤 checkpoint(`trainer.resume_from`)自动续;③ 若能改测试进程,让它用独立
-   Ray 实例(自己的 `_temp_dir`+端口+namespace),teardown 只停自己。**待你确认测试进程是否 `ray stop`。**
-
-   > **为什么会有 ray-stop 问题(心智模型,别再说"Ray 不 solid"):** Ray 本身很 solid,问题不在它可靠性,
-   > 在于它是**整机全局单例**——`ray.init()` 起/连的是机器上**唯一一套** Ray,`ray stop` 是**按进程名整机扫杀**
-   > 的管理命令(设计如此)。两个互不协调的负载同机、都用 Ray,谁跑 `ray stop` 谁把对方也端掉。这是**多租户/
-   > 共享**问题,不是 Ray 脆。探针"活下来"只因它**不用 Ray = 没有被 `ray stop` 攻击的面**,不是它软件更好
-   > (它反而是有 bug 的那个)。
-   >
-   > 打个比方:Ray 像整栋楼共用的电力总闸,`ray stop` = 有人去拉总闸。你的训练和你的测试是同一条总闸下的两户;
-   > 测试为重置自己拉一下总闸,你的训练那户也跟着黑了——不是你家线路差,是你俩共用一个闸。探针 = 自带电池、
-   > 不接总闸的设备,拉闸拉不到它。跟"谁的电器更 solid"无关。
-   >
-   > **真正的解 = 进程隔离,让邻居的 `ray stop` 够不到你:**
-   > - **最干净:容器 / 独立机器。** 容器有 PID namespace 隔离——邻居在它那边 `ray stop` 看不到也杀不到你容器里的
-   >   Ray 进程。根治。
-   > - **只加端口/namespace/temp-dir 不够:** 那只解决"两套 Ray 启动抢端口";`ray stop` 按进程名整机扫,照样杀你隔离的那套。
-   > - **同机又不隔离 = 本质脆弱:** 只要邻居能跑全局 `ray stop` 就防不住;`run-until-success` + 勤 checkpoint 是
-   >   "被杀自动续"的创可贴,不是根治。
-   > - **诚实前提:** "是 `ray stop`" 是从 SIGTERM 签名 + "有进程一直 testing" **推断**的,当时的杀是**混合**的
-   >   (一部分外部 SIGTERM,一部分 OOM——OOM 与 Ray 无关,已被显存修复解决)。需你确认测试进程是否 `ray stop`。
-3. **提高统计功效**：把每点样本 16 → 32/64,压掉点间抖动,让 t 稳定越过 2(比多跑更新更干净)。
-4. **first_step 守卫改硬失败**：`vrl/trainers/online/trainer.py:1127` 现在 parity>0.01 只 **warn**;改成
+2. **提高统计功效**：把每点样本 16 → 32/64,压掉点间抖动,让 t 稳定越过 2(比多跑更新更干净)。
+3. **first_step 守卫改硬失败**：`vrl/trainers/online/trainer.py:1127` 现在 parity>0.01 只 **warn**;改成
    **hard-fail**（或首跑默认开）,这样未来新家族若写错 sigma 模式,不会默默用坏梯度训几小时(正是探针的教训)。
 
 ## 7. 非目标
@@ -140,5 +122,8 @@ parity=0.0）。我用探针只因为**它在你这台"专杀 Ray + 抢卡"的�
   `vrl/math/diffusion/flow_matching.py:74`（`sigma = scheduler.sigmas[step_index]`）
 - 守卫：`vrl/trainers/online/trainer.py:1127`（first_step parity warn→建议 hard-fail）
 - 配方：`vrl/config/presets/experiment/diffusion/cosmos_predict2/online_grpo_droid_overfit_validation.yaml`
+- Ray 稳定性独立范围：`docs/sprints/done/SPRINT_ray_cluster_ownership_and_shared_host_isolation.md`
+- 现场外部终止证据：`outputs/janus_smoke/aesthetic.log`、`outputs/janus_smoke/aesthetic_rbs24.log`、
+  `outputs/janus_smoke/baseline.log`（只证明 `SIGTERM`，不证明发送命令）
 - 记忆：[[project_droid_overfit_validation]]、[[project_replay_parity_audit]]、
   [[project_single_gpu_93f_probe_oom]]、[[feedback_unattended_run_survival]]、[[project_first_trustworthy_curve]]
