@@ -1,7 +1,26 @@
 # SPRINT: flow_grpo 源码研究 + diffusion GRPO 配方对照（borrow what actually learns）
 
-状态：planned（2026-06-20）。性质：**源码研究 + 逐 knob 差距对照**，落地是一次**配方对齐重跑**，
-不是功能移植。
+状态：**DONE / superseded（2026-07-09 终局对账；原 planned 2026-06-20）**。
+性质：**源码研究 + 逐 knob 差距对照**，落地是一次**配方对齐重跑**，不是功能移植。
+
+> **终局对账（2026-07-09，对 configs/git 实况）**：本 sprint 的三半都已被后续工作覆盖，无独属剩余项：
+> - **研究半（§1/§2）**：写文档时即完成（knob 对照表就是产出）。
+> - **配方对齐（§3.1）已落地，且比本文方案更结构化**——不是 experiment override，而是 family
+>   boundary：`configs/recipe/online/flow_matching_grpo.yaml` 给全 diffusion 族设
+>   `clip_ratio: 1.0e-4`（d1547dfe，注释引用 flow_grpo SD3 clip_range）；
+>   `configs/recipe/online/cosmos_predict25_grpo.yaml` 视频族收到 `1.0e-3`（= flow_grpo 原值，
+>   24682ec4）。`global_std: true` 已进 geneval + 全部新 validation 实验；`kl_coef: 0.004` 已进
+>   wan/echo/anima 视频实验、geneval 用 0.04（= flow_grpo geneval 值）；LoRA `lr: 1e-4` + EMA-on +
+>   paper-shaped group（8×32）在 predict2.5 GRPO recipe 里落齐。predict2.5 未开 KL 是刻意的：
+>   paper 路线用 diffusion-loss 正则替代，open item 归 [[SPRINT_cosmos_predict25_rl_paper_parity]]。
+> - **§2 一处判断被实测推翻**：「`ppo_epochs=1` ✓ 不动」——flux 四算法 validation 实测
+>   ppo_epochs=1 时 ratio≡1、clip_fraction≡0（trust region 机制死），predict2.5 GRPO recipe
+>   已改 `ppo_epochs: 4` 并在 yaml header 记录根因（info/SPRINT_flux_algo_validation_curves.md）。
+> - **重跑半（§3.2/3.3）以演化形式执行**：flux 四算法 validation runs + cosmos25 kling 曲线记录
+>   （info/SPRINT_cosmos25_kling_reward_curve.md：reward 噪声内持平，根因 = per-step 梯度小 +
+>   轮换 prompt 度量不可读，须固定 eval prompt 集）。「>2σ 单调抬升」的 learning verdict 尚未在
+>   cosmos 上达成——该判据的所有权已随 [[SPRINT_cosmos_predict25_rl_paper_parity]] /
+>   [[SPRINT_cosmos_predict2_2b_trustworthy_curve]] 走，不再由本 sprint 承载。归档 done/。
 
 > 来源：通读了 `~/Desktop/flow_grpo`（SD3/Flux/Wan GRPO 训练库，本仓库 RL 层的母体）的
 > `config/grpo.py` 与 `scripts/train_sd3.py` 训练循环，对照本仓库 `vrl/algorithms/grpo/`、
