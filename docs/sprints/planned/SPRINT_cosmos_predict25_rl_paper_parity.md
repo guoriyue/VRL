@@ -88,6 +88,30 @@ rbs=1、n=3 时组内只有 3 个样本、每步只有 1 个 prompt——advanta
    predict2_5 从未在 GRPO/SDE-logprob 评估器下实跑过——首跑先短 smoke 验 first_step parity。
 2. **diffusion-loss 正则**:论文明确用它防 reward hacking;在 NFT recipe 里**没找到**对应实现。
    **行动:确认是否缺,缺则补**(否则容易 reward hack)。
+   **→ 已确认缺;设计已定(2026-07-09,先设计后实施)**:
+   - **确认**:在线路径无任何 diffusion-loss 项。`diffusion_sft_loss` 只被离线 DPO trainer 消费
+     (`vrl/trainers/offline/dpo.py:334-340`,gated on `sft_weight>0`);schema 的
+     `algorithm.sft_weight` 键在线无读者。在线的防 hack 锚只有 `kl_coef`(锚向旧策略,
+     不锚向数据流形——语义弱于论文的 data-diffusion-loss)。
+   - **这不是一个纯 loss 项,是一条数据通道**。论文在 **fine-tuning 数据**上算 loss →
+     训练侧需要 (clean latents, prompt embeds) 对。两个结构性障碍:
+     ① trainer 用 ReplayModel(只装 transformer+scheduler,**无 VAE/text-encoder**,
+     minimal-replay 契约有测试锁定)——训练时现场 encode 不可行;
+     ② 当前 paper-parity run 的数据集 `videophy` 是纯 prompt manifest(train.txt),
+     **没有 target 视频**——即使机制齐了,这个 run 也没有数据可锚。有 target 视频的是
+     droid 系 manifest(`data/artifacts.py` 的 `target_video` 字段已进 rollout metadata)。
+   - **架构裁决:预编码 latents(Option A),不走 rollout-worker 现场编码(Option B)**。
+     B 让生成 worker 替训练侧编码并每个 batch 重复运送同样的 target latents——把训练关切
+     耦合进 rollout wire,且同一 prompt 的 latents 每 epoch 重复付费。A = 一次性离线
+     encode(全 bundle,可借 `vrl/scripts/diffusion/generate.py` 的家族无关加载),产出
+     (latents, embeds) shard;trainer 按 `algorithm.sft_weight>0` + `data.sft_latents`
+     加载,MSE 项复用离线 DPO 已验证的构造(`_inject_noise`:flow_matching 走
+     `scheduler.scale_noise`、target=noise-latents;epsilon/v-pred 走 add_noise/get_velocity
+     ——与 `sampling.sde_type` 的家族映射一致)+ family `forward_step`(全家族 parity 0.0e+00)。
+   - **纪律**:旋钮与数据通道**必须同一批落地**(无消费者的 sft_weight = no-op knob,
+     违反 dead-field 规则);numerics 门 = 真权重下 sft_weight=0 逐位不变 + 小 lr 短跑
+     diffusion loss 下降;predict2_5 的 UniPC sigma 域按 replay 侧同款 schedule 取 t
+     (EDM 域翻车先例 c66bf11,不要另起换算)。
 3. **reward 模型**:论文 **VideoAlign** vs config `kling_video_reward`——很可能同源(Kling 的
    VideoReward),但**没 100% 确认**。**行动:确认是不是同一个模型。**
 4. **lr / 微调方式**:论文 3e-5 全参,config 是 1e-4 LoRA(注释解释:全参需多卡)。这是**有意的

@@ -85,12 +85,42 @@ parity=0.0）。我用探针只因为**它在你这台"专杀 Ray + 抢卡"的�
 
 ## 6. 剩余项（按优先级）
 
-1. **正式管线端到端复验** ⭐：探针 R12 跑完后,用 `vrl-train --config
-   experiment/diffusion/cosmos_predict2/online_grpo_droid_overfit_validation` + `run-until-success` + §4 显存修复
-   真跑一次同配方,确认生产路径也出这条上升曲线。两条都绿才算落地。
+1. **正式管线 continuation（IN PROGRESS 2026-07-09）** ⭐：探针停在 R10（dino ~0.486, +4.6%）后,
+   **warm-start 从探针策略接着用 `vrl-train` 训**(不是从零)。落地细节:
+   - 探针 `lora_round_10.pt`(PEFT 格式,448 keys)→ `scratchpad/convert_probe_lora.py` 经 model.apply_lora
+     路径转成 PEFT adapter 目录 `outputs/_level0_curve/probe_lora_r10_adapter`(load 时 unexpected=0,接干净)。
+   - 配方 `online_grpo_droid_overfit_validation` + 显存修复(spc=1 / traj cpu / reward gpu_pool)+ `run-until-success`。
+   - **断点续正确性坑**:`model.lora.path`(warm-start)与 `trainer.resume_from`(续 ckpt)**互斥**。条件启动器
+     `scratchpad/cosmos_continue.sh`:首跑 warm-start 探针 adapter;之后每次被杀改从 vrl-train 最新 checkpoint 续
+     (`save_freq=2`),不退回探针、不丢生产进度。
+   - **⚠️ Ray-stop 风险回归**:换回整框架 = 重新接上 Ray 总闸(§6.2)。探针阶段 ray-stop 是可选防护;
+     continuation 阶段变刚需——邻居频繁 `ray stop` 会让进度很碎,`run-until-success`+`save_freq=2` 只能自动续。
+   - **warm-start confound(诚实)**:从探针 +4.6% 接着训 = 不浪费,但这条生产曲线**不能再独立宣称"生产也把
+     dino 推上去了"**(大头探针推完了)。要独立复验须从零跑。且探针只 overfit 1 个 prompt,本配方 4 个 prompt →
+     其余 3 个冷启动,是"热启动的真训练"非纯单-prompt 续。
+   - **判读**:先看 `first-step log-prob` parity ≈0(证明 warm-start 权重接干净)→ 再看 eval dino 从 ~0.486 往哪走。
 2. **Ray-kill 隔离**：Ray 是整机全局单例,`ray stop` 按进程名全杀。解法(按干净度)：① 训练放独立机器/容器;
    ② 同机则 `run-until-success` + 勤 checkpoint(`trainer.resume_from`)自动续;③ 若能改测试进程,让它用独立
    Ray 实例(自己的 `_temp_dir`+端口+namespace),teardown 只停自己。**待你确认测试进程是否 `ray stop`。**
+
+   > **为什么会有 ray-stop 问题(心智模型,别再说"Ray 不 solid"):** Ray 本身很 solid,问题不在它可靠性,
+   > 在于它是**整机全局单例**——`ray.init()` 起/连的是机器上**唯一一套** Ray,`ray stop` 是**按进程名整机扫杀**
+   > 的管理命令(设计如此)。两个互不协调的负载同机、都用 Ray,谁跑 `ray stop` 谁把对方也端掉。这是**多租户/
+   > 共享**问题,不是 Ray 脆。探针"活下来"只因它**不用 Ray = 没有被 `ray stop` 攻击的面**,不是它软件更好
+   > (它反而是有 bug 的那个)。
+   >
+   > 打个比方:Ray 像整栋楼共用的电力总闸,`ray stop` = 有人去拉总闸。你的训练和你的测试是同一条总闸下的两户;
+   > 测试为重置自己拉一下总闸,你的训练那户也跟着黑了——不是你家线路差,是你俩共用一个闸。探针 = 自带电池、
+   > 不接总闸的设备,拉闸拉不到它。跟"谁的电器更 solid"无关。
+   >
+   > **真正的解 = 进程隔离,让邻居的 `ray stop` 够不到你:**
+   > - **最干净:容器 / 独立机器。** 容器有 PID namespace 隔离——邻居在它那边 `ray stop` 看不到也杀不到你容器里的
+   >   Ray 进程。根治。
+   > - **只加端口/namespace/temp-dir 不够:** 那只解决"两套 Ray 启动抢端口";`ray stop` 按进程名整机扫,照样杀你隔离的那套。
+   > - **同机又不隔离 = 本质脆弱:** 只要邻居能跑全局 `ray stop` 就防不住;`run-until-success` + 勤 checkpoint 是
+   >   "被杀自动续"的创可贴,不是根治。
+   > - **诚实前提:** "是 `ray stop`" 是从 SIGTERM 签名 + "有进程一直 testing" **推断**的,当时的杀是**混合**的
+   >   (一部分外部 SIGTERM,一部分 OOM——OOM 与 Ray 无关,已被显存修复解决)。需你确认测试进程是否 `ray stop`。
 3. **提高统计功效**：把每点样本 16 → 32/64,压掉点间抖动,让 t 稳定越过 2(比多跑更新更干净)。
 4. **first_step 守卫改硬失败**：`vrl/trainers/online/trainer.py:1127` 现在 parity>0.01 只 **warn**;改成
    **hard-fail**（或首跑默认开）,这样未来新家族若写错 sigma 模式,不会默默用坏梯度训几小时(正是探针的教训)。

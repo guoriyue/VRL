@@ -18,7 +18,8 @@
 > **Phase 0 终局对账（2026-07-07）**：11 轮薄化，净删 ~1500 行样板；descriptor 家族 5 个
 > （sd3_5/qwen_image/predict2_5/wan_2_1/wan_2_1_i2v rollout）；diffusion runner 归零；AR 装配线归一；
 > capability 全仓单一构造点；死键/死函数两轮全仓扫描零命中。**挂条件延期项**（非遗漏）：
-> ① per-family train.py ×6（多带真 recipe 差异，纯 GRPO 的可再审）② executor-as-data（等 owner 决策）
+> ① per-family train.py ×6（**薄化第十六轮再审+落地，2026-07-09**——纯转发的折叠，真差异的保留）
+> ② executor-as-data（等 owner 决策）
 > ③ AR chunk 模板化（**薄化第十五轮落地，2026-07-08**——触发条件"5 个 AR 家族"已满足）
 > ④ echo compile/fp8 GPU 验证（80GB 卡）⑤ cosmos caps 契约统一（**薄化第十五轮落地，2026-07-08**）
 > ⑥ SamplingState 基类（**薄化第十四轮落地，2026-07-08**）。~~下一步 = Phase 1 接 SANA~~——**已落地**
@@ -609,6 +610,22 @@ GPU，让某一跳能跑生成 parity；(b) 转为**有人值守**逐个接（�
 >   已删函数的死条目（F822）。
 > - 验证：tests/{models,generation,rollouts,config,architecture,scripts,trainers} 全绿；改动文件
 >   ruff clean。
+
+> **薄化第十六轮（2026-07-09）——终局对账延期项①落地：per-family train.py 再审**：
+> - **逐份裁决（引用到行）**：janus_pro/train.py（85L）与 nextstep_1/train.py（52L）是**纯转发**——
+>   janus 的 family= 闭包甚至 `del family`（死仪式），r1 的 ar_task 本就由 cfg.model.family 在
+>   extractor 内派生；两份删除，折叠进新的家族无关入口 `vrl/scripts/ar/train.py:train_ar_grpo`
+>   （镜像 diffusion 侧 `train_diffusion_grpo` 的形状；builder 从 registry entry 的
+>   `runtime_builder`/`runtime_spec_extractor` + 新增 `replay_runtime_builder` 字段解析——
+>   与 Ray worker 走同一批 import 字符串）。5 个 AR 实验 yaml 改指通用入口。
+> - **顺带解锁**：emu3/glm_image/llamagen 三个 Phase 1 新家族此前**没有任何训练入口**（只落了
+>   rollout 侧）；registry 声明 replay builder 后它们经 train_ar_grpo 直接可训（契约测试锁定
+>   6 个 AR 家族的三条 import 字符串全部可解析）。
+> - **保留的（真差异，不折叠）**：flux/train.py = NFT 专用（无 reference_model_getter，KL 参照走
+>   disable_adapter）；wan_2_1/train.py = i2v 的 collector_kwargs_getter（参考图解析）+ 手写
+>   replay builder（多 transformer，generic replay 路径对它 fail-loud）；cosmos/train.py =
+>   predict2 V2W 参考图接线 + predict2.5 GRPO/NFT 双入口；wan train_dpo.py = 离线 DPO 另一套
+>   循环。这些是 recipe 层真代码，不是样板。
 
 ### 事实基础（全部引用到行级）
 
