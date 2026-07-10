@@ -10,8 +10,10 @@
 # - ppo_epochs 4 instead of a single pass: with ppo_epochs=1 the trust-region
 #   clip is identically zero (ratio==1; flux algo validation measured
 #   clip_fraction==0), so the GRPO mechanism would be dead.
-# - No diffusion-loss regularizer: the paper uses one against reward hacking;
-#   not implemented in this repo yet (open item in the parity sprint).
+# - Diffusion-loss regularizer disabled for this experiment: the mechanism is
+#   implemented, but VideoPhy is prompt-only and has no clean target videos.
+#   Enabling it requires a target-backed fine-tuning manifest and an encoded
+#   data.sft_latents shard; see online_grpo_droid_sft_numerics_240p_33f.yaml.
 # Paper-shaped budget kept: 8 outputs x 32 conditions per update, 20 denoise
 # steps no-CFG, 10 gradient timestep slices (timestep_fraction 0.5), 256 updates.
 defaults:

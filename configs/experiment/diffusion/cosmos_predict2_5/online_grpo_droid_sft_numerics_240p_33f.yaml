@@ -1,0 +1,48 @@
+# Predict2.5 GRPO + diffusion-loss regularizer numerics gate.
+#
+# This is a reusable mechanism validation config, NOT the paper-shaped training
+# recipe. It deliberately matches the available DROID target clips (33 frames)
+# and uses a four-row overfit manifest so encode/decode, gradient flow, and SFT
+# loss movement can be checked without pretending that 240p/33f reproduces the
+# paper's 512p/93f rollout budget.
+#
+# Build the shard and inspect the first VAE round trip before training:
+#   python -m vrl.scripts.diffusion.encode_targets \
+#     --experiment diffusion/cosmos_predict2_5/online_grpo_droid_sft_numerics_240p_33f \
+#     --out data/external/video_world/sft_latents/cosmos_predict25_240p_33f.pt \
+#     --preview-out outputs/cosmos_predict25_sft_target_roundtrip.mp4
+defaults:
+  - /recipe/online/cosmos_predict25_grpo
+  - /model/diffusion/cosmos/predict2_5_2b
+  - /sampling/video/240p_33f
+  - /sampling/denoise/20_step_no_cfg
+  - /reward/target_dino_similarity
+  - /dataset/droid_overfit_validation_sft_predict25_240p_33f
+
+precision: bf16
+
+algorithm:
+  sft_weight: 0.1
+
+actor:
+  optim:
+    lr: 1.0e-4
+  ppo_epochs: 2
+  timestep_fraction: 0.5
+  ema:
+    enable: false
+
+rollout:
+  n_samples_per_prompt: 2
+  prompts_per_batch: 1
+  samples_per_chunk: 1
+  noise_level: 0.7
+
+trainer:
+  output_dir: outputs/cosmos_predict25_sft_numerics_240p_33f
+  total_epochs: 2
+  save_freq: 2
+  debug:
+    first_step: true
+  eval:
+    enabled: false

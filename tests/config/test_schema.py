@@ -755,3 +755,19 @@ def test_latents_shard_without_weight_is_inert_and_allowed() -> None:
     cfg = _minimal_grpo_cfg()
     cfg.data.sft_latents = "data/droid/sft_latents.pt"
     parse_config(cfg)
+
+
+@pytest.mark.parametrize("value", [-0.1, float("nan"), float("inf")])
+def test_sft_weight_must_be_finite_and_nonnegative(value: float) -> None:
+    cfg = _minimal_grpo_cfg(algorithm={"kind": "grpo", "sft_weight": value})
+    with pytest.raises(ValueError, match="finite number >= 0"):
+        parse_config(cfg)
+
+
+def test_sft_weight_rejects_non_diffusion_grpo_kind() -> None:
+    cfg = _minimal_grpo_cfg(
+        algorithm={"kind": "token_grpo", "sft_weight": 0.1},
+    )
+    cfg.data.sft_latents = "data/droid/sft_latents.pt"
+    with pytest.raises(ValueError, match="only for diffusion"):
+        parse_config(cfg)

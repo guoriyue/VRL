@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
+from collections import defaultdict
+
 import pytest
 import torch
 import torch.nn as nn
@@ -18,6 +21,7 @@ from vrl.trajectory import build_diffusion_trajectory
 _B, _T = 2, 4
 _LATENT = (3, 2, 2)
 _PROMPTS = ["a red fox", "a blue car"]
+_TARGET_VIDEO = "targets/training.mp4"
 
 
 class _Collector:
@@ -93,6 +97,7 @@ def _batch(scheduler) -> RolloutBatch:
         dones=torch.ones(_B, dtype=torch.bool),
         group_ids=torch.arange(_B),
         prompts=list(_PROMPTS),
+        context={"reward_metadata": {"target_video": _TARGET_VIDEO}},
         trajectory=trajectory,
     )
 
@@ -119,13 +124,13 @@ def _trainer(tmp_path, *, sft_weight: float, sft_latents) -> OnlineTrainer:
     )
 
 
-def _latents_for_prompts() -> dict[str, torch.Tensor]:
+def _latents_for_targets() -> dict[str, torch.Tensor]:
     torch.manual_seed(7)
-    return {prompt: torch.randn(*_LATENT) for prompt in _PROMPTS}
+    return {_TARGET_VIDEO: torch.randn(*_LATENT)}
 
 
 def test_sft_term_flows_gradient_and_scales_with_weight(tmp_path) -> None:
-    latents = _latents_for_prompts()
+    latents = _latents_for_targets()
     trainer1 = _trainer(tmp_path, sft_weight=0.5, sft_latents=latents)
     trainer2 = _trainer(tmp_path, sft_weight=1.0, sft_latents=latents)
     batch = _batch(trainer1.evaluator.scheduler)
@@ -150,16 +155,15 @@ def test_sft_term_flows_gradient_and_scales_with_weight(tmp_path) -> None:
     assert noisy.shape == (_B, *_LATENT)
 
 
-def test_sft_term_rejects_missing_prompt(tmp_path) -> None:
-    latents = _latents_for_prompts()
-    del latents[_PROMPTS[1]]
+def test_sft_term_rejects_missing_target(tmp_path) -> None:
+    latents = {"targets/other.mp4": torch.randn(*_LATENT)}
     trainer = _trainer(tmp_path, sft_weight=0.5, sft_latents=latents)
-    with pytest.raises(ValueError, match="missing 1 of this batch's prompts"):
+    with pytest.raises(ValueError, match="no entry for target_video"):
         trainer._sft_regularizer_loss(_batch(trainer.evaluator.scheduler))
 
 
 def test_sft_term_rejects_geometry_mismatch(tmp_path) -> None:
-    latents = {prompt: torch.randn(3, 4, 4) for prompt in _PROMPTS}
+    latents = {_TARGET_VIDEO: torch.randn(3, 4, 4)}
     trainer = _trainer(tmp_path, sft_weight=0.5, sft_latents=latents)
     with pytest.raises(ValueError, match="does not match the"):
         trainer._sft_regularizer_loss(_batch(trainer.evaluator.scheduler))
@@ -173,3 +177,56 @@ def test_ctor_rejects_weight_without_latents(tmp_path) -> None:
 def test_ctor_allows_zero_weight_without_latents(tmp_path) -> None:
     trainer = _trainer(tmp_path, sft_weight=0.0, sft_latents=None)
     assert trainer._sft_weight == 0.0
+
+
+def test_sft_backward_uses_group_scale_not_timestep_scale(tmp_path) -> None:
+    trainer = _trainer(
+        tmp_path,
+        sft_weight=0.5,
+        sft_latents=_latents_for_targets(),
+    )
+    batch = _batch(trainer.evaluator.scheduler)
+    backward_losses: list[torch.Tensor] = []
+    trainer._backward = backward_losses.append
+    agg: dict[str, list[float]] = defaultdict(list)
+
+    trainer._backward_sft_regularizer(
+        batch,
+        loss_weight=0.25,
+        total_groups=2,
+        is_dummy=False,
+        autocast_ctx=contextlib.nullcontext(),
+        agg=agg,
+    )
+
+    metric = trainer._weighted_sft_metric(agg)
+    assert len(backward_losses) == 1
+    torch.testing.assert_close(
+        backward_losses[0].detach(),
+        torch.tensor(metric * 0.25 / 2),
+    )
+
+
+def test_sft_dummy_slot_runs_zero_weight_backward_without_metric(tmp_path) -> None:
+    trainer = _trainer(
+        tmp_path,
+        sft_weight=0.5,
+        sft_latents=_latents_for_targets(),
+    )
+    backward_losses: list[torch.Tensor] = []
+    trainer._backward = backward_losses.append
+    agg: dict[str, list[float]] = defaultdict(list)
+
+    trainer._backward_sft_regularizer(
+        _batch(trainer.evaluator.scheduler),
+        loss_weight=0.0,
+        total_groups=2,
+        is_dummy=True,
+        autocast_ctx=contextlib.nullcontext(),
+        agg=agg,
+    )
+
+    assert len(trainer.model.forward_calls) == 1
+    assert len(backward_losses) == 1
+    assert float(backward_losses[0].detach()) == 0.0
+    assert trainer._weighted_sft_metric(agg) == 0.0

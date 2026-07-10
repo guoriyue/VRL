@@ -1,0 +1,19 @@
+# Target-backed four-row DROID validation set plus the Predict2.5 240p/33f
+# latent shard derived from it. This is deliberately a separate dataset group:
+# data.sft_latents is part of the data asset contract and experiments do not
+# inline or override data fields.
+data:
+  loader: prompt_manifest
+  manifest: data/external/video_world/manifests/droid_overfit_validation.jsonl
+  eval_manifest: data/external/video_world/manifests/droid_overfit_validation.jsonl
+  source_report: data/external/video_world/droid_full_targets_report.json
+  artifact_data_root: data/external
+  sft_latents: data/external/video_world/sft_latents/cosmos_predict25_240p_33f.pt
+  task_type: video2world
+  preprocessing:
+    format: jsonl
+    target_text: none
+    media_type: video
+    conditioning: reference_image
+  sampler:
+    type: random_without_replacement

@@ -14,6 +14,7 @@ from tests.models.diffusion.fixtures import add_lora_adapters, build_tiny_wan_tr
 from vrl.generation import GenerationRequest, GenerationSampleRow
 from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.models.diffusion import DiffusionModelBase
+from vrl.models.diffusion.cosmos import CosmosReplayForward
 from vrl.models.diffusion.cosmos.predict2.model import CosmosPredict2Model
 from vrl.models.diffusion.sd3_5.model import SD3_5Model
 from vrl.models.diffusion.wan_2_1.model import WanT2VDiffusersModel
@@ -74,6 +75,7 @@ class _ModelBaseStub(DiffusionModelBase):
         object.__setattr__(self, "_pipeline", pipeline)
         self.transformer = pipeline.transformer
         self.forward_models: list[Any] = []
+        self.forward_step_indices: list[int] = []
 
     @property
     def pipeline(self) -> Any:
@@ -106,8 +108,9 @@ class _ModelBaseStub(DiffusionModelBase):
         state: Any,
         step_idx: int,
     ) -> dict[str, Any]:
-        del state, step_idx
+        del state
         self.forward_models.append(self.transformer)
+        self.forward_step_indices.append(step_idx)
         return {"noise_pred": torch.ones(1)}
 
     def decode_latents(self, latents: Any) -> Any:
@@ -260,9 +263,28 @@ def test_replay_forward_returns_typed_replay_result() -> None:
     )
 
     result = runtime.replay_forward(batch, timestep_idx=1)
+    caller_latent_result = runtime.replay_forward_with_latents(
+        batch,
+        timestep_idx=1,
+        latents=torch.zeros(2, 1),
+    )
 
     assert isinstance(result, ReplayResult)
     assert result.segments["denoise"].values["noise_pred"].shape == (1,)
+    assert caller_latent_result["noise_pred"].shape == (1,)
+    assert runtime.forward_step_indices == [0, 0]
+
+    class _CosmosReplayStub(CosmosReplayForward, _ModelBaseStub):
+        pass
+
+    cosmos_runtime = _CosmosReplayStub()
+    cosmos_runtime.replay_forward(batch, timestep_idx=1)
+    cosmos_runtime.replay_forward_with_latents(
+        batch,
+        timestep_idx=1,
+        latents=torch.zeros(2, 1),
+    )
+    assert cosmos_runtime.forward_step_indices == [1, 1]
 
 
 def test_disable_adapter_forwards_to_transformer_context() -> None:

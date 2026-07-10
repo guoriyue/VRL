@@ -143,7 +143,7 @@ class DiffusionModelBase(nn.Module, ABC):
             latents,
             timestep_idx,
         )
-        values = self.forward(state, 0)
+        values = self.forward(state, self._replay_forward_step_index(timestep_idx))
         return ReplayResult(
             segments={
                 "denoise": ReplaySegmentResult(
@@ -179,7 +179,25 @@ class DiffusionModelBase(nn.Module, ABC):
             latents,
             timestep_idx,
         )
-        return dict(self.forward(state, 0))
+        return dict(
+            self.forward(
+                state,
+                self._replay_forward_step_index(timestep_idx),
+            ),
+        )
+
+    def _replay_forward_step_index(self, timestep_idx: int) -> int:
+        """Map a trajectory step to the index the rebuilt family state expects.
+
+        Most families rebuild a one-step state and therefore forward at index
+        zero. Cosmos keeps the full scheduler sigma table in replay state, so
+        its shared protocol mixin returns the real trajectory index instead.
+        Both normal replay and caller-latent replay use this hook; otherwise the
+        same noisy input could be evaluated under two different sigma values.
+        """
+
+        del timestep_idx
+        return 0
 
     def _replay_inputs_for_step(
         self,
