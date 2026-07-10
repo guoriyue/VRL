@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import torch
-from omegaconf import OmegaConf
 
 from vrl.config.builders import build_configs
 from vrl.config.loading import load_config

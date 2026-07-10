@@ -16,13 +16,14 @@ import argparse
 
 import torch
 
+from vrl.scripts.perf.common.timing import cuda_mean_ms
+
 # Measure the EXACT production policy, not a copy: selective_checkpoint_func is the
 # same SAC helper that enable_transformer_gradient_checkpointing applies to every
 # diffusion family, so probe numbers describe what real training actually runs.
 # Imported from the trainers module (not the online runner) so the probe stays a
 # lightweight perf script and does not pull in Ray/launcher.
 from vrl.trainers.activation_checkpointing import selective_checkpoint_func
-from vrl.scripts.perf.common.timing import cuda_mean_ms
 
 
 def _apply_ckpt(tf, mode: str) -> None:

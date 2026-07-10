@@ -62,14 +62,13 @@ def main() -> None:
 
     def one_rollout():
         with record_function("prompt_encode"):
-            emb = kwargs["encoder_hidden_states"]  # already built; encode is cheap/once
+            _ = kwargs["encoder_hidden_states"]  # already built; encode is cheap/once
             torch.cuda.synchronize()
         x = lat
-        for i in range(args.steps):
-            with record_function("denoise_dit_forward"):  # GPU-bound
-                with torch.no_grad():
-                    model_in = torch.cat([x, pad], dim=1)  # 16-ch latent + padding -> 17-ch input
-                    vel = model(**{**kwargs, "hidden_states": model_in})[0]
+        for _step in range(args.steps):
+            with record_function("denoise_dit_forward"), torch.no_grad():  # GPU-bound
+                model_in = torch.cat([x, pad], dim=1)  # 16-ch latent + padding -> 17-ch input
+                vel = model(**{**kwargs, "hidden_states": model_in})[0]
             with record_function("sde_step_logprob_math"):  # the fp32 SDE/log-prob math (CPU+GPU)
                 # real repo math: build a tiny scheduler-free gaussian step proxy at the
                 # SAME tensor size so the fp32 elementwise/reduction cost is realistic.
@@ -80,9 +79,8 @@ def main() -> None:
                 x = (mean + std * noise).to(dt)
                 logp = (-((noise) ** 2) / 2 - 0.9189).flatten(1).sum(-1)  # gaussian log-prob
                 _ = logp.detach()
-        with record_function("vae_decode"):  # GPU
-            with torch.no_grad():
-                _ = vae(x)
+        with record_function("vae_decode"), torch.no_grad():  # GPU
+            _ = vae(x)
         torch.cuda.synchronize()
 
     for _ in range(2):  # warmup
