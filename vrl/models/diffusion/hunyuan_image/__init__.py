@@ -5,10 +5,8 @@ from vrl.models.diffusion.hunyuan_image.model import (
     HunyuanImageReplayModel,
     HunyuanImageSamplingState,
 )
-from vrl.models.diffusion.hunyuan_image.runtime import HunyuanImageChunkExecutor
 
 __all__ = [
-    "HunyuanImageChunkExecutor",
     "HunyuanImageModel",
     "HunyuanImageReplayModel",
     "HunyuanImageSamplingState",

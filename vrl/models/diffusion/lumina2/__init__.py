@@ -5,10 +5,8 @@ from vrl.models.diffusion.lumina2.model import (
     Lumina2ReplayModel,
     Lumina2SamplingState,
 )
-from vrl.models.diffusion.lumina2.runtime import Lumina2ChunkExecutor
 
 __all__ = [
-    "Lumina2ChunkExecutor",
     "Lumina2Model",
     "Lumina2ReplayModel",
     "Lumina2SamplingState",

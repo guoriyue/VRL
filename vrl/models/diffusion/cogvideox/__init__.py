@@ -5,10 +5,8 @@ from vrl.models.diffusion.cogvideox.model import (
     CogVideoXReplayModel,
     CogVideoXSamplingState,
 )
-from vrl.models.diffusion.cogvideox.runtime import CogVideoXChunkExecutor
 
 __all__ = [
-    "CogVideoXChunkExecutor",
     "CogVideoXModel",
     "CogVideoXReplayModel",
     "CogVideoXSamplingState",

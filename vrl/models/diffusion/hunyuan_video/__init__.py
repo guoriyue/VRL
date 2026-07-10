@@ -5,10 +5,8 @@ from vrl.models.diffusion.hunyuan_video.model import (
     HunyuanVideoReplayModel,
     HunyuanVideoSamplingState,
 )
-from vrl.models.diffusion.hunyuan_video.runtime import HunyuanVideoChunkExecutor
 
 __all__ = [
-    "HunyuanVideoChunkExecutor",
     "HunyuanVideoModel",
     "HunyuanVideoReplayModel",
     "HunyuanVideoSamplingState",

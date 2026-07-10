@@ -108,7 +108,11 @@ def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
     assert inputs.launch_contract.policy_version == 0
     assert inputs.launch_contract.runtime_builder == entry.runtime_builder
     assert inputs.launch_contract.executor_cls == entry.executor_cls
-    assert inputs.launch_contract.executor_kwargs == {"samples_per_chunk": 2}
+    # Generic-executor families also carry their DiffusionExecutorConfig
+    # (family/task/default_*) in executor_kwargs; families with their own
+    # executor carry only the cfg-derived kwargs. Both must thread the
+    # cfg-derived samples_per_chunk.
+    assert inputs.launch_contract.executor_kwargs["samples_per_chunk"] == 2
     assert isinstance(inputs.gatherer, expected_gatherer)
     assert not isinstance(inputs.gatherer, GenerationChunkExecutor)
 
@@ -278,4 +282,7 @@ def test_explicit_executor_kwargs_override_registry_defaults() -> None:
     )
 
     assert isinstance(inputs, RayGenerationLaunchInputs)
-    assert inputs.launch_contract.executor_kwargs == {"samples_per_chunk": 3}
+    # Explicit executor_kwargs override the cfg-derived value (3, not the
+    # rollout.samples_per_chunk=8 above); the generic executor's config keys
+    # ride alongside.
+    assert inputs.launch_contract.executor_kwargs["samples_per_chunk"] == 3

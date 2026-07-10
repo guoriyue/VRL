@@ -5,10 +5,8 @@ from vrl.models.diffusion.mochi.model import (
     MochiReplayModel,
     MochiSamplingState,
 )
-from vrl.models.diffusion.mochi.runtime import MochiChunkExecutor
 
 __all__ = [
-    "MochiChunkExecutor",
     "MochiModel",
     "MochiReplayModel",
     "MochiSamplingState",

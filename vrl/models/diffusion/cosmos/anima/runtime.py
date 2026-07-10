@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.generation.diffusion import DiffusionChunkExecutorBase
 from vrl.models.diffusion.cosmos.anima.model import _resolve_artifact
 from vrl.models.interfaces.runtime import (
     RuntimeBuildSpec,
@@ -94,22 +93,6 @@ def build_anima_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
             **minimal_replay_bundle_metadata(),
         },
     )
-
-
-class AnimaChunkExecutor(DiffusionChunkExecutorBase):
-    """Diffusion executor for Anima text-to-image rollouts."""
-
-    family: str = ANIMA_FAMILY
-    task: str = "t2i"
-    default_num_frames: int = 1
-    default_fps: int | None = None
-    default_max_sequence_length: int = 512
-
-    def __init__(self, model: Any, *, samples_per_chunk: int = 1) -> None:
-        self.model = model
-        self.default_samples_per_chunk = max(1, int(samples_per_chunk))
-
-
 def load_anima_transformer(spec: RuntimeBuildSpec) -> Any:
     from safetensors.torch import load_file
 
@@ -133,7 +116,6 @@ def load_anima_transformer(spec: RuntimeBuildSpec) -> Any:
 
 __all__ = [
     "ANIMA_FAMILY",
-    "AnimaChunkExecutor",
     "build_anima_replay_runtime_bundle",
     "extract_anima_replay_runtime_spec",
     "load_anima_transformer",

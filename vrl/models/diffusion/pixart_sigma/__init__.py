@@ -6,10 +6,8 @@ from vrl.models.diffusion.pixart_sigma.model import (
     PixArtSigmaSamplingState,
     pixart_ddim_scheduler,
 )
-from vrl.models.diffusion.pixart_sigma.runtime import PixArtSigmaChunkExecutor
 
 __all__ = [
-    "PixArtSigmaChunkExecutor",
     "PixArtSigmaModel",
     "PixArtSigmaReplayModel",
     "PixArtSigmaSamplingState",
