@@ -51,6 +51,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         choices=["flow_grpo", "cps", "ddim"],
         help="log-prob math family (ddim for alphas-ladder checkpoints)",
     )
+    parser.add_argument(
+        "--quantize",
+        default=None,
+        choices=["fp8"],
+        help="rollout-only GEMM quantization (precision.rollout equivalent)",
+    )
     parser.add_argument("--check-replay", action="store_true")
     parser.add_argument(
         "--deterministic",
@@ -94,6 +100,8 @@ def main() -> None:
         dtype=dtype,
         family=family,
         task_variant=entry.build.task_variant if entry.build else None,
+        rollout_quantization=args.quantize,
+        rollout_weight_sync=False,  # the probe never syncs weights
         model_config={
             "path": args.path,
             "use_lora": False,
