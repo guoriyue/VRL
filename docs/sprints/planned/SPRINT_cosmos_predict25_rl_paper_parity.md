@@ -112,6 +112,23 @@ rbs=1、n=3 时组内只有 3 个样本、每步只有 1 个 prompt——advanta
      违反 dead-field 规则);numerics 门 = 真权重下 sft_weight=0 逐位不变 + 小 lr 短跑
      diffusion loss 下降;predict2_5 的 UniPC sigma 域按 replay 侧同款 schedule 取 t
      (EDM 域翻车先例 c66bf11,不要另起换算)。
+   **→ 通道已落地(2026-07-09,CPU 全链验证;GPU numerics 门未跑)**。实施相对设计有一处
+   收紧:不预存 embeds——SFT 项复用**当前训练 batch 的 prompt 条件**(新模型方法
+   `replay_forward_with_latents`,与 log-prob replay 走同一 state 重建/同一 timestep,
+   sigma 域零第二换算路径),shard 只存 {prompt → 干净视频 latents}。五件套:
+   ① 加噪构造 `diffusion_pretraining_pair`(vrl/math/diffusion/flow_matching.py,
+   scheduler 拥有 forward process:flow=scale_noise+velocity 目标、ddim 系=add_noise+
+   epsilon/v 目标);② `GRPOConfig.sft_weight` + schema 交叉校验(weight>0 无
+   data.sft_latents 在 config load 即拒);③ shard 契约 save/load_sft_latents
+   (trainers/data/artifacts.py,family 不匹配拒载);④ trainer 项
+   `OnlineTrainer._sft_regularizer_loss`(每 chunk 一次额外 forward,严格/streaming
+   两路都接,metrics 列 sft_loss);⑤ 编码脚本 vrl/scripts/diffusion/encode_targets.py
+   (吃实验 config 保证同模型同几何,`CosmosPredict2Model.encode_video_to_latents` =
+   decode 的精确逆 + diffusers pipeline conditioning 同款构造;其他 family 用前先补该方法)。
+   **GPU 门(未跑)**:① encode 一个 droid manifest 并 eyeball decode 回放;② 真权重
+   sft_weight=0 与关闭逐位一致;③ 小 lr 短跑 sft_loss 下降、reward 不崩。
+   注意:videophy(本 parity run 的数据集)无 target 视频——paper run 想用此正则需先给
+   数据集配 target(droid 系 manifest 天然满足)。
 3. **reward 模型**:论文 **VideoAlign** vs config `kling_video_reward`——很可能同源(Kling 的
    VideoReward),但**没 100% 确认**。**行动:确认是不是同一个模型。**
 4. **lr / 微调方式**:论文 3e-5 全参,config 是 1e-4 LoRA(注释解释:全参需多卡)。这是**有意的
