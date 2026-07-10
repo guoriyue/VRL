@@ -26,6 +26,79 @@ from typing import Any
 import torch
 
 
+def _flow_terminal_mean(
+    image_head: Any,
+    cond: torch.Tensor,
+    x: torch.Tensor,
+    *,
+    num_steps: int,
+    cfg_uncond: torch.Tensor | None,
+    guidance_scale: float,
+    velocity_fn: Callable[..., torch.Tensor] | None,
+) -> torch.Tensor:
+    """Run the deterministic Euler prefix and return the terminal flow mean.
+
+    Single construction site for the velocity contract, the CFG combine, and
+    the Euler loop — the sampling and replay paths below MUST walk the exact
+    same trajectory, or the GRPO old/fresh log-prob ratio silently corrupts.
+
+    Velocity contract (verified against ``stepfun-ai/NextStep-1``'s
+    ``modeling_nextstep.FlowMatchingHead``): the head exposes its velocity
+    predictor as ``image_head.net(x, t, c)`` (a ``SimpleMLPAdaLN``). The
+    head's own ``forward(z, target, mask)`` is the training-loss path, not
+    the velocity field, so we never call the head directly — always ``.net``.
+    Pass ``velocity_fn`` to override.
+    """
+
+    B = cond.shape[0]
+    t_grid = torch.linspace(0.0, 1.0, num_steps + 1, device=x.device, dtype=x.dtype)
+    dt = 1.0 / num_steps
+
+    def _velocity(xk: torch.Tensor, tk: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
+        if velocity_fn is not None:
+            return velocity_fn(xk, tk, c)
+        return image_head.net(xk, tk, c)
+
+    def _guided_velocity(xk: torch.Tensor, tk: torch.Tensor) -> torch.Tensor:
+        v_cond = _velocity(xk, tk, cond)
+        if cfg_uncond is not None and abs(guidance_scale - 1.0) > 1e-6:
+            v_uncond = _velocity(xk, tk, cfg_uncond)
+            return (1.0 + guidance_scale) * v_cond - guidance_scale * v_uncond
+        return v_cond
+
+    # K-1 deterministic Euler steps, then the final step's mean.
+    for k in range(num_steps - 1):
+        x = x + dt * _guided_velocity(x, t_grid[k].expand(B))
+    return x + dt * _guided_velocity(x, t_grid[num_steps - 1].expand(B))
+
+
+def _flow_noise_std(noise_level: float, num_steps: int) -> float:
+    """SDE-from-ODE final-step std: ``noise_level * sqrt(dt)``.
+
+    Matches flow_grpo's final-step parameterisation (sigma_min ≪ sigma_max in
+    a flat schedule). Single construction site so sampling and replay always
+    normalize by the same scale.
+    """
+
+    return noise_level * math.sqrt(1.0 / num_steps)
+
+
+def _isotropic_gaussian_logprob(delta: torch.Tensor, std_scalar: float) -> torch.Tensor:
+    """``log N(delta; 0, std^2 I)`` summed over the token dim, per sample.
+
+    SUM (not mean) over D so that ratios of fresh/old log-probs stay correctly
+    scaled across batch entries.
+    """
+
+    dim = delta.shape[-1]
+    sq_err = (delta**2).sum(dim=-1)  # [B]
+    return (
+        -sq_err / (2.0 * std_scalar**2)
+        - float(dim) * math.log(max(std_scalar, 1e-12))
+        - 0.5 * float(dim) * math.log(2.0 * math.pi)
+    )
+
+
 def flow_sample_with_logprob(
     image_head: Any,
     cond: torch.Tensor,         # [B, D_hidden] — LLM last hidden state
@@ -52,11 +125,8 @@ def flow_sample_with_logprob(
 
     Args:
         image_head: NextStep-1's flow-matching MLP (``model.image_head``).
-            Must expose either:
-              - ``image_head.velocity(x, t, cond)`` returning ``[B, D]`` v(x,t),
-                OR
-              - ``image_head(x, t, cond)`` (forward) returning v(x,t).
-            We call ``velocity_fn`` if provided, else fall back to forward.
+            Its velocity predictor is called as ``image_head.net(x, t, cond)``
+            (see ``_flow_terminal_mean`` for the verified upstream contract).
         cond: ``[B, D_hidden]`` LLM hidden state at this AR position.
         num_steps: Number of Euler steps inside the flow ODE.
         noise_level: Scales the final-step Gaussian std (analogue of the
@@ -71,23 +141,13 @@ def flow_sample_with_logprob(
         initial_noise: Optional explicit ``x_0`` prior. When provided, this
             exact tensor is used as the deterministic flow prefix and returned
             for replay.
-        velocity_fn: Optional override for how to call image_head. If None,
-            we try ``image_head.velocity(...)`` then ``image_head(...)``.
+        velocity_fn: Optional override for how to call image_head.
 
     Returns:
         ``(token, log_prob, initial_noise)`` where ``token`` is ``[B, D]``,
         ``log_prob`` is ``[B]``, and ``initial_noise`` is the replay prior.
-
-    NOTE
-    ----
-    Velocity contract (verified against ``stepfun-ai/NextStep-1``'s
-    ``modeling_nextstep.FlowMatchingHead``): the head exposes its velocity
-    predictor as ``image_head.net(x, t, c)`` (a ``SimpleMLPAdaLN``) and the
-    token latent dim as ``image_head.input_dim``. The head's own ``forward``
-    is the training-loss path, not the velocity field, so we never call the
-    head directly — always ``.net``. Pass ``velocity_fn`` to override.
     """
-    B, D = cond.shape[0], None  # D inferred from x_0 below
+    B = cond.shape[0]
     device = cond.device
     dtype = cond.dtype
 
@@ -116,42 +176,17 @@ def flow_sample_with_logprob(
         x = initial_noise.to(device=device, dtype=dtype)
     x0 = x
 
-    # Linear time grid t in [0, 1]
-    t_grid = torch.linspace(0.0, 1.0, num_steps + 1, device=device, dtype=dtype)
-    dt = 1.0 / num_steps
+    mean = _flow_terminal_mean(
+        image_head,
+        cond,
+        x,
+        num_steps=num_steps,
+        cfg_uncond=cfg_uncond,
+        guidance_scale=guidance_scale,
+        velocity_fn=velocity_fn,
+    )
 
-    def _velocity(xk: torch.Tensor, tk: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
-        # Upstream FlowMatchingHead exposes its velocity predictor as
-        # ``image_head.net`` (a SimpleMLPAdaLN). Caller may override.
-        if velocity_fn is not None:
-            return velocity_fn(xk, tk, c)
-        return image_head.net(xk, tk, c)
-
-    # K-1 deterministic Euler steps
-    for k in range(num_steps - 1):
-        tk = t_grid[k].expand(B)
-        v_cond = _velocity(x, tk, cond)
-        if cfg_uncond is not None and abs(guidance_scale - 1.0) > 1e-6:
-            v_uncond = _velocity(x, tk, cfg_uncond)
-            v = (1.0 + guidance_scale) * v_cond - guidance_scale * v_uncond
-        else:
-            v = v_cond
-        x = x + dt * v
-
-    # Final step with Gaussian noise injection (the source of the log-prob)
-    tk = t_grid[num_steps - 1].expand(B)
-    v_cond = _velocity(x, tk, cond)
-    if cfg_uncond is not None and abs(guidance_scale - 1.0) > 1e-6:
-        v_uncond = _velocity(x, tk, cfg_uncond)
-        v = (1.0 + guidance_scale) * v_cond - guidance_scale * v_uncond
-    else:
-        v = v_cond
-
-    mean = x + dt * v
-
-    # SDE-from-ODE: std = noise_level * sqrt(dt) (matches flow_grpo's
-    # final-step parameterisation; sigma_min ≪ sigma_max in flat schedule)
-    std_scalar = noise_level * math.sqrt(dt)
+    std_scalar = _flow_noise_std(noise_level, num_steps)
     eps = torch.randn(
         mean.shape,
         device=mean.device,
@@ -160,15 +195,7 @@ def flow_sample_with_logprob(
     )
     token = mean + std_scalar * eps
 
-    # Isotropic Gaussian log-prob, summed across token dim, then mean per
-    # sample. We use SUM (not mean) over D so that ratios of fresh/old
-    # log-probs stay correctly scaled across batch entries.
-    sq_err = ((token.detach() - mean) ** 2).sum(dim=-1)  # [B]
-    log_prob = (
-        -sq_err / (2.0 * std_scalar ** 2)
-        - float(D) * math.log(max(std_scalar, 1e-12))
-        - 0.5 * float(D) * math.log(2.0 * math.pi)
-    )
+    log_prob = _isotropic_gaussian_logprob(token.detach() - mean, std_scalar)
 
     return token, log_prob, x0
 
@@ -217,44 +244,15 @@ def flow_logprob_at(
         # collection-time noise verbatim).
         x = torch.randn(B, D, device=device, dtype=dtype)
 
-    t_grid = torch.linspace(0.0, 1.0, num_steps + 1, device=device, dtype=dtype)
-    dt = 1.0 / num_steps
-
-    def _velocity(xk: torch.Tensor, tk: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
-        # Same velocity contract as the sample path: NextStep-1's
-        # FlowMatchingHead exposes its velocity predictor as ``.net(x, t, c)``
-        # (a SimpleMLPAdaLN). Do NOT fall back to ``image_head(...)`` — the
-        # head's ``forward(z, target, mask)`` is the training-loss forward, not
-        # the velocity field, so calling it here would silently score garbage.
-        if velocity_fn is not None:
-            return velocity_fn(xk, tk, c)
-        return image_head.net(xk, tk, c)
-
-    for k in range(num_steps - 1):
-        tk = t_grid[k].expand(B)
-        v_cond = _velocity(x, tk, cond)
-        if cfg_uncond is not None and abs(guidance_scale - 1.0) > 1e-6:
-            v_uncond = _velocity(x, tk, cfg_uncond)
-            v = (1.0 + guidance_scale) * v_cond - guidance_scale * v_uncond
-        else:
-            v = v_cond
-        x = x + dt * v
-
-    tk = t_grid[num_steps - 1].expand(B)
-    v_cond = _velocity(x, tk, cond)
-    if cfg_uncond is not None and abs(guidance_scale - 1.0) > 1e-6:
-        v_uncond = _velocity(x, tk, cfg_uncond)
-        v = (1.0 + guidance_scale) * v_cond - guidance_scale * v_uncond
-    else:
-        v = v_cond
-
-    mean = x + dt * v
-    std_scalar = noise_level * math.sqrt(dt)
-
-    sq_err = ((target_token - mean) ** 2).sum(dim=-1)
-    log_prob = (
-        -sq_err / (2.0 * std_scalar ** 2)
-        - float(D) * math.log(max(std_scalar, 1e-12))
-        - 0.5 * float(D) * math.log(2.0 * math.pi)
+    mean = _flow_terminal_mean(
+        image_head,
+        cond,
+        x,
+        num_steps=num_steps,
+        cfg_uncond=cfg_uncond,
+        guidance_scale=guidance_scale,
+        velocity_fn=velocity_fn,
     )
-    return log_prob
+
+    std_scalar = _flow_noise_std(noise_level, num_steps)
+    return _isotropic_gaussian_logprob(target_token - mean, std_scalar)

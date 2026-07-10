@@ -52,7 +52,7 @@ def _state(*, guidance_scale: float, temperature: float) -> JanusProARState:
         logprobs=torch.empty(1, 1),
         guidance_scale=guidance_scale,
         temperature=temperature,
-        image_token_num=1,
+        total_token_num=1,
     )
 
 
@@ -68,7 +68,7 @@ def test_cfg_logprob_is_scored_from_cond_not_guided() -> None:
     hidden = torch.zeros(2, 1, 8)
 
     torch.manual_seed(0)
-    sampled, lp = runner._sample_cfg_image_token(state, hidden)
+    sampled, lp = runner._sample_cfg_image_token(state, hidden, position=0)
 
     guided = uncond + state.guidance_scale * (cond - uncond)
     cond_lp = F.log_softmax(cond / state.temperature, dim=-1)[sampled]

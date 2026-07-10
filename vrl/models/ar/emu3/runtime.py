@@ -10,7 +10,11 @@ from vrl.generation.ar import ARChunkInputs, ARDiscreteChunkExecutorBase
 from vrl.generation.capabilities import FamilyCapability
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
-from vrl.models.ar.build import build_ar_runtime_bundle, extract_ar_runtime_spec
+from vrl.models.ar.build import (
+    ar_model_config_base,
+    build_ar_runtime_bundle,
+    extract_ar_runtime_spec,
+)
 from vrl.models.ar.capabilities import ar_discrete_family_capability
 from vrl.models.ar.emu3.model import (
     Emu3Config,
@@ -20,7 +24,6 @@ from vrl.models.ar.emu3.model import (
     emu3_grid_token_num,
 )
 from vrl.models.ar.emu3.runner import Emu3TokenRunner
-from vrl.models.dtypes import dtype_to_config_string
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.utils.logging import init_logger
 
@@ -80,28 +83,8 @@ _EMU3_LORA_DEFAULTS: dict[str, Any] = {
 
 
 def _emu3_config_from_runtime_spec(spec: RuntimeBuildSpec) -> dict[str, Any]:
-    model_config = spec.model_config or {}
     sampling_config = spec.sampling_config or {}
-    use_lora = spec.use_lora
-    config: dict[str, Any] = {
-        "model_path": spec.model_name_or_path,
-        "dtype": dtype_to_config_string(spec.dtype),
-        "device": str(spec.device),
-        "use_lora": use_lora,
-    }
-
-    if use_lora:
-        lora = dict(_EMU3_LORA_DEFAULTS)
-        lora.update(model_config.get("lora") or {})
-        config.update(
-            {
-                "lora_rank": int(lora["rank"]),
-                "lora_alpha": int(lora["alpha"]),
-                "lora_target_modules": tuple(lora["target_modules"]),
-                "lora_dropout": float(lora["dropout"]),
-                "lora_init": str(lora["init"]),
-            },
-        )
+    config = ar_model_config_base(spec, _EMU3_LORA_DEFAULTS)
 
     for key in ("guidance_scale", "temperature", "image_area", "ratio"):
         if key in sampling_config:

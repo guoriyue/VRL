@@ -75,8 +75,8 @@ def _optional_block(cfg: Any, field_name: str) -> dict[str, Any] | None:
 
 # Read views moved onto ``RuntimeBuildSpec`` as properties (``spec.memory`` /
 # ``spec.lora`` / ``spec.num_steps`` / ...), so consumers read them directly
-# instead of through free-function wrappers. AR families keep their own
-# ``_resolve_lora_block`` for family-default merging.
+# instead of through free-function wrappers. AR families merge their defaults
+# via ``vrl.models.ar.build.ar_model_config_base``.
 
 
 __all__ = [

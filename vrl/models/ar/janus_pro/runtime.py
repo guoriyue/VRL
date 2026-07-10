@@ -23,7 +23,11 @@ from vrl.generation.types import (
     GenerationRequest,
     GenerationSampleRow,
 )
-from vrl.models.ar.build import build_ar_runtime_bundle, extract_ar_runtime_spec
+from vrl.models.ar.build import (
+    ar_model_config_base,
+    build_ar_runtime_bundle,
+    extract_ar_runtime_spec,
+)
 from vrl.models.ar.capabilities import ar_discrete_family_capability
 from vrl.models.ar.janus_pro import JANUS_R1_SEGMENTS
 from vrl.models.ar.janus_pro.model import (
@@ -32,7 +36,6 @@ from vrl.models.ar.janus_pro.model import (
     JanusProReplayModel,
 )
 from vrl.models.ar.janus_pro.runner import JanusProARModelRunner
-from vrl.models.dtypes import dtype_to_config_string
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.trajectory import build_ar_multisegment_trajectory
 from vrl.utils.logging import init_logger
@@ -109,25 +112,7 @@ _JANUS_LORA_DEFAULTS: dict[str, Any] = {
 def _janus_config_from_runtime_spec(spec: RuntimeBuildSpec) -> dict[str, Any]:
     model_config = spec.model_config or {}
     sampling_config = spec.sampling_config or {}
-    use_lora = spec.use_lora
-    config: dict[str, Any] = {
-        "model_path": spec.model_name_or_path,
-        "dtype": dtype_to_config_string(spec.dtype),
-        "device": str(spec.device),
-        "use_lora": use_lora,
-    }
-
-    if use_lora:
-        lora = _resolve_lora_block(spec, _JANUS_LORA_DEFAULTS)
-        config.update(
-            {
-                "lora_rank": int(lora["rank"]),
-                "lora_alpha": int(lora["alpha"]),
-                "lora_target_modules": tuple(lora["target_modules"]),
-                "lora_dropout": float(lora["dropout"]),
-                "lora_init": str(lora["init"]),
-            },
-        )
+    config = ar_model_config_base(spec, _JANUS_LORA_DEFAULTS)
 
     for key in ("guidance_scale", "temperature", "image_token_num"):
         if key in sampling_config:
@@ -145,14 +130,6 @@ def _janus_config_from_runtime_spec(spec: RuntimeBuildSpec) -> dict[str, Any]:
             config[key] = value
 
     return config
-
-
-def _resolve_lora_block(spec: RuntimeBuildSpec, defaults: dict[str, Any]) -> dict[str, Any]:
-    """Merge the carried ``model.lora`` block over AR family LoRA defaults."""
-
-    lora = dict(defaults)
-    lora.update((spec.model_config or {}).get("lora") or {})
-    return lora
 
 
 class JanusProChunkExecutor(ARDiscreteChunkExecutorBase):
