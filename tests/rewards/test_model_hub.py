@@ -41,13 +41,13 @@ def test_parse_hf_repo_revision_rejects_missing_repo_id() -> None:
         parse_hf_repo_revision("@main")
 
 
-def test_videocon_physics_model_root_uses_shared_repo_revision_parser(
+def test_resolve_model_root_uses_shared_repo_revision_parser(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Checks VideoCon-Physics passes parsed repo id and revision to Hugging Face."""
+    """Checks the shared resolver passes parsed repo id, revision, and offline flag."""
 
-    from vrl.rewards.models.videocon_physics import _resolve_model_root
+    from vrl.rewards.models.hub import resolve_model_root
 
     captured = {}
 
@@ -57,10 +57,16 @@ def test_videocon_physics_model_root_uses_shared_repo_revision_parser(
 
     monkeypatch.setattr("huggingface_hub.snapshot_download", _fake_snapshot_download)
 
-    resolved = _resolve_model_root(
-        {"reward_model_name": "videophysics/videocon_physics@paper-rev"},
+    resolved = resolve_model_root(
+        {
+            "reward_model_name": "videophysics/videocon_physics@paper-rev",
+            "local_files_only": True,
+        },
+        default_model="videophysics/videocon_physics",
+        family="VideoCon-Physics",
     )
 
     assert resolved == tmp_path.resolve()
     assert captured["repo_id"] == "videophysics/videocon_physics"
     assert captured["revision"] == "paper-rev"
+    assert captured["local_files_only"] is True

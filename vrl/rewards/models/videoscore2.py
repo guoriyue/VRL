@@ -34,15 +34,14 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from pathlib import Path
 from typing import Any
 
 import torch
 
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
-from vrl.rewards.models.base import RewardModel
-from vrl.rewards.models.hub import parse_hf_repo_revision
+from vrl.rewards.models.base import RewardModel, require_prompt_and_video_path
+from vrl.rewards.models.hub import resolve_model_root
 from vrl.utils.logging import init_logger, kv
 
 logger = init_logger(__name__)
@@ -98,7 +97,11 @@ class VideoScore2Model(RewardModel):
         self.reward_model_name = str(
             self.worker_config.get("reward_model_name", ""),
         ).strip()
-        self.model_root = _resolve_model_root(self.worker_config)
+        self.model_root = resolve_model_root(
+            self.worker_config,
+            default_model=_DEFAULT_REWARD_MODEL,
+            family="VideoScore2",
+        )
         self.dtype = resolve_torch_dtype(str(self.worker_config.get("dtype", "bfloat16")))
         self.device = str(self.worker_config.get("device", "cuda:0"))
         self.fps = float(self.worker_config.get("fps", _DEFAULT_FPS))
@@ -151,13 +154,7 @@ class VideoScore2Model(RewardModel):
         request: RewardInferenceRequest,
     ) -> dict[str, float]:
         del request
-        prompt = artifact.prompt or str(artifact.metadata.get("prompt", ""))
-        if not prompt:
-            raise ValueError(
-                f"VideoScore2 requires a prompt for artifact {artifact.artifact_id!r}; "
-                "found none on artifact.prompt or artifact.metadata['prompt']",
-            )
-        video_path = str(Path(artifact.as_path()).expanduser().resolve())
+        prompt, video_path = require_prompt_and_video_path(artifact, family="VideoScore2")
         return self._score_video(video_path, prompt)
 
     def _score_video(self, video_path: str, prompt: str) -> dict[str, float]:
@@ -223,13 +220,6 @@ class VideoScore2Model(RewardModel):
             tokenizer=self.tokenizer,
         )
         return _normalize_scores(*_merge_soft_with_hard(soft, hard))
-
-
-def preflight_videoscore2_backend() -> None:
-    """Validate backend imports without downloading weights."""
-
-    import qwen_vl_utils  # noqa: F401
-    import transformers  # noqa: F401
 
 
 def _parse_integer_scores(text: str) -> tuple[int, int, int] | None:
@@ -419,33 +409,4 @@ def _normalize_scores(
     }
 
 
-def _resolve_model_root(worker_config: Mapping[str, Any]) -> Path:
-    """Return a local checkpoint dir: ``model_path`` if set, else snapshot_download."""
-
-    model_path = str(worker_config.get("model_path", "")).strip()
-    if model_path:
-        root = Path(model_path).expanduser().resolve()
-        if not root.exists():
-            raise FileNotFoundError(f"VideoScore2 model_path missing: {root}")
-        return root
-
-    reward_model_name = str(worker_config.get("reward_model_name", "")).strip()
-    if not reward_model_name:
-        reward_model_name = _DEFAULT_REWARD_MODEL
-    model_ref = parse_hf_repo_revision(reward_model_name)
-
-    from huggingface_hub import snapshot_download
-
-    return Path(
-        snapshot_download(
-            repo_id=model_ref.repo_id,
-            revision=model_ref.revision,
-            local_files_only=bool(worker_config.get("local_files_only", False)),
-        ),
-    ).resolve()
-
-
-__all__ = [
-    "VideoScore2Model",
-    "preflight_videoscore2_backend",
-]
+__all__ = ["VideoScore2Model"]

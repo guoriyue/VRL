@@ -20,7 +20,7 @@ import torch.nn as nn
 from transformers import Qwen2VLForConditionalGeneration
 
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
-from vrl.rewards.models.base import RewardModel
+from vrl.rewards.models.base import RewardModel, require_prompt_and_video_path
 from vrl.rewards.models.hub import parse_hf_repo_revision
 from vrl.utils.logging import init_logger, kv
 
@@ -268,13 +268,10 @@ class KlingVideoRewardModel(RewardModel):
         artifact: RewardInferenceArtifact,
         request: RewardInferenceRequest,
     ) -> dict[str, float]:
-        prompt = artifact.prompt or str(artifact.metadata.get("prompt", ""))
-        if not prompt:
-            raise ValueError(
-                f"Kling VideoReward requires a prompt for artifact {artifact.artifact_id!r}; "
-                "found none on artifact.prompt or artifact.metadata['prompt']",
-            )
-        artifact_path = str(Path(artifact.as_path()).expanduser().resolve())
+        prompt, artifact_path = require_prompt_and_video_path(
+            artifact,
+            family="Kling VideoReward",
+        )
         rewards = self._reward(
             [artifact_path],
             [prompt],

@@ -18,7 +18,6 @@ vendored ``third_party.mplug_owl_video`` module directly.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Any
 
 import torch
@@ -26,8 +25,8 @@ import torch.nn as nn
 
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
-from vrl.rewards.models.base import RewardModel
-from vrl.rewards.models.hub import parse_hf_repo_revision
+from vrl.rewards.models.base import RewardModel, require_prompt_and_video_path
+from vrl.rewards.models.hub import resolve_model_root
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -54,7 +53,13 @@ class VideoConPhysicsModel(RewardModel):
         self.reward_model_name = str(
             self.worker_config.get("reward_model_name", ""),
         ).strip()
-        self.model_root = _resolve_model_root(self.worker_config)
+        # Drift fix: this family previously dropped ``local_files_only`` on the
+        # snapshot_download path; the shared resolver forwards it.
+        self.model_root = resolve_model_root(
+            self.worker_config,
+            default_model=_DEFAULT_REWARD_MODEL,
+            family="VideoCon-Physics",
+        )
         self.dtype = resolve_torch_dtype(str(self.worker_config.get("dtype", "bfloat16")))
         self.device = str(self.worker_config.get("device", "cuda:0"))
         self.num_frames = int(self.worker_config.get("num_frames", _DEFAULT_NUM_FRAMES))
@@ -112,12 +117,10 @@ class VideoConPhysicsModel(RewardModel):
         request: RewardInferenceRequest,
     ) -> dict[str, float]:
         del request
-        prompt = artifact.prompt or str(artifact.metadata.get("prompt", ""))
-        if not prompt:
-            raise ValueError(
-                f"VideoCon-Physics requires a caption for artifact {artifact.artifact_id!r}",
-            )
-        video_path = str(Path(artifact.as_path()).expanduser().resolve())
+        prompt, video_path = require_prompt_and_video_path(
+            artifact,
+            family="VideoCon-Physics",
+        )
 
         physics_text = self.physics_template.format(
             video=_DEFAULT_VIDEO_TOKEN,
@@ -191,43 +194,4 @@ class VideoConPhysicsModel(RewardModel):
         return float((p_yes / denom).item())
 
 
-def preflight_videocon_physics_backend() -> None:
-    """Validate vendored backend imports without downloading weights."""
-
-    import mplug_owl_video  # noqa: F401
-    import transformers  # noqa: F401
-
-
-def _resolve_model_root(worker_config: Mapping[str, Any]) -> Path:
-    """Return a local directory containing the checkpoint files.
-
-    Either ``worker_config.model_path`` is set (local checkpoint) or we
-    snapshot_download ``videophysics/videocon_physics``.
-    """
-
-    model_path = str(worker_config.get("model_path", "")).strip()
-    if model_path:
-        root = Path(model_path).expanduser().resolve()
-        if not root.exists():
-            raise FileNotFoundError(f"VideoCon-Physics model_path missing: {root}")
-        return root
-
-    reward_model_name = str(
-        worker_config.get("reward_model_name", ""),
-    ).strip()
-    if not reward_model_name:
-        reward_model_name = _DEFAULT_REWARD_MODEL
-
-    model_ref = parse_hf_repo_revision(reward_model_name)
-
-    from huggingface_hub import snapshot_download
-
-    return Path(
-        snapshot_download(repo_id=model_ref.repo_id, revision=model_ref.revision),
-    ).resolve()
-
-
-__all__ = [
-    "VideoConPhysicsModel",
-    "preflight_videocon_physics_backend",
-]
+__all__ = ["VideoConPhysicsModel"]

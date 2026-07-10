@@ -92,12 +92,6 @@ class PhyMotionModel(RewardModel):
             return _read_phymotion_scores(output_path)
 
 
-def preflight_phymotion_backend() -> None:
-    """No importable backend - PhyMotion runs as an external process."""
-
-    return None
-
-
 def _read_phymotion_scores(output_path: str) -> dict[str, float]:
     """Read and validate the three axes from PhyMotion's JSON output (fail-fast)."""
 
@@ -122,4 +116,4 @@ def _read_phymotion_scores(output_path: str) -> dict[str, float]:
     return scores
 
 
-__all__ = ["PhyMotionModel", "preflight_phymotion_backend"]
+__all__ = ["PhyMotionModel"]

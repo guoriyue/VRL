@@ -11,6 +11,10 @@ import torch
 
 from vrl.rewards.inference import MEDIA_TYPES, MediaType, RewardInferenceArtifact
 from vrl.rewards.types import RewardRollout
+from vrl.trainers.data.artifacts import (
+    DEFAULT_ARTIFACT_FIELDS,
+    SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS,
+)
 from vrl.utils.media import write_mp4
 
 # On-disk artifact container. ``ArtifactFormat`` is the single source of truth;
@@ -129,20 +133,13 @@ def _sample_id(metadata: dict[str, Any], index: int) -> str:
 
 
 def _artifact_provenance(metadata: dict[str, Any]) -> dict[str, Any]:
+    # task_type is store-local (stamped by the collector, not a manifest field);
+    # the rest derives from the manifest vocabulary. "references" is excluded on
+    # purpose: it is list-valued and incompatible with the scalar filter below.
     keys = (
         "task_type",
-        "reference_image",
-        "reference_video",
-        "target_image",
-        "target_video",
-        "source",
-        "source_repo",
-        "source_split",
-        "source_episode",
-        "source_video",
-        "source_frame_index",
-        "decode_method",
-        "conditioning",
+        *(f for f in DEFAULT_ARTIFACT_FIELDS if f != "references"),
+        *SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS,
     )
     return {
         key: metadata[key]
