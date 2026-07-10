@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from vrl.generation.capabilities import FamilyCapability
+from vrl.generation.diffusion.executor import GENERIC_DIFFUSION_EXECUTOR
 from vrl.generation.ray.launcher import (
     RayGenerationLauncher,
     RayGenerationLaunchInputs,
@@ -108,15 +109,6 @@ def register_rollout_family(entry: RolloutFamilyEntry) -> RolloutFamilyEntry:
         raise ValueError(f"duplicate rollout family registration: {entry.family!r}")
     FAMILY_REGISTRY[entry.family] = entry
     return entry
-
-
-# One generic executor serves every family whose chunk executor is pure data
-# (no build_chunk_encoded / encode_prompt_for_chunk override). Such families
-# leave ``executor_cls`` unset (defaulting here) and put their executor config
-# in the model yaml's ``executor`` block.
-GENERIC_DIFFUSION_EXECUTOR = (
-    "vrl.generation.diffusion.executor:DiffusionChunkExecutor"
-)
 
 
 def _diffusion_entry(

@@ -379,7 +379,7 @@ def _build_gatherer(entry: Any) -> ChunkGatherer:
 
 
 def _build_executor_kwargs(entry: Any, cfg: Any) -> dict[str, Any]:
-    from vrl.rollouts.families.registry import GENERIC_DIFFUSION_EXECUTOR
+    from vrl.generation.diffusion.executor import GENERIC_DIFFUSION_EXECUTOR
 
     kwargs: dict[str, Any] = {}
     # Which executor kwargs to thread is DERIVED from the family capability,

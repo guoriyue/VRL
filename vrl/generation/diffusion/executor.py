@@ -1160,6 +1160,15 @@ __all__ = [
 ]
 
 
+# Canonical import string for the generic executor below. The family registry
+# uses it as the ``executor_cls`` default and the launcher keys the wholesale
+# yaml executor-config pass on it — defined here (not registry-side) so the
+# generation layer never imports the rollout layer.
+GENERIC_DIFFUSION_EXECUTOR = (
+    "vrl.generation.diffusion.executor:DiffusionChunkExecutor"
+)
+
+
 class DiffusionChunkExecutor(DiffusionChunkExecutorBase):
     """Generic chunk executor for pure-data diffusion families.
 
