@@ -21,7 +21,9 @@
 > ① per-family train.py ×6（多带真 recipe 差异，纯 GRPO 的可再审）② executor-as-data（等 owner 决策）
 > ③ AR chunk 模板化（**薄化第十五轮落地，2026-07-08**——触发条件"5 个 AR 家族"已满足）
 > ④ echo compile/fp8 GPU 验证（80GB 卡）⑤ cosmos caps 契约统一（**薄化第十五轮落地，2026-07-08**）
-> ⑥ SamplingState 基类（**薄化第十四轮落地，2026-07-08**）。**下一步 = Phase 1 接 SANA**（[[SPRINT_sana_t2i]]）。
+> ⑥ SamplingState 基类（**薄化第十四轮落地，2026-07-08**）。~~下一步 = Phase 1 接 SANA~~——**已落地**
+> （[[SPRINT_sana_t2i]] 已归档 done/；CPU 复验 2026-07-09：tests/models/diffusion/sana 4 passed +
+> tests/config 168 passed）。Phase 1 全量收官见文首验证记录；本文件仅因挂条件延期项 ①②④ 留在 planned/。
 
 ## 0. 一句话
 
