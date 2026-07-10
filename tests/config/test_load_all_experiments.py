@@ -118,11 +118,15 @@ def test_raw_yaml_has_no_user_specific_absolute_paths() -> None:
         r"[A-Za-z]:[\\/]Users[\\/][^\\/\s\"'{}]+[\\/])",
     )
     offenders = []
-    for path in sorted(CONFIGS_ROOT.rglob("*.yaml")):
-        for line_number, line in enumerate(path.read_text().splitlines(), start=1):
+    for logical_name in list_bundled_configs():
+        resource = bundled_config_resource(logical_name)
+        with resource.open("r", encoding="utf-8") as stream:
+            lines = stream.read().splitlines()
+        for line_number, line in enumerate(lines, start=1):
             if user_home.search(line):
-                relative = path.relative_to(REPO_ROOT).as_posix()
-                offenders.append(f"{relative}:{line_number}: {line.strip()}")
+                offenders.append(
+                    f"vrl/config/presets/{logical_name}:{line_number}: {line.strip()}",
+                )
 
     assert offenders == []
 
