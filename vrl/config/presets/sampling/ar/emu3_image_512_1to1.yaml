@@ -1,0 +1,10 @@
+# Emu3 discrete AR image sampling: image_area 262144 = 512x512 at ratio 1:1
+# (the token count is grid-derived, h*(w+1)+3 — no image_token_num knob).
+# Values match the checkpoint generation defaults and the runtime-spec tests.
+sampling:
+  image_area: 262144
+  ratio: "1:1"
+  guidance_scale: 3.0
+  temperature: 1.0
+  max_text_length: 128
+  ar_scheduler_batch_size: null

@@ -296,13 +296,28 @@ class SamplingConfig(ConfigBase):
     # distinct from guidance_scale (the float strength). Diffusion models AND it
     # with guidance_scale > 1.0 to derive their internal do_cfg flag.
     cfg: Any = None
+    # Frozen GLM-Image DiT decode knobs (rollout postprocess, never trained);
+    # reader: glm_image prepare_chunk_inputs.
+    decode_guidance_scale: Any = None
+    decode_num_inference_steps: Any = None
     fps: Any = None
     guidance_scale: Any = None
     height: Any = None
+    # Emu3 latent-grid geometry (readers: emu3 prepare_chunk_inputs /
+    # encode_generation_prompts — the token count derives from these).
+    image_area: Any = None
+    # GLM-Image pixel target, multiples of 32 (reader: glm_image
+    # prepare_chunk_inputs; distinct from diffusion's height/width keys).
+    image_height: Any = None
+    image_width: Any = None
     image_size: Any = None
     image_token_num: Any = None
     max_reflect_len: Any = None
     max_sequence_length: Any = None
+    # AR prompt pad length (readers: every AR family's prepare_chunk_inputs;
+    # llamagen additionally requires it == cls_token_num).
+    max_text_length: Any = None
+    ratio: Any = None
     # AR families declare noise_level under sampling; the collector flat-merges
     # it into rollout values. Same knob as rollout.noise_level (the canonical
     # owner the cross-field validator enforces for token_grpo + nextstep_1).
@@ -314,6 +329,10 @@ class SamplingConfig(ConfigBase):
     # (cogvideox, pixart_sigma), "cps" the pixel-space CPS variant.
     sde_type: Literal["flow_grpo", "ddim", "cps"] = "flow_grpo"
     temperature: Any = None
+    # AR nucleus/top-k filtering (readers: llamagen and glm_image
+    # prepare_chunk_inputs; checkpoint defaults apply when unset).
+    top_k: Any = None
+    top_p: Any = None
     width: Any = None
 
 
@@ -417,6 +436,17 @@ class NextStep1ModelConfig(ModelConfig):
     vae_path: Any = None
 
 
+class LlamaGenModelConfig(ModelConfig):
+    """LlamaGen checkpoint-file and frozen-T5 keys (vendored, non-HF layout)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    gpt_ckpt: Any = None
+    gpt_model: Any = None
+    t5_path: Any = None
+    vq_ckpt: Any = None
+
+
 class EchoModelConfig(ModelConfig):
     """JoyAI-Echo model keys consumed by the echo runtime/model loaders.
 
@@ -463,6 +493,7 @@ _model_config_classes_by_family: dict[str, type[ModelConfig]] = {
     "janus_pro_r1": JanusProModelConfig,
     "nextstep": NextStep1ModelConfig,
     "nextstep_1": NextStep1ModelConfig,
+    "llamagen": LlamaGenModelConfig,
     "echo": EchoModelConfig,
     "joyai_echo": EchoModelConfig,
 }

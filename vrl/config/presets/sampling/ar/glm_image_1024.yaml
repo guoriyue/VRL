@@ -1,0 +1,13 @@
+# GLM-Image AR prior sampling at the checkpoint-native 1024x1024 (multiples of
+# 32; 32x32 token grid + 16x16 preview grid = 1280 prior tokens — the shape
+# the expansion campaign rollout-verified). temperature/top_p are the
+# checkpoint's generation_config values; there is NO AR-side CFG for this
+# family. The frozen DiT decode keeps its model-config defaults
+# (decode_num_inference_steps / decode_guidance_scale) unless overridden.
+sampling:
+  image_height: 1024
+  image_width: 1024
+  temperature: 0.9
+  top_p: 0.75
+  max_text_length: 128
+  ar_scheduler_batch_size: null
