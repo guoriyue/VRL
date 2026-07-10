@@ -142,6 +142,31 @@ def test_factory_builds_continuous_schedule() -> None:
     assert schedule.mode is RolloutScheduleMode.CONTINUOUS
 
 
+@pytest.mark.asyncio
+async def test_shutdown_joins_producer_before_clearing_runtime_state() -> None:
+    runtime = _Runtime()
+    schedule = _build(
+        _continuous_config(),
+        _Collector(runtime),
+        _Syncer(runtime),
+    )
+
+    await schedule.next_iteration(["p0"], group_size=1)
+    producer = schedule.producer
+    assert producer is not None
+    loop_task = producer._loop_task
+
+    await schedule.shutdown()
+    await schedule.shutdown()
+
+    assert loop_task is not None and loop_task.done()
+    assert producer._inflight == set()
+    assert schedule.producer is None
+    assert schedule.queue is None
+    assert schedule.consumer is None
+    assert schedule.scheduler is None
+
+
 def test_continuous_rejects_stale_window_for_intolerant_algorithm() -> None:
     """A likelihood-free algorithm + max_stale>0 must fail fast as unsound."""
     runtime = _Runtime()

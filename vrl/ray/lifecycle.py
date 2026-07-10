@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
-import contextlib
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def kill_actors(ray: Any, actors: list[Any]) -> None:
     """Best-effort kill for Ray actors."""
 
     for actor in actors:
-        with contextlib.suppress(Exception):
+        try:
             ray.kill(actor, no_restart=True)
+        except Exception:
+            logger.warning("Failed to kill owned Ray actor %r", actor, exc_info=True)
 
 
 def remove_placement_group(placement_group: Any) -> None:
@@ -19,10 +23,16 @@ def remove_placement_group(placement_group: Any) -> None:
 
     if placement_group is None:
         return
-    with contextlib.suppress(Exception):
+    try:
         from ray.util import remove_placement_group as _remove_placement_group
 
         _remove_placement_group(placement_group)
+    except Exception:
+        logger.warning(
+            "Failed to remove owned Ray placement group %r",
+            placement_group,
+            exc_info=True,
+        )
 
 
 __all__ = ["kill_actors", "remove_placement_group"]

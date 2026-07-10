@@ -140,6 +140,18 @@ def test_build_strategy_returns_ddp_strategy() -> None:
     assert strategy._find_unused_parameters is True
 
 
+def test_ddp_shutdown_releases_training_process_group(monkeypatch) -> None:
+    calls: list[bool] = []
+    monkeypatch.setattr(
+        "vrl.trainers.fsdp.shutdown_training_process_group",
+        lambda: calls.append(True),
+    )
+
+    DDPStrategy(_cpu_ddp_context()).shutdown()
+
+    assert calls == [True]
+
+
 def test_ddp_prepare_model_rejects_model_without_transformer_handle() -> None:
     with pytest.raises(NotImplementedError, match="trainable roots"):
         DDPStrategy(_cpu_ddp_context()).prepare_model(_ARLikePolicy())

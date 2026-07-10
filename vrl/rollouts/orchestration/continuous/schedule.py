@@ -150,6 +150,16 @@ class ContinuousRolloutSchedule:
         # without awaiting.
         if self.producer is not None:
             self.producer.cancel()
+        self._clear_runtime_state()
+
+    async def shutdown(self) -> None:
+        """Stop and join background work before its collector is destroyed."""
+
+        if self.producer is not None:
+            await self.producer.stop()
+        self._clear_runtime_state()
+
+    def _clear_runtime_state(self) -> None:
         if self.queue is not None:
             self.queue.close()
         self.producer = None

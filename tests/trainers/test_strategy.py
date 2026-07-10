@@ -103,3 +103,7 @@ def test_export_and_load_trainable_state_round_trip() -> None:
 
 def test_barrier_is_noop() -> None:
     assert SingleProcessStrategy().barrier() is None
+
+
+def test_shutdown_is_noop() -> None:
+    assert SingleProcessStrategy().shutdown() is None

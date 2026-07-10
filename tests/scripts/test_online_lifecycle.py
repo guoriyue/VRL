@@ -43,6 +43,7 @@ class _FakeReward:
 
     async def shutdown(self) -> None:
         self._state["reward_shutdowns"] += 1
+        self._state["shutdown_order"].append("reward")
 
 
 class _FakeCollector:
@@ -60,6 +61,7 @@ class _FakeCollector:
 
     async def shutdown(self) -> None:
         self._state["collector_shutdowns"] += 1
+        self._state["shutdown_order"].append("collector")
         if self._state.get("collector_shutdown_raises"):
             raise RuntimeError("collector shutdown boom")
         shutdown = getattr(self._runtime, "shutdown", None)
@@ -73,6 +75,16 @@ class _FakeRuntime:
 
     async def shutdown(self) -> None:
         self._state["runtime_shutdowns"] += 1
+        self._state["shutdown_order"].append("runtime")
+
+
+class _FakeSchedule:
+    def __init__(self, state: dict[str, Any]) -> None:
+        self._state = state
+
+    async def shutdown(self) -> None:
+        self._state["schedule_shutdowns"] += 1
+        self._state["shutdown_order"].append("schedule")
 
 
 class _FakeLauncher:
@@ -101,8 +113,30 @@ class _FakePlacementOwner:
 
     def shutdown(self) -> None:
         self._state["owner_shutdowns"] += 1
+        self._state["shutdown_order"].append("owner")
         if self._state.get("owner_shutdown_raises"):
             raise RuntimeError("owner shutdown boom")
+
+
+class _FakeRecipeRay:
+    __version__ = "test-ray"
+
+    def __init__(self, state: dict[str, Any]) -> None:
+        self._state = state
+        self._initialized = False
+
+    def is_initialized(self) -> bool:
+        return self._initialized
+
+    def init(self, **kwargs: Any) -> Any:
+        self._initialized = True
+        self._state["ray_init_calls"].append(dict(kwargs))
+        return SimpleNamespace(address_info={"session_dir": "/tmp/test-ray"})
+
+    def shutdown(self) -> None:
+        self._initialized = False
+        self._state["ray_shutdowns"] += 1
+        self._state["shutdown_order"].append("ray")
 
 
 class _FakeTrainer:
@@ -110,6 +144,7 @@ class _FakeTrainer:
         del args, kwargs
         self._state = state
         self.state = SimpleNamespace(global_step=0)
+        self.rollout_schedule = _FakeSchedule(state)
 
     async def step(self, example_batch: list[Any]) -> Any:
         del example_batch
@@ -125,6 +160,7 @@ def _state() -> dict[str, Any]:
         "collector_set_runtime": 0,
         "collector_shutdowns": 0,
         "runtime_shutdowns": 0,
+        "schedule_shutdowns": 0,
         "reward_resets": 0,
         "reward_shutdowns": 0,
         "owner_creates": 0,
@@ -132,6 +168,9 @@ def _state() -> dict[str, Any]:
         "launches": 0,
         "trainer_steps": 0,
         "checkpoint_paths": [],
+        "shutdown_order": [],
+        "ray_init_calls": [],
+        "ray_shutdowns": 0,
     }
 
 
@@ -205,11 +244,8 @@ def _install_common_fakes(
         "GlobalRayPlacementOwner",
         lambda *args, **kwargs: _FakePlacementOwner(state, *args, **kwargs),
     )
-    monkeypatch.setattr(
-        online,
-        "require_ray",
-        lambda: SimpleNamespace(is_initialized=lambda: True, init=lambda **kwargs: None),
-    )
+    fake_ray = _FakeRecipeRay(state)
+    monkeypatch.setattr(online, "require_ray", lambda: fake_ray)
     monkeypatch.setattr(
         online,
         "build_online_recipe_components",
@@ -268,8 +304,19 @@ async def test_run_online_recipe_shutdowns_owner_after_success(monkeypatch, tmp_
     assert state["checkpoint_paths"] == ["checkpoint-final"]
     assert state["collector_shutdowns"] == 1
     assert state["runtime_shutdowns"] == 1
+    assert state["schedule_shutdowns"] == 1
     assert state["reward_shutdowns"] == 1
     assert state["owner_shutdowns"] == 1
+    assert state["ray_init_calls"] == [{"address": "local"}]
+    assert state["ray_shutdowns"] == 1
+    assert state["shutdown_order"] == [
+        "schedule",
+        "collector",
+        "runtime",
+        "reward",
+        "owner",
+        "ray",
+    ]
 
 
 def test_require_supported_online_strategy_allows_fsdp() -> None:

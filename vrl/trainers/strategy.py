@@ -81,6 +81,10 @@ class Strategy(Protocol):
         """Synchronize all training ranks (no-op for single process)."""
         ...
 
+    def shutdown(self) -> None:
+        """Release process-wide resources owned by this strategy."""
+        ...
+
 
 class SingleProcessStrategy(Strategy):
     """The current single-GPU behavior, moved behind the strategy protocol.
@@ -144,6 +148,9 @@ class SingleProcessStrategy(Strategy):
         optimizer.load_state_dict(state)
 
     def barrier(self) -> None:
+        return None
+
+    def shutdown(self) -> None:
         return None
 
 
@@ -335,6 +342,11 @@ class FSDPStrategy(Strategy):
         if dist.is_initialized():
             dist.barrier()
 
+    def shutdown(self) -> None:
+        from vrl.trainers.fsdp import shutdown_training_process_group
+
+        shutdown_training_process_group()
+
 
 class DDPStrategy(Strategy):
     """DistributedDataParallel training behind the same seam.
@@ -475,6 +487,11 @@ class DDPStrategy(Strategy):
 
         if dist.is_initialized():
             dist.barrier()
+
+    def shutdown(self) -> None:
+        from vrl.trainers.fsdp import shutdown_training_process_group
+
+        shutdown_training_process_group()
 
 
 def build_strategy(cfg: Any, context: DistributedTrainingContext) -> Strategy:

@@ -441,6 +441,10 @@ def test_ray_backend_requires_launch_contract_and_gatherer(
         )
 
 
+def test_launcher_default_ray_init_is_owned_local() -> None:
+    assert RayGenerationLauncher().ray_init_kwargs == {"address": "local"}
+
+
 def test_ray_backend_rejects_driver_cuda_policy_without_overlap() -> None:
     """Checks Ray backend rejects driver cuda policy without overlap."""
     with pytest.raises(ValueError, match=r"resources\.allow_overlap=false"):

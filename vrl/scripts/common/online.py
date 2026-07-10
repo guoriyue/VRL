@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import logging
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -17,7 +18,7 @@ from vrl.config.precision import precision_bridge_fields, resolve_precision_poli
 from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces import require_runtime_model
-from vrl.ray.dependencies import inspect_cluster, require_ray
+from vrl.ray.dependencies import require_ray
 from vrl.ray.placement import GlobalRayPlacementOwner
 from vrl.ray.resources import (
     format_distributed_resource_plan,
@@ -62,6 +63,90 @@ from vrl.trainers.weight_sync import build_runtime_weight_syncer
 from vrl.utils.memory import capture_host_memory, format_host_memory, log_host_memory
 
 logger = logging.getLogger(__name__)
+
+_RAY_ADDRESS_ENV = "RAY_ADDRESS"
+
+
+@dataclass(slots=True)
+class _RayClusterSession:
+    """Connection owned by this recipe invocation.
+
+    A pre-initialized Ray client belongs to the embedding caller and is left
+    connected. Connections opened here are always closed: for a local cluster
+    ``ray.shutdown`` terminates only the processes spawned by this driver; for an
+    explicitly attached cluster it disconnects this driver without stopping the
+    cluster.
+    """
+
+    ray: Any
+    shutdown_on_exit: bool
+    _closed: bool = False
+
+    def shutdown(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if self.shutdown_on_exit:
+            self.ray.shutdown()
+
+
+def _initialize_ray_cluster(
+    resources: Any,
+    ray: Any,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> _RayClusterSession:
+    """Connect to exactly the Ray cluster selected by the resource topology.
+
+    Single-node and per-rank-local runs always start a fresh local cluster, even
+    when the host has a stale ``RAY_ADDRESS`` or another user's Ray instance.
+    Cross-node runs must provide a concrete address explicitly; implicit
+    ``address='auto'`` discovery is unsafe on a shared host because the most
+    recently started test cluster can win the startup race.
+    """
+
+    if ray.is_initialized():
+        logger.info(
+            "Ray cluster session: ownership=preinitialized driver_pid=%d ray_version=%s",
+            os.getpid(),
+            getattr(ray, "__version__", "unknown"),
+        )
+        return _RayClusterSession(ray=ray, shutdown_on_exit=False)
+
+    environment = os.environ if environ is None else environ
+    if bool(resources.cross_node):
+        address = str(environment.get(_RAY_ADDRESS_ENV, "")).strip()
+        if not address or address in {"auto", "local"}:
+            raise ValueError(
+                "distributed.resources.cross_node=true requires a concrete "
+                "RAY_ADDRESS (for example 10.0.0.1:6379); 'auto' and 'local' "
+                "do not identify the operator-owned multi-node cluster",
+            )
+        ownership = "attached"
+    else:
+        # ``local`` bypasses RAY_ADDRESS and Ray's latest-cluster discovery.
+        address = "local"
+        ownership = "owned_local"
+
+    context = ray.init(address=address)
+    address_info = getattr(context, "address_info", None)
+    if not isinstance(address_info, Mapping):
+        address_info = {}
+    resolved_address = (
+        address_info.get("gcs_address")
+        or address_info.get("address")
+        or address
+    )
+    logger.info(
+        "Ray cluster session: ownership=%s driver_pid=%d address=%s session_dir=%s "
+        "ray_version=%s",
+        ownership,
+        os.getpid(),
+        resolved_address,
+        address_info.get("session_dir", "unknown"),
+        getattr(ray, "__version__", "unknown"),
+    )
+    return _RayClusterSession(ray=ray, shutdown_on_exit=True)
 
 
 def _require_supported_online_strategy(context: DistributedTrainingContext) -> None:
@@ -597,43 +682,6 @@ class OnlineRecipeRun:
         stack.strategy.barrier()
 
 
-def _maybe_autodetect_cross_node(cfg: DictConfig, ray: Any) -> None:
-    """Enable distributed.resources.cross_node automatically on a multi-node cluster.
-
-    Follows the standard Ray multi-node pattern, where the operator brings the
-    cluster up first (``ray start``) and the driver attaches to it. When
-    ``cross_node`` is not set
-    explicitly we ATTACH to an already-running cluster (``address="auto"``) and, if
-    it exposes GPUs on non-driver nodes, set ``cross_node=true`` before resolving so
-    the user need not hand-set it. A single-node run with no external cluster raises
-    ``ConnectionError`` on attach and is left untouched -- the normal ``ray.init()``
-    later starts the local instance -- so single-node behaviour is unchanged. An
-    explicit ``cross_node`` (true or false) is an override and is always respected.
-    """
-
-    if OmegaConf.select(cfg, "distributed.resources.cross_node", default=None) is not None:
-        return
-    if not ray.is_initialized():
-        try:
-            ray.init(address="auto")
-        except ConnectionError:
-            return
-    try:
-        multinode = inspect_cluster(ray).has_non_driver_gpus
-    except Exception:
-        # Best-effort: if the live cluster cannot be inspected, leave cross_node
-        # unset (single-node default; the user can set it explicitly).
-        return
-    if not multinode:
-        return
-    OmegaConf.update(cfg, "distributed.resources.cross_node", True, force_add=True)
-    logger.info(
-        "Auto-detected a multi-node Ray cluster (GPUs on non-driver nodes); "
-        "enabling distributed.resources.cross_node=true. Set it explicitly to "
-        "override.",
-    )
-
-
 async def run_online_recipe(
     cfg: DictConfig,
     definition: OnlineRecipeDefinition,
@@ -659,11 +707,6 @@ async def run_online_recipe(
         strict=trainer_config.resume_strict,
     )
 
-    # Auto-enable cross_node when an already-running multi-node Ray cluster is
-    # detected, so the user need not hand-set it. Must run before resolve, since
-    # the resolver sizes the GPU budget differently under cross_node. No-op (and
-    # ordering unchanged) for single-node runs with no external cluster.
-    _maybe_autodetect_cross_node(cfg, require_ray())
     resources = resolve_distributed_resources(cfg)
     logger.info(format_distributed_resource_plan(resources))
     device = torch.device(trainer_torch_device(resources))
@@ -725,8 +768,8 @@ async def run_online_recipe(
     scheduler = definition.scheduler_getter(bundle)
 
     # One run-level Ray placement group owns trainer/rollout/reward bundles for
-    # the whole run. Created after the trainer model is on its GPU (so Ray init
-    # keeps following model placement) and before reward/rollout are built, so
+    # the whole run. Created after the trainer model is on its GPU and before
+    # reward/rollout are built, so
     # both receive owner-managed placement into the same group instead of each
     # building (and per-epoch rebuilding) its own.
     placement_owner = GlobalRayPlacementOwner(
@@ -736,17 +779,18 @@ async def run_online_recipe(
         ),
     )
     ray = require_ray()
-    if not ray.is_initialized():
-        ray.init()
-    if resources.cross_node:
-        from vrl.generation.ray.launcher import _cross_node_preflight
-
-        _cross_node_preflight(ray, resources)
-
+    ray_session: _RayClusterSession | None = None
     collector: Any | None = None
     reward_fn: Any | None = None
+    trainer: OnlineTrainer | None = None
+    strategy: Any | None = None
     run_error: BaseException | None = None
     try:
+        ray_session = _initialize_ray_cluster(resources, ray)
+        if resources.cross_node:
+            from vrl.generation.ray.launcher import _cross_node_preflight
+
+            _cross_node_preflight(ray, resources)
         placement_owner.create()
         components = build_online_recipe_components(
             cfg,
@@ -1042,9 +1086,16 @@ async def run_online_recipe(
         raise
     finally:
         await _shutdown_online_recipe_runtime(
+            rollout_schedule=(
+                getattr(trainer, "rollout_schedule", None)
+                if trainer is not None
+                else None
+            ),
             collector=collector,
             reward_fn=reward_fn,
             placement_owner=placement_owner,
+            strategy=strategy,
+            ray_session=ray_session,
             run_error=run_error,
         )
 
@@ -1067,9 +1118,12 @@ def _preflight_production_video_reward(cfg: DictConfig) -> None:
 
 async def _shutdown_online_recipe_runtime(
     *,
+    rollout_schedule: Any | None,
     collector: Any | None,
     reward_fn: Any | None,
     placement_owner: Any | None,
+    strategy: Any | None,
+    ray_session: _RayClusterSession | None,
     run_error: BaseException | None,
 ) -> None:
     shutdown_errors: list[tuple[str, Exception]] = []
@@ -1085,9 +1139,14 @@ async def _shutdown_online_recipe_runtime(
         except Exception as exc:
             shutdown_errors.append((name, exc))
 
+    # Stop background producers before their collector/runtime/placement targets.
+    await _run_shutdown("rollout_schedule", rollout_schedule)
     await _run_shutdown("collector", collector)
     await _run_shutdown("reward_fn", reward_fn)
     await _run_shutdown("placement_owner", placement_owner)
+    await _run_shutdown("strategy", strategy)
+    # Ray is last: every handle-based actor/PG cleanup above needs the connection.
+    await _run_shutdown("ray_session", ray_session)
 
     if not shutdown_errors:
         return

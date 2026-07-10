@@ -438,6 +438,18 @@ def test_build_strategy_fsdp_reads_knobs() -> None:
     assert strategy._reshard_after_forward is False
 
 
+def test_fsdp_shutdown_releases_training_process_group(monkeypatch) -> None:
+    calls: list[bool] = []
+    monkeypatch.setattr(
+        "vrl.trainers.fsdp.shutdown_training_process_group",
+        lambda: calls.append(True),
+    )
+
+    FSDPStrategy(_cpu_fsdp_context()).shutdown()
+
+    assert calls == [True]
+
+
 def test_build_strategy_fsdp_allows_ema_and_resume() -> None:
     # The original §10 gates, now lifted: EMA updates through DTensor
     # local-shard views (EMAModuleWrapper) and optimizer resume goes through

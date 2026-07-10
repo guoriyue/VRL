@@ -32,6 +32,8 @@ class RolloutSchedule(Protocol):
 
     def reset(self) -> None: ...
 
+    async def shutdown(self) -> None: ...
+
 
 def build_rollout_schedule(
     config: Any,

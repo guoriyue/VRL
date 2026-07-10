@@ -13,7 +13,10 @@ import asyncio
 import importlib
 import inspect
 import logging
+import signal
+from collections.abc import Awaitable
 from dataclasses import dataclass
+from types import FrameType
 from typing import Any
 
 from omegaconf import DictConfig
@@ -71,6 +74,38 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+async def _run_async_trainer(result: Awaitable[Any]) -> signal.Signals | None:
+    """Run an async trainer until it completes or the CLI receives a stop signal."""
+
+    loop = asyncio.get_running_loop()
+    task = asyncio.ensure_future(result)
+    received_signal: signal.Signals | None = None
+    previous_handlers: dict[signal.Signals, Any] = {}
+
+    def request_shutdown(signum: int, frame: FrameType | None) -> None:
+        del frame
+        nonlocal received_signal
+        if received_signal is not None:
+            return
+        received_signal = signal.Signals(signum)
+        # Cancellation unwinds the trainer's own async cleanup; signal handlers
+        # must not reach into Ray or other runtime-specific lifecycle APIs.
+        loop.call_soon_threadsafe(task.cancel)
+
+    try:
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            previous_handlers[signum] = signal.signal(signum, request_shutdown)
+        try:
+            await task
+        except asyncio.CancelledError:
+            if received_signal is None:
+                raise
+        return received_signal
+    finally:
+        for signum, previous_handler in previous_handlers.items():
+            signal.signal(signum, previous_handler)
+
+
 def main(argv: list[str] | None = None) -> None:
     from vrl.config.loading import load_config
 
@@ -83,7 +118,9 @@ def main(argv: list[str] | None = None) -> None:
     cfg = load_config(args.config, overrides=args.overrides)
     result = run_config(cfg)
     if inspect.isawaitable(result):
-        asyncio.run(result)
+        received_signal = asyncio.run(_run_async_trainer(result))
+        if received_signal is not None:
+            raise SystemExit(128 + int(received_signal))
 
 
 if __name__ == "__main__":

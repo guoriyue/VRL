@@ -280,8 +280,16 @@ class RayGenerationRuntime(GenerationRuntime):
         return None
 
     async def shutdown(self) -> None:
-        if self._release_after_collect is not None:
-            await self.release()
+        lease = self._release_after_collect
+        if lease is not None:
+            # Terminal shutdown is not a phase handoff: even a sleep-eligible
+            # lease must drop its actors instead of retaining an inner runtime
+            # that nothing can wake after the collector releases this facade.
+            runtime = lease.runtime
+            lease.runtime = None
+            lease.asleep = False
+            if runtime is not None:
+                await runtime.shutdown()
             return None
         if not self._owned_workers and not self._owned_actors and self._placement_group is None:
             return None

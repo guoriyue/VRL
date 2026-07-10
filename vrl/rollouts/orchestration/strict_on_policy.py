@@ -80,5 +80,8 @@ class StrictOnPolicyRolloutSchedule:
     def reset(self) -> None:
         """No-op reset; the schedule holds no resume-sensitive state."""
 
+    async def shutdown(self) -> None:
+        """No-op shutdown; strict scheduling owns no background task."""
+
 
 __all__ = ["StrictOnPolicyRolloutSchedule"]

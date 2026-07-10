@@ -1,0 +1,41 @@
+"""Failure observability for handle-scoped Ray cleanup helpers."""
+
+from __future__ import annotations
+
+import logging
+import sys
+from types import SimpleNamespace
+
+from vrl.ray.lifecycle import kill_actors, remove_placement_group
+
+
+def test_actor_cleanup_failure_is_logged(caplog) -> None:
+    class _Ray:
+        @staticmethod
+        def kill(actor, *, no_restart: bool) -> None:
+            del actor, no_restart
+            raise RuntimeError("kill failed")
+
+    with caplog.at_level(logging.WARNING, logger="vrl.ray.lifecycle"):
+        kill_actors(_Ray(), ["actor-1"])
+
+    assert "Failed to kill owned Ray actor 'actor-1'" in caplog.text
+    assert "kill failed" in caplog.text
+
+
+def test_placement_cleanup_failure_is_logged(monkeypatch, caplog) -> None:
+    def _remove(placement_group) -> None:
+        del placement_group
+        raise RuntimeError("remove failed")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "ray.util",
+        SimpleNamespace(remove_placement_group=_remove),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="vrl.ray.lifecycle"):
+        remove_placement_group("pg-1")
+
+    assert "Failed to remove owned Ray placement group 'pg-1'" in caplog.text
+    assert "remove failed" in caplog.text

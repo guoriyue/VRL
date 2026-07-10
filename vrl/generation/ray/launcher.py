@@ -46,7 +46,11 @@ class RayGenerationLauncher:
     """Create Ray generation actors and return a ``RayGenerationRuntime``."""
 
     init_ray: bool = True
-    ray_init_kwargs: dict[str, Any] = field(default_factory=dict)
+    # Standalone launcher use must be ownership-safe too. Online recipes already
+    # initialize explicitly; callers that intend to attach can override address.
+    ray_init_kwargs: dict[str, Any] = field(
+        default_factory=lambda: {"address": "local"},
+    )
 
     def launch(
         self,

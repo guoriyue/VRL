@@ -178,3 +178,35 @@ def test_non_sleep_lease_release_still_tears_down() -> None:
     assert inner.calls == ["shutdown"]
     assert state.runtime is None
     assert state.asleep is False
+
+
+def test_sleep_eligible_shutdown_terminates_active_runtime() -> None:
+    runtime = _lease_runtime()
+    state = runtime._release_after_collect
+    assert state is not None
+    state.sleep_eligible = True
+    inner = _FakeInner()
+    state.runtime = inner
+
+    asyncio.run(runtime.shutdown())
+
+    assert inner.calls == ["shutdown"]
+    assert state.runtime is None
+    assert state.asleep is False
+
+
+def test_sleep_eligible_shutdown_terminates_asleep_runtime_once() -> None:
+    runtime = _lease_runtime()
+    state = runtime._release_after_collect
+    assert state is not None
+    state.sleep_eligible = True
+    state.asleep = True
+    inner = _FakeInner()
+    state.runtime = inner
+
+    asyncio.run(runtime.shutdown())
+    asyncio.run(runtime.shutdown())
+
+    assert inner.calls == ["shutdown"]
+    assert state.runtime is None
+    assert state.asleep is False
