@@ -187,3 +187,24 @@ def test_unknown_family_raises_clear_error() -> None:
     """Checks unknown family raises clear error."""
     with pytest.raises(ValueError, match="unsupported rollout family"):
         get_rollout_family_entry("not_a_family")
+
+
+def test_ar_families_declare_importable_replay_builders() -> None:
+    """Every AR family must resolve through the generic AR GRPO entrypoint.
+
+    train_ar_grpo (vrl/scripts/ar/train.py) builds the trainer replay bundle
+    from the entry's replay_runtime_builder string; a missing or misspelled
+    declaration would only surface at training launch otherwise.
+    """
+    from vrl.rollouts.families.registry import FAMILY_REGISTRY
+    from vrl.utils.config import import_from_path
+
+    ar_families = [
+        entry for entry in FAMILY_REGISTRY.values() if entry.task.startswith("ar_")
+    ]
+    assert len(ar_families) >= 6
+    for entry in ar_families:
+        assert entry.replay_runtime_builder, f"{entry.family} lacks replay_runtime_builder"
+        assert callable(import_from_path(entry.replay_runtime_builder))
+        assert callable(import_from_path(entry.runtime_builder))
+        assert callable(import_from_path(entry.runtime_spec_extractor))

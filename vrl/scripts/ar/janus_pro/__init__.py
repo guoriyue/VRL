@@ -1,2 +1,0 @@
-"""Janus-Pro autoregressive scripts."""
-

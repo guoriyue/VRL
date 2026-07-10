@@ -97,6 +97,11 @@ class RolloutFamilyEntry:
     capability: FamilyCapability
     aliases: tuple[str, ...] = ()
     build: DiffusionFamilyBuild | None = None
+    # Trainer-replay builder import string. Consumed by the generic AR GRPO
+    # entrypoint (vrl/scripts/ar/train.py); diffusion families resolve replay
+    # through DiffusionFamilyBuild descriptors or their hand-written stubs and
+    # leave this None.
+    replay_runtime_builder: str | None = None
 
 
 FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {}
@@ -522,6 +527,9 @@ register_rollout_family(
         ),
         executor_cls="vrl.models.ar.janus_pro.runtime:JanusProChunkExecutor",
         runtime_builder="vrl.models.ar.janus_pro.runtime:build_janus_pro_runtime_bundle",
+        replay_runtime_builder=(
+            "vrl.models.ar.janus_pro.runtime:build_janus_pro_replay_runtime_bundle"
+        ),
         runtime_spec_extractor=(
             "vrl.models.ar.janus_pro.runtime:extract_janus_pro_runtime_spec"
         ),
@@ -544,6 +552,9 @@ register_rollout_family(
         ),
         executor_cls="vrl.models.ar.janus_pro.runtime:JanusProR1ChunkExecutor",
         runtime_builder="vrl.models.ar.janus_pro.runtime:build_janus_pro_runtime_bundle",
+        replay_runtime_builder=(
+            "vrl.models.ar.janus_pro.runtime:build_janus_pro_replay_runtime_bundle"
+        ),
         runtime_spec_extractor=(
             "vrl.models.ar.janus_pro.runtime:extract_janus_pro_runtime_spec"
         ),
@@ -567,6 +578,9 @@ register_rollout_family(
         ),
         executor_cls="vrl.models.ar.nextstep_1.runtime:NextStep1ChunkExecutor",
         runtime_builder="vrl.models.ar.nextstep_1.runtime:build_nextstep_1_runtime_bundle",
+        replay_runtime_builder=(
+            "vrl.models.ar.nextstep_1.runtime:build_nextstep_1_replay_runtime_bundle"
+        ),
         runtime_spec_extractor=(
             "vrl.models.ar.nextstep_1.runtime:extract_nextstep_1_runtime_spec"
         ),
@@ -589,6 +603,9 @@ register_rollout_family(
         ),
         executor_cls="vrl.models.ar.emu3.runtime:Emu3ChunkExecutor",
         runtime_builder="vrl.models.ar.emu3.runtime:build_emu3_runtime_bundle",
+        replay_runtime_builder=(
+            "vrl.models.ar.emu3.runtime:build_emu3_replay_runtime_bundle"
+        ),
         runtime_spec_extractor=(
             "vrl.models.ar.emu3.runtime:extract_emu3_runtime_spec"
         ),
@@ -611,6 +628,9 @@ register_rollout_family(
         ),
         executor_cls="vrl.models.ar.glm_image.runtime:GlmImageChunkExecutor",
         runtime_builder="vrl.models.ar.glm_image.runtime:build_glm_image_runtime_bundle",
+        replay_runtime_builder=(
+            "vrl.models.ar.glm_image.runtime:build_glm_image_replay_runtime_bundle"
+        ),
         runtime_spec_extractor=(
             "vrl.models.ar.glm_image.runtime:extract_glm_image_runtime_spec"
         ),
@@ -633,6 +653,9 @@ register_rollout_family(
         ),
         executor_cls="vrl.models.ar.llamagen.runtime:LlamaGenChunkExecutor",
         runtime_builder="vrl.models.ar.llamagen.runtime:build_llamagen_runtime_bundle",
+        replay_runtime_builder=(
+            "vrl.models.ar.llamagen.runtime:build_llamagen_replay_runtime_bundle"
+        ),
         runtime_spec_extractor=(
             "vrl.models.ar.llamagen.runtime:extract_llamagen_runtime_spec"
         ),
