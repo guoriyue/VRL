@@ -1,5 +1,31 @@
 # SPRINT: Config duplication audit — factor more, don't flatten
 
+状态：**DONE（2026-07-09 执行）**。
+
+> **执行记录（2026-07-09）**。每一步都用「全部 50 个实验的 resolved-config 转储逐字节相同」
+> 做零行为变化门（≠ 审计写作时的 42 个——新家族又加了 8 个），`tests/config` + `tests/scripts`
+> 266 passed。两个 open judgment call 的裁决：#1 按本文建议（删裸的、留带 why 注释的——现存
+> 裸重复只剩 3+2 处，×29/×12 的旧计数已被并行清理消化）；#2 走 evidence-first（只把**逐字相同**
+> 的值上提，族内漂移的调参留在实验里）。
+> - **Step 1**：删 3 处裸 no-op（droid_overfit / droid_lora 的 `kl_coef: 0.0`、droid_lora 的
+>   `same_latent: false`）；fsdp fullparam 的 kl 与 droid_overfit 的 same_latent 带根因注释，保留。
+> - **Step 2**：`flow_matching_grpo` 收下 `entrypoint`/`kl_coef: 0.04`/`global_std: true`
+>   （16 个组合者 13×/14×/16× 逐字重复；anima 显式 `global_std: false` 保历史行为，pickscore 留 0.01）；
+>   通用 entrypoint 进 dance/dppo/guard/`diffusion_grpo`；`train_ar_grpo` 进 3 个 AR recipe；
+>   新建 `wan_2_1_grpo` / `wan_2_1_i2v_grpo` 家族 recipe；droid 两实验改组合
+>   `cosmos_predict2_grpo`（不再在通用 recipe 上重抄它的 entrypoint/clip/CPS）；echo 删重抄。
+>   **`ppo_epochs` 刻意不上 recipe**——correctness audit §3 撞车警告（=1 时 clip 恒零），
+>   `wan_2_1_i2v_grpo` 的注释把这条规则钉在了 recipe 里。
+> - **Step 3**：视频族 1e-3 已由上游 cosmos recipes 先行落地，无事可做。
+> - **Axis 2**：`v2w_reference_480p` 已被上游转成 thin extension；`offline_dpo_pickapic_v1`
+>   本次转换（54→15 行）；droid_target/droid_full/droid_lora 判**真发散**保留全量文件——
+>   reward 栈与 dataset 不同，extension 无法"减去"基座组合进来的 reward group。
+> - **Step 4**：两个单文件组**跳过（有据）**：`profile/torch_profiler.yaml` 是被代码 docstring
+>   （`vrl/utils/profiling.py:46`）与 trustworthy-profiling DONE 契约钉住的唯一 preset 路径；
+>   `reward_rubrics/dance_cloth.yaml` 是运行时 `rubric_path` 数据资产，不是组合组。
+> - **未做（刻意）**：secondary 的 YAML style 统一（inline `{}` vs block）——正交、diff 噪声大，
+>   留给顺手改到的文件。
+
 > **Diagnosis (flips the initial feeling).** The `configs/` tree is NOT over-organized —
 > it is a correct 3-tier Hydra composition (`base/` atoms → `recipe/` family+algo combos
 > → `experiment/` runs, plus orthogonal `model/` `sampling/` `dataset/` `reward/`).
