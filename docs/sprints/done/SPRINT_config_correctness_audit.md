@@ -1,6 +1,16 @@
 # SPRINT: Config correctness audit —— 剔除跑不出真结果的设置
 
-状态：**DONE cosmos / wan 待验（2026-07-02）。** 性质：**正确性审计（不是重复审计）。**
+状态：**DONE（2026-07-09 终局对账；执行 2026-07-02）。** 性质：**正确性审计（不是重复审计）。**
+
+> **终局对账（2026-07-09，对 main 实况）**：执行结果里的改动已全部 commit 上 main
+> （3 个 240p 死配置已删、`droid_target_480p` 改名到位、kling/v2w_reference `ppo_epochs: 4`、
+> canonical bf16 480p 相对路径）；wan 一节当天已实测 KEEP（状态头旧写"待验"是笔误）。
+> "未做①" 的 async_reward header 残留已不存在（header 已重写为 480p 版）。
+> **新漏网（audit 清单之外，留给后来者）**：`droid_overfit_validation.yaml:69` 与
+> `droid_lora_480p_curve.yaml:47` 仍写死 `/home/.../vrl2/...v2w_480p_diffusers`（fp32 版）绝对路径
+> ——本次**刻意不改**：前者是 [[SPRINT_dino_reward_rl_trainability]]（in-progress）的现役 recipe，
+> 中途换 checkpoint 精度（fp32→bf16）会污染该调查的前后可比性；等它收官后按 §2 动作统一。
+> §3 的撞车警告（ppo_epochs 绝不以 1 固化进 recipe）已在 dedup 执行中遵守。归档 done/。
 
 > ## ✅ 执行结果（2026-07-02，改在 `~/Desktop/VRL`，未 commit）—— `pytest tests/config/test_load_all_experiments.py tests/ray/test_resources.py::...async_reward... = 31 passed`
 > - **240p cosmos（5）**：删 3 死配置（`droid_full_target_240p`、`fullparam_8bit_240p`、`v2w_reference_fullparam_240p`）；**转 480p 2 个**（原计划全删,但 pre-flight 发现两个被测试硬编码 → 改为转 480p 保测试）：`async_reward`（就地 240p→480p + native ckpt）、`droid_target_240p`→**改名** `droid_target_480p`（+ 更新 `tests/config/test_load_all_experiments.py:496`）。

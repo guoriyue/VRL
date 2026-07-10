@@ -99,7 +99,6 @@ actor:
 
 algorithm:
   clip_ratio: 1.0e-3
-  kl_coef: 0.0
 
 cosmos:
   reference_mode: per_sample

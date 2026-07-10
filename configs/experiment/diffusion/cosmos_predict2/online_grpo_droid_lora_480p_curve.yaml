@@ -70,7 +70,6 @@ actor:
 
 algorithm:
   clip_ratio: 1.0e-3
-  kl_coef: 0.0
 
 cosmos:
   reference_mode: per_sample
@@ -80,7 +79,6 @@ rollout:
   prompts_per_batch: 1
   samples_per_chunk: 1                # measured memory floor at 480p_93f — see header
   sde: { type: cps }
-  same_latent: false
   trajectory_storage:
     device: cpu                       # 93f trajectories on the GPU wire OOM the collect handoff
 
