@@ -1496,6 +1496,9 @@ class OnlineTrainer(Trainer):
     # ------------------------------------------------------------------
 
     def state_dict(self) -> dict:
+        # COLLECTIVE under fsdp (optimizer-moment + EMA-shadow gathers): the
+        # checkpoint writer must call this on EVERY rank before its
+        # primary-only file write, like the trainable-state gather.
         d: dict[str, Any] = {
             "step": self.state.step,
             "global_step": self.state.global_step,
@@ -1503,7 +1506,10 @@ class OnlineTrainer(Trainer):
             "total_loss": self.state.total_loss,
         }
         if self._optimizer is not None:
-            d["optimizer"] = self._optimizer.state_dict()
+            d["optimizer"] = self._strategy.export_optimizer_state(
+                self.model,
+                self._optimizer,
+            )
         if self._grad_scaler is not None:
             d["grad_scaler"] = self._grad_scaler.state_dict()
         ema = self._ensure_ema()
@@ -1523,7 +1529,11 @@ class OnlineTrainer(Trainer):
         if "optimizer" in state:
             optimizer = self._ensure_optimizer()
             try:
-                optimizer.load_state_dict(state["optimizer"])
+                self._strategy.load_optimizer_state(
+                    self.model,
+                    optimizer,
+                    state["optimizer"],
+                )
             except Exception:
                 if strict:
                     raise

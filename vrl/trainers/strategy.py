@@ -60,6 +60,23 @@ class Strategy(Protocol):
         """Load a checkpoint-facing trainable state back into the bundle."""
         ...
 
+    def export_optimizer_state(
+        self,
+        model: nn.Module,
+        optimizer: torch.optim.Optimizer,
+    ) -> dict[str, Any]:
+        """Checkpoint-facing optimizer state (full tensors under sharding)."""
+        ...
+
+    def load_optimizer_state(
+        self,
+        model: nn.Module,
+        optimizer: torch.optim.Optimizer,
+        state: dict[str, Any],
+    ) -> None:
+        """Load a checkpoint-facing optimizer state back (re-shard under FSDP)."""
+        ...
+
     def barrier(self) -> None:
         """Synchronize all training ranks (no-op for single process)."""
         ...
@@ -108,6 +125,23 @@ class SingleProcessStrategy(Strategy):
         from vrl.trainers.checkpointing import load_trainable_state
 
         load_trainable_state(bundle, state)
+
+    def export_optimizer_state(
+        self,
+        model: nn.Module,
+        optimizer: torch.optim.Optimizer,
+    ) -> dict[str, Any]:
+        del model  # plain tensors: torch's native (positional-id) format suffices
+        return optimizer.state_dict()
+
+    def load_optimizer_state(
+        self,
+        model: nn.Module,
+        optimizer: torch.optim.Optimizer,
+        state: dict[str, Any],
+    ) -> None:
+        del model
+        optimizer.load_state_dict(state)
 
     def barrier(self) -> None:
         return None
@@ -274,6 +308,27 @@ class FSDPStrategy(Strategy):
             if name in state:
                 load_full_state_dict(unwrap_compile_and_ddp(module), state[name])
 
+    def export_optimizer_state(
+        self,
+        model: nn.Module,
+        optimizer: torch.optim.Optimizer,
+    ) -> dict[str, Any]:
+        # COLLECTIVE (all-gathers each Adam moment): run on every rank; FQN-keyed
+        # so the checkpoint does not depend on optimizer param ordering.
+        from vrl.trainers.fsdp import gather_full_optimizer_state_dict
+
+        return gather_full_optimizer_state_dict(model, optimizer)
+
+    def load_optimizer_state(
+        self,
+        model: nn.Module,
+        optimizer: torch.optim.Optimizer,
+        state: dict[str, Any],
+    ) -> None:
+        from vrl.trainers.fsdp import load_full_optimizer_state_dict
+
+        load_full_optimizer_state_dict(model, optimizer, state)
+
     def barrier(self) -> None:
         import torch.distributed as dist
 
@@ -396,6 +451,25 @@ class DDPStrategy(Strategy):
             if name in state:
                 load_full_state_dict(unwrap_compile_and_ddp(module), state[name])
 
+    def export_optimizer_state(
+        self,
+        model: nn.Module,
+        optimizer: torch.optim.Optimizer,
+    ) -> dict[str, Any]:
+        # DDP replicates params (no sharding), so optimizer state is already
+        # full plain tensors on every rank — torch's native format suffices.
+        del model
+        return optimizer.state_dict()
+
+    def load_optimizer_state(
+        self,
+        model: nn.Module,
+        optimizer: torch.optim.Optimizer,
+        state: dict[str, Any],
+    ) -> None:
+        del model
+        optimizer.load_state_dict(state)
+
     def barrier(self) -> None:
         import torch.distributed as dist
 
@@ -442,25 +516,14 @@ def build_strategy(cfg: Any, context: DistributedTrainingContext) -> Strategy:
 def _assert_fsdp_config_supported(cfg: Any) -> None:
     """Fail-fast on fsdp + a feature whose DTensor handling is not implemented yet.
 
-    These are the ``SPRINT_multi_gpu_training.md`` §10 gates: EMA and optimizer
-    resume both touch state that, under FSDP2, is sharded as DTensor and needs an
-    explicit full gather/scatter the first version does not provide. Better a clear
-    error here than silent partial support on real hardware.
+    Two of the original ``SPRINT_multi_gpu_training.md`` §10 gates are now
+    lifted: EMA shadows update through DTensor local-shard views and
+    gather/re-shard at checkpoint boundaries (EMAModuleWrapper), and optimizer
+    resume goes through the strategy's full-state export/load
+    (gather_full_optimizer_state_dict / load_full_optimizer_state_dict).
+    torch.compile remains gated.
     """
 
-    if bool(cfg_path(cfg, "actor.ema.enable", False)):
-        raise NotImplementedError(
-            "distributed.training.strategy=fsdp with actor.ema.enable=true is not "
-            "supported until DTensor-aware EMA is implemented "
-            "(SPRINT_multi_gpu_training.md §8/§10). Disable EMA to run FSDP2.",
-        )
-    resume_from = str(cfg_path(cfg, "trainer.resume_from", "") or "").strip()
-    if resume_from:
-        raise NotImplementedError(
-            "distributed.training.strategy=fsdp with trainer.resume_from is not "
-            "supported until FSDP2 optimizer state export/load is implemented "
-            "(SPRINT_multi_gpu_training.md §8/§10).",
-        )
     if bool(cfg_path(cfg, "model.torch_compile.enable", False)):
         raise NotImplementedError(
             "distributed.training.strategy=fsdp with model.torch_compile.enable=true "

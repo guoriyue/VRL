@@ -122,15 +122,17 @@ def save_training_checkpoint(
     export_trainable = (
         strategy.export_trainable_state if strategy is not None else export_trainable_state
     )
-    # Collective on ALL ranks (FSDP all-gather) — before the is_primary gate.
+    # Collectives on ALL ranks (FSDP all-gathers) — before the is_primary gate:
+    # the trainable-state gather, and trainer.state_dict() (whose optimizer
+    # moments and EMA shadows are DTensor shards that gather to full tensors).
     trainable_modules = export_trainable(bundle)
+    trainer_state = trainer.state_dict()
     if not is_primary:
-        # Non-primary ranks joined the gather above; only rank0 writes the files.
+        # Non-primary ranks joined the gathers above; only rank0 writes the files.
         return {}
 
     path = Path(checkpoint_dir)
     path.mkdir(parents=True, exist_ok=True)
-    trainer_state = trainer.state_dict()
     payload = {
         "schema_version": CHECKPOINT_SCHEMA_VERSION,
         "family": family,

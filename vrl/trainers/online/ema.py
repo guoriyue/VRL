@@ -79,6 +79,11 @@ class EMAModuleWrapper:
                     ema_param.add_(param_copy)
                     del param_copy
             if fused_ema:
+                # DTensor shadows (FSDP2) go through the same fused call: the
+                # shadow is a clone of its param (identical sharding), and torch
+                # dispatches _foreach_lerp_ on DTensor natively (probed on the
+                # pinned torch; a torch downgrade that loses coverage would
+                # fail loudly here, not silently).
                 torch._foreach_lerp_(fused_ema, fused_param, one_minus_decay)
             self.num_updates += 1
 
@@ -92,17 +97,18 @@ class EMAModuleWrapper:
 
     def copy_ema_to(self, parameters: Iterable[torch.nn.Parameter], store_temp: bool = True) -> None:
         """Replace model parameters with EMA values; optionally save originals."""
+        parameters = list(parameters)
         if store_temp:
             # copy=True is required: plain .cpu() is a no-op when params already
             # live on CPU, so detach() would share storage and the in-place copy_
             # below would clobber the saved originals — copy_temp_to would then
             # restore EMA values instead of the pre-swap weights. copy=True keeps
             # the CPU-offload intent while guaranteeing an independent buffer.
+            # (DTensor params stage as CPU-local DTensors — same code path.)
             self.temp_stored_parameters = [
                 p.detach().to("cpu", copy=True) for p in parameters
             ]
 
-        parameters = list(parameters)
         for ema_param, param in zip(self.ema_parameters, parameters, strict=True):
             param.data.copy_(ema_param.to(param.device).data)
 
@@ -114,14 +120,42 @@ class EMAModuleWrapper:
         self.temp_stored_parameters = None
 
     def state_dict(self) -> dict[str, Any]:
+        """Checkpoint-facing state; always plain full tensors.
+
+        DTensor shadows (FSDP2) gather to full CPU tensors so the rank0-written
+        checkpoint carries every rank's data — the gather is a COLLECTIVE, so
+        this must run on every rank (save_training_checkpoint calls
+        trainer.state_dict() on all ranks before its primary-only file write).
+        """
+
+        from torch.distributed.tensor import DTensor
+
         return {
             "decay": self.decay,
-            "ema_parameters": self.ema_parameters,
+            "ema_parameters": [
+                p.full_tensor().detach().cpu() if isinstance(p, DTensor) else p
+                for p in self.ema_parameters
+            ],
             "num_updates": self.num_updates,
         }
 
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
+        from torch.distributed.tensor import DTensor, distribute_tensor
+
         self.decay = state_dict.get("decay", self.decay)
-        self.ema_parameters = state_dict.get("ema_parameters", self.ema_parameters)
+        incoming = state_dict.get("ema_parameters", self.ema_parameters)
+        resharded: list[torch.Tensor] = []
+        # Checkpoints store full tensors; when the live shadows are DTensor
+        # (FSDP2), re-shard each one onto the live shadow's layout (SPMD:
+        # every resuming rank read the full checkpoint and takes its shard).
+        for current, loaded in zip(self.ema_parameters, incoming, strict=True):
+            if isinstance(current, DTensor) and not isinstance(loaded, DTensor):
+                loaded = distribute_tensor(
+                    loaded.to(device=current.device, dtype=current.dtype),
+                    current.device_mesh,
+                    current.placements,
+                )
+            resharded.append(loaded)
+        self.ema_parameters = resharded
         self.num_updates = int(state_dict.get("num_updates", self.num_updates))
         self.to(self.device)

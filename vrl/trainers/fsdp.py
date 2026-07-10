@@ -252,3 +252,86 @@ def load_full_state_dict(module: nn.Module, state: dict[str, Any]) -> None:
         state,
         options=StateDictOptions(full_state_dict=True, broadcast_from_rank0=True),
     )
+
+
+def _materialize_full_cpu(value: Any) -> Any:
+    """Recursively gather DTensor leaves to full CPU tensors.
+
+    Optimizer state nests tensors inside dicts/lists (per-param exp_avg /
+    exp_avg_sq plus scalar step counters); everything non-tensor passes
+    through untouched.
+    """
+
+    from torch.distributed.tensor import DTensor
+
+    if isinstance(value, DTensor):
+        return value.full_tensor().detach().cpu()
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu()
+    if isinstance(value, dict):
+        return {key: _materialize_full_cpu(inner) for key, inner in value.items()}
+    if isinstance(value, (list, tuple)):
+        materialized = [_materialize_full_cpu(inner) for inner in value]
+        return tuple(materialized) if isinstance(value, tuple) else materialized
+    return value
+
+
+def gather_full_optimizer_state_dict(
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+) -> dict[str, Any]:
+    """Gather a sharded model's optimizer state into a full CPU dict ON EVERY RANK.
+
+    FSDP2 optimizer state (Adam moments) lives as DTensor shards keyed by the
+    optimizer's positional param ids; ``get_optimizer_state_dict`` re-keys by
+    parameter FQN (checkpoint-stable across runs) and, with
+    ``full_state_dict=True``, all-gathers each moment to a full tensor. Same
+    ``cpu_offload=False`` rationale as ``gather_full_state_dict``: with offload
+    DCP returns the state only on rank0 and empties elsewhere, which breaks
+    every-rank symmetric callers; we move to CPU ourselves.
+    """
+
+    from torch.distributed.checkpoint.state_dict import (
+        StateDictOptions,
+        get_optimizer_state_dict,
+    )
+
+    state = get_optimizer_state_dict(
+        model,
+        optimizer,
+        options=StateDictOptions(full_state_dict=True, cpu_offload=False),
+    )
+    return _materialize_full_cpu(state)
+
+
+def load_full_optimizer_state_dict(
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    state: dict[str, Any],
+) -> None:
+    """Load a full (FQN-keyed) optimizer state back into a sharded model's optimizer.
+
+    Mirrors ``load_full_state_dict``: every resuming rank read the checkpoint
+    file itself, ``broadcast_from_rank0=True`` makes rank0's copy authoritative
+    and DCP re-shards each moment onto the local DTensor layout. A no-op
+    broadcast at ``world_size=1``.
+    """
+
+    from torch.distributed.checkpoint.state_dict import (
+        StateDictOptions,
+        _init_optim_state,
+        set_optimizer_state_dict,
+    )
+
+    # A freshly-built optimizer has NO state yet; DCP needs materialized local
+    # state to locate devices/layouts before it can re-shard the checkpoint
+    # onto it. _init_optim_state is DCP's own zero-grad-step initializer (a
+    # no-op when state already exists). It early-returns if gradients are
+    # pending — resume runs before any training step, so none are.
+    _init_optim_state(optimizer)
+    set_optimizer_state_dict(
+        model,
+        optimizer,
+        state,
+        options=StateDictOptions(full_state_dict=True, broadcast_from_rank0=True),
+    )

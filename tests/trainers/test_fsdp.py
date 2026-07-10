@@ -438,14 +438,21 @@ def test_build_strategy_fsdp_reads_knobs() -> None:
     assert strategy._reshard_after_forward is False
 
 
-def test_build_strategy_fsdp_rejects_ema() -> None:
-    with pytest.raises(NotImplementedError, match="EMA"):
-        build_strategy({"actor": {"ema": {"enable": True}}}, _cpu_fsdp_context())
-
-
-def test_build_strategy_fsdp_rejects_optimizer_resume() -> None:
-    with pytest.raises(NotImplementedError, match="resume"):
-        build_strategy({"trainer": {"resume_from": "/ckpt/checkpoint-10"}}, _cpu_fsdp_context())
+def test_build_strategy_fsdp_allows_ema_and_resume() -> None:
+    # The original §10 gates, now lifted: EMA updates through DTensor
+    # local-shard views (EMAModuleWrapper) and optimizer resume goes through
+    # the strategy's full-state export/load.
+    assert isinstance(
+        build_strategy({"actor": {"ema": {"enable": True}}}, _cpu_fsdp_context()),
+        FSDPStrategy,
+    )
+    assert isinstance(
+        build_strategy(
+            {"trainer": {"resume_from": "/ckpt/checkpoint-10"}},
+            _cpu_fsdp_context(),
+        ),
+        FSDPStrategy,
+    )
 
 
 def test_build_strategy_fsdp_rejects_train_compile() -> None:
@@ -549,3 +556,116 @@ def test_export_modules_rejects_sharded_module_outside_bundle(cpu_process_group,
             strategy=FSDPStrategy(_cpu_fsdp_context()),
             is_primary=True,
         )
+
+
+# ── optimizer-state resume + DTensor EMA (the lifted §10 gates) ──────────────
+
+
+def _one_sgd_like_step(net: nn.Module, optimizer: torch.optim.Optimizer) -> None:
+    optimizer.zero_grad()
+    net(torch.randn(2, 4)).sum().backward()
+    optimizer.step()
+
+
+def test_fsdp_optimizer_state_export_is_full_plain_cpu(cpu_process_group) -> None:
+    """Exported Adam moments are FQN-keyed full CPU tensors, not DTensor shards."""
+
+    from torch.distributed.tensor import DTensor
+
+    torch.manual_seed(0)
+    net = _shard(_ToyTransformer())
+    optimizer = torch.optim.AdamW(net.parameters(), lr=1e-2)
+    _one_sgd_like_step(net, optimizer)
+
+    strategy = FSDPStrategy(_cpu_fsdp_context(), precision_policy="none")
+    state = strategy.export_optimizer_state(net, optimizer)
+
+    moments = state["state"]
+    assert moments, "no per-param optimizer state exported"
+    global_shapes = {name: p.shape for name, p in net.named_parameters()}
+    for fqn, entry in moments.items():
+        assert fqn in global_shapes, f"non-FQN optimizer key {fqn!r}"
+        for key in ("exp_avg", "exp_avg_sq"):
+            moment = entry[key]
+            assert isinstance(moment, torch.Tensor)
+            assert not isinstance(moment, DTensor)
+            assert moment.device.type == "cpu"
+            assert moment.shape == global_shapes[fqn]
+
+
+def test_fsdp_optimizer_state_round_trip(cpu_process_group) -> None:
+    """Export -> fresh optimizer -> load reproduces the exact moment tensors."""
+
+    torch.manual_seed(0)
+    net = _shard(_ToyTransformer())
+    optimizer = torch.optim.AdamW(net.parameters(), lr=1e-2)
+    _one_sgd_like_step(net, optimizer)
+
+    strategy = FSDPStrategy(_cpu_fsdp_context(), precision_policy="none")
+    exported = strategy.export_optimizer_state(net, optimizer)
+
+    # Resume precondition: the fresh optimizer exists but no training step ran
+    # (no pending gradients) — mirror it by clearing the grads the export step
+    # left behind.
+    for p in net.parameters():
+        p.grad = None
+    fresh = torch.optim.AdamW(net.parameters(), lr=1e-2)
+    strategy.load_optimizer_state(net, fresh, exported)
+    reexported = strategy.export_optimizer_state(net, fresh)
+
+    assert reexported["state"].keys() == exported["state"].keys()
+    for fqn, entry in exported["state"].items():
+        for key, value in entry.items():
+            other = reexported["state"][fqn][key]
+            if isinstance(value, torch.Tensor):
+                torch.testing.assert_close(other, value)
+            else:
+                assert other == value
+
+
+def test_ema_over_dtensor_params_updates_swaps_and_round_trips(cpu_process_group) -> None:
+    """EMA shadows DTensor params: step moves shadows, swap/restore is exact,
+    and the checkpoint state is full plain tensors that re-shard on load."""
+
+    from torch.distributed.tensor import DTensor
+
+    from vrl.trainers.online.ema import EMAModuleWrapper
+
+    torch.manual_seed(0)
+    net = _shard(_ToyTransformer())
+    params = [p for p in net.parameters() if p.requires_grad]
+    ema = EMAModuleWrapper(params, decay=0.5, update_step_interval=1)
+    assert all(isinstance(p, DTensor) for p in ema.ema_parameters)
+
+    # Move the live params, then EMA-step: shadows must move toward them.
+    with torch.no_grad():
+        for p in params:
+            p.add_(1.0)
+    before = [p.full_tensor().clone() for p in ema.ema_parameters]
+    ema.step(params, optimization_step=0)
+    assert ema.has_updates
+    after = [p.full_tensor() for p in ema.ema_parameters]
+    assert all(not torch.equal(a, b) for a, b in zip(after, before, strict=True))
+
+    # Swap EMA weights in for eval, then restore the originals exactly.
+    originals = [p.full_tensor().clone() for p in params]
+    ema.copy_ema_to(params, store_temp=True)
+    for p, shadow in zip(params, after, strict=True):
+        torch.testing.assert_close(p.full_tensor(), shadow)
+    ema.copy_temp_to(params)
+    for p, original in zip(params, originals, strict=True):
+        torch.testing.assert_close(p.full_tensor(), original)
+
+    # Checkpoint round trip: full plain tensors out, re-sharded DTensors in.
+    state = ema.state_dict()
+    for saved, shadow in zip(state["ema_parameters"], ema.ema_parameters, strict=True):
+        assert isinstance(saved, torch.Tensor)
+        assert not isinstance(saved, DTensor)
+        assert saved.shape == shadow.shape  # DTensor .shape is the global shape
+
+    restored = EMAModuleWrapper(params, decay=0.5, update_step_interval=1)
+    restored.load_state_dict(state)
+    assert all(isinstance(p, DTensor) for p in restored.ema_parameters)
+    for got, expected in zip(restored.ema_parameters, after, strict=True):
+        torch.testing.assert_close(got.full_tensor(), expected)
+    assert restored.num_updates == ema.num_updates
