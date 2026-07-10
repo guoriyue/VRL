@@ -369,15 +369,19 @@ register_rollout_family(
         task="t2v",
         aliases=("wan",),
         # The two wan entries carry their own per-variant recipes, so the
-        # t2v/i2v resolution the runtime module used to re-derive from cfg is
-        # decided here, once, by family selection. Replay stays hand-written
-        # (multi-transformer), hence no replay_cls.
+        # t2v/i2v resolution is decided here, once, by family selection. The
+        # dual-stage transformer_2 late-load lives in the replay model's
+        # prepare_replay, so replay is generic too.
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
         runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
         request_prefix="wan_2_1",
         default_task_type="text_to_video",
         build=DiffusionFamilyBuild(
             model_cls="vrl.models.diffusion.wan_2_1.model:WanT2VDiffusersModel",
+            replay_cls="vrl.models.diffusion.wan_2_1.model:WanT2VReplayModel",
+            transformer_classname="WanTransformer3DModel",
+            # Replay recomputes log-probs on the schedule the rollout sampled.
+            scheduler_classname="UniPCMultistepScheduler",
             task_variant="t2v",
             memory_owner="Wan VAE",
         ),
@@ -397,6 +401,9 @@ register_rollout_family(
         supports_reference_conditioning=True,
         build=DiffusionFamilyBuild(
             model_cls="vrl.models.diffusion.wan_2_1.model:WanI2VDiffusersModel",
+            replay_cls="vrl.models.diffusion.wan_2_1.model:WanI2VReplayModel",
+            transformer_classname="WanTransformer3DModel",
+            scheduler_classname="UniPCMultistepScheduler",
             task_variant="i2v",
             memory_owner="Wan VAE",
         ),

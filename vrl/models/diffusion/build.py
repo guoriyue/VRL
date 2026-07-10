@@ -30,7 +30,6 @@ from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.loader import (
     apply_rollout_quantization,
     compile_transformer,
-    enable_transformer_full_finetune,
     load_diffusers_scheduler,
     load_diffusers_transformer,
     load_flow_match_scheduler,
@@ -168,7 +167,10 @@ def build_diffusion_replay_runtime_bundle(
     if spec.use_lora:
         model.apply_lora(spec)
     else:
-        enable_transformer_full_finetune(model)
+        # The model method, not a helper: multi-transformer families (wan
+        # dual-stage) decide WHICH transformer is trainable — mirroring the
+        # rollout builder's contract.
+        model.apply_full_finetune()
 
     compile_cfg = spec.torch_compile or {}
     if compile_cfg.get("enable"):

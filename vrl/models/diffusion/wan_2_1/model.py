@@ -549,6 +549,32 @@ class WanT2VReplayModel(ReplayRolloutStubs, WanT2VDiffusersModel):
         for module in self._wan_transformers().values():
             module.requires_grad_(False)
 
+    def prepare_replay(self, spec: Any) -> None:
+        """Finish the multi-transformer replay setup with the spec in hand.
+
+        The generic replay loader constructs only the primary transformer +
+        scheduler; Wan2.2 dual-stage checkpoints carry a second transformer
+        whose presence is decided by ``boundary_ratio`` (explicit config or
+        the pipeline config). Late-load it here and redo the ctor wiring
+        (trainable-name normalization + freeze) that depends on it.
+        """
+        boundary_ratio = _boundary_ratio_from_spec(spec)
+        if boundary_ratio is not None and self.transformer_2 is None:
+            from vrl.models.loader import load_diffusers_transformer
+
+            self.transformer_2 = load_diffusers_transformer(
+                spec,
+                "WanTransformer3DModel",
+                subfolder="transformer_2",
+            )
+        self._boundary_ratio = boundary_ratio
+        self._trainable_transformer_names = _normalize_trainable_transformers(
+            (spec.model_config or {}).get("trainable_transformers"),
+            dual_stage=boundary_ratio is not None,
+        )
+        for module in self._wan_transformers().values():
+            module.requires_grad_(False)
+
     @property
     def pipeline(self) -> Any:
         raise RuntimeError("WanT2VReplayModel does not own a diffusers pipeline")
@@ -885,6 +911,12 @@ class WanI2VReplayModel(ReplayRolloutStubs, WanI2VDiffusersModel):
             trainable_transformers=trainable_transformers,
         )
 
+    def prepare_replay(self, spec: Any) -> None:
+        # Same delegation as __init__: the i2v replay shares the t2v replay's
+        # dual-stage setup wholesale (it does not inherit from it — the class
+        # bases carry the i2v FORWARD math, not the replay plumbing).
+        WanT2VReplayModel.prepare_replay(self, spec)
+
     @property
     def pipeline(self) -> Any:
         raise RuntimeError("WanI2VReplayModel does not own a diffusers pipeline")
@@ -1057,6 +1089,23 @@ def _optional_float(value: Any, field_name: str) -> float | None:
         return float(value)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{field_name} must be a float or null") from exc
+
+
+def _boundary_ratio_from_spec(spec: Any) -> float | None:
+    """Dual-stage boundary for the replay build: explicit ``model.boundary_ratio``
+    wins; Wan2.2 checkpoints read it from the pipeline config (the replay model
+    loads no pipeline of its own, so this is where transformer_2 loading is
+    decided)."""
+
+    model_config = spec.model_config or {}
+    if "boundary_ratio" in model_config:
+        return _optional_float(model_config.get("boundary_ratio"), "model.boundary_ratio")
+    if "Wan2.2" not in str(spec.model_name_or_path):
+        return None
+    from diffusers import DiffusionPipeline
+
+    config = DiffusionPipeline.load_config(spec.model_name_or_path)
+    return _optional_float(config.get("boundary_ratio"), "pipeline boundary_ratio")
 
 
 def _normalize_trainable_transformers(value: Any, *, dual_stage: bool) -> tuple[str, ...]:

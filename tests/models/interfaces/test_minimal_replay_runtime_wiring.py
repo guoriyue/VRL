@@ -80,62 +80,9 @@ def _spec(**overrides: Any) -> RuntimeBuildSpec:
     return RuntimeBuildSpec(**values)
 
 
-@pytest.mark.parametrize(
-    ("module_path", "builder_name"),
-    [
-        (
-            "vrl.models.diffusion.wan_2_1.runtime",
-            "build_wan_2_1_replay_runtime_bundle",
-        ),
-    ],
-)
-def test_diffusion_replay_builders_return_minimal_bundles(
-    monkeypatch: pytest.MonkeyPatch,
-    module_path: str,
-    builder_name: str,
-) -> None:
-    """Checks diffusion replay builders return minimal bundles."""
-    module = __import__(module_path, fromlist=[builder_name])
-    # Single-transformer families (sd3_5) delegate loading to the shared
-    # ``vrl.models.diffusion.build`` module, so the loaders must be patched
-    # there; families not yet migrated (wan, cosmos) still bind the loaders in
-    # their own runtime namespace. Patch both with ``raising=False`` so one set
-    # of monkeypatches covers the mixed migration state.
-    from vrl.models.diffusion import build as _shared_build
-
-    for target in (module, _shared_build):
-        monkeypatch.setattr(
-            target,
-            "load_diffusers_transformer",
-            lambda *_args, **_kwargs: _TinyTransformer(),
-            raising=False,
-        )
-        monkeypatch.setattr(
-            target,
-            "load_flow_match_scheduler",
-            lambda *_args, **_kwargs: _TinyScheduler(),
-            raising=False,
-        )
-        monkeypatch.setattr(
-            target,
-            "load_diffusers_scheduler",
-            lambda *_args, **_kwargs: _TinyScheduler(),
-            raising=False,
-        )
-
-    bundle = getattr(module, builder_name)(_spec())
-
-    # The replay bundle is the trainer-side memory boundary: it does not own the
-    # full generation modules (text encoders, VAE), so there is nothing to offload.
-    assert bundle_loads_full_generation_modules(bundle) is False
-    assert bundle.raw_handle is None
-    assert set(bundle.trainable_modules) == {"transformer"}
-    assert "pipeline" not in vars(bundle.model)
-    with pytest.raises(RuntimeError, match="pipeline"):
-        _ = bundle.model.pipeline
 
 
-@pytest.mark.parametrize("family", ["sd3_5", "qwen_image", "flux", "cosmos-predict2", "sana", "lumina2", "hunyuan_video", "mochi", "cogvideox", "pixart_sigma", "hunyuan_image"])
+@pytest.mark.parametrize("family", ["sd3_5", "qwen_image", "flux", "cosmos-predict2", "sana", "lumina2", "hunyuan_video", "mochi", "cogvideox", "pixart_sigma", "hunyuan_image", "wan_2_1"])
 def test_registry_descriptor_replay_builder_returns_minimal_bundle(
     monkeypatch: pytest.MonkeyPatch,
     family: str,
@@ -185,8 +132,8 @@ def test_registry_descriptor_replay_builder_returns_minimal_bundle(
 def test_wan_replay_builder_uses_wan_pipeline_scheduler_class(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Checks Wan replay builder uses Wan pipeline scheduler class."""
-    from vrl.models.diffusion.wan_2_1 import runtime
+    """The wan descriptor's scheduler_classname drives the generic replay loader."""
+    from vrl.models.diffusion import build as _shared_build
 
     scheduler_classes: list[str] = []
 
@@ -195,13 +142,13 @@ def test_wan_replay_builder_uses_wan_pipeline_scheduler_class(
         return _TinyScheduler()
 
     monkeypatch.setattr(
-        runtime,
+        _shared_build,
         "load_diffusers_transformer",
         lambda *_args, **_kwargs: _TinyTransformer(),
     )
-    monkeypatch.setattr(runtime, "load_diffusers_scheduler", fake_scheduler_loader)
+    monkeypatch.setattr(_shared_build, "load_diffusers_scheduler", fake_scheduler_loader)
 
-    bundle = runtime.build_wan_2_1_replay_runtime_bundle(_spec())
+    bundle = _shared_build.build_family_replay_runtime_bundle(_spec(family="wan_2_1"))
 
     assert scheduler_classes == ["UniPCMultistepScheduler"]
     assert bundle.scheduler.timesteps.tolist() == [1.0]
@@ -210,23 +157,23 @@ def test_wan_replay_builder_uses_wan_pipeline_scheduler_class(
 def test_wan_i2v_replay_builder_uses_i2v_replay_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Checks Wan I2V replay builder uses I2V replay model."""
-    from vrl.models.diffusion.wan_2_1 import runtime
+    """The i2v registry entry's replay_cls selects the I2V replay model."""
+    from vrl.models.diffusion import build as _shared_build
     from vrl.models.diffusion.wan_2_1.model import WanI2VReplayModel
 
     monkeypatch.setattr(
-        runtime,
+        _shared_build,
         "load_diffusers_transformer",
         lambda *_args, **_kwargs: _TinyTransformer(),
     )
     monkeypatch.setattr(
-        runtime,
+        _shared_build,
         "load_diffusers_scheduler",
         lambda *_args, **_kwargs: _TinyScheduler(),
     )
 
-    bundle = runtime.build_wan_2_1_replay_runtime_bundle(
-        _spec(task_variant="i2v"),
+    bundle = _shared_build.build_family_replay_runtime_bundle(
+        _spec(family="wan_2_1_i2v", task_variant="i2v"),
     )
 
     assert bundle_loads_full_generation_modules(bundle) is False
@@ -236,8 +183,9 @@ def test_wan_i2v_replay_builder_uses_i2v_replay_model(
 def test_wan_dual_stage_replay_builder_loads_low_noise_transformer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Checks Wan 2.2 replay loads transformer_2 and trains it by default."""
-    from vrl.models.diffusion.wan_2_1 import runtime
+    """Wan 2.2 dual-stage: prepare_replay late-loads transformer_2 and trains it."""
+    import vrl.models.loader as _loader
+    from vrl.models.diffusion import build as _shared_build
 
     loaded_subfolders: list[str] = []
 
@@ -250,15 +198,19 @@ def test_wan_dual_stage_replay_builder_loads_low_noise_transformer(
         loaded_subfolders.append(subfolder)
         return _TinyTransformer()
 
-    monkeypatch.setattr(runtime, "load_diffusers_transformer", fake_transformer_loader)
+    # The generic builder loads the primary transformer; prepare_replay
+    # late-loads transformer_2 through vrl.models.loader — patch both.
+    monkeypatch.setattr(_shared_build, "load_diffusers_transformer", fake_transformer_loader)
+    monkeypatch.setattr(_loader, "load_diffusers_transformer", fake_transformer_loader)
     monkeypatch.setattr(
-        runtime,
+        _shared_build,
         "load_diffusers_scheduler",
         lambda *_args, **_kwargs: _TinyScheduler(),
     )
 
-    bundle = runtime.build_wan_2_1_replay_runtime_bundle(
+    bundle = _shared_build.build_family_replay_runtime_bundle(
         _spec(
+            family="wan_2_1_i2v",
             task_variant="i2v",
             extra={
                 "boundary_ratio": 0.9,
@@ -268,7 +220,8 @@ def test_wan_dual_stage_replay_builder_loads_low_noise_transformer(
     )
 
     assert bundle_loads_full_generation_modules(bundle) is False
-    assert loaded_subfolders == ["transformer_2", "transformer"]
+    # Primary first (generic ctor), then the prepare_replay late-load.
+    assert loaded_subfolders == ["transformer", "transformer_2"]
     assert set(bundle.trainable_modules) == {"transformer_2"}
     # boundary_ratio is behavior-consumed on the model (dual-stage transformer
     # routing), not bundle metadata — assert the consumed surface.

@@ -77,15 +77,6 @@ def load_flow_match_scheduler(
     )
 
 
-def enable_transformer_full_finetune(model: Any) -> None:
-    """Mark the replay transformer fully trainable."""
-
-    model.transformer.requires_grad_(True)
-    to = getattr(model.transformer, "to", None)
-    if callable(to):
-        to(model.device)
-
-
 def compile_transformer(model: Any, mode: str) -> None:
     """Apply ``torch.compile`` to the replay transformer."""
 
@@ -184,7 +175,6 @@ __all__ = [
     "apply_rollout_quantization",
     "assert_rollout_quantization_applied",
     "compile_transformer",
-    "enable_transformer_full_finetune",
     "load_diffusers_scheduler",
     "load_diffusers_transformer",
     "load_flow_match_scheduler",

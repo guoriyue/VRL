@@ -57,11 +57,11 @@ def _build_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
 
 
 def _build_replay_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
-    from vrl.models.diffusion.wan_2_1.runtime import (
-        build_wan_2_1_replay_runtime_bundle_from_cfg,
+    from vrl.models.diffusion.build import (
+        build_family_replay_runtime_bundle_from_cfg,
     )
 
-    return build_wan_2_1_replay_runtime_bundle_from_cfg(cfg, device, weight_dtype)
+    return build_family_replay_runtime_bundle_from_cfg(cfg, device, weight_dtype)
 
 
 def _after_bundle_built(bundle: Any, cfg: DictConfig) -> None:
