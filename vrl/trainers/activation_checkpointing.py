@@ -41,7 +41,7 @@ _GRADIENT_CHECKPOINT_SAVE_OPS = {
 }
 
 
-def _selective_checkpoint_policy(ctx, op, *args, **kwargs):  # noqa: ARG001
+def _selective_checkpoint_policy(ctx, op, *args, **kwargs):
     if op in _GRADIENT_CHECKPOINT_SAVE_OPS:
         return CheckpointPolicy.MUST_SAVE
     return CheckpointPolicy.PREFER_RECOMPUTE

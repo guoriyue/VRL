@@ -33,12 +33,13 @@ from vrl.generation.ar.decode_loop import (
     ARStepResult,
     ARTokenLoopInit,
 )
+
+# Shared nucleus filtering, numerically identical to upstream generate()
+# implementations (kept in the llamagen runner as the single copy).
 from vrl.models.ar.glm_image.model import (
     glm_image_decode_position_schedule,
     glm_image_prefill_position_ids,
 )
-# Shared nucleus filtering, numerically identical to upstream generate()
-# implementations (kept in the llamagen runner as the single copy).
 from vrl.models.ar.llamagen.runner import top_k_top_p_filtering
 from vrl.models.ar.paged_attention_helpers import (
     append_attention_token,

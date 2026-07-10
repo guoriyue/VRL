@@ -20,8 +20,8 @@ import torch.nn as nn
 from transformers import Qwen2VLForConditionalGeneration
 
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
-from vrl.rewards.models.hub import parse_hf_repo_revision
 from vrl.rewards.models.base import RewardModel
+from vrl.rewards.models.hub import parse_hf_repo_revision
 from vrl.utils.logging import init_logger, kv
 
 logger = init_logger(__name__)

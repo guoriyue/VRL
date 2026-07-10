@@ -7,11 +7,10 @@ plus a learned LLM adapter before feeding Cosmos' 1024-wide text context.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import random
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -19,7 +18,11 @@ import torch.nn.functional as F
 from torch import nn
 
 from vrl.generation.diffusion.layout import VideoGenerationRequest
-from vrl.models.diffusion import DiffusionModelBase, DiffusionSamplingStateBase, ReplayRolloutStubs
+from vrl.models.diffusion import (
+    DiffusionModelBase,
+    DiffusionSamplingStateBase,
+    ReplayRolloutStubs,
+)
 from vrl.models.diffusion.common import (
     ChunkedLatentDecoder,
     LatentDecodeSpec,

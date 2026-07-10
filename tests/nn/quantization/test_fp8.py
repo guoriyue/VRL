@@ -290,7 +290,7 @@ def test_apply_rollout_quantization_rejects_blockwise_with_compile():
     """blockwise graph-breaks inductor (compiled ~10x slower than eager) — refuse."""
     from vrl.models.loader import apply_rollout_quantization
 
-    with pytest.raises(ValueError, match="blockwise.*torch_compile"):
+    with pytest.raises(ValueError, match=r"blockwise.*torch_compile"):
         apply_rollout_quantization(
             _SwapModel(["a"]),
             SimpleNamespace(

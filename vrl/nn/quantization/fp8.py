@@ -66,7 +66,7 @@ DEFAULT_EXCLUDE: tuple[str, ...] = (
 # corrupts the very logits the AR log-probs are computed from (lm_head /
 # janus's gen_head are caught by "head"; llamagen's vendored GPT names its
 # head "output").
-LM_EXCLUDE: tuple[str, ...] = DEFAULT_EXCLUDE + ("head", "output")
+LM_EXCLUDE: tuple[str, ...] = (*DEFAULT_EXCLUDE, "head", "output")
 
 
 def _amax_scale(t: torch.Tensor, dim: int | None) -> torch.Tensor:

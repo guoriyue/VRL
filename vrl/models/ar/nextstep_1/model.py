@@ -27,7 +27,6 @@ The flow head's velocity-call signature is handled in
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -37,9 +36,9 @@ import torch.nn as nn
 from vrl.math.ar.flow_matching import (
     flow_logprob_at,
 )
+from vrl.models.ar.base import ARModelBase, ARReplayRolloutStubs
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
-from vrl.models.ar.base import ARModelBase, ARReplayRolloutStubs
 from vrl.models.utils import count_trainable_params
 from vrl.utils.logging import init_logger
 

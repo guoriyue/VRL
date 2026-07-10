@@ -125,7 +125,7 @@ def test_registry_descriptor_replay_builder_returns_minimal_bundle(
         _ = bundle.model.pipeline
 
     # A spec without family fails loud instead of guessing.
-    with pytest.raises(ValueError, match="spec.family"):
+    with pytest.raises(ValueError, match=r"spec\.family"):
         _shared_build.build_family_replay_runtime_bundle(_spec())
 
 

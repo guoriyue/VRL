@@ -15,7 +15,6 @@ import pytest
 import torch
 
 from vrl.scripts.perf.profile_smoke import run_smoke
-from vrl.utils import profiling
 from vrl.utils.profiling import (
     TorchProfilerConfig,
     _resolve_activities,
@@ -54,9 +53,8 @@ def test_profile_range_pops_nvtx_on_exception(monkeypatch: pytest.MonkeyPatch) -
     calls = {"push": 0, "pop": 0}
     monkeypatch.setattr(torch.cuda.nvtx, "range_push", lambda name: calls.__setitem__("push", calls["push"] + 1))
     monkeypatch.setattr(torch.cuda.nvtx, "range_pop", lambda: calls.__setitem__("pop", calls["pop"] + 1))
-    with pytest.raises(ValueError):
-        with profile_range("test.boom", emit_nvtx=True):
-            raise ValueError("boom")
+    with pytest.raises(ValueError), profile_range("test.boom", emit_nvtx=True):
+        raise ValueError("boom")
     # push and pop must be strictly paired even when the body raises.
     assert calls == {"push": 1, "pop": 1}
 
@@ -145,15 +143,14 @@ def test_capture_fails_fast_on_missing_activity(tmp_path: Path, monkeypatch: pyt
     # Force a CPU-only machine view so requesting cuda is genuinely unsupported.
     monkeypatch.setattr(torch.profiler, "supported_activities", lambda: {CPU})
     cfg = TorchProfilerConfig(enabled=True, activities=("cuda",))
-    with pytest.raises(RuntimeError, match="unsupported activities"):
-        with capture_torch_trace(
-            cfg,
-            output_dir=str(tmp_path),
-            step=0,
-            device="cpu",
-            worker_name="t",
-        ):
-            pass
+    with pytest.raises(RuntimeError, match="unsupported activities"), capture_torch_trace(
+        cfg,
+        output_dir=str(tmp_path),
+        step=0,
+        device="cpu",
+        worker_name="t",
+    ):
+        pass
 
 
 def test_capture_disabled_is_passthrough(tmp_path: Path) -> None:

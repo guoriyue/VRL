@@ -25,9 +25,9 @@ from vrl.nn.quantization.fp8 import (
 __all__ = [
     "DEFAULT_EXCLUDE",
     "LM_EXCLUDE",
-    "drop_fp8_masters",
     "Fp8Linear",
     "QuantizedLinear",
+    "drop_fp8_masters",
     "swap_linears_to_fp8",
     "vllm_block_fp8_available",
 ]

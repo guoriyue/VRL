@@ -21,8 +21,8 @@ import torch
 # diffusion family, so probe numbers describe what real training actually runs.
 # Imported from the trainers module (not the online runner) so the probe stays a
 # lightweight perf script and does not pull in Ray/launcher.
-from vrl.trainers.activation_checkpointing import selective_checkpoint_func
 from vrl.scripts.perf.common.timing import cuda_mean_ms
+from vrl.trainers.activation_checkpointing import selective_checkpoint_func
 
 
 def _apply_ckpt(tf, mode: str) -> None:

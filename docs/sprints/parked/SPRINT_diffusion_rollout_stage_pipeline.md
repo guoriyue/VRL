@@ -509,10 +509,9 @@ buys — running denoise GEMMs and VAE/reward GEMMs at the same time — still n
 **separate GPUs** (denoise on GPU0-1, VAE on GPU2, reward on GPU3), because each
 tensor-heavy stage wants its own un-contended tensor cores. On one GPU: `sbs`
 removes most boundaries for free (sbs=4 -> 89% busy), and the residual ~9% is the
-non-tensor boundary overlap (T2/P2). NCU probe:
-`vrl/scripts/perf/ncu_denoise_occupancy_probe.py` (run under
-`ncu --launch-skip 400 --launch-count 45 --metrics sm__throughput.avg.pct_of_peak_sustained_elapsed,...`),
-metrics in memory `project_real_run_profiling`.
+non-tensor boundary overlap (T2/P2). The one-shot NCU probe was retired after
+recording this gate result; it ran with
+`ncu --launch-skip 400 --launch-count 45 --metrics sm__throughput.avg.pct_of_peak_sustained_elapsed,...`.
 
 **Updated gate verdict:**
 

@@ -114,7 +114,6 @@ def test_wan_runtime_bundle_records_model_build_memory_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Checks Wan runtime bundle records model build memory metadata."""
-    from vrl.models.diffusion.wan_2_1 import runtime
     from vrl.models.interfaces.runtime import RuntimeBuildSpec
 
     class _FakeModel:

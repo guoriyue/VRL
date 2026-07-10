@@ -30,7 +30,7 @@ class _FixedLogitsHead(nn.Module):
         super().__init__()
         self._logits = logits
 
-    def forward(self, hidden: torch.Tensor) -> torch.Tensor:  # noqa: ARG002 - fixed output
+    def forward(self, hidden: torch.Tensor) -> torch.Tensor:
         return self._logits
 
 

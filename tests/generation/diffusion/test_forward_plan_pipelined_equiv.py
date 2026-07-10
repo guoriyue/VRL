@@ -115,7 +115,7 @@ def test_forward_plan_pipelined_matches_serial_forward_plan() -> None:
     pipelined = DiffusionChunkExecutorBase.forward_plan_pipelined(ex, request, sample_rows, plan)
 
     assert len(pipelined.output) == len(serial.output)
-    for idx, (s, p) in enumerate(zip(serial.output, pipelined.output)):
+    for idx, (s, p) in enumerate(zip(serial.output, pipelined.output, strict=True)):
         # serial keeps GPU tensors; pipelined's teardown moved them to CPU — same
         # VALUES, compared on CPU.
         assert torch.equal(s.detach().cpu(), p.detach().cpu()), f"chunk {idx} diverged"

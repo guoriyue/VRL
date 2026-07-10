@@ -675,7 +675,7 @@ class GlmImageModel(ARModelBase):
         token_h, token_w, prev_h, prev_w = glm_image_grid_dims(height, width)
         B, L = image_token_ids.shape
         expected = prev_h * prev_w + token_h * token_w
-        if L != expected:
+        if expected != L:
             raise ValueError(
                 f"decode_image_tokens expects {expected} tokens "
                 f"(preview {prev_h}x{prev_w} + large {token_h}x{token_w}) for "
