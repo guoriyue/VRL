@@ -11,6 +11,7 @@ from vrl.generation.execution.types import DistributedWorkerHandle
 from vrl.generation.protocols import GenerationRuntime
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.executor import RayGenerationExecutor
+from vrl.generation.ray.lifecycle_fsm import RuntimeLifecycle, RuntimePhase
 from vrl.generation.ray.weight_sync import GenerationWeightSync
 from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.dependencies import require_ray
@@ -71,6 +72,11 @@ class RayGenerationRuntime(GenerationRuntime):
         self._placement_group = placement_group
         self._colocated = bool(colocated)
         self._release_after_collect: _RuntimeLease | None = None
+        # Behavior-consumed phase machine: generate/update_weights admission,
+        # shutdown idempotency, and expected-kill classification all read it.
+        self.lifecycle = RuntimeLifecycle()
+        self.lifecycle.transition(RuntimePhase.RUNNING)
+        self._fleet_generation = 1
         self.requires_driver_model_offload = False
         self.current_policy_version: int | None = None
         # Set True by the launcher when every resident worker retains versioned
@@ -126,6 +132,10 @@ class RayGenerationRuntime(GenerationRuntime):
             placement=placement,
             sleep_eligible=sleep_eligible,
         )
+        runtime.lifecycle = RuntimeLifecycle()
+        runtime.lifecycle.transition(RuntimePhase.RUNNING)
+        runtime._fleet_generation = 0  # no fleet launched yet; first acquire is gen 1
+        runtime.requires_driver_model_offload = config.gpus_per_worker > 0
         runtime.requires_driver_model_offload = bool(
             handoff is not None and handoff.release_rollout_before_train,
         )
@@ -137,6 +147,7 @@ class RayGenerationRuntime(GenerationRuntime):
         return runtime
 
     async def generate(self, request: GenerationRequest) -> GenerationOutput:
+        self.lifecycle.require_running("generate")
         runtime = await self._ensure_runtime()
         if request.sampling.get("samples_per_chunk") == "auto":
             # Resolve BEFORE delegating so the lease's inner runtime (rebuilt
@@ -244,6 +255,7 @@ class RayGenerationRuntime(GenerationRuntime):
         return self._colocated
 
     async def update_weights(self, state_ref: Any, policy_version: int) -> None:
+        self.lifecycle.require_running("update_weights")
         state = self._release_after_collect
         if state is not None:
             if self.weight_sync is None:
@@ -289,6 +301,17 @@ class RayGenerationRuntime(GenerationRuntime):
         return None
 
     async def shutdown(self) -> None:
+        if self.lifecycle.phase in (RuntimePhase.STOPPED, RuntimePhase.FAILED):
+            return None  # terminal shutdown is idempotent
+        if self.lifecycle.phase is not RuntimePhase.DRAINING:
+            self.lifecycle.transition(RuntimePhase.DRAINING)
+        try:
+            await self._teardown_owned_resources()
+        finally:
+            self.lifecycle.transition(RuntimePhase.STOPPED)
+        return None
+
+    async def _teardown_owned_resources(self) -> None:
         lease = self._release_after_collect
         if lease is not None:
             # Terminal shutdown is not a phase handoff: even a sleep-eligible
@@ -298,11 +321,28 @@ class RayGenerationRuntime(GenerationRuntime):
             lease.runtime = None
             lease.asleep = False
             if runtime is not None:
+                # The inner runtime records expected kills for its own actors.
                 await runtime.shutdown()
             return None
         if not self._owned_workers and not self._owned_actors and self._placement_group is None:
             return None
         ray = require_ray()
+        doomed = [
+            worker.actor for worker in self._owned_workers if worker.actor is not None
+        ] + list(self._owned_actors)
+        # Written BEFORE the kills are sent: a death observed concurrently is
+        # classified expected by matching this record, not by phase guesswork.
+        record = self.lifecycle.record_expected_kill(
+            doomed,
+            fleet_generation=self._fleet_generation,
+            reason="runtime shutdown",
+        )
+        logger.info(
+            "shutdown %s: killing %d owned actor(s) (fleet_generation=%d)",
+            record.operation_id,
+            len(doomed),
+            record.fleet_generation,
+        )
         release_refs: list[Any] = []
         for worker in self._owned_workers:
             actor = worker.actor
@@ -376,6 +416,7 @@ class RayGenerationRuntime(GenerationRuntime):
         if state.runtime is None:
             from vrl.generation.ray.launcher import RayGenerationLauncher
 
+            self._fleet_generation += 1
             runtime = RayGenerationLauncher().launch(
                 state.config,
                 state.launch_contract,
