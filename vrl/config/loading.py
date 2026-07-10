@@ -6,7 +6,27 @@ from pathlib import Path
 
 from omegaconf import DictConfig, ListConfig, OmegaConf
 
-CONFIGS_ROOT = Path(__file__).resolve().parents[2] / "configs"
+
+def _configs_root() -> Path:
+    """Locate configs in a source checkout or an installed distribution."""
+
+    source_root = Path(__file__).resolve().parents[2] / "configs"
+    if source_root.is_dir():
+        return source_root
+
+    # Wheels copy the same tree beside the vrl package. Keeping the result as a
+    # Path preserves OmegaConf's include/error behavior and avoids extracting a
+    # temporary resource tree for every config load.
+    installed_root = Path(__file__).resolve().parents[1] / "configs"
+    if installed_root.is_dir():
+        return installed_root
+
+    raise FileNotFoundError(
+        "VRL configuration tree was not installed; reinstall visual-rl from a wheel or sdist",
+    )
+
+
+CONFIGS_ROOT = _configs_root()
 
 _SELF_ = "_self_"
 

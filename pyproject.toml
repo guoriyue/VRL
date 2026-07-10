@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Visual generation RL infrastructure stack across autoregressive image generation, diffusion, and world models"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "Apache-2.0"}
+license = "Apache-2.0"
 dependencies = [
     "torch>=2.2.0",
     "triton>=3.0.0",
@@ -30,6 +30,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "build>=1.2.0",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "httpx>=0.27.0",
@@ -39,7 +40,8 @@ dev = [
 ]
 cosmos = [
     "diffusers>=0.31.0",
-    "transformers>=4.40.0,<5",
+    # GLM-Image is part of the shared model runtime and first ships in 5.13.
+    "transformers>=5.13.0,<6",
     "accelerate>=0.30.0",
     "sentencepiece>=0.2.0",
     "peft>=0.11.0",          # LoRA adapters for diffusion/AR model families
@@ -51,7 +53,7 @@ cosmos = [
 # UnifiedReward-2.0 samples frames with opencv. PhyMotion's SMPL+MuJoCo backend is
 # external by design (vendored under third_party/) and intentionally absent here.
 reward = [
-    "transformers>=4.49.0,<5",
+    "transformers>=5.13.0,<6",
     "peft>=0.11.0",
     "qwen-vl-utils>=0.0.10",
     "torchvision>=0.17.0",
@@ -95,9 +97,9 @@ ar-vllm = [
     "vllm>=0.21.0,<0.22",
 ]
 # Fixed video-eval suite extras (vrl/scripts/eval/video_reward_suite.py). VBench
-# is PyPI-packaged so it is a dependency here; the other motion-eval benchmarks
-# (VMBench, DynamicEval) ship no packaging and are vendored as submodules under
-# third_party/ — run their CLIs and fold results in via --merge-json.
+# pins transformers==4.33.2, so this extra is intentionally a separate
+# environment from the transformers-5 model/reward stack. The uv conflicts
+# below make that deployment boundary executable instead of documentary.
 videoeval = [
     "vbench>=0.1.5",
 ]
@@ -115,6 +117,33 @@ vrl-train = "vrl.scripts.train:main"
 
 [tool.setuptools.packages.find]
 include = ["vrl*"]
+
+[tool.uv]
+# These extras represent separately deployed runtimes. Declaring the boundary
+# lets uv produce one universal lock without pretending incompatible stacks can
+# be installed together.
+conflicts = [
+    [
+        { extra = "videoeval" },
+        { extra = "cosmos" },
+    ],
+    [
+        { extra = "videoeval" },
+        { extra = "reward" },
+    ],
+    [
+        { extra = "ar-vllm" },
+        { extra = "cosmos" },
+    ],
+    [
+        { extra = "ar-vllm" },
+        { extra = "reward" },
+    ],
+    [
+        { extra = "ar-vllm" },
+        { extra = "videoeval" },
+    ],
+]
 
 # ── Ruff ─────────────────────────────────────────────────────────
 [tool.ruff]
