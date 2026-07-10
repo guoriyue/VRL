@@ -2,6 +2,9 @@
 # Non-flow family: pair with sampling.sde_type: ddim (validated at rollout).
 model:
   family: cogvideox
+  executor:
+    num_frames: 49
+    max_sequence_length: 226
   path: THUDM/CogVideoX-2b
 
   memory:

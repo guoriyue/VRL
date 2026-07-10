@@ -3,6 +3,9 @@
 # encoder is parked on CPU by from_spec.
 model:
   family: hunyuan_video
+  executor:
+    num_frames: 17
+    max_sequence_length: 256
   path: hunyuanvideo-community/HunyuanVideo
 
   memory:

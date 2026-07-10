@@ -89,22 +89,6 @@ class DiffusionFamilyBuild:
     requires_lora: bool = False
 
 
-@dataclass(frozen=True, slots=True)
-class DiffusionExecutorConfig:
-    """Pure-data chunk-executor config for families using the generic executor.
-
-    A family whose executor overrides no method carries these values here
-    instead of shipping a boilerplate ``DiffusionChunkExecutorBase`` subclass.
-    ``family`` / ``task`` come from the entry; ``family_capability`` is injected
-    by the worker from the launch contract. The launcher spreads these into the
-    generic ``DiffusionChunkExecutor`` constructor.
-    """
-
-    default_num_frames: int = 1
-    default_max_sequence_length: int = 512
-    default_fps: int | None = None
-    chunk_passthrough_keys: tuple[str, ...] = ()
-
 
 @dataclass(frozen=True, slots=True)
 class RolloutFamilyEntry:
@@ -123,7 +107,6 @@ class RolloutFamilyEntry:
     )
     aliases: tuple[str, ...] = ()
     build: DiffusionFamilyBuild | None = None
-    executor_config: DiffusionExecutorConfig | None = None
 
 
 FAMILY_REGISTRY: dict[str, RolloutFamilyEntry] = {}
@@ -140,8 +123,9 @@ def register_rollout_family(entry: RolloutFamilyEntry) -> RolloutFamilyEntry:
 
 # One generic executor serves every family whose chunk executor is pure data
 # (no build_chunk_encoded / encode_prompt_for_chunk override). Such families
-# pass ``executor_config`` and leave ``executor_cls`` unset.
-_GENERIC_DIFFUSION_EXECUTOR = (
+# leave ``executor_cls`` unset (defaulting here) and put their executor config
+# in the model yaml's ``executor`` block.
+GENERIC_DIFFUSION_EXECUTOR = (
     "vrl.generation.diffusion.executor:DiffusionChunkExecutor"
 )
 
@@ -156,22 +140,19 @@ def _diffusion_entry(
     request_prefix: str,
     default_task_type: str,
     executor_cls: str | None = None,
-    executor_config: DiffusionExecutorConfig | None = None,
     supports_reference_conditioning: bool = False,
     build: DiffusionFamilyBuild | None = None,
 ) -> RolloutFamilyEntry:
+    # Default dispatch: the shared generic executor. Families with real
+    # per-chunk logic pass their own executor_cls. Per-family executor config
+    # (num_frames / max_sequence_length / ...) lives in the model yaml's
+    # ``executor`` block, read wholesale at launch — not here.
     if executor_cls is None:
-        if executor_config is None:
-            raise ValueError(
-                f"diffusion family {family!r}: pass either executor_cls (real "
-                "chunk logic) or executor_config (generic executor)",
-            )
-        executor_cls = _GENERIC_DIFFUSION_EXECUTOR
+        executor_cls = GENERIC_DIFFUSION_EXECUTOR
     return RolloutFamilyEntry(
         family=family,
         task=task,
         aliases=aliases,
-        executor_config=executor_config,
         collector=CollectorMetadata(
             kind="diffusion",
             request_prefix=request_prefix,
@@ -202,7 +183,6 @@ register_rollout_family(
         family="sd3_5",
         task="t2i",
         aliases=(),
-        executor_config=DiffusionExecutorConfig(default_max_sequence_length=128),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
         runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
         request_prefix="sd3_5",
@@ -222,7 +202,6 @@ register_rollout_family(
         family="flux",
         task="t2i",
         aliases=("flux_1_dev",),
-        executor_config=DiffusionExecutorConfig(chunk_passthrough_keys=("text_ids",)),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
         runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
         request_prefix="flux",
@@ -242,7 +221,6 @@ register_rollout_family(
         family="qwen_image",
         task="t2i",
         aliases=("qwen-image",),
-        executor_config=DiffusionExecutorConfig(default_max_sequence_length=1024),
         # Descriptor-driven family: the generic functions in
         # vrl.models.diffusion.build read the recipe below, so qwen_image ships
         # no per-family builder/extractor functions.
@@ -265,7 +243,6 @@ register_rollout_family(
         family="sana",
         task="t2i",
         aliases=("sana_1600m",),
-        executor_config=DiffusionExecutorConfig(default_max_sequence_length=300),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
         runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
         request_prefix="sana",
@@ -285,7 +262,6 @@ register_rollout_family(
         family="lumina2",
         task="t2i",
         aliases=("lumina_image_2",),
-        executor_config=DiffusionExecutorConfig(default_max_sequence_length=256),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
         runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
         request_prefix="lumina2",
@@ -305,7 +281,6 @@ register_rollout_family(
         family="hunyuan_video",
         task="t2v",
         aliases=("hunyuanvideo",),
-        executor_config=DiffusionExecutorConfig(default_num_frames=17, default_max_sequence_length=256),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
         runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
         request_prefix="hunyuan_video",
@@ -325,7 +300,6 @@ register_rollout_family(
         family="mochi",
         task="t2v",
         aliases=("mochi_1",),
-        executor_config=DiffusionExecutorConfig(default_num_frames=19, default_max_sequence_length=256),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
         runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
         request_prefix="mochi",
@@ -345,7 +319,6 @@ register_rollout_family(
         family="hunyuan_image",
         task="t2i",
         aliases=("hunyuanimage_2_1",),
-        executor_config=DiffusionExecutorConfig(default_max_sequence_length=1000),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
         runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
         request_prefix="hunyuan_image",
@@ -365,7 +338,6 @@ register_rollout_family(
         family="pixart_sigma",
         task="t2i",
         aliases=("pixart",),
-        executor_config=DiffusionExecutorConfig(default_max_sequence_length=300),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
         runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
         request_prefix="pixart_sigma",
@@ -389,7 +361,6 @@ register_rollout_family(
         family="cogvideox",
         task="t2v",
         aliases=("cogvideox_2b", "cogvideox_5b"),
-        executor_config=DiffusionExecutorConfig(default_num_frames=49, default_max_sequence_length=226),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
         runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
         request_prefix="cogvideox",
@@ -412,7 +383,6 @@ register_rollout_family(
         family="wan_2_1",
         task="t2v",
         aliases=("wan",),
-        executor_config=DiffusionExecutorConfig(),
         # The two wan entries carry their own per-variant recipes, so the
         # t2v/i2v resolution the runtime module used to re-derive from cfg is
         # decided here, once, by family selection. Replay stays hand-written
@@ -526,7 +496,6 @@ register_rollout_family(
         family="cosmos-predict2-anima",
         task="t2i",
         aliases=("anima", "cosmos_anima"),
-        executor_config=DiffusionExecutorConfig(),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
         runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
         request_prefix="anima",

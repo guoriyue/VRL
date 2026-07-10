@@ -379,6 +379,8 @@ def _build_gatherer(entry: Any) -> ChunkGatherer:
 
 
 def _build_executor_kwargs(entry: Any, cfg: Any) -> dict[str, Any]:
+    from vrl.rollouts.families.registry import GENERIC_DIFFUSION_EXECUTOR
+
     kwargs: dict[str, Any] = {}
     metadata = entry.executor_kwargs
     if metadata.include_samples_per_chunk:
@@ -389,19 +391,14 @@ def _build_executor_kwargs(entry: Any, cfg: Any) -> dict[str, Any]:
         reference_image = cfg_path(cfg, "model.reference_image", None)
         if reference_image:
             kwargs["reference_image"] = str(reference_image)
-    # Pure-data families dispatch the generic DiffusionChunkExecutor, which
-    # takes its family/task and default_* config as constructor kwargs instead
-    # of hardcoding them on a per-family subclass.
-    config = getattr(entry, "executor_config", None)
-    if config is not None:
+    # Families on the shared executor read their whole executor config block
+    # from yaml in ONE pass (config is homogeneous — no per-field extraction);
+    # family/task identity comes from the registry entry. Families with their
+    # own executor hardcode these as class attrs and skip this.
+    if entry.executor_cls == GENERIC_DIFFUSION_EXECUTOR:
+        kwargs.update(dict(cfg_path(cfg, "model.executor", {}) or {}))
         kwargs["family"] = entry.family
         kwargs["task"] = entry.task
-        kwargs["default_num_frames"] = config.default_num_frames
-        kwargs["default_max_sequence_length"] = config.default_max_sequence_length
-        if config.default_fps is not None:
-            kwargs["default_fps"] = config.default_fps
-        if config.chunk_passthrough_keys:
-            kwargs["chunk_passthrough_keys"] = tuple(config.chunk_passthrough_keys)
     return kwargs
 
 

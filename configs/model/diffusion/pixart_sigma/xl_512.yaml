@@ -3,6 +3,8 @@
 # DDIMScheduler from the shipped DPM-Solver beta config for RL log-probs).
 model:
   family: pixart_sigma
+  executor:
+    max_sequence_length: 300
   path: PixArt-alpha/PixArt-Sigma-XL-2-512-MS
 
   use_lora: true

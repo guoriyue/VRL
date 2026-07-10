@@ -2,6 +2,9 @@
 # is recomputed per request by the model, so 2b and 5b share all code.
 model:
   family: cogvideox
+  executor:
+    num_frames: 49
+    max_sequence_length: 226
   path: THUDM/CogVideoX-5b
 
   memory:

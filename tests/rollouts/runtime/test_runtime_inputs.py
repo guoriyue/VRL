@@ -108,8 +108,8 @@ def test_rollout_runtime_inputs_are_serializable_and_registry_backed(
     assert inputs.launch_contract.policy_version == 0
     assert inputs.launch_contract.runtime_builder == entry.runtime_builder
     assert inputs.launch_contract.executor_cls == entry.executor_cls
-    # Generic-executor families also carry their DiffusionExecutorConfig
-    # (family/task/default_*) in executor_kwargs; families with their own
+    # Generic-executor families also carry their model.executor yaml block
+    # (family/task/num_frames/...) in executor_kwargs; families with their own
     # executor carry only the cfg-derived kwargs. Both must thread the
     # cfg-derived samples_per_chunk.
     assert inputs.launch_contract.executor_kwargs["samples_per_chunk"] == 2

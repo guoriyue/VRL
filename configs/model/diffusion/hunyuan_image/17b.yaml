@@ -5,6 +5,8 @@
 # (~16.6 GB) and byT5 text encoders are parked on CPU by from_spec.
 model:
   family: hunyuan_image
+  executor:
+    max_sequence_length: 1000
   path: hunyuanvideo-community/HunyuanImage-2.1-Diffusers
 
   memory:

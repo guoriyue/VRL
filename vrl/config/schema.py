@@ -332,6 +332,15 @@ class ModelConfig(ConfigBase):
     path: Any = None
     torch_compile: Annotated[Any, ConfigBlock(("enable", "mode"))] = None
     use_lora: Any = None
+    # model.executor: pure-data chunk-executor config for families using the
+    # shared DiffusionChunkExecutor. Read wholesale into executor_kwargs; the
+    # executor picks the keys it needs (unknown keys fail loud at construction).
+    executor: Annotated[
+        Any,
+        ConfigBlock((
+            "num_frames", "max_sequence_length", "fps", "chunk_passthrough_keys",
+        )),
+    ] = None
 
 
 class SD3ModelConfig(ModelConfig):

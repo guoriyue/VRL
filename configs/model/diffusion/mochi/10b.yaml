@@ -1,6 +1,9 @@
 # Mochi-1 10B AsymmDiT — checkpoint, LoRA. T5-XXL parks on CPU (from_spec).
 model:
   family: mochi
+  executor:
+    num_frames: 19
+    max_sequence_length: 256
   path: genmo/mochi-1-preview
 
   memory:

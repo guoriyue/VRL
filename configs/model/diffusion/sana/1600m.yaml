@@ -2,6 +2,8 @@
 # Sampling shape/denoise defaults live under configs/sampling/.
 model:
   family: sana
+  executor:
+    max_sequence_length: 300
   path: Efficient-Large-Model/Sana_1600M_1024px_diffusers
 
   use_lora: true

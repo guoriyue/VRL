@@ -1,6 +1,8 @@
 # Lumina-Image-2.0 2.6B Next-DiT — checkpoint, LoRA, compile.
 model:
   family: lumina2
+  executor:
+    max_sequence_length: 256
   path: Alpha-VLLM/Lumina-Image-2.0
 
   use_lora: true

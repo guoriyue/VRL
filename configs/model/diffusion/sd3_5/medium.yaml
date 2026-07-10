@@ -2,6 +2,8 @@
 # Sampling shape and denoise defaults live under configs/sampling/.
 model:
   family: sd3_5
+  executor:
+    max_sequence_length: 128
   path: stabilityai/stable-diffusion-3.5-medium
 
   memory:
