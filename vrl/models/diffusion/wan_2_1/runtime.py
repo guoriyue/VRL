@@ -132,26 +132,6 @@ def build_wan_2_1_replay_runtime_bundle_from_cfg(
 
 
 """Wan 2.1 diffusion pipeline executor."""
-
-
-class Wan_2_1ChunkExecutor(DiffusionChunkExecutorBase):
-    """Diffusion executor for Wan 2.1 text-to-video rollouts."""
-
-    family: str = "wan_2_1"
-    task: str = "t2v"
-    family_capability = WAN_2_1_FAMILY_CAPABILITY
-    default_num_frames: int = 1
-    default_max_sequence_length: int = 512
-
-    def __init__(
-        self,
-        model: Any,
-        *,
-        samples_per_chunk: int = 1,
-    ) -> None:
-        self.model = model
-        self.default_samples_per_chunk = max(1, int(samples_per_chunk))
-
 class Wan_2_1I2VChunkExecutor(ReferenceConditionedChunks, DiffusionChunkExecutorBase):
     """Diffusion executor for Wan 2.1 image-to-video rollouts."""
 
@@ -192,7 +172,6 @@ def _boundary_ratio_from_spec(spec: RuntimeBuildSpec) -> float | None:
 
 
 __all__ = [
-    "Wan_2_1ChunkExecutor",
     "Wan_2_1I2VChunkExecutor",
     "build_wan_2_1_replay_runtime_bundle",
     "build_wan_2_1_replay_runtime_bundle_from_cfg",

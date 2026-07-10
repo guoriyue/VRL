@@ -412,7 +412,7 @@ register_rollout_family(
         family="wan_2_1",
         task="t2v",
         aliases=("wan",),
-        executor_cls="vrl.models.diffusion.wan_2_1.runtime:Wan_2_1ChunkExecutor",
+        executor_config=DiffusionExecutorConfig(),
         # The two wan entries carry their own per-variant recipes, so the
         # t2v/i2v resolution the runtime module used to re-derive from cfg is
         # decided here, once, by family selection. Replay stays hand-written

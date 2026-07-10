@@ -11,7 +11,6 @@ from vrl.models.diffusion.wan_2_1.model import (
     WanT2VSamplingState,
 )
 from vrl.models.diffusion.wan_2_1.runtime import (
-    Wan_2_1ChunkExecutor,
     Wan_2_1I2VChunkExecutor,
     build_wan_2_1_replay_runtime_bundle,
     build_wan_2_1_replay_runtime_bundle_from_cfg,
@@ -24,7 +23,6 @@ __all__ = [
     "WanT2VDiffusersModel",
     "WanT2VReplayModel",
     "WanT2VSamplingState",
-    "Wan_2_1ChunkExecutor",
     "Wan_2_1I2VChunkExecutor",
     "build_wan_2_1_replay_runtime_bundle",
     "build_wan_2_1_replay_runtime_bundle_from_cfg",
