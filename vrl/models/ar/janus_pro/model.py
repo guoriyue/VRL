@@ -1209,52 +1209,14 @@ def _load_janus_replay_core_from_pretrained(config: JanusProConfig) -> JanusProR
         trust_remote_code=config.trust_remote_code,
     )
     core = JanusProReplayCore(model_config)
-    checkpoint_dir = _resolve_hf_checkpoint_dir(config.model_path)
-    missing_keys = _load_janus_replay_checkpoint(core, checkpoint_dir)
-    missing_replay = sorted(set(missing_keys) & set(core.state_dict()))
-    if missing_replay:
-        preview = ", ".join(missing_replay[:5])
-        suffix = " ..." if len(missing_replay) > 5 else ""
-        raise RuntimeError(f"Janus replay checkpoint is missing keys: {preview}{suffix}")
-    return core.to(device=config.device, dtype=dtype).eval()
+    from vrl.models.ar.loader import load_replay_core_checkpoint, resolve_hf_checkpoint_dir
 
-
-def _resolve_hf_checkpoint_dir(model_path: str) -> str:
-    import os
-
-    if os.path.isdir(model_path):
-        return model_path
-    from huggingface_hub import snapshot_download
-
-    return snapshot_download(model_path)
-
-
-def _load_janus_replay_checkpoint(model: nn.Module, checkpoint_dir: str) -> list[str]:
-    import os
-
-    from transformers.modeling_utils import load_sharded_checkpoint, load_state_dict
-
-    for name in (
-        "pytorch_model.bin.index.json",
-        "model.safetensors.index.json",
-    ):
-        if os.path.exists(os.path.join(checkpoint_dir, name)):
-            result = load_sharded_checkpoint(model, checkpoint_dir, strict=False)
-            return list(getattr(result, "missing_keys", result[0] if result else []))
-
-    for name in (
-        "model.safetensors",
-        "pytorch_model.bin",
-    ):
-        path = os.path.join(checkpoint_dir, name)
-        if os.path.exists(path):
-            state = load_state_dict(path)
-            missing, _unexpected = model.load_state_dict(state, strict=False)
-            return list(missing)
-
-    raise FileNotFoundError(
-        f"No supported Janus checkpoint file found in {checkpoint_dir}",
+    load_replay_core_checkpoint(
+        core,
+        resolve_hf_checkpoint_dir(config.model_path),
+        owner="Janus",
     )
+    return core.to(device=config.device, dtype=dtype).eval()
 
 
 __all__ = [

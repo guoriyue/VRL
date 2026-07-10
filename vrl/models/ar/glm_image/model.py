@@ -904,66 +904,25 @@ def _load_glm_image_replay_core_from_pretrained(
 ) -> GlmImageReplayCore:
     """Load GLM-Image replay modules without the vision tower / VQ encoder.
 
-    Same load shape as the emu3 replay loader (config-init the minimal module
-    set, then strict-check a ``strict=False`` sharded-checkpoint load against
-    the core's own keys), pointed at the ``vision_language_encoder``
-    checkpoint subfolder.
+    Config-inits the minimal module set, then loads only the replay-core
+    shards via the shared AR loader, pointed at the
+    ``vision_language_encoder`` checkpoint subfolder.
     """
 
-    import json
-    import os
-
     from transformers import AutoConfig
-    from transformers.modeling_utils import load_state_dict
+
+    from vrl.models.ar.loader import load_replay_core_checkpoint, resolve_hf_checkpoint_dir
 
     dtype = resolve_torch_dtype(config.dtype)
     model_config = AutoConfig.from_pretrained(
         config.model_path, subfolder=GLM_IMAGE_AR_SUBFOLDER,
     )
     core = GlmImageReplayCore(model_config)
-    core_keys = set(core.state_dict())
-
-    if os.path.isdir(config.model_path):
-        checkpoint_dir = os.path.join(config.model_path, GLM_IMAGE_AR_SUBFOLDER)
-    else:
-        from huggingface_hub import snapshot_download
-
-        checkpoint_dir = os.path.join(
-            snapshot_download(config.model_path), GLM_IMAGE_AR_SUBFOLDER,
-        )
-
-    # transformers 5.x removed ``load_sharded_checkpoint``; walk the shard
-    # index directly, loading only the shards that carry replay-core keys
-    # (the vision-tower/VQ-only shards are skipped entirely).
-    index_path = os.path.join(checkpoint_dir, "model.safetensors.index.json")
-    single_path = os.path.join(checkpoint_dir, "model.safetensors")
-    loaded_keys: set[str] = set()
-    if os.path.exists(index_path):
-        with open(index_path) as index_file:
-            weight_map = json.load(index_file)["weight_map"]
-        shard_names = sorted(
-            {name for key, name in weight_map.items() if key in core_keys},
-        )
-        for shard_name in shard_names:
-            state = load_state_dict(os.path.join(checkpoint_dir, shard_name))
-            core.load_state_dict(state, strict=False)
-            loaded_keys.update(set(state) & core_keys)
-    elif os.path.exists(single_path):
-        state = load_state_dict(single_path)
-        core.load_state_dict(state, strict=False)
-        loaded_keys.update(set(state) & core_keys)
-    else:
-        raise FileNotFoundError(
-            f"No supported GLM-Image checkpoint file found in {checkpoint_dir}",
-        )
-
-    missing_replay = sorted(core_keys - loaded_keys)
-    if missing_replay:
-        preview = ", ".join(missing_replay[:5])
-        suffix = " ..." if len(missing_replay) > 5 else ""
-        raise RuntimeError(
-            f"GLM-Image replay checkpoint is missing keys: {preview}{suffix}",
-        )
+    load_replay_core_checkpoint(
+        core,
+        resolve_hf_checkpoint_dir(config.model_path, subfolder=GLM_IMAGE_AR_SUBFOLDER),
+        owner="GLM-Image",
+    )
     return core.to(device=config.device, dtype=dtype).eval()
 
 

@@ -26,9 +26,6 @@ from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
-from vrl.models.replay_loading import (
-    minimal_replay_bundle_metadata,
-)
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -44,29 +41,9 @@ def build_cosmos3_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle
         scheduler=driver.scheduler,
         device=spec.device,
     )
-    use_lora = spec.use_lora
-    if use_lora:
-        model.apply_lora(spec)
-    else:
-        model.apply_full_finetune()
-    compile_cfg = spec.torch_compile or {}
-    if compile_cfg.get("enable"):
-        model.torch_compile_transformer(compile_cfg["mode"])
+    from vrl.models.diffusion.build import assemble_replay_bundle
 
-    return RuntimeBundle(
-        model=model,
-        trainable_modules=model.trainable_modules,
-        scheduler=model.scheduler,
-        raw_handle=None,
-        metadata={
-            "model_path": spec.model_name_or_path,
-            "family": "cosmos3",
-            "task_variant": spec.task_variant,
-            "dtype": str(spec.dtype),
-            "use_lora": use_lora,
-            **minimal_replay_bundle_metadata(),
-        },
-    )
+    return assemble_replay_bundle(model, spec, family="cosmos3")
 
 
 def build_cosmos3_replay_runtime_bundle_from_cfg(cfg: Any, device: Any, weight_dtype: Any) -> RuntimeBundle:

@@ -9,9 +9,6 @@ from vrl.models.interfaces.runtime import (
     RuntimeBuildSpec,
     RuntimeBundle,
 )
-from vrl.models.replay_loading import (
-    minimal_replay_bundle_metadata,
-)
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -66,33 +63,14 @@ def build_anima_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
         dtype=resolve_torch_dtype(spec.dtype),
     )
 
-    use_lora = spec.use_lora
-    if use_lora:
-        model.apply_lora(spec)
-    else:
-        model.apply_full_finetune()
-
-    compile_cfg = spec.torch_compile or {}
-    if compile_cfg.get("enable"):
-        model.torch_compile_transformer(compile_cfg["mode"])
-
+    # Trainer replay reads bundle.scheduler directly (no prepare_sampling),
+    # so the timestep table must be set here.
     if num_steps is not None:
         model.set_num_steps(int(num_steps))
 
-    return RuntimeBundle(
-        model=model,
-        trainable_modules=model.trainable_modules,
-        scheduler=model.scheduler,
-        raw_handle=None,
-        metadata={
-            "model_path": spec.model_name_or_path,
-            "family": ANIMA_FAMILY,
-            "task_variant": spec.task_variant,
-            "dtype": str(spec.dtype),
-            "use_lora": use_lora,
-            **minimal_replay_bundle_metadata(),
-        },
-    )
+    from vrl.models.diffusion.build import assemble_replay_bundle
+
+    return assemble_replay_bundle(model, spec, family=ANIMA_FAMILY)
 def load_anima_transformer(spec: RuntimeBuildSpec) -> Any:
     from safetensors.torch import load_file
 

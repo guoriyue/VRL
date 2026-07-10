@@ -77,16 +77,6 @@ def load_flow_match_scheduler(
     )
 
 
-def compile_transformer(model: Any, mode: str) -> None:
-    """Apply ``torch.compile`` to the replay transformer."""
-
-    import torch
-
-    model._set_transformer(
-        torch.compile(model.transformer, mode=mode, fullgraph=False),
-    )
-
-
 def apply_rollout_quantization(model: Any, spec: Any) -> int:
     """Swap the rollout transformer's big GEMMs to the configured low-precision scheme.
 
@@ -174,7 +164,6 @@ def assert_rollout_quantization_applied(model: Any, spec: Any) -> None:
 __all__ = [
     "apply_rollout_quantization",
     "assert_rollout_quantization_applied",
-    "compile_transformer",
     "load_diffusers_scheduler",
     "load_diffusers_transformer",
     "load_flow_match_scheduler",

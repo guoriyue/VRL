@@ -735,62 +735,14 @@ def _load_emu3_replay_core_from_pretrained(config: Emu3Config) -> Emu3ReplayCore
     dtype = resolve_torch_dtype(config.dtype)
     model_config = AutoConfig.from_pretrained(config.model_path)
     core = Emu3ReplayCore(model_config)
-    checkpoint_dir = _resolve_hf_checkpoint_dir(config.model_path)
-    missing_keys = _load_emu3_replay_checkpoint(core, checkpoint_dir)
-    missing_replay = sorted(set(missing_keys) & set(core.state_dict()))
-    if missing_replay:
-        preview = ", ".join(missing_replay[:5])
-        suffix = " ..." if len(missing_replay) > 5 else ""
-        raise RuntimeError(f"Emu3 replay checkpoint is missing keys: {preview}{suffix}")
-    return core.to(device=config.device, dtype=dtype).eval()
+    from vrl.models.ar.loader import load_replay_core_checkpoint, resolve_hf_checkpoint_dir
 
-
-def _resolve_hf_checkpoint_dir(model_path: str) -> str:
-    import os
-
-    if os.path.isdir(model_path):
-        return model_path
-    from huggingface_hub import snapshot_download
-
-    return snapshot_download(model_path)
-
-
-def _load_emu3_replay_checkpoint(model: nn.Module, checkpoint_dir: str) -> list[str]:
-    import json
-    import os
-
-    from transformers.modeling_utils import load_state_dict
-
-    for name in (
-        "pytorch_model.bin.index.json",
-        "model.safetensors.index.json",
-    ):
-        index_path = os.path.join(checkpoint_dir, name)
-        if os.path.exists(index_path):
-            # transformers 5 removed load_sharded_checkpoint; walk the shard
-            # index directly (also lets us skip shards with no replay keys).
-            with open(index_path) as fh:
-                weight_map = json.load(fh)["weight_map"]
-            missing: set[str] = set(model.state_dict().keys())
-            for shard in sorted(set(weight_map.values())):
-                state = load_state_dict(os.path.join(checkpoint_dir, shard))
-                shard_missing, _unexpected = model.load_state_dict(state, strict=False)
-                missing &= set(shard_missing)
-            return sorted(missing)
-
-    for name in (
-        "model.safetensors",
-        "pytorch_model.bin",
-    ):
-        path = os.path.join(checkpoint_dir, name)
-        if os.path.exists(path):
-            state = load_state_dict(path)
-            missing, _unexpected = model.load_state_dict(state, strict=False)
-            return list(missing)
-
-    raise FileNotFoundError(
-        f"No supported Emu3 checkpoint file found in {checkpoint_dir}",
+    load_replay_core_checkpoint(
+        core,
+        resolve_hf_checkpoint_dir(config.model_path),
+        owner="Emu3",
     )
+    return core.to(device=config.device, dtype=dtype).eval()
 
 
 __all__ = [

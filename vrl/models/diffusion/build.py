@@ -29,7 +29,6 @@ from vrl.models.diffusion.common.vae_decode_memory import (
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
 from vrl.models.loader import (
     apply_rollout_quantization,
-    compile_transformer,
     load_diffusers_scheduler,
     load_diffusers_transformer,
     load_flow_match_scheduler,
@@ -163,22 +162,42 @@ def build_diffusion_replay_runtime_bundle(
     )
 
     model.prepare_replay(spec)
+    return assemble_replay_bundle(
+        model,
+        spec,
+        family=capability.family,
+        extra_metadata=extra_metadata,
+    )
 
+
+def assemble_replay_bundle(
+    spec_model: object,
+    spec: RuntimeBuildSpec,
+    *,
+    family: str,
+    extra_metadata: Callable[[object, RuntimeBuildSpec], dict[str, object]] | None = None,
+) -> RuntimeBundle:
+    """Shared replay-bundle assembly: training knobs + provenance + bundle.
+
+    One construction site for the lora/full-finetune + compile tail — the
+    generic replay builder AND the hand-written-construction families (anima,
+    cosmos3, echo) all finish here, so a knob fix (e.g. the dual-stage
+    apply_full_finetune contract) lands once. Model METHODS, not loader
+    helpers: the family decides which transformer trains/compiles.
+    """
+    model = spec_model
     if spec.use_lora:
         model.apply_lora(spec)
     else:
-        # The model method, not a helper: multi-transformer families (wan
-        # dual-stage) decide WHICH transformer is trainable — mirroring the
-        # rollout builder's contract.
         model.apply_full_finetune()
 
     compile_cfg = spec.torch_compile or {}
     if compile_cfg.get("enable"):
-        compile_transformer(model, compile_cfg["mode"])
+        model.torch_compile_transformer(compile_cfg["mode"])
 
     metadata: dict[str, object] = {
         "model_path": spec.model_name_or_path,
-        "family": capability.family,
+        "family": family,
         "task_variant": spec.task_variant,
         "dtype": str(spec.dtype),
         "use_lora": spec.use_lora,
@@ -308,6 +327,7 @@ def build_family_replay_runtime_bundle_from_cfg(cfg, device, weight_dtype) -> Ru
 
 
 __all__ = [
+    "assemble_replay_bundle",
     "build_diffusion_replay_runtime_bundle",
     "build_diffusion_runtime_bundle",
     "build_family_replay_runtime_bundle",

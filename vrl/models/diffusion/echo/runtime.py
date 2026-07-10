@@ -26,9 +26,6 @@ from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces.runtime import RuntimeBuildSpec, RuntimeBundle
-from vrl.models.replay_loading import (
-    minimal_replay_bundle_metadata,
-)
 from vrl.utils.logging import init_logger
 
 logger = init_logger(__name__)
@@ -85,26 +82,9 @@ def build_echo_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
     if num_steps is not None:
         model.set_num_steps(num_steps)
 
-    use_lora = spec.use_lora
-    if use_lora:
-        model.apply_lora(spec)
-    else:
-        model.apply_full_finetune()
+    from vrl.models.diffusion.build import assemble_replay_bundle
 
-    return RuntimeBundle(
-        model=model,
-        trainable_modules=model.trainable_modules,
-        scheduler=model.scheduler,
-        raw_handle=None,
-        metadata={
-            "model_path": spec.model_name_or_path,
-            "family": "echo",
-            "task_variant": spec.task_variant,
-            "dtype": str(spec.dtype),
-            "use_lora": use_lora,
-            **minimal_replay_bundle_metadata(),
-        },
-    )
+    return assemble_replay_bundle(model, spec, family="echo")
 
 
 def build_echo_replay_runtime_bundle_from_cfg(
