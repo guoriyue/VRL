@@ -379,3 +379,106 @@ class _Bundle:
         self.module = nn.Linear(1, 1, bias=False)
         self.trainable_modules = {"module": self.module}
         self.metadata = {"family": "unit"}
+
+
+def test_checkpoint_publish_is_atomic(tmp_path) -> None:
+    """A save that dies mid-write leaves no directory a resume would trust."""
+    from vrl.trainers.checkpointing import (
+        find_latest_complete_checkpoint,
+        is_complete_checkpoint,
+    )
+
+    class _ExplodingExport:
+        def save_pretrained(self, *_args, **_kwargs):
+            raise RuntimeError("disk full")
+
+    target = tmp_path / "checkpoint-3"
+    with pytest.raises(RuntimeError, match="disk full"):
+        save_training_checkpoint(
+            target,
+            trainer=_Trainer(),
+            bundle=_Bundle(),
+            family="unit",
+            progress={"next_epoch": 3, "global_step": 3},
+            rng_state={},
+            export_modules={"lora_weights": _ExplodingExport()},
+        )
+
+    # Neither the final directory nor a trusted leftover exists.
+    assert not target.exists()
+    assert find_latest_complete_checkpoint(tmp_path) is None
+    for leftover in tmp_path.iterdir():
+        assert not is_complete_checkpoint(leftover)
+
+
+def test_published_checkpoint_is_complete_and_size_stamped(tmp_path) -> None:
+    from vrl.trainers.checkpointing import (
+        TRAINING_CHECKPOINT_NAME,
+        is_complete_checkpoint,
+        read_checkpoint_meta,
+    )
+
+    target = tmp_path / "checkpoint-7"
+    save_training_checkpoint(
+        target,
+        trainer=_Trainer(),
+        bundle=_Bundle(),
+        family="unit",
+        progress={"next_epoch": 7, "global_step": 7},
+        rng_state={},
+    )
+
+    assert is_complete_checkpoint(target)
+    meta = read_checkpoint_meta(target)
+    assert meta["checkpoint_file_bytes"] == (target / TRAINING_CHECKPOINT_NAME).stat().st_size
+    # Truncation is detected without loading the payload.
+    (target / TRAINING_CHECKPOINT_NAME).write_bytes(b"torn")
+    assert not is_complete_checkpoint(target)
+
+
+def test_find_latest_complete_checkpoint_skips_staging_and_orders_by_step(tmp_path) -> None:
+    from vrl.trainers.checkpointing import find_latest_complete_checkpoint
+
+    class _StepTrainer(_Trainer):
+        def __init__(self, step: int) -> None:
+            super().__init__()
+            self._step = step
+
+        def state_dict(self):
+            return {"step": self._step, "global_step": self._step}
+
+    for step in (2, 10):
+        save_training_checkpoint(
+            tmp_path / f"checkpoint-{step}",
+            trainer=_StepTrainer(step),
+            bundle=_Bundle(),
+            family="unit",
+            progress={"next_epoch": step, "global_step": step},
+            rng_state={},
+        )
+    # A staging leftover (crash before publish) and a torn dir are both skipped.
+    (tmp_path / "checkpoint-99.tmp-abc").mkdir()
+    torn = tmp_path / "checkpoint-50"
+    torn.mkdir()
+    (torn / "checkpoint.pt").write_bytes(b"torn")
+
+    latest = find_latest_complete_checkpoint(tmp_path)
+    assert latest is not None and latest.name == "checkpoint-10"
+
+
+def test_resave_to_existing_checkpoint_dir_replaces_it(tmp_path) -> None:
+    """Crash-loop overwriting the same checkpoint-N republishes cleanly."""
+    from vrl.trainers.checkpointing import is_complete_checkpoint
+
+    target = tmp_path / "checkpoint-1"
+    for _ in range(2):
+        save_training_checkpoint(
+            target,
+            trainer=_Trainer(),
+            bundle=_Bundle(),
+            family="unit",
+            progress={"next_epoch": 1, "global_step": 1},
+            rng_state={},
+        )
+    assert is_complete_checkpoint(target)
+    assert load_training_checkpoint(target).payload["family"] == "unit"

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import shutil
+import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -131,8 +134,16 @@ def save_training_checkpoint(
         # Non-primary ranks joined the gathers above; only rank0 writes the files.
         return {}
 
-    path = Path(checkpoint_dir)
-    path.mkdir(parents=True, exist_ok=True)
+    # Atomic publish: every artifact (checkpoint.pt, exports, meta) is written
+    # into a same-filesystem staging directory, fsynced, and then renamed into
+    # place in one os.replace. A crash at any point leaves either the previous
+    # complete checkpoint or an ignorable *.tmp-* directory — never a torn
+    # checkpoint.pt that a supervisor resume would trust.
+    final_path = Path(checkpoint_dir)
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    path = Path(
+        tempfile.mkdtemp(prefix=f"{final_path.name}.tmp-", dir=final_path.parent),
+    )
     payload = {
         "schema_version": CHECKPOINT_SCHEMA_VERSION,
         "family": family,
@@ -143,8 +154,49 @@ def save_training_checkpoint(
         "progress": dict(progress),
         "rng": rng_state or capture_rng_state(),
     }
-    torch.save(payload, path / TRAINING_CHECKPOINT_NAME)
+    try:
+        checkpoint_file = path / TRAINING_CHECKPOINT_NAME
+        torch.save(payload, checkpoint_file)
+        with checkpoint_file.open("rb") as handle:
+            os.fsync(handle.fileno())
+    except BaseException:
+        shutil.rmtree(path, ignore_errors=True)
+        raise
 
+    try:
+        return _write_checkpoint_artifacts_and_publish(
+            staging=path,
+            final_path=final_path,
+            checkpoint_file=checkpoint_file,
+            bundle=bundle,
+            family=family,
+            progress=progress,
+            trainer_state=trainer_state,
+            trainable_modules=trainable_modules,
+            export_modules=export_modules,
+            export_ema=export_ema,
+        )
+    except BaseException:
+        shutil.rmtree(path, ignore_errors=True)
+        raise
+
+
+def _write_checkpoint_artifacts_and_publish(
+    *,
+    staging: Path,
+    final_path: Path,
+    checkpoint_file: Path,
+    bundle: Any,
+    family: str,
+    progress: dict[str, Any],
+    trainer_state: dict[str, Any],
+    trainable_modules: dict[str, Any],
+    export_modules: dict[str, Any] | None,
+    export_ema: Any | None,
+) -> dict[str, Any]:
+    """Write exports + meta into ``staging``, then atomically rename into place."""
+
+    path = staging
     export_modules = export_modules or {}
     trainable_parameters: list[Any] = []
     used_ema_export = False
@@ -215,14 +267,36 @@ def save_training_checkpoint(
         if used_ema_export:
             export_ema.copy_temp_to(trainable_parameters)
 
-    return write_checkpoint_meta(
+    meta = write_checkpoint_meta(
         path,
         family=family,
         trainer_state=trainer_state,
         completed_epoch=int(progress.get("completed_epoch", progress.get("next_epoch", 0))),
         next_epoch=int(progress.get("next_epoch", progress.get("next_step", 0))),
         uses_lora=export_modules.get(LORA_WEIGHTS_NAME) is not None,
+        checkpoint_file_bytes=checkpoint_file.stat().st_size,
     )
+    _publish_checkpoint_dir(staging, final_path)
+    return meta
+
+
+def _publish_checkpoint_dir(staging: Path, final_path: Path) -> None:
+    """Atomically rename the fully written staging directory into place.
+
+    Re-saving to an existing directory (crash-loop overwriting the same
+    ``checkpoint-N``) removes the stale directory first; the replaced window is
+    not atomic, but the staging directory is complete before it opens, and
+    discovery ignores ``*.tmp-*`` so no reader can observe a partial state.
+    """
+
+    if final_path.exists():
+        shutil.rmtree(final_path)
+    os.replace(staging, final_path)
+    directory_fd = os.open(final_path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
 
 
 def load_training_checkpoint(path: str | Path) -> TrainingCheckpoint:
@@ -496,13 +570,22 @@ def write_checkpoint_meta(
     completed_epoch: int,
     next_epoch: int,
     uses_lora: bool,
+    checkpoint_file_bytes: int | None = None,
 ) -> dict[str, Any]:
-    """Write human-readable checkpoint metadata next to ``checkpoint.pt``."""
+    """Write human-readable checkpoint metadata next to ``checkpoint.pt``.
+
+    ``checkpoint_file_bytes`` records the published size of ``checkpoint.pt``
+    so completeness checks (supervisor resume discovery) can reject truncated
+    copies without loading the payload.
+    """
 
     meta = {
         "schema_version": CHECKPOINT_SCHEMA_VERSION,
         "family": family,
         "checkpoint_file": TRAINING_CHECKPOINT_NAME,
+        "checkpoint_file_bytes": (
+            int(checkpoint_file_bytes) if checkpoint_file_bytes is not None else None
+        ),
         "trainer_step": int(trainer_state.get("step", 0)),
         "global_step": int(trainer_state.get("global_step", 0)),
         "completed_epoch": int(completed_epoch),
@@ -513,6 +596,58 @@ def write_checkpoint_meta(
     path.mkdir(parents=True, exist_ok=True)
     (path / CHECKPOINT_META_NAME).write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n")
     return meta
+
+
+def is_complete_checkpoint(checkpoint_dir: str | Path) -> bool:
+    """True when the directory holds a fully published checkpoint.
+
+    Complete means: not a staging leftover, meta present, ``checkpoint.pt``
+    present, and (when recorded) the published byte size matches. This is the
+    supervisor's trust boundary — anything else is treated as absent.
+    """
+
+    path = Path(checkpoint_dir)
+    if ".tmp-" in path.name:
+        return False
+    checkpoint_file = path / TRAINING_CHECKPOINT_NAME
+    if not checkpoint_file.is_file():
+        return False
+    try:
+        meta = read_checkpoint_meta(path)
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return False
+    if not meta:
+        return False
+    expected_bytes = meta.get("checkpoint_file_bytes")
+    return not (
+        expected_bytes is not None
+        and checkpoint_file.stat().st_size != int(expected_bytes)
+    )
+
+
+def find_latest_complete_checkpoint(output_dir: str | Path) -> Path | None:
+    """Latest fully published ``checkpoint-*`` directory under ``output_dir``.
+
+    Ordered by meta ``global_step`` (falling back to the numeric directory
+    suffix); incomplete/staging directories are skipped entirely. Returns
+    ``None`` when no trustworthy checkpoint exists — the caller starts fresh.
+    """
+
+    root = Path(output_dir)
+    if not root.is_dir():
+        return None
+    best: tuple[int, int, Path] | None = None
+    for candidate in root.glob("checkpoint-*"):
+        if not candidate.is_dir() or not is_complete_checkpoint(candidate):
+            continue
+        match = re.fullmatch(r"checkpoint-(\d+)", candidate.name)
+        suffix = int(match.group(1)) if match else -1
+        meta = read_checkpoint_meta(candidate)
+        global_step = int(meta.get("global_step", 0) or 0)
+        key = (global_step, suffix, candidate)
+        if best is None or key[:2] > best[:2]:
+            best = key
+    return best[2] if best else None
 
 
 def _non_negative_int(value: Any, field: str) -> int:
@@ -549,7 +684,9 @@ __all__ = [
     "TrainingCheckpoint",
     "capture_rng_state",
     "export_trainable_state",
+    "find_latest_complete_checkpoint",
     "infer_next_epoch",
+    "is_complete_checkpoint",
     "load_trainable_state",
     "load_training_checkpoint",
     "load_training_checkpoint_from_config",
