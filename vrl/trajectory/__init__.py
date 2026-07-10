@@ -40,6 +40,7 @@ from vrl.trajectory.views import (
     RewardView,
     TrainingView,
     build_training_view,
+    named_tensor,
     role_tensor,
 )
 
@@ -69,6 +70,7 @@ __all__ = [
     "build_ar_multisegment_trajectory",
     "build_diffusion_trajectory",
     "build_training_view",
+    "named_tensor",
     "replay_input_ref",
     "role_tensor",
     "tensor_ref",

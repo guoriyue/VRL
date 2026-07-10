@@ -129,6 +129,17 @@ def role_tensor(segment: TrajectorySegment, role: str) -> TrajectoryTensor:
     return matches[0]
 
 
+def named_tensor(segment: TrajectorySegment, name: str) -> TrajectoryTensor:
+    """Read one named tensor from a segment or fail with the missing name."""
+
+    try:
+        return segment.tensors[name]
+    except KeyError as exc:
+        raise RuntimeError(
+            f"segment {segment.name!r} is missing tensor {name!r}",
+        ) from exc
+
+
 def _loss_axis(axes: tuple[str, ...]) -> str:
     for axis in axes:
         if axis != "sample":
@@ -142,5 +153,6 @@ __all__ = [
     "RewardView",
     "TrainingView",
     "build_training_view",
+    "named_tensor",
     "role_tensor",
 ]

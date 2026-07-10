@@ -128,16 +128,6 @@ class TrajectoryResolver:
             out[tensor_name] = move_value_to_device(value, device)
         return out
 
-    def _lookup_tensor(self, ref: str) -> TrajectoryTensor:
-        segment_name, tensor_name = _split_ref(ref, "tensor")
-        segment = self.trajectory.segments.get(segment_name)
-        if segment is None:
-            _fail(f"unknown tensor ref {ref!r}: segment {segment_name!r} is unknown")
-        tensor = segment.tensors.get(tensor_name)
-        if tensor is None:
-            _fail(f"unknown tensor ref {ref!r}: tensor {tensor_name!r} is unknown")
-        return tensor
-
     def _canonical_tensor_ref(self, segment_name: str, ref: str) -> str:
         if "." in ref:
             return ref
