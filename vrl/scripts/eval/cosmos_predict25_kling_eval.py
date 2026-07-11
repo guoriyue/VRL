@@ -89,7 +89,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--steps", type=int, default=0)
     parser.add_argument("--fps", type=int, default=0)
     parser.add_argument("--max-sequence-length", type=int, default=0)
-    parser.add_argument("--guidance-scale", type=float, default=0.0)
+    parser.add_argument("--guidance-scale", type=float, default=None)
     parser.add_argument(
         "--score-key",
         default="",
@@ -150,9 +150,7 @@ def main(argv: list[str] | None = None) -> None:
 
     run_config = {
         "config": args.config,
-        "checkpoints": [
-            {"label": spec.label, "path": str(spec.path)} for spec in checkpoints
-        ],
+        "checkpoints": [{"label": spec.label, "path": str(spec.path)} for spec in checkpoints],
         "prompt_count": len(prompts),
         "samples_per_prompt": int(args.samples_per_prompt),
         "seed": int(args.seed),
@@ -236,7 +234,9 @@ def _resolve_device(device_arg: str) -> torch.device:
     if device_arg != "auto":
         device = torch.device(device_arg)
         if getattr(device, "type", str(device)) == "cuda" and not torch.cuda.is_available():
-            raise RuntimeError(f"CUDA device was requested ({device_arg}), but CUDA is unavailable")
+            raise RuntimeError(
+                f"CUDA device was requested ({device_arg}), but CUDA is unavailable"
+            )
         return device
     return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -272,8 +272,9 @@ def _resolve_sampling(args: argparse.Namespace, cfg: DictConfig) -> dict[str, An
             or OmegaConf.select(cfg, "sampling.max_sequence_length", default=512),
         ),
         "guidance_scale": float(
-            args.guidance_scale
-            or OmegaConf.select(cfg, "sampling.guidance_scale", default=1.0),
+            OmegaConf.select(cfg, "sampling.guidance_scale", default=1.0)
+            if args.guidance_scale is None
+            else args.guidance_scale,
         ),
         "denoise_mode": str(OmegaConf.select(cfg, "rollout.denoise_mode", default="sde")),
         "noise_level": float(OmegaConf.select(cfg, "rollout.noise_level", default=1.0)),
@@ -577,10 +578,7 @@ def _score_key(args: argparse.Namespace, cfg: DictConfig) -> str:
 
 
 def _artifact_id(video: GeneratedVideo) -> str:
-    return (
-        f"{video.checkpoint_label}-"
-        f"p{video.prompt_index:04d}-s{video.sample_index:02d}"
-    )
+    return f"{video.checkpoint_label}-p{video.prompt_index:04d}-s{video.sample_index:02d}"
 
 
 def _write_generation_metadata(videos: list[GeneratedVideo], output_dir: Path) -> None:

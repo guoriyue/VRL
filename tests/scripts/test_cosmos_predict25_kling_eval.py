@@ -113,6 +113,28 @@ def test_checkpoint_eval_rejects_conflicting_lifecycle_flags() -> None:
         eval_script._keep_model_between_checkpoints(args)
 
 
+def test_eval_sampling_inherits_guidance_when_cli_omits_it() -> None:
+    """An omitted guidance flag inherits the merged sampling config."""
+    cfg = OmegaConf.create({"sampling": {"guidance_scale": 4.0}})
+    args = eval_script.build_parser().parse_args(["--checkpoint", "unused"])
+
+    sampling = eval_script._resolve_sampling(args, cfg)
+
+    assert sampling["guidance_scale"] == 4.0
+
+
+def test_eval_sampling_preserves_explicit_zero_guidance() -> None:
+    """An explicit zero disables CFG instead of falling back to the config."""
+    cfg = OmegaConf.create({"sampling": {"guidance_scale": 4.0}})
+    args = eval_script.build_parser().parse_args(
+        ["--checkpoint", "unused", "--guidance-scale", "0"],
+    )
+
+    sampling = eval_script._resolve_sampling(args, cfg)
+
+    assert sampling["guidance_scale"] == 0.0
+
+
 def test_generate_all_releases_model_before_rebuilding(monkeypatch, tmp_path) -> None:
     """Checks non-reused checkpoint eval does not keep old models alive."""
 
@@ -145,7 +167,9 @@ def test_generate_all_releases_model_before_rebuilding(monkeypatch, tmp_path) ->
         "build_family_runtime_bundle",
         fake_build_runtime_bundle,
     )
-    monkeypatch.setattr(eval_script, "_load_checkpoint_into_bundle", lambda bundle, checkpoint: None)
+    monkeypatch.setattr(
+        eval_script, "_load_checkpoint_into_bundle", lambda bundle, checkpoint: None
+    )
     monkeypatch.setattr(eval_script, "_generate_checkpoint_videos", lambda *args, **kwargs: [])
 
     videos = eval_script._generate_all(

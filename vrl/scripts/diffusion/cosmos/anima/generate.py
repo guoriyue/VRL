@@ -73,7 +73,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--height", type=int, default=0)
     parser.add_argument("--steps", type=int, default=0)
     parser.add_argument(
-        "--guidance-scale", "--cfg-scale", dest="guidance_scale", type=float, default=0.0,
+        "--guidance-scale",
+        "--cfg-scale",
+        dest="guidance_scale",
+        type=float,
+        default=None,
     )
     parser.add_argument("--samples-per-prompt", type=int, default=1)
     parser.add_argument("--max-sequence-length", type=int, default=0)
@@ -137,7 +141,9 @@ def main(argv: list[str] | None = None) -> None:
     if not prompts:
         raise ValueError("provide at least one prompt source")
 
-    _configure_lora_for_inference(cfg, lora_path=args.lora_path, use_config_lora=args.use_config_lora)
+    _configure_lora_for_inference(
+        cfg, lora_path=args.lora_path, use_config_lora=args.use_config_lora
+    )
     sampling = _resolve_sampling(args, cfg)
     out_dir = Path(args.output_dir).expanduser().resolve()
     image_dir = out_dir / "images"
@@ -198,7 +204,11 @@ def main(argv: list[str] | None = None) -> None:
                     {
                         "prompt_index": prompt_index,
                         "sample_index": sample_index,
-                        "seed": prompt_seed + sample_index,
+                        # The whole samples_per_prompt batch is drawn from ONE
+                        # generator seeded with prompt_seed (prepare_sampling);
+                        # samples have no individual seeds, so record the batch
+                        # seed that actually reproduces this row.
+                        "seed": prompt_seed,
                         "image_path": str(image_path),
                         "prompt": prompt,
                     }
@@ -213,9 +223,7 @@ def _load_prompts(args: argparse.Namespace, cfg: DictConfig) -> list[str]:
     if args.prompt_file:
         path = Path(args.prompt_file).expanduser()
         prompts.extend(
-            line.strip()
-            for line in path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
+            line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
         )
     manifest_path = args.manifest
     if args.eval_manifest:
@@ -255,7 +263,9 @@ def _resolve_sampling(args: argparse.Namespace, cfg: DictConfig) -> dict[str, An
         "height": int(args.height or OmegaConf.select(cfg, "sampling.height", default=512)),
         "num_steps": num_steps,
         "guidance_scale": float(
-            args.guidance_scale or OmegaConf.select(cfg, "sampling.guidance_scale", default=4.5),
+            OmegaConf.select(cfg, "sampling.guidance_scale", default=4.5)
+            if args.guidance_scale is None
+            else args.guidance_scale,
         ),
         "max_sequence_length": int(
             args.max_sequence_length
