@@ -223,23 +223,22 @@ with memory_profiling(...) as profile_result:
 
 ## Phase 3（L3）：标签式相位交接（替换 kill/relaunch）
 
-> **复核（2026-07-02）：本 Phase 的 colocated-trainer 让位这一类已被独立落地**——
-> [[SPRINT_frozen_component_preservation]] 的缺陷 A（kill→sleep，CuMemAllocator 按 tag
-> 释放/重映射物理页，2026-06-29 GPU 验收过）就是这里要的 slime 形状。Phase 3 剩余对象只有
-> reward-handoff teardown 这一类（bundle 要交给 reward 时仍拆毁）与下方 reload-cost probe。
+> **复核（2026-07-10）：canonical Phase 3 handoff已完成。**
+> [[SPRINT_frozen_component_preservation]] 的缺陷 A 落地了CuMemAllocator按tag
+> 释放/重映射物理页；reward现在是driver内的`LocalRewardRuntime`，不会申请rollout的Ray
+> logical bundle。因此trainer/reward handoff都保留actor并sleep/wake，已删除无生产者的
+> `sleep_eligible`与missing-topology teardown fallback。kill/relaunch只属于terminal cleanup
+> 或未来fault recovery，不再是normal phase handoff。
 
 ```text
-现状   RayGenerationRuntime（with_release_after_collect 租约，vrl/generation/ray/runtime.py）
-       整 actor 拆毁重建（release-after-collect：release()→runtime.shutdown()，
-       下一轮 _ensure_runtime() 用 RayGenerationLauncher 重建）
-       NFT 周期重载耗时【尚未实测】——"~5min" 是文档间互引的估值、非测量值；
-       L3 排期前需一个 reload-cost probe 先建立 baseline
-目标   slime 形状：权重 tag 常驻、激活/缓冲 tag 释放；reward 相位只让出激活
-       显存，回 rollout 相位免重载
-依赖   torch_memory_saver 或等价 allocator pause/resume；风险在与 CUDA Graph/
-       compile 的交互，需单独 spike
-验收   先用 probe 测出 worker 重建在 NFT 单步 wall time 的实际占比（baseline），
-       L3 落地后该占比归零
+现状   RayGenerationRuntime lazy lease（vrl/generation/ray/runtime.py）
+       release()保留actor/placement bundle并park model physical pages；
+       activate() wake后restore desired policy，readiness完成前不接收generate
+目标   已达成slime形状：权重tag驻留在host backing，physical GPU pages在phase间让位，
+       回rollout相位免checkpoint cold reload
+依赖   CuMemAllocator；不可用时worker保留明确的CPU move fallback
+验收   2026-06-29 GPU probe已验证sleep/wake；本次lease并发与transactional commit使用
+       deterministic CPU tests验收，未在占用中的GPU上重复实验
 ```
 
 ---
@@ -251,7 +250,7 @@ with memory_profiling(...) as profile_result:
 | vLLM | profiling-admission：dummy/profile run 拆出 weight、peak activation、non-torch、CUDA Graph 等不可用内存，再把剩余预算给 KV cache/请求池；调度器把"分配失败"当背压（停 admit / 抢占） | `vllm.md:72,183,229`；外部 API 文档 `https://docs.vllm.ai/en/latest/api/vllm/v1/worker/gpu_worker/` | L2；我们也要先 profile 不可动基线，再用剩余预算装最大安全 rollout chunk |
 | SGLang | 准入前查 allocator：`available_size() >= num_tokens` 不满足先 evict 再查，仍不满足 retract 请求稍后重跑 | `sglang.md:363-374` | L2；我们 OOM 后才反应（split），无事前准入 |
 | SGLang-Omni | 字节计价批量收集：encoder 批按 `request_cost_fn` 字节成本 + `max_batch_cost`（10GiB × activation 倍率）；每 stage 显式显存契约（fraction 总和校验） | `sglang-omni.md:304-316,348` | L2（最对症）；VAE decode 微批 / denoise chunk 都该按字节切 |
-| slime | 带标签的暂停/恢复：`torch_memory_saver.pause()/resume()` 按 tag（WEIGHTS vs KV_CACHE）分级释放，权重留显存、激活让位 | `slime.md:75` | L3；我们的 release lifecycle 是 kill/relaunch 整个 actor |
+| slime | 带标签的暂停/恢复：`torch_memory_saver.pause()/resume()` 按 tag（WEIGHTS vs KV_CACHE）分级释放，权重留显存、激活让位 | `slime.md:75` | L3；当前rollout lease已采用actor保活的sleep/wake形状 |
 | cosmos-rl | 有界暂存队列 + 事件驱动释放：recv 临时张量入队、超界即 sync+free；buffer 内存被训练进度反向约束（`samples_on_the_fly`） | `cosmos-rl.md:281-283` | L1/L3；continuous queue 的字节约束**已升级为事前准入**（2026-07 复核：`RolloutScheduler.can_admit` 返回 `byte_budget_full`，producer 每次 submit 前询问；queue._enforce_caps 降级为 in-flight 落地突发的安全网，scheduler.py:137-143 注释明确二者分工） |
 
 不学：paged KV / radix cache 本体——那是"跨请求共享前缀 + 逐 token 增长"的 LLM
