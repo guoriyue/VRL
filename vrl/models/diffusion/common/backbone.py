@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
@@ -120,9 +119,7 @@ class DiffusionBackboneCaller:
         self.runner = runner
 
     def __call__(self, request: DiffusionBackboneInput) -> DiffusionBackboneOutput:
-        started = time.perf_counter()
         cond_branch = self.runner.build_branch(request, "cond")
-        branch_calls = 1
 
         if request.do_cfg:
             uncond_branch = self.runner.build_branch(request, "uncond")
@@ -137,7 +134,6 @@ class DiffusionBackboneCaller:
                 raw_calls = 2
             else:
                 raise ValueError("single_branch runner cannot run CFG")
-            branch_calls = 2
             noise_pred_uncond = self.runner.postprocess_branch(
                 request,
                 uncond_branch,
@@ -173,11 +169,10 @@ class DiffusionBackboneCaller:
             noise_pred=noise_pred,
             noise_pred_cond=noise_pred_cond,
             noise_pred_uncond=noise_pred_uncond,
-            metrics={
-                "branch_calls": branch_calls,
-                "transformer_calls": raw_calls,
-                "elapsed_ms": (time.perf_counter() - started) * 1000.0,
-            },
+            # transformer_calls is the CFG-batching contract observable asserted
+            # by tests/models/diffusion/common/test_backbone_contract.py
+            # (batched_cfg=1 call vs separate_cfg=2); no production reader.
+            metrics={"transformer_calls": raw_calls},
         )
 
     def _call_transformer(self, kwargs: dict[str, Any]) -> torch.Tensor:
