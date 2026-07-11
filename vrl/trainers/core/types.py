@@ -17,9 +17,32 @@ carry no metadata.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal
 
 from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
 from vrl.utils.profiling import TorchProfilerConfig
+
+
+def _parse_non_negative_int(value: object, *, path: str) -> int:
+    """Validate a non-negative integer configuration boundary."""
+
+    if isinstance(value, bool):
+        raise ValueError(f"{path} must be a non-negative integer")
+    try:
+        parsed = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{path} must be a non-negative integer (got {value!r})") from exc
+    if parsed < 0:
+        raise ValueError(f"{path} must be >= 0 (got {parsed})")
+    return parsed
+
+
+def _parse_samples_per_chunk(value: object, *, path: str) -> int | Literal["auto"]:
+    """Validate generation chunking without resolving its runtime ``auto`` mode."""
+
+    if value == "auto":
+        return "auto"
+    return _parse_non_negative_int(value, path=path)
 
 
 @dataclass(slots=True)
@@ -289,12 +312,22 @@ class TrainerConfig:
     # knob: you declare how many groups fit in one slice, the microstep count
     # falls out (SPRINT_memory_budgeted_microbatch).
     microbatch_size: int = field(default=0, metadata={"yaml": "rollout"})
-    # Per-prompt sample chunk size for BOTH generation and training replay: the
-    # generation backend chunks its sample axis by this, and replay/backward
-    # splits each prompt group into chunks of this size (full-group loss math
-    # preserved via per-chunk loss weighting). One public knob bounds both the
-    # forward generation and the heavier backward pass. 0 = legacy full-group.
-    samples_per_chunk: int = field(default=0, metadata={"yaml": "rollout"})
+    # Generation-side sample chunk size. ``auto`` is resolved by the Ray
+    # generation runtime; 0 keeps the legacy full-group fallback. This field is
+    # carried here only because TrainerConfig bridges the merged online recipe --
+    # the trainer must not treat the generation verdict as a replay capacity.
+    samples_per_chunk: int | Literal["auto"] = field(
+        default=0,
+        metadata={"yaml": "rollout"},
+    )
+    # Training-replay sample chunk size, independent of generation because
+    # backward has a lower memory ceiling. Default 1 is the safe video-training
+    # floor; recipes with measured headroom may explicitly raise it. 0 requests
+    # one unsplit full prompt group.
+    replay_samples_per_chunk: int = field(
+        default=1,
+        metadata={"yaml": "actor"},
+    )
     # Fail-fast host-RAM guard for streaming accumulation: if, after collecting
     # one streamed microbatch, system memory used-fraction exceeds this, raise
     # immediately instead of OOMing minutes into the run. Streaming holds ~one
@@ -352,7 +385,10 @@ class TrainerConfig:
         rbs = int(self.prompts_per_batch)
         gas = int(self.gradient_accumulation_steps)
         mbs = int(self.microbatch_size)
-        samples_per_chunk = int(self.samples_per_chunk)
+        samples_per_chunk = _parse_samples_per_chunk(
+            self.samples_per_chunk,
+            path="rollout.samples_per_chunk",
+        )
         if gas < 0:
             raise ValueError(
                 f"actor.gradient_accumulation_steps must be >= 0 (got {gas})",
@@ -361,12 +397,12 @@ class TrainerConfig:
             raise ValueError(
                 f"rollout.microbatch_size must be >= 0 (got {mbs})",
             )
-        if samples_per_chunk < 0:
-            raise ValueError(
-                "rollout.samples_per_chunk must be >= 0 "
-                f"(got {samples_per_chunk})",
-            )
         self.samples_per_chunk = samples_per_chunk
+        replay_samples_per_chunk = _parse_non_negative_int(
+            self.replay_samples_per_chunk,
+            path="actor.replay_samples_per_chunk",
+        )
+        self.replay_samples_per_chunk = replay_samples_per_chunk
         if mbs > 0 and gas > 0:
             # Both declared: must agree (no drift). Tell the user to set one.
             if rbs != gas * mbs:

@@ -696,6 +696,18 @@ def test_cli_overrides_reach_typed_trainer_config() -> None:
     assert trainer.samples_per_chunk == 2
 
 
+def test_generation_chunk_auto_does_not_change_fixed_replay_default() -> None:
+    """Generation auto remains generation-owned; replay defaults safely to one."""
+    cfg = load_config(
+        "experiment/diffusion/sd3_5/online_grpo_ocr",
+        overrides=["rollout.samples_per_chunk=auto"],
+    )
+    trainer = build_configs(cfg)["trainer"]
+
+    assert trainer.samples_per_chunk == "auto"
+    assert trainer.replay_samples_per_chunk == 1
+
+
 def test_invalid_algorithm_kind_fails_fast() -> None:
     """Checks invalid algorithm kind fails fast."""
     cfg = OmegaConf.create({"algorithm": {"kind": "grpo", "adv_estimator": "dpo"}})

@@ -212,6 +212,7 @@ class TestRewardUpdateFlow:
                 ema=EMAConfig(),
                 debug=DebugConfig(),
                 n_samples_per_prompt=2,
+                replay_samples_per_chunk=0,
             ),
             device="cpu",
         )
@@ -646,8 +647,8 @@ class TestRewardUpdateFlow:
         )
 
 
-def test_samples_per_chunk_splits_training_replay_and_preserves_gradient(monkeypatch) -> None:
-    """rollout.samples_per_chunk bounds replay/backward calls without changing gradients."""
+def test_replay_samples_per_chunk_splits_backward_and_preserves_gradient(monkeypatch) -> None:
+    """The replay-only chunk integer changes call shape without changing gradients."""
     import asyncio
 
     import pytest
@@ -724,7 +725,7 @@ def test_samples_per_chunk_splits_training_replay_and_preserves_gradient(monkeyp
             pass
 
     def _make_trainer(
-        samples_per_chunk: int,
+        replay_samples_per_chunk: int,
         *,
         streaming: bool,
     ) -> tuple[OnlineTrainer, list[int]]:
@@ -748,20 +749,20 @@ def test_samples_per_chunk_splits_training_replay_and_preserves_gradient(monkeyp
                 debug=DebugConfig(),
                 n_samples_per_prompt=4,
                 gradient_accumulation_steps=1 if streaming else 0,
-                samples_per_chunk=samples_per_chunk,
+                replay_samples_per_chunk=replay_samples_per_chunk,
             ),
             device="cpu",
         )
         return trainer, replay_calls
 
     def _run(
-        samples_per_chunk: int,
+        replay_samples_per_chunk: int,
         *,
         streaming: bool,
     ) -> tuple[float, list[int], list[int]]:
         device_move_sizes.clear()
         trainer, replay_calls = _make_trainer(
-            samples_per_chunk,
+            replay_samples_per_chunk,
             streaming=streaming,
         )
         recorded_grads: list[float] = []
@@ -792,15 +793,15 @@ def test_samples_per_chunk_splits_training_replay_and_preserves_gradient(monkeyp
         return recorded_grads[0], replay_calls, list(device_move_sizes)
 
     full_grad, full_calls, full_device_moves = _run(
-        samples_per_chunk=0,
+        replay_samples_per_chunk=0,
         streaming=False,
     )
     legacy_split_grad, legacy_split_calls, legacy_split_device_moves = _run(
-        samples_per_chunk=2,
+        replay_samples_per_chunk=2,
         streaming=False,
     )
     streaming_split_grad, streaming_split_calls, streaming_split_device_moves = _run(
-        samples_per_chunk=2,
+        replay_samples_per_chunk=2,
         streaming=True,
     )
 
@@ -894,6 +895,83 @@ def test_microbatch_size_reconciles_with_gradient_accumulation_steps() -> None:
         _cfg(samples_per_chunk=-1)
 
 
+def test_replay_samples_per_chunk_is_an_independent_fixed_integer() -> None:
+    """Replay defaults to one and never inherits generation's chunk declaration."""
+    import pytest
+
+    from vrl.trainers.core.types import OptimConfig, TrainerConfig
+
+    def _cfg(**kw: object) -> TrainerConfig:
+        base = dict(
+            optim=OptimConfig(lr=1e-4),
+            n_samples_per_prompt=2,
+            prompts_per_batch=32,
+            timestep_fraction=0.5,
+            total_epochs=1,
+            output_dir="x",
+            drop_zero_advantage=False,
+        )
+        base.update(kw)
+        return TrainerConfig(**base)  # type: ignore[arg-type]
+
+    assert _cfg().replay_samples_per_chunk == 1
+    assert _cfg(samples_per_chunk=4).replay_samples_per_chunk == 1
+    assert _cfg(samples_per_chunk="auto").samples_per_chunk == "auto"
+    assert _cfg(samples_per_chunk="auto").replay_samples_per_chunk == 1
+    c = _cfg(samples_per_chunk=4, replay_samples_per_chunk=2)
+    assert c.samples_per_chunk == 4
+    assert c.replay_samples_per_chunk == 2
+    assert _cfg(replay_samples_per_chunk=0).replay_samples_per_chunk == 0
+
+    with pytest.raises(ValueError, match="replay_samples_per_chunk"):
+        _cfg(replay_samples_per_chunk=-1)
+    with pytest.raises(ValueError, match="replay_samples_per_chunk"):
+        _cfg(replay_samples_per_chunk="auto")
+    with pytest.raises(ValueError, match="samples_per_chunk"):
+        _cfg(samples_per_chunk="largest")
+
+
+def test_fixed_replay_chunk_remains_available_to_distributed_strategies() -> None:
+    """DDP/FSDP accept the same explicit replay chunk configuration."""
+    from types import SimpleNamespace
+
+    import torch.nn as nn
+
+    from vrl.trainers.core.types import OptimConfig, TrainerConfig
+    from vrl.trainers.online import OnlineTrainer
+
+    class _Algorithm:
+        class _Config:
+            sft_weight = 0.0
+
+        config = _Config()
+
+    for strategy_name in ("ddp", "fsdp"):
+        strategy = SimpleNamespace(
+            context=SimpleNamespace(strategy=strategy_name),
+            prepare_model=lambda model: model,
+        )
+        trainer = OnlineTrainer(
+            algorithm=_Algorithm(),
+            collector=object(),
+            evaluator=None,
+            model=nn.Linear(1, 1),
+            config=TrainerConfig(
+                optim=OptimConfig(lr=1e-4),
+                n_samples_per_prompt=2,
+                prompts_per_batch=1,
+                timestep_fraction=1.0,
+                total_epochs=1,
+                output_dir="x",
+                drop_zero_advantage=False,
+                replay_samples_per_chunk=1,
+            ),
+            strategy=strategy,  # type: ignore[arg-type]
+            device="cpu",
+        )
+        assert trainer.config.replay_samples_per_chunk == 1
+
+
 def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
     """Startup logs should make rollout microbatch residency visible."""
     import logging
@@ -920,7 +998,8 @@ def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
     streaming_messages = [record.getMessage() for record in caplog.records]
     assert any("streaming accumulation enabled" in msg for msg in streaming_messages)
     assert any("microbatch_prompts=1" in msg for msg in streaming_messages)
-    assert any("sample_chunk_size_per_call=2" in msg for msg in streaming_messages)
+    assert any("generation_samples_per_chunk=2" in msg for msg in streaming_messages)
+    assert any("replay_samples_per_chunk=1" in msg for msg in streaming_messages)
     assert any("target_samples_per_update=8" in msg for msg in streaming_messages)
 
     caplog.clear()
@@ -928,7 +1007,8 @@ def test_rollout_memory_plan_logs_streaming_and_legacy_warning(caplog) -> None:
         _log_rollout_memory_plan(_cfg(4, 0))
     legacy_messages = [record.getMessage() for record in caplog.records]
     assert any("legacy full-batch accumulation" in msg for msg in legacy_messages)
-    assert any("sample_chunk_size_per_call=2" in msg for msg in legacy_messages)
+    assert any("generation_samples_per_chunk=2" in msg for msg in legacy_messages)
+    assert any("replay_samples_per_chunk=1" in msg for msg in legacy_messages)
     # The legacy path must emit a host-RAM residency WARNING. Assert the warning
     # level fired (the behavioral contract) rather than pinning its exact prose,
     # which a benign reword would redden with no real regression.

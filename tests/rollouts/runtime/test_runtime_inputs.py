@@ -13,6 +13,7 @@ from vrl.generation.diffusion import DiffusionChunkGatherer
 from vrl.generation.protocols import GenerationChunkExecutor
 from vrl.models.ar.janus_pro.runtime import JanusProR1ChunkGatherer
 from vrl.models.ar.nextstep_1.runtime import NextStep1ChunkGatherer
+from vrl.rollouts.collector.config import build_rollout_config_from_cfg
 from vrl.rollouts.families import (
     RayGenerationLaunchInputs,
     build_ray_generation_inputs_for_family,
@@ -140,6 +141,27 @@ def test_diffusion_launch_contract_uses_worker_primitive_device_and_dtype() -> N
     assert inputs.launch_contract.model_build is not None
     assert inputs.launch_contract.model_build["device"] == "cuda"
     assert inputs.launch_contract.model_build["dtype"] == "float16"
+
+
+def test_generation_chunk_auto_reaches_ray_runtime_without_executor_coercion() -> None:
+    """Ray owns generation auto; the fixed executor fallback must not parse it."""
+    cfg = load_config(
+        "experiment/diffusion/sd3_5/online_grpo_ocr",
+        overrides=["rollout.samples_per_chunk=auto"],
+    )
+
+    inputs = build_ray_generation_inputs_for_family(
+        cfg,
+        "sd3_5",
+        weight_dtype=torch.bfloat16,
+    )
+
+    assert "samples_per_chunk" not in inputs.launch_contract.executor_kwargs
+    assert (
+        build_rollout_config_from_cfg(cfg, family="sd3_5")
+        .request_sampling()["samples_per_chunk"]
+        == "auto"
+    )
 
 
 @pytest.mark.parametrize(

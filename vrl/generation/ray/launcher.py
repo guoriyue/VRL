@@ -358,7 +358,10 @@ def _build_executor_kwargs(entry: Any, cfg: Any) -> dict[str, Any]:
     # image. One source (entry.capability) drives both.
     if entry.capability.trajectory_kind == "diffusion":
         samples_per_chunk = cfg_path(cfg, "rollout.samples_per_chunk", None)
-        if samples_per_chunk is not None:
+        # ``auto`` belongs to the request and is resolved by RayGenerationRuntime
+        # before dispatch. Do not feed it to the executor constructor, whose
+        # fixed fallback accepts only an integer.
+        if samples_per_chunk is not None and samples_per_chunk != "auto":
             kwargs["samples_per_chunk"] = int(samples_per_chunk)
     if entry.capability.supports_reference_conditioning:
         reference_image = cfg_path(cfg, "model.reference_image", None)

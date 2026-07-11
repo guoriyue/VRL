@@ -192,14 +192,17 @@ def _log_rollout_memory_plan(trainer_config: Any) -> None:
     prompts_per_batch = int(trainer_config.prompts_per_batch)
     samples_per_prompt = int(trainer_config.n_samples_per_prompt)
     target_samples = prompts_per_batch * samples_per_prompt
-    samples_per_chunk = int(getattr(trainer_config, "samples_per_chunk", 0) or 0)
-    # One knob bounds both the generation forward chunk and the train replay
-    # chunk, so this per-call sample count applies to generation and backward.
-    sample_chunk_size = (
-        samples_per_prompt
-        if samples_per_chunk <= 0
-        else min(samples_per_prompt, samples_per_chunk)
-    )
+    generation_chunk = getattr(trainer_config, "samples_per_chunk", 0)
+    replay_chunk = getattr(trainer_config, "replay_samples_per_chunk", 0)
+
+    def describe_chunk(value: Any) -> str:
+        if value == "auto":
+            return "auto(pending)"
+        size = int(value or 0)
+        return str(samples_per_prompt if size <= 0 else min(samples_per_prompt, size))
+
+    generation_chunk_text = describe_chunk(generation_chunk)
+    replay_chunk_text = describe_chunk(replay_chunk)
     gas = int(getattr(trainer_config, "gradient_accumulation_steps", 0))
     if gas > 0:
         # Read the reconciled microbatch_size (TrainerConfig.__post_init__ sets it
@@ -210,23 +213,26 @@ def _log_rollout_memory_plan(trainer_config: Any) -> None:
             "Rollout memory plan: streaming accumulation enabled "
             "(prompts_per_batch=%d, gradient_accumulation_steps=%d, "
             "microbatch_prompts=%d, microbatch_samples=%d, "
-            "sample_chunk_size_per_call=%d, "
+            "generation_samples_per_chunk=%s, replay_samples_per_chunk=%s, "
             "target_samples_per_update=%d)",
             prompts_per_batch,
             gas,
             microbatch_prompts,
             microbatch_samples,
-            sample_chunk_size,
+            generation_chunk_text,
+            replay_chunk_text,
             target_samples,
         )
         return
 
     logger.info(
         "Rollout memory plan: legacy full-batch accumulation "
-        "(prompts_per_batch=%d, sample_chunk_size_per_call=%d, "
+        "(prompts_per_batch=%d, generation_samples_per_chunk=%s, "
+        "replay_samples_per_chunk=%s, "
         "target_samples_per_update=%d)",
         prompts_per_batch,
-        sample_chunk_size,
+        generation_chunk_text,
+        replay_chunk_text,
         target_samples,
     )
     if prompts_per_batch > 1:

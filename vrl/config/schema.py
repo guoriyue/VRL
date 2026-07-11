@@ -580,6 +580,9 @@ class ActorSection(ConfigBase):
     gradient_checkpointing: Any = None  # off | full | selective (or bool: true=full, false=off)
     timestep_fraction: Any = None
     timestep_selection: Any = None  # strided | random (DanceGRPO)
+    # Replay-side chunk capacity, independent from generation. Default 1 is the
+    # safe training floor; recipes may explicitly raise it after measurement.
+    replay_samples_per_chunk: Any = None
     # offline DPO entrypoint (vrl/scripts/diffusion/wan_2_1/train_dpo.py)
     prediction_type: Any = None
     scale_lr: Any = None
