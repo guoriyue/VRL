@@ -72,6 +72,24 @@ async def test_multi_reward_accumulates_components_until_reset() -> None:
 
 
 @pytest.mark.asyncio
+async def test_zero_weight_component_is_scored_without_changing_total() -> None:
+    """Checks observation-only scores are logged but excluded from the reward."""
+    reward = MultiReward(
+        [
+            ("train", 1.0, _QueuedBatchReward([[2.0, 3.0]])),
+            ("observe", 0.0, _QueuedBatchReward([[0.7, 0.8]])),
+        ],
+    )
+
+    scores = await reward.score_batch([_make_rollout("a"), _make_rollout("b")])
+
+    assert scores == pytest.approx([2.0, 3.0])
+    assert reward.last_components == pytest.approx(
+        {"train": [2.0, 3.0], "observe": [0.7, 0.8]},
+    )
+
+
+@pytest.mark.asyncio
 async def test_multi_reward_aggregates_inference_observations() -> None:
     """Checks multi reward exposes child reward inference timings."""
     reward = MultiReward(

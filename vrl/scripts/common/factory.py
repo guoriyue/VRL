@@ -101,7 +101,7 @@ def build_reward_from_cfg(
             "online recipe requires a reward section; diffusion_dpo is offline-only",
         )
     reward_weights, reward_kwargs = built["reward"]
-    if not reward_weights:
+    if not any(weight > 0 for weight in reward_weights.values()):
         raise ValueError("At least one reward component must have weight > 0.")
     from vrl.rewards.functions.registry import MultiReward
 

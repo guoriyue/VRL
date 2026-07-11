@@ -69,7 +69,8 @@ class RewardConfig(ConfigBase):
                     f"reward.kwargs.{name} must be a mapping, got {type(sub).__name__}",
                 )
 
-        # Per-component: weight must be numeric and >= 0
+        # Zero keeps a scorer observation-only: it is still computed and logged
+        # but contributes nothing to the optimization reward.
         for name, weight_raw in self.components.items():
             try:
                 weight = float(weight_raw)
@@ -79,8 +80,6 @@ class RewardConfig(ConfigBase):
                 ) from exc
             if weight < 0:
                 raise ValueError(f"reward.components.{name} must be >= 0, got {weight}")
-            if weight == 0:
-                continue
         return self
 
 

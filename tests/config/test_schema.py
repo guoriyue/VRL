@@ -442,8 +442,8 @@ def test_unknown_sampler_type_raises() -> None:
 # ── Reward weight validation ──────────────────────────────────────────────────
 
 
-def test_zero_weight_component_skips_video_reward_check() -> None:
-    """Checks zero weight component skips video reward check."""
+def test_zero_weight_observation_component_is_valid() -> None:
+    """Checks zero weight keeps a component valid for observation-only scoring."""
     cfg = RewardConfig.model_validate(
         {"components": {"kling_video_reward": 0.0}, "kwargs": {}}
     )

@@ -255,7 +255,11 @@ def build_algorithm_config(cfg: DictConfig):
 
 
 def build_reward_config(cfg: DictConfig) -> tuple[dict[str, float], dict[str, dict]]:
-    """Slice ``cfg.reward`` into ``(weights, kwargs)``."""
+    """Slice ``cfg.reward`` into ``(weights, kwargs)``.
+
+    Zero-weight components remain present so they can be scored and logged as
+    observation-only safeguards without changing the optimization reward.
+    """
 
     validate_reward_config(cfg)
     reward = cfg.reward
@@ -265,11 +269,7 @@ def build_reward_config(cfg: DictConfig) -> tuple[dict[str, float], dict[str, di
         resolve=True,
         throw_on_missing=True,
     ) or {}
-    weights: dict[str, float] = {}
-    for name, weight in components.items():
-        component_weight = float(weight)
-        if component_weight > 0:
-            weights[name] = component_weight
+    weights = {name: float(weight) for name, weight in components.items()}
 
     raw_kwargs = reward.get("kwargs", None)
     kwargs: dict[str, dict] = (
