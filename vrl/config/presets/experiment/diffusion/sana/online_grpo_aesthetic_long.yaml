@@ -50,9 +50,3 @@ trainer:
   save_freq: 1                # checkpoint every epoch -> resumable on the shared GPU
   debug:
     first_step: true          # keep the parity assert live (cheap, one line/epoch)
-  eval:
-    enabled: true
-    freq: 1
-    samples_per_prompt: 2
-    max_prompts: 32           # 64 held-out eval images/point -> low-noise curve
-    seed: 20260711

@@ -11,7 +11,7 @@
 # Short-probe run (the chosen validation depth):
 #   CUDA_VISIBLE_DEVICES=0 vrl-train \
 #     --config experiment/diffusion/flux/online_grpo_guard_pickscore_validation \
-#     trainer.total_epochs=30 trainer.eval.freq=5 trainer.save_freq=9999
+#     trainer.total_epochs=30 trainer.standalone evaluation cadence=5 trainer.save_freq=9999
 # Stability control: a paired plain flow_matching_grpo run at the same lr +
 # timestep_fraction=1.0 (GRPO-Guard should stay steadier / not collapse).
 defaults:
@@ -58,6 +58,5 @@ trainer:
   total_epochs: 300
   save_freq: 50
   debug: { first_step: true }
-  eval: { enabled: true, freq: 25, samples_per_prompt: 2, max_prompts: 32, seed: 20260621 }
 
 model: { torch_compile: { enable: false } }

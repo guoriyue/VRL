@@ -66,7 +66,6 @@ trainer:
   total_epochs: 300
   save_freq: 50
   debug: {first_step: true}
-  eval: {enabled: true, freq: 25, samples_per_prompt: 2, max_prompts: 64, seed: 20260628}
 
 reward:
   components:

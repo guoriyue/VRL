@@ -39,12 +39,6 @@ trainer:
   save_freq: 25
   debug:
     first_step: true
-  eval:
-    enabled: true
-    freq: 25
-    samples_per_prompt: 2
-    max_prompts: 64
-    seed: 20260710
 
 reward:
   components:

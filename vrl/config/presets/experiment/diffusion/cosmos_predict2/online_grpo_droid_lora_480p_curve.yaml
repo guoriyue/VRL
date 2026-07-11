@@ -108,7 +108,6 @@ trainer:
   total_epochs: 200
   save_freq: 10                       # resumable via trainer.resume_from after a crash/preemption
   debug: { first_step: true }
-  eval: { enabled: true, freq: 2, samples_per_prompt: 4, max_prompts: 16, seed: 20260628 }
 
 reward:
   components:

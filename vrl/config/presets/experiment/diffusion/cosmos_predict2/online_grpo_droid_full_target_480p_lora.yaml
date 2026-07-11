@@ -51,7 +51,6 @@ trainer:
   total_epochs: 100     # long overnight run
   save_freq: 10         # checkpoints at 10,20,... so a mid-run crash is resumable
   debug: {first_step: true}
-  eval: {enabled: true, freq: 10, samples_per_prompt: 2, max_prompts: 4, seed: 20260628}
 
 reward:
   components:

@@ -73,16 +73,7 @@ trainer:
   # before the first update — separates "weak signal" from "broken replay".
   debug:
     first_step: true
-  # Inline fixed eval = the learning signal. Judge learning by eval_reward_mean
-  # only; training reward_mean rotates prompts each epoch and is unreadable
-  # (SPRINT_cosmos_kling_fixed_eval_signal). For a SHORT diagnostic run override
-  # BOTH save_freq and eval.freq to ~3.
-  eval:
-    enabled: true
-    freq: 32
-    samples_per_prompt: 2
-    max_prompts: 35           # full VideoPhy eval manifest
-    seed: 20260614
+  # Evaluate saved checkpoints separately with the held-out manifest and fixed seeds.
 
 reward:
   kwargs:

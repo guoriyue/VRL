@@ -80,21 +80,7 @@ trainer:
   # (e.g. previous adapter not synced / scheduler drift) before a long run.
   debug:
     first_step: true
-  # Inline fixed eval = the learning signal. Training reward_mean rotates prompts
-  # each epoch (unreadable); this scores a held-out prompt+seed grid every `freq`
-  # epochs into eval_metrics.csv, no backward/EMA. Judge learning by
-  # eval_reward_mean only (SPRINT_cosmos_kling_fixed_eval_signal).
-  eval:
-    enabled: true
-    # NOT auto-derived from save_freq — keep them equal by hand. 32 suits the full
-    # 256-epoch paper run; for a SHORT diagnostic run (<=50 epochs) override BOTH
-    # save_freq and eval.freq to ~3, or 6 epochs produce zero eval points and
-    # "didn't learn" is indistinguishable from "eval never ran". Baseline (epoch=-1)
-    # always runs regardless.
-    freq: 32
-    samples_per_prompt: 2
-    max_prompts: 35           # full VideoPhy eval manifest
-    seed: 20260614
+  # Evaluate saved checkpoints separately with the held-out manifest and fixed seeds.
 
 reward:
   kwargs:

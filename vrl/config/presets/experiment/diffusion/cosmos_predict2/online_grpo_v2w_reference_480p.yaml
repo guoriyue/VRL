@@ -13,4 +13,3 @@ trainer:
   output_dir: outputs/cosmos_pred2_2b_v2w_480p
   save_freq: 50
   total_epochs: 300
-  eval: { enabled: true, freq: 25, samples_per_prompt: 2, max_prompts: 32, seed: 20260621 }

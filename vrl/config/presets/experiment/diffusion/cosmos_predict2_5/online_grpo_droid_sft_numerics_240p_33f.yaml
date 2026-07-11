@@ -44,5 +44,3 @@ trainer:
   save_freq: 2
   debug:
     first_step: true
-  eval:
-    enabled: false

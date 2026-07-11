@@ -139,7 +139,6 @@ trainer:
   debug: { first_step: true }
   # spp 2 (eval n=8/point): each eval video costs ~35s gen + reward; n=16 added
   # ~20min/epoch. The paired design keeps n=8 judgeable across a dense freq=1 series.
-  eval: { enabled: true, freq: 1, samples_per_prompt: 2, max_prompts: 4, seed: 20260628 }
 
 reward:
   components:
