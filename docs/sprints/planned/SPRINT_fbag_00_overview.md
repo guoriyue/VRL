@@ -1,7 +1,8 @@
 # SPRINT: Function-bag audit — 总览与结论
 
-状态：in progress（2026-07-10）。核心模块的 artifacts 拆分与 dead-symbol sweep 已完成；
-`scripts/diffusion/` 全量入口审计仍在进行。子任务索引见 §5。
+状态：in progress（2026-07-11）。核心模块的 artifacts 拆分与 dead-symbol sweep 已完成；
+`scripts/diffusion/` 入口 body-level 审计已完成落地（2 个 FIX + 死协议面清除，见子
+sprint §2.2），仅 perf fp8_math 重复 helper 待处置。子任务索引见 §5。
 
 > 方法：22 个长期库核心文件，每个一个深度审计 agent（读全文 + grep 全仓调用点 + 按
 > AGENTS.md 的"五种死代码形态 + thin-function 保留清单"逐符号定罪），每条"要改"判决再过一个
@@ -89,7 +90,7 @@ config preset 通过 `trainer.entrypoint` 点名字符串调度(`vrl.scripts.dif
 
 - `../done/SPRINT_fbag_artifacts_split.md` —— **done**：trainers/data/artifacts.py 拆 SFT-latents + 合并 `_coerce_data_root`(唯一的真 grab-bag)
 - `../done/SPRINT_fbag_dead_symbol_sweep.md` —— **done**：2 个死函数删除 + 1 个重复 helper 收敛 + 1 个单调用者合并
-- `SPRINT_fbag_scripts_diffusion_entrypoint_audit.md` —— **in progress**：补审 7 个被错分的生产训练入口
+- `SPRINT_fbag_scripts_diffusion_entrypoint_audit.md` —— **入口审计完成**（2026-07-11）：2 个 FIX（wan-DPO 归一化反向、anima seed 虚构）+ definition seam 死协议面清除；余 perf fp8_math
 
 ## 引用
 
