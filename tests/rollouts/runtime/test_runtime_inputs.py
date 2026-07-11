@@ -147,7 +147,18 @@ def test_generation_chunk_auto_reaches_ray_runtime_without_executor_coercion() -
     """Ray owns generation auto; the fixed executor fallback must not parse it."""
     cfg = load_config(
         "experiment/diffusion/sd3_5/online_grpo_ocr",
-        overrides=["rollout.samples_per_chunk=auto"],
+        overrides=[
+            # This test only exercises input routing; resource validation has
+            # dedicated coverage and the repository verify lane hides all GPUs.
+            "distributed.resources.visible_devices=[]",
+            "distributed.resources.trainer.num_gpus=0",
+            "distributed.resources.rollout.num_gpus=0",
+            "distributed.resources.rollout.gpus_per_worker=0",
+            "distributed.resources.rollout.num_workers=1",
+            "distributed.resources.reward.num_gpus=0",
+            "distributed.resources.reward.gpus_per_worker=0",
+            "rollout.samples_per_chunk=auto",
+        ],
     )
 
     inputs = build_ray_generation_inputs_for_family(
