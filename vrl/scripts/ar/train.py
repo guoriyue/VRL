@@ -6,9 +6,9 @@ forwarding — the family string was their only difference). The online family
 comes from ``resolve_online_family``, which also maps algorithm-selected
 variants (janus_pro + token_grpo_multisegment -> janus_pro_r1) that plain
 ``model.family`` normalization would miss.
-The bundle builders come from the rollout family registry: ``runtime_builder``
-/ ``runtime_spec_extractor`` (the same strings the Ray workers import) plus
-``replay_runtime_builder`` for the trainer-side replay bundle.
+The replay bundle builder comes from the rollout family registry:
+``replay_runtime_builder`` + ``runtime_spec_extractor`` (the same extractor
+string the Ray workers import for the rollout side).
 
 Mirrors ``vrl/scripts/diffusion/train.py`` (the registry-descriptor diffusion
 entrypoint) so both sides read the same way.
@@ -44,14 +44,13 @@ async def train_ar_grpo(cfg: DictConfig) -> None:
         cfg,
         OnlineRecipeDefinition(
             family=family,
-            build_bundle=_build_bundle,
             build_replay_bundle=_build_replay_bundle,
             export_modules_getter=export_language_model_lora,
         ),
     )
 
 
-def _resolve_family_imports(cfg: DictConfig) -> tuple[Any, Any, Any]:
+def _build_replay_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
     from vrl.rollouts.families.registry import get_rollout_family_entry
     from vrl.scripts.common.factory import resolve_online_family
     from vrl.utils.config import import_from_path
@@ -62,20 +61,8 @@ def _resolve_family_imports(cfg: DictConfig) -> tuple[Any, Any, Any]:
             f"rollout family {entry.family!r} declares no replay_runtime_builder; "
             "the generic AR entrypoint needs it for the trainer replay bundle",
         )
-    return (
-        import_from_path(entry.runtime_builder),
-        import_from_path(entry.replay_runtime_builder),
-        import_from_path(entry.runtime_spec_extractor),
-    )
-
-
-def _build_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
-    build, _, extract = _resolve_family_imports(cfg)
-    return build(extract(cfg, device, weight_dtype))
-
-
-def _build_replay_bundle(cfg: DictConfig, device: Any, weight_dtype: Any) -> Any:
-    _, build_replay, extract = _resolve_family_imports(cfg)
+    build_replay = import_from_path(entry.replay_runtime_builder)
+    extract = import_from_path(entry.runtime_spec_extractor)
     return build_replay(extract(cfg, device, weight_dtype))
 
 

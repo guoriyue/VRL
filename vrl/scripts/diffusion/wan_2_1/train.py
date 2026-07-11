@@ -20,7 +20,7 @@ from vrl.scripts.common.online import (
     run_online_recipe,
 )
 from vrl.scripts.common.types import OnlineRecipeDefinition
-from vrl.scripts.diffusion.train import build_bundle, build_replay_bundle
+from vrl.scripts.diffusion.train import build_replay_bundle
 
 
 async def train_wan_2_1_i2v_grpo(cfg: DictConfig) -> None:
@@ -30,7 +30,6 @@ async def train_wan_2_1_i2v_grpo(cfg: DictConfig) -> None:
         cfg,
         OnlineRecipeDefinition(
             family="wan_2_1_i2v",
-            build_bundle=build_bundle,
             build_replay_bundle=build_replay_bundle,
             after_bundle_built=enable_transformer_gradient_checkpointing,
             reference_model_getter=default_reference_model,
@@ -45,8 +44,7 @@ def _i2v_collector_kwargs(cfg: DictConfig, examples: list[Any]) -> dict[str, Any
 
     Paths were already resolved at prompt load time (run_online_recipe ->
     ``_resolve_reference_artifacts``); this hook keeps only the wan-specific
-    checks: missing-vs-global fallback, existence, and the I2V conditioning
-    metadata marker.
+    checks: missing-vs-global fallback and existence.
     """
 
     global_reference = str(OmegaConf.select(cfg, "model.reference_image", default="") or "")
@@ -66,9 +64,6 @@ def _i2v_collector_kwargs(cfg: DictConfig, examples: list[Any]) -> dict[str, Any
                 f"{manifest_path}: row {row_index} reference_image does not exist: "
                 f"{raw_path}",
             )
-        metadata = dict(getattr(example, "metadata", None) or {})
-        metadata.setdefault("conditioning", "reference_image")
-        example.metadata = metadata
     return {}
 
 

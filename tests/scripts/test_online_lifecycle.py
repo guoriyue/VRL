@@ -201,7 +201,7 @@ def _cfg() -> Any:
 def _definition() -> OnlineRecipeDefinition:
     return OnlineRecipeDefinition(
         family="sd3_5",
-        build_bundle=lambda cfg, device, weight_dtype: SimpleNamespace(
+        build_replay_bundle=lambda cfg, device, weight_dtype: SimpleNamespace(
             model=_FakeModel(),
             scheduler=object(),
             trainable_modules={},

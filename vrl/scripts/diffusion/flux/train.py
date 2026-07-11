@@ -10,7 +10,7 @@ from vrl.scripts.common.online import (
     run_online_recipe,
 )
 from vrl.scripts.common.types import OnlineRecipeDefinition
-from vrl.scripts.diffusion.train import build_bundle, build_replay_bundle
+from vrl.scripts.diffusion.train import build_replay_bundle
 
 
 async def train_flux_diffusion_nft(cfg: DictConfig) -> None:
@@ -28,7 +28,6 @@ async def train_flux_diffusion_nft(cfg: DictConfig) -> None:
         cfg,
         OnlineRecipeDefinition(
             family="flux",
-            build_bundle=build_bundle,
             build_replay_bundle=build_replay_bundle,
             after_bundle_built=enable_transformer_gradient_checkpointing,
             export_modules_getter=export_transformer_lora,

@@ -330,14 +330,6 @@ def build_family_replay_runtime_bundle(spec: RuntimeBuildSpec) -> RuntimeBundle:
     )
 
 
-def build_family_runtime_bundle_from_cfg(cfg, device, weight_dtype) -> RuntimeBundle:
-    """Whole-cfg convenience for the trainer path: cfg -> spec -> bundle."""
-
-    return build_family_runtime_bundle(
-        extract_family_runtime_spec(cfg, device, weight_dtype),
-    )
-
-
 def build_family_replay_runtime_bundle_from_cfg(cfg, device, weight_dtype) -> RuntimeBundle:
     """Whole-cfg convenience for the trainer path: cfg -> spec -> replay bundle."""
 
@@ -353,6 +345,5 @@ __all__ = [
     "build_family_replay_runtime_bundle",
     "build_family_replay_runtime_bundle_from_cfg",
     "build_family_runtime_bundle",
-    "build_family_runtime_bundle_from_cfg",
     "extract_family_runtime_spec",
 ]

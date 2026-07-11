@@ -34,7 +34,6 @@ from vrl.scripts.common.fixed_eval import _FixedEvalResult, _run_distributed_fix
 from vrl.scripts.common.types import (
     OnlineRecipeDefinition,
     OnlineRecipeStack,
-    RecipeDeviceContext,
 )
 from vrl.trainers.activation_checkpointing import (
     enable_transformer_gradient_checkpointing,
@@ -476,9 +475,8 @@ class OnlineRecipeRun:
 
     This is NOT a second owner of ``stack``'s fields -- component_names,
     reward_fn, trainer, definition, etc. are all read through ``self.stack``.
-    ``OnlineRecipeStack`` stays the family-hook payload (handed to ``before_step``
-    / ``after_step``); ``OnlineRecipeRun`` is the IO/execution controller and is
-    never exposed to family hooks.
+    ``OnlineRecipeStack`` holds the wired runtime objects; ``OnlineRecipeRun``
+    is the IO/execution controller layered on top of it.
     """
 
     stack: OnlineRecipeStack
@@ -575,9 +573,6 @@ class OnlineRecipeRun:
             ),
             **{f"r_{name}": component_means[name] for name in component_names},
         }
-        metric_row_hook = self.stack.definition.metric_row_hook
-        if metric_row_hook is not None:
-            metric_row_hook(row, metrics)
         with self.csv_path.open("a", encoding="utf-8") as handle:
             handle.write(
                 ",".join(
@@ -742,8 +737,6 @@ async def run_online_recipe(
     _preflight_production_video_reward(cfg)
     built = build_configs(cfg)
     trainer_config = built["trainer"]
-    if definition.configure_trainer is not None:
-        definition.configure_trainer(cfg, trainer_config)
     _apply_precision_policy(cfg, trainer_config)
     _log_rollout_memory_plan(trainer_config)
     _warn_global_std_streaming_divergence(cfg, trainer_config)
@@ -773,11 +766,7 @@ async def run_online_recipe(
     device = training_context.device
     # Replay/training model storage follows ``train`` (via trainer_config);
     # the generation (rollout) model can use a different ``rollout`` dtype.
-    weight_dtype = (
-        definition.weight_dtype_getter(cfg, trainer_config, torch)
-        if definition.weight_dtype_getter is not None
-        else torch_dtype_for_trainer_precision(trainer_config, torch)
-    )
+    weight_dtype = torch_dtype_for_trainer_precision(trainer_config, torch)
     policy = resolve_precision_policy(cfg)
     rollout_precision = policy.rollout
     if rollout_precision == "fp4":
@@ -795,10 +784,6 @@ async def run_online_recipe(
         rollout_weight_dtype = resolve_torch_dtype(policy.train)
     else:
         rollout_weight_dtype = resolve_torch_dtype(rollout_precision)
-    context = RecipeDeviceContext(
-        device=device,
-        weight_dtype=weight_dtype,
-    )
     examples = load_prompt_examples_from_config(cfg.data)
     _resolve_reference_artifacts(examples, cfg)
     eval_cfg = getattr(trainer_config, "eval", None)
@@ -808,17 +793,17 @@ async def run_online_recipe(
     )
     _resolve_reference_artifacts(eval_examples, cfg)
 
-    bundle_builder = definition.build_replay_bundle or definition.build_bundle
     log_host_memory("before_trainer_bundle_build", log=logger)
-    bundle = bundle_builder(cfg, context.device, context.weight_dtype)
+    bundle = definition.build_replay_bundle(cfg, device, weight_dtype)
     log_host_memory("after_trainer_bundle_build", log=logger)
     if definition.after_bundle_built is not None:
         definition.after_bundle_built(bundle, cfg)
     model = require_runtime_model(
-        definition.model_getter(bundle),
-        owner=f"{definition.family}.model_getter",
+        bundle.model,
+        owner=f"{definition.family}.bundle.model",
     )
-    scheduler = definition.scheduler_getter(bundle)
+    # Scheduler feeds the flow-matching evaluator when the family bundle has one.
+    scheduler = getattr(bundle, "scheduler", None)
 
     # One run-level Ray placement group owns trainer/rollout/reward bundles for
     # the whole run. Created after the trainer model is on its GPU and before
@@ -955,24 +940,17 @@ async def run_online_recipe(
             cfg=cfg,
             definition=definition,
             bundle=bundle,
-            model=model,
             reward_fn=components.reward_fn,
-            collector=collector,
-            algorithm=components.algorithm,
-            evaluator=components.evaluator,
             trainer=trainer,
             strategy=strategy,
-            trainer_config=trainer_config,
-            collector_config=components.collector_config,
             family=components.family,
-            output_dir=output_dir,
             component_names=component_names,
         )
         # Execution controller for this run: owns the metrics-CSV paths, prompt
         # RNG, and resume flag, and carries the metrics/checkpoint IO as methods so
         # the loop below stops threading csv_path / reward_fn / component_names /
         # rng through free helpers. Holds `stack` (single owner of the wired
-        # runtime); never handed to family hooks, which still receive `stack`.
+        # runtime).
         run = OnlineRecipeRun(
             stack=stack,
             csv_path=output_dir / "metrics.csv",
@@ -1081,11 +1059,6 @@ async def run_online_recipe(
                 training_context.rank * rank_batch : (training_context.rank + 1) * rank_batch
             ]
             example_batch = [examples[i] for i in shard]
-            if definition.before_step is not None:
-                maybe_awaitable = definition.before_step(stack, epoch, example_batch)
-                if maybe_awaitable is not None:
-                    await maybe_awaitable
-
             if gradient_accumulation_steps > 0:
                 # Streaming accumulation: split the optimizer-target batch into
                 # microbatches collected/trained/released one at a time so host
@@ -1112,11 +1085,6 @@ async def run_online_recipe(
             # (disjoint eval shard + stats all-reduce); rank0 writes the row.
             if eval_enabled and (epoch + 1) % int(eval_cfg.freq) == 0:
                 await _fixed_eval_and_log(epoch)
-
-            if definition.after_step is not None:
-                maybe_awaitable = definition.after_step(stack, epoch, example_batch)
-                if maybe_awaitable is not None:
-                    await maybe_awaitable
 
             # Checkpoint on EVERY rank (NOT gated by is_primary): the trainable-state
             # export inside is a collective under FSDP2 (all ranks all-gather), and

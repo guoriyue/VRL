@@ -190,13 +190,12 @@ def test_online_metrics_csv_includes_logprob_mismatch_metrics(tmp_path):
 
     csv_path = tmp_path / "metrics.csv"
     # The metrics-CSV side effects now live on OnlineRecipeRun; the controller
-    # reads component_names / reward_fn / metric_row_hook off its stack, so a
-    # minimal SimpleNamespace stack is enough to exercise the row formatting.
+    # reads component_names / reward_fn off its stack, so a minimal
+    # SimpleNamespace stack is enough to exercise the row formatting.
     run = OnlineRecipeRun(
         stack=SimpleNamespace(
             component_names=(),
             reward_fn=SimpleNamespace(last_components={}),
-            definition=SimpleNamespace(metric_row_hook=None),
         ),
         csv_path=csv_path,
         eval_csv_path=tmp_path / "eval_metrics.csv",
