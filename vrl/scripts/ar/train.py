@@ -2,8 +2,10 @@
 
 AR families train through this single entrypoint instead of a per-family
 ``train.py`` (the janus_pro / nextstep_1 scripts it replaces were pure
-forwarding — the family string was their only difference, and the r1 variant
-already derived its ar_task from ``cfg.model.family`` inside the extractor).
+forwarding — the family string was their only difference). The online family
+comes from ``resolve_online_family``, which also maps algorithm-selected
+variants (janus_pro + token_grpo_multisegment -> janus_pro_r1) that plain
+``model.family`` normalization would miss.
 The bundle builders come from the rollout family registry: ``runtime_builder``
 / ``runtime_spec_extractor`` (the same strings the Ray workers import) plus
 ``replay_runtime_builder`` for the trainer-side replay bundle.
@@ -30,9 +32,14 @@ from vrl.scripts.common.types import OnlineRecipeDefinition
 async def train_ar_grpo(cfg: DictConfig) -> None:
     """Run token GRPO for any AR family (reward chosen by config)."""
 
-    from vrl.rollouts.families.registry import normalize_rollout_family
+    # resolve_online_family, not plain normalization: the shipped R1 recipe
+    # keeps model.family=janus_pro and selects janus_pro_r1 via
+    # algorithm.kind=token_grpo_multisegment. Passing the base family here
+    # short-circuits `family or resolve_online_family(cfg)` in the factory
+    # and the multisegment guard rejects the run.
+    from vrl.scripts.common.factory import resolve_online_family
 
-    family = normalize_rollout_family(str(cfg.model.family))
+    family = resolve_online_family(cfg)
     await run_online_recipe(
         cfg,
         OnlineRecipeDefinition(
@@ -45,13 +52,11 @@ async def train_ar_grpo(cfg: DictConfig) -> None:
 
 
 def _resolve_family_imports(cfg: DictConfig) -> tuple[Any, Any, Any]:
-    from vrl.rollouts.families.registry import (
-        get_rollout_family_entry,
-        normalize_rollout_family,
-    )
+    from vrl.rollouts.families.registry import get_rollout_family_entry
+    from vrl.scripts.common.factory import resolve_online_family
     from vrl.utils.config import import_from_path
 
-    entry = get_rollout_family_entry(normalize_rollout_family(str(cfg.model.family)))
+    entry = get_rollout_family_entry(resolve_online_family(cfg))
     if entry.replay_runtime_builder is None:
         raise ValueError(
             f"rollout family {entry.family!r} declares no replay_runtime_builder; "
