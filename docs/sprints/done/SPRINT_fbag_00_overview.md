@@ -1,8 +1,7 @@
 # SPRINT: Function-bag audit — 总览与结论
 
-状态：in progress（2026-07-11）。核心模块的 artifacts 拆分与 dead-symbol sweep 已完成；
-`scripts/diffusion/` 入口 body-level 审计已完成落地（2 个 FIX + 死协议面清除，见子
-sprint §2.2），仅 perf fp8_math 重复 helper 待处置。子任务索引见 §5。
+状态：**done（2026-07-11）**。核心模块的 artifacts 拆分、dead-symbol sweep,以及
+`scripts/diffusion/` 全量入口审计均已完成——三个子 sprint 全部落在 `../done/`。子任务索引见 §5。
 
 > 方法：22 个长期库核心文件，每个一个深度审计 agent（读全文 + grep 全仓调用点 + 按
 > AGENTS.md 的"五种死代码形态 + thin-function 保留清单"逐符号定罪），每条"要改"判决再过一个
@@ -32,7 +31,7 @@ DDPStrategy 两个策略共用**(strategy.py:244/395 与 348/494)——收进 FS
 `vrl/trainers/data/artifacts.py`(451 行),它**确实是 grab-bag**:一个文件塞了两个零耦合的
 落盘契约——① prompt-manifest 路径解析 + 溯源校验(和文件 docstring 相符),② SFT clean-latents
 张量分片存取(`save_/load_sft_latents`,和上面不共享任何符号/常量/helper,docstring 里根本没提)。
-拆分结果见 `../done/SPRINT_fbag_artifacts_split.md`。而 `vrl/utils/artifacts.py`(64 行)是干净的,唯一问题是
+拆分结果见 `./SPRINT_fbag_artifacts_split.md`。而 `vrl/utils/artifacts.py`(64 行)是干净的,唯一问题是
 被 ① 抄了一份 `_coerce_data_root`。
 
 ## 2. 全量清单(22 文件 × 判决)
@@ -42,21 +41,21 @@ DDPStrategy 两个策略共用**(strategy.py:244/395 与 348/494)——收进 FS
 | trainers/fsdp.py | cohesive-keep | 无(假设已证伪,见 §1) |
 | trainers/checkpointing.py | cohesive-keep | 无(565 行=单一大职责,非袋) |
 | trainers/activation_checkpointing.py | cohesive-keep | 无 |
-| **trainers/data/artifacts.py** | **grab-bag-split** | **已完成**：拆 SFT-latents + 合并 `_coerce_data_root` → `../done/SPRINT_fbag_artifacts_split.md` |
+| **trainers/data/artifacts.py** | **grab-bag-split** | **已完成**：拆 SFT-latents + 合并 `_coerce_data_root` → `./SPRINT_fbag_artifacts_split.md` |
 | utils/artifacts.py | mostly-fine | 成为 `_coerce_data_root` 的唯一 owner |
-| **utils/media.py** | minor | **已完成**：保留共享 `write_png`，删除 video_world 私拷 → `../done/SPRINT_fbag_dead_symbol_sweep.md` |
+| **utils/media.py** | minor | **已完成**：保留共享 `write_png`，删除 video_world 私拷 → `./SPRINT_fbag_dead_symbol_sweep.md` |
 | utils/memory.py | mostly-fine | 无 |
 | utils/config.py | cohesive-keep | 无(config 访问器 facade,合法) |
 | config/validation.py | cohesive-keep | 无 |
-| **config/builders.py** | minor | **已完成**：删死函数 `section_to_dataclass` → `../done/SPRINT_fbag_dead_symbol_sweep.md` |
+| **config/builders.py** | minor | **已完成**：删死函数 `section_to_dataclass` → `./SPRINT_fbag_dead_symbol_sweep.md` |
 | config/loading.py | cohesive-keep | 无 |
 | config/precision.py | cohesive-keep | 无 |
 | config/unknown_keys.py | cohesive-keep | 无 |
 | trajectory/builders.py | cohesive-keep | 无 |
 | trajectory/ops.py | cohesive-keep | 无(名字像袋,内容内聚) |
 | trajectory/storage.py | cohesive-keep | 无 |
-| **rollouts/collector/config.py** | minor | **已完成**：合并单调用者 `_has_sde_sampling` → `../done/SPRINT_fbag_dead_symbol_sweep.md` |
-| **rollouts/batch/ops.py** | minor | **已完成**：删死函数 `shuffle_and_rebatch_batches` → `../done/SPRINT_fbag_dead_symbol_sweep.md` |
+| **rollouts/collector/config.py** | minor | **已完成**：合并单调用者 `_has_sde_sampling` → `./SPRINT_fbag_dead_symbol_sweep.md` |
+| **rollouts/batch/ops.py** | minor | **已完成**：删死函数 `shuffle_and_rebatch_batches` → `./SPRINT_fbag_dead_symbol_sweep.md` |
 | nn/layers/attention/cache_rows.py | cohesive-keep | 无 |
 | nn/modules/ar_attention_backends.py | cohesive-keep | 无(framework-adapter 跨家族一致形状,合法) |
 | models/diffusion/build.py | cohesive-keep | 无 |
@@ -67,11 +66,15 @@ DDPStrategy 两个策略共用**(strategy.py:244/395 与 348/494)——收进 FS
 sweep 判定 `vrl/scripts/{perf,eval,data}` 都是**正确的一次性生命周期**(procedural 函数袋在这里
 合法,AGENTS.md 明说),但 **`vrl/scripts/diffusion/` 被错分**:它是生产训练/生成入口层,由 ~15 个
 config preset 通过 `trainer.entrypoint` 点名字符串调度(`vrl.scripts.diffusion.<family>.train:...`)。
-这 7 个文件是长期资产,却因为在 `scripts/` 下而被我这轮深度审计排除。跟进见
-`SPRINT_fbag_scripts_diffusion_entrypoint_audit.md`。
+这些文件是长期资产,却因为在 `scripts/` 下而被我这轮深度审计排除。补审已完成(2026-07-11),见
+`./SPRINT_fbag_scripts_diffusion_entrypoint_audit.md`:**全部生产入口判为 cohesive-keep**——每家
+`train.py` 都是委托共享 `run_online_recipe` 的薄 recipe wrapper,只带各自合法的家族钩子,无 form-2/3/4;
+唯一的离线入口 `train_dpo.py` 亦内聚。两个局部 finding 已落地提交。(补审同时修正了第一版误列的
+`sd3_5/train.py` / `train_wan_2_1_grpo`——两者不存在,sd3.5 与 wan-T2V 都走通用入口。)
 
-另:`scripts/perf/common/fp8_math.py` 里 `amax_scale`/`tensorwise_fp8_matmul` 手抄了
-`nn/quantization/fp8.py` 的量化核心序列(form-4/5),但它在一次性 perf 目录下,优先级低,并入上面那篇。
+另:`scripts/perf/common/fp8_math.py` 里 `amax_scale`/`tensorwise_fp8_matmul` 曾被疑手抄
+`nn/quantization/fp8.py` 的量化核心(form-4/5),补审后**判 KEEP**:它们是 3 个仍活着的 perf probe 的
+独立测量参照,真魔数 `FP8_E4M3_MAX` 已单源 import,重复的只是一行教科书式 amax-scale 定义。详见子篇 §3。
 
 ## 4. Non-goals(明确不做,及原因——防止下次又议)
 
@@ -88,14 +91,14 @@ config preset 通过 `trainer.entrypoint` 点名字符串调度(`vrl.scripts.dif
 
 ## 5. 子 sprint 索引
 
-- `../done/SPRINT_fbag_artifacts_split.md` —— **done**：trainers/data/artifacts.py 拆 SFT-latents + 合并 `_coerce_data_root`(唯一的真 grab-bag)
-- `../done/SPRINT_fbag_dead_symbol_sweep.md` —— **done**：2 个死函数删除 + 1 个重复 helper 收敛 + 1 个单调用者合并
-- `SPRINT_fbag_scripts_diffusion_entrypoint_audit.md` —— **入口审计完成**（2026-07-11）：2 个 FIX（wan-DPO 归一化反向、anima seed 虚构）+ definition seam 死协议面清除；余 perf fp8_math
+- `./SPRINT_fbag_artifacts_split.md` —— **done**：trainers/data/artifacts.py 拆 SFT-latents + 合并 `_coerce_data_root`(唯一的真 grab-bag)
+- `./SPRINT_fbag_dead_symbol_sweep.md` —— **done**：2 个死函数删除 + 1 个重复 helper 收敛 + 1 个单调用者合并
+- `./SPRINT_fbag_scripts_diffusion_entrypoint_audit.md` —— **done**：补审被错分的生产训练入口层——全部 cohesive-keep,2 个 finding 已落地,fp8_math 重复项判 KEEP,config-resolve 33/33 通过
 
 ## 引用
 
 - 审计脚本:`scratchpad/fbag_audit.js`(一次性 workflow);逐 agent 结果 journal 在 workflow 转录目录
 - 平反证据:`vrl/trainers/strategy.py:244,348,389,395,494`(pg 生命周期跨策略共用)
-- 坐实证据:`../done/SPRINT_fbag_artifacts_split.md`；当前实现分别位于
+- 坐实证据:`./SPRINT_fbag_artifacts_split.md`；当前实现分别位于
   `vrl/trainers/data/artifacts.py` 与 `vrl/trainers/data/sft_latents.py`
 - 范围漏洞:config `recipe/online/*.yaml` 的 `trainer.entrypoint` 指向 `vrl.scripts.diffusion.*`
