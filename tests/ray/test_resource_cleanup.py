@@ -6,7 +6,7 @@ import logging
 import sys
 from types import SimpleNamespace
 
-from vrl.ray.lifecycle import kill_actors, remove_placement_group
+from vrl.ray.resource_cleanup import kill_actors, remove_placement_group
 
 
 def test_actor_cleanup_failure_is_logged(caplog) -> None:
@@ -16,7 +16,7 @@ def test_actor_cleanup_failure_is_logged(caplog) -> None:
             del actor, no_restart
             raise RuntimeError("kill failed")
 
-    with caplog.at_level(logging.WARNING, logger="vrl.ray.lifecycle"):
+    with caplog.at_level(logging.WARNING, logger="vrl.ray.resource_cleanup"):
         failures = kill_actors(_Ray(), ["actor-1"])
 
     assert len(failures) == 1
@@ -37,7 +37,7 @@ def test_placement_cleanup_failure_is_logged(monkeypatch, caplog) -> None:
         SimpleNamespace(remove_placement_group=_remove),
     )
 
-    with caplog.at_level(logging.WARNING, logger="vrl.ray.lifecycle"):
+    with caplog.at_level(logging.WARNING, logger="vrl.ray.resource_cleanup"):
         failure = remove_placement_group("pg-1")
 
     assert isinstance(failure, RuntimeError)

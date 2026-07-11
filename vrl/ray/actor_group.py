@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from vrl.ray.dependencies import require_ray
-from vrl.ray.lifecycle import kill_actors
+from vrl.ray.resource_cleanup import kill_actors
 from vrl.ray.placement import actor_scheduling_strategy
 
 

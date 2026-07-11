@@ -32,7 +32,7 @@ from vrl.ray.dependencies import (
     inspect_cluster,
     require_ray,
 )
-from vrl.ray.lifecycle import kill_actors, remove_placement_group
+from vrl.ray.resource_cleanup import kill_actors, remove_placement_group
 from vrl.ray.resources import (
     BundleLayout,
     ResolvedDistributedResources,

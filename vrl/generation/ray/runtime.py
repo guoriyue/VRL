@@ -18,7 +18,7 @@ from vrl.generation.ray.lifecycle_fsm import RuntimeLifecycle, RuntimePhase
 from vrl.generation.ray.weight_sync import GenerationWeightSync
 from vrl.generation.types import GenerationOutput, GenerationRequest
 from vrl.ray.dependencies import require_ray
-from vrl.ray.lifecycle import kill_actors, remove_placement_group
+from vrl.ray.resource_cleanup import kill_actors, remove_placement_group
 from vrl.ray.placement import RolePlacement
 
 logger = logging.getLogger(__name__)
