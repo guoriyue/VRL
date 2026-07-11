@@ -65,7 +65,10 @@ class AestheticRewardModel(TorchRewardModel):
                 device = next(self.parameters()).device
                 inputs = self.processor(images=images, return_tensors="pt")
                 inputs = {k: v.to(self.dtype).to(device) for k, v in inputs.items()}
-                embed = self.clip.get_image_features(**inputs)
+                # Transformers 5 returns its projected embedding inside the
+                # feature output; the LAION head requires that 768-d projection,
+                # not the unprojected vision hidden state.
+                embed = self.clip.get_image_features(**inputs).pooler_output
                 embed = embed / torch.linalg.vector_norm(embed, dim=-1, keepdim=True)
                 return self.mlp(embed).squeeze(1)
 

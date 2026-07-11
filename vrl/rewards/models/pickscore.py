@@ -76,9 +76,9 @@ class PickScoreRewardModel(TorchRewardModel):
                 padding=True, truncation=True, max_length=77, return_tensors="pt",
             )
             text_inputs = {k: v.to(self.device) for k, v in text_inputs.items()}
-            image_embs = self._model.get_image_features(**image_inputs)
+            image_embs = self._model.get_image_features(**image_inputs).pooler_output
             image_embs = image_embs / image_embs.norm(p=2, dim=-1, keepdim=True)
-            text_embs = self._model.get_text_features(**text_inputs)
+            text_embs = self._model.get_text_features(**text_inputs).pooler_output
             text_embs = text_embs / text_embs.norm(p=2, dim=-1, keepdim=True)
             logit_scale = self._model.logit_scale.exp()
             scores = logit_scale * (text_embs @ image_embs.T)
