@@ -31,7 +31,6 @@ from vrl.scripts.common.factory import (
     build_collector_from_cfg,
     build_online_recipe_components,
 )
-from vrl.scripts.common.fixed_eval import _FixedEvalResult, _run_distributed_fixed_eval
 from vrl.scripts.common.types import (
     OnlineRecipeDefinition,
     OnlineRecipeStack,
@@ -51,10 +50,7 @@ from vrl.trainers.checkpointing import (
     save_resolved_config,
     save_training_checkpoint,
 )
-from vrl.trainers.data import (
-    load_eval_prompt_examples_from_config,
-    load_prompt_examples_from_config,
-)
+from vrl.trainers.data import load_prompt_examples_from_config
 from vrl.trainers.distributed import DistributedTrainingContext, resolve_training_context
 from vrl.trainers.online import OnlineTrainer
 from vrl.trainers.precision import torch_dtype_for_trainer_precision
@@ -499,7 +495,6 @@ class OnlineRecipeRun:
 
     stack: OnlineRecipeStack
     csv_path: Path
-    eval_csv_path: Path
     rng: Any
     resume: bool
 
@@ -631,34 +626,6 @@ class OnlineRecipeRun:
                 + "\n",
             )
 
-    def prepare_eval_metrics_csv(self) -> None:
-        """eval_metrics.csv header. ``epoch=-1`` is the pre-RL baseline row."""
-
-        component_cols = ",".join(f"r_{name}" for name in self.stack.component_names)
-        header = "epoch,eval_reward_mean,eval_reward_std,eval_reward_stderr,eval_n,global_step"
-        if component_cols:
-            header = f"{header},{component_cols}"
-        prepare_metrics_csv(self.eval_csv_path, header + "\n", resume=self.resume)
-
-    def write_eval_metric_row(
-        self,
-        epoch: int,
-        result: _FixedEvalResult,
-        *,
-        global_step: int,
-    ) -> None:
-        means = result.component_means
-        columns = [
-            str(epoch),
-            f"{result.reward_mean:.4f}",
-            f"{result.reward_std:.4f}",
-            f"{result.reward_stderr:.4f}",
-            str(result.n),
-            str(global_step),
-            *(f"{means.get(name, float('nan')):.4f}" for name in self.stack.component_names),
-        ]
-        with self.eval_csv_path.open("a", encoding="utf-8") as handle:
-            handle.write(",".join(columns) + "\n")
 
     def save_checkpoint(self, path: Path, *, epoch: int) -> None:
         stack = self.stack
@@ -805,13 +772,6 @@ async def run_online_recipe(
         rollout_weight_dtype = resolve_torch_dtype(rollout_precision)
     examples = load_prompt_examples_from_config(cfg.data)
     _resolve_reference_artifacts(examples, cfg)
-    eval_cfg = getattr(trainer_config, "eval", None)
-    eval_enabled = bool(getattr(eval_cfg, "enabled", False))
-    eval_examples = (
-        load_eval_prompt_examples_from_config(cfg.data) if eval_enabled else []
-    )
-    _resolve_reference_artifacts(eval_examples, cfg)
-
     log_host_memory("before_trainer_bundle_build", log=logger)
     bundle = definition.build_replay_bundle(cfg, device, weight_dtype)
     log_host_memory("after_trainer_bundle_build", log=logger)
@@ -973,14 +933,11 @@ async def run_online_recipe(
         run = OnlineRecipeRun(
             stack=stack,
             csv_path=output_dir / "metrics.csv",
-            eval_csv_path=output_dir / "eval_metrics.csv",
             rng=rng,
             resume=resume_checkpoint is not None,
         )
         if is_primary:
             run.prepare_metrics_csv()
-            if eval_enabled:
-                run.prepare_eval_metrics_csv()
 
         logger.info(
             "Starting %s online recipe: epochs=%d examples=%d n=%d",
@@ -989,68 +946,6 @@ async def run_online_recipe(
             len(examples),
             trainer_config.n_samples_per_prompt,
         )
-
-        async def _fixed_eval_and_log(eval_epoch: int) -> None:
-            """Run the distributed fixed eval, append its row on rank0, log the signal.
-
-            Runs on EVERY rank: each evaluates a disjoint global-index prompt shard
-            and the stats all-reduce inside ``_run_distributed_fixed_eval`` makes
-            every rank see the same global ``_FixedEvalResult``. Only rank0 writes
-            eval_metrics.csv / logs (single writer); all ranks then meet at
-            ``strategy.barrier()`` so fixed eval is one global phase, not a rank0
-            bypass that would desync the next training collective. eval_epoch=-1 is
-            the pre-RL baseline.
-            """
-            # Fixed eval is a rollout-phase activity: on a colocated topology the
-            # driver model must vacate the GPU exactly as the training collect
-            # does (strict_on_policy brackets its collect with the same calls).
-            # Without this, the post-training driver residency plus the woken
-            # rollout worker OOM at video scale (first hit: 480p_93f LoRA — the
-            # epoch-0 eval collect died with the driver holding ~27GiB).
-            eval_lifecycle = getattr(trainer.rollout_schedule, "lifecycle", None)
-            eval_phases: dict[str, float] = {}
-            eval_offloaded = (
-                eval_lifecycle.offload_driver_model_for_rollout(eval_phases)
-                if eval_lifecycle is not None
-                else False
-            )
-            try:
-                result = await _run_distributed_fixed_eval(
-                    collector,
-                    components.reward_fn,
-                    eval_examples,
-                    samples_per_prompt=int(eval_cfg.samples_per_prompt),
-                    base_seed=int(eval_cfg.seed),
-                    max_prompts=int(eval_cfg.max_prompts),
-                    component_names=component_names,
-                    training_context=training_context,
-                )
-            finally:
-                if eval_offloaded:
-                    eval_lifecycle.restore_driver_model_after_rollout(eval_phases)
-            if is_primary:
-                run.write_eval_metric_row(
-                    eval_epoch,
-                    result,
-                    global_step=int(trainer.state.global_step),
-                )
-                logger.info(
-                    "fixed eval epoch=%d: eval_reward_mean=%.4f +/- %.4f (n=%d)",
-                    eval_epoch,
-                    result.reward_mean,
-                    result.reward_stderr,
-                    result.n,
-                )
-            # fixed eval is a global phase: all ranks rejoin here before the next
-            # training step so the eval-side reduce can't bleed into a later
-            # trainer.step collective.
-            strategy.barrier()
-
-        # Pre-RL baseline on the fixed grid (fresh runs only; resume keeps its rows).
-        # Runs on every rank (sharded generation + stats all-reduce inside); rank0
-        # writes, all ranks barrier out together.
-        if eval_enabled and resume_checkpoint is None:
-            await _fixed_eval_and_log(-1)
 
         # Both ddp and fsdp are data-parallel (fsdp shards the MODEL, not the data):
         # every rank shares the prompt RNG (identical draw), so draw world_size *
@@ -1098,12 +993,6 @@ async def run_online_recipe(
                 metrics = await trainer.step(example_batch)
             if is_primary:
                 run.write_metric_row(epoch, metrics)
-
-            # Fixed eval AFTER the training row (eval overwrites reward_fn
-            # components; the next epoch's collect resets them). Runs on every rank
-            # (disjoint eval shard + stats all-reduce); rank0 writes the row.
-            if eval_enabled and (epoch + 1) % int(eval_cfg.freq) == 0:
-                await _fixed_eval_and_log(epoch)
 
             # Checkpoint on EVERY rank (NOT gated by is_primary): the trainable-state
             # export inside is a collective under FSDP2 (all ranks all-gather), and

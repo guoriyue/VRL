@@ -198,7 +198,6 @@ def test_online_metrics_csv_includes_logprob_mismatch_metrics(tmp_path):
             reward_fn=SimpleNamespace(last_components={}),
         ),
         csv_path=csv_path,
-        eval_csv_path=tmp_path / "eval_metrics.csv",
         rng=None,
         resume=False,
     )

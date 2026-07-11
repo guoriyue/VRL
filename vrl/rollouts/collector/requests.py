@@ -69,7 +69,7 @@ class GenerationRequestBuilder:
             # wording); the value is the collector's `group_size` — the GRPO group,
             # sourced from rollout.n_samples_per_prompt. Same number, three domain
             # names (config / GRPO collector / generation request), each accurate to
-            # its layer; distinct from the eval-only trainer.eval.samples_per_prompt.
+            # its layer; distinct from any external evaluation sampling policy.
             samples_per_prompt=group_size,
             sampling=sampling,
             return_artifacts=set(self.return_artifacts),

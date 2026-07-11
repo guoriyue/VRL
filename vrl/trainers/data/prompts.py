@@ -136,23 +136,6 @@ def load_prompt_examples_from_config(data_cfg: Any) -> list[PromptExample]:
     )
 
 
-def load_eval_prompt_examples_from_config(data_cfg: Any) -> list[PromptExample]:
-    """Load the fixed eval prompt set from ``data.eval_manifest``.
-
-    Held-out eval prompts come from ``data.eval_manifest`` (not ``data.manifest``)
-    so train and eval never share a prompt source; fail fast if eval is requested
-    without one. Same loader types as training.
-    """
-
-    return _load_prompt_examples_from_config(
-        data_cfg,
-        manifest_key="eval_manifest",
-        missing_message=(
-            "trainer.eval.enabled=true requires data.eval_manifest "
-            "(the fixed eval prompt set); none is configured"
-        ),
-    )
-
 
 class JsonlPromptDataset(Dataset):
     """Dataset that loads :class:`PromptExample` objects from a JSONL file.
@@ -284,7 +267,6 @@ __all__ = [
     "ImageCaptionPromptDataset",
     "JsonlPromptDataset",
     "PromptExample",
-    "load_eval_prompt_examples_from_config",
     "load_prompt_examples_from_config",
     "load_prompt_image_manifest",
     "load_prompt_manifest",

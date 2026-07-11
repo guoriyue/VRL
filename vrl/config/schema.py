@@ -29,7 +29,6 @@ from vrl.ray.resources import (
 from vrl.trainers.core.types import (
     DebugConfig,
     EMAConfig,
-    EvalConfig,
     OptimConfig,
     PrecisionDriftGuardConfig,
     RolloutOrchestrationConfig,
@@ -563,7 +562,6 @@ class TrainerSection(ConfigBase):
     resume_from: Any = None
     resume_strict: Any = None
     debug: Annotated[Any, ConfigBlock(DebugConfig)] = None
-    eval: Annotated[Any, ConfigBlock(EvalConfig)] = None
     precision_drift_guard: Annotated[Any, ConfigBlock(PrecisionDriftGuardConfig)] = None
     precision_correction: Annotated[Any, ConfigBlock(PrecisionCorrectionConfig)] = None
     # continuous sub-block nests automatically from the dataclass field type

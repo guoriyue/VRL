@@ -160,6 +160,15 @@ def build_trainer_config(cfg: DictConfig):
 
     from vrl.trainers.core.types import TrainerConfig
 
+    trainer_block = getattr(cfg, "trainer", None)
+    if trainer_block is not None and "eval" in trainer_block:
+        raise ValueError(
+            "trainer.eval was removed: online training no longer runs fixed eval. "
+            "Evaluate saved checkpoints with a script under vrl/scripts/eval; "
+            "for Cosmos Predict2.5 + Kling use "
+            "`python -m vrl.scripts.eval.cosmos_predict25_kling_eval`.",
+        )
+
     hints = get_type_hints(TrainerConfig)
     payload: dict[str, Any] = {}
     missing: list[str] = []
