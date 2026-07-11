@@ -29,7 +29,7 @@ from vrl.rollouts.orchestration.continuous.types import (
     ContinuousRolloutProducerState,
     estimate_batch_bytes,
 )
-from vrl.rollouts.orchestration.lifecycle import RolloutLifecycle
+from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.orchestration.prompt_collection import collect_prompt_batches
 from vrl.utils.stats import RolloutStats
 
@@ -46,7 +46,7 @@ class ContinuousRolloutProducer:
     def __init__(
         self,
         *,
-        lifecycle: RolloutLifecycle,
+        lifecycle: RolloutRuntimeCoordinator,
         prompts: list[Any],
         queue: ContinuousRolloutQueue,
         scheduler: RolloutScheduler,

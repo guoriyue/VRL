@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 
 from vrl.rollouts.orchestration.continuous import ContinuousRolloutSchedule
-from vrl.rollouts.orchestration.lifecycle import RolloutLifecycle
+from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 from vrl.rollouts.orchestration.strict_on_policy import StrictOnPolicyRolloutSchedule
 from vrl.rollouts.orchestration.types import RolloutIteration, RolloutScheduleMode
 
@@ -63,7 +63,7 @@ def build_rollout_schedule(
         getattr(config, "schedule_mode", RolloutScheduleMode.STRICT_ON_POLICY.value),
     )
 
-    lifecycle = RolloutLifecycle(
+    lifecycle = RolloutRuntimeCoordinator(
         collector=collector,
         model=model,
         device=device,
@@ -87,7 +87,7 @@ def build_rollout_schedule(
 def _build_continuous_schedule(
     config: Any,
     *,
-    lifecycle: RolloutLifecycle,
+    lifecycle: RolloutRuntimeCoordinator,
     algorithm_tolerates_off_policy_staleness: bool,
 ) -> ContinuousRolloutSchedule:
     """Translate ``rollout_orchestration.continuous`` config into the schedule.

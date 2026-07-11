@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.rollouts.orchestration.lifecycle import RolloutLifecycle, record_phase
+from vrl.rollouts.orchestration.rollout_runtime import (
+    RolloutRuntimeCoordinator,
+    record_phase,
+)
 from vrl.rollouts.orchestration.prompt_collection import collect_prompt_batches
 from vrl.rollouts.orchestration.types import (
     RolloutIteration,
@@ -21,7 +24,7 @@ class StrictOnPolicyRolloutSchedule:
 
     mode = RolloutScheduleMode.STRICT_ON_POLICY
 
-    def __init__(self, *, lifecycle: RolloutLifecycle) -> None:
+    def __init__(self, *, lifecycle: RolloutRuntimeCoordinator) -> None:
         self.lifecycle = lifecycle
         self.state = RolloutScheduleState()
 

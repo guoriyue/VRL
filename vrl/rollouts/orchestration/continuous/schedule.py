@@ -21,7 +21,10 @@ from vrl.rollouts.orchestration.continuous.producer import ContinuousRolloutProd
 from vrl.rollouts.orchestration.continuous.queue import ContinuousRolloutQueue
 from vrl.rollouts.orchestration.continuous.scheduler import RolloutScheduler
 from vrl.rollouts.orchestration.continuous.staleness import StalenessPolicy
-from vrl.rollouts.orchestration.lifecycle import RolloutLifecycle, record_phase
+from vrl.rollouts.orchestration.rollout_runtime import (
+    RolloutRuntimeCoordinator,
+    record_phase,
+)
 from vrl.rollouts.orchestration.types import (
     RolloutIteration,
     RolloutScheduleMode,
@@ -39,7 +42,7 @@ class ContinuousRolloutSchedule:
     def __init__(
         self,
         *,
-        lifecycle: RolloutLifecycle,
+        lifecycle: RolloutRuntimeCoordinator,
         require_separate_gpus: bool = True,
         # No defaults below: build_rollout_schedule is the only constructor and
         # always passes these from ContinuousRolloutConfig (the single source of

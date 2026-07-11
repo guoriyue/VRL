@@ -1,4 +1,4 @@
-"""Runtime lifecycle helpers for RL rollout schedules."""
+"""Runtime coordination shared by RL rollout schedules."""
 
 from __future__ import annotations
 
@@ -22,8 +22,8 @@ def record_phase(phase_times: dict[str, float], name: str):
         phase_times[name] = phase_times.get(name, 0.0) + time.perf_counter() - start
 
 
-class RolloutLifecycle:
-    """Lifecycle operations shared by strict and overlapped rollout schedules."""
+class RolloutRuntimeCoordinator:
+    """Coordinate runtime operations shared by strict and overlapped schedules."""
 
     def __init__(
         self,
@@ -143,14 +143,6 @@ class RolloutLifecycle:
                 await offload()
             empty_cuda_cache()
 
-    async def release_rollout_runtime_memory(
-        self,
-        phase_times: dict[str, float],
-    ) -> None:
-        """Compatibility facade for the former release terminology."""
-
-        await self.offload_rollout_runtime_memory(phase_times)
-
     def requires_runtime_offload_before_reward(self) -> bool:
         return bool(
             getattr(self.collector, "requires_runtime_offload_before_reward", False),
@@ -185,4 +177,4 @@ class RolloutLifecycle:
         return int(self._last_policy_version) + 1
 
 
-__all__ = ["RolloutLifecycle", "record_phase"]
+__all__ = ["RolloutRuntimeCoordinator", "record_phase"]

@@ -11,7 +11,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
-from vrl.rollouts.orchestration.lifecycle import RolloutLifecycle
+from vrl.rollouts.orchestration.rollout_runtime import RolloutRuntimeCoordinator
 
 
 class _FakeDriverModel:
@@ -29,11 +29,11 @@ class _FakeDriverModel:
         self.frozen_calls.append(device)
 
 
-def _lifecycle(model: _FakeDriverModel) -> RolloutLifecycle:
+def _coordinator(model: _FakeDriverModel) -> RolloutRuntimeCoordinator:
     # A runtime that advertises colocation-driven driver offload; cuda-typed
     # device so should_offload_driver_model_for_rollout() is True on a CPU box.
     runtime = SimpleNamespace(requires_driver_model_offload=True, current_policy_version=None)
-    return RolloutLifecycle(
+    return RolloutRuntimeCoordinator(
         collector=SimpleNamespace(runtime=runtime),
         model=model,
         device=SimpleNamespace(type="cuda"),
@@ -46,7 +46,7 @@ def _lifecycle(model: _FakeDriverModel) -> RolloutLifecycle:
 
 def test_offload_and_restore_move_frozen_components() -> None:
     model = _FakeDriverModel(with_frozen_hook=True)
-    lifecycle = _lifecycle(model)
+    lifecycle = _coordinator(model)
     phases: dict[str, float] = {}
 
     assert lifecycle.offload_driver_model_for_rollout(phases) is True
@@ -61,7 +61,7 @@ def test_offload_and_restore_move_frozen_components() -> None:
 def test_model_without_frozen_hook_is_unaffected() -> None:
     """AR families register their VAE directly and expose no hook — no crash."""
     model = _FakeDriverModel(with_frozen_hook=False)
-    lifecycle = _lifecycle(model)
+    lifecycle = _coordinator(model)
 
     assert lifecycle.offload_driver_model_for_rollout({}) is True
     lifecycle.restore_driver_model_after_rollout({})
