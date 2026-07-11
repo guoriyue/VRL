@@ -73,25 +73,6 @@ def nonzero_advantage_mask(advantages: torch.Tensor) -> torch.Tensor:
     return adv_abs.sum(dim=reduce_dims) != 0
 
 
-def pad_zero_advantage_mask(mask: torch.Tensor, num_batches: int) -> torch.Tensor:
-    """Pad zero-advantage samples back in so rebatching divides evenly."""
-
-    if num_batches <= 0:
-        return mask
-    padded = mask.clone()
-    true_count = int(padded.sum().item())
-    if true_count == 0 or true_count % num_batches == 0:
-        return padded
-    false_indices = torch.where(~padded)[0]
-    num_to_change = num_batches - (true_count % num_batches)
-    if false_indices.numel() >= num_to_change:
-        random_indices = torch.randperm(false_indices.numel(), device=false_indices.device)[
-            :num_to_change
-        ]
-        padded[false_indices[random_indices]] = True
-    return padded
-
-
 def split_batch_by_group(batch: RolloutBatch) -> list[RolloutBatch]:
     """Split a rollout batch into group-local batches for bounded training memory."""
 
@@ -163,7 +144,6 @@ def move_training_batch_to_device(
 __all__ = [
     "move_training_batch_to_device",
     "nonzero_advantage_mask",
-    "pad_zero_advantage_mask",
     "remap_group_ids_",
     "select_batch",
     "split_batch_by_group",
