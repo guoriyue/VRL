@@ -12,6 +12,7 @@ from vrl.generation.execution.chunk_placement import (
 )
 from vrl.generation.execution.ids import build_sample_rows
 from vrl.generation.execution.types import (
+    ChunkExecutionEnvelope,
     ChunkExecutionResult,
     DistributedWorkerHandle,
     StaleSlotDiscard,
@@ -58,7 +59,6 @@ class RayGenerationExecutor:
             generation_plan = self.planner.plan_with_engine(
                 request,
                 self.workers,
-                sample_rows=sample_rows,
             )
         assignments = list(generation_plan.assignments)
         engine_plan = generation_plan.engine_plan
@@ -76,8 +76,6 @@ class RayGenerationExecutor:
         schedule_rows: list[dict[str, Any]] = []
 
         for job_index, assignment in enumerate(assignments):
-            if assignment.envelope is None:
-                raise RuntimeError("distributed rollout assignment is missing execution envelope")
             if assignment.worker_id is None:
                 # Dynamic placement: binding happens in the actor pool. The
                 # estimated cost becomes the submission priority (LPT).
@@ -132,6 +130,13 @@ class RayGenerationExecutor:
                 f"{len(results)} != {len(assignments)}",
             )
 
+        envelope_by_chunk_key = {
+            assignment.envelope.chunk_key: assignment.envelope
+            for assignment in assignments
+        }
+        for result in results:
+            _require_correlated_result(result, envelope_by_chunk_key)
+
         # A stale-slot result is a typed graceful discard, not a failure: the
         # request's policy version was evicted from its worker's slot window under
         # a non-draining weight sync. Route it BEFORE OOM-degrade (which hard-raises
@@ -152,10 +157,7 @@ class RayGenerationExecutor:
 
         results, oom_splits = await self._degrade_oom_chunks(
             results,
-            envelope_by_chunk_key={
-                assignment.envelope.chunk_key: assignment.envelope
-                for assignment in assignments
-            },
+            envelope_by_chunk_key=envelope_by_chunk_key,
             worker_by_id=worker_by_id,
         )
 
@@ -302,6 +304,7 @@ class RayGenerationExecutor:
             retry_jobs: list[RayActorJob] = []
             local_calls: list[tuple[Any, Any]] = []
             for result in pending:
+                parent_envelope = envelope_by_chunk_key[result.chunk.chunk_key]
                 if not result.error:
                     final.append(result)
                     continue
@@ -312,7 +315,6 @@ class RayGenerationExecutor:
                         f"(worker_id={result.worker_id}, chunk={chunk}): "
                         f"{result.error}",
                     )
-                parent_envelope = envelope_by_chunk_key[chunk.chunk_key]
                 worker = worker_by_id.get(result.worker_id)
                 if worker is None or worker.actor is None:
                     raise RuntimeError(
@@ -359,6 +361,8 @@ class RayGenerationExecutor:
                 )
                 pending.extend(result for _, result in pairs)
             pending.extend(call(envelope) for call, envelope in local_calls)
+            for result in pending:
+                _require_correlated_result(result, envelope_by_chunk_key)
         return final, splits
 
     def _remote_worker_methods(self) -> dict[str, Any]:
@@ -376,10 +380,33 @@ class RayGenerationExecutor:
             methods[worker.worker_id] = remote
         return methods
 
+
 def _is_oom_error(message: str) -> bool:
     """Match CUDA/HIP allocator failures flattened to str by the worker."""
 
     return "out of memory" in message.lower()
+
+
+def _require_correlated_result(
+    result: ChunkExecutionResult,
+    envelope_by_chunk_key: dict[str, ChunkExecutionEnvelope],
+) -> ChunkExecutionEnvelope:
+    """Validate that a worker result belongs to its submitted request/chunk."""
+
+    envelope = envelope_by_chunk_key.get(result.chunk.chunk_key)
+    if envelope is None:
+        raise RuntimeError(
+            "distributed rollout returned an unknown chunk "
+            f"(worker_id={result.worker_id}, chunk={result.chunk.chunk_key})",
+        )
+    expected_request_id = envelope.request.request_id
+    if result.request_id != expected_request_id:
+        raise RuntimeError(
+            "distributed rollout request_id mismatch "
+            f"(worker_id={result.worker_id}, chunk={result.chunk.chunk_key}, "
+            f"expected={expected_request_id!r}, actual={result.request_id!r})",
+        )
+    return envelope
 
 
 __all__ = ["RayGenerationExecutor"]

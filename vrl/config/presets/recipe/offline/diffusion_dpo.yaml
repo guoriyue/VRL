@@ -1,8 +1,27 @@
 # Offline diffusion DPO recipe.
 defaults:
   - /base/algorithm/dpo
-  - /base/actor
-  - /base/trainer
+
+# DPO has its own synchronous trainer surface. Do not inherit the online actor /
+# trainer presets: EMA, PPO epochs, rollout orchestration, and total_epochs have
+# no DPO consumers.
+precision: ???
+
+actor:
+  optim:
+    lr: ???
+  gradient_accumulation_steps: ???
+  prediction_type: ???
+  scale_lr: ???
+  train_batch_size: ???
+  use_adafactor: ???
+
+trainer:
+  entrypoint: ???
+  output_dir: ???
+  max_train_steps: ???
+  checkpointing_steps: ???
+  log_interval: ???
 
 distributed:
   resources:

@@ -136,20 +136,24 @@ def build_algorithm_and_evaluator_from_cfg(
         from vrl.algorithms.grpo.continuous import (
             GRPO,
             FlowDPPO,
+            FlowDPPOConfig,
             GRPOConfig,
             GRPOGuard,
+            GRPOGuardConfig,
         )
-        from vrl.algorithms.grpo.token import TokenGRPOConfig
         from vrl.rollouts.evaluators.diffusion.sde_logprob import (
             DiffusionSDELogProbEvaluator,
         )
 
-        if not isinstance(algorithm_config, GRPOConfig) or isinstance(
-            algorithm_config,
-            TokenGRPOConfig,
-        ):
+        expected_config_type = {
+            "grpo": GRPOConfig,
+            "dance_grpo": GRPOConfig,
+            "flow_dppo": FlowDPPOConfig,
+            "grpo_guard": GRPOGuardConfig,
+        }[kind]
+        if not isinstance(algorithm_config, expected_config_type):
             raise TypeError(
-                f"{entry.family} GRPO expects GRPOConfig, got "
+                f"{entry.family} {kind} expects {expected_config_type.__name__}, got "
                 f"{type(algorithm_config).__name__}",
             )
         if kind == "flow_dppo":
@@ -274,7 +278,7 @@ def build_collector_from_cfg(
 def build_online_recipe_components(
     cfg: DictConfig,
     *,
-    device: str = "cuda",
+    reward_device: str = "cuda",
     family: str | RolloutFamilyEntry | None = None,
     scheduler: Any | None = None,
     built: dict[str, Any] | None = None,
@@ -287,7 +291,7 @@ def build_online_recipe_components(
     reward_fn = build_reward_from_cfg(
         cfg,
         built=built,
-        device=device,
+        device=reward_device,
     )
     pair = build_algorithm_and_evaluator_from_cfg(
         cfg,

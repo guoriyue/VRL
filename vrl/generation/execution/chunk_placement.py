@@ -12,7 +12,7 @@ from vrl.generation.execution.types import (
     ChunkExecutionEnvelope,
     DistributedWorkerHandle,
 )
-from vrl.generation.types import GenerationRequest, GenerationSampleRow
+from vrl.generation.types import GenerationRequest
 
 _PLACEMENT_STRATEGIES = ("round_robin", "dynamic")
 
@@ -42,16 +42,20 @@ class ChunkPlacementPolicy:
 class DeviceAssignment:
     """Map one logical chunk to one generation worker.
 
-    Worker fields are ``None`` under dynamic placement — binding then
-    happens at dispatch time in the actor pool, not at plan time.
+    ``worker_id`` is ``None`` under dynamic placement — binding then happens at
+    dispatch time in the actor pool, not at plan time. The envelope is the wire
+    payload and single source of truth for chunk identity.
     """
 
     worker_id: str | None
-    node_id: str | None
-    gpu_ids: tuple[int, ...]
-    chunk: SampleChunk
-    envelope: ChunkExecutionEnvelope | None = None
+    envelope: ChunkExecutionEnvelope
     estimated_cost: float = 0.0
+
+    @property
+    def chunk(self) -> SampleChunk:
+        """Return the chunk carried by the authoritative wire envelope."""
+
+        return self.envelope.chunk
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,8 +239,6 @@ class DistributedExecutionPlanner:
         self,
         request: GenerationRequest,
         workers: list[DistributedWorkerHandle],
-        *,
-        sample_rows: list[GenerationSampleRow] | None = None,
     ) -> DistributedGenerationPlan:
         if not workers:
             raise ValueError("DistributedExecutionPlanner requires at least one worker")
@@ -265,9 +267,6 @@ class DistributedExecutionPlanner:
             assignments.append(
                 DeviceAssignment(
                     worker_id=worker.worker_id if worker else None,
-                    node_id=worker.node_id if worker else None,
-                    gpu_ids=worker.gpu_ids if worker else (),
-                    chunk=chunk,
                     envelope=envelope,
                     estimated_cost=estimate_chunk_cost(request, chunk),
                 ),

@@ -19,14 +19,26 @@ from vrl.algorithms.types import TrainStepMetrics
 
 
 @dataclass(slots=True)
-class GRPOConfig:
-    """Hyper-parameters for continuous GRPO."""
+class GroupAdvantageConfig:
+    """Hyper-parameters shared only by group-relative advantage algorithms."""
 
-    clip_ratio: float = 0.2
-    kl_coef: float = 0.0
     eps: float = 1e-4
     adv_clip_max: float = 5.0
     global_std: bool = False
+
+
+@dataclass(slots=True)
+class ClippedPolicyConfig(GroupAdvantageConfig):
+    """Policy-ratio clipping and reference-KL knobs with real loss consumers."""
+
+    clip_ratio: float = 0.2
+    kl_coef: float = 0.0
+
+
+@dataclass(slots=True)
+class GRPOConfig(ClippedPolicyConfig):
+    """Hyper-parameters for continuous GRPO."""
+
     flow_kl_use_dt: bool = False
     # Diffusion-loss regularizer weight (Cosmos-Predict2.5 paper 4.2.2's
     # anti-reward-hacking term): adds sft_weight * MSE(model_pred,
@@ -66,6 +78,11 @@ class GRPO(Algorithm):
 
     def __init__(self, config: GRPOConfig | None = None) -> None:
         self.config = config or GRPOConfig()
+        self._initialize_precision_correction()
+
+    def _initialize_precision_correction(self) -> None:
+        """Install the trainer-injected rollout/replay correction capability."""
+
         # Rollout->replay precision correction (TIS). Off by default; the trainer
         # injects trainer.precision_correction here at construction so the knobs
         # live at the trainer level, not in the algorithm's hyperparameters.
@@ -217,7 +234,7 @@ def _require_trust_region_signals(signals: Any, algorithm: str) -> Any:
 
 
 @dataclass(slots=True)
-class FlowDPPOConfig(GRPOConfig):
+class FlowDPPOConfig(GroupAdvantageConfig):
     """Flow-DPPO: exact-Gaussian-KL trust region instead of the PPO ratio clip."""
 
     # Per-sample latent KL above which an update that *widens* the gap from the
@@ -245,8 +262,8 @@ class FlowDPPO(GRPO):
 
     def __init__(self, config: FlowDPPOConfig | None = None) -> None:
         cfg = config or FlowDPPOConfig()
-        super().__init__(cfg)
         self.config: FlowDPPOConfig = cfg
+        self._initialize_precision_correction()
 
     def compute_loss(self, inputs: AlgorithmInput) -> tuple[Any, TrainStepMetrics]:
         import torch
@@ -329,12 +346,13 @@ class FlowDPPO(GRPO):
 
 
 @dataclass(slots=True)
-class GRPOGuardConfig(GRPOConfig):
+class GRPOGuardConfig(GroupAdvantageConfig):
     """GRPO-Guard: ratio-mean-bias correction + per-step magnitude normalization.
 
-    Reuses ``clip_ratio`` / ``adv_clip_max``; the guard terms are derived from
-    the per-step diffusion scale, not from new hyper-parameters.
+    The guard terms are derived from the per-step diffusion scale.
     """
+
+    clip_ratio: float = 0.2
 
 
 class GRPOGuard(GRPO):
@@ -354,8 +372,8 @@ class GRPOGuard(GRPO):
 
     def __init__(self, config: GRPOGuardConfig | None = None) -> None:
         cfg = config or GRPOGuardConfig()
-        super().__init__(cfg)
         self.config: GRPOGuardConfig = cfg
+        self._initialize_precision_correction()
 
     def compute_loss(self, inputs: AlgorithmInput) -> tuple[Any, TrainStepMetrics]:
         import torch

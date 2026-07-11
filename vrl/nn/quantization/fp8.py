@@ -227,19 +227,6 @@ class Fp8Linear(QuantizedLinear):
         return f"in={self.in_features}, out={self.out_features}, recipe={self.recipe}, fp8=e4m3"
 
 
-def drop_fp8_masters(root: nn.Module) -> int:
-    """Free every ``Fp8Linear`` bf16 master under ``root``; returns bytes freed.
-
-    See :meth:`Fp8Linear.drop_master` for when this is valid (adapter-only or
-    sync-free rollouts).
-    """
-    return sum(
-        module.drop_master()
-        for module in root.modules()
-        if isinstance(module, Fp8Linear)
-    )
-
-
 def swap_linears_to_fp8(
     root: nn.Module,
     *,

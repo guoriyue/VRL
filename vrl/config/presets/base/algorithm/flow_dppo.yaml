@@ -3,10 +3,8 @@
 # Drops high-KL, gap-widening samples (asymmetric trust region) rather than
 # clamping the ratio. Reads the rollout proposal mean, so the recipe MUST set
 # rollout.return_prev_sample_mean=true (the loss fails fast otherwise).
-# clip_ratio is inherited from GRPOConfig but unused (no ratio clip here).
 algorithm:
   kind: flow_dppo
-  kl_coef: 0.0
   eps: 1.0e-8
   adv_clip_max: 5.0
   global_std: false

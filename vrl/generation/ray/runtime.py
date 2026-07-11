@@ -67,15 +67,11 @@ class RayGenerationRuntime(GenerationRuntime):
         *,
         weight_sync: GenerationWeightSync | None = None,
         owned_workers: list[DistributedWorkerHandle] | None = None,
-        owned_actors: list[Any] | None = None,
-        placement_group: Any | None = None,
         colocated: bool = False,
     ) -> None:
         self.executor = executor
         self.weight_sync = weight_sync
         self._owned_workers = list(owned_workers or [])
-        self._owned_actors = list(owned_actors or [])
-        self._placement_group = placement_group
         self._colocated = bool(colocated)
         self._on_demand: _OnDemandRuntimeState | None = None
         # Rollout schedules own pause/drain. The runtime lifecycle only closes
@@ -522,14 +518,14 @@ class RayGenerationRuntime(GenerationRuntime):
             state.workers_offloaded = False
             state.active_policy_version = None
             return None
-        if not self._owned_workers and not self._owned_actors and self._placement_group is None:
+        if not self._owned_workers:
             return None
         ray = require_ray()
         doomed = [
             worker.actor for worker in self._owned_workers if worker.actor is not None
-        ] + list(self._owned_actors)
+        ]
         logger.info(
-            "runtime shutdown: killing %d owned actor(s)",
+            "runtime shutdown: killing %d owned worker actor(s)",
             len(doomed),
         )
         release_refs: list[Any] = []
@@ -553,26 +549,11 @@ class RayGenerationRuntime(GenerationRuntime):
             if worker.actor is not None and id(worker.actor) in failed_worker_actor_ids
         ]
 
-        actor_failures = kill_actors(ray, self._owned_actors)
-        failed_actor_ids = {id(actor) for actor, _ in actor_failures}
-        self._owned_actors[:] = [
-            actor for actor in self._owned_actors if id(actor) in failed_actor_ids
-        ]
-
-        placement_failure: Exception | None = None
-        if not worker_failures and not actor_failures:
-            placement_failure = remove_placement_group(self._placement_group)
-            if placement_failure is None:
-                self._placement_group = None
-
-        failures = [error for _, error in (*worker_failures, *actor_failures)]
-        if placement_failure is not None:
-            failures.append(placement_failure)
+        failures = [error for _, error in worker_failures]
         if failures:
             raise RuntimeError(
                 "Ray runtime cleanup incomplete: "
-                f"{len(worker_failures) + len(actor_failures)} actor kill(s) and "
-                f"{int(placement_failure is not None)} placement-group removal failed",
+                f"{len(worker_failures)} worker actor kill(s) failed",
             ) from failures[0]
         return None
 

@@ -1,8 +1,13 @@
-# Token-GRPO algorithm hyper-parameters — extends GRPO for AR (Janus, NextStep).
-# Adds kl_estimator (k1/k2/k3).
-defaults:
-  - /base/algorithm/grpo
-
+# Token-GRPO algorithm hyper-parameters for AR (Janus, NextStep).
+# Continuous-flow-only knobs intentionally do not enter this config surface.
 algorithm:
   kind: token_grpo
+  clip_ratio: 0.2
+  kl_coef: 0.0
+  eps: 1.0e-8
+  adv_clip_max: 5.0
+  global_std: false
   kl_estimator: k3              # k1 = signed log-ratio; k2 = 0.5 * log-ratio^2; k3 = exponential unbiased form
+
+  # Reward shaping is collector behavior, independent of the token loss-side KL.
+  kl_reward_coef: 0.0

@@ -13,10 +13,6 @@ precision: bf16
 sampling:
   num_frames: 1
 
-rollout:
-  n_samples_per_prompt: 1
-  prompts_per_batch: 1
-
 # DPO-specific trainer overrides — paper-default schedule for SDXL scaled to Wan.
 trainer:
   entrypoint: vrl.scripts.diffusion.wan_2_1.train_dpo:train_wan_2_1_dpo

@@ -70,7 +70,6 @@ class RayGenerationLauncher:
 
         placement_group = placement.placement_group
         bundle_indices = list(placement.bundle_indices)
-        owned_placement_group = None  # owned by GlobalRayPlacementOwner
         expected_gpu_ids = placement.expected_gpu_ids
 
         worker_ids = [f"rollout-{logical_idx}" for logical_idx in range(len(bundle_indices))]
@@ -110,8 +109,6 @@ class RayGenerationLauncher:
         workers = [
             DistributedWorkerHandle(
                 worker_id=handle.worker_id,
-                node_id=handle.node_ip,
-                gpu_ids=handle.gpu_ids,
                 actor=handle.actor,
             )
             for handle in actor_group.handles
@@ -135,8 +132,6 @@ class RayGenerationLauncher:
             executor,
             weight_sync=weight_sync,
             owned_workers=workers,
-            owned_actors=[],
-            placement_group=owned_placement_group,
             colocated=rollout_config.allow_driver_gpu_overlap,
         )
         if contract.policy_version is not None:

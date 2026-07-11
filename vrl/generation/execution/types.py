@@ -24,11 +24,9 @@ class StaleSlotDiscard(Exception):
 
 @dataclass(frozen=True, slots=True)
 class DistributedWorkerHandle:
-    """Scheduler-visible metadata for one generation worker actor."""
+    """Scheduler-visible identity and actor handle for one generation worker."""
 
     worker_id: str
-    node_id: str
-    gpu_ids: tuple[int, ...] = ()
     actor: Any | None = None
 
 

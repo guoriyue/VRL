@@ -1,22 +1,22 @@
 # Cross-node (2 servers x 1 GPU each) variant of the Cosmos Predict2.5 + Kling
 # DiffusionNFT run. Splits the run across two hosts over a Ray cluster:
 #
-#   node A (head/driver) : the single_process trainer. Its GPU is held OUT of
-#                          Ray's scheduling pool (`ray start --head --num-gpus=0`)
-#                          so no actor can land on the trainer card.
-#   node B (worker)      : the rollout worker AND the Kling reward pool worker,
-#                          time-sharing node B's one GPU
+#   node A (head/driver) : the single_process trainer AND the in-process Kling
+#                          reward model. Its GPU is held OUT of Ray's scheduling
+#                          pool (`ray start --head --num-gpus=0`); Kling parks via
+#                          sleep_offload after scoring so training can reclaim it.
+#   node B (worker)      : the rollout worker on node B's one GPU
 #                          (`ray start --address=<head>:6379 --num-gpus=1`).
 #
 # Setup + launch commands:
 #   docs/training_examples/online_nft_kling_video_reward_cross_node/README.md
 #
-# STALE SINCE THE RAY REWARD POOL REMOVAL: rewards now score in-process on the
-# DRIVER (node A), so "the Kling reward pool worker on node B" no longer exists.
-# As composed, the Kling model loads on node A's trainer card next to the
-# trainer model — memory-unverified. This recipe's reward placement needs a
-# redesign (or a revived remote transport) before the cross-node layout is run
-# again; the rollout-on-node-B half is unaffected.
+# Rewards score in-process on the DRIVER (node A), so this config deliberately
+# declares no reward resource token. With no reward reservation the local reward
+# follows the rank-local trainer device; token 1 remains rollout-only. A config
+# that assigns reward.devices=[1] now fails before model loading because cross-node
+# tokens cannot name a driver-local CUDA device. The trainer+Kling memory fit on
+# node A remains a deployment requirement for this two-host layout.
 defaults:
   - /experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward
 
@@ -33,11 +33,9 @@ distributed:
     # so no same-card overlap permission is needed.
     allow_overlap: false
     # GPU "ids" here are budget TOKENS, not physical devices (cross_node): the
-    # real placement is by node (which host you `ray start` on). Sharing is
-    # expressed directly by the token id -- rollout and reward both sit on
-    # token 1, so they coalesce onto one bundle and share node B's single card.
+    # real rollout placement is by node (which host you `ray start` on).
     #   token 0 -> head/driver node A's card (held out of Ray: --num-gpus=0)
-    #   token 1 -> worker node B's card, shared by rollout + reward (2 GPUs only)
+    #   token 1 -> worker node B's rollout card (2 GPUs total)
     trainer:
       num_gpus: 1
     rollout:
@@ -45,8 +43,10 @@ distributed:
       gpus_per_worker: 1.0
       num_workers: 1
     reward:
-      # Same token as rollout -> reward coalesces onto the rollout bundle and
-      # shares node B's card (equivalent to reward.gpu_pool: rollout, expressed
-      # here by token id). The resolver then makes rollout on_demand (release
-      # between collect and score).
-      devices: [1]
+      # Override /reward/kling_video_reward's local-GPU reservation. In cross-node
+      # mode non-trainer ordinals are remote Ray budget tokens, while Kling runs
+      # inside the driver; an empty reservation makes the factory use node A's
+      # rank-local trainer device instead.
+      devices: []
+      num_gpus: 0
+      num_workers: auto

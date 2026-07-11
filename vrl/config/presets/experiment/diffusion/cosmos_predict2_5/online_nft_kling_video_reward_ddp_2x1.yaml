@@ -4,8 +4,8 @@
 # Every server runs ONE torchrun rank = 1 DDP train replica + the base recipe's
 # single-GPU colocated rollout (and Kling reward) time-sharing its local GPU, all
 # reading the SAME policy version. Only the gradient all-reduce crosses servers
-# (the torchrun process group); Ray and the rollout/reward workers are
-# per-rank-LOCAL (each rank does its own local ray.init() on its own card). There
+# (the torchrun process group); Ray rollout workers and the in-process reward
+# model are per-rank-LOCAL (each rank does its own local ray.init() on its card). There
 # is NO shared Ray cluster and NO cross-node Ray placement group.
 #
 # It inherits the base recipe's single-GPU colocated plan UNCHANGED (trainer +

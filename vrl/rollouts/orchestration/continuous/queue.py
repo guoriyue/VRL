@@ -43,12 +43,8 @@ class ContinuousRolloutQueue:
     def ready_bytes(self) -> int:
         return self._bytes
 
-    def distinct_group_count(self, version: int | None = None) -> int:
-        keys = {
-            item.group_key
-            for item in self._items
-            if version is None or item.rollout_policy_version == version
-        }
+    def distinct_group_count(self) -> int:
+        keys = {item.group_key for item in self._items}
         return len(keys)
 
     def stats(self) -> dict[str, float]:

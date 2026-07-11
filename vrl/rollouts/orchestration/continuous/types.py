@@ -47,7 +47,6 @@ class ContinuousRolloutItem:
     ``len(prompts)`` distinct groups per iteration.
     """
 
-    item_id: int
     group_key: int
     rollout_policy_version: int | None
     batch: RolloutBatch

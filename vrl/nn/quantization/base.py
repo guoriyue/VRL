@@ -19,8 +19,24 @@ class QuantizedLinear(nn.Module):
     Carries no behavior — subclasses implement the actual quantized forward. Its
     only job is to be the type the swap installs and the backstop guard counts, so
     "was a quantized rollout actually applied?" is one ``isinstance`` check across
-    all present and future schemes.
+    all present and future schemes. Every scheme also implements
+    ``drop_master() -> int`` (free the high-precision master, return bytes freed)
+    so :func:`drop_quantized_masters` covers it without a per-scheme list.
     """
 
 
-__all__ = ["QuantizedLinear"]
+def drop_quantized_masters(root: nn.Module) -> int:
+    """Free every quantized linear's high-precision master under ``root``.
+
+    Returns the bytes freed. Valid whenever weight-sync never loads base weights
+    into these modules (adapter-only or sync-free rollouts) — see the per-scheme
+    ``drop_master`` docstrings.
+    """
+    return sum(
+        module.drop_master()
+        for module in root.modules()
+        if isinstance(module, QuantizedLinear)
+    )
+
+
+__all__ = ["QuantizedLinear", "drop_quantized_masters"]

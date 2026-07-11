@@ -45,6 +45,7 @@ class OfflineDPOTrainerConfig:
     adam_beta2: float = field(default=0.999)
     adam_weight_decay: float = field(default=1e-2)
     adam_epsilon: float = field(default=1e-8)
+    allow_tf32: bool = field(default=True)
     use_adafactor: bool = field(default=False)
     max_grad_norm: float = field(default=1.0)
     gradient_accumulation_steps: int = field(default=1)
@@ -213,6 +214,8 @@ class OfflineDPOTrainer:
         self.encode_text = encode_text
         self.config = config or OfflineDPOTrainerConfig()
         self.device = torch.device(device) if isinstance(device, str) else device
+        torch.backends.cuda.matmul.allow_tf32 = bool(self.config.allow_tf32)
+        torch.backends.cudnn.allow_tf32 = bool(self.config.allow_tf32)
         self.global_step = 0
         self._gradient_accumulation_micro_step = 0
 

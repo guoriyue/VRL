@@ -1,10 +1,11 @@
 """Run-level Ray placement owner.
 
 A single :class:`GlobalRayPlacementOwner` builds one placement group for the
-whole run from the resolved :class:`BundleLayout`, probes which physical GPU
-each bundle actually landed on, and hands rollout/reward runtimes role placement
-handles (the shared PG plus the bundle indices they may schedule into). It removes
-the placement group exactly once at run shutdown.
+whole run from the resolved :class:`BundleLayout` and probes which physical GPU
+each bundle actually landed on. The rollout runtime consumes its role placement
+handle; the in-process reward runtime consumes the reserved device directly.
+The public reward role mapping remains the protocol boundary for a future remote
+runtime. The owner removes the placement group exactly once at run shutdown.
 
 This replaces two independent placement groups (one built by the rollout
 launcher, one by the reward actor runtime) and the reward ``gpu_reservation_count``

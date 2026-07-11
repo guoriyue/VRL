@@ -7,7 +7,7 @@ from typing import Any
 
 import torch
 
-from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
+from vrl.algorithms.grpo.continuous import GRPO, ClippedPolicyConfig
 from vrl.algorithms.logprob_mismatch import (
     apply_rejection_sample_mask,
     apply_truncated_importance_weight,
@@ -18,7 +18,7 @@ from vrl.algorithms.types import TrainStepMetrics
 
 
 @dataclass(slots=True)
-class TokenGRPOConfig(GRPOConfig):
+class TokenGRPOConfig(ClippedPolicyConfig):
     """Token-level GRPO hyper-parameters."""
 
     kl_estimator: str = "k3"
@@ -29,8 +29,8 @@ class TokenGRPO(GRPO):
 
     def __init__(self, config: TokenGRPOConfig | None = None) -> None:
         cfg = config or TokenGRPOConfig()
-        super().__init__(cfg)
         self.config: TokenGRPOConfig = cfg
+        self._initialize_precision_correction()
 
     def compute_loss(
         self,

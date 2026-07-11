@@ -597,6 +597,35 @@ class ActorSection(ConfigBase):
     use_adafactor: Any = None
 
 
+# Entrypoint-specific schema boundary. These are the only shared actor/trainer
+# keys consumed by train_wan_2_1_dpo (plus trainer.entrypoint, consumed by the
+# public dispatcher). Keeping the sets here makes inherited online-only knobs
+# fail loudly before model/data construction.
+_OFFLINE_DPO_ACTOR_FIELDS = frozenset(
+    {
+        "gradient_accumulation_steps",
+        "gradient_checkpointing",
+        "max_norm",
+        "optim",
+        "prediction_type",
+        "scale_lr",
+        "train_batch_size",
+        "use_adafactor",
+    },
+)
+_OFFLINE_DPO_TRAINER_FIELDS = frozenset(
+    {
+        "checkpointing_steps",
+        "entrypoint",
+        "log_interval",
+        "max_train_steps",
+        "output_dir",
+        "resume_from",
+        "resume_strict",
+    },
+)
+
+
 class FSDPConfig(ConfigBase):
     """distributed.training.fsdp: the FSDP2 knobs ``build_strategy`` reads.
 
@@ -778,6 +807,9 @@ class RootConfig(ConfigBase):
         kind = algo.kind
         rollout = self.rollout
 
+        if kind == "diffusion_dpo":
+            self._validate_offline_dpo_surface()
+
         # The SFT term belongs to continuous diffusion GRPO and offline
         # Diffusion-DPO. Validate the numeric domain and algorithm ownership
         # here so an inherited token-GRPO field cannot silently become a no-op.
@@ -838,6 +870,30 @@ class RootConfig(ConfigBase):
                 )
 
         return self
+
+    def _validate_offline_dpo_surface(self) -> None:
+        for section_name, section, allowed in (
+            ("actor", self.actor, _OFFLINE_DPO_ACTOR_FIELDS),
+            ("trainer", self.trainer, _OFFLINE_DPO_TRAINER_FIELDS),
+        ):
+            if section is None:
+                continue
+            unsupported = sorted(section.model_fields_set - allowed)
+            if unsupported:
+                fields = ", ".join(f"{section_name}.{name}" for name in unsupported)
+                raise ValueError(
+                    f"diffusion_dpo does not consume config field(s): {fields}",
+                )
+
+        if self.rollout is not None and self.rollout.model_fields_set:
+            fields = ", ".join(
+                f"rollout.{name}" for name in sorted(self.rollout.model_fields_set)
+            )
+            raise ValueError(
+                f"diffusion_dpo does not consume config field(s): {fields}",
+            )
+        if self.reward is not None:
+            raise ValueError("diffusion_dpo does not consume the reward config section")
 
 
 # ── Parse boundary ────────────────────────────────────────────────────────────

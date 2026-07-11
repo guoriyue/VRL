@@ -76,7 +76,6 @@ class ContinuousRolloutProducer:
         self.state = ContinuousRolloutProducerState()
         self._loop_task: asyncio.Task[None] | None = None
         self._inflight: set[asyncio.Task[Any]] = set()
-        self._item_counter = 0
         self._prompt_cursor = 0
         self._last_tick_at: float | None = None
         self._last_observability_log_at = 0.0
@@ -292,7 +291,6 @@ class ContinuousRolloutProducer:
         for index, batch in enumerate(result["batches"]):
             stored = move_training_batch_to_device(batch, _CPU)
             item = ContinuousRolloutItem(
-                item_id=self._item_counter,
                 group_key=int(result["slot"]),
                 rollout_policy_version=result["version"],
                 prompt_set_id=int(result["prompt_set_id"]),
@@ -304,7 +302,6 @@ class ContinuousRolloutProducer:
                 # the same wall time.
                 stats=result["stats"] if index == 0 else RolloutStats(),
             )
-            self._item_counter += 1
             self.queue.put(item)
 
     def _record_tick(self) -> None:

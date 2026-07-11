@@ -361,14 +361,12 @@ class TrainerConfig:
         rbs = int(self.prompts_per_batch)
         gas = int(self.gradient_accumulation_steps)
         mbs = int(self.microbatch_size)
+        # _parse_samples_per_chunk already enforces non-negative for the int form
+        # and passes the "auto" sentinel through (resolved by the runtime, not here).
         samples_per_chunk = _parse_samples_per_chunk(
             self.samples_per_chunk,
             path="rollout.samples_per_chunk",
         )
-        if samples_per_chunk < 0:
-            raise ValueError(
-                f"rollout.samples_per_chunk must be >= 0 (got {samples_per_chunk})",
-            )
         if gas < 0:
             raise ValueError(
                 f"actor.gradient_accumulation_steps must be >= 0 (got {gas})",

@@ -38,7 +38,7 @@ class RolloutResourceConfig(RoleResourceConfig):
 
 @dataclass(frozen=True, slots=True)
 class RewardResourceConfig(RoleResourceConfig):
-    """GPU ownership request for reward inference workers."""
+    """GPU ownership request for in-process reward inference."""
 
     gpus_per_worker: float = 1.0
     num_workers: int | str = "auto"
@@ -214,6 +214,12 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
     )
     rollout_num_gpus = len(rollout_devices)
 
+    if rollout_gpus_per_worker == 0 and rollout_num_gpus > 0:
+        raise ValueError(
+            "distributed.resources.rollout.gpus_per_worker=0 requires zero "
+            f"resolved rollout GPUs, got {list(rollout_devices)}. Remove the GPU "
+            "request or set gpus_per_worker=1.",
+        )
     if rollout_gpus_per_worker > 0 and rollout_num_gpus == 0:
         raise ValueError(
             "No rollout GPUs are available after reserving trainer devices "
@@ -252,6 +258,12 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
         allow_overlap=config.allow_overlap,
     )
     reward_num_gpus = len(reward_devices)
+    if reward_gpus_per_worker == 0 and reward_num_gpus > 0:
+        raise ValueError(
+            "distributed.resources.reward.gpus_per_worker=0 requires zero "
+            f"resolved reward GPUs, got {list(reward_devices)}. Remove the GPU "
+            "request or set gpus_per_worker=1.",
+        )
     reward_num_workers = _resolve_role_num_workers(
         role="reward",
         num_workers=config.reward.num_workers,
@@ -288,10 +300,10 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
     if persistent_colocated and reward_shared_with_rollout:
         raise ValueError(
             "distributed.resources.rollout.gpu_pool=trainer + memory_fraction "
-            "(resident colocation) cannot share the rollout GPU with a Ray reward "
-            "worker. Use distributed.resources.reward.gpu_pool=dedicated (or expose "
-            "a separate reward GPU) for async reward overlap; shared reward pools "
-            "require phase handoff instead of resident overlap.",
+            "(resident colocation) cannot share the rollout GPU with the in-process "
+            "reward model. Use distributed.resources.reward.gpu_pool=dedicated (or "
+            "expose a separate reward GPU) for async reward overlap; shared reward "
+            "placement requires phase handoff instead of resident overlap.",
         )
     # Resident colocation requires the cap (a resident worker + resident trainer on
     # one GPU would otherwise let the worker's allocator grow until the trainer's
@@ -406,8 +418,8 @@ def _validate_fsdp_trainer_disjoint(
     if overlap_rollout or overlap_reward:
         raise ValueError(
             "distributed.training.strategy=fsdp requires trainer GPUs disjoint from "
-            "rollout and reward (each FSDP rank owns its GPU; rollout/reward run as "
-            "separate Ray actors). "
+            "rollout and reward (each FSDP rank owns its GPU; rollout actors and "
+            "the in-process reward model need separate reserved devices). "
             f"trainer={list(trainer_devices)} rollout={list(rollout_devices)} "
             f"reward={list(reward_devices)} "
             f"(overlap rollout={overlap_rollout}, reward={overlap_reward}).",
@@ -425,6 +437,55 @@ def trainer_torch_device(
     if not devices:
         return "cpu"
     return f"cuda:{int(devices[0])}"
+
+
+def reward_torch_device(
+    resolved: ResolvedDistributedResources,
+    *,
+    trainer_device: Any | None = None,
+) -> str:
+    """Return the device for the local, in-process reward runtime.
+
+    A resolved reward GPU is a local reservation, not a Ray worker placement.
+    The local runtime can therefore consume exactly one local execution slot.
+    A CPU-only resource request selects CPU; cross-node reward ordinals are only
+    Ray budget tokens and cannot name a device in the driver process. Multiple
+    workers or remote reward inference need a real transport boundary instead.
+
+    When no reward GPU is reserved, reward inference follows the trainer device.
+    ``trainer_device`` lets torchrun callers provide their rank-local device
+    instead of the resolver's rank-agnostic trainer ordinal.
+    """
+
+    devices = tuple(resolved.reward_devices)
+    if len(devices) > 1:
+        raise ValueError(
+            "Local reward inference supports at most one resolved reward GPU, "
+            f"got {list(devices)}. Rewards score in the driver process; split "
+            "multi-GPU reward inference requires a remote runtime boundary.",
+        )
+    if resolved.reward_num_workers > 1:
+        raise ValueError(
+            "Local reward inference supports at most one resolved reward worker, "
+            f"got {resolved.reward_num_workers}. Parallel reward workers require "
+            "a remote runtime boundary.",
+        )
+    if resolved.reward_num_workers == 1 and resolved.reward_gpus_per_worker == 0:
+        return "cpu"
+
+    if resolved.cross_node and devices:
+        raise ValueError(
+            "distributed.resources.cross_node=true cannot place local reward "
+            f"inference on reward devices {list(devices)}: cross-node device ids "
+            "are Ray budget tokens, not driver-local CUDA ordinals. Remove the "
+            "reward resource block to score on the trainer device, or implement "
+            "a remote reward transport.",
+        )
+    if devices:
+        return f"cuda:{int(devices[0])}"
+    if trainer_device is not None:
+        return str(trainer_device)
+    return trainer_torch_device(resolved)
 
 
 def format_distributed_resource_plan(
@@ -625,12 +686,25 @@ def _resolve_rollout_devices(
                 "distributed.resources.rollout.num_gpus does not match "
                 f"len(distributed.resources.rollout.devices): {num_gpus} vs {len(devices)}",
             )
-        if gpu_pool == "trainer" and not (set(devices) & set(trainer_devices)):
+        trainer_pool = set(trainer_devices)
+        if gpu_pool == "trainer" and not set(devices).issubset(trainer_pool):
+            outside = sorted(set(devices) - trainer_pool)
             raise ValueError(
-                "distributed.resources.rollout.gpu_pool=trainer colocates rollout on "
-                f"the trainer GPU, but rollout.devices={list(devices)} is disjoint from "
-                f"trainer={list(trainer_devices)}. Drop the explicit devices (auto pins "
-                "onto the trainer GPU) or set them to overlap the trainer.",
+                "distributed.resources.rollout.gpu_pool=trainer requires every "
+                "rollout device to belong to the trainer pool, but "
+                f"rollout.devices={list(devices)} includes {outside} outside "
+                f"trainer={list(trainer_devices)}. Devices disjoint from trainer "
+                "or mixing trainer and spare GPUs are invalid; drop the explicit "
+                "devices (auto pins onto the trainer pool) or use "
+                "gpu_pool=dedicated.",
+            )
+        trainer_overlap = sorted(set(devices) & trainer_pool)
+        if gpu_pool == "dedicated" and trainer_overlap:
+            raise ValueError(
+                "distributed.resources.rollout.gpu_pool=dedicated requires rollout "
+                "devices disjoint from the trainer pool, but "
+                f"rollout={list(devices)} trainer={list(trainer_devices)} "
+                f"overlap={trainer_overlap}",
             )
         return devices
 
@@ -857,7 +931,9 @@ def _resolve_reward_devices(
         pool=pool,
         excluded=excluded,
         visible_devices=visible_devices,
-        allow_overlap=allow_overlap,
+        # This branch is the explicit dedicated pool. ``allow_overlap`` permits
+        # auto placement to share, but cannot weaken a declared dedicated pool.
+        allow_overlap=False,
         not_enough_pool_error=(
             "Not enough non-overlapping reward GPUs: "
             f"requested={requested}, available={len(pool)}, "
@@ -892,18 +968,30 @@ def _validate_reward_overlap(
     reward_config: RewardResourceConfig,
     allow_overlap: bool,
 ) -> None:
-    rollout_overlap = sorted(set(devices) & set(rollout_devices))
-    if rollout_overlap and reward_config.gpu_pool == "dedicated":
-        # "auto" may choose sharing; only an explicit "dedicated" contradicts an
-        # overlapping topology. (Release is derived, so a shared pool always
-        # releases between phases -- there is no flag to contradict.)
+    device_set = set(devices)
+    rollout_pool = set(rollout_devices)
+    trainer_pool = set(trainer_devices)
+
+    if reward_config.gpu_pool == "rollout" and not device_set.issubset(rollout_pool):
+        outside = sorted(device_set - rollout_pool)
         raise ValueError(
-            "Reward and rollout devices overlap but "
-            "distributed.resources.reward.gpu_pool=dedicated: "
-            f"reward={list(devices)} rollout={list(rollout_devices)}",
+            "distributed.resources.reward.gpu_pool=rollout requires every reward "
+            f"device to belong to rollout={list(rollout_devices)}, but "
+            f"reward={list(devices)} includes {outside} outside that pool",
         )
 
-    trainer_overlap = sorted(set(devices) & set(trainer_devices))
+    rollout_overlap = sorted(device_set & rollout_pool)
+    trainer_overlap = sorted(device_set & trainer_pool)
+    if reward_config.gpu_pool == "dedicated" and (
+        rollout_overlap or trainer_overlap
+    ):
+        raise ValueError(
+            "distributed.resources.reward.gpu_pool=dedicated requires reward "
+            "devices disjoint from both trainer and rollout pools: "
+            f"reward={list(devices)} trainer={list(trainer_devices)} "
+            f"rollout={list(rollout_devices)}",
+        )
+
     if trainer_overlap and not allow_overlap:
         raise ValueError(
             "Trainer and reward devices overlap but "
@@ -1322,5 +1410,6 @@ __all__ = [
     "build_bundle_layout",
     "format_distributed_resource_plan",
     "resolve_distributed_resources",
+    "reward_torch_device",
     "trainer_torch_device",
 ]

@@ -7,8 +7,8 @@
 #       background producer keeps per-prompt groups in flight while the trainer
 #       drains homogeneous-policy ready groups.
 #   (2) reward on a DEDICATED GPU disjoint from rollout
-#       (distributed.resources.reward.gpu_pool: dedicated): the reward worker
-#       takes a spare GPU that does NOT overlap rollout's GPU.
+#       (distributed.resources.reward.gpu_pool: dedicated): the in-process reward
+#       model uses a spare GPU that does NOT overlap rollout's GPU.
 #   (3) cosmos full-param 8-bit training at 480p-native (720p weights are
 #       garbage at 240p/480p; see SPRINT_config_correctness_audit).
 #
@@ -20,18 +20,17 @@
 #     GPUs"). The single-GPU resident trick lives in the opposite recipe,
 #     sd3_5/online_grpo_ocr_single_gpu_async_debug.yaml (gpu_pool=trainer +
 #     memory_fraction pins rollout resident on the trainer card).
-#   - 2 GPUs: resolves, but reward.gpu_pool=dedicated lands the reward worker
-#     back on the TRAINER GPU (the only spare disjoint from rollout). The async
-#     overlap below still holds (reward stays disjoint from rollout), but reward
-#     now contends with the trainer's forward/backward instead of owning its own
-#     card. Use 3+ GPUs for the full no-contention layout this recipe targets.
+#   - 2 GPUs: does NOT resolve. `dedicated` means disjoint from BOTH trainer and
+#     rollout, so there is no reward GPU left and resource resolution fails. Use
+#     3+ GPUs for the no-contention layout this recipe declares, or explicitly
+#     choose reward.gpu_pool=rollout for phase-separated sharing.
 #
 # WHY the dedicated reward GPU is load-bearing for throughput: when reward shares
 # rollout's GPU, the topology derives release_rollout_before_reward=True (rollout
 # must step off so reward can run), serializing reward(N) after rollout(N).
 # Disjoint reward devices make reward_shared_with_rollout False, so
-# release_rollout_before_reward resolves False and the reward lease is resident —
-# reward(N) overlaps rollout(N+1) on its own card. That is what hides the
+# release_rollout_before_reward resolves False and the reward model stays resident —
+# reward(N) overlaps an already-submitted rollout(N+1) on its own card. That hides the
 # measured ~14% reward stage instead of paying it on the critical path.
 #
 # Usage (>= 3 GPUs):

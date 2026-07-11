@@ -23,6 +23,7 @@ from vrl.ray.placement import GlobalRayPlacementOwner, cross_node_preflight
 from vrl.ray.resources import (
     format_distributed_resource_plan,
     resolve_distributed_resources,
+    reward_torch_device,
     trainer_torch_device,
 )
 from vrl.rollouts.families import build_ray_generation_inputs_for_family
@@ -781,23 +782,24 @@ async def run_online_recipe(
     # trainer device so the trainer model, rollout, and weight sync all land on
     # this rank's card. single_process passes the resolver device straight through.
     device = training_context.device
+    # Rewards execute in this driver process. A dedicated local reward reservation
+    # must therefore select the reward model's actual CUDA device; cross-node reward
+    # ordinals are remote budget tokens and fail here before any model is loaded.
+    reward_device = reward_torch_device(
+        resources,
+        trainer_device=device,
+    )
     # Replay/training model storage follows ``train`` (via trainer_config);
     # the generation (rollout) model can use a different ``rollout`` dtype.
     weight_dtype = torch_dtype_for_trainer_precision(trainer_config, torch)
     policy = resolve_precision_policy(cfg)
     rollout_precision = policy.rollout
-    if rollout_precision == "fp4":
-        # fp4 has a precision token + drift/TIS support but no GEMM kernel yet
-        # (Fp8Linear is e4m3 only). Fail loudly rather than crash in the forward.
-        raise NotImplementedError(
-            "precision.rollout='fp4': the fp4 rollout GEMM is not built "
-            "(Fp8Linear is e4m3/fp8 only). Use fp8 or bf16/fp16/fp32 for live runs.",
-        )
     if rollout_precision == "fp8":
-        # fp8 rollout is a quantized GEMM, not float8 storage: the rollout model
-        # loads its bf16 master and the runtime builder swaps the big linears to
-        # Fp8Linear (torch._scaled_mm). So storage stays the compute (bf16) dtype;
-        # the swap is driven by spec.rollout_quantization (extract_runtime_spec).
+        # fp8 rollout is a quantized GEMM, not float8 storage: the rollout
+        # model loads its bf16 master and the runtime builder swaps the big
+        # linears to Fp8Linear (torch._scaled_mm). So storage stays the compute
+        # (bf16) dtype; the swap is driven by
+        # spec.rollout_quantization (extract_runtime_spec).
         rollout_weight_dtype = resolve_torch_dtype(policy.train)
     else:
         rollout_weight_dtype = resolve_torch_dtype(rollout_precision)
@@ -822,11 +824,11 @@ async def run_online_recipe(
     # Scheduler feeds the flow-matching evaluator when the family bundle has one.
     scheduler = getattr(bundle, "scheduler", None)
 
-    # One run-level Ray placement group owns trainer/rollout/reward bundles for
-    # the whole run. Created after the trainer model is on its GPU and before
-    # reward/rollout are built, so
-    # both receive owner-managed placement into the same group instead of each
-    # building (and per-epoch rebuilding) its own.
+    # One run-level Ray placement group owns the trainer/reward reservations and
+    # rollout bundles for the whole run. It is created after the trainer model is
+    # placed and before reward/rollout construction: the rollout actor receives
+    # its role placement, while the local reward model uses the reserved physical
+    # device selected above.
     placement_owner = GlobalRayPlacementOwner(
         resources,
         rollout_cpus_per_worker=float(
@@ -848,7 +850,7 @@ async def run_online_recipe(
         components = build_online_recipe_components(
             cfg,
             family=definition.family,
-            device=str(device),
+            reward_device=reward_device,
             scheduler=scheduler,
             built=built,
         )

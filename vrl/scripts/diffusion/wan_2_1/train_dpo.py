@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from omegaconf import DictConfig, OmegaConf
 
@@ -34,10 +35,77 @@ from vrl.trainers.checkpointing import (
     save_resolved_config,
     save_training_checkpoint,
 )
-from vrl.trainers.core.types import TrainerConfig
+from vrl.trainers.core.types import OptimConfig, TrainerConfig
 from vrl.trainers.precision import normalize_mixed_precision
 
+if TYPE_CHECKING:
+    from vrl.algorithms.dpo import DiffusionDPOConfig
+    from vrl.trainers.offline import OfflineDPOTrainerConfig
+
 logger = logging.getLogger(__name__)
+
+
+def _build_offline_dpo_trainer_config(
+    cfg: DictConfig,
+    dpo_config: DiffusionDPOConfig,
+    *,
+    mixed_precision: str,
+    train_batch_size: int,
+    gradient_accumulation_steps: int,
+) -> OfflineDPOTrainerConfig:
+    """Resolve the DPO trainer from the public actor optimizer config."""
+
+    from vrl.config.validation import require
+    from vrl.trainers.offline import OfflineDPOTrainerConfig
+
+    raw_optim = OmegaConf.to_container(
+        cfg.actor.optim,
+        resolve=True,
+        throw_on_missing=True,
+    )
+    if not isinstance(raw_optim, dict):
+        raise ValueError("actor.optim must be a mapping")
+    optim = OptimConfig(**raw_optim)
+    if optim.optim_8bit:
+        raise ValueError(
+            "actor.optim.optim_8bit=true is not supported by OfflineDPOTrainer; "
+            "use AdamW/Adafactor without 8-bit optimizer state",
+        )
+    use_adafactor = bool(require(cfg, "actor.use_adafactor"))
+    if use_adafactor:
+        adam_only_keys = sorted({"adam_beta1", "adam_beta2", "eps"} & raw_optim.keys())
+        if adam_only_keys:
+            paths = ", ".join(f"actor.optim.{key}" for key in adam_only_keys)
+            raise ValueError(
+                "actor.use_adafactor=true does not consume AdamW-only key(s): "
+                f"{paths}",
+            )
+
+    scale_lr = bool(require(cfg, "actor.scale_lr"))
+    effective_batch_size = train_batch_size * gradient_accumulation_steps
+    lr = float(optim.lr) * effective_batch_size if scale_lr else float(optim.lr)
+    trainer_fields = TrainerConfig.__dataclass_fields__
+    return OfflineDPOTrainerConfig(
+        beta=float(dpo_config.beta),
+        sft_weight=float(dpo_config.sft_weight),
+        lr=lr,
+        adam_beta1=float(optim.adam_beta1),
+        adam_beta2=float(optim.adam_beta2),
+        adam_weight_decay=float(optim.weight_decay),
+        adam_epsilon=float(optim.eps),
+        allow_tf32=bool(optim.allow_tf32),
+        max_grad_norm=float(
+            OmegaConf.select(
+                cfg,
+                "actor.max_norm",
+                default=trainer_fields["max_norm"].default,
+            ),
+        ),
+        gradient_accumulation_steps=gradient_accumulation_steps,
+        prediction_type=str(require(cfg, "actor.prediction_type")),
+        mixed_precision=mixed_precision,
+        use_adafactor=use_adafactor,
+    )
 
 
 def _build_encoders(pipeline, num_frames: int, device, dtype):
@@ -103,7 +171,6 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     from vrl.trainers.data import collate_preference, load_pickapic
     from vrl.trainers.offline import (
         OfflineDPOTrainer,
-        OfflineDPOTrainerConfig,
         wan_forward,
     )
 
@@ -111,7 +178,6 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     # to keep the YAML-as-source-of-truth contract (SPRINT patch 3 Phase 6).
     validate_training_config(cfg)
 
-    actor = cfg.actor
     trainer_cfg_yaml = cfg.trainer
     sampling = cfg.sampling
     data_cfg = cfg.data
@@ -125,6 +191,15 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
 
     precision = resolve_precision_policy(cfg)
     mixed_precision = normalize_mixed_precision(precision.train)
+    train_batch_size = int(require(cfg, "actor.train_batch_size"))
+    grad_accum = int(require(cfg, "actor.gradient_accumulation_steps"))
+    trainer_cfg = _build_offline_dpo_trainer_config(
+        cfg,
+        dpo_config,
+        mixed_precision=mixed_precision,
+        train_batch_size=train_batch_size,
+        gradient_accumulation_steps=grad_accum,
+    )
     # Optional knobs: base yaml no longer restates dataclass defaults, so an
     # absent key falls back to the typed default — derived, never copied.
     _trainer_fields = TrainerConfig.__dataclass_fields__
@@ -179,8 +254,6 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         no_hflip=not bool(require(cfg, "data.preprocessing.horizontal_flip")),
         dataset_name=str(data_cfg.dataset_name),
     )
-    train_batch_size = int(require(cfg, "actor.train_batch_size"))
-    grad_accum = int(require(cfg, "actor.gradient_accumulation_steps"))
     dataloader = DataLoader(
         ds,
         batch_size=train_batch_size,
@@ -191,28 +264,8 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
     )
     logger.info("Loaded %d preference pairs", len(ds))
 
-    # 4. Trainer config — bridge YAML slices to OfflineDPOTrainerConfig
-    base_lr = float(actor.optim.lr)
-    scale_lr = bool(require(cfg, "actor.scale_lr"))
-    effective_bs = train_batch_size * grad_accum
-    lr = base_lr * effective_bs if scale_lr else base_lr
-
-    trainer_cfg = OfflineDPOTrainerConfig(
-        beta=float(dpo_config.beta),
-        sft_weight=float(dpo_config.sft_weight),
-        lr=lr,
-        max_grad_norm=float(
-            OmegaConf.select(
-                cfg,
-                "actor.max_norm",
-                default=_trainer_fields["max_norm"].default,
-            ),
-        ),
-        gradient_accumulation_steps=grad_accum,
-        prediction_type=str(require(cfg, "actor.prediction_type")),
-        mixed_precision=mixed_precision,
-        use_adafactor=bool(require(cfg, "actor.use_adafactor")),
-    )
+    # 4. Trainer — its config was resolved before runtime/data construction so
+    # unsupported optimizer modes fail without paying model or dataset startup.
     pipeline.scheduler.set_timesteps(
         pipeline.scheduler.config.num_train_timesteps, device=device,
     )
@@ -266,7 +319,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
 
     logger.info(
         "Starting Wan-1.3B DPO — %d steps, beta=%g, lr=%g, num_frames=%d",
-        max_train_steps, trainer_cfg.beta, lr, num_frames,
+        max_train_steps, trainer_cfg.beta, trainer_cfg.lr, num_frames,
     )
 
     # LoRA-only checkpoints export the adapter weights; full fine-tunes export

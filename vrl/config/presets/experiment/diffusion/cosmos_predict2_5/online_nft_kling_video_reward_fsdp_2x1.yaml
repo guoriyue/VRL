@@ -4,8 +4,9 @@
 # Same per-rank-local symmetric-colocated topology as the DDP 2x1 variant: every
 # server runs ONE torchrun rank = 1 trainer + the base recipe's single-GPU
 # colocated rollout (and Kling reward) time-sharing its local GPU, all reading the
-# SAME policy version. Ray and the rollout/reward workers are per-rank-LOCAL (each
-# rank does its own ray.init() on its own card); there is NO shared Ray cluster.
+# SAME policy version. Ray rollout workers and the in-process reward model are
+# per-rank-LOCAL (each rank does its own ray.init() on its card); there is NO shared
+# Ray cluster.
 # The two ranks draw DISJOINT prompt slices (genuine data parallelism), so 2 ranks
 # = 2x the effective batch. Outputs (metrics / checkpoints / eval) are written by
 # rank0 only — server A's disk.
