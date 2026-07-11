@@ -55,6 +55,15 @@ sampling:
   # (SDE-draw "luck", see the overfit-validation recipe's sampling comment) —
   # 5 deterministic tail steps past the [0,10) window restore the quality floor.
   num_steps: 15
+  # CFG off for RL: every shipped cosmos-rl Predict2 RL config uses guidance 0
+  # (cosmos_rl/policy/config/wfm/__init__.py rl.guidance default), and dropping
+  # the uncond branch halves BOTH rollout and replay-backward transformer time
+  # (measured account: ~114 -> ~57 min/update on 1x5090). GATE before any long
+  # run: fixed-grid mp4 eyeball + reward level, see
+  # docs/sprints/planned/SPRINT_ppo_update_cycle_speedup.md P0. Curves generated
+  # at guidance 7 are NOT comparable — re-baseline.
+  guidance_scale: 0.0
+  cfg: false
 
 actor:
   optim:
@@ -67,6 +76,10 @@ actor:
   # gate must certify the same trainer semantics this run uses.
   ppo_epochs: 2
   timestep_fraction: 0.5
+  # Explicit training floor from the 2026-07-10 93f backward probe. Replay does
+  # not inherit generation's larger chunk because full-checkpointed backward has
+  # a separate, lower memory ceiling.
+  replay_samples_per_chunk: 1
 
 cosmos:
   reference_mode: per_sample
@@ -74,7 +87,12 @@ cosmos:
 rollout:
   n_samples_per_prompt: 16            # 16 rollouts/update (per_sample mode requires prompts_per_batch=1)
   prompts_per_batch: 1
-  samples_per_chunk: 1                # measured memory floor at 480p_93f — see header
+  # Generation-side chunking: 1->4 measured 1.40x on this exact model/shape
+  # (2026-06-29 A/B: 139.6->99.5 s/chunk, gen peak 25.3GB fits, old==fresh
+  # logprob bit-exact). The old memory-floor=1 applied when this knob also
+  # drove the replay backward; that side is now resolved independently via
+  # actor.replay_samples_per_chunk above.
+  samples_per_chunk: 4
   trajectory_storage:
     device: cpu                       # 93f trajectories on the GPU wire OOM the collect handoff
 
