@@ -26,7 +26,6 @@ from typing import Any
 import torch
 
 from vrl.rewards.base import decode_artifact_frames
-from vrl.utils.artifacts import default_data_root
 
 
 class MotionDynamicsModel:
@@ -34,13 +33,13 @@ class MotionDynamicsModel:
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
         cfg = dict(worker_config)
-        self.worker_config = cfg
-        self.data_root = str(cfg.get("data_root") or default_data_root())
         self.num_frames = max(2, int(cfg.get("num_frames", 16)))
         # RAFT needs H,W divisible by 8; 256 keeps small motions resolvable cheaply.
         self.flow_size = int(cfg.get("flow_size", 256))
         if self.flow_size % 8 != 0:
-            raise ValueError(f"motion_dynamics flow_size must be divisible by 8, got {self.flow_size}")
+            raise ValueError(
+                f"motion_dynamics flow_size must be divisible by 8, got {self.flow_size}"
+            )
         self.top_fraction = float(cfg.get("top_fraction", 0.05))
         # Maps normalized top-5% flow (fraction of frame diagonal) into a [0,1]
         # reward. Domain-tunable: DROID exterior-cam motion is small (~0.007 of the

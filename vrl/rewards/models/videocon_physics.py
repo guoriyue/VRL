@@ -38,21 +38,17 @@ _DEFAULT_VIDEO_TOKEN = "<|video|>"
 # Templates use the videophy paper conversational format. The {caption} slot is
 # filled with the rollout prompt. {video} expands to the special media token
 # (``<|video|>``) that the MplugOwlProcessor maps to a vision-feature block.
-_DEFAULT_PHYSICS_TEMPLATE = (
-    "\nHuman: {video}\nDoes the video follow physical commonsense?\nAI: "
-)
+_DEFAULT_PHYSICS_TEMPLATE = "\nHuman: {video}\nDoes the video follow physical commonsense?\nAI: "
 _DEFAULT_SEMANTIC_TEMPLATE = (
-    "\nHuman: {video}\nDoes the video entail the caption: \"{caption}\"?\nAI: "
+    '\nHuman: {video}\nDoes the video entail the caption: "{caption}"?\nAI: '
 )
+
 
 class VideoConPhysicsModel(RewardModel):
     """Load VideoCon-Physics and score one (prompt, video) pair per call."""
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
         self.worker_config = dict(worker_config)
-        self.reward_model_name = str(
-            self.worker_config.get("reward_model_name", ""),
-        ).strip()
         # Drift fix: this family previously dropped ``local_files_only`` on the
         # snapshot_download path; the shared resolver forwards it.
         self.model_root = resolve_model_root(

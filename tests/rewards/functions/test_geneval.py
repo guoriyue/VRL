@@ -10,9 +10,7 @@ from vrl.rewards.types import RewardRollout, RewardTrajectory
 def _rollout(metadata: dict) -> RewardRollout:
     return RewardRollout(
         request=None,
-        trajectory=RewardTrajectory(
-            prompt="a photo of a yellow bus", output=None
-        ),
+        trajectory=RewardTrajectory(prompt="a photo of a yellow bus", output=None),
         metadata=metadata,
     )
 
@@ -20,6 +18,7 @@ def _rollout(metadata: dict) -> RewardRollout:
 @pytest.mark.asyncio
 async def test_geneval_reward_uses_injected_scorer_metadata() -> None:
     """Checks GenEval reward uses injected scorer metadata."""
+
     def scorer(**kwargs):
         assert kwargs["geneval"]["tag"] == "colors"
         assert kwargs["geneval"]["include"][0]["class"] == "bus"
@@ -43,6 +42,7 @@ async def test_geneval_reward_uses_injected_scorer_metadata() -> None:
 @pytest.mark.asyncio
 async def test_geneval_reward_reads_manifest_row_metadata() -> None:
     """Checks GenEval reward reads manifest row metadata."""
+
     def scorer(**kwargs):
         assert kwargs["geneval"]["tag"] == "single_object"
         return 0.5
@@ -85,9 +85,15 @@ async def test_geneval_reward_rejects_unknown_kwarg() -> None:
         GenEvalReward(device="cpu", evaluator="constant", scorer=lambda **_: 0.25)
 
 
+def test_geneval_reward_rejects_removed_timeout_knob() -> None:
+    with pytest.raises(TypeError, match="timeout_s"):
+        GenEvalReward(device="cpu", timeout_s=0.0, scorer=lambda **_: 0.25)
+
+
 @pytest.mark.asyncio
 async def test_geneval_reward_registered_in_multi_reward() -> None:
     """Checks GenEval reward registered in multi reward."""
+
     def scorer(**kwargs):
         assert kwargs["geneval"]["tag"] == "colors"
         return 0.25

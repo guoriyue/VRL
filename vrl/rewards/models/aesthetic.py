@@ -45,7 +45,7 @@ class AestheticRewardModel(TorchRewardModel):
                 return self.layers(embed)
 
         class _AestheticScorer(nn.Module):
-            def __init__(self, device: str, dtype: Any) -> None:
+            def __init__(self, dtype: Any) -> None:
                 super().__init__()
                 self.clip = CLIPModel.from_pretrained(model_name)
                 self.processor = CLIPProcessor.from_pretrained(model_name)
@@ -72,7 +72,7 @@ class AestheticRewardModel(TorchRewardModel):
                 embed = embed / torch.linalg.vector_norm(embed, dim=-1, keepdim=True)
                 return self.mlp(embed).squeeze(1)
 
-        self._scorer = _AestheticScorer(self.device, self.dtype).to(self.device)
+        self._scorer = _AestheticScorer(self.dtype).to(self.device)
 
     def score_media(self, *, media: Any, prompt: str, request: Any) -> Mapping[str, float]:
         import torch
@@ -87,9 +87,7 @@ class AestheticRewardModel(TorchRewardModel):
             elif images_raw.ndim == 4 and images_raw.shape[0] <= 4:
                 t = images_raw.shape[1]
                 indices = [t // 4, t // 2, 3 * t // 4]
-                images = [
-                    images_raw[:, i, :, :].cpu().numpy().transpose(1, 2, 0) for i in indices
-                ]
+                images = [images_raw[:, i, :, :].cpu().numpy().transpose(1, 2, 0) for i in indices]
             elif images_raw.ndim == 3:
                 images = [images_raw.cpu().numpy().transpose(1, 2, 0)]
             else:

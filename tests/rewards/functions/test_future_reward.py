@@ -7,8 +7,11 @@ DINOv2 / RAFT discrimination is integration-verified by running the probe itself
 
 from __future__ import annotations
 
+import pytest
 import torch
 
+from vrl.rewards.functions.motion_dynamics import MotionDynamicsReward
+from vrl.rewards.functions.target_dino_similarity import TargetDinoSimilarityReward
 from vrl.scripts.eval.future_reward_discrimination_probe import (
     _build_candidates,
     _verdict,
@@ -89,3 +92,21 @@ def test_verdict_motion_guard_requires_static_floor() -> None:
     leaky = dict(passing)
     leaky["static_frozen"] = {"mean": 0.30, "std": 0.0, "n": 8}
     assert _verdict("motion_dynamics", leaky)["passed"] is False
+
+
+@pytest.mark.parametrize(
+    "reward_cls",
+    [MotionDynamicsReward, TargetDinoSimilarityReward],
+)
+def test_future_reward_accepts_declared_worker_config(reward_cls: type) -> None:
+    reward = reward_cls(device="cpu", worker_config={"num_frames": 2})
+    assert reward.runtime is not None
+
+
+@pytest.mark.parametrize(
+    "reward_cls",
+    [MotionDynamicsReward, TargetDinoSimilarityReward],
+)
+def test_future_reward_rejects_unknown_kwargs(reward_cls: type) -> None:
+    with pytest.raises(TypeError, match="unknown_knob"):
+        reward_cls(device="cpu", unknown_knob=True)

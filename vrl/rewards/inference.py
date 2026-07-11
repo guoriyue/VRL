@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, get_args
 
 # Valid artifact media kinds. ``MediaType`` is the single source of truth; the
@@ -125,24 +125,6 @@ class RewardInferenceRequest(_ScoreSelection):
         if len(set(artifact_ids)) != len(artifact_ids):
             raise ValueError(f"duplicate reward artifact ids: {artifact_ids}")
 
-    def with_artifacts(
-        self,
-        artifacts: tuple[RewardInferenceArtifact, ...],
-        *,
-        shard_index: int | None = None,
-    ) -> RewardInferenceRequest:
-        metadata = dict(self.metadata)
-        if shard_index is not None:
-            metadata["shard_index"] = int(shard_index)
-        return replace(self, artifacts=artifacts, metadata=metadata)
-
-    def with_metadata(self, values: Mapping[str, Any]) -> RewardInferenceRequest:
-        """Return a copy with additional request metadata."""
-
-        metadata = dict(self.metadata)
-        metadata.update(dict(values))
-        return replace(self, metadata=metadata)
-
 
 @dataclass(frozen=True, slots=True)
 class RewardInferenceResult(_ScoreSelection):
@@ -217,8 +199,7 @@ def validate_reward_results(
     extra = sorted(set(by_id) - set(expected_ids))
     if missing or extra:
         raise RuntimeError(
-            "reward inference result/artifact mismatch: "
-            f"missing={missing}, extra={extra}",
+            f"reward inference result/artifact mismatch: missing={missing}, extra={extra}",
         )
     return [by_id[artifact_id] for artifact_id in expected_ids]
 

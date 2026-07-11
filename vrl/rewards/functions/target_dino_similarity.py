@@ -18,7 +18,6 @@ class TargetDinoSimilarityReward(RewardFunction):
         reward_name: str = "target_dino_similarity",
         score_key: str = "target_dino_similarity",
         worker_config: dict[str, Any] | None = None,
-        **_: Any,
     ) -> None:
         cfg = dict(worker_config or {})
         if device:

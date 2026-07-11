@@ -18,7 +18,6 @@ class MotionDynamicsReward(RewardFunction):
         reward_name: str = "motion_dynamics",
         score_key: str = "motion_dynamics",
         worker_config: dict[str, Any] | None = None,
-        **_: Any,
     ) -> None:
         cfg = dict(worker_config or {})
         if device:

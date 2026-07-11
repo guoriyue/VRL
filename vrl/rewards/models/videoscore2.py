@@ -94,9 +94,6 @@ class VideoScore2Model(RewardModel):
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
         self.worker_config = dict(worker_config)
-        self.reward_model_name = str(
-            self.worker_config.get("reward_model_name", ""),
-        ).strip()
         self.model_root = resolve_model_root(
             self.worker_config,
             default_model=_DEFAULT_REWARD_MODEL,

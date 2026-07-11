@@ -30,7 +30,6 @@ class GenEvalReward(RewardFunction):
         self,
         device: str = "cuda",
         import_path: str = "",
-        timeout_s: float = 120.0,
         debug_dir: str = "",
         artifact_dir: str = "",
         scorer: Callable[..., Any] | None = None,
@@ -39,10 +38,6 @@ class GenEvalReward(RewardFunction):
         # otherwise resolves the ``import_path`` callable. An unknown reward.kwargs
         # key is a typo and fails loud here (the __init__ is the per-reward
         # validation boundary), same as ocr.py's explicit signature.
-        self.device = device
-        self.import_path = import_path
-        self.timeout_s = float(timeout_s)
-        self.artifact_dir = artifact_dir
         # Build eagerly so an injected scorer and the import_path are wired
         # before the first score call.
         model = GenEvalRewardModel(
@@ -54,7 +49,6 @@ class GenEvalReward(RewardFunction):
                 "scorer": scorer,
             },
         )
-        self._model = model
         super().__init__(
             reward_name="geneval",
             score_key="geneval",

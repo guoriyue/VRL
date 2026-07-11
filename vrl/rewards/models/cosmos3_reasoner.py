@@ -89,15 +89,16 @@ class Cosmos3ReasonerRewardModel(RewardModel):
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
         self.worker_config = dict(worker_config)
-        self.reward_model_name = str(
-            self.worker_config.get("reward_model_name", ""),
-        ).strip()
         # Generator tower is a separate diffusion model; only the reasoner judges
         # here, and the unified checkpoint will not load HF-direct (see module
         # docstring). Require an explicit, supported layout.
-        self.checkpoint_layout = str(
-            self.worker_config.get("checkpoint_layout", ""),
-        ).strip().lower()
+        self.checkpoint_layout = (
+            str(
+                self.worker_config.get("checkpoint_layout", ""),
+            )
+            .strip()
+            .lower()
+        )
         self.dtype = resolve_torch_dtype(str(self.worker_config.get("dtype", "bfloat16")))
         self.device = str(self.worker_config.get("device", "cuda:0"))
         self.fps = float(self.worker_config.get("fps", _DEFAULT_FPS))
@@ -277,12 +278,7 @@ def _normalize_scores(
         "contact_realism": contact_realism,
         "temporal_consistency": temporal_consistency,
         "physical_plausibility": physical_plausibility,
-        "overall": (
-            task_success
-            + contact_realism
-            + temporal_consistency
-            + physical_plausibility
-        )
+        "overall": (task_success + contact_realism + temporal_consistency + physical_plausibility)
         / 4.0,
     }
 

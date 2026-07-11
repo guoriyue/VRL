@@ -45,7 +45,6 @@ class TargetDinoSimilarityModel:
 
     def __init__(self, worker_config: Mapping[str, Any]) -> None:
         cfg = dict(worker_config)
-        self.worker_config = cfg
         self.data_root = str(cfg.get("data_root") or default_data_root())
         self.num_frames = max(1, int(cfg.get("num_frames", 16)))
         # Temporal weight is high on purpose: per-frame cosine alone cannot separate
