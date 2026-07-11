@@ -123,10 +123,12 @@ class RayGenerationRuntime(GenerationRuntime):
             placement=placement,
             sleep_eligible=sleep_eligible,
         )
-        runtime.requires_driver_model_offload = config.gpus_per_worker > 0
+        runtime.requires_driver_model_offload = bool(
+            handoff is not None and handoff.release_rollout_before_train,
+        )
         runtime.current_policy_version = _launch_contract_policy_version(launch_contract)
-        # Lease mode requires driver-model offload, which already hard-fails the
-        # continuous schedule, so non-draining never applies here.
+        # Lease workers are released between phases, so they cannot retain the
+        # versioned slots required by non-draining continuous weight sync.
         runtime.supports_non_draining_weight_sync = False
         runtime._probed_samples_per_chunk = None
         return runtime

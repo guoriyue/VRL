@@ -541,25 +541,32 @@ class OnlineTrainer(Trainer):
         byte-equivalent to plain GRPO — the documented flat-curve root cause. Fail
         fast instead of silently training a no-op mechanism.
 
-        Scoped to ``strict_on_policy``: ``continuous`` is the explicit off-policy
-        path (stale ``behavior_policy_version`` makes ``r != 1`` even at one epoch),
-        so the user has already opted into a moving ratio there.
+        A continuous schedule only creates a moving ratio when it actually
+        permits stale behavior-policy versions. Its default
+        ``max_stale_policy_versions=0`` is behavior-equivalent to strict
+        on-policy execution and must be rejected at one epoch as well.
         """
         if not bool(getattr(self.algorithm, "requires_active_trust_region", False)):
             return
         cfg = self.config
-        schedule_mode = cfg.rollout_orchestration.schedule_mode
-        if schedule_mode == "strict_on_policy" and int(cfg.ppo_epochs) <= 1:
+        orchestration = cfg.rollout_orchestration
+        schedule_mode = orchestration.schedule_mode
+        max_stale = (
+            int(orchestration.continuous.max_stale_policy_versions)
+            if schedule_mode == "continuous"
+            else 0
+        )
+        if int(cfg.ppo_epochs) <= 1 and max_stale <= 0:
             raise ValueError(
                 f"{type(self.algorithm).__name__} is defined by its importance-ratio "
-                "trust region, but rollout_orchestration.schedule_mode='strict_on_policy' "
-                "with actor.ppo_epochs=1 makes the ratio identically 1 (behavior == "
+                "trust region, but the rollout schedule permits no behavior-policy "
+                "staleness and actor.ppo_epochs=1 makes the ratio identically 1 (behavior == "
                 "target on the single replay pass), so the clip/guard term is a no-op "
                 "and the run is equivalent to plain GRPO. Set actor.ppo_epochs>1 — which "
                 "needs the legacy full-batch path (actor.gradient_accumulation_steps=0 "
                 "and rollout.microbatch_size=0, since streaming releases each microbatch "
                 "and cannot replay it across epochs) — or use schedule_mode='continuous' "
-                "with staleness for an off-policy ratio."
+                "with continuous.max_stale_policy_versions>0 for an off-policy ratio."
             )
 
     # ------------------------------------------------------------------

@@ -19,7 +19,13 @@ from tests.trainers.online._helpers import _trajectory_signals
 from vrl.algorithms.grpo.continuous import GRPO, FlowDPPO, GRPOGuard
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.evaluators.base import Evaluator
-from vrl.trainers.core.types import EMAConfig, OptimConfig, TrainerConfig
+from vrl.trainers.core.types import (
+    ContinuousRolloutConfig,
+    EMAConfig,
+    OptimConfig,
+    RolloutOrchestrationConfig,
+    TrainerConfig,
+)
 from vrl.trainers.online import OnlineTrainer
 
 
@@ -50,7 +56,14 @@ class _Evaluator(Evaluator):
         )
 
 
-def _build_trainer(tmp_path, *, algorithm, ppo_epochs: int = 1) -> OnlineTrainer:
+def _build_trainer(
+    tmp_path,
+    *,
+    algorithm,
+    ppo_epochs: int = 1,
+    schedule_mode: str = "strict_on_policy",
+    max_stale_policy_versions: int = 0,
+) -> OnlineTrainer:
     model = nn.Linear(1, 1, bias=False)
     with torch.no_grad():
         model.weight.fill_(1.0)
@@ -68,6 +81,12 @@ def _build_trainer(tmp_path, *, algorithm, ppo_epochs: int = 1) -> OnlineTrainer
             optim=OptimConfig(lr=0.01),
             ema=EMAConfig(),
             n_samples_per_prompt=2,
+            rollout_orchestration=RolloutOrchestrationConfig(
+                schedule_mode=schedule_mode,
+                continuous=ContinuousRolloutConfig(
+                    max_stale_policy_versions=max_stale_policy_versions,
+                ),
+            ),
             train_precision="no",
             output_dir=str(tmp_path),
         ),
@@ -105,10 +124,21 @@ def test_plain_grpo_single_epoch_is_allowed(tmp_path) -> None:
     assert trainer is not None
 
 
-def test_continuous_mode_bypasses_the_check(tmp_path) -> None:
-    # Continuous is the explicit off-policy path: stale behavior_policy_version
-    # makes the ratio != 1 even at one epoch, so the trust region can engage.
-    trainer = _build_trainer(tmp_path, algorithm=GRPO(), ppo_epochs=1)
-    trainer.algorithm = FlowDPPO()
-    trainer.config.rollout_orchestration.schedule_mode = "continuous"
-    trainer._validate_trust_region_engages()  # must not raise
+def test_continuous_without_staleness_rejects_single_epoch_trust_region(tmp_path) -> None:
+    with pytest.raises(ValueError, match="staleness"):
+        _build_trainer(
+            tmp_path,
+            algorithm=FlowDPPO(),
+            schedule_mode="continuous",
+            max_stale_policy_versions=0,
+        )
+
+
+def test_continuous_with_staleness_allows_single_epoch_trust_region(tmp_path) -> None:
+    trainer = _build_trainer(
+        tmp_path,
+        algorithm=FlowDPPO(),
+        schedule_mode="continuous",
+        max_stale_policy_versions=1,
+    )
+    assert trainer is not None

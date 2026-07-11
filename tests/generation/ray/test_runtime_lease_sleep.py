@@ -73,6 +73,27 @@ def test_sleep_eligible_only_for_colocated_trainer_handoff() -> None:
     assert _lease_runtime(None)._release_after_collect.sleep_eligible is False
 
 
+def test_driver_offload_follows_the_trainer_rollout_handoff() -> None:
+    trainer_handoff = SimpleNamespace(
+        release_rollout_before_train=True,
+        release_rollout_before_reward=False,
+    )
+    reward_only_handoff = SimpleNamespace(
+        release_rollout_before_train=False,
+        release_rollout_before_reward=True,
+    )
+
+    trainer_runtime = _lease_runtime(
+        SimpleNamespace(lifecycle=SimpleNamespace(handoff=trainer_handoff)),
+    )
+    reward_runtime = _lease_runtime(
+        SimpleNamespace(lifecycle=SimpleNamespace(handoff=reward_only_handoff)),
+    )
+
+    assert trainer_runtime.requires_driver_model_offload is True
+    assert reward_runtime.requires_driver_model_offload is False
+
+
 def _contract_after_lease(*, before_train: bool, before_reward: bool) -> Any:
     handoff = SimpleNamespace(
         release_rollout_before_train=before_train,
