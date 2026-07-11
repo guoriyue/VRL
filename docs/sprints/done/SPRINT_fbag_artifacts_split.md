@@ -1,6 +1,6 @@
 # SPRINT: 拆分 trainers/data/artifacts.py（唯一的真 grab-bag）
 
-状态：proposed / planned（2026-07-10）。父：`SPRINT_fbag_00_overview.md`。
+状态：done（2026-07-10）。父：`../planned/SPRINT_fbag_00_overview.md`。
 
 > 这是全仓 22 个审计文件里**唯一**被定为 `grab-bag-split-by-concern` 的文件（其余 15 内聚、
 > 6 只有零散小问题）。判决经对抗性 verify 保留（refuted=0）。
@@ -27,7 +27,7 @@
 这是 torch 张量持久化 + family/model 溯源契约,和契约 A **不共享一个符号、常量或 helper**。
 它被 bolt 在文件末尾,是 grab-bag 的本体。
 
-## 2. 动作
+## 2. 已完成动作
 
 ### 2.1 搬 SFT-latents 到自己的模块
 
@@ -57,6 +57,9 @@
    —— 把所有 import 重指到新模块。
 2. 合并 `_coerce_data_root` 前:确认两处 byte-identical(已确认),确认无第三处定义。
 3. 改完跑 `tests/data/` + `tests/trainers/` + config-resolve 冒烟,确认零回归。
+
+执行结果：旧 import 已清零；SFT shard round-trip / provenance 拒绝测试、在线加载测试、
+相关配置解析与 Ruff 均通过。仓库级验证结果由本轮最终提交统一记录。
 
 ## 4. 明确不动
 

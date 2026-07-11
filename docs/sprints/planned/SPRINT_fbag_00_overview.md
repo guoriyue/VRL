@@ -1,7 +1,7 @@
 # SPRINT: Function-bag audit — 总览与结论
 
-状态：proposed / planned（2026-07-10）。这是一次仓库级"函数袋（function-bag）"审计的总览，
-子任务拆到同目录 `SPRINT_fbag_*.md`。
+状态：in progress（2026-07-10）。核心模块的 artifacts 拆分与 dead-symbol sweep 已完成；
+`scripts/diffusion/` 全量入口审计仍在进行。子任务索引见 §5。
 
 > 方法：22 个长期库核心文件，每个一个深度审计 agent（读全文 + grep 全仓调用点 + 按
 > AGENTS.md 的"五种死代码形态 + thin-function 保留清单"逐符号定罪），每条"要改"判决再过一个
@@ -31,7 +31,7 @@ DDPStrategy 两个策略共用**(strategy.py:244/395 与 348/494)——收进 FS
 `vrl/trainers/data/artifacts.py`(451 行),它**确实是 grab-bag**:一个文件塞了两个零耦合的
 落盘契约——① prompt-manifest 路径解析 + 溯源校验(和文件 docstring 相符),② SFT clean-latents
 张量分片存取(`save_/load_sft_latents`,和上面不共享任何符号/常量/helper,docstring 里根本没提)。
-拆法见 `SPRINT_fbag_artifacts_split.md`。而 `vrl/utils/artifacts.py`(64 行)是干净的,唯一问题是
+拆分结果见 `../done/SPRINT_fbag_artifacts_split.md`。而 `vrl/utils/artifacts.py`(64 行)是干净的,唯一问题是
 被 ① 抄了一份 `_coerce_data_root`。
 
 ## 2. 全量清单(22 文件 × 判决)
@@ -41,21 +41,21 @@ DDPStrategy 两个策略共用**(strategy.py:244/395 与 348/494)——收进 FS
 | trainers/fsdp.py | cohesive-keep | 无(假设已证伪,见 §1) |
 | trainers/checkpointing.py | cohesive-keep | 无(565 行=单一大职责,非袋) |
 | trainers/activation_checkpointing.py | cohesive-keep | 无 |
-| **trainers/data/artifacts.py** | **grab-bag-split** | 拆 SFT-latents + 合并 `_coerce_data_root` → `SPRINT_fbag_artifacts_split.md` |
+| **trainers/data/artifacts.py** | **grab-bag-split** | **已完成**：拆 SFT-latents + 合并 `_coerce_data_root` → `../done/SPRINT_fbag_artifacts_split.md` |
 | utils/artifacts.py | mostly-fine | 成为 `_coerce_data_root` 的唯一 owner |
-| **utils/media.py** | minor | 删死函数 `write_png`(且 video_world 有重复私拷)→ `SPRINT_fbag_dead_symbol_sweep.md` |
+| **utils/media.py** | minor | **已完成**：保留共享 `write_png`，删除 video_world 私拷 → `../done/SPRINT_fbag_dead_symbol_sweep.md` |
 | utils/memory.py | mostly-fine | 无 |
 | utils/config.py | cohesive-keep | 无(config 访问器 facade,合法) |
 | config/validation.py | cohesive-keep | 无 |
-| **config/builders.py** | minor | 删死函数 `section_to_dataclass` → dead-symbol sweep |
+| **config/builders.py** | minor | **已完成**：删死函数 `section_to_dataclass` → `../done/SPRINT_fbag_dead_symbol_sweep.md` |
 | config/loading.py | cohesive-keep | 无 |
 | config/precision.py | cohesive-keep | 无 |
 | config/unknown_keys.py | cohesive-keep | 无 |
 | trajectory/builders.py | cohesive-keep | 无 |
 | trajectory/ops.py | cohesive-keep | 无(名字像袋,内容内聚) |
 | trajectory/storage.py | cohesive-keep | 无 |
-| **rollouts/collector/config.py** | minor | 合并单调用者 `_has_sde_sampling` → dead-symbol sweep |
-| **rollouts/batch/ops.py** | minor | 删死函数 `shuffle_and_rebatch_batches` → dead-symbol sweep |
+| **rollouts/collector/config.py** | minor | **已完成**：合并单调用者 `_has_sde_sampling` → `../done/SPRINT_fbag_dead_symbol_sweep.md` |
+| **rollouts/batch/ops.py** | minor | **已完成**：删死函数 `shuffle_and_rebatch_batches` → `../done/SPRINT_fbag_dead_symbol_sweep.md` |
 | nn/layers/attention/cache_rows.py | cohesive-keep | 无 |
 | nn/modules/ar_attention_backends.py | cohesive-keep | 无(framework-adapter 跨家族一致形状,合法) |
 | models/diffusion/build.py | cohesive-keep | 无 |
@@ -87,14 +87,14 @@ config preset 通过 `trainer.entrypoint` 点名字符串调度(`vrl.scripts.dif
 
 ## 5. 子 sprint 索引
 
-- `SPRINT_fbag_artifacts_split.md` —— trainers/data/artifacts.py 拆 SFT-latents + 合并 `_coerce_data_root`(唯一的真 grab-bag)
-- `SPRINT_fbag_dead_symbol_sweep.md` —— 3 个死符号删除 + 1 个单调用者合并(纯机械)
-- `SPRINT_fbag_scripts_diffusion_entrypoint_audit.md` —— 补审 7 个被错分的生产训练入口
+- `../done/SPRINT_fbag_artifacts_split.md` —— **done**：trainers/data/artifacts.py 拆 SFT-latents + 合并 `_coerce_data_root`(唯一的真 grab-bag)
+- `../done/SPRINT_fbag_dead_symbol_sweep.md` —— **done**：2 个死函数删除 + 1 个重复 helper 收敛 + 1 个单调用者合并
+- `SPRINT_fbag_scripts_diffusion_entrypoint_audit.md` —— **in progress**：补审 7 个被错分的生产训练入口
 
 ## 引用
 
 - 审计脚本:`scratchpad/fbag_audit.js`(一次性 workflow);逐 agent 结果 journal 在 workflow 转录目录
 - 平反证据:`vrl/trainers/strategy.py:244,348,389,395,494`(pg 生命周期跨策略共用)
-- 坐实证据:`vrl/trainers/data/artifacts.py`(§ SFT-latents 与 manifest 零共享)、
-  `vrl/utils/artifacts.py:54-55` vs `vrl/trainers/data/artifacts.py:297-298`(byte-identical)
+- 坐实证据:`../done/SPRINT_fbag_artifacts_split.md`；当前实现分别位于
+  `vrl/trainers/data/artifacts.py` 与 `vrl/trainers/data/sft_latents.py`
 - 范围漏洞:config `recipe/online/*.yaml` 的 `trainer.entrypoint` 指向 `vrl.scripts.diffusion.*`

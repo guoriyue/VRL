@@ -1,13 +1,14 @@
 # SPRINT: 死符号清除 + 单调用者合并（纯机械）
 
-状态：proposed / planned（2026-07-10）。父：`SPRINT_fbag_00_overview.md`。
+状态：done（2026-07-10）。父：`../planned/SPRINT_fbag_00_overview.md`。
 
 > 4 个零散小问题,分布在 4 个否则内聚的文件里。每条都经对抗性 verify 保留 + 本人独立 grep 复核。
 > 全是低风险机械改动,可以一个 commit 收掉。
 
 ## 0. 一句话
 
-3 个零调用者的死函数 + 1 个单调用者的概念拆分。删除/合并即可,不触碰任何架构。
+3 个零调用者的死函数 + 1 个单调用者的概念拆分。其中两个死函数直接删除；共享
+`write_png` 接回真实 data-prep 消费者并删除私拷；谓词并回唯一决策点。
 
 ## 1. 死函数(form-1,零调用者)
 
@@ -18,13 +19,9 @@
 写了个私有 `_write_png`(`video_world.py:816`,在 151/201 调用)——即共享的 `write_png` 既死
 又被抄了一份(form-4)。
 
-**做法(二选一,推荐 A):**
-- **A(去重优先)**:`video_world.py` 改用共享 `media.write_png`,删掉本地 `_write_png`——
-  一处 owner,消灭重复。
-- **B(纯删)**:若不想动 video_world,直接删 `media.py` 的 `write_png` + `__all__` 条目。
-
-推荐 A:media.py 的 docstring 自述是"rewards/生成脚本/data-prep 的 domain-neutral 共享家",
-video_world 正是它服务的 data-prep 消费者,让其复用才符合该模块存在的理由。
+**已采用去重方案**:`video_world.py` 改用共享 `media.write_png`,删掉本地 `_write_png`——
+一处 owner,消灭重复。`media.py` 的 docstring 自述是"rewards/生成脚本/data-prep 的
+domain-neutral 共享家",video_world 正是它服务的 data-prep 消费者。
 
 ### 1.2 `config/builders.py:section_to_dataclass` —— 死
 
@@ -53,6 +50,11 @@ rebatch 路径已被移除——这是它 dead-semantics 的来源。删除 def 
 
 删除前逐一 `grep -rnw <symbol> vrl/ tests/` 复确认零调用者(§1 三个已确认);内联后跑
 `tests/rollouts/` + `tests/config/` + `tests/utils/`(若有)确认零回归。这批不改行为,测试应全绿。
+
+执行结果：`section_to_dataclass` / `shuffle_and_rebatch_batches` 已无生产/测试调用者；共享
+`write_png` 现有两个真实生产调用者，本地 `_write_png` 私拷已清零；`_has_sde_sampling` 已并回
+唯一决策点。config、collector、trainer、video-world 定向测试与 Ruff 均通过。仓库级验证结果
+由本轮最终提交统一记录。
 
 ## 4. 明确不动
 

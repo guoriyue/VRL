@@ -1,6 +1,7 @@
 # SPRINT: 补审被错分的生产训练入口层（scripts/diffusion/）
 
-状态：proposed / planned（2026-07-10）。父：`SPRINT_fbag_00_overview.md`。
+状态：in progress（2026-07-10）。父：`SPRINT_fbag_00_overview.md`。已落地两个明确 finding；
+7 个生产入口的完整逐函数审计仍未关闭。
 
 > 这是 function-bag 审计暴露出的**范围漏洞**,不是一条具体缺陷。sweep agent 判定
 > `vrl/scripts/{perf,eval,data}` 是正确的一次性生命周期,但 `vrl/scripts/diffusion/` 被错分。
@@ -40,6 +41,15 @@ canonical paths, are referenced by other code/docs, survive cleanup"。这 7 个
 
 具体:对每个入口的每个 `train_*` 函数,问 form-2(某分支的输入还有没有生产者)、form-4(主体是
 不是共享 `run_online_recipe` 的手抄变体)、form-3(family train.py 内部的私有拆分)。
+
+### 2.1 已落地 findings
+
+- `cosmos/anima/generate.py::_resolve_sampling` 删除 7 个从未被生成请求读取的训练期 sampling key；
+  CLI adapter 只保留实际传入 prompt encoding 与 `VideoGenerationRequest` 的 5 个值。
+- `wan_2_1/train_dpo.py` 删除私有 `_trainer_precision_label`，复用
+  `vrl.trainers.precision.normalize_mixed_precision` 这一 Accelerate 协议适配边界。
+
+其余入口仍须按 §2 完成 body-level 对照；这两个局部 finding 不代表全量审计已结束。
 
 ## 3. 附带:一个 perf 目录的重复 helper
 
