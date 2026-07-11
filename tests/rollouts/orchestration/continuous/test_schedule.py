@@ -99,9 +99,7 @@ def _continuous_config(**continuous: Any) -> SimpleNamespace:
     defaults.update(continuous)
     return SimpleNamespace(
         schedule_mode="continuous",
-        max_pending_rollouts=2,
         require_separate_gpus=True,
-        weight_sync_barrier="pause_admission_and_drain_inflight",
         continuous=SimpleNamespace(**defaults),
     )
 
@@ -127,9 +125,7 @@ def _build(
         sync_state_getter=(lambda: {"w": 1}) if syncer is not None else None,
         weights_initialized=lambda: initialized["value"],
         set_weights_initialized=_set,
-        algorithm_tolerates_off_policy_staleness=(
-            algorithm_tolerates_off_policy_staleness
-        ),
+        algorithm_tolerates_off_policy_staleness=(algorithm_tolerates_off_policy_staleness),
     )
 
 
@@ -221,9 +217,7 @@ async def test_continuous_drains_full_homogeneous_iteration() -> None:
         assert len(iteration.batches) == 2
         group_ids = sorted(int(b.group_ids[0]) for b in iteration.batches)
         assert group_ids == [0, 1]
-        assert all(
-            b.context["rollout_policy_version"] == 1 for b in iteration.batches
-        )
+        assert all(b.context["rollout_policy_version"] == 1 for b in iteration.batches)
         assert "continuous.queue_wait_s" in iteration.stats.as_phase_dict()
     finally:
         await schedule.producer.stop()
@@ -288,8 +282,7 @@ async def test_after_train_step_purges_stale_ready_items_after_sync() -> None:
         assert queued_after_sync["ready_items"] == 0
         assert queued_after_sync["dropped_stale"] >= queued_before_sync["ready_items"]
         assert (
-            sync_phases["continuous.post_sync_dropped_stale"]
-            == queued_after_sync["dropped_stale"]
+            sync_phases["continuous.post_sync_dropped_stale"] == queued_after_sync["dropped_stale"]
         )
         # The receipt-time gate is a separate path: standard barrier order
         # advances the policy version after drain, so the schedule-side purge
@@ -450,9 +443,7 @@ async def test_weight_sync_waits_for_inflight_reward() -> None:
         assert len(syncer.calls) == sync_calls_before + 1
         assert schedule.producer.state.paused_for_weight_sync is False
         # The drained group was harvested with its pre-sync policy version.
-        assert all(
-            item.rollout_policy_version == 1 for item in schedule.queue._items
-        )
+        assert all(item.rollout_policy_version == 1 for item in schedule.queue._items)
     finally:
         await schedule.producer.stop()
 

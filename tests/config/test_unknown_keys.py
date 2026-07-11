@@ -55,6 +55,22 @@ def test_open_blocks_accept_arbitrary_keys() -> None:
     assert find_unknown_keys(cfg) == []
 
 
+def test_removed_rollout_queue_knob_is_unknown() -> None:
+    cfg = OmegaConf.create(
+        {"trainer": {"rollout_orchestration": {"max_pending_rollouts": 2}}},
+    )
+    assert find_unknown_keys(cfg) == [
+        "trainer.rollout_orchestration.max_pending_rollouts",
+    ]
+
+
+def test_removed_sampling_r1_duplicate_is_unknown() -> None:
+    cfg = OmegaConf.create(
+        {"sampling": {"r1": {"train_segments": {"initial_image": True}}}},
+    )
+    assert find_unknown_keys(cfg) == ["sampling.r1"]
+
+
 def test_warn_unknown_keys_logs_one_line(caplog) -> None:
     cfg = OmegaConf.create({"sampling": {"num_stps": 5}})
     with caplog.at_level(logging.WARNING):

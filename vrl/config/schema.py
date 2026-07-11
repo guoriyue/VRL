@@ -47,8 +47,6 @@ class ConfigBase(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
-
-
 # ── Reward section ────────────────────────────────────────────────────────────
 
 
@@ -123,17 +121,28 @@ class AlgorithmConfig(ConfigBase):
 
 
 class DataConfig(ConfigBase):
-    loader: Literal["pickapic_preference", "prompt_manifest", "prompt_image_manifest"] | None = None
+    loader: Literal["pickapic_preference", "prompt_manifest", "prompt_image_manifest"] | None = (
+        None
+    )
     manifest: str | None = None
     eval_manifest: str | None = None
     # readers: _validate_data + loader tooling
     preprocessing: Annotated[
         dict[str, Any] | None,
-        ConfigBlock((
-            "resolution", "random_crop", "horizontal_flip",
-            "format", "image_field", "caption_field", "media_type",
-            "conditioning", "metadata_schema", "target_text",
-        )),
+        ConfigBlock(
+            (
+                "resolution",
+                "random_crop",
+                "horizontal_flip",
+                "format",
+                "image_field",
+                "caption_field",
+                "media_type",
+                "conditioning",
+                "metadata_schema",
+                "target_text",
+            )
+        ),
     ] = None
     sampler: Annotated[
         dict[str, Any] | None,
@@ -183,9 +192,7 @@ class DataConfig(ConfigBase):
                 raise ValueError("config missing required field: data.preprocessing")
             for field in ("format", "image_field", "caption_field", "media_type", "conditioning"):
                 if field not in self.preprocessing:
-                    raise ValueError(
-                        f"config missing required field: data.preprocessing.{field}"
-                    )
+                    raise ValueError(f"config missing required field: data.preprocessing.{field}")
             self._validate_sampler_type()
 
         if self.loader == "pickapic_preference":
@@ -197,15 +204,11 @@ class DataConfig(ConfigBase):
                 raise ValueError("config missing required field: data.preprocessing")
             for field in ("resolution", "random_crop", "horizontal_flip"):
                 if field not in self.preprocessing:
-                    raise ValueError(
-                        f"config missing required field: data.preprocessing.{field}"
-                    )
+                    raise ValueError(f"config missing required field: data.preprocessing.{field}")
             sampler = self.sampler or {}
             for field in ("shuffle", "drop_last", "dataloader_num_workers"):
                 if field not in sampler:
-                    raise ValueError(
-                        f"config missing required field: data.sampler.{field}"
-                    )
+                    raise ValueError(f"config missing required field: data.sampler.{field}")
 
         return self
 
@@ -218,9 +221,7 @@ class DataConfig(ConfigBase):
         valid_samplers = {"random_without_replacement", "sequential_window"}
         if sampler_type not in valid_samplers:
             expected = " / ".join(sorted(valid_samplers))
-            raise ValueError(
-                f"unknown data.sampler.type={sampler_type!r}; expected {expected}"
-            )
+            raise ValueError(f"unknown data.sampler.type={sampler_type!r}; expected {expected}")
 
 
 # ── Supporting sections for cross-field validation ────────────────────────────
@@ -280,11 +281,6 @@ class RolloutConfig(ConfigBase):
 
 
 class SamplingConfig(ConfigBase):
-    # reader: rollouts/collector/config.py + RootConfig cross-field check
-    r1: Annotated[
-        dict[str, Any] | None,
-        ConfigBlock(("train_segments",)),
-    ] = None
     # reader: vrl/nn/modules/ar_attention_backends.py attention_backend_name
     # (read from the request dict; default "vllm_paged"). Declared here so the
     # allowed set is the type and the key is registered (no false unknown-key warning).
@@ -345,10 +341,17 @@ class ModelConfig(ConfigBase):
     # readers: models/interfaces/runtime.py + family runtime.py lora blocks
     lora: Annotated[
         Any,
-        ConfigBlock((
-            "rank", "alpha", "path", "target_modules",
-            "init_lora_weights", "dropout", "init",
-        )),
+        ConfigBlock(
+            (
+                "rank",
+                "alpha",
+                "path",
+                "target_modules",
+                "init_lora_weights",
+                "dropout",
+                "init",
+            )
+        ),
     ] = None
     # model.memory sections (today only vae_decode, which self-validates strictly)
     memory: Annotated[Any, ConfigBlock(MODEL_MEMORY_SECTIONS)] = None
@@ -360,9 +363,14 @@ class ModelConfig(ConfigBase):
     # executor picks the keys it needs (unknown keys fail loud at construction).
     executor: Annotated[
         Any,
-        ConfigBlock((
-            "num_frames", "max_sequence_length", "fps", "chunk_passthrough_keys",
-        )),
+        ConfigBlock(
+            (
+                "num_frames",
+                "max_sequence_length",
+                "fps",
+                "chunk_passthrough_keys",
+            )
+        ),
     ] = None
 
 
@@ -530,12 +538,12 @@ def _validate_model_config_for_family(model: ModelConfig | None) -> None:
 
 def _prefix_model_error(message: str) -> str:
     if message.startswith("unknown "):
-        rest = message[len("unknown "):]
+        rest = message[len("unknown ") :]
         if rest.startswith("model."):
             return message
         return f"unknown model.{rest}"
     if message.startswith("config missing required field: "):
-        rest = message[len("config missing required field: "):]
+        rest = message[len("config missing required field: ") :]
         return f"config missing required field: model.{rest}"
     return message
 
@@ -679,8 +687,7 @@ class DistributedSection(ConfigBase):
     resources: Annotated[
         Any,
         ConfigBlock(
-            ("visible_devices", "trainer", "rollout", "reward",
-             "allow_overlap", "cross_node"),
+            ("visible_devices", "trainer", "rollout", "reward", "allow_overlap", "cross_node"),
             {
                 "trainer": ConfigBlock(RoleResourceConfig),
                 # memory_fraction is a public input key (resident-colocation GPU cap)
@@ -754,7 +761,9 @@ class RootConfig(ConfigBase):
     distributed: DistributedSection | None = None
     # reader: vrl/config/precision.py (scalar form skips the block walk).
     # `rollout` is the experimental fp8/fp4-rollout split (rollout != train).
-    precision: Annotated[Any, ConfigBlock(("train", "rollout", "math", "frozen", "rollout_recipe"))] = None
+    precision: Annotated[
+        Any, ConfigBlock(("train", "rollout", "math", "frozen", "rollout_recipe"))
+    ] = None
     # reader: vrl/scripts/diffusion/cosmos/train.py
     cosmos: Annotated[Any, ConfigBlock(("reference_mode",))] = None
 
@@ -810,9 +819,7 @@ class RootConfig(ConfigBase):
         # token_grpo: nextstep_1 family requires rollout.noise_level
         if kind == "token_grpo":
             model_family = self.model.family if self.model else None
-            if model_family == "nextstep_1" and (
-                rollout is None or rollout.noise_level is None
-            ):
+            if model_family == "nextstep_1" and (rollout is None or rollout.noise_level is None):
                 raise ValueError("config missing required field: rollout.noise_level")
 
         # token_grpo_multisegment: janus_pro only; final_image_policy from rollout
@@ -831,6 +838,7 @@ class RootConfig(ConfigBase):
                 )
 
         return self
+
 
 # ── Parse boundary ────────────────────────────────────────────────────────────
 
@@ -851,7 +859,7 @@ def _extract_error_message(exc: ValidationError) -> str:
         return f"unknown {loc}={input_val!r}; {expected}"
     # ValueError raised inside a validator — strip Pydantic's "Value error, " prefix
     if msg.startswith("Value error, "):
-        return msg[len("Value error, "):]
+        return msg[len("Value error, ") :]
     return msg
 
 

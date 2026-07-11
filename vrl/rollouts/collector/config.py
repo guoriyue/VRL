@@ -65,10 +65,7 @@ def build_rollout_config_from_cfg(
         values,
         cfg,
         "train_segments",
-        (
-            "algorithm.train_segments",
-            "sampling.r1.train_segments",
-        ),
+        ("algorithm.train_segments",),
     )
     _copy_first_present(values, cfg, "trajectory_storage", ("rollout.trajectory_storage",))
     _copy_first_present(values, cfg, "reward_artifact", ("rollout.reward_artifact",))
@@ -120,8 +117,7 @@ def _copy_first_present(
 
 def _add_derived_values(values: dict[str, Any]) -> None:
     has_sde_sampling = any(
-        name in values
-        for name in ("sde_type", "sde_window_size", "sde_window_range")
+        name in values for name in ("sde_type", "sde_window_size", "sde_window_range")
     )
     if "kl_reward_coef" in values and has_sde_sampling:
         values["return_kl"] = float(values.get("kl_reward_coef", 0.0)) > 0.0

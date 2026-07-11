@@ -25,9 +25,7 @@ def _literal_args(annotation) -> tuple[str, ...]:
     members = typing.get_args(annotation)
     # Optional[Literal[...]]: unwrap each non-None union member's Literal args.
     if any(m is type(None) for m in members):
-        return tuple(
-            a for m in members if m is not type(None) for a in typing.get_args(m)
-        )
+        return tuple(a for m in members if m is not type(None) for a in typing.get_args(m))
     return members
 
 
@@ -75,9 +73,7 @@ def test_unknown_algorithm_keys_warn_and_load() -> None:
     cfg = OmegaConf.create(
         {"algorithm": {"kind": "grpo", "adv_estimator": "dpo", "future_field": True}}
     )
-    algo = AlgorithmConfig.model_validate(
-        OmegaConf.to_container(cfg.algorithm, resolve=True)
-    )
+    algo = AlgorithmConfig.model_validate(OmegaConf.to_container(cfg.algorithm, resolve=True))
     assert algo.kind == "grpo"  # loads fine
     unknown = find_unknown_keys(cfg)
     assert "algorithm.adv_estimator" in unknown
@@ -243,7 +239,8 @@ def test_unknown_chunk_placement_strategy_raises() -> None:
         distributed={"rollout": {"chunk_placement_strategy": "work_stealing"}},
     )
     with pytest.raises(
-        ValueError, match=r"unknown distributed\.rollout\.chunk_placement_strategy",
+        ValueError,
+        match=r"unknown distributed\.rollout\.chunk_placement_strategy",
     ):
         parse_config(cfg)
 
@@ -314,9 +311,7 @@ def test_reward_resident_overlap_is_not_a_resource_key() -> None:
 # ── Data loader discriminator ─────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize(
-    "loader", _literal_args(DataConfig.model_fields["loader"].annotation)
-)
+@pytest.mark.parametrize("loader", _literal_args(DataConfig.model_fields["loader"].annotation))
 def test_valid_data_loaders_are_accepted(loader: str) -> None:
     """Every loader in the DataConfig.loader Literal allow-list is accepted; the
     per-loader construction branches below stay as real behavior coverage."""
@@ -444,9 +439,7 @@ def test_unknown_sampler_type_raises() -> None:
 
 def test_zero_weight_observation_component_is_valid() -> None:
     """Checks zero weight keeps a component valid for observation-only scoring."""
-    cfg = RewardConfig.model_validate(
-        {"components": {"kling_video_reward": 0.0}, "kwargs": {}}
-    )
+    cfg = RewardConfig.model_validate({"components": {"kling_video_reward": 0.0}, "kwargs": {}})
     assert cfg.components["kling_video_reward"] == 0.0
 
 
@@ -461,10 +454,7 @@ def test_negative_reward_weight_raises() -> None:
 def test_non_numeric_reward_weight_raises() -> None:
     """Checks non numeric reward weight raises."""
     with pytest.raises(ValueError, match="must be numeric"):
-        RewardConfig.model_validate(
-            {"components": {"aesthetic": "heavy"}, "kwargs": {}}
-        )
-
+        RewardConfig.model_validate({"components": {"aesthetic": "heavy"}, "kwargs": {}})
 
 
 def test_grpo_requires_valid_sde_type() -> None:
@@ -514,7 +504,6 @@ def test_token_grpo_multisegment_requires_janus_pro_family() -> None:
             },
             "model": {"family": "other_model"},
             "rollout": {"final_image_policy": "always_generate"},
-            "sampling": {"r1": {"final_image_policy": "always_generate"}},
         }
     )
     with pytest.raises(ValueError, match="janus_pro"):
@@ -522,8 +511,7 @@ def test_token_grpo_multisegment_requires_janus_pro_family() -> None:
 
 
 def test_token_grpo_multisegment_final_image_policy_single_source() -> None:
-    """final_image_policy may be set in rollout alone; the sampling.r1 duplicate is
-    no longer required (the collector resolves it rollout-first)."""
+    """final_image_policy is owned by the rollout section."""
     cfg = OmegaConf.create(
         {
             "algorithm": {"kind": "token_grpo_multisegment"},
@@ -535,7 +523,6 @@ def test_token_grpo_multisegment_final_image_policy_single_source() -> None:
             },
             "model": {"family": "janus_pro"},
             "rollout": {"final_image_policy": "always_generate"},
-            "sampling": {"r1": {"train_segments": {"initial_image": True}}},
         }
     )
     assert parse_config(cfg).rollout.final_image_policy == "always_generate"

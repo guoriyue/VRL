@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import torch
 
+from vrl.config.loading import load_config
 from vrl.generation import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.rollouts.collector import build_rollout_collector
 from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
     TrajectoryRolloutBatchBuilder,
 )
-from vrl.rollouts.collector.config import RolloutConfig
+from vrl.rollouts.collector.config import RolloutConfig, build_rollout_config_from_cfg
 from vrl.rollouts.families import get_rollout_family_entry
 from vrl.trajectory import build_ar_multisegment_trajectory
 
@@ -51,6 +52,20 @@ def _segment(batch: int, length: int, *, visual: bool) -> dict[str, torch.Tensor
         "attention_mask": torch.ones(batch, 4, dtype=torch.long),
         "visual": visual,
         "cfg": visual,
+    }
+
+
+def test_r1_train_segments_derive_from_algorithm_config() -> None:
+    cfg = load_config("experiment/ar/janus_pro/online_r1_grpo_ocr")
+    cfg.algorithm.train_segments.initial_image = False
+    cfg.algorithm.train_segments.selfcheck_text = True
+
+    rollout = build_rollout_config_from_cfg(cfg, family="janus_pro_r1")
+
+    assert rollout.get("train_segments") == {
+        "initial_image": False,
+        "selfcheck_text": True,
+        "final_image": True,
     }
 
 
@@ -141,7 +156,10 @@ def test_r1_trajectory_batch_keeps_segments_separate() -> None:
     assert "r1_segments" not in packed.extras
     assert packed.trajectory is trajectory
     assert trajectory.segments["initial_image"].tensors["token_ids"].value.shape == (batch_size, 3)
-    assert trajectory.segments["selfcheck_text"].tensors["token_ids"].value.shape == (batch_size, 2)
+    assert trajectory.segments["selfcheck_text"].tensors["token_ids"].value.shape == (
+        batch_size,
+        2,
+    )
     assert trajectory.segments["final_image"].tensors["token_ids"].value.shape == (batch_size, 5)
     assert "log_probs" not in packed.extras
     assert packed.actions.shape == (batch_size, 5)

@@ -21,8 +21,8 @@
 #
 # Note: max_ready_groups must be >= prompts_per_batch (one iteration's worth of
 # prompt groups); the schedule raises the effective queue cap to fit if smaller.
-# weight_sync_barrier is derived for this mode
-# (pause_admission_and_drain_inflight) — continuous supports no other value.
+# Admission and weight-sync ordering are owned by the continuous schedule state
+# machine; there is no independent queue-capacity or barrier knob.
 # Queue/staleness tuning defaults (max_inflight_groups, max_ready_groups,
 # max_ready_bytes_mb, max_stale_policy_versions=0 Phase A,
 # wait_timeout_s, queue_poll_interval_s) live on ContinuousRolloutConfig in
@@ -30,4 +30,3 @@
 trainer:
   rollout_orchestration:
     schedule_mode: continuous
-    max_pending_rollouts: 2

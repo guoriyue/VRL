@@ -89,8 +89,8 @@ def test_typo_yaml_home_is_rejected() -> None:
     """A metadata address naming an unknown top-level section fails loudly."""
     from vrl.config.builders import _validate_yaml_home
 
-    _validate_yaml_home("save_freq", "trainer")          # known section: ok
-    _validate_yaml_home("optim", "actor.optim")          # dotted path: ok
+    _validate_yaml_home("save_freq", "trainer")  # known section: ok
+    _validate_yaml_home("optim", "actor.optim")  # dotted path: ok
 
     with pytest.raises(AssertionError, match=r"trainerx"):
         _validate_yaml_home("save_freq", "trainerx")
@@ -321,14 +321,12 @@ def test_rollout_orchestration_group_override_uses_rollout_namespace() -> None:
 
     orchestration = cfg.trainer.rollout_orchestration
     assert orchestration.schedule_mode == "continuous"
-    # weight_sync_barrier is no longer spelled in YAML; the typed config
-    # derives the only barrier the mode supports.
     from vrl.trainers.core.types import RolloutOrchestrationConfig
 
     typed = RolloutOrchestrationConfig(
         **OmegaConf.to_container(orchestration, resolve=True),
     )
-    assert typed.weight_sync_barrier == "pause_admission_and_drain_inflight"
+    assert typed.schedule_mode == "continuous"
 
 
 def test_sd35_single_gpu_async_debug_uses_persistent_colocated_rollout() -> None:

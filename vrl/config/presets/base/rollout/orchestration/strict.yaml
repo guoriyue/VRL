@@ -1,6 +1,6 @@
 # Default rollout orchestration: collect one rollout, train it, then sync.
-# max_pending_rollouts and weight_sync_barrier are derived for this mode
-# (1 / before_sync) — strict_on_policy supports no other values.
+# Admission and weight-sync ordering are owned by the strict schedule state
+# machine; there is no independent queue-capacity or barrier knob.
 trainer:
   rollout_orchestration:
     schedule_mode: strict_on_policy

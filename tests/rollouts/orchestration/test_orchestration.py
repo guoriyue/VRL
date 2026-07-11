@@ -11,9 +11,7 @@ import pytest
 def _schedule_config(mode: str) -> SimpleNamespace:
     return SimpleNamespace(
         schedule_mode=mode,
-        max_pending_rollouts=1,
         require_separate_gpus=True,
-        weight_sync_barrier="before_sync",
     )
 
 

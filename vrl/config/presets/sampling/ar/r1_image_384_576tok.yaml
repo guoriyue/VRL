@@ -6,10 +6,3 @@ sampling:
   temperature: 0.9
   ar_scheduler_batch_size: null
   max_reflect_len: 80
-  r1:
-    # final_image_policy is set once in base/rollout/ar_r1;
-    # the collector resolves it rollout-first, so it is not duplicated here.
-    train_segments:
-      initial_image: true
-      selfcheck_text: false
-      final_image: true

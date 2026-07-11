@@ -62,12 +62,6 @@ def build_rollout_schedule(
     mode = RolloutScheduleMode(
         getattr(config, "schedule_mode", RolloutScheduleMode.STRICT_ON_POLICY.value),
     )
-    max_pending = int(getattr(config, "max_pending_rollouts", 1))
-    if mode is not RolloutScheduleMode.CONTINUOUS and max_pending != 1:
-        raise ValueError(
-            "rollout_orchestration.max_pending_rollouts must be 1 unless "
-            "mode='continuous'",
-        )
 
     lifecycle = RolloutLifecycle(
         collector=collector,
@@ -85,9 +79,7 @@ def build_rollout_schedule(
         return _build_continuous_schedule(
             config,
             lifecycle=lifecycle,
-            algorithm_tolerates_off_policy_staleness=(
-                algorithm_tolerates_off_policy_staleness
-            ),
+            algorithm_tolerates_off_policy_staleness=(algorithm_tolerates_off_policy_staleness),
         )
     raise AssertionError(f"unreachable rollout schedule mode: {mode}")
 
