@@ -24,6 +24,14 @@ def _request() -> SimpleNamespace:
     return SimpleNamespace(sampling={}, policy_version=None)
 
 
+def test_resident_runtime_tracks_only_worker_ownership() -> None:
+    runtime = _resident_runtime()
+
+    assert runtime._owned_workers == []
+    assert not hasattr(runtime, "_owned_actors")
+    assert not hasattr(runtime, "_placement_group")
+
+
 async def _wait_for_shutdown_idle(runtime: RayGenerationRuntime) -> None:
     async def _poll() -> None:
         while runtime._shutdown_task is not None:

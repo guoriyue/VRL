@@ -232,6 +232,11 @@ def _install_common_fakes(
     monkeypatch.setattr(online, "resolve_distributed_resources", lambda cfg, **kwargs: resources)
     monkeypatch.setattr(online, "format_distributed_resource_plan", lambda resources: "resources")
     monkeypatch.setattr(online, "trainer_torch_device", lambda resources: "cpu")
+    monkeypatch.setattr(
+        online,
+        "reward_torch_device",
+        lambda resources, *, trainer_device: "cpu",
+    )
     monkeypatch.setattr(online, "torch_dtype_for_trainer_precision", lambda trainer, torch: torch.float32)
     monkeypatch.setattr(
         online,

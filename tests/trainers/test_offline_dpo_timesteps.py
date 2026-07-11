@@ -39,12 +39,18 @@ def _noop_encode_text(captions):  # pragma: no cover
     return None
 
 
-def _make_trainer(scheduler_timesteps, *, timestep_subset=None) -> OfflineDPOTrainer:
+def _make_trainer(
+    scheduler_timesteps,
+    *,
+    timestep_subset=None,
+    allow_tf32: bool = True,
+) -> OfflineDPOTrainer:
     scheduler = SimpleNamespace(
         timesteps=scheduler_timesteps,
         config=SimpleNamespace(num_train_timesteps=1000),
     )
     cfg = OfflineDPOTrainerConfig(
+        allow_tf32=allow_tf32,
         prediction_type="epsilon",
         timestep_subset=timestep_subset,
     )
@@ -202,6 +208,37 @@ def test_offline_dpo_accumulation_boundary_ignores_global_step_offset() -> None:
     assert trainer._mark_gradient_accumulation_step() is False
     assert trainer._mark_gradient_accumulation_step() is False
     assert trainer._mark_gradient_accumulation_step() is True
+
+
+def test_offline_dpo_adamw_consumes_every_resolved_optimizer_value() -> None:
+    import vrl.trainers.offline.dpo as dpo_module
+
+    parameter = torch.nn.Parameter(torch.ones(1))
+    cfg = OfflineDPOTrainerConfig(
+        lr=0.02,
+        adam_beta1=0.6,
+        adam_beta2=0.7,
+        adam_weight_decay=0.04,
+        adam_epsilon=1e-5,
+    )
+
+    optimizer = dpo_module._build_optimizer([parameter], cfg)
+
+    assert optimizer.defaults["lr"] == pytest.approx(0.02)
+    assert optimizer.defaults["betas"] == pytest.approx((0.6, 0.7))
+    assert optimizer.defaults["weight_decay"] == pytest.approx(0.04)
+    assert optimizer.defaults["eps"] == pytest.approx(1e-5)
+
+
+@pytest.mark.parametrize("allow_tf32", [False, True])
+def test_offline_dpo_applies_tf32_policy(monkeypatch, allow_tf32: bool) -> None:
+    monkeypatch.setattr(torch.backends.cuda.matmul, "allow_tf32", not allow_tf32)
+    monkeypatch.setattr(torch.backends.cudnn, "allow_tf32", not allow_tf32)
+
+    _make_trainer(torch.arange(20), allow_tf32=allow_tf32)
+
+    assert torch.backends.cuda.matmul.allow_tf32 is allow_tf32
+    assert torch.backends.cudnn.allow_tf32 is allow_tf32
 
 
 @pytest.mark.parametrize(

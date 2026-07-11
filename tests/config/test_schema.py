@@ -742,8 +742,66 @@ def test_diffusion_dpo_sft_weight_does_not_require_online_latents_shard() -> Non
     cfg = _minimal_grpo_cfg(
         algorithm={"kind": "diffusion_dpo", "sft_weight": 0.1},
     )
+    del cfg.rollout
     parsed = parse_config(cfg)
     assert parsed.algorithm.sft_weight == pytest.approx(0.1)
+
+
+@pytest.mark.parametrize(
+    ("section", "payload", "field"),
+    [
+        ("actor", {"ema": {"enable": True}}, "actor.ema"),
+        ("actor", {"ppo_epochs": 2}, "actor.ppo_epochs"),
+        ("trainer", {"total_epochs": 10}, "trainer.total_epochs"),
+        ("trainer", {"precision_drift_guard": {"mode": "warn"}}, "trainer.precision_drift_guard"),
+        ("rollout", {"prompts_per_batch": 1}, "rollout.prompts_per_batch"),
+    ],
+)
+def test_diffusion_dpo_rejects_online_only_config_fields(
+    section: str,
+    payload: dict,
+    field: str,
+) -> None:
+    cfg = OmegaConf.create(
+        {
+            "algorithm": {"kind": "diffusion_dpo"},
+            section: payload,
+        },
+    )
+
+    with pytest.raises(ValueError, match=rf"{field}"):
+        parse_config(cfg)
+
+
+def test_diffusion_dpo_accepts_its_resume_and_optimizer_surface() -> None:
+    cfg = OmegaConf.create(
+        {
+            "algorithm": {"kind": "diffusion_dpo"},
+            "actor": {
+                "optim": {"lr": 1e-8, "allow_tf32": False},
+                "gradient_accumulation_steps": 1,
+                "gradient_checkpointing": False,
+                "max_norm": 1.0,
+                "prediction_type": "flow_matching",
+                "scale_lr": False,
+                "train_batch_size": 1,
+                "use_adafactor": False,
+            },
+            "trainer": {
+                "checkpointing_steps": 10,
+                "entrypoint": "pkg.module:train",
+                "log_interval": 1,
+                "max_train_steps": 20,
+                "output_dir": "outputs/dpo",
+                "resume_from": "",
+                "resume_strict": True,
+            },
+        },
+    )
+
+    parsed = parse_config(cfg)
+
+    assert parsed.algorithm.kind == "diffusion_dpo"
 
 
 def test_latents_shard_without_weight_is_inert_and_allowed() -> None:

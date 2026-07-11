@@ -9,6 +9,7 @@ from vrl.ray.resources import (
     build_bundle_layout,
     format_distributed_resource_plan,
     resolve_distributed_resources,
+    reward_torch_device,
     trainer_torch_device,
 )
 
@@ -334,6 +335,43 @@ def test_cpu_only_rollout_uses_no_gpu_bundles() -> None:
     assert trainer_torch_device(resolved) == "cpu"
 
 
+def test_cpu_only_rollout_rejects_a_gpu_device_assignment() -> None:
+    """A zero-GPU worker cannot truthfully own a GPU ordinal."""
+    with pytest.raises(ValueError, match=r"rollout\.gpus_per_worker=0 requires zero"):
+        resolve_distributed_resources(
+            _cfg(
+                {
+                    "visible_devices": [0],
+                    "trainer": {"num_gpus": 0},
+                    "rollout": {
+                        "devices": [0],
+                        "gpus_per_worker": 0,
+                        "num_workers": 1,
+                    },
+                },
+            ),
+        )
+
+
+def test_cpu_only_reward_rejects_a_gpu_device_assignment() -> None:
+    """A CPU reward slot cannot carry an ignored GPU reservation."""
+    with pytest.raises(ValueError, match=r"reward\.gpus_per_worker=0 requires zero"):
+        resolve_distributed_resources(
+            _cfg(
+                {
+                    "visible_devices": [0, 1, 2],
+                    "trainer": {"devices": [0]},
+                    "rollout": {"devices": [1], "gpus_per_worker": 1},
+                    "reward": {
+                        "devices": [2],
+                        "gpus_per_worker": 0,
+                        "num_workers": 1,
+                    },
+                },
+            ),
+        )
+
+
 def test_trainer_only_plan_allows_zero_rollout_workers() -> None:
     """Checks trainer only plan allows zero rollout workers."""
     resolved = resolve_distributed_resources(
@@ -354,6 +392,123 @@ def test_trainer_only_plan_allows_zero_rollout_workers() -> None:
     assert resolved.rollout_devices == ()
     assert resolved.rollout_num_workers == 0
     assert trainer_torch_device(resolved) == "cuda:0"
+
+
+def test_reward_torch_device_uses_the_reserved_local_gpu() -> None:
+    """A local reward reservation, not the trainer default, owns model placement."""
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0, 1, 2],
+                "trainer": {"devices": [0]},
+                "rollout": {"devices": [1], "gpus_per_worker": 1},
+                "reward": {
+                    "devices": [2],
+                    "gpu_pool": "dedicated",
+                    "gpus_per_worker": 1,
+                },
+            },
+        ),
+    )
+
+    assert reward_torch_device(resolved, trainer_device="cuda:0") == "cuda:2"
+
+
+def test_reward_torch_device_without_a_reservation_follows_the_rank_local_trainer() -> None:
+    """An unreserved in-process reward shares the caller's actual trainer device."""
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0, 1],
+                "trainer": {"devices": [0]},
+                "rollout": {"devices": [1], "gpus_per_worker": 1},
+            },
+        ),
+    )
+
+    assert reward_torch_device(resolved, trainer_device="cuda:7") == "cuda:7"
+
+
+def test_reward_torch_device_honors_an_explicit_cpu_slot() -> None:
+    """A CPU reward request must not silently inherit the trainer CUDA device."""
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0, 1],
+                "trainer": {"devices": [0]},
+                "rollout": {"devices": [1], "gpus_per_worker": 1},
+                "reward": {
+                    "devices": [],
+                    "num_gpus": 0,
+                    "gpus_per_worker": 0,
+                    "num_workers": 1,
+                },
+            },
+        ),
+    )
+
+    assert reward_torch_device(resolved, trainer_device="cuda:0") == "cpu"
+
+
+def test_reward_torch_device_rejects_multiple_local_workers() -> None:
+    """The in-process runtime cannot honor a parallel-worker resource request."""
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0, 1],
+                "trainer": {"devices": [0]},
+                "rollout": {"devices": [1], "gpus_per_worker": 1},
+                "reward": {
+                    "devices": [],
+                    "num_gpus": 0,
+                    "gpus_per_worker": 0,
+                    "num_workers": 2,
+                },
+            },
+        ),
+    )
+
+    with pytest.raises(ValueError, match="at most one resolved reward worker"):
+        reward_torch_device(resolved, trainer_device="cuda:0")
+
+
+def test_reward_torch_device_rejects_multi_gpu_local_inference() -> None:
+    """One driver-local reward runtime cannot consume an actor-pool-shaped plan."""
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0, 1, 2, 3],
+                "trainer": {"devices": [0]},
+                "rollout": {"devices": [1], "gpus_per_worker": 1},
+                "reward": {"devices": [2, 3], "gpus_per_worker": 1},
+            },
+        ),
+    )
+
+    with pytest.raises(ValueError, match="at most one resolved reward GPU"):
+        reward_torch_device(resolved, trainer_device="cuda:0")
+
+
+def test_reward_torch_device_rejects_cross_node_budget_tokens() -> None:
+    """A remote Ray ordinal cannot be used as a CUDA device in the driver process."""
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": "auto",
+                "cross_node": True,
+                "trainer": {"num_gpus": 1},
+                "rollout": {
+                    "devices": [1],
+                    "gpus_per_worker": 1,
+                    "num_workers": 1,
+                },
+                "reward": {"devices": [1], "gpus_per_worker": 1},
+            },
+        ),
+    )
+
+    with pytest.raises(ValueError, match="cross-node device ids are Ray budget tokens"):
+        reward_torch_device(resolved, trainer_device="cuda:0")
 
 
 def test_resource_plan_formatter_includes_key_fields() -> None:
@@ -470,6 +625,21 @@ def test_cross_node_preset_resolves() -> None:
     assert resolved.rollout_devices == (1,)
     assert resolved.rollout_num_workers == 1
     assert resolved.requires_trainer_reservation is False
+
+
+def test_cross_node_kling_recipe_keeps_the_local_reward_on_the_driver() -> None:
+    """The shipped two-host recipe has no remote reward token after pool removal."""
+    from vrl.config.loading import load_config
+
+    cfg = load_config(
+        "experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward_cross_node",
+    )
+    resolved = resolve_distributed_resources(cfg)
+
+    assert resolved.cross_node is True
+    assert resolved.rollout_devices == (1,)
+    assert resolved.reward_devices == ()
+    assert reward_torch_device(resolved, trainer_device="cuda:0") == "cuda:0"
 
 
 def test_reward_role_resolves_after_trainer_and_rollout_devices() -> None:
@@ -1116,6 +1286,116 @@ def test_single_gpu_colocate_without_cross_node_still_rejects_excess_rollout() -
 
 
 # ── rollout.gpu_pool grammar (SPRINT_gpu_pool_grammar_unification) ────────────
+
+
+def test_rollout_gpu_pool_trainer_rejects_a_mixed_explicit_device_set() -> None:
+    """One overlapping device cannot legitimize a spare outside the trainer pool."""
+    with pytest.raises(ValueError, match="requires every rollout device"):
+        resolve_distributed_resources(
+            _cfg(
+                {
+                    "visible_devices": [0, 1],
+                    "trainer": {"devices": [0]},
+                    "rollout": {
+                        "devices": [0, 1],
+                        "num_gpus": 2,
+                        "num_workers": 2,
+                        "gpus_per_worker": 1,
+                        "gpu_pool": "trainer",
+                    },
+                },
+            ),
+        )
+
+
+def test_rollout_gpu_pool_dedicated_rejects_explicit_trainer_overlap() -> None:
+    """allow_overlap cannot weaken an explicitly dedicated rollout pool."""
+    with pytest.raises(ValueError, match="gpu_pool=dedicated requires rollout"):
+        resolve_distributed_resources(
+            _cfg(
+                {
+                    "visible_devices": [0, 1],
+                    "trainer": {"devices": [0]},
+                    "rollout": {
+                        "devices": [0],
+                        "gpu_pool": "dedicated",
+                        "gpus_per_worker": 1,
+                    },
+                    "allow_overlap": True,
+                },
+            ),
+        )
+
+
+def test_reward_gpu_pool_rollout_rejects_an_explicit_device_outside_the_pool() -> None:
+    """The rollout pool name constrains explicit reward devices as well as auto ones."""
+    with pytest.raises(ValueError, match="requires every reward device"):
+        resolve_distributed_resources(
+            _cfg(
+                {
+                    "visible_devices": [0, 1, 2],
+                    "trainer": {"devices": [0]},
+                    "rollout": {"devices": [1], "gpus_per_worker": 1},
+                    "reward": {
+                        "devices": [2],
+                        "gpu_pool": "rollout",
+                        "gpus_per_worker": 1,
+                    },
+                },
+            ),
+        )
+
+
+@pytest.mark.parametrize("reward_device", [0, 1])
+def test_reward_gpu_pool_dedicated_rejects_explicit_owned_devices(
+    reward_device: int,
+) -> None:
+    """Dedicated reward means disjoint from both trainer and rollout."""
+    with pytest.raises(ValueError, match="disjoint from both trainer and rollout"):
+        resolve_distributed_resources(
+            _cfg(
+                {
+                    "visible_devices": [0, 1, 2],
+                    "trainer": {"devices": [0]},
+                    "rollout": {"devices": [1], "gpus_per_worker": 1},
+                    "reward": {
+                        "devices": [reward_device],
+                        "gpu_pool": "dedicated",
+                        "gpus_per_worker": 1,
+                    },
+                    "allow_overlap": True,
+                },
+            ),
+        )
+
+
+def test_reward_gpu_pool_dedicated_requires_a_real_spare() -> None:
+    """Dedicated auto placement never falls back onto trainer or rollout GPUs."""
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0, 1, 2],
+                "trainer": {"devices": [0]},
+                "rollout": {"devices": [1], "gpus_per_worker": 1},
+                "reward": {"num_gpus": 1, "gpu_pool": "dedicated"},
+                "allow_overlap": True,
+            },
+        ),
+    )
+    assert resolved.reward_devices == (2,)
+
+    with pytest.raises(ValueError, match="Not enough non-overlapping reward GPUs"):
+        resolve_distributed_resources(
+            _cfg(
+                {
+                    "visible_devices": [0, 1],
+                    "trainer": {"devices": [0]},
+                    "rollout": {"devices": [1], "gpus_per_worker": 1},
+                    "reward": {"num_gpus": 1, "gpu_pool": "dedicated"},
+                    "allow_overlap": True,
+                },
+            ),
+        )
 
 
 def test_rollout_gpu_pool_trainer_colocates_on_demand() -> None:

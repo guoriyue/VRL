@@ -421,7 +421,7 @@ def test_apply_rollout_quantization_dispatches_by_scheme():
     assert model.recipes == []
     # an unimplemented scheme must NOT silently no-op (that was the old footgun) — raise
     with pytest.raises(NotImplementedError, match="no rollout swap"):
-        apply_rollout_quantization(model, SimpleNamespace(rollout_quantization="fp4"))
+        apply_rollout_quantization(model, SimpleNamespace(rollout_quantization="int8"))
     assert model.recipes == []
     # fp8: the swap fires
     apply_rollout_quantization(model, SimpleNamespace(rollout_quantization="fp8"))

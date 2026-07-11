@@ -197,7 +197,6 @@ def _slot_handles(ray: Any, *supports: bool | None) -> list[DistributedWorkerHan
     return [
         DistributedWorkerHandle(
             worker_id=f"w{index}",
-            node_id="local",
             actor=actor_cls.remote(value),
         )
         for index, value in enumerate(supports)

@@ -85,8 +85,6 @@ def _workers(count: int) -> list[DistributedWorkerHandle]:
     return [
         DistributedWorkerHandle(
             worker_id=f"w{idx}",
-            node_id="node-0",
-            gpu_ids=(idx,),
             actor=None,
         )
         for idx in range(count)
@@ -213,6 +211,9 @@ def test_dynamic_planner_leaves_chunks_unbound_with_costs() -> None:
     assert [a.estimated_cost for a in plan.assignments] == [
         estimate_chunk_cost(request, a.chunk) for a in plan.assignments
     ]
+    assert all(a.chunk is a.envelope.chunk for a in plan.assignments)
+    assert all(not hasattr(a, "node_id") for a in plan.assignments)
+    assert all(not hasattr(a, "gpu_ids") for a in plan.assignments)
     # Chunk identity and order (the gather contract) are untouched.
     assert [a.chunk.sample_start for a in plan.assignments] == [0, 2, 4, 6]
 
@@ -284,11 +285,9 @@ def _executor(strategy: str, actors: list[_FakeActor]) -> RayGenerationExecutor:
     workers = [
         DistributedWorkerHandle(
             worker_id=actor.worker_id,
-            node_id="node-0",
-            gpu_ids=(idx,),
             actor=actor,
         )
-        for idx, actor in enumerate(actors)
+        for actor in actors
     ]
     return RayGenerationExecutor(
         DistributedExecutionPlanner(

@@ -163,10 +163,9 @@ CASES: tuple[RealCheckpointCase, ...] = (
                 "model.torch_compile.enable=false",
                 "precision=bf16",
                 "actor.gradient_accumulation_steps=0",
-                # No ref model in this harness; dance_grpo uses GRPO's loss, so a
-                # leaked experiment kl_coef>0 would demand one. (flow_dppo /
-                # grpo_guard ignore kl_coef in their own loss.)
-                "algorithm.kl_coef=0.0",
+                # No ref model in this harness; only DanceGRPO exposes GRPO's
+                # reference-KL coefficient and therefore needs it disabled.
+                *(("algorithm.kl_coef=0.0",) if _algo == "dance_grpo" else ()),
                 "algorithm.kl_reward_coef=0.0",
                 "actor.drop_zero_advantage=false",
                 "rollout.n_samples_per_prompt=2",
@@ -434,6 +433,27 @@ CASES: tuple[RealCheckpointCase, ...] = (
         min_cuda_memory_gib=64.0,
     ),
 )
+
+
+@pytest.mark.parametrize(
+    "case",
+    tuple(
+        case
+        for case in CASES
+        if case.case_id
+        in {"sd3_5_dance_grpo", "sd3_5_flow_dppo", "sd3_5_grpo_guard"}
+    ),
+    ids=lambda case: case.case_id,
+)
+def test_new_diffusion_algorithm_case_overrides_build_without_gpu(
+    case: RealCheckpointCase,
+) -> None:
+    """Real-checkpoint overrides expose only knobs consumed by each loss."""
+    has_reference_kl = "algorithm.kl_coef=0.0" in case.overrides
+    assert has_reference_kl is (case.case_id == "sd3_5_dance_grpo")
+
+    built = build_configs(load_config(case.config, overrides=list(case.overrides)))
+    assert hasattr(built["algorithm"], "kl_coef") is has_reference_kl
 
 
 class _IndexReward:

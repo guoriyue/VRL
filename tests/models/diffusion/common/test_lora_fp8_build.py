@@ -105,7 +105,7 @@ def test_shared_builder_drops_master_before_quantized_lora_gpu_move(monkeypatch)
 
     monkeypatch.setattr(
         quantization,
-        "drop_fp8_masters",
+        "drop_quantized_masters",
         lambda _model: events.append("drop") or 4,
     )
     spec = RuntimeBuildSpec(

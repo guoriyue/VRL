@@ -136,7 +136,7 @@ def test_ray_generation_launcher_builds_worker_runtime_with_embedded_ray() -> No
         assert runtime.current_policy_version == 7
         assert runtime.weight_sync is None
         # Launcher uses the owner's group; it does not own/remove it.
-        assert runtime._placement_group is None
+        assert not hasattr(runtime, "_placement_group")
         # Config-selected placement strategy must reach the live planner.
         assert runtime.executor.planner.policy.strategy == "dynamic"
 
@@ -204,8 +204,8 @@ def test_owner_placement_runtime_does_not_own_placement_group() -> None:
         )
 
         # Runtime owns its workers but not the owner-managed placement group.
-        assert runtime._placement_group is None
-        assert runtime._owned_actors == []
+        assert not hasattr(runtime, "_placement_group")
+        assert not hasattr(runtime, "_owned_actors")
         assert [w.worker_id for w in runtime.executor.workers] == ["rollout-0"]
 
         # Tearing down the runtime kills workers but leaves the owner's PG alive.
@@ -282,7 +282,7 @@ def test_phase_handoff_keeps_actor_and_owner_placement() -> None:
         assert runtime._on_demand is not None
         inner = runtime._on_demand.inner_runtime
         assert inner is not None
-        assert inner._placement_group is None  # inner never owned the PG
+        assert not hasattr(inner, "_placement_group")  # inner never owns the PG
         first_actor = inner.executor.workers[0].actor
         asyncio.run(runtime.offload())
         assert runtime._on_demand is not None

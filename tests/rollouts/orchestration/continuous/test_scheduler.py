@@ -43,7 +43,6 @@ def _admit(sched: RolloutScheduler, inflight: int, ready: int, ready_bytes: int 
 
 
 def _item(
-    item_id: int,
     group_key: int,
     version: int | None,
     *,
@@ -58,7 +57,6 @@ def _item(
         prompts=[f"p{group_key}"] * 2,
     )
     return ContinuousRolloutItem(
-        item_id=item_id,
         group_key=group_key,
         rollout_policy_version=version,
         prompt_set_id=prompt_set_id,
@@ -207,8 +205,8 @@ def test_set_groups_per_iteration_updates_prediction() -> None:
 
 def test_select_drains_distinct_groups_at_one_version() -> None:
     queue = ContinuousRolloutQueue(max_items=8)
-    queue.put(_item(0, group_key=0, version=1))
-    queue.put(_item(1, group_key=1, version=1))
+    queue.put(_item(group_key=0, version=1))
+    queue.put(_item(group_key=1, version=1))
 
     selected = _scheduler(max_stale=0).select_iteration(
         queue, min_groups=2, current_version=1,
@@ -222,7 +220,7 @@ def test_select_drains_distinct_groups_at_one_version() -> None:
 
 def test_select_waits_until_full_set_present() -> None:
     queue = ContinuousRolloutQueue(max_items=8)
-    queue.put(_item(0, group_key=0, version=1))
+    queue.put(_item(group_key=0, version=1))
     # Only one of two required groups present yet.
     assert (
         _scheduler(max_stale=0).select_iteration(
@@ -236,13 +234,13 @@ def test_select_never_mixes_policy_versions() -> None:
     queue = ContinuousRolloutQueue(max_items=8)
     # v1 and v2 both in-window under max_stale=1, but an iteration must stay
     # homogeneous and v2 alone cannot yet fill min_groups=2 -> None.
-    queue.put(_item(0, group_key=0, version=1))
-    queue.put(_item(1, group_key=1, version=2))
+    queue.put(_item(group_key=0, version=1))
+    queue.put(_item(group_key=1, version=2))
     sched = _scheduler(max_stale=1)
     assert sched.select_iteration(queue, min_groups=2, current_version=2) is None
 
     # Add the second v2 group; now v2 alone fills the iteration.
-    queue.put(_item(2, group_key=0, version=2))
+    queue.put(_item(group_key=0, version=2))
     selected = sched.select_iteration(queue, min_groups=2, current_version=2)
     assert selected is not None
     version, items = selected
@@ -252,8 +250,8 @@ def test_select_never_mixes_policy_versions() -> None:
 
 def test_drop_stale_counts_and_removes() -> None:
     queue = ContinuousRolloutQueue(max_items=8)
-    queue.put(_item(0, group_key=0, version=1))
-    queue.put(_item(1, group_key=1, version=3))
+    queue.put(_item(group_key=0, version=1))
+    queue.put(_item(group_key=1, version=3))
     dropped = _scheduler(max_stale=0).drop_stale(queue, current_version=3)
     assert dropped == 1
     assert queue.size() == 1
@@ -262,7 +260,7 @@ def test_drop_stale_counts_and_removes() -> None:
 
 def test_future_item_fails_fast() -> None:
     queue = ContinuousRolloutQueue(max_items=8)
-    queue.put(_item(0, group_key=0, version=5))
+    queue.put(_item(group_key=0, version=5))
     with pytest.raises(RuntimeError, match="newer than the trainer policy"):
         _scheduler(max_stale=0).drop_stale(queue, current_version=4)
 
@@ -271,8 +269,8 @@ def test_select_only_serves_the_requested_prompt_set() -> None:
     # A prompt swap leaves the previous set's items in the queue at the same
     # version and slot numbering; select must never serve them for the new set.
     queue = ContinuousRolloutQueue(max_items=8)
-    queue.put(_item(0, group_key=0, version=1, prompt_set_id=0))
-    queue.put(_item(1, group_key=1, version=1, prompt_set_id=0))
+    queue.put(_item(group_key=0, version=1, prompt_set_id=0))
+    queue.put(_item(group_key=1, version=1, prompt_set_id=0))
     sched = _scheduler(max_stale=0)
 
     # The new prompt set (id=1) has no items yet -> nothing to train, even though
@@ -286,22 +284,22 @@ def test_select_only_serves_the_requested_prompt_set() -> None:
 
     # Once the new set's groups arrive, they fill the iteration; the old set's
     # items stay behind.
-    queue.put(_item(2, group_key=0, version=1, prompt_set_id=1))
-    queue.put(_item(3, group_key=1, version=1, prompt_set_id=1))
+    queue.put(_item(group_key=0, version=1, prompt_set_id=1))
+    queue.put(_item(group_key=1, version=1, prompt_set_id=1))
     selected = sched.select_iteration(
         queue, min_groups=2, current_version=1, prompt_set_id=1,
     )
     assert selected is not None
     _version, items = selected
     assert {item.prompt_set_id for item in items} == {1}
-    assert {item.item_id for item in items} == {2, 3}
+    assert {item.group_key for item in items} == {0, 1}
     assert queue.size() == 2  # the two old-set items remain
 
 
 def test_drop_obsolete_prompt_sets_counts_and_removes() -> None:
     queue = ContinuousRolloutQueue(max_items=8)
-    queue.put(_item(0, group_key=0, version=1, prompt_set_id=0))
-    queue.put(_item(1, group_key=1, version=1, prompt_set_id=1))
+    queue.put(_item(group_key=0, version=1, prompt_set_id=0))
+    queue.put(_item(group_key=1, version=1, prompt_set_id=1))
 
     dropped = _scheduler(max_stale=1).drop_obsolete_prompt_sets(
         queue,

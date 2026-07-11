@@ -11,8 +11,10 @@ from __future__ import annotations
 import logging
 
 import pytest
+from omegaconf import OmegaConf
 
 from vrl.algorithms.grpo.continuous import FlowDPPOConfig, GRPOConfig, GRPOGuardConfig
+from vrl.algorithms.grpo.token import TokenGRPOConfig
 from vrl.config.builders import build_algorithm_config, build_configs
 from vrl.config.loading import load_config
 
@@ -47,6 +49,51 @@ def test_grpo_guard_recipe_resolves_and_enables_proposal_mean_storage() -> None:
     assert cfg.algorithm.kind == "grpo_guard"
     assert isinstance(build_algorithm_config(cfg), GRPOGuardConfig)
     assert cfg.rollout.return_prev_sample_mean is True
+
+
+@pytest.mark.parametrize(
+    ("kind", "field", "value"),
+    [
+        ("flow_dppo", "clip_ratio", 0.2),
+        ("flow_dppo", "kl_coef", 0.1),
+        ("flow_dppo", "flow_kl_use_dt", True),
+        ("flow_dppo", "sft_weight", 0.0),
+        ("grpo_guard", "kl_coef", 0.1),
+        ("grpo_guard", "flow_kl_use_dt", True),
+        ("grpo_guard", "sft_weight", 0.0),
+        ("token_grpo", "flow_kl_use_dt", True),
+        ("token_grpo", "sft_weight", 0.0),
+    ],
+)
+def test_algorithm_configs_reject_unconsumed_knobs(
+    kind: str,
+    field: str,
+    value: object,
+) -> None:
+    cfg = OmegaConf.create({"algorithm": {"kind": kind, field: value}})
+
+    with pytest.raises(ValueError, match=rf"algorithm\.{field}"):
+        build_algorithm_config(cfg)
+
+
+def test_token_grpo_keeps_its_clipping_and_reference_kl_config() -> None:
+    cfg = OmegaConf.create(
+        {
+            "algorithm": {
+                "kind": "token_grpo",
+                "clip_ratio": 0.3,
+                "kl_coef": 0.2,
+                "kl_estimator": "k2",
+            },
+        },
+    )
+
+    built = build_algorithm_config(cfg)
+
+    assert isinstance(built, TokenGRPOConfig)
+    assert built.clip_ratio == pytest.approx(0.3)
+    assert built.kl_coef == pytest.approx(0.2)
+    assert built.kl_estimator == "k2"
 
 
 @pytest.mark.parametrize(

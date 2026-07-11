@@ -15,7 +15,6 @@ from vrl.rollouts.orchestration.continuous.types import ContinuousRolloutItem
 
 
 def _item(
-    item_id: int,
     group_key: int,
     version: int | None,
     *,
@@ -31,7 +30,6 @@ def _item(
         prompts=[f"p{group_key}"] * samples,
     )
     return ContinuousRolloutItem(
-        item_id=item_id,
         group_key=group_key,
         rollout_policy_version=version,
         batch=batch,
@@ -42,10 +40,10 @@ def _item(
 def test_snapshot_and_remove_are_pure_container_ops() -> None:
     """snapshot() reads FIFO order; remove() drops by identity and fixes bytes."""
     queue = ContinuousRolloutQueue(max_items=8)
-    queue.put(_item(0, group_key=0, version=1, nbytes=4))
-    queue.put(_item(1, group_key=1, version=1, nbytes=6))
+    queue.put(_item(group_key=0, version=1, nbytes=4))
+    queue.put(_item(group_key=1, version=1, nbytes=6))
     snap = queue.snapshot()
-    assert [item.item_id for item in snap] == [0, 1]
+    assert [item.group_key for item in snap] == [0, 1]
 
     queue.remove([snap[0]])
     assert queue.size() == 1
@@ -57,21 +55,21 @@ def test_snapshot_and_remove_are_pure_container_ops() -> None:
 def test_item_count_backpressure_drops_oldest() -> None:
     """Checks item count backpressure drops oldest."""
     queue = ContinuousRolloutQueue(max_items=2)
-    queue.put(_item(0, group_key=0, version=1))
-    queue.put(_item(1, group_key=1, version=1))
-    queue.put(_item(2, group_key=2, version=1))
+    queue.put(_item(group_key=0, version=1))
+    queue.put(_item(group_key=1, version=1))
+    queue.put(_item(group_key=2, version=1))
     assert queue.size() == 2
     assert queue.dropped_backpressure == 1
-    # Oldest (item 0) evicted.
-    remaining = {item.item_id for item in queue._items}
+    # Oldest group (slot 0) evicted.
+    remaining = {item.group_key for item in queue._items}
     assert remaining == {1, 2}
 
 
 def test_byte_cap_backpressure() -> None:
     """Checks byte cap backpressure."""
     queue = ContinuousRolloutQueue(max_items=100, max_bytes=10)
-    queue.put(_item(0, group_key=0, version=1, nbytes=6))
-    queue.put(_item(1, group_key=1, version=1, nbytes=6))  # 12 > 10 -> drop one
+    queue.put(_item(group_key=0, version=1, nbytes=6))
+    queue.put(_item(group_key=1, version=1, nbytes=6))  # 12 > 10 -> drop one
     assert queue.ready_bytes() <= 10
     assert queue.dropped_backpressure == 1
 
@@ -79,8 +77,18 @@ def test_byte_cap_backpressure() -> None:
 def test_stats_shape() -> None:
     """Checks stats shape."""
     queue = ContinuousRolloutQueue(max_items=8)
-    queue.put(_item(0, group_key=0, version=1, nbytes=4))
+    queue.put(_item(group_key=0, version=1, nbytes=4))
     stats = queue.stats()
     assert stats["ready_items"] == 1.0
     assert stats["ready_groups"] == 1.0
     assert stats["ready_bytes"] == 4.0
+
+
+def test_ready_group_count_spans_policy_versions() -> None:
+    """Queue stats count group slots; version selection belongs to the scheduler."""
+    queue = ContinuousRolloutQueue(max_items=8)
+    queue.put(_item(group_key=0, version=1))
+    queue.put(_item(group_key=0, version=2))
+    queue.put(_item(group_key=1, version=2))
+
+    assert queue.distinct_group_count() == 2

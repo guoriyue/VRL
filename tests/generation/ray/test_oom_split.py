@@ -41,20 +41,26 @@ class _CapacityWorker:
     max_samples: int
     executed: list[str] = field(default_factory=list)
     fail_message: str = _OOM_MESSAGE
+    request_id_override: str | None = None
 
     def execute_chunk(self, envelope: ChunkExecutionEnvelope) -> ChunkExecutionResult:
         chunk = envelope.chunk
         self.executed.append(chunk.chunk_key)
+        request_id = (
+            envelope.request.request_id
+            if self.request_id_override is None
+            else self.request_id_override
+        )
         if chunk.sample_count > self.max_samples:
             return ChunkExecutionResult(
-                request_id=envelope.request.request_id,
+                request_id=request_id,
                 worker_id=self.worker_id,
                 chunk=chunk,
                 output=None,
                 error=self.fail_message,
             )
         return ChunkExecutionResult(
-            request_id=envelope.request.request_id,
+            request_id=request_id,
             worker_id=self.worker_id,
             chunk=chunk,
             output={"chunk_key": chunk.chunk_key, "samples": chunk.sample_count},
@@ -79,15 +85,10 @@ class _StaticPlanner:
         self,
         request: GenerationRequest,
         workers: list[DistributedWorkerHandle],
-        *,
-        sample_rows: Any,
     ) -> DistributedGenerationPlan:
         assignments = tuple(
             DeviceAssignment(
                 worker_id=workers[index % len(workers)].worker_id,
-                node_id=None,
-                gpu_ids=(),
-                chunk=chunk,
                 envelope=ChunkExecutionEnvelope(
                     request=request,
                     chunk=chunk,
@@ -133,7 +134,7 @@ def _executor(
     workers: list[_CapacityWorker],
 ) -> tuple[RayGenerationExecutor, list[DistributedWorkerHandle]]:
     handles = [
-        DistributedWorkerHandle(worker_id=worker.worker_id, node_id="local", actor=worker)
+        DistributedWorkerHandle(worker_id=worker.worker_id, actor=worker)
         for worker in workers
     ]
     executor = RayGenerationExecutor(
@@ -215,6 +216,22 @@ async def test_healthy_chunks_skip_degradation_path() -> None:
     assert "ray_chunk_oom_splits" not in output.extra
 
 
+@pytest.mark.asyncio
+async def test_result_request_id_must_match_submitted_envelope() -> None:
+    chunk = SampleChunk(prompt_index=0, prompt="p", sample_start=0, sample_count=2)
+    worker = _CapacityWorker(
+        worker_id="w0",
+        max_samples=2,
+        request_id_override="wrong-request",
+    )
+    executor, _ = _executor([chunk], [worker])
+
+    with pytest.raises(RuntimeError, match="request_id mismatch"):
+        await executor.execute(_request(2))
+
+    assert worker.executed == [chunk.chunk_key]
+
+
 @dataclass
 class _StaleSlotWorker:
     """Worker that returns a typed stale-slot result (evicted version slot)."""
@@ -259,7 +276,7 @@ async def test_stale_slot_routes_to_graceful_discard_not_failure() -> None:
     chunk = SampleChunk(prompt_index=0, prompt="p", sample_start=0, sample_count=2)
     worker = _StaleSlotWorker(worker_id="w0")
     handles = [
-        DistributedWorkerHandle(worker_id=worker.worker_id, node_id="local", actor=worker),
+        DistributedWorkerHandle(worker_id=worker.worker_id, actor=worker),
     ]
     executor = RayGenerationExecutor(
         planner=_StaticPlanner(chunks=[chunk]),
@@ -320,7 +337,7 @@ class _RoutingWorker:
 
 def _routing_executor(chunks, workers, *, pipelined):
     handles = [
-        DistributedWorkerHandle(worker_id=w.worker_id, node_id="local", actor=w)
+        DistributedWorkerHandle(worker_id=w.worker_id, actor=w)
         for w in workers
     ]
     return RayGenerationExecutor(

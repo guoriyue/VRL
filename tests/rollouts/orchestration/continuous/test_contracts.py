@@ -369,7 +369,6 @@ async def test_producer_discards_group_past_stale_window() -> None:
 
 
 def _item(
-    item_id: int,
     group_key: int,
     version: int | None,
     phase_times: dict[str, float] | None = None,
@@ -377,7 +376,6 @@ def _item(
     from vrl.utils.stats import RolloutStats
 
     return ContinuousRolloutItem(
-        item_id=item_id,
         group_key=group_key,
         rollout_policy_version=version,
         batch=_batch(f"p{group_key}"),
@@ -417,8 +415,8 @@ async def _drain(
 async def test_consumer_consumes_stale_items_within_bound() -> None:
     """max_stale=1 lets the trainer consume one-version-old groups."""
     queue = ContinuousRolloutQueue(max_items=8)
-    queue.put(_item(0, group_key=0, version=1))
-    queue.put(_item(1, group_key=1, version=1))
+    queue.put(_item(group_key=0, version=1))
+    queue.put(_item(group_key=1, version=1))
 
     iteration = await _drain(
         _consumer(queue, max_stale=1),
@@ -435,8 +433,8 @@ async def test_consumer_consumes_stale_items_within_bound() -> None:
 async def test_consumer_drops_too_stale_items_and_times_out() -> None:
     """max_stale=0 must drop pre-sync items instead of training on them."""
     queue = ContinuousRolloutQueue(max_items=8)
-    queue.put(_item(0, group_key=0, version=1))
-    queue.put(_item(1, group_key=1, version=1))
+    queue.put(_item(group_key=0, version=1))
+    queue.put(_item(group_key=1, version=1))
 
     with pytest.raises(TimeoutError):
         await _drain(
@@ -479,7 +477,7 @@ async def test_late_reward_group_dropped_under_non_draining_max_stale_0() -> Non
     # The late-reward group: produced (and stamped) under v1, but its reward
     # only lands AFTER the trainer has bumped to v2 (the non-draining barrier
     # did not wait for it). It enters the ready queue stamped at v1.
-    queue.put(_item(0, group_key=0, version=1))
+    queue.put(_item(group_key=0, version=1))
     assert queue.size() == 1
 
     # Trainer is now at v2; the post-sync purge runs drop_stale at the new
@@ -499,7 +497,7 @@ async def test_late_reward_group_dropped_under_non_draining_max_stale_0() -> Non
     # Positive control: a FRESH v2 group (reward landed in time) is the one that
     # gets trained -- proving the timeout above is a drop, not an empty-queue
     # artifact, and that the machinery still admits in-window work.
-    queue.put(_item(1, group_key=0, version=2))
+    queue.put(_item(group_key=0, version=2))
     iteration = await _drain(consumer, min_groups=1, current_version=2)
     assert iteration.policy_version == 2
     assert queue.dropped_stale == 1  # the v1 late group, dropped exactly once
@@ -511,7 +509,6 @@ async def test_consumer_aggregates_item_phase_times() -> None:
     queue = ContinuousRolloutQueue(max_items=8)
     queue.put(
         _item(
-            0,
             group_key=0,
             version=1,
             phase_times={"collect.engine_generate": 1.5, "collect.reward_score": 0.5},
@@ -519,7 +516,6 @@ async def test_consumer_aggregates_item_phase_times() -> None:
     )
     queue.put(
         _item(
-            1,
             group_key=1,
             version=1,
             phase_times={"collect.engine_generate": 2.5},

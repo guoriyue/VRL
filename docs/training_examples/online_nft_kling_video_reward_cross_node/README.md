@@ -2,13 +2,11 @@
 
 Runbook for `experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward_cross_node`.
 
-> Status as of 2026-07-01: this runbook is stale for reward placement. The Ray
-> reward actor pool was removed; rewards now score in-process on the driver via
-> `LocalRewardRuntime`, and heavyweight rewards use
-> `reward.kwargs.<name>.sleep_offload=true` to park on CPU between scores. The
-> rollout-on-worker cross-node half remains relevant, but this exact 2-host
-> Kling reward placement needs a redesign or a new remote reward transport
-> before running again.
+> Status as of 2026-07-11: reward placement follows the current in-process
+> runtime. Kling scores on the driver and uses
+> `reward.kwargs.<name>.sleep_offload=true` to park on CPU between scores; only
+> rollout is scheduled on the worker. The trainer+Kling memory fit on node A is
+> still a deployment prerequisite for this two-host layout.
 
 Runs one RL job across **two hosts over a Ray cluster**: the trainer on one
 server and generation on the other. This is the cross-node
@@ -36,12 +34,13 @@ server and generation on the other. This is the cross-node
 
 ### The 2-GPU caveat
 
-This recipe predates the reward execution rewrite. The old design put Kling in
-a Ray reward pool on node B, sharing that GPU with rollout and forcing rollout
-to reload each epoch. That transport is gone. As composed today, Kling would
-load in-process on node A next to the trainer model, so the recipe is
-memory-unverified and should not be treated as a ready cross-node Kling run.
-Use it only as a reference for the rollout-on-worker placement mechanics.
+The old design put Kling in a Ray reward pool on node B, sharing that GPU with
+rollout and forcing rollout to reload each epoch. That transport is gone. The
+current recipe explicitly declares no reward GPU reservation, so Kling loads
+in-process on node A next to the trainer model and token 1 remains
+rollout-only. Do not set `distributed.resources.reward.devices=[1]`: in
+cross-node mode that ordinal is a Ray scheduling token, not a driver-local CUDA
+device, and the runtime rejects it before loading either model.
 
 ## Prerequisites (both nodes)
 
@@ -52,9 +51,9 @@ Use it only as a reference for the rollout-on-worker placement mechanics.
   from other users' lifecycle commands.
 - **node A**: cosmos Predict2.5 2B weights + the VideoPhy prompt dataset.
 - **node B**: cosmos Predict2.5 2B weights (rollout loads them).
-- **node A**: if you still run this stale Kling composition, the
-  `KlingTeam/VideoReward` model must be in the local HF cache on the driver
-  because reward scoring is in-process there.
+- **node A**: the `KlingTeam/VideoReward` model must be in the local HF cache on
+  the driver because reward scoring is in-process there. Confirm the trainer
+  and Kling model fit on this GPU with the configured sleep-offload policy.
 - Pick the same `trainer.output_dir` on a path that exists on both, or a shared
   filesystem, so checkpoints/eval/reward artifacts land where you expect.
 
@@ -113,7 +112,9 @@ RAY_ADDRESS=10.0.0.1:6379 \
   GPU you get: *"the driver/head node exposes N Ray GPU(s)…"* — restart the head
   with `--num-gpus=0`.
 - **Placement log.** Look for `GlobalRayPlacementOwner created: bundles=(1,) …`
-  with rollout on the worker bundle.
+  with rollout on the worker bundle. The resolved resource plan should report
+  `reward=[]`; Kling follows the driver's rank-local trainer device instead of
+  consuming a Ray bundle.
 - **Rollout lands off-head.** Node-aware validation (`validate_actor_gpu_ids`,
   cross-node path) raises if a worker lands on the head node, so a clean start
   means generation is on node B.
@@ -138,26 +139,12 @@ disconnects the driver and does not stop the cluster.
 
 ## Upgrade path
 
-The old 3-GPU advice also assumed a Ray reward actor pool. With the current
-in-process reward runtime, a real cross-node reward run needs either a new
-remote reward transport or an explicit redesign that keeps reward memory off the
-trainer GPU.
-
-If such a remote transport is added later, the intended placement is still:
-trainer on node A, rollout on node B, reward on a dedicated non-head GPU so
-rollout stays resident:
-
-```yaml
-distributed:
-  resources:
-    reward:
-      share_with_rollout: false   # reward gets its own GPU bundle
-```
-
-Join the extra GPU to the cluster (`ray start --address=<head>:6379 --num-gpus=1`
-on node B's second GPU or on node C). The resolver then keeps rollout
-**resident** (no reload), with trainer=A, rollout and reward on the two
-non-head GPUs.
+The old 3-GPU advice assumed a Ray reward actor pool. The current resource
+schema intentionally cannot turn a remote scheduling token into a local reward
+device. Moving Kling off node A therefore requires a real remote reward runtime
+and transport boundary, not another `reward.devices` ordinal. If that boundary
+is added later, it can own a dedicated non-head GPU while rollout remains
+resident on node B.
 
 ## Notes
 

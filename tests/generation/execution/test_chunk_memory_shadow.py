@@ -339,7 +339,7 @@ def test_planner_rejects_unresolved_auto() -> None:
     with pytest.raises(ValueError, match="samples_per_chunk: auto requires"):
         planner.plan_with_engine(
             _request(),
-            [SimpleNamespace(worker_id="w0", node_id="n0", gpu_ids=(0,), actor=None)],
+            [SimpleNamespace(worker_id="w0", actor=None)],
         )
 
 
