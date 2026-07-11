@@ -56,10 +56,18 @@ class LoraModelMixin:
         transformer = self._lora_transformer()
         transformer.requires_grad_(False)
         dtype = self._lora_dtype(spec)
-        if dtype is None:
-            transformer.to(self.device)
-        else:
-            transformer.to(self.device, dtype=dtype)
+        # Quantized LoRA rollouts attach PEFT while the checkpoint is still on
+        # CPU. The shared builder then swaps the wrapped base linears, drops
+        # their unsynced masters, and only moves the compact policy to the GPU.
+        # Moving here would make a 17B bf16 checkpoint exceed a 32GB card before
+        # fp8 has a chance to halve it. Plain-precision LoRA keeps the historical
+        # direct move; replay builders never request rollout quantization.
+        defer_device_move = bool(getattr(spec, "rollout_quantization", None))
+        if not defer_device_move:
+            if dtype is None:
+                transformer.to(self.device)
+            else:
+                transformer.to(self.device, dtype=dtype)
 
         lora_path = spec.lora_path
         if lora_path:

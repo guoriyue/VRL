@@ -235,6 +235,39 @@ def test_fp8_linear_exposes_master_weight_and_requantizes_on_sync():
     assert rel < 0.06, f"fp8 output should track the synced weight (drift {rel:.4f})"
 
 
+def test_master_free_fp8_survives_adapter_only_weight_sync():
+    """LoRA sync recurses through frozen fp8 children without base weights.
+
+    A master-free rollout intentionally drops the bf16 ``weight``. PyTorch still
+    calls every child's ``_load_from_state_dict`` for an adapter-only payload, so
+    the fp8 cache must stay intact instead of trying to requantize a missing master.
+    """
+    from vrl.models.utils import load_weights_into
+
+    class _AdapterPolicy(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            base = nn.Linear(16, 16, bias=False).requires_grad_(False)
+            self.base_layer = Fp8Linear(base)
+            self.lora = nn.Parameter(torch.zeros(2, 16))
+
+    policy = _AdapterPolicy()
+    policy.base_layer.drop_master()
+    cached_weight = policy.base_layer.weight_fp8.clone()
+    update = torch.ones_like(policy.lora)
+
+    load_weights_into(
+        policy,
+        {"transformer.lora": update},
+        prefix="transformer",
+        label="adapter policy",
+    )
+
+    assert policy.base_layer.weight is None
+    assert torch.equal(policy.base_layer.weight_fp8, cached_weight)
+    assert torch.equal(policy.lora, update)
+
+
 @requires_fp8
 def test_fp8_linear_handles_fp32_activations():
     """DiT adaLN / pooled-projection paths feed fp32 activations, and rowwise

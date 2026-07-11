@@ -158,8 +158,12 @@ class Fp8Linear(QuantizedLinear):
                 "rollouts; full-finetune weight-sync must keep the master.",
             )
         super()._load_from_state_dict(state_dict, prefix, *args)
-        # A weight-sync just overwrote `weight`; refresh the fp8 cache from it.
-        self._requantize_weight()
+        # Full-parameter sync overwrites `weight`, so refresh the fp8 cache.
+        # Adapter-only sync still recurses through every child module even though
+        # its state dict contains only LoRA keys. Master-free rollout linears have
+        # no `weight` by design; their frozen fp8 cache must remain untouched.
+        if self.weight is not None:
+            self._requantize_weight()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         shape = x.shape
