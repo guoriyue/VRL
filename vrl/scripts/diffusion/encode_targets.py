@@ -140,7 +140,7 @@ def main() -> None:
         normalize_rollout_family,
     )
     from vrl.trainers.data import load_prompt_examples_from_config
-    from vrl.trainers.data.artifacts import save_sft_latents
+    from vrl.trainers.data.sft_latents import save_sft_latents
     from vrl.utils.config import import_from_path
 
     cfg = load_config(f"experiment/{args.experiment}")

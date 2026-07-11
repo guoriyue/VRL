@@ -310,7 +310,7 @@ def _load_sft_latents_from_config(cfg: DictConfig, family: str) -> dict[str, Any
     path = OmegaConf.select(cfg, "data.sft_latents", default=None)
     if not path:
         raise ValueError("algorithm.sft_weight > 0 requires data.sft_latents")
-    from vrl.trainers.data.artifacts import load_sft_latents
+    from vrl.trainers.data.sft_latents import load_sft_latents
 
     return load_sft_latents(
         str(path),

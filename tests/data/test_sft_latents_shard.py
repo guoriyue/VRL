@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from vrl.trainers.data.artifacts import load_sft_latents, save_sft_latents
+from vrl.trainers.data.sft_latents import load_sft_latents, save_sft_latents
 
 
 def test_sft_latents_round_trip(tmp_path) -> None:
