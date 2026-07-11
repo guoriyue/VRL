@@ -119,15 +119,12 @@ def _copy_first_present(
 
 
 def _add_derived_values(values: dict[str, Any]) -> None:
-    if "kl_reward_coef" in values and _has_sde_sampling(values):
-        values["return_kl"] = float(values.get("kl_reward_coef", 0.0)) > 0.0
-
-
-def _has_sde_sampling(values: dict[str, Any]) -> bool:
-    return any(
+    has_sde_sampling = any(
         name in values
         for name in ("sde_type", "sde_window_size", "sde_window_range")
     )
+    if "kl_reward_coef" in values and has_sde_sampling:
+        values["return_kl"] = float(values.get("kl_reward_coef", 0.0)) > 0.0
 
 
 def _normalize_config_value(name: str, value: Any) -> Any:

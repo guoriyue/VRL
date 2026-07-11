@@ -6,7 +6,7 @@ from typing import Any
 
 import torch
 
-from vrl.rollouts.batch import RolloutBatch, stack_batches
+from vrl.rollouts.batch import RolloutBatch
 from vrl.trajectory.device import map_tensor_tree
 from vrl.trajectory.ops import move_trajectory_batch, select_trajectory_batch
 
@@ -92,43 +92,6 @@ def pad_zero_advantage_mask(mask: torch.Tensor, num_batches: int) -> torch.Tenso
     return padded
 
 
-def shuffle_and_rebatch_batches(
-    batches: list[RolloutBatch],
-    advantages: list[torch.Tensor],
-    *,
-    num_batches: int,
-) -> tuple[list[RolloutBatch], list[torch.Tensor]]:
-    """Shuffle across all rollout rows and split into Flow-GRPO microbatches."""
-
-    combined = stack_batches(batches)
-    adv_all = torch.cat(advantages)
-    total_batch_size = int(combined.rewards.shape[0])
-    if total_batch_size == 0:
-        return [], []
-    if num_batches <= 0 or total_batch_size % num_batches != 0:
-        raise ValueError(
-            "Flow-GRPO rebatch requires total samples divisible by rollout batches: "
-            f"total_batch_size={total_batch_size}, num_batches={num_batches}",
-        )
-
-    perm = torch.randperm(total_batch_size, device=combined.rewards.device)
-    combined = select_batch(combined, perm)
-    adv_all = adv_all[perm.to(adv_all.device)]
-
-    microbatch_size = total_batch_size // num_batches
-    rebatches: list[RolloutBatch] = []
-    rebatch_advs: list[torch.Tensor] = []
-    for start in range(0, total_batch_size, microbatch_size):
-        idx = torch.arange(
-            start,
-            start + microbatch_size,
-            device=combined.rewards.device,
-        )
-        rebatches.append(select_batch(combined, idx))
-        rebatch_advs.append(adv_all[idx.to(adv_all.device)])
-    return rebatches, rebatch_advs
-
-
 def split_batch_by_group(batch: RolloutBatch) -> list[RolloutBatch]:
     """Split a rollout batch into group-local batches for bounded training memory."""
 
@@ -203,6 +166,5 @@ __all__ = [
     "pad_zero_advantage_mask",
     "remap_group_ids_",
     "select_batch",
-    "shuffle_and_rebatch_batches",
     "split_batch_by_group",
 ]

@@ -33,6 +33,7 @@ from vrl.scripts.data.common import (
     write_report,
 )
 from vrl.trainers.data.artifacts import validate_source_backed_video_world_manifest_pair
+from vrl.utils.media import write_png
 
 COMMAND_NAME = "video-world-bridge"
 TARGET_COMMAND_NAME = "video-world-targets"
@@ -148,7 +149,7 @@ def build_video_world_rows(
         if not prompt or not episode_id or image is None:
             continue
         ref_path = reference_dir / f"{source}_{episode_id}_first.png"
-        _write_png(ref_path, image)
+        write_png(image, ref_path)
         source_metadata = {
             key: value
             for key, value in dict(episode.get("metadata") or {}).items()
@@ -198,7 +199,7 @@ def build_target_video_world_rows(
         clip_fps = float(metadata_raw.get("source_fps") or fps)
         ref_path = reference_dir / f"{source}_{episode_id}_first.png"
         target_path = target_dir / f"{source}_{episode_id}_target.mp4"
-        _write_png(ref_path, frames[0])
+        write_png(frames[0], ref_path)
         writer(target_path, frames, clip_fps)
         source_metadata = {
             key: value
@@ -811,20 +812,6 @@ def _decode_frames(url: str, *, stop_after: int) -> Iterator[tuple[int, Any]]:
             yield position, frame.to_ndarray(format="rgb24")
             if position >= stop_after:
                 break
-
-
-def _write_png(path: Path, image: Any) -> None:
-    import numpy as np
-    from PIL import Image
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if isinstance(image, Image.Image):
-        image.convert("RGB").save(path, format="PNG")
-        return
-    array = np.asarray(image)
-    if array.dtype != np.uint8:
-        array = array.astype("uint8")
-    Image.fromarray(array).convert("RGB").save(path, format="PNG")
 
 
 def _write_mp4(path: Path, frames: Sequence[Any], fps: float) -> None:

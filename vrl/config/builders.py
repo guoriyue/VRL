@@ -113,20 +113,6 @@ def _section_payload_and_missing(
     return payload, missing
 
 
-def section_to_dataclass(cls: type[Any], cfg: DictConfig, path: str) -> Any:
-    """Construct ``cls`` from the YAML section at ``path``.
-
-    Requiredness comes from the dataclass field list alone: a field without a
-    default is required, and every missing required key is reported at once
-    with its full YAML path.
-    """
-
-    payload, missing = _section_payload_and_missing(cls, cfg, path)
-    if missing:
-        raise ValueError("config missing required key(s): " + ", ".join(missing))
-    return cls(**payload)
-
-
 def _dataclass_payload(cls: type[Any], node: DictConfig) -> dict[str, Any]:
     raw = OmegaConf.to_container(node, resolve=True, throw_on_missing=True) or {}
     if not isinstance(raw, dict):
