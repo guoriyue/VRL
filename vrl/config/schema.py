@@ -769,9 +769,9 @@ class RootConfig(ConfigBase):
         kind = algo.kind
         rollout = self.rollout
 
-        # The SFT term is a continuous diffusion-GRPO feature. Validate the
-        # numeric domain and algorithm ownership here so a negative/NaN value
-        # or an inherited token-GRPO field cannot silently become a no-op.
+        # The SFT term belongs to continuous diffusion GRPO and offline
+        # Diffusion-DPO. Validate the numeric domain and algorithm ownership
+        # here so an inherited token-GRPO field cannot silently become a no-op.
         raw_sft_weight = getattr(algo, "sft_weight", None)
         if raw_sft_weight is not None:
             try:
@@ -780,17 +780,19 @@ class RootConfig(ConfigBase):
                 raise ValueError("algorithm.sft_weight must be a finite number >= 0") from exc
             if not math.isfinite(sft_weight) or sft_weight < 0:
                 raise ValueError("algorithm.sft_weight must be a finite number >= 0")
-            if sft_weight > 0 and kind not in {"grpo", "dance_grpo"}:
-                raise ValueError(
-                    "algorithm.sft_weight > 0 is supported only for diffusion "
-                    "grpo/dance_grpo",
-                )
-            if sft_weight > 0 and (self.data is None or not self.data.sft_latents):
-                raise ValueError(
-                    "algorithm.sft_weight > 0 requires data.sft_latents "
-                    "(the precomputed clean-latents shard; see "
-                    "vrl/scripts/diffusion/encode_targets.py)",
-                )
+            if sft_weight > 0:
+                if kind in {"grpo", "dance_grpo"}:
+                    if self.data is None or not self.data.sft_latents:
+                        raise ValueError(
+                            "algorithm.sft_weight > 0 requires data.sft_latents "
+                            "(the precomputed clean-latents shard; see "
+                            "vrl/scripts/diffusion/encode_targets.py)",
+                        )
+                elif kind != "diffusion_dpo":
+                    raise ValueError(
+                        "algorithm.sft_weight > 0 is supported only for diffusion "
+                        "grpo/dance_grpo or diffusion_dpo",
+                    )
 
         # grpo / diffusion_nft: SDE type must be sde or cps
         # grpo / diffusion_nft require an sde block; sde.type membership is now

@@ -19,6 +19,7 @@ from tests.models.diffusion.fixtures import (
     build_tiny_wan_transformer,
     record_forward_calls,
 )
+from vrl.trainers.data.preferences import PreferenceBatch
 from vrl.trainers.offline import (
     OfflineDPOTrainer,
     OfflineDPOTrainerConfig,
@@ -61,6 +62,7 @@ def _make_trainer(scheduler_timesteps, *, timestep_subset=None) -> OfflineDPOTra
 
 class TestSampleTimesteps:
     """Groups tests for sample timesteps."""
+
     def test_uses_scheduler_timesteps_when_set(self) -> None:
         """Checks that uses scheduler timesteps when set."""
         trainer = _make_trainer(torch.arange(20))
@@ -200,6 +202,78 @@ def test_offline_dpo_accumulation_boundary_ignores_global_step_offset() -> None:
     assert trainer._mark_gradient_accumulation_step() is False
     assert trainer._mark_gradient_accumulation_step() is False
     assert trainer._mark_gradient_accumulation_step() is True
+
+
+@pytest.mark.parametrize(
+    ("sft_weight", "expected_loss", "expected_sft_calls"),
+    [(0.0, 2.0, 0), (0.5, 3.5, 1)],
+)
+def test_step_metrics_report_the_optimized_loss(
+    monkeypatch,
+    sft_weight: float,
+    expected_loss: float,
+    expected_sft_calls: int,
+) -> None:
+    import vrl.trainers.offline.dpo as dpo_module
+
+    model = torch.nn.Linear(1, 1, bias=False)
+    ref_model = torch.nn.Linear(1, 1, bias=False)
+    scheduler = SimpleNamespace(
+        timesteps=torch.arange(1),
+        add_noise=lambda latents, noise, timesteps: latents,
+    )
+
+    def forward_fn(model, noisy, timesteps, encoder):
+        del timesteps, encoder
+        return model(noisy.flatten(1)[:, :1]).reshape(-1, 1, 1, 1)
+
+    def fake_dpo_loss(*, model_pred, **kwargs):
+        del kwargs
+        base = model_pred.sum() * 0.0 + 2.0
+        return {
+            "loss": base,
+            "raw_model_loss": base,
+            "raw_ref_loss": base,
+            "model_diff": base,
+            "ref_diff": base,
+            "implicit_acc": base,
+        }
+
+    sft_calls = 0
+
+    def fake_sft_loss(model_pred, target):
+        nonlocal sft_calls
+        del target
+        sft_calls += 1
+        return model_pred.sum() * 0.0 + 3.0
+
+    monkeypatch.setattr(dpo_module, "diffusion_dpo_loss", fake_dpo_loss)
+    monkeypatch.setattr(dpo_module, "diffusion_sft_loss", fake_sft_loss)
+    trainer = OfflineDPOTrainer(
+        model=model,
+        ref_model=ref_model,
+        forward_fn=forward_fn,
+        noise_scheduler=scheduler,
+        encode_pixels=lambda pixels: pixels[:, :1],
+        encode_text=lambda captions: torch.zeros(len(captions), 1),
+        config=OfflineDPOTrainerConfig(
+            prediction_type="epsilon",
+            mixed_precision="no",
+            sft_weight=sft_weight,
+            lr=0.0,
+        ),
+        device="cpu",
+    )
+
+    metrics = trainer.step(
+        PreferenceBatch(
+            pixel_values=torch.zeros(1, 6, 1, 1),
+            captions=["prompt"],
+        ),
+    )
+
+    assert metrics.loss == pytest.approx(expected_loss)
+    assert sft_calls == expected_sft_calls
 
 
 def _adam_exp_avg_values(optimizer) -> list[float]:

@@ -68,7 +68,10 @@ def _build_encoders(pipeline, num_frames: int, device, dtype):
         x = pixels_2bchw.unsqueeze(2).expand(-1, -1, num_frames, -1, -1).contiguous()
         x = x.to(device=device, dtype=vae.dtype)
         latents = vae.encode(x).latent_dist.sample()
-        latents = (latents.float() - latents_mean) * latents_std
+        # Inverse of the Wan decode denormalization (raw = z * std + mean, see
+        # decode_latents in models/diffusion/wan_2_1/model.py): the transformer
+        # consumes z = (raw - mean) / std.
+        latents = (latents.float() - latents_mean) / latents_std
         return latents.to(dtype)
 
     @torch.no_grad()

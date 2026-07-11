@@ -751,6 +751,14 @@ def test_sft_weight_with_latents_shard_parses() -> None:
     parse_config(cfg)
 
 
+def test_diffusion_dpo_sft_weight_does_not_require_online_latents_shard() -> None:
+    cfg = _minimal_grpo_cfg(
+        algorithm={"kind": "diffusion_dpo", "sft_weight": 0.1},
+    )
+    parsed = parse_config(cfg)
+    assert parsed.algorithm.sft_weight == pytest.approx(0.1)
+
+
 def test_latents_shard_without_weight_is_inert_and_allowed() -> None:
     cfg = _minimal_grpo_cfg()
     cfg.data.sft_latents = "data/droid/sft_latents.pt"

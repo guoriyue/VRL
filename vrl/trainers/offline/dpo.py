@@ -50,8 +50,12 @@ class OfflineDPOTrainerConfig:
     gradient_accumulation_steps: int = field(default=1)
 
     # --- noise / schedule ---
-    prediction_type: str = field(default="flow_matching")  # "epsilon" | "v_prediction" | "flow_matching"
-    timestep_subset: tuple[int, int] | None = field(default=None)  # restrict sampling, e.g. (0, 200)
+    prediction_type: str = field(
+        default="flow_matching"
+    )  # "epsilon" | "v_prediction" | "flow_matching"
+    timestep_subset: tuple[int, int] | None = field(
+        default=None
+    )  # restrict sampling, e.g. (0, 200)
 
     # --- mixed precision ---
     mixed_precision: str = field(default="bf16")  # "fp16" | "bf16" | "no"
@@ -73,6 +77,7 @@ class DPOStepMetrics:
 
 def _autocast(precision: str, device: torch.device) -> Any:
     import contextlib
+
     precision = normalize_mixed_precision(precision)
     if precision == "fp16":
         return torch.amp.autocast(str(device), dtype=torch.float16)
@@ -89,16 +94,23 @@ def _build_optimizer(
         try:
             from transformers.optimization import Adafactor
         except ImportError as e:
-            raise ImportError("Install transformers for Adafactor: pip install transformers") from e
+            raise ImportError(
+                "Install transformers for Adafactor: pip install transformers"
+            ) from e
         return Adafactor(
-            list(parameters), lr=cfg.lr,
-            scale_parameter=False, relative_step=False, warmup_init=False,
+            list(parameters),
+            lr=cfg.lr,
+            scale_parameter=False,
+            relative_step=False,
+            warmup_init=False,
             weight_decay=cfg.adam_weight_decay,
         )
     return torch.optim.AdamW(
-        list(parameters), lr=cfg.lr,
+        list(parameters),
+        lr=cfg.lr,
         betas=(cfg.adam_beta1, cfg.adam_beta2),
-        weight_decay=cfg.adam_weight_decay, eps=cfg.adam_epsilon,
+        weight_decay=cfg.adam_weight_decay,
+        eps=cfg.adam_epsilon,
     )
 
 
@@ -298,14 +310,16 @@ class OfflineDPOTrainer:
             if encoder_hidden_states.shape[0] != latents.shape[0]:
                 # caller may return [B, ...] — repeat to [2B, ...]
                 encoder_hidden_states = encoder_hidden_states.repeat_interleave(
-                    latents.shape[0] // encoder_hidden_states.shape[0], dim=0,
+                    latents.shape[0] // encoder_hidden_states.shape[0],
+                    dim=0,
                 )
 
         # 4. Sample shared noise + timestep across each pair
         bsz_pair = latents.shape[0] // 2
         noise = torch.randn(
             (bsz_pair, *tuple(latents.shape[1:])),
-            device=latents.device, dtype=latents.dtype,
+            device=latents.device,
+            dtype=latents.dtype,
         ).repeat(2, *([1] * (latents.ndim - 1)))
         ts_pair = self._sample_timesteps(bsz_pair)
         timesteps = ts_pair.repeat(2)
@@ -315,11 +329,16 @@ class OfflineDPOTrainer:
         # 5. Forward — policy + frozen reference
         with _autocast(cfg.mixed_precision, self.device):
             model_pred = self.forward_fn(
-                self.model, noisy_latents, timesteps, encoder_hidden_states,
+                self.model,
+                noisy_latents,
+                timesteps,
+                encoder_hidden_states,
             )
             with torch.no_grad():
                 ref_pred = self._reference_forward(
-                    noisy_latents, timesteps, encoder_hidden_states,
+                    noisy_latents,
+                    timesteps,
+                    encoder_hidden_states,
                 ).detach()
 
             stats = diffusion_dpo_loss(
@@ -335,7 +354,8 @@ class OfflineDPOTrainer:
                 # Compute MSE on winner only
                 bsz = model_pred.shape[0] // 2
                 sft_loss_val = diffusion_sft_loss(
-                    model_pred[:bsz].float(), target[:bsz].float(),
+                    model_pred[:bsz].float(),
+                    target[:bsz].float(),
                 )
                 loss = loss + cfg.sft_weight * sft_loss_val
 
@@ -354,7 +374,7 @@ class OfflineDPOTrainer:
         self.global_step += 1
 
         return DPOStepMetrics(
-            loss=float(stats["loss"].detach()),
+            loss=float(loss.detach()),
             raw_model_loss=float(stats["raw_model_loss"].detach()),
             raw_ref_loss=float(stats["raw_ref_loss"].detach()),
             model_diff=float(stats["model_diff"].detach()),
@@ -378,12 +398,18 @@ class OfflineDPOTrainer:
         """
         if self.ref_model is not None:
             return self.forward_fn(
-                self.ref_model, noisy_latents, timesteps, encoder_hidden_states,
+                self.ref_model,
+                noisy_latents,
+                timesteps,
+                encoder_hidden_states,
             )
         if hasattr(self.model, "disable_adapter"):
             with self.model.disable_adapter():
                 return self.forward_fn(
-                    self.model, noisy_latents, timesteps, encoder_hidden_states,
+                    self.model,
+                    noisy_latents,
+                    timesteps,
+                    encoder_hidden_states,
                 )
         raise RuntimeError(
             "no ref_model and policy has no ``disable_adapter`` — "
