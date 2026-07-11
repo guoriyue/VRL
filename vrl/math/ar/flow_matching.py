@@ -61,9 +61,9 @@ def _flow_terminal_mean(
 
     def _guided_velocity(xk: torch.Tensor, tk: torch.Tensor) -> torch.Tensor:
         v_cond = _velocity(xk, tk, cond)
-        if cfg_uncond is not None and abs(guidance_scale - 1.0) > 1e-6:
+        if cfg_uncond is not None and guidance_scale > 1.0:
             v_uncond = _velocity(xk, tk, cfg_uncond)
-            return (1.0 + guidance_scale) * v_cond - guidance_scale * v_uncond
+            return v_uncond + guidance_scale * (v_cond - v_uncond)
         return v_cond
 
     # K-1 deterministic Euler steps, then the final step's mean.
@@ -101,7 +101,7 @@ def _isotropic_gaussian_logprob(delta: torch.Tensor, std_scalar: float) -> torch
 
 def flow_sample_with_logprob(
     image_head: Any,
-    cond: torch.Tensor,         # [B, D_hidden] — LLM last hidden state
+    cond: torch.Tensor,  # [B, D_hidden] — LLM last hidden state
     *,
     num_steps: int = 20,
     noise_level: float = 1.0,
@@ -134,8 +134,9 @@ def flow_sample_with_logprob(
             deterministic (zero log-prob mass), 1 → unit-variance noise.
         cfg_uncond: ``[B, D_hidden]`` unconditional hidden state for CFG.
             When provided, velocity is computed as
-                v_guided = (1 + s) * v(x, cond) - s * v(x, uncond)
-            with ``s = guidance_scale``. Skip if guidance_scale ≈ 1.
+                v_guided = v(x, uncond) + s * (v(x, cond) - v(x, uncond))
+            with ``s = guidance_scale``. Enabled only when guidance_scale > 1,
+            matching NextStep's upstream CFG branch.
         guidance_scale: CFG strength on the velocity.
         generator: Optional torch.Generator for reproducibility.
         initial_noise: Optional explicit ``x_0`` prior. When provided, this
@@ -170,8 +171,7 @@ def flow_sample_with_logprob(
     else:
         if initial_noise.shape != (B, D):
             raise ValueError(
-                "initial_noise must have shape "
-                f"{(B, D)}, got {tuple(initial_noise.shape)}"
+                f"initial_noise must have shape {(B, D)}, got {tuple(initial_noise.shape)}"
             )
         x = initial_noise.to(device=device, dtype=dtype)
     x0 = x
@@ -202,8 +202,8 @@ def flow_sample_with_logprob(
 
 def flow_logprob_at(
     image_head: Any,
-    cond: torch.Tensor,         # [B, D_hidden]
-    target_token: torch.Tensor, # [B, D_token]
+    cond: torch.Tensor,  # [B, D_hidden]
+    target_token: torch.Tensor,  # [B, D_token]
     saved_noise: torch.Tensor | None = None,
     *,
     num_steps: int = 20,
