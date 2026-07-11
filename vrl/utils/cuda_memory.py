@@ -93,6 +93,13 @@ class CumemPool:
 def is_cuda_out_of_memory(exc: BaseException) -> bool:
     """Return whether an exception looks like a CUDA OOM failure."""
 
+    try:
+        import torch
+
+        if isinstance(exc, torch.cuda.OutOfMemoryError):
+            return True
+    except (ImportError, AttributeError):
+        pass
     message = str(exc).lower()
     return "cuda" in message and "out of memory" in message
 
