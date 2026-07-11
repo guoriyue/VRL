@@ -106,7 +106,6 @@ def test_default_selfcheck_weight_zero_does_not_affect_loss() -> None:
     loss, _ = algo.compute_loss(inputs)
 
     assert loss.item() == pytest.approx(-1.0)
-    assert "selfcheck_text" not in algo.last_segment_metrics
 
 
 def test_nonzero_missing_segment_raises() -> None:

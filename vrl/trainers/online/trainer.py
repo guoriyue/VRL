@@ -59,9 +59,7 @@ def _global_reward_stats(rewards: Any) -> tuple[float, float]:
 
     n = rewards.numel()
     dist = torch.distributed
-    distributed = (
-        dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1
-    )
+    distributed = dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1
     if not distributed:
         mean = rewards.mean().item() if n else 0.0
         std = rewards.std().item() if n > 1 else 0.0
@@ -132,8 +130,7 @@ def _create_optimizer(
     # kernels (the loop variant launched ~1.7k/step on LoRA models). It is
     # only valid for CUDA float params; anything else falls back to default.
     use_fused = bool(parameters) and all(
-        isinstance(p, torch.Tensor) and p.is_cuda and p.is_floating_point()
-        for p in parameters
+        isinstance(p, torch.Tensor) and p.is_cuda and p.is_floating_point() for p in parameters
     )
     if getattr(optim, "optim_8bit", False):
         # int8 Adam state -> full-parameter 2B+ DiT fits on one 32GB card. Quantizes the
@@ -481,7 +478,6 @@ class OnlineTrainer(Trainer):
         # diffusion-loss regularizer; the recipe loads data.sft_latents and the
         # config layer already rejected sft_weight>0 without it.
         self._sft_latents = dict(sft_latents) if sft_latents else None
-        self._sft_weight = float(getattr(algorithm.config, "sft_weight", 0.0) or 0.0)
         if self._sft_weight > 0 and self._sft_latents is None:
             raise ValueError(
                 "algorithm.sft_weight > 0 but no sft_latents were provided to "
@@ -903,7 +899,9 @@ class OnlineTrainer(Trainer):
         )
         num_timesteps = batch.batches[0].observations.shape[1]
         train_indices = self._train_timestep_indices(
-            num_timesteps, cfg.timestep_fraction, cfg.timestep_selection,
+            num_timesteps,
+            cfg.timestep_fraction,
+            cfg.timestep_selection,
         )
         loss_scale = int(total_groups) * len(train_indices)
         samples_per_chunk = int(cfg.replay_samples_per_chunk)
@@ -938,7 +936,6 @@ class OnlineTrainer(Trainer):
                     )
                     loss = loss * sample_chunk.loss_weight / loss_scale
                 self._backward(loss)
-                self._clear_algorithm_diagnostics()
                 if not sample_chunk.is_dummy:
                     agg["loss"].append(metrics.loss)
                     agg["policy_loss"].append(metrics.policy_loss)
@@ -1106,7 +1103,9 @@ class OnlineTrainer(Trainer):
         # single-source selection helper with the streaming path.
         num_timesteps = filtered_batches[0].observations.shape[1]
         train_indices = self._train_timestep_indices(
-            num_timesteps, cfg.timestep_fraction, cfg.timestep_selection,
+            num_timesteps,
+            cfg.timestep_fraction,
+            cfg.timestep_selection,
         )
 
         # Number of rollout micro-batches per optimizer update. ``0`` preserves
@@ -1263,7 +1262,8 @@ class OnlineTrainer(Trainer):
                         timestep_idx,
                         ref_model=self.ref_model,
                         signal_request=SignalRequest(
-                            need_ref=False, need_kl_intermediates=False,
+                            need_ref=False,
+                            need_kl_intermediates=False,
                         ),
                     )
                 if not isinstance(_sig, TrajectorySignalBatch):
@@ -1334,8 +1334,6 @@ class OnlineTrainer(Trainer):
 
                         with timer.time("backward"):
                             self._backward(loss)
-
-                        self._clear_algorithm_diagnostics()
 
                         if not sample_chunk.is_dummy:
                             agg_metrics["loss"].append(metrics.loss)
@@ -1490,11 +1488,6 @@ class OnlineTrainer(Trainer):
         except Exception:
             pass
 
-    def _clear_algorithm_diagnostics(self) -> None:
-        for attr in ("_last_policy_loss_tensor", "_last_kl_term_tensor"):
-            if hasattr(self.algorithm, attr):
-                setattr(self.algorithm, attr, None)
-
     def _backward_sft_regularizer(
         self,
         chunk_batch: Any,
@@ -1535,6 +1528,12 @@ class OnlineTrainer(Trainer):
         weights = agg.get("sft_loss_weights", [])
         denominator = sum(weights)
         return sum(weighted) / denominator if denominator > 0 else 0.0
+
+    @property
+    def _sft_weight(self) -> float:
+        """Read the regularizer weight from its algorithm-config source of truth."""
+
+        return float(getattr(self.algorithm.config, "sft_weight", 0.0) or 0.0)
 
     def _sft_regularizer_loss(self, chunk_batch: Any) -> torch.Tensor:
         """Weighted diffusion pretraining loss on clean fine-tuning latents.
@@ -1577,12 +1576,17 @@ class OnlineTrainer(Trainer):
             )
 
         observations = chunk_batch.observations
-        x0 = self._sft_latents[target_key].unsqueeze(0).expand(
-            int(observations.shape[0]),
-            *self._sft_latents[target_key].shape,
-        ).to(
-            device=self.device,
-            dtype=observations.dtype if hasattr(observations, "dtype") else None,
+        x0 = (
+            self._sft_latents[target_key]
+            .unsqueeze(0)
+            .expand(
+                int(observations.shape[0]),
+                *self._sft_latents[target_key].shape,
+            )
+            .to(
+                device=self.device,
+                dtype=observations.dtype if hasattr(observations, "dtype") else None,
+            )
         )
         expected_shape = tuple(observations.shape[0:1]) + tuple(observations.shape[2:])
         if tuple(x0.shape) != expected_shape:

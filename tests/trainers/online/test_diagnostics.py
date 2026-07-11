@@ -8,6 +8,7 @@ from vrl.rollouts.evaluators.base import Evaluator
 
 class TestDiagnostics:
     """Groups tests for diagnostics."""
+
     def test_first_step_debug_writes_training_debug_jsonl(self, tmp_path) -> None:
         """Checks first-step debug writes training debug JSONL."""
         import asyncio
@@ -77,7 +78,9 @@ class TestDiagnostics:
             def evaluate(self, model, batch, timestep_idx, **kw):
                 del kw
                 grad_enabled.append(torch.is_grad_enabled())
-                return _trajectory_signals(batch, model.weight.view(1).expand(batch.rewards.shape[0]), timestep_idx)
+                return _trajectory_signals(
+                    batch, model.weight.view(1).expand(batch.rewards.shape[0]), timestep_idx
+                )
 
         model = nn.Linear(1, 1, bias=False)
         with torch.no_grad():
@@ -125,92 +128,3 @@ class TestDiagnostics:
         assert record["runtime_debug"]["ray_chunks"][0]["worker_id"] == "rollout-0"
         assert grad_enabled[0] is False
         assert any(grad_enabled[1:])
-
-    def test_algorithm_diagnostic_tensors_are_cleared_after_backward(self) -> None:
-        """Checks algorithm diagnostic tensors are cleared after backward."""
-        import asyncio
-
-        import torch
-        import torch.nn as nn
-
-        from vrl.algorithms.types import TrainStepMetrics
-        from vrl.rollouts.batch import RolloutBatch
-        from vrl.trainers.core.types import DebugConfig, EMAConfig, OptimConfig, TrainerConfig
-        from vrl.trainers.online import OnlineTrainer
-
-        class _Algorithm:
-            class _Config:
-                global_std = False
-                eps = 1e-8
-                adv_clip_max = 5.0
-                kl_coef = 0.0
-
-            config = _Config()
-
-            def __init__(self) -> None:
-                self._last_policy_loss_tensor = None
-                self._last_kl_term_tensor = None
-
-            def compute_advantages_from_tensors(self, rewards, group_ids):
-                del group_ids
-                return rewards - rewards.mean()
-
-            def compute_loss(self, inputs):
-                signals, advantages, old_log_probs = _algorithm_inputs(inputs)
-                del old_log_probs
-                policy_loss = signals.log_prob.mean() + advantages.mean() * 0.0
-                self._last_policy_loss_tensor = policy_loss
-                self._last_kl_term_tensor = policy_loss * 0.0
-                return policy_loss, TrainStepMetrics(
-                    loss=policy_loss.item(),
-                    policy_loss=policy_loss.item(),
-                )
-
-        class _Collector:
-            async def score_rollouts(self, pendings):
-                return list(pendings)
-
-            async def collect_unscored(self, prompts, **kwargs):
-                group_size = int(kwargs["group_size"])
-                return RolloutBatch(
-                    observations=torch.zeros(group_size, 2, 1),
-                    actions=torch.zeros(group_size, 2, 1),
-                    rewards=torch.arange(group_size, dtype=torch.float32),
-                    dones=torch.ones(group_size, dtype=torch.bool),
-                    group_ids=torch.zeros(group_size, dtype=torch.long),
-                    prompts=list(prompts) * group_size,
-                )
-
-        class _Evaluator(Evaluator):
-            def evaluate(self, model, batch, timestep_idx, **kw):
-                del kw
-                return _trajectory_signals(batch, model.weight.view(1).expand(batch.rewards.shape[0]), timestep_idx)
-
-        algorithm = _Algorithm()
-        model = nn.Linear(1, 1, bias=False)
-        with torch.no_grad():
-            model.weight.fill_(1.0)
-
-        trainer = OnlineTrainer(
-            algorithm=algorithm,
-            collector=_Collector(),
-            evaluator=_Evaluator(),
-            model=model,
-            config=TrainerConfig(
-                prompts_per_batch=1,
-                timestep_fraction=1.0,
-                total_epochs=1,
-                drop_zero_advantage=False,
-                output_dir="outputs/",
-                optim=OptimConfig(lr=0.01),
-                ema=EMAConfig(),
-                debug=DebugConfig(),
-                n_samples_per_prompt=2,
-            ),
-            device="cpu",
-        )
-
-        asyncio.run(trainer.step(["prompt-a"]))
-
-        assert algorithm._last_policy_loss_tensor is None
-        assert algorithm._last_kl_term_tensor is None

@@ -18,10 +18,14 @@ def normalized_mse(prediction: Any, target: Any) -> Any:
 
     reduce_dims = tuple(range(1, target.ndim))
     with torch.no_grad():
-        weight = torch.abs(prediction.double() - target.double()).mean(
-            dim=reduce_dims,
-            keepdim=True,
-        ).clip(min=1e-5)
+        weight = (
+            torch.abs(prediction.double() - target.double())
+            .mean(
+                dim=reduce_dims,
+                keepdim=True,
+            )
+            .clip(min=1e-5)
+        )
     return ((prediction - target) ** 2 / weight).mean(dim=reduce_dims)
 
 
@@ -65,8 +69,6 @@ class DiffusionNFT(Algorithm):
 
     def __init__(self, config: DiffusionNFTConfig | None = None) -> None:
         self.config = config or DiffusionNFTConfig()
-        self._last_policy_loss_tensor: Any = None
-        self._last_kl_term_tensor: Any = None
 
     def compute_advantages_from_tensors(
         self,
@@ -280,16 +282,12 @@ class DiffusionNFT(Algorithm):
 
         flat_mix = reward_mix.flatten(start_dim=1).mean(dim=1)
         original_policy_loss = (
-            flat_mix * positive_loss / beta
-            + (1.0 - flat_mix) * negative_loss / beta
+            flat_mix * positive_loss / beta + (1.0 - flat_mix) * negative_loss / beta
         )
         policy_loss = original_policy_loss.mean() * advantage_scale
         kl_loss = ((forward_prediction.float() - ref_prediction.float()) ** 2).mean()
         kl_term = float(cfg.kl_coef) * kl_loss
         loss = policy_loss + kl_term
-
-        self._last_policy_loss_tensor = policy_loss
-        self._last_kl_term_tensor = kl_term
 
         with torch.no_grad():
             previous_deviation = (

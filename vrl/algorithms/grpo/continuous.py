@@ -70,11 +70,6 @@ class GRPO(Algorithm):
         # injects trainer.precision_correction here at construction so the knobs
         # live at the trainer level, not in the algorithm's hyperparameters.
         self.precision_correction = PrecisionCorrectionConfig()
-        # Diagnostic stash: last call's policy_loss and (kl_coef * kl_loss)
-        # tensors, kept alive (not detached) for grad-split diagnostics in
-        # the trainer. Set to None when not applicable.
-        self._last_policy_loss_tensor: Any = None
-        self._last_kl_term_tensor: Any = None
 
     def compute_advantages_from_tensors(
         self,
@@ -140,13 +135,9 @@ class GRPO(Algorithm):
             tis_clip_fraction = (1.0 - tis_keep.mean()).item()
         else:
             tis_clip_fraction = (
-                0.0
-                if pc.tis_mode == "off"
-                else (ratio != raw_ratio).float().mean().item()
+                0.0 if pc.tis_mode == "off" else (ratio != raw_ratio).float().mean().item()
             )
-        rs_seq_masked_fraction = (
-            0.0 if rs_keep is None else (1.0 - rs_keep.mean()).item()
-        )
+        rs_seq_masked_fraction = 0.0 if rs_keep is None else (1.0 - rs_keep.mean()).item()
 
         if cfg.kl_coef > 0:
             if signals.ref_log_prob is None:
@@ -172,13 +163,9 @@ class GRPO(Algorithm):
                 kl_loss = torch.mean(signals.log_prob - signals.ref_log_prob)
             kl_term = cfg.kl_coef * kl_loss
             loss = policy_loss + kl_term
-            self._last_kl_term_tensor = kl_term
         else:
             kl_loss = torch.tensor(0.0, device=signals.log_prob.device)
             loss = policy_loss
-            self._last_kl_term_tensor = None
-
-        self._last_policy_loss_tensor = policy_loss
 
         clip_fraction = torch.mean((torch.abs(ratio - 1.0) > cfg.clip_ratio).float()).item()
         approx_kl = 0.5 * torch.mean((signals.log_prob - old_log_probs) ** 2).item()
@@ -219,11 +206,7 @@ def _require_trust_region_signals(signals: Any, algorithm: str) -> Any:
             "sampling.return_prev_sample_mean=true so generation stores it into "
             "the trajectory.",
         )
-    if (
-        signals.prev_sample_mean is None
-        or signals.std_dev_t is None
-        or signals.dt is None
-    ):
+    if signals.prev_sample_mean is None or signals.std_dev_t is None or signals.dt is None:
         raise RuntimeError(
             f"{algorithm} requires flow-matching SDE signals "
             "(prev_sample_mean / std_dev_t / dt). dt comes from the evaluator's "
@@ -287,7 +270,8 @@ class FlowDPPO(GRPO):
         pc = self.precision_correction
         ratio, tis_keep = apply_truncated_importance_weight(raw_ratio, pc)
         rs_keep = apply_rejection_sample_mask(
-            signals.log_prob - signals.old_log_prob, pc,
+            signals.log_prob - signals.old_log_prob,
+            pc,
         )
         # Gaussian KL between the current and rollout proposal means (the
         # current-vs-rollout drift). With add_kl_coefficient the sigma folds in the
@@ -304,10 +288,9 @@ class FlowDPPO(GRPO):
             )
         else:
             non_batch = tuple(range(1, signals.prev_sample_mean.ndim))
-            kl_per_sample = (
-                (signals.prev_sample_mean - old_prev_sample_mean).pow(2).mean(dim=non_batch)
-                / 2.0
-            )
+            kl_per_sample = (signals.prev_sample_mean - old_prev_sample_mean).pow(2).mean(
+                dim=non_batch
+            ) / 2.0
         high_kl = kl_per_sample >= cfg.kl_mask_threshold
         pos_rm = high_kl & (ratio > 1.0) & (advantages > 0)
         neg_rm = high_kl & (ratio < 1.0) & (advantages < 0)
@@ -318,23 +301,21 @@ class FlowDPPO(GRPO):
         keep = combine_keep_masks(trust_keep.to(ratio.dtype), tis_keep, rs_keep)
         unclipped_loss = -advantages * ratio
         per_sample_loss = torch.where(
-            keep.bool(), unclipped_loss, torch.zeros_like(unclipped_loss),
+            keep.bool(),
+            unclipped_loss,
+            torch.zeros_like(unclipped_loss),
         )
         policy_loss = per_sample_loss.mean()
 
-        self._last_policy_loss_tensor = policy_loss
-        self._last_kl_term_tensor = None
-
         masked_fraction = (1.0 - keep.mean()).item()
-        tis_clip_fraction = (
-            (1.0 - tis_keep.mean()).item() if tis_keep is not None else 0.0
+        tis_clip_fraction = (1.0 - tis_keep.mean()).item() if tis_keep is not None else 0.0
+        rs_seq_masked_fraction = (1.0 - rs_keep.mean()).item() if rs_keep is not None else 0.0
+        approx_kl = (
+            0.5
+            * torch.mean(
+                (signals.log_prob - signals.old_log_prob) ** 2,
+            ).item()
         )
-        rs_seq_masked_fraction = (
-            (1.0 - rs_keep.mean()).item() if rs_keep is not None else 0.0
-        )
-        approx_kl = 0.5 * torch.mean(
-            (signals.log_prob - signals.old_log_prob) ** 2,
-        ).item()
         metrics = TrainStepMetrics(
             loss=policy_loss.item(),
             policy_loss=policy_loss.item(),
@@ -416,18 +397,11 @@ class GRPOGuard(GRPO):
         # Per-step magnitude normalization (cross-timestep consistent gradients).
         policy_loss = reduced / sqrt_dt_mean.pow(2).clamp_min(1e-12)
 
-        self._last_policy_loss_tensor = policy_loss
-        self._last_kl_term_tensor = None
-
         clip_fraction = torch.mean(
             (torch.abs(ratio - 1.0) > cfg.clip_ratio).float(),
         ).item()
-        tis_clip_fraction = (
-            (1.0 - tis_keep.mean()).item() if tis_keep is not None else 0.0
-        )
-        rs_seq_masked_fraction = (
-            (1.0 - rs_keep.mean()).item() if rs_keep is not None else 0.0
-        )
+        tis_clip_fraction = (1.0 - tis_keep.mean()).item() if tis_keep is not None else 0.0
+        rs_seq_masked_fraction = (1.0 - rs_keep.mean()).item() if rs_keep is not None else 0.0
         approx_kl = 0.5 * torch.mean(log_ratio**2).item()
         metrics = TrainStepMetrics(
             loss=policy_loss.item(),

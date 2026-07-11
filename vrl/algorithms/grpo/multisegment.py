@@ -40,7 +40,6 @@ class MultiSegmentTokenGRPO(TokenGRPO):
         cfg = config or MultiSegmentTokenGRPOConfig()
         super().__init__(cfg)
         self.config: MultiSegmentTokenGRPOConfig = cfg
-        self.last_segment_metrics: dict[str, TrainStepMetrics] = {}
 
     def compute_loss(
         self,
@@ -54,14 +53,12 @@ class MultiSegmentTokenGRPO(TokenGRPO):
 
         total_loss: torch.Tensor | None = None
         metric_values: dict[str, list[float]] = {
-            "loss": [],
             "policy_loss": [],
             "kl_penalty": [],
             "clip_fraction": [],
             "approx_kl": [],
         }
         total_weight = 0.0
-        self.last_segment_metrics = {}
         train_segments = dict(self.config.train_segments or {})
         weights = dict(self.config.segment_weights or {})
         raw_order = signals.context.get("segment_order")
@@ -88,9 +85,7 @@ class MultiSegmentTokenGRPO(TokenGRPO):
                 elif "__default__" in segment_advantages:
                     segment_advantages = segment_advantages["__default__"]
                 else:
-                    raise RuntimeError(
-                        f"missing multi-segment advantages for segment: {name}"
-                    )
+                    raise RuntimeError(f"missing multi-segment advantages for segment: {name}")
             loss, metrics = super().compute_loss(
                 AlgorithmInput(
                     signals=TrajectorySignalBatch(
@@ -105,11 +100,9 @@ class MultiSegmentTokenGRPO(TokenGRPO):
                     metadata=inputs.metadata,
                 ),
             )
-            self.last_segment_metrics[name] = metrics
             weighted = loss * weight
             total_loss = weighted if total_loss is None else total_loss + weighted
             total_weight += weight
-            metric_values["loss"].append(metrics.loss * weight)
             metric_values["policy_loss"].append(metrics.policy_loss * weight)
             metric_values["kl_penalty"].append(metrics.kl_penalty * weight)
             metric_values["clip_fraction"].append(metrics.clip_fraction * weight)
