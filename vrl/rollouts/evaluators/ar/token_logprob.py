@@ -53,21 +53,26 @@ class TokenLogProbEvaluator(Evaluator):
         request = signal_request or SignalRequest()
         action_ids: torch.Tensor = batch.actions  # [B, L_img]
 
-        new_lp = self._compute_logprobs(model, batch, action_ids)
+        builder = TrajectorySignalBuilder(batch)
+        # Rollout scoring divides logits by the sampling temperature; replay
+        # must renormalize with the recorded temperature for old/new parity.
+        temperature = float(builder.context.get("temperature", 1.0))
+
+        new_lp = self._compute_logprobs(model, batch, action_ids, temperature)
 
         ref_lp = None
         if request.need_ref:
             if ref_model is not None:
                 ref_lp = self._compute_logprobs(
-                    ref_model, batch, action_ids,
+                    ref_model, batch, action_ids, temperature,
                 )
             else:
                 with torch.no_grad(), model.disable_adapter():
                     ref_lp = self._compute_logprobs(
-                        model, batch, action_ids,
+                        model, batch, action_ids, temperature,
                     )
 
-        return TrajectorySignalBuilder(batch).single_segment(
+        return builder.single_segment(
             segment_name="image_tokens",
             log_prob=new_lp,
             old_log_prob=None,
@@ -86,9 +91,12 @@ class TokenLogProbEvaluator(Evaluator):
         model: ReplayModel,
         batch: RolloutBatch,
         action_ids: torch.Tensor,
+        temperature: float,
     ) -> torch.Tensor:
         """Forward + gather. Always returns ``[B, L]`` float32 log-probs."""
         out = model.replay_forward(batch, timestep_idx=0)
         result = out.require_segment("image_tokens")
         logits: torch.Tensor = result.require_value("logits")   # [B, L, V_img]
-        return gather_categorical_log_probs(logits, action_ids)  # [B, L]
+        return gather_categorical_log_probs(
+            logits, action_ids, temperature=temperature,
+        )  # [B, L]

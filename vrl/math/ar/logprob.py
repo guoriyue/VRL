@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import torch
 import torch.nn.functional as F
 
@@ -42,6 +44,7 @@ def gather_categorical_log_probs(
     logits: torch.Tensor,
     token_ids: torch.Tensor,
     *,
+    temperature: float = 1.0,
     chunk_size: int = 128,
 ) -> torch.Tensor:
     """Return log-probs for selected tokens without materializing full log-softmax.
@@ -51,6 +54,14 @@ def gather_categorical_log_probs(
     can OOM when trainer and rollout worker are colocated on one GPU. Chunking
     over flattened token positions keeps peak memory bounded while preserving
     fp32 normalization.
+
+    ``temperature`` scales logits before normalization. The AR policy contract
+    scores the temperature-scaled conditional (rollout samplers divide by the
+    sampling temperature before ``log_softmax``), so replay MUST apply the
+    same recorded temperature or the GRPO old/new ratio is biased whenever
+    temperature != 1. Greedy decoding is a separate policy mode, not a
+    near-zero-temperature categorical distribution, so temperature must be
+    finite and strictly positive.
     """
 
     if chunk_size < 1:
@@ -66,17 +77,34 @@ def gather_categorical_log_probs(
             f"got logits={tuple(logits.shape)} token_ids={tuple(token_ids.shape)}",
         )
 
+    temp = require_positive_temperature(temperature)
     vocab_size = logits.shape[-1]
     flat_logits = logits.reshape(-1, vocab_size)
     flat_ids = token_ids.to(device=logits.device, dtype=torch.long).reshape(-1)
     pieces: list[torch.Tensor] = []
     for start in range(0, flat_ids.numel(), chunk_size):
         end = min(start + chunk_size, flat_ids.numel())
-        chunk = flat_logits[start:end].float()
+        chunk = flat_logits[start:end].float() / temp
         ids = flat_ids[start:end]
         selected = chunk.gather(-1, ids.unsqueeze(-1)).squeeze(-1)
         pieces.append(selected - torch.logsumexp(chunk, dim=-1))
     return torch.cat(pieces, dim=0).reshape(token_ids.shape)
 
 
-__all__ = ["gather_categorical_log_probs", "top_k_top_p_filtering"]
+def require_positive_temperature(value: float) -> float:
+    """Return a finite positive categorical-policy temperature."""
+
+    temperature = float(value)
+    if not math.isfinite(temperature) or temperature <= 0.0:
+        raise ValueError(
+            "categorical policy temperature must be finite and > 0; "
+            "use an explicit greedy policy instead of temperature=0",
+        )
+    return temperature
+
+
+__all__ = [
+    "gather_categorical_log_probs",
+    "require_positive_temperature",
+    "top_k_top_p_filtering",
+]

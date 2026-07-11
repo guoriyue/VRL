@@ -44,6 +44,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from vrl.math.ar.logprob import require_positive_temperature
 from vrl.models.ar.base import ARModelBase, ARReplayRolloutStubs
 from vrl.models.ar.janus_pro import JANUS_R1_SEGMENTS
 from vrl.models.interfaces import ReplayRequest, ReplayResult, ReplaySegmentResult
@@ -544,6 +545,7 @@ class JanusProModel(ARModelBase):
             raise ValueError("generate_with_refine requires initial_image stage")
         if max_reflect_len < 1:
             raise ValueError("max_reflect_len must be >= 1")
+        temperature = require_positive_temperature(temperature)
 
         mode = (refine_mode or self.config.r1_refine_mode).lower()
         if mode not in {"selfcheck", "always", "never"}:
@@ -923,7 +925,7 @@ class JanusProModel(ARModelBase):
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         batch_size = prompt_embeds.shape[0]
         device = prompt_embeds.device
-        temp = max(float(temperature), 1e-6)
+        temp = require_positive_temperature(temperature)
 
         token_ids = torch.full(
             (batch_size, max_new_tokens),

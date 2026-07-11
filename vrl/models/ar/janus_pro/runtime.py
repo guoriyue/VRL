@@ -177,6 +177,7 @@ class JanusProChunkExecutor(ARDiscreteChunkExecutorBase):
             uncond_attention_mask=uncond_mask,
             context={
                 "guidance_scale": guidance_scale,
+                "temperature": temperature,
                 "image_token_num": params.image_token_num,
             },
             # Two branch prefills: cond and uncond run as separate forwards.

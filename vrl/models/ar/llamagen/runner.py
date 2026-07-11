@@ -27,7 +27,11 @@ from vrl.generation.ar.decode_loop import (
     ARStepBatch,
     ARTokenLoopInit,
 )
-from vrl.math.ar.logprob import top_k_top_p_filtering
+from vrl.math.ar.logprob import (
+    gather_categorical_log_probs,
+    require_positive_temperature,
+    top_k_top_p_filtering,
+)
 from vrl.models.ar.base import ARDiscreteTokenRunner, ARDiscreteTokenState
 
 
@@ -66,7 +70,9 @@ class LlamaGenARModelRunner(ARDiscreteTokenRunner):
     ) -> ARTokenLoopInit:
         config = self.model.config
         cfg = guidance_scale if guidance_scale is not None else config.guidance_scale
-        temp = temperature if temperature is not None else config.temperature
+        temp = require_positive_temperature(
+            temperature if temperature is not None else config.temperature,
+        )
         top_k = top_k if top_k is not None else config.top_k
         top_p = top_p if top_p is not None else config.top_p
         image_token_num = image_token_num or config.image_token_num
@@ -119,7 +125,7 @@ class LlamaGenARModelRunner(ARDiscreteTokenRunner):
                     batch_size, image_token_num, dtype=torch.float32, device=device
                 ),
                 guidance_scale=float(cfg),
-                temperature=float(temp),
+                temperature=temp,
                 top_k=int(top_k),
                 top_p=float(top_p),
                 total_token_num=int(image_token_num),
@@ -187,8 +193,7 @@ class LlamaGenARModelRunner(ARDiscreteTokenRunner):
         # Upstream CFG combine: uncond + (cond - uncond) * cfg_scale.
         guided = uncond_logits + (cond_logits - uncond_logits) * state.guidance_scale
 
-        temp = max(state.temperature, 1e-5)
-        filtered = guided / temp
+        filtered = guided / state.temperature
         if state.top_k > 0 or state.top_p < 1.0:
             filtered = top_k_top_p_filtering(
                 filtered.clone(), top_k=state.top_k, top_p=state.top_p
@@ -202,8 +207,7 @@ class LlamaGenARModelRunner(ARDiscreteTokenRunner):
         # policy, which is what GRPO optimizes; CFG and top-k/top-p are only
         # the behavior/sampling distribution. Upstream computes no log-prob,
         # so there is no upstream line to copy.
-        log_probs = F.log_softmax(cond_logits / temp, dim=-1)
-        lp = log_probs.gather(-1, sampled.unsqueeze(-1)).squeeze(-1)
+        lp = gather_categorical_log_probs(cond_logits, sampled, temperature=state.temperature)
         return sampled, lp
 
     def _advance_after_sample(

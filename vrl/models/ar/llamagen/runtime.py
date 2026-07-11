@@ -159,6 +159,7 @@ class LlamaGenChunkExecutor(ARDiscreteChunkExecutorBase):
             uncond_attention_mask=torch.zeros_like(prompt_mask),
             context={
                 "guidance_scale": guidance_scale,
+                "temperature": temperature,
                 "top_k": top_k,
                 "top_p": top_p,
                 "image_token_num": params.image_token_num,

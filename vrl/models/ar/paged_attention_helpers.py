@@ -11,6 +11,10 @@ from vrl.generation.ar.decode_loop import (
     ARStepBatch,
     ARTokenLoopInit,
 )
+from vrl.math.ar.logprob import (
+    gather_categorical_log_probs,
+    require_positive_temperature,
+)
 from vrl.models.ar.base import ARDiscreteTokenRunner, ARDiscreteTokenState
 from vrl.nn.layers.attention.paged import (
     ARAttentionBackend,
@@ -154,6 +158,7 @@ class PagedCFGTokenRunner(ARDiscreteTokenRunner):
     ) -> ARTokenLoopInit:
         """Prefill both CFG branches and construct the shared loop payload."""
 
+        temperature = require_positive_temperature(temperature)
         batch_size = cond_inputs_embeds.shape[0]
         device = cond_inputs_embeds.device
         cond_prefill = self._prefill_ar_prompt_paged(
@@ -185,7 +190,7 @@ class PagedCFGTokenRunner(ARDiscreteTokenRunner):
                 ),
                 total_token_num=total_token_num,
                 guidance_scale=float(guidance_scale),
-                temperature=float(temperature),
+                temperature=temperature,
                 paged_cond_states=list(cond_prefill.sequence_states),
                 paged_uncond_states=list(uncond_prefill.sequence_states),
                 prefill_forwards=2,
@@ -225,8 +230,11 @@ class PagedCFGTokenRunner(ARDiscreteTokenRunner):
             cond_logits = cond_logits.masked_fill(~allowed, float("-inf"))
         probs = torch.softmax(guided / state.temperature, dim=-1)
         sampled = torch.multinomial(probs, num_samples=1).squeeze(-1)
-        log_probs = torch.log_softmax(cond_logits / state.temperature, dim=-1)
-        return sampled, log_probs.gather(-1, sampled.unsqueeze(-1)).squeeze(-1)
+        # Score through the shared helper so rollout old_log_prob and replay
+        # log_prob come from one implementation with one temperature rule.
+        return sampled, gather_categorical_log_probs(
+            cond_logits, sampled, temperature=state.temperature,
+        )
 
     def _paged_attention_enabled(self, state: ARDiscreteTokenState) -> bool:
         assert isinstance(state, PagedCFGARState)

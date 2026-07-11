@@ -70,14 +70,22 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
                     ref_output = model.replay_forward(batch, request=replay_request)
 
         signal_builder = TrajectorySignalBuilder(batch)
+        # R1 rollout scores every segment (text and image) with the same
+        # sampling temperature; replay renormalizes with the recorded value
+        # to keep old/new log-prob parity.
+        temperature = float(signal_builder.context.get("temperature", 1.0))
         segment_signals: dict[str, SegmentSignal] = {}
 
         for name in enabled_names:
             segment = segments[name]
-            new_lp = self._compute_segment_logprobs(current_output, name, segment)
+            new_lp = self._compute_segment_logprobs(
+                current_output, name, segment, temperature,
+            )
             ref_lp = None
             if ref_output is not None:
-                ref_lp = self._compute_segment_logprobs(ref_output, name, segment)
+                ref_lp = self._compute_segment_logprobs(
+                    ref_output, name, segment, temperature,
+                )
 
             segment_signals[name] = signal_builder.segment_signal(
                 segment_name=name,
@@ -128,9 +136,10 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
         output: ReplayResult,
         name: str,
         segment: dict[str, Any],
+        temperature: float,
     ) -> torch.Tensor:
         result = output.require_segment(name)
-        return self._extract_logprobs(result, segment)
+        return self._extract_logprobs(result, segment, temperature)
 
     @staticmethod
     def _segments_from_batch(batch: RolloutBatch) -> dict[str, Any] | None:
@@ -169,6 +178,7 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
     def _extract_logprobs(
         result: ReplaySegmentResult,
         segment: dict[str, Any],
+        temperature: float,
     ) -> torch.Tensor:
         # The payload-key knowledge (log_probs vs modality-named logits) lives on
         # ReplaySegmentResult itself; this evaluator only supplies the trajectory
@@ -176,7 +186,7 @@ class MultiSegmentTokenLogProbEvaluator(Evaluator):
         token_ids = result.values.get("token_ids")
         if token_ids is None:
             token_ids = MultiSegmentTokenLogProbEvaluator._segment_tensor(segment, "token_ids")
-        return result.logprobs(token_ids)
+        return result.logprobs(token_ids, temperature=temperature)
 
     @staticmethod
     def _segment_tensor(segment: dict[str, Any], key: str) -> torch.Tensor:

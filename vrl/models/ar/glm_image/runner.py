@@ -31,7 +31,11 @@ from vrl.generation.ar.decode_loop import (
     ARStepBatch,
     ARTokenLoopInit,
 )
-from vrl.math.ar.logprob import top_k_top_p_filtering
+from vrl.math.ar.logprob import (
+    gather_categorical_log_probs,
+    require_positive_temperature,
+    top_k_top_p_filtering,
+)
 from vrl.models.ar.base import ARDiscreteTokenRunner, ARDiscreteTokenState
 from vrl.models.ar.glm_image.model import (
     glm_image_decode_position_schedule,
@@ -82,7 +86,9 @@ class GlmImageTokenRunner(ARDiscreteTokenRunner):
         temperature: float | None = None,
         top_p: float | None = None,
     ) -> ARTokenLoopInit:
-        temp = temperature if temperature is not None else self.model.config.temperature
+        temp = require_positive_temperature(
+            temperature if temperature is not None else self.model.config.temperature,
+        )
         nucleus = top_p if top_p is not None else self.model.config.top_p
         grids = ((int(token_h), int(token_w)), (int(prev_h), int(prev_w)))
         # Generation order matches the schedule: preview raster first, then
@@ -108,7 +114,7 @@ class GlmImageTokenRunner(ARDiscreteTokenRunner):
                 logprobs=torch.empty(
                     batch_size, total_token_num, dtype=torch.float32, device=device,
                 ),
-                temperature=float(temp),
+                temperature=temp,
                 top_p=float(nucleus),
                 total_token_num=int(total_token_num),
                 base_position_schedule=base_schedule,
@@ -182,8 +188,7 @@ class GlmImageTokenRunner(ARDiscreteTokenRunner):
         # inside the raster), so no per-position mask is needed.
         logits = self.model.image_gen_logits(hidden).squeeze(1).float()  # [B, V]
 
-        temp = max(state.temperature, 1e-5)
-        filtered = logits / temp
+        filtered = logits / state.temperature
         if state.top_p < 1.0:
             filtered = top_k_top_p_filtering(filtered.clone(), top_p=state.top_p)
         probs = F.softmax(filtered, dim=-1)
@@ -195,8 +200,7 @@ class GlmImageTokenRunner(ARDiscreteTokenRunner):
         # temperature-scaled conditional over the restricted vocab — the
         # conditional model is the policy GRPO optimizes; nucleus filtering
         # is only the behavior distribution.
-        log_probs = F.log_softmax(logits / temp, dim=-1)
-        lp = log_probs.gather(-1, sampled.unsqueeze(-1)).squeeze(-1)
+        lp = gather_categorical_log_probs(logits, sampled, temperature=state.temperature)
         return sampled, lp
 
     def _advance_after_sample(

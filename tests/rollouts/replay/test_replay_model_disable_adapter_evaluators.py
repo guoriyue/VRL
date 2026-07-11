@@ -49,7 +49,7 @@ def _sample_rows() -> list[GenerationSampleRow]:
     ]
 
 
-def _discrete_batch() -> RolloutBatch:
+def _discrete_batch(context: dict | None = None) -> RolloutBatch:
     token_ids = torch.tensor([[1, 2], [2, 3]])
     trajectory = build_ar_discrete_trajectory(
         request=_request(),
@@ -61,7 +61,7 @@ def _discrete_batch() -> RolloutBatch:
         prompt_attention_mask=torch.ones(2, 3, dtype=torch.long),
         uncond_input_ids=torch.zeros(2, 3, dtype=torch.long),
         uncond_attention_mask=torch.ones(2, 3, dtype=torch.long),
-        context={"model_family": "janus_pro"},
+        context={"model_family": "janus_pro", **(context or {})},
     )
     return RolloutBatch(
         observations=torch.ones(2, 1, 3, dtype=torch.long),
@@ -161,6 +161,22 @@ class _ContinuousReplayModel:
 
     def load_trainable_state(self, state_dict):
         del state_dict
+
+
+def test_token_logprob_evaluator_applies_rollout_temperature() -> None:
+    """Checks replay renormalizes with the recorded sampling temperature."""
+    batch = _discrete_batch(context={"temperature": 0.5})
+    model = _DiscreteReplayModel()
+
+    signals = TokenLogProbEvaluator().evaluate(model, batch)
+
+    logits = torch.zeros(2, 2, 8)
+    logits.scatter_(-1, batch.actions.unsqueeze(-1), 4.0)
+    expected = torch.nn.functional.log_softmax(logits / 0.5, dim=-1).gather(
+        -1,
+        batch.actions.unsqueeze(-1),
+    ).squeeze(-1)
+    assert torch.allclose(signals.primary.log_prob, expected, atol=1e-6)
 
 
 def test_token_logprob_evaluator_uses_replay_model_disable_adapter() -> None:

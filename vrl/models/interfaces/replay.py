@@ -45,7 +45,7 @@ class ReplaySegmentResult:
             )
         return self.values[key]
 
-    def logprobs(self, token_ids: Any | None = None) -> Any:
+    def logprobs(self, token_ids: Any | None = None, *, temperature: float = 1.0) -> Any:
         """Per-token log-probs for this segment.
 
         Families either store them directly (``log_probs``) or store logits
@@ -53,6 +53,12 @@ class ReplaySegmentResult:
         ``text_logits``). That field-name knowledge lives here with the payload
         contract, so consumers (evaluators) do not switch on payload keys and a
         new modality only touches this method.
+
+        ``temperature`` is the rollout sampling temperature (recorded in the
+        rollout context). It only applies on the logits path: rollout scoring
+        divides logits by temperature, so replay must renormalize with the
+        same temperature to keep old/new log-prob parity. Directly stored
+        ``log_probs`` were already scaled at rollout time.
         """
         direct = self.values.get("log_probs")
         if direct is not None:
@@ -71,7 +77,7 @@ class ReplaySegmentResult:
 
         from vrl.math.ar.logprob import gather_categorical_log_probs
 
-        return gather_categorical_log_probs(logits, token_ids)
+        return gather_categorical_log_probs(logits, token_ids, temperature=temperature)
 
 
 @dataclass(slots=True)

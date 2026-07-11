@@ -61,7 +61,7 @@ def _trajectory_segment(
     }
 
 
-def _trajectory_batch() -> RolloutBatch:
+def _trajectory_batch(context: dict | None = None) -> RolloutBatch:
     initial_ids = torch.tensor([[1, 2], [2, 3]])
     final_ids = torch.tensor([[3, 4, 5], [4, 5, 6]])
     selfcheck_ids = torch.tensor([[7, 8], [8, 9]])
@@ -100,7 +100,7 @@ def _trajectory_batch() -> RolloutBatch:
             "selfcheck": selfcheck_ids,
         },
         primary_segment="final_image",
-        context={},
+        context=context or {},
     )
     return RolloutBatch(
         observations=torch.ones(2, 1, 3, dtype=torch.long),
@@ -173,6 +173,26 @@ def test_evaluator_can_replay_text_segment_without_using_image_path() -> None:
 
     assert model.calls == [("selfcheck_text", "text")]
     assert signals.segments["selfcheck_text"].log_prob.shape == (2, 2)
+
+
+def test_evaluator_applies_rollout_temperature_to_all_segments() -> None:
+    """Checks replay renormalizes every segment with the recorded temperature."""
+    batch = _trajectory_batch(context={"temperature": 0.5})
+    model = _SegmentReplayModel()
+    evaluator = MultiSegmentTokenLogProbEvaluator(
+        enabled_segments=("selfcheck_text", "final_image"),
+    )
+
+    signals = evaluator.evaluate(model, batch)
+
+    token_ids = torch.tensor([[7, 8], [8, 9]])
+    logits = torch.zeros(2, 2, 20)
+    logits.scatter_(-1, token_ids.unsqueeze(-1), 3.0)
+    expected = torch.nn.functional.log_softmax(logits / 0.5, dim=-1).gather(
+        -1,
+        token_ids.unsqueeze(-1),
+    ).squeeze(-1)
+    assert torch.allclose(signals.segments["selfcheck_text"].log_prob, expected, atol=1e-6)
 
 
 def test_evaluator_reads_r1_segments_from_canonical_trajectory_fields() -> None:

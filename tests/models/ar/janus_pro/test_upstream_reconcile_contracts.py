@@ -81,6 +81,24 @@ def test_cfg_logprob_is_scored_from_cond_not_guided() -> None:
     assert not torch.allclose(lp, guided_lp, atol=1e-4)
 
 
+def test_paged_cfg_init_rejects_zero_temperature_before_prefill() -> None:
+    """Greedy decoding must use an explicit policy mode, not a zero clamp."""
+    logits = torch.zeros(2, 1, 4)
+    runner = _runner_with_fixed_logits(logits)
+    embeds = torch.zeros(1, 1, 8)
+    mask = torch.ones(1, 1, dtype=torch.long)
+
+    with pytest.raises(ValueError, match="temperature must be finite and > 0"):
+        runner.init_ar(
+            embeds,
+            embeds,
+            mask,
+            mask,
+            temperature=0.0,
+            image_token_num=1,
+        )
+
+
 def test_vq_latent_channels_resolved_dynamically_not_hardcoded_8() -> None:
     # Upstream hardcodes shape[1]=8; a variant whose codebook width != 8 must still
     # resolve correctly. 11 is chosen so a reverted `return 8` fails this assertion.
