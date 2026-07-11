@@ -261,13 +261,6 @@ def _resolve_sampling(args: argparse.Namespace, cfg: DictConfig) -> dict[str, An
             args.max_sequence_length
             or OmegaConf.select(cfg, "sampling.max_sequence_length", default=128),
         ),
-        "num_frames": 1,
-        "sde_window_range": (0, num_steps),
-        "sde_window_size": 0,
-        "same_latent": False,
-        "return_kl": False,
-        "noise_level": 1.0,
-        "sde_type": "flow_grpo",
     }
 
 

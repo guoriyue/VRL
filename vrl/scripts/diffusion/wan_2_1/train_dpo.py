@@ -35,12 +35,9 @@ from vrl.trainers.checkpointing import (
     save_training_checkpoint,
 )
 from vrl.trainers.core.types import TrainerConfig
+from vrl.trainers.precision import normalize_mixed_precision
 
 logger = logging.getLogger(__name__)
-
-
-def _trainer_precision_label(precision: str) -> str:
-    return "no" if precision == "fp32" else precision
 
 
 def _build_encoders(pipeline, num_frames: int, device, dtype):
@@ -124,7 +121,7 @@ def train_wan_2_1_dpo(cfg: DictConfig) -> None:
         )
 
     precision = resolve_precision_policy(cfg)
-    mixed_precision = _trainer_precision_label(precision.train)
+    mixed_precision = normalize_mixed_precision(precision.train)
     # Optional knobs: base yaml no longer restates dataclass defaults, so an
     # absent key falls back to the typed default — derived, never copied.
     _trainer_fields = TrainerConfig.__dataclass_fields__
