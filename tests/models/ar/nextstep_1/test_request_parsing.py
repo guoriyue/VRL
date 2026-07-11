@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import pytest
+import torch
 from omegaconf import OmegaConf
 
 from vrl.generation import GenerationRequest
 from vrl.generation.ar import ARRequestLayout
 from vrl.generation.ar.decode_loop import ActiveSequence
+from vrl.generation.execution.ids import build_sample_rows
 from vrl.models.ar.build import extract_family_ar_runtime_spec
+from vrl.models.ar.nextstep_1.runtime import (
+    NextStep1ARChunkResult,
+    NextStep1ChunkGatherer,
+)
 
 
 def test_nextstep_ar_sampling_params_carry_scheduler_batch_size() -> None:
@@ -78,3 +84,41 @@ def test_descriptor_extractor_carries_actor_gradient_checkpointing() -> None:
 
     assert spec.family == "nextstep_1"
     assert spec.model_config["gradient_checkpointing"] is True
+
+
+def test_nextstep_gather_derives_reward_image_from_canonical_output() -> None:
+    """Decoded output is the single source for both generation and reward views."""
+    request = GenerationRequest(
+        request_id="req",
+        family="nextstep_1",
+        task="ar_t2i",
+        prompts=["draw text"],
+        samples_per_prompt=2,
+        sampling={"image_token_num": 2},
+    )
+    sample_rows = build_sample_rows(request)
+    images = torch.arange(24, dtype=torch.float32).reshape(2, 3, 2, 2)
+    chunk = NextStep1ARChunkResult(
+        prompt_index=0,
+        sample_start=0,
+        sample_count=2,
+        output=images,
+        tokens=torch.zeros(2, 2, 4),
+        saved_noise=torch.zeros(2, 2, 4),
+        log_probs=torch.zeros(2, 2),
+        prompt_input_ids=torch.zeros(2, 3, dtype=torch.long),
+        prompt_attention_mask=torch.ones(2, 3, dtype=torch.long),
+        uncond_input_ids=torch.zeros(2, 3, dtype=torch.long),
+        uncond_attention_mask=torch.ones(2, 3, dtype=torch.long),
+        context={},
+    )
+
+    output = NextStep1ChunkGatherer().gather_chunks(
+        request,
+        sample_rows,
+        [chunk],
+    )
+    reward_images = output.trajectory.segments["decoded"].tensors["images_for_reward"].value
+
+    assert output.output is reward_images
+    assert torch.equal(output.output, images)

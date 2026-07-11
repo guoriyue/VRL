@@ -100,7 +100,6 @@ def test_decode_denoise_result_threads_rollout_dtype_into_context() -> None:
     )
 
     chunk = executor.decode_denoise_result(
-        request=SimpleNamespace(),
         config=_config(sample_count=2),
         denoise_result=denoise,
     )
@@ -289,7 +288,6 @@ def test_decode_denoise_result_packs_video_as_uint8() -> None:
     )
 
     chunk = executor.decode_denoise_result(
-        request=SimpleNamespace(),
         config=_config(sample_count=2),
         denoise_result=denoise,
     )
@@ -320,7 +318,6 @@ def test_apply_wire_storage_policy_downcasts_before_wire() -> None:
         config=_config(sample_count=2),
     )
     chunk = executor.decode_denoise_result(
-        request=SimpleNamespace(),
         config=_config(sample_count=2),
         denoise_result=denoise,
     )
@@ -341,7 +338,6 @@ def test_apply_wire_storage_policy_downcasts_before_wire() -> None:
 
     # Default policy is a strict identity: same tensor objects, no copies.
     chunk2 = executor.decode_denoise_result(
-        request=SimpleNamespace(),
         config=_config(sample_count=2),
         denoise_result=executor.run_denoise_steps(
             state=_state(batch=2, steps=1),

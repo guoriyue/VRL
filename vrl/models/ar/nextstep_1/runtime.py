@@ -85,7 +85,6 @@ class NextStep1ARChunkResult:
     tokens: torch.Tensor
     saved_noise: torch.Tensor
     log_probs: torch.Tensor
-    images_for_reward: torch.Tensor
     prompt_input_ids: torch.Tensor
     prompt_attention_mask: torch.Tensor
     uncond_input_ids: torch.Tensor
@@ -198,7 +197,6 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
         tokens, saved_noise, old_logprobs = decode_result.finalized
 
         images = self.model.decode_image_tokens(tokens, image_size=params.image_size)
-        images_for_reward = images
         peak_mem_mb = self.layout.peak_memory_mb()
 
         return NextStep1ARChunkResult(
@@ -209,7 +207,6 @@ class NextStep1ChunkExecutor(ARChunkExecutorBase):
             tokens=tokens,
             saved_noise=saved_noise,
             log_probs=old_logprobs,
-            images_for_reward=images_for_reward,
             prompt_input_ids=prompt_ids,
             prompt_attention_mask=prompt_mask,
             uncond_input_ids=uncond_ids,
@@ -286,7 +283,6 @@ class NextStep1ChunkGatherer:
             "tokens",
             "saved_noise",
             "log_probs",
-            "images_for_reward",
             "prompt_input_ids",
             "prompt_attention_mask",
             "uncond_input_ids",
@@ -312,9 +308,7 @@ class NextStep1ChunkGatherer:
                 "ar_decode_forwards": max(image_token_num - 1, 0),
                 "ar_decode_tokens": len(sample_rows) * image_token_num,
                 "ar_scheduler_enabled": False,
-                "ar_scheduler_batch_size": request.sampling.get(
-                    "ar_scheduler_batch_size"
-                ),
+                "ar_scheduler_batch_size": request.sampling.get("ar_scheduler_batch_size"),
                 "ar_scheduler_batches": None,
             },
         )
@@ -329,7 +323,7 @@ class NextStep1ChunkGatherer:
             prompt_attention_mask=cat["prompt_attention_mask"],
             uncond_input_ids=cat["uncond_input_ids"],
             uncond_attention_mask=cat["uncond_attention_mask"],
-            images_for_reward=cat["images_for_reward"],
+            images_for_reward=cat["output"],
             context=trajectory_context,
         )
 

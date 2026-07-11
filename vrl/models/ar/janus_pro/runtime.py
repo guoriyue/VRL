@@ -240,7 +240,6 @@ class JanusProR1ChunkResult:
     prompt_index: int
     sample_start: int
     sample_count: int
-    output: torch.Tensor
     initial_image: torch.Tensor
     final_image: torch.Tensor
     selfcheck: torch.Tensor
@@ -310,7 +309,6 @@ class JanusProR1ChunkExecutor(JanusProChunkExecutor):
             prompt_index=chunk.prompt_index,
             sample_start=chunk.sample_start,
             sample_count=chunk.sample_count,
-            output=result["final_image"],
             initial_image=result["initial_image"],
             final_image=result["final_image"],
             selfcheck=result["selfcheck"],
@@ -401,7 +399,7 @@ class JanusProR1ChunkGatherer:
         sample_rows: Sequence[GenerationSampleRow],
         chunks: Sequence[JanusProR1ChunkResult],
     ) -> GenerationOutput:
-        fields = ("output", "initial_image", "final_image", "selfcheck")
+        fields = ("initial_image", "final_image", "selfcheck")
         ordered = self.layout.ordered_chunks(
             request,
             sample_rows,
@@ -445,7 +443,7 @@ class JanusProR1ChunkGatherer:
             task=request.task,
             prompts=list(request.prompts),
             sample_rows=list(sample_rows),
-            output=cat["output"],
+            output=cat["final_image"],
             trajectory=trajectory,
             extra={},
             metrics=metrics,

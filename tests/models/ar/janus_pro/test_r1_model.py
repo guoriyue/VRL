@@ -391,15 +391,10 @@ def test_r1_executor_forward_emits_canonical_family_and_segment_schema() -> None
     assert out.family == "janus_pro_r1"
     assert out.task == "ar_t2i_r1"
     assert out.output.shape == (2, 3, 2, 2)
+    assert out.output is out.trajectory.segments["decoded"].tensors["final_image"].value
     assert "segments" not in out.extra
     assert "selfcheck_text" not in out.extra
     assert out.trajectory is not None
     assert set(out.trajectory.segments) >= set(JANUS_R1_SEGMENTS)
-    assert (
-        out.trajectory.segments["final_image"].tensors["token_ids"].value.shape
-        == (2, 4)
-    )
-    assert (
-        out.trajectory.segments["selfcheck_text"].tensors["token_ids"].value.shape
-        == (2, 4)
-    )
+    assert out.trajectory.segments["final_image"].tensors["token_ids"].value.shape == (2, 4)
+    assert out.trajectory.segments["selfcheck_text"].tensors["token_ids"].value.shape == (2, 4)

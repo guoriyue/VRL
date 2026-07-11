@@ -48,8 +48,8 @@ logger = init_logger(__name__)
 # NextStep-1 image grid: 32x32 continuous patches at f8ch16 = 16-channel,
 # 8x downsample VAE (per the model card). Override via config if you load
 # a different checkpoint that uses a different grid.
-NEXTSTEP_DEFAULT_TOKEN_NUM = 1024     # 32 x 32 patches per 256^2 image
-NEXTSTEP_DEFAULT_TOKEN_DIM = 64       # latent_patch_size^2 * f8ch16 channels
+NEXTSTEP_DEFAULT_TOKEN_NUM = 1024  # 32 x 32 patches per 256^2 image
+NEXTSTEP_DEFAULT_TOKEN_DIM = 64  # latent_patch_size^2 * f8ch16 channels
 
 
 @dataclass(slots=True)
@@ -72,14 +72,17 @@ class NextStep1Config:
     lora_dropout: float = 0.0
     # NextStep-1's LLM is Qwen-derived; same names as Qwen-2 attention
     lora_target_modules: tuple[str, ...] = (
-        "q_proj", "k_proj", "v_proj", "o_proj",
+        "q_proj",
+        "k_proj",
+        "v_proj",
+        "o_proj",
     )
     lora_init: str = "gaussian"
 
     # Flow-head sampling — used by the AR runtime runner.
-    num_steps: int = 20             # K Euler steps inside the flow ODE
-    noise_level: float = 1.0             # final-step Gaussian std multiplier
-    guidance_scale: float = 4.5               # CFG strength on the velocity field
+    num_steps: int = 20  # K Euler steps inside the flow ODE
+    noise_level: float = 1.0  # final-step Gaussian std multiplier
+    guidance_scale: float = 4.5  # CFG strength on the velocity field
 
     # AR loop
     image_token_num: int = NEXTSTEP_DEFAULT_TOKEN_NUM
@@ -131,7 +134,6 @@ class NextStep1Model(ARModelBase):
         self.language_model = self._pipeline.model
         self.image_head = self._pipeline.model.image_head
         self._image_in_projector = self._pipeline.model.image_in_projector
-        self._image_out_projector = self._pipeline.model.image_out_projector
         self.vae = self._pipeline.vae
         self.processor = self._pipeline.tokenizer  # AutoTokenizer (naming aligns with Janus)
         self.config.token_dim = int(
@@ -200,12 +202,12 @@ class NextStep1Model(ARModelBase):
 
     def recompute_logprobs(
         self,
-        prompt_embeds: torch.Tensor,         # [B, L_text, D_hidden]
+        prompt_embeds: torch.Tensor,  # [B, L_text, D_hidden]
         uncond_embeds: torch.Tensor | None,
         prompt_mask: torch.Tensor,
         uncond_mask: torch.Tensor | None,
-        tokens: torch.Tensor,                # [B, L_img, D_token]
-        saved_noise: torch.Tensor,           # [B, L_img, D_token]
+        tokens: torch.Tensor,  # [B, L_img, D_token]
+        saved_noise: torch.Tensor,  # [B, L_img, D_token]
         *,
         guidance_scale: float | None = None,
         num_steps: int | None = None,
@@ -227,8 +229,7 @@ class NextStep1Model(ARModelBase):
         # parameters. Same path as sampling but with grad enabled.
         kv_cond = self._init_kv(prompt_embeds, prompt_mask)
         kv_uncond = (
-            self._init_kv(uncond_embeds, uncond_mask)
-            if uncond_embeds is not None else None
+            self._init_kv(uncond_embeds, uncond_mask) if uncond_embeds is not None else None
         )
         c_cond = self._last_hidden(kv_cond)
         c_uncond = self._last_hidden(kv_uncond) if kv_uncond is not None else None
@@ -298,8 +299,12 @@ class NextStep1Model(ARModelBase):
         uncond_embeds = embed(uncond_ids) if uncond_ids is not None else None
 
         log_probs = self.recompute_logprobs(
-            prompt_embeds, uncond_embeds, prompt_mask, uncond_mask,
-            tokens=tokens, saved_noise=saved_noise,
+            prompt_embeds,
+            uncond_embeds,
+            prompt_mask,
+            uncond_mask,
+            tokens=tokens,
+            saved_noise=saved_noise,
             guidance_scale=batch.context.get("guidance_scale"),
             num_steps=batch.context.get("num_steps"),
             noise_level=batch.context.get("noise_level"),
@@ -320,7 +325,7 @@ class NextStep1Model(ARModelBase):
     @torch.no_grad()
     def decode_image_tokens(
         self,
-        tokens: torch.Tensor,        # [B, L_img, D_token]
+        tokens: torch.Tensor,  # [B, L_img, D_token]
         image_size: int | None = None,
     ) -> torch.Tensor:
         """Continuous tokens → pixels in ``[-1, 1]`` via the f8ch16 VAE."""
@@ -331,9 +336,7 @@ class NextStep1Model(ARModelBase):
                 f"image_token_num must be a square grid, got {tokens.shape[1]}",
             )
         latent = self._pipeline.model.unpatchify(tokens, h=side, w=side)
-        latent = (
-            latent / self._pipeline.scaling_factor
-        ) + self._pipeline.shift_factor
+        latent = (latent / self._pipeline.scaling_factor) + self._pipeline.shift_factor
         decoded = self.vae.decode(latent.to(self.vae.dtype))
         pixels = decoded.sample if hasattr(decoded, "sample") else decoded[0]
         return pixels.to(torch.float32)
@@ -378,18 +381,14 @@ class NextStep1Model(ARModelBase):
 
         lm = self.language_model
         peft_inner = getattr(lm, "base_model", None)
-        if (
-            peft_inner is not None
-            and hasattr(peft_inner, "model")
-            and peft_inner.model is not lm
-        ):
+        if peft_inner is not None and hasattr(peft_inner, "model") and peft_inner.model is not lm:
             return peft_inner.model
         return lm
 
     def _step_llm(
         self,
         kv: Any,
-        new_embed: torch.Tensor,         # [B, D_hidden]
+        new_embed: torch.Tensor,  # [B, D_hidden]
     ) -> tuple[Any, torch.Tensor]:
         """One-token LLM forward; returns updated kv + new last hidden."""
         out = self.language_model(
@@ -420,13 +419,10 @@ class NextStep1ReplayModel(ARReplayRolloutStubs, NextStep1Model):
         self._device = torch.device(config.device)
 
         self.language_model = (
-            language_model
-            if language_model is not None
-            else _load_nextstep_replay_model(config)
+            language_model if language_model is not None else _load_nextstep_replay_model(config)
         )
         self.image_head = self.language_model.image_head
         self._image_in_projector = self.language_model.image_in_projector
-        self._image_out_projector = self.language_model.image_out_projector
         self.config.token_dim = int(
             getattr(self.image_head, "input_dim", self.config.token_dim),
         )
@@ -445,6 +441,7 @@ class NextStep1ReplayModel(ARReplayRolloutStubs, NextStep1Model):
             init_lora_weights=self.config.lora_init,
         )
         self.language_model = get_peft_model(self.language_model, lora_cfg)
+
 
 def _load_nextstep_replay_model(config: NextStep1Config) -> Any:
     """Load the upstream NextStep model without the inference pipeline or VAE."""

@@ -56,9 +56,6 @@ class TorchNativeDecoderAttentionBackend(ARAttentionBackend):
         super().__init__(config)
         self._prefill_fn = prefill_fn
         self._step_fn = step_fn
-        self.backend_label = str(
-            config.extra.get("backend_label", f"{config.family}_torch_native_attention")
-        )
 
     @torch.no_grad()
     def prefill(self, request: ARAttentionPrefillInput) -> ARAttentionPrefillOutput:

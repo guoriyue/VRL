@@ -141,13 +141,7 @@ class DiffusionPromptStageOutput:
 class DiffusionPreparedStageOutput:
     """Prepared latent state and denoise config for the denoise stage."""
 
-    generation_request: GenerationRequest
-    chunk: SampleChunk
-    params: DiffusionSamplingParams
-    video_request: VideoGenerationRequest
-    encoded: dict[str, Any]
     chunk_encoded: dict[str, Any]
-    prepare_kwargs: dict[str, Any]
     config: DiffusionDenoiseConfig
     state: Any
 
@@ -156,7 +150,6 @@ class DiffusionPreparedStageOutput:
 class DiffusionDenoisedStageOutput:
     """Denoise stage output before VAE decode."""
 
-    request: VideoGenerationRequest
     config: DiffusionDenoiseConfig
     denoise_result: DiffusionDenoiseResult
     stage_durations: dict[str, float] = field(default_factory=dict)
@@ -239,8 +232,7 @@ def preallocate_denoise_buffers(
     chunk_batch = int(latents.shape[0])
     if chunk_batch != int(config.sample_count):
         raise ValueError(
-            "Diffusion denoise chunk produced "
-            f"{chunk_batch} rows, expected {config.sample_count}",
+            f"Diffusion denoise chunk produced {chunk_batch} rows, expected {config.sample_count}",
         )
     num_steps = len(state.timesteps)
     latent_shape = tuple(latents.shape[1:])
@@ -417,9 +409,7 @@ class DiffusionChunkExecutorBase(
 
     def capability(self) -> FamilyCapability:
         if self.family_capability is None:
-            raise RuntimeError(
-                f"{type(self).__name__} must declare family_capability explicitly"
-            )
+            raise RuntimeError(f"{type(self).__name__} must declare family_capability explicitly")
         return self.family_capability
 
     def plan(
@@ -584,14 +574,16 @@ class DiffusionChunkExecutorBase(
         if policy == TrajectoryStoragePolicy():
             return chunk_result
         chunk_result.observations = apply_value_storage_policy(
-            chunk_result.observations, policy,
+            chunk_result.observations,
+            policy,
         )
         chunk_result.actions = apply_value_storage_policy(chunk_result.actions, policy)
         chunk_result.log_probs = apply_value_storage_policy(chunk_result.log_probs, policy)
         chunk_result.timesteps = apply_value_storage_policy(chunk_result.timesteps, policy)
         chunk_result.kl = apply_value_storage_policy(chunk_result.kl, policy)
         chunk_result.replay_tensors = apply_value_storage_policy(
-            chunk_result.replay_tensors, policy,
+            chunk_result.replay_tensors,
+            policy,
         )
         return chunk_result
 
@@ -669,13 +661,7 @@ class DiffusionChunkExecutorBase(
         )
         stage_durations["prepare_latent"] = time.perf_counter() - started
         return DiffusionPreparedStageOutput(
-            generation_request=payload.generation_request,
-            chunk=payload.chunk,
-            params=payload.params,
-            video_request=payload.video_request,
-            encoded=payload.encoded,
             chunk_encoded=chunk_encoded,
-            prepare_kwargs=prepare_kwargs,
             config=config,
             state=state,
         )
@@ -696,7 +682,6 @@ class DiffusionChunkExecutorBase(
         )
         stage_durations["denoise"] = time.perf_counter() - started
         return DiffusionDenoisedStageOutput(
-            request=payload.video_request,
             config=payload.config,
             denoise_result=denoise_result,
             stage_durations=dict(stage_durations),
@@ -710,7 +695,6 @@ class DiffusionChunkExecutorBase(
 
         started = time.perf_counter()
         chunk_result = self.decode_denoise_result(
-            request=payload.request,
             config=payload.config,
             denoise_result=payload.denoise_result,
             stage_durations=payload.stage_durations,
@@ -783,9 +767,7 @@ class DiffusionChunkExecutorBase(
 
         prompt_embeds = encoded.get("prompt_embeds")
         transformer_dtype = (
-            prompt_embeds.dtype
-            if isinstance(prompt_embeds, torch.Tensor)
-            else state.latents.dtype
+            prompt_embeds.dtype if isinstance(prompt_embeds, torch.Tensor) else state.latents.dtype
         )
         if getattr(state.latents.device, "type", None) == "cuda" and transformer_dtype in (
             torch.float16,
@@ -827,9 +809,12 @@ class DiffusionChunkExecutorBase(
                         # instead of rerunning this forward every ppo_epoch.
                         # Already inside the loop's torch.no_grad(); just drop the
                         # adapter so the forward is the frozen base model.
-                        with record_function(
-                            "generation.ref_denoise_forward",
-                        ), model.disable_adapter():
+                        with (
+                            record_function(
+                                "generation.ref_denoise_forward",
+                            ),
+                            model.disable_adapter(),
+                        ):
                             ref_step_output = model.forward_step(state, step_idx)
                         ref_noise_pred = ref_step_output["noise_pred"]
 
@@ -891,9 +876,7 @@ class DiffusionChunkExecutorBase(
                     )
                     if config.sde.return_kl:
                         buffers.kl[:, step_idx].copy_(
-                            sde_result.log_prob.detach()
-                            .abs()
-                            .to(dtype=buffers.kl.dtype),
+                            sde_result.log_prob.detach().abs().to(dtype=buffers.kl.dtype),
                         )
                     else:
                         buffers.kl[:, step_idx].zero_()
@@ -910,9 +893,7 @@ class DiffusionChunkExecutorBase(
                             ),
                         )
         denoise_peak_bytes = _cuda_phase_peak_bytes()
-        peak_memory_mb = (
-            None if denoise_peak_bytes is None else denoise_peak_bytes / (1024 * 1024)
-        )
+        peak_memory_mb = None if denoise_peak_bytes is None else denoise_peak_bytes / (1024 * 1024)
         memory = None
         if occupancy is not None and denoise_peak_bytes is not None:
             memory = {
@@ -960,7 +941,6 @@ class DiffusionChunkExecutorBase(
     def decode_denoise_result(
         self,
         *,
-        request: VideoGenerationRequest,
         config: DiffusionDenoiseConfig,
         denoise_result: DiffusionDenoiseResult,
         stage_durations: dict[str, float] | None = None,
@@ -1017,13 +997,9 @@ class DiffusionChunkExecutorBase(
         memory = None
         if denoise_result.memory is not None and decode_peak_bytes is not None:
             memory = {**denoise_result.memory, "decode_peak_bytes": decode_peak_bytes}
-        decode_peak_mb = (
-            None if decode_peak_bytes is None else decode_peak_bytes / (1024 * 1024)
-        )
+        decode_peak_mb = None if decode_peak_bytes is None else decode_peak_bytes / (1024 * 1024)
         phase_peaks = [
-            peak
-            for peak in (denoise_result.peak_memory_mb, decode_peak_mb)
-            if peak is not None
+            peak for peak in (denoise_result.peak_memory_mb, decode_peak_mb) if peak is not None
         ]
 
         return DiffusionChunkResult(
@@ -1127,6 +1103,7 @@ class DiffusionChunkExecutorBase(
         del encoded, generation_request, video_request, params, chunk
         return None
 
+
 __all__ = [
     "DiffusionChunkExecutorBase",
     "DiffusionChunkResult",
@@ -1148,9 +1125,7 @@ __all__ = [
 # uses it as the ``executor_cls`` default and the launcher keys the wholesale
 # yaml executor-config pass on it — defined here (not registry-side) so the
 # generation layer never imports the rollout layer.
-GENERIC_DIFFUSION_EXECUTOR = (
-    "vrl.generation.diffusion.executor:DiffusionChunkExecutor"
-)
+GENERIC_DIFFUSION_EXECUTOR = "vrl.generation.diffusion.executor:DiffusionChunkExecutor"
 
 
 class DiffusionChunkExecutor(DiffusionChunkExecutorBase):

@@ -43,7 +43,11 @@ class TrajectoryValidator:
     """Validate one trajectory batch and its derived training/reward views."""
 
     batch: TrajectoryBatch
-    tensor_refs: dict[str, TrajectoryTensor] = field(default_factory=dict)
+    tensor_refs: dict[str, TrajectoryTensor] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
 
     def validate_batch(self) -> TrajectoryBatch:
         """Validate structural trajectory invariants and return the batch."""
@@ -61,8 +65,7 @@ class TrajectoryValidator:
         for axis_name, axis in batch.axes.items():
             if axis_name != axis.name:
                 self._fail(
-                    f"Axis key {axis_name!r} does not match "
-                    f"TrajectoryAxis.name={axis.name!r}",
+                    f"Axis key {axis_name!r} does not match TrajectoryAxis.name={axis.name!r}",
                 )
             if axis.length is not None and axis.length < 0:
                 self._fail(f"Axis {axis_name!r} length must be >= 0")
@@ -91,9 +94,7 @@ class TrajectoryValidator:
         for axis_name, length in batch.metrics.axis_lengths.items():
             axis = batch.axes.get(axis_name)
             if axis is None:
-                self._fail(
-                    f"TrajectoryMetrics.axis_lengths references unknown axis {axis_name!r}"
-                )
+                self._fail(f"TrajectoryMetrics.axis_lengths references unknown axis {axis_name!r}")
             if axis.length is not None and int(length) != axis.length:
                 self._fail(
                     f"TrajectoryMetrics.axis_lengths[{axis_name!r}]={length} "
@@ -168,8 +169,7 @@ class TrajectoryValidator:
                 )
             if unit.axis not in refs[ref].axes:
                 self._fail(
-                    f"LossUnit.{field_name} must reference tensor with axis "
-                    f"{unit.axis!r}",
+                    f"LossUnit.{field_name} must reference tensor with axis {unit.axis!r}",
                 )
         self._require_ref_role(unit.action_ref, "action", "LossUnit.action_ref")
         self._require_ref_role(
@@ -180,9 +180,7 @@ class TrajectoryValidator:
         self._require_ref_role(unit.mask_ref, "mask", "LossUnit.mask_ref")
         for replay_ref in unit.replay_input_refs:
             if "." not in replay_ref:
-                self._fail(
-                    f"LossUnit replay input ref {replay_ref!r} must be 'segment.name'"
-                )
+                self._fail(f"LossUnit replay input ref {replay_ref!r} must be 'segment.name'")
             segment_name, replay_name = replay_ref.split(".", 1)
             segment = self.batch.segments.get(segment_name)
             if segment is None or replay_name not in segment.replay_inputs:
@@ -222,8 +220,7 @@ class TrajectoryValidator:
             self.tensor_refs[ref] = tensor
             if tensor.role in SINGLETON_TENSOR_ROLES and tensor.role in roles:
                 self._fail(
-                    f"trainable segment {segment.name!r} has multiple "
-                    f"{tensor.role!r} tensors",
+                    f"trainable segment {segment.name!r} has multiple {tensor.role!r} tensors",
                 )
             roles.setdefault(tensor.role, tensor)
 
@@ -258,9 +255,7 @@ class TrajectoryValidator:
                 if "." not in ref:
                     ref = tensor_ref(segment.name, ref)
                 if ref not in self.tensor_refs:
-                    self._fail(
-                        f"ReplayInput {replay.name!r} references unknown tensor {ref!r}"
-                    )
+                    self._fail(f"ReplayInput {replay.name!r} references unknown tensor {ref!r}")
             self._reject_runtime_state(
                 replay.metadata,
                 f"ReplayInput {segment.name}.{replay.name}.metadata",
@@ -290,8 +285,7 @@ class TrajectoryValidator:
         for axis_name in tensor.axes:
             if axis_name not in self.batch.axes:
                 self._fail(
-                    f"tensor {segment_name}.{tensor.name} references unknown "
-                    f"axis {axis_name!r}",
+                    f"tensor {segment_name}.{tensor.name} references unknown axis {axis_name!r}",
                 )
             if axis_name in seen:
                 self._fail(f"tensor {segment_name}.{tensor.name} repeats axis {axis_name!r}")
