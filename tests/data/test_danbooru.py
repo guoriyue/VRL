@@ -333,6 +333,22 @@ def test_positive_hand_hard_negative_and_label_queue_rows(tmp_path: Path) -> Non
     assert "Are fingers plausible enough for the image scale?" in queue[0]["questions"]
 
 
+def test_hard_negative_severity_zero_is_not_replaced_by_the_default(tmp_path: Path) -> None:
+    generated = tmp_path / "generated.jsonl"
+    _write_jsonl(
+        generated,
+        [
+            {"image_path": "zero.png", "labels": ["bad_hands"], "severity": 0},
+            {"image_path": "missing.png", "labels": ["bad_hands"]},
+        ],
+    )
+
+    negatives = hard_negative_rows(generated, min_severity=1)
+
+    assert [row["image_path"] for row in negatives] == ["missing.png"]
+    assert negatives[0]["severity"] == 1
+
+
 def test_build_safety_prompts_requires_danbooru_metadata(tmp_path: Path) -> None:
     """Checks build safety prompts requires Danbooru metadata."""
     train_output = tmp_path / "train.jsonl"

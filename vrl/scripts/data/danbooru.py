@@ -64,7 +64,6 @@ SAFETY_MIN_RISK_TAGS = 1
 SAFETY_SEED = 0
 
 POSITIVE_IMAGES_OUTPUT = ANATOMY_DIR / "positive_images.jsonl"
-HAND_CROPS_OUTPUT = ANATOMY_DIR / "hand_crops.jsonl"
 POSITIVE_IMAGE_SOURCE = "danbooru2023"
 POSITIVE_IMAGE_MIN_SCORE = 20.0
 POSITIVE_IMAGE_LIMIT = 10_000
@@ -105,7 +104,6 @@ DEFAULT_BUCKET_WEIGHTS = dict(_ANATOMY["default_bucket_weights"])
 PROMPT_ANCHOR_TAGS = tuple(_ANATOMY["prompt_anchor_tags"])
 FAILURE_LABELS = set(_ANATOMY["failure_labels"])
 
-SAFETY_TEMPLATE_ID = "anime_safety_danbooru_v1"
 # Danbooru metadata writes the rating as a single letter (g/s/q/e). Map every
 # accepted spelling -> canonical name. _SAFETY_RATING_SPELLINGS is the source of
 # truth; the lookup is derived so the identity entry (a canonical name accepts
@@ -1046,12 +1044,6 @@ def http_download(url: str, target: Path) -> None:
                 handle.write(chunk)
 
 
-def count_jsonl_rows(path: Path) -> int:
-    if not path.exists():
-        return 0
-    return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
-
-
 def positive_image_rows(
     metadata_path: str | Path,
     *,
@@ -1126,7 +1118,8 @@ def hard_negative_rows(
         row_labels = {str(label) for label in row.get("labels", [])}
         if not row_labels & requested:
             continue
-        severity = int(row.get("severity", 1) or 1)
+        raw_severity = row.get("severity")
+        severity = 1 if raw_severity is None else int(raw_severity)
         if severity < min_severity:
             continue
         out = dict(row)
@@ -1484,7 +1477,6 @@ __all__ = [
     "DEFAULT_BUCKET_WEIGHTS",
     "FAILURE_LABELS",
     "SAFETY_TARGET_RATINGS",
-    "SAFETY_TEMPLATE_ID",
     "PromptRow",
     "anatomy_constraints",
     "bucket_from_tags",
@@ -1494,7 +1486,6 @@ __all__ = [
     "build_positive_images",
     "build_prompt_rows",
     "build_safety_prompts",
-    "count_jsonl_rows",
     "download_danbooru_images",
     "download_metadata_file",
     "hand_crop_rows",

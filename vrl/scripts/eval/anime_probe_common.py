@@ -40,6 +40,13 @@ FINGER_CHAINS = (
 )
 
 
+def optional_finger_cv(metrics: dict[str, Any]) -> float | None:
+    """Return the optional HaMeR metric without treating a perfect zero as missing."""
+
+    value = metrics.get("mean_finger_cv")
+    return None if value is None else float(value)
+
+
 def require_modules(modules: list[tuple[str, str]]) -> None:
     """Exit with install hints when optional probe dependencies are missing."""
 

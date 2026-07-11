@@ -54,6 +54,7 @@ from .anime_probe_common import (
     load_hamer_model,
     load_images,
     load_rtmw,
+    optional_finger_cv,
     require_hamer_modules,
     require_rtmw_modules,
     rtmw_metrics,
@@ -88,8 +89,9 @@ def build_report(rows: list[dict], out_dir: Path) -> Path:
         bc_col = _score_color(m["body_coverage"], 0.4, 0.8)
         hc_col = _score_color(m["hand_coverage"], 0.3, 0.6)
         be_col = _score_color(1 - m["bone_ratio_err"], 0.6, 0.85)
-        cv_str = f"{hm['mean_finger_cv']:.3f}" if hm.get("mean_finger_cv") is not None else "-"
-        cv_col = _score_color(1 - (hm.get("mean_finger_cv") or 0.5), 0.6, 0.85)
+        finger_cv = optional_finger_cv(hm)
+        cv_str = f"{finger_cv:.3f}" if finger_cv is not None else "-"
+        cv_col = _score_color(1 - (0.5 if finger_cv is None else finger_cv), 0.6, 0.85)
         html_rows += f"""
         <tr>
           <td><b>{r["name"]}</b></td>
@@ -251,9 +253,8 @@ def main() -> None:
         cv2.imwrite(str(vis_path), m["annotated"])
 
         rows.append({"name": name, "label": label, "rtmw": m, "hamer": hm})
-        cv_str = (
-            f"  finger_cv={hm['mean_finger_cv']:.3f}" if hm and hm.get("mean_finger_cv") else ""
-        )
+        finger_cv = optional_finger_cv(hm or {})
+        cv_str = f"  finger_cv={finger_cv:.3f}" if finger_cv is not None else ""
         print(
             f"body={m['body_coverage']:.2f} "
             f"hand={m['hand_coverage']:.2f} "
