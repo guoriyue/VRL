@@ -36,6 +36,7 @@ from __future__ import annotations
 import math
 
 import torch
+from torch import nn
 
 from vrl.algorithms.grpo.continuous import GRPO, GRPOConfig
 from vrl.algorithms.logprob_mismatch import (
@@ -43,18 +44,13 @@ from vrl.algorithms.logprob_mismatch import (
     compute_logprob_mismatch_stats,
 )
 from vrl.algorithms.trajectory import AlgorithmInput
+from vrl.nn.quantization.fp8 import Fp8Linear
 from vrl.rollouts.evaluators.types import SegmentSignal, TrajectorySignalBatch
-from vrl.scripts.perf.common.fp8_math import tensorwise_fp8_matmul
 from vrl.trainers.core.types import PrecisionDriftGuardConfig
 from vrl.trainers.online.precision_guard import (
     PrecisionDriftError,
     run_precision_drift_guard,
 )
-
-
-def _fp8_matmul(x_bf16: torch.Tensor, w_bf16: torch.Tensor) -> torch.Tensor:
-    """x @ w.T computed in fp8-e4m3 on tensor cores, accumulated to bf16."""
-    return tensorwise_fp8_matmul(x_bf16, w_bf16)
 
 
 def _logprob_from_logits(logits: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
@@ -134,9 +130,18 @@ def main() -> None:
     activations = torch.randn(n_samples, hidden, device=device, dtype=torch.bfloat16)
     weight = torch.randn(vocab, hidden, device=device, dtype=torch.bfloat16) * (hidden**-0.5)
 
+    # The fp8 side runs the rollout engine's own Fp8Linear (weight quantized
+    # once, activation per call) so the probe measures the production kernel,
+    # not a hand copy. Tensorwise recipe keeps the archived drift numbers
+    # comparable.
+    head_lin = nn.Linear(hidden, vocab, bias=False, device=device, dtype=torch.bfloat16)
+    with torch.no_grad():
+        head_lin.weight.copy_(weight)
+    fp8_head = Fp8Linear(head_lin, recipe="tensorwise")
+
     # Replay (bf16) and rollout (fp8) logits for the SAME head.
     logits_replay = (activations @ weight.t()).to(torch.bfloat16)
-    logits_rollout_fp8 = _fp8_matmul(activations, weight)
+    logits_rollout_fp8 = fp8_head(activations)
 
     # Actions are sampled by the rollout (fp8) policy; both sides score them.
     actions = torch.distributions.Categorical(logits=logits_rollout_fp8.float()).sample()
@@ -186,8 +191,8 @@ def main() -> None:
     n_traj, n_steps = 256, 35
     traj_acts = torch.randn(n_traj, n_steps, hidden, device=device, dtype=torch.bfloat16)
     traj_logits_replay = (traj_acts @ weight.t()).to(torch.bfloat16)
-    traj_logits_fp8 = _fp8_matmul(
-        traj_acts.reshape(n_traj * n_steps, hidden), weight,
+    traj_logits_fp8 = fp8_head(
+        traj_acts.reshape(n_traj * n_steps, hidden),
     ).reshape(n_traj, n_steps, vocab)
     traj_actions = torch.distributions.Categorical(logits=traj_logits_fp8.float()).sample()
     traj_rollout_logprob = _trajectory_logprob(traj_logits_fp8, traj_actions)

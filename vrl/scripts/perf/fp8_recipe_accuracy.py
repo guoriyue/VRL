@@ -25,7 +25,8 @@ from __future__ import annotations
 import torch
 from torch import nn
 
-from vrl.scripts.perf.common.fp8_math import FP8_E4M3_MAX, relative_l1_drift
+from vrl.nn.quantization.fp8 import FP8_E4M3_MAX
+from vrl.scripts.perf.common.fp8_math import relative_l1_drift
 
 
 def _to_fp8_dequant(t: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:

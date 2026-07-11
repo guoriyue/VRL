@@ -15,9 +15,10 @@ relative error (drift) per shape. Shapes cover the four DiT GEMMs (QKV, attn-out
 MLP-up 4x, MLP-down 4x) at SD3.5/cosmos-ish hidden sizes and image/video token
 counts.
 
-FAITHFULNESS: the fp8 path is the exact recipe the swap module will use
-(per-tensor amax e4m3 scaling, weight pre-quantized, `_scaled_mm` bf16 accumulate),
-so the measured latency includes the real overhead the rollout forward would pay.
+FAITHFULNESS: the fp8 path IS the production swap module (``Fp8Linear``,
+tensorwise recipe: per-tensor amax e4m3 scaling, weight pre-quantized,
+`_scaled_mm` bf16 accumulate), so the measured latency includes the real
+overhead the rollout forward pays.
 
 Usage:  python -m vrl.scripts.perf.fp8_linear_benchmark
 """
@@ -27,39 +28,9 @@ from __future__ import annotations
 import torch
 from torch import nn
 
-from vrl.scripts.perf.common.fp8_math import amax_scale, relative_l1_drift
+from vrl.nn.quantization.fp8 import Fp8Linear
+from vrl.scripts.perf.common.fp8_math import relative_l1_drift
 from vrl.scripts.perf.common.timing import cuda_mean_ms
-
-
-class Fp8DynamicLinear(nn.Module):
-    """nn.Linear replacement: fp8 weight (pre-quantized) + dynamic fp8 activation.
-
-    Per-tensor amax e4m3 scaling, ``_scaled_mm`` with bf16 accumulation. The weight
-    is quantized once at construction (inference: weights are frozen during a
-    rollout); only the activation is quantized per forward.
-    """
-
-    def __init__(self, lin: nn.Linear) -> None:
-        super().__init__()
-        w = lin.weight.data  # [out, in]
-        w_scale = amax_scale(w)
-        self.register_buffer("w_fp8", (w / w_scale).to(torch.float8_e4m3fn))
-        self.register_buffer("w_scale", w_scale)
-        self.bias = lin.bias
-        self.out_features = lin.out_features
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        shape = x.shape
-        x2d = x.reshape(-1, shape[-1])
-        x_scale = amax_scale(x2d)
-        x_fp8 = (x2d / x_scale).to(torch.float8_e4m3fn)
-        out = torch._scaled_mm(
-            x_fp8, self.w_fp8.t(), scale_a=x_scale, scale_b=self.w_scale, out_dtype=x.dtype,
-        )
-        out = out.reshape(*shape[:-1], self.out_features)
-        if self.bias is not None:
-            out = out + self.bias
-        return out
 
 
 def main() -> None:
@@ -86,7 +57,7 @@ def main() -> None:
     speedups, drifts = [], []
     for m, k, n in shapes:
         lin = nn.Linear(k, n, bias=True).cuda().to(torch.bfloat16)
-        fp8 = Fp8DynamicLinear(lin).cuda()
+        fp8 = Fp8Linear(lin, recipe="tensorwise")
         x = torch.randn(m, k, device=dev, dtype=torch.bfloat16)
         with torch.no_grad():
             ref, q = lin(x), fp8(x)
