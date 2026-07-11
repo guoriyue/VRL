@@ -65,8 +65,8 @@ class RolloutCollector:
         self.request_builder = request_builder
         self.reward_scorer = reward_scorer
         self._runtime = runtime
-        # Topology-derived release policy (vrl/ray/resources.py). None means no
-        # shared GPU, so rollout never releases before reward. Read here instead
+        # Topology-derived handoff policy (vrl/ray/resources.py). None means no
+        # shared GPU, so rollout never offloads before reward. Read here instead
         # of asking the runtime, which is now just transport.
         self._lifecycle = lifecycle
 
@@ -92,10 +92,20 @@ class RolloutCollector:
             await shutdown()
         self._runtime = None
 
+    async def activate_runtime(self) -> None:
+        activate = getattr(self._runtime, "activate", None)
+        if callable(activate):
+            await activate()
+
+    async def offload_runtime_memory(self) -> None:
+        offload = getattr(self._runtime, "offload", None)
+        if callable(offload):
+            await offload()
+
     async def release_runtime_memory(self) -> None:
-        release = getattr(self._runtime, "release", None)
-        if release is not None:
-            await release()
+        """Compatibility facade for the former release terminology."""
+
+        await self.offload_runtime_memory()
 
     async def collect(
         self,
@@ -118,7 +128,7 @@ class RolloutCollector:
 
         Deferred-scoring half of collect(): the generation runtime stays
         resident so several groups can be generated back to back; scoring (and
-        the rollout release shared-GPU reward runs need before it) happens in
+        the rollout offload shared-GPU reward runs need before it) happens in
         score_rollouts().
         """
 
@@ -148,16 +158,16 @@ class RolloutCollector:
 
         Rollout prompts/metadata are per-sample, so all groups score in a
         single reward_scorer.score_many call — model-backed rewards with
-        release_after_score pay one actor cold start per call instead of one
-        per group. Batches return in input order.
+        phase parking pay one model activation per call instead of one per
+        group. Batches return in input order.
         """
 
         if not unscored:
             return []
         if self._should_release_runtime_before_reward_model():
-            # Shared single-GPU reward runs must drop rollout actors before reward
-            # model actors can reserve the same GPU.
-            await self.release_runtime_memory()
+            # Shared single-GPU reward runs park rollout model memory before the
+            # in-process reward model takes over the physical GPU.
+            await self.offload_runtime_memory()
 
         contexts = []
         builders = []
@@ -196,7 +206,11 @@ class RolloutCollector:
         build_t = _sync_time() if profile else None
         batches: list[RolloutBatch] = []
         for builder, context, rollout, group_rewards in zip(
-            builders, contexts, unscored, rewards, strict=True,
+            builders,
+            contexts,
+            unscored,
+            rewards,
+            strict=True,
         ):
             batch = builder.build(group_rewards)
             release_reward_artifact_if_needed(batch, context.reward_artifact_policy)
@@ -220,6 +234,12 @@ class RolloutCollector:
         if lifecycle is None:
             return False
         return lifecycle.handoff.release_rollout_before_reward
+
+    @property
+    def requires_runtime_offload_before_reward(self) -> bool:
+        """Whether scoring introduces a mid-iteration GPU handoff."""
+
+        return self._should_release_runtime_before_reward_model()
 
 
 def build_rollout_collector(

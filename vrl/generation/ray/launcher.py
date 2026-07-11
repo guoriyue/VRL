@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field
@@ -16,6 +17,7 @@ from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import ChunkGatherer, GenerationRuntime
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.executor import RayGenerationExecutor
+from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.ray.weight_sync import RayGenerationWeightSync
 from vrl.generation.ray.worker import RayGenerationWorker
@@ -26,14 +28,6 @@ from vrl.ray.placement import RolePlacement, validate_actor_gpu_ids
 from vrl.utils.config import cfg_path, import_from_path, to_builtin_deep
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True, slots=True)
-class RayGenerationLaunchInputs:
-    """Serializable worker launch contract plus driver-side pure gatherer."""
-
-    launch_contract: GenerationRuntimeLaunchContract
-    gatherer: ChunkGatherer
 
 
 @dataclass(slots=True)
@@ -135,9 +129,7 @@ class RayGenerationLauncher:
             pipelined=rollout_config.pipelined,
         )
         weight_sync = (
-            RayGenerationWeightSync(workers)
-            if rollout_config.sync_trainable_state
-            else None
+            RayGenerationWeightSync(workers) if rollout_config.sync_trainable_state else None
         )
         runtime = RayGenerationRuntime(
             executor,
@@ -159,6 +151,33 @@ class RayGenerationLauncher:
             weight_sync=weight_sync,
         )
         return runtime
+
+    async def launch_async(
+        self,
+        config: RayGenerationConfig | Mapping[str, Any],
+        launch_contract: GenerationRuntimeLaunchContract | Mapping[str, Any],
+        gatherer: ChunkGatherer,
+        *,
+        placement: RolePlacement,
+    ) -> RayGenerationRuntime:
+        """Launch without blocking the runtime's lifecycle event loop.
+
+        Ray initialization stays on the caller thread because it owns process
+        signal setup. Once connected, actor startup and policy load can run in
+        a worker thread; the runtime's shielded activation task remains the
+        ownership boundary if the external waiter is cancelled.
+        """
+
+        ray = require_ray()
+        if self.init_ray and not ray.is_initialized():
+            ray.init(**self.ray_init_kwargs)
+        return await asyncio.to_thread(
+            self.launch,
+            config,
+            launch_contract,
+            gatherer,
+            placement=placement,
+        )
 
     def launch_from_cfg(
         self,
@@ -199,14 +218,15 @@ class RayGenerationLauncher:
             # resolved plan (hand-built configs in tests) default to resident.
             resources = config.resources
             rollout_on_demand = (
-                resources is not None
-                and resources.lifecycle.rollout.mode == "on_demand"
+                resources is not None and resources.lifecycle.rollout.mode == "on_demand"
             )
             if rollout_on_demand:
-                return RayGenerationRuntime.with_release_after_collect(
+                return RayGenerationRuntime.with_on_demand_activation(
                     config,
-                    resolved_contract,
-                    gatherer,
+                    RayGenerationLaunchInputs(
+                        launch_contract=resolved_contract,
+                        gatherer=gatherer,
+                    ),
                     placement=placement,
                 )
             return self.launch(
@@ -394,8 +414,7 @@ def _validate_model_compile_supported(cfg: Any, entry: Any) -> None:
         return
     if not entry.capability.supports_torch_compile:
         raise ValueError(
-            f"{entry.family} does not support torch compile but "
-            "model.torch_compile.enable is set",
+            f"{entry.family} does not support torch compile but model.torch_compile.enable is set",
         )
 
 

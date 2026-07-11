@@ -1,8 +1,8 @@
 """Does level-1 sleep free enough GPU for a colocated trainer, and how much does
 vLLM's CuMemAllocator cut the wake cost vs a naive to(cpu)/to(gpu) round trip?
 
-SPRINT_frozen_component_preservation defect A turns the release-after-collect
-lease's per-cycle teardown (level-2: kill the worker, ``from_pretrained`` re-reads
+SPRINT_frozen_component_preservation defect A turns on-demand rollout handoff's
+per-cycle teardown (level-2: kill the worker, ``from_pretrained`` re-reads
 the frozen VAE / text-encoders from disk) into level-1 offload-and-restore. Two
 backends implement the offload:
 
@@ -120,15 +120,19 @@ def _measure(
     _do_sleep(alloc, model)
     torch.cuda.synchronize()
     slept = _gpu_used_mb()
-    print(f"GPU used after sleep (RESIDUAL)    = {slept:8.1f} MB  "
-          f"(trainer reclaims {loaded - slept:.1f} MB)")
+    print(
+        f"GPU used after sleep (RESIDUAL)    = {slept:8.1f} MB  "
+        f"(trainer reclaims {loaded - slept:.1f} MB)"
+    )
 
     _do_wake(alloc, model, device)
     torch.cuda.synchronize()
     woken = _gpu_used_mb()
     frag = woken - loaded
-    print(f"GPU used after wake                    = {woken:8.1f} MB  "
-          f"({'+' if frag >= 0 else ''}{frag:.1f} vs load — fragmentation)")
+    print(
+        f"GPU used after wake                    = {woken:8.1f} MB  "
+        f"({'+' if frag >= 0 else ''}{frag:.1f} vs load — fragmentation)"
+    )
 
     # Warm up so the first-touch allocator/cudaMalloc costs don't skew the stats.
     for _ in range(warmup):

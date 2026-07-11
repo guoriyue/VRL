@@ -4,10 +4,8 @@ from vrl.generation.ray.config import (
     DRIVER_CUDA_OWNERSHIP_ERROR,
     RayGenerationConfig,
 )
-from vrl.generation.ray.launcher import (
-    RayGenerationLauncher,
-    RayGenerationLaunchInputs,
-)
+from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
+from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.generation.ray.pipeline_runner import (
     RayPipelineRunner,
     RayPipelineStageHandle,

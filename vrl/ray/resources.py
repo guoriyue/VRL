@@ -30,7 +30,7 @@ class RolloutResourceConfig(RoleResourceConfig):
     #   "trainer"   share the trainer GPU pool (colocated). The sibling
     #               distributed.resources.rollout.memory_fraction makes the worker
     #               resident (parsed into the flat rollout_gpu_memory_fraction below);
-    #               absent = on-demand (released between phases). gpu_pool=trainer is
+    #               absent = on-demand (parks between phases). gpu_pool=trainer is
     #               itself the overlap permission (no allow_overlap needed).
     #   "dedicated" require a dedicated spare rollout GPU; error if none exists.
     gpu_pool: str = "auto"
@@ -76,12 +76,12 @@ class DistributedResourceConfig:
 
 @dataclass(frozen=True, slots=True)
 class ActorLeasePolicy:
-    """How long a role's Ray actors stay alive across phases.
+    """Whether a role keeps its accelerator active across phase boundaries.
 
-    ``resident`` actors stay up across phases (the role owns a dedicated GPU,
-    or is the persistent colocated debug worker). ``on_demand`` actors are
-    released at a phase handoff and reacquired on next use, because the role
-    shares a GPU it must hand back.
+    ``resident`` keeps serving across phases because the role owns a dedicated
+    GPU or an explicitly bounded colocated share. ``on_demand`` yields a shared
+    GPU at a handoff and activates again on next use. The rollout backend parks
+    its actors in host RAM; this policy does not require process destruction.
     """
 
     mode: Literal["resident", "on_demand"]
@@ -89,7 +89,7 @@ class ActorLeasePolicy:
 
 @dataclass(frozen=True, slots=True)
 class PhaseHandoffPolicy:
-    """Which resident-vs-shared actors must step off their GPU at each boundary.
+    """Which resident-vs-shared roles must step off their GPU at each boundary.
 
     A flag is True only when two roles share a GPU and the next phase needs the
     first to release it. Derived once from topology so no runtime re-decides it
@@ -103,14 +103,12 @@ class PhaseHandoffPolicy:
 
 @dataclass(frozen=True, slots=True)
 class RayLifecyclePlan:
-    """Single topology-derived answer to "which Ray actors release when".
+    """Single topology-derived answer to "which role yields its GPU when".
 
     Built by :func:`resolve_distributed_resources` from GPU ownership so the
     launcher, collector, and reward runtime read one declarative plan instead of
     each re-deriving ``release_after_*`` from raw device sets. Real behavior reads
-    ``resolved.lifecycle.*``; the only flat mirror left on
-    :class:`ResolvedDistributedResources` is ``rollout_release_after_collect``
-    (logging-only, kept for the plan summary line).
+    ``resolved.lifecycle.*``; no flat release-after-collect mirror is retained.
     """
 
     rollout: ActorLeasePolicy
@@ -161,8 +159,7 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
     # (gpu_pool=trainer + a memory_fraction cap); derive it once here instead of
     # caching a redundant bool on the config struct.
     persistent_colocated = (
-        config.rollout.gpu_pool == "trainer"
-        and config.rollout_gpu_memory_fraction is not None
+        config.rollout.gpu_pool == "trainer" and config.rollout_gpu_memory_fraction is not None
     )
     training = cfg_get(cfg_get(cfg, "distributed", {}), "training", {})
     training_strategy = str(cfg_get(training, "strategy", "single_process"))
@@ -181,9 +178,7 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
     # per-rank-local model ddp uses (SPRINT_symmetric_colocated_ddp), signaled by
     # rollout.gpu_pool=trainer. Only asymmetric fsdp sizes the trainer to the whole
     # world; symmetric fsdp follows the per-rank single-GPU rule like ddp.
-    fsdp_symmetric_colocated = (
-        training_strategy == "fsdp" and config.rollout.gpu_pool == "trainer"
-    )
+    fsdp_symmetric_colocated = training_strategy == "fsdp" and config.rollout.gpu_pool == "trainer"
     fsdp_asymmetric = training_strategy == "fsdp" and not fsdp_symmetric_colocated
     trainer_default_auto = (
         training_world_size if fsdp_asymmetric else (1 if visible_devices else 0)
@@ -265,8 +260,7 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
     )
     if reward_gpus_per_worker > 0 and reward_num_gpus == 0 and reward_num_workers > 0:
         raise ValueError(
-            "distributed.resources.reward requested GPU workers but no reward GPUs "
-            "were resolved",
+            "distributed.resources.reward requested GPU workers but no reward GPUs were resolved",
         )
 
     reward_shared_with_rollout = bool(set(reward_devices) & set(rollout_devices))
@@ -321,9 +315,7 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
     # frees the card by sleep_offload parking inside LocalRewardRuntime. This
     # flag still records the topology fact for the lifecycle plan / log line.
     reward_release_after_score = reward_shared_with_rollout
-    rollout_release_after_collect = (
-        rollout_release_before_train or rollout_release_before_reward_model
-    )
+    rollout_on_demand = rollout_release_before_train or rollout_release_before_reward_model
 
     requires_trainer_reservation = (
         bool(trainer_devices)
@@ -333,11 +325,11 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
         and not config.cross_node
     )
     # One derivation feeds both the named plan and the flat compatibility
-    # fields: a role is on_demand when any handoff can drop it, while the plan
+    # fields: a role is on_demand when any handoff makes it yield, while the plan
     # keeps the specific phase boundary explicit.
     lifecycle = RayLifecyclePlan(
         rollout=ActorLeasePolicy(
-            mode="on_demand" if rollout_release_after_collect else "resident",
+            mode="on_demand" if rollout_on_demand else "resident",
         ),
         reward=ActorLeasePolicy(
             mode="on_demand" if reward_release_after_score else "resident",
@@ -456,7 +448,7 @@ def format_distributed_resource_plan(
         f"cross_node={resolved.cross_node}",
         f"trainer_reservation={resolved.requires_trainer_reservation}",
         # Reading the plan at a glance: lease mode per role + which boundaries
-        # release. resident=stays up, on_demand=released at the handoff.
+        # release. resident=stays active, on_demand=parks at the handoff.
         f"lifecycle=rollout:{resolved.lifecycle.rollout.mode}"
         f"/reward:{resolved.lifecycle.reward.mode}",
         "handoff="
@@ -808,9 +800,7 @@ def _resolve_reward_devices(
         # pool. Removes the footgun where a spelled-out "rollout" kept forcing
         # shared single-GPU churn even on machines with spare GPUs.
         spare_excluded = set(trainer_devices) | set(rollout_devices)
-        spare_pool = tuple(
-            device for device in visible_devices if device not in spare_excluded
-        )
+        spare_pool = tuple(device for device in visible_devices if device not in spare_excluded)
         spare_requested = _requested_role_gpu_count(
             role="reward",
             num_gpus=reward_config.num_gpus,
@@ -1111,8 +1101,7 @@ def _parse_rollout_pool(
             ) from exc
         if not 0.0 < fraction <= 1.0:
             raise ValueError(
-                "distributed.resources.rollout.memory_fraction must be in (0, 1], "
-                f"got {fraction}",
+                f"distributed.resources.rollout.memory_fraction must be in (0, 1], got {fraction}",
             )
         if pool != "trainer":
             raise ValueError(

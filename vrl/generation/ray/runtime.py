@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 from dataclasses import dataclass, replace
 from typing import Any
 
 from vrl.generation.execution.types import DistributedWorkerHandle
+from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import GenerationRuntime
 from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.executor import RayGenerationExecutor
+from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.lifecycle_fsm import RuntimeLifecycle, RuntimePhase
 from vrl.generation.ray.weight_sync import GenerationWeightSync
 from vrl.generation.types import GenerationOutput, GenerationRequest
@@ -21,38 +24,41 @@ from vrl.ray.placement import RolePlacement
 logger = logging.getLogger(__name__)
 
 
-@dataclass(slots=True)
-class _RuntimeLease:
-    """On-demand worker lease: the inner runtime is acquired on generate and
-    dropped on release, so a shared GPU can be handed back between phases.
+@dataclass(frozen=True, slots=True)
+class _PolicySnapshot:
+    """Latest complete trainer state desired by the rollout workers."""
 
-    ``sleep_eligible`` picks the release discipline. When every handoff is an
-    in-driver timeshare (colocated trainer step, in-process reward scoring), the
-    rollout keeps its placement bundle and just vacates the *physical* GPU:
-    release offloads the workers to host RAM and reacquire wakes them — level-1
-    offload-and-restore (cf. vLLM ``sleep_level=1``), saving the per-cycle cold
-    reload of the frozen VAE / text-encoders. Teardown (level-2) remains for
-    leases without a resolved topology, where nothing proves the bundle can be
-    retained.
+    state_ref: Any
+    policy_version: int
+
+
+@dataclass(slots=True)
+class _OnDemandRuntimeState:
+    """Explicit rollout activation state across shared-GPU phase handoffs.
+
+    The schedule activates this runtime before generation and offloads it after
+    generation.  The first activation launches workers; later activations wake the
+    same workers.  ``activation_task`` provides single-flight launch/wake, while
+    ``desired_policy`` records weights published while workers are offloaded.
     """
 
     config: RayGenerationConfig
-    launch_contract: Any
-    gatherer: Any
+    launch_inputs: RayGenerationLaunchInputs
     placement: RolePlacement
-    runtime: RayGenerationRuntime | None = None
-    last_state: Any | None = None
-    sleep_eligible: bool = False
-    asleep: bool = False
+    inner_runtime: RayGenerationRuntime | None = None
+    activation_task: asyncio.Task[RayGenerationRuntime] | None = None
+    desired_policy: _PolicySnapshot | None = None
+    active_policy_version: int | None = None
+    workers_offloaded: bool = False
 
 
 class RayGenerationRuntime(GenerationRuntime):
     """Collector-facing Ray generation runtime.
 
-    One public runtime covers both worker lifecycles:
-    resident workers stay alive for split-GPU throughput and tiny colocated
-    async debug; release-after-collect workers are recreated on demand when a
-    shared GPU needs to be handed back to the trainer or reward model.
+    Resident workers remain GPU-active for split-GPU throughput and bounded
+    colocated debug. Shared-GPU workers launch lazily, remain alive across phase
+    handoffs, and park their model in host RAM while the trainer or in-process
+    reward uses the physical GPU.
     """
 
     def __init__(
@@ -71,13 +77,12 @@ class RayGenerationRuntime(GenerationRuntime):
         self._owned_actors = list(owned_actors or [])
         self._placement_group = placement_group
         self._colocated = bool(colocated)
-        self._release_after_collect: _RuntimeLease | None = None
-        # Behavior-consumed phase machine: generate/update_weights admission,
-        # shutdown idempotency, and expected-kill classification all read it.
+        self._on_demand: _OnDemandRuntimeState | None = None
+        # Rollout schedules own pause/drain. The runtime lifecycle only closes
+        # terminal admission and records the first cleanup-worthy failure.
         self.lifecycle = RuntimeLifecycle()
-        self.lifecycle.transition(RuntimePhase.RUNNING)
-        self._fleet_generation = 1
-        self.requires_driver_model_offload = False
+        self._offload_task: asyncio.Task[None] | None = None
+        self._shutdown_task: asyncio.Task[None] | None = None
         self.current_policy_version: int | None = None
         # Set True by the launcher when every resident worker retains versioned
         # trainable-state slots, which lets the continuous schedule skip the drain
@@ -86,72 +91,125 @@ class RayGenerationRuntime(GenerationRuntime):
         self.supports_non_draining_weight_sync = False
         # Resolved by the startup chunk-size probe on the first request that
         # carries sampling.samples_per_chunk == "auto"; a run-level constant
-        # (same shape + same contract budget), so lease sleep/relaunch cycles
+        # (same shape + same contract budget), so sleep/wake and recovery relaunch
         # never re-probe.
         self._probed_samples_per_chunk: int | None = None
+
+    @classmethod
+    def with_on_demand_activation(
+        cls,
+        config: RayGenerationConfig,
+        launch_inputs: RayGenerationLaunchInputs,
+        *,
+        placement: RolePlacement,
+    ) -> RayGenerationRuntime:
+        """Build a runtime explicitly activated/offloaded by its schedule."""
+        resources = config.resources
+        if resources is None or resources.lifecycle.rollout.mode != "on_demand":
+            raise ValueError(
+                "with_on_demand_activation requires a resolved on-demand rollout lifecycle plan",
+            )
+        contract = GenerationRuntimeLaunchContract.from_value(
+            launch_inputs.launch_contract,
+        )
+        sleep_contract = contract
+        if config.gpus_per_worker > 0:
+            sleep_contract = replace(
+                contract,
+                extra={**contract.extra, "sleep_offload": True},
+            )
+
+        runtime = cls(
+            executor=None,
+        )
+        runtime._on_demand = _OnDemandRuntimeState(
+            config=config,
+            # GPU workers pool their model in CuMemAllocator so offload/activate
+            # release and restore physical pages. CPU-only worker tests keep the
+            # ordinary allocator because there is no CUDA memory to pool.
+            launch_inputs=replace(
+                launch_inputs,
+                launch_contract=sleep_contract,
+            ),
+            placement=placement,
+        )
+        runtime.current_policy_version = contract.policy_version
+        return runtime
 
     @classmethod
     def with_release_after_collect(
         cls,
         config: RayGenerationConfig,
-        launch_contract: Any,
-        gatherer: Any,
+        launch_inputs: RayGenerationLaunchInputs,
         *,
         placement: RolePlacement,
     ) -> RayGenerationRuntime:
-        """Build a runtime that recreates Ray workers between collect phases."""
-        runtime = cls.__new__(cls)
-        runtime.executor = None
-        runtime.weight_sync = object() if config.sync_trainable_state else None
-        runtime._owned_workers = []
-        runtime._owned_actors = []
-        runtime._placement_group = None
-        runtime._colocated = False
-        # Sleep (level-1 offload-and-restore) is safe whenever every phase that
-        # takes the GPU is an in-driver timeshare. Both current handoff consumers
-        # are inline: the colocated trainer, and the in-process LocalRewardRuntime
-        # (remote reward actors were removed with the actor pool) — neither
-        # acquires the lease's Ray placement bundle, they only need the physical
-        # memory, which sleep releases. The old
-        # ``release_before_train and not release_before_reward`` derivation
-        # encoded the deleted reward-actor era, forcing a ~5s cold reload per
-        # cycle where an ~0.8s wake suffices. Teardown remains for configs
-        # without a resolved topology (test specs): no handoff proves a
-        # timeshare, so the bundle is genuinely freed.
-        handoff = config.resources.lifecycle.handoff if config.resources is not None else None
-        sleep_eligible = handoff is not None and (
-            handoff.release_rollout_before_train or handoff.release_rollout_before_reward
-        )
-        runtime._release_after_collect = _RuntimeLease(
-            config=config,
-            # Tell the worker to pool its model in CuMemAllocator so sleep/wake
-            # release+restore GPU physical pages instead of a to(cpu)/to(gpu) round
-            # trip. Only for sleep-eligible leases; teardown leases load normally.
-            launch_contract=_with_sleep_offload(launch_contract) if sleep_eligible else launch_contract,
-            gatherer=gatherer,
+        """Compatibility facade for the former release-after-collect factory."""
+
+        return cls.with_on_demand_activation(
+            config,
+            launch_inputs,
             placement=placement,
-            sleep_eligible=sleep_eligible,
         )
-        runtime.lifecycle = RuntimeLifecycle()
-        runtime.lifecycle.transition(RuntimePhase.RUNNING)
-        runtime._fleet_generation = 0  # no fleet launched yet; first acquire is gen 1
-        runtime.requires_driver_model_offload = config.gpus_per_worker > 0
-        runtime.requires_driver_model_offload = bool(
-            handoff is not None and handoff.release_rollout_before_train,
+
+    @property
+    def requires_driver_model_offload(self) -> bool:
+        """Whether an on-demand rollout must vacate the trainer's physical GPU."""
+
+        state = self._on_demand
+        return bool(
+            state is not None
+            and state.config.allow_driver_gpu_overlap
+            and state.config.gpus_per_worker > 0
         )
-        runtime.current_policy_version = _launch_contract_policy_version(launch_contract)
-        # Lease workers are released between phases, so they cannot retain the
-        # versioned slots required by non-draining continuous weight sync.
-        runtime.supports_non_draining_weight_sync = False
-        runtime._probed_samples_per_chunk = None
-        return runtime
+
+    @property
+    def supports_weight_sync(self) -> bool:
+        """Whether trainer weight pushes have a configured worker consumer.
+
+        An on-demand runtime has no inner ``GenerationWeightSync`` before first
+        use, so capability cannot be inferred from the current handle. Derive it
+        from the normalized launch config; resident runtimes use their live syncer.
+        """
+
+        state = self._on_demand
+        if state is not None:
+            return bool(state.config.sync_trainable_state)
+        return self.weight_sync is not None
+
+    async def activate(self) -> None:
+        """Launch or wake on-demand workers and install the desired policy.
+
+        Schedules call this before admitting generation. Resident runtimes are
+        already active, so activation is a no-op for them.
+        """
+
+        self.lifecycle.require_running("activate")
+        state = self._on_demand
+        if state is None:
+            return None
+        task = state.activation_task
+        if task is not None and task.done():
+            self._activation_finished(state, task)
+            task = None
+        if task is None:
+            task = asyncio.create_task(self._activate_once(state))
+            state.activation_task = task
+            task.add_done_callback(lambda done: self._activation_finished(state, done))
+        try:
+            await asyncio.shield(task)
+        except BaseException:
+            if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
+                await self.shutdown()
+            raise
+        return None
 
     async def generate(self, request: GenerationRequest) -> GenerationOutput:
         self.lifecycle.require_running("generate")
-        runtime = await self._ensure_runtime()
+        runtime = self._active_runtime()
         if request.sampling.get("samples_per_chunk") == "auto":
-            # Resolve BEFORE delegating so the lease's inner runtime (rebuilt
-            # across cycles) never sees "auto"; the facade caches the verdict.
+            # Resolve before delegation so every worker receives an integer. The
+            # facade caches this run-level verdict across offload/onload cycles.
             resolved = await self._resolve_probed_samples_per_chunk(runtime, request)
             request = replace(
                 request,
@@ -173,9 +231,9 @@ class RayGenerationRuntime(GenerationRuntime):
         """Run the startup chunk-size probe once and cache the verdict.
 
         vLLM shape (EngineCore init -> determine_available_memory): sizing runs
-        inside the same launch, before the first real request, user does
-        nothing. Here "startup" is the first generate() because lease-mode
-        workers only exist after _ensure_runtime() launches them lazily. Every
+        inside the same activation, before the first real request, user does
+        nothing. Here "startup" is the first generate() after activate() because
+        on-demand workers only exist after explicit activation. Every
         worker is probed concurrently (seconds each, homogeneous cards give
         equal answers); the fleet answer is the min.
         """
@@ -210,7 +268,9 @@ class RayGenerationRuntime(GenerationRuntime):
                 )
         if refs:
             ray = require_ray()
-            local_results.extend(ray.get(refs, timeout=600))
+            local_results.extend(
+                await asyncio.to_thread(ray.get, refs, timeout=600),
+            )
         resolved = min(int(result["samples_per_chunk"]) for result in local_results)
         for result in local_results:
             logger.info(
@@ -240,13 +300,13 @@ class RayGenerationRuntime(GenerationRuntime):
         yet, so free memory overestimates what rollout may keep.
         """
 
-        state = self._release_after_collect
+        state = self._on_demand
         if state is None or state.config.resources is None:
             return None
         return state.config.resources.rollout_gpu_memory_fraction
 
     def is_colocated(self) -> bool:
-        state = self._release_after_collect
+        state = self._on_demand
         if state is not None:
             if state.config.allow_driver_gpu_overlap:
                 return True
@@ -256,73 +316,211 @@ class RayGenerationRuntime(GenerationRuntime):
 
     async def update_weights(self, state_ref: Any, policy_version: int) -> None:
         self.lifecycle.require_running("update_weights")
-        state = self._release_after_collect
+        state = self._on_demand
         if state is not None:
-            if self.weight_sync is None:
-                raise RuntimeError("RayGenerationRuntime has no generation weight sync")
-            state.last_state = state_ref
-            self.current_policy_version = int(policy_version)
-            # A slept worker holds its model on CPU; don't push onto it now. The
-            # retained ``last_state`` is replayed on wake (mirroring the cold-launch
-            # path), so the awoken worker always serves the latest version.
-            if state.runtime is not None and not state.asleep:
-                await state.runtime.update_weights(state_ref, self.current_policy_version)
+            if not state.config.sync_trainable_state:
+                raise RuntimeError(
+                    "RayGenerationRuntime has no generation weight sync",
+                )
+            activation = state.activation_task
+            if activation is not None and not activation.done():
+                raise RuntimeError(
+                    "update_weights requires rollout activation to be idle; "
+                    "the rollout schedule must pause/drain before syncing",
+                )
+            snapshot = _PolicySnapshot(
+                state_ref=state_ref,
+                policy_version=int(policy_version),
+            )
+            inner_runtime = state.inner_runtime
+            if inner_runtime is not None and not state.workers_offloaded:
+                try:
+                    await inner_runtime.update_weights(
+                        snapshot.state_ref,
+                        snapshot.policy_version,
+                    )
+                except BaseException as error:
+                    await self._quarantine_after_update_failure(error)
+                    raise
+                state.active_policy_version = snapshot.policy_version
+            self._commit_policy_state(state, snapshot)
             return
+
         if self.weight_sync is None:
             raise RuntimeError("RayGenerationRuntime has no GenerationWeightSync")
-        await self.weight_sync.push_to_rollout_workers(state_ref, policy_version)
+        try:
+            await self.weight_sync.push_to_rollout_workers(
+                state_ref,
+                policy_version,
+            )
+        except BaseException as error:
+            await self._quarantine_after_update_failure(error)
+            raise
         self.current_policy_version = int(policy_version)
 
-    async def release(self) -> None:
-        """Release the on-demand workers between phases; generate() reacquires them.
+    async def _quarantine_after_update_failure(self, error: BaseException) -> None:
+        """Close admission and clean a fleet whose installed version is unknown."""
 
-        Sleep-eligible leases (colocated trainer timeshare) offload the live
-        workers to host RAM and keep them alive, so reacquire wakes them without a
-        cold reload. Otherwise the workers are torn down so the placement bundle is
-        free for the next role. No-op for a resident runtime (actors stay up until
-        shutdown()).
+        self.lifecycle.fail(error)
+        try:
+            await self.shutdown()
+        except BaseException as cleanup_error:
+            if cleanup_error is not error:
+                raise cleanup_error from error
+
+    def _commit_policy_state(
+        self,
+        state: _OnDemandRuntimeState,
+        snapshot: _PolicySnapshot,
+    ) -> None:
+        """Publish desired state and version as one accepted snapshot."""
+
+        state.desired_policy = snapshot
+        self.current_policy_version = snapshot.policy_version
+
+    async def offload(self) -> None:
+        """Park explicitly idle on-demand workers between GPU phases.
+
+        The actors and owner-managed placement bundle stay alive; their model
+        weights move to host RAM so the trainer or in-process reward can use the
+        physical GPU. The schedule must drain generation before this call; the
+        next activate() wakes workers and restores the desired policy.
+        Resident runtimes remain a no-op here and keep serving until shutdown().
         """
-        state = self._release_after_collect
-        if state is None:
+        state = self._on_demand
+        if state is None or (state.inner_runtime is None and state.activation_task is None):
             return None
-        runtime = state.runtime
-        if runtime is None:
+        if self.lifecycle.phase is RuntimePhase.TERMINATED:
             return None
-        if state.sleep_eligible:
-            # Idempotent per phase: the collector's pre-reward release and the
-            # schedule's finally can both reach here — a sleeping worker must
-            # not be told to sleep again.
-            if not state.asleep:
-                await runtime.sleep_workers()
-                state.asleep = True
+        if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
+            await self.shutdown()
             return None
-        state.runtime = None
-        await runtime.shutdown()
+        activation = state.activation_task
+        if activation is not None and not activation.done():
+            # A cancelled activate() waiter does not cancel its shielded
+            # launch/wake task. Join that one runtime-owned task so a schedule's
+            # finally block can still park workers without reviving a generic
+            # operation barrier.
+            try:
+                await asyncio.shield(activation)
+            except BaseException:
+                if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
+                    await self.shutdown()
+                raise
+            if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
+                await self.shutdown()
+                return None
+        task = self._offload_task
+        if task is not None and task.done():
+            self._offload_finished(task)
+            task = None
+        if task is None:
+            task = asyncio.create_task(self._offload_once(state))
+            self._offload_task = task
+            task.add_done_callback(self._offload_finished)
+        try:
+            await asyncio.shield(task)
+        except BaseException:
+            # Caller cancellation does not cancel the shared task. A real worker
+            # failure closes admission inside _offload_once and triggers cleanup.
+            if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
+                await self.shutdown()
+            raise
+        if self.lifecycle.phase is RuntimePhase.SHUTTING_DOWN:
+            await self.shutdown()
         return None
+
+    async def release(self) -> None:
+        """Compatibility facade for callers using the former release name."""
+
+        await self.offload()
+
+    def _offload_finished(self, task: asyncio.Task[None]) -> None:
+        if self._offload_task is task:
+            self._offload_task = None
+        if not task.cancelled():
+            task.exception()  # retrieve failures even if every waiter was cancelled
+
+    async def _offload_once(self, state: _OnDemandRuntimeState) -> None:
+        try:
+            if self.lifecycle.phase is not RuntimePhase.RUNNING:
+                return None
+            inner_runtime = state.inner_runtime
+            if inner_runtime is None:
+                return None
+            if not state.workers_offloaded:
+                await inner_runtime.sleep_workers()
+                state.workers_offloaded = True
+            return None
+        except BaseException as error:
+            self.lifecycle.fail(error)
+            raise
 
     async def shutdown(self) -> None:
-        if self.lifecycle.phase in (RuntimePhase.STOPPED, RuntimePhase.FAILED):
-            return None  # terminal shutdown is idempotent
-        if self.lifecycle.phase is not RuntimePhase.DRAINING:
-            self.lifecycle.transition(RuntimePhase.DRAINING)
-        try:
-            await self._teardown_owned_resources()
-        finally:
-            self.lifecycle.transition(RuntimePhase.STOPPED)
+        """Close admission and tear down owned resources exactly once.
+
+        Shielding the shared task keeps cancellation of one caller from
+        cancelling cleanup for every caller. A failed cleanup remains
+        SHUTTING_DOWN and clears the task so a later shutdown call can retry
+        owned resources. The schedule stops and joins generation before calling
+        shutdown; this method only joins runtime-owned activation/offload tasks.
+        """
+
+        if self.lifecycle.phase is RuntimePhase.TERMINATED:
+            return None
+        task = self._shutdown_task
+        if task is not None and task.done():
+            self._shutdown_finished(task)
+            task = None
+        if task is None:
+            self.lifecycle.begin_shutdown()
+            task = asyncio.create_task(self._shutdown_once())
+            self._shutdown_task = task
+            task.add_done_callback(self._shutdown_finished)
+        await asyncio.shield(task)
         return None
 
+    def _shutdown_finished(self, task: asyncio.Task[None]) -> None:
+        if self._shutdown_task is task:
+            self._shutdown_task = None
+        if not task.cancelled():
+            task.exception()  # retrieve failures even if every waiter was cancelled
+
+    async def _shutdown_once(self) -> None:
+        await self._join_control_tasks()
+        try:
+            await self._teardown_owned_resources()
+        except BaseException as error:
+            root_failure = self.lifecycle.failure
+            self.lifecycle.fail(error)
+            if root_failure is not None and root_failure is not error:
+                raise error from root_failure
+            raise
+        self.lifecycle.finish_shutdown()
+
+    async def _join_control_tasks(self) -> None:
+        """Join launch/wake and offload work owned below the schedule boundary."""
+
+        state = self._on_demand
+        tasks = [self._offload_task]
+        if state is not None:
+            tasks.append(state.activation_task)
+        current = asyncio.current_task()
+        pending = [task for task in tasks if task is not None and task is not current]
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
     async def _teardown_owned_resources(self) -> None:
-        lease = self._release_after_collect
-        if lease is not None:
-            # Terminal shutdown is not a phase handoff: even a sleep-eligible
-            # lease must drop its actors instead of retaining an inner runtime
-            # that nothing can wake after the collector releases this facade.
-            runtime = lease.runtime
-            lease.runtime = None
-            lease.asleep = False
-            if runtime is not None:
-                # The inner runtime records expected kills for its own actors.
-                await runtime.shutdown()
+        state = self._on_demand
+        if state is not None:
+            # Terminal shutdown is not a phase handoff: parked actors must be
+            # destroyed instead of retained after the facade becomes unreachable.
+            inner_runtime = state.inner_runtime
+            if inner_runtime is not None:
+                await inner_runtime.shutdown()
+            state.inner_runtime = None
+            state.workers_offloaded = False
+            state.active_policy_version = None
             return None
         if not self._owned_workers and not self._owned_actors and self._placement_group is None:
             return None
@@ -330,18 +528,9 @@ class RayGenerationRuntime(GenerationRuntime):
         doomed = [
             worker.actor for worker in self._owned_workers if worker.actor is not None
         ] + list(self._owned_actors)
-        # Written BEFORE the kills are sent: a death observed concurrently is
-        # classified expected by matching this record, not by phase guesswork.
-        record = self.lifecycle.record_expected_kill(
-            doomed,
-            fleet_generation=self._fleet_generation,
-            reason="runtime shutdown",
-        )
         logger.info(
-            "shutdown %s: killing %d owned actor(s) (fleet_generation=%d)",
-            record.operation_id,
+            "runtime shutdown: killing %d owned actor(s)",
             len(doomed),
-            record.fleet_generation,
         )
         release_refs: list[Any] = []
         for worker in self._owned_workers:
@@ -352,16 +541,39 @@ class RayGenerationRuntime(GenerationRuntime):
                 release_refs.append(actor.release_policy.remote())
         if release_refs:
             with contextlib.suppress(Exception):
-                ray.get(release_refs, timeout=60)
-        kill_actors(
-            ray,
-            [worker.actor for worker in self._owned_workers if worker.actor is not None],
-        )
-        self._owned_workers.clear()
-        kill_actors(ray, self._owned_actors)
-        self._owned_actors.clear()
-        remove_placement_group(self._placement_group)
-        self._placement_group = None
+                await asyncio.to_thread(ray.get, release_refs, timeout=60)
+        worker_actors = [
+            worker.actor for worker in self._owned_workers if worker.actor is not None
+        ]
+        worker_failures = kill_actors(ray, worker_actors)
+        failed_worker_actor_ids = {id(actor) for actor, _ in worker_failures}
+        self._owned_workers[:] = [
+            worker
+            for worker in self._owned_workers
+            if worker.actor is not None and id(worker.actor) in failed_worker_actor_ids
+        ]
+
+        actor_failures = kill_actors(ray, self._owned_actors)
+        failed_actor_ids = {id(actor) for actor, _ in actor_failures}
+        self._owned_actors[:] = [
+            actor for actor in self._owned_actors if id(actor) in failed_actor_ids
+        ]
+
+        placement_failure: Exception | None = None
+        if not worker_failures and not actor_failures:
+            placement_failure = remove_placement_group(self._placement_group)
+            if placement_failure is None:
+                self._placement_group = None
+
+        failures = [error for _, error in (*worker_failures, *actor_failures)]
+        if placement_failure is not None:
+            failures.append(placement_failure)
+        if failures:
+            raise RuntimeError(
+                "Ray runtime cleanup incomplete: "
+                f"{len(worker_failures) + len(actor_failures)} actor kill(s) and "
+                f"{int(placement_failure is not None)} placement-group removal failed",
+            ) from failures[0]
         return None
 
     async def sleep_workers(self) -> None:
@@ -380,7 +592,7 @@ class RayGenerationRuntime(GenerationRuntime):
             if worker.actor is not None
         ]
         if refs:
-            ray.get(refs, timeout=120)
+            await asyncio.to_thread(ray.get, refs, timeout=120)
         return None
 
     async def wake_workers(self) -> None:
@@ -394,70 +606,91 @@ class RayGenerationRuntime(GenerationRuntime):
             if worker.actor is not None
         ]
         if refs:
-            ray.get(refs, timeout=120)
+            await asyncio.to_thread(ray.get, refs, timeout=120)
         return None
 
-    async def _ensure_runtime(self) -> RayGenerationRuntime:
-        state = self._release_after_collect
+    def _active_runtime(self) -> RayGenerationRuntime:
+        state = self._on_demand
         if state is None:
             return self
-        if state.runtime is not None and state.asleep:
-            # Wake the offloaded workers (host RAM -> GPU, no disk reload) and
-            # replay the latest trainable state, the same refresh contract the
-            # cold-launch path below applies after a teardown.
-            await state.runtime.wake_workers()
-            state.asleep = False
-            if state.last_state is not None:
-                await state.runtime.update_weights(
-                    state.last_state,
-                    int(self.current_policy_version),
-                )
-            return state.runtime
-        if state.runtime is None:
+        if state.inner_runtime is None or state.workers_offloaded:
+            raise RuntimeError(
+                "generate requires an active rollout runtime; "
+                "the rollout schedule must await activate() first",
+            )
+        return state.inner_runtime
+
+    def _activation_finished(
+        self,
+        state: _OnDemandRuntimeState,
+        task: asyncio.Task[RayGenerationRuntime],
+    ) -> None:
+        if state.activation_task is task:
+            state.activation_task = None
+        if not task.cancelled():
+            task.exception()  # retrieve failures even if every waiter was cancelled
+
+    async def _activate_once(
+        self,
+        state: _OnDemandRuntimeState,
+    ) -> RayGenerationRuntime:
+        try:
+            if state.inner_runtime is not None and state.workers_offloaded:
+                inner_runtime = state.inner_runtime
+                await inner_runtime.wake_workers()
+                # Record physical truth before applying weights so terminal
+                # cleanup treats a failed restore as an awake runtime.
+                state.workers_offloaded = False
+                desired = state.desired_policy
+                if desired is not None and desired.policy_version != state.active_policy_version:
+                    await inner_runtime.update_weights(
+                        desired.state_ref,
+                        desired.policy_version,
+                    )
+                    state.active_policy_version = desired.policy_version
+                return inner_runtime
+            if state.inner_runtime is not None:
+                return state.inner_runtime
+
             from vrl.generation.ray.launcher import RayGenerationLauncher
 
-            self._fleet_generation += 1
-            runtime = RayGenerationLauncher().launch(
+            candidate = await RayGenerationLauncher().launch_async(
                 state.config,
-                state.launch_contract,
-                state.gatherer,
+                state.launch_inputs.launch_contract,
+                state.launch_inputs.gatherer,
                 placement=state.placement,
             )
-            state.runtime = runtime
-            if state.last_state is not None:
-                await runtime.update_weights(
-                    state.last_state,
-                    int(self.current_policy_version),
-                )
-        return state.runtime
-
-
-def _with_sleep_offload(launch_contract: Any) -> Any:
-    """Return the contract with ``extra["sleep_offload"]`` set so the worker pools
-    its model for cumem sleep/wake. Best-effort: a non-contract test spec that does
-    not normalize is returned unchanged (the worker just takes the naive path)."""
-    from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
-
-    try:
-        contract = GenerationRuntimeLaunchContract.from_value(launch_contract)
-    except (TypeError, ValueError):
-        return launch_contract
-    return replace(contract, extra={**contract.extra, "sleep_offload": True})
-
-
-def _launch_contract_policy_version(launch_contract: Any) -> int | None:
-    from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
-
-    if isinstance(launch_contract, GenerationRuntimeLaunchContract):
-        contract = launch_contract
-    else:
-        try:
-            contract = GenerationRuntimeLaunchContract.from_value(launch_contract)
-        except (TypeError, ValueError):
-            return None
-    if contract.policy_version is None:
-        return None
-    return int(contract.policy_version)
+            try:
+                desired = state.desired_policy
+                if desired is not None:
+                    await candidate.update_weights(
+                        desired.state_ref,
+                        desired.policy_version,
+                    )
+                    state.active_policy_version = desired.policy_version
+                else:
+                    state.active_policy_version = candidate.current_policy_version
+            except BaseException as restore_error:
+                # A candidate is not published until restore succeeds;
+                # clean it here so a failed cold activation cannot leak actors.
+                try:
+                    await candidate.shutdown()
+                except BaseException as cleanup_error:
+                    # Retain ownership when candidate cleanup itself fails. The
+                    # terminal shutdown retry path can now reach the handles.
+                    state.inner_runtime = candidate
+                    state.workers_offloaded = False
+                    logger.error(
+                        "candidate cleanup failed after restore error %r",
+                        restore_error,
+                        exc_info=cleanup_error,
+                    )
+                raise
+            state.inner_runtime = candidate
+            return candidate
+        except BaseException as error:
+            self.lifecycle.fail(error)
+            raise
 
 
 __all__ = ["RayGenerationRuntime"]

@@ -28,7 +28,7 @@ distributed:
   resources:
     rollout:
       # Pin the rollout worker resident on the trainer GPU instead of the normal
-      # single-GPU release-after-collect path. gpu_pool: trainer borrows the
+      # single-GPU activate/offload path. gpu_pool: trainer borrows the
       # trainer GPU (colocated); memory_fraction makes the worker resident and
       # hard-caps its GPU share so it cannot starve the trainer on the shared card
       # (the trainer gets the remaining ~0.45). This is what makes continuous

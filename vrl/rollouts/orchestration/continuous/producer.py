@@ -86,6 +86,7 @@ class ContinuousRolloutProducer:
     async def start(self) -> dict[str, float]:
         phase_times: dict[str, float] = {}
         await self.lifecycle.ensure_initial_weights(phase_times)
+        await self.lifecycle.activate_rollout_runtime(phase_times)
         self.state.running = True
         self._loop_task = asyncio.create_task(self._run())
         return phase_times
@@ -165,11 +166,9 @@ class ContinuousRolloutProducer:
         while True:
             inflight = len(self._inflight)
             ready_items = self.queue.size()
-            self.state.predicted_admit_staleness = (
-                self.scheduler.predicted_landing_staleness(
-                    inflight_count=inflight,
-                    ready_items=ready_items,
-                )
+            self.state.predicted_admit_staleness = self.scheduler.predicted_landing_staleness(
+                inflight_count=inflight,
+                ready_items=ready_items,
             )
             decision = self.scheduler.can_admit(
                 inflight_count=inflight,
@@ -245,8 +244,7 @@ class ContinuousRolloutProducer:
                 self.state.discarded_stale_count += 1
                 if self.runtime_debug:
                     logger.info(
-                        "continuous rollout discarded stale slot "
-                        "(discarded_stale=%d): %s",
+                        "continuous rollout discarded stale slot (discarded_stale=%d): %s",
                         self.state.discarded_stale_count,
                         exc,
                     )
@@ -258,8 +256,7 @@ class ContinuousRolloutProducer:
                 # would otherwise stay invisible until a periodic tick, and the
                 # consumer would only see an opaque wait timeout downstream.
                 logger.warning(
-                    "continuous rollout collect failed (error_count=%d, "
-                    "completed=%d): %s",
+                    "continuous rollout collect failed (error_count=%d, completed=%d): %s",
                     self.state.error_count,
                     self.state.completed_count,
                     exc,

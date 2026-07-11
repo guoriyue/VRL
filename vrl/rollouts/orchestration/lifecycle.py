@@ -124,15 +124,37 @@ class RolloutLifecycle:
                 restore_frozen(self.device)
             empty_cuda_cache()
 
+    async def activate_rollout_runtime(
+        self,
+        phase_times: dict[str, float],
+    ) -> None:
+        with record_phase(phase_times, "rollout.activate_runtime_s"):
+            activate = getattr(self.collector, "activate_runtime", None)
+            if callable(activate):
+                await activate()
+
+    async def offload_rollout_runtime_memory(
+        self,
+        phase_times: dict[str, float],
+    ) -> None:
+        with record_phase(phase_times, "rollout.offload_runtime_s"):
+            offload = getattr(self.collector, "offload_runtime_memory", None)
+            if callable(offload):
+                await offload()
+            empty_cuda_cache()
+
     async def release_rollout_runtime_memory(
         self,
         phase_times: dict[str, float],
     ) -> None:
-        with record_phase(phase_times, "rollout.release_runtime_s"):
-            release = getattr(self.collector, "release_runtime_memory", None)
-            if callable(release):
-                await release()
-            empty_cuda_cache()
+        """Compatibility facade for the former release terminology."""
+
+        await self.offload_rollout_runtime_memory(phase_times)
+
+    def requires_runtime_offload_before_reward(self) -> bool:
+        return bool(
+            getattr(self.collector, "requires_runtime_offload_before_reward", False),
+        )
 
     def _collector_runtime(self) -> Any | None:
         # The collector's `runtime` property raises RuntimeError before

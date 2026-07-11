@@ -32,7 +32,7 @@ class StrictOnPolicyRolloutSchedule:
         group_size: int,
         runtime_debug: bool = False,
     ) -> RolloutIteration:
-        # Schedule-level phases (weight init / offload / collect / release /
+        # Schedule-level phases (weight init / driver offload / activate / collect /
         # sync) are timed into a local dict via the lifecycle's record_phase;
         # the per-request collect stats accumulate into a typed RolloutStats.
         # Both are merged onto the iteration so nothing about the reported
@@ -46,6 +46,7 @@ class StrictOnPolicyRolloutSchedule:
 
         offloaded = self.lifecycle.offload_driver_model_for_rollout(schedule_phases)
         try:
+            await self.lifecycle.activate_rollout_runtime(schedule_phases)
             with record_phase(schedule_phases, "rollout.collect_s"):
                 batches = await collect_prompt_batches(
                     collector=self.lifecycle.collector,
@@ -56,7 +57,7 @@ class StrictOnPolicyRolloutSchedule:
                     stats=stats,
                 )
         finally:
-            await self.lifecycle.release_rollout_runtime_memory(schedule_phases)
+            await self.lifecycle.offload_rollout_runtime_memory(schedule_phases)
             if offloaded:
                 self.lifecycle.restore_driver_model_after_rollout(schedule_phases)
 

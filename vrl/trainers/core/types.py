@@ -365,6 +365,10 @@ class TrainerConfig:
             self.samples_per_chunk,
             path="rollout.samples_per_chunk",
         )
+        if samples_per_chunk < 0:
+            raise ValueError(
+                f"rollout.samples_per_chunk must be >= 0 (got {samples_per_chunk})",
+            )
         if gas < 0:
             raise ValueError(
                 f"actor.gradient_accumulation_steps must be >= 0 (got {gas})",

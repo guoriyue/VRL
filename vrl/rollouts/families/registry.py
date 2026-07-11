@@ -13,10 +13,8 @@ from typing import Any, Literal
 
 from vrl.generation.capabilities import FamilyCapability
 from vrl.generation.diffusion.executor import GENERIC_DIFFUSION_EXECUTOR
-from vrl.generation.ray.launcher import (
-    RayGenerationLauncher,
-    RayGenerationLaunchInputs,
-)
+from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
+from vrl.generation.ray.launcher import RayGenerationLauncher
 from vrl.models.ar.emu3.runtime import EMU3_FAMILY_CAPABILITY
 from vrl.models.ar.glm_image.runtime import GLM_IMAGE_FAMILY_CAPABILITY
 from vrl.models.ar.janus_pro.runtime import (

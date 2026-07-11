@@ -74,7 +74,7 @@ def build_runtime_weight_syncer(
 
     if not callable(getattr(runtime, "update_weights", None)):
         return None
-    if getattr(runtime, "weight_sync", None) is None:
+    if not bool(getattr(runtime, "supports_weight_sync", False)):
         return None
     return RayRuntimeWeightSyncer(
         runtime,
