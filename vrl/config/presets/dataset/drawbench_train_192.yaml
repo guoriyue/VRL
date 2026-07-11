@@ -2,6 +2,9 @@
 data:
   loader: prompt_manifest
   manifest: datasets/drawbench/train_192.txt
+  # Fixed, disjoint 64-prompt grid derived from DrawBench test.txt. The
+  # trustworthy-curve protocol keeps both this list and its seed grid frozen.
+  eval_manifest: datasets/drawbench/eval_64.txt
   preprocessing:
     format: text
     target_text: none

@@ -1,5 +1,12 @@
 {
   "dataset": "drawbench",
+  "eval": {
+    "derivation": "first 64 unique test prompts not exactly present in train_192.txt",
+    "path": "datasets/drawbench/eval_64.txt",
+    "row_count": 64,
+    "train_192_exact_overlap_count": 0,
+    "unique_prompt_count": 64
+  },
   "files": {
     "test": {
       "duplicate_prompt_count": 800,

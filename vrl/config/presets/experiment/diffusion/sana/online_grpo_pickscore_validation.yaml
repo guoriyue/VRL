@@ -11,7 +11,8 @@ defaults:
   - /dataset/pickapic_v2
   - /reward/pickscore
 
-precision: bf16
+# SANA's fp16 checkpoint is the numerically validated linear-attention path.
+precision: fp16
 
 sampling:
   max_sequence_length: 300
