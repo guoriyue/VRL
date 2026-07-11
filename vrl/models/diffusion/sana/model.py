@@ -129,6 +129,21 @@ class SanaModel(LoraModelMixin, DiffusersPipelineModelBase, DiffusionBackboneRun
             text_encoder.to(spec.device, dtype=frozen_dtype)
         # DC-AE decodes in fp32 for output fidelity regardless of denoiser dtype.
         pipeline.vae.to(spec.device, dtype=torch.float32)
+        # SANA is rectified-flow native; diffusers ships DPMSolverMultistep for
+        # fast inference, but flow-matching GRPO's per-step SDE log-prob needs a
+        # FlowMatchEuler scheduler on BOTH sides. The replay bundle already loads
+        # FlowMatchEuler (build.py, no scheduler_classname); the rollout was still
+        # on DPMSolver, so rollout timesteps never matched replay's and
+        # index_for_timestep(t) returned empty at the first-step parity check.
+        # Swap rollout to FlowMatchEuler via from_config so it matches replay
+        # exactly (from_config keeps shift at its default 1.0 — diffusers does not
+        # map SANA's `flow_shift` config key onto `shift`, and the replay loader
+        # lands on the same 1.0, so the two schedules are identical).
+        from diffusers import FlowMatchEulerDiscreteScheduler
+
+        pipeline.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
+            dict(pipeline.scheduler.config),
+        )
         return cls(
             pipeline=pipeline,
             device=spec.device,

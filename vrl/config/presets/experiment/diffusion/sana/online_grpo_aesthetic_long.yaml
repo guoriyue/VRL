@@ -1,0 +1,58 @@
+# SANA 1.6B + aesthetic GRPO — LONG RUN (real aesthetic-improvement curve).
+#
+# Built on the validated seam:
+# - Rollout scheduler is now FlowMatchEuler (sana/model.py from_spec swap), so it
+#   matches the replay scheduler and first-step parity holds (|Δlogp|=5.9e-5).
+# - ppo_epochs 2 + timestep_fraction 0.5 (no streaming: gas=0 so the 8x16 batch
+#   is replayable across ppo epochs) was proven to MOVE the reward in the 8-prompt
+#   overfit validation (eval aesthetic 4.2627 -> 4.2917 -> 4.3166, monotonic).
+# - EMA off so the eval curve tracks the actual policy (no averaging lag).
+#
+# Differences from the overfit validation: full DrawBench train set (192 prompts)
+# + a HELD-OUT eval set (drawbench eval_64, 64 prompts) so the curve judges
+# generalization, not memorization. Eval + checkpoint every epoch (save_freq 1)
+# so the run is judgeable AND resumable on the shared GPU — resume after a kill
+# with `trainer.resume_from=<outputs/sana_aesthetic_long/ckpt dir>`.
+#
+# Run (single GPU): CUDA_VISIBLE_DEVICES=0 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+#   vrl-train --config experiment/diffusion/sana/online_grpo_aesthetic_long
+defaults:
+  - /recipe/online/flow_matching_grpo
+  - /model/diffusion/sana/1600m
+  - /sampling/image/512
+  - /sampling/denoise/10_step_cfg_4_5
+  - /dataset/drawbench_train_192
+  - /reward/aesthetic
+  - _self_
+
+precision: bf16
+
+sampling:
+  max_sequence_length: 300
+
+actor:
+  optim:
+    lr: 3.0e-4
+  gradient_checkpointing: true
+  ppo_epochs: 2
+  timestep_fraction: 0.5
+  ema:
+    enable: false
+
+rollout:
+  n_samples_per_prompt: 16
+  prompts_per_batch: 8
+  samples_per_chunk: 16
+
+trainer:
+  output_dir: outputs/sana_aesthetic_long
+  total_epochs: 20            # ~24 updates/epoch; stop early when the curve plateaus
+  save_freq: 1                # checkpoint every epoch -> resumable on the shared GPU
+  debug:
+    first_step: true          # keep the parity assert live (cheap, one line/epoch)
+  eval:
+    enabled: true
+    freq: 1
+    samples_per_prompt: 2
+    max_prompts: 32           # 64 held-out eval images/point -> low-noise curve
+    seed: 20260711
