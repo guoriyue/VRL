@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import Mapping, Sequence
+from types import SimpleNamespace
 from typing import Any
 
 try:
@@ -15,6 +16,7 @@ except ModuleNotFoundError:  # Ray workers import this module for tiny builders.
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import ChunkResult
 from vrl.generation.ray.config import RayGenerationConfig
+from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.generation.types import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.models.ar.capabilities import ar_discrete_family_capability
@@ -101,9 +103,7 @@ def _launch_contract() -> GenerationRuntimeLaunchContract:
             "device": "cpu",
             "dtype": "float32",
         },
-        runtime_builder=(
-            "tests.generation.ray.test_rollout_launcher:build_tiny_runtime_bundle"
-        ),
+        runtime_builder=("tests.generation.ray.test_rollout_launcher:build_tiny_runtime_bundle"),
         executor_cls="tests.generation.ray.test_rollout_launcher:_TinyChunkExecutor",
         extra={"family_capability": capability.to_dict()},
     )
@@ -250,35 +250,52 @@ def test_launcher_marks_explicit_colocated_persistent_runtime() -> None:
         ray.shutdown()
 
 
-def test_release_after_collect_owner_placement_survives_release() -> None:
-    """Release-after-collect runtime drops workers but never the owner-managed PG."""
+def test_phase_handoff_keeps_actor_and_owner_placement() -> None:
+    """A shared-GPU handoff parks its actor without dropping the owner PG."""
     ray = pytest.importorskip("ray")
 
     ray.shutdown()
     ray.init(ignore_reinit_error=True, include_dashboard=False, num_cpus=2, log_to_driver=False)
     owner = _cpu_rollout_owner(ray)
-    runtime = RayGenerationRuntime.with_release_after_collect(
+    runtime = RayGenerationRuntime.with_on_demand_activation(
         RayGenerationConfig(
             num_workers=1,
             gpus_per_worker=0.0,
             cpus_per_worker=0.5,
             sync_trainable_state=False,
+            resources=SimpleNamespace(
+                rollout_gpus_per_worker=0.0,
+                lifecycle=SimpleNamespace(
+                    rollout=SimpleNamespace(mode="on_demand"),
+                ),
+            ),
         ),
-        _launch_contract(),
-        _Gatherer(),
+        RayGenerationLaunchInputs(
+            launch_contract=_launch_contract(),
+            gatherer=_Gatherer(),
+        ),
         placement=owner.rollout_placement,
     )
     try:
-        # Acquire workers, then release: the underlying runtime is dropped...
-        inner = asyncio.run(runtime._ensure_runtime())
+        # Explicit activation launches workers; offload parks them in place.
+        asyncio.run(runtime.activate())
+        assert runtime._on_demand is not None
+        inner = runtime._on_demand.inner_runtime
+        assert inner is not None
         assert inner._placement_group is None  # inner never owned the PG
-        asyncio.run(runtime.release())
-        assert runtime._release_after_collect is not None
-        assert runtime._release_after_collect.runtime is None
-        # ...but the owner's placement group is untouched and reacquire works.
+        first_actor = inner.executor.workers[0].actor
+        asyncio.run(runtime.offload())
+        assert runtime._on_demand is not None
+        assert runtime._on_demand.inner_runtime is inner
+        assert runtime._on_demand.workers_offloaded is True
+        # The owner's placement group is untouched and activation wakes in place.
         assert owner._placement_group is not None
-        reacquired = asyncio.run(runtime._ensure_runtime())
+        asyncio.run(runtime.activate())
+        reacquired = runtime._on_demand.inner_runtime
+        assert reacquired is not None
         assert [w.worker_id for w in reacquired.executor.workers] == ["rollout-0"]
+        assert reacquired is inner
+        assert reacquired.executor.workers[0].actor is first_actor
     finally:
         asyncio.run(runtime.shutdown())
         owner.shutdown()

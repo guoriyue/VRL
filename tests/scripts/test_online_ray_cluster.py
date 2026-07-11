@@ -1,118 +1,157 @@
-"""Ray cluster ownership tests for the online recipe (fake Ray only)."""
+"""Ray cluster ownership tests for the online recipe, against real Ray.
+
+Every test drives ``online._initialize_ray_cluster`` with the real ``ray``
+module; ownership is observed through ``ray.is_initialized()`` and the
+connected cluster's GCS address instead of recorded fake calls. Error-path
+tests raise before ``ray.init`` and stay in the fast lane; tests that start a
+real cluster are ``slow_test`` (nightly lane). The attach test starts its
+operator cluster in a subprocess and tears it down with the subprocess's own
+``ray.shutdown()`` — never ``ray stop``, which would kill unrelated clusters
+on a shared host.
+"""
 
 from __future__ import annotations
 
+import signal
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
 
 from vrl.scripts.common import online
 
+ray = pytest.importorskip("ray")
 
-class _FakeRay:
-    __version__ = "test-ray"
 
-    def __init__(self, *, initialized: bool = False) -> None:
-        self.initialized = initialized
-        self.init_calls: list[dict[str, str]] = []
-        self.shutdown_calls = 0
-
-    def is_initialized(self) -> bool:
-        return self.initialized
-
-    def init(self, **kwargs):
-        self.init_calls.append(dict(kwargs))
-        self.initialized = True
-        return SimpleNamespace(
-            address_info={
-                "gcs_address": "127.0.0.1:10001",
-                "session_dir": "/tmp/ray/test-session",
-            },
-        )
-
-    def shutdown(self) -> None:
-        self.shutdown_calls += 1
-        self.initialized = False
+@pytest.fixture()
+def isolated_ray():
+    """Real ray with no driver connection before or after the test."""
+    ray.shutdown()
+    yield ray
+    ray.shutdown()
 
 
 def _resources(*, cross_node: bool) -> SimpleNamespace:
     return SimpleNamespace(cross_node=cross_node)
 
 
-def test_local_run_starts_owned_cluster_even_when_environment_has_address() -> None:
-    ray = _FakeRay()
+@pytest.mark.slow_test
+def test_local_run_starts_owned_cluster_even_when_environment_has_address(
+    isolated_ray, monkeypatch
+) -> None:
+    """A stale RAY_ADDRESS (another user's or a dead cluster's) must not hijack
+    a single-node run: 10.0.0.9 is unroutable, so accidentally attaching would
+    fail instead of starting the owned local cluster asserted below."""
+    monkeypatch.setenv("RAY_ADDRESS", "10.0.0.9:6379")
 
     session = online._initialize_ray_cluster(
         _resources(cross_node=False),
-        ray,
+        isolated_ray,
         environ={"RAY_ADDRESS": "10.0.0.9:6379"},
     )
-    session.shutdown()
-    session.shutdown()
 
-    assert ray.init_calls == [{"address": "local"}]
-    assert ray.shutdown_calls == 1
+    assert isolated_ray.is_initialized()
+    session.shutdown()
+    session.shutdown()  # idempotent: the second call must be a no-op
+    assert not isolated_ray.is_initialized()
 
 
 @pytest.mark.parametrize("address", [None, "", "auto", "local"])
-def test_cross_node_requires_concrete_operator_address(address: str | None) -> None:
-    ray = _FakeRay()
+def test_cross_node_requires_concrete_operator_address(
+    isolated_ray, address: str | None
+) -> None:
     environ = {} if address is None else {"RAY_ADDRESS": address}
 
     with pytest.raises(ValueError, match="requires a concrete RAY_ADDRESS"):
         online._initialize_ray_cluster(
             _resources(cross_node=True),
-            ray,
+            isolated_ray,
             environ=environ,
         )
 
-    assert ray.init_calls == []
-    assert ray.shutdown_calls == 0
+    assert not isolated_ray.is_initialized()
 
 
-def test_cross_node_attaches_only_to_explicit_address() -> None:
-    ray = _FakeRay()
+_OPERATOR_HEAD_SCRIPT = """\
+import sys
 
-    session = online._initialize_ray_cluster(
-        _resources(cross_node=True),
-        ray,
-        environ={"RAY_ADDRESS": "10.0.0.1:6379"},
+import ray
+
+context = ray.init(
+    address="local", num_cpus=1, include_dashboard=False, log_to_driver=False
+)
+print(context.address_info["gcs_address"], flush=True)
+sys.stdin.readline()
+ray.shutdown()
+"""
+
+
+@pytest.mark.slow_test
+def test_cross_node_attaches_only_to_explicit_address(isolated_ray) -> None:
+    """Cross-node runs join the operator-owned cluster at the explicit address
+    (never a second local cluster), and session shutdown is disconnect-only:
+    the operator cluster must survive the recipe driver."""
+    head = subprocess.Popen(
+        [sys.executable, "-c", _OPERATOR_HEAD_SCRIPT],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
     )
-    session.shutdown()
+    try:
+        address = head.stdout.readline().strip()
+        assert address, "operator head subprocess failed to start a cluster"
 
-    assert ray.init_calls == [{"address": "10.0.0.1:6379"}]
-    # Ray defines shutdown on an attached driver as disconnect-only.
-    assert ray.shutdown_calls == 1
+        session = online._initialize_ray_cluster(
+            _resources(cross_node=True),
+            isolated_ray,
+            environ={"RAY_ADDRESS": address},
+        )
+
+        assert isolated_ray.is_initialized()
+        assert isolated_ray.get_runtime_context().gcs_address == address
+
+        session.shutdown()
+        assert not isolated_ray.is_initialized()
+
+        # The operator cluster outlived our disconnect: its own driver can
+        # still shut it down cleanly.
+        head.stdin.write("stop\n")
+        head.stdin.flush()
+        assert head.wait(timeout=60) == 0
+    finally:
+        if head.poll() is None:
+            head.kill()
+            head.wait(timeout=30)
 
 
-def test_preinitialized_connection_remains_owned_by_embedding_caller() -> None:
-    ray = _FakeRay(initialized=True)
+@pytest.mark.slow_test
+def test_preinitialized_connection_remains_owned_by_embedding_caller(
+    isolated_ray,
+) -> None:
+    isolated_ray.init(
+        address="local", num_cpus=1, include_dashboard=False, log_to_driver=False
+    )
 
     session = online._initialize_ray_cluster(
         _resources(cross_node=False),
-        ray,
+        isolated_ray,
         environ={},
     )
     session.shutdown()
 
-    assert ray.init_calls == []
-    assert ray.shutdown_calls == 0
+    # The embedding caller's connection must survive the recipe session.
+    assert isolated_ray.is_initialized()
 
 
-def test_ray_init_cannot_steal_cli_signal_handlers() -> None:
-    """ray.init overwrites the driver SIGTERM handler (documented Ray behavior);
-    the recipe must restore the launcher-owned handlers around init."""
-    import signal
+@pytest.mark.slow_test
+def test_ray_init_cannot_steal_cli_signal_handlers(isolated_ray) -> None:
+    """Real ray.init overwrites the driver SIGTERM handler (ray._private.worker
+    documents this); the recipe must restore the launcher-owned handlers
+    around init."""
 
     def cli_handler(signum, frame):  # pragma: no cover - never invoked
         del signum, frame
-
-    class _SignalStealingRay(_FakeRay):
-        def init(self, **kwargs):
-            # Mirror ray._private.worker: install a bare exit handler.
-            signal.signal(signal.SIGTERM, signal.SIG_DFL)
-            signal.signal(signal.SIGINT, signal.SIG_DFL)
-            return super().init(**kwargs)
 
     previous = {
         signal.SIGTERM: signal.getsignal(signal.SIGTERM),
@@ -121,9 +160,13 @@ def test_ray_init_cannot_steal_cli_signal_handlers() -> None:
     try:
         signal.signal(signal.SIGTERM, cli_handler)
         signal.signal(signal.SIGINT, cli_handler)
+
         online._initialize_ray_cluster(
-            _resources(cross_node=False), _SignalStealingRay(), environ={},
+            _resources(cross_node=False),
+            isolated_ray,
+            environ={},
         )
+
         assert signal.getsignal(signal.SIGTERM) is cli_handler
         assert signal.getsignal(signal.SIGINT) is cli_handler
     finally:

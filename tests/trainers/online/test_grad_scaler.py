@@ -46,85 +46,74 @@ def test_needs_grad_scaler_matrix(mixed_precision, device, accelerator, expected
 
 
 # --------------------------------------------------------------------------
-# Fakes for calling OnlineTrainer._clip_and_step in isolation
+# Real cpu GradScaler for calling OnlineTrainer._clip_and_step in isolation:
+# scale(loss).backward() primes genuinely scaled grads, an injected inf grad
+# drives the real backoff path, and the weight itself witnesses stepped/skipped.
 # --------------------------------------------------------------------------
-class _FakeScaler:
-    """Records call order and drives ``get_scale`` from a scripted sequence."""
-
-    def __init__(self, scales, events):
-        self._scales = list(scales)
-        self.events = events
-
-    def unscale_(self, optimizer):
-        self.events.append("unscale")
-
-    def get_scale(self):
-        return self._scales.pop(0) if len(self._scales) > 1 else self._scales[0]
-
-    def step(self, optimizer):
-        self.events.append("step")
-
-    def update(self):
-        self.events.append("update")
-
-
-class _FakeOptimizer:
-    def zero_grad(self):
-        pass
-
-    def step(self):  # pragma: no cover - only the scaler should step here
-        raise AssertionError("optimizer.step must go through the scaler")
-
-
-def _fake_trainer(grad_scaler, max_norm=1.0):
+def _scaler_trainer(*, growth_interval: int = 2000, max_norm: float = 1.0):
     model = nn.Linear(1, 1, bias=False)
-    model.weight.grad = torch.ones_like(model.weight)
-    return SimpleNamespace(
+    with torch.no_grad():
+        model.weight.fill_(1.0)
+    scaler = torch.amp.GradScaler(
+        "cpu", enabled=True, init_scale=1024.0, growth_interval=growth_interval
+    )
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+    scaler.scale(model.weight.sum()).backward()  # grad now carries the 1024 scale
+    trainer = SimpleNamespace(
         config=SimpleNamespace(max_norm=max_norm),
         accelerator=None,
         model=model,
-        _grad_scaler=grad_scaler,
+        _grad_scaler=scaler,
         _strategy=SingleProcessStrategy(),
     )
+    return trainer, optimizer, model
 
 
 # --------------------------------------------------------------------------
 # G2 — unscale_ must happen before clip_grad_norm_ (else clip sees scaled grads)
 # --------------------------------------------------------------------------
 def test_unscale_runs_before_clip(monkeypatch) -> None:
-    events: list[str] = []
-    monkeypatch.setattr(
-        torch.nn.utils,
-        "clip_grad_norm_",
-        lambda *a, **k: (events.append("clip"), torch.tensor(1.0))[1],
-    )
-    scaler = _FakeScaler(scales=[1024.0, 1024.0], events=events)
-    trainer = _fake_trainer(scaler)
+    """The grad magnitude observed inside clip is the ordering witness: the
+    scaled grad reads 1024.0, the unscaled one exactly 1.0."""
+    seen: list[float] = []
 
-    OnlineTrainer._clip_and_step(trainer, _FakeOptimizer())
+    def probe_clip(parameters, max_norm, **kwargs):
+        del max_norm, kwargs
+        seen.extend(float(p.grad.abs().max()) for p in parameters if p.grad is not None)
+        return torch.tensor(1.0)
 
-    assert events.index("unscale") < events.index("clip"), events
+    monkeypatch.setattr(torch.nn.utils, "clip_grad_norm_", probe_clip)
+    trainer, optimizer, _model = _scaler_trainer()
+
+    OnlineTrainer._clip_and_step(trainer, optimizer)
+
+    assert seen == [1.0], seen
 
 
 # --------------------------------------------------------------------------
 # G4 (unit) — stepped reflects whether the scaler applied the update
 # --------------------------------------------------------------------------
 @pytest.mark.parametrize(
-    ("scales", "expected_stepped"),
+    ("inf_grad", "growth_interval", "expected_stepped"),
     [
-        ([1024.0, 512.0], False),   # backoff -> inf/nan skip
-        ([1024.0, 1024.0], True),   # unchanged -> stepped
-        ([1024.0, 2048.0], True),   # growth -> stepped
+        (True, 2000, False),   # inf grad -> real backoff (1024 -> 512), step skipped
+        (False, 2000, True),   # finite, scale unchanged -> stepped
+        (False, 1, True),      # finite, scale grows (1024 -> 2048) -> stepped
     ],
 )
-def test_clip_and_step_reports_skipped(monkeypatch, scales, expected_stepped) -> None:
+def test_clip_and_step_reports_skipped(
+    monkeypatch, inf_grad, growth_interval, expected_stepped
+) -> None:
     monkeypatch.setattr(torch.nn.utils, "clip_grad_norm_", lambda *a, **k: torch.tensor(0.0))
-    scaler = _FakeScaler(scales=scales, events=[])
-    trainer = _fake_trainer(scaler)
+    trainer, optimizer, model = _scaler_trainer(growth_interval=growth_interval)
+    if inf_grad:
+        model.weight.grad.fill_(float("inf"))
 
-    _grad_norm, stepped = OnlineTrainer._clip_and_step(trainer, _FakeOptimizer())
+    _grad_norm, stepped = OnlineTrainer._clip_and_step(trainer, optimizer)
 
     assert stepped is expected_stepped
+    # stepped must reflect what really happened to the weights.
+    assert (model.weight.item() != 1.0) is expected_stepped
 
 
 # --------------------------------------------------------------------------

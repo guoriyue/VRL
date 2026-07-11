@@ -4,6 +4,12 @@ These use awaitable fake refs so completion order is fully controlled — no Ray
 runtime, no slow markers. They pin the Track A contract:
 round_robin keeps plan-time binding bit-for-bit; dynamic binds at dispatch
 time (pull + LPT) and never changes gather order.
+
+The fakes here control event-loop completion ORDER, which real Ray cannot make
+deterministic — they are a controlled clock, not a Ray protocol fake. The
+protocol assumption they encode (real ObjectRefs await directly and resolve to
+the task result) is pinned against a live cluster by the real-Ray twin
+tests/ray/test_ray_actor_pool.py::test_run_actor_jobs_awaits_real_object_refs.
 """
 
 from __future__ import annotations

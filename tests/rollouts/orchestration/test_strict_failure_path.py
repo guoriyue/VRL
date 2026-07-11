@@ -41,8 +41,11 @@ class _RecordingLifecycle:
         self.calls.append("offload")
         return self._offloaded
 
-    async def release_rollout_runtime_memory(self, _phase_times: dict[str, float]) -> None:
-        self.calls.append("release_rollout_runtime_memory")
+    async def activate_rollout_runtime(self, _phase_times: dict[str, float]) -> None:
+        self.calls.append("activate_rollout_runtime")
+
+    async def offload_rollout_runtime_memory(self, _phase_times: dict[str, float]) -> None:
+        self.calls.append("offload_rollout_runtime_memory")
 
     def restore_driver_model_after_rollout(self, _phase_times: dict[str, float]) -> None:
         self.calls.append("restore_driver_model_after_rollout")
@@ -66,9 +69,10 @@ async def test_cleanup_runs_when_collect_raises() -> None:
         await schedule.next_iteration(["a prompt"], group_size=2)
 
     # Both cleanup hooks ran despite the collect failure, in finally order.
-    assert "release_rollout_runtime_memory" in lifecycle.calls
+    assert "activate_rollout_runtime" in lifecycle.calls
+    assert "offload_rollout_runtime_memory" in lifecycle.calls
     assert "restore_driver_model_after_rollout" in lifecycle.calls
-    assert lifecycle.calls.index("release_rollout_runtime_memory") < lifecycle.calls.index(
+    assert lifecycle.calls.index("offload_rollout_runtime_memory") < lifecycle.calls.index(
         "restore_driver_model_after_rollout"
     )
     # Weights were never synced as part of a failed collection.
@@ -85,7 +89,7 @@ async def test_driver_not_restored_when_not_offloaded() -> None:
     with pytest.raises(RuntimeError, match="collect blew up"):
         await schedule.next_iteration(["a prompt"], group_size=2)
 
-    assert "release_rollout_runtime_memory" in lifecycle.calls
+    assert "offload_rollout_runtime_memory" in lifecycle.calls
     assert "restore_driver_model_after_rollout" not in lifecycle.calls
 
 
@@ -109,5 +113,7 @@ class _OkCollector:
     def __init__(self) -> None:
         self.runtime = None
 
-    async def collect_unscored(self, *_args: object, **_kwargs: object) -> object:  # pragma: no cover
+    async def collect_unscored(
+        self, *_args: object, **_kwargs: object
+    ) -> object:  # pragma: no cover
         raise AssertionError("should not be called for empty prompts")

@@ -192,6 +192,9 @@ def _request(samples_per_prompt: int = 10) -> GenerationRequest:
 
 @pytest.fixture
 def fake_cuda(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fixed 24GB-free/32GB-total card. Kept as a fake on purpose: the probe's
+    budget arithmetic asserts exact byte values, which no real GPU can pin
+    (mem_get_info is machine- and load-dependent)."""
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(torch.cuda, "mem_get_info", lambda: (24 * GB, 32 * GB))
     monkeypatch.setattr(torch.cuda, "synchronize", lambda: None)

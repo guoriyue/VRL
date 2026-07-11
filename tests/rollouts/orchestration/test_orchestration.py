@@ -68,6 +68,8 @@ class _Collector:
     def __init__(self, runtime: _Runtime) -> None:
         self.runtime = runtime
         self.calls: list[dict[str, Any]] = []
+        self.activation_calls = 0
+        self.offload_calls = 0
 
     async def collect_unscored(self, prompts, **kwargs):
         prompts = list(prompts)
@@ -77,8 +79,11 @@ class _Collector:
     async def score_rollouts(self, pendings):
         return list(pendings)
 
-    async def release_runtime_memory(self) -> None:
-        self.calls.append({"release_runtime_memory": True})
+    async def activate_runtime(self) -> None:
+        self.activation_calls += 1
+
+    async def offload_runtime_memory(self) -> None:
+        self.offload_calls += 1
 
 
 @pytest.mark.asyncio
@@ -130,3 +135,5 @@ async def test_strict_schedule_collects_and_syncs_with_rollout_metadata() -> Non
     assert iteration.batches[0].context["schedule_mode"] == "strict_on_policy"
     assert len(syncer.calls) == 2
     assert runtime.current_policy_version == 2
+    assert collector.activation_calls == 1
+    assert collector.offload_calls == 1

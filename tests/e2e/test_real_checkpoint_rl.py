@@ -324,9 +324,7 @@ CASES: tuple[RealCheckpointCase, ...] = (
             CheckpointField(
                 cfg_path="model.path",
                 repo_id="circlestone-labs/Anima",
-                required_files=(
-                    "split_files/diffusion_models/anima-preview3-base.safetensors",
-                ),
+                required_files=("split_files/diffusion_models/anima-preview3-base.safetensors",),
                 allow_file=True,
             ),
         ),
@@ -351,12 +349,10 @@ CASES: tuple[RealCheckpointCase, ...] = (
         ),
         min_cuda_memory_gib=28.0,
         replay_runtime_builder=(
-            "vrl.models.diffusion.cosmos.anima.runtime:"
-            "build_anima_replay_runtime_bundle"
+            "vrl.models.diffusion.cosmos.anima.runtime:build_anima_replay_runtime_bundle"
         ),
         replay_runtime_spec_extractor=(
-            "vrl.models.diffusion.cosmos.anima.runtime:"
-            "extract_anima_replay_runtime_spec"
+            "vrl.models.diffusion.cosmos.anima.runtime:extract_anima_replay_runtime_spec"
         ),
         synthetic_replay_rollout=True,
     ),
@@ -369,9 +365,7 @@ CASES: tuple[RealCheckpointCase, ...] = (
             CheckpointField(
                 cfg_path="model.path",
                 repo_id="circlestone-labs/Anima",
-                required_files=(
-                    "split_files/diffusion_models/anima-preview3-base.safetensors",
-                ),
+                required_files=("split_files/diffusion_models/anima-preview3-base.safetensors",),
                 allow_file=True,
             ),
         ),
@@ -396,12 +390,10 @@ CASES: tuple[RealCheckpointCase, ...] = (
         ),
         min_cuda_memory_gib=28.0,
         replay_runtime_builder=(
-            "vrl.models.diffusion.cosmos.anima.runtime:"
-            "build_anima_replay_runtime_bundle"
+            "vrl.models.diffusion.cosmos.anima.runtime:build_anima_replay_runtime_bundle"
         ),
         replay_runtime_spec_extractor=(
-            "vrl.models.diffusion.cosmos.anima.runtime:"
-            "extract_anima_replay_runtime_spec"
+            "vrl.models.diffusion.cosmos.anima.runtime:extract_anima_replay_runtime_spec"
         ),
         synthetic_replay_rollout=True,
     ),
@@ -460,6 +452,9 @@ class _DirectExecutorGenerationRuntime:
         self.executor = executor
         self.current_policy_version = 0
 
+    async def activate(self) -> None:
+        return None
+
     async def generate(self, request: GenerationRequest) -> GenerationOutput:
         rows = build_sample_rows(request)
         with torch.no_grad():
@@ -467,7 +462,7 @@ class _DirectExecutorGenerationRuntime:
             plan = plan_fn(request, rows) if callable(plan_fn) else build_engine_plan(request)
             return self.executor.forward_plan(request, rows, plan)
 
-    async def release(self) -> None:
+    async def offload(self) -> None:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
@@ -506,7 +501,10 @@ class _SyntheticDiffusionReplayCollector:
     async def score_rollouts(self, pendings: Any) -> Any:
         return list(pendings)
 
-    async def release_runtime_memory(self) -> None:
+    async def activate_runtime(self) -> None:
+        return None
+
+    async def offload_runtime_memory(self) -> None:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
@@ -530,8 +528,7 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
     _skip_unless_cuda_has_memory(case.min_cuda_memory_gib)
 
     checkpoint_overrides = [
-        f"{field.cfg_path}={_resolve_checkpoint_path(case, field)}"
-        for field in case.checkpoints
+        f"{field.cfg_path}={_resolve_checkpoint_path(case, field)}" for field in case.checkpoints
     ]
     case_overrides = list(case.overrides)
     if case.reference_image_cfg_path is not None:
@@ -577,7 +574,8 @@ def test_real_checkpoint_online_rl_updates_trainable_weights(
             executor = _build_executor(entry, bundle.model, cfg)
             reward_fn = (
                 build_reward_from_cfg(cfg, built=built, device=str(device))
-                if case.use_config_reward else _IndexReward()
+                if case.use_config_reward
+                else _IndexReward()
             )
             collector = build_collector_from_cfg(
                 cfg,
@@ -913,8 +911,7 @@ def _resolve_checkpoint_path(case: RealCheckpointCase, field: CheckpointField) -
         missing = _missing_required_files(path, field.required_files)
         if missing:
             pytest.skip(
-                f"{env_name} points to an incomplete checkpoint: {path}; "
-                f"missing={missing}",
+                f"{env_name} points to an incomplete checkpoint: {path}; missing={missing}",
             )
         return path
 
@@ -934,11 +931,7 @@ def _resolve_checkpoint_path(case: RealCheckpointCase, field: CheckpointField) -
 
 
 def _checkpoint_env_name(case: RealCheckpointCase, field: CheckpointField) -> str:
-    return (
-        "WM_REAL_CHECKPOINT_"
-        f"{_env_token(case.case_id)}_"
-        f"{_env_token(field.cfg_path)}"
-    )
+    return f"WM_REAL_CHECKPOINT_{_env_token(case.case_id)}_{_env_token(field.cfg_path)}"
 
 
 def _cached_hf_snapshot(
@@ -1023,10 +1016,13 @@ def test_cached_hf_snapshot_handles_cache_miss_and_incomplete_snapshot(
         f"{__name__}.snapshot_download",
         lambda **kwargs: str(incomplete),
     )
-    assert _cached_hf_snapshot(
-        "org/incomplete",
-        required_files=("model_index.json",),
-    ) is None
+    assert (
+        _cached_hf_snapshot(
+            "org/incomplete",
+            required_files=("model_index.json",),
+        )
+        is None
+    )
 
 
 def test_checkpoint_env_override_precedes_hub_lookup(

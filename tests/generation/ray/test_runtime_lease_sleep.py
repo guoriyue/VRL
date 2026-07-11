@@ -1,12 +1,4 @@
-"""Release-after-collect lease sleep/wake FSM (SPRINT_frozen_component_preservation, defect A).
-
-A sleep-eligible lease (colocated trainer timeshare: rollout keeps its placement
-bundle and only vacates the physical GPU) offloads its workers to host RAM on
-release and wakes them on reacquire, instead of tearing them down and cold
-reloading the frozen VAE / text-encoders from disk. A lease that must hand its
-bundle to a reward worker still tears down. These exercise the lease state machine
-directly with a fake inner runtime — no Ray cluster.
-"""
+"""Explicit activation/offload for shared-GPU Ray rollout workers."""
 
 from __future__ import annotations
 
@@ -14,16 +6,21 @@ import asyncio
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
-from vrl.generation.ray.runtime import RayGenerationRuntime
+from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
+from vrl.generation.ray.lifecycle_fsm import RuntimeLifecycleError, RuntimePhase
+from vrl.generation.ray.runtime import RayGenerationRuntime, _PolicySnapshot
+from vrl.trainers.weight_sync import build_runtime_weight_syncer
 
 
 class _FakeInner:
-    """Records the lifecycle calls the lease drives on its inner runtime."""
+    """Record ordered worker operations without requiring a Ray cluster."""
 
     def __init__(self) -> None:
         self.calls: list[Any] = []
-        self.current_policy_version: int | None = None
+        self.current_policy_version: int | None = 0
 
     async def sleep_workers(self) -> None:
         self.calls.append("sleep")
@@ -36,228 +33,568 @@ class _FakeInner:
 
     async def update_weights(self, state_ref: Any, version: int) -> None:
         self.calls.append(("update", state_ref, version))
+        self.current_policy_version = version
 
 
-def _lease_runtime(resources: Any = None) -> RayGenerationRuntime:
-    # SimpleNamespace config: the factory only reads sync_trainable_state /
-    # gpus_per_worker / resources. resources=None -> sleep_eligible derives False;
-    # the FSM tests override state.sleep_eligible directly.
-    config = SimpleNamespace(sync_trainable_state=False, gpus_per_worker=0.0, resources=resources)
-    return RayGenerationRuntime.with_release_after_collect(
+class _BlockingRestoreInner(_FakeInner):
+    def __init__(self) -> None:
+        super().__init__()
+        self.restore_started = asyncio.Event()
+        self.finish_restore = asyncio.Event()
+
+    async def update_weights(self, state_ref: Any, version: int) -> None:
+        self.restore_started.set()
+        await self.finish_restore.wait()
+        await super().update_weights(state_ref, version)
+
+
+class _BlockingWakeInner(_FakeInner):
+    def __init__(self) -> None:
+        super().__init__()
+        self.wake_started = asyncio.Event()
+        self.finish_wake = asyncio.Event()
+
+    async def wake_workers(self) -> None:
+        self.calls.append("wake")
+        self.wake_started.set()
+        await self.finish_wake.wait()
+
+
+class _BlockingSleepInner(_FakeInner):
+    def __init__(self) -> None:
+        super().__init__()
+        self.sleep_started = asyncio.Event()
+        self.finish_sleep = asyncio.Event()
+
+    async def sleep_workers(self) -> None:
+        self.sleep_started.set()
+        await self.finish_sleep.wait()
+        await super().sleep_workers()
+
+
+def _on_demand_resources(*, colocated: bool = True) -> SimpleNamespace:
+    return SimpleNamespace(
+        colocated=colocated,
+        rollout_gpu_memory_fraction=None,
+        lifecycle=SimpleNamespace(
+            rollout=SimpleNamespace(mode="on_demand"),
+        ),
+    )
+
+
+def _launch_contract(*, policy_version: int = 0) -> GenerationRuntimeLaunchContract:
+    return GenerationRuntimeLaunchContract(
+        family="sd3_5",
+        task="t2i",
+        policy_version=policy_version,
+        runtime_builder="tests:runtime_builder",
+        executor_cls="tests:executor_cls",
+    )
+
+
+def _on_demand_runtime(
+    *,
+    sync_trainable_state: bool = True,
+    allow_driver_gpu_overlap: bool = True,
+    gpus_per_worker: float = 0.0,
+) -> RayGenerationRuntime:
+    config = SimpleNamespace(
+        sync_trainable_state=sync_trainable_state,
+        gpus_per_worker=gpus_per_worker,
+        allow_driver_gpu_overlap=allow_driver_gpu_overlap,
+        resources=_on_demand_resources(colocated=allow_driver_gpu_overlap),
+    )
+    return RayGenerationRuntime.with_on_demand_activation(
         config,
-        SimpleNamespace(),  # launch_contract (never launched — runtime is injected)
-        SimpleNamespace(),  # gatherer
+        RayGenerationLaunchInputs(
+            launch_contract=_launch_contract(),
+            gatherer=SimpleNamespace(),
+        ),
         placement=SimpleNamespace(),
     )
 
 
-# -- sleep-eligibility derivation --------------------------------------------
+def _set_desired_policy(
+    runtime: RayGenerationRuntime,
+    state_ref: Any,
+    policy_version: int,
+) -> None:
+    state = runtime._on_demand
+    assert state is not None
+    state.desired_policy = _PolicySnapshot(state_ref, policy_version)
+    runtime.current_policy_version = policy_version
 
 
-def _eligible(*, before_train: bool, before_reward: bool) -> bool:
-    handoff = SimpleNamespace(
-        release_rollout_before_train=before_train,
-        release_rollout_before_reward=before_reward,
+def test_on_demand_factory_stamps_contract_for_cumem_offload() -> None:
+    runtime = _on_demand_runtime(gpus_per_worker=1.0)
+    state = runtime._on_demand
+    assert state is not None
+    assert state.launch_inputs.launch_contract.extra["sleep_offload"] is True
+
+
+def test_on_demand_weight_sync_capability_does_not_require_active_workers() -> None:
+    runtime = _on_demand_runtime()
+    disabled = _on_demand_runtime(sync_trainable_state=False)
+
+    assert runtime.weight_sync is None
+    assert runtime.supports_weight_sync is True
+    assert build_runtime_weight_syncer(runtime) is not None
+    assert disabled.supports_weight_sync is False
+    assert build_runtime_weight_syncer(disabled) is None
+
+
+def test_driver_model_offload_is_derived_from_actual_gpu_overlap() -> None:
+    shared_gpu = _on_demand_runtime(
+        allow_driver_gpu_overlap=True,
+        gpus_per_worker=1.0,
     )
-    resources = SimpleNamespace(lifecycle=SimpleNamespace(handoff=handoff))
-    return _lease_runtime(resources)._release_after_collect.sleep_eligible
-
-
-def test_sleep_eligible_for_any_inline_timeshare_handoff() -> None:
-    """Every current handoff consumer is in-driver (colocated trainer step,
-    in-process LocalRewardRuntime): none of them takes the Ray bundle, so any
-    handoff combination sleeps. Only a missing topology tears down."""
-    assert _eligible(before_train=True, before_reward=False) is True
-    assert _eligible(before_train=True, before_reward=True) is True
-    assert _eligible(before_train=False, before_reward=True) is True
-    # No resolved topology (hand-built specs) -> conservative teardown.
-    assert _lease_runtime(None)._release_after_collect.sleep_eligible is False
-
-
-def test_driver_offload_follows_the_trainer_rollout_handoff() -> None:
-    trainer_handoff = SimpleNamespace(
-        release_rollout_before_train=True,
-        release_rollout_before_reward=False,
+    separate_gpu = _on_demand_runtime(
+        allow_driver_gpu_overlap=False,
+        gpus_per_worker=1.0,
     )
-    reward_only_handoff = SimpleNamespace(
-        release_rollout_before_train=False,
-        release_rollout_before_reward=True,
+    cpu_rollout = _on_demand_runtime(
+        allow_driver_gpu_overlap=True,
+        gpus_per_worker=0.0,
     )
 
-    trainer_runtime = _lease_runtime(
-        SimpleNamespace(lifecycle=SimpleNamespace(handoff=trainer_handoff)),
-    )
-    reward_runtime = _lease_runtime(
-        SimpleNamespace(lifecycle=SimpleNamespace(handoff=reward_only_handoff)),
-    )
-
-    assert trainer_runtime.requires_driver_model_offload is True
-    assert reward_runtime.requires_driver_model_offload is False
+    assert shared_gpu.requires_driver_model_offload is True
+    assert separate_gpu.requires_driver_model_offload is False
+    assert cpu_rollout.requires_driver_model_offload is False
 
 
-def _contract_after_lease(*, before_train: bool, before_reward: bool) -> Any:
-    handoff = SimpleNamespace(
-        release_rollout_before_train=before_train,
-        release_rollout_before_reward=before_reward,
-    )
+@pytest.mark.parametrize("resources", [None, _on_demand_resources()])
+def test_on_demand_factory_requires_on_demand_plan(resources) -> None:
+    if resources is not None:
+        resources.lifecycle.rollout.mode = "resident"
     config = SimpleNamespace(
         sync_trainable_state=False,
         gpus_per_worker=0.0,
-        resources=SimpleNamespace(lifecycle=SimpleNamespace(handoff=handoff)),
+        allow_driver_gpu_overlap=False,
+        resources=resources,
     )
-    contract = GenerationRuntimeLaunchContract(
-        family="sd3_5",
-        task="t2i",
-        policy_version=1,
-        runtime_builder="x:y",
-        executor_cls="x:z",
-    )
-    runtime = RayGenerationRuntime.with_release_after_collect(
-        config, contract, SimpleNamespace(), placement=SimpleNamespace(),
-    )
-    return runtime._release_after_collect.launch_contract
+
+    with pytest.raises(ValueError, match="resolved on-demand"):
+        RayGenerationRuntime.with_on_demand_activation(
+            config,
+            RayGenerationLaunchInputs(
+                launch_contract=_launch_contract(),
+                gatherer=SimpleNamespace(),
+            ),
+            placement=SimpleNamespace(),
+        )
 
 
-def test_sleep_eligible_lease_stamps_contract_for_cumem_offload() -> None:
-    # Sleep-eligible -> the worker is told to pool its model for cumem sleep/wake.
-    contract = _contract_after_lease(before_train=True, before_reward=False)
-    assert contract.extra.get("sleep_offload") is True
-    # Inline reward timeshare sleeps too (no Ray role takes the bundle).
-    contract = _contract_after_lease(before_train=False, before_reward=True)
-    assert contract.extra.get("sleep_offload") is True
+@pytest.mark.asyncio
+async def test_generate_requires_explicit_activation() -> None:
+    runtime = _on_demand_runtime()
+    request = SimpleNamespace(sampling={}, policy_version=None)
+
+    with pytest.raises(RuntimeError, match=r"await activate\(\) first"):
+        await runtime.generate(request)
 
 
-def test_teardown_lease_leaves_contract_unstamped() -> None:
-    # No resolved topology -> teardown lease -> no cumem pooling requested.
-    config = SimpleNamespace(sync_trainable_state=False, gpus_per_worker=0.0, resources=None)
-    contract = GenerationRuntimeLaunchContract(
-        family="sd3_5",
-        task="t2i",
-        policy_version=1,
-        runtime_builder="x:y",
-        executor_cls="x:z",
-    )
-    runtime = RayGenerationRuntime.with_release_after_collect(
-        config, contract, SimpleNamespace(), placement=SimpleNamespace(),
-    )
-    assert "sleep_offload" not in runtime._release_after_collect.launch_contract.extra
-
-
-# -- lease FSM ----------------------------------------------------------------
-
-
-def test_sleep_eligible_release_offloads_and_keeps_runtime() -> None:
-    runtime = _lease_runtime()
-    state = runtime._release_after_collect
+@pytest.mark.asyncio
+async def test_cold_weights_are_staged_then_applied_during_activation(monkeypatch) -> None:
+    runtime = _on_demand_runtime()
+    state = runtime._on_demand
     assert state is not None
-    state.sleep_eligible = True
-    inner = _FakeInner()
-    state.runtime = inner
+    candidate = _FakeInner()
 
-    asyncio.run(runtime.release())
+    class _Launcher:
+        async def launch_async(self, *args, **kwargs):
+            del args, kwargs
+            return candidate
 
-    assert inner.calls == ["sleep"]  # offloaded, not torn down
-    assert state.runtime is inner  # workers stay alive
-    assert state.asleep is True
+    import vrl.generation.ray.launcher as launcher_module
+
+    monkeypatch.setattr(launcher_module, "RayGenerationLauncher", _Launcher)
+    await runtime.update_weights("W2", 2)
+
+    assert state.desired_policy == _PolicySnapshot("W2", 2)
+    assert state.inner_runtime is None
+    await runtime.activate()
+    assert state.inner_runtime is candidate
+    assert state.active_policy_version == 2
+    assert candidate.calls == [("update", "W2", 2)]
 
 
-def test_ensure_runtime_wakes_and_replays_latest_state() -> None:
-    runtime = _lease_runtime()
-    state = runtime._release_after_collect
+@pytest.mark.asyncio
+async def test_offload_keeps_workers_and_activation_wakes_latest_policy() -> None:
+    runtime = _on_demand_runtime()
+    state = runtime._on_demand
     assert state is not None
-    state.sleep_eligible = True
-    state.asleep = True
     inner = _FakeInner()
-    state.runtime = inner
-    state.last_state = "W"
-    runtime.current_policy_version = 5
+    state.inner_runtime = inner
+    state.active_policy_version = 1
 
-    reacquired = asyncio.run(runtime._ensure_runtime())
+    await runtime.offload()
+    await runtime.update_weights("W2", 2)
 
-    assert reacquired is inner  # same workers, no relaunch
-    # Wake from host RAM, then replay the newest trainable state (same refresh
-    # contract the cold-launch path applies after a teardown).
-    assert inner.calls == ["wake", ("update", "W", 5)]
-    assert state.asleep is False
-
-
-def test_update_weights_while_asleep_records_but_does_not_push() -> None:
-    runtime = _lease_runtime()
-    state = runtime._release_after_collect
-    assert state is not None
-    runtime.weight_sync = object()  # lease branch needs a syncer present
-    state.sleep_eligible = True
-    state.asleep = True
-    inner = _FakeInner()
-    state.runtime = inner
-
-    asyncio.run(runtime.update_weights("W2", 7))
-
-    # Recorded for replay-on-wake; NOT pushed onto the slept (CPU-resident) worker.
-    assert state.last_state == "W2"
-    assert runtime.current_policy_version == 7
-    assert inner.calls == []
-
-
-def test_non_sleep_lease_release_still_tears_down() -> None:
-    """Regression: a reward-handoff lease keeps the level-2 teardown path."""
-    runtime = _lease_runtime()
-    state = runtime._release_after_collect
-    assert state is not None
-    state.sleep_eligible = False
-    inner = _FakeInner()
-    state.runtime = inner
-
-    asyncio.run(runtime.release())
-
-    assert inner.calls == ["shutdown"]
-    assert state.runtime is None
-    assert state.asleep is False
-
-
-def test_sleep_eligible_shutdown_terminates_active_runtime() -> None:
-    runtime = _lease_runtime()
-    state = runtime._release_after_collect
-    assert state is not None
-    state.sleep_eligible = True
-    inner = _FakeInner()
-    state.runtime = inner
-
-    asyncio.run(runtime.shutdown())
-
-    assert inner.calls == ["shutdown"]
-    assert state.runtime is None
-    assert state.asleep is False
-
-
-def test_sleep_eligible_shutdown_terminates_asleep_runtime_once() -> None:
-    runtime = _lease_runtime()
-    state = runtime._release_after_collect
-    assert state is not None
-    state.sleep_eligible = True
-    state.asleep = True
-    inner = _FakeInner()
-    state.runtime = inner
-
-    asyncio.run(runtime.shutdown())
-    asyncio.run(runtime.shutdown())
-
-    assert inner.calls == ["shutdown"]
-    assert state.runtime is None
-    assert state.asleep is False
-
-
-def test_release_is_idempotent_within_a_phase() -> None:
-    """Collector pre-reward release + schedule finally must sleep exactly once."""
-    runtime = _lease_runtime()
-    state = runtime._release_after_collect
-    assert state is not None
-    state.sleep_eligible = True
-    inner = _FakeInner()
-    state.runtime = inner
-
-    asyncio.run(runtime.release())
-    asyncio.run(runtime.release())
-
+    assert state.inner_runtime is inner
+    assert state.workers_offloaded is True
+    assert state.desired_policy == _PolicySnapshot("W2", 2)
     assert inner.calls == ["sleep"]
-    assert state.asleep is True
+
+    await runtime.activate()
+    assert state.inner_runtime is inner
+    assert state.workers_offloaded is False
+    assert state.active_policy_version == 2
+    assert inner.calls == ["sleep", "wake", ("update", "W2", 2)]
+
+
+@pytest.mark.asyncio
+async def test_activation_does_not_reinstall_an_already_active_policy() -> None:
+    runtime = _on_demand_runtime()
+    state = runtime._on_demand
+    assert state is not None
+    inner = _FakeInner()
+    state.inner_runtime = inner
+    state.workers_offloaded = True
+    state.active_policy_version = 2
+    _set_desired_policy(runtime, "W2", 2)
+
+    await runtime.activate()
+
+    assert inner.calls == ["wake"]
+    assert state.active_policy_version == 2
+
+
+@pytest.mark.asyncio
+async def test_active_update_publishes_only_after_inner_ack() -> None:
+    runtime = _on_demand_runtime()
+    state = runtime._on_demand
+    assert state is not None
+    _set_desired_policy(runtime, "W1", 1)
+    inner = _BlockingRestoreInner()
+    state.inner_runtime = inner
+    state.active_policy_version = 1
+
+    update = asyncio.create_task(runtime.update_weights("W2", 2))
+    await asyncio.wait_for(inner.restore_started.wait(), timeout=1)
+    assert state.desired_policy == _PolicySnapshot("W1", 1)
+    assert state.active_policy_version == 1
+    assert runtime.current_policy_version == 1
+
+    inner.finish_restore.set()
+    await asyncio.wait_for(update, timeout=1)
+    assert state.desired_policy == _PolicySnapshot("W2", 2)
+    assert state.active_policy_version == 2
+    assert runtime.current_policy_version == 2
+
+
+@pytest.mark.asyncio
+async def test_active_update_failure_preserves_desired_policy_and_terminates() -> None:
+    runtime = _on_demand_runtime()
+    state = runtime._on_demand
+    assert state is not None
+    _set_desired_policy(runtime, "W1", 1)
+    update_error = RuntimeError("worker update failed")
+
+    class _FailingInner(_FakeInner):
+        async def update_weights(self, state_ref: Any, version: int) -> None:
+            del state_ref, version
+            raise update_error
+
+    inner = _FailingInner()
+    state.inner_runtime = inner
+
+    with pytest.raises(RuntimeError, match="worker update failed") as caught:
+        await runtime.update_weights("W2", 2)
+
+    assert caught.value is update_error
+    assert state.desired_policy == _PolicySnapshot("W1", 1)
+    assert runtime.current_policy_version == 1
+    assert runtime.lifecycle.failure is update_error
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+    assert state.inner_runtime is None
+    assert inner.calls == ["shutdown"]
+
+
+@pytest.mark.asyncio
+async def test_update_cleanup_failure_retains_inner_for_retry() -> None:
+    runtime = _on_demand_runtime()
+    state = runtime._on_demand
+    assert state is not None
+    _set_desired_policy(runtime, "W1", 1)
+    update_error = RuntimeError("worker update failed")
+    cleanup_error = RuntimeError("worker cleanup failed")
+
+    class _FailingInner(_FakeInner):
+        shutdown_calls = 0
+
+        async def update_weights(self, state_ref: Any, version: int) -> None:
+            del state_ref, version
+            raise update_error
+
+        async def shutdown(self) -> None:
+            self.shutdown_calls += 1
+            if self.shutdown_calls == 1:
+                raise cleanup_error
+            self.calls.append("shutdown")
+
+    inner = _FailingInner()
+    state.inner_runtime = inner
+
+    with pytest.raises(RuntimeError, match="worker cleanup failed") as caught:
+        await runtime.update_weights("W2", 2)
+    assert caught.value.__cause__ is update_error
+    assert runtime.lifecycle.phase is RuntimePhase.SHUTTING_DOWN
+    assert state.inner_runtime is inner
+
+    await runtime.shutdown()
+    assert inner.shutdown_calls == 2
+    assert state.inner_runtime is None
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+
+
+@pytest.mark.asyncio
+async def test_offload_is_single_flight_and_idempotent() -> None:
+    runtime = _on_demand_runtime()
+    state = runtime._on_demand
+    assert state is not None
+    inner = _BlockingSleepInner()
+    state.inner_runtime = inner
+
+    first = asyncio.create_task(runtime.offload())
+    await asyncio.wait_for(inner.sleep_started.wait(), timeout=1)
+    second = asyncio.create_task(runtime.offload())
+    await asyncio.sleep(0)
+    assert not first.done()
+    assert not second.done()
+
+    inner.finish_sleep.set()
+    await asyncio.wait_for(asyncio.gather(first, second), timeout=1)
+    await runtime.offload()
+    assert inner.calls == ["sleep"]
+    assert state.workers_offloaded is True
+
+
+@pytest.mark.asyncio
+async def test_offload_failure_runs_terminal_cleanup() -> None:
+    runtime = _on_demand_runtime()
+    state = runtime._on_demand
+    assert state is not None
+    offload_error = RuntimeError("sleep failed")
+
+    class _FailingInner(_FakeInner):
+        async def sleep_workers(self) -> None:
+            raise offload_error
+
+    inner = _FailingInner()
+    state.inner_runtime = inner
+
+    with pytest.raises(RuntimeError, match="sleep failed") as caught:
+        await runtime.offload()
+    assert caught.value is offload_error
+    assert runtime.lifecycle.failure is offload_error
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+    assert state.inner_runtime is None
+    assert inner.calls == ["shutdown"]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_cold_activation_launches_and_restores_once(monkeypatch) -> None:
+    runtime = _on_demand_runtime()
+    state = runtime._on_demand
+    assert state is not None
+    _set_desired_policy(runtime, "W", 3)
+    candidate = _BlockingRestoreInner()
+    launch_calls = 0
+
+    class _Launcher:
+        async def launch_async(self, *args, **kwargs):
+            nonlocal launch_calls
+            del args, kwargs
+            launch_calls += 1
+            return candidate
+
+    import vrl.generation.ray.launcher as launcher_module
+
+    monkeypatch.setattr(launcher_module, "RayGenerationLauncher", _Launcher)
+    first = asyncio.create_task(runtime.activate())
+    await asyncio.wait_for(candidate.restore_started.wait(), timeout=1)
+    second = asyncio.create_task(runtime.activate())
+    await asyncio.sleep(0)
+
+    assert launch_calls == 1
+    assert state.inner_runtime is None
+    assert not first.done()
+    assert not second.done()
+
+    candidate.finish_restore.set()
+    await asyncio.wait_for(asyncio.gather(first, second), timeout=1)
+    assert state.inner_runtime is candidate
+    assert state.active_policy_version == 3
+    assert candidate.calls == [("update", "W", 3)]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_activation_wakes_and_restores_once() -> None:
+    runtime = _on_demand_runtime()
+    state = runtime._on_demand
+    assert state is not None
+    inner = _BlockingRestoreInner()
+    state.inner_runtime = inner
+    state.workers_offloaded = True
+    _set_desired_policy(runtime, "W", 3)
+
+    first = asyncio.create_task(runtime.activate())
+    await asyncio.wait_for(inner.restore_started.wait(), timeout=1)
+    assert state.workers_offloaded is False
+    assert state.activation_task is not None
+    second = asyncio.create_task(runtime.activate())
+    await asyncio.sleep(0)
+    assert not first.done()
+    assert not second.done()
+
+    inner.finish_restore.set()
+    await asyncio.wait_for(asyncio.gather(first, second), timeout=1)
+    assert inner.calls == ["wake", ("update", "W", 3)]
+
+
+@pytest.mark.asyncio
+async def test_update_rejects_activation_overlap_while_offload_joins_it(
+    monkeypatch,
+) -> None:
+    runtime = _on_demand_runtime()
+    state = runtime._on_demand
+    assert state is not None
+    _set_desired_policy(runtime, "W1", 1)
+    candidate = _BlockingRestoreInner()
+
+    class _Launcher:
+        async def launch_async(self, *args, **kwargs):
+            del args, kwargs
+            return candidate
+
+    import vrl.generation.ray.launcher as launcher_module
+
+    monkeypatch.setattr(launcher_module, "RayGenerationLauncher", _Launcher)
+    activation = asyncio.create_task(runtime.activate())
+    await asyncio.wait_for(candidate.restore_started.wait(), timeout=1)
+
+    with pytest.raises(RuntimeError, match="activation to be idle"):
+        await runtime.update_weights("W2", 2)
+    offload = asyncio.create_task(runtime.offload())
+    await asyncio.sleep(0)
+    assert not offload.done()
+    assert state.desired_policy == _PolicySnapshot("W1", 1)
+
+    candidate.finish_restore.set()
+    await asyncio.wait_for(asyncio.gather(activation, offload), timeout=1)
+    assert candidate.calls == [("update", "W1", 1), "sleep"]
+    assert state.workers_offloaded is True
+
+
+@pytest.mark.asyncio
+async def test_shutdown_joins_activation_after_waiter_cancellation(monkeypatch) -> None:
+    runtime = _on_demand_runtime()
+    state = runtime._on_demand
+    assert state is not None
+    _set_desired_policy(runtime, "W", 4)
+    candidate = _BlockingRestoreInner()
+
+    class _Launcher:
+        async def launch_async(self, *args, **kwargs):
+            del args, kwargs
+            return candidate
+
+    import vrl.generation.ray.launcher as launcher_module
+
+    monkeypatch.setattr(launcher_module, "RayGenerationLauncher", _Launcher)
+    waiter = asyncio.create_task(runtime.activate())
+    await asyncio.wait_for(candidate.restore_started.wait(), timeout=1)
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+
+    shutdown = asyncio.create_task(runtime.shutdown())
+    await asyncio.sleep(0)
+    assert not shutdown.done()
+    assert "shutdown" not in candidate.calls
+
+    candidate.finish_restore.set()
+    await asyncio.wait_for(shutdown, timeout=1)
+    assert candidate.calls == [("update", "W", 4), "shutdown"]
+    assert state.inner_runtime is None
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+
+
+@pytest.mark.asyncio
+async def test_shutdown_joins_offload_before_teardown() -> None:
+    runtime = _on_demand_runtime()
+    state = runtime._on_demand
+    assert state is not None
+    inner = _BlockingSleepInner()
+    state.inner_runtime = inner
+
+    offload = asyncio.create_task(runtime.offload())
+    await asyncio.wait_for(inner.sleep_started.wait(), timeout=1)
+    shutdown = asyncio.create_task(runtime.shutdown())
+    await asyncio.sleep(0)
+    assert "shutdown" not in inner.calls
+
+    inner.finish_sleep.set()
+    await asyncio.wait_for(asyncio.gather(offload, shutdown), timeout=1)
+    assert inner.calls == ["sleep", "shutdown"]
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+
+
+@pytest.mark.asyncio
+async def test_activation_restore_failure_cleans_candidate_and_terminates(monkeypatch) -> None:
+    runtime = _on_demand_runtime()
+    state = runtime._on_demand
+    assert state is not None
+    _set_desired_policy(runtime, "W", 3)
+    restore_error = RuntimeError("restore failed")
+
+    class _Candidate(_FakeInner):
+        async def update_weights(self, state_ref: Any, version: int) -> None:
+            del state_ref, version
+            raise restore_error
+
+    candidate = _Candidate()
+
+    class _Launcher:
+        async def launch_async(self, *args, **kwargs):
+            del args, kwargs
+            return candidate
+
+    import vrl.generation.ray.launcher as launcher_module
+
+    monkeypatch.setattr(launcher_module, "RayGenerationLauncher", _Launcher)
+    with pytest.raises(RuntimeError, match="restore failed") as caught:
+        await runtime.activate()
+
+    assert caught.value is restore_error
+    assert candidate.calls == ["shutdown"]
+    assert state.inner_runtime is None
+    assert runtime.lifecycle.failure is restore_error
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+
+
+@pytest.mark.asyncio
+async def test_on_demand_shutdown_is_idempotent_for_offloaded_workers() -> None:
+    runtime = _on_demand_runtime()
+    state = runtime._on_demand
+    assert state is not None
+    state.workers_offloaded = True
+    inner = _FakeInner()
+    state.inner_runtime = inner
+
+    await runtime.shutdown()
+    await runtime.shutdown()
+
+    assert inner.calls == ["shutdown"]
+    assert state.inner_runtime is None
+    assert state.workers_offloaded is False
+    assert runtime.lifecycle.phase is RuntimePhase.TERMINATED
+
+
+@pytest.mark.asyncio
+async def test_terminated_runtime_rejects_activation() -> None:
+    runtime = _on_demand_runtime()
+    await runtime.shutdown()
+
+    with pytest.raises(RuntimeLifecycleError, match="terminated"):
+        await runtime.activate()

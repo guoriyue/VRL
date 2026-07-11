@@ -7,9 +7,10 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import torch
 from omegaconf import OmegaConf
 
-from vrl.generation import GenerationOutput
+from tests.generation.ray.test_rollout_launcher import _Gatherer
 from vrl.generation.execution.types import DistributedWorkerHandle
 from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.ray.config import (
@@ -20,6 +21,8 @@ from vrl.generation.ray.launcher import (
     RayGenerationLauncher,
     _all_workers_support_versioned_slots,
 )
+from vrl.models.ar.capabilities import ar_discrete_family_capability
+from vrl.models.diffusion.capabilities import diffusion_family_capability
 from vrl.models.interfaces import RuntimeBuildSpec
 
 
@@ -31,63 +34,16 @@ class _CpuPolicy:
     device = "cpu"
 
 
-class _FakeParameter:
-    def __init__(self, device: str) -> None:
-        self.device = device
-
-
-class _FakeModule:
-    def __init__(self, device: str) -> None:
-        self._parameters = [_FakeParameter(device)]
-
-    def parameters(self) -> list[_FakeParameter]:
-        return self._parameters
-
-
 @dataclass
 class _Bundle:
     model: Any
     trainable_modules: dict[str, Any]
 
 
-class _FakeGatherer:
-    def gather_chunks(self, request: Any, sample_rows: Any, chunks: Any) -> GenerationOutput:
-        del sample_rows, chunks
-        return GenerationOutput(
-            request_id=request.request_id,
-            family=request.family,
-            task=request.task,
-            prompts=list(request.prompts),
-            sample_rows=[],
-            output=None,
-        )
-
-
-class _FakeCapability:
-    trajectory_kind = "diffusion"
-    supports_torch_compile = True
-    supports_reference_conditioning = False
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "family": "sd3_5",
-            "task": "t2i",
-            "trajectory_kind": self.trajectory_kind,
-            "supports_torch_compile": self.supports_torch_compile,
-        }
-
-
-class _FakeArCapability(_FakeCapability):
-    trajectory_kind = "ar_discrete"
-    supports_torch_compile = False
-
-
 def extract_fake_runtime_spec(cfg: Any, device: str, weight_dtype: str) -> RuntimeBuildSpec:
     model_node = OmegaConf.select(cfg, "model")
     model_config = (
-        OmegaConf.to_container(model_node, resolve=True)
-        if OmegaConf.is_config(model_node)
-        else {}
+        OmegaConf.to_container(model_node, resolve=True) if OmegaConf.is_config(model_node) else {}
     )
     return RuntimeBuildSpec(
         model_name_or_path="unit-test",
@@ -104,9 +60,7 @@ def _launch_contract() -> GenerationRuntimeLaunchContract:
     return GenerationRuntimeLaunchContract(
         family="janus_pro",
         task="ar_t2i",
-        runtime_builder=(
-            "tests.generation.ray.test_rollout_launcher:build_tiny_runtime_bundle"
-        ),
+        runtime_builder=("tests.generation.ray.test_rollout_launcher:build_tiny_runtime_bundle"),
         executor_cls="tests.generation.ray.test_rollout_launcher:_TinyChunkExecutor",
     )
 
@@ -115,16 +69,16 @@ def _build_inputs_entry(capability: Any | None = None) -> Any:
     return SimpleNamespace(
         family="sd3_5",
         task="t2i",
-        runtime_builder="tests.generation.ray.test_runtime_config:build_fake_runtime",
-        executor_cls="tests.generation.ray.test_runtime_config:FakeExecutor",
+        runtime_builder=("tests.generation.ray.test_rollout_launcher:build_tiny_runtime_bundle"),
+        executor_cls="tests.generation.ray.test_rollout_launcher:_TinyChunkExecutor",
         runtime_spec_extractor=(
             "tests.generation.ray.test_runtime_config:extract_fake_runtime_spec"
         ),
         gatherer=SimpleNamespace(
-            import_path="tests.generation.ray.test_runtime_config:_FakeGatherer",
+            import_path="tests.generation.ray.test_rollout_launcher:_Gatherer",
             kwargs={},
         ),
-        capability=capability or _FakeCapability(),
+        capability=capability or diffusion_family_capability("sd3_5", "t2i"),
     )
 
 
@@ -225,81 +179,77 @@ def _build_inputs_cfg(
     return OmegaConf.create(cfg)
 
 
-class _SlotActor:
-    """Stand-in Ray actor exposing the versioned-slot capability forwarder."""
+class _SlotWorker:
+    """Real Ray actor exposing the versioned-slot capability query;
+    ``supports=None`` raises like a dead/broken worker."""
 
-    def __init__(self, supports: bool | Exception) -> None:
+    def __init__(self, supports: bool | None) -> None:
         self._supports = supports
 
-        class _Remote:
-            def remote(_self) -> bool:
-                if isinstance(supports, Exception):
-                    raise supports
-                return supports
-
-        self.supports_versioned_trainable_state = _Remote()
+    def supports_versioned_trainable_state(self) -> bool:
+        if self._supports is None:
+            raise RuntimeError("actor dead")
+        return self._supports
 
 
-class _FakeRay:
-    """Minimal ray.get that resolves each fake .remote() eagerly (or re-raises)."""
-
-    @staticmethod
-    def get(refs: Any) -> Any:
-        # refs is the list comprehension already evaluated by the helper; each
-        # fake .remote() returns a plain bool or raised before we got here.
-        return list(refs)
-
-
-def _handles(*supports: bool | Exception) -> list[DistributedWorkerHandle]:
+def _slot_handles(ray: Any, *supports: bool | None) -> list[DistributedWorkerHandle]:
+    actor_cls = ray.remote(num_cpus=0)(_SlotWorker)
     return [
         DistributedWorkerHandle(
             worker_id=f"w{index}",
             node_id="local",
-            actor=_SlotActor(value),
+            actor=actor_cls.remote(value),
         )
         for index, value in enumerate(supports)
     ]
 
 
-def test_runtime_capability_is_and_over_all_workers() -> None:
+@pytest.mark.slow_test
+def test_runtime_capability_is_and_over_all_workers(local_ray) -> None:
     """supports_non_draining_weight_sync derives as the AND of every worker's
     supports_versioned_trainable_state(): all True -> True; any False -> False."""
     weight_sync = object()
 
-    assert _all_workers_support_versioned_slots(
-        _FakeRay(), _handles(True, True), weight_sync=weight_sync
-    ) is True
-    assert _all_workers_support_versioned_slots(
-        _FakeRay(), _handles(True, False), weight_sync=weight_sync
-    ) is False
+    assert (
+        _all_workers_support_versioned_slots(
+            local_ray, _slot_handles(local_ray, True, True), weight_sync=weight_sync
+        )
+        is True
+    )
+    assert (
+        _all_workers_support_versioned_slots(
+            local_ray, _slot_handles(local_ray, True, False), weight_sync=weight_sync
+        )
+        is False
+    )
 
 
-def test_runtime_capability_false_without_weight_sync_or_workers() -> None:
+@pytest.mark.slow_test
+def test_runtime_capability_false_without_weight_sync_or_workers(local_ray) -> None:
     """No weight sync (sync_trainable_state off) or no workers -> safe draining
     barrier (False), never a silent True."""
-    assert _all_workers_support_versioned_slots(
-        _FakeRay(), _handles(True, True), weight_sync=None
-    ) is False
-    assert _all_workers_support_versioned_slots(
-        _FakeRay(), [], weight_sync=object()
-    ) is False
+    assert (
+        _all_workers_support_versioned_slots(
+            local_ray, _slot_handles(local_ray, True, True), weight_sync=None
+        )
+        is False
+    )
+    assert _all_workers_support_versioned_slots(local_ray, [], weight_sync=object()) is False
 
 
-def test_runtime_capability_false_when_a_worker_query_raises() -> None:
-    """A failed capability query must fall back to the safe draining barrier,
-    not crash the launch or optimistically assume support."""
-
-    class _RaisingRay:
-        @staticmethod
-        def get(refs: Any) -> Any:
-            # Force evaluation so the raising .remote() actually fires.
-            return [ref for ref in refs]
-
-    assert _all_workers_support_versioned_slots(
-        _RaisingRay(),
-        _handles(True, RuntimeError("actor dead")),
-        weight_sync=object(),
-    ) is False
+@pytest.mark.slow_test
+def test_runtime_capability_false_when_a_worker_query_raises(local_ray) -> None:
+    """A failed capability query (real ray.get raising RayTaskError) must fall
+    back to the safe draining barrier, not crash the launch or optimistically
+    assume support."""
+    assert (
+        _all_workers_support_versioned_slots(
+            local_ray,
+            _slot_handles(local_ray, True, None),
+            weight_sync=object(),
+        )
+        is False
+    )
 
 
 def test_chunk_placement_strategy_switches_from_cfg() -> None:
@@ -414,7 +364,7 @@ def test_ray_build_inputs_rejects_model_compile_on_family_without_capability() -
                     "mode": "default",
                 },
             ),
-            _build_inputs_entry(_FakeArCapability()),
+            _build_inputs_entry(ar_discrete_family_capability("janus_pro", "ar_t2i")),
             weight_dtype="bfloat16",
         )
 
@@ -422,7 +372,7 @@ def test_ray_build_inputs_rejects_model_compile_on_family_without_capability() -
 @pytest.mark.parametrize(
     ("launch_contract", "gatherer"),
     [
-        pytest.param(None, _FakeGatherer(), id="missing-launch-contract"),
+        pytest.param(None, _Gatherer(), id="missing-launch-contract"),
         pytest.param(_launch_contract(), None, id="missing-gatherer"),
         pytest.param(None, None, id="missing-both"),
     ],
@@ -459,11 +409,12 @@ def test_ray_backend_rejects_driver_cuda_policy_without_overlap() -> None:
     assert "overlaps rollout devices" in DRIVER_CUDA_OWNERSHIP_ERROR
 
 
+@pytest.mark.gpu
 def test_ray_backend_detects_cuda_trainable_module_when_policy_has_no_device() -> None:
     """Checks Ray backend detects cuda trainable module when policy has no device."""
     bundle = _Bundle(
         model=object(),
-        trainable_modules={"transformer": _FakeModule("cuda:0")},
+        trainable_modules={"transformer": torch.nn.Linear(1, 1).to("cuda:0")},
     )
 
     with pytest.raises(ValueError, match=r"resources\.allow_overlap=false"):
@@ -479,8 +430,8 @@ def test_ray_backend_detects_cuda_trainable_module_when_policy_has_no_device() -
 def test_ray_backend_allows_driver_cuda_policy_with_explicit_overlap() -> None:
     """Checks Ray backend allows driver cuda policy with explicit overlap.
 
-    A colocated single-GPU topology derives release-after-collect, so the driver
-    CUDA policy overlapping the rollout GPU is allowed.
+    A colocated single-GPU topology derives on-demand rollout activation, so the
+    driver CUDA policy overlapping the rollout GPU is allowed.
     """
     config = RayGenerationConfig.from_cfg(
         _resource_cfg(

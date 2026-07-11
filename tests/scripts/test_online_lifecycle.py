@@ -12,6 +12,30 @@ from vrl.models.interfaces import ReplayResult
 from vrl.scripts.common import online
 from vrl.scripts.common.types import OnlineRecipeDefinition
 
+ray = pytest.importorskip("ray")
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _module_ray_teardown():
+    """Leave the shared cluster up between tests, close it when the module ends."""
+    yield
+    ray.shutdown()
+
+
+@pytest.fixture()
+def preinitialized_ray():
+    """Shared real local Ray cluster. The recipe sees an is_initialized()
+    driver, takes the embedding-caller ownership branch, and must leave the
+    cluster running — asserted per-test via ray.is_initialized()."""
+    if not ray.is_initialized():
+        ray.init(
+            address="local",
+            num_cpus=2,
+            include_dashboard=False,
+            log_to_driver=False,
+        )
+    yield ray
+
 
 class _FakeModel:
     device = torch.device("cpu")
@@ -118,27 +142,6 @@ class _FakePlacementOwner:
             raise RuntimeError("owner shutdown boom")
 
 
-class _FakeRecipeRay:
-    __version__ = "test-ray"
-
-    def __init__(self, state: dict[str, Any]) -> None:
-        self._state = state
-        self._initialized = False
-
-    def is_initialized(self) -> bool:
-        return self._initialized
-
-    def init(self, **kwargs: Any) -> Any:
-        self._initialized = True
-        self._state["ray_init_calls"].append(dict(kwargs))
-        return SimpleNamespace(address_info={"session_dir": "/tmp/test-ray"})
-
-    def shutdown(self) -> None:
-        self._initialized = False
-        self._state["ray_shutdowns"] += 1
-        self._state["shutdown_order"].append("ray")
-
-
 class _FakeTrainer:
     def __init__(self, state: dict[str, Any], *args: Any, **kwargs: Any) -> None:
         del args, kwargs
@@ -169,8 +172,6 @@ def _state() -> dict[str, Any]:
         "trainer_steps": 0,
         "checkpoint_paths": [],
         "shutdown_order": [],
-        "ray_init_calls": [],
-        "ray_shutdowns": 0,
     }
 
 
@@ -244,8 +245,6 @@ def _install_common_fakes(
         "GlobalRayPlacementOwner",
         lambda *args, **kwargs: _FakePlacementOwner(state, *args, **kwargs),
     )
-    fake_ray = _FakeRecipeRay(state)
-    monkeypatch.setattr(online, "require_ray", lambda: fake_ray)
     monkeypatch.setattr(
         online,
         "build_online_recipe_components",
@@ -292,10 +291,15 @@ def _install_common_fakes(
     return reward
 
 
+@pytest.mark.slow_test
 @pytest.mark.asyncio
 async def test_run_online_recipe_shutdowns_owner_after_success(monkeypatch, tmp_path) -> None:
     state = _state()
     _install_common_fakes(monkeypatch, tmp_path, state)
+    # No preexisting driver: the recipe must start an owned local cluster and
+    # close it on exit. Real Ray cannot append to the shutdown_order ledger, so
+    # the post-run is_initialized() check stands in for the trailing "ray" entry.
+    ray.shutdown()
 
     await online.run_online_recipe(_cfg(), _definition())
 
@@ -307,16 +311,14 @@ async def test_run_online_recipe_shutdowns_owner_after_success(monkeypatch, tmp_
     assert state["schedule_shutdowns"] == 1
     assert state["reward_shutdowns"] == 1
     assert state["owner_shutdowns"] == 1
-    assert state["ray_init_calls"] == [{"address": "local"}]
-    assert state["ray_shutdowns"] == 1
     assert state["shutdown_order"] == [
         "schedule",
         "collector",
         "runtime",
         "reward",
         "owner",
-        "ray",
     ]
+    assert not ray.is_initialized()
 
 
 def test_require_supported_online_strategy_allows_fsdp() -> None:
@@ -367,8 +369,11 @@ def test_require_supported_online_strategy_allows_ddp() -> None:
     online._require_supported_online_strategy(ctx)  # no raise
 
 
+@pytest.mark.slow_test
 @pytest.mark.asyncio
-async def test_rollout_sync_getter_routes_through_strategy(monkeypatch, tmp_path) -> None:
+async def test_rollout_sync_getter_routes_through_strategy(
+    preinitialized_ray, monkeypatch, tmp_path
+) -> None:
     """The recipe binds the rollout sync getter to the strategy, not the raw helper.
 
     Locks sprint P3 ownership: the strategy seam -- not a direct
@@ -406,8 +411,11 @@ async def test_rollout_sync_getter_routes_through_strategy(monkeypatch, tmp_path
     assert len(export_calls) == 1
 
 
+@pytest.mark.slow_test
 @pytest.mark.asyncio
-async def test_run_online_recipe_shutdowns_owner_after_create_failure(monkeypatch, tmp_path) -> None:
+async def test_run_online_recipe_shutdowns_owner_after_create_failure(
+    preinitialized_ray, monkeypatch, tmp_path
+) -> None:
     state = _state()
     state["owner_create_raises"] = True
     _install_common_fakes(monkeypatch, tmp_path, state)
@@ -420,10 +428,14 @@ async def test_run_online_recipe_shutdowns_owner_after_create_failure(monkeypatc
     assert state["launches"] == 0
     assert state["collector_shutdowns"] == 0
     assert state["reward_shutdowns"] == 0
+    # Even on failure, the embedding caller's Ray connection is not ours to close.
+    assert preinitialized_ray.is_initialized()
 
 
+@pytest.mark.slow_test
 @pytest.mark.asyncio
 async def test_run_online_recipe_shutdowns_owner_after_rollout_launch_failure(
+    preinitialized_ray,
     monkeypatch,
     tmp_path,
 ) -> None:
@@ -440,9 +452,11 @@ async def test_run_online_recipe_shutdowns_owner_after_rollout_launch_failure(
     assert state["owner_shutdowns"] == 1
 
 
+@pytest.mark.slow_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["reward", "collector"])
 async def test_run_online_recipe_shutdowns_owner_after_component_build_failure(
+    preinitialized_ray,
     monkeypatch,
     tmp_path,
     failure,
@@ -474,8 +488,10 @@ async def test_run_online_recipe_shutdowns_owner_after_component_build_failure(
     assert reward is not None
 
 
+@pytest.mark.slow_test
 @pytest.mark.asyncio
 async def test_run_online_recipe_shutdowns_owner_after_final_checkpoint_failure(
+    preinitialized_ray,
     monkeypatch,
     tmp_path,
 ) -> None:
@@ -496,8 +512,10 @@ async def test_run_online_recipe_shutdowns_owner_after_final_checkpoint_failure(
     assert state["owner_shutdowns"] == 1
 
 
+@pytest.mark.slow_test
 @pytest.mark.asyncio
 async def test_run_online_recipe_shutdown_errors_do_not_hide_training_error(
+    preinitialized_ray,
     monkeypatch,
     tmp_path,
 ) -> None:
@@ -515,8 +533,10 @@ async def test_run_online_recipe_shutdown_errors_do_not_hide_training_error(
     assert state["owner_shutdowns"] == 1
 
 
+@pytest.mark.slow_test
 @pytest.mark.asyncio
 async def test_run_online_recipe_shutdown_errors_after_success_run_all_cleanups(
+    preinitialized_ray,
     monkeypatch,
     tmp_path,
 ) -> None:

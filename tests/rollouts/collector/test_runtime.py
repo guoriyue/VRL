@@ -78,8 +78,8 @@ class _Runtime:
             trajectory=trajectory,
         )
 
-    async def release(self) -> None:
-        self.events.append("release")
+    async def offload(self) -> None:
+        self.events.append("offload")
 
 
 class _RewardScorer:
@@ -167,14 +167,14 @@ def test_collector_routes_request_through_runtime_reward_and_trajectory_batch() 
     assert batch.training_view is not None
 
 
-def test_collector_releases_runtime_memory_before_reward_scoring() -> None:
-    """Checks collector releases runtime memory before reward scoring."""
+def test_collector_offloads_runtime_memory_before_reward_scoring() -> None:
+    """Checks collector offloads runtime memory before reward scoring."""
     import asyncio
 
     runtime = _Runtime()
     reward_scorer = _RewardScorer(runtime)
     # Shared reward GPU: the lifecycle plan (not the runtime) tells the collector
-    # to drop rollout actors before the reward model scores.
+    # to park rollout GPU memory before the in-process reward model scores.
     lifecycle = RayLifecyclePlan(
         rollout=ActorLeasePolicy(mode="on_demand"),
         reward=ActorLeasePolicy(mode="on_demand"),
@@ -192,11 +192,11 @@ def test_collector_releases_runtime_memory_before_reward_scoring() -> None:
 
     asyncio.run(collector.collect(["p0"], group_size=1))
 
-    assert runtime.events == ["generate", "release", "score"]
+    assert runtime.events == ["generate", "offload", "score"]
 
 
-def test_collector_does_not_release_runtime_memory_before_independent_reward() -> None:
-    """Checks collector does not release runtime memory before independent reward."""
+def test_collector_does_not_offload_runtime_before_independent_reward() -> None:
+    """Checks collector keeps rollout active for an independent reward."""
     import asyncio
 
     runtime = _Runtime()
@@ -270,10 +270,18 @@ def test_reward_scorer_score_many_uses_one_call_and_splits_per_group() -> None:
     assert len(reward_fn.score_batch_calls) == 1
     rollouts = reward_fn.score_batch_calls[0]
     assert [r.trajectory.prompt for r in rollouts] == [
-        "g0-a", "g0-b", "g1-a", "g1-b", "g1-c",
+        "g0-a",
+        "g0-b",
+        "g1-a",
+        "g1-b",
+        "g1-c",
     ]
     assert [r.metadata["target_text"] for r in rollouts] == [
-        "group-0", "group-0", "group-1", "group-1", "group-1",
+        "group-0",
+        "group-0",
+        "group-1",
+        "group-1",
+        "group-1",
     ]
     # Scores split back by group size, in order.
     assert rewards[0].tolist() == [0.0, 1.0]

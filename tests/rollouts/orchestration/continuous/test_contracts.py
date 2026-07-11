@@ -86,6 +86,9 @@ class _Lifecycle:
     async def ensure_initial_weights(self, phase_times: dict[str, float]) -> None:
         del phase_times
 
+    async def activate_rollout_runtime(self, phase_times: dict[str, float]) -> None:
+        del phase_times
+
 
 def _producer(
     collector: Any,
@@ -418,7 +421,9 @@ async def test_consumer_consumes_stale_items_within_bound() -> None:
     queue.put(_item(1, group_key=1, version=1))
 
     iteration = await _drain(
-        _consumer(queue, max_stale=1), min_groups=2, current_version=2,
+        _consumer(queue, max_stale=1),
+        min_groups=2,
+        current_version=2,
     )
 
     assert iteration.policy_version == 1
@@ -522,7 +527,9 @@ async def test_consumer_aggregates_item_phase_times() -> None:
     )
 
     iteration = await _drain(
-        _consumer(queue, max_stale=0), min_groups=2, current_version=1,
+        _consumer(queue, max_stale=0),
+        min_groups=2,
+        current_version=1,
     )
 
     assert iteration.stats.as_phase_dict()["collect.engine_generate"] == 4.0

@@ -1,6 +1,6 @@
 """GenerationWorkerCore sleep/wake (SPRINT_frozen_component_preservation, defect A).
 
-Level-1 offload-and-restore for the release-after-collect lease: ``sleep`` parks
+Level-1 offload-and-restore for on-demand activation: ``sleep`` parks
 the loaded model on host RAM (transformer via ``nn.Module.to`` plus the frozen
 VAE / text-encoders via ``move_frozen_components``) while keeping the executor
 alive, and ``wake`` restores it onto the captured GPU without a cold reload. This
@@ -51,7 +51,14 @@ class _Executor:
 
 
 class _FakeCuMem:
-    """Stand-in for vLLM's CuMemAllocator: records pool/sleep/wake calls."""
+    """Stand-in for vLLM's CuMemAllocator: records pool/sleep/wake calls.
+
+    Kept as a fake on purpose: the real allocator needs vLLM installed plus a
+    CUDA context (virtual-memory paging), neither available in the CPU lane.
+    The allocator-missing branch is tested for real via
+    test_sleep_offload_requires_cumem; a memory-effect twin belongs in a
+    vLLM-equipped GPU lane when one exists.
+    """
 
     def __init__(self) -> None:
         self.pool_tags: list[Any] = []
@@ -193,7 +200,7 @@ def test_load_policy_falls_back_when_cumem_unavailable(monkeypatch) -> None:
 
 
 def test_load_policy_does_not_pool_without_sleep_offload(monkeypatch) -> None:
-    """A teardown-lease / resident worker never enters the cumem pool."""
+    """A resident worker without phase parking never enters the cumem pool."""
     import vrl.utils.cuda_memory as cuda_memory_mod
 
     called: list[bool] = []

@@ -51,7 +51,12 @@ def test_reward_class_uses_inline_transport() -> None:
 
 
 class _FakeCumemAllocator:
-    """Records pool/sleep/wake calls (the cumem contract, no CUDA needed)."""
+    """Records pool/sleep/wake calls (the cumem contract, no CUDA needed).
+
+    Kept as a fake on purpose: the real allocator needs vLLM installed plus a
+    CUDA context; a memory-effect twin belongs in a vLLM-equipped GPU lane
+    when one exists (the allocator-missing branch is already tested for real).
+    """
 
     def __init__(self) -> None:
         self.pool_tags: list[str] = []

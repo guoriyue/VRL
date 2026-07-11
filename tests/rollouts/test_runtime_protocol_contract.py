@@ -11,27 +11,30 @@ from types import SimpleNamespace
 
 import pytest
 
+from vrl.generation.launch_contract import GenerationRuntimeLaunchContract
 from vrl.generation.protocols import PolicyVersionProvider
 from vrl.generation.ray.config import RayGenerationConfig
+from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.runtime import RayGenerationRuntime
 from vrl.ray.placement import RolePlacement
-from vrl.ray.resources import PhaseHandoffPolicy
+from vrl.ray.resources import ActorLeasePolicy, PhaseHandoffPolicy, RayLifecyclePlan
 from vrl.trainers.weight_sync import RayRuntimeWeightSyncer, WeightSyncer
 
 
-def _release_after_collect_runtime(
+def _on_demand_runtime(
     *,
     allow_driver_gpu_overlap: bool = False,
     colocated: bool = False,
 ) -> RayGenerationRuntime:
     config = RayGenerationConfig(
         allow_driver_gpu_overlap=allow_driver_gpu_overlap,
-        # lifecycle.handoff is read by with_release_after_collect to decide
-        # sleep-vs-teardown leases; the real PhaseHandoffPolicy keeps this fake
-        # from drifting when the handoff contract changes.
+        # Use the real lifecycle types so the fixture cannot omit the canonical
+        # on-demand selection that production resolves from shared-GPU topology.
         resources=SimpleNamespace(
             colocated=colocated,
-            lifecycle=SimpleNamespace(
+            lifecycle=RayLifecyclePlan(
+                rollout=ActorLeasePolicy(mode="on_demand"),
+                reward=ActorLeasePolicy(mode="resident"),
                 handoff=PhaseHandoffPolicy(
                     release_rollout_before_train=True,
                     release_rollout_before_reward=True,
@@ -40,10 +43,17 @@ def _release_after_collect_runtime(
             ),
         ),
     )
-    return RayGenerationRuntime.with_release_after_collect(
+    return RayGenerationRuntime.with_on_demand_activation(
         config,
-        launch_contract=SimpleNamespace(policy_version=None),
-        gatherer=object(),
+        RayGenerationLaunchInputs(
+            launch_contract=GenerationRuntimeLaunchContract(
+                family="test",
+                task="test",
+                runtime_builder="tests:runtime_builder",
+                executor_cls="tests:executor_cls",
+            ),
+            gatherer=object(),
+        ),
         placement=RolePlacement(
             placement_group=object(),
             bundle_indices=(),
@@ -74,8 +84,8 @@ def test_persistent_runtime_is_not_colocated() -> None:
         (False, False, False),
     ],
 )
-def test_release_after_collect_runtime_colocation(overlap, colocated, expected) -> None:
-    runtime = _release_after_collect_runtime(
+def test_on_demand_runtime_colocation(overlap, colocated, expected) -> None:
+    runtime = _on_demand_runtime(
         allow_driver_gpu_overlap=overlap,
         colocated=colocated,
     )
@@ -87,9 +97,15 @@ def test_release_after_collect_runtime_colocation(overlap, colocated, expected) 
 # --------------------------------------------------------------------------
 def test_runtimes_satisfy_policy_version_provider() -> None:
     persistent = RayGenerationRuntime(executor=object())
-    release_after_collect = _release_after_collect_runtime()
+    on_demand = _on_demand_runtime()
     assert isinstance(persistent, PolicyVersionProvider)
-    assert isinstance(release_after_collect, PolicyVersionProvider)
+    assert isinstance(on_demand, PolicyVersionProvider)
+
+
+def test_runtimes_expose_explicit_activation_and_offload() -> None:
+    runtime = _on_demand_runtime()
+    assert callable(runtime.activate)
+    assert callable(runtime.offload)
 
 
 def test_weight_syncer_reports_its_runtime_version() -> None:

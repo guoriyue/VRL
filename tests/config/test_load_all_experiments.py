@@ -329,6 +329,7 @@ def test_rollout_orchestration_group_override_uses_rollout_namespace() -> None:
     assert typed.schedule_mode == "continuous"
 
 
+
 def test_sd35_single_gpu_async_debug_uses_persistent_colocated_rollout() -> None:
     """Checks the single-GPU async debug recipe opts into colocated continuous rollout."""
     from vrl.ray.resources import resolve_distributed_resources

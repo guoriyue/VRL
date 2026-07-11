@@ -19,7 +19,7 @@ from vrl.trainers.weight_sync import (
 class _RuntimeWithSync:
     def __init__(self) -> None:
         self.current_policy_version = 0
-        self.weight_sync = object()
+        self.supports_weight_sync = True
         self.calls: list[tuple[dict[str, Any], int]] = []
 
     async def update_weights(self, state_ref: dict[str, Any], policy_version: int) -> None:
@@ -28,6 +28,8 @@ class _RuntimeWithSync:
 
 
 class _RuntimeWithoutSync:
+    supports_weight_sync = False
+
     async def update_weights(self, state_ref: dict[str, Any], policy_version: int) -> None:
         del state_ref, policy_version
 
@@ -55,6 +57,7 @@ def test_ray_runtime_weight_syncer_pushes_cpu_state_with_monotonic_versions() ->
 
 def test_ray_runtime_weight_syncer_serializes_concurrent_push_versions() -> None:
     """Checks Ray runtime weight syncer serializes concurrent push versions."""
+
     class _SlowRuntime(_RuntimeWithSync):
         async def update_weights(self, state_ref: dict[str, Any], policy_version: int) -> None:
             await asyncio.sleep(0)
@@ -75,8 +78,8 @@ def test_ray_runtime_weight_syncer_serializes_concurrent_push_versions() -> None
     assert runtime.current_policy_version == 2
 
 
-def test_build_runtime_weight_syncer_requires_runtime_weight_sync_handle() -> None:
-    """Checks build runtime weight syncer requires runtime weight sync handle."""
+def test_build_runtime_weight_syncer_requires_explicit_runtime_capability() -> None:
+    """Checks the adapter reads capability instead of a current inner handle."""
     assert build_runtime_weight_syncer(_RuntimeWithSync()) is not None
     assert build_runtime_weight_syncer(_RuntimeWithoutSync()) is None
 

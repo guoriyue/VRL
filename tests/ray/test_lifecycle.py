@@ -17,8 +17,11 @@ def test_actor_cleanup_failure_is_logged(caplog) -> None:
             raise RuntimeError("kill failed")
 
     with caplog.at_level(logging.WARNING, logger="vrl.ray.lifecycle"):
-        kill_actors(_Ray(), ["actor-1"])
+        failures = kill_actors(_Ray(), ["actor-1"])
 
+    assert len(failures) == 1
+    assert failures[0][0] == "actor-1"
+    assert isinstance(failures[0][1], RuntimeError)
     assert "Failed to kill owned Ray actor 'actor-1'" in caplog.text
     assert "kill failed" in caplog.text
 
@@ -35,7 +38,8 @@ def test_placement_cleanup_failure_is_logged(monkeypatch, caplog) -> None:
     )
 
     with caplog.at_level(logging.WARNING, logger="vrl.ray.lifecycle"):
-        remove_placement_group("pg-1")
+        failure = remove_placement_group("pg-1")
 
+    assert isinstance(failure, RuntimeError)
     assert "Failed to remove owned Ray placement group 'pg-1'" in caplog.text
     assert "remove failed" in caplog.text

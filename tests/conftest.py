@@ -74,6 +74,26 @@ def pytest_collection_modifyitems(config, items):
                 item.add_marker(skip_optional)
 
 
+@pytest.fixture()
+def local_ray():
+    """Real local Ray cluster (small, CPU-only) for real-Ray unit tests.
+
+    ``address="local"`` always starts a fresh cluster, so an operator cluster
+    already running on the host is never hijacked; teardown disconnects and
+    stops only the processes this driver spawned (never ``ray stop``).
+    """
+    ray = pytest.importorskip("ray")
+    ray.shutdown()
+    ray.init(
+        address="local",
+        num_cpus=2,
+        include_dashboard=False,
+        log_to_driver=False,
+    )
+    yield ray
+    ray.shutdown()
+
+
 @pytest.fixture(autouse=True)
 def _propagate_vrl_logs():
     """vrl.utils.logging sets propagate=False on the "vrl" logger so production

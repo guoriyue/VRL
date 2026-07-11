@@ -19,7 +19,13 @@ from vrl.math.diffusion.flow_matching import sde_step_with_logprob
 
 
 class _FakeScheduler:
-    """Minimal scheduler: a fixed descending sigma table plus timesteps."""
+    """Minimal scheduler: a fixed descending sigma table plus timesteps.
+
+    Kept as a fake on purpose: it injects hand-paired EDM/flow sigma tables —
+    a real flow scheduler never produces sigma_max > 1 at runtime, and the
+    exact table pairing IS the isomorphism under test. The real
+    FlowMatchEulerDiscreteScheduler is exercised directly further down.
+    """
 
     def __init__(self, sigmas: torch.Tensor) -> None:
         self.sigmas = sigmas

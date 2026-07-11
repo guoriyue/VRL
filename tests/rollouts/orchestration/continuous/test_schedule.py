@@ -73,6 +73,8 @@ class _Collector:
     def __init__(self, runtime: _Runtime) -> None:
         self.runtime = runtime
         self.calls: list[dict[str, Any]] = []
+        self.activation_calls = 0
+        self.offload_calls = 0
 
     async def collect_unscored(self, prompts: Any, **kwargs: Any) -> RolloutBatch:
         prompts = list(prompts)
@@ -82,8 +84,11 @@ class _Collector:
     async def score_rollouts(self, pendings: Any) -> list[RolloutBatch]:
         return list(pendings)
 
-    async def release_runtime_memory(self) -> None:
-        self.calls.append({"release_runtime_memory": True})
+    async def activate_runtime(self) -> None:
+        self.activation_calls += 1
+
+    async def offload_runtime_memory(self) -> None:
+        self.offload_calls += 1
 
 
 def _continuous_config(**continuous: Any) -> SimpleNamespace:
@@ -215,6 +220,7 @@ async def test_continuous_drains_full_homogeneous_iteration() -> None:
         assert iteration.prompt_count == 2
         assert iteration.sample_count == 4
         assert len(iteration.batches) == 2
+        assert collector.activation_calls == 1
         group_ids = sorted(int(b.group_ids[0]) for b in iteration.batches)
         assert group_ids == [0, 1]
         assert all(b.context["rollout_policy_version"] == 1 for b in iteration.batches)
@@ -319,6 +325,17 @@ async def test_rejects_colocated_runtime() -> None:
     schedule = _build(_continuous_config(), _Collector(runtime), None)
 
     with pytest.raises(RuntimeError, match="separate trainer and rollout GPU"):
+        await schedule.next_iteration(["p0"], group_size=1)
+
+
+@pytest.mark.asyncio
+async def test_rejects_mid_iteration_reward_offload() -> None:
+    runtime = _Runtime()
+    collector = _Collector(runtime)
+    collector.requires_runtime_offload_before_reward = True
+    schedule = _build(_continuous_config(), collector, _Syncer(runtime))
+
+    with pytest.raises(RuntimeError, match=r"does not offload.*mid-iteration"):
         await schedule.next_iteration(["p0"], group_size=1)
 
 
