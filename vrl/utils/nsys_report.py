@@ -157,7 +157,6 @@ class IdleGap:
 
     start: int = field()
     end: int = field()
-    device_id: int = field()
     api_breakdown: tuple[ApiSpan, ...] = field()
     memcpy_ns: int = field()
     memcpy_bytes: int = field()
@@ -181,7 +180,6 @@ class NvtxBusy:
     occurrences: int = field()
     summed_wall_ns: int = field()
     union_busy_ns: int = field()
-    device_id: int = field()
 
     @property
     def busy_fraction(self) -> float:
@@ -383,7 +381,6 @@ def _idle_gaps(
     conn: sqlite3.Connection,
     busy_intervals: Sequence[Interval],
     window: Interval,
-    device_id: int,
     *,
     top: int,
     min_gap_ns: int,
@@ -415,7 +412,6 @@ def _idle_gaps(
             IdleGap(
                 start=start,
                 end=end,
-                device_id=device_id,
                 api_breakdown=tuple(api),
                 memcpy_ns=memcpy_ns,
                 memcpy_bytes=memcpy_bytes,
@@ -427,7 +423,6 @@ def _idle_gaps(
 def _nvtx_attribution(
     conn: sqlite3.Connection,
     kernels: Sequence[Interval],
-    device_id: int,
     *,
     top: int,
 ) -> list[NvtxBusy]:
@@ -461,7 +456,6 @@ def _nvtx_attribution(
                 occurrences=len(spans),
                 summed_wall_ns=summed_wall,
                 union_busy_ns=union_length(clipped),
-                device_id=device_id,
             )
         )
     out.sort(key=lambda n: n.summed_wall_ns, reverse=True)
@@ -539,8 +533,8 @@ def analyze(
             gap_dev = device_id
         gap_kernels = by_dev.get(gap_dev, [])
 
-        gaps = _idle_gaps(conn, gap_kernels, win, gap_dev, top=top_gaps, min_gap_ns=min_gap_ns)
-        nvtx = _nvtx_attribution(conn, gap_kernels, gap_dev, top=top_nvtx)
+        gaps = _idle_gaps(conn, gap_kernels, win, top=top_gaps, min_gap_ns=min_gap_ns)
+        nvtx = _nvtx_attribution(conn, gap_kernels, top=top_nvtx)
 
         provenance = ReportProvenance(
             source_path=str(path),
