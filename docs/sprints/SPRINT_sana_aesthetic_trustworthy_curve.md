@@ -1,5 +1,11 @@
 # SPRINT: SANA 美学 GRPO 可信曲线
 
+> 2026-07-11 migration note: online fixed eval has been removed. The training
+> configuration now only saves checkpoints; run the held-out prompt/seed
+> evaluation as a separate checkpoint job. References below to
+> `eval_metrics.csv`, baseline epoch `-1`, and inline eval cadence describe the
+> superseded execution plan and must not be used as launch instructions.
+
 状态：**READY / WAITING FOR GPU（2026-07-10）**。运行协议、预算和 PASS/FAIL 已在 baseline
 生成前冻结；当前 GPU 正由既有 Cosmos 曲线占用，SANA 不抢占、不并跑。GPU 与 `vrl-train` 进程均空闲后启动。
 

@@ -1,4 +1,8 @@
-"""Apply the pre-registered SANA aesthetic trustworthy-curve verdict.
+"""Apply the legacy inline-eval SANA trustworthy-curve verdict.
+
+Online training no longer produces ``eval_metrics.csv``. This reader remains
+only for historical runs that already contain that artifact; new checkpoint
+evaluations must consume the standalone evaluator's report instead.
 
 The run protocol is documented in
 ``docs/sprints/SPRINT_sana_aesthetic_trustworthy_curve.md``. This program keeps

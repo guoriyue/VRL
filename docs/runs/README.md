@@ -15,6 +15,11 @@ Each run directory keeps the lightweight, reviewable artifacts (`metrics.csv`,
 `README.md` explaining what it shows. Large checkpoints (GBs) stay out of the repo; large
 eval-image grids are kept only when they *are* the lesson (visual proof of learning).
 
+`eval_metrics.csv` is a legacy inline-evaluation artifact retained for historical
+runs. New runs evaluate saved checkpoints in a separate `vrl/scripts/eval/` job;
+their evaluation report belongs beside that evaluation job, not in the live
+training writer.
+
 **When adding a run:** only add it if it's a good example or it exposes something worth
 remembering. Write a `README.md` (config + result + what it teaches). Don't commit
 multi-GB checkpoints.
