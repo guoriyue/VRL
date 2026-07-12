@@ -19,12 +19,17 @@ from vrl.generation.ray.config import RayGenerationConfig
 from vrl.generation.ray.executor import RayGenerationExecutor
 from vrl.generation.ray.launch_inputs import RayGenerationLaunchInputs
 from vrl.generation.ray.runtime import RayGenerationRuntime
+from vrl.generation.ray.utils import (
+    all_workers_support_versioned_slots,
+    require_chunk_gatherer,
+    validate_worker_gpu_ids,
+)
 from vrl.generation.ray.weight_sync import RayGenerationWeightSync
 from vrl.generation.ray.worker import RayGenerationWorker
 from vrl.models.dtypes import dtype_to_config_string
 from vrl.ray.actor_group import RayActorGroup
-from vrl.ray.dependencies import current_node_ip, require_ray
-from vrl.ray.placement import RolePlacement, validate_actor_gpu_ids
+from vrl.ray.dependencies import require_ray
+from vrl.ray.placement import RolePlacement
 from vrl.utils.config import cfg_path, import_from_path, to_builtin_deep
 
 logger = logging.getLogger(__name__)
@@ -62,7 +67,7 @@ class RayGenerationLauncher:
         contract = GenerationRuntimeLaunchContract.from_value(launch_contract)
         if not contract.family:
             raise ValueError("GenerationRuntimeLaunchContract.family is required")
-        chunk_gatherer = _require_chunk_gatherer(gatherer)
+        chunk_gatherer = require_chunk_gatherer(gatherer)
 
         ray = require_ray()
         if self.init_ray and not ray.is_initialized():
@@ -94,7 +99,7 @@ class RayGenerationLauncher:
                 }
                 for handle in actor_group.handles
             ]
-            _validate_worker_gpu_ids(
+            validate_worker_gpu_ids(
                 rollout_config,
                 metadata,
                 expected_gpu_ids=expected_gpu_ids,
@@ -140,7 +145,7 @@ class RayGenerationLauncher:
         # trainable-state slots (a chunk stamped v1 may land on any worker). Workers
         # already loaded their model (startup_method="load_policy"), so query the
         # AND once here; absence/error keeps the safe draining barrier.
-        runtime.supports_non_draining_weight_sync = _all_workers_support_versioned_slots(
+        runtime.supports_non_draining_weight_sync = all_workers_support_versioned_slots(
             ray,
             workers,
             weight_sync=weight_sync,
@@ -281,71 +286,6 @@ class RayGenerationLauncher:
             ),
             gatherer=_build_gatherer(entry),
         )
-
-
-def _require_chunk_gatherer(gatherer: Any) -> ChunkGatherer:
-    gather_chunks = getattr(gatherer, "gather_chunks", None)
-    if not callable(gather_chunks):
-        raise TypeError(
-            f"{type(gatherer).__name__} does not implement gather_chunks(...)",
-        )
-    return gatherer
-
-
-def _all_workers_support_versioned_slots(
-    ray: Any,
-    workers: list[DistributedWorkerHandle],
-    *,
-    weight_sync: Any | None,
-) -> bool:
-    """AND of every worker's versioned-trainable-state capability.
-
-    Non-draining weight sync needs slots on ALL workers because a chunk stamped
-    with an older policy version can be placed on any worker. Returns False (safe
-    draining barrier) when there is no weight sync, no workers, or any query fails.
-    """
-
-    if weight_sync is None:
-        return False
-    actors = [worker.actor for worker in workers if worker.actor is not None]
-    if not actors:
-        return False
-    try:
-        results = ray.get(
-            [actor.supports_versioned_trainable_state.remote() for actor in actors],
-        )
-    except Exception:
-        return False
-    return bool(results) and all(bool(result) for result in results)
-
-
-def _validate_worker_gpu_ids(
-    config: RayGenerationConfig,
-    metadata: list[Mapping[str, Any]],
-    *,
-    expected_gpu_ids: tuple[int, ...] | None = None,
-) -> None:
-    resources = config.resources
-    if resources is None or resources.rollout_gpus_per_worker <= 0:
-        return
-
-    driver_node_ip: str | None = None
-    if resources.cross_node:
-        try:
-            driver_node_ip = current_node_ip()
-        except Exception:
-            driver_node_ip = None
-
-    # The placement owner supplies the role's expected GPUs (empty under
-    # cross-node, where the node-aware check applies instead).
-    expected = resources.rollout_devices if expected_gpu_ids is None else expected_gpu_ids
-    validate_actor_gpu_ids(
-        metadata,
-        expected_gpu_ids=expected,
-        role="generation",
-        cross_node=resources.cross_node,
-        driver_node_ip=driver_node_ip,
-    )
 
 
 def _call_runtime_build_extractor(

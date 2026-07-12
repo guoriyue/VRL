@@ -17,10 +17,8 @@ from vrl.generation.ray.config import (
     DRIVER_CUDA_OWNERSHIP_ERROR,
     RayGenerationConfig,
 )
-from vrl.generation.ray.launcher import (
-    RayGenerationLauncher,
-    _all_workers_support_versioned_slots,
-)
+from vrl.generation.ray.launcher import RayGenerationLauncher
+from vrl.generation.ray.utils import all_workers_support_versioned_slots
 from vrl.models.ar.capabilities import ar_discrete_family_capability
 from vrl.models.diffusion.capabilities import diffusion_family_capability
 from vrl.models.interfaces import RuntimeBuildSpec
@@ -210,13 +208,13 @@ def test_runtime_capability_is_and_over_all_workers(local_ray) -> None:
     weight_sync = object()
 
     assert (
-        _all_workers_support_versioned_slots(
+        all_workers_support_versioned_slots(
             local_ray, _slot_handles(local_ray, True, True), weight_sync=weight_sync
         )
         is True
     )
     assert (
-        _all_workers_support_versioned_slots(
+        all_workers_support_versioned_slots(
             local_ray, _slot_handles(local_ray, True, False), weight_sync=weight_sync
         )
         is False
@@ -228,12 +226,12 @@ def test_runtime_capability_false_without_weight_sync_or_workers(local_ray) -> N
     """No weight sync (sync_trainable_state off) or no workers -> safe draining
     barrier (False), never a silent True."""
     assert (
-        _all_workers_support_versioned_slots(
+        all_workers_support_versioned_slots(
             local_ray, _slot_handles(local_ray, True, True), weight_sync=None
         )
         is False
     )
-    assert _all_workers_support_versioned_slots(local_ray, [], weight_sync=object()) is False
+    assert all_workers_support_versioned_slots(local_ray, [], weight_sync=object()) is False
 
 
 @pytest.mark.slow_test
@@ -242,7 +240,7 @@ def test_runtime_capability_false_when_a_worker_query_raises(local_ray) -> None:
     back to the safe draining barrier, not crash the launch or optimistically
     assume support."""
     assert (
-        _all_workers_support_versioned_slots(
+        all_workers_support_versioned_slots(
             local_ray,
             _slot_handles(local_ray, True, None),
             weight_sync=object(),

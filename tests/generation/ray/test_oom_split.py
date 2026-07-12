@@ -19,7 +19,8 @@ from vrl.generation.execution.types import (
     DistributedWorkerHandle,
     StaleSlotDiscard,
 )
-from vrl.generation.ray.executor import RayGenerationExecutor, _is_oom_error
+from vrl.generation.ray.executor import RayGenerationExecutor
+from vrl.generation.ray.utils import is_oom_error
 from vrl.generation.types import GenerationOutput, GenerationRequest
 
 _OOM_MESSAGE = "CUDA out of memory. Tried to allocate 4.00 GiB"
@@ -134,8 +135,7 @@ def _executor(
     workers: list[_CapacityWorker],
 ) -> tuple[RayGenerationExecutor, list[DistributedWorkerHandle]]:
     handles = [
-        DistributedWorkerHandle(worker_id=worker.worker_id, actor=worker)
-        for worker in workers
+        DistributedWorkerHandle(worker_id=worker.worker_id, actor=worker) for worker in workers
     ]
     executor = RayGenerationExecutor(
         planner=_StaticPlanner(chunks=chunks),
@@ -155,9 +155,7 @@ async def test_oom_chunk_splits_until_it_fits() -> None:
 
     output = await executor.execute(_request(8))
 
-    covered = sorted(
-        (entry["chunk_key"], entry["samples"]) for entry in output.output
-    )
+    covered = sorted((entry["chunk_key"], entry["samples"]) for entry in output.output)
     assert covered == [
         (_key(0, 2), 2),
         (_key(2, 2), 2),
@@ -300,9 +298,9 @@ def test_stale_slot_discard_is_not_runtime_error() -> None:
 
 
 def test_is_oom_error_classifier() -> None:
-    assert _is_oom_error(_OOM_MESSAGE)
-    assert _is_oom_error("torch.OutOfMemoryError: HIP out of memory")
-    assert not _is_oom_error("ValueError: shape mismatch")
+    assert is_oom_error(_OOM_MESSAGE)
+    assert is_oom_error("torch.OutOfMemoryError: HIP out of memory")
+    assert not is_oom_error("ValueError: shape mismatch")
 
 
 @dataclass
@@ -336,10 +334,7 @@ class _RoutingWorker:
 
 
 def _routing_executor(chunks, workers, *, pipelined):
-    handles = [
-        DistributedWorkerHandle(worker_id=w.worker_id, actor=w)
-        for w in workers
-    ]
+    handles = [DistributedWorkerHandle(worker_id=w.worker_id, actor=w) for w in workers]
     return RayGenerationExecutor(
         planner=_StaticPlanner(chunks=chunks),
         workers=handles,
