@@ -673,8 +673,8 @@ def _resolve_reference_artifacts(examples: list[Any], cfg: DictConfig) -> None:
     """Resolve manifest-relative REFERENCE paths once, at prompt load time.
 
     Rollout executors, family collector hooks, and rewards all consume
-    reference paths; resolving here (fields + the metadata mirror the wire
-    contract reads) means every consumer sees the same absolute path instead
+    reference paths; resolving the typed fields here means every consumer sees
+    the same absolute path instead
     of each re-deriving it against its own data root. Rows without reference
     fields (t2v recipes) pass through untouched; required-ness stays with the
     family collector hooks. Absolute manifest paths pass through unchanged.
@@ -690,7 +690,6 @@ def _resolve_reference_artifacts(examples: list[Any], cfg: DictConfig) -> None:
         OmegaConf.select(cfg, "data.artifact_data_root", default=None),
     )
     for example in examples:
-        metadata: dict[str, Any] | None = None
         for field_name in ("reference_image", "reference_video"):
             raw = str(getattr(example, field_name, "") or "").strip()
             if not raw:
@@ -699,8 +698,6 @@ def _resolve_reference_artifacts(examples: list[Any], cfg: DictConfig) -> None:
                 resolve_artifact_path(raw, data_root=data_root, allow_absolute=True),
             )
             setattr(example, field_name, resolved)
-            metadata = dict(example.metadata) if metadata is None else metadata
-            metadata[field_name] = resolved
         references = list(getattr(example, "references", None) or [])
         if references:
             resolved_refs = [
@@ -708,10 +705,6 @@ def _resolve_reference_artifacts(examples: list[Any], cfg: DictConfig) -> None:
                 for item in references
             ]
             example.references = resolved_refs
-            metadata = dict(example.metadata) if metadata is None else metadata
-            metadata["references"] = resolved_refs
-        if metadata is not None:
-            example.metadata = metadata
 
 
 async def run_online_recipe(

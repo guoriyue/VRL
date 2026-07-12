@@ -122,7 +122,7 @@ def _request(
         request_id="req",
         family=family,
         task=task,
-        prompts=["p0"],
+        inputs=["p0"],
         samples_per_prompt=2,
         sampling={
             "num_steps": 2,

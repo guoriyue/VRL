@@ -46,8 +46,6 @@ actor:
   gradient_checkpointing: true
   ppo_epochs: 4                       # =1 makes clip_fraction identically 0 (dead trust-region)
 
-cosmos:
-  reference_mode: per_sample
 
 rollout:
   samples_per_chunk: 1                # 480p_93f is token-heavy; keep 1 for memory (raise if smoke shows headroom)

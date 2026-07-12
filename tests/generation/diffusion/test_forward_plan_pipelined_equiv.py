@@ -80,7 +80,7 @@ def _request(num_samples: int) -> GenerationRequest:
         request_id="req-equiv",
         family="test",
         task="t2i",
-        prompts=["p"],
+        inputs=["p"],
         samples_per_prompt=num_samples,
     )
 

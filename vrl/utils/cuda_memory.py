@@ -201,9 +201,64 @@ def release_cuda_memory(
         return
 
 
+def gpu_used_bytes(device: str | None = None) -> int:
+    """Driver-level physical bytes in use on a CUDA device (0 without CUDA).
+
+    ``device=None`` measures the process's current CUDA device. A non-CUDA
+    ``device`` string (or a CPU-only box) reads as 0 — memory-parking proofs
+    on CPU components are trivially satisfied.
+    """
+
+    if device is not None and not str(device).startswith("cuda"):
+        return 0
+    try:
+        import torch
+    except ImportError:
+        return 0
+    if not torch.cuda.is_available():
+        return 0
+    target = None if device is None else torch.device(device)
+    torch.cuda.synchronize(target)
+    free_bytes, total_bytes = torch.cuda.mem_get_info(target)
+    return int(total_bytes - free_bytes)
+
+
+def release_cuda_memory_for_parking(device: str | None = None) -> None:
+    """Strict CUDA cleanup before publishing a memory-parking proof.
+
+    Unlike :func:`release_cuda_memory` this path must not swallow failures:
+    the caller is about to certify physical GPU release to a phase handoff,
+    so any error here invalidates the handoff and propagates.
+    """
+
+    gc.collect()
+    if device is not None and not str(device).startswith("cuda"):
+        return
+    try:
+        import torch
+    except ImportError:
+        return
+    if not torch.cuda.is_available():
+        return
+    if device is None:
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
+        torch.cuda.synchronize()
+        return
+    target = torch.device(device)
+    with torch.cuda.device(target):
+        torch.cuda.synchronize(target)
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
+        torch.cuda.synchronize(target)
+
+
 __all__ = [
     "CumemPool",
     "empty_cuda_cache",
+    "gpu_used_bytes",
     "is_cuda_out_of_memory",
     "release_cuda_memory",
+    "release_cuda_memory_for_parking",
 ]

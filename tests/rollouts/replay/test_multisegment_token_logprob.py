@@ -69,7 +69,7 @@ def _trajectory_batch(context: dict | None = None) -> RolloutBatch:
         request_id="r1",
         family="janus_pro_r1",
         task="ar_t2i_r1",
-        prompts=["draw a chart"],
+        inputs=["draw a chart"],
         samples_per_prompt=2,
         return_artifacts={"output", "trajectory"},
     )

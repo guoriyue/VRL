@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import gc
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -20,7 +19,12 @@ from vrl.generation.protocols import GenerationChunkExecutor
 from vrl.models.dtypes import resolve_torch_dtype
 from vrl.models.interfaces import require_runtime_model
 from vrl.utils.config import import_from_path
-from vrl.utils.cuda_memory import CumemPool, release_cuda_memory
+from vrl.utils.cuda_memory import (
+    CumemPool,
+    gpu_used_bytes,
+    release_cuda_memory,
+    release_cuda_memory_for_parking,
+)
 from vrl.utils.logging import init_logger
 from vrl.utils.profiling import TorchProfilerConfig
 
@@ -74,13 +78,11 @@ class GenerationWorkerCore:
 
         if self.executor is not None:
             if self._parking_requested():
-                self._require_complete_parking_declaration()
                 self._require_complete_parking_backend()
             return
         from vrl.utils.memory import log_host_memory
 
         if self._parking_requested():
-            self._require_complete_parking_declaration()
             self._parking_baseline_gpu_used_bytes = self._gpu_used_bytes()
         self._parking_restore_device = None
         log_host_memory(f"generation_worker:{self.worker_id}:before_load_policy", log=logger)
@@ -164,8 +166,7 @@ class GenerationWorkerCore:
             snapshot.validate()
             return snapshot
         if self._parking_requested():
-            self._require_complete_parking_declaration()
-        self._require_complete_parking_backend()
+            self._require_complete_parking_backend()
         # This is provenance for the operation being attempted, not durable
         # worker state. Sampling here includes generation-time caches allocated
         # after load_policy() returned.
@@ -247,15 +248,6 @@ class GenerationWorkerCore:
     def _parking_requested(self) -> bool:
         return bool(self.launch_contract.extra.get("sleep_offload"))
 
-    def _require_complete_parking_declaration(self) -> None:
-        """Reject a shared-GPU family that has no complete parking contract."""
-
-        if not self.capability.supports_complete_memory_parking:
-            raise RuntimeError(
-                f"generation family {self.family!r} does not declare complete "
-                "memory parking support",
-            )
-
     def _require_complete_parking_backend(self) -> None:
         """Validate the concrete executor path before a shared-GPU run proceeds."""
 
@@ -277,40 +269,15 @@ class GenerationWorkerCore:
                 "move_frozen_components(...)"
             )
 
-    @staticmethod
-    def _cuda_available() -> bool:
-        try:
-            import torch
-
-            return bool(torch.cuda.is_available())
-        except ImportError:
-            return False
-
+    # Instance-assignable test seams over the shared parking bookkeeping in
+    # vrl.utils.cuda_memory; the worker measures its process-current GPU.
     @classmethod
     def _gpu_used_bytes(cls) -> int:
-        """Driver-level physical memory in use on this worker's current GPU."""
-
-        if not cls._cuda_available():
-            return 0
-        import torch
-
-        torch.cuda.synchronize()
-        free_bytes, total_bytes = torch.cuda.mem_get_info()
-        return int(total_bytes - free_bytes)
+        return gpu_used_bytes()
 
     @classmethod
     def _release_cuda_memory_for_parking(cls) -> None:
-        """Strict CUDA cleanup: any failure invalidates the phase handoff."""
-
-        gc.collect()
-        if not cls._cuda_available():
-            return
-        import torch
-
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
-        torch.cuda.ipc_collect()
-        torch.cuda.synchronize()
+        return release_cuda_memory_for_parking()
 
     def update_weights(self, state_ref: Any, policy_version: int) -> int:
         """Install weights and return the policy version as the commit ACK.
@@ -853,19 +820,6 @@ class GenerationWorkerCore:
             raise ValueError(
                 "executor trajectory capability does not match launch contract: "
                 f"{declared.trajectory_kind} != {self.capability.trajectory_kind}",
-            )
-        if (
-            declared.supports_reference_conditioning
-            != self.capability.supports_reference_conditioning
-            or declared.supports_complete_memory_parking
-            != self.capability.supports_complete_memory_parking
-        ):
-            raise ValueError(
-                "executor feature capability does not match launch contract: "
-                f"reference={declared.supports_reference_conditioning} != "
-                f"reference={self.capability.supports_reference_conditioning}; "
-                f"parking={declared.supports_complete_memory_parking} != "
-                f"parking={self.capability.supports_complete_memory_parking}",
             )
         return declared
 

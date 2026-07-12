@@ -11,7 +11,7 @@ from typing import Any
 import torch
 
 from vrl.rewards.base import RewardFunction
-from vrl.rewards.inference import RewardInferenceResult, RewardMemoryReleaseProof
+from vrl.rewards.inference import RewardMemoryReleaseProof
 from vrl.rewards.types import RewardRollout, RewardTrajectory
 
 
@@ -91,18 +91,6 @@ class RewardScorer:
         requests: list[RewardScoringInput],
         *,
         require_memory_release: bool = False,
-    ) -> list[torch.Tensor]:
-        result = await self.score_many_with_components(
-            requests,
-            require_memory_release=require_memory_release,
-        )
-        return result.scores
-
-    async def score_many_with_components(
-        self,
-        requests: list[RewardScoringInput],
-        *,
-        require_memory_release: bool = False,
     ) -> RewardScoreBatch:
         """Score several prompt groups through one reward call.
 
@@ -151,16 +139,18 @@ class RewardScorer:
         ]
 
         components: dict[str, list[float]] = {}
-        component_batch_fn = getattr(self.reward_fn, "score_batch_with_components", None)
-        if callable(component_batch_fn):
-            outcome = component_batch_fn(rollouts)
-            if inspect.isawaitable(outcome):
-                outcome = await outcome
-            raw, raw_components = outcome
+        timing_ms: dict[str, float] = {}
+        report_fn = getattr(self.reward_fn, "score_batch_report", None)
+        if callable(report_fn):
+            report = report_fn(rollouts)
+            if inspect.isawaitable(report):
+                report = await report
+            raw = report.scores
             components = {
                 str(name): [float(value) for value in values]
-                for name, values in dict(raw_components).items()
+                for name, values in dict(report.components).items()
             }
+            timing_ms = {str(key): float(value) for key, value in dict(report.timing_ms).items()}
         else:
             batch_fn = getattr(self.reward_fn, "score_batch", None)
             if batch_fn is not None:
@@ -190,7 +180,6 @@ class RewardScorer:
                 )
         if require_memory_release:
             await self.park_memory(required=True)
-        timing_ms = _reward_timing_ms(self.reward_fn)
 
         split: list[torch.Tensor] = []
         offset = 0
@@ -236,33 +225,6 @@ class RewardScorer:
             if not proof.released:
                 raise RuntimeError("reward function did not release GPU memory")
         return proofs
-
-
-def _reward_timing_ms(reward_fn: Any) -> dict[str, float]:
-    timing = getattr(reward_fn, "last_timing_ms", None)
-    if timing:
-        return {str(key): float(value) for key, value in dict(timing).items()}
-
-    results = list(getattr(reward_fn, "last_results", []) or [])
-    if not results or not all(isinstance(result, RewardInferenceResult) for result in results):
-        return {}
-    return {
-        "latency_ms": max(
-            (float(result.latency_ms) for result in results if result.latency_ms is not None),
-            default=0.0,
-        ),
-        "queue_wait_ms": max(
-            (
-                float(result.queue_wait_ms)
-                for result in results
-                if result.queue_wait_ms is not None
-            ),
-            default=0.0,
-        ),
-        "inference_ms": sum(
-            float(result.inference_ms) for result in results if result.inference_ms is not None
-        ),
-    }
 
 
 __all__ = ["RewardScoreBatch", "RewardScorer", "RewardScoringInput"]

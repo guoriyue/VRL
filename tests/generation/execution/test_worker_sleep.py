@@ -291,19 +291,6 @@ def test_load_policy_does_not_pool_without_sleep_offload(monkeypatch) -> None:
 
     assert called == []  # allocator never consulted
     assert core._cumem is None
-
-
-def test_sleep_offload_requires_family_parking_declaration() -> None:
-    core = _core(None, sleep_offload=True)
-    core.capability = replace(
-        core.capability,
-        supports_complete_memory_parking=False,
-    )
-
-    with pytest.raises(RuntimeError, match="does not declare complete memory parking"):
-        core.load_policy()
-
-
 def test_ar_cpu_fallback_does_not_enter_cumem_pool(monkeypatch) -> None:
     """AR decode may call empty_cache, which is incompatible with the pool scope."""
     import vrl.utils.cuda_memory as cuda_memory_mod

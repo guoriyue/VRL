@@ -35,7 +35,7 @@
 # Usage (>= 3 GPUs):
 #   CUDA_VISIBLE_DEVICES=0,1,2 vrl-train \
 #     --config experiment/diffusion/cosmos_predict2/online_grpo_async_reward \
-#     model.reference_image=/path/to/ref.png
+#     data.preprocessing.reference_image=/path/to/ref.png
 defaults:
 - /recipe/online/cosmos_predict2_grpo
 - /model/diffusion/cosmos/predict2_2b
@@ -44,6 +44,10 @@ defaults:
 - /reward/kling_video_reward          # local HF model, no API key
 - /dataset/drawbench_train_192
 - /base/rollout/orchestration/continuous
+
+data:
+  preprocessing:
+    conditioning: reference_image
 
 model:
   use_lora: false                     # FULL-PARAMETER (-> apply_full_finetune); 480p full-param needs FSDP/multi-GPU
@@ -74,8 +78,6 @@ actor:
 rollout:
   samples_per_chunk: 4
 
-cosmos:
-  reference_mode: global              # global | per_sample
 
 trainer:
   output_dir: outputs/cosmos_pred2_2b_async_reward_480p

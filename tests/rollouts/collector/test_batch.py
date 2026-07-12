@@ -213,7 +213,7 @@ def _trajectory(request_id: str, token_ids):
         request_id=request_id,
         family="janus_pro",
         task="ar_t2i",
-        prompts=["p"],
+        inputs=["p"],
         samples_per_prompt=1,
     )
     sample_rows = [

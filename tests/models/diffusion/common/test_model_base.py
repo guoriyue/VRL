@@ -227,7 +227,7 @@ def test_replay_forward_returns_typed_replay_result() -> None:
             request_id="diffusion",
             family="sd3_5",
             task="t2i",
-            prompts=["a", "b"],
+            inputs=["a", "b"],
             samples_per_prompt=1,
         ),
         sample_rows=[

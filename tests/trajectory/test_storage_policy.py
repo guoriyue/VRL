@@ -76,7 +76,7 @@ def _trajectory():
         request_id="req",
         family="janus_pro",
         task="ar_t2i",
-        prompts=["p0"],
+        inputs=["p0"],
         samples_per_prompt=2,
     )
     sample_rows = [

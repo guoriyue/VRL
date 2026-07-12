@@ -51,8 +51,6 @@ distributed:
   rollout:
     pipelined: true
 
-cosmos:
-  reference_mode: per_sample
 
 trainer:
   output_dir: outputs/cosmos_pred2_droid_full_target_480p_lora

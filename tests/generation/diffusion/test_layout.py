@@ -65,7 +65,7 @@ def _request(extra_sampling: dict[str, object]) -> GenerationRequest:
         request_id="req",
         family="sd3_5",
         task="t2i",
-        prompts=["p0"],
+        inputs=["p0"],
         samples_per_prompt=1,
         sampling=sampling,
     )

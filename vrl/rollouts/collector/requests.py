@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Mapping
 from typing import Any, NamedTuple
 
-from vrl.generation import GenerationRequest
+from vrl.generation import GenerationInput, GenerationRequest
 
 
 class CollectorRequest(NamedTuple):
@@ -54,9 +54,14 @@ class GenerationRequestBuilder:
         metadata = self._metadata(kwargs)
         if "fps" in sampling:
             metadata.setdefault("video_fps", sampling["fps"])
-        request_metadata = dict(metadata)
+        input_metadata = {
+            key: value
+            for key, value in metadata.items()
+            if key not in {"task_type", "reference_image", "reference_video"}
+        }
         if self.metadata_key is not None:
-            request_metadata = {self.metadata_key: dict(metadata)}
+            input_metadata = {self.metadata_key: input_metadata}
+        request_metadata: dict[str, Any] = {}
         if kwargs.get("runtime_debug"):
             request_metadata["_runtime_debug"] = True
 
@@ -64,7 +69,16 @@ class GenerationRequestBuilder:
             request_id=f"{self.request_prefix}-{uuid.uuid4()}",
             family=self.family,
             task=self.task,
-            prompts=prompts,
+            inputs=[
+                GenerationInput(
+                    prompt=prompt,
+                    task_type=kwargs.get("task_type") or self.default_task_type,
+                    reference_image=kwargs.get("reference_image") or None,
+                    reference_video=kwargs.get("reference_video") or None,
+                    metadata=dict(input_metadata),
+                )
+                for prompt in prompts
+            ],
             # GenerationRequest names this `samples_per_prompt` (generation-domain
             # wording); the value is the collector's `group_size` — the GRPO group,
             # sourced from rollout.n_samples_per_prompt. Same number, three domain

@@ -19,6 +19,7 @@ from vrl.scripts.common.online import (
     export_transformer_lora,
     run_online_recipe,
 )
+from vrl.trainers.data.artifacts import require_reference_images
 from vrl.scripts.common.types import OnlineRecipeDefinition
 from vrl.scripts.diffusion.train import build_replay_bundle
 
@@ -47,23 +48,21 @@ def _i2v_collector_kwargs(cfg: DictConfig, examples: list[Any]) -> dict[str, Any
     checks: missing-vs-global fallback and existence.
     """
 
-    global_reference = str(OmegaConf.select(cfg, "model.reference_image", default="") or "")
     manifest_path = Path(str(OmegaConf.select(cfg, "data.manifest", default="manifest")))
-
-    for row_index, example in enumerate(examples):
-        raw_path = str(getattr(example, "reference_image", "") or "").strip()
-        if not raw_path:
-            if global_reference:
-                continue
-            raise ValueError(
-                f"{manifest_path}: row {row_index} is missing required field "
-                "reference_image",
-            )
-        if not Path(raw_path).exists():
-            raise FileNotFoundError(
-                f"{manifest_path}: row {row_index} reference_image does not exist: "
-                f"{raw_path}",
-            )
+    conditioning = OmegaConf.select(cfg, "data.preprocessing.conditioning", default=None)
+    if conditioning != "reference_image":
+        raise ValueError(
+            "Wan I2V requires data.preprocessing.conditioning=reference_image",
+        )
+    require_reference_images(
+        examples,
+        manifest_path=manifest_path,
+        default_reference_image=OmegaConf.select(
+            cfg,
+            "data.preprocessing.reference_image",
+            default=None,
+        ),
+    )
     return {}
 
 

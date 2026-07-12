@@ -151,7 +151,7 @@ def _r1_rollout_batch() -> RolloutBatch:
         request_id="r1",
         family="janus_pro_r1",
         task="ar_t2i_r1",
-        prompts=["draw text"],
+        inputs=["draw text"],
         samples_per_prompt=2,
         return_artifacts={"output", "trajectory"},
     )
@@ -373,7 +373,7 @@ def test_r1_executor_forward_emits_canonical_family_and_segment_schema() -> None
         request_id="r1",
         family="janus_pro_r1",
         task="ar_t2i_r1",
-        prompts=["draw text"],
+        inputs=["draw text"],
         samples_per_prompt=2,
         sampling={
             "image_token_num": 4,

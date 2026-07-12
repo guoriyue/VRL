@@ -96,9 +96,9 @@ async def test_video_reward_materializes_artifacts_and_returns_runtime_scores(
         runtime=runtime,
     )
 
-    scores = await reward.score_batch([_rollout(torch.ones(1, 2, 2, 2))])
+    report = await reward.score_batch_report([_rollout(torch.ones(1, 2, 2, 2))])
 
-    assert scores == pytest.approx([1.5])
+    assert report.scores == pytest.approx([1.5])
     assert len(runtime.requests) == 1
     request = runtime.requests[0]
     assert request.reward_name == "kling_video_reward"
@@ -107,7 +107,7 @@ async def test_video_reward_materializes_artifacts_and_returns_runtime_scores(
     assert (tmp_path / "artifacts" / "manifest.jsonl").exists()
     assert (tmp_path / "debug" / "kling_video_reward_requests.jsonl").exists()
     assert (tmp_path / "debug" / "kling_video_reward_results.jsonl").exists()
-    assert asdict(reward.last_results[0])["reward_model_version"] == "fake-test"
+    assert asdict(report.results[0])["reward_model_version"] == "fake-test"
 
 
 @pytest.mark.asyncio

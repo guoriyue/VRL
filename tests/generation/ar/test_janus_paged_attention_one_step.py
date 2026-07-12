@@ -211,7 +211,7 @@ def _request() -> GenerationRequest:
         request_id="test-janus-paged",
         family="janus_pro",
         task="ar_t2i",
-        prompts=[""],
+        inputs=[""],
         samples_per_prompt=2,
     )
 

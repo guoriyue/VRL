@@ -19,16 +19,12 @@ TrajectoryKind = Literal[
 class FamilyCapability:
     """Runtime decisions supported by one family/task pair.
 
-    Every field has a non-logging consumer: family/task/trajectory validate the
-    worker launch contract, reference conditioning changes launch inputs, and
-    complete memory parking gates shared-GPU worker activation.
+    Family/task identify the launch contract; trajectory_kind selects the execution path.
     """
 
     family: str
     task: str
     trajectory_kind: TrajectoryKind
-    supports_reference_conditioning: bool = False
-    supports_complete_memory_parking: bool = False
 
     def __post_init__(self) -> None:
         if not self.family:
@@ -42,8 +38,6 @@ class FamilyCapability:
             "family": self.family,
             "task": self.task,
             "trajectory_kind": self.trajectory_kind,
-            "supports_reference_conditioning": self.supports_reference_conditioning,
-            "supports_complete_memory_parking": self.supports_complete_memory_parking,
         }
 
     @classmethod
@@ -57,12 +51,6 @@ class FamilyCapability:
             family=str(value["family"]),
             task=str(value["task"]),
             trajectory_kind=_trajectory_kind(value.get("trajectory_kind", "unknown")),
-            supports_reference_conditioning=bool(
-                value.get("supports_reference_conditioning", False),
-            ),
-            supports_complete_memory_parking=bool(
-                value.get("supports_complete_memory_parking", False),
-            ),
         )
 
 

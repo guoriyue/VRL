@@ -45,7 +45,7 @@ def _request(ar_engine: str | None = None) -> GenerationRequest:
         request_id="req",
         family="janus_pro",
         task="ar_t2i",
-        prompts=["prompt"],
+        inputs=["prompt"],
         samples_per_prompt=1,
         sampling=sampling,
     )

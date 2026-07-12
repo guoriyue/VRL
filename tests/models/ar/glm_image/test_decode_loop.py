@@ -31,7 +31,7 @@ def _run_tiny_decode_loop(model, batch_size: int = 2, *, top_p: float = 1.0):
         request_id="test-glm-image-decode",
         family="glm_image",
         task="ar_t2i",
-        prompts=[""],
+        inputs=[""],
         samples_per_prompt=batch_size,
     )
     rows = [

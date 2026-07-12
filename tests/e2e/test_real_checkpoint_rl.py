@@ -268,7 +268,7 @@ CASES: tuple[RealCheckpointCase, ...] = (
             "sampling.max_sequence_length=64",
         ),
         min_cuda_memory_gib=28.0,
-        reference_image_cfg_path="model.reference_image",
+        reference_image_cfg_path="data.preprocessing.reference_image",
         use_config_reward=True,
     ),
     RealCheckpointCase(
@@ -757,7 +757,7 @@ def _build_executor(
     if "samples_per_chunk" in signature.parameters:
         kwargs["samples_per_chunk"] = int(cfg.rollout.samples_per_chunk)
     if "reference_image" in signature.parameters:
-        kwargs["reference_image"] = getattr(cfg.model, "reference_image", None)
+        kwargs["reference_image"] = OmegaConf.select(cfg, "data.preprocessing.reference_image", default=None)
     return executor_cls(model, **kwargs)
 
 
@@ -793,7 +793,7 @@ def _synthetic_diffusion_replay_batch(
         request_id=f"{case.case_id}:synthetic-replay",
         family=case.family,
         task="text_to_image",
-        prompts=list(prompts),
+        inputs=list(prompts),
         samples_per_prompt=group_size,
         sampling={
             "height": height,

@@ -45,12 +45,17 @@ def test_engine_request_builder_reads_resolved_request_sampling() -> None:
         "seed": 7,
     }
     assert collector_request.request.return_artifacts == {"output"}
-    assert collector_request.request.metadata == {
+    assert collector_request.request.metadata == {}
+    assert collector_request.request.inputs[0].task_type == "text_to_image"
+    assert collector_request.request.inputs[0].metadata == {
+        "difficulty": "easy",
+        "target_text": "HELLO",
+    }
+    assert collector_request.metadata == {
         "difficulty": "easy",
         "target_text": "HELLO",
         "task_type": "text_to_image",
     }
-    assert collector_request.metadata == collector_request.request.metadata
 
 
 def test_engine_request_builder_applies_request_overrides_last() -> None:

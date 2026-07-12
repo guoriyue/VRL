@@ -108,7 +108,7 @@ def resolve_prompt_example_artifacts(
             ),
         )
         if example.reference_image
-        else ""
+        else None
     )
     reference_video = (
         str(
@@ -119,7 +119,7 @@ def resolve_prompt_example_artifacts(
             ),
         )
         if example.reference_video
-        else ""
+        else None
     )
     target_image = (
         str(
@@ -130,7 +130,7 @@ def resolve_prompt_example_artifacts(
             ),
         )
         if example.target_image
-        else ""
+        else None
     )
     target_video = (
         str(
@@ -141,19 +141,8 @@ def resolve_prompt_example_artifacts(
             ),
         )
         if example.target_video
-        else ""
+        else None
     )
-    metadata = dict(example.metadata)
-    if reference_image:
-        metadata["reference_image"] = reference_image
-    if reference_video:
-        metadata["reference_video"] = reference_video
-    if target_image:
-        metadata["target_image"] = target_image
-    if target_video:
-        metadata["target_video"] = target_video
-    if references:
-        metadata["references"] = references
     return PromptExample(
         prompt=example.prompt,
         target_text=example.target_text,
@@ -164,7 +153,7 @@ def resolve_prompt_example_artifacts(
         references=references,
         task_type=example.task_type,
         request_overrides=dict(example.request_overrides),
-        metadata=metadata,
+        metadata=dict(example.metadata),
     )
 
 
@@ -292,6 +281,39 @@ def validate_source_backed_video_world_manifest_pair(
     )
 
 
+def require_reference_images(
+    examples: Sequence[PromptExample],
+    *,
+    manifest_path: str | Path,
+    default_reference_image: str | None = None,
+) -> None:
+    """Normalize one optional dataset default into required per-row inputs."""
+
+    manifest = Path(manifest_path)
+    default_text = str(default_reference_image or "").strip()
+    default_path: Path | None = None
+    if default_text:
+        default_path = Path(default_text).expanduser()
+        if not default_path.exists():
+            raise FileNotFoundError(
+                f"data.preprocessing.reference_image does not exist: {default_path}",
+            )
+        default_path = default_path.resolve()
+
+    for row_index, example in enumerate(examples):
+        raw = str(example.reference_image or "").strip()
+        path = Path(raw).expanduser() if raw else default_path
+        if path is None:
+            raise ValueError(
+                f"{manifest}: row {row_index} is missing required field reference_image",
+            )
+        if not path.exists():
+            raise FileNotFoundError(
+                f"{manifest}: row {row_index} reference_image does not exist: {path}",
+            )
+        example.reference_image = str(path.resolve())
+
+
 def _artifact_values(example: PromptExample, field_name: str) -> tuple[str, ...]:
     value = getattr(example, field_name, None)
     if value is None:
@@ -336,6 +358,7 @@ __all__ = [
     "SOURCE_BACKED_VIDEO_WORLD_METADATA_FIELDS",
     "ArtifactManifestReport",
     "ResolvedArtifact",
+    "require_reference_images",
     "resolve_prompt_example_artifacts",
     "validate_artifact_manifest",
     "validate_artifact_manifest_pair",

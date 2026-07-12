@@ -76,7 +76,7 @@ def _batch(scheduler) -> RolloutBatch:
         request_id="r",
         family="cosmos-predict2",
         task="v2w",
-        prompts=list(_PROMPTS),
+        inputs=list(_PROMPTS),
         samples_per_prompt=1,
         return_artifacts={"output", "trajectory"},
     )

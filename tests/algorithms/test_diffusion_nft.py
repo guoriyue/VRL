@@ -167,7 +167,7 @@ def _build_batch(
         request_id="nft-test",
         family="wan",
         task="t2v",
-        prompts=["a test prompt"],
+        inputs=["a test prompt"],
         samples_per_prompt=_BATCH,
     )
     sample_rows = [

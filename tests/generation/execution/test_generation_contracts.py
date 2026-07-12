@@ -29,7 +29,7 @@ def _request(
         request_id=request_id,
         family="sd3_5",
         task="t2i",
-        prompts=["a test prompt"],
+        inputs=["a test prompt"],
         samples_per_prompt=2,
         sampling=sampling,
         return_artifacts={"output", "trajectory"},
@@ -39,12 +39,12 @@ def _request(
 
 def test_generation_request_validation() -> None:
     """Checks generation request validation."""
-    with pytest.raises(ValueError, match="prompts"):
+    with pytest.raises(ValueError, match="inputs"):
         GenerationRequest(
             request_id="req",
             family="sd3_5",
             task="t2i",
-            prompts=[],
+            inputs=[],
             samples_per_prompt=1,
         )
 
@@ -53,7 +53,7 @@ def test_generation_request_validation() -> None:
             request_id="req",
             family="sd3_5",
             task="t2i",
-            prompts=["x"],
+            inputs=["x"],
             samples_per_prompt=0,
         )
 
@@ -62,7 +62,7 @@ def test_generation_request_validation() -> None:
             request_id="req",
             family="sd3_5",
             task="t2i",
-            prompts=["x"],
+            inputs=["x"],
             samples_per_prompt=1,
             policy_version=-1,
         )

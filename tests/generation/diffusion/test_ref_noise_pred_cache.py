@@ -85,7 +85,7 @@ def test_layout_parses_cache_ref_noise_pred_flag() -> None:
         request_id="req",
         family="sd3_5",
         task="t2i",
-        prompts=["p"],
+        inputs=["p"],
         samples_per_prompt=1,
         sampling=sampling,
     )
@@ -110,7 +110,7 @@ def _batch(*, ref_noise_pred: torch.Tensor | None) -> RolloutBatch:
         request_id="req",
         family="sd3_5",
         task="t2i",
-        prompts=["p0", "p1"],
+        inputs=["p0", "p1"],
         samples_per_prompt=1,
     )
     sample_rows = [

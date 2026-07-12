@@ -18,15 +18,15 @@ class PromptExample:
 
     prompt: str
     target_text: str = ""
-    reference_image: str = field(default="", metadata={"artifact": True})
-    reference_video: str = field(default="", metadata={"artifact": True})
-    target_image: str = field(default="", metadata={"artifact": True})
+    reference_image: str | None = field(default=None, metadata={"artifact": True})
+    reference_video: str | None = field(default=None, metadata={"artifact": True})
+    target_image: str | None = field(default=None, metadata={"artifact": True})
     # CONTRACT: target_video stays manifest-relative for the whole run — it is
     # the identity key into sft-latents shards (save/load_sft_latents) and into
     # target-similarity rewards, which resolve it per-process themselves.
     # Load-time resolution (``_resolve_reference_artifacts``) covers REFERENCE
     # fields only and must never rewrite this one.
-    target_video: str = field(default="", metadata={"artifact": True})
+    target_video: str | None = field(default=None, metadata={"artifact": True})
     references: list[str] = field(default_factory=list, metadata={"artifact": True})
     task_type: str = "text_to_video"
     request_overrides: dict[str, Any] = field(default_factory=dict)

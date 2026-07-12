@@ -34,7 +34,7 @@ def test_unknown_keys_are_found_at_every_depth() -> None:
 
 
 def test_open_blocks_accept_arbitrary_keys() -> None:
-    """worker_config / non-modeled reward kwargs / cosmos are open by design."""
+    """worker_config and non-modeled reward kwargs are open by design."""
     cfg = OmegaConf.create(
         {
             "reward": {
@@ -49,7 +49,6 @@ def test_open_blocks_accept_arbitrary_keys() -> None:
                     },
                 },
             },
-            "cosmos": {"reference_mode": "global"},
         },
     )
     assert find_unknown_keys(cfg) == []

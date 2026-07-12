@@ -22,7 +22,7 @@ def test_byte_counter_counts_trajectory_tensor_leaves() -> None:
             request_id="req",
             family="janus_pro",
             task="ar_t2i",
-            prompts=["p"],
+            inputs=["p"],
             samples_per_prompt=1,
         ),
         sample_rows=[

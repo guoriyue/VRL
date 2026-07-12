@@ -115,7 +115,7 @@ def test_r1_trajectory_batch_keeps_segments_separate() -> None:
         request_id="r1",
         family="janus_pro_r1",
         task="ar_t2i_r1",
-        prompts=["draw text"],
+        inputs=["draw text"],
         samples_per_prompt=2,
         return_artifacts={"output", "trajectory"},
     )

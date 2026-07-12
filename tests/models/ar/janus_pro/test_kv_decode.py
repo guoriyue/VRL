@@ -91,7 +91,7 @@ def _run_ar_decode(model: JanusProModel) -> None:
         request_id="test-janus-kv",
         family="janus_pro",
         task="ar_t2i",
-        prompts=[""],
+        inputs=[""],
         samples_per_prompt=batch_size,
     )
     rows = [

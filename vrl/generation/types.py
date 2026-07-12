@@ -24,19 +24,78 @@ class GenerationMetrics:
 
 
 @dataclass(slots=True)
+class GenerationInput:
+    """One prompt and its functional conditioning inputs."""
+
+    prompt: str
+    task_type: str | None = None
+    reference_image: str | None = None
+    reference_video: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.prompt:
+            raise ValueError("GenerationInput.prompt must be non-empty")
+        for name in ("reference_image", "reference_video"):
+            if getattr(self, name) == "":
+                raise ValueError(f"GenerationInput.{name} must be None or non-empty")
+
+
+@dataclass(slots=True, init=False)
 class GenerationRequest:
     """One generation request submitted to the engine."""
 
     request_id: str
     family: str
     task: str
-    prompts: list[str]
+    inputs: list[GenerationInput]
     samples_per_prompt: int
     sampling: dict[str, Any] = field(default_factory=dict)
     return_artifacts: set[str] = field(default_factory=set)
     metadata: dict[str, Any] = field(default_factory=dict)
     priority: int = 0
     policy_version: int | None = None
+
+    def __init__(
+        self,
+        request_id: str,
+        family: str,
+        task: str,
+        inputs: list[GenerationInput | str],
+        samples_per_prompt: int,
+        sampling: dict[str, Any] | None = None,
+        return_artifacts: set[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+        priority: int = 0,
+        policy_version: int | None = None,
+    ) -> None:
+        normalized_inputs: list[GenerationInput] = []
+        for value in inputs:
+            if isinstance(value, GenerationInput):
+                normalized_inputs.append(value)
+            elif isinstance(value, str):
+                normalized_inputs.append(GenerationInput(prompt=value))
+            else:
+                raise TypeError(
+                    "GenerationRequest.inputs must contain GenerationInput or str",
+                )
+        self.request_id = request_id
+        self.family = family
+        self.task = task
+        self.inputs = normalized_inputs
+        self.samples_per_prompt = samples_per_prompt
+        self.sampling = dict(sampling or {})
+        self.return_artifacts = set(return_artifacts or ())
+        self.metadata = dict(metadata or {})
+        self.priority = priority
+        self.policy_version = policy_version
+        self.__post_init__()
+
+    @property
+    def prompts(self) -> list[str]:
+        """Text-only view used by family-agnostic execution code."""
+
+        return [value.prompt for value in self.inputs]
 
     def __post_init__(self) -> None:
         if not self.request_id:
@@ -45,8 +104,8 @@ class GenerationRequest:
             raise ValueError("GenerationRequest.family must be non-empty")
         if not self.task:
             raise ValueError("GenerationRequest.task must be non-empty")
-        if not self.prompts:
-            raise ValueError("GenerationRequest.prompts must be non-empty")
+        if not self.inputs:
+            raise ValueError("GenerationRequest.inputs must be non-empty")
         if self.samples_per_prompt < 1:
             raise ValueError("GenerationRequest.samples_per_prompt must be >= 1")
         if self.policy_version is not None and self.policy_version < 0:

@@ -75,7 +75,7 @@ def _run_tiny_decode_loop(model, batch_size: int = 2):
         request_id="test-emu3-decode",
         family="emu3",
         task="ar_t2i",
-        prompts=[""],
+        inputs=[""],
         samples_per_prompt=batch_size,
     )
     rows = [

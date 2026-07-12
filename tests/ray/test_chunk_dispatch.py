@@ -73,7 +73,7 @@ def _request(num_steps: int = 10, samples: int = 8, sbs: int = 2) -> GenerationR
         request_id="req-dispatch",
         family="sd3_5",
         task="t2i",
-        prompts=["a test prompt"],
+        inputs=["a test prompt"],
         samples_per_prompt=samples,
         sampling={"height": 64, "width": 64, "num_steps": num_steps, "samples_per_chunk": sbs},
         return_artifacts={"output"},

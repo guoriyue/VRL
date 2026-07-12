@@ -6,7 +6,7 @@ import json
 import time
 import uuid
 from collections.abc import Callable, Mapping
-from dataclasses import asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -63,6 +63,22 @@ def resolve_reward_component_device(
             f"resolved {resolved_device!r}. CPU resources cannot launch a CUDA reward.",
         )
     return effective
+
+
+@dataclass(frozen=True, slots=True)
+class RewardBatchReport:
+    """One scoring call's scores plus the observations produced by that call.
+
+    Observations travel with the return value instead of mutable ``last_*``
+    attributes: continuous rollout can score future groups while the trainer
+    consumes an older group, so cached instance state would attach metrics to
+    whichever call finished last instead of to the batch being trained.
+    """
+
+    scores: list[float]
+    components: dict[str, list[float]] = field(default_factory=dict)
+    timing_ms: dict[str, float] = field(default_factory=dict)
+    results: list[RewardInferenceResult] = field(default_factory=list)
 
 
 class RewardCleanupError(RuntimeError):
@@ -157,8 +173,6 @@ class RewardFunction:
         self.debug_dir = str(debug_dir)
         self._request_prefix = request_prefix
         self._debug_basename = debug_basename
-        self.last_results: list[RewardInferenceResult] = []
-        self.last_timing_ms: dict[str, float] = {}
         self._last_reward_request_id: str | None = None
 
     async def park_memory(self) -> tuple[RewardMemoryReleaseProof, ...]:
@@ -187,19 +201,21 @@ class RewardFunction:
     async def score_batch(self, rollouts: list[RewardRollout]) -> list[float]:
         """Score a batch of rollouts (default: sequential)."""
         if self._uses_inference_runtime():
-            return await self._score_with_inference_runtime(rollouts)
+            return (await self._score_with_inference_runtime(rollouts)).scores
         return [await self.score(r) for r in rollouts]
 
+    async def score_batch_report(self, rollouts: list[RewardRollout]) -> RewardBatchReport:
+        """Score a batch and return the observations from this exact call."""
+        if self._uses_inference_runtime():
+            return await self._score_with_inference_runtime(rollouts)
+        return RewardBatchReport(scores=await self.score_batch(rollouts))
+
     async def shutdown(self) -> None:
-        runtime = getattr(self, "runtime", None)
-        if runtime is not None:
-            await runtime.shutdown()
+        if self.runtime is not None:
+            await self.runtime.shutdown()
 
     def _uses_inference_runtime(self) -> bool:
-        return (
-            getattr(self, "runtime", None) is not None
-            and getattr(self, "_artifact_builder", None) is not None
-        )
+        return self.runtime is not None and self._artifact_builder is not None
 
     def _init_reward_model(
         self,
@@ -233,11 +249,11 @@ class RewardFunction:
         model_factory: str,
         request_prefix: str,
         debug_basename: str,
+        artifact_format: str,
         reward_name: str = "",
         score_key: str = "",
         media_type: MediaType = "video",
         artifact_dir: str = "outputs/reward_artifacts",
-        artifact_format: str = "tensor",
         debug_dir: str = "",
         device: str | None = None,
         sleep_offload: bool = False,
@@ -278,15 +294,12 @@ class RewardFunction:
             # Normalize the model-id key ONCE here so the disk loaders
             # (kling/videocon) read only worker_config["reward_model_name"].
             # Precedence: an explicit worker_config.reward_model_name wins;
-            # otherwise fold worker_config.model_name (deprecated alias) or a
-            # top-level reward_name that looks like a HF repo (contains "/")
-            # — a bare reward_name stays a logical tag, not a model id.
+            # otherwise fold a top-level reward_name that looks like a HF repo
+            # (contains "/") — a bare reward_name stays a logical tag, not a
+            # model id.
             reward_name_repo = reward_name if "/" in reward_name else ""
             reward_model_name = str(
-                worker_cfg.get("reward_model_name")
-                or worker_cfg.get("model_name")  # deprecated alias
-                or reward_name_repo
-                or "",
+                worker_cfg.get("reward_model_name") or reward_name_repo or "",
             ).strip()
             model_path = str(worker_cfg.get("model_path", "")).strip()
             # YAML names the public model; the loader needs the private factory.
@@ -327,11 +340,9 @@ class RewardFunction:
     async def _score_with_inference_runtime(
         self,
         rollouts: list[RewardRollout],
-    ) -> list[float]:
+    ) -> RewardBatchReport:
         if not rollouts:
-            self.last_results = []
-            self.last_timing_ms = {}
-            return []
+            return RewardBatchReport(scores=[])
 
         runtime = self.runtime
         artifact_builder = self._artifact_builder
@@ -385,14 +396,6 @@ class RewardFunction:
         results = validate_reward_results(request, raw_results)
         inference_total_ms = (time.perf_counter() - inference_started) * 1000.0
         total_latency_ms = (time.perf_counter() - total_started) * 1000.0
-        self.last_results = list(results)
-        self.last_timing_ms = {
-            "latency_ms": total_latency_ms,
-            "queue_wait_ms": _max_result_timing(results, "queue_wait_ms"),
-            "inference_ms": _sum_result_timing(results, "inference_ms")
-            if results
-            else inference_total_ms,
-        }
         self._write_debug(
             request,
             results,
@@ -400,7 +403,17 @@ class RewardFunction:
             inference_total_ms=inference_total_ms,
             total_reward_latency_ms=total_latency_ms,
         )
-        return [float(result.selected_score) for result in results]
+        return RewardBatchReport(
+            scores=[float(result.selected_score) for result in results],
+            timing_ms={
+                "latency_ms": total_latency_ms,
+                "queue_wait_ms": _max_result_timing(results, "queue_wait_ms"),
+                "inference_ms": _sum_result_timing(results, "inference_ms")
+                if results
+                else inference_total_ms,
+            },
+            results=list(results),
+        )
 
     def _write_debug(
         self,
@@ -505,6 +518,7 @@ def _sum_result_timing(results: list[RewardInferenceResult], field: str) -> floa
 __all__ = [
     "ArtifactBuilder",
     "CumemRewardFunction",
+    "RewardBatchReport",
     "RewardCleanupError",
     "RewardFunction",
     "decode_artifact_frames",

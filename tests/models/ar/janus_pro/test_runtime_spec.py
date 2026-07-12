@@ -48,7 +48,7 @@ def test_janus_executor_parse_sampling_params_reads_scheduler_batch_size() -> No
         request_id="req",
         family="janus_pro",
         task="ar_t2i",
-        prompts=["draw text"],
+        inputs=["draw text"],
         samples_per_prompt=1,
         sampling={
             "image_token_num": 4,
@@ -98,7 +98,7 @@ def test_janus_chunk_context_records_temperature(
         request_id="req",
         family="janus_pro",
         task="ar_t2i",
-        prompts=["draw text"],
+        inputs=["draw text"],
         samples_per_prompt=1,
         sampling={
             "temperature": 0.7,

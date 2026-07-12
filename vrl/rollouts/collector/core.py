@@ -244,13 +244,9 @@ class RolloutCollector:
             for builder, rollout in zip(builders, unscored, strict=True)
         ]
         with record_function("collector.reward_score"):
-            score_result = await (
-                self.reward_scorer.score_many_with_components(
-                    reward_inputs,
-                    require_memory_release=True,
-                )
-                if require_reward_release
-                else self.reward_scorer.score_many_with_components(reward_inputs)
+            score_result = await self.reward_scorer.score_many(
+                reward_inputs,
+                require_memory_release=require_reward_release,
             )
         reward_timing_ms = dict(score_result.timing_ms)
         if reward_timing_ms:

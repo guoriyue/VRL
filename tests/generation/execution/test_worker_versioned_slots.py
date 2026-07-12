@@ -119,7 +119,7 @@ def _envelope(version: int) -> ChunkExecutionEnvelope:
         request_id=f"req-{version}",
         family="sd3_5",
         task="t2i",
-        prompts=["p"],
+        inputs=["p"],
         samples_per_prompt=1,
         policy_version=version,
     )

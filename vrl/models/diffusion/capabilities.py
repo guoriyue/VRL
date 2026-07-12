@@ -8,8 +8,6 @@ from vrl.generation.capabilities import FamilyCapability
 def diffusion_family_capability(
     family: str,
     task: str,
-    *,
-    supports_reference_conditioning: bool = False,
 ) -> FamilyCapability:
     """Capability template for diffusion timestep rollouts.
 
@@ -23,8 +21,6 @@ def diffusion_family_capability(
         family=family,
         task=task,
         trajectory_kind="diffusion",
-        supports_reference_conditioning=supports_reference_conditioning,
-        supports_complete_memory_parking=True,
     )
 
 

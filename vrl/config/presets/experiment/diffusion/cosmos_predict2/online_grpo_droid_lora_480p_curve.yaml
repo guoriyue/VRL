@@ -81,8 +81,6 @@ actor:
   # a separate, lower memory ceiling.
   replay_samples_per_chunk: 1
 
-cosmos:
-  reference_mode: per_sample
 
 rollout:
   n_samples_per_prompt: 16            # 16 rollouts/update (per_sample mode requires prompts_per_batch=1)

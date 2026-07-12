@@ -20,7 +20,7 @@ def test_diffusion_rollout_batch_builder_applies_storage_policy() -> None:
         request_id="req",
         family="sd3_5",
         task="t2i",
-        prompts=["p0"],
+        inputs=["p0"],
         samples_per_prompt=1,
         sampling={"num_steps": 2},
     )

@@ -9,8 +9,8 @@ from PIL import Image
 
 from vrl.scripts.common.online import _resolve_reference_artifacts
 from vrl.scripts.data import bootstrap, common, danbooru, setup, video_world
-from vrl.scripts.diffusion.cosmos.train import _normalize_per_sample_reference_images
 from vrl.trainers.data import load_prompt_manifest
+from vrl.trainers.data.artifacts import require_reference_images
 
 
 def test_video_world_bridge_rows_match_cosmos_consumer(
@@ -58,10 +58,9 @@ def test_video_world_bridge_rows_match_cosmos_consumer(
         examples,
         OmegaConf.create({"data": {"manifest": manifest.as_posix()}}),
     )
-    _normalize_per_sample_reference_images(
+    require_reference_images(
         examples,
         manifest_path=manifest,
-        prompts_per_batch=1,
     )
     assert examples[0].metadata["source_episode"] == "000001"
     assert Path(examples[0].reference_image).exists()

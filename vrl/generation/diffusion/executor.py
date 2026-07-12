@@ -325,14 +325,13 @@ class ReferenceConditionedChunks:
     """Reference-image threading for per-chunk encode/prepare.
 
     Cosmos Predict2 Video2World and Wan 2.1 I2V condition every chunk on a
-    reference image that can arrive globally (executor attribute) or
-    per-sample (request metadata). The two executors had copy-pasted these
+    reference image carried by its GenerationInput. The two executors had
+    copy-pasted these
     hooks; ``build_chunk_encoded`` stays family-specific because the encoded
     payloads genuinely differ (Wan carries ``image_embeds``).
     """
 
     model: Any
-    reference_image: Any
 
     def encode_prompt_for_chunk(
         self,
@@ -344,7 +343,7 @@ class ReferenceConditionedChunks:
     ) -> dict[str, Any]:
         """Encode text plus the active reference-image conditioning for one chunk."""
 
-        reference_image = self._reference_image_for_request(generation_request)
+        reference_image = self._reference_image_for_chunk(generation_request, chunk)
         return self.model.encode_prompt(
             chunk.prompt,
             video_request.negative_prompt or None,
@@ -364,18 +363,25 @@ class ReferenceConditionedChunks:
     ) -> dict[str, Any]:
         """Thread the active reference image into family prepare_sampling."""
 
-        del encoded, video_request, params, chunk
+        del encoded, video_request, params
         return {
-            "reference_image": self._reference_image_for_request(
+            "reference_image": self._reference_image_for_chunk(
                 generation_request,
+                chunk,
             ),
         }
 
-    def _reference_image_for_request(self, request: GenerationRequest) -> Any:
-        # Per-sample reference paths arrive already resolved: prompt loading
-        # (run_online_recipe -> _resolve_reference_artifacts) resolves manifest
-        # relative paths against data.artifact_data_root before collection.
-        ref = request.metadata.get("reference_image", self.reference_image)
+    def _reference_image_for_chunk(
+        self,
+        request: GenerationRequest,
+        chunk: SampleChunk,
+    ) -> Any:
+        ref = request.inputs[chunk.prompt_index].reference_image
+        if ref is None:
+            raise ValueError(
+                f"{request.family} requires reference_image for prompt "
+                f"index {chunk.prompt_index}",
+            )
         return load_reference_image(ref)
 
 

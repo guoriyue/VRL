@@ -18,7 +18,7 @@ def test_diffusion_chunk_gatherer_aggregates_json_serializable_counters() -> Non
         request_id="req",
         family="sd3_5",
         task="t2i",
-        prompts=["p0"],
+        inputs=["p0"],
         samples_per_prompt=2,
         sampling={"num_steps": 2},
     )

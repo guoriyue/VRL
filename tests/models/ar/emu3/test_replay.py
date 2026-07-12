@@ -31,7 +31,7 @@ def _request() -> GenerationRequest:
         request_id="req",
         family="emu3",
         task="ar_t2i",
-        prompts=["draw text"],
+        inputs=["draw text"],
         samples_per_prompt=2,
     )
 

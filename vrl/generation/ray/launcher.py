@@ -314,10 +314,6 @@ def _build_executor_kwargs(entry: Any, cfg: Any) -> dict[str, Any]:
         # fixed fallback accepts only an integer.
         if samples_per_chunk is not None and samples_per_chunk != "auto":
             kwargs["samples_per_chunk"] = int(samples_per_chunk)
-    if entry.capability.supports_reference_conditioning:
-        reference_image = cfg_path(cfg, "model.reference_image", None)
-        if reference_image:
-            kwargs["reference_image"] = str(reference_image)
     # Families on the shared executor read their whole executor config block
     # from yaml in ONE pass (config is homogeneous — no per-field extraction);
     # family/task identity comes from the registry entry. Families with their

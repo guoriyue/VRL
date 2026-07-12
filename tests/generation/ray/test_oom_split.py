@@ -125,7 +125,7 @@ def _request(num_samples: int) -> GenerationRequest:
         request_id="req-oom",
         family="test",
         task="t2i",
-        prompts=["p"],
+        inputs=["p"],
         samples_per_prompt=num_samples,
     )
 
@@ -259,7 +259,7 @@ def _versioned_request(num_samples: int, version: int) -> GenerationRequest:
         request_id="req-stale",
         family="test",
         task="t2i",
-        prompts=["p"],
+        inputs=["p"],
         samples_per_prompt=num_samples,
         policy_version=version,
     )

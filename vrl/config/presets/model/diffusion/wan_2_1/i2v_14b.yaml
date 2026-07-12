@@ -2,7 +2,6 @@
 model:
   family: wan_2_1_i2v
   path: Wan-AI/Wan2.1-I2V-14B-480P-Diffusers
-  reference_image: ""
   offload_mode: none
 
   memory:

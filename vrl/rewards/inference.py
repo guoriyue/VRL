@@ -190,6 +190,24 @@ class RewardMemoryParkingSpec:
             raise ValueError("reward parking residual_bytes_limit must be >= 0")
 
 
+def validate_reward_parking_residual(
+    *,
+    residual_bytes: int,
+    baseline_bytes: int,
+    limit_bytes: int,
+    context: str,
+) -> None:
+    """One invariant behind every reward release check: residual <= baseline + limit."""
+
+    if min(residual_bytes, baseline_bytes, limit_bytes) < 0:
+        raise ValueError(f"{context} byte counts must be >= 0")
+    if residual_bytes > baseline_bytes + limit_bytes:
+        raise RuntimeError(
+            f"incomplete {context}: residual={residual_bytes} "
+            f"baseline={baseline_bytes} limit={limit_bytes}",
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class RewardMemoryReleaseProof:
     """Evidence that one reward request finished with GPU memory parked."""
@@ -210,23 +228,12 @@ class RewardMemoryReleaseProof:
             raise RuntimeError(
                 f"reward GPU memory was not released for request {request_id!r}",
             )
-        if (
-            min(
-                self.baseline_gpu_used_bytes,
-                self.residual_gpu_used_bytes,
-                self.residual_bytes_limit,
-            )
-            < 0
-        ):
-            raise ValueError("reward memory release proof byte counts must be >= 0")
-        allowed = self.baseline_gpu_used_bytes + self.residual_bytes_limit
-        if self.residual_gpu_used_bytes > allowed:
-            raise RuntimeError(
-                "incomplete reward memory parking for request "
-                f"{request_id!r}: residual={self.residual_gpu_used_bytes} "
-                f"baseline={self.baseline_gpu_used_bytes} "
-                f"limit={self.residual_bytes_limit}",
-            )
+        validate_reward_parking_residual(
+            residual_bytes=self.residual_gpu_used_bytes,
+            baseline_bytes=self.baseline_gpu_used_bytes,
+            limit_bytes=self.residual_bytes_limit,
+            context=f"reward memory parking for request {request_id!r}",
+        )
 
 
 @runtime_checkable
@@ -344,5 +351,6 @@ __all__ = [
     "RewardMemoryParkingRuntime",
     "RewardMemoryReleaseProof",
     "score_artifacts_with_model",
+    "validate_reward_parking_residual",
     "validate_reward_results",
 ]

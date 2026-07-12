@@ -109,7 +109,7 @@ def test_nextstep_runtime_uses_vllm_paged_attention_by_default(monkeypatch) -> N
         request_id="nextstep-vllm-paged",
         family="nextstep_1",
         task="ar_t2i",
-        prompts=[""],
+        inputs=[""],
         samples_per_prompt=1,
         sampling={
             "ar_paged_block_size": 32,

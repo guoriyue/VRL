@@ -13,6 +13,7 @@ from vrl.scripts.common.online import (
     export_transformer_lora,
     run_online_recipe,
 )
+from vrl.trainers.data.artifacts import require_reference_images
 from vrl.scripts.common.types import OnlineRecipeDefinition
 from vrl.scripts.diffusion.train import build_replay_bundle
 
@@ -73,56 +74,21 @@ def _after_bundle_built(bundle: Any, cfg: DictConfig) -> None:
 
 
 def _predict2_collector_kwargs(cfg: DictConfig, examples: Any) -> dict[str, Any]:
-    mode = str(OmegaConf.select(cfg, "cosmos.reference_mode", default="global"))
-    if mode not in {"global", "per_sample"}:
-        raise ValueError("cosmos.reference_mode must be 'global' or 'per_sample'")
-    if mode == "global":
-        # Pass the validated path, not a loaded PIL image: the Ray launch
-        # contract only accepts primitive executor kwargs, and the worker-side
-        # executor loads paths itself (load_reference_image in its __init__).
-        path_text = str(cfg.model.reference_image or "").strip()
-        if not path_text:
-            raise ValueError(
-                "Cosmos Predict2 Video2World GRPO requires model.reference_image "
-                "unless cosmos.reference_mode=per_sample",
-            )
-        path = Path(path_text).expanduser()
-        if not path.exists():
-            raise FileNotFoundError(f"model.reference_image does not exist: {path}")
-        return {"reference_image": str(path)}
-    _normalize_per_sample_reference_images(
+    conditioning = OmegaConf.select(cfg, "data.preprocessing.conditioning", default=None)
+    if conditioning != "reference_image":
+        raise ValueError(
+            "Cosmos Predict2 requires data.preprocessing.conditioning=reference_image",
+        )
+    require_reference_images(
         examples,
         manifest_path=Path(str(cfg.data.manifest)),
-        prompts_per_batch=int(cfg.rollout.prompts_per_batch),
+        default_reference_image=OmegaConf.select(
+            cfg,
+            "data.preprocessing.reference_image",
+            default=None,
+        ),
     )
     return {}
-
-
-def _normalize_per_sample_reference_images(
-    examples: Any,
-    *,
-    manifest_path: Path,
-    prompts_per_batch: int,
-) -> None:
-    # Paths were already resolved at prompt load time
-    # (run_online_recipe -> _resolve_reference_artifacts); this hook keeps only
-    # the cosmos-specific checks: the per_sample batch-shape guard and the
-    # per-row required/existence validation.
-    if prompts_per_batch != 1:
-        raise ValueError(
-            "cosmos.reference_mode=per_sample currently requires "
-            "trainer.prompts_per_batch=1",
-        )
-    for idx, example in enumerate(examples):
-        raw_path = str(getattr(example, "reference_image", "") or "").strip()
-        if not raw_path:
-            raise ValueError(
-                f"{manifest_path}: row {idx} is missing required field reference_image",
-            )
-        if not Path(raw_path).exists():
-            raise FileNotFoundError(
-                f"{manifest_path}: row {idx} reference_image does not exist: {raw_path}",
-            )
 
 
 __all__ = [

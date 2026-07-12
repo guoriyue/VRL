@@ -28,11 +28,9 @@ class Wan_2_1I2VChunkExecutor(ReferenceConditionedChunks, DiffusionChunkExecutor
         self,
         model: Any,
         *,
-        reference_image: Any = None,
         samples_per_chunk: int = 1,
     ) -> None:
         self.model = model
-        self.reference_image = reference_image
         self.default_samples_per_chunk = max(1, int(samples_per_chunk))
 
 

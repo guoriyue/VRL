@@ -97,8 +97,6 @@ actor:
   ema:
     enable: false                     # validation: no averaging lag on top of the raw policy
 
-cosmos:
-  reference_mode: per_sample
 
 rollout:
   n_samples_per_prompt: 16

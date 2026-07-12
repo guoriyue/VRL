@@ -7,8 +7,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.rewards.base import RewardCleanupError, RewardFunction
-from vrl.rewards.inference import RewardMemoryReleaseProof
+from vrl.rewards.base import RewardBatchReport, RewardCleanupError, RewardFunction
+from vrl.rewards.inference import RewardInferenceResult, RewardMemoryReleaseProof
 from vrl.rewards.types import RewardRollout
 
 # Registry of reward function factories.
@@ -64,20 +64,15 @@ def _register_builtins() -> None:
 class MultiReward(RewardFunction):
     """Weighted combination of named reward functions.
 
-    Component scores are returned with the totals for the same scoring call.
-    They deliberately do not live on this shared object: continuous rollout
-    can score future groups while the trainer consumes an older group, so a
-    mutable last-value cache would attach metrics to whichever call finished
-    last instead of to the batch being trained.
-
     Usage::
 
         reward_fn = MultiReward.from_dict(
             {"ocr": 1.0, "aesthetic": 0.3},
             device="cuda",
         )
-        totals, components = await reward_fn.score_batch_with_components([rollout])
-        # components -> {"ocr": [0.87], "aesthetic": [5.2]}
+        report = await reward_fn.score_batch_report([rollout])
+        # report.scores     -> weighted totals
+        # report.components -> {"ocr": [0.87], "aesthetic": [5.2]}
     """
 
     def __init__(
@@ -177,36 +172,38 @@ class MultiReward(RewardFunction):
         return cls(triples)
 
     async def score(self, rollout: RewardRollout) -> float:
-        totals, _ = await self.score_batch_with_components([rollout])
-        return totals[0]
+        return (await self.score_batch_report([rollout])).scores[0]
 
     async def score_batch(self, rollouts: list[RewardRollout]) -> list[float]:
-        totals, _ = await self.score_batch_with_components(rollouts)
-        return totals
+        return (await self.score_batch_report(rollouts)).scores
 
-    async def score_batch_with_components(
-        self,
-        rollouts: list[RewardRollout],
-    ) -> tuple[list[float], dict[str, list[float]]]:
-        """Return totals and batch-aligned raw components from one call."""
+    async def score_batch_report(self, rollouts: list[RewardRollout]) -> RewardBatchReport:
+        """Return weighted totals plus per-component observations from one call."""
 
-        self.last_results = []
-        self.last_timing_ms = {}
         totals = [0.0] * len(rollouts)
         components: dict[str, list[float]] = {}
+        timing_ms: dict[str, float] = {}
+        results: list[RewardInferenceResult] = []
         operation_error: BaseException | None = None
         try:
             for name, weight, fn in self.rewards:
-                sub_scores = await fn.score_batch(rollouts)
-                self._append_inference_observations(fn)
-                components[name] = list(sub_scores)
-                for i, s in enumerate(sub_scores):
+                report = await fn.score_batch_report(rollouts)
+                components[name] = list(report.scores)
+                results.extend(report.results)
+                for key, value in report.timing_ms.items():
+                    timing_ms[str(key)] = timing_ms.get(str(key), 0.0) + float(value)
+                for i, s in enumerate(report.scores):
                     totals[i] += weight * s
         except BaseException as error:
             operation_error = error
         _, cleanup_error = await self._park_all_memory()
         _raise_operation_and_cleanup(operation_error, cleanup_error)
-        return totals, components
+        return RewardBatchReport(
+            scores=totals,
+            components=components,
+            timing_ms=timing_ms,
+            results=results,
+        )
 
     async def park_memory(self) -> tuple[RewardMemoryReleaseProof, ...]:
         """Actively park every component; never infer release from cached state."""
@@ -230,11 +227,6 @@ class MultiReward(RewardFunction):
         if errors:
             return tuple(proofs), RewardCleanupError("reward memory parking failures", errors)
         return tuple(proofs), None
-
-    def _append_inference_observations(self, fn: RewardFunction) -> None:
-        self.last_results.extend(list(getattr(fn, "last_results", []) or []))
-        for key, value in (getattr(fn, "last_timing_ms", {}) or {}).items():
-            self.last_timing_ms[str(key)] = self.last_timing_ms.get(str(key), 0.0) + float(value)
 
 
 def validate_reward_memory_parking_components(

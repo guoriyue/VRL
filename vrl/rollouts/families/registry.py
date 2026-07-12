@@ -140,7 +140,6 @@ def _diffusion_entry(
     request_prefix: str,
     default_task_type: str,
     executor_cls: str | None = None,
-    supports_reference_conditioning: bool = False,
     build: DiffusionFamilyBuild | None = None,
     replay_runtime_builder: str | None = None,
 ) -> RolloutFamilyEntry:
@@ -171,7 +170,6 @@ def _diffusion_entry(
         capability=diffusion_family_capability(
             family,
             task,
-            supports_reference_conditioning=supports_reference_conditioning,
         ),
     )
 
@@ -411,7 +409,6 @@ register_rollout_family(
         runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
         request_prefix="wan_2_1_i2v",
         default_task_type="image_to_video",
-        supports_reference_conditioning=True,
         build=DiffusionFamilyBuild(
             model_cls="vrl.models.diffusion.wan_2_1.model:WanI2VDiffusersModel",
             replay_cls="vrl.models.diffusion.wan_2_1.model:WanI2VReplayModel",
@@ -433,7 +430,6 @@ register_rollout_family(
         runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
         request_prefix="cosmos-predict2",
         default_task_type="video2world",
-        supports_reference_conditioning=True,
         build=DiffusionFamilyBuild(
             model_cls="vrl.models.diffusion.cosmos.predict2.model:CosmosPredict2Model",
             task_variant="video2world",
@@ -487,7 +483,6 @@ register_rollout_family(
         runtime_spec_extractor="vrl.models.diffusion.build:extract_family_runtime_spec",
         request_prefix="cosmos3",
         default_task_type="text_to_video",
-        supports_reference_conditioning=False,
         build=DiffusionFamilyBuild(
             model_cls="vrl.models.diffusion.cosmos.cosmos3.model:Cosmos3Model",
             task_variant="text2world",

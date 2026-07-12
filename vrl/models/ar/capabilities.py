@@ -22,7 +22,6 @@ def ar_discrete_family_capability(
         family=family,
         task=task,
         trajectory_kind=trajectory_kind,
-        supports_complete_memory_parking=True,
     )
 
 
@@ -40,7 +39,6 @@ def ar_continuous_family_capability(
         family=family,
         task=task,
         trajectory_kind="ar_continuous",
-        supports_complete_memory_parking=True,
     )
 
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import gc
 import importlib
 from collections.abc import Mapping
 from typing import Any
@@ -12,8 +11,13 @@ from vrl.rewards.inference import (
     RewardInferenceResult,
     RewardMemoryReleaseProof,
     score_artifacts_with_model,
+    validate_reward_parking_residual,
 )
-from vrl.utils.cuda_memory import CumemPool
+from vrl.utils.cuda_memory import (
+    CumemPool,
+    gpu_used_bytes,
+    release_cuda_memory_for_parking,
+)
 
 
 class LocalRewardRuntime:
@@ -164,52 +168,25 @@ class LocalRewardRuntime:
             baseline_bytes = self._parking_baseline_gpu_used_bytes
             if baseline_bytes is None:
                 raise RuntimeError("reward runtime has no pre-load shutdown baseline")
-            residual_bytes = self._gpu_used_bytes()
-            allowed = baseline_bytes + self._parking_residual_bytes_limit
-            if residual_bytes > allowed:
-                # Retain the pool/baseline so terminal cleanup can retry cache
-                # release; the trainer remains parked until this method succeeds.
-                raise RuntimeError(
-                    "incomplete reward memory release during shutdown: "
-                    f"residual={residual_bytes} baseline={baseline_bytes} "
-                    f"limit={self._parking_residual_bytes_limit}",
-                )
+            # A failure retains the pool/baseline so terminal cleanup can retry
+            # cache release; the trainer remains parked until this succeeds.
+            validate_reward_parking_residual(
+                residual_bytes=self._gpu_used_bytes(),
+                baseline_bytes=baseline_bytes,
+                limit_bytes=self._parking_residual_bytes_limit,
+                context="reward memory release during shutdown",
+            )
         self._pool = None
         self._last_request_id = None
         self._parking_baseline_gpu_used_bytes = None
 
+    # Instance-assignable test seams over the shared parking bookkeeping in
+    # vrl.utils.cuda_memory; rewards measure their configured device only.
     def _gpu_used_bytes(self) -> int:
-        """Physical bytes in use on the configured reward CUDA device."""
-
-        device = str(self._worker_config.get("device", ""))
-        if not device.startswith("cuda"):
-            return 0
-        import torch
-
-        if not torch.cuda.is_available():
-            return 0
-        target = torch.device(device)
-        torch.cuda.synchronize(target)
-        free_bytes, total_bytes = torch.cuda.mem_get_info(target)
-        return int(total_bytes - free_bytes)
+        return gpu_used_bytes(str(self._worker_config.get("device", "")))
 
     def _release_cuda_memory_for_parking(self) -> None:
-        """Release default-allocator pages before publishing the reward proof."""
-
-        gc.collect()
-        device = str(self._worker_config.get("device", ""))
-        if not device.startswith("cuda"):
-            return
-        import torch
-
-        if not torch.cuda.is_available():
-            return
-        target = torch.device(device)
-        with torch.cuda.device(target):
-            torch.cuda.synchronize(target)
-            torch.cuda.empty_cache()
-            torch.cuda.ipc_collect()
-            torch.cuda.synchronize(target)
+        return release_cuda_memory_for_parking(str(self._worker_config.get("device", "")))
 
 
 __all__ = [

@@ -1131,7 +1131,7 @@ def test_select_move_and_remap_preserve_rollout_trajectory_fields() -> None:
         request_id="req",
         family="janus_pro",
         task="ar_t2i",
-        prompts=["a", "b"],
+        inputs=["a", "b"],
         samples_per_prompt=2,
     )
     sample_rows = [

@@ -115,7 +115,7 @@ def test_forward_chunk_plan_routes_through_stage_boundary_methods() -> None:
         request_id="req-1",
         family="test",
         task="t2i",
-        prompts=["prompt"],
+        inputs=["prompt"],
         samples_per_prompt=2,
     )
     chunk = SampleChunk(
@@ -326,7 +326,7 @@ def test_apply_wire_storage_policy_downcasts_before_wire() -> None:
         request_id="req-policy",
         family="test",
         task="t2i",
-        prompts=["p"],
+        inputs=["p"],
         samples_per_prompt=2,
         sampling={"trajectory_storage": {"dtype": "float16"}},
     )
@@ -349,7 +349,7 @@ def test_apply_wire_storage_policy_downcasts_before_wire() -> None:
         request_id="req-plain",
         family="test",
         task="t2i",
-        prompts=["p"],
+        inputs=["p"],
         samples_per_prompt=2,
     )
     before = chunk2.observations

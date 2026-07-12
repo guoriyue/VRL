@@ -23,7 +23,7 @@ def test_nextstep_ar_sampling_params_carry_scheduler_batch_size() -> None:
         request_id="req",
         family="nextstep_1",
         task="ar_t2i",
-        prompts=["draw text"],
+        inputs=["draw text"],
         samples_per_prompt=2,
         sampling={
             "image_token_num": 8,
@@ -62,7 +62,7 @@ def test_ar_layout_requires_shape_sampling_fields() -> None:
             request_id="req",
             family="nextstep_1",
             task="ar_t2i",
-            prompts=["draw text"],
+            inputs=["draw text"],
             samples_per_prompt=1,
             sampling=sampling,
         )
@@ -92,7 +92,7 @@ def test_nextstep_gather_derives_reward_image_from_canonical_output() -> None:
         request_id="req",
         family="nextstep_1",
         task="ar_t2i",
-        prompts=["draw text"],
+        inputs=["draw text"],
         samples_per_prompt=2,
         sampling={"image_token_num": 2},
     )

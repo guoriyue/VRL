@@ -23,7 +23,7 @@ def _request(samples: int = 2) -> GenerationRequest:
         request_id="req",
         family="llamagen",
         task="ar_t2i",
-        prompts=["a photo of a cat"],
+        inputs=["a photo of a cat"],
         samples_per_prompt=samples,
     )
 

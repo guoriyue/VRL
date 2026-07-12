@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from vrl.rewards.base import RewardCleanupError, RewardFunction
+from vrl.rewards.base import RewardBatchReport, RewardCleanupError, RewardFunction
 from vrl.rewards.functions.registry import MultiReward
 from vrl.rewards.runtime import LocalRewardRuntime
 from vrl.rewards.types import RewardRollout, RewardTrajectory
@@ -37,17 +37,14 @@ class _TimedBatchReward(RewardFunction):
         self.scores = list(scores)
         self.timing_ms = dict(timing_ms)
         self.tag = tag
-        self.last_results: list[str] = []
-        self.last_timing_ms: dict[str, float] = {}
 
-    async def score(self, rollout: RewardRollout) -> float:
-        return (await self.score_batch([rollout]))[0]
-
-    async def score_batch(self, rollouts: list[RewardRollout]) -> list[float]:
+    async def score_batch_report(self, rollouts: list[RewardRollout]) -> RewardBatchReport:
         assert len(rollouts) == len(self.scores)
-        self.last_results = [self.tag]
-        self.last_timing_ms = dict(self.timing_ms)
-        return list(self.scores)
+        return RewardBatchReport(
+            scores=list(self.scores),
+            timing_ms=dict(self.timing_ms),
+            results=[self.tag],
+        )
 
 
 @pytest.mark.asyncio
@@ -60,19 +57,19 @@ async def test_multi_reward_returns_components_for_each_scoring_call() -> None:
         ]
     )
 
-    first, first_components = await reward.score_batch_with_components(
+    first = await reward.score_batch_report(
         [_make_rollout("a"), _make_rollout("b")],
     )
-    second, second_components = await reward.score_batch_with_components(
+    second = await reward.score_batch_report(
         [_make_rollout("c")],
     )
 
-    assert first == pytest.approx([0.6, 1.2])
-    assert second == pytest.approx([1.8])
-    assert first_components == pytest.approx(
+    assert first.scores == pytest.approx([0.6, 1.2])
+    assert second.scores == pytest.approx([1.8])
+    assert first.components == pytest.approx(
         {"ocr": [0.1, 0.2], "aesthetic": [1.0, 2.0]},
     )
-    assert second_components == pytest.approx(
+    assert second.components == pytest.approx(
         {"ocr": [0.3], "aesthetic": [3.0]},
     )
 
@@ -87,12 +84,12 @@ async def test_zero_weight_component_is_scored_without_changing_total() -> None:
         ],
     )
 
-    scores, components = await reward.score_batch_with_components(
+    report = await reward.score_batch_report(
         [_make_rollout("a"), _make_rollout("b")],
     )
 
-    assert scores == pytest.approx([2.0, 3.0])
-    assert components == pytest.approx(
+    assert report.scores == pytest.approx([2.0, 3.0])
+    assert report.components == pytest.approx(
         {"train": [2.0, 3.0], "observe": [0.7, 0.8]},
     )
 
@@ -131,11 +128,11 @@ async def test_multi_reward_aggregates_inference_observations() -> None:
         ],
     )
 
-    scores = await reward.score_batch([_make_rollout("a"), _make_rollout("b")])
+    report = await reward.score_batch_report([_make_rollout("a"), _make_rollout("b")])
 
-    assert scores == pytest.approx([2.1, 4.2])
-    assert reward.last_results == ["first-result", "second-result"]
-    assert reward.last_timing_ms == pytest.approx(
+    assert report.scores == pytest.approx([2.1, 4.2])
+    assert report.results == ["first-result", "second-result"]
+    assert report.timing_ms == pytest.approx(
         {
             "latency_ms": 12.0,
             "queue_wait_ms": 4.0,

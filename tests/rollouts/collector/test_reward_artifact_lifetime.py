@@ -36,7 +36,7 @@ class _RequestBuilder:
             request_id="artifact-request",
             family="unit",
             task="ar_t2i",
-            prompts=prompts,
+            inputs=prompts,
             samples_per_prompt=group_size,
             return_artifacts={"output"},
         )
@@ -97,13 +97,10 @@ class _RewardScorer:
     async def score_many(
         self,
         requests: list[RewardScoringInput],
-    ) -> list[torch.Tensor]:
-        return (await self.score_many_with_components(requests)).scores
-
-    async def score_many_with_components(
-        self,
-        requests: list[RewardScoringInput],
+        *,
+        require_memory_release: bool = False,
     ) -> RewardScoreBatch:
+        assert require_memory_release is False
         return RewardScoreBatch(
             scores=[await self.score(request) for request in requests],
             components={},
@@ -227,7 +224,7 @@ def _continuous_trajectory():
         request_id="continuous-request",
         family="nextstep_1",
         task="ar_t2i_continuous",
-        prompts=["p"],
+        inputs=["p"],
         samples_per_prompt=2,
     )
     sample_rows = _sample_rows(request)

@@ -59,7 +59,7 @@ def test_executor_layout_defaults_match_xl_stage1_256() -> None:
         request_id="req",
         family="llamagen",
         task="ar_t2i",
-        prompts=["draw text"],
+        inputs=["draw text"],
         samples_per_prompt=1,
         sampling={},
     )
@@ -75,7 +75,7 @@ def test_executor_rejects_shared_attention_backend_selection() -> None:
         request_id="req",
         family="llamagen",
         task="ar_t2i",
-        prompts=["draw text"],
+        inputs=["draw text"],
         samples_per_prompt=1,
         sampling={"attention_backend": "vllm_paged"},
     )

@@ -44,15 +44,15 @@ def _reward_function_local() -> RewardFunction:
 async def test_reward_function_local_scores_in_process_no_disk() -> None:
     """Checks reward function local scores in process no disk."""
     reward = _reward_function_local()
-    out = await reward.score_batch(
+    report = await reward.score_batch_report(
         [
             _rollout(torch.full((1, 3, 2, 2), 0.5)),
             _rollout(torch.ones(1, 3, 2, 2)),
         ],
     )
 
-    assert out == pytest.approx([0.5, 1.0])
-    assert [r.worker_id for r in reward.last_results] == ["local", "local"]
+    assert report.scores == pytest.approx([0.5, 1.0])
+    assert [r.worker_id for r in report.results] == ["local", "local"]
     # in-memory artifacts carry no materialized path
     await reward.shutdown()
 

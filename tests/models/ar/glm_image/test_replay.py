@@ -26,7 +26,7 @@ def _request() -> GenerationRequest:
         request_id="req",
         family="glm_image",
         task="ar_t2i",
-        prompts=["a red apple"],
+        inputs=["a red apple"],
         samples_per_prompt=2,
     )
 

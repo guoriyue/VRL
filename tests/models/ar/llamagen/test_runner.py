@@ -24,7 +24,7 @@ def _request() -> GenerationRequest:
         request_id="req",
         family="llamagen",
         task="ar_t2i",
-        prompts=["a photo of a cat"],
+        inputs=["a photo of a cat"],
         samples_per_prompt=BATCH,
         sampling={"seed": 0},
     )

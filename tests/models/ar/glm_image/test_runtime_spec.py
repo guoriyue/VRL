@@ -87,7 +87,7 @@ def test_executor_rejects_explicit_attention_backend() -> None:
         request_id="req",
         family="glm_image",
         task="ar_t2i",
-        prompts=["p"],
+        inputs=["p"],
         samples_per_prompt=1,
         sampling={"attention_backend": "vllm_paged"},
     )
@@ -98,7 +98,7 @@ def test_executor_rejects_explicit_attention_backend() -> None:
         request_id="req",
         family="glm_image",
         task="ar_t2i",
-        prompts=["p"],
+        inputs=["p"],
         samples_per_prompt=1,
         sampling={},
     )

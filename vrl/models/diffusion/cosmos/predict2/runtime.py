@@ -17,7 +17,6 @@ from vrl.generation.diffusion.layout import VideoGenerationRequest
 from vrl.generation.execution.chunks import SampleChunk
 from vrl.generation.types import GenerationRequest
 from vrl.utils.logging import init_logger
-from vrl.utils.media import load_reference_image
 
 logger = init_logger(__name__)
 class CosmosChunkExecutor(ReferenceConditionedChunks, DiffusionChunkExecutorBase):
@@ -34,11 +33,9 @@ class CosmosChunkExecutor(ReferenceConditionedChunks, DiffusionChunkExecutorBase
         self,
         model: Any,  # CosmosPredict2Model
         *,
-        reference_image: Any = None,
         samples_per_chunk: int = 8,
     ) -> None:
         self.model = model
-        self.reference_image = load_reference_image(reference_image)
         self.default_samples_per_chunk = max(1, int(samples_per_chunk))
 
     def build_chunk_encoded(
@@ -54,7 +51,7 @@ class CosmosChunkExecutor(ReferenceConditionedChunks, DiffusionChunkExecutorBase
 
         del video_request, params
         chunk_g = chunk.sample_count
-        reference_image = self._reference_image_for_request(generation_request)
+        reference_image = self._reference_image_for_chunk(generation_request, chunk)
         chunk_encoded: dict[str, Any] = {
             "prompt_embeds": self.layout.repeat_batch(
                 encoded["prompt_embeds"],

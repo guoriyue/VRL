@@ -47,7 +47,7 @@ def _batch_with_sentinel_timestep_tensors() -> tuple[RolloutBatch, list[_NoFullM
         request_id="req",
         family="sd3_5",
         task="t2i",
-        prompts=["p0", "p1"],
+        inputs=["p0", "p1"],
         samples_per_prompt=1,
     )
     sample_rows = [

@@ -34,8 +34,6 @@ actor:
 rollout:
   samples_per_chunk: 4
 
-cosmos:
-  reference_mode: per_sample
 
 distributed:
   resources:

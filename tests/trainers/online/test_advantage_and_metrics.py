@@ -190,7 +190,7 @@ class TestAdvantageAndMetrics:
                     request_id="zero-adv",
                     family="janus_pro",
                     task="ar_t2i",
-                    prompts=prompts,
+                    inputs=prompts,
                     samples_per_prompt=group_size,
                 )
                 sample_rows = [

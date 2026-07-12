@@ -11,11 +11,16 @@ from omegaconf import OmegaConf
 from vrl.scripts.diffusion.wan_2_1.train import _i2v_collector_kwargs
 
 
-def _cfg(global_reference: str = "") -> object:
+def _cfg(global_reference: str | None = None) -> object:
     return OmegaConf.create(
         {
-            "model": {"reference_image": global_reference},
-            "data": {"manifest": "manifest.jsonl"},
+            "data": {
+                "manifest": "manifest.jsonl",
+                "preprocessing": {
+                    "conditioning": "reference_image",
+                    "reference_image": global_reference,
+                },
+            },
         },
     )
 
@@ -39,12 +44,15 @@ def test_valid_rows_pass_and_metadata_stays_untouched(tmp_path: Path) -> None:
 
 
 def test_missing_row_reference_falls_back_to_global(tmp_path: Path) -> None:
-    example = SimpleNamespace(reference_image="", metadata={})
-    assert _i2v_collector_kwargs(_cfg(str(tmp_path / "g.png")), [example]) == {}
+    ref = tmp_path / "g.png"
+    ref.write_bytes(b"png")
+    example = SimpleNamespace(reference_image=None, metadata={})
+    assert _i2v_collector_kwargs(_cfg(str(ref)), [example]) == {}
+    assert example.reference_image == str(ref.resolve())
 
 
 def test_missing_row_reference_without_global_raises() -> None:
-    example = SimpleNamespace(reference_image="", metadata={})
+    example = SimpleNamespace(reference_image=None, metadata={})
     with pytest.raises(ValueError, match="missing required field"):
         _i2v_collector_kwargs(_cfg(), [example])
 

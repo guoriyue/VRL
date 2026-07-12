@@ -9,7 +9,7 @@ import torch
 
 from vrl.generation import GenerationOutput, GenerationRequest, GenerationSampleRow
 from vrl.ray.resources import ActorLeasePolicy, PhaseHandoffPolicy, RayLifecyclePlan
-from vrl.rewards.base import RewardCleanupError
+from vrl.rewards.base import RewardBatchReport, RewardCleanupError
 from vrl.rewards.inference import RewardMemoryReleaseProof
 from vrl.rollouts.collector.batch_builder import (
     RolloutBatchBuildContext,
@@ -38,7 +38,7 @@ class _RequestBuilder:
             request_id="unit-request",
             family="unit",
             task="collect",
-            prompts=prompts,
+            inputs=prompts,
             samples_per_prompt=group_size,
             sampling={"seed": kwargs.get("seed")},
             return_artifacts={"output"},
@@ -147,18 +147,6 @@ class _RewardScorer:
         return torch.arange(request.batch_size, dtype=torch.float32)
 
     async def score_many(
-        self,
-        requests: list[RewardScoringInput],
-        *,
-        require_memory_release: bool = False,
-    ) -> list[torch.Tensor]:
-        result = await self.score_many_with_components(
-            requests,
-            require_memory_release=require_memory_release,
-        )
-        return result.scores
-
-    async def score_many_with_components(
         self,
         requests: list[RewardScoringInput],
         *,
@@ -374,13 +362,13 @@ def test_collector_blocks_trainer_handoff_when_reward_release_proof_fails() -> N
     import asyncio
 
     class _FailingRewardScorer(_RewardScorer):
-        async def score_many_with_components(
+        async def score_many(
             self,
             requests: list[RewardScoringInput],
             *,
             require_memory_release: bool = False,
         ) -> RewardScoreBatch:
-            await super().score_many_with_components(
+            await super().score_many(
                 requests,
                 require_memory_release=False,
             )
@@ -535,7 +523,7 @@ def test_reward_scorer_score_many_uses_one_call_and_splits_per_group() -> None:
         ),
     ]
 
-    rewards = asyncio.run(scorer.score_many(requests))
+    rewards = asyncio.run(scorer.score_many(requests)).scores
 
     # One reward call for both groups — this is what keeps one actor
     # lifecycle per epoch for release_after_score rewards.
@@ -559,7 +547,7 @@ def test_reward_scorer_score_many_uses_one_call_and_splits_per_group() -> None:
     assert rewards[0].tolist() == [0.0, 1.0]
     assert rewards[1].tolist() == [2.0, 3.0, 4.0]
 
-    assert asyncio.run(scorer.score_many([])) == []
+    assert asyncio.run(scorer.score_many([])).scores == []
 
 
 def test_collector_attaches_components_to_their_exact_rollout_groups() -> None:
@@ -567,9 +555,12 @@ def test_collector_attaches_components_to_their_exact_rollout_groups() -> None:
     import asyncio
 
     class _ComponentReward:
-        async def score_batch_with_components(self, rollouts):
+        async def score_batch_report(self, rollouts):
             scores = [float(index) for index in range(len(rollouts))]
-            return scores, {"observer": [value + 10.0 for value in scores]}
+            return RewardBatchReport(
+                scores=scores,
+                components={"observer": [value + 10.0 for value in scores]},
+            )
 
     collector = _collector(
         runtime=_Runtime(),
@@ -598,16 +589,17 @@ def test_collect_prompt_batches_folds_reward_timing_into_stats() -> None:
     class _TimedReward:
         def __init__(self) -> None:
             self.batch_sizes: list[int] = []
-            self.last_timing_ms: dict[str, float] = {}
 
-        async def score_batch(self, rollouts: list[Any]) -> list[float]:
+        async def score_batch_report(self, rollouts: list[Any]) -> RewardBatchReport:
             self.batch_sizes.append(len(rollouts))
-            self.last_timing_ms = {
-                "latency_ms": 12.0,
-                "queue_wait_ms": 3.0,
-                "inference_ms": 9.0,
-            }
-            return [float(index + 1) for index in range(len(rollouts))]
+            return RewardBatchReport(
+                scores=[float(index + 1) for index in range(len(rollouts))],
+                timing_ms={
+                    "latency_ms": 12.0,
+                    "queue_wait_ms": 3.0,
+                    "inference_ms": 9.0,
+                },
+            )
 
     reward_fn = _TimedReward()
     collector = RolloutCollector(
@@ -648,7 +640,7 @@ def test_reward_view_selection_fails_fast_when_ambiguous() -> None:
         request_id="unit-request",
         family="unit",
         task="collect",
-        prompts=["p0"],
+        inputs=["p0"],
         samples_per_prompt=1,
     )
     output = asyncio.run(_Runtime().generate(request))
@@ -692,7 +684,7 @@ def test_collector_forwards_reference_metadata_to_request() -> None:
         {"reference_image": "/tmp/reference.png"},
     )
 
-    assert collector_request.request.metadata["reference_image"] == "/tmp/reference.png"
+    assert collector_request.request.inputs[0].reference_image == "/tmp/reference.png"
     assert collector_request.metadata["reference_image"] == "/tmp/reference.png"
 
 
@@ -720,8 +712,8 @@ def test_collector_forwards_target_metadata_to_request() -> None:
         },
     )
 
-    assert collector_request.request.metadata["target_image"] == "/tmp/target.png"
-    assert collector_request.request.metadata["target_video"] == "/tmp/target.mp4"
+    assert collector_request.request.inputs[0].metadata["target_image"] == "/tmp/target.png"
+    assert collector_request.request.inputs[0].metadata["target_video"] == "/tmp/target.mp4"
     assert collector_request.metadata["target_image"] == "/tmp/target.png"
     assert collector_request.metadata["target_video"] == "/tmp/target.mp4"
 
@@ -762,7 +754,7 @@ def test_reward_outputs_reconstructs_uint8_wire_video_exactly() -> None:
         request_id="unit-request",
         family="unit",
         task="collect",
-        prompts=["p0"],
+        inputs=["p0"],
         samples_per_prompt=1,
     )
     output = asyncio.run(_Runtime().generate(request))

@@ -183,7 +183,7 @@ def _request(samples_per_prompt: int = 10) -> GenerationRequest:
         request_id="req-1",
         family="sd3_5",
         task="t2i",
-        prompts=["p"],
+        inputs=["p"],
         samples_per_prompt=samples_per_prompt,
         sampling={"num_steps": 20, "samples_per_chunk": "auto"},
         policy_version=1,
@@ -373,7 +373,7 @@ def test_worker_forwards_chunk_memory_without_runtime_debug() -> None:
         request_id="req-1",
         family="sd3_5",
         task="t2i",
-        prompts=["p"],
+        inputs=["p"],
         samples_per_prompt=1,
         policy_version=1,
     )

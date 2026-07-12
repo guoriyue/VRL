@@ -54,7 +54,7 @@ def _nft_batch(*, latents_clean: torch.Tensor | None) -> RolloutBatch:
         request_id="nft-contract",
         family="wan",
         task="t2v",
-        prompts=["a test prompt"],
+        inputs=["a test prompt"],
         samples_per_prompt=_BATCH,
     )
     sample_rows = [

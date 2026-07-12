@@ -138,6 +138,7 @@ class DataConfig(ConfigBase):
                 "caption_field",
                 "media_type",
                 "conditioning",
+                "reference_image",
                 "metadata_schema",
                 "target_text",
             )
@@ -386,7 +387,6 @@ class WanModelConfig(ModelConfig):
 
     boundary_ratio: Any = None
     offload_mode: Literal["none", "model", "sequential"] = "none"
-    reference_image: Any = None
     task_variant: Any = None
     trainable_transformers: Any = None
 
@@ -395,9 +395,6 @@ class CosmosPredict2ModelConfig(ModelConfig):
     """Cosmos Predict2 Video2World model keys."""
 
     model_config = ConfigDict(extra="ignore")
-
-    reference_image: Any = None
-
 
 class CosmosPredict25ModelConfig(ModelConfig):
     """Cosmos Predict2.5 model keys."""
@@ -782,9 +779,6 @@ class RootConfig(ConfigBase):
     precision: Annotated[
         Any, ConfigBlock(("train", "rollout", "math", "frozen", "rollout_recipe"))
     ] = None
-    # reader: vrl/scripts/diffusion/cosmos/train.py
-    cosmos: Annotated[Any, ConfigBlock(("reference_mode",))] = None
-
     @model_validator(mode="after")
     def _cross_field_validate(self) -> RootConfig:
         _validate_model_config_for_family(self.model)

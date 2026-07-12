@@ -1,15 +1,13 @@
 # Cosmos Predict2 2B Video2World + GRPO (single-GPU Ray rollout backend).
 #
-# This is the global-reference smoke/debug recipe. It is useful when a caller
-# explicitly overrides model.reference_image, but it is not the production
+# This is the fixed-reference smoke/debug recipe. It is useful when a caller
+# explicitly overrides data.preprocessing.reference_image, but it is not the production
 # learning setup: one fixed reference image paired with unrelated text prompts
 # gives Kling VideoReward little trainable signal. For source-backed training,
 # use experiment/diffusion/cosmos_predict2/online_grpo_v2w_reference.
 #
-# This recipe still requires real Video2World conditioning. Use either:
-#   1. global mode: override model.reference_image=/path/to/reference.png
-#   2. per-sample mode: set cosmos.reference_mode=per_sample and use JSONL rows:
-#      {"prompt": "...", "reference_image": "path/to/frame.png"}
+# This recipe requires:
+#   data.preprocessing.reference_image=/path/to/reference.png
 defaults:
 - /recipe/online/cosmos_predict2_grpo
 - /model/diffusion/cosmos/predict2_2b
@@ -17,6 +15,10 @@ defaults:
 - /sampling/denoise/35_step_cfg_7
 - /reward/kling_video_reward
 - /dataset/drawbench_train_192
+
+data:
+  preprocessing:
+    conditioning: reference_image
 
 # The upstream beta=0.004 KL prior is too strong for the current VRL
 # loss-scale on Kling reward: local diagnostics showed the objective dominated
@@ -28,8 +30,6 @@ actor:
 
 rollout:
   samples_per_chunk: 1   # 512p93f peaks ~31.8GB at sbs=1; CFG doubles the transformer batch — no sample-batch headroom on 32GB (scale gate OOM 2026-06-10)
-cosmos:
-  reference_mode: global   # global | per_sample
 
 trainer:
   output_dir: outputs/cosmos_pred2_2b_grpo

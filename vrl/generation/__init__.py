@@ -26,6 +26,7 @@ from vrl.generation.protocols import (
     GenerationRuntime,
 )
 from vrl.generation.types import (
+    GenerationInput,
     GenerationMetrics,
     GenerationOutput,
     GenerationRequest,
@@ -37,6 +38,7 @@ __all__ = [
     "ChunkResult",
     "FamilyCapability",
     "GenerationChunkExecutor",
+    "GenerationInput",
     "GenerationMetrics",
     "GenerationOutput",
     "GenerationRequest",
