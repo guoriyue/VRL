@@ -5,6 +5,39 @@ compose them with `reward.components` and override per-component
 `reward.kwargs.<component>.score_key` when a compound recipe needs a narrower
 signal than the base reward default.
 
+## Inference Deployment
+
+Reward execution is selected per component. `in_process` is the default and is
+the only supported heavy-reward mode when trainer, rollout, and reward share one
+GPU. An operator-owned service uses typed transport config:
+
+```yaml
+reward:
+  components:
+    videoscore2: 1.0
+  kwargs:
+    videoscore2:
+      artifact_dir: /shared/vrl/reward_artifacts
+      inference:
+        kind: http
+        endpoint: http://reward.internal:8300
+        timeout_s: 1800
+        expected_model: videoscore2-v1
+```
+
+Do not put `worker_config`, `device`, or parking fields on an HTTP component.
+Those belong to the standalone service config. HTTP scoring currently uses
+integrity-checked shared-filesystem paths, so the trainer and service must see
+the same absolute `artifact_dir`. External-only rewards receive no local Ray
+resource bundle. If a transport failure leaves the remote request state
+unknown, VRL retains that request's artifacts for operator cleanup rather than
+deleting files that the service may still be reading.
+
+Generation/reward streaming is capability-derived. It is enabled only when no
+GPU phase handoff is required and every reward component uses a non-blocking
+runtime. In-process rewards retain one batched scoring call even on a dedicated
+GPU; this avoids trading batch throughput for fake event-loop concurrency.
+
 ## Video Score Keys
 
 Do not treat every video reward's default score as an orthogonal training
