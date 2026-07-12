@@ -1,13 +1,13 @@
-"""Apply the legacy inline-eval SANA trustworthy-curve verdict.
+"""Apply the SANA trustworthy-curve verdict.
 
-Online training no longer produces ``eval_metrics.csv``. This reader remains
-only for historical runs that already contain that artifact; new checkpoint
-evaluations must consume the standalone evaluator's report instead.
+Online training no longer produces ``eval_metrics.csv``. New runs consume the
+provenance-bound report from ``sana_aesthetic_checkpoint_eval``; the old CSV is
+accepted only for historical runs that already contain the inline-eval artifact.
 
 The run protocol is documented in
 ``docs/sprints/SPRINT_sana_aesthetic_trustworthy_curve.md``. This program keeps
-the numerical decision mechanical: it reads only the completed fixed-eval and
-training CSVs and emits a JSON PASS/FAIL record. Qualitative contact-sheet review
+the numerical decision mechanical: it reads only the completed standalone report
+and training CSV and emits a JSON PASS/FAIL record. Qualitative contact-sheet review
 is a separate mandatory gate and is therefore reported as pending unless the
 caller explicitly supplies its pre-recorded result.
 """
@@ -33,6 +33,41 @@ def _read_rows(path: Path) -> list[dict[str, float]]:
     return rows
 
 
+def _read_eval_rows(run_dir: Path) -> list[dict[str, float]]:
+    from vrl.scripts.eval.sana_aesthetic_checkpoint_eval import (
+        REPORT_RELATIVE_PATH,
+        load_report_metrics,
+    )
+
+    report_path = run_dir / REPORT_RELATIVE_PATH
+    if report_path.is_file():
+        return load_report_metrics(run_dir)
+    legacy_path = run_dir / "eval_metrics.csv"
+    if legacy_path.is_file():
+        from omegaconf import OmegaConf
+
+        config_path = run_dir / "resolved_config.yaml"
+        if config_path.is_file():
+            legacy_cfg = OmegaConf.load(config_path)
+            # ``trainer.eval`` was intentionally removed from the current schema.
+            # Inspect the archived resolved mapping as legacy data instead of
+            # resurrecting it as a live config path in the runtime-key registry.
+            legacy_plain = OmegaConf.to_container(legacy_cfg, resolve=True)
+            legacy_trainer = (
+                legacy_plain.get("trainer", {}) if isinstance(legacy_plain, dict) else {}
+            )
+            legacy_eval = (
+                legacy_trainer.get("eval", {}) if isinstance(legacy_trainer, dict) else {}
+            )
+            if isinstance(legacy_eval, dict) and bool(legacy_eval.get("enabled", False)):
+                return _read_rows(legacy_path)
+    raise FileNotFoundError(
+        f"standalone SANA evaluation report not found: {report_path}. Run "
+        "`python -m vrl.scripts.eval.sana_aesthetic_checkpoint_eval "
+        f"--run-dir {run_dir}` after checkpoints have been saved.",
+    )
+
+
 def _mean(rows: list[dict[str, float]], key: str) -> float:
     return statistics.fmean(row[key] for row in rows)
 
@@ -55,11 +90,12 @@ def evaluate(
     train_rows: list[dict[str, float]],
     *,
     expected_updates: int = 300,
+    min_post_eval_points: int = 12,
     endpoint_points: int = 3,
     min_aesthetic_gain: float = 0.10,
     min_gain_z: float = 2.0,
     max_pickscore_relative_drop: float = 0.02,
-    max_logprob_abs_diff: float = 0.01,
+    max_pre_update_logprob_abs_diff: float = 0.01,
     qualitative_audit: str = "pending",
 ) -> dict[str, Any]:
     failures: list[str] = []
@@ -67,8 +103,10 @@ def evaluate(
     post_rows = [row for row in eval_rows if int(row["epoch"]) >= 0]
     if len(baseline_rows) != 1:
         failures.append("fixed eval must contain exactly one epoch=-1 baseline")
-    if len(post_rows) < endpoint_points:
-        failures.append(f"fixed eval needs at least {endpoint_points} post-training points")
+    if len(post_rows) < min_post_eval_points:
+        failures.append(
+            f"fixed eval needs at least {min_post_eval_points} post-training points",
+        )
     if len(train_rows) != expected_updates:
         failures.append(
             f"run depth changed or incomplete: {len(train_rows)} != {expected_updates} updates",
@@ -85,8 +123,8 @@ def evaluate(
         "reward_std",
         "grad_norm",
         "trained_prompt_num",
-        "clip_fraction",
-        "logprob_abs_diff_max",
+        "active_clip_fraction",
+        "pre_update_logprob_abs_diff_max",
     }
     for label, rows, keys in (
         ("eval", eval_rows, required_eval),
@@ -155,9 +193,9 @@ def evaluate(
         window = min(32, len(train_rows))
         early_std = statistics.median(row["reward_std"] for row in train_rows[:window])
         late_std = statistics.median(row["reward_std"] for row in train_rows[-window:])
-        max_parity_error = max(row["logprob_abs_diff_max"] for row in train_rows)
-        moving_fraction = (
-            statistics.fmean(float(row["clip_fraction"] > 0) for row in train_rows[5:])
+        max_parity_error = max(row["pre_update_logprob_abs_diff_max"] for row in train_rows)
+        active_clip_updates = (
+            statistics.fmean(float(row["active_clip_fraction"] > 0) for row in train_rows[5:])
             if len(train_rows) > 5
             else 0.0
         )
@@ -165,22 +203,25 @@ def evaluate(
             {
                 "early_reward_std_median": early_std,
                 "late_reward_std_median": late_std,
-                "max_logprob_abs_diff": max_parity_error,
-                "updates_with_nonzero_clip_fraction": moving_fraction,
+                "max_pre_update_logprob_abs_diff": max_parity_error,
+                "updates_with_active_policy_clip": active_clip_updates,
             }
         )
         if late_std <= 1e-4 or late_std < 0.25 * early_std:
             failures.append("late reward diversity collapsed")
-        if max_parity_error > max_logprob_abs_diff:
+        if max_parity_error > max_pre_update_logprob_abs_diff:
             failures.append(
-                f"logprob parity error {max_parity_error:.6f} > {max_logprob_abs_diff:.6f}",
+                "pre-update logprob parity error "
+                f"{max_parity_error:.6f} > {max_pre_update_logprob_abs_diff:.6f}",
             )
         if not any(row["grad_norm"] > 0 for row in train_rows):
             failures.append("all gradient norms are zero")
         if any(row["trained_prompt_num"] <= 0 for row in train_rows):
             failures.append("an update trained zero prompts")
-        if moving_fraction < 0.25:
-            failures.append("ratio clip engaged in fewer than 25% of post-warmup updates")
+        if active_clip_updates < 0.25:
+            failures.append(
+                "policy surrogate clip engaged in fewer than 25% of post-warmup updates",
+            )
 
     if qualitative_audit not in {"pass", "fail"}:
         failures.append("qualitative baseline/endpoint audit is not recorded")
@@ -193,26 +234,30 @@ def evaluate(
         "diagnostics": diagnostics,
         "criteria": {
             "expected_updates": expected_updates,
+            "min_post_eval_points": min_post_eval_points,
             "endpoint_points": endpoint_points,
             "min_aesthetic_gain": min_aesthetic_gain,
             "min_gain_z": min_gain_z,
             "max_pickscore_relative_drop": max_pickscore_relative_drop,
-            "max_logprob_abs_diff": max_logprob_abs_diff,
+            "max_pre_update_logprob_abs_diff": max_pre_update_logprob_abs_diff,
         },
     }
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument(
         "--qualitative-audit", choices=("pass", "fail", "pending"), default="pending"
     )
     parser.add_argument("--out", type=Path)
-    args = parser.parse_args()
-
+    args = parser.parse_args(argv)
+    try:
+        eval_rows = _read_eval_rows(args.run_dir)
+    except (FileNotFoundError, ValueError, TypeError, json.JSONDecodeError) as error:
+        raise SystemExit(str(error)) from error
     result = evaluate(
-        _read_rows(args.run_dir / "eval_metrics.csv"),
+        eval_rows,
         _read_rows(args.run_dir / "metrics.csv"),
         qualitative_audit=args.qualitative_audit,
     )

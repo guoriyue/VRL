@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import csv
+
+import pytest
+
+from vrl.scripts.eval import sana_aesthetic_curve_verdict as verdict
 from vrl.scripts.eval.sana_aesthetic_curve_verdict import evaluate
 
 
@@ -10,8 +15,11 @@ def _train_rows(count: int = 300) -> list[dict[str, float]]:
             "reward_std": 0.5,
             "grad_norm": 0.1,
             "trained_prompt_num": 8.0,
-            "clip_fraction": 0.1,
-            "logprob_abs_diff_max": 0.0,
+            "active_clip_fraction": 0.05,
+            # Later PPO passes intentionally drift from the rollout policy;
+            # only the pre-update field is backend parity.
+            "logprob_abs_diff_max": 0.5,
+            "pre_update_logprob_abs_diff_max": 0.0,
         }
         for index in range(count)
     ]
@@ -59,3 +67,62 @@ def test_fails_incomplete_run_and_pending_visual_audit() -> None:
     assert result["verdict"] == "FAIL"
     assert any("incomplete" in failure for failure in result["failures"])
     assert any("qualitative" in failure for failure in result["failures"])
+
+
+def test_fails_when_only_endpoint_window_exists_without_full_curve() -> None:
+    result = evaluate(_eval_rows()[:-1], _train_rows(), qualitative_audit="pass")
+
+    assert result["verdict"] == "FAIL"
+    assert result["criteria"]["min_post_eval_points"] == 12
+    assert any("at least 12 post-training points" in failure for failure in result["failures"])
+
+
+def test_fails_pre_update_logprob_parity_error() -> None:
+    train_rows = _train_rows()
+    train_rows[10]["pre_update_logprob_abs_diff_max"] = 0.02
+
+    result = evaluate(_eval_rows(), train_rows, qualitative_audit="pass")
+
+    assert result["verdict"] == "FAIL"
+    assert any("pre-update logprob parity" in failure for failure in result["failures"])
+
+
+def test_eval_reader_keeps_historical_inline_csv_compatibility(tmp_path) -> None:
+    path = tmp_path / "eval_metrics.csv"
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=sorted(_eval_rows()[0]))
+        writer.writeheader()
+        writer.writerows(_eval_rows())
+    (tmp_path / "resolved_config.yaml").write_text(
+        "trainer:\n  eval:\n    enabled: true\n",
+        encoding="utf-8",
+    )
+
+    assert verdict._read_eval_rows(tmp_path) == _eval_rows()
+
+
+def test_eval_reader_rejects_unmarked_csv_from_new_run(tmp_path) -> None:
+    (tmp_path / "eval_metrics.csv").write_text("epoch,r_aesthetic\n-1,5.0\n")
+    (tmp_path / "resolved_config.yaml").write_text("trainer: {}\n", encoding="utf-8")
+
+    with pytest.raises(FileNotFoundError, match="sana_aesthetic_checkpoint_eval"):
+        verdict._read_eval_rows(tmp_path)
+
+
+def test_eval_reader_rejects_missing_standalone_report(tmp_path) -> None:
+    with pytest.raises(FileNotFoundError, match="sana_aesthetic_checkpoint_eval"):
+        verdict._read_eval_rows(tmp_path)
+
+
+def test_main_reports_missing_standalone_report(tmp_path, capsys) -> None:
+    with pytest.raises(SystemExit, match="standalone SANA evaluation report"):
+        verdict.main(["--run-dir", str(tmp_path)])
+    assert capsys.readouterr().out == ""
+
+
+def test_verdict_parser_does_not_accept_arbitrary_eval_csv(tmp_path) -> None:
+    with pytest.raises(SystemExit) as raised:
+        verdict.main(
+            ["--run-dir", str(tmp_path), "--eval-csv", str(tmp_path / "foreign.csv")],
+        )
+    assert raised.value.code == 2
