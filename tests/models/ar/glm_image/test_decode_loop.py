@@ -31,14 +31,14 @@ def _run_tiny_decode_loop(model, batch_size: int = 2, *, top_p: float = 1.0):
         request_id="test-glm-image-decode",
         family="glm_image",
         task="ar_t2i",
-        inputs=[""],
+        inputs=["test prompt"],
         samples_per_prompt=batch_size,
     )
     rows = [
         GenerationSampleRow(
             prompt_index=0,
             sample_index=index,
-            prompt="",
+            prompt="test prompt",
             prompt_id="prompt-0",
             group_id="group-0",
             sample_id=f"sample-{index}",
@@ -108,11 +108,12 @@ def test_rollout_logprobs_match_teacher_forced_replay() -> None:
 
     embed = model.language_model.get_input_embeddings()
     logits = model.forward_image_logits(
-        embed(cond_ids), cond_mask, token_ids, grids=GRIDS,
+        embed(cond_ids),
+        cond_mask,
+        token_ids,
+        grids=GRIDS,
     )
     replay_logprobs = (
-        F.log_softmax(logits.float(), dim=-1)
-        .gather(-1, token_ids.unsqueeze(-1))
-        .squeeze(-1)
+        F.log_softmax(logits.float(), dim=-1).gather(-1, token_ids.unsqueeze(-1)).squeeze(-1)
     )
     assert torch.allclose(replay_logprobs, rollout_logprobs, atol=1e-4)

@@ -57,7 +57,9 @@ def _state() -> SimpleNamespace:
 
 
 def test_ref_buffer_allocated_with_step_and_latent_shape_when_opted_in() -> None:
-    buffers = preallocate_denoise_buffers(state=_state(), config=_config(cache_ref_noise_pred=True))
+    buffers = preallocate_denoise_buffers(
+        state=_state(), config=_config(cache_ref_noise_pred=True)
+    )
     assert buffers.ref_noise_preds is not None
     # [chunk_batch, num_steps, *latent_shape]
     assert tuple(buffers.ref_noise_preds.shape) == (2, 3, 4, 8, 8)
@@ -65,7 +67,9 @@ def test_ref_buffer_allocated_with_step_and_latent_shape_when_opted_in() -> None
 
 
 def test_ref_buffer_is_none_by_default() -> None:
-    buffers = preallocate_denoise_buffers(state=_state(), config=_config(cache_ref_noise_pred=False))
+    buffers = preallocate_denoise_buffers(
+        state=_state(), config=_config(cache_ref_noise_pred=False)
+    )
     assert buffers.ref_noise_preds is None
     # The always-on tensors are unaffected.
     assert buffers.observations is not None
@@ -93,8 +97,15 @@ def test_layout_parses_cache_ref_noise_pred_flag() -> None:
     assert params.sde is not None
     assert params.sde.cache_ref_noise_pred is True
     # Default stays off when the key is absent.
-    sampling.pop("cache_ref_noise_pred")
-    assert layout.parse_sampling_params(request).sde.cache_ref_noise_pred is False
+    default_request = GenerationRequest(
+        request_id="req-default",
+        family="sd3_5",
+        task="t2i",
+        inputs=["p"],
+        samples_per_prompt=1,
+        sampling={key: value for key, value in sampling.items() if key != "cache_ref_noise_pred"},
+    )
+    assert layout.parse_sampling_params(default_request).sde.cache_ref_noise_pred is False
 
 
 # -- replay-side consumption ------------------------------------------------
@@ -190,7 +201,7 @@ def test_cached_ref_matches_fresh_ref_forward() -> None:
     )
 
     assert cached.replay_forward_calls == 1  # policy only
-    assert fresh.replay_forward_calls == 2   # policy + ref
+    assert fresh.replay_forward_calls == 2  # policy + ref
     torch.testing.assert_close(
         cached_signals.primary.ref_log_prob,
         fresh_signals.primary.ref_log_prob,

@@ -91,14 +91,14 @@ def _run_ar_decode(model: JanusProModel) -> None:
         request_id="test-janus-kv",
         family="janus_pro",
         task="ar_t2i",
-        inputs=[""],
+        inputs=["test prompt"],
         samples_per_prompt=batch_size,
     )
     rows = [
         GenerationSampleRow(
             prompt_index=0,
             sample_index=index,
-            prompt="",
+            prompt="test prompt",
             prompt_id="prompt-0",
             group_id="group-0",
             sample_id=f"sample-{index}",

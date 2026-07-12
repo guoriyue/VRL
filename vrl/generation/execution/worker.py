@@ -193,9 +193,7 @@ class GenerationWorkerCore:
                 if callable(move_frozen):
                     move_frozen("cpu")
             self._release_cuda_memory_for_parking()
-            backend = (
-                "cpu_offload" if str(restore_device).startswith("cuda") else "cpu_only"
-            )
+            backend = "cpu_offload" if str(restore_device).startswith("cuda") else "cpu_only"
 
         residual_bytes = self._gpu_used_bytes()
         baseline_bytes = self._parking_baseline_gpu_used_bytes
@@ -479,7 +477,7 @@ class GenerationWorkerCore:
             probe_request = dataclass_replace(
                 request,
                 request_id=f"chunk-probe-{self.worker_id}-n{n}",
-                prompts=[request.prompts[0]],
+                inputs=[request.inputs[0]],
                 samples_per_prompt=n,
                 sampling=probe_sampling,
             )

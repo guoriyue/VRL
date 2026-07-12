@@ -48,9 +48,7 @@ class _PagedState:
 
 class _RecordingPagedBackend(ARAttentionBackend):
     def __init__(self) -> None:
-        super().__init__(
-            ARAttentionConfig(family="janus_pro", model_key="test-janus")
-        )
+        super().__init__(ARAttentionConfig(family="janus_pro", model_key="test-janus"))
         self.prefill_requests: list[ARAttentionPrefillInput] = []
         self.step_requests: list[ARAttentionStepInput] = []
 
@@ -211,7 +209,7 @@ def _request() -> GenerationRequest:
         request_id="test-janus-paged",
         family="janus_pro",
         task="ar_t2i",
-        inputs=[""],
+        inputs=["test prompt"],
         samples_per_prompt=2,
     )
 
@@ -221,7 +219,7 @@ def _rows(*, batch_size: int) -> list[GenerationSampleRow]:
         GenerationSampleRow(
             prompt_index=0,
             sample_index=index,
-            prompt="",
+            prompt="test prompt",
             prompt_id="prompt-0",
             group_id="group-0",
             sample_id=f"sample-{index}",

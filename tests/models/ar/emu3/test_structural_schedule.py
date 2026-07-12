@@ -75,14 +75,14 @@ def _run_tiny_decode_loop(model, batch_size: int = 2):
         request_id="test-emu3-decode",
         family="emu3",
         task="ar_t2i",
-        inputs=[""],
+        inputs=["test prompt"],
         samples_per_prompt=batch_size,
     )
     rows = [
         GenerationSampleRow(
             prompt_index=0,
             sample_index=index,
-            prompt="",
+            prompt="test prompt",
             prompt_id="prompt-0",
             group_id="group-0",
             sample_id=f"sample-{index}",
@@ -131,12 +131,20 @@ def test_decode_loop_enforces_structural_schedule_end_to_end() -> None:
 
     assert token_ids.shape == (2, TOTAL)
     assert logprobs.shape == (2, TOTAL)
-    forced_positions = {3: TINY_EOL_IDX, 7: TINY_EOL_IDX, 8: TINY_EOF_IDX, 9: TINY_EOI_IDX, 10: TINY_EOS_IDX}
+    forced_positions = {
+        3: TINY_EOL_IDX,
+        7: TINY_EOL_IDX,
+        8: TINY_EOF_IDX,
+        9: TINY_EOI_IDX,
+        10: TINY_EOS_IDX,
+    }
     for position, expected in forced_positions.items():
         assert (token_ids[:, position] == expected).all(), position
         # Forced positions renormalize to a single legal token -> lp == 0.
         assert torch.allclose(
-            logprobs[:, position], torch.zeros(2), atol=1e-6,
+            logprobs[:, position],
+            torch.zeros(2),
+            atol=1e-6,
         ), position
     free_positions = [0, 1, 2, 4, 5, 6]
     assert (token_ids[:, free_positions] < TINY_IMAGE_VOCAB).all()
