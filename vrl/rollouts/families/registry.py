@@ -8,7 +8,7 @@ metadata.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from vrl.generation.capabilities import FamilyCapability
@@ -24,6 +24,11 @@ from vrl.models.ar.janus_pro.runtime import (
 from vrl.models.ar.llamagen.runtime import LLAMAGEN_FAMILY_CAPABILITY
 from vrl.models.ar.nextstep_1.runtime import NEXTSTEP_1_FAMILY_CAPABILITY
 from vrl.models.diffusion.capabilities import diffusion_family_capability
+from vrl.rollouts.family_names import (
+    normalize_rollout_family,
+    rollout_family_aliases,
+    validate_rollout_family_aliases,
+)
 
 CollectorKind = Literal["diffusion", "ar_discrete", "ar_continuous", "ar_r1"]
 
@@ -132,6 +137,14 @@ def register_rollout_family(entry: RolloutFamilyEntry) -> RolloutFamilyEntry:
 
     if entry.family in FAMILY_REGISTRY:
         raise ValueError(f"duplicate rollout family registration: {entry.family!r}")
+    aliases = rollout_family_aliases(entry.family)
+    if entry.aliases and entry.aliases != aliases:
+        raise ValueError(
+            f"rollout family aliases for {entry.family!r} must be declared in "
+            "vrl.rollouts.family_names",
+        )
+    if entry.aliases != aliases:
+        entry = replace(entry, aliases=aliases)
     FAMILY_REGISTRY[entry.family] = entry
     return entry
 
@@ -140,7 +153,6 @@ def _diffusion_entry(
     *,
     family: str,
     task: str,
-    aliases: tuple[str, ...],
     runtime_builder: str,
     model_build_resolver: str,
     request_prefix: str,
@@ -158,7 +170,6 @@ def _diffusion_entry(
     return RolloutFamilyEntry(
         family=family,
         task=task,
-        aliases=aliases,
         collector=CollectorMetadata(
             kind="diffusion",
             request_prefix=request_prefix,
@@ -181,7 +192,6 @@ register_rollout_family(
     _diffusion_entry(
         family="sd3_5",
         task="t2i",
-        aliases=(),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
         model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
         request_prefix="sd3_5",
@@ -200,7 +210,6 @@ register_rollout_family(
     _diffusion_entry(
         family="flux",
         task="t2i",
-        aliases=("flux_1_dev",),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
         model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
         request_prefix="flux",
@@ -219,7 +228,6 @@ register_rollout_family(
     _diffusion_entry(
         family="qwen_image",
         task="t2i",
-        aliases=("qwen-image",),
         # Descriptor-driven family: the generic functions in
         # vrl.models.diffusion.build read the recipe below, so qwen_image ships
         # no per-family builder/resolver functions.
@@ -241,7 +249,6 @@ register_rollout_family(
     _diffusion_entry(
         family="sana",
         task="t2i",
-        aliases=("sana_1600m",),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
         model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
         request_prefix="sana",
@@ -263,7 +270,6 @@ register_rollout_family(
     _diffusion_entry(
         family="lumina2",
         task="t2i",
-        aliases=("lumina_image_2",),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
         model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
         request_prefix="lumina2",
@@ -282,7 +288,6 @@ register_rollout_family(
     _diffusion_entry(
         family="hunyuan_video",
         task="t2v",
-        aliases=("hunyuanvideo",),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
         model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
         request_prefix="hunyuan_video",
@@ -301,7 +306,6 @@ register_rollout_family(
     _diffusion_entry(
         family="mochi",
         task="t2v",
-        aliases=("mochi_1",),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
         model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
         request_prefix="mochi",
@@ -320,7 +324,6 @@ register_rollout_family(
     _diffusion_entry(
         family="hunyuan_image",
         task="t2i",
-        aliases=("hunyuanimage_2_1",),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
         model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
         request_prefix="hunyuan_image",
@@ -339,7 +342,6 @@ register_rollout_family(
     _diffusion_entry(
         family="pixart_sigma",
         task="t2i",
-        aliases=("pixart",),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
         model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
         request_prefix="pixart_sigma",
@@ -362,7 +364,6 @@ register_rollout_family(
     _diffusion_entry(
         family="cogvideox",
         task="t2v",
-        aliases=("cogvideox_2b", "cogvideox_5b"),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
         model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
         request_prefix="cogvideox",
@@ -384,7 +385,6 @@ register_rollout_family(
     _diffusion_entry(
         family="wan_2_1",
         task="t2v",
-        aliases=("wan",),
         # The two wan entries carry their own per-variant recipes, so the
         # t2v/i2v resolution is decided here, once, by family selection. The
         # dual-stage transformer_2 late-load lives in the replay model's
@@ -409,7 +409,6 @@ register_rollout_family(
     _diffusion_entry(
         family="wan_2_1_i2v",
         task="i2v",
-        aliases=("wan_i2v",),
         executor_cls="vrl.models.diffusion.wan_2_1.runtime:Wan_2_1I2VChunkExecutor",
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
         model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
@@ -430,7 +429,6 @@ register_rollout_family(
     _diffusion_entry(
         family="cosmos-predict2",
         task="v2w",
-        aliases=("cosmos", "cosmos_predict2"),
         executor_cls="vrl.models.diffusion.cosmos.predict2.runtime:CosmosChunkExecutor",
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
         model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
@@ -450,7 +448,6 @@ register_rollout_family(
     _diffusion_entry(
         family="cosmos-predict2.5",
         task="t2w",
-        aliases=("cosmos_predict2_5",),
         executor_cls=(
             "vrl.models.diffusion.cosmos.predict2_5.runtime:CosmosPredict25ChunkExecutor"
         ),
@@ -478,7 +475,6 @@ register_rollout_family(
     _diffusion_entry(
         family="cosmos3",
         task="t2v",
-        aliases=("cosmos3_omni", "cosmos_omni"),
         executor_cls="vrl.models.diffusion.cosmos.cosmos3.runtime:Cosmos3ChunkExecutor",
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
         model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
@@ -499,7 +495,6 @@ register_rollout_family(
     _diffusion_entry(
         family="cosmos-predict2-anima",
         task="t2i",
-        aliases=("anima", "cosmos_anima"),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
         model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
         request_prefix="anima",
@@ -519,7 +514,6 @@ register_rollout_family(
     _diffusion_entry(
         family="echo",
         task="t2v",
-        aliases=("joyai_echo",),
         executor_cls="vrl.models.diffusion.echo.runtime:EchoChunkExecutor",
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
         model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
@@ -548,7 +542,6 @@ register_rollout_family(
     RolloutFamilyEntry(
         family="janus_pro",
         task="ar_t2i",
-        aliases=("janus",),
         collector=CollectorMetadata(
             kind="ar_discrete",
             request_prefix="janus_pro",
@@ -570,7 +563,6 @@ register_rollout_family(
     RolloutFamilyEntry(
         family="janus_pro_r1",
         task="ar_t2i_r1",
-        aliases=("janus_r1",),
         collector=CollectorMetadata(
             kind="ar_r1",
             request_prefix="janus_pro_r1",
@@ -592,7 +584,6 @@ register_rollout_family(
     RolloutFamilyEntry(
         family="nextstep_1",
         task="ar_t2i",
-        aliases=("nextstep",),
         collector=CollectorMetadata(
             kind="ar_continuous",
             request_prefix="nextstep_1",
@@ -622,7 +613,6 @@ register_rollout_family(
     RolloutFamilyEntry(
         family="emu3",
         task="ar_t2i",
-        aliases=("emu3_gen",),
         collector=CollectorMetadata(
             kind="ar_discrete",
             request_prefix="emu3",
@@ -650,7 +640,6 @@ register_rollout_family(
     RolloutFamilyEntry(
         family="glm_image",
         task="ar_t2i",
-        aliases=("glm_image_t2i",),
         collector=CollectorMetadata(
             kind="ar_discrete",
             request_prefix="glm_image",
@@ -678,7 +667,6 @@ register_rollout_family(
     RolloutFamilyEntry(
         family="llamagen",
         task="ar_t2i",
-        aliases=("llamagen_t2i",),
         collector=CollectorMetadata(
             kind="ar_discrete",
             request_prefix="llamagen",
@@ -702,18 +690,8 @@ register_rollout_family(
     ),
 )
 
-_FAMILY_ALIASES: dict[str, str] = {
-    alias: family
-    for family, entry in FAMILY_REGISTRY.items()
-    for alias in (family, *entry.aliases)
-}
 
-
-def normalize_rollout_family(family: str) -> str:
-    """Return the canonical registry key for a rollout family or alias."""
-
-    text = str(family)
-    return _FAMILY_ALIASES.get(text, text)
+validate_rollout_family_aliases(FAMILY_REGISTRY)
 
 
 def get_rollout_family_entry(family: str) -> RolloutFamilyEntry:

@@ -228,6 +228,19 @@ def test_wan_model_keys_are_scoped_to_wan_family() -> None:
     )
     assert find_unknown_keys(wan_cfg) == []
 
+    alias_cfg = OmegaConf.create(
+        {
+            "model": {
+                "family": "wan_i2v",
+                "path": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
+                "boundary_ratio": 0.9,
+                "trainable_transformers": ["transformer_2"],
+                "offload_mode": "sequential",
+            },
+        },
+    )
+    assert find_unknown_keys(alias_cfg) == []
+
     sd3_cfg = OmegaConf.create(
         {
             "model": {

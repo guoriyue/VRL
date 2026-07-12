@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
+
 import pytest
 from omegaconf import OmegaConf
 
@@ -14,6 +17,24 @@ from vrl.rollouts.families import (
     registered_rollout_families,
 )
 from vrl.rollouts.families.registry import _default_return_artifacts
+
+
+def test_family_name_import_does_not_load_runtime_registry() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; import vrl.rollouts.family_names; "
+                "assert 'vrl.rollouts.families.registry' not in sys.modules"
+            ),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_family_registry_covers_current_rollout_families() -> None:
@@ -54,11 +75,7 @@ def test_family_registry_covers_current_rollout_families() -> None:
 
 
 def test_family_aliases_resolve_to_canonical_entries() -> None:
-    """Every alias declared on a registry entry resolves back to that entry.
-
-    Derived from ``entry.aliases`` so a new family/alias is covered automatically
-    and no hand-copied alias map can drift from the registry source of truth.
-    """
+    """Every naming-table alias resolves back to its runtime registry entry."""
     seen = 0
     for family, entry in FAMILY_REGISTRY.items():
         # The canonical name itself must resolve to its own entry.

@@ -493,51 +493,43 @@ class FluxModelConfig(ModelConfig):
     nft_previous_adapter: Any = None
 
 
+# Keyed by CANONICAL rollout-family name only. Aliases ("wan", "cosmos",
+# "janus_r1", ...) are owned by vrl/rollouts/family_names.py — lookups
+# normalize through it, so a new declared alias works here for free.
 _model_config_classes_by_family: dict[str, type[ModelConfig]] = {
     "sd3_5": SD3ModelConfig,
     "flux": FluxModelConfig,
-    "flux_1_dev": FluxModelConfig,
-    "wan": WanModelConfig,
     "wan_2_1": WanModelConfig,
     "wan_2_1_i2v": WanModelConfig,
-    "wan_i2v": WanModelConfig,
-    "cosmos": CosmosPredict2ModelConfig,
     "cosmos-predict2": CosmosPredict2ModelConfig,
-    "cosmos_predict2": CosmosPredict2ModelConfig,
     "cosmos-predict2.5": CosmosPredict25ModelConfig,
-    "cosmos_predict2_5": CosmosPredict25ModelConfig,
-    "anima": CosmosAnimaModelConfig,
-    "cosmos_anima": CosmosAnimaModelConfig,
     "cosmos-predict2-anima": CosmosAnimaModelConfig,
-    "janus": JanusProModelConfig,
     "janus_pro": JanusProModelConfig,
-    "janus_r1": JanusProModelConfig,
     "janus_pro_r1": JanusProModelConfig,
-    "nextstep": NextStep1ModelConfig,
     "nextstep_1": NextStep1ModelConfig,
     "llamagen": LlamaGenModelConfig,
     "echo": EchoModelConfig,
-    "joyai_echo": EchoModelConfig,
 }
 
 _model_config_variant_classes: tuple[type[ModelConfig], ...] = tuple(
     dict.fromkeys(_model_config_classes_by_family.values())
 )
 
-_model_config_blocks_by_family: dict[type[ModelConfig], ConfigBlock] = {}
-
 
 def _model_config_class_for_family(family: Any) -> type[ModelConfig]:
-    return _model_config_classes_by_family.get(str(family or ""), ModelConfig)
+    from vrl.rollouts.family_names import normalize_rollout_family
+
+    canonical = normalize_rollout_family(str(family or ""))
+    return _model_config_classes_by_family.get(canonical, ModelConfig)
+
+
+@functools.cache
+def _model_config_block(cls: type[ModelConfig]) -> ConfigBlock:
+    return ConfigBlock(cls)
 
 
 def _model_config_block_for_unknown_keys(mapping: Mapping[str, Any]) -> ConfigBlock:
-    cls = _model_config_class_for_family(mapping.get("family"))
-    block = _model_config_blocks_by_family.get(cls)
-    if block is None:
-        block = ConfigBlock(cls)
-        _model_config_blocks_by_family[cls] = block
-    return block
+    return _model_config_block(_model_config_class_for_family(mapping.get("family")))
 
 
 def _validate_model_config_for_family(model: ModelConfig | None) -> None:
