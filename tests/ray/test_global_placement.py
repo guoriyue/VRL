@@ -280,6 +280,254 @@ def test_bundle_specs_size_shared_bundle_to_max_role_cpu() -> None:
     assert specs[trainer_bundle] == {"CPU": 0.001, "GPU": 1.0}
 
 
+def test_shutdown_retries_same_placement_group_after_remove_failure(monkeypatch) -> None:
+    owner = _owner(
+        {
+            "visible_devices": [0, 1],
+            "trainer": {"devices": [0]},
+            "rollout": {"devices": [1], "gpus_per_worker": 1},
+        },
+    )
+    placement_group = object()
+    owner._placement_group = placement_group
+    calls: list[object] = []
+
+    def remove(pg):
+        calls.append(pg)
+        if len(calls) == 1:
+            return RuntimeError("placement remove failed")
+        return None
+
+    monkeypatch.setattr("vrl.ray.placement.remove_placement_group", remove)
+
+    with pytest.raises(RuntimeError, match="placement remove failed"):
+        owner.shutdown()
+    assert owner._placement_group is placement_group
+
+    owner.shutdown()
+    assert calls == [placement_group, placement_group]
+    assert owner._placement_group is None
+
+
+def test_create_failure_retains_placement_for_cleanup_retry(monkeypatch) -> None:
+    owner = _owner(
+        {
+            "visible_devices": [0, 1],
+            "trainer": {"devices": [0]},
+            "rollout": {"devices": [1], "gpus_per_worker": 1},
+        },
+    )
+
+    class _PlacementGroup:
+        @staticmethod
+        def ready():
+            return object()
+
+    placement_group = _PlacementGroup()
+    remove_calls: list[object] = []
+
+    monkeypatch.setattr(
+        "vrl.ray.placement._create_raw_placement_group",
+        lambda *_args, **_kwargs: placement_group,
+    )
+    monkeypatch.setattr(
+        "vrl.ray.placement.require_ray",
+        lambda: type("_Ray", (), {"get": staticmethod(lambda *_args, **_kwargs: None)})(),
+    )
+    monkeypatch.setattr(
+        GlobalRayPlacementOwner,
+        "_probe_gpu_bundles",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("probe failed")),
+    )
+
+    def remove(pg):
+        remove_calls.append(pg)
+        if len(remove_calls) == 1:
+            return RuntimeError("initial remove failed")
+        return None
+
+    monkeypatch.setattr("vrl.ray.placement.remove_placement_group", remove)
+
+    with pytest.raises(RuntimeError, match="probe failed") as caught:
+        owner.create()
+    assert any("retained the handle" in note for note in caught.value.__notes__)
+    assert owner._placement_group is placement_group
+    assert owner._placement_ready is False
+
+    with pytest.raises(RuntimeError, match="cleanup is still pending"):
+        owner.create()
+    owner.shutdown()
+
+    assert remove_calls == [placement_group, placement_group]
+    assert owner._placement_group is None
+
+
+def test_ready_failure_retains_exact_placement_for_shutdown_retry(monkeypatch) -> None:
+    owner = _owner(
+        {
+            "visible_devices": [0, 1],
+            "trainer": {"devices": [0]},
+            "rollout": {"devices": [1], "gpus_per_worker": 1},
+        },
+    )
+
+    class _PlacementGroup:
+        def ready(self):
+            return object()
+
+    placement_group = _PlacementGroup()
+
+    class _Ray:
+        @staticmethod
+        def get(*_args, **_kwargs):
+            raise RuntimeError("ready transport failed")
+
+    remove_calls: list[object] = []
+
+    def remove(pg):
+        remove_calls.append(pg)
+        if len(remove_calls) == 1:
+            return RuntimeError("initial remove failed")
+        return None
+
+    monkeypatch.setattr("vrl.ray.placement.require_ray", lambda: _Ray())
+    monkeypatch.setattr(
+        "vrl.ray.placement._create_raw_placement_group",
+        lambda *_args, **_kwargs: placement_group,
+    )
+    monkeypatch.setattr("vrl.ray.placement.remove_placement_group", remove)
+
+    with pytest.raises(RuntimeError, match="placement group not ready") as caught:
+        owner.create()
+
+    assert caught.value.__cause__ is not None
+    assert "ready transport failed" in str(caught.value.__cause__)
+    assert any("retained the handle" in note for note in caught.value.__notes__)
+    assert owner._placement_group is placement_group
+    assert owner._placement_ready is False
+
+    owner.shutdown()
+
+    assert remove_calls == [placement_group, placement_group]
+    assert owner._placement_group is None
+
+
+def test_probe_partial_actor_construction_cleans_created_handles(monkeypatch) -> None:
+    owner = _owner(
+        {
+            "visible_devices": [0, 1],
+            "trainer": {"devices": [0]},
+            "rollout": {"devices": [1], "gpus_per_worker": 1},
+        },
+    )
+    first_actor = object()
+    create_calls = 0
+    killed: list[object] = []
+
+    class _RemoteProbe:
+        def options(self, **_kwargs):
+            return self
+
+        def remote(self):
+            nonlocal create_calls
+            create_calls += 1
+            if create_calls == 2:
+                raise RuntimeError("probe actor construction failed")
+            return first_actor
+
+    class _Ray:
+        @staticmethod
+        def remote(**_kwargs):
+            return lambda _actor_cls: _RemoteProbe()
+
+    def kill(_ray, actors):
+        killed.extend(actors)
+        return []
+
+    monkeypatch.setattr("vrl.ray.placement.actor_scheduling_strategy", lambda *_a, **_k: object())
+    monkeypatch.setattr("vrl.ray.placement.kill_actors", kill)
+
+    with pytest.raises(RuntimeError, match="probe actor construction failed"):
+        owner._probe_gpu_bundles(_Ray(), object())
+
+    assert killed == [first_actor]
+
+
+def test_probe_actor_kill_failure_is_a_create_failure(monkeypatch) -> None:
+    owner = _owner(
+        {
+            "visible_devices": [0],
+            "trainer": {"num_gpus": 0},
+            "rollout": {"devices": [0], "gpus_per_worker": 1},
+        },
+    )
+
+    class _Method:
+        def __init__(self, value):
+            self.value = value
+
+        def remote(self):
+            return self.value
+
+    class _Actor:
+        def __init__(self):
+            self.node_and_gpus = _Method("probe-ref")
+
+    actor = _Actor()
+
+    class _PlacementGroup:
+        @staticmethod
+        def ready():
+            return "ready-ref"
+
+    placement_group = _PlacementGroup()
+
+    class _RemoteProbe:
+        def options(self, **_kwargs):
+            return self
+
+        @staticmethod
+        def remote():
+            return actor
+
+    class _Ray:
+        @staticmethod
+        def remote(**_kwargs):
+            return lambda _actor_cls: _RemoteProbe()
+
+        @staticmethod
+        def get(refs, **_kwargs):
+            if refs == "ready-ref":
+                return None
+            assert refs == ["probe-ref"]
+            return [("node", (0,))]
+
+    cleanup_error = RuntimeError("probe kill failed")
+    remove_calls: list[object] = []
+    monkeypatch.setattr("vrl.ray.placement.actor_scheduling_strategy", lambda *_a, **_k: object())
+    monkeypatch.setattr("vrl.ray.placement.require_ray", lambda: _Ray())
+    monkeypatch.setattr(
+        "vrl.ray.placement._create_raw_placement_group",
+        lambda *_args, **_kwargs: placement_group,
+    )
+    monkeypatch.setattr(
+        "vrl.ray.placement.kill_actors",
+        lambda _ray, actors: [(actors[0], cleanup_error)],
+    )
+    monkeypatch.setattr(
+        "vrl.ray.placement.remove_placement_group",
+        lambda pg: remove_calls.append(pg),
+    )
+
+    with pytest.raises(RuntimeError, match="probe actor cleanup incomplete") as caught:
+        owner.create()
+
+    assert caught.value.__cause__ is cleanup_error
+    assert remove_calls == [placement_group]
+    assert owner._placement_group is None
+    assert owner._placement_ready is False
+
+
 # ----------------------------------------------- simulated multi-GPU (real Ray)
 #
 # Ray's num_gpus is logical accounting, so a single-physical-GPU host can still
@@ -309,7 +557,7 @@ def test_owner_reserves_trainer_gpu_and_binds_roles_on_simulated_gpus() -> None:
     )
     try:
         owner.create()
-        probed = owner._bundle_gpu_actual
+        probed = owner._probe_gpu_bundles(ray, owner._placement_group)
         rollout = owner.rollout_placement
         reward = owner.reward_placement
         # Rollout/reward actually land on their requested GPUs.
@@ -351,7 +599,8 @@ def test_owner_shares_one_bundle_for_rollout_and_reward_on_simulated_gpus() -> N
         rollout = owner.rollout_placement
         reward = owner.reward_placement
         assert rollout.bundle_indices == reward.bundle_indices
-        assert owner._bundle_gpu_actual[rollout.bundle_indices[0]] == 1
+        probed = owner._probe_gpu_bundles(ray, owner._placement_group)
+        assert probed[rollout.bundle_indices[0]] == 1
     finally:
         owner.shutdown()
         ray.shutdown()

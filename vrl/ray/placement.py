@@ -43,36 +43,18 @@ from vrl.ray.resources import (
 logger = logging.getLogger(__name__)
 
 
-def create_placement_group(
+def _create_raw_placement_group(
     bundles: Sequence[Mapping[str, float]],
     *,
     strategy: str,
-    ready_timeout_s: float = 600.0,
 ) -> Any:
-    """Create a Ray placement group and wait until it is ready.
-
-    ``pg.ready()`` never resolves when the cluster cannot satisfy the bundles
-    (e.g. a GPU bundle while resident actors hold every free GPU), so the wait
-    is bounded and failure reports the requested bundles instead of hanging.
-    """
+    """Lazy Ray adapter that returns an unready placement-group handle."""
 
     if not bundles:
         raise ValueError("Ray placement group requires at least one bundle")
-    ray = require_ray()
     from ray.util.placement_group import placement_group
 
-    pg = placement_group([dict(bundle) for bundle in bundles], strategy=str(strategy))
-    try:
-        ray.get(pg.ready(), timeout=float(ready_timeout_s))
-    except Exception as exc:
-        remove_placement_group(pg)
-        raise RuntimeError(
-            f"Ray placement group not ready after {ready_timeout_s:.0f}s: "
-            f"bundles={[dict(b) for b in bundles]} strategy={strategy!r}. "
-            "The cluster cannot satisfy these bundles -- check whether resident "
-            "actors hold the GPUs this group is trying to reserve.",
-        ) from exc
-    return pg
+    return placement_group([dict(bundle) for bundle in bundles], strategy=str(strategy))
 
 
 def actor_scheduling_strategy(
@@ -234,9 +216,10 @@ class GlobalRayPlacementOwner:
     resources: ResolvedDistributedResources
     rollout_cpus_per_worker: float = 1.0
     placement_strategy: str | None = None
+    ready_timeout_s: float = 600.0
     layout: BundleLayout = field(init=False)
     _placement_group: Any | None = field(default=None, init=False, repr=False)
-    _bundle_gpu_actual: dict[int, int] = field(default_factory=dict, init=False, repr=False)
+    _placement_ready: bool = field(default=False, init=False, repr=False)
     _role_bundles: dict[str, tuple[int, ...]] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -247,23 +230,50 @@ class GlobalRayPlacementOwner:
     def create(self) -> None:
         """Create the placement group, probe GPU bundles, and assign roles."""
 
-        if self._placement_group is not None:
+        if self._placement_ready:
             return
+        if self._placement_group is not None:
+            raise RuntimeError(
+                "placement creation previously failed and cleanup is still pending; "
+                "call shutdown() before retrying create()",
+            )
         if self.layout.total_bundles == 0:
             # Trainer-only / no-rollout plans need no Ray placement.
             self._role_bundles = {"rollout": (), "reward": ()}
+            self._placement_ready = True
             return
 
         ray = require_ray()
-        pg = create_placement_group(self._bundle_specs(), strategy=self._strategy())
+        bundle_specs = self._bundle_specs()
+        strategy = self._strategy()
+        pg = _create_raw_placement_group(bundle_specs, strategy=strategy)
+        # Claim the raw handle before waiting for readiness. A ready/probe/assign
+        # failure whose removal also fails must leave this exact placement group
+        # reachable by terminal shutdown.
+        self._placement_group = pg
         try:
+            try:
+                ray.get(pg.ready(), timeout=float(self.ready_timeout_s))
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Ray placement group not ready after {self.ready_timeout_s:.0f}s: "
+                    f"bundles={bundle_specs} strategy={strategy!r}. "
+                    "The cluster cannot satisfy these bundles -- check whether "
+                    "resident actors hold the GPUs this group is trying to reserve.",
+                ) from exc
             probed = self._probe_gpu_bundles(ray, pg)
             self._role_bundles = self.assign_roles(probed)
-        except Exception:
-            remove_placement_group(pg)
+        except BaseException as error:
+            cleanup_error = remove_placement_group(pg)
+            if cleanup_error is None:
+                self._placement_group = None
+            else:
+                error.add_note(
+                    "initial placement cleanup failed; the owner retained the "
+                    f"handle for shutdown retry: {cleanup_error!r}",
+                )
             raise
-        self._placement_group = pg
-        self._bundle_gpu_actual = probed
+        self._placement_ready = True
         logger.info(
             "GlobalRayPlacementOwner created: bundles=%s probed_gpus=%s roles=%s",
             self.layout.bundle_gpu_ids,
@@ -272,12 +282,17 @@ class GlobalRayPlacementOwner:
         )
 
     def shutdown(self) -> None:
-        """Remove the placement group exactly once."""
+        """Remove the placement group, retaining ownership until success."""
 
         pg = self._placement_group
+        if pg is None:
+            return
+        error = remove_placement_group(pg)
+        if error is not None:
+            raise error
         self._placement_group = None
-        if pg is not None:
-            remove_placement_group(pg)
+        self._placement_ready = False
+        self._role_bundles.clear()
 
     # -- role placement handles ---------------------------------------------
 
@@ -407,27 +422,37 @@ class GlobalRayPlacementOwner:
 
     def _probe_gpu_bundles(self, ray: Any, pg: Any) -> dict[int, int]:
         gpu_bundles = [
-            index
-            for index, gpu_id in enumerate(self.layout.bundle_gpu_ids)
-            if gpu_id is not None
+            index for index, gpu_id in enumerate(self.layout.bundle_gpu_ids) if gpu_id is not None
         ]
         if not gpu_bundles:
             return {}
         remote_probe = ray.remote(num_cpus=0.001, num_gpus=1.0)(_ProbeActor)
-        actors = [
-            remote_probe.options(
-                scheduling_strategy=actor_scheduling_strategy(
-                    placement_group=pg,
-                    bundle_index=bundle_index,
-                    capture_child_tasks=True,
-                ),
-            ).remote()
-            for bundle_index in gpu_bundles
-        ]
+        actors: list[Any] = []
         try:
+            for bundle_index in gpu_bundles:
+                actor = remote_probe.options(
+                    scheduling_strategy=actor_scheduling_strategy(
+                        placement_group=pg,
+                        bundle_index=bundle_index,
+                        capture_child_tasks=True,
+                    ),
+                ).remote()
+                actors.append(actor)
             results = ray.get([actor.node_and_gpus.remote() for actor in actors])
-        finally:
-            kill_actors(ray, actors)
+        except BaseException as error:
+            actor_failures = kill_actors(ray, actors)
+            if actor_failures:
+                error.add_note(
+                    "placement probe actor cleanup also failed: "
+                    f"{len(actor_failures)} actor(s) retained by the placement group",
+                )
+            raise
+        actor_failures = kill_actors(ray, actors)
+        if actor_failures:
+            raise RuntimeError(
+                "placement probe actor cleanup incomplete: "
+                f"{len(actor_failures)} actor kill(s) failed",
+            ) from actor_failures[0][1]
         probed: dict[int, int] = {}
         for bundle_index, (_node_ip, gpu_ids) in zip(gpu_bundles, results, strict=True):
             if not gpu_ids:
@@ -442,7 +467,6 @@ __all__ = [
     "GlobalRayPlacementOwner",
     "RolePlacement",
     "actor_scheduling_strategy",
-    "create_placement_group",
     "cross_node_preflight",
     "validate_actor_gpu_ids",
 ]
