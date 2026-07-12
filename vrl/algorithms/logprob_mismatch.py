@@ -109,8 +109,9 @@ class PrecisionCorrectionConfig:
     on diffusion the SDE window is short (``sde_window_size`` is usually 2), so a
     per-token statistic has near-zero power (each per-step stat is already a mean
     over thousands of latent dims). ``token_*`` RS is intentionally *not*
-    offered; it would only invite misuse. For per-sample (continuous diffusion)
-    log-probs the two seq modes coincide (there is no sequence axis to reduce).
+    offered; it would only invite misuse. The continuous-diffusion evaluator
+    exposes one per-sample scalar for the current denoise timestep, so the two
+    seq modes coincide there (there is no sequence axis to reduce).
 
     **Bypass vs recompute** (``recompute_old_logprob``). This codebase already
     uses the rollout-recorded ``old_log_prob`` directly as the PPO "old" (bypass:
@@ -233,11 +234,12 @@ def apply_rejection_sample_mask(
     - ``seq_max_k1``: every step must lie in band (a single out-of-band step
       rejects the whole sequence) — the strictest mode.
 
-    Shapes: per-sample log-ratio ``(B,)`` (continuous diffusion) has no sequence
-    axis, so both modes reduce to the same per-sample band check and the returned
-    mask is ``(B,)``. Per-token log-ratio ``(B, L)`` reduces over ``L`` and the
-    returned mask is ``(B, 1)`` so it broadcasts over the token axis. ``mask``
-    (token validity) restricts the reduction to real tokens when given.
+    Shapes: per-sample log-ratio ``(B,)`` (one continuous-diffusion timestep)
+    has no sequence axis, so both modes reduce to the same per-sample band check
+    and the returned mask is ``(B,)``. Per-token log-ratio ``(B, L)`` reduces
+    over ``L`` and the returned mask is ``(B, 1)`` so it broadcasts over the
+    token axis. ``mask`` (token validity) restricts the reduction to real tokens
+    when given.
     """
 
     mode = config.rs_mode
@@ -246,8 +248,8 @@ def apply_rejection_sample_mask(
     low, high = config.rs_log_ratio_low, config.rs_log_ratio_high
 
     if log_ratio.dim() <= 1:
-        # Per-sample: the log-ratio is already a whole-trajectory scalar, so
-        # seq_mean and seq_max coincide — judge each sample's band directly.
+        # Continuous diffusion supplies one scalar per sample for the current
+        # denoise timestep; seq_mean and seq_max therefore coincide here.
         keep = (log_ratio >= low) & (log_ratio <= high)
         return keep.to(log_ratio.dtype)
 
