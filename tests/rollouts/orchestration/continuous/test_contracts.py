@@ -53,6 +53,10 @@ class _Unscored:
 class _GatedCollector:
     """Collector whose generation/reward phases block on explicit gates."""
 
+    requires_runtime_offload_before_reward = False
+    requires_driver_model_offload_for_reward = False
+    supports_reward_generation_overlap = False
+
     def __init__(self) -> None:
         self.allow_generate = asyncio.Event()
         self.allow_generate.set()

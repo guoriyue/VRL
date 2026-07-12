@@ -127,10 +127,12 @@ class _RewardScorer:
         runtime: _Runtime | None = None,
         *,
         fail_park: bool = False,
+        supports_generation_overlap: bool = False,
     ) -> None:
         self.calls: list[dict[str, Any]] = []
         self.runtime = runtime
         self.fail_park = fail_park
+        self.supports_generation_overlap = supports_generation_overlap
         self.shutdown_failures = 0
         self.shutdown_calls = 0
         self.last_memory_release_proofs: tuple[RewardMemoryReleaseProof, ...] = ()
@@ -367,6 +369,46 @@ def test_collector_does_not_offload_runtime_before_independent_reward() -> None:
     assert collector.requires_driver_model_offload_for_reward is False
 
 
+@pytest.mark.parametrize(
+    (
+        "rollout_handoff",
+        "trainer_handoff",
+        "scorer_supports_overlap",
+        "expected",
+    ),
+    [
+        (False, False, True, True),
+        (False, False, False, False),
+        (True, False, True, False),
+        (False, True, True, False),
+    ],
+)
+def test_collector_derives_reward_generation_overlap_from_topology_and_scorer(
+    rollout_handoff: bool,
+    trainer_handoff: bool,
+    scorer_supports_overlap: bool,
+    expected: bool,
+) -> None:
+    lifecycle = RayLifecyclePlan(
+        rollout=ActorLeasePolicy(mode="resident"),
+        reward=ActorLeasePolicy(mode="resident"),
+        handoff=PhaseHandoffPolicy(
+            release_rollout_before_train=False,
+            release_rollout_before_reward=rollout_handoff,
+            release_trainer_before_reward=trainer_handoff,
+            release_reward_after_score=False,
+        ),
+    )
+    collector = _collector(
+        reward_scorer=_RewardScorer(
+            supports_generation_overlap=scorer_supports_overlap,
+        ),
+        lifecycle=lifecycle,
+    )
+
+    assert collector.supports_reward_generation_overlap is expected
+
+
 def test_collector_blocks_trainer_handoff_when_reward_release_proof_fails() -> None:
     """A failed reward park remains terminal even after rollout itself parks."""
     import asyncio
@@ -493,12 +535,36 @@ def test_collector_attempts_reward_park_after_rollout_offload_failure(
     assert runtime.events == ["offload", "reward_park"]
 
 
+def _reward_sample_rows(
+    request_id: str,
+    prompts: list[str],
+    *,
+    policy_version: int = 4,
+) -> list[GenerationSampleRow]:
+    return [
+        GenerationSampleRow(
+            prompt_index=index,
+            sample_index=0,
+            prompt=prompt,
+            prompt_id=f"{request_id}:prompt:{index}",
+            group_id=f"{request_id}:group:{index}",
+            sample_id=f"{request_id}:sample:{index}",
+            trajectory_id=f"{request_id}:trajectory:{index}",
+            seed=None,
+            metadata={"policy_version": policy_version},
+        )
+        for index, prompt in enumerate(prompts)
+    ]
+
+
 def test_reward_scoring_input_rejects_prompt_output_mismatch() -> None:
     """Checks reward scoring input rejects prompt output mismatch."""
     with pytest.raises(ValueError, match="prompt/output batch mismatch"):
         RewardScoringInput(
             outputs=torch.ones(2, 3),
             prompts=["p0"],
+            source_request_id="request-0",
+            sample_rows=_reward_sample_rows("request-0", ["p0", "p1"]),
             metadata={},
             device="cpu",
         )
@@ -522,12 +588,20 @@ def test_reward_scorer_score_many_uses_one_call_and_splits_per_group() -> None:
         RewardScoringInput(
             outputs=torch.ones(2, 3),
             prompts=["g0-a", "g0-b"],
+            source_request_id="request-0",
+            sample_rows=_reward_sample_rows("request-0", ["g0-a", "g0-b"]),
             metadata={"target_text": "group-0"},
             device="cpu",
         ),
         RewardScoringInput(
             outputs=torch.ones(3, 3),
             prompts=["g1-a", "g1-b", "g1-c"],
+            source_request_id="request-1",
+            sample_rows=_reward_sample_rows(
+                "request-1",
+                ["g1-a", "g1-b", "g1-c"],
+                policy_version=5,
+            ),
             metadata={"target_text": "group-1"},
             device="cpu",
         ),
@@ -553,6 +627,35 @@ def test_reward_scorer_score_many_uses_one_call_and_splits_per_group() -> None:
         "group-1",
         "group-1",
     ]
+    assert [r.source_request_id for r in rollouts] == [
+        "request-0",
+        "request-0",
+        "request-1",
+        "request-1",
+        "request-1",
+    ]
+    assert [r.sample_id for r in rollouts] == [
+        "request-0:sample:0",
+        "request-0:sample:1",
+        "request-1:sample:0",
+        "request-1:sample:1",
+        "request-1:sample:2",
+    ]
+    assert [r.group_id for r in rollouts] == [
+        "request-0:group:0",
+        "request-0:group:1",
+        "request-1:group:0",
+        "request-1:group:1",
+        "request-1:group:2",
+    ]
+    assert [r.trajectory_id for r in rollouts] == [
+        "request-0:trajectory:0",
+        "request-0:trajectory:1",
+        "request-1:trajectory:0",
+        "request-1:trajectory:1",
+        "request-1:trajectory:2",
+    ]
+    assert [r.policy_version for r in rollouts] == [4, 4, 5, 5, 5]
     # Scores split back by group size, in order.
     assert rewards[0].tolist() == [0.0, 1.0]
     assert rewards[1].tolist() == [2.0, 3.0, 4.0]
@@ -745,6 +848,10 @@ def _sample_rows(request: GenerationRequest) -> list[GenerationSampleRow]:
                     sample_id=sample_id,
                     trajectory_id=f"t_{sample_id}",
                     seed=None,
+                    metadata={
+                        "request_id": request.request_id,
+                        "policy_version": request.policy_version,
+                    },
                 ),
             )
     return rows

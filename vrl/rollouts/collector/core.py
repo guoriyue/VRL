@@ -347,6 +347,16 @@ class RolloutCollector:
             return False
         return lifecycle.handoff.release_trainer_before_reward
 
+    @property
+    def supports_reward_generation_overlap(self) -> bool:
+        """Whether reward scoring can safely overlap the next generation."""
+
+        return bool(
+            not self.requires_runtime_offload_before_reward
+            and not self.requires_driver_model_offload_for_reward
+            and getattr(self.reward_scorer, "supports_generation_overlap", False)
+        )
+
 
 def build_rollout_collector(
     family: str,

@@ -19,6 +19,10 @@ from vrl.rollouts.orchestration.strict_on_policy import (
 class _RaisingCollector:
     """Collector whose generation always raises, like a mid-rollout crash."""
 
+    requires_runtime_offload_before_reward = True
+    requires_driver_model_offload_for_reward = False
+    supports_reward_generation_overlap = False
+
     def __init__(self) -> None:
         self.runtime = None
 

@@ -10,6 +10,7 @@ from typing import Any
 
 import torch
 
+from vrl.generation import GenerationSampleRow
 from vrl.rewards.base import RewardFunction
 from vrl.rewards.inference import RewardMemoryReleaseProof
 from vrl.rewards.types import RewardRollout
@@ -21,6 +22,8 @@ class RewardScoringInput:
 
     outputs: Any
     prompts: Sequence[str]
+    source_request_id: str
+    sample_rows: Sequence[GenerationSampleRow]
     metadata: Mapping[str, Any]
     device: Any
     expected_count: int | None = None
@@ -38,6 +41,28 @@ class RewardScoringInput:
                 "reward prompt/output batch mismatch: "
                 f"prompts={len(self.prompts)}, outputs={batch_size}",
             )
+        if not self.source_request_id:
+            raise ValueError("reward source_request_id must be non-empty")
+        if len(self.sample_rows) != batch_size:
+            raise ValueError(
+                "reward sample-row/output batch mismatch: "
+                f"sample_rows={len(self.sample_rows)}, outputs={batch_size}",
+            )
+        for index, (prompt, row) in enumerate(
+            zip(self.prompts, self.sample_rows, strict=True),
+        ):
+            if prompt != row.prompt:
+                raise ValueError(
+                    "reward prompt/sample-row mismatch: "
+                    f"index={index}, prompt={prompt!r}, row.prompt={row.prompt!r}",
+                )
+            row_request_id = row.metadata.get("request_id")
+            if row_request_id is not None and row_request_id != self.source_request_id:
+                raise ValueError(
+                    "reward source request/sample-row mismatch: "
+                    f"index={index}, source_request_id={self.source_request_id!r}, "
+                    f"row.request_id={row_request_id!r}",
+                )
         object.__setattr__(self, "batch_size", batch_size)
 
     @staticmethod
@@ -71,6 +96,15 @@ class RewardScorer:
         self.reward_fn = reward_fn
         self._shutdown_complete = False
         self._score_lock = asyncio.Lock()
+
+    @property
+    def supports_generation_overlap(self) -> bool:
+        """Whether scoring can make progress without blocking generation."""
+
+        return bool(
+            self.reward_fn is not None
+            and getattr(self.reward_fn, "supports_generation_overlap", False)
+        )
 
     async def shutdown(self) -> None:
         """Release the owned reward function exactly once after success."""
@@ -125,12 +159,24 @@ class RewardScorer:
             ]
             return RewardScoreBatch(scores=scores, components={}, timing_ms={})
 
-        rollouts = [
-            RewardRollout(prompt=request.prompts[i], output=request.outputs[i], metadata=dict(request.metadata),
-            )
-            for request in requests
-            for i in range(request.batch_size)
-        ]
+        rollouts: list[RewardRollout] = []
+        for request in requests:
+            for index, row in enumerate(request.sample_rows):
+                metadata = dict(request.metadata)
+                metadata.update(row.metadata)
+                policy_version = row.metadata.get("policy_version")
+                rollouts.append(
+                    RewardRollout(
+                        prompt=request.prompts[index],
+                        output=request.outputs[index],
+                        source_request_id=request.source_request_id,
+                        sample_id=row.sample_id,
+                        group_id=row.group_id,
+                        trajectory_id=row.trajectory_id,
+                        policy_version=(None if policy_version is None else int(policy_version)),
+                        metadata=metadata,
+                    ),
+                )
 
         components: dict[str, list[float]] = {}
         timing_ms: dict[str, float] = {}

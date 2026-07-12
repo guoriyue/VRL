@@ -29,6 +29,10 @@ def _batch(prompts: list[str], group_size: int) -> RolloutBatch:
 
 
 class _OwnerCollector:
+    requires_runtime_offload_before_reward = False
+    requires_driver_model_offload_for_reward = False
+    supports_reward_generation_overlap = False
+
     def __init__(
         self,
         *,

@@ -64,6 +64,8 @@ class TrajectoryRolloutBatchBuilder:
         return RewardScoringInput(
             outputs=reward_outputs,
             prompts=[row.prompt for row in self.output.sample_rows],
+            source_request_id=self.output.request_id,
+            sample_rows=tuple(self.output.sample_rows),
             metadata=dict(metadata),
             device=self._infer_device(reward_outputs),
             expected_count=len(self.output.sample_rows),
@@ -111,10 +113,9 @@ class TrajectoryRolloutBatchBuilder:
         device = observations.device
 
         if self.context.kl_reward_coef > 0:
-            rewards_adjusted = (
-                rewards_raw.to(device)
-                - self.context.kl_reward_coef * kl_tensor.sum(dim=1)
-            )
+            rewards_adjusted = rewards_raw.to(
+                device
+            ) - self.context.kl_reward_coef * kl_tensor.sum(dim=1)
         else:
             rewards_adjusted = rewards_raw.to(device)
 
@@ -278,11 +279,7 @@ class TrajectoryRolloutBatchBuilder:
             ) from exc
 
     def _trainable_segments(self) -> list[TrajectorySegment]:
-        return [
-            segment
-            for segment in self.trajectory.segments.values()
-            if segment.trainable
-        ]
+        return [segment for segment in self.trajectory.segments.values() if segment.trainable]
 
     def _primary_trainable_segment(
         self,
@@ -320,14 +317,10 @@ class TrajectoryRolloutBatchBuilder:
         self,
         trainable: list[TrajectorySegment],
     ) -> bool:
-        if (
-            self.trajectory.family == "janus_pro_r1"
-            or self.trajectory.task == "ar_t2i_r1"
-        ):
+        if self.trajectory.family == "janus_pro_r1" or self.trajectory.task == "ar_t2i_r1":
             return True
         return len(trainable) > 1 and all(
-            segment.distribution == "categorical"
-            for segment in trainable
+            segment.distribution == "categorical" for segment in trainable
         )
 
     def _decoded_tensor(self, name: str) -> Any | None:
