@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from vrl.generation import GenerationInput
 from vrl.rollouts.batch import RolloutBatch
 from vrl.rollouts.batch.ops import remap_group_ids_, split_batch_by_group
 from vrl.utils.stats import RolloutStats
@@ -40,14 +41,11 @@ async def collect_prompt_batches(
     async def flush_pending_prompts() -> None:
         if not pending_prompts:
             return
-        collect_kwargs = _base_collect_kwargs(
+        unscored = await collector.collect_unscored(
+            [GenerationInput(prompt=prompt) for prompt in pending_prompts],
             group_size=group_size,
             runtime_debug=runtime_debug,
             policy_version=policy_version,
-        )
-        unscored = await collector.collect_unscored(
-            list(pending_prompts),
-            **collect_kwargs,
         )
         unscored_groups.append((unscored, list(pending_indices)))
         pending_prompts.clear()
@@ -56,15 +54,15 @@ async def collect_prompt_batches(
     for prompt_idx, item in enumerate(prompts):
         if _is_prompt_example(item):
             await flush_pending_prompts()
-            collect_kwargs = _prompt_example_kwargs(
-                item,
+            # The example itself owns the field mapping (generation_input /
+            # reward_metadata) — no untyped kwargs relay in between.
+            unscored = await collector.collect_unscored(
+                [item.generation_input()],
                 group_size=group_size,
+                metadata=item.reward_metadata(),
+                request_overrides=dict(item.request_overrides or {}),
                 runtime_debug=runtime_debug,
                 policy_version=policy_version,
-            )
-            unscored = await collector.collect_unscored(
-                [str(item.prompt)],
-                **collect_kwargs,
             )
             unscored_groups.append((unscored, prompt_idx))
         else:
@@ -103,56 +101,8 @@ async def collect_prompt_batches(
     return all_batches
 
 
-def _base_collect_kwargs(
-    *,
-    group_size: int,
-    runtime_debug: bool,
-    policy_version: int | None,
-) -> dict[str, Any]:
-    kwargs: dict[str, Any] = {"group_size": int(group_size)}
-    if runtime_debug:
-        kwargs["runtime_debug"] = True
-    if policy_version is not None:
-        kwargs["policy_version"] = int(policy_version)
-    return kwargs
-
-
-def _prompt_example_kwargs(
-    item: Any,
-    *,
-    group_size: int,
-    runtime_debug: bool,
-    policy_version: int | None,
-) -> dict[str, Any]:
-    kwargs = {
-        **_base_collect_kwargs(
-            group_size=group_size,
-            runtime_debug=runtime_debug,
-            policy_version=policy_version,
-        ),
-        "target_text": getattr(item, "target_text", None),
-        "references": getattr(item, "references", None),
-        "task_type": getattr(item, "task_type", None),
-        "request_overrides": getattr(item, "request_overrides", None),
-        "sample_metadata": getattr(item, "metadata", None),
-    }
-    reference_image = getattr(item, "reference_image", None)
-    if reference_image:
-        kwargs["reference_image"] = reference_image
-    reference_video = getattr(item, "reference_video", None)
-    if reference_video:
-        kwargs["reference_video"] = reference_video
-    target_image = getattr(item, "target_image", None)
-    if target_image:
-        kwargs["target_image"] = target_image
-    target_video = getattr(item, "target_video", None)
-    if target_video:
-        kwargs["target_video"] = target_video
-    return kwargs
-
-
 def _is_prompt_example(item: Any) -> bool:
-    return not isinstance(item, (str, bytes)) and hasattr(item, "prompt")
+    return not isinstance(item, (str, bytes)) and hasattr(item, "generation_input")
 
 
 __all__ = ["collect_prompt_batches"]

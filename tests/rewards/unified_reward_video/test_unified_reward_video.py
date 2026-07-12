@@ -12,7 +12,7 @@ from vrl.config.validation import validate_reward_config
 from vrl.rewards.functions.unified_reward_video import UnifiedRewardVideoReward
 from vrl.rewards.inference import RewardInferenceResult
 from vrl.rewards.models.unified_reward_video import _load_rubric, _parse_axis_scores
-from vrl.rewards.types import RewardRollout, RewardTrajectory
+from vrl.rewards.types import RewardRollout
 
 _FAKE_SCORES = {"alignment": 4.0, "physics": 2.0, "style": 3.0, "overall": 3.0}
 
@@ -43,9 +43,7 @@ class _FakeRuntime:
 
 
 def _rollout() -> RewardRollout:
-    return RewardRollout(
-        request=None,
-        trajectory=RewardTrajectory(prompt="a spinning dancer", output=torch.ones(1, 2, 2, 2)),
+    return RewardRollout(prompt="a spinning dancer", output=torch.ones(1, 2, 2, 2),
         metadata={"policy_version": 1},
     )
 

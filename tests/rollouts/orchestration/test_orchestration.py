@@ -114,8 +114,8 @@ class _Collector:
         self.activation_calls = 0
         self.offload_calls = 0
 
-    async def collect_unscored(self, prompts, **kwargs):
-        prompts = list(prompts)
+    async def collect_unscored(self, inputs, **kwargs):
+        prompts = [getattr(item, "prompt", item) for item in inputs]
         self.calls.append({"prompts": prompts, **dict(kwargs)})
         return _batch(prompts, int(kwargs["group_size"]))
 

@@ -7,7 +7,12 @@ from typing import Any
 import pytest
 import torch
 
-from vrl.generation import GenerationOutput, GenerationRequest, GenerationSampleRow
+from vrl.generation import (
+    GenerationInput,
+    GenerationOutput,
+    GenerationRequest,
+    GenerationSampleRow,
+)
 from vrl.ray.resources import ActorLeasePolicy, PhaseHandoffPolicy, RayLifecyclePlan
 from vrl.rewards.base import RewardBatchReport, RewardCleanupError
 from vrl.rewards.inference import RewardMemoryReleaseProof
@@ -30,20 +35,25 @@ from vrl.utils.stats import RolloutStats
 class _RequestBuilder:
     def build(
         self,
-        prompts: list[str],
+        inputs: list[Any],
         group_size: int,
-        kwargs: dict[str, Any],
+        *,
+        metadata: dict[str, Any] | None = None,
+        request_overrides: dict[str, Any] | None = None,
+        seed: int | None = None,
+        runtime_debug: bool = False,
+        policy_version: int | None = None,
     ) -> CollectorRequest:
         request = GenerationRequest(
             request_id="unit-request",
             family="unit",
             task="collect",
-            inputs=prompts,
+            inputs=list(inputs),
             samples_per_prompt=group_size,
-            sampling={"seed": kwargs.get("seed")},
+            sampling={"seed": seed},
             return_artifacts={"output"},
             metadata={"source": "collector-test"},
-            policy_version=kwargs.get("policy_version"),
+            policy_version=policy_version,
         )
         return CollectorRequest(
             request=request,
@@ -529,7 +539,7 @@ def test_reward_scorer_score_many_uses_one_call_and_splits_per_group() -> None:
     # lifecycle per epoch for release_after_score rewards.
     assert len(reward_fn.score_batch_calls) == 1
     rollouts = reward_fn.score_batch_calls[0]
-    assert [r.trajectory.prompt for r in rollouts] == [
+    assert [r.prompt for r in rollouts] == [
         "g0-a",
         "g0-b",
         "g1-a",
@@ -679,9 +689,8 @@ def test_collector_forwards_reference_metadata_to_request() -> None:
     )
 
     collector_request = builder.build(
-        ["prompt"],
+        [GenerationInput(prompt="prompt", reference_image="/tmp/reference.png")],
         1,
-        {"reference_image": "/tmp/reference.png"},
     )
 
     assert collector_request.request.inputs[0].reference_image == "/tmp/reference.png"
@@ -702,14 +711,17 @@ def test_collector_forwards_target_metadata_to_request() -> None:
         default_task_type="video2world",
     )
 
+    targets = {"target_image": "/tmp/target.png", "target_video": "/tmp/target.mp4"}
     collector_request = builder.build(
-        ["prompt"],
+        [
+            GenerationInput(
+                prompt="prompt",
+                reference_image="/tmp/reference.png",
+                metadata=dict(targets),
+            ),
+        ],
         1,
-        {
-            "reference_image": "/tmp/reference.png",
-            "target_image": "/tmp/target.png",
-            "target_video": "/tmp/target.mp4",
-        },
+        metadata=dict(targets),
     )
 
     assert collector_request.request.inputs[0].metadata["target_image"] == "/tmp/target.png"

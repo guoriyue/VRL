@@ -11,7 +11,7 @@ from omegaconf import OmegaConf
 from vrl.config.validation import validate_reward_config
 from vrl.rewards.functions.videoscore2 import VideoScore2Reward
 from vrl.rewards.inference import RewardInferenceResult
-from vrl.rewards.types import RewardRollout, RewardTrajectory
+from vrl.rewards.types import RewardRollout
 
 _FAKE_SCORES = {
     "visual_quality": 4.0,
@@ -51,11 +51,7 @@ class _FakeRuntime:
 
 
 def _rollout(output: torch.Tensor, *, policy_version: int = 7) -> RewardRollout:
-    return RewardRollout(
-        request=None,
-        trajectory=RewardTrajectory(prompt="a dancer spins, skirt billowing", output=output),
-        metadata={"policy_version": policy_version, "sample_ids": ["sample-a"]},
-    )
+    return RewardRollout(prompt="a dancer spins, skirt billowing", output=output, metadata={"policy_version": policy_version, "sample_ids": ["sample-a"]})
 
 
 def _build_reward(tmp_path: Path, *, score_key: str = "physical_common_sense", **kwargs):

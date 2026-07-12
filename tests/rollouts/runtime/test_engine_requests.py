@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from vrl.generation import GenerationInput
 from vrl.rollouts.collector.config import RolloutConfig
 from vrl.rollouts.collector.requests import GenerationRequestBuilder
 
@@ -25,14 +26,16 @@ def test_engine_request_builder_reads_resolved_request_sampling() -> None:
     )
 
     collector_request = builder.build(
-        ["prompt"],
+        [
+            GenerationInput(
+                prompt="prompt",
+                metadata={"difficulty": "easy", "target_text": "HELLO"},
+            ),
+        ],
         3,
-        {
-            "seed": 7,
-            "policy_version": 11,
-            "target_text": "HELLO",
-            "sample_metadata": {"difficulty": "easy"},
-        },
+        seed=7,
+        policy_version=11,
+        metadata={"difficulty": "easy", "target_text": "HELLO"},
     )
 
     assert collector_request.request.family == "sd3_5"
@@ -71,7 +74,7 @@ def test_engine_request_builder_applies_request_overrides_last() -> None:
     collector_request = builder.build(
         ["prompt"],
         1,
-        {"request_overrides": {"alpha": 2, "beta": 3}},
+        request_overrides={"alpha": 2, "beta": 3},
     )
 
     assert collector_request.request.sampling == {"alpha": 2, "beta": 3}

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -151,30 +152,55 @@ class RolloutCollector:
 
     async def collect(
         self,
-        prompts: list[str],
+        inputs: list[Any],
         *,
         group_size: int,
-        **kwargs: Any,
+        metadata: Mapping[str, Any] | None = None,
+        request_overrides: Mapping[str, Any] | None = None,
+        seed: int | None = None,
+        runtime_debug: bool = False,
+        policy_version: int | None = None,
     ) -> RolloutBatch:
-        unscored = await self.collect_unscored(prompts, group_size=group_size, **kwargs)
+        unscored = await self.collect_unscored(
+            inputs,
+            group_size=group_size,
+            metadata=metadata,
+            request_overrides=request_overrides,
+            seed=seed,
+            runtime_debug=runtime_debug,
+            policy_version=policy_version,
+        )
         return (await self.score_rollouts([unscored]))[0]
 
     async def collect_unscored(
         self,
-        prompts: list[str],
+        inputs: list[Any],
         *,
         group_size: int,
-        **kwargs: Any,
+        metadata: Mapping[str, Any] | None = None,
+        request_overrides: Mapping[str, Any] | None = None,
+        seed: int | None = None,
+        runtime_debug: bool = False,
+        policy_version: int | None = None,
     ) -> UnscoredRollout:
-        """Generate one prompt group without scoring it.
+        """Generate one group of ``GenerationInput`` (or bare prompt) conditioning.
 
         Deferred-scoring half of collect(): the generation runtime stays
         resident so several groups can be generated back to back; scoring (and
         the rollout offload shared-GPU reward runs need before it) happens in
-        score_rollouts().
+        score_rollouts(). ``metadata`` is the group's opaque reward-scoring
+        payload (see ``PromptExample.reward_metadata``).
         """
 
-        collector_request = self.request_builder.build(prompts, int(group_size), dict(kwargs))
+        collector_request = self.request_builder.build(
+            inputs,
+            int(group_size),
+            metadata=metadata,
+            request_overrides=request_overrides,
+            seed=seed,
+            runtime_debug=runtime_debug,
+            policy_version=policy_version,
+        )
         # A new generation phase has not activated reward memory yet. This also
         # prevents a previous iteration's proof from authorizing a later handoff.
         self._reward_phase_started = False

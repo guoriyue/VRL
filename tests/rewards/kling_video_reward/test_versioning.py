@@ -10,7 +10,7 @@ import torch
 
 from vrl.rewards.functions.kling_video_reward import KlingVideoReward
 from vrl.rewards.inference import RewardInferenceResult
-from vrl.rewards.types import RewardRollout, RewardTrajectory
+from vrl.rewards.types import RewardRollout
 
 
 class _VersionedRuntime:
@@ -38,12 +38,7 @@ class _VersionedRuntime:
 
 
 def _rollout() -> RewardRollout:
-    return RewardRollout(
-        request=None,
-        trajectory=RewardTrajectory(
-            prompt="prompt",
-            output=torch.ones(1, 2, 2, 2),
-        ),
+    return RewardRollout(prompt="prompt", output=torch.ones(1, 2, 2, 2),
         metadata={"policy_version": 23, "sample_ids": ["sample-v"]},
     )
 

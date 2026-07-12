@@ -12,7 +12,7 @@ import torch
 
 from vrl.rewards.base import RewardFunction
 from vrl.rewards.inference import RewardMemoryReleaseProof
-from vrl.rewards.types import RewardRollout, RewardTrajectory
+from vrl.rewards.types import RewardRollout
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,13 +126,7 @@ class RewardScorer:
             return RewardScoreBatch(scores=scores, components={}, timing_ms={})
 
         rollouts = [
-            RewardRollout(
-                request=None,
-                trajectory=RewardTrajectory(
-                    prompt=request.prompts[i],
-                    output=request.outputs[i],
-                ),
-                metadata=dict(request.metadata),
+            RewardRollout(prompt=request.prompts[i], output=request.outputs[i], metadata=dict(request.metadata),
             )
             for request in requests
             for i in range(request.batch_size)

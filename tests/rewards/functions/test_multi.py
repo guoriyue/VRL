@@ -7,14 +7,11 @@ import pytest
 from vrl.rewards.base import RewardBatchReport, RewardCleanupError, RewardFunction
 from vrl.rewards.functions.registry import MultiReward
 from vrl.rewards.runtime import LocalRewardRuntime
-from vrl.rewards.types import RewardRollout, RewardTrajectory
+from vrl.rewards.types import RewardRollout
 
 
 def _make_rollout(prompt: str) -> RewardRollout:
-    return RewardRollout(
-        request=None,
-        trajectory=RewardTrajectory(prompt=prompt, output=None),
-    )
+    return RewardRollout(prompt=prompt, output=None)
 
 
 class _QueuedBatchReward(RewardFunction):

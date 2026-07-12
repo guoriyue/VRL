@@ -7,21 +7,12 @@ from typing import Any
 
 
 @dataclass(slots=True)
-class RewardTrajectory:
-    """Generation trajectory attached to reward scoring input."""
+class RewardRollout:
+    """A single generated output paired with reward-scoring metadata."""
 
     prompt: str
-    output: Any  # Final generated output (frames / latents)
-
-
-@dataclass(slots=True)
-class RewardRollout:
-    """A single generation paired with reward-scoring metadata."""
-
-    request: Any  # VideoGenerationRequest or similar
-    trajectory: RewardTrajectory
-    reward: float = 0.0
+    output: Any  # Final generated media (frames / latents)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-__all__ = ["RewardRollout", "RewardTrajectory"]
+__all__ = ["RewardRollout"]

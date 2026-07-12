@@ -7,17 +7,11 @@ import torch
 from PIL import Image
 
 from vrl.rewards.functions.nsfw_safety import NSFWSafetyReward
-from vrl.rewards.types import RewardRollout, RewardTrajectory
+from vrl.rewards.types import RewardRollout
 
 
 def _rollout(output: object) -> RewardRollout:
-    return RewardRollout(
-        request=None,
-        trajectory=RewardTrajectory(
-            prompt="anime portrait",
-            output=output,
-        ),
-    )
+    return RewardRollout(prompt="anime portrait", output=output)
 
 
 @pytest.mark.asyncio

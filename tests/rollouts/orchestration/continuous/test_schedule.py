@@ -95,8 +95,8 @@ class _Collector:
         self.shutdown_calls = 0
         self.shutdown_failures = 0
 
-    async def collect_unscored(self, prompts: Any, **kwargs: Any) -> RolloutBatch:
-        prompts = list(prompts)
+    async def collect_unscored(self, inputs: Any, **kwargs: Any) -> RolloutBatch:
+        prompts = [getattr(item, "prompt", item) for item in inputs]
         self.calls.append({"prompts": prompts, **dict(kwargs)})
         return _batch(prompts, int(kwargs["group_size"]))
 

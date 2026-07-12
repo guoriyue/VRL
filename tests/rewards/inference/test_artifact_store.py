@@ -9,14 +9,11 @@ import pytest
 import torch
 
 from vrl.rewards.artifacts import VideoRewardArtifactStore
-from vrl.rewards.types import RewardRollout, RewardTrajectory
+from vrl.rewards.types import RewardRollout
 
 
 def _rollout(output: torch.Tensor) -> RewardRollout:
-    return RewardRollout(
-        request=None,
-        trajectory=RewardTrajectory(prompt="prompt", output=output),
-        metadata={
+    return RewardRollout(prompt="prompt", output=output, metadata={
             "policy_version": 4,
             "sample_ids": ["sample-x"],
             "fps": 8,
@@ -24,8 +21,7 @@ def _rollout(output: torch.Tensor) -> RewardRollout:
             "reference_image": "/tmp/reference.png",
             "source_repo": "lerobot/droid_100",
             "source_episode": "000001",
-        },
-    )
+        })
 
 
 def test_video_artifact_store_writes_tensor_and_manifest(tmp_path: Path) -> None:

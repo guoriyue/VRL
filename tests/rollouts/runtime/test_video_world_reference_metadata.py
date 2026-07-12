@@ -50,12 +50,9 @@ def test_resolved_reference_image_flows_to_collector_metadata(tmp_path: Path) ->
     )
 
     collector_request = builder.build(
-        [example.prompt],
+        [example.generation_input()],
         1,
-        {
-            "reference_image": example.reference_image,
-            "sample_metadata": example.metadata,
-        },
+        metadata=example.reward_metadata(),
     )
 
     assert collector_request.metadata["reference_image"].endswith("ref.ppm")

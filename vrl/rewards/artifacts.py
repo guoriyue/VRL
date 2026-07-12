@@ -59,7 +59,7 @@ class VideoRewardArtifactStore:
         return artifacts
 
     def _write_one(self, rollout: RewardRollout, index: int) -> RewardInferenceArtifact:
-        output = rollout.trajectory.output
+        output = rollout.output
         if not isinstance(output, torch.Tensor):
             raise TypeError(
                 "video reward artifact materialization requires tensor rollout output",
@@ -83,7 +83,7 @@ class VideoRewardArtifactStore:
             artifact_id=artifact_id,
             path=str(path.resolve()),
             media_type=self.media_type,
-            prompt=str(rollout.trajectory.prompt),
+            prompt=str(rollout.prompt),
             sample_id=sample_id,
             policy_version=policy_version,
             metadata={

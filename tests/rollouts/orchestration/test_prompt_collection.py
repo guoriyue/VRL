@@ -16,17 +16,8 @@ import pytest
 import torch
 
 from vrl.rollouts.batch import RolloutBatch
+from vrl.trainers.data import PromptExample
 from vrl.rollouts.orchestration.prompt_collection import collect_prompt_batches
-
-
-@dataclass
-class _PromptExample:
-    prompt: str
-    target_text: str | None = None
-    references: Any = None
-    task_type: str | None = None
-    request_overrides: Any = None
-    metadata: Any = None
 
 
 def _batch(prompts: list[str], group_size: int) -> RolloutBatch:
@@ -51,8 +42,8 @@ class _DeferredCollector:
     def __init__(self) -> None:
         self.events: list[str] = []
 
-    async def collect_unscored(self, prompts: list[str], **kwargs: Any) -> Any:
-        prompts = list(prompts)
+    async def collect_unscored(self, inputs: list[Any], **kwargs: Any) -> Any:
+        prompts = [getattr(item, "prompt", item) for item in inputs]
         self.events.append(f"generate:{','.join(prompts)}")
         return _batch(prompts, int(kwargs["group_size"]))
 
@@ -66,7 +57,7 @@ class _DeferredCollector:
 async def test_prompt_examples_generate_all_groups_before_one_scoring_call() -> None:
     """Checks all PromptExample groups generate before the single score call."""
     collector = _DeferredCollector()
-    prompts = [_PromptExample(prompt=f"p{i}") for i in range(3)]
+    prompts = [PromptExample(prompt=f"p{i}") for i in range(3)]
 
     batches = await collect_prompt_batches(
         collector=collector,
@@ -93,7 +84,7 @@ async def test_prompt_examples_generate_all_groups_before_one_scoring_call() -> 
 async def test_mixed_prompts_preserve_group_id_remap() -> None:
     """Checks plain strings and PromptExamples keep their prompt indices."""
     collector = _DeferredCollector()
-    prompts: list[Any] = ["s0", _PromptExample(prompt="e1"), "s2"]
+    prompts: list[Any] = ["s0", PromptExample(prompt="e1"), "s2"]
 
     batches = await collect_prompt_batches(
         collector=collector,
@@ -123,8 +114,8 @@ class _Unscored:
 class _PhasedCollector:
     """Collector fake exposing per-call phase timings like RolloutCollector."""
 
-    async def collect_unscored(self, prompts: list[str], **kwargs: Any) -> _Unscored:
-        prompts = list(prompts)
+    async def collect_unscored(self, inputs: list[Any], **kwargs: Any) -> _Unscored:
+        prompts = [getattr(item, "prompt", item) for item in inputs]
         return _Unscored(
             batch=_batch(prompts, int(kwargs["group_size"])),
             phases={"collect.engine_generate": 1.0},
@@ -146,7 +137,7 @@ async def test_phase_times_accumulate_per_call() -> None:
 
     await collect_prompt_batches(
         collector=_PhasedCollector(),
-        prompts=[_PromptExample(prompt="p0"), _PromptExample(prompt="p1")],
+        prompts=[PromptExample(prompt="p0"), PromptExample(prompt="p1")],
         group_size=1,
         runtime_debug=False,
         policy_version=None,

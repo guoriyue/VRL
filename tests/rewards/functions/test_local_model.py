@@ -8,7 +8,7 @@ import torch
 from vrl.rewards.base import RewardFunction
 from vrl.rewards.models.base import TorchRewardModel
 from vrl.rewards.runtime import LocalRewardRuntime
-from vrl.rewards.types import RewardRollout, RewardTrajectory
+from vrl.rewards.types import RewardRollout
 
 
 class _FakeTorchReward(TorchRewardModel):
@@ -22,11 +22,7 @@ class _FakeTorchReward(TorchRewardModel):
 
 
 def _rollout(output: torch.Tensor, *, policy_version: int = 2) -> RewardRollout:
-    return RewardRollout(
-        request=None,
-        trajectory=RewardTrajectory(prompt="p", output=output),
-        metadata={"policy_version": policy_version},
-    )
+    return RewardRollout(prompt="p", output=output, metadata={"policy_version": policy_version})
 
 
 def _reward_function_local() -> RewardFunction:

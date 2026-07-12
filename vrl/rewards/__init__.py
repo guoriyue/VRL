@@ -4,7 +4,7 @@ from typing import Any
 
 from vrl.rewards.base import RewardFunction
 from vrl.rewards.functions.registry import MultiReward, get_reward
-from vrl.rewards.types import RewardRollout, RewardTrajectory
+from vrl.rewards.types import RewardRollout
 
 
 def __getattr__(name: str) -> Any:
@@ -19,6 +19,5 @@ __all__ = [
     "MultiReward",
     "RewardFunction",
     "RewardRollout",
-    "RewardTrajectory",
     "get_reward",
 ]

@@ -73,8 +73,8 @@ class GenEvalReward(RewardFunction):
                     artifact_id=f"geneval-{index}",
                     path="",
                     media_type="image",
-                    media=_OutputBox(rollout.trajectory.output),
-                    prompt=str(rollout.trajectory.prompt),
+                    media=_OutputBox(rollout.output),
+                    prompt=str(rollout.prompt),
                     sample_id=f"sample-{index}",
                     policy_version=None if policy_version is None else int(policy_version),
                     metadata={

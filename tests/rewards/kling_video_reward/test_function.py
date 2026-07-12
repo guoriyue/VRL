@@ -12,7 +12,7 @@ from omegaconf import OmegaConf
 from vrl.config.validation import validate_reward_config
 from vrl.rewards.functions.kling_video_reward import KlingVideoReward
 from vrl.rewards.inference import RewardInferenceResult
-from vrl.rewards.types import RewardRollout, RewardTrajectory
+from vrl.rewards.types import RewardRollout
 
 
 class _FakeRuntime:
@@ -52,11 +52,7 @@ class _EmptyRuntime:
 
 
 def _rollout(output: torch.Tensor, *, policy_version: int = 3) -> RewardRollout:
-    return RewardRollout(
-        request=None,
-        trajectory=RewardTrajectory(prompt="prompt", output=output),
-        metadata={"policy_version": policy_version, "sample_ids": ["sample-a"]},
-    )
+    return RewardRollout(prompt="prompt", output=output, metadata={"policy_version": policy_version, "sample_ids": ["sample-a"]})
 
 
 def _video_reward_config(**video_kwargs: object):

@@ -23,6 +23,7 @@ class TestRewardUpdateFlow:
         from vrl.trainers.online import OnlineTrainer
 
         captured_kwargs: list[dict] = []
+        captured_inputs: list = []
 
         class _Algorithm:
             class _Config:
@@ -58,16 +59,18 @@ class TestRewardUpdateFlow:
             async def score_rollouts(self, pendings):
                 return list(pendings)
 
-            async def collect_unscored(self, prompts, **kwargs):
+            async def collect_unscored(self, inputs, **kwargs):
+                captured_inputs.extend(inputs)
                 captured_kwargs.append(dict(kwargs))
                 group_size = int(kwargs["group_size"])
+                prompts = [item.prompt for item in inputs]
                 return RolloutBatch(
                     observations=torch.zeros(group_size, 2, 1),
                     actions=torch.zeros(group_size, 2, 1),
                     rewards=torch.ones(group_size, dtype=torch.float32),
                     dones=torch.ones(group_size, dtype=torch.bool),
                     group_ids=torch.zeros(group_size, dtype=torch.long),
-                    prompts=list(prompts) * group_size,
+                    prompts=prompts * group_size,
                 )
 
         class _Evaluator(Evaluator):
@@ -112,13 +115,16 @@ class TestRewardUpdateFlow:
         asyncio.run(trainer.step([example]))
 
         # Group-batched collect: one call per prompt, carrying group_size=2.
+        # Conditioning rides the typed GenerationInput; reward targets ride the
+        # group metadata dict (PromptExample owns that mapping).
         assert len(captured_kwargs) == 1
         kw = captured_kwargs[0]
         assert kw["group_size"] == 2
-        assert kw["target_text"] == "HELLO"
-        assert kw["reference_image"] == "/tmp/reference.png"
-        assert kw["task_type"] == "text_to_video"
-        assert kw["sample_metadata"]["difficulty"] == "easy"
+        assert kw["metadata"]["target_text"] == "HELLO"
+        assert kw["metadata"]["difficulty"] == "easy"
+        assert len(captured_inputs) == 1
+        assert captured_inputs[0].reference_image == "/tmp/reference.png"
+        assert captured_inputs[0].task_type == "text_to_video"
 
     def test_cea_batches_plain_prompts_for_rollout_but_splits_training(self) -> None:
         """Plain prompts should collect together, then train as group-local batches."""
@@ -166,8 +172,8 @@ class TestRewardUpdateFlow:
             async def score_rollouts(self, pendings):
                 return list(pendings)
 
-            async def collect_unscored(self, prompts, **kwargs):
-                prompts = list(prompts)
+            async def collect_unscored(self, inputs, **kwargs):
+                prompts = [getattr(item, "prompt", item) for item in inputs]
                 collect_calls.append(prompts)
                 group_size = int(kwargs["group_size"])
                 batch_size = len(prompts) * group_size
@@ -272,8 +278,8 @@ class TestRewardUpdateFlow:
             async def score_rollouts(self, pendings):
                 return list(pendings)
 
-            async def collect_unscored(self, prompts, **kwargs):
-                prompts = list(prompts)
+            async def collect_unscored(self, inputs, **kwargs):
+                prompts = [getattr(item, "prompt", item) for item in inputs]
                 collect_calls.append(list(prompts))
                 group_size = int(kwargs["group_size"])
                 batch_size = len(prompts) * group_size
@@ -456,8 +462,8 @@ class TestRewardUpdateFlow:
             async def score_rollouts(self, pendings):
                 return list(pendings)
 
-            async def collect_unscored(self, prompts, **kwargs):
-                prompts = list(prompts)
+            async def collect_unscored(self, inputs, **kwargs):
+                prompts = [getattr(item, "prompt", item) for item in inputs]
                 group_size = int(kwargs["group_size"])
                 batch_size = len(prompts) * group_size
                 group_ids = torch.tensor(
@@ -568,8 +574,8 @@ class TestRewardUpdateFlow:
             async def score_rollouts(self, pendings):
                 return list(pendings)
 
-            async def collect_unscored(self, prompts, **kwargs):
-                prompts = list(prompts)
+            async def collect_unscored(self, inputs, **kwargs):
+                prompts = [getattr(item, "prompt", item) for item in inputs]
                 group_size = int(kwargs["group_size"])
                 batch_size = len(prompts) * group_size
                 group_ids = torch.tensor(

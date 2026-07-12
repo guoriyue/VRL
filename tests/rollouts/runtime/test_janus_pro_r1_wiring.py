@@ -94,7 +94,7 @@ def test_r1_collector_uses_r1_task_request_and_trajectory_batch() -> None:
         reward_fn=None,
         config=rollout_config,
     )
-    plan = collector.request_builder.build(["draw text"], 2, {})
+    plan = collector.request_builder.build(["draw text"], 2)
 
     entry = get_rollout_family_entry("janus_pro_r1")
     assert collector.family == "janus_pro_r1"

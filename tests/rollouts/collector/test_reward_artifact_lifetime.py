@@ -28,15 +28,15 @@ from vrl.trajectory import (
 class _RequestBuilder:
     def build(
         self,
-        prompts: list[str],
+        inputs: list[Any],
         group_size: int,
-        kwargs: dict[str, Any],
+        **kwargs: Any,
     ) -> CollectorRequest:
         request = GenerationRequest(
             request_id="artifact-request",
             family="unit",
             task="ar_t2i",
-            inputs=prompts,
+            inputs=list(inputs),
             samples_per_prompt=group_size,
             return_artifacts={"output"},
         )

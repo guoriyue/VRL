@@ -9,6 +9,7 @@ from typing import Any
 
 from torch.utils.data import Dataset
 
+from vrl.generation import GenerationInput
 from vrl.utils.config import cfg_get
 
 
@@ -31,6 +32,40 @@ class PromptExample:
     task_type: str = "text_to_video"
     request_overrides: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    # These two methods are the ONLY place that maps PromptExample fields onto
+    # the engine/reward split. Adding a field means extending exactly one of
+    # them — nothing downstream picks fields out of an untyped kwargs dict.
+
+    def generation_input(self) -> GenerationInput:
+        """Engine-facing conditioning for this example.
+
+        Typed conditioning (task_type / reference media) rides the
+        ``GenerationInput`` fields; everything else — including the reward-only
+        targets — rides its metadata so engine sample rows can carry it.
+        """
+
+        return GenerationInput(
+            prompt=self.prompt,
+            task_type=self.task_type or None,
+            reference_image=self.reference_image or None,
+            reference_video=self.reference_video or None,
+            metadata=self.reward_metadata(),
+        )
+
+    def reward_metadata(self) -> dict[str, Any]:
+        """Reward-scoring metadata attached to this example's rollout group."""
+
+        metadata = dict(self.metadata)
+        if self.target_text:
+            metadata["target_text"] = self.target_text
+        if self.references:
+            metadata["references"] = list(self.references)
+        if self.target_image is not None:
+            metadata["target_image"] = self.target_image
+        if self.target_video is not None:
+            metadata["target_video"] = self.target_video
+        return metadata
 
 
 def load_prompt_manifest(path: str | Path) -> list[PromptExample]:

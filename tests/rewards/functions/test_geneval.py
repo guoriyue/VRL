@@ -4,15 +4,11 @@ import pytest
 
 from vrl.rewards.functions.geneval import GenEvalReward
 from vrl.rewards.functions.registry import MultiReward
-from vrl.rewards.types import RewardRollout, RewardTrajectory
+from vrl.rewards.types import RewardRollout
 
 
 def _rollout(metadata: dict) -> RewardRollout:
-    return RewardRollout(
-        request=None,
-        trajectory=RewardTrajectory(prompt="a photo of a yellow bus", output=None),
-        metadata=metadata,
-    )
+    return RewardRollout(prompt="a photo of a yellow bus", output=None, metadata=metadata)
 
 
 @pytest.mark.asyncio

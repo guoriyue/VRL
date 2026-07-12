@@ -56,14 +56,17 @@ def _make_ocr_rollout(target_text: str, video_tensor=None):
     """Build a minimal RewardRollout with target_text metadata and a video tensor."""
     import torch
 
-    from vrl.rewards.types import RewardRollout, RewardTrajectory
+    from vrl.rewards.types import RewardRollout
 
     if video_tensor is None:
         # Black frames — no OCR text expected
         video_tensor = torch.zeros(3, 8, 64, 64)
 
-    traj = RewardTrajectory(prompt="test", output=video_tensor)
-    return RewardRollout(request=None, trajectory=traj, metadata={"target_text": target_text})
+    return RewardRollout(
+        prompt="test",
+        output=video_tensor,
+        metadata={"target_text": target_text},
+    )
 
 
 @_skip_no_rapidocr
