@@ -105,7 +105,7 @@ sd3_5 runner:74,83 / predict2_5 runner:63 —— DiffusionBackboneRunner 是 Pro
 scripts _build_bundle/_build_replay_bundle ×4 — lazy-import 回调边界（OnlineRecipeDefinition
     按名注入），跨家族成对形状，保留
 runtime/runner __init__ 同构 ×3/×2 — constructor 接线，家族属性各异同形，保留
-from_spec ×5 / export_batch_context ×5（其中 wan↔sd3_5 两份同体）— 5 家族 ABC 形状，
+from_build ×5 / export_batch_context ×5（其中 wan↔sd3_5 两份同体）— 5 家族 ABC 形状，
     只动其中 2 个会破对称，保留
 encode_prompt/prepare_sampling/forward_step/restore_eval_state/decode_latents 同名 ×6
     — ABC 表面（rollout 正体实现各异），保留；只有 replay 桩（S1）下沉

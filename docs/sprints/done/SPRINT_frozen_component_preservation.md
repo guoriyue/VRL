@@ -49,7 +49,7 @@ sprint，不能复活本文的旧 bundle 假设。
 
 ## 0. Core Decision（先看这一段）
 
-**结论：vrl 当前在 Ray on-demand（release-after-collect）模式下，每个 collect 周期都会 discard 整个 executor 并冷重载冻结组件，这正是 verl-omni 用 `sleep_level=1` 刻意避免的反模式 —— 应改为 offload-and-restore（sleep/wake）。** 已逐跳核实：rollout 的 `release_rollout_runtime_memory` 最终把 worker 的 `self.executor` 置空并释放 CUDA（`vrl/generation/execution/worker.py:75`），下一次 `generate()` 重新 `launch()` 时走 `from_spec` → `StableDiffusion3Pipeline.from_pretrained(...)`（`vrl/models/diffusion/sd3_5/model.py:131`），把 VAE + 3 个 text-encoder 从磁盘**整盘冷重载**一遍 —— 这些组件从不参与 weight-sync（只同步可训练的 transformer/LoRA），所以重载它们是纯浪费。verl-omni 对完全相同的问题给出了明确范式：diffusion pipeline 的 text-encoder/VAE "are not part of the trainable actor and therefore are not included in full-model weight syncs"，因此用 level-1 sleep 把它们 offload、wake-up 时 restore，而不是被 level-2 discard（`verl_omni/workers/rollout/vllm_rollout/vllm_omni_async_server.py:204-216`）。本 sprint 把这套 offload-and-restore 纪律引入 vrl 的两条释放路径（lease 模式 + 单卡 colocated 的 driver-offload 模式），让冻结权重在 GPU↔CPU 之间搬运而非销毁重建。
+**结论：vrl 当前在 Ray on-demand（release-after-collect）模式下，每个 collect 周期都会 discard 整个 executor 并冷重载冻结组件，这正是 verl-omni 用 `sleep_level=1` 刻意避免的反模式 —— 应改为 offload-and-restore（sleep/wake）。** 已逐跳核实：rollout 的 `release_rollout_runtime_memory` 最终把 worker 的 `self.executor` 置空并释放 CUDA（`vrl/generation/execution/worker.py:75`），下一次 `generate()` 重新 `launch()` 时走 `from_build` → `StableDiffusion3Pipeline.from_pretrained(...)`（`vrl/models/diffusion/sd3_5/model.py:131`），把 VAE + 3 个 text-encoder 从磁盘**整盘冷重载**一遍 —— 这些组件从不参与 weight-sync（只同步可训练的 transformer/LoRA），所以重载它们是纯浪费。verl-omni 对完全相同的问题给出了明确范式：diffusion pipeline 的 text-encoder/VAE "are not part of the trainable actor and therefore are not included in full-model weight syncs"，因此用 level-1 sleep 把它们 offload、wake-up 时 restore，而不是被 level-2 discard（`verl_omni/workers/rollout/vllm_rollout/vllm_omni_async_server.py:204-216`）。本 sprint 把这套 offload-and-restore 纪律引入 vrl 的两条释放路径（lease 模式 + 单卡 colocated 的 driver-offload 模式），让冻结权重在 GPU↔CPU 之间搬运而非销毁重建。
 
 ---
 
@@ -71,9 +71,9 @@ sprint，不能复活本文的旧 bundle 假设。
 4. worker 的 `release_policy()` 把整个 executor 丢弃并释放 CUDA：
    > `self.executor = None; release_cuda_memory(gc_collect=True, ipc_collect=True)`
    （`vrl/generation/execution/worker.py:75-76`）—— executor 持有 family model，model 持有 VAE+text-encoder，全部随之销毁。
-5. 下个周期 `generate()` → `_ensure_runtime()` 发现 `state.runtime is None`，重新 `RayGenerationLauncher().launch(...)`（`vrl/generation/ray/runtime.py:178-187`）→ worker `load_policy()` → `_build_executor()` → `build_runtime_bundle(spec)`（`vrl/generation/execution/worker.py:68,336`）。
+5. 下个周期 `generate()` → `_ensure_runtime()` 发现 `state.runtime is None`，重新 `RayGenerationLauncher().launch(...)`（`vrl/generation/ray/runtime.py:178-187`）→ worker `load_policy()` → `_build_executor()` → `build_runtime_bundle(build)`（`vrl/generation/execution/worker.py:68,336`）。
 6. SD3.5 的构建是整盘从磁盘加载并冻结：
-   > `pipeline = StableDiffusion3Pipeline.from_pretrained(spec.model_name_or_path, **load_kwargs)` … `pipeline.vae.requires_grad_(False)` … 三个 `enc.requires_grad_(False)`
+   > `pipeline = StableDiffusion3Pipeline.from_pretrained(build.model_name_or_path, **load_kwargs)` … `pipeline.vae.requires_grad_(False)` … 三个 `enc.requires_grad_(False)`
    （`vrl/models/diffusion/sd3_5/model.py:131-144`）。
 
 **判定：lease 模式确实是 discard + cold reload。** 冻结组件（VAE、text_encoder/2/3）每周期被销毁后从磁盘重载，而它们从不进入 weight-sync（worker 只 `install/load_trainable_state` 可训练权重，`vrl/generation/execution/worker.py:90-102`），所以这部分重载是纯开销，可被 offload-and-restore 完全省掉。
@@ -103,7 +103,7 @@ sprint，不能复活本文的旧 bundle 假设。
 
 ### D. 未验证（未验证）
 
-- **未验证：** cosmos / wan / janus_pro / nextstep 等其他 family 的 `from_spec` 是否同样整盘冷重载冻结组件。本轮只核实了 SD3.5（`vrl/models/diffusion/sd3_5/model.py`）。设计上其余 family 走相同的 `_build_executor → build_runtime_bundle → from_spec` 通道，预期同构，但**未逐个核实**。
+- **未验证：** cosmos / wan / janus_pro / nextstep 等其他 family 的 `from_build` 是否同样整盘冷重载冻结组件。本轮只核实了 SD3.5（`vrl/models/diffusion/sd3_5/model.py`）。设计上其余 family 走相同的 `_build_executor → build_runtime_bundle → from_build` 通道，预期同构，但**未逐个核实**。
 - **未验证：** offload 冻结组件到 CPU 再搬回的耗时是否真的小于 `from_pretrained` 冷重载（直觉上 CPU↔GPU 拷贝远快于磁盘反序列化 + 构图 + 冻结，但**未实测**）。需在落地前用一次 probe 量化（见 §3 验收）。
 - **已核实（2026-06-29，原"架构选型未定"项收窄）：** 复核两处代码后，"actor 生命周期是否每周期保活"不是一个不可知的架构分叉，而是一个可测量的显存问题：
   1. **lease 模式下 bundle 根本不交还。** `_ensure_runtime` 重 launch 时传的是同一个 `state.placement`（`runtime.py:181-186`），launcher 里 `owned_placement_group = None`、PG 由 `GlobalRayPlacementOwner` 持有、`shutdown` 从不 remove PG（`launcher.py:88` 注释）。所以 `kill_actors` 杀掉的只是 **actor 进程**，bundle 一直为 rollout 保留、下周期同 bundle 重建——kill 的唯一作用是回收那张物理卡的显存（含 CUDA context），**不是**把 Ray 调度位让给别的角色。
@@ -120,7 +120,7 @@ sprint，不能复活本文的旧 bundle 假设。
 
 - **缺陷 A（lease 模式，主目标，依赖架构决策）：** 把 `release_after_collect` 的 `kill_actors` 路径替换为 "sleep actor"：actor 进程常驻，`release_policy` 不再 `executor=None`，而是把可训练 transformer 卸下（仍由 weight-sync 重装）+ 把冻结组件 offload 到 CPU；`_ensure_runtime` 的重 `launch` 改为 "wake"（把冻结组件搬回 GPU，不重读磁盘）。这需要 §1.D 未验证项落定：actor 是否保活。**这一步与 [[SPRINT_compile_rollout_lifecycle]] 的"编译产物常驻 vs 每周期重建"是同一根生命周期轴** —— 若 actor 保活，编译产物与冻结权重可一起摊销到 ~0。
 
-- **冻结组件的 single source of truth：** 不要在生命周期层硬编码"哪些是冻结组件"。冻结性已在 `from_spec` 用 `requires_grad_(False)` 标注（`vrl/models/diffusion/sd3_5/model.py:135-142`）。offload/restore 的对象集合应从 model 暴露的"非可训练子模块/pipeline 组件"派生，避免在两处各维护一份名单而 rot。
+- **冻结组件的 single source of truth：** 不要在生命周期层硬编码"哪些是冻结组件"。冻结性已在 `from_build` 用 `requires_grad_(False)` 标注（`vrl/models/diffusion/sd3_5/model.py:135-142`）。offload/restore 的对象集合应从 model 暴露的"非可训练子模块/pipeline 组件"派生，避免在两处各维护一份名单而 rot。
 
 ---
 
@@ -149,7 +149,7 @@ vrl 代码路径（本轮逐跳核实）：
 - `vrl/generation/ray/runtime.py:67-95,131-193`（lease 工厂、`release/shutdown/_ensure_runtime` kill+relaunch）
 - `vrl/generation/ray/launcher.py:202-213`（on-demand 触发条件）
 - `vrl/generation/execution/worker.py:56-76,88-107,317-347`（`load_policy/release_policy/update_weights/_build_executor`）
-- `vrl/models/diffusion/sd3_5/model.py:84-90,119-144`（pipeline 旁挂未注册、`from_spec` 整盘冷重载 + 冻结）
+- `vrl/models/diffusion/sd3_5/model.py:84-90,119-144`（pipeline 旁挂未注册、`from_build` 整盘冷重载 + 冻结）
 - `vrl/models/diffusion/base.py:30-`（`DiffusionModelBase` 未重写 `to()`）
 
 相关 sprint：

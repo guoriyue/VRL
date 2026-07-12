@@ -28,7 +28,7 @@
 1. 双 embeds 线程：`encode_prompt` 返回 `{"prompt_embeds", "glyph_embeds", masks...}`，
    `build_chunk_encoded` repeat 两组——这是它区别于 SANA/Lumina 的主要 seam 工作量。
 2. 冻结编码器 CPU offload：MLLM 编码器体量大，照 flux 落地实测经验（[[SPRINT_flux_t2i]] §0.1.1）
-   `from_spec` 放 CPU、`encode_prompt` 在编码器设备跑。
+   `from_build` 放 CPU、`encode_prompt` 在编码器设备跑。
 3. refiner / distilled 变体一律不接（§5）。
 
 ## 3. 落地文件

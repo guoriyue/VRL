@@ -32,7 +32,7 @@ trainer replay bundle 只加载 transformer + scheduler：
 model = replay_cls(
     transformer=load_diffusers_transformer(...),
     scheduler=load_diffusers_scheduler(...),
-    device=spec.device,
+    device=build.device,
 )
 ```
 
@@ -196,7 +196,7 @@ absent_modules = ...
 
 ```text
 Generation model:
-  from_spec / runtime bundle
+  from_build / runtime bundle
   encode_prompt / encode_reference
   prepare_sampling
   forward_step

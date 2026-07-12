@@ -1,6 +1,6 @@
 # SPRINT: 测试套件 tiny-real 化、假替身审计与配置断言整改（planned）
 
-状态：已落地 / done。全套 T1–T6 已在 commit 84584d2（"test: tiny-real fixtures, dedup fakes, prune declaration-only config asserts"，main 祖先）一次性实现：AR fixtures.py（build_stub_janus_mmgpt/build_stub_janus_model）、anima test_backbone_parity.py + build_tiny_anima_transformer、_ONLINE_RECIPES/_RECIPES 从 _experiment_names() glob 派生、interfaces 契约参数化注册家族、replay-export 对齐 predict2+predict2.5+anima、cosmos/wan-i2v from_spec loading test、conftest marker 注释、_wait_until 沉入 continuous/_helpers.py。190 测试全绿。仅 T3.4/T6.4（doc 明标可选、nightly-only 提速观察）未做，不计入 scope。
+状态：已落地 / done。全套 T1–T6 已在 commit 84584d2（"test: tiny-real fixtures, dedup fakes, prune declaration-only config asserts"，main 祖先）一次性实现：AR fixtures.py（build_stub_janus_mmgpt/build_stub_janus_model）、anima test_backbone_parity.py + build_tiny_anima_transformer、_ONLINE_RECIPES/_RECIPES 从 _experiment_names() glob 派生、interfaces 契约参数化注册家族、replay-export 对齐 predict2+predict2.5+anima、cosmos/wan-i2v from_build loading test、conftest marker 注释、_wait_until 沉入 continuous/_helpers.py。190 测试全绿。仅 T3.4/T6.4（doc 明标可选、nightly-only 提速观察）未做，不计入 scope。
 保留、哪些测试什么都没证明该删、哪些配置断言违反 no-exact-config、哪些 parity/infra 缺口要补。
 findings + 路径 + 整改逻辑都在本文。按 T1→T6 分轨道做，轨道间基本无依赖（T1 的 AR fixtures 是 T5
 AR parity 的前置）；每个 item 独立可 PR。
@@ -290,18 +290,21 @@ AGENTS.md "不要手维护重复类型化结构的常量、应从真相源派生
 ### T4.1 — `_ONLINE_RECIPES` 手维护列表已漂移，从 glob 派生（risk: low）
 
 证据：`tests/config/test_precision.py:135` 的 `_ONLINE_RECIPES` 有 16 条；盘上有 17 个 online recipe，
-**漏了 `diffusion/cosmos_predict2_5/online_nft_motion_physics`**（实测它 resolve 出
-compute=bf16/rollout=bf16/math=fp32、无 legacy key，本会 PASS，是被静默漏测的真覆盖）。
+**漏了 `diffusion/cosmos_predict2_5/online_nft_motion_physics`**（实测它当时的等价解析为
+`training.dtype=bf16`, `rollout.dtype=bf16`, and `diffusion_math.dtype=fp32`，
+无 legacy key，本会 PASS，是被静默漏测的真覆盖）。
 
-- [ ] **保留**测试（`policy.math=='fp32'` 是 resolver 强制的受保护轴不变量，`"mixed_precision" not in cfg.actor`
+- [ ] **保留**测试（`policy.diffusion_math == 'fp32'` 是 resolver 强制的受保护轴不变量，`"mixed_precision" not in cfg.actor`
   守旧 split 配置面不被重引入——都有 teeth）；**删手列表**，从 `_experiment_names()` 过滤
   `not Path(name).name.startswith("offline_")` 派生（实测得正好 17 条 online recipe）。
 - [ ] **同步修第二处相同病灶**：`tests/scripts/test_online_precision_bridge.py:20` 的 `_RECIPES`（4 条手列表，
   同样漏 `online_nft_motion_physics`）也从 glob 派生。
   - 什么覆盖会丢失：无；反而**找回**被漏测的 recipe 覆盖。removal_safe=false（不删测试，只改 list 来源）。
 
-> 注：`policy.compute == policy.rollout` 这条几乎是 tautology（resolver 在 `precision.py` 结构上把两者
-> 从同一 forward 派生），无法被任何配置触发失败——有 teeth 的是 `math=='fp32'` 和 `not in cfg.actor`。
+> Current note: `policy.training == policy.rollout` is no longer a resolver
+> tautology. The two role blocks are independently explicit, so this assertion
+> now protects the online-recipe alignment contract. The protected-math and
+> legacy-key assertions remain independently useful.
 
 ### T4.2 — `test_experiments_are_grouped_by_model_family` 钉死 18 条实验名全集，改结构断言（risk: low）
 
@@ -415,14 +418,14 @@ tensor 的 dim-0 == sample batch（生于真实 GPU-gate bug：`init_latents` le
 
 > **关键修正（复核改了首选方案 + 丢弃同义反复提案）：** **不要**做"自审计测试断言 archs_with_tiny_pipe()
 > 等于预期集合"——那是把 `_TINY_PIPELINES.keys()` 再抄一份的同义反复，且根本无法实现"Hub 发布 tiny repo
-> 时标记"（测试不查 Hub）。真正没便宜覆盖的是 **`from_spec` 的冻结/dtype/safety-checker 分支**（cosmos
+> 时标记"（测试不查 Hub）。真正没便宜覆盖的是 **`from_build` 的冻结/dtype/safety-checker 分支**（cosmos
 > `_PassthroughSafetyChecker` 替换 + `torch.set_grad_enabled(True)` + dtype staging, `model.py:118-144`；
 > wan-i2v `enable_sequential`/`model_cpu_offload` 分支, `model.py:430-438`）。注意 predict2 的 wrapper
 > 接受真实 tiny transformer + forward_step 已被 `predict2/test_backbone_parity.py` + `common/test_decode_layout_parity.py`
 > 用 `SimpleNamespace(pipeline)` 便宜覆盖了，所以"never wiring-tested cheaply" 过宽。
 
 - [ ] **首选**：按 sd3 的 monkeypatch-`from_pretrained` 模式（`sd3_5/test_model_loading.py` 用 `_FakePipeline`
-  断言冻结/dtype/device staging，零下载），给 cosmos predict2 和 wan-i2v 各加一个 `from_spec` 加载测试，
+  断言冻结/dtype/device staging，零下载），给 cosmos predict2 和 wan-i2v 各加一个 `from_build` 加载测试，
   覆盖 safety-checker passthrough + grad 重开 + offload 分支。
 - [ ] **补充（可选）**：若发布 pinned tiny Cosmos/Wan-I2V pipe repo，扩 `_TINY_PIPELINES` 覆盖真实
   diffusers 装配；在 docstring 写明 regeneration 路径。
@@ -619,7 +622,7 @@ job 全是 `runs-on: ubuntu-latest`（CPU），无任何 GPU/self-hosted runner�
    （T3.1/T3.5 合并、T3.2 通用化、T3.3 删）。
 4. **T2** — anima fake→tiny + 补 backbone parity（T2.1）；scheduler parity tiny-repo（T2.2）。
 5. **T5** — RuntimeModel 契约参数化跑真实家族（T5.1）；replay-export 对齐跨家族（T5.3）；cosmos/wan-i2v
-   `from_spec` 加载测试（T5.4）；AR parity gap 文档化（T5.2，track 项）。
+   `from_build` 加载测试（T5.4）；AR parity gap 文档化（T5.2，track 项）。
 6. **T6** — infra 卫生：marker 注释（T6.1）、gpu docstring 软化（T6.2）、`_wait_until` 去重（T6.3）、
    pipeline-contract Ray spin-up 优化（T6.4）。
 

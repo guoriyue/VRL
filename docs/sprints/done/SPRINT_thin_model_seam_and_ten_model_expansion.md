@@ -5,7 +5,7 @@
 > **Phase 1 验证记录（2026-07-08，RTX 5090 32GB + CPU 兜底）**：探针 = `vrl/scripts/diffusion/generate.py`
 > （生产 `sde_step_with_logprob` 循环 + first-step replay parity）/ AR 家族用 executor 直驱。
 > 10/10 全部 replay parity **0.0e+00**（AR 家族由 rollout↔teacher-forced 等值测试锁定）：
-> SANA（bf16 尾数坏死线性注意力——二分定位后 from_spec 映射到 fp16，4a0c8e5e，修复后 SDE 直出杂志级）、Lumina-Image-2（摄影级输出）、PixArt-Σ（ddim 阶梯首战）、
+> SANA（bf16 尾数坏死线性注意力——二分定位后 from_build 映射到 fp16，4a0c8e5e，修复后 SDE 直出杂志级）、Lumina-Image-2（摄影级输出）、PixArt-Σ（ddim 阶梯首战）、
 > HunyuanImage-2.1（17B CPU 验证；1024px/20 步复跑画质干净——首跑斑块系 6 步/512px 探针省时设置）、HunyuanVideo（13B + tiled decode）、Mochi（倒 sigma 标准化实证）、
 > CogVideoX（v-pred ddim + BFCHW）、Emu3（4163 受限 token 直出高质量图）、LlamaGen（vendored GPT 256 token）、
 > GLM-Image（transformers 5.13 升级后落地；原生 1024px CPU 全程验证——1280 prior token 采样 +
@@ -49,7 +49,7 @@ register_rollout_family(
         aliases=("flux_1_dev",),
         executor_cls="vrl.models.diffusion.flux.runtime:FluxChunkExecutor",
         runtime_builder="vrl.models.diffusion.flux.runtime:build_flux_runtime_bundle",
-        runtime_spec_extractor="vrl.models.diffusion.flux.runtime:extract_flux_runtime_spec",
+        model_build_resolver="vrl.models.diffusion.flux.runtime:resolve_flux_model_build",
         request_prefix="flux",
         default_task_type="text_to_image",
     ),
@@ -66,17 +66,17 @@ register_rollout_family(
 
 ```python
 # vrl/models/diffusion/sd3_5/runtime.py:46-175（节选骨架）
-def extract_sd3_5_runtime_spec(cfg, device, weight_dtype):        # 只是 task_variant 不同
-    return extract_runtime_spec(cfg, device, weight_dtype, task_variant="t2i")
+def resolve_sd3_5_model_build(cfg, device, weight_dtype):        # 只是 task_variant 不同
+    return resolve_model_build(cfg, device, weight_dtype, task_variant="t2i")
 
-def build_sd3_5_runtime_bundle(spec):                             # 通用编排：from_spec→lora/ft→
-    model = SD3_5Model.from_spec(spec)                            #   quantize→compile→set_num_steps→
-    if spec.use_lora: model.apply_lora(spec)                     #   组装 RuntimeBundle
+def build_sd3_5_runtime_bundle(build):                             # 通用编排：from_build→lora/ft→
+    model = SD3_5Model.from_build(build)                            #   quantize→compile→set_num_steps→
+    if build.use_lora: model.apply_lora(build)                     #   组装 RuntimeBundle
     else: model.apply_full_finetune()
-    apply_rollout_quantization(model, spec)
+    apply_rollout_quantization(model, build)
     ...  # compile / set_num_steps / RuntimeBundle(...)  ← 这 40 行每个家族都一样
 
-def build_sd3_5_replay_runtime_bundle(spec): ...                 # 同一套编排的 replay 变体
+def build_sd3_5_replay_runtime_bundle(build): ...                 # 同一套编排的 replay 变体
 def build_sd3_5_runtime_bundle_from_cfg(cfg, device, wd): ...    # 2 行包装
 def build_sd3_5_replay_runtime_bundle_from_cfg(cfg, device, wd): ...  # 2 行包装
 ```
@@ -84,7 +84,7 @@ def build_sd3_5_replay_runtime_bundle_from_cfg(cfg, device, wd): ...  # 2 行包
 家族之间**真正不同的只有 5 个值**：`Model` 类、`ReplayModel` 类、`transformer` diffusers classname
 字符串（如 `"SD3Transformer2DModel"`，见 `runtime.py:125`）、scheduler loader、`task_variant` + 两个
 `runtime_caps` flag。其余全是复制。AR 侧同理：`ar/janus_pro/runtime.py:53-122` 的
-`build_janus_pro_runtime_bundle` / `build_janus_pro_replay_runtime_bundle` / `extract_janus_pro_runtime_spec`
+`build_janus_pro_runtime_bundle` / `build_janus_pro_replay_runtime_bundle` / `resolve_janus_pro_model_build`
 也是同一套编排换个类名。
 
 ### 1.3 结论：哪些该折叠、哪些是真薄层（保留）
@@ -93,9 +93,9 @@ def build_sd3_5_replay_runtime_bundle_from_cfg(cfg, device, wd): ...  # 2 行包
 |---|---|---|
 | registry `_diffusion_entry` / `RolloutFamilyEntry` | 已声明式、薄 | **保留** |
 | `build_*_runtime_bundle` / `build_*_replay_runtime_bundle` | 每家族逐字复制 40+ 行 | **折叠**进共享通用 builder |
-| `extract_*_runtime_spec` / 两个 `*_from_cfg` 包装 | 每家族 2~4 行样板 | **折叠**（由描述符提供 task_variant）|
+| `resolve_*_model_build` / 两个 `*_from_cfg` 包装 | 每家族 2~4 行样板 | **折叠**（由描述符提供 task_variant）|
 | `*ChunkExecutor.build_chunk_encoded`（diffusion）| 家族特有（要 repeat 哪些 embed）| **保留**（真薄层）|
-| `model.py`（`from_spec`/`encode_prompt`/`forward_step`/`decode_latents`）| 家族特有真代码 | **保留**（这才是模型本体）|
+| `model.py`（`from_build`/`encode_prompt`/`forward_step`/`decode_latents`）| 家族特有真代码 | **保留**（这才是模型本体）|
 | AR `runner.py` / executor 的 `forward_plan`/`gather_chunks` | 家族特有（tokenize/decode/VQ）| **保留**（真薄层）|
 | `vrl/scripts/.../<family>/train.py` | 每模型 ~59 行纯转发（如 `scripts/diffusion/sd3_5/train.py`）| **折叠**成 registry 驱动的通用 entrypoint |
 | 每家族 `__init__.py` re-export 聚合器 | 样板 | **收薄**（只 re-export 真需要对外的符号）|
@@ -118,7 +118,7 @@ def build_sd3_5_replay_runtime_bundle_from_cfg(cfg, device, wd): ...  # 2 行包
 > - ✅ 共享 builder 落地：`vrl/models/diffusion/build.py` 的 `build_diffusion_runtime_bundle` /
 >   `build_diffusion_replay_runtime_bundle`（family-agnostic，不 import 任何家族类，无循环依赖）。
 > - ✅ 参考家族 sd3_5 迁移完成：`sd3_5/runtime.py` 的 `build_*` 从 ~90 行编排缩成薄 stub，删掉 8 个只在
->   编排里用的 import。派发契约（`module:build_sd3_5_runtime_bundle(spec)` 字符串路径）不变。
+>   编排里用的 import。派发契约（`module:build_sd3_5_runtime_bundle(build)` 字符串路径）不变。
 > - ✅ 死代码 `vrl/models/vla/` 已删（§2.6）。
 > - ✅ 验证：`tests/models` + `tests/rollouts` 309 passed；相关 wiring/precision/config/vae-memory/launcher
 >   119 passed。两个 pin 测试（policy-source-scan、replay-namespace-patch）已改指向共享 `build.py` 并保留
@@ -167,15 +167,15 @@ def build_sd3_5_replay_runtime_bundle_from_cfg(cfg, device, wd): ...  # 2 行包
 > model_revision / skip_text_encoder）。折叠须给共享 builder 加 caps/metadata 参数并决定 caps 契约
 > 是否统一——**有人值守项**，且 caps 不一致本身值得单独审（消费方读不读 `family_capability`？）。 |
 > | **AR janus_pro / nextstep_1** | 22+27 / 22+22 行自建 | ⚠️ **bundle 组装 ~18 行逐字重复**（差异只在
-> capability 常量与 `supports_chunked_execution`；家族真逻辑是 config-from-spec 函数，那部分保留）。
-> **建议在接 3 个 AR 新家族（GLM-Image/Emu3/LlamaGen）前折叠 `build_ar_runtime_bundle(spec, ...)`**，
+> capability 常量与 `supports_chunked_execution`；家族真逻辑是 config-from-build 函数，那部分保留）。
+> **建议在接 3 个 AR 新家族（GLM-Image/Emu3/LlamaGen）前折叠 `build_ar_runtime_bundle(build, ...)`**，
 > 否则每个新 AR 家族再抄一份。model.py 侧已由 ARModelBase 收薄（tick 3）。 |
 > | `*_from_cfg` 包装（各家族 6-8 行×2） | — | ✅ 保留：它们是 train.py `trainer.entrypoint` 的派发目标，
 > 折叠属于 §2.4（有人值守项）。 |
 
 > **薄化第二轮（2026-07-01，有人值守）——AR 折叠落地 + cosmos 折叠落地 + 剩余家族逐一判定**：
 >
-> **已落地**（`build_ar_runtime_bundle` + 共享 builder 新增 `runtime_caps` 全量覆盖 / `extra_metadata(model, spec)` 两参）：
+> **已落地**（`build_ar_runtime_bundle` + 共享 builder 新增 `runtime_caps` 全量覆盖 / `extra_metadata(model, build)` 两参）：
 > - ✅ **AR janus_pro / nextstep_1**：4 个 builder → 9-15 行 stub（`vrl/models/ar/build.py`）。caps 差异
 >   （R1 按 `ar_task` 选 capability）留在 janus stub。GLM-Image/Emu3/LlamaGen 落地时直接用。
 > - ✅ **cosmos predict2（rollout+replay）**：历史 caps dict（无 `family_capability` 键）原样传入——
@@ -191,14 +191,14 @@ def build_sd3_5_replay_runtime_bundle_from_cfg(cfg, device, wd): ...  # 2 行包
 >   `scheduler_classname` + `full_finetune` 两个 knob 只服务一个家族 = knob 蔓延，保留。
 > - **wan rollout（68L）**：**其实可折**（下一个有人值守单元）——`_resolve_model_cls(task_variant)` 在
 >   stub 里先解析再传 `model_cls`，caps/家族名切换也在 stub 定，`boundary_ratio`/`trainable_transformers`
->   走 `extra_metadata(model, spec)`（model 依赖的 metadata 正是这个签名的设计原因）。replay（76L）
+>   走 `extra_metadata(model, build)`（model 依赖的 metadata 正是这个签名的设计原因）。replay（76L）
 >   多 transformer 构造，保留。wan 是最高流量视频家族，折叠单独一个 commit + 全量 wan 测试。
 > - **echo rollout（41L）**：机械可折且现有配置下零行为变化（echo 配置没设 compile/quant，通用 builder
 >   的这两步是条件 no-op）。但**语义变化**：今天 echo 静默忽略这两个 knob（按本仓库 no-op-knob 规则这
 >   本身是个 bug——用户设了没效果），折叠后会真的生效于 LTX wrapper——**需要 GPU 验证 echo+compile
 >   后再折**。echo replay（64L）是 LTX wrapper 工厂，保留。
-> - **anima rollout（63L）**：可折但要先把 artifact 路径解析（原地 mutate `spec.model_config`）挪进
->   `AnimaModel.from_spec`（本来就该在那），metadata 的三个 path 键走 `extra_metadata` 读已解析的
+> - **anima rollout（63L）**：可折但要先把 artifact 路径解析（原地 mutate `build.model_config`）挪进
+>   `AnimaModel.from_build`（本来就该在那），metadata 的三个 path 键走 `extra_metadata` 读已解析的
 >   config。preview-grade 家族，ROI 低，可选。replay（57L）自建调度器 + `load_anima_transformer`，保留。
 > - **cosmos3（32/30L）**：`_apply_train_knobs` 替换了整个 lora/full-finetune 分支且无 compile 步——
 >   折叠等于用 hook 换掉 builder 心脏，不是折叠。probe-grade，保留。
@@ -207,8 +207,8 @@ def build_sd3_5_replay_runtime_bundle_from_cfg(cfg, device, wd): ...  # 2 行包
 > - ✅ **wan rollout（68→34L）**：t2v/i2v 解析（model_cls/capability/caps flag）留在 stub 做前置，
 >   规范化 task_variant 与 model 依赖的 metadata（boundary_ratio/trainable_transformers）走
 >   `extra_metadata`（merge 在通用键之后，覆盖原始 task_variant）。
-> - ✅ **anima rollout（63→35L）**：单文件 artifact 解析留在 stub 做前置（原地改 `spec.model_config`，
->   发生在 from_spec 之前——委托内部才调 from_spec，顺序保持）；`_resolve_artifact` 不挪
+> - ✅ **anima rollout（63→35L）**：单文件 artifact 解析留在 stub 做前置（原地改 `build.model_config`，
+>   发生在 from_build 之前——委托内部才调 from_build，顺序保持）；`_resolve_artifact` 不挪
 >   （replay 路径与 wiring 测试还在用它）。新增模块级 `ANIMA_FAMILY_CAPABILITY`，executor 类属性复用。
 > - ❌ **echo rollout 撤出折叠名单（修正第二轮判断）**：echo 文件头 docstring 明确记录
 >   "Quantization and torch.compile are intentionally not wired in Stage 1 ... add them once validated
@@ -236,26 +236,26 @@ def build_sd3_5_replay_runtime_bundle_from_cfg(cfg, device, wd): ...  # 2 行包
 > **薄化第五轮（2026-07-01）——§2.1+§2.4 落地：registry 描述符彻底消灭 wrapper（qwen_image pilot）**：
 > - ✅ 机制：`RolloutFamilyEntry` 新增 `build: DiffusionFamilyBuild`（model_cls/replay_cls/
 >   transformer_classname/task_variant/memory_owner/scheduler_classname/runtime_caps，纯字符串数据）；
->   `vrl/models/diffusion/build.py` 新增 4 个 generic 函数（`extract_family_runtime_spec` 从
->   `cfg.model.family` 解析家族并盖到 spec 上；`build_family_runtime_bundle`/`_replay_` 用 `spec.family`
->   查描述符；2 个 from_cfg）；`RuntimeBuildSpec` 新增 `family` 字段（随 Ray payload 走，worker/launcher
+>   `vrl/models/diffusion/build.py` 新增 4 个 generic 函数（`resolve_family_model_build` 从
+>   `cfg.model.family` 解析家族并盖到 build 上；`build_family_runtime_bundle`/`_replay_` 用 `build.family`
+>   查描述符；2 个 from_cfg）；`ModelBuild` 新增 `family` 字段（随 Ray payload 走，worker/launcher
 >   **零改动**——contract 本就带 family，payload 归一化是白名单外透传）；新增通用 train entrypoint
 >   `vrl/scripts/diffusion/train.py:train_diffusion_grpo`（sd3_5/qwen 的 train.py 逐字同构证明了它家族无关）。
 > - ✅ pilot：qwen_image 端到端迁移——runtime.py 的 5 个 builder/extractor 函数**全删**（只剩 capability
 >   常量 + executor），`scripts/diffusion/qwen_image/` 整目录删除，实验 yaml entrypoint 切到通用 recipe，
->   wiring 测试换 descriptor 专测（含 spec.family 缺失 fail-loud 断言）。
+>   wiring 测试换 descriptor 专测（含 build.family 缺失 fail-loud 断言）。
 > - **新家族的落地面（当下起）**：`model.py`（真代码）+ `runner.py`（若需要）+ `runtime.py`
 >   （capability + executor，~30 行）+ registry 一条带 `build=` 描述符 + yaml（entrypoint 用通用 recipe）
 >   ——**零 builder 函数、零 train.py**。SANA 按此接。
 > - ✅ **sd3_5 同法迁移完成（第二个 descriptor 家族）**：5 个函数删、`scripts/diffusion/sd3_5/` 目录删、
 >   5 个实验 yaml entrypoint 切通用 recipe（fsdp yaml 经 defaults 继承自动跟随）、3 处测试改指 generic
->   （precision-bridge 用 `extract_family_runtime_spec`；wiring 的 descriptor 专测参数化覆盖
->   sd3_5+qwen_image；vae-memory 参数化加 spec_family 列）。全仓 `build_sd3_5_*`/`train_sd3_5_*` 零残留。
+>   （precision-bridge 用 `resolve_family_model_build`；wiring 的 descriptor 专测参数化覆盖
+>   sd3_5+qwen_image；vae-memory 参数化加 build_family 列）。全仓 `build_sd3_5_*`/`train_sd3_5_*` 零残留。
 > - **descriptor 家族名册（终态）**：sd3_5、qwen_image（+ 未来所有 data-only 新家族，SANA 起）。
 >   **其余家族为何不迁（都是"stub 里有代码"）**：flux（NFT hook 闭包）、wan（t2v/i2v 变体解析 +
 >   model 依赖 metadata）、anima（artifact 路径解析前置）、predict2/predict2_5（extra_metadata lambda +
 >   NFT 守卫）、echo（replay 是 LTX wrapper 工厂，descriptor 的 replay_cls 装不下）、cosmos3
->   （`_apply_train_knobs`）、AR janus/nextstep（config-from-spec 是真代码，且 janus 双 capability）。
+>   （`_apply_train_knobs`）、AR janus/nextstep（config-from-build 是真代码，且 janus 双 capability）。
 >   描述符装数据不装代码——这条边界就是"能否零函数"的判据。
 > - 验证：**439 passed**（迄今最宽集合：+ execution worker 测试）。
 
@@ -273,7 +273,7 @@ def build_sd3_5_replay_runtime_bundle_from_cfg(cfg, device, wd): ...  # 2 行包
 >   `apply_full_finetune`（NFT raise）。`_lora_dtype` 的 3 份相同 override 保留——`LoraModelMixin`
 >   在 MRO 中先于新基类，挪进基类会被 mixin 默认遮住，改 mixin 会改 cosmos 系行为。
 > - echo/anima 不采用（非 pipeline-backed：LTX wrapper / 单文件 checkpoint），留在 `DiffusionModelBase`。
-> - 新家族增益：SANA 等 model.py 不再写这 8 个成员，只写 from_spec + 四个生成抽象方法 + replay 投影。
+> - 新家族增益：SANA 等 model.py 不再写这 8 个成员，只写 from_build + 四个生成抽象方法 + replay 投影。
 > - 验证：**439 passed** + 8 类继承/override 断言抽查。
 
 > **薄化第七轮（2026-07-02）——runner/executor 层：no-op 骨架与 base 等价 override 清除**：
@@ -331,7 +331,7 @@ def build_sd3_5_replay_runtime_bundle_from_cfg(cfg, device, wd): ...  # 2 行包
 #   model_cls:            "vrl.models.diffusion.<f>.model:<F>Model"
 #   replay_cls:           "vrl.models.diffusion.<f>.model:<F>ReplayModel"
 #   transformer_classname:"SD3Transformer2DModel"      # diffusers 类名
-#   task_variant:         "t2i"                          # 供 extract_runtime_spec
+#   task_variant:         "t2i"                          # 供 resolve_model_build
 #   runtime_caps_extra:   {"supports_reference_conditioning": False}
 ```
 
@@ -340,18 +340,18 @@ def build_sd3_5_replay_runtime_bundle_from_cfg(cfg, device, wd): ...  # 2 行包
 在 `vrl/models/loader.py`（或新文件 `vrl/models/diffusion/build.py`）放一份通用编排，签名吃描述符：
 
 ```python
-def build_diffusion_runtime_bundle(spec, entry) -> RuntimeBundle:
-    model = _import(entry.model_cls).from_spec(spec)
-    (model.apply_lora if spec.use_lora else model.apply_full_finetune)(spec)
-    apply_rollout_quantization(model, spec)
-    if (c := spec.torch_compile or {}).get("enable"):
+def build_diffusion_runtime_bundle(build, entry) -> RuntimeBundle:
+    model = _import(entry.model_cls).from_build(build)
+    (model.apply_lora if build.use_lora else model.apply_full_finetune)(build)
+    apply_rollout_quantization(model, build)
+    if (c := build.torch_compile or {}).get("enable"):
         model.torch_compile_transformer(c["mode"])
-    if spec.num_steps is not None:
-        model.set_num_steps(spec.num_steps)
+    if build.num_steps is not None:
+        model.set_num_steps(build.num_steps)
     return RuntimeBundle(model=model, ..., runtime_caps={
         "family_capability": entry.capability.to_dict(), **entry.runtime_caps_extra})
 
-def build_diffusion_replay_runtime_bundle(spec, entry) -> RuntimeBundle: ...  # replay 变体，同理
+def build_diffusion_replay_runtime_bundle(build, entry) -> RuntimeBundle: ...  # replay 变体，同理
 ```
 
 launcher 从 registry entry 直接调这两个通用 builder，不再按家族名 import `build_<f>_runtime_bundle`。
@@ -359,7 +359,7 @@ launcher 从 registry entry 直接调这两个通用 builder，不再按家族�
 ### 2.3 迁移每个现有 diffusion 家族
 
 对 sd3_5 / flux / qwen_image / wan_2_1 / echo / cosmos*（共 ~9 个）：删掉各自的 `build_*_runtime_bundle` /
-`build_*_replay_runtime_bundle` / `extract_*_runtime_spec` / 两个 `*_from_cfg`，把那 5 个值挪进 registry
+`build_*_replay_runtime_bundle` / `resolve_*_model_build` / 两个 `*_from_cfg`，把那 5 个值挪进 registry
 描述符。`runtime.py` 只留 `*ChunkExecutor`。逐家族迁移、逐家族跑 `tests/generation/diffusion/`。
 
 ### 2.4 折叠 per-model `train.py` entrypoint
@@ -373,7 +373,7 @@ launcher 从 registry entry 直接调这两个通用 builder，不再按家族�
 
 架构盘点确认 AR **没有** diffusion 那样的共享基类。Phase 0 给 AR 加一个 `vrl/models/ar/base.py:ARModelBase`
 （把 janus_pro / nextstep_1 里重复的 replay/adapter/versioned-slot 逻辑上提，对齐 `DiffusionModelBase`），
-并把 `build_*_runtime_bundle` / `extract_*_runtime_spec` 折叠成一个 `build_ar_runtime_bundle(spec, entry)`。
+并把 `build_*_runtime_bundle` / `resolve_*_model_build` 折叠成一个 `build_ar_runtime_bundle(build, entry)`。
 AR 的 executor（`forward_plan`/`gather_chunks`）含 tokenize/decode/VQ，是真薄层，保留。
 
 ### 2.6 清理死代码
@@ -446,7 +446,7 @@ SANA → Lumina2 → Emu3 → HunyuanVideo → Mochi-1 → GLM-Image → Hunyuan
 **Diffusion 家族**（例：SANA）需要新增/改动：
 
 ```text
-vrl/models/diffusion/sana/model.py      # 真代码：from_spec / encode_prompt / prepare_sampling /
+vrl/models/diffusion/sana/model.py      # 真代码：from_build / encode_prompt / prepare_sampling /
                                         #   forward_step / decode_latents + SanaReplayModel
 vrl/models/diffusion/sana/runtime.py    # 只留 SanaChunkExecutor（build_chunk_encoded：repeat 哪些 embed）
 vrl/models/diffusion/sana/__init__.py
@@ -513,7 +513,7 @@ tests/generation/diffusion/test_sana_*  # 1-step forward + config resolve
 
 **结论**：loop 的自主安全工作（Phase 0）已基本穷尽。Phase 1 需要三者之一：(a) 提供 SANA 等模型的真权重 +
 GPU，让某一跳能跑生成 parity；(b) 转为**有人值守**逐个接（我写 model.py、你在 GPU 上跑 parity 确认）；
-(c) 把 loop 重定向到剩余的可选 Phase 0 项（§2.1 需先给 `RuntimeBuildSpec` 加 `family` 字段并过 Ray
+(c) 把 loop 重定向到剩余的可选 Phase 0 项（§2.1 需先给 `ModelBuild` 加 `family` 字段并过 Ray
 序列化，或 `build_ar_runtime_bundle` 折叠——都是更大、非纯净的单元）。tick 4 未提交任何代码，停在此决策点。
 
 ### 6.4 一个诚实提醒
@@ -549,7 +549,7 @@ GPU，让某一跳能跑生成 parity；(b) 转为**有人值守**逐个接（�
 
 > **薄化第十二轮（2026-07-07）——flux 升级第六个 descriptor 家族；builder hook 机制退役**：
 > - **判决修正**：flux 的两个 hook 装的都是模型知识（runner 合并同款论证）——NFT `previous` adapter
->   搬进 `FluxModel.apply_lora`（配置驱动：`model.nft_previous_adapter: true`，from_spec/prepare_replay
+>   搬进 `FluxModel.apply_lora`（配置驱动：`model.nft_previous_adapter: true`，from_build/prepare_replay
 >   双守卫拦全参）；动态时间步搬进 `FluxReplayModel.prepare_replay`（`DiffusionModelBase` 新增 no-op
 >   协议，generic replay builder 构造后统一调用）。
 > - **hook 参数退役**：`after_lora`/`after_construct` 随唯一用户消失，从共享 builder 签名删除。
@@ -567,9 +567,9 @@ GPU，让某一跳能跑生成 parity；(b) 转为**有人值守**逐个接（�
 >   echo train.py 整目录删除、train_anima_grpo 删除，3 个 yaml 切 generic entrypoint。
 > - **四家升级**：predict2（全 descriptor，含 replay）、echo/cosmos3/anima（rollout descriptor，
 >   replay 自建保留：LTX 工厂 / pipeline-shell 复用 / 自建调度器）。anima 的 artifact 解析搬进
->   `AnimaModel.from_spec`（模型知识回家）；其 replay extract 因 e2e 字符串契约 + 自辩注释保留，
+>   `AnimaModel.from_build`（模型知识回家）；其 replay extract 因 e2e 字符串契约 + 自辩注释保留，
 >   body 改走 generic。
-> - **janus R1 wan 病修复**：recipe 在 extract 后手动突变 `spec.ar_task` ——改为 extract 按
+> - **janus R1 wan 病修复**：recipe 在 extract 后手动突变 `build.ar_task` ——改为 extract 按
 >   `cfg.model.family` 派生（registry 早有 `janus_pro_r1` entry；R1 配置须声明 family）。
 > - **descriptor 名册终态：10/13**（sd3_5、qwen_image、flux、predict2、predict2_5、wan×2、echo、
 >   cosmos3、anima——后三家 rollout 侧）。runtime.py 里剩余全部函数：4 个自建 replay（真构造发散）
@@ -617,7 +617,7 @@ GPU，让某一跳能跑生成 parity；(b) 转为**有人值守**逐个接（�
 >   janus 的 family= 闭包甚至 `del family`（死仪式），r1 的 ar_task 本就由 cfg.model.family 在
 >   extractor 内派生；两份删除，折叠进新的家族无关入口 `vrl/scripts/ar/train.py:train_ar_grpo`
 >   （镜像 diffusion 侧 `train_diffusion_grpo` 的形状；builder 从 registry entry 的
->   `runtime_builder`/`runtime_spec_extractor` + 新增 `replay_runtime_builder` 字段解析——
+>   `runtime_builder`/`model_build_resolver` + 新增 `replay_runtime_builder` 字段解析——
 >   与 Ray worker 走同一批 import 字符串）。5 个 AR 实验 yaml 改指通用入口。
 > - **顺带解锁**：emu3/glm_image/llamagen 三个 Phase 1 新家族此前**没有任何训练入口**（只落了
 >   rollout 侧）；registry 声明 replay builder 后它们经 train_ar_grpo 直接可训（契约测试锁定

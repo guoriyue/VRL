@@ -444,7 +444,7 @@ TORCH_LOGS=recompiles profiling path remains documented in SPRINT_rollout_perfor
 ```python
 def decode_latents(self, latents, *, decode_batch_size=None):
     ...
-    LatentDecodeSpec(..., decode_batch_size=decode_batch_size)
+    LatentDecodePlan(..., decode_batch_size=decode_batch_size)
 ```
 
 现有 VAE memory policy 只包含：
@@ -510,7 +510,7 @@ diffusion family executors / models
     喂给现有 ChunkedLatentDecoder；不再读 pipe/self.decode_batch_size
 
 已删除（model_config["runtime_blocks"] 注入通道整个废掉）
-  vrl/models/interfaces/runtime.py: RUNTIME_BLOCKS_MODEL_KEY / runtime_blocks_model_config / RuntimeBuildSpec.runtime_blocks
+  vrl/models/interfaces/runtime.py: RUNTIME_BLOCKS_MODEL_KEY / runtime_blocks_model_config / ModelBuild.runtime_blocks
   vrl/models/diffusion/common/block.py: 整个文件（apply_decode_latents_batch_size 等）
   各 family runtime: apply_decode_latents_batch_size(...) 调用 + pipe.decode_batch_size baking
 
@@ -569,6 +569,9 @@ python -u -m vrl.scripts.train \
 ```
 
 结果：
+
+> Historical output below used `diffusion_rollout_transformer_dtype` for the
+> autocast dtype. The current counter is `diffusion_rollout_autocast_dtype`.
 
 ```text
 exit code: 0
@@ -638,7 +641,7 @@ Does decode mini-batch remove the VAE OOM observed at larger sample_batch_size?
 Run matrix：
 
 ```text
-precision: fp16 or bf16 production path
+precision.training.dtype = precision.rollout.dtype = fp16 or bf16
 compile: rollout.blocks.denoise.torch_compile.enable=true
 denoise.batch_size: 8, 16, 24, 32
 decode_latents.batch_size: 1, 2, 4

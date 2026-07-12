@@ -1,9 +1,9 @@
 # SPRINT: Low-precision rollout correction (TIS / MIS)（done）
 
-状态：**DONE（2026-06-20 核实落地，commit `ba94732`）**。触发条件（fp8/fp4 rollout split）已出现，核心交付物全部落地：
+状态：**DONE（2026-06-20 核实落地，commit `ba94732`）**。触发条件（当前可达为 FP8 rollout split；FP4 保留但不可用）已出现，核心交付物全部落地：
 TIS `truncate`/`clip`/`mask`（`vrl/algorithms/logprob_mismatch.py:176-199`，bound 的是 mismatch ratio
 `exp(replay-rollout)` 而非 behavior ratio——避开了本 doc §2 点名的头号 bug）+ 正交的 seq-level RS
-（`seq_mean_k1`/`seq_max_k1`）+ mismatch 指标（`compute_logprob_mismatch_stats`，fp32 归约）+ fp8/fp4 rollout
+（`seq_mean_k1`/`seq_max_k1`）+ mismatch 指标（`compute_logprob_mismatch_stats`，fp32 归约）+ FP8 rollout
 精度轴（`vrl/config/precision.py`）。默认 off（`tis_mode="off"`/`rs_mode="off"`），bf16 下 no-op；precision split
 时由 `vrl/config/builders.py:34-51` 自动启用。算法接线 `vrl/trainers/online/trainer.py:333-334`，测试
 `tests/config/test_precision.py` + `tests/algorithms/test_grpo*.py` **87 passed**。

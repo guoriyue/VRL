@@ -88,7 +88,9 @@ defaults:
   - /dataset/geneval
   - _self_
 
-precision: bf16
+precision:
+  training:
+    dtype: bf16
 sampling: { height: 256, width: 256, num_steps: 10, max_sequence_length: 64 }
 
 # REQUIRED: wire the GenEval object-detector scorer (geneval.yaml ships import_path: "").

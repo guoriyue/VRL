@@ -45,7 +45,7 @@ implemented and unit-tested on a single CPU rank (gloo, `world_size=1`), where
 - `vrl/trainers/online/trainer.py` — routes its model through
   `strategy.prepare_model` once (identity for single_process).
 - `vrl/config/schema.py` + `configs/base/distributed/training_fsdp.yaml` — the
-  `distributed.training.fsdp` knobs the strategy reads (mesh / mixed_precision /
+  `distributed.training.fsdp` knobs the strategy reads (mesh / precision_policy /
   reshard_after_forward).
 - `tests/trainers/test_fsdp.py` — real CPU `fully_shard` round-trips, the §9
   rollout-key-space invariant (sharded export == single-process export), pure
@@ -219,7 +219,7 @@ distributed:
 
     fsdp:                          # FSDP2 (fully_shard / DTensor)
       mesh: ["dp_shard"]           # 1D 起步；多节点 HSDP ["dp_replicate","dp_shard"]
-      mixed_precision: actor       # → MixedPrecisionPolicy(param=bf16, reduce=fp32)，接 precision config
+      precision_policy: actor      # → MixedPrecisionPolicy(param=bf16, reduce=fp32)，接 precision config
       reshard_after_forward: true  # = ZeRO-3；false 省通信、费显存
       activation_checkpointing: actor
       cpu_offload: false

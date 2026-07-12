@@ -1,6 +1,6 @@
 # SPRINT: 语义级公开 API 透传门面（`__all__` 导出）—— 标注而非内联（planned）
 
-状态：已完成（2026-06-21）。Phase A/B/C 全部落地：`extract_anima_replay_runtime_spec`（anima/runtime.py）与 `diffusion_sft_loss`（dpo.py）各补一行 WHY 注释，固化「公开 API 门面 / 命名契约」意图；本 doc 即 keep-decision 记录。纯注释改动，无逻辑/签名/`__all__` 变更。验证：`pytest tests/algorithms/test_dpo.py`（含在 315 passed）全绿；两处符号/字符串引用未动。
+状态：已完成（2026-06-21）。Phase A/B/C 全部落地：`resolve_anima_replay_model_build`（anima/runtime.py）与 `diffusion_sft_loss`（dpo.py）各补一行 WHY 注释，固化「公开 API 门面 / 命名契约」意图；本 doc 即 keep-decision 记录。纯注释改动，无逻辑/签名/`__all__` 变更。验证：`pytest tests/algorithms/test_dpo.py`（含在 315 passed）全绿；两处符号/字符串引用未动。
 
 范围：给两个**机械上是纯透传、但经核实是承重的公开 API 门面**的函数补一行 WHY 注释，把「这是有意设计的 API 边界」这一意图显式写在定义处，让未来的审计/读者不再把它们重新 flag 成「透传 wrapper 异味」。**不内联、不删除、不缩 `__all__`、不动有真实逻辑的兄弟函数。** 交付物是注释 + 一条「经审计、决定保留」的记录，不是代码删除。
 
@@ -14,42 +14,42 @@
 
 两个候选都满足「public API facade」这一档，但满足的**证据形态不同**，所以注释措辞也不同：
 
-1. `extract_anima_replay_runtime_spec`（`vrl/models/diffusion/cosmos/anima/runtime.py:48-60`）—— 它是 **replay 路径 vs full-generation 路径的命名契约**，被 `train.py` 按符号引用、被 e2e 测试**按 dotted-string 路径**引用，且 git 历史证明它曾经做过字段裁剪、未来可能再次分叉。它是一条**有意保持稳定的「分叉缝」（divergence seam）**：现在恰好和 full-generation 抽取一致，但存在的意义是「允许将来独立变化而不动调用方」。
+1. `resolve_anima_replay_model_build`（`vrl/models/diffusion/cosmos/anima/runtime.py:48-60`）—— 它是 **replay 路径 vs full-generation 路径的命名契约**，被 `train.py` 按符号引用、被 e2e 测试**按 dotted-string 路径**引用，且 git 历史证明它曾经做过字段裁剪、未来可能再次分叉。它是一条**有意保持稳定的「分叉缝」（divergence seam）**：现在恰好和 full-generation 抽取一致，但存在的意义是「允许将来独立变化而不动调用方」。
 2. `diffusion_sft_loss`（`vrl/algorithms/dpo.py:108-116`）—— 它是**为了对齐参考 DPO 实现的 loss surface 而刻意导出的辅助 loss API**，模块 docstring 和 `__all__` 都把它和 `diffusion_dpo_loss` 成对列出。它不是「顺手起了名的 `mse_loss` 别名」，而是 offline DPO trainer 的辅助 SFT loss 契约。
 
 判定：**两个都留**，各补一行 WHY 注释，把上面的意图固化到定义处。下文逐条给出现状实锤（含 git 史与字符串引用证据）、注释落点、以及「若未来契约引用真的消失 AND 不再可能分叉，才考虑内联」的退出条件。
 
 ## 1. 现状实锤
 
-### 1.1 `extract_anima_replay_runtime_spec` —— replay 命名契约 / 字符串引用门面（留）
+### 1.1 `resolve_anima_replay_model_build` —— replay 命名契约 / 字符串引用门面（留）
 
 函数体确实是纯透传，零新增逻辑（`vrl/models/diffusion/cosmos/anima/runtime.py:48-60`）：
 
 ```python
-def extract_anima_replay_runtime_spec(
+def resolve_anima_replay_model_build(
     cfg: Any,
     device: Any,
     weight_dtype: Any,
-) -> RuntimeBuildSpec:
-    """Trainer replay-only Anima runtime spec.
+) -> ModelBuild:
+    """Trainer replay-only Anima model build.
 
     With the whole ``cfg.model`` block carried wholesale, the replay model only
     reads the artifact paths / scheduler_shift / torch_compile it needs; the
     remaining fields ride along inertly, so no trimming is required.
     """
 
-    return extract_anima_runtime_spec(cfg, device, weight_dtype)
+    return resolve_anima_model_build(cfg, device, weight_dtype)
 ```
 
-它和兄弟函数 `extract_anima_runtime_spec`（`runtime.py:33-45`）当前都最终落到 `extract_runtime_spec(..., task_variant="text_to_image")`，所以**当下行为完全一致**。审计因此把它 flag 成「零增值透传」。但三条证据证明它是承重边界，不能内联：
+它和兄弟函数 `resolve_anima_model_build`（`runtime.py:33-45`）当前都最终落到 `resolve_model_build(..., task_variant="text_to_image")`，所以**当下行为完全一致**。审计因此把它 flag 成「零增值透传」。但三条证据证明它是承重边界，不能内联：
 
 **证据 A —— 被 `__all__` 导出且经 package `__init__` 再导出。** `runtime.py:260-268`：
 
 ```python
 __all__ = [
     ...
-    "extract_anima_replay_runtime_spec",
-    "extract_anima_runtime_spec",
+    "resolve_anima_replay_model_build",
+    "resolve_anima_model_build",
     ...
 ]
 ```
@@ -59,20 +59,20 @@ __all__ = [
 **证据 B —— 被 e2e 测试按 dotted-string 路径硬引用（不是普通调用，内联会直接打断 import 字符串）。** `tests/e2e/test_real_checkpoint_rl.py:356-359` 与 `:401-404` 两个 `RealCheckpointCase` 都写死：
 
 ```python
-replay_runtime_spec_extractor=(
+replay_model_build_resolver=(
     "vrl.models.diffusion.cosmos.anima.runtime:"
-    "extract_anima_replay_runtime_spec"
+    "resolve_anima_replay_model_build"
 ),
 ```
 
 这是 replay 路径的**字符串契约**：测试通过 `module:function` 字符串动态解析它，与 `replay_runtime_builder=...:build_anima_replay_runtime_bundle` 成对，明确区分 replay 与 full-generation 两条装配链。内联进 `build_*` 调用方会让这个字符串无处可指。
 
-**证据 C —— git 历史证明它曾经分叉、未来可能再分叉。** commit `571277787`（"Refactor Anima runtime bundle construction"，2026-05-23）把 `runtime.py` 从 182 行精简到约 77 行（`-132/+77`），正是这一轮把 replay 抽取里原本的字段裁剪折叠掉、统一到 `extract_anima_runtime_spec` 上。docstring 里「no trimming is required」记录的就是这次折叠后的现状 —— 它描述的是「曾经裁剪、现在不裁」的演化结果，而非「从来就是别名」。这正是一条 divergence seam：留着这个命名入口，下次 replay 模型需要不同字段集时改这一个函数即可，调用方与测试字符串都不动。
+**证据 C —— git 历史证明它曾经分叉、未来可能再分叉。** commit `571277787`（"Refactor Anima runtime bundle construction"，2026-05-23）把 `runtime.py` 从 182 行精简到约 77 行（`-132/+77`），正是这一轮把 replay 抽取里原本的字段裁剪折叠掉、统一到 `resolve_anima_model_build` 上。docstring 里「no trimming is required」记录的就是这次折叠后的现状 —— 它描述的是「曾经裁剪、现在不裁」的演化结果，而非「从来就是别名」。这正是一条 divergence seam：留着这个命名入口，下次 replay 模型需要不同字段集时改这一个函数即可，调用方与测试字符串都不动。
 
 调用方（除测试外）：`vrl/scripts/diffusion/cosmos/train.py:122-127`，在 replay bundle builder 里成对调用：
 
 ```python
-return build_anima_replay_runtime_bundle(extract_anima_replay_runtime_spec(cfg, device, weight_dtype))
+return build_anima_replay_runtime_bundle(resolve_anima_replay_model_build(cfg, device, weight_dtype))
 ```
 
 另有 `tests/models/interfaces/test_minimal_replay_runtime_wiring.py:331,356` 直接调用它做 replay 装配 wiring 测试。
@@ -130,7 +130,7 @@ loss = loss + cfg.sft_weight * sft_loss_val
 
 每个 Phase 独立可提交，互不依赖。
 
-### Phase A. 给 `extract_anima_replay_runtime_spec` 补 WHY 注释（divergence seam）
+### Phase A. 给 `resolve_anima_replay_model_build` 补 WHY 注释（divergence seam）
 
 在 `vrl/models/diffusion/cosmos/anima/runtime.py:48` 定义处补一行注释，点明：这是 replay 路径的命名契约（被 `train.py` 与 e2e replay 测试按符号/字符串引用），与 full-generation 抽取**有意分叉**、曾做过字段裁剪、保持稳定入口以便将来再分叉。建议落在 docstring 末尾或紧邻 `def` 上方，例如：
 
@@ -140,8 +140,8 @@ loss = loss + cfg.sft_weight * sft_loss_val
     # e2e replay test (test_real_checkpoint_rl.py). It intentionally diverges
     # from full-generation extraction — it previously trimmed fields
     # (commit 571277787) and may diverge again; the stable entry point lets the
-    # replay spec change without touching callers/tests. Do not inline.
-    return extract_anima_runtime_spec(cfg, device, weight_dtype)
+    # replay build change without touching callers/tests. Do not inline.
+    return resolve_anima_model_build(cfg, device, weight_dtype)
 ```
 
 不动函数签名、不动现有 docstring 的现状描述、不动 `__all__`。
@@ -165,14 +165,14 @@ loss = loss + cfg.sft_weight * sft_loss_val
 
 本 sprint 文件即为该记录。两条都登记为「经审计、判为公开 API 门面、决定保留 + 已就地标注」。退出条件（仅满足时才考虑内联，且需 owner 单独签字）：
 
-- `extract_anima_replay_runtime_spec`：未来审计发现 `train.py` 调用 **AND** e2e 字符串引用 **AND** `__all__` 导出全部消失，且 replay 与 full-generation 不再可能分叉时，才内联回 `extract_anima_runtime_spec`。
+- `resolve_anima_replay_model_build`：未来审计发现 `train.py` 调用 **AND** e2e 字符串引用 **AND** `__all__` 导出全部消失，且 replay 与 full-generation 不再可能分叉时，才内联回 `resolve_anima_model_build`。
 - `diffusion_sft_loss`：未来 offline DPO trainer 不再调用、`__all__` 不再导出、参考实现对齐不再是目标时，才内联回 `F.mse_loss`。
 
 ## 3. 验证（finishing criteria）
 
 - `grep -n "WHY" vrl/models/diffusion/cosmos/anima/runtime.py` 与 `grep -n "WHY" vrl/algorithms/dpo.py` 各命中新增的注释；diff 仅为注释新增，无逻辑/签名变更。
 - 引用仍然存活（注释前后各跑一遍确认未误删）：
-  - `grep -rn "extract_anima_replay_runtime_spec" vrl/ tests/` 仍命中 `train.py:124,127`、`anima/__init__.py:8,17`、`runtime.py:48,265`、`test_real_checkpoint_rl.py:358,403`、`test_minimal_replay_runtime_wiring.py:312,331,347,356`。
+  - `grep -rn "resolve_anima_replay_model_build" vrl/ tests/` 仍命中 `train.py:124,127`、`anima/__init__.py:8,17`、`runtime.py:48,265`、`test_real_checkpoint_rl.py:358,403`、`test_minimal_replay_runtime_wiring.py:312,331,347,356`。
   - `grep -rn "diffusion_sft_loss" vrl/ tests/` 仍命中 `dpo.py:9,108,122`、`trainers/offline/dpo.py:25,337`、`test_dpo.py:18,169`。
 - `ruff check vrl/models/diffusion/cosmos/anima/runtime.py vrl/algorithms/dpo.py`（含 format 检查）零报错 —— 纯注释改动不应触发 lint。
 - `pytest tests/algorithms/test_dpo.py -q` 全绿（`diffusion_sft_loss` 行为未变）。
@@ -181,9 +181,9 @@ loss = loss + cfg.sft_weight * sft_loss_val
 
 ## 4. 非目标 / Non-Goals
 
-- **不内联任何一个函数。** 把 `extract_anima_replay_runtime_spec` 内联回 `extract_anima_runtime_spec`、或把 `diffusion_sft_loss` 内联回 `F.mse_loss`，会抹掉一个有命名、被外部引用的公开 API 契约 —— 正是本 sprint 反对的修法。
-- **不动有真实逻辑的兄弟函数：** `diffusion_dpo_loss`（`dpo.py:36-105`，含 chunk(2)/logsigmoid/implicit_acc 真算法）、`extract_anima_runtime_spec`（`runtime.py:33-45`）、`extract_runtime_spec`（`vrl/models/runtime_config.py`）。
-- **不动其他 family 的 `extract_*_runtime_spec`**（如设 `task_variant="t2i"` 的 `extract_sd3_5_runtime_spec` 等）—— 它们设不同的 `task_variant`，是合法的 cross-family uniform shape，不在本主题内。
+- **不内联任何一个函数。** 把 `resolve_anima_replay_model_build` 内联回 `resolve_anima_model_build`、或把 `diffusion_sft_loss` 内联回 `F.mse_loss`，会抹掉一个有命名、被外部引用的公开 API 契约 —— 正是本 sprint 反对的修法。
+- **不动有真实逻辑的兄弟函数：** `diffusion_dpo_loss`（`dpo.py:36-105`，含 chunk(2)/logsigmoid/implicit_acc 真算法）、`resolve_anima_model_build`（`runtime.py:33-45`）、`resolve_model_build`（`vrl/models/model_build.py`）。
+- **不动其他 family 的 `resolve_*_model_build`**（如设 `task_variant="t2i"` 的 `resolve_sd3_5_model_build` 等）—— 它们设不同的 `task_variant`，是合法的 cross-family uniform shape，不在本主题内。
 - **不删、不缩 `__all__` 导出**（`runtime.py:260-268`、`anima/__init__.py`、`dpo.py:119-123`）。
 - **不 flag 单调用方私有 `_helper`**（如 `vrl/models/diffusion/cosmos/anima/runtime.py:202` 的 `_resolve_artifact`）—— 单调用方私有 helper 不属本主题。
 

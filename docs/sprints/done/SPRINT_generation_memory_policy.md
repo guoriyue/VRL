@@ -15,7 +15,7 @@ Model loader 负责加载、冻结、搬运 backend components；generation memo
 ```python
 memory_metadata = apply_vae_decode_memory(
     pipeline.vae,
-    memory_config=spec.memory,
+    memory_config=build.memory,
     owner="Wan VAE",
 )
 ```
@@ -24,7 +24,7 @@ memory_metadata = apply_vae_decode_memory(
 
 ## 1. 现状证据
 
-### 1.1 RuntimeBuildSpec 已经携带 model.memory，不应该变成 parser
+### 1.1 ModelBuild 已经携带 model.memory，不应该变成 parser
 
 ```python
 @property
@@ -37,10 +37,10 @@ def memory(self) -> dict[str, Any] | None:
 
 ```python
 def test_runtime_interface_does_not_parse_model_memory_sections() -> None:
-    """RuntimeBuildSpec is a data contract, not a model.memory parser."""
+    """ModelBuild is a data contract, not a model.memory parser."""
 ```
 
-因此本 sprint 不把 `RuntimeBuildSpec` 扩成内存策略解析器。它继续只是 runtime build contract。
+因此本 sprint 不把 `ModelBuild` 扩成内存策略解析器。它继续只是 runtime build contract。
 
 ### 1.2 VAE policy 已有共享模块，但调用点仍然按 family 重复
 
@@ -150,14 +150,14 @@ move components to device / dtype
 return model
 ```
 
-不再在 `from_spec()` 内手动调用 `apply_vae_decode_memory(...)`。
+不再在 `from_build()` 内手动调用 `apply_vae_decode_memory(...)`。
 
 ### 2.3 Runtime builder 应用 policy，并统一 attach metadata
 
 Family runtime builder 已经是模型构建后的统一边界。第一阶段改成：
 
 ```python
-model = SD3_5Model.from_spec(build)
+model = SD3_5Model.from_build(build)
 memory_metadata = apply_generation_memory_policy(
     memory_config=build.memory,
     targets=model.generation_memory_targets(),
@@ -217,13 +217,14 @@ Report 不负责把 trajectory tensor 搬到 CPU，也不负责 release Ray acto
 
 ## 3. 命名
 
-不要在新代码里继续使用裸 `spec` 作为本地变量名。它只重复了类型名，不能说明这个对象在当前函数里的角色。
+`ModelBuild` 的参数和局部变量统一使用 `build`。这个名字直接说明对象是模型构建输入，
+并与已经表示运行期对象的 `RuntimeBundle` / `RuntimeModel` 保持清晰边界。
 
 保留现有 public contract：
 
 ```text
-RuntimeBuildSpec
-from_spec(...)
+ModelBuild
+from_build(...)
 ```
 
 原因：这是已有接口，重命名会产生大量和 memory boundary 无关的 churn。
@@ -231,8 +232,8 @@ from_spec(...)
 新代码和新触达 call site 使用更具体的名字：
 
 ```python
-def build_sd3_5_runtime_bundle(build: RuntimeBuildSpec) -> RuntimeBundle:
-    model = SD3_5Model.from_spec(build)
+def build_sd3_5_runtime_bundle(build: ModelBuild) -> RuntimeBundle:
+    model = SD3_5Model.from_build(build)
     memory_metadata = apply_generation_memory_policy(
         memory_config=build.memory,
         targets=model.generation_memory_targets(),
@@ -243,7 +244,7 @@ def build_sd3_5_runtime_bundle(build: RuntimeBuildSpec) -> RuntimeBundle:
 命名规则：
 
 ```text
-build       RuntimeBuildSpec local variable inside runtime builders
+build       ModelBuild local variable inside runtime builders
 memory      parsed or raw memory config only when the scope is already clear
 targets     backend objects that policy may act on
 owner       human-readable metadata/error prefix
@@ -270,7 +271,7 @@ component   只是在 target/object 后面加装饰词
 
 ### 4.2 应该保持不变
 
-- `RuntimeBuildSpec.memory` 保持“返回整个 `model.memory` block”的 data contract，不解析具体 policy。
+- `ModelBuild.memory` 保持“返回整个 `model.memory` block”的 data contract，不解析具体 policy。
 - `vrl/models/diffusion/common/vae_decode_memory.py` 保留。它是 VAE decode primitive，不是重复代码。
 - `model.memory.vae_decode.tiling/slicing` 路径保持。它们是 build-time VAE object policy。
 - `rollout.trajectory_storage` 的实际应用继续留在 collector/batch builder，因为它作用在 rollout artifact 上，不是 model build 行为。
@@ -319,7 +320,7 @@ frozenset(f.name for f in fields(VaeDecodeMemory))
   - 禁止 diffusion family `model.py` 直接 import `vae_decode_memory`。
   - 禁止 diffusion family `model.py` 直接调用 `apply_vae_decode_memory(...)`。
   - 保留禁止 inline `enable_tiling(...)` / `enable_slicing(...)`。
-  - 保留 `RuntimeBuildSpec` 不解析 `model.memory` 的测试。
+  - 保留 `ModelBuild` 不解析 `model.memory` 的测试。
 
 ### T3. Unit tests
 
@@ -397,7 +398,7 @@ not copying apply_vae_decode_memory(...) into its loader.
 
 ## 7. 非目标
 
-- 不重命名 `RuntimeBuildSpec` / `from_spec(...)` public API；只在新触达代码里避免裸 `spec` 本地变量。
+- 不重命名 `RuntimeBundle` / `RuntimeModel`；它们仍然准确表示构建完成后的运行期对象。
 - 不把 `rollout.sample_batch_size`、`trajectory_storage`、Ray release flags 搬进 `model.memory`。
 - 不实现 full physical stage pipeline。
 - 不实现 OOM auto-tuner；这里只留出 future policy/report 边界。

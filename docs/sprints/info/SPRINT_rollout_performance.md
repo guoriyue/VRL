@@ -1,5 +1,11 @@
 # SPRINT: Rollout Performance
 
+> Precision naming note (2026-07-12): raw 2026-06 measurements below retain
+> their historical `compute`/`mixed_precision`/`bf16` labels. Current public
+> config uses `precision.training.dtype` and `precision.rollout.dtype`, with
+> optional rollout quantization under `precision.rollout.quantization`. Scalar
+> `precision` and the legacy trainer keys are no longer public inputs.
+
 状态：profiling 结果归档 + 决定性优化已落地（2026-06-08~06-10）。D0 substage profiling（record_function ranges in executor.py）、D1 rollout-only transformer compile（rollout.denoise_compile，commit d3581ed，经 capability.supports_torch_compile + torch_compile_model_config 接线，非文中已不存在的 RolloutCompileMetadata 符号）、D2 recompile 观测（TORCH_LOGS=recompiles，commit bae13c0）、D5 sde_step_with_logprob 去 per-step host sync（step_index 参数，commit d3581ed）均已落地；GPM scale bump（vae_decode.tiling + sample_batch_size:16，commit d26dc75）取代旧 b8 默认。D3 clone cleanup（hygiene）、D4 staged rollout、P2 multi-GPU rollout（需第二张卡）按文档明确范围保留为可选/延后项，不计入完成。
 
 ## Profiling 结论
@@ -277,7 +283,8 @@ Attention 的 NCU 样本要谨慎读：这次 attention-only NCU 捕到的是中
 （单个 sample 约 4-6ms），Nsight Systems 的 aggregate 更适合判断全局时间占比。NCU 在这里主要用于看
 kernel utilization characteristic，不用于替代 nsys 的全局时间占比。
 
-BF16 rollout parity calibration（compute/replay fp32，rollout bf16，`n=2`，1 prompt group）失败：
+BF16 rollout parity calibration（历史标签 `compute`/replay fp32，当前该轴名为
+`train`；rollout bf16，`n=2`，1 prompt group）失败：
 
 ```text
 output:
@@ -320,8 +327,10 @@ outputs/diffusion_util_bf16_rollout_parity/metrics.csv
 
 ### U1：bf16/fp16 forward micro-benchmark（2026-06-07）
 
-U0 之后所有 SD3.5 实验已默认切到 `precision: bf16`（rollout 与 replay 同 dtype，
+U0 之后当时的 SD3.5 实验默认切到 scalar `precision: bf16`（rollout 与 replay 同 dtype，
 解除了 U0 里 `fp32 replay + bf16 rollout` 的 parity 失败——两边 dtype 一致，ratio≈1 成立）。
+The current equivalent sets both `precision.training.dtype` and
+`precision.rollout.dtype` to `bf16`.
 为量化"低精度到底带来多少显存余量和多少 forward 提速"，对 SD3.5 transformer forward
 （D0：占 denoise 99.88%）做隔离实测。
 
@@ -355,8 +364,10 @@ fp32 → bf16：weights 砍半（8.36→4.18GB）、peak 砍半（9.95→5.01GB�
 
 #### Full rollout profile（bf16，2026-06-07）
 
-micro-benchmark 之后又跑了完整 SD3.5 OCR rollout profile，使用当前默认 `precision: bf16`，
+micro-benchmark 之后又跑了完整 SD3.5 OCR rollout profile，使用当时的 scalar `precision: bf16`，
 同一个 10-step denoise / rollout batch=8 shape，关闭 eval，未开启 compile。
+以下保留当时的原始 `compute` 标签；当前对应字段为
+`precision.training.dtype`。
 
 first-step parity 通过：
 
@@ -461,7 +472,7 @@ representative large GEMM（0.920ms）更快，即使 Compute(SM)% 看起来更�
 而 trainer replay 会因为 zero-advantage filtering 出现动态 microbatch。rollout denoise shape 相对固定，
 应该有独立策略：
 
-当前代码状态（2026-06-07）：`RuntimeBuildSpec.torch_compile` 只读 `model.torch_compile`，
+当前代码状态（2026-06-07）：`ModelBuild.torch_compile` 只读 `model.torch_compile`，
 `build_sd3_5_runtime_bundle()` 和 `build_sd3_5_replay_runtime_bundle()` 都会消费它。因此现在不能用
 `model.torch_compile.enable=true` 做 rollout-only 实验；那会把 replay compile / recompile / warmup
 混进结果。正确落点是：diffusion rollout family 在 registry 里声明 compile metadata，
@@ -668,6 +679,10 @@ timeout 900 python -u -m vrl.scripts.train \
 ```
 
 真实结果（both bf16, no compile, one prompt group, `rollout.n=16`, `decode_latents.batch_size=1`）：
+
+> The historical counter name `diffusion_rollout_transformer_dtype` in this
+> captured result meant the rollout autocast dtype. Current runtime diagnostics
+> name it `diffusion_rollout_autocast_dtype`; it is not parameter storage dtype.
 
 | metric | b8 control | b16 denoise | read |
 | --- | ---: | ---: | --- |

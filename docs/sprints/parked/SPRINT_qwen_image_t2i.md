@@ -37,7 +37,7 @@ LoRA-only 起步 + VAE tiling，和 `encode_prompt` 走 Qwen2.5-VL 文本编码�
        family="qwen_image", task="t2i", aliases=(),
        executor_cls="vrl.models.diffusion.qwen_image.runtime:QwenImageChunkExecutor",
        runtime_builder="vrl.models.diffusion.qwen_image.runtime:build_qwen_image_runtime_bundle",
-       runtime_spec_extractor="vrl.models.diffusion.qwen_image.runtime:extract_qwen_image_runtime_spec",
+       model_build_resolver="vrl.models.diffusion.qwen_image.runtime:resolve_qwen_image_model_build",
        request_prefix="qwen_image", default_task_type="text_to_image",
    ))
    ```
@@ -49,7 +49,7 @@ LoRA-only 起步 + VAE tiling，和 `encode_prompt` 走 Qwen2.5-VL 文本编码�
      `build_branch` 出 cond/uncond，`encoder_hidden_states=prompt_embeds`、`extra_kwargs` 传 attention mask
      （**不带 pooled_projections**）。
    - `runtime.py`：`build_qwen_image_runtime_bundle` / `build_qwen_image_replay_runtime_bundle` /
-     `extract_qwen_image_runtime_spec(... task_variant="t2i")` / `QwenImageChunkExecutor`，
+     `resolve_qwen_image_model_build(... task_variant="t2i")` / `QwenImageChunkExecutor`，
      复用 `vrl/models/loader.py` 的 `load_diffusers_transformer / load_flow_match_scheduler /
      apply_lora_to_transformer / apply_rollout_quantization`。
    - `__init__.py`：导出。
@@ -66,7 +66,7 @@ LoRA-only 起步 + VAE tiling，和 `encode_prompt` 走 Qwen2.5-VL 文本编码�
 - **训练**：套 [[SPRINT_flow_grpo_recipe_parity]] 配方，固定 prompt 集跑短 GRPO（LoRA），BLOCK test 判读
   reward >2σ 单调抬升（见 `project_first_trustworthy_curve`）；注意 20B + group≥16 的显存预算，
   必要时降分辨率/microbatch（见 `project_two_level_async` 的 streaming/microbatch 手段）。
-- **测试**：照 `tests/models/diffusion/` 加家族注册 + `from_spec/encode_prompt/forward_step/decode_latents`
+- **测试**：照 `tests/models/diffusion/` 加家族注册 + `from_build/encode_prompt/forward_step/decode_latents`
   结构性用例（不断言配置字面值，见 `feedback_no_exact_config_tests`）。
 
 ## 4. 非目标

@@ -118,7 +118,7 @@ logprob drift ≤ 0.01（P3）；若真漂，回退 compile-neither（不要回 
 - `vrl/scripts/perf/compile_benchmark.py` — `--family` 加速 A/B + `--parity` 数值对比（本 doc 数据源）
 - `configs/experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward.yaml` — compile-both 落地
 - `configs/model/diffusion/{cosmos/anima_preview3,wan_2_1/i2v_14b,wan_2_2/a14b,wan_2_2/i2v_a14b}.yaml` — defer 注释
-- `vrl/models/interfaces/runtime.py` `RuntimeBuildSpec.torch_compile` — model 块 → worker（rollout 继承的来源）
+- `vrl/models/interfaces/runtime.py` `ModelBuild.torch_compile` — model 块 → worker（rollout 继承的来源）
 - `vrl/models/diffusion/{base,cosmos/predict2_5/model,wan_2_1/model}.py` `torch_compile_transformer`
 - 配套：`docs/sprints/planned/SPRINT_compile_rollout_lifecycle.md`（§4.3 加速 / §4.4 parity / P3）、
   `docs/sprints/info/SPRINT_cosmos_generation_compile_bottleneck.md`（生成侧 1.68×）

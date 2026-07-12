@@ -269,7 +269,7 @@ gradient path exists through trainable transformer params
 规则：
 
 ```text
-from_spec may still load WanPipeline for VAE/text/scheduler
+from_build may still load WanPipeline for VAE/text/scheduler
 pipeline.transformer weights are copied into WanNativeTransformerExecutor
 self.transformer becomes WanNativeTransformerExecutor
 DiffusionBackboneCaller calls native executor (runner unchanged)

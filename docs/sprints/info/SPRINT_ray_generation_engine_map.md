@@ -26,7 +26,7 @@ config(RayGenerationConfig) + GenerationRuntimeLaunchContract(family, model_buil
        runtime_builder) + ChunkGatherer + RolePlacement
  → RayActorGroup.launch(worker_cls=RayGenerationWorker, startup_method="load_policy")  (launcher.py:87)
        each actor: load_policy → GenerationWorkerCore._build_executor (worker.py:360)
-                   → build_runtime_bundle(spec) → model + executor_cls(model)  = the GenerationChunkExecutor impl
+                   → build_runtime_bundle(build) → model + executor_cls(model)  = the GenerationChunkExecutor impl
  → wrap actors in DistributedWorkerHandle
  → RayGenerationExecutor(planner=DistributedExecutionPlanner, workers, gatherer, pipelined)  (launcher.py:127)
  → RayGenerationWeightSync(workers)  (launcher.py:139)

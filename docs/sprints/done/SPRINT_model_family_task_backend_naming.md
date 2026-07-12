@@ -9,9 +9,9 @@ tests/trainers tests/config tests/trajectory` 全绿（751 passed）。grep 净�
 `"model_family"` / `cfg.model,"task"` / `backend_handle` / model 类 `.family`·
 `.model_family` 定义 / nn 层裸 `"backend"` metric 键，在 `vrl/` 全部 0 命中。
 
-- **A** 拆 `task_variant`：新增 `RuntimeBuildSpec.ar_task`，AR（janus/nextstep）改读写
+- **A** 拆 `task_variant`：新增 `ModelBuild.ar_task`，AR（janus/nextstep）改读写
   `ar_task`，diffusion 独占 `task_variant`。`ar_task` 随 `asdict` 走 Ray launch 契约
-  序列化往返（worker 端 `RuntimeBuildSpec(**payload)` 不白名单字段，自动透传）。
+  序列化往返（worker 端 `ModelBuild(**payload)` 不白名单字段，自动透传）。
 - **B**（**改为删除，非改名**）：model 类的 `.family`（diffusion，"wan-diffusers-i2v"
   等）/ `model_family`（janus）属性在 **D** 删掉其唯一消费者（context 死写）后已**无任何
   读者**——按 AGENTS.md derived-struct 规则「既不被行为消费、也非 display-only 的字段即死字段，
@@ -36,7 +36,7 @@ tests/trainers tests/config tests/trajectory` 全绿（751 passed）。grep 净�
 
 model+nn 层有五处**身份串命名歧义/死代码**经逐文件复核全部成立且安全，应在一个 sprint 内一并收敛：
 
-1. **`RuntimeBuildSpec.task_variant` 是同名异义字段**：diffusion 侧塞 `t2v`/`i2v`，AR 侧塞 `ar_t2i`/`ar_t2i_r1`——同一个共享 interface 字段扛两套互不相交的枚举，类型层（都是 `str`）看不出冲突。
+1. **`ModelBuild.task_variant` 是同名异义字段**：diffusion 侧塞 `t2v`/`i2v`，AR 侧塞 `ar_t2i`/`ar_t2i_r1`——同一个共享 interface 字段扛两套互不相交的枚举，类型层（都是 `str`）看不出冲突。
 2. **`family` 一词散落四个互不兼容的取值空间**：`cfg.model.family`（`"wan"`/`"janus_pro"`）、`DiffusionModelBase.family`（`"wan-diffusers-i2v"`）、`JanusProModel.model_family`（`"janus-pro-t2i"`），三个都叫 family/model_family 却永不相等。
 3. **Wan 的 `cfg.model.task` fallback 读的是 schema 里不存在的键**——死的"容忍拼写"分支。
 4. **`model_family` 这个 trajectory/rollout context 键每个 family 都写、生产侧零读**——只是把 `self.family` 换个键名再编码一遍的死写。
@@ -65,10 +65,10 @@ if text in {"image_to_video", "image-to-video", "i2v"}:
     return "i2v"
 ```
 
-AR 侧把同一字段当成 `ar_t2i`/`ar_t2i_r1` 枚举用——`extract_janus_pro_runtime_spec` 写 `task_variant="ar_t2i"`（`vrl/models/ar/janus_pro/runtime.py:118-119`），训练脚本再覆写成 `ar_t2i_r1`（`vrl/scripts/ar/janus_pro/train.py:58, 76`）：
+AR 侧把同一字段当成 `ar_t2i`/`ar_t2i_r1` 枚举用——`resolve_janus_pro_model_build` 写 `task_variant="ar_t2i"`（`vrl/models/ar/janus_pro/runtime.py:118-119`），训练脚本再覆写成 `ar_t2i_r1`（`vrl/scripts/ar/janus_pro/train.py:58, 76`）：
 
 ```python
-spec.task_variant = "ar_t2i_r1"
+build.task_variant = "ar_t2i_r1"
 ```
 
 replay builder 直接按这个 AR 枚举分支（`vrl/models/ar/janus_pro/runtime.py:81-85`）：
@@ -76,7 +76,7 @@ replay builder 直接按这个 AR 枚举分支（`vrl/models/ar/janus_pro/runtim
 ```python
 family_capability = (
     JANUS_PRO_R1_FAMILY_CAPABILITY
-    if spec.task_variant == "ar_t2i_r1"
+    if build.task_variant == "ar_t2i_r1"
     else JANUS_PRO_FAMILY_CAPABILITY
 )
 ```
@@ -157,9 +157,9 @@ if strict and checkpoint_family and bundle_family and str(checkpoint_family) != 
 
 ```python
 metadata={
-    "model_path": spec.model_name_or_path,
-    "task_variant": spec.task_variant,
-    "use_lora": spec.use_lora,
+    "model_path": build.model_name_or_path,
+    "task_variant": build.task_variant,
+    "use_lora": build.use_lora,
     ...
 }
 ```
@@ -217,10 +217,10 @@ family-专属键的真实消费面（确认只 Wan 2.2 读）：`boundary_ratio`
 
 ### A. 拆 `task_variant` 同名异义（§1.1）
 
-- AR 侧改用独立字段。在 `RuntimeBuildSpec` 增 `ar_task: str | None = None`（`vrl/models/interfaces/runtime.py:59` 邻位），把 `task_variant` 留给 diffusion 的 t2v/i2v 轴。
-- 同步迁移 AR 写入点：`vrl/models/ar/janus_pro/runtime.py:118-119`（`task_variant="ar_t2i"` → `ar_task="ar_t2i"`）、`vrl/scripts/ar/janus_pro/train.py:58, 76`（`spec.task_variant = "ar_t2i_r1"` → `spec.ar_task`）、replay 分支 `vrl/models/ar/janus_pro/runtime.py:83`（`spec.task_variant == "ar_t2i_r1"` → `spec.ar_task`）。
-- bundle metadata 里 AR 写的 `"task_variant": spec.task_variant`（`runtime.py:69, 98`）随之改键，nextstep_1 同形点一并迁移。
-- 注意：`task_variant` 是 Ray 序列化的 launch 契约一部分，新增字段须保证序列化往返；改名须 AR 三处（spec 写、train 覆写、replay 读）+ metadata writer 同步落地。
+- AR 侧改用独立字段。在 `ModelBuild` 增 `ar_task: str | None = None`（`vrl/models/interfaces/runtime.py:59` 邻位），把 `task_variant` 留给 diffusion 的 t2v/i2v 轴。
+- 同步迁移 AR 写入点：`vrl/models/ar/janus_pro/runtime.py:118-119`（`task_variant="ar_t2i"` → `ar_task="ar_t2i"`）、`vrl/scripts/ar/janus_pro/train.py:58, 76`（`build.task_variant = "ar_t2i_r1"` → `build.ar_task`）、replay 分支 `vrl/models/ar/janus_pro/runtime.py:83`（`build.task_variant == "ar_t2i_r1"` → `build.ar_task`）。
+- bundle metadata 里 AR 写的 `"task_variant": build.task_variant`（`runtime.py:69, 98`）随之改键，nextstep_1 同形点一并迁移。
+- 注意：`task_variant` 是 Ray 序列化的 launch 契约一部分，新增字段须保证序列化往返；改名须 AR 三处（build 写、train 覆写、replay 读）+ metadata writer 同步落地。
 
 ### B. 收敛 `family` 取值空间（§1.2）
 
@@ -240,13 +240,13 @@ family-专属键的真实消费面（确认只 Wan 2.2 读）：`boundary_ratio`
 ### E. 修活 checkpoint family 守卫（§1.5）
 
 - 选定"修活"而非"删守卫"：让 family builders 在 `RuntimeBundle.metadata` 写 `"family"`，值取 `cfg.model.family` 取值空间（与 checkpoint payload 同空间，守卫才有意义）。改 `vrl/models/ar/janus_pro/runtime.py:67-72, 95-100` 及各 diffusion family 的 metadata dict，统一经 `vrl/models/replay_loading.py` 的共享 metadata 构造器加该键，保证跨 family 一致。
-- 注意：payload 侧是 `normalize_rollout_family(cfg.model.family)`，bundle 侧须写同一规整后的值，否则把守卫从"恒不触发"变成"恒误报"。spec 已携带 family 信息或可由 builder 注入。
+- 注意：payload 侧是 `normalize_rollout_family(cfg.model.family)`，bundle 侧须写同一规整后的值，否则把守卫从"恒不触发"变成"恒误报"。build 已携带 family 信息或可由 builder 注入。
 
 ### F. 给 "backend" 划边界（§1.6，不含 backend_label）
 
 - `RuntimeBundle.backend_handle` → `raw_handle`（或 `pipeline_handle`）。同步改：interface 定义 `vrl/models/interfaces/runtime.py:162` + docstring `:133`、7 个 family runtime 的写入、`train_dpo.py:150` 读取、wiring 测试断言。
 - metric 键去歧义：`ar_decoder.py:97` 的 `"backend"`（per-family label）与 `vllm_paged.py:279` 的 `"backend"`（kernel 类串）改用不同键，如 `"attention_backend"` vs `"attention_kernels"`，避免一个键扛两套取值空间；`torch_attention.py:70, 82` 同步。
-- `RuntimeBuildSpec` docstring 里"backend classes"措辞改"family model classes"（`vrl/models/interfaces/runtime.py:4` 区域）。
+- `ModelBuild` docstring 里"backend classes"措辞改"family model classes"（`vrl/models/interfaces/runtime.py:4` 区域）。
 - 保留 `attention_backend` 作为 kernel 选择器名（对齐 vLLM/SGLang 用法），不改。
 - 注意：metric 键可能被外部 dashboard 抓取——改键名属语义破坏，须在 sprint 内确认无内部 dashboard 依赖；若有，记一行 migration 注释。
 
@@ -261,7 +261,7 @@ family-专属键的真实消费面（确认只 Wan 2.2 读）：`boundary_ratio`
 - 已落地：两个 Wan CPU offload bool 合并为 `offload_mode` enum；旧 bool 在 Wan loader
   层 fail loud，避免绕过 schema 时变成 no-op。
 - 非目标：不拆 per-checkpoint config class；不把 family runtime 逻辑搬进 schema；
-  `RuntimeBuildSpec.model_config` 继续作为 plain dict 传给 family runtime。
+  `ModelBuild.model_config` 继续作为 plain dict 传给 family runtime。
 
 ## 验证（finishing criteria）
 
@@ -269,7 +269,7 @@ family-专属键的真实消费面（确认只 Wan 2.2 读）：`boundary_ratio`
 - 配置解析：对每个改动 family 跑一次 `cfg.model.family` 选择 + bundle 构建，断言 `RuntimeBundle.metadata["family"]` 现在非空且等于 `normalize_rollout_family(cfg.model.family)`（E 修活的直接证据）。
 - 新增一条 resume 守卫回归测试：构造 checkpoint payload family="janus_pro" + bundle metadata family="wan"，`restore_training_checkpoint(strict=True)` 须 raise `ValueError`（证明守卫从"恒不触发"变成"真触发"）。
 - grep 净化：`grep -rn '"model_family"' vrl/` 在生产代码零命中；`grep -rn 'cfg.model, "task"' vrl/` 零命中；`grep -rn 'backend_handle' vrl/` 零命中（全部改名）。
-- AR 路径冒烟：janus_pro 与 janus_pro_r1 各跑一次 spec 构建，断言 `ar_task` 取值正确分流 capability（`JANUS_PRO_R1_FAMILY_CAPABILITY` vs `JANUS_PRO_FAMILY_CAPABILITY`）。
+- AR 路径冒烟：janus_pro 与 janus_pro_r1 各跑一次 build 构建，断言 `ar_task` 取值正确分流 capability（`JANUS_PRO_R1_FAMILY_CAPABILITY` vs `JANUS_PRO_FAMILY_CAPABILITY`）。
 
 ## 非目标 / Non-Goals
 
@@ -281,13 +281,13 @@ family-专属键的真实消费面（确认只 Wan 2.2 读）：`boundary_ratio`
 
 ## References
 
-- `vrl/models/interfaces/runtime.py:4, 59, 133, 162`（RuntimeBuildSpec.task_variant、RuntimeBundle.backend_handle、metadata 契约）
+- `vrl/models/interfaces/runtime.py:4, 59, 133, 162`（ModelBuild.task_variant、RuntimeBundle.backend_handle、metadata 契约）
 - `vrl/models/diffusion/wan_2_1/runtime.py:347-368`（_task_variant_from_cfg 死读 + i2v 规整）
 - `vrl/models/diffusion/wan_2_1/model.py:440, 569`（.family 类属性 + model_family context 写）
 - `vrl/models/diffusion/cosmos/predict2/model.py:395`（model_family context 写）
 - `vrl/models/ar/janus_pro/model.py:155`（model_family 类属性）
 - `vrl/models/ar/janus_pro/runtime.py:67-72, 81-85, 95-100, 118-119, 398, 520`（metadata 无 family、ar_t2i 写入、ar_t2i_r1 分支、model_family context 写）
-- `vrl/scripts/ar/janus_pro/train.py:58, 76`（spec.task_variant = "ar_t2i_r1"）
+- `vrl/scripts/ar/janus_pro/train.py:58, 76`（build.task_variant = "ar_t2i_r1"）
 - `vrl/config/schema.py:288-294, 313, 317, 530, 538-539`（ModelConfig 扁平 key 注册表 + family-专属键、task_variant 有/task 无、family capability gating）
 - `vrl/models/diffusion/wan_2_1/runtime.py:158-181`、`model.py:101-113, 603-606`、`vrl/scripts/eval/wan_i2v_base_sample.py:112`（boundary_ratio / trainable_transformers / *_cpu_offload 真实消费面，均 Wan 专属）
 - `vrl/trainers/checkpointing.py:122, 249-255`（payload family 写 + 死守卫读）

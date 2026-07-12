@@ -84,9 +84,10 @@ SD3.5 不踩是因为它默认不 compile trainer。`tests/trainers/test_weight_
 ```text
 1. 双 reward 单卡：motion_physics 的第二个 RewardModelWorker 分不到 GPU
    （资源计划只有 1 个 reward bundle，两个 ray-runtime reward 各起一个 actor）。
-2. predict2 global reference 模式把 PIL Image 塞进 executor_kwargs，被 Ray launch contract
-   的 primitive-only 校验拒绝（vrl/generation/launch_contract.py）。当前只有
-   cosmos.reference_mode=per_sample 可用，且 manifest 里的路径必须在 data/external/ 根下。
+2. **Resolved (2026-07-12):** Predict2 reference images now travel as typed,
+   per-prompt `GenerationInput.reference_image` values. Dataset defaults use
+   `data.preprocessing.reference_image`; no PIL object or global reference is
+   serialized in executor kwargs.
 3. predict2 没接 VAE tiling（wan/anima 走 vrl/models/diffusion/common/vae_decode_memory.py，
    predict2 缺席）⇒ 原生 704p93f 在 VAE encode 即 OOM，单卡只能 512p。
 4. kling reward artifact_format: tensor 在本环境损坏：decord 读不了 .pt，fallback 的

@@ -65,8 +65,8 @@ launcher 据 `resources.lifecycle.rollout.mode == "on_demand"` 决定走 `with_r
 
 ```text
 predict2_5_2b.yaml  model.torch_compile.enable  (当前 false)
-  └─ extract_runtime_spec: model_config = plain_mapping(cfg.model)        runtime_config.py:43
-  └─ RuntimeBuildSpec.torch_compile：enable 为假返回 None                  interfaces/runtime.py:112-117
+  └─ resolve_model_build: model_config = plain_mapping(cfg.model)        model_build.py:43
+  └─ ModelBuild.torch_compile：enable 为假返回 None                  interfaces/runtime.py:112-117
   └─ build_cosmos_predict25_runtime_bundle：enable 真才调               cosmos/predict2_5/runtime.py:77-78
   └─ CosmosPredict25Model.torch_compile_transformer(mode)              cosmos/predict2_5/model.py:245-246
   └─ torch.compile(self.pipeline.transformer, mode=mode, fullgraph=False)  （注:Predict2.5 编的是 pipeline.transformer）
@@ -251,11 +251,11 @@ resident 拿全额稳态加速;release-after-collect 的每周期重编译也因
 
 **Predict2.5 compile 接线**
 - `configs/model/diffusion/cosmos/predict2_5_2b.yaml:29-31` — `torch_compile.enable: false`
-- `vrl/models/runtime_config.py:43` — model block 发给 worker
-- `vrl/models/interfaces/runtime.py:112-117` — `RuntimeBuildSpec.torch_compile`（enable 门控）
+- `vrl/models/model_build.py:43` — model block 发给 worker
+- `vrl/models/interfaces/runtime.py:112-117` — `ModelBuild.torch_compile`（enable 门控）
 - `vrl/models/diffusion/cosmos/predict2_5/runtime.py:77-78` — 调 `torch_compile_transformer`
 - `vrl/models/diffusion/cosmos/predict2_5/model.py:245-246` — `torch.compile(pipeline.transformer, mode=mode, fullgraph=False)`
-- `vrl/models/interfaces/runtime.py:123-128` — `RuntimeBuildSpec.torch_compile` reads the single `model.torch_compile` source
+- `vrl/models/interfaces/runtime.py:123-128` — `ModelBuild.torch_compile` reads the single `model.torch_compile` source
 - `vrl/generation/ray/launcher.py` — `model.torch_compile.enable` unsupported-family fail-fast gate
 - `vrl/models/diffusion/capabilities.py` — diffusion families declare `supports_torch_compile=True`
 

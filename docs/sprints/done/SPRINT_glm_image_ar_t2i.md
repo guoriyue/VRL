@@ -51,7 +51,7 @@ configs/model/ar/glm_image/16b.yaml                          # use_lora: true �
 tests/models/ar/glm_image/ + wiring 参数化
 ```
 
-前置改进（建议先做）：折叠 `build_ar_runtime_bundle(spec, entry)`——见 index sprint 薄化审计，
+前置改进（建议先做）：折叠 `build_ar_runtime_bundle(build, entry)`——见 index sprint 薄化审计，
 janus/nextstep 的 bundle 组装 ~18 行逐字重复，接 3 个 AR 新家族前折掉，每家族省一份。
 
 ## 5. 验收

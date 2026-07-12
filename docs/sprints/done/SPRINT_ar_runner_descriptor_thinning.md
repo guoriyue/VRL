@@ -17,8 +17,8 @@ contracts.
 3. Consolidated Emu3 and Janus cond/uncond prefill plus CFG-behavior sampling /
    conditional-policy log-prob scoring.
 4. Added `ARFamilyBuild` registry descriptors and generic rollout, replay, and
-   spec construction in `vrl.models.ar.build`.
-5. Removed the 15 repeated family build/replay/spec facades from Emu3,
+   build construction in `vrl.models.ar.build`.
+5. Removed the 15 repeated family build/replay/build facades from Emu3,
    GLM-Image, Janus-Pro, LlamaGen, and NextStep-1 runtime modules.
 6. Closed the temperature parity follow-up: rollout and replay now normalize
    categorical logits with the same recorded positive temperature, all

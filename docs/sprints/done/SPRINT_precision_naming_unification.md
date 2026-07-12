@@ -1,5 +1,24 @@
 # SPRINT: 精度命名统一 —— 一个概念三套拼写 + 一个撞名 (planned)
 
+> Superseded naming note (2026-07-12): the current public surface is
+> role-shaped: `precision.training.dtype`, `precision.rollout.dtype`, optional
+> `precision.rollout.quantization.{format,recipe}` and
+> `precision.rollout.prompt_encoders.dtype`, plus
+> `precision.diffusion_math.dtype`. Scalar `precision`, the former flat
+> `forward`/`compute`/`train`/`math`/`frozen`/`rollout_recipe` keys, a scalar
+> `precision.rollout`, and `mixed_precision` are not live public inputs.
+> `mixed_precision` remains only at the HF Accelerate protocol boundary, where
+> `no`/`fp16`/`bf16` are the dependency's required values. `TrainerConfig`
+> retains only `train_precision`/`rollout_precision` as internal runtime
+> projections. FP8 rollout is available through `quantization.format: fp8`;
+> experimental NVIDIA FP4 rollout uses the precise `format: nvfp4` spelling.
+> Ambiguous `format: fp4` is rejected.
+>
+> The `precision_bridge_fields` seam described in §3.4 was later removed.
+> `build_trainer_config` now projects the two trainer fields directly, and the
+> duplicate `online.py` projection disappeared with `_apply_precision_policy`.
+> Everything below this note is retained as historical implementation evidence.
+
 状态：DONE（2026-06-20）。范围：收口「compute 用什么精度」这一个概念在仓库里的**三套拼写 + 一个同名异义**，让 `precision:` 成为唯一可填真源，删冗余派生布尔、改撞名的 FSDP key。不动统一 `precision` policy 的语义、不动 fp8/fp4 rollout 劈叉路径。
 
 落地（§3.1/§3.2/§3.4 全部完成；§3.3 按本 sprint 定为「仅判定」—— 评估结论：保留 Accelerate 拼写层，`normalize_mixed_precision` 仍是 dpo.py + dtype helper 的共享真源，不删）：
@@ -9,7 +28,9 @@
 - 验证：tests/config/test_precision + test_load_all_experiments + test_unknown_keys + test_schema + tests/trainers/test_precision + test_fsdp + tests/scripts/test_online_precision_bridge + tests/trainers/online 共 256 passed。
 
 关联：
-- [[SPRINT_fullparam_and_fp8_precision]] —— 统一 `precision` policy（`forward`/`rollout`/`math`/`frozen` 四轴）与 fp8 rollout 劈叉的归属 sprint；本 sprint 是它的命名收尾。
+- [[SPRINT_fullparam_and_fp8_precision]] —— the current role-shaped `precision`
+  policy and the FP8 rollout split live there; this sprint records the older
+  naming cleanup that preceded that surface.
 - [[SPRINT_design_smell_audit]] / [[SPRINT_resolved_struct_field_audit]]（均 `done/`）—— 派生/影子字段的处置先例（"派生布尔不该手维护"、"resolved struct 每个字段要有非日志消费方"）。本 sprint 的 `bf16` 冗余判定沿用同一判据。
 
 ## 0. Core Decision（先看这一段）
@@ -17,13 +38,13 @@
 「compute 用什么精度」一个概念，仓库里有三层拼写，加一个倒霉撞名的无关概念：
 
 1. **`precision:`（`fp32`/`bf16`/`fp16`，顶层）** —— 唯一真源、用户唯一该设的。`vrl/config/precision.py`。
-2. **`mixed_precision` + `bf16`（`TrainerConfig` 派生字段）** —— 从 #1 自动算出来的内部桥接字段，`metadata yaml="bridged"`（不可在 YAML 填）。`bf16` 是纯冗余布尔（= `compute=="bf16"`）。
+2. **`mixed_precision` + `bf16`（当时的 `TrainerConfig` 派生字段）** —— 这是迁移前的内部桥形状，不是当前字段。
 3. **`'no'`/`'fp16'`/`'bf16'`（HF Accelerate 边界拼写）** —— `vrl/trainers/precision.py` 的 `normalize_mixed_precision` 把 `fp32`→`'no'`、`float16`→`fp16`，只为喂 HF Accelerate 的 `Accelerator(mixed_precision=...)`（当前仅 Wan DPO 一条路要）。
 4. **`distributed...fsdp.mixed_precision: actor|none`（撞名异义）** —— 这根本不是 dtype，是 **FSDP 的参数/梯度规约策略**（`actor` = bf16 参数 + fp32 reduce）。只是不幸跟 #2 撞了同一个词。
 
-核心结论：#1 是对的、保留；#2 的 `bf16` 布尔删掉（派生冗余）；#4 改名消撞；#3 评估是否能随 Wan DPO 收掉。落地后用户面只剩一个 `precision:`，resolved config 里的 `mixed_precision` 是派生输出（已有消费方），不再有第二个并行可填字段。
+核心结论：#1 是对的、保留；#2 的 `bf16` 布尔删掉（派生冗余）；#4 改名消撞；#3 只保留在 AMP/Accelerate 协议边界。当前用户面只剩一个 `precision:`，trainer 投影名为 `train_precision`。
 
-## 1. 现状实锤（evidence-first）
+## 1. 当时现状实锤（evidence-first）
 
 ### 1.1 真源：统一 precision policy
 
@@ -35,9 +56,26 @@
 # - frozen  : frozen text encoder / VAE
 _CANONICAL = ("fp32", "bf16", "fp16", "fp8", "fp4")
 ```
-用户写 `precision: bf16`（标量两边同 dtype）或 `precision: {forward: bf16, rollout: fp8}`（劈叉）。
+当时用户写 `precision: bf16`（标量两边同 dtype）或
+`precision: {forward: bf16, rollout: fp8}`（劈叉）。The current equivalent is:
 
-### 1.2 派生桥接字段（bridged，不可填）
+```yaml
+precision:
+  training:
+    dtype: bf16
+  rollout:
+    quantization:
+      format: fp8
+```
+
+The omitted rollout base dtype inherits `training.dtype`; specify it only for a
+deliberate stage split.
+
+Experimental NVFP4 is available at
+`precision.rollout.quantization.format: nvfp4`; generic `format: fp4` remains
+invalid because it cannot identify a concrete FP4 scaling scheme.
+
+### 1.2 历史派生桥接字段（bridged，已被当前 `train_precision` 投影取代）
 
 ```python
 # vrl/config/builders.py:180
@@ -128,7 +166,9 @@ mixed_precision: actor      # bf16 params/compute, fp32 grad reduction
 ## References
 
 vrl 代码（本轮实际读过）：
-- `vrl/config/precision.py:1-150`（统一 policy 真源、`_CANONICAL`、`forward/rollout/math/frozen` 四轴、fp8/fp4 rollout-only）
+- `vrl/config/precision.py` (current role-shaped source of truth:
+  `RolePrecision`, `QuantizationPolicy`, and `_PRECISION_TOKENS`; FP8 rollout is
+  available, NVFP4 is experimental, and ambiguous generic `fp4` is rejected)
 - `vrl/config/builders.py:178-185`（policy → 四个派生字段 expand）
 - `vrl/trainers/core/types.py:303-306`（`mixed_precision`/`bf16` bridged 派生字段定义）
 - `vrl/trainers/precision.py:8-77`（`normalize_mixed_precision` accelerate 拼写、`bf16` fallback、`torch_dtype_for_*`）

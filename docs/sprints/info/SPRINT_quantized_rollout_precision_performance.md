@@ -138,7 +138,7 @@ python -m vrl.scripts.perf.quantized_sd3_forward_profile \
 
 TORCHINDUCTOR_COMPILE_THREADS=1 \
 python -m vrl.scripts.perf.quantized_sd3_forward_profile \
-  --compile --schemes bf16 fp4 --batches 32 --warmup 10 --iters 20
+  --compile --schemes bf16 nvfp4 --batches 32 --warmup 10 --iters 20
 ```
 
 | scheme | median | p10–p90 | speedup | cold compile | noise-pred nL1 / NRMSE |
@@ -189,12 +189,12 @@ runner 现支持显式 `--target-profile mlp_only|attention_mlp`。同一 profil
 ```bash
 TORCHINDUCTOR_COMPILE_THREADS=1 \
 python -m vrl.scripts.perf.quantized_sd3_forward_profile \
-  --target-profile mlp_only --compile --schemes bf16 fp8 fp4 \
+  --target-profile mlp_only --compile --schemes bf16 fp8 nvfp4 \
   --batches 32 --warmup 20 --iters 30
 
 TORCHINDUCTOR_COMPILE_THREADS=1 \
 python -m vrl.scripts.perf.quantized_sd3_forward_profile \
-  --target-profile attention_mlp --compile --schemes bf16 fp8 fp4 \
+  --target-profile attention_mlp --compile --schemes bf16 fp8 nvfp4 \
   --batches 32 --warmup 20 --iters 30
 ```
 
@@ -229,7 +229,7 @@ compiled B=32 allocator：
 
 ```bash
 python -m vrl.scripts.perf.quantized_rollout_drift_probe --scheme fp8
-python -m vrl.scripts.perf.quantized_rollout_drift_probe --scheme fp4
+python -m vrl.scripts.perf.quantized_rollout_drift_probe --scheme nvfp4
 ```
 
 该 probe 用生产量化 module，但模型只是 synthetic categorical head。它回答“量化误差经过
@@ -289,7 +289,8 @@ checkpoint runner。
 
 - `formats.py` 的 ALL_CAPS 是 E2M1/E4M3/alignment/swizzle 的硬件格式协议常量，保留。
 - `targeting.py::MLP_PATH_SEGMENTS` 是刻意隔离的模型路径 taxonomy，FP4/测试共同消费，保留。
-- family base 的 `quantize_rollout_fp8/fp4` 薄方法提供 cross-family dispatch 一致性，保留。
+- family base methods `quantize_rollout_fp8` and `quantize_rollout_nvfp4`
+  provide a uniform cross-family dispatch boundary and remain intentionally thin.
 - 旧 `fp8_*` perf 文件是公共 CLI 兼容 facade，保留；canonical runner 仍是 scheme-neutral。
 
 非目标：不合并 FP8/FP4 kernel、不量化训练/replay、不把 full-head synthetic 结果冒充 MLP-only

@@ -21,7 +21,7 @@ VRL 的 seam 已经存在——`GenerationWeightSync` 是 protocol
   建 collective group(`ray.util.collective` 或手建 ProcessGroup,调研后择一,
   倾向 prior art:vLLM/slime 的做法),state dict 按 key 顺序逐张量 broadcast,
   GPU 直传不落 CPU。
-- 选择逻辑:`spec.use_lora`(或同步负载估计)决定默认传输;yaml 可显式覆盖
+- 选择逻辑:`build.use_lora`(或同步负载估计)决定默认传输;yaml 可显式覆盖
   (`model.weight_sync.transport: object_store | nccl`),读取走 `cfg_path`
   单一读取器,不加专用 reader。
 - worker 侧 `update_weights` 拆出接收路径:object-store 路径保持原签名;NCCL

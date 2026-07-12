@@ -24,7 +24,7 @@
   `vrl/rewards/artifacts.py`（reward artifact 存储）与 `vrl/rollouts/collector/artifacts.py`（reward view 释放）
   是真正独立的概念，保留原地，各自只有局部小修。
 - 真正的系统性问题不是"函数太散"，而是三类：**迁移收尾没做完**（双 import 家园）、
-  **形式四近重复**（10 份同体 `frozen_dtype` 块、10 份同体 `_lora_dtype` override、5 份 reward `_resolve_model_root`、
+  **形式四近重复**（10 份同体 `prompt_encoder_dtype` 块、10 份同体 `_lora_dtype` override、5 份 reward `_resolve_model_root`、
   flow_matching 采样/回放双拷贝）、以及顺带揪出的**一个活 bug**（echo/cosmos3/anima 的 diffusion replay builder 断线）。
 
 ---
@@ -92,18 +92,21 @@
 
 1. **【BUG】diffusion replay builder 断线 + provenance 去重**（发现 #14 + #19，同文件合并）：
    - `vrl/rollouts/families/registry.py`：echo/cosmos3/anima 三条 entry 设 `replay_runtime_builder` dotted string（复用 AR 侧既有字段，**不**在 DiffusionFamilyBuild 加新字段）；更新字段 docstring（不再 AR-only）与 :74-75 过时 wan 注释。
-   - `vrl/models/diffusion/build.py::build_family_replay_runtime_bundle`：`replay_cls is None` 时若 entry 有 builder 则 `import_from_path(...)(spec)`（`_check_requires_lora` 先行），否则保留响亮 ValueError。
-   - 删零调用方 `build_echo_replay_runtime_bundle_from_cfg`、`build_cosmos3_replay_runtime_bundle_from_cfg` 及 `__all__` 条目；anima 的 `extract_anima_replay_runtime_spec` 不动（e2e 字符串引用契约）。
-   - 同文件加双调用方 `_provenance_metadata(spec, family)`（5 键 dict 唯一构造点，"audited 2026-07-02" 注释随行搬），:102-107 与 :198-204 改用；`assemble_replay_bundle` docstring 收窄为 "REPLAY-side ... tail"。**明确拒绝**统一 rollout/replay 的 lora+compile tail（rollout 侧量化交织在分支两臂内、顺序有文档化路径依赖——不是重复）。
+   - `vrl/models/diffusion/build.py::build_family_replay_runtime_bundle`：`replay_cls is None` 时若 entry 有 builder 则 `import_from_path(...)(build)`（`_check_requires_lora` 先行），否则保留响亮 ValueError。
+   - 删零调用方 `build_echo_replay_runtime_bundle_from_cfg`、`build_cosmos3_replay_runtime_bundle_from_cfg` 及 `__all__` 条目；anima 的 `resolve_anima_replay_model_build` 不动（e2e 字符串引用契约）。
+   - 同文件加双调用方 `_provenance_metadata(build, family)`（5 键 dict 唯一构造点，"audited 2026-07-02" 注释随行搬），:102-107 与 :198-204 改用；`assemble_replay_bundle` docstring 收窄为 "REPLAY-side ... tail"。**明确拒绝**统一 rollout/replay 的 lora+compile tail（rollout 侧量化交织在分支两臂内、顺序有文档化路径依赖——不是重复）。
    - 测试：扩展 `tests/rollouts/runtime/test_family_registry.py` 断言每个 diffusion family 解析出 replay 路径（`replay_cls` 或可导入的 `replay_runtime_builder`）——这就是本该抓住回归的测试。**落地前先 `git fetch` 复查 registry.py/build.py**（记忆：另一进程在并行 reconcile 本树）。
-2. **AR runtime LoRA 默认值折叠 5 份**（发现 #12）：`vrl/models/ar/build.py` 加 `ar_model_config_base(spec, lora_defaults)`（base dict + use_lora 合并 + 5 个类型化 lora_* 键）；5 个 family runtime 各替换为一行调用，**保留各家 `_*_LORA_DEFAULTS` dict**（llamagen 的 wqkv/wo 真有差异）；删 janus 的 `_resolve_lora_block`；重指 `interfaces/runtime.py:112` 与 `runtime_config.py:79` 两处文档引用。
+2. **AR runtime LoRA 默认值折叠 5 份**（发现 #12）：`vrl/models/ar/build.py` 加 `ar_model_config_base(build, lora_defaults)`（base dict + use_lora 合并 + 5 个类型化 lora_* 键）；5 个 family runtime 各替换为一行调用，**保留各家 `_*_LORA_DEFAULTS` dict**（llamagen 的 wqkv/wo 真有差异）；删 janus 的 `_resolve_lora_block`；重指 `interfaces/runtime.py:112` 与 `model_build.py:79` 两处文档引用。
 3. **scripts/diffusion 六份 lazy builder + wan T2V 重复入口**（发现 #30 + #31，同文件合并）：
    - `diffusion/train.py`：`_build_bundle`/`_build_replay_bundle` → 公有 `build_bundle`/`build_replay_bundle`（唯一合法 lazy-import 副本）；删 `_after_bundle_built`，直接传 `enable_transformer_gradient_checkpointing`。
    - cosmos/train.py 删四个 builder 改 import 共享对（**保留**自家 `_after_bundle_built`——`require_method=False` 是真实家族行为）；flux、wan 同理删本地对与 wrapper。
    - 删 `train_wan_2_1_grpo`（与通用 `train_diffusion_grpo` 逐字段相同；registry alias `wan`→`wan_2_1` 全覆盖）+ `__all__` 条目 + 模块 docstring 改为 Wan I2V；`presets/recipe/online/wan_2_1_grpo.yaml` 删 `trainer:` entrypoint 回覆盖块（文件本身保留，rollout shape 被三个实验共享）；`diffusion_grpo.yaml:18-19` 注释只留 cosmos。**保留** `train_wan_2_1_i2v_grpo`（真实 hook `collector_kwargs_getter`）。
-4. **frozen_dtype 精度契约 10 份收敛**（发现 #15）：`vrl/models/diffusion/base.py` 加模块级 `diffusers_pipeline_dtypes(spec, model_dtype) -> (frozen_dtype, load_kwargs)`（sd3_5 的契约注释升格为 docstring）；`diffusion/__init__.py` 再导出；10 个 family `from_spec` 各删 12 行块改一行调用（sd3_5/flux/qwen_image/sana/lumina2/pixart_sigma/mochi/cogvideox/hunyuan_image/hunyuan_video）。pipeline 构造与 freeze 序列不动。
+4. **Prompt-encoder precision consolidation** (finding #15):
+   `diffusers_pipeline_dtypes(build, model_dtype) -> (prompt_encoder_dtype, load_kwargs)`
+   is the shared load boundary used by the ten Diffusers families. VAE FP32
+   remains family-owned; pipeline construction and freeze order stay unchanged.
 5. **anima align/shared replay tensor 收敛**（发现 #17）：删 anima 私有 `_align_replay_tensor`/`_shared_replay_tensor`，改用 `vrl.models.diffusion.common` 的共享对；`:381` 传**在作用域内的 `batch_context`**（与 predict2/2.5 调用形状逐字节一致，不传 `{}`）；`common/tensors.py:24-27` 假豁免注释改为说明 wan 保留严格变体的真实理由；顺手修 predict2 测试 docstring 的 stale 提法。
-6. **`_lora_dtype` 10 份同体 override 下沉**（发现 #38，按 PARTIAL 修正）：mixin 默认改为 lazy import `resolve_torch_dtype(spec.dtype)`，docstring 重写；删 10 个同体 override；**仅** `CosmosPredict2Model` 与 `Cosmos3Model` 加显式 `return None` override（唯二真消费 None 默认的类）；**不动** wan_2_1（自有 apply_lora 不调 `_lora_dtype`，加了就是死方法）与 predict2_5（根本不继承 mixin）。
+6. **`_lora_dtype` 10 份同体 override 下沉**（发现 #38，按 PARTIAL 修正）：mixin 默认读取已在 runtime 边界归一化的 `build.parameter_dtype`，docstring 重写；删 10 个同体 override；**仅** `CosmosPredict2Model` 与 `Cosmos3Model` 加显式 `return None` override（唯二真消费 None 默认的类）；**不动** wan_2_1（自有 apply_lora 不调 `_lora_dtype`，加了就是死方法）与 predict2_5（根本不继承 mixin）。
 7. **reward 模型五份 `_resolve_model_root` + `__call__` 前奏收敛**（发现 #21 + #23，同文件组合并）：
    - `hub.py` 加 `resolve_model_root(worker_config, *, default_model, family)`（含 `local_files_only` 转发、lazy snapshot_download）；videoscore2/unified/cosmos3_reasoner/videocon 四家删本地副本改调用。**有意 drift 修复①**：videocon 由此获得之前静默丢失的 `local_files_only`。**kling 不动**（pin/RuntimeError-wrap/layout 校验，真家族特有）。
    - `base.py` 加 `require_prompt_and_video_path(artifact, *, family)`，五个 `__call__` 前奏改调用。**有意 drift 修复②**：unified_reward_video 补上缺失的空 prompt raise（其 rubric 是 caption-conditioned，正确）。phymotion:74 不动（path-only）。
@@ -130,7 +133,7 @@
 
 1. **flow_matching 采样/回放双拷贝收敛**（发现 #25，**logprob 位一致性关键**）：`vrl/math/ar/flow_matching.py` 同文件内提取 `_flow_terminal_mean(...)`（单一 `_velocity` 闭包 + Euler 前缀环 + 4 处 CFG combine 收成 1 处 + `noise_level*sqrt(dt)` 单一构造点）与 `_isotropic_gaussian_logprob(...)`；`flow_sample_with_logprob` / `flow_logprob_at` 各保留自己的入口逻辑；修 stale Args docstring（删 "fall back to forward"，契约是 `image_head.net`）。公共 API 不变。
    **闸门**：`pytest tests/math/test_ar_flow_matching.py`（既有 sample/replay parity 测试）必须位精确通过——这是 GRPO old/fresh ratio 的防腐线。
-2. **`DiffusersReplayModelBase` 落地**（发现 #16，M）：`base.py` 在 `ReplayRolloutStubs` 下方加 5 成员基类（**不放在 ReplayRolloutStubs 上**——Cosmos3ReplayModel 继承它并读 `self.pipeline` shell）；7 家整体删（sana/lumina2/cogvideox/qwen_image/hunyuan_image/hunyuan_video/cosmos-predict2）、3 家只留 `prepare_replay`（flux/mochi/pixart_sigma）、sd3_5 留 ctor+`_set_transformer` override、predict2_5 留 ctor/`set_num_steps`/nft 并**删其同体 `torch_compile_transformer`**（形式四）。wan/echo/anima/cosmos3 不动。与 Sprint 3 第 4/6 项同文件但区域不相交（from_spec / `_lora_dtype` / Replay 类），**按 Sprint 3 → Sprint 4 顺序落地**避免 rebase 冲突。
+2. **`DiffusersReplayModelBase` 落地**（发现 #16，M）：`base.py` 在 `ReplayRolloutStubs` 下方加 5 成员基类（**不放在 ReplayRolloutStubs 上**——Cosmos3ReplayModel 继承它并读 `self.pipeline` shell）；7 家整体删（sana/lumina2/cogvideox/qwen_image/hunyuan_image/hunyuan_video/cosmos-predict2）、3 家只留 `prepare_replay`（flux/mochi/pixart_sigma）、sd3_5 留 ctor+`_set_transformer` override、predict2_5 留 ctor/`set_num_steps`/nft 并**删其同体 `torch_compile_transformer`**（形式四）。wan/echo/anima/cosmos3 不动。与 Sprint 3 第 4/6 项同文件但区域不相交（from_build / `_lora_dtype` / Replay 类），**按 Sprint 3 → Sprint 4 顺序落地**避免 rebase 冲突。
    **闸门**：全家族 backbone-parity 测试 + `tests/models/diffusion/sd3_5/test_attention_processor_install.py`。
 3. **Emu3/Janus paged-CFG 状态机提基**（发现 #11，M）：在**现有** `vrl/models/ar/paged_attention_helpers.py` 落 `PagedCFGARState`（kw_only；janus 的 `image_token_num` 统一改名 `total_token_num`，公共 `init_ar` kwarg 不变，3 处测试行同步）与 `PagedCFGTokenRunner`（step_ar/finalize_ar/prefill/validate/sample/`_advance_after_sample` 原样自 janus，以 `family` 类属性 + `_embed_sampled_token` hook 参数化）；两家保留文件、公有类名、`init_ar`、各自 `_sample_cfg_image_token`（含 emu3 结构 mask 与两处 RL-correctness 注释）；统一 sampling hook 签名为 `(state, hidden, position)` 并改两处 2-arg 测试直调。**不碰** glm_image/llamagen/nextstep_1（真实偏差：native mrope 无 CFG；连续 token flow loop）。
    **闸门**：`pytest tests/models/ar/emu3 tests/models/ar/janus_pro tests/generation/ar/test_janus_paged_attention_one_step.py`。
@@ -160,7 +163,7 @@
 | 3 | #2（load-time 统一）vs #32（提取共享 normalize 函数）互斥修同一段代码 | 采用 #2（覆盖全部 5 散点 + 修 executor 旋钮缺陷）；#32 只保留其测试重指与 "cosmos 须尊重 artifact_data_root" 要求 |
 | 4 | Sprint 2 重指 cosmos/wan train.py 的 artifacts import → Sprint 4 又删其部分消费点 | 顺序无碍；Sprint 4 收尾 grep 未使用 import |
 | 5 | #30（builder 收敛）与 #31（wan 入口删除）同文件 | 合并为 Sprint 3 单项，先收敛后删入口，wan 文件终态只剩 i2v 用共享 builder |
-| 6 | #15/#38（Sprint 3）与 #16（Sprint 4）触同一批 family model.py | 区域不相交（from_spec / _lora_dtype / Replay 类）；固定 Sprint 3→4 顺序 |
+| 6 | #15/#38（Sprint 3）与 #16（Sprint 4）触同一批 family model.py | 区域不相交（from_build / _lora_dtype / Replay 类）；固定 Sprint 3→4 顺序 |
 | 7 | #5 与 #34 同触 resolver.py | 互补：#34 删 `_lookup_tensor`（Sprint 1），#5 让 `tensor()` delegate `named_tensor`（Sprint 3），无重叠符号 |
 | 8 | 并行 worktree 风险（记忆：另一进程 reconcile wm-infra 的 layout.py/sampling-state；用户并行改分支） | Sprint 3 第 9 项与 Sprint 4 全部条目落地前强制 `git fetch` + `git status` 复查；#14 的 registry/build.py 同样先复查 |
 | 9 | REJECTED 清单 | `RolloutScheduler` 命名与 `pipeline_runner.py`/`stage_worker.py` 全家在四个 sprint 中均列为非目标，防止后续误清 |

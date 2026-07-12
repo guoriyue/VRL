@@ -14,7 +14,7 @@
 1. **直接删死分支（零行为风险，先做）**：
    - `rollout.train_segments` 这个 fallback 分支**没有任何 live config 使用**（live 归属是 `algorithm.train_segments` 与 `sampling.r1.train_segments`），删掉。
    - `sampling.r1.final_image_policy` 这个归属**没有任何 live config 使用**（唯一 live 归属是 `rollout.final_image_policy`，`r1` 采样 preset 里还专门写注释说明「set once in rollout」），连带 `_cross_field_validate` 里那段「两边都设了必须相等」的 12 行平等校验一起删。
-2. **统一 config 表面拼写（保留上游 API 名作 adapter 内部名）**：CFG 强度统一到 `guidance_scale`，步数统一到 `num_steps`，AR runtime 在 runtime-spec 提取层把 YAML 的统一名映射成上游 `generate()` 需要的 `cfg_scale`/`cfg_weight`/`num_flow_steps`。这一档不能 remove-outright，必须先迁移 AR 的 sampling preset YAML 再删 schema 旧 key。
+2. **统一 config 表面拼写（保留上游 API 名作 adapter 内部名）**：CFG 强度统一到 `guidance_scale`，步数统一到 `num_steps`，AR runtime 在 model-build 提取层把 YAML 的统一名映射成上游 `generate()` 需要的 `cfg_scale`/`cfg_weight`/`num_flow_steps`。这一档不能 remove-outright，必须先迁移 AR 的 sampling preset YAML 再删 schema 旧 key。
 
 `cfg` 布尔（do-CFG 开关）与 `cfg_scale`/`cfg_weight` 同前缀但语义不同，顺手在 schema 注释里点明 / 或重命名为 `do_cfg`，属低优先。
 
@@ -114,7 +114,7 @@ _copy_first_present(
 
 ### 第二档：统一表面拼写（migrate-then-remove）
 
-5. CFG 强度：在 AR runtime-spec 提取层（`vrl/models/ar/nextstep_1/runtime.py:245`、`vrl/models/ar/janus_pro/runtime.py:299`）改为读 `sampling["guidance_scale"]`，内部仍以 `cfg_scale`/`cfg_weight` 传给上游 `generate()`。迁移 `configs/sampling/ar/continuous_image_256_1024tok.yaml:8`、`configs/sampling/ar/r1_image_384_576tok.yaml:5` 改用 `guidance_scale`。两份 YAML 迁移完成后，从 `vrl/config/schema.py:271-272` 删除 `cfg_scale`/`cfg_weight`。
+5. CFG 强度：在 AR model-build 提取层（`vrl/models/ar/nextstep_1/runtime.py:245`、`vrl/models/ar/janus_pro/runtime.py:299`）改为读 `sampling["guidance_scale"]`，内部仍以 `cfg_scale`/`cfg_weight` 传给上游 `generate()`。迁移 `configs/sampling/ar/continuous_image_256_1024tok.yaml:8`、`configs/sampling/ar/r1_image_384_576tok.yaml:5` 改用 `guidance_scale`。两份 YAML 迁移完成后，从 `vrl/config/schema.py:271-272` 删除 `cfg_scale`/`cfg_weight`。
 6. 步数：同样把 nextstep_1 提取层（`vrl/models/ar/nextstep_1/runtime.py:246` 及其下游 `flow_matching.py`/`runner.py`/`model.py` 的 `num_flow_steps` 形参）统一读 `num_steps`；迁移 `configs/sampling/ar/continuous_image_256_1024tok.yaml:6`；最后删 `vrl/config/schema.py:281` 的 `num_flow_steps`。此项链路较长，可作为第二档的独立子任务。
 7. noise_level：保留 `rollout.noise_level` 作 canonical（cross-validator 认它），在 `vrl/config/schema.py:280` 的 `SamplingConfig.noise_level` 加 `# AR families 在 sampling 段设此值，collector flat-merge 进 rollout values；与 rollout.noise_level 同一旋钮` 一行注释，把「故意双归属」说明白；或把 AR continuous 的 `noise_level` 也迁到 rollout 段后删 sampling 声明（取决于 AR rollout base 是否方便承载）。
 
@@ -126,7 +126,7 @@ _copy_first_present(
 
 - 第一档每删一个分支后，跑 config-resolve（对 `configs/base/algorithm/token_grpo_multisegment.yaml`、`configs/base/rollout/ar_r1.yaml`、`configs/sampling/ar/r1_image_384_576tok.yaml` 三个真实 YAML 组合）确认 `train_segments` / `final_image_policy` 仍解析出原值，无 KeyError、无 unknown-key 告警。
 - 全仓 grep 确认被删的 `rollout.train_segments`、`sampling.r1.final_image_policy` 在 `configs/` 与 `vrl/` 里零引用后再删。
-- 第二档迁移后：grep `cfg_scale`/`cfg_weight`/`num_flow_steps` 在 `configs/` 内零命中（只允许出现在 runtime adapter 内部传参处），并对 AR sampling preset 跑一次 runtime-spec 提取，确认 `guidance_scale`/`num_steps` 被正确读出。
+- 第二档迁移后：grep `cfg_scale`/`cfg_weight`/`num_flow_steps` 在 `configs/` 内零命中（只允许出现在 runtime adapter 内部传参处），并对 AR sampling preset 跑一次 model-build 提取，确认 `guidance_scale`/`num_steps` 被正确读出。
 - `pytest` 全绿（schema 解析测试、collector config 测试、trajectory builder 测试）。
 
 ## 非目标 / Non-Goals

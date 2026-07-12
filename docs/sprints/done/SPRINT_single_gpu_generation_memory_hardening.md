@@ -26,7 +26,7 @@ Part 2 + 3（models 层）—— 本仓（vrl2），本 sprint 落地:
 
 ### 改动前的问题
 
-`apply_vae_decode_memory` 在 5 个 family `model.py` 的 `from_spec` 里各调一次
+`apply_vae_decode_memory` 在 5 个 family `model.py` 的 `from_build` 里各调一次
 （wan 两个类共 6 处），loader 持有 `memory_metadata` 状态，runtime builder 再用
 `getattr(model, "memory_metadata", None) or {}` 拼回 bundle——施策点、状态、上报
 散在三层，每个新家族都要重抄一遍，漏抄即静默无 tiling（predict2 704p OOM 的根因

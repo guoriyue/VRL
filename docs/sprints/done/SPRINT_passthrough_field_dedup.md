@@ -1,5 +1,12 @@
 # SPRINT: 消除 parse→runtime 结构的 pass-through 字段重复
 
+> Superseded implementation note (2026-07-11): the historical
+> `LogprobMismatchStats.to_metrics_kwargs()` bridge described below has been
+> removed. Current code keeps mismatch values in `LogprobMismatchStats`, groups
+> policy-objective observations in `PolicyUpdateStats`, and flattens both only at
+> the CSV boundary. The sections below remain the record of the earlier sprint,
+> not launch or implementation guidance.
+
 状态：**done（2026-06-25）**。exemplar（§3）+ #1 + #2 已修并测试通过；#3 经评估**保留**（理由见 §4 第 3 行）。范围是一个**架构卫生**问题，不是 correctness bug——但它会孕育 correctness bug（silent no-op knob），所以值得收口。
 
 ## 0. 一句话

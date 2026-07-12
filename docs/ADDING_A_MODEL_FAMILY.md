@@ -36,7 +36,7 @@ the diffusion descriptor snippet below.
 The rollout model normally subclasses `DiffusionModelBase` or
 `DiffusersPipelineModelBase` and implements these generation methods:
 
-- `from_spec`: load the generation pipeline and freeze generation-only modules.
+- `from_build`: load the generation pipeline and freeze generation-only modules.
 - `encode_prompt`: return the conditioning tensors used by the family.
 - `prepare_sampling`: return a private state containing at least `latents`,
   `timesteps`, and `scheduler`.
@@ -68,12 +68,9 @@ register_rollout_family(
         task="t2i",
         aliases=(),
         runtime_builder="vrl.models.diffusion.build:build_family_runtime_bundle",
-        runtime_spec_extractor=(
-            "vrl.models.diffusion.build:extract_family_runtime_spec"
-        ),
+        model_build_resolver="vrl.models.diffusion.build:resolve_family_model_build",
         request_prefix="my_model",
         default_task_type="text_to_image",
-        supports_reference_conditioning=False,
         build=DiffusionFamilyBuild(
             model_cls="vrl.models.diffusion.my_model.model:MyModel",
             replay_cls="vrl.models.diffusion.my_model.model:MyReplayModel",
@@ -85,11 +82,12 @@ register_rollout_family(
 )
 ```
 
-Use the canonical family name in `cfg.model.family`. Set
-`supports_reference_conditioning=True` only when the collector must carry a
-reference image or video. Set `scheduler_classname` when replay must load a
-scheduler other than the shared flow-match scheduler. Set `requires_lora=True`
-only when the model implementation genuinely rejects full-parameter training.
+Use the canonical family name in `cfg.model.family`. Functional conditioning
+such as a reference image or video belongs on each `GenerationInput`; it is not
+a family capability or executor-constructor setting. Set `scheduler_classname`
+when replay must load a scheduler other than the shared flow-match scheduler.
+Set `requires_lora=True` only when the model implementation genuinely rejects
+full-parameter training.
 
 `executor_cls` is intentionally absent above, so `_diffusion_entry` selects the
 shared `DiffusionChunkExecutor`. Add a family executor only when its body performs

@@ -9,7 +9,7 @@
 ## 0.1 落地实测发现（超出原 plan 的两处真实修复）
 
 1. **大文本编码器必须 CPU offload 才能单卡跑**：FLUX.1-dev 的 T5-XXL(~9.4GB) + transformer(~24GB,bf16)
-   合计 ~33GB > 32GB，全驻留单卡 OOM。修复：`from_spec` 把冻结编码器放 CPU，`encode_prompt` 在编码器
+   合计 ~33GB > 32GB，全驻留单卡 OOM。修复：`from_build` 把冻结编码器放 CPU，`encode_prompt` 在编码器
    设备上跑再把 embeds 搬到 GPU（`enable_model_cpu_offload` 纪律）。这是"单卡端到端跑通"的前置必需，
    不是可选优化。
 2. **FlowMatch 动态 shifting 需要按分辨率算 `mu`**：FLUX 调度器 `use_dynamic_shifting=True`，
@@ -58,7 +58,7 @@ FLUX 要新增一个 **单分支** 模式：
        family="flux", task="t2i", aliases=(),
        executor_cls="vrl.models.diffusion.flux.runtime:FluxChunkExecutor",
        runtime_builder="vrl.models.diffusion.flux.runtime:build_flux_runtime_bundle",
-       runtime_spec_extractor="vrl.models.diffusion.flux.runtime:extract_flux_runtime_spec",
+       model_build_resolver="vrl.models.diffusion.flux.runtime:resolve_flux_model_build",
        request_prefix="flux", default_task_type="text_to_image",
    ))
    ```
@@ -68,7 +68,7 @@ FLUX 要新增一个 **单分支** 模式：
      `forward_step`（注入 guidance）/ `decode_latents`（unpack→VAE decode）+ replay 三件套。
    - `runner.py`：`FluxDiffusionBackboneRunner`——**单分支 + guidance（本 sprint 核心）**。
    - `runtime.py`：`build_flux_runtime_bundle` / `build_flux_replay_runtime_bundle` /
-     `extract_flux_runtime_spec(... task_variant="t2i")` / `FluxChunkExecutor`，
+     `resolve_flux_model_build(... task_variant="t2i")` / `FluxChunkExecutor`，
      复用 `vrl/models/loader.py` 的 `load_diffusers_transformer / load_flow_match_scheduler /
      apply_lora_to_transformer`。
    - `__init__.py`：导出。
@@ -85,7 +85,7 @@ FLUX 要新增一个 **单分支** 模式：
 - **训练**：套 [[SPRINT_flow_grpo_recipe_parity]] 配方（`eps_clip=1e-3`、KL 开、`global_std`、group≥16、
   lr=1e-4），固定 prompt 集跑短 GRPO，BLOCK test 判读 reward >2σ 单调抬升（不把噪声当 learning，
   见 `project_first_trustworthy_curve`）。
-- **测试**：照 `tests/models/diffusion/` 加家族注册 + `from_spec/encode_prompt/forward_step/decode_latents`
+- **测试**：照 `tests/models/diffusion/` 加家族注册 + `from_build/encode_prompt/forward_step/decode_latents`
   结构性用例（不断言配置字面值，见 `feedback_no_exact_config_tests`）。
 
 ## 5. 非目标

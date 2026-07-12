@@ -87,7 +87,7 @@ MR0 (probe) ✅done → MR1 (bump diffusers + load) → MR2 (cosmos3 family) →
 ### MR2 — `cosmos3` diffusion family（核心工作量）
 
 新建 `vrl/models/diffusion/cosmos/cosmos3/{model,runner,runtime}.py`，**包住 diffusers 的 `Cosmos3OmniDiffusersPipeline`**（像 predict2 包 `Cosmos2VideoToWorldPipeline`）：
-- `model.py`：`Cosmos3Model(DiffusionModelBase)` + `Cosmos3SamplingState`。`from_spec` 载 pipeline；`encode_prompt` 走 pipeline 的 tokenization 出 input_ids；`prepare_sampling` 建 **cond/uncond `packed_static`**（§1.2 的难点：把 pipeline `__call__` 内联的 pack 装配抽出来复用）；`forward_step` 每步 splice `vision_timesteps`+latents → `transformer(**pack)` → `preds_vision`(velocity)，返回 `{noise_pred, noise_pred_cond, noise_pred_uncond}`，CFG+logprob 交给 executor。
+- `model.py`：`Cosmos3Model(DiffusionModelBase)` + `Cosmos3SamplingState`。`from_build` 载 pipeline；`encode_prompt` 走 pipeline 的 tokenization 出 input_ids；`prepare_sampling` 建 **cond/uncond `packed_static`**（§1.2 的难点：把 pipeline `__call__` 内联的 pack 装配抽出来复用）；`forward_step` 每步 splice `vision_timesteps`+latents → `transformer(**pack)` → `preds_vision`(velocity)，返回 `{noise_pred, noise_pred_cond, noise_pred_uncond}`，CFG+logprob 交给 executor。
 - `register_rollout_family(family="cosmos3", diffusion 分支)`（`vrl/rollouts/families/registry.py`）+ `configs/model/diffusion/cosmos/cosmos3_nano.yaml`。
 - **复用**：`DiffusionModelBase`、executor SDE-logprob 循环（`vrl/generation/diffusion/executor.py`）、loader、gatherer、CFG caller。
 - **gate**：family executor 出一个非 RL T2V clip（与 MR1 pipeline 输出一致）。

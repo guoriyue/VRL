@@ -185,7 +185,7 @@ distributed:
 
     fsdp:
       mesh: ["dp_shard"]
-      mixed_precision: actor
+      precision_policy: actor
       reshard_after_forward: true
       activation_checkpointing: actor
       cpu_offload: false

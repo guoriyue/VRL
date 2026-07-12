@@ -513,8 +513,11 @@ _DTYPE_NAME_BY_INPUT = {
 }
 ```
 
-`resolve_torch_dtype` 内另有一张 canonical→`torch.dtype` 表（:45-49）：canonical 名字作共享源即不漂移；
-`dtype_to_config_string` 的 pass-through（未知原样返回）保持不变。
+`resolve_torch_dtype` also owns the canonical-name-to-`torch.dtype` direction,
+so both directions share one vocabulary. `dtype_to_wire_name` (named
+`dtype_to_config_string` when this audit was written) preserves the historical
+unknown-value pass-through behavior. Its output is a torch wire name such as
+`bfloat16` or `float16`, not a public precision token.
 
 ### B.3 Janus R1 prompts（model.py:62,65）— 改判 KEEP（撤销原 §4 P3 的 MOVE）
 
@@ -539,7 +542,7 @@ _DTYPE_NAME_BY_INPUT = {
 A.1 判 KEEP（默认值有出处）。改名 `_*_RUNTIME_LORA_DEFAULTS` **收益弱**——它们本就在 `runtime.py`，
 路径已带 "runtime"，再塞 `_RUNTIME_` 与路径重复。**更值得记的相邻发现**：两个 dict 内容**逐字节相同**
 （rank32 / alpha64 / q,v_proj / dropout0 / gaussian），却**解析路径不一致**——Janus 走共享 helper
-`_resolve_lora_block(spec, defaults)`（:162），NextStep 走内联 `dict(defaults)+update`（:155-156）。
+`_resolve_lora_block(build, defaults)`（:162），NextStep 走内联 `dict(defaults)+update`（:155-156）。
 统一两边 lora 解析路径是**单独 follow-up**，不混进本 naming PR。
 
 ### B.7 落地与非目标

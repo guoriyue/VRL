@@ -238,3 +238,4 @@ recipe lives under `vrl/config/presets/experiment/` — browse it to see what ru
 
 - [`docs/NORTH_STAR.md`](docs/NORTH_STAR.md) — positioning, moat, and roadmap (why visual-rl, not slime/verl).
 - [`docs/ADDING_A_MODEL_FAMILY.md`](docs/ADDING_A_MODEL_FAMILY.md) — add a model module, registry descriptor, presets, and contract tests without forking the trainer.
+- [`docs/PRECISION.md`](docs/PRECISION.md) — base dtypes, selective FP8 quantization, protected diffusion math, and frozen rollout components.

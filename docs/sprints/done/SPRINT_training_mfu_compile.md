@@ -26,7 +26,7 @@ batch 2 no-ckpt:  65% / 26.8GB → 79% / 20.1GB   +14pp MFU, -25% 显存, 1.21x
 
 ## 1. 证据:flag 同时覆盖 rollout 和 replay
 
-每个家族有两个 runtime builder,**gate 在同一个 `spec.torch_compile.enable`**:
+每个家族有两个 runtime builder,**gate 在同一个 `build.torch_compile.enable`**:
 
 ```text
 vrl/models/diffusion/cosmos/predict2_5/runtime.py
@@ -64,7 +64,12 @@ wan/anima/predict2 同构。所以 `model.torch_compile.enable=true` 一次开�
    - **eager + selective（SAC）**：SD3.5 数据 @batch4 恢复 full 的 ~2/3 recompute 税、no-ckpt OOM 的 batch 也能上（[[SPRINT_training_mfu_selective_checkpointing]]）。
    哪边赢取决于该 recipe 摘掉 ckpt 后 batch 能到多少——**必须 per-recipe 用 `backward_mfu_probe` 两条腿实测**，不要用 no-ckpt 的 1.2x 承诺 ckpt-locked recipe。注意一个待对齐的矛盾：probe `--compile` 仍会测 compiled×selective（探索 AOTAutograd 能否 compose），而守卫按"已测坏"直接禁——若未来 probe 证明 compose 可行，先解守卫再谈开关。
 3. **LoRA / mode**：mode 必须 `default`;`reduce-overhead`/CUDA-graph 撞 PEFT LoRA + grad-ckpt([[project_torch_compile_wan]])。
-4. **fp8 rollout recipe（新,2026-07-02）**：开 compile 的 recipe 若同时配 `precision.rollout=fp8`，recipe 只能 rowwise——`blockwise` 与 compile 硬互斥（graph-break 10x 减速，loader 层 raise，见 [[SPRINT_rollout_optimization_layer]] §3.2）。现役 fp8 配置全是默认 rowwise，无实际冲突。
+4. **FP8 rollout recipe (added 2026-07-02)**: when compile is enabled with
+   `precision.rollout.quantization.format=fp8`,
+   `precision.rollout.quantization.recipe` must be `rowwise`. `blockwise` is
+   hard-incompatible with compile because it graph-breaks into a 10x slowdown;
+   the loader raises before execution (see [[SPRINT_rollout_optimization_layer]]
+   §3.2). All live FP8 presets currently use the rowwise default.
 
 ## 4. 落地清单（最终状态 2026-07-02）
 
