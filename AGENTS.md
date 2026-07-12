@@ -51,6 +51,15 @@
 - NEVER add time estimates to plans (e.g. "Phase 1 (3 days)", "Phase 2 (1 week)") — just write the code
 - NEVER read secret files (.env, private keys), print secret values, or hardcode secrets in code
 
+### Formatting and Diff Discipline
+
+- Ruff is the single source of truth for Python linting, import sorting, and formatting. Do not manually apply a competing style or perform aesthetic reformatting that Ruff does not require.
+- Run Ruff only on the Python files touched by the task: first `ruff check --fix <files>`, then `ruff format <files>`, followed by `ruff check <files>` and `ruff format --check <files>` for verification.
+- Never run a repository-wide formatting or auto-fix command (for example, `ruff format .` or `ruff check --fix .`) unless the user explicitly requests a formatting sweep.
+- Keep functional diffs focused. Do not reflow nearby comments/docstrings, reorder unrelated code, normalize quotes, wrap lines, or change whitespace outside the task merely because the file is open.
+- Inspect the final diff after Ruff runs. If formatting a touched file creates broad unrelated churn, remove that churn and leave pre-existing style debt for a separate formatting task; an existing violation is not authorization to rewrite unrelated code.
+- Do not mix a formatting-only cleanup with a functional change. Consistency with the repository formatter is more valuable than personal formatting preferences, and a reviewable minimal diff is more valuable than opportunistic cleanup.
+
 ### Architecture Hygiene
 
 - ALWAYS question module-level ALL_CAPS hardcoded data and thin separated functions/files when reviewing or editing code.
