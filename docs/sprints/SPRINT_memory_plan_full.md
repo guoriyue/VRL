@@ -46,8 +46,8 @@ pipeline 全部声明为 `generation_only_modules`（absent）。
 
 ```text
 预算   没有代码声明"这张卡/这个相位可用多少字节"
-       （ResolvedDistributedResources 无任何字节字段，只有 rollout_gpu_memory_fraction
-        这种 GPU 占比、非字节预算；resolve_distributed_resources docstring 明示
+       （ResolvedDistributedResources 无字节预算；旧 rollout_gpu_memory_fraction 已随
+        bounded-resident shared lifecycle 删除。resolve_distributed_resources docstring 明示
         "intentionally does static ownership checks only; memory pressure is still a
         runtime concern"，vrl/ray/resources.py:166-171）
 核算   peak_memory_mb 遥测只记录，从不裁决
@@ -101,9 +101,8 @@ chunk 比对、超预算 `logger.warning`，再经 collector → `RolloutStats` 
 
 即：**warn-only L1 与"直接让它崩"等价**——告警是死的，结构化 `over_budget`/`memory_budget_mb`
 也只有它自己的测试读、生产链路（曾接到 `metrics.csv`）也只是把恒 false 的布尔搬运一遍。
-0.45 这个 cap 本身还是手写的人肉数（`distributed.resources.rollout.memory_fraction`，配
-`gpu_pool=trainer` 时生效），即 L1 要替代的
-东西。要让告警有意义必须用 **soft 阈值**（如 `0.85 × cap`，在崩前留提前量），但那又引入一个
+0.45 这个 cap 本身还是手写的人肉数；该 public role cap 后续已随 bounded-resident shared
+lifecycle 删除。要让告警有意义必须用 **soft 阈值**（如 `0.85 × cap`，在崩前留提前量），但那又引入一个
 拍脑袋系数；判断收益不抵复杂度，整套撤销。
 
 **若将来重做**：(1) 预算线必须 **低于** allocator cap（soft margin），否则告警恒不触发；

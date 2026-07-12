@@ -69,6 +69,12 @@ per_sample_loss = torch.where(keep, -advantages * ratio, 0)   # NO ratio clip
 
 ## 3. 落地
 
+> 2026-07-11 配置面纠偏：`reward/geneval` 仍保留为 scorer adapter，但默认
+> `import_path: ""` 没有可执行 evaluator。因此不再发布
+> `experiment/diffusion/sd3_5/online_grpo_geneval` 这类必然在运行时失败的 active
+> experiment。下面的 Flow-DPPO 配方在真实 GenEval scorer 接入并通过 reward memory
+> preflight 前只是一份设计草案；今天可运行的验证继续使用 PickScore/OCR fallback。
+
 新建 `configs/experiment/diffusion/flux/online_flow_dppo_geneval_validation.yaml`：
 
 ```yaml

@@ -583,14 +583,14 @@ pytest tests/rollouts/collector/test_runtime.py
 
 | 模式 | reward ∥ 其他 group 生成？ | reward ∥ 训练？ | 机制 / 证据 |
 |---|---|---|---|
-| **continuous**（多卡 async 路径，默认 `require_separate_gpus=True`） | **是** | **是** | producer 维持 `max_inflight_groups` 个并发 `_collect_group`（各跑 generate+score 一个 group）；non-draining weight sync 让 in-flight collect 与训练并发。`continuous/producer.py:164-228`、`continuous/schedule.py:130-145` |
+| **continuous**（只允许 trainer/rollout 分卡的 async 路径） | **是** | **是** | pre-launch topology validator 拒绝共卡与 reward mid-iteration handoff；独立 owner 维持 `max_inflight_groups` 个并发 `_collect_group`（各跑 generate+score 一个 group），non-draining weight sync 让 in-flight collect 与训练并发。 |
 | **strict_on_policy**（默认、严格 on-policy、cosmos 用） + 共享单卡 | 否 | 否 | `release_rollout_before_reward=True` → 卸载 rollout 才能打分；generate-all→release→score-all→train 全串行。P1 在此 `can_stream_scoring=False`，no-op（保留批量是对的） |
 | **strict_on_policy** + reward 独立卡 + **P1** | **是（仅 call 内 group 间）** | 否 | P1 让 `collect_prompt_batches` 里 score(group N) 作为后台 task ∥ generate(group N+1)；但 collect 之后仍硬 train barrier |
 
 读法：
 - **想要 reward 和「生成 + 训练」都重叠，continuous 模式早就给了**（代价是 staleness，由 `StalenessPolicy` 管）。
-- continuous 用 `max_stale=0` + 队列=一个 iteration 时**行为等价于 strict_on_policy**（`schedule.py:9-12` docstring），
-  且仍走 producer 的 in-flight 重叠——所以"既要严格 on-policy 又要重叠"这个诉求，continuous(max_stale=0) 也能接。
+- production continuous 要求 `max_stale_policy_versions>=1`；零 staleness 必须使用
+  `strict_on_policy`，不能再用 continuous 的后台队列伪装成 async。
 - **P1 唯一独占的 niche**：strict_on_policy + reward 独立卡 + 多 group + 坚持零 staleness（不切 continuous）——
   此时 P1 给 call 内 score∥next-gen 重叠（不含训练）。窄、未实测、且和 continuous 能做的高度重叠。
 - 净判断：**P1 没有引入 reward async（早有）；它只是给 strict 默认路径补一条 call 内的窄重叠。** 是否值得保留，

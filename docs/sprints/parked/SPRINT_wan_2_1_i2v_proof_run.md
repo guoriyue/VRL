@@ -4,6 +4,12 @@
 单卡 GRPO 被 16.4B transformer 的驻留需求结构性阻塞。触发条件：至少两卡且 replay
 分片路径可用，完成剩余 multi-GPU train step。
 
+> **2026-07-11 reward lease 更新：**active 母配方不再声称两个 7B reward 能在同一
+> 进程共享一张 GPU。Kling 是唯一共享 GPU/CuMem owner，VideoCon-Physics 显式在 CPU
+> 执行；因此旧文中的“第三张 reward GPU”是历史拓扑，不再是当前 blocker。真正未解的
+> 仍是 16.4B trainer replay 分片与多卡真机 step。单 Kling smoke 配方继续保留，因为它
+> 避免 CPU VideoCon 的吞吐成本，适合契约验证。
+
 > **2026-07-02 真机实测结论（单卡 RTX 5090 32GB）：**
 > 1. **smoke run 实跑 OOM，且是结构性的**：`online_grpo_i2v_smoke_single_gpu` 在 driver 侧
 >    `build_wan_2_1_replay_runtime_bundle` 的 LoRA attach 阶段 OOM（allocator 已占 30.65GiB /

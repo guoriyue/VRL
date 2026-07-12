@@ -39,7 +39,8 @@
   - 排除与 `train_192.txt` 精确重复项；
   - 64/64 与训练集不重叠；开跑后不得替换。
 - 目标：`aesthetic: 1.0`。
-- 只观测不优化：`pickscore: 0.0`。`MultiReward` 仍计算并记录 PickScore，但它不进入 advantage。
+- 只观测不优化：`pickscore: 0.0`。`MultiReward` 仍在 CPU 上计算并随 rollout batch 记录
+  PickScore，但它不进入 advantage，也不成为第二个 shared-GPU CuMem owner。
 - update：300；`ppo_epochs: 4`；LoRA r16/alpha32；10-step denoise；CFG 4.5。
 - fixed eval：baseline `epoch=-1`，之后每 25 update 一次，64 prompts × 2 samples，seed `20260710`。
 - 输出：`outputs/sana_aesthetic_trustworthy_curve/`；checkpoint 每 25 update。

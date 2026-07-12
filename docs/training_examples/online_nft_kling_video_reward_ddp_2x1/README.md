@@ -1,5 +1,11 @@
 # Cosmos Predict2.5 + Kling DiffusionNFT — symmetric colocated DDP 2x1
 
+> **Capability-gated:** this historical 2x1 runbook is not currently runnable.
+> Shared-GPU phase leasing now requires collective-safe DDP state parking, which
+> `DDPStrategy` rejects before model/Ray launch until reducer-bucket, optimizer,
+> EMA/scaler, and live-gradient parking is implemented. Current DDP runs need a
+> rollout GPU pool disjoint from the trainer.
+
 Runbook for `experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward_ddp_2x1`,
 run unattended across **two servers, 1 GPU each**, with the resume-capable launcher
 [`ddp_2x1_launch.sh`](./ddp_2x1_launch.sh).

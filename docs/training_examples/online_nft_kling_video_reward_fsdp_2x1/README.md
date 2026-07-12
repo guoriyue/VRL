@@ -1,5 +1,10 @@
 # FSDP2 2×1 cross-node run (Cosmos Predict2.5 + Kling DiffusionNFT)
 
+> **Capability-gated:** this historical 2x1 runbook is not currently runnable.
+> Shared-GPU phase leasing now requires collective-safe DTensor, optimizer,
+> EMA/scaler, and live-gradient parking. `FSDPStrategy` rejects this topology
+> before model/Ray launch; current FSDP runs need disjoint rollout GPUs.
+
 Symmetric colocated **FSDP2** variant of the DDP 2×1 example. The intended topology has
 two servers, one GPU each, and one torchrun rank per server, with one node-local Ray
 cluster for rollout plus an in-process Kling reward — but the trainer **shards**

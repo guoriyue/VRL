@@ -77,6 +77,10 @@ SD3.5 不踩是因为它默认不 compile trainer。`tests/trainers/test_weight_
 
 ## 4. 记录在案的 wiring gap（未修，属设计工作）
 
+> 2026-07-11 对账：第 1 项是旧 Ray 双 actor 架构的历史结果。当前 in-process reward
+> contract 只允许一个共享 GPU/CuMem owner；active motion-physics 配方保留 Kling 在 GPU，
+> 并把 VideoCon-Physics 显式放到 CPU，静态 reward parking preflight 已覆盖该边界。
+
 ```text
 1. 双 reward 单卡：motion_physics 的第二个 RewardModelWorker 分不到 GPU
    （资源计划只有 1 个 reward bundle，两个 ray-runtime reward 各起一个 actor）。

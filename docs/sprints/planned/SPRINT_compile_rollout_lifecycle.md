@@ -1,6 +1,14 @@
 # SPRINT: torch.compile × rollout worker 生命周期（Cosmos Predict2.5 RL）（planned）
 
-状态：proposed / planned（2026-06-17 按当前代码全量核实重写）。本 sprint 是**测量 +
+状态：superseded（2026-07-11，由
+`docs/sprints/planned/SPRINT_miles_phase_lease_and_one_continuous.md` 取代）。
+
+> 本文保留 2026-06-17 的 compile 测量结果作为历史证据，但其 colocated-persistent 产品前提已
+> 删除。当前 shared trainer/rollout GPU 只允许 on-demand phase lease；role
+> `memory_fraction` 与 resident shared lifecycle 不再是可实施方案。Split-GPU resident compile
+> 结论仍有效。
+
+原 sprint 是**测量 +
 生命周期正确性**,不动调度架构。聚焦 **Cosmos Predict2.5 + Kling RL**(不是旧的 Predict2)。
 
 > 方法:逐跳核实了 `vrl/ray/resources.py`、`vrl/generation/ray/{config,launcher,runtime}.py`、

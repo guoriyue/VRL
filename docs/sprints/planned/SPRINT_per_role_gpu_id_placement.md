@@ -1,6 +1,13 @@
 # SPRINT：按 GPU 细化角色重叠与生命周期
 
-状态：**planned / proposal**。本文描述尚未实现的增量；当前 main 只有角色级
+状态：**superseded**（2026-07-11，由
+`docs/sprints/planned/SPRINT_miles_phase_lease_and_one_continuous.md` 取代）。
+
+> 本提案依赖 role `memory_fraction` 与同卡 resident lease；两者已经从产品面删除，因此 T2、
+> T3 和以它们为前提的 T4 不再实施。未来若需要逐卡 engine budget，必须从具体 backend 的真实
+> consumer 重新设计，不能恢复通用 role cap。以下正文只保留为被取代的设计记录。
+
+本文描述尚未实现的增量；当时 main 只有角色级
 重叠、标量显存上限和角色级 lease。本轮文档纠正此前误写的“已实现 T1–T4”。
 
 ## 0. 当前事实基线

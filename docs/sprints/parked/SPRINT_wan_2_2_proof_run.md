@@ -5,6 +5,11 @@
 加载 / boundary 路由 / replay `transformer_2` / 默认 low-noise 训练 + 23 项 CPU 单测全过）。本 sprint =
 那个实现 sprint 唯一的剩余项：**把代码在真机上跑通一次 Wan 2.2 A14B GRPO，验证 replay 契约与 reward 信号**。
 
+> **2026-07-11 reward lease 更新：**母配方现在让 Kling 独占共享 GPU reward lease，
+> VideoCon-Physics 显式走 CPU；旧尝试记录中的“三个 GPU 角色”已不再是 active 配方的
+> 资源前提。任务仍 parked 的原因是 2×14B expert 的显存/offload 与真实 replay，而不是
+> reward placement。
+
 > 拆分理由：实现是"代码 + CPU 单测"（已 done）；proof run 是"真机 + 多卡 + 端到端契约验证"，性质不同、
 > 卡在不同资源（GPU），故独立成 sprint。决策依据见 `reading/SPRINT_moe_support_decision.md`。
 

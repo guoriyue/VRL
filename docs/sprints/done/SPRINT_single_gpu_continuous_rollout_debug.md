@@ -2,6 +2,13 @@
 
 状态：已完成 — 单卡 continuous rollout debug harness 全部落地于 061cfb2（main）：新增 config online_grpo_ocr_single_gpu_async_debug.yaml + persistent_colocated_workers flag（vrl/generation/ray/config.py、vrl/ray/resources.py 完整校验），5 项验证目标均有通过的测试覆盖。
 
+> **Superseded（2026-07-11）**：本文件保留当时的 debug 结果作为历史记录，但它定义的
+> same-GPU resident continuous 产品路径已经由
+> `docs/sprints/planned/SPRINT_miles_phase_lease_and_one_continuous.md` 删除。当前 shared
+> trainer/rollout GPU 只允许 `strict_on_policy` phase lease；production `continuous` 必须使用
+> disjoint GPUs。本文中的 preset、`persistent_colocated_workers`、role `memory_fraction` 和
+> `require_separate_gpus` 均已删除，下面的命令与配置不再是可运行接口。
+
 ## 结论
 
 要做一个能在 **1 张 GPU** 上验证 rollout/training 异步调度的例子，不能复用

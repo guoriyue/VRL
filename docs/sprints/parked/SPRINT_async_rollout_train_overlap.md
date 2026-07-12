@@ -4,6 +4,13 @@
 这个问题的设计裁决 + continuous-for-cosmos 接线排查。结论先行:**async overlap 对我们当前的
 DiffusionNFT 没有"理论安全"版本,只有"实测不伤就用"的经验路;且任何真 overlap 都需要 ≥2 卡。**
 
+> **边界更新（2026-07-11）**：
+> `docs/sprints/planned/SPRINT_miles_phase_lease_and_one_continuous.md` 已把这里提到的单卡
+> resident continuous harness 连同 `require_separate_gpus`、`persistent_colocated_workers` 和
+> role `memory_fraction` 一起删除。当前单卡 shared topology 只能走 strict phase lease；唯一
+> production continuous 是 disjoint-GPU owner loop，且 typed staleness window 必须 `>=1`。
+> 下文关于旧 harness/escape hatch 的描述只保留为历史，不再表示当前代码能力。
+
 > **复核更新（2026-06-20）**：本 doc 的 §1 核心裁决「DiffusionNFT 无理论安全 async」**现已被代码强制**——
 > `vrl/algorithms/diffusion_nft.py:51 tolerates_off_policy_staleness = False` + `vrl/rollouts/orchestration/schedule.py:124`
 > 的 `max_stale>0 且不容忍 → ValueError` fail-fast。相关基础设施也已落地并归档 `done/`：非-drain 权重同步

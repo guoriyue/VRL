@@ -8,10 +8,11 @@
 Runbook for `experiment/diffusion/cosmos_predict2_5/online_nft_kling_video_reward_cross_node`.
 
 > Status as of 2026-07-11: reward placement follows the current in-process
-> runtime. Kling scores on the driver and uses
-> `reward.kwargs.<name>.sleep_offload=true` to park on CPU between scores; only
-> rollout is scheduled on the worker. The trainer+Kling memory fit on node A is
-> still a deployment prerequisite for this two-host layout.
+> runtime. Kling scores on the driver; because reward has no separate GPU
+> reservation, the resolved topology automatically gives it a CuMem phase lease
+> on the trainer GPU and requires a release proof after every score. Only rollout
+> is scheduled on the worker. The trainer+Kling memory fit on node A is still a
+> deployment prerequisite for this two-host layout.
 
 Runs one RL job across **two hosts over a Ray cluster**: the trainer on one
 server and generation on the other. This is the cross-node
