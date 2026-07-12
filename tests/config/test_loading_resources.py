@@ -18,6 +18,9 @@ def test_config_package_defers_typed_builder_import() -> None:
             "-c",
             (
                 "import sys; import vrl.config; "
+                "assert all(callable(getattr(vrl.config, name)) for name in "
+                "('build_configs', 'bundled_config_resource', "
+                "'list_bundled_configs', 'load_config')); "
                 "assert 'vrl.config.builders' not in sys.modules"
             ),
         ],
@@ -69,6 +72,20 @@ def test_explicit_root_composes_external_config_tree(tmp_path: Path) -> None:
 
     assert cfg.value.inherited is True
     assert cfg.value.local is True
+
+
+def test_dict_default_entry_accepts_group_override(tmp_path: Path) -> None:
+    group = tmp_path / "model"
+    group.mkdir()
+    (group / "small.yaml").write_text("model:\n  size: small\n")
+    (group / "large.yaml").write_text("model:\n  size: large\n")
+    (tmp_path / "experiment.yaml").write_text(
+        "defaults:\n  - model: small\n  - _self_\n",
+    )
+
+    cfg = load_config("experiment", root=tmp_path, overrides=["/model=large"])
+
+    assert cfg.model.size == "large"
 
 
 def test_bundled_logical_name_cannot_escape_resource_root() -> None:

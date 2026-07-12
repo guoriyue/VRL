@@ -38,16 +38,6 @@ logger = init_logger(__name__)
 OPEN = object()
 
 
-def _field_names(source: Any) -> frozenset[str]:
-    """Derive a known-key set from a pydantic model, dataclass, or iterable."""
-
-    if hasattr(source, "model_fields"):  # pydantic model class
-        return frozenset(source.model_fields)
-    if dataclasses.is_dataclass(source):
-        return frozenset(f.name for f in dataclasses.fields(source))
-    return frozenset(source)
-
-
 def _block_from(candidate: Any) -> Any:
     """Map an annotation/metadata object to a child block, or None."""
 
@@ -112,7 +102,14 @@ class ConfigBlock:
         select: Callable[[Mapping[str, Any]], Any] | None = None,
         variants: tuple[Any, ...] = (),
     ) -> None:
-        self.known = _field_names(source)
+        # Known keys derive from the type that consumes the block (pydantic
+        # model or dataclass); an iterable is the hand-list escape hatch.
+        if hasattr(source, "model_fields"):
+            self.known = frozenset(source.model_fields)
+        elif dataclasses.is_dataclass(source):
+            self.known = frozenset(f.name for f in dataclasses.fields(source))
+        else:
+            self.known = frozenset(source)
         self.children = {**_model_children(source), **(children or {})}
         self.open_keys = open_keys
         self.select = select

@@ -540,19 +540,15 @@ def _validate_model_config_for_family(model: ModelConfig | None) -> None:
     try:
         cls.model_validate(payload)
     except ValidationError as exc:
-        raise ValueError(_prefix_model_error(_extract_error_message(exc))) from exc
-
-
-def _prefix_model_error(message: str) -> str:
-    if message.startswith("unknown "):
-        rest = message[len("unknown ") :]
-        if rest.startswith("model."):
-            return message
-        return f"unknown model.{rest}"
-    if message.startswith("config missing required field: "):
-        rest = message[len("config missing required field: ") :]
-        return f"config missing required field: model.{rest}"
-    return message
+        # Re-anchor the error under the model. section (the family class
+        # validates a bare payload, so its paths lack the prefix).
+        message = _extract_error_message(exc)
+        if message.startswith("unknown ") and not message.startswith("unknown model."):
+            message = f"unknown model.{message[len('unknown ') :]}"
+        elif message.startswith("config missing required field: "):
+            rest = message[len("config missing required field: ") :]
+            message = f"config missing required field: model.{rest}"
+        raise ValueError(message) from exc
 
 
 # ── Section key registries (values validated by their own layers) ────────────

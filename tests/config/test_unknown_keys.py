@@ -2,11 +2,22 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 
 from omegaconf import OmegaConf
 
 from vrl.config.unknown_keys import find_unknown_keys, warn_unknown_keys
+from vrl.utils.profiling import TorchProfilerConfig
+
+
+def test_config_block_known_keys_derive_from_dataclass_fields() -> None:
+    """The mechanism must not maintain a second dataclass field allow-list."""
+    from vrl.config.unknown_keys import ConfigBlock
+
+    assert ConfigBlock(TorchProfilerConfig).known == frozenset(
+        field.name for field in dataclasses.fields(TorchProfilerConfig)
+    )
 
 
 def test_unknown_keys_are_found_at_every_depth() -> None:

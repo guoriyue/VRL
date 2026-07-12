@@ -1,9 +1,9 @@
 """Validation and required-access helpers for merged training configs.
 
-Public API is preserved unchanged. Whitelist sets (_ALGORITHM_KINDS, _DATA_LOADERS,
-_PROMPT_SAMPLERS, _REWARD_REQUIRED_KWARGS, _REWARD_KWARGS_VALIDATORS) have moved to
-schema.py. Structural validation now flows through parse_config() -> RootConfig.
-File-existence checks remain here because they must not enter the Pydantic schema (D4).
+Structural validation flows through parse_config() -> RootConfig (schema.py).
+This module owns the dotted-path access helpers (require / optional_none /
+path_exists) and the production gates whose file-existence and manifest checks
+must not enter the Pydantic schema.
 """
 
 from __future__ import annotations
@@ -96,9 +96,7 @@ def validate_reward_config(cfg: DictConfig) -> None:
     from vrl.config.unknown_keys import warn_unknown_keys
 
     warn_unknown_keys(cfg.reward, section="reward")
-    reward_raw = (
-        OmegaConf.to_container(cfg.reward, resolve=True, throw_on_missing=True) or {}
-    )
+    reward_raw = OmegaConf.to_container(cfg.reward, resolve=True, throw_on_missing=True) or {}
     try:
         RewardConfig.model_validate(reward_raw)
     except ValidationError as exc:
@@ -138,13 +136,20 @@ def validate_production_reward_contract(cfg: DictConfig) -> None:
         raise ValueError("production.kling_video_reward requires artifact_format=mp4")
     if not str(vr_kwargs.get("reward_name", "")).strip():
         raise ValueError(
-            "production.kling_video_reward requires "
-            "reward.kwargs.kling_video_reward.reward_name"
+            "production.kling_video_reward requires reward.kwargs.kling_video_reward.reward_name"
         )
     worker_config = vr_kwargs.get("worker_config") or {}
     forbidden = sorted(
-        k for k in ("backend", "backend_import_path", "backend_code_dir",
-                    "import_path", "model_subdir", "score_key_map", "model_factory")
+        k
+        for k in (
+            "backend",
+            "backend_import_path",
+            "backend_code_dir",
+            "import_path",
+            "model_subdir",
+            "score_key_map",
+            "model_factory",
+        )
         if k in worker_config
     )
     if forbidden:

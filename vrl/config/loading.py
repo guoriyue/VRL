@@ -67,58 +67,29 @@ def list_bundled_configs(prefix: str = "") -> tuple[str, ...]:
     return tuple(names)
 
 
-def _resolve_default(entry: str | dict, root: ConfigSource) -> ConfigSource:
-    """Resolve a ``defaults:`` entry to a YAML path under ``root``."""
-
-    if isinstance(entry, dict):
-        if len(entry) != 1:
-            raise ValueError(f"defaults dict must have exactly one key: {entry}")
-        key, value = next(iter(entry.items()))
-        entry = f"{key}/{value}"
-    return _join_config(root, _normalize_config_name(entry))
-
-
-def _default_group(entry: str | dict) -> str | None:
-    if isinstance(entry, dict):
-        if len(entry) != 1:
-            raise ValueError(f"defaults dict must have exactly one key: {entry}")
-        key = str(next(iter(entry.keys()))).strip().lstrip("/")
-        return key or None
-
-    text = str(entry).strip().lstrip("/")
-    if not text or text == _SELF_:
-        return None
-    if text.endswith((".yaml", ".yml")):
-        text = text.rsplit(".", 1)[0]
-    parts = text.split("/")
-    if len(parts) < 2:
-        return None
-    return "/".join(parts[:-1])
-
-
 def _apply_default_override(entry: str | dict, default_overrides: dict[str, str]) -> str | dict:
-    group = _default_group(entry)
+    """Swap a defaults entry's option when a ``/group=option`` override names its group."""
+
+    if isinstance(entry, dict):
+        if len(entry) != 1:
+            raise ValueError(f"defaults dict must have exactly one key: {entry}")
+        group = str(next(iter(entry.keys()))).strip().lstrip("/") or None
+    else:
+        text = str(entry).strip().lstrip("/")
+        if not text or text == _SELF_:
+            group = None
+        else:
+            if text.endswith((".yaml", ".yml")):
+                text = text.rsplit(".", 1)[0]
+            parts = text.split("/")
+            group = "/".join(parts[:-1]) if len(parts) >= 2 else None
+
     if group is None or group not in default_overrides:
         return entry
     option = default_overrides[group].strip().lstrip("/")
     if not option:
         raise ValueError(f"defaults override for {group!r} cannot be empty")
     return f"{group}/{option}"
-
-
-def _split_defaults_overrides(overrides: list[str] | None) -> tuple[dict[str, str], list[str]]:
-    default_overrides: dict[str, str] = {}
-    value_overrides: list[str] = []
-    for override in overrides or []:
-        if isinstance(override, str) and override.startswith("/") and "=" in override:
-            key, value = override.split("=", 1)
-            group = key.strip().lstrip("/")
-            if not group:
-                raise ValueError(f"invalid defaults override: {override!r}")
-            default_overrides[group] = value
-            continue
-        value_overrides.append(override)
-    return default_overrides, value_overrides
 
 
 def _load_one(
@@ -156,7 +127,12 @@ def _load_one(
                 self_seen = True
                 continue
             entry_val = _apply_default_override(entry_val, default_overrides)
-            sub_path = _resolve_default(entry_val, root)
+            if isinstance(entry_val, dict):
+                if len(entry_val) != 1:
+                    raise ValueError(f"defaults dict must have exactly one key: {entry_val}")
+                key, value = next(iter(entry_val.items()))
+                entry_val = f"{key}/{value}"
+            sub_path = _join_config(root, _normalize_config_name(entry_val))
             merged = OmegaConf.merge(
                 merged,
                 _load_one(sub_path, root, _seen, default_overrides),
@@ -186,7 +162,20 @@ def load_config(
     else:
         source = _join_config(config_root, _normalize_config_name(path))
 
-    default_overrides, value_overrides = _split_defaults_overrides(overrides)
+    # ``/group=option`` overrides swap a defaults entry; everything else is a
+    # dotlist value override merged after composition.
+    default_overrides: dict[str, str] = {}
+    value_overrides: list[str] = []
+    for override in overrides or []:
+        if isinstance(override, str) and override.startswith("/") and "=" in override:
+            key, value = override.split("=", 1)
+            group = key.strip().lstrip("/")
+            if not group:
+                raise ValueError(f"invalid defaults override: {override!r}")
+            default_overrides[group] = value
+        else:
+            value_overrides.append(override)
+
     cfg = _load_one(source, config_root, default_overrides=default_overrides)
 
     if value_overrides:

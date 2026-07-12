@@ -7,7 +7,6 @@ asserts the trace/summary/manifest trust triad. The CUDA path is exercised by
 
 from __future__ import annotations
 
-import dataclasses
 import json
 from pathlib import Path
 
@@ -87,16 +86,6 @@ def test_safe_label_stable(raw: str, expected: str) -> None:
 def test_safe_worker_name_includes_step() -> None:
     name = _safe_worker_name("trainer", 3)
     assert name.endswith("_trainer_step3")
-
-
-def test_config_known_keys_derive_from_dataclass_fields() -> None:
-    # The config-validation layer derives allowed keys from the dataclass; there
-    # must be no hand-maintained duplicate allow-list that would rot on a new field.
-    from vrl.config.unknown_keys import _field_names
-
-    assert _field_names(TorchProfilerConfig) == frozenset(
-        f.name for f in dataclasses.fields(TorchProfilerConfig)
-    )
 
 
 def test_config_low_overhead_defaults() -> None:

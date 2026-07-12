@@ -21,10 +21,13 @@ from vrl.config.unknown_keys import OPEN, ConfigBlock, _root_block
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def config_reads_in_code(root: Path | None = None) -> tuple[set[str], set[str]]:
-    """Extract (bare_keys, dotted_paths) read via the config-access helpers."""
+def config_reads_in_code(root: Path | None = None) -> set[str]:
+    """Extract the dotted config paths read via the config-access helpers.
 
-    bare: set[str] = set()
+    Bare (dot-free) keys are ignored: they are relative reads inside an
+    already-scoped sub-config and cannot be checked against the root tree.
+    """
+
     dotted: set[str] = set()
     for f in (root or REPO_ROOT / "vrl").rglob("*.py"):
         tree = ast.parse(f.read_text())
@@ -37,12 +40,15 @@ def config_reads_in_code(root: Path | None = None) -> tuple[set[str], set[str]]:
             if not (isinstance(arg, ast.Constant) and isinstance(arg.value, str)):
                 continue
             value = arg.value
-            if name == "cfg_get" or (
-                name in ("require", "select")
-                and value.replace(".", "").replace("_", "").isalnum()
+            if "." in value and (
+                name == "cfg_get"
+                or (
+                    name in ("require", "select")
+                    and value.replace(".", "").replace("_", "").isalnum()
+                )
             ):
-                (dotted if "." in value else bare).add(value)
-    return bare, dotted
+                dotted.add(value)
+    return dotted
 
 
 def _path_is_known(block: object, segments: tuple[str, ...]) -> bool:
@@ -65,7 +71,7 @@ def _path_is_known(block: object, segments: tuple[str, ...]) -> bool:
 def unregistered_code_paths() -> list[str]:
     """Code sweep: dotted config paths read by code but absent from the tree."""
 
-    _, dotted = config_reads_in_code()
+    dotted = config_reads_in_code()
     root = _root_block()
     return sorted(p for p in dotted if not _path_is_known(root, tuple(p.split("."))))
 

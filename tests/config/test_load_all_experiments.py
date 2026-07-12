@@ -18,7 +18,7 @@ from vrl.algorithms.dpo import DiffusionDPOConfig
 from vrl.algorithms.grpo.continuous import GRPOConfig
 from vrl.algorithms.grpo.multisegment import MultiSegmentTokenGRPOConfig
 from vrl.algorithms.grpo.token import TokenGRPOConfig
-from vrl.config.builders import build_algorithm_config, build_configs
+from vrl.config.builders import build_algorithm_config, build_configs, build_reward_config
 from vrl.config.loading import (
     bundled_config_resource,
     list_bundled_configs,
@@ -787,6 +787,15 @@ def test_negative_reward_component_weights_are_rejected() -> None:
 
     with pytest.raises(ValueError, match=r"reward\.components\.nsfw_safety must be >= 0"):
         validate_reward_config(cfg)
+
+
+def test_public_reward_builder_validates_its_input() -> None:
+    cfg = OmegaConf.create(
+        {"reward": {"components": {"ocr": 1.0}, "kwargs": {"ocr": ["invalid"]}}},
+    )
+
+    with pytest.raises(ValueError, match=r"reward\.kwargs\.ocr must be a mapping"):
+        build_reward_config(cfg)
 
 
 def test_required_training_fields_fail_fast() -> None:

@@ -53,65 +53,10 @@ def build_precision_split_safety_configs() -> tuple[
     )
 
 
-def _apply_rollout_precision_defaults(
-    cfg: DictConfig,
-    precision: PrecisionPolicy,
-    payload: dict[str, Any],
-) -> None:
-    """Derive safe rollout/replay precision policy from the public precision intent.
-
-    Users should only have to say that rollout is lower precision or a different
-    backend. The correction mechanism is an implementation detail: on a split,
-    default to bypass old-logprob plus TIS/RS correction and a catastrophic-drift
-    guard. Explicit expert blocks are still respected.
-    """
-
-    if precision.stages_match:
-        return
-
-    correction, guard = build_precision_split_safety_configs()
-
-    if not path_exists(cfg, "trainer.precision_correction"):
-        payload["precision_correction"] = correction
-    if not path_exists(cfg, "trainer.precision_drift_guard"):
-        payload["precision_drift_guard"] = guard
-
-
 def _dataclass_field_names(cls: type[Any]) -> set[str]:
     if not is_dataclass(cls):
         raise TypeError(f"{cls!r} must be a dataclass type")
     return {field.name for field in fields(cls) if field.init}
-
-
-def _required_field_names(cls: type[Any]) -> set[str]:
-    """Fields without a default — required, torch signature semantics."""
-
-    return {
-        field.name
-        for field in fields(cls)
-        if field.init and field.default is MISSING and field.default_factory is MISSING
-    }
-
-
-def _section_payload(cfg: DictConfig, path: str) -> dict[str, Any]:
-    """Resolve a YAML section to a plain dict; absent section -> {}.
-
-    An explicitly null section (``actor.ema: null``) raises instead of
-    silently replacing the section with all-defaults — only true absence
-    means "use the dataclass defaults".
-    """
-
-    node = OmegaConf.select(cfg, path)
-    if node is None:
-        if path_exists(cfg, path):
-            raise ValueError(
-                f"config section {path} is null; delete the key or fill the section",
-            )
-        return {}
-    raw = OmegaConf.to_container(node, resolve=True, throw_on_missing=True)
-    if not isinstance(raw, dict):
-        raise ValueError(f"config section {path} must be a mapping")
-    return raw
 
 
 def _section_payload_and_missing(
@@ -121,19 +66,39 @@ def _section_payload_and_missing(
 ) -> tuple[dict[str, Any], list[str]]:
     """Select ``cls`` fields from the section; report missing required paths.
 
-    Unknown keys raise: for a typed section the dataclass is the complete
-    vocabulary, so a typo'd hyperparameter must refuse to start rather than
-    silently train with the default behind a lint warning.
+    An explicitly null section (``actor.ema: null``) raises instead of
+    silently replacing the section with all-defaults — only true absence
+    means "use the dataclass defaults". Unknown keys raise: for a typed
+    section the dataclass is the complete vocabulary, so a typo'd
+    hyperparameter must refuse to start rather than silently train with the
+    default behind a lint warning.
     """
 
-    raw = _section_payload(cfg, path)
+    node = OmegaConf.select(cfg, path)
+    if node is None:
+        if path_exists(cfg, path):
+            raise ValueError(
+                f"config section {path} is null; delete the key or fill the section",
+            )
+        raw: dict[str, Any] = {}
+    else:
+        raw = OmegaConf.to_container(node, resolve=True, throw_on_missing=True)
+        if not isinstance(raw, dict):
+            raise ValueError(f"config section {path} must be a mapping")
+
     allowed = _dataclass_field_names(cls)
     unknown = sorted(set(raw) - allowed)
     if unknown:
         keys = ", ".join(f"{path}.{key}" for key in unknown)
         raise ValueError(f"unknown {cls.__name__} key(s): {keys}")
     payload = {key: value for key, value in raw.items() if key in allowed}
-    missing = sorted(f"{path}.{name}" for name in _required_field_names(cls) - set(payload))
+    # Required = no default, torch signature semantics.
+    required = {
+        field.name
+        for field in fields(cls)
+        if field.init and field.default is MISSING and field.default_factory is MISSING
+    }
+    missing = sorted(f"{path}.{name}" for name in required - set(payload))
     return payload, missing
 
 
@@ -252,7 +217,16 @@ def build_trainer_config(
         train_precision=precision.training.label,
         rollout_precision=precision.rollout.label,
     )
-    _apply_rollout_precision_defaults(cfg, precision, payload)
+    # On a rollout/train precision split, the correction mechanism is an
+    # implementation detail the user should not have to spell out: default to
+    # TIS/RS correction plus a catastrophic-drift guard. Explicit expert
+    # trainer.precision_* blocks are still respected.
+    if not precision.stages_match:
+        correction, guard = build_precision_split_safety_configs()
+        if not path_exists(cfg, "trainer.precision_correction"):
+            payload["precision_correction"] = correction
+        if not path_exists(cfg, "trainer.precision_drift_guard"):
+            payload["precision_drift_guard"] = guard
 
     return TrainerConfig(**payload)
 
