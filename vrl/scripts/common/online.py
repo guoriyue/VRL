@@ -841,6 +841,10 @@ async def run_online_recipe(
             built=built,
         )
         reward_fn = components.reward_fn
+        # An unreachable or wrong-identity external reward service must fail
+        # here, before the expensive rollout backend launch — not after the
+        # first generation batch reaches scoring.
+        await reward_fn.preflight()
         rollout_executor_kwargs = (
             definition.collector_kwargs_getter(cfg, examples)
             if definition.collector_kwargs_getter is not None

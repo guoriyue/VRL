@@ -39,6 +39,10 @@ class _FakeRuntime:
                     reward_name=request.reward_name,
                     score_key=request.score_key,
                     policy_version=artifact.policy_version,
+                    source_request_id=artifact.source_request_id,
+                    sample_id=artifact.sample_id,
+                    group_id=artifact.group_id,
+                    trajectory_id=artifact.trajectory_id,
                     reward_model_version="fake-test",
                     latency_ms=1.0,
                     worker_id="fake",
@@ -51,7 +55,15 @@ class _FakeRuntime:
 
 
 def _rollout(output: torch.Tensor, *, policy_version: int = 7) -> RewardRollout:
-    return RewardRollout(prompt="a dancer spins, skirt billowing", output=output, metadata={"policy_version": policy_version, "sample_ids": ["sample-a"]})
+    return RewardRollout(
+        prompt="a dancer spins, skirt billowing",
+        output=output,
+        source_request_id="request-a",
+        sample_id="sample-a",
+        group_id="group-a",
+        trajectory_id="trajectory-a",
+        policy_version=policy_version,
+    )
 
 
 def _build_reward(tmp_path: Path, *, score_key: str = "physical_common_sense", **kwargs):
@@ -63,6 +75,7 @@ def _build_reward(tmp_path: Path, *, score_key: str = "physical_common_sense", *
         artifact_format="tensor",
         artifact_dir=str(tmp_path / "artifacts"),
         debug_dir=str(tmp_path / "debug"),
+        retain_artifacts=True,
         runtime=_FakeRuntime(),
         **kwargs,
     )

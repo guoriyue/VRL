@@ -546,6 +546,46 @@ def test_non_numeric_reward_weight_raises() -> None:
         RewardConfig.model_validate({"components": {"aesthetic": "heavy"}, "kwargs": {}})
 
 
+def test_reward_http_inference_config_is_validated_inside_open_component_kwargs() -> None:
+    """Transport config stays typed even though reward-specific kwargs are open."""
+
+    cfg = RewardConfig.model_validate(
+        {
+            "components": {"videoscore2": 1.0},
+            "kwargs": {
+                "videoscore2": {
+                    "inference": {
+                        "kind": "http",
+                        "endpoint": "http://reward:8300",
+                        "expected_model": "videoscore2-v1",
+                    },
+                },
+            },
+        },
+    )
+
+    assert cfg.kwargs["videoscore2"]["inference"]["kind"] == "http"
+
+
+def test_reward_http_inference_rejects_unknown_field() -> None:
+    with pytest.raises(ValueError, match=r"unsupported .* keys"):
+        RewardConfig.model_validate(
+            {
+                "components": {"videoscore2": 1.0},
+                "kwargs": {
+                    "videoscore2": {
+                        "inference": {
+                            "kind": "http",
+                            "endpoint": "http://reward:8300",
+                            "expected_model": "videoscore2-v1",
+                            "service_url": "http://legacy",
+                        },
+                    },
+                },
+            },
+        )
+
+
 def test_grpo_requires_valid_sde_type() -> None:
     """Checks GRPO requires valid SDE type."""
     cfg = _minimal_grpo_cfg()

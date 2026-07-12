@@ -106,9 +106,10 @@ def build_reward_from_cfg(
 ) -> Any:
     """Build the online reward function from the shared config loader output.
 
-    Rewards score in-process. GPU ownership decides parking: a shared reward is
-    automatically pooled and must publish a release proof; a dedicated reward
-    stays resident. YAML does not choose lifecycle behavior.
+    In-process GPU ownership decides parking: a shared reward is automatically
+    pooled and must publish a release proof, while a dedicated reward stays
+    resident. HTTP components own their deployment externally and receive no
+    local parking policy. YAML selects transport, not lifecycle behavior.
     """
 
     built = built or build_configs(cfg)

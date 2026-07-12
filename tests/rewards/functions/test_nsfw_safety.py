@@ -10,8 +10,15 @@ from vrl.rewards.functions.nsfw_safety import NSFWSafetyReward
 from vrl.rewards.types import RewardRollout
 
 
-def _rollout(output: object) -> RewardRollout:
-    return RewardRollout(prompt="anime portrait", output=output)
+def _rollout(output: object, *, sample_id: str = "sample-0") -> RewardRollout:
+    return RewardRollout(
+        prompt="anime portrait",
+        output=output,
+        source_request_id="request-0",
+        sample_id=sample_id,
+        group_id="group-0",
+        trajectory_id=f"trajectory-{sample_id}",
+    )
 
 
 @pytest.mark.asyncio
@@ -26,7 +33,9 @@ async def test_nsfw_safety_reward_only_penalizes_scores_above_threshold() -> Non
     )
     image = Image.new("RGB", (8, 8), color=(128, 128, 128))
 
-    scores = await reward.score_batch([_rollout(image), _rollout(image)])
+    scores = await reward.score_batch(
+        [_rollout(image), _rollout(image, sample_id="sample-1")],
+    )
 
     assert scores[0] == pytest.approx(0.0)
     assert scores[1] == pytest.approx(-1.3333333333)

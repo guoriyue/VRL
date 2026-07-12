@@ -1,0 +1,89 @@
+"""Reward inference deployment config tests."""
+
+from __future__ import annotations
+
+import pytest
+
+from vrl.config.reward_inference import (
+    RewardInferenceConfig,
+    parse_reward_inference_config,
+    reward_inference_configs_from_cfg,
+)
+
+
+def test_in_process_is_the_default() -> None:
+    assert parse_reward_inference_config(None, context="reward.kwargs.x.inference") == (
+        RewardInferenceConfig()
+    )
+
+
+def test_http_requires_endpoint_and_expected_model() -> None:
+    with pytest.raises(ValueError, match="absolute http"):
+        parse_reward_inference_config(
+            {"kind": "http", "expected_model": "judge-v1"},
+            context="reward.kwargs.x.inference",
+        )
+    with pytest.raises(ValueError, match="expected_model"):
+        parse_reward_inference_config(
+            {"kind": "http", "endpoint": "http://reward:8300"},
+            context="reward.kwargs.x.inference",
+        )
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "http://user:secret@reward:8300",
+        "http://reward:8300/score",
+        "http://reward:8300?token=secret",
+        "http://reward:8300#fragment",
+    ],
+)
+def test_http_endpoint_is_an_origin_without_embedded_credentials(
+    endpoint: str,
+) -> None:
+    with pytest.raises(ValueError, match="endpoint"):
+        parse_reward_inference_config(
+            {
+                "kind": "http",
+                "endpoint": endpoint,
+                "expected_model": "unit",
+            },
+            context="reward.kwargs.x.inference",
+        )
+
+
+def test_unknown_inference_key_is_rejected_from_typed_source() -> None:
+    with pytest.raises(ValueError, match=r"unsupported .* keys"):
+        parse_reward_inference_config(
+            {"kind": "in_process", "service_url": "http://legacy"},
+            context="reward.kwargs.x.inference",
+        )
+
+
+def test_component_inference_configs_resolve_independently() -> None:
+    cfg = {
+        "reward": {
+            "components": {"ocr": 0.25, "videoscore2": 0.75},
+            "kwargs": {
+                "videoscore2": {
+                    "inference": {
+                        "kind": "http",
+                        "endpoint": "http://reward:8300",
+                        "timeout_s": 90,
+                        "expected_model": "videoscore2-v1",
+                    },
+                },
+            },
+        },
+    }
+
+    resolved = reward_inference_configs_from_cfg(cfg)
+
+    assert resolved["ocr"].kind == "in_process"
+    assert resolved["videoscore2"] == RewardInferenceConfig(
+        kind="http",
+        endpoint="http://reward:8300",
+        timeout_s=90,
+        expected_model="videoscore2-v1",
+    )

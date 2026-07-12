@@ -23,6 +23,10 @@ class _VersionedRuntime:
                 reward_name=request.reward_name,
                 score_key=request.score_key,
                 policy_version=artifact.policy_version,
+                source_request_id=artifact.source_request_id,
+                sample_id=artifact.sample_id,
+                group_id=artifact.group_id,
+                trajectory_id=artifact.trajectory_id,
                 reward_model_version="reward-v2",
                 latency_ms=7.0,
                 queue_wait_ms=2.0,
@@ -38,8 +42,14 @@ class _VersionedRuntime:
 
 
 def _rollout() -> RewardRollout:
-    return RewardRollout(prompt="prompt", output=torch.ones(1, 2, 2, 2),
-        metadata={"policy_version": 23, "sample_ids": ["sample-v"]},
+    return RewardRollout(
+        prompt="prompt",
+        output=torch.ones(1, 2, 2, 2),
+        source_request_id="request-v",
+        sample_id="sample-v",
+        group_id="group-v",
+        trajectory_id="trajectory-v",
+        policy_version=23,
     )
 
 
@@ -84,4 +94,3 @@ async def test_video_reward_debug_records_versions_and_latency(tmp_path: Path) -
     assert result_rows[0]["latency_ms"] == pytest.approx(7.0)
     assert result_rows[0]["queue_wait_ms"] == pytest.approx(2.0)
     assert result_rows[0]["inference_ms"] == pytest.approx(5.0)
-

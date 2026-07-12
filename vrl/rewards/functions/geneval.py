@@ -64,19 +64,21 @@ class GenEvalReward(RewardFunction):
         rollouts: list[RewardRollout],
     ) -> list[RewardInferenceArtifact]:
         artifacts: list[RewardInferenceArtifact] = []
-        for index, rollout in enumerate(rollouts):
+        for rollout in rollouts:
             rollout_metadata = dict(rollout.metadata or {})
-            policy_version = rollout_metadata.get("policy_version")
             geneval = self._extract_geneval_metadata(rollout)
             artifacts.append(
                 RewardInferenceArtifact(
-                    artifact_id=f"geneval-{index}",
+                    artifact_id=(f"{rollout.source_request_id}:{rollout.sample_id}:geneval"),
                     path="",
                     media_type="image",
                     media=_OutputBox(rollout.output),
                     prompt=str(rollout.prompt),
-                    sample_id=f"sample-{index}",
-                    policy_version=None if policy_version is None else int(policy_version),
+                    source_request_id=rollout.source_request_id,
+                    sample_id=rollout.sample_id,
+                    group_id=rollout.group_id,
+                    trajectory_id=rollout.trajectory_id,
+                    policy_version=rollout.policy_version,
                     metadata={
                         "geneval": geneval,
                         "rollout_metadata": rollout_metadata,

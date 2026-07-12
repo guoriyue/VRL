@@ -42,6 +42,7 @@ class _FakePaddleOCR:
 def _has_rapidocr() -> bool:
     try:
         import rapidocr_onnxruntime  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -52,7 +53,12 @@ _skip_no_rapidocr = pytest.mark.skipif(
 )
 
 
-def _make_ocr_rollout(target_text: str, video_tensor=None):
+def _make_ocr_rollout(
+    target_text: str,
+    video_tensor=None,
+    *,
+    sample_id: str = "sample-0",
+):
     """Build a minimal RewardRollout with target_text metadata and a video tensor."""
     import torch
 
@@ -65,6 +71,10 @@ def _make_ocr_rollout(target_text: str, video_tensor=None):
     return RewardRollout(
         prompt="test",
         output=video_tensor,
+        source_request_id="request-0",
+        sample_id=sample_id,
+        group_id="group-0",
+        trajectory_id=f"trajectory-{sample_id}",
         metadata={"target_text": target_text},
     )
 
@@ -78,7 +88,9 @@ async def test_ocr_reward_rapidocr_core_scoring_behaviors() -> None:
     assert await reward.score(_make_ocr_rollout("")) == pytest.approx(0.0)
     assert await reward.score(_make_ocr_rollout("HELLO")) <= 0.5
 
-    scores = await reward.score_batch([_make_ocr_rollout("A"), _make_ocr_rollout("B")])
+    scores = await reward.score_batch(
+        [_make_ocr_rollout("A"), _make_ocr_rollout("B", sample_id="sample-1")],
+    )
     assert len(scores) == 2
 
 

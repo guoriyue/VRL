@@ -31,6 +31,10 @@ class _FakeRuntime:
                 reward_name=request.reward_name,
                 score_key=request.score_key,
                 policy_version=artifact.policy_version,
+                source_request_id=artifact.source_request_id,
+                sample_id=artifact.sample_id,
+                group_id=artifact.group_id,
+                trajectory_id=artifact.trajectory_id,
                 reward_model_version="fake",
                 latency_ms=1.0,
                 worker_id="fake",
@@ -43,8 +47,14 @@ class _FakeRuntime:
 
 
 def _rollout() -> RewardRollout:
-    return RewardRollout(prompt="a spinning dancer", output=torch.ones(1, 2, 2, 2),
-        metadata={"policy_version": 1},
+    return RewardRollout(
+        prompt="a spinning dancer",
+        output=torch.ones(1, 2, 2, 2),
+        source_request_id="request-0",
+        sample_id="sample-0",
+        group_id="group-0",
+        trajectory_id="trajectory-0",
+        policy_version=1,
     )
 
 
@@ -65,7 +75,9 @@ def test_parse_axis_scores_missing_axis_raises() -> None:
 def test_load_rubric_default_and_override(tmp_path: Path) -> None:
     assert "{prompt}" in _load_rubric("")
     rubric = tmp_path / "r.yaml"
-    rubric.write_text("problem_template: 'judge {prompt} on Style Score (1-5): Z'\n", encoding="utf-8")
+    rubric.write_text(
+        "problem_template: 'judge {prompt} on Style Score (1-5): Z'\n", encoding="utf-8"
+    )
     assert "{prompt}" in _load_rubric(str(rubric))
 
 
@@ -107,7 +119,9 @@ def test_config_validates() -> None:
                     "unified_reward_video": {
                         "reward_name": "unified_reward_video",
                         "score_key": "overall",
-                        "worker_config": {"reward_model_name": "CodeGoat24/UnifiedReward-2.0-qwen-7b@main"},
+                        "worker_config": {
+                            "reward_model_name": "CodeGoat24/UnifiedReward-2.0-qwen-7b@main"
+                        },
                     },
                 },
             },

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 
 from vrl.rewards.inference import (
     MediaType,
@@ -21,8 +22,15 @@ from vrl.rewards.inference import (
     RewardMemoryReleaseProof,
 )
 from vrl.rewards.types import RewardRollout
+from vrl.utils.logging import init_logger
+
+logger = init_logger(__name__)
 
 ArtifactBuilder = Callable[[list[RewardRollout]], list[RewardInferenceArtifact]]
+# Runs once after scoring reaches a terminal state: either deletes the call's
+# materializations or transfers their ownership to the debug/output dir.
+ArtifactFinalizer = Callable[[list[RewardInferenceArtifact]], None]
+ArtifactTransport = Literal["in_memory", "disk"]
 
 # Protocol boundary measured on RTX 5090: the first CUDA scoring kernel leaves a
 # 2 MiB runtime allocation outside vLLM's one-shot model pool. Keep a bounded
@@ -104,6 +112,8 @@ class RewardFunction:
     # Most reward constructors expose the selected device as ``device``;
     # exceptional schemas (for example NSFW's classifier_device) override it.
     device_config_key: ClassVar[str] = "device"
+    # Registry preflight reads this before constructing heavyweight models.
+    artifact_transport: ClassVar[ArtifactTransport] = "in_memory"
 
     @classmethod
     def resolve_execution_device(
@@ -136,18 +146,20 @@ class RewardFunction:
         """Build reward artifacts that carry media in-memory (no disk write)."""
 
         artifacts: list[RewardInferenceArtifact] = []
-        for index, rollout in enumerate(rollouts):
+        for rollout in rollouts:
             metadata = dict(rollout.metadata or {})
-            policy_version = metadata.get("policy_version")
             artifacts.append(
                 RewardInferenceArtifact(
-                    artifact_id=f"local-{index}",
+                    artifact_id=(f"{rollout.source_request_id}:{rollout.sample_id}:in-memory"),
                     path="",
                     media_type=media_type,
                     media=rollout.output,
                     prompt=str(rollout.prompt),
-                    sample_id=f"sample-{index}",
-                    policy_version=None if policy_version is None else int(policy_version),
+                    source_request_id=rollout.source_request_id,
+                    sample_id=rollout.sample_id,
+                    group_id=rollout.group_id,
+                    trajectory_id=rollout.trajectory_id,
+                    policy_version=rollout.policy_version,
                     metadata=metadata,
                 ),
             )
@@ -160,6 +172,8 @@ class RewardFunction:
         score_key: str = "",
         runtime: RewardInferenceRuntime | None = None,
         artifact_builder: ArtifactBuilder | None = None,
+        artifact_finalizer: ArtifactFinalizer | None = None,
+        artifact_retainer: ArtifactFinalizer | None = None,
         request_metadata: Mapping[str, Any] | None = None,
         debug_dir: str = "",
         request_prefix: str = "reward",
@@ -169,11 +183,35 @@ class RewardFunction:
         self.score_key = str(score_key)
         self.runtime = runtime
         self._artifact_builder = artifact_builder
+        self._artifact_finalizer = artifact_finalizer
+        self._artifact_retainer = artifact_retainer
         self._request_metadata = dict(request_metadata or {})
         self.debug_dir = str(debug_dir)
         self._request_prefix = request_prefix
         self._debug_basename = debug_basename
         self._last_reward_request_id: str | None = None
+
+    @property
+    def supports_generation_overlap(self) -> bool:
+        """Whether this scorer can run without blocking generation progress."""
+
+        return bool(
+            self.runtime is not None
+            and getattr(self.runtime, "supports_generation_overlap", False)
+        )
+
+    async def preflight(self) -> None:
+        """Fail before training starts when a remote scoring dependency is broken.
+
+        In-process runtimes have nothing to check here (their model loads
+        lazily on the reward device). Remote runtimes expose ``ensure_ready``
+        so an unreachable, not-ready, or wrong-model service is reported at
+        startup instead of after the first generation batch completes.
+        """
+
+        ensure_ready = getattr(self.runtime, "ensure_ready", None)
+        if callable(ensure_ready):
+            await ensure_ready()
 
     async def park_memory(self) -> tuple[RewardMemoryReleaseProof, ...]:
         """Park this reward runtime, retrying the runtime's current request."""
@@ -228,13 +266,13 @@ class RewardFunction:
     ) -> None:
         """Initialize a RewardFunction backed by a RewardModel factory."""
 
-        from vrl.rewards.runtime import InProcessRewardRuntime
+        from vrl.rewards.runtime import build_reward_runtime
 
         RewardFunction.__init__(
             self,
             reward_name=reward_name,
             score_key=score_key,
-            runtime=InProcessRewardRuntime(
+            runtime=build_reward_runtime(
                 {**dict(worker_config), "model_factory": str(model_factory)},
             ),
             artifact_builder=lambda rollouts: RewardFunction.build_inmemory_artifacts(
@@ -258,6 +296,7 @@ class RewardFunction:
         device: str | None = None,
         sleep_offload: bool = False,
         memory_parking_residual_bytes_limit: int = 0,
+        retain_artifacts: bool = False,
         worker_config: Mapping[str, Any] | None = None,
         runtime: Any | None = None,
     ) -> None:
@@ -265,19 +304,23 @@ class RewardFunction:
 
         Sibling to :meth:`_init_reward_model`: same idea (configure ``self`` as a
         ``RewardFunction``), but the heavyweight path — media is written to disk
-        via ``VideoRewardArtifactStore`` and scored in-process, instead of passed
-        in-memory. ``sleep_offload`` parks the model on CPU between scores (the
+        via ``VideoRewardArtifactStore`` and scored through the selected runtime,
+        instead of passed in-memory. ``sleep_offload`` parks an in-process model
+        on CPU between scores (the
         rollout/trainer own the GPU then), mirroring the rollout lease's
         sleep/wake. ``model_factory`` / ``request_prefix`` / ``debug_basename``
         are the only per-reward differences (concrete rewards set their own
         ``reward_name`` / ``score_key`` / ``artifact_format`` defaults before
         delegating); everything else is shared wiring, so no concrete reward
         copies this body. ``runtime`` injects a ready ``RewardInferenceRuntime``
-        (tests); it wins over the factory-built one.
+        (tests); it wins over the factory-built one. Disk files belong to this
+        reward call and are deleted after terminal success or failure; explicit
+        ``retain_artifacts`` or an ambiguous remote state transfers them to the
+        debug/output owner instead.
         """
 
         from vrl.rewards.artifacts import VideoRewardArtifactStore
-        from vrl.rewards.runtime import InProcessRewardRuntime
+        from vrl.rewards.runtime import build_reward_runtime
 
         self.media_type = str(media_type)
         self.artifact_store = VideoRewardArtifactStore(
@@ -323,7 +366,7 @@ class RewardFunction:
                 worker_cfg["memory_parking_residual_bytes_limit"] = int(
                     memory_parking_residual_bytes_limit,
                 )
-            runtime = InProcessRewardRuntime(worker_cfg)
+            runtime = build_reward_runtime(worker_cfg)
 
         RewardFunction.__init__(
             self,
@@ -331,6 +374,10 @@ class RewardFunction:
             score_key=str(score_key),
             runtime=runtime,
             artifact_builder=self.artifact_store.materialize,
+            artifact_finalizer=(
+                self.artifact_store.retain if retain_artifacts else self.artifact_store.release
+            ),
+            artifact_retainer=self.artifact_store.retain,
             request_metadata={"media_type": self.media_type},
             debug_dir=debug_dir,
             request_prefix=request_prefix,
@@ -353,67 +400,130 @@ class RewardFunction:
         materialize_started = time.perf_counter()
         artifacts = artifact_builder(rollouts)
         materialization_ms = (time.perf_counter() - materialize_started) * 1000.0
-        policy_version = artifacts[0].policy_version if artifacts else None
-        request = RewardInferenceRequest(
-            request_id=f"{self._request_prefix}-{uuid.uuid4().hex}",
-            artifacts=tuple(artifacts),
-            reward_name=self.reward_name,
-            score_key=self.score_key,
-            policy_version=policy_version,
-            metadata={
-                **self._request_metadata,
-                "artifact_materialization_ms": materialization_ms,
-            },
-        )
-        self._last_reward_request_id = request.request_id
-        inference_started = time.perf_counter()
-        # Contract enforcement lives at this seam, not inside each runtime, so
-        # every RewardInferenceRuntime (including injected test fakes) gets the
-        # same result/artifact mismatch guard and request-order re-sort.
-        from vrl.rewards.inference import validate_reward_results
+        operation_error: BaseException | None = None
+        report: RewardBatchReport | None = None
+        try:
+            if len(artifacts) != len(rollouts):
+                raise ValueError(
+                    "reward artifact builder returned wrong number of artifacts: "
+                    f"artifacts={len(artifacts)}, rollouts={len(rollouts)}",
+                )
+            correlated_artifacts: list[RewardInferenceArtifact] = []
+            for artifact, rollout in zip(artifacts, rollouts, strict=True):
+                expected_lineage = {
+                    "source_request_id": rollout.source_request_id,
+                    "sample_id": rollout.sample_id,
+                    "group_id": rollout.group_id,
+                    "trajectory_id": rollout.trajectory_id,
+                    "policy_version": rollout.policy_version,
+                }
+                for field_name, expected in expected_lineage.items():
+                    actual = getattr(artifact, field_name)
+                    if actual is not None and actual != expected:
+                        raise ValueError(
+                            "reward artifact lineage mismatch: "
+                            f"artifact_id={artifact.artifact_id!r}, "
+                            f"field={field_name}, expected={expected!r}, "
+                            f"actual={actual!r}",
+                        )
+                correlated_artifacts.append(replace(artifact, **expected_lineage))
+            artifacts = correlated_artifacts
 
-        score_error: BaseException | None = None
-        raw_results: list[RewardInferenceResult] | None = None
-        try:
-            raw_results = await runtime.score_batch(request)
-        except BaseException as error:
-            score_error = error
-        park_error: BaseException | None = None
-        try:
-            await self.park_memory()
-        except BaseException as error:
-            park_error = error
-        if score_error is not None and park_error is not None:
-            raise RewardCleanupError(
-                "reward scoring and memory parking both failed",
-                [score_error, park_error],
+            policy_versions = {artifact.policy_version for artifact in artifacts}
+            policy_version = next(iter(policy_versions)) if len(policy_versions) == 1 else None
+            request = RewardInferenceRequest(
+                request_id=f"{self._request_prefix}-{uuid.uuid4().hex}",
+                artifacts=tuple(artifacts),
+                reward_name=self.reward_name,
+                score_key=self.score_key,
+                policy_version=policy_version,
+                metadata={
+                    **self._request_metadata,
+                    "artifact_materialization_ms": materialization_ms,
+                },
             )
-        if score_error is not None:
-            raise score_error
-        if park_error is not None:
-            raise park_error
-        assert raw_results is not None
-        results = validate_reward_results(request, raw_results)
-        inference_total_ms = (time.perf_counter() - inference_started) * 1000.0
-        total_latency_ms = (time.perf_counter() - total_started) * 1000.0
-        self._write_debug(
-            request,
-            results,
-            artifact_materialization_ms=materialization_ms,
-            inference_total_ms=inference_total_ms,
-            total_reward_latency_ms=total_latency_ms,
+            self._last_reward_request_id = request.request_id
+            inference_started = time.perf_counter()
+            # Contract enforcement lives at this seam, not inside each runtime,
+            # so every runtime (including injected fakes) gets the same result
+            # identity guard and request-order re-sort.
+            from vrl.rewards.inference import validate_reward_results
+
+            score_error: BaseException | None = None
+            raw_results: list[RewardInferenceResult] | None = None
+            try:
+                raw_results = await runtime.score_batch(request)
+            except BaseException as error:
+                score_error = error
+            park_error: BaseException | None = None
+            try:
+                await self.park_memory()
+            except BaseException as error:
+                park_error = error
+            if score_error is not None and park_error is not None:
+                raise RewardCleanupError(
+                    "reward scoring and memory parking both failed",
+                    [score_error, park_error],
+                )
+            if score_error is not None:
+                raise score_error
+            if park_error is not None:
+                raise park_error
+            assert raw_results is not None
+            results = validate_reward_results(request, raw_results)
+            inference_total_ms = (time.perf_counter() - inference_started) * 1000.0
+            total_latency_ms = (time.perf_counter() - total_started) * 1000.0
+            self._write_debug(
+                request,
+                results,
+                artifact_materialization_ms=materialization_ms,
+                inference_total_ms=inference_total_ms,
+                total_reward_latency_ms=total_latency_ms,
+            )
+            report = RewardBatchReport(
+                scores=[float(result.selected_score) for result in results],
+                timing_ms={
+                    "latency_ms": total_latency_ms,
+                    "queue_wait_ms": _max_result_timing(results, "queue_wait_ms"),
+                    "inference_ms": _sum_result_timing(results, "inference_ms")
+                    if results
+                    else inference_total_ms,
+                },
+                results=list(results),
+            )
+        except BaseException as error:
+            operation_error = error
+
+        cleanup_error: BaseException | None = None
+        artifact_finalizer = self._artifact_finalizer
+        retain_for_remote = operation_error is not None and (
+            isinstance(operation_error, asyncio.CancelledError)
+            or bool(getattr(operation_error, "retain_reward_artifacts", False))
         )
-        return RewardBatchReport(
-            scores=[float(result.selected_score) for result in results],
-            timing_ms={
-                "latency_ms": total_latency_ms,
-                "queue_wait_ms": _max_result_timing(results, "queue_wait_ms"),
-                "inference_ms": _sum_result_timing(results, "inference_ms")
-                if results
-                else inference_total_ms,
-            },
-            results=list(results),
-        )
+        if retain_for_remote:
+            artifact_finalizer = self._artifact_retainer
+            logger.warning(
+                "reward inference did not confirm terminal state; retaining %d "
+                "artifact(s) for request_id=%s",
+                len(artifacts),
+                self._last_reward_request_id,
+            )
+        if artifact_finalizer is not None:
+            try:
+                artifact_finalizer(artifacts)
+            except BaseException as error:
+                cleanup_error = error
+        if operation_error is not None and cleanup_error is not None:
+            raise RewardCleanupError(
+                "reward operation and artifact cleanup both failed",
+                [operation_error, cleanup_error],
+            )
+        if operation_error is not None:
+            raise operation_error
+        if cleanup_error is not None:
+            raise cleanup_error
+        assert report is not None
+        return report
 
     def _write_debug(
         self,
@@ -431,6 +541,10 @@ class RewardFunction:
         request_row = {
             "request_id": request.request_id,
             "artifact_ids": [artifact.artifact_id for artifact in request.artifacts],
+            "source_request_ids": [artifact.source_request_id for artifact in request.artifacts],
+            "sample_ids": [artifact.sample_id for artifact in request.artifacts],
+            "group_ids": [artifact.group_id for artifact in request.artifacts],
+            "trajectory_ids": [artifact.trajectory_id for artifact in request.artifacts],
             "reward_name": request.reward_name,
             "score_key": request.score_key,
             "policy_version": request.policy_version,
@@ -450,11 +564,15 @@ class RewardFunction:
 class CumemRewardFunction(RewardFunction):
     """Reward whose model allocations support verified tagged-pool parking."""
 
-    memory_parking: ClassVar[RewardMemoryParkingCapability] = (
-        RewardMemoryParkingCapability(
-            residual_bytes_limit=_REWARD_CUDA_RUNTIME_RESIDUAL_BYTES,
-        )
+    memory_parking: ClassVar[RewardMemoryParkingCapability] = RewardMemoryParkingCapability(
+        residual_bytes_limit=_REWARD_CUDA_RUNTIME_RESIDUAL_BYTES,
     )
+
+
+class DiskArtifactRewardFunction(CumemRewardFunction):
+    """Registry-visible base for rewards that require disk materialization."""
+
+    artifact_transport: ClassVar[ArtifactTransport] = "disk"
 
 
 _IMAGE_SUFFIXES = frozenset({".bmp", ".gif", ".jpeg", ".jpg", ".png", ".ppm", ".webp"})
@@ -519,7 +637,10 @@ def _sum_result_timing(results: list[RewardInferenceResult], field: str) -> floa
 
 __all__ = [
     "ArtifactBuilder",
+    "ArtifactFinalizer",
+    "ArtifactTransport",
     "CumemRewardFunction",
+    "DiskArtifactRewardFunction",
     "RewardBatchReport",
     "RewardCleanupError",
     "RewardFunction",

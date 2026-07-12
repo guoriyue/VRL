@@ -819,6 +819,82 @@ def test_explicit_cpu_reward_does_not_create_gpu_handoffs() -> None:
     assert reward_torch_device(resolved, trainer_device="cuda:0") == "cpu"
 
 
+def test_http_only_reward_owns_no_local_resource_or_handoff() -> None:
+    """Inherited local reward reservations disappear for external-only scoring."""
+
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0, 1, 2],
+                "trainer": {"devices": [0]},
+                "rollout": {"devices": [1], "gpus_per_worker": 1},
+                # A reward preset may carry this local default. HTTP deployment
+                # owns its accelerator externally and must not reserve GPU2.
+                "reward": {
+                    "devices": [2],
+                    "num_gpus": 1,
+                    "gpus_per_worker": 1,
+                    "num_workers": 1,
+                },
+            },
+            reward_components={"videoscore2": 1.0},
+            reward_kwargs={
+                "videoscore2": {
+                    "inference": {
+                        "kind": "http",
+                        "endpoint": "http://reward:8300",
+                        "expected_model": "videoscore2-v1",
+                    },
+                },
+            },
+        ),
+    )
+
+    assert resolved.reward_devices == ()
+    assert resolved.reward_num_workers == 0
+    assert resolved.reward_uses_trainer_device is False
+    assert resolved.lifecycle.handoff.release_trainer_before_reward is False
+    assert resolved.lifecycle.handoff.release_rollout_before_reward is False
+    assert resolved.lifecycle.handoff.release_reward_after_score is False
+    assert build_bundle_layout(resolved).reward_bundle_indices == ()
+
+
+def test_mixed_http_and_local_reward_resources_cover_only_local_execution() -> None:
+    """A remote sibling does not erase a real local component's CPU execution."""
+
+    resolved = resolve_distributed_resources(
+        _cfg(
+            {
+                "visible_devices": [0, 1],
+                "trainer": {"devices": [0]},
+                "rollout": {"devices": [1], "gpus_per_worker": 1},
+                "reward": {
+                    "devices": [],
+                    "num_gpus": 0,
+                    "gpus_per_worker": 0,
+                    "num_workers": 1,
+                },
+            },
+            reward_components={"ocr": 0.5, "videoscore2": 0.5},
+            reward_kwargs={
+                "videoscore2": {
+                    "inference": {
+                        "kind": "http",
+                        "endpoint": "http://reward:8300",
+                        "expected_model": "videoscore2-v1",
+                    },
+                },
+            },
+        ),
+    )
+
+    assert resolved.reward_devices == ()
+    assert resolved.reward_num_workers == 1
+    assert resolved.reward_gpus_per_worker == 0
+    assert reward_torch_device(resolved) == "cpu"
+    assert len(build_bundle_layout(resolved).reward_bundle_indices) == 1
+
+
 def test_resource_plan_formatter_includes_lifecycle() -> None:
     """Acceptance #8: the resource plan log shows the lifecycle plan at a glance."""
     resolved = resolve_distributed_resources(

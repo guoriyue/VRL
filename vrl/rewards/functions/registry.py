@@ -7,8 +7,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from vrl.config.reward_inference import parse_reward_inference_config
 from vrl.rewards.base import RewardBatchReport, RewardCleanupError, RewardFunction
 from vrl.rewards.inference import RewardInferenceResult, RewardMemoryReleaseProof
+from vrl.rewards.runtime import build_reward_runtime
 from vrl.rewards.types import RewardRollout
 
 # Registry of reward function factories.
@@ -86,6 +88,20 @@ class MultiReward(RewardFunction):
         # failed instead of double-shutting siblings.
         self._shutdown_completed_children: set[int] = set()
 
+    @property
+    def supports_generation_overlap(self) -> bool:
+        """Stream only when every component uses a non-blocking transport."""
+
+        return bool(self.rewards) and all(
+            reward.supports_generation_overlap for _, _, reward in self.rewards
+        )
+
+    async def preflight(self) -> None:
+        """Check every component's remote dependency before training starts."""
+
+        for _, _, fn in self.rewards:
+            await fn.preflight()
+
     async def shutdown(self) -> None:
         errors: list[BaseException] = []
         for _, _, fn in self.rewards:
@@ -130,6 +146,10 @@ class MultiReward(RewardFunction):
             reward_cls = reward_classes[name]
             # `or {}`: a bare YAML key (kwargs: <name>:) parses as None.
             extra = dict(reward_kwargs.get(name) or {})
+            inference = parse_reward_inference_config(
+                extra.pop("inference", None),
+                context=f"reward.kwargs.{name}.inference",
+            )
             if "execution" in extra:
                 raise ValueError(
                     f"reward.kwargs.{name}.execution is no longer supported: the "
@@ -137,10 +157,34 @@ class MultiReward(RewardFunction):
                     "Drop the key; shared-GPU parking is derived from distributed "
                     "resource topology.",
                 )
-            component_device = reward_cls.resolve_execution_device(
-                device=device,
-                kwargs=extra,
-            )
+            if inference.kind == "http":
+                if getattr(reward_cls, "artifact_transport", "in_memory") != "disk":
+                    raise ValueError(
+                        f"reward {name!r} uses in-memory artifacts and cannot use HTTP inference",
+                    )
+                local_only = sorted(
+                    set(extra)
+                    & {
+                        "device",
+                        "memory_parking_residual_bytes_limit",
+                        "runtime",
+                        "sleep_offload",
+                        "worker_config",
+                    },
+                )
+                if local_only:
+                    raise ValueError(
+                        f"HTTP reward {name!r} cannot set local execution keys "
+                        f"{local_only}; model/device configuration belongs to the "
+                        "standalone reward service",
+                    )
+                component_device = "cpu"
+                extra["runtime"] = build_reward_runtime(inference=inference)
+            else:
+                component_device = reward_cls.resolve_execution_device(
+                    device=device,
+                    kwargs=extra,
+                )
             # The resolved value is passed once through the constructor's common
             # device argument; remove a component override after it has served as
             # the CPU-downgrade input.
@@ -242,6 +286,11 @@ def validate_reward_memory_parking_components(
     gpu_components = [
         name
         for name in names
+        if parse_reward_inference_config(
+            dict(kwargs_by_name.get(name) or {}).get("inference"),
+            context=f"reward.kwargs.{name}.inference",
+        ).kind
+        == "in_process"
         if get_reward(name)
         .resolve_execution_device(
             device=device,

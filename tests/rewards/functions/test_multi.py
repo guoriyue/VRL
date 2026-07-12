@@ -7,11 +7,19 @@ import pytest
 from vrl.rewards.base import RewardBatchReport, RewardCleanupError, RewardFunction
 from vrl.rewards.functions.registry import MultiReward
 from vrl.rewards.runtime import InProcessRewardRuntime
+from vrl.rewards.service.client import HttpRewardRuntime
 from vrl.rewards.types import RewardRollout
 
 
 def _make_rollout(prompt: str) -> RewardRollout:
-    return RewardRollout(prompt=prompt, output=None)
+    return RewardRollout(
+        prompt=prompt,
+        output=None,
+        source_request_id="request-0",
+        sample_id=f"sample-{prompt}",
+        group_id="group-0",
+        trajectory_id=f"trajectory-{prompt}",
+    )
 
 
 class _QueuedBatchReward(RewardFunction):
@@ -42,6 +50,47 @@ class _TimedBatchReward(RewardFunction):
             timing_ms=dict(self.timing_ms),
             results=[self.tag],
         )
+
+
+@pytest.mark.asyncio
+async def test_multi_reward_preserves_typed_rollout_lineage_for_every_component() -> None:
+    seen: dict[str, list[tuple[str, str, str, str]]] = {}
+
+    class _CaptureReward(RewardFunction):
+        def __init__(self, name: str) -> None:
+            super().__init__()
+            self.name = name
+
+        async def score_batch_report(
+            self,
+            rollouts: list[RewardRollout],
+        ) -> RewardBatchReport:
+            seen[self.name] = [
+                (
+                    rollout.source_request_id,
+                    rollout.sample_id,
+                    rollout.group_id,
+                    rollout.trajectory_id,
+                )
+                for rollout in rollouts
+            ]
+            return RewardBatchReport(scores=[1.0] * len(rollouts))
+
+    reward = MultiReward(
+        [
+            ("first", 1.0, _CaptureReward("first")),
+            ("second", 1.0, _CaptureReward("second")),
+        ],
+    )
+    rollouts = [_make_rollout("a"), _make_rollout("b")]
+
+    await reward.score_batch_report(rollouts)
+
+    expected = [
+        ("request-0", "sample-a", "group-0", "trajectory-a"),
+        ("request-0", "sample-b", "group-0", "trajectory-b"),
+    ]
+    assert seen == {"first": expected, "second": expected}
 
 
 @pytest.mark.asyncio
@@ -355,4 +404,106 @@ def test_from_dict_validates_zero_weight_observation_components() -> None:
         MultiReward.from_dict(
             {"not_a_registered_reward": 0.0, "aesthetic": 1.0},
             device="cpu",
+        )
+
+
+def test_http_disk_reward_builds_transport_without_local_model_config(tmp_path) -> None:
+    reward = MultiReward.from_dict(
+        {"videoscore2": 1.0},
+        device="cuda:0",
+        reward_kwargs={
+            "videoscore2": {
+                "artifact_dir": str(tmp_path),
+                "inference": {
+                    "kind": "http",
+                    "endpoint": "http://reward:8300",
+                    "expected_model": "videoscore2-v1",
+                },
+            },
+        },
+        memory_parking_required=False,
+    )
+
+    component = reward.rewards[0][2]
+    assert component.artifact_transport == "disk"
+    assert isinstance(component.runtime, HttpRewardRuntime)
+    assert component.supports_generation_overlap is True
+    assert reward.supports_generation_overlap is True
+
+
+def test_http_reward_rejects_inmemory_artifact_component() -> None:
+    with pytest.raises(ValueError, match="in-memory artifacts"):
+        MultiReward.from_dict(
+            {"aesthetic": 1.0},
+            device="cpu",
+            reward_kwargs={
+                "aesthetic": {
+                    "inference": {
+                        "kind": "http",
+                        "endpoint": "http://reward:8300",
+                        "expected_model": "aesthetic-v1",
+                    },
+                },
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_preflight_reaches_every_remote_runtime_and_skips_local_ones() -> None:
+    checked: list[str] = []
+
+    class _RemoteRuntime:
+        def __init__(self, name: str) -> None:
+            self._name = name
+
+        async def ensure_ready(self) -> None:
+            checked.append(self._name)
+
+        async def shutdown(self) -> None:
+            return None
+
+    remote_a = RewardFunction(reward_name="a", runtime=_RemoteRuntime("a"))
+    remote_b = RewardFunction(reward_name="b", runtime=_RemoteRuntime("b"))
+    local = RewardFunction(reward_name="c", runtime=InProcessRewardRuntime({}))
+    reward = MultiReward([("a", 1.0, remote_a), ("b", 1.0, remote_b), ("c", 1.0, local)])
+
+    await reward.preflight()
+
+    assert checked == ["a", "b"]
+
+
+def test_mixed_runtime_components_fail_closed_for_generation_overlap(tmp_path) -> None:
+    reward = MultiReward.from_dict(
+        {"videoscore2": 1.0, "ocr": 0.5},
+        device="cpu",
+        reward_kwargs={
+            "videoscore2": {
+                "artifact_dir": str(tmp_path),
+                "inference": {
+                    "kind": "http",
+                    "endpoint": "http://reward:8300",
+                    "expected_model": "videoscore2-v1",
+                },
+            },
+        },
+    )
+
+    assert reward.supports_generation_overlap is False
+
+
+def test_http_reward_rejects_local_worker_config() -> None:
+    with pytest.raises(ValueError, match="belongs to the standalone reward service"):
+        MultiReward.from_dict(
+            {"videoscore2": 1.0},
+            device="cpu",
+            reward_kwargs={
+                "videoscore2": {
+                    "inference": {
+                        "kind": "http",
+                        "endpoint": "http://reward:8300",
+                        "expected_model": "videoscore2-v1",
+                    },
+                    "worker_config": {"device": "cuda:0"},
+                },
+            },
         )

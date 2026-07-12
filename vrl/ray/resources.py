@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import ast
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
+from vrl.config.reward_inference import reward_inference_configs_from_cfg
 from vrl.utils.config import cfg_get
 
 
@@ -152,6 +153,23 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
     """
 
     config = _distributed_resource_config_from_cfg(cfg)
+    reward_inference = reward_inference_configs_from_cfg(cfg)
+    local_reward_configured = any(
+        inference.kind == "in_process" for inference in reward_inference.values()
+    )
+    if reward_inference and not local_reward_configured:
+        # External services own their accelerator and process placement. Ignore
+        # inherited reward presets here instead of creating a phantom local GPU
+        # or CPU bundle; the HTTP runtime is a driver-side client.
+        config = replace(
+            config,
+            reward=RewardResourceConfig(
+                num_gpus=0,
+                devices=[],
+                gpus_per_worker=1.0,
+                num_workers="auto",
+            ),
+        )
     training = cfg_get(cfg_get(cfg, "distributed", {}), "training", {})
     training_strategy = str(cfg_get(training, "strategy", "single_process"))
     training_world_size = int(cfg_get(training, "num_nodes", 1)) * int(
@@ -282,15 +300,7 @@ def resolve_distributed_resources(cfg: Any) -> ResolvedDistributedResources:
     if fsdp_asymmetric:
         _validate_fsdp_trainer_disjoint(trainer_devices, rollout_devices, reward_devices)
 
-    reward_configured = bool(
-        _to_plain(
-            cfg_get(
-                cfg_get(cfg, "reward", None),
-                "components",
-                None,
-            ),
-        ),
-    )
+    reward_configured = local_reward_configured
     reward_runs_on_cpu = reward_num_workers == 1 and reward_gpus_per_worker == 0
     reward_uses_trainer_device = bool(
         reward_configured and not reward_devices and not reward_runs_on_cpu and trainer_devices

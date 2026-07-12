@@ -5,7 +5,11 @@ from __future__ import annotations
 import pytest
 import torch
 
-from vrl.rewards.base import RewardFunction
+from vrl.rewards.base import (
+    DiskArtifactRewardFunction,
+    RewardCleanupError,
+    RewardFunction,
+)
 from vrl.rewards.models.base import TorchRewardModel
 from vrl.rewards.runtime import InProcessRewardRuntime
 from vrl.rewards.types import RewardRollout
@@ -21,8 +25,21 @@ class _FakeTorchReward(TorchRewardModel):
         return {"fake": float(media.float().mean().item())}
 
 
-def _rollout(output: torch.Tensor, *, policy_version: int = 2) -> RewardRollout:
-    return RewardRollout(prompt="p", output=output, metadata={"policy_version": policy_version})
+def _rollout(
+    output: torch.Tensor,
+    *,
+    sample_id: str = "sample-0",
+    policy_version: int = 2,
+) -> RewardRollout:
+    return RewardRollout(
+        prompt="p",
+        output=output,
+        source_request_id="request-0",
+        sample_id=sample_id,
+        group_id="group-0",
+        trajectory_id=f"trajectory-{sample_id}",
+        policy_version=policy_version,
+    )
 
 
 def _reward_function_in_process() -> RewardFunction:
@@ -31,7 +48,8 @@ def _reward_function_in_process() -> RewardFunction:
         score_key="fake",
         runtime=InProcessRewardRuntime(model=_FakeTorchReward({"device": "cpu"})),
         artifact_builder=lambda rollouts: RewardFunction.build_inmemory_artifacts(
-            rollouts, media_type="image",
+            rollouts,
+            media_type="image",
         ),
     )
 
@@ -43,7 +61,7 @@ async def test_reward_function_in_process_scores_without_disk() -> None:
     report = await reward.score_batch_report(
         [
             _rollout(torch.full((1, 3, 2, 2), 0.5)),
-            _rollout(torch.ones(1, 3, 2, 2)),
+            _rollout(torch.ones(1, 3, 2, 2), sample_id="sample-1"),
         ],
     )
 
@@ -70,3 +88,77 @@ def test_pickscore_reward_model_constructs_lazily() -> None:
     assert model.model_name == "x"
     assert model.processor_name == "y"
     assert model._loaded is False  # no heavy load at construction
+
+
+def test_reward_artifact_transport_is_registry_visible() -> None:
+    assert RewardFunction.artifact_transport == "in_memory"
+    assert DiskArtifactRewardFunction.artifact_transport == "disk"
+
+
+@pytest.mark.asyncio
+async def test_reward_reports_operation_and_artifact_cleanup_failures() -> None:
+    class _FailingRuntime:
+        async def score_batch(self, request):
+            raise RuntimeError("score failed")
+
+        async def shutdown(self) -> None:
+            return None
+
+    def fail_cleanup(artifacts) -> None:
+        assert artifacts
+        raise OSError("cleanup failed")
+
+    reward = RewardFunction(
+        reward_name="fake",
+        score_key="fake",
+        runtime=_FailingRuntime(),
+        artifact_builder=RewardFunction.build_inmemory_artifacts,
+        artifact_finalizer=fail_cleanup,
+    )
+
+    with pytest.raises(RewardCleanupError) as error:
+        await reward.score(_rollout(torch.zeros(1, 3, 2, 2)))
+
+    assert [str(item) for item in error.value.errors] == [
+        "score failed",
+        "cleanup failed",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reward_retains_artifacts_when_remote_state_is_ambiguous() -> None:
+    class _AmbiguousRuntime:
+        async def score_batch(self, request):
+            error = RuntimeError("remote state unknown")
+            error.retain_reward_artifacts = True
+            raise error
+
+        async def shutdown(self) -> None:
+            return None
+
+    finalized = False
+    retained = False
+
+    def finalize(artifacts) -> None:
+        nonlocal finalized
+        finalized = True
+
+    def retain(artifacts) -> None:
+        nonlocal retained
+        assert artifacts
+        retained = True
+
+    reward = RewardFunction(
+        reward_name="fake",
+        score_key="fake",
+        runtime=_AmbiguousRuntime(),
+        artifact_builder=RewardFunction.build_inmemory_artifacts,
+        artifact_finalizer=finalize,
+        artifact_retainer=retain,
+    )
+
+    with pytest.raises(RuntimeError, match="remote state unknown"):
+        await reward.score(_rollout(torch.zeros(1, 3, 2, 2)))
+
+    assert retained is True
+    assert finalized is False

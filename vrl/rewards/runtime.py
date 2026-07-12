@@ -6,9 +6,14 @@ import importlib
 from collections.abc import Mapping
 from typing import Any
 
+from vrl.config.reward_inference import (
+    RewardInferenceConfig,
+    parse_reward_inference_config,
+)
 from vrl.rewards.inference import (
     RewardInferenceRequest,
     RewardInferenceResult,
+    RewardInferenceRuntime,
     RewardMemoryReleaseProof,
     score_artifacts_with_model,
     validate_reward_parking_residual,
@@ -62,6 +67,12 @@ class InProcessRewardRuntime:
         )
         if self._parking_residual_bytes_limit < 0:
             raise ValueError("reward memory parking residual limit must be >= 0")
+
+    @property
+    def supports_generation_overlap(self) -> bool:
+        """In-process model calls are synchronous on the collector event loop."""
+
+        return False
 
     @property
     def requires_memory_parking(self) -> bool:
@@ -189,6 +200,36 @@ class InProcessRewardRuntime:
         return release_cuda_memory_for_parking(str(self._worker_config.get("device", "")))
 
 
+def build_reward_runtime(
+    worker_config: Mapping[str, Any] | None = None,
+    *,
+    inference: Mapping[str, Any] | RewardInferenceConfig | None = None,
+) -> RewardInferenceRuntime:
+    """Build the runtime selected by the typed inference deployment config."""
+
+    cfg = dict(worker_config or {})
+    if "service_url" in cfg:
+        raise ValueError(
+            "worker_config.service_url was removed; configure "
+            "reward.kwargs.<component>.inference.kind=http and inference.endpoint",
+        )
+    deployment = parse_reward_inference_config(
+        inference,
+        context="reward inference",
+    )
+    if deployment.kind == "in_process":
+        return InProcessRewardRuntime(cfg)
+    if cfg:
+        raise ValueError(
+            "HTTP reward runtime cannot consume local worker_config; model and "
+            "device configuration belong to the external service",
+        )
+    from vrl.rewards.service.client import HttpRewardRuntime
+
+    return HttpRewardRuntime(deployment)
+
+
 __all__ = [
     "InProcessRewardRuntime",
+    "build_reward_runtime",
 ]

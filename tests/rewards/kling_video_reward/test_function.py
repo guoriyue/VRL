@@ -32,6 +32,10 @@ class _FakeRuntime:
                     reward_name=request.reward_name,
                     score_key=request.score_key,
                     policy_version=artifact.policy_version,
+                    source_request_id=artifact.source_request_id,
+                    sample_id=artifact.sample_id,
+                    group_id=artifact.group_id,
+                    trajectory_id=artifact.trajectory_id,
                     reward_model_version="fake-test",
                     latency_ms=1.0,
                     worker_id="fake",
@@ -52,7 +56,15 @@ class _EmptyRuntime:
 
 
 def _rollout(output: torch.Tensor, *, policy_version: int = 3) -> RewardRollout:
-    return RewardRollout(prompt="prompt", output=output, metadata={"policy_version": policy_version, "sample_ids": ["sample-a"]})
+    return RewardRollout(
+        prompt="prompt",
+        output=output,
+        source_request_id="request-a",
+        sample_id="sample-a",
+        group_id="group-a",
+        trajectory_id="trajectory-a",
+        policy_version=policy_version,
+    )
 
 
 def _video_reward_config(**video_kwargs: object):
@@ -89,6 +101,7 @@ async def test_video_reward_materializes_artifacts_and_returns_runtime_scores(
         artifact_format="tensor",
         artifact_dir=str(tmp_path / "artifacts"),
         debug_dir=str(tmp_path / "debug"),
+        retain_artifacts=True,
         runtime=runtime,
     )
 
@@ -99,6 +112,8 @@ async def test_video_reward_materializes_artifacts_and_returns_runtime_scores(
     request = runtime.requests[0]
     assert request.reward_name == "kling_video_reward"
     assert request.artifacts[0].policy_version == 3
+    assert request.artifacts[0].source_request_id == "request-a"
+    assert request.artifacts[0].sample_id == "sample-a"
     assert Path(request.artifacts[0].path).exists()
     assert (tmp_path / "artifacts" / "manifest.jsonl").exists()
     assert (tmp_path / "debug" / "kling_video_reward_requests.jsonl").exists()
@@ -119,6 +134,25 @@ async def test_video_reward_rejects_missing_runtime_results(tmp_path: Path) -> N
 
     with pytest.raises(RuntimeError, match="result/artifact mismatch"):
         await reward.score_batch([_rollout(torch.ones(1, 2, 2, 2))])
+    assert not list((tmp_path / "artifacts").glob("*.pt"))
+
+
+@pytest.mark.asyncio
+async def test_video_reward_releases_artifacts_after_success_by_default(
+    tmp_path: Path,
+) -> None:
+    runtime = _FakeRuntime()
+    reward = KlingVideoReward(
+        reward_name="kling_video_reward",
+        score_key="overall_reward",
+        artifact_format="tensor",
+        artifact_dir=str(tmp_path / "artifacts"),
+        runtime=runtime,
+    )
+
+    await reward.score_batch([_rollout(torch.ones(1, 2, 2, 2))])
+
+    assert not Path(runtime.requests[0].artifacts[0].path).exists()
 
 
 def test_video_reward_config_accepts_ray_runtime() -> None:

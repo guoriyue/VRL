@@ -23,11 +23,16 @@ class RewardInferenceArtifact:
     path: str
     media_type: MediaType
     prompt: str = ""
+    source_request_id: str | None = None
     sample_id: str | None = None
+    group_id: str | None = None
+    trajectory_id: str | None = None
     policy_version: int | None = None
+    size_bytes: int | None = None
+    sha256: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
-    # Optional in-memory payload (e.g. an image/video tensor). The Ray transport
-    # ships file paths; the in-process transport can avoid disk materialization.
+    # Optional in-memory payload (e.g. an image/video tensor). The HTTP transport
+    # ships file references; the in-process runtime can avoid materialization.
     media: Any = None
 
     def __post_init__(self) -> None:
@@ -42,6 +47,23 @@ class RewardInferenceArtifact:
             raise ValueError(
                 f"RewardInferenceArtifact.media_type must be one of {allowed}; "
                 f"got {self.media_type!r}",
+            )
+        if (self.size_bytes is None) != (self.sha256 is None):
+            raise ValueError(
+                "RewardInferenceArtifact.size_bytes and sha256 must be set together",
+            )
+        if not self.path and self.size_bytes is not None:
+            raise ValueError(
+                "RewardInferenceArtifact in-memory media cannot declare file integrity",
+            )
+        if self.size_bytes is not None and int(self.size_bytes) < 0:
+            raise ValueError("RewardInferenceArtifact.size_bytes must be >= 0")
+        if self.sha256 is not None and (
+            len(self.sha256) != 64
+            or any(character not in "0123456789abcdef" for character in self.sha256)
+        ):
+            raise ValueError(
+                "RewardInferenceArtifact.sha256 must be a lowercase hex SHA-256 digest",
             )
 
     def as_media(self) -> Any:
@@ -137,6 +159,10 @@ class RewardInferenceResult(_ScoreSelection):
     score_key: str
     score_aggregation: str = "sum"
     policy_version: int | None = None
+    source_request_id: str | None = None
+    sample_id: str | None = None
+    group_id: str | None = None
+    trajectory_id: str | None = None
     reward_model_version: str | None = None
     latency_ms: float | None = None
     queue_wait_ms: float | None = None
@@ -170,6 +196,11 @@ class RewardInferenceResult(_ScoreSelection):
 
 class RewardInferenceRuntime(Protocol):
     """Runtime boundary for model-backed reward inference."""
+
+    @property
+    def supports_generation_overlap(self) -> bool:
+        """Whether scoring yields while generation work runs elsewhere."""
+        ...
 
     async def score_batch(
         self,
@@ -268,7 +299,35 @@ def validate_reward_results(
         raise RuntimeError(
             f"reward inference result/artifact mismatch: missing={missing}, extra={extra}",
         )
-    return [by_id[artifact_id] for artifact_id in expected_ids]
+    ordered = [by_id[artifact_id] for artifact_id in expected_ids]
+    for artifact, result in zip(request.artifacts, ordered, strict=True):
+        for field_name in (
+            "source_request_id",
+            "sample_id",
+            "group_id",
+            "trajectory_id",
+        ):
+            expected = getattr(artifact, field_name)
+            actual = getattr(result, field_name)
+            if expected != actual:
+                raise RuntimeError(
+                    "reward inference result lineage mismatch: "
+                    f"artifact_id={artifact.artifact_id!r}, field={field_name}, "
+                    f"expected={expected!r}, actual={actual!r}",
+                )
+        expected_policy_version = (
+            artifact.policy_version
+            if artifact.policy_version is not None
+            else request.policy_version
+        )
+        if result.policy_version != expected_policy_version:
+            raise RuntimeError(
+                "reward inference result lineage mismatch: "
+                f"artifact_id={artifact.artifact_id!r}, field=policy_version, "
+                f"expected={expected_policy_version!r}, "
+                f"actual={result.policy_version!r}",
+            )
+    return ordered
 
 
 def score_artifacts_with_model(
@@ -310,6 +369,10 @@ def score_artifacts_with_model(
             policy_version=artifact.policy_version
             if artifact.policy_version is not None
             else request.policy_version,
+            source_request_id=artifact.source_request_id,
+            sample_id=artifact.sample_id,
+            group_id=artifact.group_id,
+            trajectory_id=artifact.trajectory_id,
             reward_model_version=str(reward_model_version),
             latency_ms=queue_wait_ms + inference_ms,
             queue_wait_ms=queue_wait_ms,

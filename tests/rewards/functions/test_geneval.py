@@ -8,7 +8,15 @@ from vrl.rewards.types import RewardRollout
 
 
 def _rollout(metadata: dict) -> RewardRollout:
-    return RewardRollout(prompt="a photo of a yellow bus", output=None, metadata=metadata)
+    return RewardRollout(
+        prompt="a photo of a yellow bus",
+        output=None,
+        source_request_id="request-0",
+        sample_id="sample-0",
+        group_id="group-0",
+        trajectory_id="trajectory-0",
+        metadata=metadata,
+    )
 
 
 @pytest.mark.asyncio

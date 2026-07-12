@@ -61,6 +61,9 @@ class _FakeReward:
     def __init__(self, state: dict[str, Any]) -> None:
         self._state = state
 
+    async def preflight(self) -> None:
+        return None
+
     async def shutdown(self) -> None:
         self._state["reward_shutdowns"] += 1
         self._state["shutdown_order"].append("reward")

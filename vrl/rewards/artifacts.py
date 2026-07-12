@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import uuid
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Literal, get_args
@@ -49,16 +51,48 @@ class VideoRewardArtifactStore:
         self.media_type = media_type
         self.artifact_format = artifact_format
         self.manifest_path = self.root / manifest_name
+        self._owned_paths: set[Path] = set()
         self.root.mkdir(parents=True, exist_ok=True)
 
     def materialize(self, rollouts: list[RewardRollout]) -> list[RewardInferenceArtifact]:
         artifacts: list[RewardInferenceArtifact] = []
-        for index, rollout in enumerate(rollouts):
-            artifact = self._write_one(rollout, index)
-            artifacts.append(artifact)
+        try:
+            for rollout in rollouts:
+                artifacts.append(self._write_one(rollout))
+        except BaseException:
+            self.release(artifacts)
+            raise
         return artifacts
 
-    def _write_one(self, rollout: RewardRollout, index: int) -> RewardInferenceArtifact:
+    def release(self, artifacts: list[RewardInferenceArtifact]) -> None:
+        """Delete materializations owned by this store; safe to retry."""
+
+        errors: list[OSError] = []
+        for artifact in artifacts:
+            if not artifact.path:
+                continue
+            path = Path(artifact.path)
+            if path not in self._owned_paths:
+                continue
+            try:
+                path.unlink(missing_ok=True)
+            except OSError as error:
+                errors.append(error)
+            else:
+                self._owned_paths.discard(path)
+        if errors:
+            raise OSError(
+                f"failed to release {len(errors)} reward artifacts",
+            ) from errors[0]
+
+    def retain(self, artifacts: list[RewardInferenceArtifact]) -> None:
+        """Transfer retained debug artifacts out of the store's ownership."""
+
+        for artifact in artifacts:
+            if artifact.path:
+                self._owned_paths.discard(Path(artifact.path))
+
+    def _write_one(self, rollout: RewardRollout) -> RewardInferenceArtifact:
         output = rollout.output
         if not isinstance(output, torch.Tensor):
             raise TypeError(
@@ -68,33 +102,43 @@ class VideoRewardArtifactStore:
         _validate_media_shape(tensor, self.media_type)
 
         metadata = dict(rollout.metadata or {})
-        sample_id = _sample_id(metadata, index)
-        artifact_id = f"{sample_id}-{index}"
+        materialization_id = uuid.uuid4().hex
+        artifact_id = f"{rollout.source_request_id}:{rollout.sample_id}:{materialization_id}"
         fps = _fps(metadata)
-        policy_version = metadata.get("policy_version")
-        policy_version = int(policy_version) if policy_version is not None else None
-        if self.artifact_format == "mp4":
-            path = self.root / f"{artifact_id}.mp4"
-            write_mp4(tensor, path, fps=fps)
-        else:
-            path = self.root / f"{artifact_id}.pt"
-            torch.save(tensor, path)
-        artifact = RewardInferenceArtifact(
-            artifact_id=artifact_id,
-            path=str(path.resolve()),
-            media_type=self.media_type,
-            prompt=str(rollout.prompt),
-            sample_id=sample_id,
-            policy_version=policy_version,
-            metadata={
-                "shape": list(tensor.shape),
-                "dtype": str(tensor.dtype),
-                "artifact_format": self.artifact_format,
-                "fps": fps,
-                **_artifact_provenance(metadata),
-            },
-        )
-        self._append_manifest(artifact)
+        suffix = "mp4" if self.artifact_format == "mp4" else "pt"
+        path = (self.root / f"{materialization_id}.{suffix}").resolve()
+        self._owned_paths.add(path)
+        try:
+            if self.artifact_format == "mp4":
+                write_mp4(tensor, path, fps=fps)
+            else:
+                torch.save(tensor, path)
+            size_bytes = path.stat().st_size
+            artifact = RewardInferenceArtifact(
+                artifact_id=artifact_id,
+                path=str(path),
+                media_type=self.media_type,
+                prompt=str(rollout.prompt),
+                source_request_id=rollout.source_request_id,
+                sample_id=rollout.sample_id,
+                group_id=rollout.group_id,
+                trajectory_id=rollout.trajectory_id,
+                policy_version=rollout.policy_version,
+                size_bytes=size_bytes,
+                sha256=_sha256_file(path),
+                metadata={
+                    "shape": list(tensor.shape),
+                    "dtype": str(tensor.dtype),
+                    "artifact_format": self.artifact_format,
+                    "fps": fps,
+                    **_artifact_provenance(metadata),
+                },
+            )
+            self._append_manifest(artifact)
+        except BaseException:
+            path.unlink(missing_ok=True)
+            self._owned_paths.discard(path)
+            raise
         return artifact
 
     def _append_manifest(self, artifact: RewardInferenceArtifact) -> None:
@@ -123,13 +167,12 @@ def _fps(metadata: dict[str, Any]) -> float:
     return float(value) if value is not None else 8.0
 
 
-def _sample_id(metadata: dict[str, Any], index: int) -> str:
-    sample_ids = metadata.get("sample_ids")
-    if isinstance(sample_ids, list) and index < len(sample_ids):
-        return str(sample_ids[index])
-    if "sample_id" in metadata:
-        return str(metadata["sample_id"])
-    return f"sample-{index}"
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _artifact_provenance(metadata: dict[str, Any]) -> dict[str, Any]:

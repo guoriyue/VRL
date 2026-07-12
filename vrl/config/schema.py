@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
 from vrl.config.algorithm import algorithm_config_class
 from vrl.config.precision import PrecisionConfig
+from vrl.config.reward_inference import parse_reward_inference_config
 from vrl.config.unknown_keys import OPEN, ConfigBlock
 from vrl.models.interfaces.runtime import MODEL_MEMORY_SECTIONS
 from vrl.ray.resources import (
@@ -67,6 +68,11 @@ class RewardConfig(ConfigBase):
             if sub is not None and not isinstance(sub, dict):
                 raise ValueError(
                     f"reward.kwargs.{name} must be a mapping, got {type(sub).__name__}",
+                )
+            if isinstance(sub, dict):
+                parse_reward_inference_config(
+                    sub.get("inference"),
+                    context=f"reward.kwargs.{name}.inference",
                 )
 
         # Zero keeps a scorer observation-only: it is still computed and logged

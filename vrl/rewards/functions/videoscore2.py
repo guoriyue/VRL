@@ -1,6 +1,6 @@
 """VideoScore2 reward function (disk artifacts + in-process runtime).
 
-A ``CumemRewardFunction`` on the disk-artifact path (see
+A ``DiskArtifactRewardFunction`` on the disk-artifact path (see
 ``_init_disk_artifact_reward``) whose runtime loads ``TIGER-Lab/VideoScore2`` and
 returns ``visual_quality`` / ``text_alignment`` / ``physical_common_sense`` /
 ``overall`` per artifact. This file only pins the model factory and the
@@ -15,13 +15,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.rewards.base import CumemRewardFunction
+from vrl.rewards.base import DiskArtifactRewardFunction
 
 _VIDEOSCORE2_MODEL = "vrl.rewards.models.videoscore2:VideoScore2Model"
 
 
-class VideoScore2Reward(CumemRewardFunction):
-    """VideoScore2 reward scored in-process from disk artifacts."""
+class VideoScore2Reward(DiskArtifactRewardFunction):
+    """VideoScore2 reward scored from disk artifacts."""
 
     def __init__(
         self,

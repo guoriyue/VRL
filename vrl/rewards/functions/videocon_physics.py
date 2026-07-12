@@ -1,6 +1,6 @@
 """VideoCon-Physics reward function (disk artifacts + in-process runtime).
 
-A ``CumemRewardFunction`` configured for the disk-artifact path (see
+A ``DiskArtifactRewardFunction`` configured for the disk-artifact path (see
 ``_init_disk_artifact_reward``) whose runtime loads the vendored mPLUG-Owl-Video
 backbone with the VideoCon-Physics checkpoint and returns ``physical_commonsense``,
 ``semantic_adherence``, and ``overall`` sub-scores per artifact. This file only
@@ -15,13 +15,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from vrl.rewards.base import CumemRewardFunction
+from vrl.rewards.base import DiskArtifactRewardFunction
 
 _VIDEOCON_PHYSICS_MODEL = "vrl.rewards.models.videocon_physics:VideoConPhysicsModel"
 
 
-class VideoConPhysicsReward(CumemRewardFunction):
-    """VideoCon-Physics reward scored in-process from disk artifacts."""
+class VideoConPhysicsReward(DiskArtifactRewardFunction):
+    """VideoCon-Physics reward scored from disk artifacts."""
 
     def __init__(
         self,

@@ -658,18 +658,6 @@ wheels = [
 ]
 
 [[package]]
-name = "asgi-lifespan"
-version = "2.1.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "sniffio" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/6a/da/e7908b54e0f8043725a990bf625f2041ecf6bfe8eb7b19407f1c00b630f7/asgi-lifespan-2.1.0.tar.gz", hash = "sha256:5e2effaf0bfe39829cf2d64e7ecc47c7d86d676a6599f7afba378c31f5e3a308", size = 15627, upload-time = "2023-03-28T17:35:49.126Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/2f/f5/c36551e93acba41a59939ae6a0fb77ddb3f2e8e8caa716410c65f7341f72/asgi_lifespan-2.1.0-py3-none-any.whl", hash = "sha256:ed840706680e28428c01e14afb3875d7d76d3206f3d5b2f2294e059b5c23804f", size = 10895, upload-time = "2023-03-28T17:35:47.772Z" },
-]
-
-[[package]]
 name = "astor"
 version = "0.8.1"
 source = { registry = "https://pypi.org/simple" }
@@ -11739,6 +11727,9 @@ reward = [
     { name = "torchvision" },
     { name = "transformers", version = "5.13.0", source = { registry = "https://pypi.org/simple" } },
 ]
+reward-service = [
+    { name = "aiohttp" },
+]
 videoeval = [
     { name = "vbench" },
 ]
@@ -11748,8 +11739,7 @@ lint = [
     { name = "ruff" },
 ]
 test = [
-    { name = "asgi-lifespan" },
-    { name = "httpx" },
+    { name = "aiohttp" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "python-levenshtein" },
@@ -11758,6 +11748,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "accelerate", marker = "extra == 'cosmos'", specifier = ">=0.30.0" },
+    { name = "aiohttp", marker = "extra == 'reward-service'", specifier = ">=3.10.0" },
     { name = "av", marker = "extra == 'data'", specifier = ">=12.0.0" },
     { name = "bitsandbytes", marker = "extra == 'optim8bit'", specifier = ">=0.43.0" },
     { name = "datasets", marker = "extra == 'data'", specifier = ">=2.18.0" },
@@ -11801,13 +11792,12 @@ requires-dist = [
     { name = "vbench", marker = "extra == 'videoeval'", specifier = "==0.1.5" },
     { name = "vllm", marker = "extra == 'ar-vllm'", specifier = ">=0.21.0,<0.22" },
 ]
-provides-extras = ["cosmos", "reward", "data", "ocr", "pose", "pose-gpu", "ar-vllm", "videoeval", "optim8bit"]
+provides-extras = ["cosmos", "reward", "reward-service", "data", "ocr", "pose", "pose-gpu", "ar-vllm", "videoeval", "optim8bit"]
 
 [package.metadata.requires-dev]
 lint = [{ name = "ruff", specifier = ">=0.4.0" }]
 test = [
-    { name = "asgi-lifespan", specifier = ">=2.1.0" },
-    { name = "httpx", specifier = ">=0.27.0" },
+    { name = "aiohttp", specifier = ">=3.10.0" },
     { name = "pytest", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", specifier = ">=0.23.0" },
     { name = "python-levenshtein", specifier = ">=0.27.0" },

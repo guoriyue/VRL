@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -13,15 +14,23 @@ from vrl.rewards.types import RewardRollout
 
 
 def _rollout(output: torch.Tensor) -> RewardRollout:
-    return RewardRollout(prompt="prompt", output=output, metadata={
+    return RewardRollout(
+        prompt="prompt",
+        output=output,
+        source_request_id="request-x",
+        sample_id="sample-x",
+        group_id="group-x",
+        trajectory_id="trajectory-x",
+        policy_version=4,
+        metadata={
             "policy_version": 4,
-            "sample_ids": ["sample-x"],
             "fps": 8,
             "task_type": "video2world",
             "reference_image": "/tmp/reference.png",
             "source_repo": "lerobot/droid_100",
             "source_episode": "000001",
-        })
+        },
+    )
 
 
 def test_video_artifact_store_writes_tensor_and_manifest(tmp_path: Path) -> None:
@@ -32,10 +41,16 @@ def test_video_artifact_store_writes_tensor_and_manifest(tmp_path: Path) -> None
 
     assert len(artifacts) == 1
     artifact = artifacts[0]
-    assert artifact.artifact_id == "sample-x-0"
+    assert artifact.artifact_id.startswith("request-x:sample-x:")
+    assert artifact.source_request_id == "request-x"
+    assert artifact.sample_id == "sample-x"
+    assert artifact.group_id == "group-x"
+    assert artifact.trajectory_id == "trajectory-x"
     assert artifact.policy_version == 4
     assert Path(artifact.path).is_absolute()
     assert Path(artifact.path).exists()
+    assert artifact.size_bytes == Path(artifact.path).stat().st_size
+    assert artifact.sha256 == hashlib.sha256(Path(artifact.path).read_bytes()).hexdigest()
     assert torch.load(artifact.path).shape == (1, 2, 2, 2)
     rows = [json.loads(line) for line in (tmp_path / "manifest.jsonl").read_text().splitlines()]
     assert rows[0]["artifact_id"] == artifact.artifact_id
@@ -79,3 +94,22 @@ def test_video_artifact_store_rejects_unknown_artifact_format(tmp_path: Path) ->
 
     with pytest.raises(ValueError, match="artifact_format must be one of"):
         VideoRewardArtifactStore(tmp_path, media_type="video", artifact_format="webm")
+
+
+def test_video_artifact_store_never_overwrites_and_releases_owned_paths(
+    tmp_path: Path,
+) -> None:
+    store = VideoRewardArtifactStore(tmp_path, media_type="video")
+    first = store.materialize([_rollout(torch.zeros(1, 2, 2, 2))])
+    second = store.materialize([_rollout(torch.ones(1, 2, 2, 2))])
+
+    assert first[0].artifact_id != second[0].artifact_id
+    assert first[0].path != second[0].path
+    assert torch.count_nonzero(torch.load(first[0].path, weights_only=True)) == 0
+    assert torch.all(torch.load(second[0].path, weights_only=True))
+
+    store.release(first + second)
+    store.release(first + second)
+
+    assert not Path(first[0].path).exists()
+    assert not Path(second[0].path).exists()
