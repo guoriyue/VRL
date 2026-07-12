@@ -113,7 +113,7 @@ if not segment.axis:
 - 删 `vrl/rollouts/evaluators/types.py:21` 的 `entropy` 字段、`:87` 的 `need_entropy` 字段。
 - 删 builder 形参与穿透：`vrl/rollouts/evaluators/trajectory.py:38,57,83,141` 的 `entropy` 形参/传参。
 - 删 evaluator 构造点的 `entropy=None`：`ar/token_logprob.py:75`、`ar/continuous_token_logprob.py:64`、`ar/multi_segment_token_logprob.py:91`。
-- 同步任何在测试里构造 `SegmentSignal(..., entropy=...)` 的点（`tests/algorithms/test_input_contract.py`、`vrl/scripts/perf/fp8_rollout_drift_probe.py` 如有传参）。
+- 同步任何在测试里构造 `SegmentSignal(..., entropy=...)` 的点（`tests/algorithms/test_input_contract.py`、`vrl/scripts/perf/quantized_rollout_drift_probe.py` 如有传参）。
 
 ### B. 删 `aux`（写入了真元数据，但零消费者）
 - 删 `vrl/rollouts/evaluators/types.py:26` 的 `aux` 字段。
@@ -124,7 +124,7 @@ if not segment.axis:
 ### C. 删 `axes`（仅进 `available` 诊断串）
 - 删 `vrl/rollouts/evaluators/types.py:15` 的 `axes` 字段、`trajectory.py:135` 的 `_axes_from_value(...)` 填充。
 - 若 `_axes_from_value` 仅服务此字段，连带删 `trajectory.py:299-303`。
-- 同步直接构造 `SegmentSignal(..., axes=...)` 的测试/脚本：`tests/algorithms/test_grpo.py`、`test_grpo_token.py`、`test_input_contract.py`、`test_multisegment_token_grpo.py`、`tests/trainers/online/_helpers.py`、`vrl/scripts/perf/fp8_rollout_drift_probe.py`。
+- 同步直接构造 `SegmentSignal(..., axes=...)` 的测试/脚本：`tests/algorithms/test_grpo.py`、`test_grpo_token.py`、`test_input_contract.py`、`test_multisegment_token_grpo.py`、`tests/trainers/online/_helpers.py`、`vrl/scripts/perf/quantized_rollout_drift_probe.py`。
 - 注意：删 `axes` **不影响** `axis` —— 两者校验/读取路径不同（§1.3 vs §1.4），不要连坐。
 
 ### D. `axis` —— 不动
@@ -150,8 +150,8 @@ ref_modules: dict[str, Any] | None = None
 
 - `grep -rn "entropy" vrl/rollouts/evaluators/ vrl/algorithms/` 不再命中 `SegmentSignal.entropy` / `need_entropy` / `entropy=None`（仅可能剩 RNG 注释类无关命中）。
 - `grep -rn "ref_modules" vrl/` 零命中。
-- `grep -rn "aux=\|\.aux\b\|\[\"aux\"\]" vrl/rollouts/evaluators/ vrl/algorithms/ tests/algorithms/ tests/trainers/online/_helpers.py vrl/scripts/perf/fp8_rollout_drift_probe.py` 零命中。
-- `grep -rn "axes=\|signal\.axes\|segment\.axes\|_axes_from_value" vrl/rollouts/evaluators/ vrl/algorithms/ tests/algorithms/ tests/trainers/online/_helpers.py vrl/scripts/perf/fp8_rollout_drift_probe.py` 零命中；允许 `tensor.axes` / `TrajectoryBatch.axes` 这类 trajectory 层结构引用继续存在。
+- `grep -rn "aux=\|\.aux\b\|\[\"aux\"\]" vrl/rollouts/evaluators/ vrl/algorithms/ tests/algorithms/ tests/trainers/online/_helpers.py vrl/scripts/perf/quantized_rollout_drift_probe.py` 零命中。
+- `grep -rn "axes=\|signal\.axes\|segment\.axes\|_axes_from_value" vrl/rollouts/evaluators/ vrl/algorithms/ tests/algorithms/ tests/trainers/online/_helpers.py vrl/scripts/perf/quantized_rollout_drift_probe.py` 零命中；允许 `tensor.axes` / `TrajectoryBatch.axes` 这类 trajectory 层结构引用继续存在。
 - `pytest tests/algorithms/ -q` 全绿（重点 `test_input_contract.py`：删字段后 `available` 列表相应缩短，断言若硬编码字段名需同步更新）。
 - `pytest tests/rollouts/ -q` 全绿（evaluator 构造点改动）。
 - 全量 `pytest -q` 与现有 config 解析零回归。
@@ -175,5 +175,5 @@ ref_modules: dict[str, Any] | None = None
 - `vrl/models/interfaces/runtime.py:170`
 - `vrl/ray/resources.py:132-135,440`
 - `tests/algorithms/test_grpo.py`、`test_grpo_token.py`、`test_input_contract.py`、`test_multisegment_token_grpo.py`
-- `tests/trainers/online/_helpers.py`、`vrl/scripts/perf/fp8_rollout_drift_probe.py:80-82`
+- `tests/trainers/online/_helpers.py`、`vrl/scripts/perf/quantized_rollout_drift_probe.py`
 - 关联：[[SPRINT_trainer_rollout_dead_alias_cleanup]]（已删 `SegmentSignal.segment` 标识符，本 sprint 承接字段级清理）

@@ -7,7 +7,7 @@
 - `PrecisionCorrectionConfig` 扩了 RS 三字段 + bypass 开关（`logprob_mismatch.py`）：`rs_mode`（off/seq_mean_k1/seq_max_k1，`token_*` 在 `__post_init__` 直接拒绝并指向 seq 模式）、`rs_log_ratio_low/high`（默认 ln0.5/ln2.0 log-ratio 数值，非 string）、`recompute_old_logprob`（off=bypass 唯一实现；on 在构造时 `NotImplementedError`，不做静默 no-op）。schema/builder 全自动从 dataclass 字段派生，无需改 `schema.py`/`builders.py`。
 - 新增 `apply_rejection_sample_mask(log_ratio, config, *, mask=None)` 与 `combine_keep_masks(*masks)`（同文件，与 `apply_truncated_importance_weight` 并列）。per-sample（1D，连续扩散）下 seq_mean/seq_max 退化同判据；token（B,L）下按序列轴聚合，返回 (B,1) 广播掩码，`mask` 把聚合限制在有效 token。
 - `continuous.py` / `token.py` 各加 RS 消费：`keep = combine_keep_masks(tis_keep, rs_keep)`（token 再乘 token mask），分母真实剔除（非梯度稀释）；新增 `rs_seq_masked_fraction` 标量，挂进 `TrainStepMetrics`（与 `tis_clip_fraction` 同作用域——只在 per-step 算法 metrics，不进 trainer 聚合/CSV）。`MultiSegmentTokenGRPO` 经 `super().compute_loss()` 自动覆盖。
-- `fp8_rollout_drift_probe.py` 加 RS 分支（seq_mean_k1 + 默认带），报 `rs_seq_masked_fraction` 并标注 <5% OK / ≥5% 收紧带或退 recompute。
+- `quantized_rollout_drift_probe.py --scheme fp8` 加 RS 分支（seq_mean_k1 + 默认带），报 `rs_seq_masked_fraction` 并标注 <5% OK / ≥5% 收紧带或退 recompute。
 - 测试：`test_logprob_mismatch.py`（RS config 校验 + mask 函数 + combine）、`test_grpo.py::TestGRPORejectSampling`（连续：越界剔除 + RS/TIS 合并分母）、`test_grpo_token.py::TestTokenRejectSampling`（seq_max 单步 outlier 拒整段、seq_mean 抵消保留、RS+TIS 折进 eff_mask、mask 感知聚合）。
 
 关联：
@@ -178,7 +178,7 @@ bypass（`recompute_old_logprob=off`，默认）下，前提是「drift 有界�
    - RS 与 TIS 同时开：keep-mask = `tis_keep * rs_keep`，分母正确剔除。
    - `rs_mode="token_k1"` 触发 `__post_init__` ValueError 并指向 seq 模式。
    - `recompute_old_logprob="on"` 报「未实现」而非静默 no-op。
-2. **drift probe 复用**：用现成的 `vrl/scripts/perf/fp8_rollout_drift_probe.py`（已 import `PrecisionCorrectionConfig` + `compute_logprob_mismatch_stats`，见 `:40`、`:124`）加 RS 分支，在真实 fp8 rollout 轨迹上确认 `rs_seq_masked_fraction` 在合理带内（< ~5%，否则按 doc 收紧/退 recompute）。
+2. **drift probe 复用**：用现成的 `vrl/scripts/perf/quantized_rollout_drift_probe.py`（调用 `PrecisionCorrectionConfig` + `compute_logprob_mismatch_stats`）加 RS 分支，在真实 fp8 rollout 轨迹上确认 `rs_seq_masked_fraction` 在合理带内（< ~5%，否则按 doc 收紧/退 recompute）。
 3. **不回归 TIS**：`rs_mode=off` 时数值与当前 `fp8-rollout-precision-tis` 分支逐位一致（RS 完全旁路）。
 
 ## Non-Goals
@@ -208,4 +208,4 @@ vrl 代码（本轮实际读过，落地目标）：
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/rollouts/evaluators/trajectory.py:182`、`:194`（`old_log_prob` 源自 rollout 记录的 trajectory segment —— vrl 已是 bypass 语义的实锤）
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/trainers/online/precision_guard.py:75`、`:55`（drift guard `auto`→`fail`，与 RS 联动守 bypass 前提）
 - `/home/mingfeiguo/Desktop/wm-infra/vrl/trainers/core/types.py:256`、`/home/mingfeiguo/Desktop/wm-infra/vrl/config/schema.py:337`（`trainer.precision_correction` config 字段与 schema 暴露）
-- `/home/mingfeiguo/Desktop/wm-infra/vrl/scripts/perf/fp8_rollout_drift_probe.py:40`、`:124`（已用 `PrecisionCorrectionConfig` 的 drift probe，RS 验证复用入口）
+- `/home/mingfeiguo/Desktop/wm-infra/vrl/scripts/perf/quantized_rollout_drift_probe.py`（已用 `PrecisionCorrectionConfig` 的 drift probe，RS 验证复用入口）

@@ -33,7 +33,7 @@
 | LM_Head 需 FP32 softmax | 无 softmax 分类头；对应的是 SDE step 的高斯 log-prob | 同上，math 轴恒 fp32 |
 | RMSNorm / RoPE / Attention 训推实现差异 | **当前无分歧**：同一份 module，同一次前向定义 | 采样 `executor.py:720 model.forward_step` 与训练 `sde_logprob.py:78 model.replay_forward` 是同一模型的两次调用 |
 | MoE router 不稳定排序 / 专家选择分歧 | **当前家族无 MoE**（sd3_5/wan/cosmos 都是 dense DiT） | —— 见 §4 门控 |
-| 长输出误差累积 | 去噪步 T（如 35 步）的误差累积 | `fp8_rollout_drift_probe.py` 实测：单步 ratio_dev ~0.14，沿 T=35 累积后 max ~0.87 |
+| 长输出误差累积 | **不能直接套到当前 diffusion loss**：trainer 对每个 denoise timestep 独立算 GRPO/TIS，再对 timestep 平均 | 修正后的 probe：FP8 35×256 个 sample-step ratio_dev mean/max=`0.0298/0.1584`，cap=2.0 下 TIS/RS 都为 0%；35 步 ratio 乘积只作反事实压力诊断 |
 | 直接用 rollout probs 当分母 | **我们已经是这样**：PPO 分母用采样时存的 logprob | `grpo/continuous.py:105` `raw_ratio = exp(signals.log_prob - old_log_probs)`，`old_log_probs` 来自采样 `executor.py:770` 存入、`gather.py:102 old_log_prob=log_probs` |
 
 **关键结论**：我们走的不是文章批评的 verl/OpenRLHF "纯重算" 范式，而是**已经把 rollout probs 当分母**（分子是带梯度的 replay(θ)，分母是采样时存下的 behavior logprob），再用 **TIS 截断 + RS 拒绝**把 rollout→replay 的精度 gap 显式 bound 住。这正是文章承认的修正路线，且比它批评的 verl 范式更进一步。
@@ -72,7 +72,9 @@ CFG 也同源：两边都 `batched_cfg`，都 `torch.cat([uncond, cond])` 拼 2x
 - **修正**：同文件 `apply_truncated_importance_weight`（TIS：off/truncate/clip/mask）+ `apply_rejection_sample_mask`（RS：seq_mean_k1 / seq_max_k1），两个 GRPO 家族共用。
 - **哨兵**：`vrl/trainers/online/precision_guard.py:run_precision_drift_guard` —— 首步逐 timestep 校验；`resolve_guard_mode` 在 `rollout_precision != train_precision` 时自动转 `fail`，精度一致时 `off`（此时 `test_diffusion_flow_matching.py:85` 已断言 replay vs rollout logprob 在 fp32 下逐位相等）。
 - **自动派生**：`build_trainer_config` 在 `precision: {train: bf16, rollout: fp8}` 且无显式 expert block 时自动注入 `PrecisionCorrectionConfig(tis_mode="truncate", rs_mode="seq_mean_k1")`（见 [[SPRINT_fullparam_and_fp8_precision]] §2）。
-- **诊断探针**：`vrl/scripts/perf/fp8_rollout_drift_probe.py` —— 真 `_scaled_mm` fp8 GEMM 测漂移 → 喂 stats → guard 触发 → TIS 在轨迹尾部 engage。
+- **诊断探针**：`vrl/scripts/perf/quantized_rollout_drift_probe.py` —— 生产 FP8/FP4
+  module 测漂移 → 喂 stats/guard/TIS/RS；正式输出严格保持 trainer 的逐 timestep 语义，另列的
+  35 步 ratio 乘积明确标为不进入 loss 的 counterfactual。
 
 > 一句话：**精度这一根轴上，文章要的"测量+修正+不确定性门控"我们都有了。**
 
@@ -93,12 +95,12 @@ CFG 也同源：两边都 `batched_cfg`，都 `torch.cat([uncond, cond])` 拼 2x
 ### 门 2：独立的投机扩散 / paged 扩散引擎
 - 触发：[[SPRINT_speculative_diffusion_rollout]]、`docs/sprints/reading/speculative_diffusion_sampling.md`。
 - 后果：投机扩散用 draft 模型 + 验证步，rollout 轨迹的 logprob 不再等于训练 replay 的 logprob——引入了 prefill/decode 式分歧。当前"采样和 replay 都用同一个 scheduler 严格重算"的前提被打破。
-- 备料：投机引擎产出的 logprob 必须能被训练 replay **精确重放**，或显式纳入 TIS 分母；落地前先跑 `fp8_rollout_drift_probe` 同款 parity 测试。
+- 备料：投机引擎产出的 logprob 必须能被训练 replay **精确重放**，或显式纳入 TIS 分母；落地前先跑 `quantized_rollout_drift_probe --scheme fp8` 同款 parity 测试。
 
 ### 门 3：批不变性（batch-invariance）—— 已 live 的隐性漂移
 - 来源：Thinking Machines Lab《Defeating Nondeterminism in LLM Inference》（文章评论引用）—— 归约顺序 / batch size 不同会引入非确定性，即使同一套 forward。
 - 我们这里 live：采样的 `chunk_batch` 与训练的 `microbatch_size` 不同 → 同一 DiT 前向在不同 batch 形状下归约顺序可能不同，产生**精度一致时仍存在的**微小 logprob 漂移。当前被 drift guard 的 fp32 逐位断言掩盖（因为测试用同 batch）。
-- 行动（小，可现在做）：在 `fp8_rollout_drift_probe` 加一个**变 batch 形状**的 parity case，量"同精度、不同 batch"下的 ratio_dev，确认是否在 TIS cap 之下；若显著则记录为已知项。
+- 行动（小，可现在做）：在 `quantized_rollout_drift_probe` 加一个**变 batch 形状**的 parity case，量"同精度、不同 batch"下的 ratio_dev，确认是否在 TIS cap 之下；若显著则记录为已知项。
 
 ## 5. 一个可直接验证的结论（省 recompute）
 
@@ -139,4 +141,4 @@ CFG 也同源：两边都 `batched_cfg`，都 `torch.cat([uncond, cond])` 拼 2x
 - [[SPRINT_moe_support_decision]]、[[SPRINT_physical_ai_model_support]] —— 门 1 触发源
 - [[SPRINT_speculative_diffusion_rollout]] —— 门 2 触发源
 - [[SPRINT_framework_lessons_vrl]] —— 同类外部框架研读
-- 代码：`vrl/algorithms/logprob_mismatch.py`、`vrl/trainers/online/precision_guard.py`、`vrl/math/diffusion/flow_matching.py`、`vrl/generation/diffusion/executor.py`、`vrl/rollouts/evaluators/diffusion/sde_logprob.py`、`vrl/scripts/perf/fp8_rollout_drift_probe.py`
+- 代码：`vrl/algorithms/logprob_mismatch.py`、`vrl/trainers/online/precision_guard.py`、`vrl/math/diffusion/flow_matching.py`、`vrl/generation/diffusion/executor.py`、`vrl/rollouts/evaluators/diffusion/sde_logprob.py`、`vrl/scripts/perf/quantized_rollout_drift_probe.py`

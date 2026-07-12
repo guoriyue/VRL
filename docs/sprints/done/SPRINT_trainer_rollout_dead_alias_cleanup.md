@@ -210,7 +210,7 @@ vrl/scripts/ar/janus_pro/train.py:81-82 __all__
 
 ### E. `SegmentSignal` 砍到一份标识符
 - dict key（`TrajectorySignalBatch.segments`）是真相。删 `vrl/rollouts/evaluators/types.py:14` 的 `segment` 字段，删 `:51-54` 的 `segment.segment != name` 自校验；`name` 留作自描述字段，由 batch 的 `__post_init__` 改为“key 不一致则纠正/赋值”而非断言三者相等。
-- 更新构造点 `vrl/rollouts/evaluators/trajectory.py:132`、`vrl/scripts/perf/fp8_rollout_drift_probe.py` 及相关 tests，去掉 `segment=...` 传参。
+- 更新构造点 `vrl/rollouts/evaluators/trajectory.py:132`、`vrl/scripts/perf/quantized_rollout_drift_probe.py` 及相关 tests，去掉 `segment=...` 传参。
 
 ### F. 删 `phase_times` 死属性
 - 删 `vrl/rollouts/orchestration/types.py:49-50` 与 `vrl/rollouts/orchestration/continuous/types.py:67-68` 两个属性。

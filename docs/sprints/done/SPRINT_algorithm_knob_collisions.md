@@ -178,7 +178,7 @@ DiffusionNFT，`vrl/algorithms/diffusion_nft.py:266`：
 
 1. `vrl/algorithms/grpo/continuous.py:26`、`vrl/algorithms/diffusion_nft.py:23`：两个字段统一为 `kl_coef`，更新各自消费点（`continuous.py:127,130,149`；`token.py:79,82,93`；`diffusion_nft.py:266`）。
 2. `vrl/config/schema.py:102-103`：把 `init_kl_coef` 与 `kl_beta` 合并为单一 `kl_coef` key。
-3. trainer getattr 同步：`vrl/trainers/online/trainer.py:666-677`、`1085-1096`；`vrl/scripts/common/online.py:202`；`vrl/scripts/perf/fp8_rollout_drift_probe.py:127`。
+3. trainer getattr 同步：`vrl/trainers/online/trainer.py:666-677`、`1085-1096`；`vrl/scripts/common/online.py:202`；`vrl/scripts/perf/quantized_rollout_drift_probe.py`。
 4. 全部 YAML：grep `init_kl_coef`/`kl_beta`（anima_preview3、sd3_5、wan_2_1/2_2、cosmos、diffusion_nft 等十余处）统一改 `kl_coef`。
 5. DPO 的 `beta` 不动——它是 temperature，不是 loss-side KL 系数（见 finding load-bearing caveat）。
 
@@ -215,7 +215,7 @@ DiffusionNFT，`vrl/algorithms/diffusion_nft.py:266`：
 - `vrl/rollouts/collector/config.py:57,123-124,165`、`core.py:167`、`batch_builder.py:37,116-119`（kl_reward 真实消费链）
 - `vrl/trainers/online/trainer.py:514-523`（adv_saturation metric）, `:666-677,1085-1096`（init_kl_coef getattr 门控）
 - `vrl/scripts/common/online.py:194,202-203`（ref model 由 init_kl_coef 决定）
-- `vrl/scripts/perf/fp8_rollout_drift_probe.py:127`
+- `vrl/scripts/perf/quantized_rollout_drift_probe.py`
 - `configs/base/algorithm/grpo.yaml:1-13`、`configs/base/algorithm/diffusion_nft.yaml:1-16`
 - `configs/experiment/ar/janus_pro/online_r1_grpo_aesthetic.yaml:24-29`、`.../online_grpo_ocr.yaml:10-11`
 - `configs/experiment/diffusion/cosmos_predict2/online_grpo_v2w_reference.yaml:17,21`、`.../online_grpo_kling_video_reward.yaml:30-31`

@@ -63,27 +63,21 @@ canonical paths, are referenced by other code/docs, survive cleanup"。这 7 个
 
 ## 3. 附带:一个 perf 目录的重复 helper
 
-`vrl/scripts/perf/common/fp8_math.py` 的 `amax_scale` / `tensorwise_fp8_matmul` 手抄了
-`vrl/nn/quantization/fp8.py` 的量化核心(form-4/5):`amax_scale` 重实现私有 `_amax_scale`
-的 scalar 分支(`fp8.py:72`),`tensorwise_fp8_matmul` 重实现 `Fp8Linear.forward` 的
-tensorwise 分支(scalar amax-scale 两操作数后 `torch._scaled_mm` bf16 累加)。
-它正确地从核心 import 了 `FP8_E4M3_MAX` 常量,但抄了序列本身。
+**2026-07-11 后续实现已改变该判决。** `fp8_math.py` 现在只保留
+`relative_l1_drift` 这一项共享测量公式；手写 `amax_scale` /
+`tensorwise_fp8_matmul` 已删除。`quantized_linear_benchmark.py` 与
+`quantized_rollout_drift_probe.py` 都直接调用生产 `Fp8Linear` / `Fp4Linear`，所以动态
+激活量化、scale 布局、bias 与 dtype 处理都由被测模块本身执行，不再存在 form-4 的量化序列副本。
 
-**判决(2026-07-11 补审后):KEEP,不改。** 逐项核对后,form-4/5 在这里不成立:
+当前应保留的薄边界只有两类：
 
-1. **probe 仍活着**:`amax_scale`/`tensorwise_fp8_matmul` 被 3 个 perf probe 导入
-   (`fp8_recipe_accuracy.py`、`fp8_rollout_drift_probe.py`、`fp8_linear_benchmark.py`),都是用户保留
-   的 perf 测量档案。
-2. **它们是独立的参考/基准,不是生产代码的便利复制**:`fp8_rollout_drift_probe` 用
-   `tensorwise_fp8_matmul` 当"fp8 对 RL log-prob 漂移影响"的独立参照,`fp8_linear_benchmark` 定义自己
-   的最小 `_Fp8Linear` 基准类。让它们改调生产 `Fp8Linear.forward` 反而 ① 拿不到裸 tensorwise
-   matmul(生产 forward 裹着 reshape/bias/blockwise/rowwise/master-drop 机制),② 把测量口径耦合到
-   生产代码演进——测量与被测同源正是要避免的。
-3. **唯一会静默 rot 的真魔数已单源**:`FP8_E4M3_MAX` 已从 `nn/quantization/fp8.py` import;重复的只是
-   `(amax/MAX).clamp_min(1e-12).to(float32)` 这一行 e4m3 amax-scale 的教科书定义,不是可微妙错位的
-   多步序列。而生产侧的 `_amax_scale` 是私有的,为一个 probe 把它公开会反向扩大生产模块 API 面。
+1. `fp8_linear_benchmark.py` / `fp8_rollout_drift_probe.py` 只把旧 CLI 名转发到新的
+   scheme-neutral 入口，是公共命令兼容 facade；薄文件合理。
+2. `fp8_math.py::relative_l1_drift` 被 recipe accuracy 与统一 linear benchmark 共用，隔离的是
+   同一条 normalized-L1 公式，避免两个报告用不同分母；这是共享测量协议，不是量化实现副本。
 
-这符合"独立性/一致性优先于减行数"与 perf-sprint 保留原则,不动。
+非目标：不为了减少文件数把 FP8/FP4 kernel 合并；两者的存储格式、scale 布局与硬件约束不同，
+跨 scheme 保持统一 module/API 形状比强行共用 kernel LOC 更重要。
 
 ## 4. 逐入口判决（补审闭合，2026-07-11）
 
