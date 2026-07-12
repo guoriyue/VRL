@@ -16,6 +16,7 @@ import pytest
 import torch
 from huggingface_hub import snapshot_download
 from huggingface_hub.errors import LocalEntryNotFoundError
+from omegaconf import OmegaConf
 
 from tests import ci_envs
 from vrl.config.builders import build_configs
@@ -757,7 +758,9 @@ def _build_executor(
     if "samples_per_chunk" in signature.parameters:
         kwargs["samples_per_chunk"] = int(cfg.rollout.samples_per_chunk)
     if "reference_image" in signature.parameters:
-        kwargs["reference_image"] = OmegaConf.select(cfg, "data.preprocessing.reference_image", default=None)
+        kwargs["reference_image"] = OmegaConf.select(
+            cfg, "data.preprocessing.reference_image", default=None
+        )
     return executor_cls(model, **kwargs)
 
 

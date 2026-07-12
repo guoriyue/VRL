@@ -16,8 +16,8 @@ import pytest
 import torch
 
 from vrl.rollouts.batch import RolloutBatch
-from vrl.trainers.data import PromptExample
 from vrl.rollouts.orchestration.prompt_collection import collect_prompt_batches
+from vrl.trainers.data import PromptExample
 
 
 def _batch(prompts: list[str], group_size: int) -> RolloutBatch:

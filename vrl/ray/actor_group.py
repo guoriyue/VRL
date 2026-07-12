@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from vrl.ray.dependencies import require_ray
-from vrl.ray.resource_cleanup import kill_actors
 from vrl.ray.placement import actor_scheduling_strategy
+from vrl.ray.resource_cleanup import kill_actors
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,7 +52,9 @@ class RayActorGroup:
         remote_worker = ray.remote(num_cpus=float(num_cpus), num_gpus=float(num_gpus))(worker_cls)
         actors: list[Any] = []
         try:
-            for index, (worker_id, worker_config) in enumerate(zip(worker_ids, worker_configs, strict=True)):
+            for index, (worker_id, worker_config) in enumerate(
+                zip(worker_ids, worker_configs, strict=True)
+            ):
                 options: dict[str, Any] = {}
                 if placement_group is not None:
                     bundle_index = None if bundle_indices is None else int(bundle_indices[index])
@@ -65,16 +67,10 @@ class RayActorGroup:
                 actors.append(actor)
 
             if startup_method:
-                startup_refs = [
-                    getattr(actor, startup_method).remote()
-                    for actor in actors
-                ]
+                startup_refs = [getattr(actor, startup_method).remote() for actor in actors]
                 ray.get(startup_refs)
 
-            metadata_refs = [
-                getattr(actor, metadata_method).remote()
-                for actor in actors
-            ]
+            metadata_refs = [getattr(actor, metadata_method).remote() for actor in actors]
             metadata = ray.get(metadata_refs)
         except Exception:
             kill_actors(ray, actors)

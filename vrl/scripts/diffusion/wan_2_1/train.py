@@ -19,9 +19,9 @@ from vrl.scripts.common.online import (
     export_transformer_lora,
     run_online_recipe,
 )
-from vrl.trainers.data.artifacts import require_reference_images
 from vrl.scripts.common.types import OnlineRecipeDefinition
 from vrl.scripts.diffusion.train import build_replay_bundle
+from vrl.trainers.data.artifacts import require_reference_images
 
 
 async def train_wan_2_1_i2v_grpo(cfg: DictConfig) -> None:

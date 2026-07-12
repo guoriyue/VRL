@@ -14,5 +14,5 @@ def test_trainer_eval_points_to_standalone_checkpoint_evaluation() -> None:
         overrides=["trainer.eval.enabled=true"],
     )
 
-    with pytest.raises(ValueError, match="trainer.eval was removed"):
+    with pytest.raises(ValueError, match=r"trainer\.eval was removed"):
         build_configs(cfg)
