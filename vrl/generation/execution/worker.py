@@ -165,8 +165,8 @@ class GenerationWorkerCore:
         if callable(move_frozen):
             move_frozen(device)
 
-    def update_weights(self, state_ref: Any, policy_version: int) -> None:
-        """Update generation weights, then record the active policy version.
+    def update_weights(self, state_ref: Any, policy_version: int) -> int:
+        """Install weights and return the policy version as the commit ACK.
 
         When the model supports versioned trainable-state slots, install the new
         version as a retained slot WITHOUT overwriting the slots older in-flight
@@ -195,6 +195,7 @@ class GenerationWorkerCore:
         # latest installed version even in slot mode. Per-chunk results take their
         # version from request.policy_version, not this field.
         self._policy_version = int(policy_version)
+        return self._policy_version
 
     def current_policy_version(self) -> int | None:
         return self._policy_version

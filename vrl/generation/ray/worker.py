@@ -48,8 +48,8 @@ class RayGenerationWorker:
     def wake(self) -> None:
         self.core.wake()
 
-    def update_weights(self, state_ref: Any, policy_version: int) -> None:
-        self.core.update_weights(state_ref, policy_version)
+    def update_weights(self, state_ref: Any, policy_version: int) -> int:
+        return self.core.update_weights(state_ref, policy_version)
 
     def current_policy_version(self) -> int | None:
         return self.core.current_policy_version()

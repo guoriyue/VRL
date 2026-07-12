@@ -6,6 +6,7 @@ import asyncio
 from typing import Any, Protocol
 
 from vrl.generation.execution.types import DistributedWorkerHandle
+from vrl.generation.ray.utils import require_installed_policy_version
 from vrl.ray.dependencies import require_ray
 
 
@@ -16,8 +17,7 @@ class GenerationWeightSync(Protocol):
         self,
         state_ref: Any,
         policy_version: int,
-    ) -> None:
-        ...
+    ) -> None: ...
 
 
 class RayGenerationWeightSync(GenerationWeightSync):
@@ -31,7 +31,7 @@ class RayGenerationWeightSync(GenerationWeightSync):
         state_ref: Any,
         policy_version: int,
     ) -> None:
-        remote_methods: list[Any] = []
+        remote_workers: list[tuple[DistributedWorkerHandle, Any]] = []
         for worker in self.workers:
             actor = worker.actor
             if actor is None:
@@ -39,12 +39,16 @@ class RayGenerationWeightSync(GenerationWeightSync):
             update_weights = actor.update_weights
             remote = getattr(update_weights, "remote", None)
             if callable(remote):
-                remote_methods.append(remote)
+                remote_workers.append((worker, remote))
             else:
-                # Local (non-Ray) fake workers used in tests: call directly.
-                update_weights(state_ref, policy_version)
+                installed = update_weights(state_ref, policy_version)
+                require_installed_policy_version(
+                    worker_id=worker.worker_id,
+                    installed=installed,
+                    expected=policy_version,
+                )
 
-        if not remote_methods:
+        if not remote_workers:
             return
 
         ray = require_ray()
@@ -55,8 +59,25 @@ class RayGenerationWeightSync(GenerationWeightSync):
         # linearly in worker count for identical data. Ray auto-dereferences
         # the ref into the real dict before the worker method runs.
         shared_state = ray.put(state_ref)
-        refs = [remote(shared_state, policy_version) for remote in remote_methods]
-        await asyncio.to_thread(ray.get, refs)
+        update_refs = [
+            update_remote(shared_state, policy_version)
+            for _worker, update_remote in remote_workers
+        ]
+        # Ray ObjectRefs are asyncio-awaitable. Waiting on them directly keeps
+        # the ACK barrier owned by this event loop; cancelling owner shutdown
+        # cannot leave a detached ``to_thread(ray.get)`` blocked indefinitely.
+        installed_versions = await asyncio.gather(*update_refs)
+        for (worker, _update), installed in zip(
+            remote_workers,
+            installed_versions,
+            strict=True,
+        ):
+            require_installed_policy_version(
+                worker_id=worker.worker_id,
+                installed=installed,
+                expected=policy_version,
+            )
+
 
 __all__ = [
     "GenerationWeightSync",
