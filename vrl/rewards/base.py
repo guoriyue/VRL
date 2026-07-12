@@ -16,8 +16,8 @@ from vrl.rewards.inference import (
     RewardInferenceRequest,
     RewardInferenceResult,
     RewardInferenceRuntime,
+    RewardMemoryParkingCapability,
     RewardMemoryParkingRuntime,
-    RewardMemoryParkingSpec,
     RewardMemoryReleaseProof,
 )
 from vrl.rewards.types import RewardRollout
@@ -98,9 +98,9 @@ class RewardFunction:
     scoring path.
     """
 
-    # None is fail-closed. A specialized base class supplies a contract only
+    # None is fail-closed. A specialized base class declares this capability only
     # when all model-owned CUDA state is built in the tagged runtime pool.
-    memory_parking: ClassVar[RewardMemoryParkingSpec | None] = None
+    memory_parking: ClassVar[RewardMemoryParkingCapability | None] = None
     # Most reward constructors expose the selected device as ``device``;
     # exceptional schemas (for example NSFW's classifier_device) override it.
     device_config_key: ClassVar[str] = "device"
@@ -228,13 +228,13 @@ class RewardFunction:
     ) -> None:
         """Initialize a RewardFunction backed by a RewardModel factory."""
 
-        from vrl.rewards.runtime import LocalRewardRuntime
+        from vrl.rewards.runtime import InProcessRewardRuntime
 
         RewardFunction.__init__(
             self,
             reward_name=reward_name,
             score_key=score_key,
-            runtime=LocalRewardRuntime(
+            runtime=InProcessRewardRuntime(
                 {**dict(worker_config), "model_factory": str(model_factory)},
             ),
             artifact_builder=lambda rollouts: RewardFunction.build_inmemory_artifacts(
@@ -277,7 +277,7 @@ class RewardFunction:
         """
 
         from vrl.rewards.artifacts import VideoRewardArtifactStore
-        from vrl.rewards.runtime import LocalRewardRuntime
+        from vrl.rewards.runtime import InProcessRewardRuntime
 
         self.media_type = str(media_type)
         self.artifact_store = VideoRewardArtifactStore(
@@ -323,7 +323,7 @@ class RewardFunction:
                 worker_cfg["memory_parking_residual_bytes_limit"] = int(
                     memory_parking_residual_bytes_limit,
                 )
-            runtime = LocalRewardRuntime(worker_cfg)
+            runtime = InProcessRewardRuntime(worker_cfg)
 
         RewardFunction.__init__(
             self,
@@ -450,8 +450,10 @@ class RewardFunction:
 class CumemRewardFunction(RewardFunction):
     """Reward whose model allocations support verified tagged-pool parking."""
 
-    memory_parking: ClassVar[RewardMemoryParkingSpec] = RewardMemoryParkingSpec(
-        residual_bytes_limit=_REWARD_CUDA_RUNTIME_RESIDUAL_BYTES,
+    memory_parking: ClassVar[RewardMemoryParkingCapability] = (
+        RewardMemoryParkingCapability(
+            residual_bytes_limit=_REWARD_CUDA_RUNTIME_RESIDUAL_BYTES,
+        )
     )
 
 

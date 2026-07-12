@@ -1,4 +1,4 @@
-"""Model-backed RewardFunction over the local transport."""
+"""Tests for model-backed RewardFunction over the in-process transport."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import torch
 
 from vrl.rewards.base import RewardFunction
 from vrl.rewards.models.base import TorchRewardModel
-from vrl.rewards.runtime import LocalRewardRuntime
+from vrl.rewards.runtime import InProcessRewardRuntime
 from vrl.rewards.types import RewardRollout
 
 
@@ -25,11 +25,11 @@ def _rollout(output: torch.Tensor, *, policy_version: int = 2) -> RewardRollout:
     return RewardRollout(prompt="p", output=output, metadata={"policy_version": policy_version})
 
 
-def _reward_function_local() -> RewardFunction:
+def _reward_function_in_process() -> RewardFunction:
     return RewardFunction(
         reward_name="fake",
         score_key="fake",
-        runtime=LocalRewardRuntime(model=_FakeTorchReward({"device": "cpu"})),
+        runtime=InProcessRewardRuntime(model=_FakeTorchReward({"device": "cpu"})),
         artifact_builder=lambda rollouts: RewardFunction.build_inmemory_artifacts(
             rollouts, media_type="image",
         ),
@@ -37,9 +37,9 @@ def _reward_function_local() -> RewardFunction:
 
 
 @pytest.mark.asyncio
-async def test_reward_function_local_scores_in_process_no_disk() -> None:
-    """Checks reward function local scores in process no disk."""
-    reward = _reward_function_local()
+async def test_reward_function_in_process_scores_without_disk() -> None:
+    """Checks reward function scoring in-process without disk artifacts."""
+    reward = _reward_function_in_process()
     report = await reward.score_batch_report(
         [
             _rollout(torch.full((1, 3, 2, 2), 0.5)),
@@ -54,9 +54,9 @@ async def test_reward_function_local_scores_in_process_no_disk() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reward_function_local_single_score() -> None:
-    """Checks reward function local single score."""
-    reward = _reward_function_local()
+async def test_reward_function_in_process_single_score() -> None:
+    """Checks a single in-process reward score."""
+    reward = _reward_function_in_process()
     assert await reward.score(_rollout(torch.zeros(1, 3, 2, 2))) == pytest.approx(0.0)
 
 

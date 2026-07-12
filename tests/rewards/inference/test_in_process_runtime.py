@@ -1,11 +1,11 @@
-"""Tests for the in-process LocalRewardRuntime transport."""
+"""Tests for the in-process reward runtime transport."""
 
 from __future__ import annotations
 
 import pytest
 
 from vrl.rewards.inference import RewardInferenceArtifact, RewardInferenceRequest
-from vrl.rewards.runtime import LocalRewardRuntime
+from vrl.rewards.runtime import InProcessRewardRuntime
 
 
 class _SumMediaModel:
@@ -39,9 +39,9 @@ def _make_request(score_key: str = "overall") -> RewardInferenceRequest:
 
 
 @pytest.mark.asyncio
-async def test_local_runtime_scores_in_process_without_disk_or_ray() -> None:
-    """Checks local runtime scores in process without disk or Ray."""
-    runtime = LocalRewardRuntime(model=_SumMediaModel())
+async def test_in_process_runtime_scores_without_disk_or_ray() -> None:
+    """Checks in-process scoring without disk or Ray."""
+    runtime = InProcessRewardRuntime(model=_SumMediaModel())
     results = await runtime.score_batch(_make_request())
 
     assert [r.artifact_id for r in results] == ["a", "b"]  # original order preserved
@@ -52,9 +52,9 @@ async def test_local_runtime_scores_in_process_without_disk_or_ray() -> None:
 
 
 @pytest.mark.asyncio
-async def test_local_runtime_composite_score_key_sums_components() -> None:
-    """Checks local runtime composite score key sums components."""
-    runtime = LocalRewardRuntime(model=_SumMediaModel())
+async def test_in_process_runtime_composite_score_key_sums_components() -> None:
+    """Checks that in-process scoring sums composite score components."""
+    runtime = InProcessRewardRuntime(model=_SumMediaModel())
     results = await runtime.score_batch(_make_request(score_key="overall+extra"))
 
     assert results[0].selected_score == pytest.approx(4.0)  # 3.0 + 1.0
@@ -62,9 +62,9 @@ async def test_local_runtime_composite_score_key_sums_components() -> None:
 
 
 @pytest.mark.asyncio
-async def test_local_runtime_empty_request_returns_empty() -> None:
-    """Checks local runtime empty request returns empty."""
-    runtime = LocalRewardRuntime(model=_SumMediaModel())
+async def test_in_process_runtime_empty_request_returns_empty() -> None:
+    """Checks that an empty in-process request returns no results."""
+    runtime = InProcessRewardRuntime(model=_SumMediaModel())
     request = RewardInferenceRequest(
         request_id="req-empty",
         artifacts=(),
@@ -75,7 +75,7 @@ async def test_local_runtime_empty_request_returns_empty() -> None:
 
 
 class _FakeCumemAllocator:
-    """Record the CuMem calls made by a parked local reward runtime."""
+    """Record CuMem calls made by a parked in-process reward runtime."""
 
     def __init__(self) -> None:
         self.pool_tags: list[str] = []
@@ -130,7 +130,7 @@ async def test_sleep_offload_uses_cumem_pool(monkeypatch) -> None:
 
     allocator = _FakeCumemAllocator()
     monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: allocator)
-    runtime = LocalRewardRuntime(
+    runtime = InProcessRewardRuntime(
         {
             "sleep_offload": True,
             "model_factory": f"{__name__}:_immovable_factory",
@@ -160,7 +160,7 @@ async def test_reward_parking_rejects_default_allocator_residual(monkeypatch) ->
 
     allocator = _FakeCumemAllocator()
     monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: allocator)
-    runtime = LocalRewardRuntime(
+    runtime = InProcessRewardRuntime(
         {
             "device": "cuda:0",
             "sleep_offload": True,
@@ -195,7 +195,7 @@ async def test_reward_memory_parking_retries_after_sleep_failure(monkeypatch) ->
 
     allocator = _FlakyAllocator()
     monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: allocator)
-    runtime = LocalRewardRuntime(
+    runtime = InProcessRewardRuntime(
         {
             "sleep_offload": True,
             "model_factory": f"{__name__}:_immovable_factory",
@@ -222,7 +222,7 @@ async def test_dedicated_reward_runtime_stays_resident(monkeypatch) -> None:
 
     allocator = _FakeCumemAllocator()
     monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: allocator)
-    runtime = LocalRewardRuntime(
+    runtime = InProcessRewardRuntime(
         {"model_factory": f"{__name__}:_immovable_factory"},
     )
 
@@ -252,7 +252,7 @@ async def test_sleep_offload_requires_cumem(monkeypatch) -> None:
     import vrl.utils.cuda_memory as cuda_memory_mod
 
     monkeypatch.setattr(cuda_memory_mod, "_cumem_allocator", lambda: None)
-    runtime = LocalRewardRuntime(
+    runtime = InProcessRewardRuntime(
         {
             "sleep_offload": True,
             "model_factory": f"{__name__}:_immovable_factory",
@@ -266,4 +266,4 @@ async def test_sleep_offload_requires_cumem(monkeypatch) -> None:
 def test_sleep_offload_rejects_injected_model() -> None:
     """An already-built model cannot be retroactively placed in the CuMem pool."""
     with pytest.raises(ValueError, match="model_factory"):
-        LocalRewardRuntime({"sleep_offload": True}, model=object())
+        InProcessRewardRuntime({"sleep_offload": True}, model=object())

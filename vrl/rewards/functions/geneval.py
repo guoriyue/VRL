@@ -1,4 +1,4 @@
-"""GenEval reward (model-backed over the local transport).
+"""GenEval reward (model-backed over the in-process transport).
 
 Scores rollouts against structured GenEval prompt metadata. The actual
 image/object scoring is delegated to an import-path callable (or an injected
@@ -14,7 +14,7 @@ from typing import Any
 from vrl.rewards.base import RewardFunction
 from vrl.rewards.inference import RewardInferenceArtifact
 from vrl.rewards.models.geneval import GenEvalRewardModel, _OutputBox
-from vrl.rewards.runtime import LocalRewardRuntime
+from vrl.rewards.runtime import InProcessRewardRuntime
 from vrl.rewards.types import RewardRollout
 
 
@@ -52,7 +52,7 @@ class GenEvalReward(RewardFunction):
         super().__init__(
             reward_name="geneval",
             score_key="geneval",
-            runtime=LocalRewardRuntime(model=model),
+            runtime=InProcessRewardRuntime(model=model),
             artifact_builder=self._build_artifacts,
             debug_dir=debug_dir,
             request_prefix="geneval",

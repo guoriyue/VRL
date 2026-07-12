@@ -1,4 +1,4 @@
-"""NSFW safety penalty reward (model-backed over the local transport)."""
+"""NSFW safety penalty reward (model-backed over the in-process transport)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from typing import Any
 
 from vrl.rewards.base import RewardFunction
 from vrl.rewards.models.nsfw_safety import NSFWSafetyRewardModel
-from vrl.rewards.runtime import LocalRewardRuntime
+from vrl.rewards.runtime import InProcessRewardRuntime
 
 
 class NSFWSafetyReward(RewardFunction):
@@ -25,7 +25,7 @@ class NSFWSafetyReward(RewardFunction):
         super().__init__(
             reward_name="nsfw_safety",
             score_key="nsfw_safety",
-            runtime=LocalRewardRuntime(model=model),
+            runtime=InProcessRewardRuntime(model=model),
             artifact_builder=lambda rollouts: RewardFunction.build_inmemory_artifacts(
                 rollouts,
                 media_type="image",

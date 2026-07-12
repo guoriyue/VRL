@@ -6,7 +6,7 @@ import pytest
 
 from vrl.rewards.base import RewardBatchReport, RewardCleanupError, RewardFunction
 from vrl.rewards.functions.registry import MultiReward
-from vrl.rewards.runtime import LocalRewardRuntime
+from vrl.rewards.runtime import InProcessRewardRuntime
 from vrl.rewards.types import RewardRollout
 
 
@@ -266,8 +266,8 @@ def test_factory_parking_policy_distinguishes_cpu_and_dedicated_rewards() -> Non
 
     cpu_runtime = cpu_reward.rewards[0][2].runtime
     dedicated_runtime = dedicated_reward.rewards[0][2].runtime
-    assert isinstance(cpu_runtime, LocalRewardRuntime)
-    assert isinstance(dedicated_runtime, LocalRewardRuntime)
+    assert isinstance(cpu_runtime, InProcessRewardRuntime)
+    assert isinstance(dedicated_runtime, InProcessRewardRuntime)
     assert cpu_runtime.requires_memory_parking is False
     assert dedicated_runtime.requires_memory_parking is False
 
@@ -332,7 +332,7 @@ def test_gpu_resource_allows_component_cpu_downgrade() -> None:
 
     runtimes = {name: fn.runtime for name, _, fn in reward.rewards}
     runtime = runtimes["kling_video_reward"]
-    assert isinstance(runtime, LocalRewardRuntime)
+    assert isinstance(runtime, InProcessRewardRuntime)
     assert runtime._worker_config["device"] == "cpu"
     assert runtime.requires_memory_parking is False
     assert runtimes["aesthetic"].requires_memory_parking is True

@@ -20,7 +20,7 @@ from typing import Any
 
 from vrl.rewards.base import RewardFunction
 from vrl.rewards.models.ocr import OCRRewardModel
-from vrl.rewards.runtime import LocalRewardRuntime
+from vrl.rewards.runtime import InProcessRewardRuntime
 
 
 class OCRReward(RewardFunction):
@@ -47,7 +47,7 @@ class OCRReward(RewardFunction):
         super().__init__(
             reward_name="ocr",
             score_key="ocr",
-            runtime=LocalRewardRuntime(model=model),
+            runtime=InProcessRewardRuntime(model=model),
             artifact_builder=lambda rollouts: RewardFunction.build_inmemory_artifacts(
                 rollouts,
                 media_type="image",

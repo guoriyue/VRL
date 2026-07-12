@@ -20,7 +20,7 @@ from vrl.utils.cuda_memory import (
 )
 
 
-class LocalRewardRuntime:
+class InProcessRewardRuntime:
     """``RewardInferenceRuntime`` that runs a ``RewardModel`` in this process.
 
     ``worker_config.sleep_offload`` opts a heavyweight model into the same
@@ -109,7 +109,7 @@ class LocalRewardRuntime:
             factory_path = str(self._worker_config.get("model_factory", "")).strip()
             if not factory_path:
                 raise ValueError(
-                    "LocalRewardRuntime requires worker_config.model_factory "
+                    "InProcessRewardRuntime requires worker_config.model_factory "
                     "(import path to a RewardModel factory) or an explicit model",
                 )
             module_path, attr = factory_path.split(":", 1)
@@ -190,5 +190,5 @@ class LocalRewardRuntime:
 
 
 __all__ = [
-    "LocalRewardRuntime",
+    "InProcessRewardRuntime",
 ]

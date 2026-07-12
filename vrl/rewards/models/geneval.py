@@ -93,7 +93,7 @@ class GenEvalRewardModel:
 
 
 def geneval_reward_model(worker_config: Mapping[str, Any]) -> GenEvalRewardModel:
-    """RewardModel factory for the reward registry / LocalRewardRuntime."""
+    """RewardModel factory for the reward registry / InProcessRewardRuntime."""
 
     return GenEvalRewardModel(worker_config)
 

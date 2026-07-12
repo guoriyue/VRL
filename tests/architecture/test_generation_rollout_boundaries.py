@@ -68,7 +68,7 @@ def test_reward_scoring_is_in_process() -> None:
     """Rewards score in-process; the removed Ray pool transport must stay gone.
 
     The pool (actor pool + release_after_call kill/reload + resident parking)
-    was replaced by LocalRewardRuntime sleep/wake offload. Guard against it
+    was replaced by InProcessRewardRuntime sleep/wake offload. Guard against it
     creeping back as a directory, and keep the in-process runtime generic (no
     model-specific code in the shared transport).
     """

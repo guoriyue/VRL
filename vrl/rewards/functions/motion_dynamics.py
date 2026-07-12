@@ -6,7 +6,7 @@ from typing import Any
 
 from vrl.rewards.base import RewardFunction, resolve_reward_component_device
 from vrl.rewards.models.motion_dynamics import MotionDynamicsModel
-from vrl.rewards.runtime import LocalRewardRuntime
+from vrl.rewards.runtime import InProcessRewardRuntime
 
 
 class MotionDynamicsReward(RewardFunction):
@@ -30,7 +30,7 @@ class MotionDynamicsReward(RewardFunction):
         super().__init__(
             reward_name=reward_name,
             score_key=score_key,
-            runtime=LocalRewardRuntime(model=model),
+            runtime=InProcessRewardRuntime(model=model),
             artifact_builder=lambda rollouts: RewardFunction.build_inmemory_artifacts(
                 rollouts,
                 media_type="video",

@@ -329,6 +329,6 @@ distributed:
 - `vrl/ray/resources.py`：`RewardResourceConfig.share_with_rollout` 当前是三态 placement preference。
 - `vrl/ray/resources.py`：`_resolve_reward_devices` 当前先找 spare GPU，再 fallback 到 rollout pool。
 - `vrl/ray/resources.py`：`reward_runtime_resource_kwargs` 只为 Ray reward pool 提供 worker/runtime resource kwargs。
-- `vrl/rewards/runtime.py`：`execution: inline` 使用 `LocalRewardRuntime`，`execution: pool` 使用 `RayRewardRuntime`。
+- `vrl/rewards/runtime.py`：`execution: inline` 使用 `InProcessRewardRuntime`，`execution: pool` 使用 `RayRewardRuntime`。
 - `vrl/scripts/common/factory.py`：只有 active `execution: pool` reward 才合入 resolved reward runtime kwargs。
 - `vrl/config/schema.py`：当前 `distributed.resources.reward` 是 resource block，`distributed.reward` 是 reward runtime block。

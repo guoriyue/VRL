@@ -27,7 +27,7 @@ class RewardInferenceArtifact:
     policy_version: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     # Optional in-memory payload (e.g. an image/video tensor). The Ray transport
-    # ships file paths; the local transport can pass media in-memory to avoid disk.
+    # ships file paths; the in-process transport can avoid disk materialization.
     media: Any = None
 
     def __post_init__(self) -> None:
@@ -180,8 +180,8 @@ class RewardInferenceRuntime(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
-class RewardMemoryParkingSpec:
-    """Pre-construction contract for a verifiable reward parking runtime."""
+class RewardMemoryParkingCapability:
+    """Class-declared support for verifiable reward memory parking."""
 
     residual_bytes_limit: int = 0
 

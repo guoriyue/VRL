@@ -162,7 +162,7 @@ class OCRRewardModel:
 
 
 def ocr_reward_model(worker_config: Mapping[str, Any]) -> OCRRewardModel:
-    """RewardModel factory for the reward registry / LocalRewardRuntime."""
+    """RewardModel factory for the reward registry / InProcessRewardRuntime."""
 
     return OCRRewardModel(worker_config)
 

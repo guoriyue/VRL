@@ -117,7 +117,7 @@ memory 波动和“正常 DEAD 被误判为事故”的观察噪声。因此原�
    的 CUDA context。
 5. **Run shutdown：drain 后 kill。** 不做 recovery。
 
-当前 reward 已经是 driver 内的 `LocalRewardRuntime`，不是 Ray reward actor。
+当前 reward 已经是 driver 内的 `InProcessRewardRuntime`，不是 Ray reward actor。
 generation actor sleep 后虽然仍持有 Ray logical bundle，但 inline reward 不通过 Ray
 申请该 token；因此 canonical `on_demand` rollout统一使用sleep/wake。重复派生的
 `sleep_eligible`和missing-topology teardown fallback已删除；没有resolved lifecycle plan

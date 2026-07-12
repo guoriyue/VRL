@@ -66,7 +66,7 @@ CPU 跑 CLIP/DINOv2/LPIPS/RAFT(7 clip × 33 帧,torch.hub,无 GPU);reward-pool G
 已核实:torchvision 是 base dep(`pyproject.toml:46`,`raft_small` 在 `torchvision.models.optical_flow`),transformers(`:42`),kling 的 disk-artifact pool 模板,metadata plumbing。
 
 **(A) 感知锚 `target_dino_similarity`(便宜、本地、先做)**
-- 抄 `vrl/rewards/functions/target_video_similarity.py` + `models/target_video_similarity.py` 几乎原样(`default_execution="inline"`、`LocalRewardRuntime`、解码 gen 帧 + 读 `metadata['target_video']`)。
+- 抄 `vrl/rewards/functions/target_video_similarity.py` + `models/target_video_similarity.py` 几乎原样(`default_execution="inline"`、`InProcessRewardRuntime`、解码 gen 帧 + 读 `metadata['target_video']`)。
 - **只换坏核心**:把 `_features()`/`_unit_similarity()`(`models/target_video_similarity.py:157-165`)换成"每帧过冻结 DINOv2(`torch.hub('facebookresearch/dinov2','dinov2_vits14')`)→ 帧 cosine 均值",保留 sequence/final 加权结构。
 - `score_key=target_dino_similarity`;无新依赖;CPU 可。注册 `registry.py`:`"target_dino_similarity": TargetDinoSimilarityReward`。
 

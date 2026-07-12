@@ -224,7 +224,7 @@ with memory_profiling(...) as profile_result:
 
 > **复核（2026-07-10）：canonical Phase 3 handoff已完成。**
 > [[SPRINT_frozen_component_preservation]] 的缺陷 A 落地了CuMemAllocator按tag
-> 释放/重映射物理页；reward现在是driver内的`LocalRewardRuntime`，不会申请rollout的Ray
+> 释放/重映射物理页；reward现在是driver内的`InProcessRewardRuntime`，不会申请rollout的Ray
 > logical bundle。因此trainer/reward handoff都保留actor并sleep/wake，已删除无生产者的
 > `sleep_eligible`与missing-topology teardown fallback。kill/relaunch只属于terminal cleanup
 > 或未来fault recovery，不再是normal phase handoff。

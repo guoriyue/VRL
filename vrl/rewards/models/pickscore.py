@@ -86,7 +86,7 @@ class PickScoreRewardModel(TorchRewardModel):
 
 
 def pickscore_reward_model(worker_config: Mapping[str, Any]) -> PickScoreRewardModel:
-    """RewardModel factory for the reward registry / LocalRewardRuntime."""
+    """RewardModel factory for the reward registry / InProcessRewardRuntime."""
 
     return PickScoreRewardModel(worker_config)
 

@@ -13,7 +13,7 @@ from vrl.rewards.inference import (
     RewardInferenceArtifact,
     RewardInferenceRequest,
 )
-from vrl.rewards.runtime import LocalRewardRuntime
+from vrl.rewards.runtime import InProcessRewardRuntime
 
 
 class _FakeRewardModel:
@@ -28,7 +28,7 @@ class _FakeRewardModel:
 
 
 def build_fake_reward_model(worker_config) -> _FakeRewardModel:
-    """Module-level factory so LocalRewardRuntime can import it by path."""
+    """Module-level factory so InProcessRewardRuntime can import it by path."""
     return _FakeRewardModel(worker_config)
 
 
@@ -36,7 +36,7 @@ def test_runtime_requires_model_factory() -> None:
     """Checks the runtime rejects a worker config without a model factory."""
     import asyncio
 
-    runtime = LocalRewardRuntime({"reward_model_name": "KlingTeam/VideoReward@main"})
+    runtime = InProcessRewardRuntime({"reward_model_name": "KlingTeam/VideoReward@main"})
     request = RewardInferenceRequest(
         request_id="req",
         artifacts=(
@@ -49,10 +49,10 @@ def test_runtime_requires_model_factory() -> None:
         asyncio.run(runtime.score_batch(request))
 
 
-def test_model_backed_reward_builds_local_runtime_directly() -> None:
+def test_model_backed_reward_builds_in_process_runtime_directly() -> None:
     reward = PickScoreReward(device="cpu")
 
-    assert isinstance(reward.runtime, LocalRewardRuntime)
+    assert isinstance(reward.runtime, InProcessRewardRuntime)
     assert reward.runtime._worker_config["model_factory"] == (
         "vrl.rewards.models.pickscore:pickscore_reward_model"
     )
@@ -67,7 +67,7 @@ def test_video_reward_derives_internal_model_factory_from_reward_name(tmp_path) 
         worker_config={"model_path": "", "dtype": "bfloat16"},
     )
 
-    assert isinstance(reward.runtime, LocalRewardRuntime)
+    assert isinstance(reward.runtime, InProcessRewardRuntime)
     assert reward.runtime._worker_config == {
         "model_path": "",
         "dtype": "bfloat16",
@@ -80,7 +80,7 @@ def test_video_reward_derives_internal_model_factory_from_reward_name(tmp_path) 
 @pytest.mark.asyncio
 async def test_runtime_loads_reward_model_via_factory() -> None:
     """Checks the runtime loads the reward model via the configured factory."""
-    runtime = LocalRewardRuntime(
+    runtime = InProcessRewardRuntime(
         {
             "model_factory": (
                 "tests.rewards.inference.test_runtime_factory:build_fake_reward_model"

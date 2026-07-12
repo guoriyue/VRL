@@ -433,7 +433,7 @@ def reward_torch_device(
     """Return the device for the local, in-process reward runtime.
 
     A resolved reward GPU is a local reservation, not a Ray worker placement.
-    The local runtime can therefore consume exactly one local execution slot.
+    The in-process runtime can therefore consume exactly one execution slot.
     A CPU-only resource request selects CPU; cross-node reward ordinals are only
     Ray budget tokens and cannot name a device in the driver process. Multiple
     workers or remote reward inference need a real transport boundary instead.

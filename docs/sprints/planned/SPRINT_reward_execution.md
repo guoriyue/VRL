@@ -60,7 +60,7 @@ VRL 其实已经有大半分层能力：
 
 ```text
 Tier 0 轻/CPU reward → 进程内
-  vrl/rewards/runtime.py  LocalRewardRuntime（OCR 等函数 reward 在采集进程内打分）
+  vrl/rewards/runtime.py  InProcessRewardRuntime（OCR 等函数 reward 在采集进程内打分）
   factory.py _with_resolved_reward_runtime_kwargs：reward_key 非 kling/video 直接 return
                                                   （OCR 根本不进 Ray 路径）
 
@@ -170,7 +170,7 @@ resource resolver 用 `inference_runtime`（已有）+ `reward_cost`（新增、
 topology + queue depth 派生 placement：
 
 ```text
-inference_runtime=local              → 无 GPU，LocalRewardRuntime / CPU
+inference_runtime=local              → 无 GPU，InProcessRewardRuntime / CPU
 inference_runtime=ray + cost 低/突发  → 即使有 spare 也优先 share（别空转）
 inference_runtime=ray + cost 高 + backlog 够 → dedicated bundle，异步队列喂满
 （未来）external service              → 不进 VRL placement，VRL 只管 client/backpressure/error
@@ -327,7 +327,7 @@ reward 的卡由谁分，两条路：
 
 应该保留：
 
-1. `LocalRewardRuntime`。它是 Tier 0 / `inference_runtime=local` 的协议边界，不是多余薄层。
+1. `InProcessRewardRuntime`。它是 Tier 0 / `inference_runtime=local` 的协议边界，不是多余薄层。
 2. `RayRewardRuntime` / `RayActorMethodRuntime`。它们是 model-backed reward 的 transport
    边界，应继续承载 actor lifecycle、release-after-score、owner-managed placement。
 3. `GlobalRayPlacementOwner` / `BundleLayout`。它们是 run-level GPU bundle 的 source of truth，
@@ -363,7 +363,7 @@ reward 的卡由谁分，两条路：
 - `docs/sprints/reading/SPRINT_framework_lessons_vrl.md`（非阻塞 barrier 同源主题）
 
 VRL 代码（落点）：
-- `vrl/rewards/runtime.py`（LocalRewardRuntime —— Tier 0）
+- `vrl/rewards/runtime.py`（InProcessRewardRuntime —— Tier 0）
 - `vrl/rewards/base.py`（_init_disk_artifact_reward —— artifact store + Ray 池）
 - `vrl/rewards/ray/runtime.py`（RayRewardRuntime → RayActorMethodRuntime）
 - `vrl/ray/resources.py`（RewardResourceConfig.share_with_rollout、_resolve_reward_devices、build_bundle_layout）
@@ -452,7 +452,7 @@ vrl 现状 已经有同样语义的 backend 开关，只是还没接到"流式"�
 def make_reward_runtime(execution: Literal["inline", "pool"], *, model_factory, worker_config=None):
     ...
     if runtime == "inline":
-        return LocalRewardRuntime(worker_cfg)
+        return InProcessRewardRuntime(worker_cfg)
     if runtime == "pool":
         from vrl.rewards.ray.runtime import RayRewardRuntime
         ...
