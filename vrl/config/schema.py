@@ -9,16 +9,18 @@ key all get the same treatment: one warning naming the dotted path.
 
 from __future__ import annotations
 
+import functools
 import math
 from collections.abc import Mapping
 from dataclasses import fields as dataclass_fields
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args
 
 from omegaconf import DictConfig, OmegaConf
 from omegaconf.errors import MissingMandatoryValue
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from vrl.algorithms.logprob_mismatch import PrecisionCorrectionConfig
+from vrl.config.algorithm import algorithm_config_class
 from vrl.config.precision import PrecisionConfig
 from vrl.config.unknown_keys import OPEN, ConfigBlock
 from vrl.models.interfaces.runtime import MODEL_MEMORY_SECTIONS
@@ -96,25 +98,41 @@ class AlgorithmConfig(ConfigBase):
         "diffusion_nft",
     ]
 
-    # Key registry: values are validated by the algorithm dataclasses in
-    # vrl/algorithms/* (build_algorithm_config), not here.
-    adv_clip_max: Any = None
-    add_kl_coefficient: Any = None  # flow_dppo
-    advantage_scale: Any = None
-    beta: Any = None
-    eps: Any = None
-    clip_ratio: Any = None
-    flow_kl_use_dt: Any = None
-    global_std: Any = None
-    kl_coef: Any = None
-    kl_estimator: Any = None
-    kl_mask_threshold: Any = None  # flow_dppo
-    kl_reward_coef: Any = None
-    nft_beta: Any = None
-    segment_weights: Any = None
+    # The only algorithm hyper-parameter the cross-field validator reads.
+    # Every other key is derived from, and validated against, the runtime
+    # dataclass selected by ``kind``.
     sft_weight: Any = None
-    train_segments: Any = None
-    weight_copy_decay: Any = None
+    # Collector-owned reward coefficient, accepted for every online algorithm.
+    # Reader: vrl/rollouts/collector/config.py.
+    kl_reward_coef: Any = None
+
+
+@functools.cache
+def _algorithm_config_block(cls: type[Any]) -> ConfigBlock:
+    # kind selects the dataclass; kl_reward_coef is consumed by the collector
+    # for every online algorithm and therefore sits outside those dataclasses.
+    known = {field.name for field in dataclass_fields(cls)} | {"kind", "kl_reward_coef"}
+    return ConfigBlock(known)
+
+
+def _algorithm_config_block_for_unknown_keys(mapping: Mapping[str, Any]) -> ConfigBlock:
+    kind = str(mapping.get("kind") or "")
+    try:
+        cls = algorithm_config_class(kind)
+    except ValueError:
+        # Unknown-key reporting runs before schema validation. Let the Literal
+        # produce the authoritative invalid-kind error instead of failing here.
+        return ConfigBlock(AlgorithmConfig)
+    return _algorithm_config_block(cls)
+
+
+_algorithm_config_variant_blocks: tuple[ConfigBlock, ...] = tuple(
+    _algorithm_config_block(cls)
+    for cls in dict.fromkeys(
+        algorithm_config_class(kind)
+        for kind in get_args(AlgorithmConfig.model_fields["kind"].annotation)
+    )
+)
 
 
 # ── Data section ──────────────────────────────────────────────────────────────
@@ -756,7 +774,14 @@ class RootConfig(ConfigBase):
     Anything else warns via ConfigBase.
     """
 
-    algorithm: AlgorithmConfig | None = None
+    algorithm: Annotated[
+        AlgorithmConfig | None,
+        ConfigBlock(
+            AlgorithmConfig,
+            select=_algorithm_config_block_for_unknown_keys,
+            variants=_algorithm_config_variant_blocks,
+        ),
+    ] = None
     data: DataConfig | None = None
     reward: RewardConfig | None = None
     rollout: RolloutConfig | None = None

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, get_type_hints
 
 from omegaconf import DictConfig, OmegaConf
 
+from vrl.config.algorithm import algorithm_config_class
 from vrl.config.precision import (
     PrecisionPolicy,
     resolve_precision_policy,
@@ -262,49 +263,8 @@ def build_algorithm_config(cfg: DictConfig):
     if "algorithm" not in cfg:
         raise ValueError("config missing `algorithm` section")
     kind = resolve_algorithm_kind(cfg.algorithm)
-
-    if kind in ("grpo", "dance_grpo"):
-        # DanceGRPO shares FlowGRPO's loss and config (verl-omni registers both to
-        # the same FlowGRPOLoss); its difference is the trainer's random
-        # timestep selection (actor.timestep_selection) + multi-reward, not a new
-        # loss or hyper-parameter set.
-        from vrl.algorithms.grpo.continuous import GRPOConfig
-
-        return GRPOConfig(**_dataclass_payload(GRPOConfig, cfg.algorithm))
-
-    if kind == "flow_dppo":
-        from vrl.algorithms.grpo.continuous import FlowDPPOConfig
-
-        return FlowDPPOConfig(**_dataclass_payload(FlowDPPOConfig, cfg.algorithm))
-
-    if kind == "grpo_guard":
-        from vrl.algorithms.grpo.continuous import GRPOGuardConfig
-
-        return GRPOGuardConfig(**_dataclass_payload(GRPOGuardConfig, cfg.algorithm))
-
-    if kind == "token_grpo":
-        from vrl.algorithms.grpo.token import TokenGRPOConfig
-
-        return TokenGRPOConfig(**_dataclass_payload(TokenGRPOConfig, cfg.algorithm))
-
-    if kind == "token_grpo_multisegment":
-        from vrl.algorithms.grpo.multisegment import MultiSegmentTokenGRPOConfig
-
-        return MultiSegmentTokenGRPOConfig(
-            **_dataclass_payload(MultiSegmentTokenGRPOConfig, cfg.algorithm),
-        )
-
-    if kind == "diffusion_dpo":
-        from vrl.algorithms.dpo import DiffusionDPOConfig
-
-        return DiffusionDPOConfig(**_dataclass_payload(DiffusionDPOConfig, cfg.algorithm))
-
-    if kind == "diffusion_nft":
-        from vrl.algorithms.diffusion_nft import DiffusionNFTConfig
-
-        return DiffusionNFTConfig(**_dataclass_payload(DiffusionNFTConfig, cfg.algorithm))
-
-    raise AssertionError(f"unreachable: kind={kind}")  # pragma: no cover
+    cls = algorithm_config_class(kind)
+    return cls(**_dataclass_payload(cls, cfg.algorithm))
 
 
 def build_reward_config(cfg: DictConfig) -> tuple[dict[str, float], dict[str, dict]]:

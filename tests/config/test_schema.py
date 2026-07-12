@@ -80,6 +80,65 @@ def test_unknown_algorithm_keys_warn_and_load() -> None:
     assert "algorithm.future_field" in unknown
 
 
+@pytest.mark.parametrize(
+    ("kind", "field", "value"),
+    [
+        ("grpo", "flow_kl_use_dt", True),
+        ("dance_grpo", "sft_weight", 0.1),
+        ("flow_dppo", "add_kl_coefficient", 0.2),
+        ("grpo_guard", "clip_ratio", 0.2),
+        ("token_grpo", "kl_estimator", "k1"),
+        ("token_grpo_multisegment", "segment_weights", [1.0]),
+        ("diffusion_dpo", "beta", 5000.0),
+        ("diffusion_nft", "nft_beta", 0.1),
+    ],
+)
+def test_algorithm_keys_derive_from_selected_runtime_config(
+    kind: str,
+    field: str,
+    value: object,
+) -> None:
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg = OmegaConf.create({"algorithm": {"kind": kind, field: value}})
+    assert find_unknown_keys(cfg) == []
+
+
+@pytest.mark.parametrize(
+    ("kind", "foreign_field"),
+    [("grpo", "beta"), ("diffusion_dpo", "clip_ratio")],
+)
+def test_algorithm_keys_are_scoped_to_selected_kind(kind: str, foreign_field: str) -> None:
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg = OmegaConf.create({"algorithm": {"kind": kind, foreign_field: 1}})
+    assert find_unknown_keys(cfg) == [f"algorithm.{foreign_field}"]
+
+
+def test_algorithm_unknown_key_selector_defers_invalid_kind_to_schema() -> None:
+    from vrl.config.unknown_keys import find_unknown_keys
+
+    cfg = OmegaConf.create({"algorithm": {"kind": "qpo", "future_field": 1}})
+    assert find_unknown_keys(cfg) == ["algorithm.future_field"]
+
+
+def test_algorithm_dispatch_covers_schema_kind_vocabulary() -> None:
+    from vrl.config.algorithm import algorithm_config_class
+
+    kinds = _literal_args(AlgorithmConfig.model_fields["kind"].annotation)
+    assert kinds
+    assert all(algorithm_config_class(kind) for kind in kinds)
+
+
+def test_resolve_algorithm_kind_remains_a_public_validation_api() -> None:
+    from vrl.config import validation
+
+    assert "resolve_algorithm_kind" in validation.__all__
+    assert validation.resolve_algorithm_kind(OmegaConf.create({"kind": "grpo"})) == "grpo"
+    with pytest.raises(ValueError, match=r"algorithm\.kind required"):
+        validation.resolve_algorithm_kind(OmegaConf.create({}))
+
+
 # ── rollout / sampling string-setting Literals ────────────────────────────────
 
 
