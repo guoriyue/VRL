@@ -1,0 +1,9 @@
+# DrawBench prompts paired with one caller-supplied reference image.
+# The manifest and sampler stay owned by the canonical DrawBench dataset group;
+# this variant only declares the Video2World conditioning contract.
+defaults:
+- /dataset/drawbench_train_192
+
+data:
+  preprocessing:
+    conditioning: reference_image

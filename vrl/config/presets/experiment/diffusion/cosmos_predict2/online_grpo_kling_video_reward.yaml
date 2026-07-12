@@ -14,11 +14,7 @@ defaults:
 - /sampling/video/704p_93f
 - /sampling/denoise/35_step_cfg_7
 - /reward/kling_video_reward
-- /dataset/drawbench_train_192
-
-data:
-  preprocessing:
-    conditioning: reference_image
+- /dataset/drawbench_train_192_reference_image
 
 # The upstream beta=0.004 KL prior is too strong for the current VRL
 # loss-scale on Kling reward: local diagnostics showed the objective dominated

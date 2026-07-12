@@ -42,12 +42,8 @@ defaults:
 - /sampling/video/480p_33f            # 480p-native; 240p is OOD -> rainbow garbage (SPRINT_config_correctness_audit)
 - /sampling/denoise/35_step_cfg_7
 - /reward/kling_video_reward          # local HF model, no API key
-- /dataset/drawbench_train_192
+- /dataset/drawbench_train_192_reference_image
 - /base/rollout/orchestration/continuous
-
-data:
-  preprocessing:
-    conditioning: reference_image
 
 model:
   use_lora: false                     # FULL-PARAMETER (-> apply_full_finetune); 480p full-param needs FSDP/multi-GPU
